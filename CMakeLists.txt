@@ -965,6 +965,9 @@ add_custom_command(
   OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen --cpp src/deptran/rcc_rpc.rpc
   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.rpc
+          ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen
+          ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/pylib/simplerpcgen/lang_cpp.py
+          ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/pylib/simplerpcgen/rpcgen.py
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 

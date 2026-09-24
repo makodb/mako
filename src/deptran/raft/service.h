@@ -42,21 +42,21 @@ class RaftServiceImpl : public RaftService {
   static rusty::Option<rusty::Arc<srpc::PollThread>> GetPollThread(siteid_t site_id);
 
   // Called by RPC handlers - lock-free atomic read
-  RaftServer* GetServer();
+  RaftServer* GetServer() const;
 
   // Generated fiber-RPC overrides. The srpc codegen wraps each one in a
   // Fiber::create_run; we return a packed response struct and the
   // framework sends the reply on fiber completion. No DeferredReply.
-  rusty::Result<RpcVoteResponse,                srpc::i32> Vote(const RpcVoteRequest& req) override;
-  rusty::Result<RpcVoteDurableResponse,         srpc::i32> VoteDurable(const RpcVoteDurableRequest& req) override;
-  rusty::Result<RpcAppendEntriesResponse,       srpc::i32> AppendEntries(const RpcAppendEntriesRequest& req) override;
-  rusty::Result<RpcEmptyAppendEntriesResponse,  srpc::i32> EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) override;
-  rusty::Result<RpcAppendEntriesDurableResponse, srpc::i32> AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req) override;
-  rusty::Result<RpcTimeoutNowResponse,          srpc::i32> TimeoutNow(const RpcTimeoutNowRequest& req) override;
-  rusty::Result<RpcNotifyRestartResponse,       srpc::i32> NotifyRestart(const RpcNotifyRestartRequest& req) override;
-  rusty::Result<RpcInstallSnapshotResponse,     srpc::i32> InstallSnapshot(const RpcInstallSnapshotRequest& req) override;
-  rusty::Result<RpcAddServerResponse,           srpc::i32> AddServer(const RpcAddServerRequest& req) override;
-  rusty::Result<RpcRemoveServerResponse,        srpc::i32> RemoveServer(const RpcRemoveServerRequest& req) override;
+  rusty::Result<RpcVoteResponse,                srpc::i32> Vote(const RpcVoteRequest& req) const override;
+  rusty::Result<RpcVoteDurableResponse,         srpc::i32> VoteDurable(const RpcVoteDurableRequest& req) const override;
+  rusty::Result<RpcAppendEntriesResponse,       srpc::i32> AppendEntries(const RpcAppendEntriesRequest& req) const override;
+  rusty::Result<RpcEmptyAppendEntriesResponse,  srpc::i32> EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) const override;
+  rusty::Result<RpcAppendEntriesDurableResponse, srpc::i32> AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req) const override;
+  rusty::Result<RpcTimeoutNowResponse,          srpc::i32> TimeoutNow(const RpcTimeoutNowRequest& req) const override;
+  rusty::Result<RpcNotifyRestartResponse,       srpc::i32> NotifyRestart(const RpcNotifyRestartRequest& req) const override;
+  rusty::Result<RpcInstallSnapshotResponse,     srpc::i32> InstallSnapshot(const RpcInstallSnapshotRequest& req) const override;
+  rusty::Result<RpcAddServerResponse,           srpc::i32> AddServer(const RpcAddServerRequest& req) const override;
+  rusty::Result<RpcRemoveServerResponse,        srpc::i32> RemoveServer(const RpcRemoveServerRequest& req) const override;
 };
 
 } // namespace janus

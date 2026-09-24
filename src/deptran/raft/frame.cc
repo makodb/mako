@@ -103,8 +103,9 @@ Communicator *RaftFrame::CreateCommo(
   // clients of this method.
   Log_info("CreateCommo: Thread ID = {}", std::this_thread::get_id());
   {
-    auto guard = srpc::sp_running_fiber_th_.borrow();
-    Log_info("CreateCommo: sp_running_fiber_th_ = {}", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
+    auto fiber = Fiber::current_fiber();
+    Log_info("CreateCommo: current fiber = {}",
+             fiber.is_some() ? static_cast<const void*>(fiber.as_ref().unwrap().get()) : nullptr);
   }
   if (commo_ == nullptr) {
     Log_info("CreateCommo: Creating new RaftCommo");
@@ -147,8 +148,9 @@ Communicator *RaftFrame::CreateCommo(
         Log_info("Test fiber: Starting execution");
         Log_info("Test fiber: Thread ID = {}", std::this_thread::get_id());
         {
-          auto guard = srpc::sp_running_fiber_th_.borrow();
-          Log_info("Test fiber: sp_running_fiber_th_ = {}", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
+          auto fiber = Fiber::current_fiber();
+          Log_info("Test fiber: current fiber = {}",
+                   fiber.is_some() ? static_cast<const void*>(fiber.as_ref().unwrap().get()) : nullptr);
         }
 
         // Yield until all 5 communicators are initialized

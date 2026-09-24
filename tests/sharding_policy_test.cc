@@ -9,7 +9,7 @@ import cluster;   // config/sharding metadata module (was #include "cluster/..."
 // The policy value types serialize via their srpc Serializable save()/load()
 // methods (BinaryWriteArchive), pulled in transitively by sharding_policy.h.
 // No operator<< / srpc::Marshal.
-#include "srpc/misc/serializable.hpp"
+import srpc.serializable;
 
 namespace janus {
 

@@ -3,7 +3,7 @@
 #include <string>
 
 #include "mako_commands.h"
-#include "srpc/misc/serializable.hpp"
+import srpc.serializable;
 
 namespace janus {
 

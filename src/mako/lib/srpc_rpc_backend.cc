@@ -28,7 +28,7 @@ using namespace mako;
 // TransportBackendService::__dispatch__ implementation
 // @safe - forwards to SrpcRpcBackend::RequestHandler
 void TransportBackendService::__dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req,
-                                           srpc::WeakServerConnection weak_sconn) {
+                                           srpc::WeakServerConnection weak_sconn) const {
     SrpcRpcBackend::RequestHandler(static_cast<uint8_t>(rpc_id), std::move(req), weak_sconn, backend_);
 }
 

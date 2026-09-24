@@ -23,12 +23,12 @@
 //
 // For OPEN-set polymorphic types (graph payloads, anything where the
 // receiver may not know about every possible carried type at compile
-// time), use `srpc::AnyMessage` instead — see `srpc/misc/any_message.hpp`.
+// time), use `srpc::AnyMessage` instead — import `srpc.any_message`.
 
 #include <rusty/arc.hpp>
 
-#include "srpc/misc/serializable.hpp"
-#include "srpc/misc/serializable_envelope.hpp"
+import srpc.serializable;
+import srpc.serializable_envelope;
 
 namespace janus {
 

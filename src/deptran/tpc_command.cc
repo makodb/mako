@@ -1,5 +1,5 @@
 #include "tpc_command.h"
-#include "srpc/misc/serializable.hpp"
+import srpc.serializable;
 
 using namespace janus;
 

@@ -4,7 +4,7 @@
 
 #include "replicated_db.h"
 #include "server.h"
-#include "srpc/misc/serializable.hpp"
+import srpc.serializable;
 #include <dirent.h>
 #include <sys/stat.h>
 #include <unistd.h>

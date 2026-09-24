@@ -32,21 +32,14 @@ EXTS = (".cpp", ".hpp", ".h", ".cc")
 COMPATIBILITY_HEADERS = (
     "src/srpc/std_compat.hpp",
     "src/srpc/srpc.hpp",
-    "src/srpc/base/all.hpp",
-    "src/srpc/misc/serializable.hpp",
-    "src/srpc/misc/any_message.hpp",
-    "src/srpc/misc/serializable_envelope.hpp",
-    "src/srpc/rpc/completion_tracker.hpp",
-    "src/srpc/rpc/frame_codec.hpp",
-    "src/srpc/rpc/idempotency.hpp",
-    "src/srpc/rpc/request_queue.hpp",
-    "src/srpc/rpc/inmemory_channel.hpp",
-    "src/srpc/rpc/fiber_channel.hpp",
 )
 C_ABI_HEADERS = (
     "src/srpc/reactor/srpc_fiber.h",
+    "src/srpc/reactor/srpc_epoll.h",
     "src/srpc/misc/srpc_rand.h",
     "src/srpc/misc/srpc_timing.h",
+    "src/srpc/rpc/srpc_connect.h",
+    "src/srpc/rpc/srpc_server.h",
 )
 
 # The legacy body-burndown classifier separated a narrow set of fixed module

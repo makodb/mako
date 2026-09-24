@@ -68,7 +68,7 @@ jobs:
           # Canonical Rust lives at its layout-mirroring path (base/misc/reactor/
           # rpc), not a flat src/. Only lib.rs remains under src/.
           canonical_input="src/srpc/rpc/frame_codec.rs"
-          runtime_facade_input="src/srpc/rusty-rustc/src/lib.rs"
+          crate_manifest_input="src/srpc/Cargo.toml"
           type_map_input="src/srpc/rust-type-map.toml"
           module_index_input="src/srpc/cpp-module-index.toml"
 
@@ -77,7 +77,7 @@ jobs:
           # NEXT build die with no output (set -e aborts inside the command
           # substitution, before its printf). Fail loudly and early instead.
           for probe_input in "${emitter_input}" "${canonical_input}" \
-            "${runtime_facade_input}" "${type_map_input}" "${module_index_input}"; do
+            "${crate_manifest_input}" "${type_map_input}" "${module_index_input}"; do
             if [ ! -e "${probe_input}" ]; then
               echo "invalidation input does not exist: ${probe_input}" >&2
               exit 1
@@ -123,16 +123,16 @@ jobs:
 
           "${assert_regenerated[@]}" srpc.frame_codec.cppm <<<"${canonical_output}"
 
-          touch "${runtime_facade_input}"
-          facade_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
-          printf '%s\n' "${facade_output}"
+          touch "${crate_manifest_input}"
+          manifest_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
+          printf '%s\n' "${manifest_output}"
 
           "${assert_regenerated[@]}" \
             srpc.request_queue.cppm \
             srpc.load_balancer.cppm \
             srpc.utils.cppm \
             srpc.frame_codec.cppm \
-            <<<"${facade_output}"
+            <<<"${manifest_output}"
           test ! -e "${GOAL0_BUILD_DIR}/src/srpc/goal0-crate-cpp/rusty"
 
           for sidecar_input in "${type_map_input}" "${module_index_input}"; do

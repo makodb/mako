@@ -8,6 +8,7 @@
 #include <rusty/arc.hpp>
 
 #include <time.h>
+#include <mutex>
 #include <vector>
 #include <sys/time.h>
 #ifdef __APPLE__ // for OS X
@@ -27,17 +28,17 @@ class ServerControlServiceImpl: public ServerControlService {
   rusty::Arc<ServerStatus> status_;
 
   unsigned int timeout_;
-  bool sig_handler_set_;
+  mutable std::once_flag sig_handler_once_;
 
   static std::vector<ServerControlServiceImpl*> scsi_s;
 
   static void shutdown_wrapper(int sig);
 
-  void set_sig_handler();
+  void set_sig_handler() const;
 
  public:
   // Internal shutdown without RPC reply
-  void do_shutdown();
+  void do_shutdown() const;
 
   // removed 3rd `Recorder *recorder = nullptr`
   // ctor parameter — every caller passed nullptr; the constructor's
@@ -47,17 +48,17 @@ class ServerControlServiceImpl: public ServerControlService {
                            unsigned int timeout = 5);
   ~ServerControlServiceImpl();
 
-  // Movable but not copyable (Arc is movable and clonable)
-  ServerControlServiceImpl(ServerControlServiceImpl&&) = default;
-  ServerControlServiceImpl& operator=(ServerControlServiceImpl&&) = default;
+  // Registered service addresses must remain stable.
+  ServerControlServiceImpl(ServerControlServiceImpl&&) = delete;
+  ServerControlServiceImpl& operator=(ServerControlServiceImpl&&) = delete;
   ServerControlServiceImpl(const ServerControlServiceImpl&) = delete;
   ServerControlServiceImpl& operator=(const ServerControlServiceImpl&) = delete;
 
   // BEGIN typed-rpc-decls (ServerControlServiceImpl)
   // Typed RPC interface overrides (new API).
-  void server_shutdown(const ServerControlService::RpcServerShutdownRequest& req, ServerControlService::RpcServerShutdownResponse& resp, srpc::DeferredReply defer) override;
-  void server_ready(const ServerControlService::RpcServerReadyRequest& req, ServerControlService::RpcServerReadyResponse& resp, srpc::DeferredReply defer) override;
-  void server_heart_beat(const ServerControlService::RpcServerHeartBeatRequest& req, ServerControlService::RpcServerHeartBeatResponse& resp, srpc::DeferredReply defer) override;
+  void server_shutdown(const ServerControlService::RpcServerShutdownRequest& req, ServerControlService::RpcServerShutdownResponse& resp, srpc::DeferredReply defer) const override;
+  void server_ready(const ServerControlService::RpcServerReadyRequest& req, ServerControlService::RpcServerReadyResponse& resp, srpc::DeferredReply defer) const override;
+  void server_heart_beat(const ServerControlService::RpcServerHeartBeatRequest& req, ServerControlService::RpcServerHeartBeatResponse& resp, srpc::DeferredReply defer) const override;
   // END typed-rpc-decls (ServerControlServiceImpl)
 };
 

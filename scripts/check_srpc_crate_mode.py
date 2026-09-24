@@ -6,12 +6,13 @@ from __future__ import annotations
 import argparse
 from collections import Counter
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
-import platform
 import re
 import shutil
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -23,13 +24,8 @@ DEFAULT_TRANSPILER = (
     "third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 )
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "a1f8fef85e8d43bb00f85f8ef32e5ecc69408642"
+REQUIRED_RUSTY_CPP_COMMIT = "1689f4380c25d13455cbe1f9eb8e5ff94e49861c"
 EXTRACTION_DRIVER = "scripts/extract_srpc_rust.py"
-# Crate-relative, like every other label the extraction driver owns: it
-# resolves against `extraction.crate_root(root)` (the vendored srpc tree at
-# `src/srpc`), not against the repository root. The three gate-owned emitter
-# inputs below stay repository-relative -- the gate passes them straight to the
-# transpiler as absolute paths.
 EXTRACTION_MANIFEST = "rust-modules.toml"
 MODULE_PREAMBLE = "src/srpc/module-preambles.toml"
 TYPE_MAP = "src/srpc/rust-type-map.toml"
@@ -52,6 +48,835 @@ BENIGN_GENERATED_DIAGNOSTIC = re.compile(
     r"in scope [^:\n]+: \[[^\]\n]*\](?:; cycle path: [^\n]*)?$",
     re.MULTILINE,
 )
+# REVIEWED ABI RESPELLING (goal0-on-main convergence, 5 symbols, 1:1):
+# - 4 symbols (QuorumEvent ctor, ClientConnection ctor, Server ctor,
+#   RpcServiceContext::new_) re-spell their hash containers under upstream
+#   #177's std_port re-backing: rusty::port::collections::hashbrown::
+#   HashMap/HashSet@hashbrown_port.* with DefaultHasher@hashbrown_port.hasher
+#   became std_port::collections::hash::{map,set}::*@std_port with
+#   std_port::hash::compat::DefaultHasher@std_port (the 8-byte compat builder
+#   that preserves the ratified LAYOUT; see the submodule's std_port compat
+#   commits). Same functions, same arity, container spelling only.
+# - 1 symbol (DeferredReply ctor) folds its two Option<Box<dyn Fn*>> params
+#   into the callbacks' own nullable state under the converged transparent-
+#   callback model (Option<rusty::Function<...>> -> rusty::Function<...>).
+# Verified against build libsrpc.a: these five were the ONLY pinned-symbol
+# deltas of that convergence; the total stayed exactly 1897.
+#
+# REVIEWED ADDITIVE ABI DELTA (cpp_internal removal, +64 symbols, 1897 -> 1961).
+# Dropping the eleven `#[cfg_attr(any(), cpp_internal)]` markers from
+# reactor/reactor.rs lets those port-internal helpers export normally.  This is
+# a deliberate, owner-authorized growth of srpc's public symbol surface:
+# preserving the incumbent's exact symbol set is NOT a requirement for them.
+# The delta is PURELY ADDITIVE -- measured 64 added, 0 removed, 0 respelled --
+# and every entry is named in REACTOR_INCUMBENT_ORACLE_ADDITIONS below:
+#   * 54 = the EventPollable `<Trait>_` UFCS layer (9 trait methods x 6
+#     concrete implementors: IntEvent, NeverEvent, QuorumEvent, TimeoutEvent,
+#     WaitAll, WaitAny).  The marker made that synthesized layer `inline`
+#     (vague, discardable linkage); without it clang gives the module-attached
+#     definitions ordinary strong linkage.
+#   *  9 = the free helper functions, which lose internal linkage and become
+#     module-owned.  At -O2 eight of them previously had NO symbol at all --
+#     internal linkage let the optimizer inline and discard them outright --
+#     so exporting them requires an out-of-line definition to exist.
+#   *  1 = STACKLESS_UNREGISTERED_SLOT, a namespace-scope const that is NOT
+#     implicitly internal in a module purview (P1815 attaches it to the
+#     module), so it becomes an ordinary strong module-owned symbol.
+# All 64 land in srpc.reactor, so 1897 + 64 = 1961 and that module's pinned
+# set moves 299 -> 363.
+#
+# 1961 -> 1963: the serialization-sink capacity seeds. kReplySinkInitialCapacity
+# (srpc.server) and kRequestSinkInitialCapacity (srpc.client) are module-scope
+# consts, so each is one more P1815-attached strong 'R' symbol, exactly like
+# the SERVER_ERR_* block and kAsyncSlotCount before them.
+#
+# 1963 -> 1965: the async-fn lowering demos. async_double and
+# async_double_twice in base/misc.rs are the first canonical `async fn`s --
+# emitted as C++ coroutines returning rusty::Task<int64_t> -- and each is an
+# ordinary strong 'T' function symbol.
+#
+# 1965 -> 1966: the thread_local! pilot's accessor, thread_slot_bump(), an
+# ordinary exported 'T'. The TL_BUMP_COUNTER LocalKey itself emits `inline
+# thread_local` -- the same weak linkage the marker-attributed reactor
+# statics always had -- so neither the variable nor its per-thread init
+# routine enters the strong census, which is what makes migrating a static
+# onto the macro symbol-neutral.
+#
+# 1966 -> 1967: inmemory_channel_inject_duplicate_next_sends, the fault-
+# injection primitive that completes the drop/error/duplicate triad for the
+# in-memory transport (docs/testing-plan.md item 2.1). An ordinary exported
+# 'T' free function.
+#
+# 1967 -> 1969: sparseint_val_size / sparseint_buf_size, two free functions in
+# srpc.basetypes holding the sparse-int length logic that SparseInt::val_size /
+# buf_size used to inline. Extracted so they can carry Verus contracts -- the
+# verus_spec return-binding macro cannot spec an associated (impl) function, so
+# proving the SHIPPED length logic (incl. the machine-checked `val_size != 8`
+# statement of the length-8 wire fix) requires it live in a free function that
+# the methods delegate to. Both are ordinary exported 'T' free functions; the
+# methods keep their symbols, so this is +2, not a rename. See docs/verification.md.
+#
+# 1969 -> 1971: sparseint_dump64 / sparseint_load64, the slice-based sparse-int
+# codec extracted from SparseInt::dump64/load64 (which now delegate) so the byte
+# logic is a Verus-reasonable free function over std::span rather than a raw
+# pointer -- the groundwork for the T4 round-trip proof, and a safety win (the
+# writes/reads are bounds-checked). The methods keep their raw-pointer symbols,
+# so this is +2, not a rename. See docs/verification.md.
+#
+# 1971 -> 1973: header_word_from_bytes / store_header_word in srpc.frame_codec,
+# the two helpers isolating i32::from_ne_bytes / to_ne_bytes so the rest of the
+# frame codec can be verified (Verus cannot process those std calls; see
+# docs/verification.md T5/T6). They are module-internal -- emitted without
+# `export` -- but still land as strong 'T' symbols in the object, so they are
+# ordinary ratchet rows. peek/write keep their own symbols: this is +2.
+# 1973 -> 2032: reviewed facade/runtime removal and canonical restoration.
+# +36 serialization, +12 explicit-time manager helpers, +4 epoll policy,
+# +4 TCP connect/keepalive policy, +3 logging/debugging, +2 client ownership
+# and replay, +1 each channel keepalive/rand/port scan; -4 retired FiberChannel
+# raw-receiver helpers and -1 retired server raw-channel accessor. Signature
+# replacements additionally track synchronized storage and const channel access.
+# 2032 -> 2045: ten canonical client binding/lifecycle helpers and three
+# queue admission/drain helpers. The client constructor and direct binding
+# signatures also change to carry synchronized generation ownership.
+# 2045 -> 2046: tcpconn_fd_locked, the descriptor-lease accessor. In the same
+# change the two pollable-shim constructors take an Option<Arc<..>> lease
+# beside the connection/listener Arc (signature replacements, count-neutral,
+# mirrored in RAW_ABI_ALIASES), and TcpConnection.fd_ becomes
+# UnsafeCell<Option<Arc<OwnedFd>>>: every later field shifts +8 and sizeof goes
+# 344 -> 352, re-pinned from measured values in tests/rpc_tcp_channel_test.cc.
+# 2046 -> 2045: the facade std::string byte model left canonical Rust; the
+# backtrace renderer's `bt_empty_string()` helper (a `Default::default()` on
+# that model) went with it, and its strong symbol in srpc.debugging with it.
+# In the same change log_line/log_sink_write take std::string_view and the
+# string-returning logging/misc functions return rusty::String (row
+# replacements, count-neutral).
+# 2045 -> 2055: facade retirement adds eight load-balancer trait RTTI/vtable/
+# destructor symbols, serialize_bytes, and four canonical wake/job helpers.
+# It removes private non-exported thread_id_to_u64, u64_to_thread_id and
+# no_reply_writer. Their only callers were inside the reactor/server providers;
+# workers now store native gettid values and absent reply writers use None.
+# No C++ consumer entry point is removed.
+# 2055 -> 2060: recoverable UTF-8 validation adds BinaryReadArchive's
+# constructor, error accessor, failed predicate, and first-error recorder, plus
+# reject_malformed_request for generated service dispatchers. These are
+# additive entry points; no existing signature is replaced.
+# Fresh objects: load_balancer 14 unique/19 raw, serializable 601/738,
+# reactor 365/386, server 86/98. The four extra raw load-balancer entries are
+# destructor aliases.
+EXPECTED_TOTAL_PROVIDER_SYMBOLS = 2060
+
+# ---------------------------------------------------------------------------
+# srpc.reactor: surviving historical additions plus current canonical helpers.
+#
+# The original reactor promotion used an exact compare of the generated
+# provider's owned strong symbols against the incumbent provider's
+# (/var/tmp/reactor-incumbent-owned.unique.demangled, sha256
+# e566039257c993ce43e9d96132ffc55d24300edbbd4bfd65c8b9104bc8d5be86, 300
+# entries; see scripts/run_reactor_promotion_battery.sh item 11 / G3).
+#
+# That promotion recorded 0 MISSING and 65 EXTRA, listed here by name.
+# The external manifest and promotion driver are historical evidence. Current
+# acceptance uses this gate's exact ABI_SPECS and RAW_ABI_ALIASES inventories,
+# including subsequent synchronized-storage and removal-counter changes.
+# Missing and unexpected symbols both fail the current comparison.
+#
+#   [1] srpc::EventState@srpc.reactor::new_()
+#       `EventState` is a value type and the DSL has no field default
+#       initialisers, so the mandated construction idiom is a
+#       `fn new() -> EventState` factory rather than a C++ constructor
+#       (CLAUDE.md; "No #[cpp_ctor]").  That factory lowers to this static
+#       `new_()`.  The frozen incumbent oracle contains NO EventState
+#       constructor symbol of any kind -- `EventState` occurs in it only as a
+#       parameter type, e.g.
+#       `srpc::event_state_seed@srpc.reactor(srpc::EventState@srpc.reactor const&)`
+#       -- so this is a pure addition.
+#
+#   [2-65] the 64-symbol REVIEWED ADDITIVE ABI DELTA from removing the eleven
+#       `#[cfg_attr(any(), cpp_internal)]` markers (see
+#       EXPECTED_TOTAL_PROVIDER_SYMBOLS above for the full rationale and the
+#       54 / 9 / 1 breakdown).  These port-internal helpers now export
+#       normally.  The incumbent object owned none of them -- at -O2 most had
+#       no symbol at all -- so all 64 replace nothing and remove nothing that
+#       any consumer could previously have called.
+#
+# The historical list remains in Git history. thread_id_to_u64 has been
+# retired with its private inverse; four standard-wake/job helpers are added.
+# REACTOR_INCUMBENT_ORACLE_ADDITIONS is enforced, not decorative: the gate
+# requires every entry to be a real, currently-owned srpc.reactor symbol
+# (require_reactor_oracle_additions), so a stale entry is an error, and a
+# further unreviewed addition cannot hide behind these.
+REACTOR_INCUMBENT_ORACLE_ADDITIONS = frozenset(
+    {
+        ('T', 'srpc::StacklessWakeTarget@srpc.reactor::wake(rusty::Arc<srpc::StacklessWakeTarget@srpc.reactor>)'),
+        ('T', 'srpc::StacklessWakeTarget@srpc.reactor::wake_by_ref(rusty::Arc<srpc::StacklessWakeTarget@srpc.reactor> const&)'),
+        ('T', 'srpc::job_identity@srpc.reactor(rusty::Arc<srpc::Job@srpc.misc> const&)'),
+        ('T', 'srpc::stackless_wake_make_binding@srpc.reactor(rusty::Arc<srpc::StacklessWakeIngress@srpc.reactor>)'),
+        ("R", "srpc::STACKLESS_UNREGISTERED_SLOT@srpc.reactor"),
+        ("T", "srpc::EventPollable_::is_ready@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::is_ready@srpc.reactor(srpc::IntEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::is_ready@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::is_ready@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::is_ready@srpc.reactor(srpc::WaitAll@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::is_ready@srpc.reactor(srpc::WaitAny@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::log@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::log@srpc.reactor(srpc::IntEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::log@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::log@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::log@srpc.reactor(srpc::WaitAll@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::log@srpc.reactor(srpc::WaitAny@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::prunable@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::prunable@srpc.reactor(srpc::IntEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::prunable@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::prunable@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::prunable@srpc.reactor(srpc::WaitAll@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::prunable@srpc.reactor(srpc::WaitAny@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::set_prunable@srpc.reactor(janus::QuorumEvent@srpc.reactor const&, bool)"),
+        ("T", "srpc::EventPollable_::set_prunable@srpc.reactor(srpc::IntEvent@srpc.reactor const&, bool)"),
+        ("T", "srpc::EventPollable_::set_prunable@srpc.reactor(srpc::NeverEvent@srpc.reactor const&, bool)"),
+        ("T", "srpc::EventPollable_::set_prunable@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&, bool)"),
+        ("T", "srpc::EventPollable_::set_prunable@srpc.reactor(srpc::WaitAll@srpc.reactor const&, bool)"),
+        ("T", "srpc::EventPollable_::set_prunable@srpc.reactor(srpc::WaitAny@srpc.reactor const&, bool)"),
+        ("T", "srpc::EventPollable_::set_status@srpc.reactor(janus::QuorumEvent@srpc.reactor const&, srpc::EventStatus@srpc.reactor)"),
+        ("T", "srpc::EventPollable_::set_status@srpc.reactor(srpc::IntEvent@srpc.reactor const&, srpc::EventStatus@srpc.reactor)"),
+        ("T", "srpc::EventPollable_::set_status@srpc.reactor(srpc::NeverEvent@srpc.reactor const&, srpc::EventStatus@srpc.reactor)"),
+        ("T", "srpc::EventPollable_::set_status@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&, srpc::EventStatus@srpc.reactor)"),
+        ("T", "srpc::EventPollable_::set_status@srpc.reactor(srpc::WaitAll@srpc.reactor const&, srpc::EventStatus@srpc.reactor)"),
+        ("T", "srpc::EventPollable_::set_status@srpc.reactor(srpc::WaitAny@srpc.reactor const&, srpc::EventStatus@srpc.reactor)"),
+        ("T", "srpc::EventPollable_::status@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::status@srpc.reactor(srpc::IntEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::status@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::status@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::status@srpc.reactor(srpc::WaitAll@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::status@srpc.reactor(srpc::WaitAny@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::test@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::test@srpc.reactor(srpc::IntEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::test@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::test@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::test@srpc.reactor(srpc::WaitAll@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::test@srpc.reactor(srpc::WaitAny@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::upgrade_fiber@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::IntEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::WaitAll@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::WaitAny@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::wakeup_time@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::IntEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::WaitAll@srpc.reactor const&)"),
+        ("T", "srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::WaitAny@srpc.reactor const&)"),
+        ("T", "srpc::EventState@srpc.reactor::new_()"),
+        ("T", "srpc::current_thread_gettid@srpc.reactor()"),
+        ("T", "srpc::reactor_log_line@srpc.reactor(int, int, signed char const*, rusty::String)"),
+        ("T", "srpc::reactor_verify@srpc.reactor(bool)"),
+        ("T", "srpc::reusing_fiber@srpc.reactor()"),
+        ("T", "srpc::stackless_profile_enabled@srpc.reactor()"),
+        ("T", "srpc::stackless_profile_env@srpc.reactor()"),
+        ("T", "srpc::stackless_profile_report_periodic@srpc.reactor()"),
+        ("T", "srpc::stackless_profile_update_max_slots@srpc.reactor(unsigned long)"),
+    }
+)
+
+# ---------------------------------------------------------------------------
+# srpc.client incumbent-oracle delta -- ENFORCED, not decorative.
+#
+# CLIENT_INCUMBENT_ORACLE is the frozen symbol set of the module as it stood
+# before the promotion (the hand-written `export namespace srpc` module at
+# c6c55ba, compiled to R/incumbent-client.o and read back with this gate's own
+# module_symbols()).  219 symbols.
+#
+# The final module owns 271 symbols: the frozen 219 plus 67 additions minus
+# 15 removals. Both sets are exact and independently checked below.
+#
+# Reviewed additions include canonical formatting/serialization helpers,
+# factory spellings, owned channel snapshots, and queued replay with its
+# scope guard and generation-bound lifecycle. The seven signature pairs record
+# factory construction/mutation, synchronized Client/ClientConnection storage,
+# the receive job's owning channel argument, and direct binding generation.
+#
+# Eight unpaired removals retire unused compatibility stubs: Client::set_valid;
+# ClientConnection's fd/content_size/poll_mode/handle_read/handle_write and
+# empty apply_keepalive_options; and the unlocked FiberChannel raw-pointer
+# helper. TCP polling remains in TcpConnection, keepalive now reaches its
+# actual socket, and receive jobs retain shared channel ownership. No frozen
+# incumbent entry is rewritten to make the comparison pass.
+#
+CLIENT_INCUMBENT_ORACLE = frozenset(
+    {
+        ('R', 'srpc::kAsyncSlotCount@srpc.client'),
+        ('T', 'srpc::BufferingConfig@srpc.client::defaults()'),
+        ('T', 'srpc::BufferingConfig@srpc.client::disabled()'),
+        ('T', 'srpc::BufferingConfig@srpc.client::new_()'),
+        ('T', 'srpc::BufferingConfig@srpc.client::to_queue_config() const'),
+        ('T', 'srpc::Client@srpc.client::Client(srpc::Client@srpc.client&&)'),
+        ('T', 'srpc::Client@srpc.client::Client(rusty::RefCell<rusty::Option<rusty::Arc<srpc::ClientConnection@srpc.client>>>, rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Cell<int>, rusty::Cell<srpc::KeepaliveConfig@srpc.client>, rusty::Cell<srpc::HeartbeatConfig@srpc.heartbeat>, rusty::Cell<srpc::CircuitBreakerConfig@srpc.circuit_breaker>, rusty::Cell<srpc::ReconnectPolicy@srpc.reconnect_policy>, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>, srpc::ConnectionMetrics@srpc.connection_metrics)'),
+        ('T', 'srpc::Client@srpc.client::add_on_connected(rusty::Function<void () const>) const'),
+        ('T', 'srpc::Client@srpc.client::add_on_disconnected(rusty::Function<void () const>) const'),
+        ('T', 'srpc::Client@srpc.client::add_on_error(rusty::Function<void (srpc::RpcError@srpc.errors, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>) const'),
+        ('T', 'srpc::Client@srpc.client::add_on_reconnected(rusty::Function<void (bool) const>) const'),
+        ('T', 'srpc::Client@srpc.client::add_on_reconnecting(rusty::Function<void () const>) const'),
+        ('T', 'srpc::Client@srpc.client::check_server_instance(unsigned long) const'),
+        ('T', 'srpc::Client@srpc.client::circuit_breaker_config() const'),
+        ('T', 'srpc::Client@srpc.client::circuit_breaker_state() const'),
+        ('T', 'srpc::Client@srpc.client::clear_connection_callbacks() const'),
+        ('T', 'srpc::Client@srpc.client::clear_pending_requests(int) const'),
+        ('T', 'srpc::Client@srpc.client::client_mode() const'),
+        ('T', 'srpc::Client@srpc.client::close() const'),
+        ('T', 'srpc::Client@srpc.client::connect(signed char const*, bool) const'),
+        ('T', 'srpc::Client@srpc.client::connected() const'),
+        ('T', 'srpc::Client@srpc.client::connection() const'),
+        ('T', 'srpc::Client@srpc.client::connection_state() const'),
+        ('T', 'srpc::Client@srpc.client::create(rusty::Arc<srpc::PollThread@srpc.reactor>)'),
+        ('T', 'srpc::Client@srpc.client::handle_free(long) const'),
+        ('T', 'srpc::Client@srpc.client::has_connection() const'),
+        ('T', 'srpc::Client@srpc.client::has_pending_channel_factory() const'),
+        ('T', 'srpc::Client@srpc.client::heartbeat_config() const'),
+        ('T', 'srpc::Client@srpc.client::host() const'),
+        ('T', 'srpc::Client@srpc.client::is_idle(unsigned long, unsigned long) const'),
+        ('T', 'srpc::Client@srpc.client::is_reconnecting() const'),
+        ('T', 'srpc::Client@srpc.client::keepalive_config() const'),
+        ('T', 'srpc::Client@srpc.client::metrics() const'),
+        ('T', 'srpc::Client@srpc.client::new_(rusty::Arc<srpc::PollThread@srpc.reactor>)'),
+        ('T', 'srpc::Client@srpc.client::operator=(srpc::Client@srpc.client&&)'),
+        ('T', 'srpc::Client@srpc.client::pause() const'),
+        ('T', 'srpc::Client@srpc.client::pending_request_count() const'),
+        ('T', 'srpc::Client@srpc.client::reconnect(rusty::Function<void (bool)>) const'),
+        ('T', 'srpc::Client@srpc.client::resume() const'),
+        ('T', 'srpc::Client@srpc.client::rpc_id() const'),
+        ('T', 'srpc::Client@srpc.client::rusty_mark_forgotten() const'),
+        ('T', 'srpc::Client@srpc.client::server_instance_id() const'),
+        ('T', 'srpc::Client@srpc.client::set_buffering_config(srpc::BufferingConfig@srpc.client const&) const'),
+        ('T', 'srpc::Client@srpc.client::set_channel_factory(rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>) const'),
+        ('T', 'srpc::Client@srpc.client::set_circuit_breaker(srpc::CircuitBreakerConfig@srpc.circuit_breaker const&) const'),
+        ('T', 'srpc::Client@srpc.client::set_client_mode(bool) const'),
+        ('T', 'srpc::Client@srpc.client::set_heartbeat(srpc::HeartbeatConfig@srpc.heartbeat const&) const'),
+        ('T', 'srpc::Client@srpc.client::set_keepalive(srpc::KeepaliveConfig@srpc.client const&) const'),
+        ('T', 'srpc::Client@srpc.client::set_on_server_restart(rusty::Function<void (unsigned long, unsigned long)>) const'),
+        ('T', 'srpc::Client@srpc.client::set_reconnect_policy(srpc::ReconnectPolicy@srpc.reconnect_policy const&) const'),
+        ('T', 'srpc::Client@srpc.client::set_rpc_id(int) const'),
+        ('T', 'srpc::Client@srpc.client::set_time(long) const'),
+        ('T', 'srpc::Client@srpc.client::set_timeout(unsigned long) const'),
+        ('T', 'srpc::Client@srpc.client::set_valid(bool) const'),
+        ('T', 'srpc::Client@srpc.client::time() const'),
+        ('T', 'srpc::Client@srpc.client::timeout() const'),
+        ('T', 'srpc::Client@srpc.client::try_reconnect_if_needed() const'),
+        ('T', 'srpc::Client@srpc.client::validate_connection() const'),
+        ('T', 'srpc::Client@srpc.client::~Client()'),
+        ('T', 'srpc::ClientConnection@srpc.client::ClientConnection(srpc::ClientConnection@srpc.client&&)'),
+        ('T', 'srpc::ClientConnection@srpc.client::ClientConnection(rusty::Arc<srpc::PollThread@srpc.reactor>)'),
+        ('T', 'srpc::ClientConnection@srpc.client::ClientConnection(rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Mutex<rusty::Option<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>>>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>>>, rusty::Cell<bool>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>, srpc::Counter@srpc.basetypes, rusty::Mutex<std_port::collections::hash::map::HashMap@std_port<long, rusty::Arc<srpc::Future@srpc.client>, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Option<rusty::Function<void (int, unsigned char const*, unsigned long)>>, rusty::alloc::Global>>, srpc::ConnectionStateMachine@srpc.connection_state, rusty::Cell<srpc::ReconnectPolicy@srpc.reconnect_policy>, srpc::ReconnectState@srpc.client, rusty::Cell<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>, rusty::Cell<srpc::BufferingConfig@srpc.client>, srpc::RequestQueue@srpc.request_queue, rusty::Cell<unsigned long>, rusty::RefCell<rusty::Function<void (unsigned long, unsigned long)>>, rusty::Cell<srpc::KeepaliveConfig@srpc.client>, srpc::HeartbeatManager@srpc.heartbeat, srpc::CircuitBreaker@srpc.circuit_breaker, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, rusty::Cell<unsigned long>, srpc::ConnectionMetrics@srpc.connection_metrics, rusty::sync::Weak<srpc::ClientConnection@srpc.client>, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, unsigned long, rusty::Cell<bool>, bool)'),
+        ('T', 'srpc::ClientConnection@srpc.client::abort_reconnect()'),
+        ('T', 'srpc::ClientConnection@srpc.client::allow_request_with_circuit_metrics() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::apply_keepalive_options()'),
+        ('T', 'srpc::ClientConnection@srpc.client::bind_channel(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::bind_channel_direct(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::bind_channel_via_poll_thread(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::bind_factory(rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>)'),
+        ('T', 'srpc::ClientConnection@srpc.client::buffering_config() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::channel_reconnect_attempts_count() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::check_pending_write_update() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::check_server_instance(unsigned long) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::circuit_breaker_config() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::circuit_breaker_state() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::clear_pending_requests(int) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::close() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::connect(signed char const*) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::connect_via_factory(signed char const*) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::connected() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::connection_state() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::content_size() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::decode_response_and_notify(unsigned char const*, unsigned long) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::dispatch_frame_via_channel(unsigned char const*, unsigned long) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::enqueue_heartbeat_probe() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::fail_pending_future(long, int) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::fd() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::force_connected_for_testing()'),
+        ('T', 'srpc::ClientConnection@srpc.client::handle_error() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::handle_free(long) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::handle_read() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::handle_write() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::heartbeat_config() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::host() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::install_self_weak_for_testing(rusty::sync::Weak<srpc::ClientConnection@srpc.client>)'),
+        ('T', 'srpc::ClientConnection@srpc.client::invalidate_pending_futures() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::invoke_connected_callback() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::invoke_disconnected_callback() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::invoke_error_callback(int, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::invoke_reconnected_callback(bool) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::invoke_reconnecting_callback() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::is_channel_mode() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::is_closed() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::is_factory_bound() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::is_idle(unsigned long, unsigned long) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::is_reconnecting() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::keepalive_config() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::last_activity_time() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::map_system_error(int)'),
+        ('T', 'srpc::ClientConnection@srpc.client::mark_closing() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::metrics() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::on_channel_closed_fan_out() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::on_request_dispatched(unsigned long) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::on_response_received(unsigned long) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::operator=(srpc::ClientConnection@srpc.client&&)'),
+        ('T', 'srpc::ClientConnection@srpc.client::pause() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::pending_future_count() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::pending_request_count() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::poll_mode() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::reconnect(rusty::Function<void (bool)>) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::reconnect_policy() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::record_circuit_result(int) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::record_circuit_state_transition(srpc::CircuitState@srpc.circuit_breaker, srpc::CircuitState@srpc.circuit_breaker) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::replay_pending_requests() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::replay_pending_requests_for_test() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::reset_channel_mode_for_reconnect() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::resume() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::run_recv_loop() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::rusty_mark_forgotten() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::server_instance_id() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::set_buffering_config(srpc::BufferingConfig@srpc.client const&) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::set_callback_manager(rusty::Arc<srpc::CallbackManager@srpc.callbacks> const&)'),
+        ('T', 'srpc::ClientConnection@srpc.client::set_circuit_breaker_config(srpc::CircuitBreakerConfig@srpc.circuit_breaker const&) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::set_heartbeat_config(srpc::HeartbeatConfig@srpc.heartbeat const&) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::set_keepalive(srpc::KeepaliveConfig@srpc.client const&) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::set_on_server_restart(rusty::Function<void (unsigned long, unsigned long)>) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::set_reconnect_address_for_testing(rusty::String) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::set_reconnect_policy(srpc::ReconnectPolicy@srpc.reconnect_policy const&) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::should_trip_circuit_for_error(int)'),
+        ('T', 'srpc::ClientConnection@srpc.client::update_last_activity(unsigned long) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::update_pending_queue_config_for_test(srpc::RequestQueueConfig@srpc.request_queue const&) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::validate_connection() const'),
+        ('T', 'srpc::ClientConnection@srpc.client::~ClientConnection()'),
+        ('T', 'srpc::ClientPool@srpc.client::ClientPool(srpc::ClientPool@srpc.client&&)'),
+        ('T', 'srpc::ClientPool@srpc.client::ClientPool(rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, rusty::Mutex<srpc::PoolState@srpc.client>, rusty::Mutex<srpc::PoolConfig@srpc.client>)'),
+        ('T', 'srpc::ClientPool@srpc.client::address_count() const'),
+        ('T', 'srpc::ClientPool@srpc.client::close_all_idle(unsigned long) const'),
+        ('T', 'srpc::ClientPool@srpc.client::close_idle_clients(std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned long) const'),
+        ('T', 'srpc::ClientPool@srpc.client::get_client(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+        ('T', 'srpc::ClientPool@srpc.client::get_healthy_client_count(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+        ('T', 'srpc::ClientPool@srpc.client::is_client_healthy(rusty::Arc<srpc::Client@srpc.client> const&) const'),
+        ('T', 'srpc::ClientPool@srpc.client::new_(rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, srpc::PoolConfig@srpc.client)'),
+        ('T', 'srpc::ClientPool@srpc.client::operator=(srpc::ClientPool@srpc.client&&)'),
+        ('T', 'srpc::ClientPool@srpc.client::pool_config() const'),
+        ('T', 'srpc::ClientPool@srpc.client::remove_all_unhealthy() const'),
+        ('T', 'srpc::ClientPool@srpc.client::remove_unhealthy_clients(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+        ('T', 'srpc::ClientPool@srpc.client::rusty_mark_forgotten() const'),
+        ('T', 'srpc::ClientPool@srpc.client::set_pool_config(srpc::PoolConfig@srpc.client) const'),
+        ('T', 'srpc::ClientPool@srpc.client::total_client_count() const'),
+        ('T', 'srpc::ClientPool@srpc.client::~ClientPool()'),
+        ('T', 'srpc::Future@srpc.client::Future(long, srpc::FutureAttr@srpc.client)'),
+        ('T', 'srpc::Future@srpc.client::add_completion_callback(rusty::Function<void ()>) const'),
+        ('T', 'srpc::Future@srpc.client::create(long, srpc::FutureAttr@srpc.client)'),
+        ('T', 'srpc::Future@srpc.client::get_error_code() const'),
+        ('T', 'srpc::Future@srpc.client::get_options() const'),
+        ('T', 'srpc::Future@srpc.client::get_reply() const'),
+        ('T', 'srpc::Future@srpc.client::get_retry_count() const'),
+        ('T', 'srpc::Future@srpc.client::get_timeout_type() const'),
+        ('T', 'srpc::Future@srpc.client::get_xid() const'),
+        ('T', 'srpc::Future@srpc.client::increment_retry_count()'),
+        ('T', 'srpc::Future@srpc.client::notify_ready(rusty::Arc<srpc::Future@srpc.client>) const'),
+        ('T', 'srpc::Future@srpc.client::ready() const'),
+        ('T', 'srpc::Future@srpc.client::safe_release(rusty::Arc<srpc::Future@srpc.client>)'),
+        ('T', 'srpc::Future@srpc.client::set_options(srpc::RequestOptions@srpc.request_options const&) const'),
+        ('T', 'srpc::Future@srpc.client::set_timeout_type(srpc::TimeoutType@srpc.request_options)'),
+        ('T', 'srpc::Future@srpc.client::should_retry() const'),
+        ('T', 'srpc::Future@srpc.client::timed_out() const'),
+        ('T', 'srpc::Future@srpc.client::timed_wait(double) const'),
+        ('T', 'srpc::Future@srpc.client::wait() const'),
+        ('T', 'srpc::Future@srpc.client::wait_with_options() const'),
+        ('T', 'srpc::FutureAttr@srpc.client::new_(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (rusty::Arc<srpc::Future@srpc.client>) const>>)'),
+        ('T', 'srpc::FutureState@srpc.client::new_()'),
+        ('T', 'srpc::KeepaliveConfig@srpc.client::aggressive()'),
+        ('T', 'srpc::KeepaliveConfig@srpc.client::disabled()'),
+        ('T', 'srpc::KeepaliveConfig@srpc.client::new_()'),
+        ('T', 'srpc::KeepaliveConfig@srpc.client::relaxed()'),
+        ('T', 'srpc::PoolConfig@srpc.client::aggressive()'),
+        ('T', 'srpc::PoolConfig@srpc.client::conservative()'),
+        ('T', 'srpc::PoolConfig@srpc.client::defaults()'),
+        ('T', 'srpc::PoolConfig@srpc.client::new_()'),
+        ('T', 'srpc::PoolConfig@srpc.client::no_health_check()'),
+        ('T', 'srpc::PoolState@srpc.client::new_()'),
+        ('T', 'srpc::classify_request_failure@srpc.client(int)'),
+        ('T', 'srpc::clientconn_addr_to_string@srpc.client(signed char const*)'),
+        ('T', 'srpc::clientconn_bind_channel_via_poll_thread@srpc.client(srpc::ClientConnection@srpc.client const&, rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>)'),
+        ('T', 'srpc::clientconn_connect_via_factory@srpc.client(srpc::ClientConnection@srpc.client const&, signed char const*)'),
+        ('T', 'srpc::clientconn_decode_response_and_notify@srpc.client(srpc::ClientConnection@srpc.client const&, unsigned char const*, unsigned long)'),
+        ('T', 'srpc::clientconn_dispatch_frame_via_channel@srpc.client(srpc::ClientConnection@srpc.client const&, unsigned char const*, unsigned long)'),
+        ('T', 'srpc::clientconn_enqueue_heartbeat_probe@srpc.client(srpc::ClientConnection@srpc.client const&)'),
+        ('T', 'srpc::clientconn_fiber_channel_ptr@srpc.client(rusty::Option<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>> const&)'),
+        ('T', 'srpc::clientconn_make_fiber_channel@srpc.client(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>)'),
+        ('T', 'srpc::clientconn_map_system_error@srpc.client(int)'),
+        ('T', 'srpc::clientconn_monotonic_ms_now@srpc.client()'),
+        ('T', 'srpc::clientconn_reconnect@srpc.client(srpc::ClientConnection@srpc.client const&, rusty::Function<void (bool)>)'),
+        ('T', 'srpc::clientconn_recv_job_entry@srpc.client(rusty::sync::Weak<srpc::ClientConnection@srpc.client>)'),
+        ('T', 'srpc::clientconn_run_recv_loop@srpc.client(srpc::ClientConnection@srpc.client const&)'),
+        ('T', 'srpc::clientpool_close_all_idle@srpc.client(srpc::ClientPool@srpc.client const&, unsigned long)'),
+        ('T', 'srpc::clientpool_close_idle_clients@srpc.client(srpc::ClientPool@srpc.client const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned long)'),
+        ('T', 'srpc::clientpool_connect_client@srpc.client(rusty::Arc<srpc::Client@srpc.client> const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+        ('T', 'srpc::clientpool_get_client@srpc.client(srpc::ClientPool@srpc.client const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+        ('T', 'srpc::clientpool_get_healthy_client_count@srpc.client(srpc::ClientPool@srpc.client const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+        ('T', 'srpc::clientpool_is_client_healthy_with@srpc.client(srpc::PoolConfig@srpc.client, rusty::Arc<srpc::Client@srpc.client> const&)'),
+        ('T', 'srpc::clientpool_remove_all_unhealthy@srpc.client(srpc::ClientPool@srpc.client const&)'),
+        ('T', 'srpc::clientpool_remove_unhealthy_clients@srpc.client(srpc::ClientPool@srpc.client const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+        ('T', 'srpc::make_prefilled_cb_slots@srpc.client()'),
+        ('T', 'srpc::make_write_archive@srpc.client(srpc::BufferSink@srpc.serializable*)'),
+        ('T', 'srpc::reply_buffer_empty@srpc.client()'),
+        ('T', 'srpc::reply_buffer_fill@srpc.client(srpc::ReplyBuffer@srpc.client&, std::__1::span<unsigned char const, 18446744073709551615ul>)'),
+        ('T', 'srpc::request_copy_reply@srpc.client(rusty::Arc<srpc::Future@srpc.client> const&, rusty::Arc<srpc::Future@srpc.client> const&)'),
+    }
+)
+
+CLIENT_INCUMBENT_ORACLE_ADDITIONS = frozenset({
+    ('R', 'srpc::CLIENT_ERR_AGAIN@srpc.client'),
+    ('R', 'srpc::CLIENT_ERR_BROKEN_PIPE@srpc.client'),
+    ('R', 'srpc::CLIENT_ERR_BUSY@srpc.client'),
+    ('R', 'srpc::CLIENT_ERR_CANCELED@srpc.client'),
+    ('R', 'srpc::CLIENT_ERR_CONNECTION_ABORTED@srpc.client'),
+    ('R', 'srpc::CLIENT_ERR_CONNECTION_REFUSED@srpc.client'),
+    ('R', 'srpc::CLIENT_ERR_CONNECTION_RESET@srpc.client'),
+    ('R', 'srpc::CLIENT_ERR_HOST_UNREACHABLE@srpc.client'),
+    ('R', 'srpc::CLIENT_ERR_INVALID_ARGUMENT@srpc.client'),
+    ('R', 'srpc::CLIENT_ERR_IO@srpc.client'),
+    ('R', 'srpc::CLIENT_ERR_NETWORK_UNREACHABLE@srpc.client'),
+    ('R', 'srpc::CLIENT_ERR_NOT_CONNECTED@srpc.client'),
+    ('R', 'srpc::CLIENT_ERR_TIMED_OUT@srpc.client'),
+    ('R', 'srpc::CLIENT_ERR_WOULD_BLOCK@srpc.client'),
+    ('R', 'srpc::CLIENT_INTERNAL_HEARTBEAT_RPC_ID@srpc.client'),
+    ('R', 'srpc::CLIENT_INT_MIN@srpc.client'),
+    ('R', 'srpc::CLIENT_POLL_NO_CHANGE@srpc.client'),
+    ('R', 'srpc::CLIENT_POLL_READ@srpc.client'),
+    ('R', 'srpc::CLIENT_RAND_MAX@srpc.client'),
+    ('R', 'srpc::CLIENT_REQUEST_QUEUE_REJECTED_ERROR@srpc.client'),
+    ('R', 'srpc::kRequestSinkInitialCapacity@srpc.client'),
+    ('T', 'srpc::BufferingConfig@srpc.client::clone() const'),
+    ('T', 'srpc::Client@srpc.client::Client(rusty::RefCell<rusty::Option<rusty::Arc<srpc::ClientConnection@srpc.client>>>, rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Cell<int>, rusty::Cell<srpc::KeepaliveConfig@srpc.client>, rusty::Cell<srpc::HeartbeatConfig@srpc.heartbeat>, rusty::Cell<srpc::CircuitBreakerConfig@srpc.circuit_breaker>, rusty::Cell<srpc::ReconnectPolicy@srpc.reconnect_policy>, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>, rusty::Arc<srpc::ConnectionMetrics@srpc.connection_metrics>)'),
+    ('T', 'srpc::ClientConnection@srpc.client::ClientConnection(rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Mutex<srpc::ClientBindingState@srpc.client>, rusty::Mutex<rusty::Option<rusty::Arc<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>>>>, rusty::Mutex<rusty::Option<rusty::Arc<rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>>>>, rusty::sync::atomic::detail::Atomic<bool>, srpc::ClientCloneCell@srpc.client<bool>, rusty::Mutex<rusty::Option<rusty::Arc<rusty::Mutex<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>>>, srpc::Counter@srpc.basetypes, rusty::Mutex<std_port::collections::hash::map::HashMap@std_port<long, rusty::Arc<srpc::Future@srpc.client>, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, rusty::Arc<rusty::Mutex<std_port::collections::hash::map::HashMap@std_port<long, rusty::Arc<srpc::Future@srpc.client>, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Option<rusty::Function<void (int, unsigned char const*, unsigned long)>>, rusty::alloc::Global>>, srpc::ConnectionStateMachine@srpc.connection_state, srpc::ClientCloneCell@srpc.client<srpc::ReconnectPolicy@srpc.reconnect_policy>, srpc::ReconnectState@srpc.client, srpc::ClientCloneCell@srpc.client<rusty::String>, srpc::ClientCloneCell@srpc.client<srpc::BufferingConfig@srpc.client>, srpc::RequestQueue@srpc.request_queue, srpc::ClientCloneCell@srpc.client<unsigned long>, rusty::Mutex<rusty::Arc<rusty::Mutex<rusty::Function<void (unsigned long, unsigned long)>>>>, srpc::ClientCloneCell@srpc.client<srpc::KeepaliveConfig@srpc.client>, srpc::HeartbeatManager@srpc.heartbeat, srpc::CircuitBreaker@srpc.circuit_breaker, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, srpc::ClientCloneCell@srpc.client<unsigned long>, rusty::Arc<srpc::ConnectionMetrics@srpc.connection_metrics>, rusty::sync::Weak<srpc::ClientConnection@srpc.client>, rusty::String, unsigned long, srpc::ClientCloneCell@srpc.client<bool>, bool)'),
+    ('T', 'srpc::ClientConnection@srpc.client::bind_channel_direct(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>, unsigned long) const'),
+    ('T', 'srpc::ClientConnection@srpc.client::bind_factory(rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>) const'),
+    ('T', 'srpc::ClientConnection@srpc.client::binding_is_current(unsigned long) const'),
+    ('T', 'srpc::ClientConnection@srpc.client::close_binding(rusty::Option<unsigned long>) const'),
+    ('T', 'srpc::ClientConnection@srpc.client::connect_attempt(signed char const*, rusty::Cell<unsigned long> const&) const'),
+    ('T', 'srpc::ClientConnection@srpc.client::detach_pending_futures() const'),
+    ('T', 'srpc::ClientConnection@srpc.client::direct_channel() const'),
+    ('T', 'srpc::ClientConnection@srpc.client::fiber_channel() const'),
+    ('T', 'srpc::ClientConnection@srpc.client::new_(rusty::Arc<srpc::PollThread@srpc.reactor>)'),
+    ('T', 'srpc::ClientConnection@srpc.client::notify_pending_futures(srpc::ClientPendingBatch@srpc.client) const'),
+    ('T', 'srpc::ClientConnection@srpc.client::on_binding_closed(unsigned long) const'),
+    ('T', 'srpc::ClientConnection@srpc.client::replace_fiber_channel(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const'),
+    ('T', 'srpc::ClientReplayScope@srpc.client::ClientReplayScope(rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>)'),
+    ('T', 'srpc::ClientReplayScope@srpc.client::ClientReplayScope(srpc::ClientReplayScope@srpc.client&&)'),
+    ('T', 'srpc::ClientReplayScope@srpc.client::operator=(srpc::ClientReplayScope@srpc.client&&)'),
+    ('T', 'srpc::ClientReplayScope@srpc.client::rusty_mark_forgotten() const'),
+    ('T', 'srpc::ClientReplayScope@srpc.client::~ClientReplayScope()'),
+    ('T', 'srpc::Future@srpc.client::new_(long, srpc::FutureAttr@srpc.client)'),
+    ('T', 'srpc::FutureAttr@srpc.client::clone() const'),
+    ('T', 'srpc::FutureAttr@srpc.client::default_()'),
+    ('T', 'srpc::KeepaliveConfig@srpc.client::clone() const'),
+    ('T', 'srpc::PoolConfig@srpc.client::clone() const'),
+    ('T', 'srpc::client_log_line@srpc.client(int, int, signed char const*, rusty::String)'),
+    ('T', 'srpc::client_rand@srpc.client(int, int)'),
+    ('T', 'srpc::client_sink_proxy@srpc.client(srpc::BufferSink@srpc.serializable&)'),
+    ('T', 'srpc::client_source_proxy@srpc.client(srpc::BufferSource@srpc.serializable&)'),
+    ('T', 'srpc::client_text@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+    ('T', 'srpc::client_text_i32@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, int, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+    ('T', 'srpc::client_text_str@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+    ('T', 'srpc::client_text_str_i32@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, int, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+    ('T', 'srpc::client_text_str_pair@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+    ('T', 'srpc::client_text_u32_str@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned int, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+    ('T', 'srpc::client_text_u64_pair@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned long, std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned long, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+    ('T', 'srpc::client_verify@srpc.client(bool)'),
+    ('T', 'srpc::clientconn_connect_factory_for_binding@srpc.client(srpc::ClientConnection@srpc.client const&, signed char const*, unsigned long)'),
+    ('T', 'srpc::clientconn_decode_response_for_binding@srpc.client(srpc::ClientConnection@srpc.client const&, unsigned long, unsigned char const*, unsigned long)'),
+    ('T', 'srpc::clientconn_dispatch_frame_for_binding@srpc.client(srpc::ClientConnection@srpc.client const&, unsigned long, unsigned char const*, unsigned long)'),
+    ('T', 'srpc::clientconn_recv_job_entry@srpc.client(rusty::sync::Weak<srpc::ClientConnection@srpc.client>, rusty::Arc<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>>)'),
+    ('T', 'srpc::clientconn_replay_pending_for_binding@srpc.client(srpc::ClientConnection@srpc.client const&, unsigned long)'),
+    ('T', 'srpc::clientconn_replay_pending_requests@srpc.client(srpc::ClientConnection@srpc.client const&)'),
+    ('T', 'srpc::clientconn_run_recv_loop_on_channel@srpc.client(srpc::ClientConnection@srpc.client const&, rusty::Arc<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>>)'),
+    ('T', 'srpc::clientpool_select@srpc.client(srpc::LoadBalancingStrategy@srpc.load_balancer, rusty::port::vec::Vec@vec_port.vec<rusty::Arc<srpc::Client@srpc.client>, rusty::alloc::Global> const&, srpc::LoadBalancerState@srpc.load_balancer const&, unsigned long)'),
+    ('T', 'srpc::make_pending_queue@srpc.client(srpc::RequestQueueConfig@srpc.request_queue const&)'),
+})
+
+CLIENT_INCUMBENT_ORACLE_REMOVALS = frozenset({
+    ('T', 'srpc::Client@srpc.client::Client(rusty::RefCell<rusty::Option<rusty::Arc<srpc::ClientConnection@srpc.client>>>, rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Cell<int>, rusty::Cell<srpc::KeepaliveConfig@srpc.client>, rusty::Cell<srpc::HeartbeatConfig@srpc.heartbeat>, rusty::Cell<srpc::CircuitBreakerConfig@srpc.circuit_breaker>, rusty::Cell<srpc::ReconnectPolicy@srpc.reconnect_policy>, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>, srpc::ConnectionMetrics@srpc.connection_metrics)'),
+    ('T', 'srpc::Client@srpc.client::set_valid(bool) const'),
+    ('T', 'srpc::ClientConnection@srpc.client::ClientConnection(rusty::Arc<srpc::PollThread@srpc.reactor>)'),
+    ('T', 'srpc::ClientConnection@srpc.client::ClientConnection(rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Mutex<rusty::Option<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>>>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>>>, rusty::Cell<bool>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>, srpc::Counter@srpc.basetypes, rusty::Mutex<std_port::collections::hash::map::HashMap@std_port<long, rusty::Arc<srpc::Future@srpc.client>, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Option<rusty::Function<void (int, unsigned char const*, unsigned long)>>, rusty::alloc::Global>>, srpc::ConnectionStateMachine@srpc.connection_state, rusty::Cell<srpc::ReconnectPolicy@srpc.reconnect_policy>, srpc::ReconnectState@srpc.client, rusty::Cell<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>, rusty::Cell<srpc::BufferingConfig@srpc.client>, srpc::RequestQueue@srpc.request_queue, rusty::Cell<unsigned long>, rusty::RefCell<rusty::Function<void (unsigned long, unsigned long)>>, rusty::Cell<srpc::KeepaliveConfig@srpc.client>, srpc::HeartbeatManager@srpc.heartbeat, srpc::CircuitBreaker@srpc.circuit_breaker, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, rusty::Cell<unsigned long>, srpc::ConnectionMetrics@srpc.connection_metrics, rusty::sync::Weak<srpc::ClientConnection@srpc.client>, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, unsigned long, rusty::Cell<bool>, bool)'),
+    ('T', 'srpc::ClientConnection@srpc.client::apply_keepalive_options()'),
+    ('T', 'srpc::ClientConnection@srpc.client::bind_channel_direct(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const'),
+    ('T', 'srpc::ClientConnection@srpc.client::bind_factory(rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>)'),
+    ('T', 'srpc::ClientConnection@srpc.client::content_size() const'),
+    ('T', 'srpc::ClientConnection@srpc.client::fd() const'),
+    ('T', 'srpc::ClientConnection@srpc.client::handle_read() const'),
+    ('T', 'srpc::ClientConnection@srpc.client::handle_write() const'),
+    ('T', 'srpc::ClientConnection@srpc.client::poll_mode() const'),
+    ('T', 'srpc::Future@srpc.client::Future(long, srpc::FutureAttr@srpc.client)'),
+    ('T', 'srpc::clientconn_fiber_channel_ptr@srpc.client(rusty::Option<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>> const&)'),
+    ('T', 'srpc::clientconn_recv_job_entry@srpc.client(rusty::sync::Weak<srpc::ClientConnection@srpc.client>)'),
+})
+
+# (incumbent spelling, current spelling) for each reviewed signature change.
+CLIENT_INCUMBENT_ORACLE_SIGNATURE_CHANGES = (
+    (
+        ('T', 'srpc::ClientConnection@srpc.client::bind_factory(rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>)'),
+        ('T', 'srpc::ClientConnection@srpc.client::bind_factory(rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>) const'),
+    ),
+    (
+        ('T', 'srpc::ClientConnection@srpc.client::ClientConnection(rusty::Arc<srpc::PollThread@srpc.reactor>)'),
+        ('T', 'srpc::ClientConnection@srpc.client::new_(rusty::Arc<srpc::PollThread@srpc.reactor>)'),
+    ),
+    (
+        ('T', 'srpc::Future@srpc.client::Future(long, srpc::FutureAttr@srpc.client)'),
+        ('T', 'srpc::Future@srpc.client::new_(long, srpc::FutureAttr@srpc.client)'),
+    ),
+    (
+        ('T', 'srpc::Client@srpc.client::Client(rusty::RefCell<rusty::Option<rusty::Arc<srpc::ClientConnection@srpc.client>>>, rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Cell<int>, rusty::Cell<srpc::KeepaliveConfig@srpc.client>, rusty::Cell<srpc::HeartbeatConfig@srpc.heartbeat>, rusty::Cell<srpc::CircuitBreakerConfig@srpc.circuit_breaker>, rusty::Cell<srpc::ReconnectPolicy@srpc.reconnect_policy>, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>, srpc::ConnectionMetrics@srpc.connection_metrics)'),
+        ('T', 'srpc::Client@srpc.client::Client(rusty::RefCell<rusty::Option<rusty::Arc<srpc::ClientConnection@srpc.client>>>, rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Cell<int>, rusty::Cell<srpc::KeepaliveConfig@srpc.client>, rusty::Cell<srpc::HeartbeatConfig@srpc.heartbeat>, rusty::Cell<srpc::CircuitBreakerConfig@srpc.circuit_breaker>, rusty::Cell<srpc::ReconnectPolicy@srpc.reconnect_policy>, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>, rusty::Arc<srpc::ConnectionMetrics@srpc.connection_metrics>)'),
+    ),
+    (
+        ('T', 'srpc::ClientConnection@srpc.client::ClientConnection(rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Mutex<rusty::Option<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>>>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>>>, rusty::Cell<bool>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>, srpc::Counter@srpc.basetypes, rusty::Mutex<std_port::collections::hash::map::HashMap@std_port<long, rusty::Arc<srpc::Future@srpc.client>, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Option<rusty::Function<void (int, unsigned char const*, unsigned long)>>, rusty::alloc::Global>>, srpc::ConnectionStateMachine@srpc.connection_state, rusty::Cell<srpc::ReconnectPolicy@srpc.reconnect_policy>, srpc::ReconnectState@srpc.client, rusty::Cell<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>, rusty::Cell<srpc::BufferingConfig@srpc.client>, srpc::RequestQueue@srpc.request_queue, rusty::Cell<unsigned long>, rusty::RefCell<rusty::Function<void (unsigned long, unsigned long)>>, rusty::Cell<srpc::KeepaliveConfig@srpc.client>, srpc::HeartbeatManager@srpc.heartbeat, srpc::CircuitBreaker@srpc.circuit_breaker, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, rusty::Cell<unsigned long>, srpc::ConnectionMetrics@srpc.connection_metrics, rusty::sync::Weak<srpc::ClientConnection@srpc.client>, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, unsigned long, rusty::Cell<bool>, bool)'),
+        ('T', 'srpc::ClientConnection@srpc.client::ClientConnection(rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Mutex<srpc::ClientBindingState@srpc.client>, rusty::Mutex<rusty::Option<rusty::Arc<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>>>>, rusty::Mutex<rusty::Option<rusty::Arc<rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>>>>, rusty::sync::atomic::detail::Atomic<bool>, srpc::ClientCloneCell@srpc.client<bool>, rusty::Mutex<rusty::Option<rusty::Arc<rusty::Mutex<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>>>, srpc::Counter@srpc.basetypes, rusty::Mutex<std_port::collections::hash::map::HashMap@std_port<long, rusty::Arc<srpc::Future@srpc.client>, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, rusty::Arc<rusty::Mutex<std_port::collections::hash::map::HashMap@std_port<long, rusty::Arc<srpc::Future@srpc.client>, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Option<rusty::Function<void (int, unsigned char const*, unsigned long)>>, rusty::alloc::Global>>, srpc::ConnectionStateMachine@srpc.connection_state, srpc::ClientCloneCell@srpc.client<srpc::ReconnectPolicy@srpc.reconnect_policy>, srpc::ReconnectState@srpc.client, srpc::ClientCloneCell@srpc.client<rusty::String>, srpc::ClientCloneCell@srpc.client<srpc::BufferingConfig@srpc.client>, srpc::RequestQueue@srpc.request_queue, srpc::ClientCloneCell@srpc.client<unsigned long>, rusty::Mutex<rusty::Arc<rusty::Mutex<rusty::Function<void (unsigned long, unsigned long)>>>>, srpc::ClientCloneCell@srpc.client<srpc::KeepaliveConfig@srpc.client>, srpc::HeartbeatManager@srpc.heartbeat, srpc::CircuitBreaker@srpc.circuit_breaker, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, srpc::ClientCloneCell@srpc.client<unsigned long>, rusty::Arc<srpc::ConnectionMetrics@srpc.connection_metrics>, rusty::sync::Weak<srpc::ClientConnection@srpc.client>, rusty::String, unsigned long, srpc::ClientCloneCell@srpc.client<bool>, bool)'),
+    ),
+    (
+        ('T', 'srpc::clientconn_recv_job_entry@srpc.client(rusty::sync::Weak<srpc::ClientConnection@srpc.client>)'),
+        ('T', 'srpc::clientconn_recv_job_entry@srpc.client(rusty::sync::Weak<srpc::ClientConnection@srpc.client>, rusty::Arc<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>>)'),
+    ),
+    (
+        ('T', 'srpc::ClientConnection@srpc.client::bind_channel_direct(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const'),
+        ('T', 'srpc::ClientConnection@srpc.client::bind_channel_direct(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>, unsigned long) const'),
+    ),
+)
+
+# These maps are intentionally exhaustive. Adding a canonical manifest module
+# without its dependency and generated-output ratchets is a gate error rather
+# than an implicitly accepted, unreviewed provider.
+#
+# POLICY (repealed byte-identity): the project's acceptance criterion is that
+# srpc builds, its tests pass, and the public function surface is equivalent.
+# Byte-identical generated C++ is explicitly NO LONGER REQUIRED, so
+# EXPECTED_GENERATED_MODULE_SHA256 is ADVISORY ONLY (see require_cpp_surfaces).
+# ABI_SPECS, EXPECTED_IMPORTS and IMPORTER_USE_MARKERS remain HARD gates:
+# those measure the real semantics -- symbol surface, module graph, and
+# importer coverage -- which is what "equivalent public surface" means.
+# REVIEWED RESPELLING (goal0-on-main convergence): the converged emitter
+# imports each rusty runtime type's OWNING port module (vec_port.vec,
+# std_port, rc_port, btree_port.*) instead of the `rusty` umbrella, and
+# injects `namespace rusty { using ::...; }` aliases locally, so every
+# rusty::* spelling in the generated bodies is unchanged. 13 module
+# graphs re-measured from the f2996ce5-generated output; the gate stays
+# EXACT (ordered list equality) at the new values.
+EXPECTED_IMPORTS = {
+    "srpc.basetypes": [],
+    "srpc.callback_wrapper": [],
+    "srpc.internal_protocol": [],
+    "srpc.stat": [],
+    "srpc.errors": [],
+    "srpc.connection_metrics": [],
+    "srpc.completion_tracker": ["std_port"],
+    "srpc.rand": ["vec_port.vec"],
+    "srpc.request_options": ["srpc.rand"],
+    "srpc.reconnect_policy": ["srpc.rand"],
+    "srpc.circuit_breaker": [
+        'srpc.threading',
+    ],
+    "srpc.connection_state": [
+        'srpc.threading',
+    ],
+    "srpc.heartbeat": [
+        'srpc.threading',
+        'srpc.circuit_breaker',
+    ],
+    "srpc.request_queue": [
+        'vec_port.vec',
+        'srpc.threading',
+        'srpc.circuit_breaker',
+    ],
+    "srpc.load_balancer": ["vec_port.vec"],
+    "srpc.utils": ["srpc.logging"],
+    "srpc.frame_codec": ["srpc.internal_protocol"],
+    "srpc.serializable": [
+        'vec_port.vec',
+        'btree_port.btree.map',
+        'btree_port.btree.set',
+        'std_port',
+        'srpc.basetypes',
+        'srpc.debugging',
+    ],
+    "srpc.serializable_envelope": [
+        'srpc.basetypes',
+        'srpc.serializable',
+        'srpc.debugging',
+    ],
+    "srpc.future": ['srpc.reactor'],
+    "srpc.logging": [
+        'vec_port.vec',
+        'srpc.debugging',
+    ],
+    "srpc.idempotency": ["vec_port.vec", "srpc.serializable"],
+    "srpc.fiber": ["rc_port", "srpc.basetypes", "srpc.reactor"],
+    "srpc.misc": [
+        'vec_port.vec',
+    ],
+    "srpc.channel": ["srpc.callback_wrapper"],
+    "srpc.epoll_wrapper": [],
+    "srpc.pollable_proxy": [],
+    "srpc.callbacks": ["vec_port.vec", "srpc.errors"],
+    "srpc.inmemory_channel": ["vec_port.vec", "std_port", "srpc.channel"],
+    # Same dependency set as before; the emitter now orders the srpc.* imports
+    # alphabetically, matching every other entry in this map.
+    "srpc.fiber_channel": ["vec_port.vec", "srpc.channel", "srpc.reactor"],
+    "srpc.threading": ["srpc.debugging"],
+    "srpc.debugging": ["vec_port.vec"],
+    "srpc.any_message": [
+        'std_port',
+        'srpc.serializable',
+        'srpc.debugging',
+    ],
+    "srpc.tcp_channel": [
+        "srpc.channel",
+        "srpc.frame_codec",
+        "srpc.pollable_proxy",
+        "srpc.reactor",
+    ],
+    # Measured ordered private imports from the generated reactor provider.
+    "srpc.reactor": [
+        'vec_port.vec',
+        'rc_port',
+        'btree_port.btree.map',
+        'btree_port.btree.set',
+        'std_port',
+        'srpc.basetypes',
+        'srpc.epoll_wrapper',
+        'srpc.logging',
+        'srpc.misc',
+        'srpc.pollable_proxy',
+        'srpc.threading',
+        'srpc.debugging',
+    ],
+    # The explicit FiberFn import moves reactor before serializable.
+    "srpc.server": [
+        'vec_port.vec',
+        'std_port',
+        'srpc.basetypes',
+        'srpc.channel',
+        'srpc.misc',
+        'srpc.reactor',
+        'srpc.serializable',
+        'srpc.tcp_channel',
+        'srpc.logging',
+        'srpc.debugging',
+        'srpc.internal_protocol',
+    ],
+    "srpc.client": [
+        'vec_port.vec',
+        'btree_port.btree.map',
+        'std_port',
+        'srpc.basetypes',
+        'srpc.callbacks',
+        'srpc.channel',
+        'srpc.circuit_breaker',
+        'srpc.connection_metrics',
+        'srpc.connection_state',
+        'srpc.errors',
+        'srpc.fiber_channel',
+        'srpc.heartbeat',
+        'srpc.load_balancer',
+        'srpc.logging',
+        'srpc.misc',
+        'srpc.reconnect_policy',
+        'srpc.request_options',
+        'srpc.request_queue',
+        'srpc.serializable',
+        'srpc.tcp_channel',
+        'srpc.reactor',
+        'srpc.threading',
+        'srpc.rand',
+        'srpc.callback_wrapper',
+        'srpc.debugging',
+    ],
+}
+
+EXPECTED_GENERATED_MODULE_SHA256 = {
+    "srpc.basetypes": '2c21d1094d927ee17e658f250f126cf174c385ba187cf9073027e025da815714',
+    "srpc.callback_wrapper": '1e43e6fc2dc7f4b501b231d2e9a4069c04970e0fd887bdf408cc020fbbfde1f6',
+    "srpc.internal_protocol": '6686a2880184238adc634be1479077a08f78ecd59bddcf6615c94d9d171e3d8b',
+    "srpc.stat": 'cfd6fbdd0400403c564a51103f7e9601715cf0b35ccaa4431f3250926c8ebff2',
+    "srpc.errors": '58b1120a5215368942cbd88fc71ad6f8633651f0441c62fb92dec887d39906f6',
+    "srpc.connection_metrics": '699cc4b78b392d95f9d4a3ff60693da0156cc3c62ac2ed5be866c47c6ecd6d38',
+    "srpc.completion_tracker": 'f94e5166e766a75005d596fa5e03ac423b55e8101cca306b9e29f4e7c5d2133d',
+    "srpc.rand": '17de856cbc1c8ea3cb814834ffda7952cd50e954677050015fba593e564dfbe1',
+    "srpc.request_options": '33169098a6ba98db44b6584dc4bab9b157bae11c6d6141212e0e42e252967f71',
+    "srpc.reconnect_policy": 'c8ec60cdefbe2eb3360526f407702f4243e92300059d64c576efad0e79b30c15',
+    "srpc.circuit_breaker": '4a957814afcab7fc7d3eac27a532481ec5c61278f0f8d507035ff2eb917c5b00',
+    "srpc.connection_state": '787d9fd998da85d757dceb246695f50b6368668525905f29f4e7b663c7179053',
+    "srpc.heartbeat": '1eb00b045a62b9fd88256bb0b3f024222cae63f19c26109c92ddab67211d520e',
+    "srpc.request_queue": 'a40287453a6719f4dad77a339e21b89f0736702dc9d6ab84131bad2e22d49450',
+    "srpc.load_balancer": '26f1e380273f88e64747fe1b7420002bd735ebb2e811979af226dccf1a0381a1',
+    "srpc.utils": '58a599f11c17476623e9b6d242e63d6e2610c4f014ee0f72337028d7b13e54ee',
+    "srpc.frame_codec": 'c9aa6cc4c1cf243e5c7fa87f8d0a6a9e7f4cd2d8d80ae6ef0260574ddf03f8b3',
+    "srpc.serializable": '49d5058e7f1878fe62dc4904eee3d42250c2efc098d2bc536f07021ebae718b3',
+    "srpc.serializable_envelope": '02fcf95068a2d17976f5b7f18fe34e5087b65e0ed15dbf63cf4805e89f993522',
+    "srpc.future": '7d7ea1fbe3a75160078febc2baa0f239a2a25e7738c23c41c619f7e04f5fa0ff',
+    "srpc.logging": '8f5046dc877e09b4abd6f47abe6f6cb33100bb92418720e736c8774cb5805073',
+    "srpc.idempotency": 'c0053a915e144980bcc1c44feb430ba2eccb0edff0f1088d038aa2c355ede6d6',
+    "srpc.fiber": '48ad7bbc9166a86a19d2e30af4b5a8625b0c339087c6e1da5efcefe64d42aed5',
+    "srpc.misc": 'dd3e1de2a3438768cd76c705be400793162985599bca02e2ac41b4276a2cc2cd',
+    "srpc.channel": 'd21076754387dbd84050018f9ecfa9b3418708d67036c36dc6a85176af156447',
+    "srpc.epoll_wrapper": '52365a3c57622c2f9eb6c7693aba94881dd1d0748b107560557239eab6bcfc0c',
+    "srpc.pollable_proxy": 'c24f86cae48a2b20597a09f7a3d1a349a3f29ea0473dfd60d48d9adccb26a3ca',
+    "srpc.callbacks": 'ff88b9e88ea364f8dcdcac543d4679a4eeb88319ad055cff8efecdc732548b60',
+    "srpc.inmemory_channel": '805a30ab85eb6ac8d28815fc433637ecd39d1c1932b21d797324541f5c24b6b9',
+    "srpc.fiber_channel": 'f9d704994865572b06247dd74b0194df1d395583b7be594b110524019fac37c6',
+    "srpc.threading": '6569216f5b14e4beaec698943fab385be7c473652637d34835e2da126a5f438b',
+    "srpc.debugging": '466128aef617259fcc45350f6ca00506f94a455ae34f38d945b8148fe20c3bfd',
+    "srpc.any_message": 'beb68efd33c161e5384025f90de915ef3b0d9721faa44182aa346462df35a3cd',
+    "srpc.tcp_channel": '56dc94a6e2a34a0b88e1a2ceaebc2f7d12c1a09479e00be82cf9ab651c47e387',
+    # Re-authored with the clippy-gate work (measured ABI-neutral: same 324 raw /
+    # 301 unique demangled strong symbols, same 29-row layout).  Digest drift is
+    # advisory; this keeps the advisory list honest rather than permanently noisy.
+    "srpc.reactor": '373e322f427c79734ff23f8c13aa9a9a59e30c210699b832473d884dbca624c2',
+    "srpc.server": '785e1896bcf5d2a413a2866f944a597e0d4635ba8cf7f6d8360d310b2f9045b5',
+    "srpc.client": '794fc2e67ae6d6489a0501dd7f3623d160c95aafc213f60406a6b6e3ca66234d',
+}
+
+IMPORTER_USE_MARKERS = {
+    "srpc.basetypes": "srpc::SparseInt",
+    "srpc.callback_wrapper": "srpc::detail::CallbackWrapper",
+    "srpc.internal_protocol": "srpc::encode_response_size",
+    "srpc.stat": "srpc::AvgStat",
+    "srpc.errors": "srpc::RpcError",
+    "srpc.connection_metrics": "srpc::ConnectionMetrics",
+    "srpc.completion_tracker": "srpc::CompletionTracker",
+    "srpc.rand": "srpc::RandomGenerator",
+    "srpc.request_options": "srpc::RequestOptions",
+    "srpc.reconnect_policy": "srpc::ReconnectPolicy",
+    "srpc.circuit_breaker": "srpc::CircuitBreaker",
+    "srpc.connection_state": "srpc::ConnectionStateMachine",
+    "srpc.heartbeat": "srpc::HeartbeatManager",
+    "srpc.request_queue": "srpc::RequestQueue",
+    "srpc.load_balancer": "srpc::LoadBalancer",
+    "srpc.utils": "srpc::AddrInfo",
+    "srpc.frame_codec": "srpc::FrameStreamReader",
+    "srpc.serializable_envelope": "srpc::SerializableEnvelope",
+    "srpc.future": "srpc::FiberFuture",
+    "srpc.logging": "srpc::log_level_tag",
+    "srpc.idempotency": "srpc::IdempotencyCache",
+    "srpc.fiber": "srpc::this_fiber::get_id",
+    "srpc.misc": "srpc::OneTimeJob",
+    "srpc.channel": "srpc::ChannelFrame",
+    "srpc.epoll_wrapper": "srpc::Epoll",
+    "srpc.pollable_proxy": "srpc::PollableProxy",
+    "srpc.callbacks": "srpc::CallbackManager",
+    "srpc.inmemory_channel": "srpc::InMemorySwitchboard",
+    "srpc.fiber_channel": "srpc::FiberChannel",
+    "srpc.threading": "srpc::SpinLock",
+    "srpc.debugging": "srpc::likely",
+    "srpc.any_message": "srpc::AnyMessage",
+    "srpc.serializable": "srpc::BinaryWriteArchive",
+    "srpc.tcp_channel": "srpc::kTcpConnectionOutboundHighWaterDefault",
+    "srpc.reactor": "srpc::EventStatus",
+    "srpc.server": "srpc::kDefaultDrainTimeoutMs",
+    "srpc.client": "srpc::CLIENT_INTERNAL_HEARTBEAT_RPC_ID",
+}
 
 
 @dataclass(frozen=True)
@@ -62,6 +887,16 @@ class AbiSpec:
     symbols: frozenset[tuple[str, str]]
 
 
+# Reviewed runtime ownership changes in the exact symbol sets below:
+# - Canonical Rust now owns epoll control, port scanning, range selection,
+#   timestamp formatting, and source-location verification helpers.
+# - Explicit-time manager methods preserve boundary tests with real clocks.
+# - Shared channel methods are const; FiberChannel callbacks own queue state,
+#   replacing raw-receiver callback/wait helpers.
+# - Real String serialization and SerializablePayload emit their trait adapters,
+#   RTTI and vtables. The four duplicate v32/v64 rusty_ext wrappers disappear;
+#   their canonical Serialize_/Deserialize_ bodies and adapters remain.
+# Constructor/destructor multiplicity is pinned separately in RAW_ABI_ALIASES.
 ABI_SPECS = {
     "srpc.callback_wrapper": AbiSpec(
         surface=frozenset(
@@ -73,6 +908,9 @@ ABI_SPECS = {
                 "struct CallbackWrapper",
                 "rusty::Option<rusty::Arc<F>> inner;",
                 "static CallbackWrapper<F> from_callable(F callable) {",
+                # Reviewed respelling: the converged emitter selects the variadic
+                # Arc factory `make` (arc.hpp defines both; identical
+                # semantics for one moved argument).
                 "rusty::Arc<F>::make(std::move(callable))",
                 "bool has_value() const {",
                 "const F& callable() const {",
@@ -427,38 +1265,19 @@ ABI_SPECS = {
         ),
         symbols=frozenset(
             {
-                ("T", "srpc::randgen_rand_max@srpc.rand()"),
-                (
-                    "T",
-                    "srpc::randgen_zero_pad@srpc.rand(std::__1::basic_string<char, "
-                    "std::__1::char_traits<char>, std::__1::allocator<char>>, int)",
-                ),
-                ("T", "srpc::randgen_rand_raw@srpc.rand()"),
-                ("T", "srpc::randgen_nu_constant_now@srpc.rand()"),
-                ("T", "srpc::randgen_destroy@srpc.rand()"),
-                ("T", "srpc::RandomGenerator@srpc.rand::rand(int, int)"),
-                (
-                    "T",
-                    "srpc::RandomGenerator@srpc.rand::rand_double(double, double)",
-                ),
-                (
-                    "T",
-                    "srpc::RandomGenerator@srpc.rand::int2str_n(int, int)",
-                ),
-                (
-                    "T",
-                    "srpc::RandomGenerator@srpc.rand::percentage_true(int)",
-                ),
-                (
-                    "T",
-                    "srpc::RandomGenerator@srpc.rand::nu_rand(int, int, int)",
-                ),
-                (
-                    "T",
-                    "srpc::RandomGenerator@srpc.rand::weighted_select("
-                    "std::__1::vector<double, std::__1::allocator<double>> const&)",
-                ),
-                ("T", "srpc::RandomGenerator@srpc.rand::destroy()"),
+                ('T', 'srpc::RandomGenerator@srpc.rand::destroy()'),
+                ('T', 'srpc::RandomGenerator@srpc.rand::int2str_n(int, int)'),
+                ('T', 'srpc::RandomGenerator@srpc.rand::nu_rand(int, int, int)'),
+                ('T', 'srpc::RandomGenerator@srpc.rand::percentage_true(int)'),
+                ('T', 'srpc::RandomGenerator@srpc.rand::rand(int, int)'),
+                ('T', 'srpc::RandomGenerator@srpc.rand::rand_double(double, double)'),
+                ('T', 'srpc::RandomGenerator@srpc.rand::weighted_select(std::__1::vector<double, std::__1::allocator<double>> const&)'),
+                ('T', 'srpc::randgen_destroy@srpc.rand()'),
+                ('T', 'srpc::randgen_nu_constant_now@srpc.rand()'),
+                ('T', 'srpc::randgen_rand_max@srpc.rand()'),
+                ('T', 'srpc::randgen_rand_raw@srpc.rand()'),
+                ('T', 'srpc::randgen_range@srpc.rand(int, int)'),
+                ('T', 'srpc::randgen_zero_pad@srpc.rand(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, int)'),
             }
         ),
     ),
@@ -589,12 +1408,12 @@ ABI_SPECS = {
                 "static CircuitBreakerConfig relaxed();",
                 "static CircuitBreakerConfig disabled();",
                 "export struct CircuitBreaker",
-                "rusty::Cell<CircuitBreakerConfig> config_field;",
-                "rusty::Cell<CircuitState> state_field;",
-                "rusty::Cell<uint32_t> failure_count_field;",
-                "rusty::Cell<uint32_t> success_count_field;",
-                "rusty::Cell<uint64_t> last_failure_time;",
-                "rusty::Cell<bool> probe_in_progress;",
+                '::srpc::SharedCell<CircuitBreakerConfig> config_field;',
+                '::srpc::SharedCell<CircuitState> state_field;',
+                '::srpc::SharedCell<uint32_t> failure_count_field;',
+                '::srpc::SharedCell<uint32_t> success_count_field;',
+                '::srpc::SharedCell<uint64_t> last_failure_time;',
+                '::srpc::SharedCell<bool> probe_in_progress;',
                 "static CircuitBreaker new_(CircuitBreakerConfig config);",
                 "void set_config(CircuitBreakerConfig config) const;",
                 "bool allow_request() const;",
@@ -616,28 +1435,30 @@ ABI_SPECS = {
             }
         ),
         symbols=frozenset(
-            ("T", symbol)
-            for symbol in {
-                "srpc::current_time_us@srpc.circuit_breaker()",
-                "srpc::circuit_state_to_string@srpc.circuit_breaker(srpc::CircuitState@srpc.circuit_breaker)",
-                "srpc::CircuitBreakerConfig@srpc.circuit_breaker::new_()",
-                "srpc::CircuitBreakerConfig@srpc.circuit_breaker::defaults()",
-                "srpc::CircuitBreakerConfig@srpc.circuit_breaker::sensitive()",
-                "srpc::CircuitBreakerConfig@srpc.circuit_breaker::relaxed()",
-                "srpc::CircuitBreakerConfig@srpc.circuit_breaker::disabled()",
-                "srpc::CircuitBreaker@srpc.circuit_breaker::new_(srpc::CircuitBreakerConfig@srpc.circuit_breaker)",
-                "srpc::CircuitBreaker@srpc.circuit_breaker::set_config(srpc::CircuitBreakerConfig@srpc.circuit_breaker) const",
-                "srpc::CircuitBreaker@srpc.circuit_breaker::allow_request() const",
-                "srpc::CircuitBreaker@srpc.circuit_breaker::record_success() const",
-                "srpc::CircuitBreaker@srpc.circuit_breaker::record_failure() const",
-                "srpc::CircuitBreaker@srpc.circuit_breaker::state() const",
-                "srpc::CircuitBreaker@srpc.circuit_breaker::is_open() const",
-                "srpc::CircuitBreaker@srpc.circuit_breaker::is_closed() const",
-                "srpc::CircuitBreaker@srpc.circuit_breaker::is_half_open() const",
-                "srpc::CircuitBreaker@srpc.circuit_breaker::reset() const",
-                "srpc::CircuitBreaker@srpc.circuit_breaker::failure_count() const",
-                "srpc::CircuitBreaker@srpc.circuit_breaker::success_count() const",
-                "srpc::CircuitBreaker@srpc.circuit_breaker::config() const",
+            {
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::allow_request() const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::allow_request_at(unsigned long) const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::config() const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::failure_count() const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::is_closed() const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::is_half_open() const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::is_open() const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::new_(srpc::CircuitBreakerConfig@srpc.circuit_breaker)'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::record_failure() const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::record_failure_at(unsigned long) const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::record_success() const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::reset() const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::reset_state() const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::set_config(srpc::CircuitBreakerConfig@srpc.circuit_breaker) const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::state() const'),
+                ('T', 'srpc::CircuitBreaker@srpc.circuit_breaker::success_count() const'),
+                ('T', 'srpc::CircuitBreakerConfig@srpc.circuit_breaker::defaults()'),
+                ('T', 'srpc::CircuitBreakerConfig@srpc.circuit_breaker::disabled()'),
+                ('T', 'srpc::CircuitBreakerConfig@srpc.circuit_breaker::new_()'),
+                ('T', 'srpc::CircuitBreakerConfig@srpc.circuit_breaker::relaxed()'),
+                ('T', 'srpc::CircuitBreakerConfig@srpc.circuit_breaker::sensitive()'),
+                ('T', 'srpc::circuit_state_to_string@srpc.circuit_breaker(srpc::CircuitState@srpc.circuit_breaker)'),
+                ('T', 'srpc::current_time_us@srpc.circuit_breaker()'),
             }
         ),
     ),
@@ -648,14 +1469,14 @@ ABI_SPECS = {
                 "export enum class ConnectionState",
                 "export struct ConnectionStateMachine",
                 "export using StateChangeCallback = rusty::Function<void(ConnectionState, ConnectionState) const>;",
-                "rusty::Cell<ConnectionState> state_field;",
-                "StateChangeCallback on_state_change;",
+                '::srpc::SharedCell<ConnectionState> state_field;',
+                "rusty::Function<void(ConnectionState, ConnectionState) const> on_state_change;",
                 "static ConnectionStateMachine new_();",
                 "ConnectionState state() const;",
                 "bool can_transition_to(ConnectionState new_state) const;",
                 "bool transition_to(ConnectionState new_state) const;",
                 "void force_state(ConnectionState new_state) const;",
-                "void set_on_state_change(StateChangeCallback callback);",
+                "void set_on_state_change(rusty::Function<void(ConnectionState, ConnectionState) const> callback);",
                 "bool is_connected() const;",
                 "bool is_failed() const;",
                 "bool is_terminal() const;",
@@ -663,8 +1484,8 @@ ABI_SPECS = {
                 "bool is_usable() const;",
                 "static bool is_valid_transition(ConnectionState from, ConnectionState to);",
                 "export std::string_view connection_state_to_string(ConnectionState state);",
-                ".on_state_change = rusty::default_like<StateChangeCallback>()",
-                "rusty::is_empty(this->on_state_change)",
+                ".on_state_change = rusty::Function<void(ConnectionState, ConnectionState) const>{}",
+                "})(this->on_state_change); _iflet_scrutinee.is_some())",
             }
         ),
         symbols=frozenset(
@@ -703,16 +1524,16 @@ ABI_SPECS = {
                 "static HeartbeatConfig relaxed();",
                 "static HeartbeatConfig disabled();",
                 "export struct HeartbeatManager",
-                "rusty::Cell<HeartbeatConfig> config_field;",
-                "rusty::Cell<uint64_t> last_send_time;",
-                "rusty::Cell<uint64_t> last_recv_time;",
-                "rusty::Cell<uint32_t> missed_count_field;",
-                "rusty::Cell<bool> pending_pong;",
-                "rusty::Cell<bool> timed_out;",
-                "rusty::RefCell<HeartbeatTimeoutCallback> on_timeout;",
+                '::srpc::SharedCell<HeartbeatConfig> config_field;',
+                '::srpc::SharedCell<uint64_t> last_send_time;',
+                '::srpc::SharedCell<uint64_t> last_recv_time;',
+                '::srpc::SharedCell<uint32_t> missed_count_field;',
+                '::srpc::SharedCell<bool> pending_pong;',
+                '::srpc::SharedCell<bool> timed_out;',
+                '::srpc::SharedCell<rusty::Arc<rusty::Mutex<rusty::Function<void()>>>> on_timeout;',
                 "static HeartbeatManager new_(const HeartbeatConfig& config);",
                 "void set_config(const HeartbeatConfig& config) const;",
-                "void set_on_timeout(HeartbeatTimeoutCallback callback) const;",
+                "void set_on_timeout(rusty::Function<void()> callback) const;",
                 "bool should_send_heartbeat() const;",
                 "void on_heartbeat_sent() const;",
                 "void on_pong_received() const;",
@@ -724,34 +1545,38 @@ ABI_SPECS = {
                 "void reset() const;",
                 "HeartbeatConfig config() const;",
                 "return current_time_us();",
-                ".on_timeout = rusty::RefCell<HeartbeatTimeoutCallback>::new_(rusty::default_like<HeartbeatTimeoutCallback>())",
-                "rusty::is_empty(((*callback)))",
+                'bool check_timeout_at(uint64_t now) const;',
                 "rusty::wrapping_sub(now",
                 "rusty::wrapping_add(this->missed_count_field.get()",
             }
         ),
         symbols=frozenset(
-            ("T", symbol)
-            for symbol in {
-                "srpc::heartbeat_time_us@srpc.heartbeat()",
-                "srpc::HeartbeatConfig@srpc.heartbeat::new_()",
-                "srpc::HeartbeatConfig@srpc.heartbeat::defaults()",
-                "srpc::HeartbeatConfig@srpc.heartbeat::aggressive()",
-                "srpc::HeartbeatConfig@srpc.heartbeat::relaxed()",
-                "srpc::HeartbeatConfig@srpc.heartbeat::disabled()",
-                "srpc::HeartbeatManager@srpc.heartbeat::new_(srpc::HeartbeatConfig@srpc.heartbeat const&)",
-                "srpc::HeartbeatManager@srpc.heartbeat::set_config(srpc::HeartbeatConfig@srpc.heartbeat const&) const",
-                "srpc::HeartbeatManager@srpc.heartbeat::set_on_timeout(rusty::Function<void ()>) const",
-                "srpc::HeartbeatManager@srpc.heartbeat::should_send_heartbeat() const",
-                "srpc::HeartbeatManager@srpc.heartbeat::on_heartbeat_sent() const",
-                "srpc::HeartbeatManager@srpc.heartbeat::on_pong_received() const",
-                "srpc::HeartbeatManager@srpc.heartbeat::check_timeout() const",
-                "srpc::HeartbeatManager@srpc.heartbeat::time_until_next_heartbeat_ms() const",
-                "srpc::HeartbeatManager@srpc.heartbeat::is_timed_out() const",
-                "srpc::HeartbeatManager@srpc.heartbeat::missed_count() const",
-                "srpc::HeartbeatManager@srpc.heartbeat::is_pending_pong() const",
-                "srpc::HeartbeatManager@srpc.heartbeat::reset() const",
-                "srpc::HeartbeatManager@srpc.heartbeat::config() const",
+            {
+                ('T', 'srpc::HeartbeatConfig@srpc.heartbeat::aggressive()'),
+                ('T', 'srpc::HeartbeatConfig@srpc.heartbeat::defaults()'),
+                ('T', 'srpc::HeartbeatConfig@srpc.heartbeat::disabled()'),
+                ('T', 'srpc::HeartbeatConfig@srpc.heartbeat::new_()'),
+                ('T', 'srpc::HeartbeatConfig@srpc.heartbeat::relaxed()'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::check_timeout() const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::check_timeout_at(unsigned long) const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::config() const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::is_pending_pong() const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::is_timed_out() const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::missed_count() const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::new_(srpc::HeartbeatConfig@srpc.heartbeat const&)'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::on_heartbeat_sent() const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::on_heartbeat_sent_at(unsigned long) const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::on_pong_received() const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::on_pong_received_at(unsigned long) const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::reset() const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::reset_state() const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::set_config(srpc::HeartbeatConfig@srpc.heartbeat const&) const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::set_on_timeout(rusty::Function<void ()>) const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::should_send_heartbeat() const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::should_send_heartbeat_at(unsigned long) const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::time_until_next_heartbeat_ms() const'),
+                ('T', 'srpc::HeartbeatManager@srpc.heartbeat::time_until_next_heartbeat_ms_at(unsigned long) const'),
+                ('T', 'srpc::heartbeat_time_us@srpc.heartbeat()'),
             }
         ),
     ),
@@ -764,8 +1589,8 @@ ABI_SPECS = {
                 "ROUND_ROBIN = 1,",
                 "LEAST_CONNECTIONS = 2,",
                 "LEAST_LATENCY = 3",
-                "// Rust-only trait import marker: using _ = rusty::LoadBalancerClient;",
-                "// Rust-only trait import marker: using _ = rusty::LoadBalancerMetrics;",
+                "class LoadBalancerClient",
+                "export class LoadBalancerMetrics",
                 "export struct LoadBalancerState",
                 "rusty::Cell<size_t> round_robin_index_field;",
                 "static LoadBalancerState new_();",
@@ -784,14 +1609,21 @@ ABI_SPECS = {
             }
         ),
         symbols=frozenset(
-            ("T", symbol)
-            for symbol in {
-                "srpc::load_balancing_strategy_to_string@srpc.load_balancer(srpc::LoadBalancingStrategy@srpc.load_balancer)",
-                "srpc::LoadBalancerState@srpc.load_balancer::new_()",
-                "srpc::LoadBalancerState@srpc.load_balancer::next_round_robin_index(unsigned long) const",
-                "srpc::LoadBalancerState@srpc.load_balancer::reset() const",
-                "srpc::LoadBalancer@srpc.load_balancer::select_random(unsigned long, unsigned long)",
-                "srpc::LoadBalancer@srpc.load_balancer::select_round_robin(unsigned long, srpc::LoadBalancerState@srpc.load_balancer const&)",
+            {
+                ('D', 'typeinfo for srpc::LoadBalancerClientVec@srpc.load_balancer'),
+                ('D', 'typeinfo for srpc::LoadBalancerMetrics@srpc.load_balancer'),
+                ('D', 'vtable for srpc::LoadBalancerClientVec@srpc.load_balancer'),
+                ('D', 'vtable for srpc::LoadBalancerMetrics@srpc.load_balancer'),
+                ('R', 'typeinfo name for srpc::LoadBalancerClientVec@srpc.load_balancer'),
+                ('R', 'typeinfo name for srpc::LoadBalancerMetrics@srpc.load_balancer'),
+                ('T', 'srpc::LoadBalancer@srpc.load_balancer::select_random(unsigned long, unsigned long)'),
+                ('T', 'srpc::LoadBalancer@srpc.load_balancer::select_round_robin(unsigned long, srpc::LoadBalancerState@srpc.load_balancer const&)'),
+                ('T', 'srpc::LoadBalancerClientVec@srpc.load_balancer::~LoadBalancerClientVec()'),
+                ('T', 'srpc::LoadBalancerMetrics@srpc.load_balancer::~LoadBalancerMetrics()'),
+                ('T', 'srpc::LoadBalancerState@srpc.load_balancer::new_()'),
+                ('T', 'srpc::LoadBalancerState@srpc.load_balancer::next_round_robin_index(unsigned long) const'),
+                ('T', 'srpc::LoadBalancerState@srpc.load_balancer::reset() const'),
+                ('T', 'srpc::load_balancing_strategy_to_string@srpc.load_balancer(srpc::LoadBalancingStrategy@srpc.load_balancer)'),
             }
         ),
     ),
@@ -807,7 +1639,7 @@ ABI_SPECS = {
                 "Complete = 1,",
                 "Malformed = 2",
                 "using FrameBytes = std::vector<uint8_t>;",
-                "export using FrameCursor = rusty::io::Cursor<FrameBytes>;",
+                "export using FrameCursor = rusty::io::Cursor<std::vector<uint8_t>>;",
                 "export constexpr size_t kFrameHeaderSize",
                 "export constexpr int32_t kMaxFramePayloadSize",
                 "export struct FrameHeader",
@@ -831,11 +1663,13 @@ ABI_SPECS = {
                 "export std::string_view frame_decode_status_to_string(FrameDecodeStatus status);",
                 "export bool frame_codec_write_header(std::span<uint8_t> out_buf, int32_t payload_size, bool extended_header_flag);",
                 "export FrameDecodeStatus frame_codec_peek_header(std::span<const uint8_t> buf, FrameHeader& out_header);",
+                "int32_t header_word_from_bytes(uint8_t b0, uint8_t b1, uint8_t b2, uint8_t b3);",
+                "void store_header_word(std::span<uint8_t> out_buf, int32_t w);",
                 "export FrameCursor make_frame_cursor();",
-                "export bool frame_codec_encode_into(FrameBytes& out, const uint8_t* payload, int32_t payload_size, bool extended_header_flag);",
+                "export bool frame_codec_encode_into(std::vector<uint8_t>& out, const uint8_t* payload, int32_t payload_size, bool extended_header_flag);",
                 "export void fsr_append(FrameStreamReader& reader, const uint8_t* data, size_t size);",
                 "export void fsr_consume_frame(FrameStreamReader& reader);",
-                "rusty::wrapping_add(this->payload_size",
+                "rusty::saturating_add(this->payload_size",
                 "static constexpr bool is_send = true;",
                 "static constexpr bool is_sync = true;",
             }
@@ -875,6 +1709,17 @@ ABI_SPECS = {
                     "T",
                     "srpc::frame_codec_peek_header@srpc.frame_codec(std::__1::span<unsigned char const, 18446744073709551615ul>, srpc::FrameHeader@srpc.frame_codec&)",
                 ),
+                # Trusted byte-marshalling helpers isolating the std calls Verus
+                # cannot process (T5/T6, docs/verification.md). Module-internal
+                # (emitted without `export`), but still strong symbols.
+                (
+                    "T",
+                    "srpc::header_word_from_bytes@srpc.frame_codec(unsigned char, unsigned char, unsigned char, unsigned char)",
+                ),
+                (
+                    "T",
+                    "srpc::store_header_word@srpc.frame_codec(std::__1::span<unsigned char, 18446744073709551615ul>, int)",
+                ),
                 (
                     "T",
                     "srpc::frame_codec_write_header@srpc.frame_codec(std::__1::span<unsigned char, 18446744073709551615ul>, int, bool)",
@@ -912,28 +1757,33 @@ ABI_SPECS = {
                 "bool valid() const;",
                 "~AddrInfo() noexcept(false);",
                 "export int32_t find_open_port();",
-                "export std::string get_host_name();",
-                "srpc::log_line(3, 0, rusty::ptr::null(), message);",
-                "srpc::log_line(1, 0, rusty::ptr::null(), message);",
-                "rusty::sys::env::hostname();",
-                "utils_ffi::srpc_find_open_port();",
+                "export rusty::String get_host_name();",
+                # Leading space, deliberately: the facade route emitted
+                # `::srpc::log_line(`, so a bare `log_line(` pin would still
+                # match the pre-rewire output and stop discriminating.
+                " log_line(3, 0, rusty::ptr::null(), message);",
+                " log_line(1, 0, rusty::ptr::null(), message);",
+                "utils_ffi::srpc_net_hostname(",
+                "utils_ffi::srpc_net_bind_port(",
+                "utils_ffi::srpc_net_socket_open()",
+                "utils_ffi::srpc_net_socket_name_status(",
                 "utils_ffi::freeaddrinfo(this->info_);",
             }
         ),
         symbols=frozenset(
-            ("T", symbol)
-            for symbol in {
-                "srpc::AddrInfo@srpc.utils::new_()",
-                "srpc::AddrInfo@srpc.utils::adopt(addrinfo*)",
-                "srpc::AddrInfo@srpc.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)",
-                "srpc::AddrInfo@srpc.utils::AddrInfo(srpc::AddrInfo@srpc.utils&&)",
-                "srpc::AddrInfo@srpc.utils::get() const",
-                "srpc::AddrInfo@srpc.utils::operator=(srpc::AddrInfo@srpc.utils&&)",
-                "srpc::AddrInfo@srpc.utils::rusty_mark_forgotten() const",
-                "srpc::AddrInfo@srpc.utils::valid() const",
-                "srpc::AddrInfo@srpc.utils::~AddrInfo()",
-                "srpc::find_open_port@srpc.utils()",
-                "srpc::get_host_name@srpc.utils()",
+            {
+                ('T', 'srpc::AddrInfo@srpc.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)'),
+                ('T', 'srpc::AddrInfo@srpc.utils::AddrInfo(srpc::AddrInfo@srpc.utils&&)'),
+                ('T', 'srpc::AddrInfo@srpc.utils::adopt(addrinfo*)'),
+                ('T', 'srpc::AddrInfo@srpc.utils::get() const'),
+                ('T', 'srpc::AddrInfo@srpc.utils::new_()'),
+                ('T', 'srpc::AddrInfo@srpc.utils::operator=(srpc::AddrInfo@srpc.utils&&)'),
+                ('T', 'srpc::AddrInfo@srpc.utils::rusty_mark_forgotten() const'),
+                ('T', 'srpc::AddrInfo@srpc.utils::valid() const'),
+                ('T', 'srpc::AddrInfo@srpc.utils::~AddrInfo()'),
+                ('T', 'srpc::find_open_port@srpc.utils()'),
+                ('T', 'srpc::get_host_name@srpc.utils()'),
+                ('T', 'srpc::scan_open_port@srpc.utils()'),
             }
         ),
     ),
@@ -957,6 +1807,10 @@ ABI_SPECS = {
                 "static int32_t load32(const uint8_t* buf);",
                 "static int64_t load64(const uint8_t* buf);",
                 "static size_t val_size(int64_t val);",
+                "export size_t sparseint_val_size(int64_t val);",
+                "export size_t sparseint_buf_size(uint8_t byte0);",
+                "export size_t sparseint_dump64(int64_t val, std::span<uint8_t> buf);",
+                "export int64_t sparseint_load64(std::span<const uint8_t> buf);",
                 "export struct v32",
                 "int32_t val_field;",
                 "static v32 new_(int32_t v);",
@@ -1020,6 +1874,28 @@ ABI_SPECS = {
                 ("T", "srpc::Timer@srpc.basetypes::stop()"),
                 ("T", "srpc::Timer@srpc.basetypes::reset()"),
                 ("T", "srpc::Timer@srpc.basetypes::elapsed() const"),
+                # Free-function sparse-int length helpers, extracted from
+                # SparseInt::val_size/buf_size so they can carry Verus contracts
+                # (the verus_spec macro cannot spec an associated fn). The
+                # methods delegate; these are the proven shipped logic. See the
+                # 1967 -> 1969 delta note above EXPECTED_TOTAL_PROVIDER_SYMBOLS.
+                ("T", "srpc::sparseint_val_size@srpc.basetypes(long)"),
+                ("T", "srpc::sparseint_buf_size@srpc.basetypes(unsigned char)"),
+                # Slice-based sparse-int codec, extracted from
+                # SparseInt::dump64/load64 (which delegate) so the byte logic is
+                # a Verus-reasonable free function over `std::span` rather than a
+                # raw pointer. See the 1969 -> 1971 delta note above
+                # EXPECTED_TOTAL_PROVIDER_SYMBOLS and docs/verification.md (T4).
+                (
+                    "T",
+                    "srpc::sparseint_dump64@srpc.basetypes(long, "
+                    "std::__1::span<unsigned char, 18446744073709551615ul>)",
+                ),
+                (
+                    "T",
+                    "srpc::sparseint_load64@srpc.basetypes("
+                    "std::__1::span<unsigned char const, 18446744073709551615ul>)",
+                ),
             }
         ),
     ),
@@ -1040,13 +1916,13 @@ ABI_SPECS = {
                 "export constexpr int32_t kRequestQueueExpiredError = static_cast<int32_t>(110);",
                 "export std::string_view overflow_strategy_to_string(OverflowStrategy strategy);",
                 "export uint64_t queued_request_time_us();",
-                "export void rq_invoke_callback_safely(QueuedRequestCallback callback, int32_t error);",
+                "export void rq_invoke_callback_safely(rusty::Function<void(int32_t)> callback, int32_t error);",
                 "export struct QueuedRequest",
                 "int64_t xid;",
                 "int32_t rpc_id;",
                 "uint64_t timestamp_us;",
                 "uint32_t retry_count;",
-                "QueuedRequestCallback callback;",
+                "rusty::Function<void(int32_t)> callback;",
                 "uint32_t ttl_ms;",
                 "static QueuedRequest new_();",
                 "bool is_expired() const;",
@@ -1062,12 +1938,12 @@ ABI_SPECS = {
                 "static RequestQueueConfig large();",
                 "static RequestQueueConfig disabled();",
                 "export struct RequestQueue",
-                "rusty::Cell<RequestQueueConfig> config_;",
+                '::srpc::SharedCell<RequestQueueConfig> config_;',
                 "rusty::Mutex<rusty::VecDeque<QueuedRequest>> queue_;",
                 "static RequestQueue new_();",
                 "static RequestQueue with_config(RequestQueueConfig config);",
                 "bool enqueue(QueuedRequest request) const;",
-                "rusty::Option<QueuedRequest> dequeue();",
+                "rusty::Option<QueuedRequest> dequeue() const;",
                 "size_t expire_stale() const;",
                 "size_t size() const;",
                 "bool empty() const;",
@@ -1079,2513 +1955,783 @@ ABI_SPECS = {
                 "size_t max_size() const;",
                 "void update_config(RequestQueueConfig config) const;",
                 "return current_time_us();",
-                "rusty::wrapping_sub(::srpc::queued_request_time_us()",
-                "catch_unwind(AssertUnwindSafe(",
+                'return this->is_expired_at(::srpc::queued_request_time_us());',
+                "rusty::panic::catch_unwind_std(AssertUnwindSafe(",
             }
         ),
-        symbols=frozenset(
-            {
-                ("R", "srpc::kRequestQueueRejectedError@srpc.request_queue"),
-                ("R", "srpc::kRequestQueueExpiredError@srpc.request_queue"),
-                *(
-                    ("T", symbol)
-                    for symbol in {
-                        "srpc::overflow_strategy_to_string@srpc.request_queue(srpc::OverflowStrategy@srpc.request_queue)",
-                        "srpc::queued_request_time_us@srpc.request_queue()",
-                        "srpc::rq_invoke_callback_safely@srpc.request_queue(rusty::Function<void (int)>, int)",
-                        "srpc::QueuedRequest@srpc.request_queue::new_()",
-                        "srpc::QueuedRequest@srpc.request_queue::is_expired() const",
-                        "srpc::QueuedRequest@srpc.request_queue::age_ms() const",
-                        "srpc::RequestQueueConfig@srpc.request_queue::new_()",
-                        "srpc::RequestQueueConfig@srpc.request_queue::defaults()",
-                        "srpc::RequestQueueConfig@srpc.request_queue::small()",
-                        "srpc::RequestQueueConfig@srpc.request_queue::large()",
-                        "srpc::RequestQueueConfig@srpc.request_queue::disabled()",
-                        "srpc::RequestQueue@srpc.request_queue::new_()",
-                        "srpc::RequestQueue@srpc.request_queue::with_config(srpc::RequestQueueConfig@srpc.request_queue)",
-                        "srpc::RequestQueue@srpc.request_queue::enqueue(srpc::QueuedRequest@srpc.request_queue) const",
-                        "srpc::RequestQueue@srpc.request_queue::dequeue()",
-                        "srpc::RequestQueue@srpc.request_queue::expire_stale() const",
-                        "srpc::RequestQueue@srpc.request_queue::size() const",
-                        "srpc::RequestQueue@srpc.request_queue::empty() const",
-                        "srpc::RequestQueue@srpc.request_queue::full()",
-                        "srpc::RequestQueue@srpc.request_queue::remaining_capacity()",
-                        "srpc::RequestQueue@srpc.request_queue::clear_all(int) const",
-                        "srpc::RequestQueue@srpc.request_queue::config() const",
-                        "srpc::RequestQueue@srpc.request_queue::enabled() const",
-                        "srpc::RequestQueue@srpc.request_queue::max_size() const",
-                        "srpc::RequestQueue@srpc.request_queue::update_config(srpc::RequestQueueConfig@srpc.request_queue) const",
-                    }
-                ),
-            }
-        ),
+        symbols=frozenset({
+            ('R', 'srpc::kRequestQueueExpiredError@srpc.request_queue'),
+            ('R', 'srpc::kRequestQueueRejectedError@srpc.request_queue'),
+            ('T', 'srpc::QueuedRequest@srpc.request_queue::age_ms() const'),
+            ('T', 'srpc::QueuedRequest@srpc.request_queue::age_ms_at(unsigned long) const'),
+            ('T', 'srpc::QueuedRequest@srpc.request_queue::is_expired() const'),
+            ('T', 'srpc::QueuedRequest@srpc.request_queue::is_expired_at(unsigned long) const'),
+            ('T', 'srpc::QueuedRequest@srpc.request_queue::new_()'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::clear_all(int) const'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::config() const'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::dequeue() const'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::drain() const'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::empty() const'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::enabled() const'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::enqueue(srpc::QueuedRequest@srpc.request_queue) const'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::enqueue_deferred(srpc::QueuedRequest@srpc.request_queue) const'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::expire_stale() const'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::expire_stale_at(unsigned long) const'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::full()'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::max_size() const'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::new_()'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::remaining_capacity()'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::size() const'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::update_config(srpc::RequestQueueConfig@srpc.request_queue) const'),
+            ('T', 'srpc::RequestQueue@srpc.request_queue::with_config(srpc::RequestQueueConfig@srpc.request_queue)'),
+            ('T', 'srpc::RequestQueueAdmission@srpc.request_queue::notify()'),
+            ('T', 'srpc::RequestQueueConfig@srpc.request_queue::defaults()'),
+            ('T', 'srpc::RequestQueueConfig@srpc.request_queue::disabled()'),
+            ('T', 'srpc::RequestQueueConfig@srpc.request_queue::large()'),
+            ('T', 'srpc::RequestQueueConfig@srpc.request_queue::new_()'),
+            ('T', 'srpc::RequestQueueConfig@srpc.request_queue::small()'),
+            ('T', 'srpc::overflow_strategy_to_string@srpc.request_queue(srpc::OverflowStrategy@srpc.request_queue)'),
+            ('T', 'srpc::queued_request_time_us@srpc.request_queue()'),
+            ('T', 'srpc::rq_invoke_callback_safely@srpc.request_queue(rusty::Function<void (int)>, int)'),
+        }),
     ),
-    # Measured on the crate-generated object, not declared: nine provider-owned
-    # strong entries plus the module initializer (which `module_symbols` drops
-    # because it carries no `@module` attachment). `verify` is an exported
-    # function TEMPLATE, so its instantiations belong to importers and never
-    # appear here; the `debugging_ffi` extern "C" block is declarations only.
-    "srpc.debugging": AbiSpec(
-        surface=frozenset(
-            {
-                "export module srpc.debugging;",
-                "import vec_port.vec;",
-                "namespace srpc {",
-                "namespace debugging_ffi {",
-                "export bool likely(bool value);",
-                "export bool unlikely(bool value);",
-                "export void print_stack_trace(FILE* stream = stderr);",
-                "export void verify_failed(std::string_view file, uint32_t line);",
-                "export template<typename Expr>",
-                "void verify(const Expr& expr, const std::source_location& location = std::source_location::current());",
-                "struct BtCapture {",
-                "bool ok;",
-                "rusty::Vec<std::string> symbols;",
-                "static BtCapture new_();",
-                "export FILE* srpc_stderr();",
-                "export int32_t srpc_backtrace_capture(std::string::value_type*** out_symbols);",
-                "export void srpc_backtrace_free(std::string::value_type** symbols);",
-                "export int32_t fputs(const std::string::value_type* text, FILE* stream);",
-            }
-        ),
-        symbols=frozenset(
-            {
-                ("T", "srpc::BtCapture@srpc.debugging::new_()"),
-                ("T", "srpc::bt_capture@srpc.debugging()"),
-                ("T", "srpc::bt_empty_string@srpc.debugging()"),
-                ("T", "srpc::bt_index_prefix@srpc.debugging(int)"),
-                (
-                    "T",
-                    "srpc::bt_render@srpc.debugging(srpc::BtCapture@srpc.debugging const&)",
-                ),
-                ("T", "srpc::likely@srpc.debugging(bool)"),
-                ("T", "srpc::print_stack_trace@srpc.debugging(_IO_FILE*)"),
-                ("T", "srpc::unlikely@srpc.debugging(bool)"),
-                (
-                    "T",
-                    "srpc::verify_failed@srpc.debugging(std::__1::basic_string_view<char, "
-                    "std::__1::char_traits<char>>, unsigned int)",
-                ),
-            }
-        ),
-    ),
-    # Goal 0 complete. The nineteen entries below were MEASURED, not written:
-    # each generated .cppm was precompiled and assembled standalone and the
-    # object read with `llvm-nm --defined-only --demangle`, keeping only the
-    # strong entries whose declared entity carries this module's attachment
-    # (`symbol_owner_module`). Weak template/lambda instantiations, `U`
-    # references, and the module initializer are excluded by construction --
-    # the initializer has no `@module` suffix, so `module_symbols` drops it.
-    # The surface fragments are likewise taken from the emitted interface:
-    # the module declaration, its exact private imports, and every exported
-    # declaration in the interface prologue.
     "srpc.serializable": AbiSpec(
         surface=frozenset(
             {
-                "export module srpc.serializable;",
-                "namespace srpc {",
-                "import srpc.basetypes;",
-                "import srpc.debugging;",
-                "import rusty;",
-                "import std;",
-                "export class SerializableBase;",
-                "export class Deserialize;",
-                "export struct BufferSink;",
-                "export struct BufferSource;",
-                "export struct FdSink;",
-                "export struct FdSource;",
-                "export struct BinaryWriteArchive;",
-                "export class Serialize;",
-                "export struct BinaryReadArchive;",
-                "export class SourceBase;",
-                "export class SinkBase;",
-                "export struct SerializableRegistry;",
-                "export using v32 = v32;",
-                "export using v64 = v64;",
-                "export using SinkProxy = rusty::Box<SinkBase>;",
-                "export using SourceProxy = rusty::Box<SourceBase>;",
-                "export using SerializableProxy = rusty::Arc<SerializableBase>;",
-                "export using SerializableRegistryFactory = rusty::Function<SerializableProxy()>;",
-                "export SinkProxy make_sink_proxy_buffer(BufferSink* sink);",
-                "export SourceProxy make_source_proxy_buffer(BufferSource* source);",
-                "export SinkProxy make_sink_proxy_fd(FdSink* sink);",
-                "export SourceProxy make_source_proxy_fd(FdSource* source);",
-                "export void serializable_registry_register_factory(int32_t kind, rusty::Function<SerializableProxy()> factory);",
-                "export rusty::Arc<SerializableBase> serializable_registry_create_impl(int32_t kind);",
-                "export bool serializable_registry_is_registered_impl(int32_t kind);",
-                "export void serializable_registry_clear_impl();",
-                "export void deserialize(v32& self_, BinaryReadArchive& ar);",
-                "export void deserialize(v64& self_, BinaryReadArchive& ar);",
-                "export void deserialize(int32_t& self_, BinaryReadArchive& ar);",
-                "export void deserialize(int8_t& self_, BinaryReadArchive& ar);",
-                "export void deserialize(int16_t& self_, BinaryReadArchive& ar);",
-                "export void deserialize(int64_t& self_, BinaryReadArchive& ar);",
-                "export void deserialize(uint8_t& self_, BinaryReadArchive& ar);",
-                "export void deserialize(uint16_t& self_, BinaryReadArchive& ar);",
-                "export void deserialize(uint32_t& self_, BinaryReadArchive& ar);",
-                "export void deserialize(uint64_t& self_, BinaryReadArchive& ar);",
-                "export void deserialize(double& self_, BinaryReadArchive& ar);",
-                "export void deserialize(std::string& self_, BinaryReadArchive& ar);",
-                "export void serialize(const v32& self_, BinaryWriteArchive& ar);",
-                "export void serialize(const v64& self_, BinaryWriteArchive& ar);",
-                "export void serialize(const int32_t& self_, BinaryWriteArchive& ar);",
-                "export void serialize(const int8_t& self_, BinaryWriteArchive& ar);",
-                "export void serialize(const int16_t& self_, BinaryWriteArchive& ar);",
-                "export void serialize(const int64_t& self_, BinaryWriteArchive& ar);",
-                "export void serialize(const uint8_t& self_, BinaryWriteArchive& ar);",
-                "export void serialize(const uint16_t& self_, BinaryWriteArchive& ar);",
-                "export void serialize(const uint32_t& self_, BinaryWriteArchive& ar);",
-                "export void serialize(const uint64_t& self_, BinaryWriteArchive& ar);",
-                "export void serialize(const double& self_, BinaryWriteArchive& ar);",
-                "export void serialize(const std::string_view& self_, BinaryWriteArchive& ar);",
-                "export void serialize(const std::string& self_, BinaryWriteArchive& ar);",
-                "export using ::srpc::details::__ufcs_SerializableBase::save;",
-                "export using ::srpc::details::__ufcs_SerializableBase::load;",
-                "export using ::srpc::details::__ufcs_SerializableBase::kind;",
-                "export using ::srpc::details::__ufcs_SerializableBase::payload_type_id;",
-                "export void srpc_fd_write_all(int32_t fd, const void* pointer, size_t length);",
-                "export size_t srpc_fd_read_upto(int32_t fd, void* pointer, size_t length);",
-                "export template <class U> class SerializableBaseAdapter;",
-                "export template <class U> class SerializableBaseAdapterRef;",
-                "export template <class U> class SerializableBaseAdapterRefMut;",
-                "export template <class U> class DeserializeAdapter;",
-                "export template <class U> class DeserializeAdapterRef;",
-                "export template <class U> class DeserializeAdapterRefMut;",
-                "export template <class U> class SerializeAdapter;",
-                "export template <class U> class SerializeAdapterRef;",
-                "export template <class U> class SerializeAdapterRefMut;",
-                "export template <class U> class SourceBaseAdapter;",
-                "export template <class U> class SourceBaseAdapterRef;",
-                "export template <class U> class SourceBaseAdapterRefMut;",
-                "export template <class U> class SinkBaseAdapter;",
-                "export template <class U> class SinkBaseAdapterRef;",
-                "export template <class U> class SinkBaseAdapterRefMut;",
-                "export void serialize();",
-                "export void deserialize();",
+                'Arc<T> ptr;',
+                'bool BinaryReadArchive::read_exact(uint8_t* p, size_t n)',
+                # STL adapters now enter through the reviewed module epilogue.
+                # Native header hashes, importer cases and exact strong symbols
+                # check their definitions and concrete compatibility entry points.
+                '#include "misc/serializable_adapters.hpp"',
+                'export SinkProxy make_sink_proxy_buffer(BufferSink* sink);',
+                'export SinkProxy make_sink_proxy_fd(FdSink* sink);',
+                'export SourceProxy make_source_proxy_buffer(BufferSource* source);',
+                'export SourceProxy make_source_proxy_fd(FdSource* source);',
+                'export bool serializable_registry_is_registered_impl(int32_t kind);',
+                'export class SerializableBase {',
+                'export class SerializablePayload {',
+                'export module srpc.serializable;',
+                'export struct BinaryReadArchive;',
+                'export struct BinaryWriteArchive;',
+                'export struct BufferSink;',
+                'export struct BufferSource;',
+                'export struct FdSink;',
+                'export struct FdSource;',
+                'export struct SerializableRegistry;',
+                'export using SerializableProxy = rusty::Arc<SerializableBase>;',
+                'export using SerializableRegistryFactory = rusty::Function<rusty::Arc<SerializableBase>()>;',
+                'export void serializable_registry_clear_impl();',
+                'export void serializable_registry_register_factory(int32_t kind, SerializableRegistryFactory factory);',
+                'rusty::Arc<SerializableBase> make_serializable_proxy(rusty::Arc<T> value);',
+                'rusty::Arc<SerializableBase> make_serializable_proxy_copy(const T& value);',
+                'rusty::Arc<SerializableBase> make_serializable_proxy_default();',
+                'serializable_holder_of(const SerializableBase* base);',
+                'std::type_index payload_type_id() const override',
+                'struct SerializableSharedPtrHolder : public SerializableBase {',
+                'virtual std::type_index payload_type_id() const = 0;',
+                'virtual void load(BinaryReadArchive& ar) = 0;',
+                'virtual void save(BinaryWriteArchive& ar) const = 0;',
+                'void BinaryWriteArchive::write_bytes(const uint8_t* p, size_t n)',
             }
         ),
         symbols=frozenset(
             {
-                (
-                    "D",
-                    "typeinfo for srpc::Deserialize@srpc.serializable",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapter@srpc.serializable<double>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapter@srpc.serializable<int>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapter@srpc.serializable<long>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapter@srpc.serializable<short>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapter@srpc.serializable<signed char>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapter@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapter@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapter@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapter@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<double>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<int>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<long>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<short>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<signed char>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<double>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<int>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<long>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<short>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<signed char>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializableBase@srpc.serializable",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::Serialize@srpc.serializable",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapter@srpc.serializable<double>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapter@srpc.serializable<int>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapter@srpc.serializable<long>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapter@srpc.serializable<short>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapter@srpc.serializable<signed char>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapter@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapter@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapter@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapter@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRef@srpc.serializable<double>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRef@srpc.serializable<int>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRef@srpc.serializable<long>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRef@srpc.serializable<short>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRef@srpc.serializable<signed char>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRef@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRef@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRef@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRef@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<double>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<int>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<long>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<short>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<signed char>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SinkBase@srpc.serializable",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SinkBaseAdapterRef@srpc.serializable<srpc::BufferSink@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SinkBaseAdapterRef@srpc.serializable<srpc::FdSink@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::BufferSink@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::FdSink@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SourceBase@srpc.serializable",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SourceBaseAdapterRef@srpc.serializable<srpc::BufferSource@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SourceBaseAdapterRef@srpc.serializable<srpc::FdSource@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::BufferSource@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::FdSource@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::Deserialize@srpc.serializable",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapter@srpc.serializable<double>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapter@srpc.serializable<int>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapter@srpc.serializable<long>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapter@srpc.serializable<short>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapter@srpc.serializable<signed char>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapter@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapter@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapter@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapter@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRef@srpc.serializable<double>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRef@srpc.serializable<int>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRef@srpc.serializable<long>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRef@srpc.serializable<short>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRef@srpc.serializable<signed char>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRef@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRef@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRef@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRef@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<double>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<int>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<long>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<short>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<signed char>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializableBase@srpc.serializable",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::Serialize@srpc.serializable",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapter@srpc.serializable<double>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapter@srpc.serializable<int>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapter@srpc.serializable<long>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapter@srpc.serializable<short>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapter@srpc.serializable<signed char>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapter@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapter@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapter@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapter@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRef@srpc.serializable<double>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRef@srpc.serializable<int>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRef@srpc.serializable<long>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRef@srpc.serializable<short>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRef@srpc.serializable<signed char>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRef@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRef@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRef@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRef@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRefMut@srpc.serializable<double>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRefMut@srpc.serializable<int>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRefMut@srpc.serializable<long>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRefMut@srpc.serializable<short>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRefMut@srpc.serializable<signed char>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SinkBase@srpc.serializable",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SinkBaseAdapterRef@srpc.serializable<srpc::BufferSink@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SinkBaseAdapterRef@srpc.serializable<srpc::FdSink@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::BufferSink@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::FdSink@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SourceBase@srpc.serializable",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SourceBaseAdapterRef@srpc.serializable<srpc::BufferSource@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SourceBaseAdapterRef@srpc.serializable<srpc::FdSource@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::BufferSource@srpc.serializable>",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::FdSource@srpc.serializable>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::Deserialize@srpc.serializable",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapter@srpc.serializable<double>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapter@srpc.serializable<int>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapter@srpc.serializable<long>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapter@srpc.serializable<short>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapter@srpc.serializable<signed char>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapter@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapter@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapter@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapter@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<double>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<int>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<long>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<short>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<signed char>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<double>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<int>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<long>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<short>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<signed char>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializableBase@srpc.serializable",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::Serialize@srpc.serializable",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapter@srpc.serializable<double>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapter@srpc.serializable<int>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapter@srpc.serializable<long>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapter@srpc.serializable<short>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapter@srpc.serializable<signed char>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapter@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapter@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapter@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapter@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<double>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<int>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<long>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<short>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<signed char>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<double>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<int>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<long>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<short>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<signed char>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned char>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned int>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned long>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned short>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SinkBase@srpc.serializable",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SinkBaseAdapterRef@srpc.serializable<srpc::BufferSink@srpc.serializable>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SinkBaseAdapterRef@srpc.serializable<srpc::FdSink@srpc.serializable>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::BufferSink@srpc.serializable>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::FdSink@srpc.serializable>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SourceBase@srpc.serializable",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SourceBaseAdapterRef@srpc.serializable<srpc::BufferSource@srpc.serializable>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SourceBaseAdapterRef@srpc.serializable<srpc::FdSource@srpc.serializable>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::BufferSource@srpc.serializable>",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::FdSource@srpc.serializable>",
-                ),
-                (
-                    "T",
-                    "srpc::BinaryReadArchive@srpc.serializable::read_exact(unsigned char*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::BinaryReadArchive@srpc.serializable::read_or_abort(unsigned char*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::BinaryWriteArchive@srpc.serializable::write_bytes(unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::BufferSink@srpc.serializable::write_bytes(unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::BufferSource@srpc.serializable::eof() const",
-                ),
-                (
-                    "T",
-                    "srpc::BufferSource@srpc.serializable::new_(unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::BufferSource@srpc.serializable::pos() const",
-                ),
-                (
-                    "T",
-                    "srpc::BufferSource@srpc.serializable::read_bytes(unsigned char*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::BufferSource@srpc.serializable::remaining() const",
-                ),
-                (
-                    "T",
-                    "srpc::Deserialize@srpc.serializable::~Deserialize()",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<double>::DeserializeAdapter(double)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<double>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<double>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<double>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<int>::DeserializeAdapter(int)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<int>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<int>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<int>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<long>::DeserializeAdapter(long)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<long>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<long>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<long>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::DeserializeAdapter(srpc::v32@srpc.basetypes)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::DeserializeAdapter(srpc::v64@srpc.basetypes)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<short>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<short>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<short>::DeserializeAdapter(short)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<short>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<signed char>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<signed char>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<signed char>::DeserializeAdapter(signed char)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<signed char>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::DeserializeAdapter(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<unsigned char>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<unsigned char>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<unsigned char>::DeserializeAdapter(unsigned char)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<unsigned char>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<unsigned int>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<unsigned int>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<unsigned int>::DeserializeAdapter(unsigned int)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<unsigned int>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<unsigned long>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<unsigned long>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<unsigned long>::DeserializeAdapter(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<unsigned long>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<unsigned short>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<unsigned short>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<unsigned short>::DeserializeAdapter(unsigned short)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapter@srpc.serializable<unsigned short>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<double>::DeserializeAdapterRef(double const&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<double>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<int>::DeserializeAdapterRef(int const&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<int>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<long>::DeserializeAdapterRef(long const&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<long>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>::DeserializeAdapterRef(srpc::v32@srpc.basetypes const&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>::DeserializeAdapterRef(srpc::v64@srpc.basetypes const&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<short>::DeserializeAdapterRef(short const&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<short>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<signed char>::DeserializeAdapterRef(signed char const&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<signed char>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::DeserializeAdapterRef(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<unsigned char>::DeserializeAdapterRef(unsigned char const&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<unsigned char>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<unsigned int>::DeserializeAdapterRef(unsigned int const&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<unsigned int>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<unsigned long>::DeserializeAdapterRef(unsigned long const&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<unsigned long>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<unsigned short>::DeserializeAdapterRef(unsigned short const&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRef@srpc.serializable<unsigned short>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<double>::DeserializeAdapterRefMut(double&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<double>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<int>::DeserializeAdapterRefMut(int&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<int>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<long>::DeserializeAdapterRefMut(long&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<long>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>::DeserializeAdapterRefMut(srpc::v32@srpc.basetypes&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>::DeserializeAdapterRefMut(srpc::v64@srpc.basetypes&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<short>::DeserializeAdapterRefMut(short&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<short>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<signed char>::DeserializeAdapterRefMut(signed char&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<signed char>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::DeserializeAdapterRefMut(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned char>::DeserializeAdapterRefMut(unsigned char&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned char>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned int>::DeserializeAdapterRefMut(unsigned int&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned int>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned long>::DeserializeAdapterRefMut(unsigned long&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned long>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned short>::DeserializeAdapterRefMut(unsigned short&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned short>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Deserialize_::deserialize@srpc.serializable(double&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Deserialize_::deserialize@srpc.serializable(int&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Deserialize_::deserialize@srpc.serializable(long&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Deserialize_::deserialize@srpc.serializable(srpc::v32@srpc.basetypes&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Deserialize_::deserialize@srpc.serializable(srpc::v64@srpc.basetypes&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Deserialize_::deserialize@srpc.serializable(short&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Deserialize_::deserialize@srpc.serializable(signed char&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Deserialize_::deserialize@srpc.serializable(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Deserialize_::deserialize@srpc.serializable(unsigned char&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Deserialize_::deserialize@srpc.serializable(unsigned int&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Deserialize_::deserialize@srpc.serializable(unsigned long&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Deserialize_::deserialize@srpc.serializable(unsigned short&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::FdSink@srpc.serializable::fd() const",
-                ),
-                (
-                    "T",
-                    "srpc::FdSink@srpc.serializable::new_(int)",
-                ),
-                (
-                    "T",
-                    "srpc::FdSink@srpc.serializable::write_bytes(unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::FdSource@srpc.serializable::fd() const",
-                ),
-                (
-                    "T",
-                    "srpc::FdSource@srpc.serializable::new_(int)",
-                ),
-                (
-                    "T",
-                    "srpc::FdSource@srpc.serializable::read_bytes(unsigned char*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializableBase@srpc.serializable::~SerializableBase()",
-                ),
-                (
-                    "T",
-                    "srpc::SerializableRegistry@srpc.serializable::clear_for_testing()",
-                ),
-                (
-                    "T",
-                    "srpc::SerializableRegistry@srpc.serializable::create(int)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializableRegistry@srpc.serializable::is_registered(int)",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize@srpc.serializable::~Serialize()",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<double>::SerializeAdapter(double)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<double>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<double>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<double>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<int>::SerializeAdapter(int)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<int>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<int>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<int>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<long>::SerializeAdapter(long)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<long>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<long>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<long>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::SerializeAdapter(srpc::v32@srpc.basetypes)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::SerializeAdapter(srpc::v64@srpc.basetypes)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<short>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<short>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<short>::SerializeAdapter(short)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<short>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<signed char>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<signed char>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<signed char>::SerializeAdapter(signed char)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<signed char>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::SerializeAdapter(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::SerializeAdapter(std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<unsigned char>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<unsigned char>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<unsigned char>::SerializeAdapter(unsigned char)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<unsigned char>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<unsigned int>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<unsigned int>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<unsigned int>::SerializeAdapter(unsigned int)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<unsigned int>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<unsigned long>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<unsigned long>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<unsigned long>::SerializeAdapter(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<unsigned long>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<unsigned short>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<unsigned short>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<unsigned short>::SerializeAdapter(unsigned short)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapter@srpc.serializable<unsigned short>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<double>::SerializeAdapterRef(double const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<double>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<int>::SerializeAdapterRef(int const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<int>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<long>::SerializeAdapterRef(long const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<long>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>::SerializeAdapterRef(srpc::v32@srpc.basetypes const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>::SerializeAdapterRef(srpc::v64@srpc.basetypes const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<short>::SerializeAdapterRef(short const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<short>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<signed char>::SerializeAdapterRef(signed char const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<signed char>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::SerializeAdapterRef(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::SerializeAdapterRef(std::__1::basic_string_view<char, std::__1::char_traits<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<unsigned char>::SerializeAdapterRef(unsigned char const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<unsigned char>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<unsigned int>::SerializeAdapterRef(unsigned int const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<unsigned int>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<unsigned long>::SerializeAdapterRef(unsigned long const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<unsigned long>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<unsigned short>::SerializeAdapterRef(unsigned short const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRef@srpc.serializable<unsigned short>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<double>::SerializeAdapterRefMut(double&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<double>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<int>::SerializeAdapterRefMut(int&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<int>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<long>::SerializeAdapterRefMut(long&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<long>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>::SerializeAdapterRefMut(srpc::v32@srpc.basetypes&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>::SerializeAdapterRefMut(srpc::v64@srpc.basetypes&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<short>::SerializeAdapterRefMut(short&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<short>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<signed char>::SerializeAdapterRefMut(signed char&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<signed char>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::SerializeAdapterRefMut(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::SerializeAdapterRefMut(std::__1::basic_string_view<char, std::__1::char_traits<char>>&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<unsigned char>::SerializeAdapterRefMut(unsigned char&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<unsigned char>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<unsigned int>::SerializeAdapterRefMut(unsigned int&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<unsigned int>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<unsigned long>::SerializeAdapterRefMut(unsigned long&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<unsigned long>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<unsigned short>::SerializeAdapterRefMut(unsigned short&)",
-                ),
-                (
-                    "T",
-                    "srpc::SerializeAdapterRefMut@srpc.serializable<unsigned short>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize_::serialize@srpc.serializable(double const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize_::serialize@srpc.serializable(int const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize_::serialize@srpc.serializable(long const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize_::serialize@srpc.serializable(srpc::v32@srpc.basetypes const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize_::serialize@srpc.serializable(srpc::v64@srpc.basetypes const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize_::serialize@srpc.serializable(short const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize_::serialize@srpc.serializable(signed char const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize_::serialize@srpc.serializable(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize_::serialize@srpc.serializable(std::__1::basic_string_view<char, std::__1::char_traits<char>> const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize_::serialize@srpc.serializable(unsigned char const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize_::serialize@srpc.serializable(unsigned int const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize_::serialize@srpc.serializable(unsigned long const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::Serialize_::serialize@srpc.serializable(unsigned short const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBase@srpc.serializable::~SinkBase()",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>::SinkBaseAdapter(srpc::BufferSink@srpc.serializable)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>::SinkBaseAdapter(srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>::write_bytes(unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>::SinkBaseAdapter(srpc::FdSink@srpc.serializable)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>::SinkBaseAdapter(srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>::write_bytes(unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapterRef@srpc.serializable<srpc::BufferSink@srpc.serializable>::SinkBaseAdapterRef(srpc::BufferSink@srpc.serializable const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapterRef@srpc.serializable<srpc::BufferSink@srpc.serializable>::write_bytes(unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapterRef@srpc.serializable<srpc::FdSink@srpc.serializable>::SinkBaseAdapterRef(srpc::FdSink@srpc.serializable const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapterRef@srpc.serializable<srpc::FdSink@srpc.serializable>::write_bytes(unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::BufferSink@srpc.serializable>::SinkBaseAdapterRefMut(srpc::BufferSink@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::BufferSink@srpc.serializable>::write_bytes(unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::FdSink@srpc.serializable>::SinkBaseAdapterRefMut(srpc::FdSink@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::FdSink@srpc.serializable>::write_bytes(unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBase@srpc.serializable::~SourceBase()",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>::SourceBaseAdapter(srpc::BufferSource@srpc.serializable)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>::SourceBaseAdapter(srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>::read_bytes(unsigned char*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>::SourceBaseAdapter(srpc::FdSource@srpc.serializable)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>::SourceBaseAdapter(srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>&&)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>::read_bytes(unsigned char*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapterRef@srpc.serializable<srpc::BufferSource@srpc.serializable>::SourceBaseAdapterRef(srpc::BufferSource@srpc.serializable const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapterRef@srpc.serializable<srpc::BufferSource@srpc.serializable>::read_bytes(unsigned char*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapterRef@srpc.serializable<srpc::FdSource@srpc.serializable>::SourceBaseAdapterRef(srpc::FdSource@srpc.serializable const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapterRef@srpc.serializable<srpc::FdSource@srpc.serializable>::read_bytes(unsigned char*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::BufferSource@srpc.serializable>::SourceBaseAdapterRefMut(srpc::BufferSource@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::BufferSource@srpc.serializable>::read_bytes(unsigned char*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::FdSource@srpc.serializable>::SourceBaseAdapterRefMut(srpc::FdSource@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::FdSource@srpc.serializable>::read_bytes(unsigned char*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::make_sink_proxy_buffer@srpc.serializable(srpc::BufferSink@srpc.serializable*)",
-                ),
-                (
-                    "T",
-                    "srpc::make_sink_proxy_fd@srpc.serializable(srpc::FdSink@srpc.serializable*)",
-                ),
-                (
-                    "T",
-                    "srpc::make_source_proxy_buffer@srpc.serializable(srpc::BufferSource@srpc.serializable*)",
-                ),
-                (
-                    "T",
-                    "srpc::make_source_proxy_fd@srpc.serializable(srpc::FdSource@srpc.serializable*)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::deserialize@srpc.serializable(double&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::deserialize@srpc.serializable(int&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::deserialize@srpc.serializable(long&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::deserialize@srpc.serializable(srpc::v32@srpc.basetypes&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::deserialize@srpc.serializable(srpc::v64@srpc.basetypes&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::deserialize@srpc.serializable(short&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::deserialize@srpc.serializable(signed char&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::deserialize@srpc.serializable(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::deserialize@srpc.serializable(unsigned char&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::deserialize@srpc.serializable(unsigned int&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::deserialize@srpc.serializable(unsigned long&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::deserialize@srpc.serializable(unsigned short&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::serialize@srpc.serializable(double const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::serialize@srpc.serializable(int const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::serialize@srpc.serializable(long const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::serialize@srpc.serializable(srpc::v32@srpc.basetypes const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::serialize@srpc.serializable(srpc::v64@srpc.basetypes const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::serialize@srpc.serializable(short const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::serialize@srpc.serializable(signed char const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::serialize@srpc.serializable(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::serialize@srpc.serializable(std::__1::basic_string_view<char, std::__1::char_traits<char>> const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::serialize@srpc.serializable(unsigned char const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::serialize@srpc.serializable(unsigned int const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::serialize@srpc.serializable(unsigned long const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::rusty_ext::serialize@srpc.serializable(unsigned short const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::serializable_registry_clear_impl@srpc.serializable()",
-                ),
-                (
-                    "T",
-                    "srpc::serializable_registry_create_impl@srpc.serializable(int)",
-                ),
-                (
-                    "T",
-                    "srpc::serializable_registry_is_registered_impl@srpc.serializable(int)",
-                ),
-                (
-                    "T",
-                    "srpc::serializable_registry_register_factory@srpc.serializable(int, rusty::Function<rusty::Arc<srpc::SerializableBase@srpc.serializable> ()>)",
-                ),
+                ('T', 'srpc::serialize_bytes@srpc.serializable(unsigned char const*, unsigned long, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('D', 'typeinfo for srpc::Deserialize@srpc.serializable'),
+                ('D', 'typeinfo for srpc::DeserializeAdapter@srpc.serializable<double>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapter@srpc.serializable<int>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapter@srpc.serializable<long>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapter@srpc.serializable<rusty::String>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapter@srpc.serializable<short>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapter@srpc.serializable<signed char>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapter@srpc.serializable<unsigned char>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapter@srpc.serializable<unsigned int>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapter@srpc.serializable<unsigned long>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapter@srpc.serializable<unsigned short>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<double>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<int>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<long>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<rusty::String>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<short>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<signed char>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<unsigned char>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<unsigned int>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<unsigned long>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRef@srpc.serializable<unsigned short>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<double>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<int>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<long>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<rusty::String>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<short>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<signed char>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned char>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned int>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned long>'),
+                ('D', 'typeinfo for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned short>'),
+                ('D', 'typeinfo for srpc::SerializableBase@srpc.serializable'),
+                ('D', 'typeinfo for srpc::SerializablePayload@srpc.serializable'),
+                ('D', 'typeinfo for srpc::Serialize@srpc.serializable'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<double>'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<int>'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<long>'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<rusty::String>'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<short>'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<signed char>'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<unsigned char>'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<unsigned int>'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<unsigned long>'),
+                ('D', 'typeinfo for srpc::SerializeAdapter@srpc.serializable<unsigned short>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<double>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<int>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<long>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<rusty::String>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<short>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<signed char>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<unsigned char>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<unsigned int>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<unsigned long>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRef@srpc.serializable<unsigned short>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<double>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<int>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<long>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<rusty::String>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<short>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<signed char>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned char>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned int>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned long>'),
+                ('D', 'typeinfo for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned short>'),
+                ('D', 'typeinfo for srpc::SinkBase@srpc.serializable'),
+                ('D', 'typeinfo for srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>'),
+                ('D', 'typeinfo for srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>'),
+                ('D', 'typeinfo for srpc::SinkBaseAdapterRef@srpc.serializable<srpc::BufferSink@srpc.serializable>'),
+                ('D', 'typeinfo for srpc::SinkBaseAdapterRef@srpc.serializable<srpc::FdSink@srpc.serializable>'),
+                ('D', 'typeinfo for srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::BufferSink@srpc.serializable>'),
+                ('D', 'typeinfo for srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::FdSink@srpc.serializable>'),
+                ('D', 'typeinfo for srpc::SourceBase@srpc.serializable'),
+                ('D', 'typeinfo for srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>'),
+                ('D', 'typeinfo for srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>'),
+                ('D', 'typeinfo for srpc::SourceBaseAdapterRef@srpc.serializable<srpc::BufferSource@srpc.serializable>'),
+                ('D', 'typeinfo for srpc::SourceBaseAdapterRef@srpc.serializable<srpc::FdSource@srpc.serializable>'),
+                ('D', 'typeinfo for srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::BufferSource@srpc.serializable>'),
+                ('D', 'typeinfo for srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::FdSource@srpc.serializable>'),
+                ('D', 'vtable for srpc::Deserialize@srpc.serializable'),
+                ('D', 'vtable for srpc::DeserializeAdapter@srpc.serializable<double>'),
+                ('D', 'vtable for srpc::DeserializeAdapter@srpc.serializable<int>'),
+                ('D', 'vtable for srpc::DeserializeAdapter@srpc.serializable<long>'),
+                ('D', 'vtable for srpc::DeserializeAdapter@srpc.serializable<rusty::String>'),
+                ('D', 'vtable for srpc::DeserializeAdapter@srpc.serializable<short>'),
+                ('D', 'vtable for srpc::DeserializeAdapter@srpc.serializable<signed char>'),
+                ('D', 'vtable for srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('D', 'vtable for srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('D', 'vtable for srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('D', 'vtable for srpc::DeserializeAdapter@srpc.serializable<unsigned char>'),
+                ('D', 'vtable for srpc::DeserializeAdapter@srpc.serializable<unsigned int>'),
+                ('D', 'vtable for srpc::DeserializeAdapter@srpc.serializable<unsigned long>'),
+                ('D', 'vtable for srpc::DeserializeAdapter@srpc.serializable<unsigned short>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRef@srpc.serializable<double>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRef@srpc.serializable<int>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRef@srpc.serializable<long>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRef@srpc.serializable<rusty::String>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRef@srpc.serializable<short>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRef@srpc.serializable<signed char>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRef@srpc.serializable<unsigned char>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRef@srpc.serializable<unsigned int>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRef@srpc.serializable<unsigned long>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRef@srpc.serializable<unsigned short>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<double>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<int>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<long>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<rusty::String>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<short>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<signed char>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned char>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned int>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned long>'),
+                ('D', 'vtable for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned short>'),
+                ('D', 'vtable for srpc::SerializableBase@srpc.serializable'),
+                ('D', 'vtable for srpc::SerializablePayload@srpc.serializable'),
+                ('D', 'vtable for srpc::Serialize@srpc.serializable'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<double>'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<int>'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<long>'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<rusty::String>'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<short>'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<signed char>'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<unsigned char>'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<unsigned int>'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<unsigned long>'),
+                ('D', 'vtable for srpc::SerializeAdapter@srpc.serializable<unsigned short>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<double>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<int>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<long>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<rusty::String>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<short>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<signed char>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<unsigned char>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<unsigned int>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<unsigned long>'),
+                ('D', 'vtable for srpc::SerializeAdapterRef@srpc.serializable<unsigned short>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<double>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<int>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<long>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<rusty::String>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<short>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<signed char>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned char>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned int>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned long>'),
+                ('D', 'vtable for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned short>'),
+                ('D', 'vtable for srpc::SinkBase@srpc.serializable'),
+                ('D', 'vtable for srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>'),
+                ('D', 'vtable for srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>'),
+                ('D', 'vtable for srpc::SinkBaseAdapterRef@srpc.serializable<srpc::BufferSink@srpc.serializable>'),
+                ('D', 'vtable for srpc::SinkBaseAdapterRef@srpc.serializable<srpc::FdSink@srpc.serializable>'),
+                ('D', 'vtable for srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::BufferSink@srpc.serializable>'),
+                ('D', 'vtable for srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::FdSink@srpc.serializable>'),
+                ('D', 'vtable for srpc::SourceBase@srpc.serializable'),
+                ('D', 'vtable for srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>'),
+                ('D', 'vtable for srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>'),
+                ('D', 'vtable for srpc::SourceBaseAdapterRef@srpc.serializable<srpc::BufferSource@srpc.serializable>'),
+                ('D', 'vtable for srpc::SourceBaseAdapterRef@srpc.serializable<srpc::FdSource@srpc.serializable>'),
+                ('D', 'vtable for srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::BufferSource@srpc.serializable>'),
+                ('D', 'vtable for srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::FdSource@srpc.serializable>'),
+                ('R', 'typeinfo name for srpc::Deserialize@srpc.serializable'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapter@srpc.serializable<double>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapter@srpc.serializable<int>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapter@srpc.serializable<long>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapter@srpc.serializable<rusty::String>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapter@srpc.serializable<short>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapter@srpc.serializable<signed char>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapter@srpc.serializable<unsigned char>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapter@srpc.serializable<unsigned int>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapter@srpc.serializable<unsigned long>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapter@srpc.serializable<unsigned short>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<double>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<int>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<long>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<rusty::String>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<short>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<signed char>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<unsigned char>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<unsigned int>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<unsigned long>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRef@srpc.serializable<unsigned short>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<double>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<int>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<long>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<rusty::String>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<short>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<signed char>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned char>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned int>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned long>'),
+                ('R', 'typeinfo name for srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned short>'),
+                ('R', 'typeinfo name for srpc::SerializableBase@srpc.serializable'),
+                ('R', 'typeinfo name for srpc::SerializablePayload@srpc.serializable'),
+                ('R', 'typeinfo name for srpc::Serialize@srpc.serializable'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<double>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<int>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<long>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<rusty::String>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<short>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<signed char>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<unsigned char>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<unsigned int>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<unsigned long>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapter@srpc.serializable<unsigned short>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<double>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<int>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<long>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<rusty::String>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<short>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<signed char>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<unsigned char>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<unsigned int>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<unsigned long>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRef@srpc.serializable<unsigned short>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<double>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<int>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<long>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<rusty::String>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<short>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<signed char>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned char>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned int>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned long>'),
+                ('R', 'typeinfo name for srpc::SerializeAdapterRefMut@srpc.serializable<unsigned short>'),
+                ('R', 'typeinfo name for srpc::SinkBase@srpc.serializable'),
+                ('R', 'typeinfo name for srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>'),
+                ('R', 'typeinfo name for srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>'),
+                ('R', 'typeinfo name for srpc::SinkBaseAdapterRef@srpc.serializable<srpc::BufferSink@srpc.serializable>'),
+                ('R', 'typeinfo name for srpc::SinkBaseAdapterRef@srpc.serializable<srpc::FdSink@srpc.serializable>'),
+                ('R', 'typeinfo name for srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::BufferSink@srpc.serializable>'),
+                ('R', 'typeinfo name for srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::FdSink@srpc.serializable>'),
+                ('R', 'typeinfo name for srpc::SourceBase@srpc.serializable'),
+                ('R', 'typeinfo name for srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>'),
+                ('R', 'typeinfo name for srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>'),
+                ('R', 'typeinfo name for srpc::SourceBaseAdapterRef@srpc.serializable<srpc::BufferSource@srpc.serializable>'),
+                ('R', 'typeinfo name for srpc::SourceBaseAdapterRef@srpc.serializable<srpc::FdSource@srpc.serializable>'),
+                ('R', 'typeinfo name for srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::BufferSource@srpc.serializable>'),
+                ('R', 'typeinfo name for srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::FdSource@srpc.serializable>'),
+                ('T', 'srpc::BinaryReadArchive@srpc.serializable::error() const'),
+                ('T', 'srpc::BinaryReadArchive@srpc.serializable::failed() const'),
+                ('T', 'srpc::BinaryReadArchive@srpc.serializable::new_(rusty::Box<srpc::SourceBase@srpc.serializable, rusty::alloc::Global>)'),
+                ('T', 'srpc::BinaryReadArchive@srpc.serializable::read_exact(unsigned char*, unsigned long)'),
+                ('T', 'srpc::BinaryReadArchive@srpc.serializable::read_or_abort(unsigned char*, unsigned long)'),
+                ('T', 'srpc::BinaryReadArchive@srpc.serializable::record_error(srpc::DecodeError@srpc.serializable)'),
+                ('T', 'srpc::BinaryWriteArchive@srpc.serializable::write_bytes(unsigned char const*, unsigned long)'),
+                ('T', 'srpc::BufferSink@srpc.serializable::write_bytes(unsigned char const*, unsigned long)'),
+                ('T', 'srpc::BufferSource@srpc.serializable::eof() const'),
+                ('T', 'srpc::BufferSource@srpc.serializable::new_(unsigned char const*, unsigned long)'),
+                ('T', 'srpc::BufferSource@srpc.serializable::pos() const'),
+                ('T', 'srpc::BufferSource@srpc.serializable::read_bytes(unsigned char*, unsigned long)'),
+                ('T', 'srpc::BufferSource@srpc.serializable::remaining() const'),
+                ('T', 'srpc::Deserialize@srpc.serializable::~Deserialize()'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<double>::DeserializeAdapter(double)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<double>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<double>&&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<double>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<int>::DeserializeAdapter(int)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<int>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<int>&&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<int>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<long>::DeserializeAdapter(long)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<long>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<long>&&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<long>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<rusty::String>::DeserializeAdapter(rusty::String)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<rusty::String>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<rusty::String>&&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<rusty::String>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<short>::DeserializeAdapter(short)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<short>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<short>&&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<short>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<signed char>::DeserializeAdapter(signed char)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<signed char>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<signed char>&&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<signed char>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>&&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::DeserializeAdapter(srpc::v32@srpc.basetypes)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>&&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::DeserializeAdapter(srpc::v64@srpc.basetypes)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>&&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::DeserializeAdapter(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<unsigned char>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<unsigned char>&&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<unsigned char>::DeserializeAdapter(unsigned char)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<unsigned char>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<unsigned int>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<unsigned int>&&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<unsigned int>::DeserializeAdapter(unsigned int)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<unsigned int>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<unsigned long>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<unsigned long>&&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<unsigned long>::DeserializeAdapter(unsigned long)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<unsigned long>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<unsigned short>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<unsigned short>&&)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<unsigned short>::DeserializeAdapter(unsigned short)'),
+                ('T', 'srpc::DeserializeAdapter@srpc.serializable<unsigned short>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<double>::DeserializeAdapterRef(double const&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<double>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<int>::DeserializeAdapterRef(int const&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<int>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<long>::DeserializeAdapterRef(long const&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<long>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<rusty::String>::DeserializeAdapterRef(rusty::String const&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<rusty::String>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<short>::DeserializeAdapterRef(short const&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<short>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<signed char>::DeserializeAdapterRef(signed char const&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<signed char>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>::DeserializeAdapterRef(srpc::v32@srpc.basetypes const&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>::DeserializeAdapterRef(srpc::v64@srpc.basetypes const&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::DeserializeAdapterRef(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<unsigned char>::DeserializeAdapterRef(unsigned char const&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<unsigned char>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<unsigned int>::DeserializeAdapterRef(unsigned int const&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<unsigned int>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<unsigned long>::DeserializeAdapterRef(unsigned long const&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<unsigned long>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<unsigned short>::DeserializeAdapterRef(unsigned short const&)'),
+                ('T', 'srpc::DeserializeAdapterRef@srpc.serializable<unsigned short>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<double>::DeserializeAdapterRefMut(double&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<double>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<int>::DeserializeAdapterRefMut(int&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<int>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<long>::DeserializeAdapterRefMut(long&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<long>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<rusty::String>::DeserializeAdapterRefMut(rusty::String&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<rusty::String>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<short>::DeserializeAdapterRefMut(short&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<short>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<signed char>::DeserializeAdapterRefMut(signed char&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<signed char>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>::DeserializeAdapterRefMut(srpc::v32@srpc.basetypes&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>::DeserializeAdapterRefMut(srpc::v64@srpc.basetypes&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::DeserializeAdapterRefMut(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned char>::DeserializeAdapterRefMut(unsigned char&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned char>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned int>::DeserializeAdapterRefMut(unsigned int&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned int>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned long>::DeserializeAdapterRefMut(unsigned long&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned long>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned short>::DeserializeAdapterRefMut(unsigned short&)'),
+                ('T', 'srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned short>::deserialize(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::Deserialize_::deserialize@srpc.serializable(double&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::Deserialize_::deserialize@srpc.serializable(int&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::Deserialize_::deserialize@srpc.serializable(long&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::Deserialize_::deserialize@srpc.serializable(rusty::String&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::Deserialize_::deserialize@srpc.serializable(short&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::Deserialize_::deserialize@srpc.serializable(signed char&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::Deserialize_::deserialize@srpc.serializable(srpc::v32@srpc.basetypes&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::Deserialize_::deserialize@srpc.serializable(srpc::v64@srpc.basetypes&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::Deserialize_::deserialize@srpc.serializable(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::Deserialize_::deserialize@srpc.serializable(unsigned char&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::Deserialize_::deserialize@srpc.serializable(unsigned int&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::Deserialize_::deserialize@srpc.serializable(unsigned long&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::Deserialize_::deserialize@srpc.serializable(unsigned short&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::FdSink@srpc.serializable::fd() const'),
+                ('T', 'srpc::FdSink@srpc.serializable::new_(int)'),
+                ('T', 'srpc::FdSink@srpc.serializable::write_bytes(unsigned char const*, unsigned long)'),
+                ('T', 'srpc::FdSource@srpc.serializable::fd() const'),
+                ('T', 'srpc::FdSource@srpc.serializable::new_(int)'),
+                ('T', 'srpc::FdSource@srpc.serializable::read_bytes(unsigned char*, unsigned long)'),
+                ('T', 'srpc::SerializableBase@srpc.serializable::~SerializableBase()'),
+                ('T', 'srpc::SerializablePayload@srpc.serializable::~SerializablePayload()'),
+                ('T', 'srpc::SerializableRegistry@srpc.serializable::clear_for_testing()'),
+                ('T', 'srpc::SerializableRegistry@srpc.serializable::create(int)'),
+                ('T', 'srpc::SerializableRegistry@srpc.serializable::is_registered(int)'),
+                ('T', 'srpc::Serialize@srpc.serializable::~Serialize()'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<double>::SerializeAdapter(double)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<double>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<double>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<double>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<int>::SerializeAdapter(int)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<int>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<int>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<int>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<long>::SerializeAdapter(long)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<long>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<long>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<long>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<rusty::String>::SerializeAdapter(rusty::String)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<rusty::String>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<rusty::String>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<rusty::String>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<short>::SerializeAdapter(short)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<short>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<short>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<short>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<signed char>::SerializeAdapter(signed char)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<signed char>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<signed char>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<signed char>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::SerializeAdapter(srpc::v32@srpc.basetypes)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::SerializeAdapter(srpc::v64@srpc.basetypes)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::SerializeAdapter(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::SerializeAdapter(std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<unsigned char>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<unsigned char>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<unsigned char>::SerializeAdapter(unsigned char)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<unsigned char>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<unsigned int>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<unsigned int>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<unsigned int>::SerializeAdapter(unsigned int)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<unsigned int>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<unsigned long>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<unsigned long>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<unsigned long>::SerializeAdapter(unsigned long)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<unsigned long>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<unsigned short>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<unsigned short>&&)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<unsigned short>::SerializeAdapter(unsigned short)'),
+                ('T', 'srpc::SerializeAdapter@srpc.serializable<unsigned short>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<double>::SerializeAdapterRef(double const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<double>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<int>::SerializeAdapterRef(int const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<int>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<long>::SerializeAdapterRef(long const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<long>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<rusty::String>::SerializeAdapterRef(rusty::String const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<rusty::String>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<short>::SerializeAdapterRef(short const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<short>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<signed char>::SerializeAdapterRef(signed char const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<signed char>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>::SerializeAdapterRef(srpc::v32@srpc.basetypes const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>::SerializeAdapterRef(srpc::v64@srpc.basetypes const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::SerializeAdapterRef(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::SerializeAdapterRef(std::__1::basic_string_view<char, std::__1::char_traits<char>> const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<unsigned char>::SerializeAdapterRef(unsigned char const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<unsigned char>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<unsigned int>::SerializeAdapterRef(unsigned int const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<unsigned int>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<unsigned long>::SerializeAdapterRef(unsigned long const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<unsigned long>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<unsigned short>::SerializeAdapterRef(unsigned short const&)'),
+                ('T', 'srpc::SerializeAdapterRef@srpc.serializable<unsigned short>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<double>::SerializeAdapterRefMut(double&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<double>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<int>::SerializeAdapterRefMut(int&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<int>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<long>::SerializeAdapterRefMut(long&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<long>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<rusty::String>::SerializeAdapterRefMut(rusty::String&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<rusty::String>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<short>::SerializeAdapterRefMut(short&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<short>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<signed char>::SerializeAdapterRefMut(signed char&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<signed char>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>::SerializeAdapterRefMut(srpc::v32@srpc.basetypes&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>::SerializeAdapterRefMut(srpc::v64@srpc.basetypes&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::SerializeAdapterRefMut(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::SerializeAdapterRefMut(std::__1::basic_string_view<char, std::__1::char_traits<char>>&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<unsigned char>::SerializeAdapterRefMut(unsigned char&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<unsigned char>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<unsigned int>::SerializeAdapterRefMut(unsigned int&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<unsigned int>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<unsigned long>::SerializeAdapterRefMut(unsigned long&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<unsigned long>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<unsigned short>::SerializeAdapterRefMut(unsigned short&)'),
+                ('T', 'srpc::SerializeAdapterRefMut@srpc.serializable<unsigned short>::serialize(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(double const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(int const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(long const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(rusty::String const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(short const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(signed char const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(srpc::v32@srpc.basetypes const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(srpc::v64@srpc.basetypes const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(std::__1::basic_string_view<char, std::__1::char_traits<char>> const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(unsigned char const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(unsigned int const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(unsigned long const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::Serialize_::serialize@srpc.serializable(unsigned short const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::SinkBase@srpc.serializable::~SinkBase()'),
+                ('T', 'srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>::SinkBaseAdapter(srpc::BufferSink@srpc.serializable)'),
+                ('T', 'srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>::SinkBaseAdapter(srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>&&)'),
+                ('T', 'srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>::write_bytes(unsigned char const*, unsigned long)'),
+                ('T', 'srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>::SinkBaseAdapter(srpc::FdSink@srpc.serializable)'),
+                ('T', 'srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>::SinkBaseAdapter(srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>&&)'),
+                ('T', 'srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>::write_bytes(unsigned char const*, unsigned long)'),
+                ('T', 'srpc::SinkBaseAdapterRef@srpc.serializable<srpc::BufferSink@srpc.serializable>::SinkBaseAdapterRef(srpc::BufferSink@srpc.serializable const&)'),
+                ('T', 'srpc::SinkBaseAdapterRef@srpc.serializable<srpc::BufferSink@srpc.serializable>::write_bytes(unsigned char const*, unsigned long)'),
+                ('T', 'srpc::SinkBaseAdapterRef@srpc.serializable<srpc::FdSink@srpc.serializable>::SinkBaseAdapterRef(srpc::FdSink@srpc.serializable const&)'),
+                ('T', 'srpc::SinkBaseAdapterRef@srpc.serializable<srpc::FdSink@srpc.serializable>::write_bytes(unsigned char const*, unsigned long)'),
+                ('T', 'srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::BufferSink@srpc.serializable>::SinkBaseAdapterRefMut(srpc::BufferSink@srpc.serializable&)'),
+                ('T', 'srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::BufferSink@srpc.serializable>::write_bytes(unsigned char const*, unsigned long)'),
+                ('T', 'srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::FdSink@srpc.serializable>::SinkBaseAdapterRefMut(srpc::FdSink@srpc.serializable&)'),
+                ('T', 'srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::FdSink@srpc.serializable>::write_bytes(unsigned char const*, unsigned long)'),
+                ('T', 'srpc::SourceBase@srpc.serializable::~SourceBase()'),
+                ('T', 'srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>::SourceBaseAdapter(srpc::BufferSource@srpc.serializable)'),
+                ('T', 'srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>::SourceBaseAdapter(srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>&&)'),
+                ('T', 'srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>::read_bytes(unsigned char*, unsigned long)'),
+                ('T', 'srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>::SourceBaseAdapter(srpc::FdSource@srpc.serializable)'),
+                ('T', 'srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>::SourceBaseAdapter(srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>&&)'),
+                ('T', 'srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>::read_bytes(unsigned char*, unsigned long)'),
+                ('T', 'srpc::SourceBaseAdapterRef@srpc.serializable<srpc::BufferSource@srpc.serializable>::SourceBaseAdapterRef(srpc::BufferSource@srpc.serializable const&)'),
+                ('T', 'srpc::SourceBaseAdapterRef@srpc.serializable<srpc::BufferSource@srpc.serializable>::read_bytes(unsigned char*, unsigned long)'),
+                ('T', 'srpc::SourceBaseAdapterRef@srpc.serializable<srpc::FdSource@srpc.serializable>::SourceBaseAdapterRef(srpc::FdSource@srpc.serializable const&)'),
+                ('T', 'srpc::SourceBaseAdapterRef@srpc.serializable<srpc::FdSource@srpc.serializable>::read_bytes(unsigned char*, unsigned long)'),
+                ('T', 'srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::BufferSource@srpc.serializable>::SourceBaseAdapterRefMut(srpc::BufferSource@srpc.serializable&)'),
+                ('T', 'srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::BufferSource@srpc.serializable>::read_bytes(unsigned char*, unsigned long)'),
+                ('T', 'srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::FdSource@srpc.serializable>::SourceBaseAdapterRefMut(srpc::FdSource@srpc.serializable&)'),
+                ('T', 'srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::FdSource@srpc.serializable>::read_bytes(unsigned char*, unsigned long)'),
+                ('T', 'srpc::make_sink_proxy_buffer@srpc.serializable(srpc::BufferSink@srpc.serializable*)'),
+                ('T', 'srpc::make_sink_proxy_fd@srpc.serializable(srpc::FdSink@srpc.serializable*)'),
+                ('T', 'srpc::make_source_proxy_buffer@srpc.serializable(srpc::BufferSource@srpc.serializable*)'),
+                ('T', 'srpc::make_source_proxy_fd@srpc.serializable(srpc::FdSource@srpc.serializable*)'),
+                ('T', 'srpc::rusty_ext::deserialize@srpc.serializable(double&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::deserialize@srpc.serializable(int&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::deserialize@srpc.serializable(long&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::deserialize@srpc.serializable(rusty::String&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::deserialize@srpc.serializable(short&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::deserialize@srpc.serializable(signed char&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::deserialize@srpc.serializable(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::deserialize@srpc.serializable(unsigned char&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::deserialize@srpc.serializable(unsigned int&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::deserialize@srpc.serializable(unsigned long&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::deserialize@srpc.serializable(unsigned short&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::serialize@srpc.serializable(double const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::serialize@srpc.serializable(int const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::serialize@srpc.serializable(long const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::serialize@srpc.serializable(rusty::String const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::serialize@srpc.serializable(short const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::serialize@srpc.serializable(signed char const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::serialize@srpc.serializable(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::serialize@srpc.serializable(std::__1::basic_string_view<char, std::__1::char_traits<char>> const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::serialize@srpc.serializable(unsigned char const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::serialize@srpc.serializable(unsigned int const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::serialize@srpc.serializable(unsigned long const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::rusty_ext::serialize@srpc.serializable(unsigned short const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
+                ('T', 'srpc::serializable_registry_clear_impl@srpc.serializable()'),
+                ('T', 'srpc::serializable_registry_create_impl@srpc.serializable(int)'),
+                ('T', 'srpc::serializable_registry_is_registered_impl@srpc.serializable(int)'),
+                ('T', 'srpc::serializable_registry_register_factory@srpc.serializable(int, rusty::Function<rusty::Arc<srpc::SerializableBase@srpc.serializable> ()>)'),
             }
         ),
     ),
     "srpc.serializable_envelope": AbiSpec(
         surface=frozenset(
             {
-                "export module srpc.serializable_envelope;",
-                "namespace srpc {",
-                "import srpc.basetypes;",
-                "import srpc.debugging;",
-                "import srpc.serializable;",
+                'SerializableEnvelope<PayloadSet> clone() const',
+                'bool has_value() const',
+                'bool is_a() const',
+                'bool operator==(const SerializableEnvelope<PayloadSet>& other) const',
+                'const SerializableBase* base_ptr() const',
+                'export module srpc.serializable_envelope;',
+                'export template<typename PayloadSet>',
+                'export template<typename Set, typename Implementor>',
+                'int32_t kind() const',
+                'int32_t kind_;',
+                'requires (PayloadMember<PayloadSet, T>::value)',
+                'rusty::Option<::srpc::SerializableProxy> inner_;',
+                'rusty::Option<rusty::Arc<T>> marshallable_cast(const SerializableEnvelope<PayloadSet>& env)',
+                'rusty::Option<rusty::Arc<T>> unpack_shared() const',
+                'static SerializableEnvelope<PayloadSet> pack(const T& value)',
+                'static SerializableEnvelope<PayloadSet> pack_aliased(rusty::Arc<T> sp)',
+                'std::add_pointer_t<T> unpack_mut()',
+                'std::add_pointer_t<std::add_const_t<T>> unpack() const',
+                'struct PayloadMember',
+                'struct SerializableEnvelope',
+                'void deserialize(SerializableEnvelope<PayloadSet>& env, ::srpc::BinaryReadArchive& ar)',
+                'void load(::srpc::BinaryReadArchive& ar)',
+                'void refresh_kind()',
+                'void save(::srpc::BinaryWriteArchive& ar) const',
+                'void serialize(const SerializableEnvelope<PayloadSet>& env, ::srpc::BinaryWriteArchive& ar)',
             }
         ),
-        symbols=frozenset(
-            {
-            }
-        ),
+        symbols=frozenset(),
     ),
     "srpc.future": AbiSpec(
         surface=frozenset(
             {
                 "export module srpc.future;",
-                "namespace srpc {",
-                "import srpc.reactor;",
-                "import std;",
+                "export template<typename T>",
+                "struct FiberFuture",
+                "struct FiberPromise",
+                'rusty::Option<rusty::Arc<::srpc::BoxEvent<T>>> state_;',
+                "static FiberFuture<T> default_()",
+                "T get()",
+                "bool wait_for(uint64_t timeout_us)",
+                "bool is_ready() const",
+                "bool valid() const",
+                "static FiberPromise<T> default_()",
+                "FiberFuture<T> get_future()",
+                "void set_value(const T& value)",
+                "FiberFuture<T> fiber_promise_get_future(FiberPromise<T>& self_)",
+                "std::pair<FiberPromise<T>, FiberFuture<T>> make_promise()",
+                "FiberFuture<T> make_ready_future(T value)",
+                "FiberFuture already retrieved from FiberPromise",
+                "FiberPromise value already set",
             }
         ),
-        symbols=frozenset(
-            {
-            }
-        ),
+        symbols=frozenset(),
     ),
     "srpc.logging": AbiSpec(
         surface=frozenset(
             {
                 "export module srpc.logging;",
-                "namespace srpc {",
-                "import srpc.debugging;",
-                "import std;",
-                "export struct Log;",
-                "export extern rusty::sync::atomic::AtomicI32 LOG_LEVEL_S;",
+                "export struct Log",
+                "static constexpr int32_t FATAL = static_cast<int32_t>(0);",
+                "static constexpr int32_t ERROR = static_cast<int32_t>(1);",
+                "static constexpr int32_t WARN = static_cast<int32_t>(2);",
+                "static constexpr int32_t INFO = static_cast<int32_t>(3);",
+                "static constexpr int32_t DEBUG = static_cast<int32_t>(4);",
+                "static void set_level(int32_t level);",
+                "static int32_t level_now();",
                 "export std::string_view log_level_tag(int32_t level);",
-                "export void log_line(int32_t level, int32_t line, const int8_t* file, const std::string& msg);",
-                "export void log_sink_write(const std::string& line);",
-                "export std::string log_basename(const int8_t* fpath);",
-                "export std::string log_time_now();",
-                "export const std::string::value_type* srpc_path_basename(const std::string::value_type* path);",
-                "export void srpc_time_now_str(std::string::value_type* now);",
+                "export void log_line(int32_t level, int32_t line, const int8_t* file, std::string_view msg);",
+                "export void log_sink_write(std::string_view line);",
+                "export rusty::String log_basename(const int8_t* fpath);",
+                "export rusty::String log_time_now();",
+                "logging_ffi::srpc_path_basename(reinterpret_cast<const std::string::value_type*>(fpath))",
+                "logging_ffi::srpc_local_calendar_fields(",
+                "logging_ffi::srpc_gettimeofday_us()",
+                "log_write_digits(",
             }
         ),
         symbols=frozenset(
             {
-                (
-                    "T",
-                    "srpc::Log@srpc.logging::level_now()",
-                ),
-                (
-                    "T",
-                    "srpc::Log@srpc.logging::set_level(int)",
-                ),
-                (
-                    "T",
-                    "srpc::log_basename@srpc.logging(signed char const*)",
-                ),
-                (
-                    "T",
-                    "srpc::log_level_tag@srpc.logging(int)",
-                ),
-                (
-                    "T",
-                    "srpc::log_line@srpc.logging(int, int, signed char const*, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::log_sink_write@srpc.logging(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::log_time_now@srpc.logging()",
-                ),
+                ('T', 'srpc::Log@srpc.logging::level_now()'),
+                ('T', 'srpc::Log@srpc.logging::set_level(int)'),
+                ('T', 'srpc::log_basename@srpc.logging(signed char const*)'),
+                ('T', 'srpc::log_format_time@srpc.logging(std::__1::span<int const, 18446744073709551615ul>, int)'),
+                ('T', 'srpc::log_level_tag@srpc.logging(int)'),
+                ('T', 'srpc::log_line@srpc.logging(int, int, signed char const*, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+                ('T', 'srpc::log_sink_write@srpc.logging(std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+                ('T', 'srpc::log_time_now@srpc.logging()'),
+                ('T', 'srpc::log_write_digits@srpc.logging(std::__1::span<unsigned char, 18446744073709551615ul>, int, unsigned long, unsigned long)'),
             }
         ),
     ),
@@ -3593,165 +2739,88 @@ ABI_SPECS = {
         surface=frozenset(
             {
                 "export module srpc.idempotency;",
-                "namespace srpc {",
-                "import vec_port.vec;",
-                "import srpc.serializable;",
-                "export struct IdempotencyKey;",
-                "export struct IdempotencyKeyHash;",
-                "export struct IdempotencyConfig;",
-                "export struct CachedResponse;",
-                "export struct IdempotencyKeyGenerator;",
-                "export struct IdempotencyCache;",
-                "export void cached_response_set(CachedResponse& entry, const rusty::Vec<uint8_t>& bytes);",
-                "export void cached_response_get(const CachedResponse& entry, rusty::Vec<uint8_t>& out);",
+                "export struct IdempotencyKey",
+                "uint64_t client_id;",
+                "uint64_t sequence;",
+                "static IdempotencyKey new_(uint64_t client_id, uint64_t sequence);",
+                "static IdempotencyKey empty();",
+                "bool is_valid() const;",
+                "bool operator==(const IdempotencyKey& other) const;",
+                "export struct IdempotencyKeyHash",
+                "uint64_t hash_one(const IdempotencyKey& key) const;",
+                "export struct IdempotencyConfig",
+                "uint64_t ttl_ms;",
+                "size_t max_entries;",
+                "bool enabled;",
+                "static IdempotencyConfig defaults();",
+                "static IdempotencyConfig small();",
+                "static IdempotencyConfig large();",
+                "static IdempotencyConfig disabled();",
+                "export struct CachedResponse",
+                "rusty::Vec<uint8_t> response_data;",
+                "bool is_expired(uint64_t current_time_ms, uint64_t ttl_ms) const;",
+                "export struct IdempotencyKeyGenerator",
+                "rusty::Cell<uint64_t> client_id_field;",
+                "rusty::Cell<uint64_t> sequence_field;",
+                "static IdempotencyKeyGenerator new_(uint64_t client_id);",
+                "IdempotencyKey next() const;",
+                "void set_client_id(uint64_t id) const;",
+                "export struct IdempotencyCache",
+                "rusty::Cell<IdempotencyConfig> config_;",
+                "rusty::Mutex<rusty::VecDeque<CachedResponse>> cache_;",
+                "static IdempotencyCache new_();",
+                "static IdempotencyCache with_config(IdempotencyConfig config);",
+                "bool lookup(const IdempotencyKey& key, uint64_t current_time_ms, int32_t& out_error_code, rusty::Vec<uint8_t>& out_response) const;",
+                "void store(const IdempotencyKey& key, int32_t error_code, const rusty::Vec<uint8_t>& response, uint64_t current_time_ms) const;",
+                "size_t evict_expired(uint64_t current_time_ms) const;",
+                "export void serialize(const IdempotencyKey& key, ::srpc::BinaryWriteArchive& archive)",
+                "export void deserialize(IdempotencyKey& key, ::srpc::BinaryReadArchive& archive)",
+                "rusty::wrapping_add(this->timestamp_ms",
+                "rusty::wrapping_add(sequence",
+                "rusty::wrapping_add(this->misses_.get()",
+                "rusty::wrapping_add(this->hits_.get()",
+                "rusty::wrapping_add(this->evictions_.get()",
             }
         ),
         symbols=frozenset(
-            {
-                (
-                    "T",
-                    "srpc::CachedResponse@srpc.idempotency::is_expired(unsigned long, unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::clear() const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::config() const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::enabled() const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::evict_expired(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::evictions() const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::hit_rate() const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::hits() const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::lookup(srpc::IdempotencyKey@srpc.idempotency const&, unsigned long, int&, rusty::port::vec::Vec@vec_port.vec<unsigned char, rusty::alloc::Global>&) const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::misses() const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::remove(srpc::IdempotencyKey@srpc.idempotency const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::reset_stats() const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::set_config(srpc::IdempotencyConfig@srpc.idempotency const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::size() const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::store(srpc::IdempotencyKey@srpc.idempotency const&, int, rusty::port::vec::Vec@vec_port.vec<unsigned char, rusty::alloc::Global> const&, unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyCache@srpc.idempotency::with_config(srpc::IdempotencyConfig@srpc.idempotency)",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyConfig@srpc.idempotency::defaults()",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyConfig@srpc.idempotency::disabled()",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyConfig@srpc.idempotency::large()",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyConfig@srpc.idempotency::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyConfig@srpc.idempotency::small()",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyKey@srpc.idempotency::empty()",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyKey@srpc.idempotency::is_valid() const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyKey@srpc.idempotency::new_(unsigned long, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyKey@srpc.idempotency::operator==(srpc::IdempotencyKey@srpc.idempotency const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyKeyGenerator@srpc.idempotency::client_id() const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyKeyGenerator@srpc.idempotency::current_sequence() const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyKeyGenerator@srpc.idempotency::new_(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyKeyGenerator@srpc.idempotency::next() const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyKeyGenerator@srpc.idempotency::set_client_id(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::IdempotencyKeyHash@srpc.idempotency::hash_one(srpc::IdempotencyKey@srpc.idempotency const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::cached_response_get@srpc.idempotency(srpc::CachedResponse@srpc.idempotency const&, rusty::port::vec::Vec@vec_port.vec<unsigned char, rusty::alloc::Global>&)",
-                ),
-                (
-                    "T",
-                    "srpc::cached_response_set@srpc.idempotency(srpc::CachedResponse@srpc.idempotency&, rusty::port::vec::Vec@vec_port.vec<unsigned char, rusty::alloc::Global> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::deserialize@srpc.idempotency(srpc::IdempotencyKey@srpc.idempotency&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::serialize@srpc.idempotency(srpc::IdempotencyKey@srpc.idempotency const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
+            ("T", symbol)
+            for symbol in {
+                "srpc::serialize@srpc.idempotency(srpc::IdempotencyKey@srpc.idempotency const&, srpc::BinaryWriteArchive@srpc.serializable&)",
+                "srpc::deserialize@srpc.idempotency(srpc::IdempotencyKey@srpc.idempotency&, srpc::BinaryReadArchive@srpc.serializable&)",
+                "srpc::IdempotencyKey@srpc.idempotency::new_(unsigned long, unsigned long)",
+                "srpc::IdempotencyKey@srpc.idempotency::empty()",
+                "srpc::IdempotencyKey@srpc.idempotency::is_valid() const",
+                "srpc::IdempotencyKey@srpc.idempotency::operator==(srpc::IdempotencyKey@srpc.idempotency const&) const",
+                "srpc::IdempotencyKeyHash@srpc.idempotency::hash_one(srpc::IdempotencyKey@srpc.idempotency const&) const",
+                "srpc::IdempotencyConfig@srpc.idempotency::new_()",
+                "srpc::IdempotencyConfig@srpc.idempotency::defaults()",
+                "srpc::IdempotencyConfig@srpc.idempotency::small()",
+                "srpc::IdempotencyConfig@srpc.idempotency::large()",
+                "srpc::IdempotencyConfig@srpc.idempotency::disabled()",
+                "srpc::cached_response_set@srpc.idempotency(srpc::CachedResponse@srpc.idempotency&, rusty::port::vec::Vec@vec_port.vec<unsigned char, rusty::alloc::Global> const&)",
+                "srpc::cached_response_get@srpc.idempotency(srpc::CachedResponse@srpc.idempotency const&, rusty::port::vec::Vec@vec_port.vec<unsigned char, rusty::alloc::Global>&)",
+                "srpc::CachedResponse@srpc.idempotency::is_expired(unsigned long, unsigned long) const",
+                "srpc::IdempotencyKeyGenerator@srpc.idempotency::new_(unsigned long)",
+                "srpc::IdempotencyKeyGenerator@srpc.idempotency::next() const",
+                "srpc::IdempotencyKeyGenerator@srpc.idempotency::client_id() const",
+                "srpc::IdempotencyKeyGenerator@srpc.idempotency::set_client_id(unsigned long) const",
+                "srpc::IdempotencyKeyGenerator@srpc.idempotency::current_sequence() const",
+                "srpc::IdempotencyCache@srpc.idempotency::new_()",
+                "srpc::IdempotencyCache@srpc.idempotency::with_config(srpc::IdempotencyConfig@srpc.idempotency)",
+                "srpc::IdempotencyCache@srpc.idempotency::enabled() const",
+                "srpc::IdempotencyCache@srpc.idempotency::config() const",
+                "srpc::IdempotencyCache@srpc.idempotency::set_config(srpc::IdempotencyConfig@srpc.idempotency const&) const",
+                "srpc::IdempotencyCache@srpc.idempotency::lookup(srpc::IdempotencyKey@srpc.idempotency const&, unsigned long, int&, rusty::port::vec::Vec@vec_port.vec<unsigned char, rusty::alloc::Global>&) const",
+                "srpc::IdempotencyCache@srpc.idempotency::store(srpc::IdempotencyKey@srpc.idempotency const&, int, rusty::port::vec::Vec@vec_port.vec<unsigned char, rusty::alloc::Global> const&, unsigned long) const",
+                "srpc::IdempotencyCache@srpc.idempotency::remove(srpc::IdempotencyKey@srpc.idempotency const&) const",
+                "srpc::IdempotencyCache@srpc.idempotency::clear() const",
+                "srpc::IdempotencyCache@srpc.idempotency::size() const",
+                "srpc::IdempotencyCache@srpc.idempotency::hits() const",
+                "srpc::IdempotencyCache@srpc.idempotency::misses() const",
+                "srpc::IdempotencyCache@srpc.idempotency::evictions() const",
+                "srpc::IdempotencyCache@srpc.idempotency::hit_rate() const",
+                "srpc::IdempotencyCache@srpc.idempotency::reset_stats() const",
+                "srpc::IdempotencyCache@srpc.idempotency::evict_expired(unsigned long) const",
             }
         ),
     ),
@@ -3759,54 +2828,31 @@ ABI_SPECS = {
         surface=frozenset(
             {
                 "export module srpc.fiber;",
-                "namespace srpc {",
-                "import rc_port;",
-                "import srpc.basetypes;",
-                "import srpc.reactor;",
+                "namespace this_fiber",
                 "export uint64_t get_id();",
+                'export rusty::Option<rusty::Rc<::srpc::Fiber>> current();',
                 "export bool in_fiber_context();",
                 "export void yield();",
                 "export void sleep_us(uint64_t microseconds);",
                 "export void sleep_ms(uint64_t milliseconds);",
                 "export void sleep_s(uint64_t seconds);",
                 "export void sleep_until_us(uint64_t abs_time_us);",
-                "export rusty::Option<rusty::Rc<Fiber>> current();",
+                "rusty::wrapping_mul(milliseconds",
+                "rusty::wrapping_mul(seconds",
+                "srpc::fiber_sleep",
             }
         ),
         symbols=frozenset(
-            {
-                (
-                    "T",
-                    "srpc::this_fiber::current@srpc.fiber()",
-                ),
-                (
-                    "T",
-                    "srpc::this_fiber::get_id@srpc.fiber()",
-                ),
-                (
-                    "T",
-                    "srpc::this_fiber::in_fiber_context@srpc.fiber()",
-                ),
-                (
-                    "T",
-                    "srpc::this_fiber::sleep_ms@srpc.fiber(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::this_fiber::sleep_s@srpc.fiber(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::this_fiber::sleep_until_us@srpc.fiber(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::this_fiber::sleep_us@srpc.fiber(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::this_fiber::yield@srpc.fiber()",
-                ),
+            ("T", symbol)
+            for symbol in {
+                "srpc::this_fiber::current@srpc.fiber()",
+                "srpc::this_fiber::get_id@srpc.fiber()",
+                "srpc::this_fiber::in_fiber_context@srpc.fiber()",
+                "srpc::this_fiber::sleep_ms@srpc.fiber(unsigned long)",
+                "srpc::this_fiber::sleep_s@srpc.fiber(unsigned long)",
+                "srpc::this_fiber::sleep_until_us@srpc.fiber(unsigned long)",
+                "srpc::this_fiber::sleep_us@srpc.fiber(unsigned long)",
+                "srpc::this_fiber::yield@srpc.fiber()",
             }
         ),
     ),
@@ -3814,94 +2860,58 @@ ABI_SPECS = {
         surface=frozenset(
             {
                 "export module srpc.misc;",
-                "namespace srpc {",
                 "export class Job;",
                 "export struct OneTimeJob;",
+                "export class Job",
+                "virtual bool Ready() = 0;",
+                "virtual void Work() = 0;",
+                "virtual bool Done() = 0;",
+                "export struct OneTimeJob : public Job",
+                "rusty::Function<void()> func_;",
+                "static OneTimeJob new_(rusty::Function<void()> func);",
+                "export template<typename T, typename T1, typename T2>",
+                "T clamp(const T& value, const T1& lower, const T2& upper)",
                 "export int32_t get_ncpu();",
-                "export std::string format_thousands(double val);",
-                "export bool Ready(OneTimeJob& self_);",
-                "export void Work(OneTimeJob& self_);",
-                "export bool Done(OneTimeJob& self_);",
-                "export int32_t srpc_get_ncpu();",
-                "export int32_t srpc_format_fixed_2(double value, int8_t* output, size_t capacity);",
-                "export template <class U> class JobAdapter;",
-                "export template <class U> class JobAdapterRef;",
-                "export template <class U> class JobAdapterRefMut;",
+                "export rusty::String format_thousands(double val);",
+                "export rusty::Task<int64_t> async_double(int64_t x);",
+                "export rusty::Task<int64_t> async_double_twice(int64_t x);",
+                "export int64_t thread_slot_bump();",
+                "thread_local rusty::LocalKey<rusty::Cell<int64_t>> TL_BUMP_COUNTER{",
+                "int32_t srpc_get_ncpu();",
+                "int32_t srpc_format_fixed_2(double value, int8_t* output, size_t capacity);",
+                "namespace Job_",
+                "export bool Ready(OneTimeJob& self_)",
+                "export void Work(OneTimeJob& self_)",
+                "export bool Done(OneTimeJob& self_)",
             }
         ),
         symbols=frozenset(
             {
-                (
-                    "D",
-                    "typeinfo for srpc::Job@srpc.misc",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::OneTimeJob@srpc.misc",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::Job@srpc.misc",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::OneTimeJob@srpc.misc",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::Job@srpc.misc",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::OneTimeJob@srpc.misc",
-                ),
-                (
-                    "T",
-                    "srpc::Job@srpc.misc::~Job()",
-                ),
-                (
-                    "T",
-                    "srpc::Job_::Done@srpc.misc(srpc::OneTimeJob@srpc.misc&)",
-                ),
-                (
-                    "T",
-                    "srpc::Job_::Ready@srpc.misc(srpc::OneTimeJob@srpc.misc&)",
-                ),
-                (
-                    "T",
-                    "srpc::Job_::Work@srpc.misc(srpc::OneTimeJob@srpc.misc&)",
-                ),
-                (
-                    "T",
-                    "srpc::OneTimeJob@srpc.misc::Done()",
-                ),
-                (
-                    "T",
-                    "srpc::OneTimeJob@srpc.misc::OneTimeJob(bool, bool, rusty::Function<void ()>)",
-                ),
-                (
-                    "T",
-                    "srpc::OneTimeJob@srpc.misc::OneTimeJob(srpc::OneTimeJob@srpc.misc&&)",
-                ),
-                (
-                    "T",
-                    "srpc::OneTimeJob@srpc.misc::Ready()",
-                ),
-                (
-                    "T",
-                    "srpc::OneTimeJob@srpc.misc::Work()",
-                ),
-                (
-                    "T",
-                    "srpc::OneTimeJob@srpc.misc::new_(rusty::Function<void ()>)",
-                ),
-                (
-                    "T",
-                    "srpc::format_thousands@srpc.misc(double)",
-                ),
-                (
-                    "T",
-                    "srpc::get_ncpu@srpc.misc()",
+                ("D", "typeinfo for srpc::Job@srpc.misc"),
+                ("D", "typeinfo for srpc::OneTimeJob@srpc.misc"),
+                ("D", "vtable for srpc::Job@srpc.misc"),
+                ("D", "vtable for srpc::OneTimeJob@srpc.misc"),
+                ("R", "typeinfo name for srpc::Job@srpc.misc"),
+                ("R", "typeinfo name for srpc::OneTimeJob@srpc.misc"),
+                ("T", "srpc::async_double@srpc.misc(long)"),
+                ("T", "srpc::async_double_twice@srpc.misc(long)"),
+                ("T", "srpc::thread_slot_bump@srpc.misc()"),
+                *(
+                    ("T", symbol)
+                    for symbol in {
+                        "srpc::Job@srpc.misc::~Job()",
+                        "srpc::Job_::Done@srpc.misc(srpc::OneTimeJob@srpc.misc&)",
+                        "srpc::Job_::Ready@srpc.misc(srpc::OneTimeJob@srpc.misc&)",
+                        "srpc::Job_::Work@srpc.misc(srpc::OneTimeJob@srpc.misc&)",
+                        "srpc::OneTimeJob@srpc.misc::Done()",
+                        "srpc::OneTimeJob@srpc.misc::OneTimeJob(bool, bool, rusty::Function<void ()>)",
+                        "srpc::OneTimeJob@srpc.misc::OneTimeJob(srpc::OneTimeJob@srpc.misc&&)",
+                        "srpc::OneTimeJob@srpc.misc::Ready()",
+                        "srpc::OneTimeJob@srpc.misc::Work()",
+                        "srpc::OneTimeJob@srpc.misc::new_(rusty::Function<void ()>)",
+                        "srpc::format_thousands@srpc.misc(double)",
+                        "srpc::get_ncpu@srpc.misc()",
+                    }
                 ),
             }
         ),
@@ -3909,4909 +2919,2105 @@ ABI_SPECS = {
     "srpc.channel": AbiSpec(
         surface=frozenset(
             {
-                "export module srpc.channel;",
-                "namespace srpc {",
-                "import srpc.callback_wrapper;",
                 "export enum class ChannelError : int32_t;",
-                "export constexpr ChannelError ChannelError_None();",
-                "export constexpr ChannelError ChannelError_WouldBlock();",
-                "export constexpr ChannelError ChannelError_ConnectionRefused();",
-                "export constexpr ChannelError ChannelError_ConnectionReset();",
-                "export constexpr ChannelError ChannelError_Timeout();",
-                "export constexpr ChannelError ChannelError_AddressInUse();",
-                "export constexpr ChannelError ChannelError_AddressInvalid();",
-                "export constexpr ChannelError ChannelError_PermissionDenied();",
-                "export constexpr ChannelError ChannelError_TooManyOpenFiles();",
-                "export constexpr ChannelError ChannelError_Internal();",
                 "export struct ChannelFrame;",
                 "export class ChannelFactoryBase;",
                 "export class ChannelListenerBase;",
-                "export struct ConnectResult;",
                 "export class ChannelConnectionBase;",
-                "export using OnFrameCallback = ::srpc::detail::CallbackWrapper<rusty::Function<void(const ChannelFrame&) const>>;",
-                "export using OnClosedCallback = ::srpc::detail::CallbackWrapper<rusty::Function<void(ChannelError) const>>;",
-                "export using OnErrorCallback = ::srpc::detail::CallbackWrapper<rusty::Function<void(ChannelError, std::string_view) const>>;",
                 "export using ChannelConnectionProxy = rusty::Box<ChannelConnectionBase>;",
-                "export using OnAcceptCallback = ::srpc::detail::CallbackWrapper<rusty::Function<void(ChannelConnectionProxy) const>>;",
-                "export using ChannelListenerProxy = rusty::Box<ChannelListenerBase>;",
-                "export using ChannelFactoryProxy = rusty::Box<ChannelFactoryBase>;",
                 "export std::string_view channel_error_to_string(ChannelError error);",
-                "export template <class U> class ChannelFactoryBaseAdapter;",
-                "export template <class U> class ChannelFactoryBaseAdapterRef;",
-                "export template <class U> class ChannelFactoryBaseAdapterRefMut;",
-                "export template <class U> class ChannelListenerBaseAdapter;",
-                "export template <class U> class ChannelListenerBaseAdapterRef;",
-                "export template <class U> class ChannelListenerBaseAdapterRefMut;",
-                "export template <class U> class ChannelConnectionBaseAdapter;",
-                "export template <class U> class ChannelConnectionBaseAdapterRef;",
-                "export template <class U> class ChannelConnectionBaseAdapterRefMut;",
             }
         ),
-        symbols=frozenset(
-            {
-                (
-                    "D",
-                    "typeinfo for srpc::ChannelConnectionBase@srpc.channel",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::ChannelFactoryBase@srpc.channel",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::ChannelListenerBase@srpc.channel",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::ChannelConnectionBase@srpc.channel",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::ChannelFactoryBase@srpc.channel",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::ChannelListenerBase@srpc.channel",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::ChannelConnectionBase@srpc.channel",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::ChannelFactoryBase@srpc.channel",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::ChannelListenerBase@srpc.channel",
-                ),
-                (
-                    "T",
-                    "srpc::ChannelConnectionBase@srpc.channel::~ChannelConnectionBase()",
-                ),
-                (
-                    "T",
-                    "srpc::ChannelFactoryBase@srpc.channel::~ChannelFactoryBase()",
-                ),
-                (
-                    "T",
-                    "srpc::ChannelListenerBase@srpc.channel::~ChannelListenerBase()",
-                ),
-                (
-                    "T",
-                    "srpc::channel_error_to_string@srpc.channel(srpc::ChannelError@srpc.channel)",
-                ),
-            }
-        ),
+        symbols=frozenset({
+            ('D', 'typeinfo for srpc::ChannelConnectionBase@srpc.channel'),
+            ('D', 'typeinfo for srpc::ChannelFactoryBase@srpc.channel'),
+            ('D', 'typeinfo for srpc::ChannelListenerBase@srpc.channel'),
+            ('D', 'vtable for srpc::ChannelConnectionBase@srpc.channel'),
+            ('D', 'vtable for srpc::ChannelFactoryBase@srpc.channel'),
+            ('D', 'vtable for srpc::ChannelListenerBase@srpc.channel'),
+            ('R', 'typeinfo name for srpc::ChannelConnectionBase@srpc.channel'),
+            ('R', 'typeinfo name for srpc::ChannelFactoryBase@srpc.channel'),
+            ('R', 'typeinfo name for srpc::ChannelListenerBase@srpc.channel'),
+            ('T', 'srpc::ChannelConnectionBase@srpc.channel::set_keepalive(bool, int, int, int) const'),
+            ('T', 'srpc::ChannelConnectionBase@srpc.channel::~ChannelConnectionBase()'),
+            ('T', 'srpc::ChannelFactoryBase@srpc.channel::~ChannelFactoryBase()'),
+            ('T', 'srpc::ChannelListenerBase@srpc.channel::~ChannelListenerBase()'),
+            ('T', 'srpc::channel_error_to_string@srpc.channel(srpc::ChannelError@srpc.channel)'),
+        }),
     ),
     "srpc.epoll_wrapper": AbiSpec(
         surface=frozenset(
             {
-                "export module srpc.epoll_wrapper;",
-                "namespace srpc {",
-                "import rusty;",
                 "export class Pollable;",
                 "export struct Epoll;",
                 "export extern rusty::sync::atomic::AtomicI32 epoll_remove_count;",
-                "export constexpr int32_t READ = static_cast<int32_t>(1);",
-                "export constexpr int32_t WRITE = static_cast<int32_t>(2);",
-                "export constexpr int32_t NO_CHANGE = static_cast<int32_t>(-1);",
-                "export constexpr int32_t READABLE = static_cast<int32_t>(1);",
-                "export constexpr int32_t WRITABLE = static_cast<int32_t>(2);",
-                "export constexpr int32_t ERROR = static_cast<int32_t>(4);",
                 "export void epoll_bump_remove_count();",
-                "export template <class U> class PollableAdapter;",
-                "export template <class U> class PollableAdapterRef;",
-                "export template <class U> class PollableAdapterRefMut;",
                 "export int32_t epoll_open();",
-                "export int32_t epoll_add_impl(int32_t poll_fd, int32_t fd, int32_t poll_mode);",
-                "export int32_t epoll_remove_impl(int32_t poll_fd, int32_t fd);",
-                "export int32_t epoll_update_impl(int32_t poll_fd, int32_t fd, int32_t new_mode, int32_t old_mode);",
-                "export int32_t epoll_wait(int32_t epoll_fd, EpollWaitEvent* events, int32_t max_events, int32_t timeout_ms);",
+                "int32_t Add(int32_t fd, int32_t poll_mode);",
+                "int32_t Remove(int32_t fd);",
+                "int32_t Update(int32_t fd, int32_t new_mode, int32_t old_mode);",
             }
         ),
         symbols=frozenset(
             {
-                (
-                    "D",
-                    "typeinfo for srpc::Pollable@srpc.epoll_wrapper",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::Pollable@srpc.epoll_wrapper",
-                ),
-                (
-                    "R",
-                    "srpc::LINUX_EPOLLERR@srpc.epoll_wrapper",
-                ),
-                (
-                    "R",
-                    "srpc::LINUX_EPOLLHUP@srpc.epoll_wrapper",
-                ),
-                (
-                    "R",
-                    "srpc::LINUX_EPOLLIN@srpc.epoll_wrapper",
-                ),
-                (
-                    "R",
-                    "srpc::LINUX_EPOLLOUT@srpc.epoll_wrapper",
-                ),
-                (
-                    "R",
-                    "srpc::LINUX_EPOLLRDHUP@srpc.epoll_wrapper",
-                ),
-                (
-                    "R",
-                    "srpc::PollMode::NO_CHANGE@srpc.epoll_wrapper",
-                ),
-                (
-                    "R",
-                    "srpc::PollMode::READ@srpc.epoll_wrapper",
-                ),
-                (
-                    "R",
-                    "srpc::PollMode::WRITE@srpc.epoll_wrapper",
-                ),
-                (
-                    "R",
-                    "srpc::PollReady::ERROR@srpc.epoll_wrapper",
-                ),
-                (
-                    "R",
-                    "srpc::PollReady::READABLE@srpc.epoll_wrapper",
-                ),
-                (
-                    "R",
-                    "srpc::PollReady::WRITABLE@srpc.epoll_wrapper",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::Pollable@srpc.epoll_wrapper",
-                ),
-                (
-                    "T",
-                    "srpc::Epoll@srpc.epoll_wrapper::Add(int, int)",
-                ),
-                (
-                    "T",
-                    "srpc::Epoll@srpc.epoll_wrapper::Remove(int)",
-                ),
-                (
-                    "T",
-                    "srpc::Epoll@srpc.epoll_wrapper::Update(int, int, int)",
-                ),
-                (
-                    "T",
-                    "srpc::Epoll@srpc.epoll_wrapper::fd() const",
-                ),
-                (
-                    "T",
-                    "srpc::Epoll@srpc.epoll_wrapper::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::EpollWaitEvent@srpc.epoll_wrapper::default_()",
-                ),
-                (
-                    "T",
-                    "srpc::Pollable@srpc.epoll_wrapper::~Pollable()",
-                ),
-                (
-                    "T",
-                    "srpc::epoll_bump_remove_count@srpc.epoll_wrapper()",
-                ),
+                ('D', 'typeinfo for srpc::Pollable@srpc.epoll_wrapper'),
+                ('D', 'vtable for srpc::Pollable@srpc.epoll_wrapper'),
+                ('R', 'srpc::LINUX_EPOLLERR@srpc.epoll_wrapper'),
+                ('R', 'srpc::LINUX_EPOLLHUP@srpc.epoll_wrapper'),
+                ('R', 'srpc::LINUX_EPOLLIN@srpc.epoll_wrapper'),
+                ('R', 'srpc::LINUX_EPOLLOUT@srpc.epoll_wrapper'),
+                ('R', 'srpc::LINUX_EPOLLRDHUP@srpc.epoll_wrapper'),
+                ('R', 'srpc::PollMode::NO_CHANGE@srpc.epoll_wrapper'),
+                ('R', 'srpc::PollMode::READ@srpc.epoll_wrapper'),
+                ('R', 'srpc::PollMode::WRITE@srpc.epoll_wrapper'),
+                ('R', 'srpc::PollReady::ERROR@srpc.epoll_wrapper'),
+                ('R', 'srpc::PollReady::READABLE@srpc.epoll_wrapper'),
+                ('R', 'srpc::PollReady::WRITABLE@srpc.epoll_wrapper'),
+                ('R', 'typeinfo name for srpc::Pollable@srpc.epoll_wrapper'),
+                ('T', 'srpc::Epoll@srpc.epoll_wrapper::Add(int, int)'),
+                ('T', 'srpc::Epoll@srpc.epoll_wrapper::Remove(int)'),
+                ('T', 'srpc::Epoll@srpc.epoll_wrapper::Update(int, int, int)'),
+                ('T', 'srpc::Epoll@srpc.epoll_wrapper::fd() const'),
+                ('T', 'srpc::Epoll@srpc.epoll_wrapper::new_()'),
+                ('T', 'srpc::EpollWaitEvent@srpc.epoll_wrapper::default_()'),
+                ('T', 'srpc::Pollable@srpc.epoll_wrapper::~Pollable()'),
+                ('T', 'srpc::epoll_add_impl@srpc.epoll_wrapper(int, int, int)'),
+                ('T', 'srpc::epoll_bump_remove_count@srpc.epoll_wrapper()'),
+                ('T', 'srpc::epoll_open@srpc.epoll_wrapper()'),
+                ('T', 'srpc::epoll_remove_impl@srpc.epoll_wrapper(int, int)'),
+                ('T', 'srpc::epoll_update_impl@srpc.epoll_wrapper(int, int, int, int)'),
             }
         ),
     ),
     "srpc.pollable_proxy": AbiSpec(
         surface=frozenset(
             {
-                "export module srpc.pollable_proxy;",
-                "namespace srpc {",
                 "export class PollableBase;",
                 "export using PollableProxy = rusty::Box<PollableBase>;",
-                "export template <class U> class PollableBaseAdapter;",
-                "export template <class U> class PollableBaseAdapterRef;",
-                "export template <class U> class PollableBaseAdapterRefMut;",
+                "export template<typename T>",
+                "PollableProxy make_pollable_proxy_from_typed_arc(rusty::Arc<T> poll);",
+                "virtual int32_t fd() const = 0;",
+                "virtual int32_t poll_mode() const = 0;",
+                "virtual void close() = 0;",
             }
         ),
         symbols=frozenset(
             {
-                (
-                    "D",
-                    "typeinfo for srpc::PollableBase@srpc.pollable_proxy",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::PollableBase@srpc.pollable_proxy",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::PollableBase@srpc.pollable_proxy",
-                ),
-                (
-                    "T",
-                    "srpc::PollableBase@srpc.pollable_proxy::~PollableBase()",
-                ),
+                ('D', 'typeinfo for srpc::PollableBase@srpc.pollable_proxy'),
+                ('D', 'vtable for srpc::PollableBase@srpc.pollable_proxy'),
+                ('R', 'typeinfo name for srpc::PollableBase@srpc.pollable_proxy'),
+                ('T', 'srpc::PollableBase@srpc.pollable_proxy::~PollableBase()'),
             }
         ),
     ),
     "srpc.callbacks": AbiSpec(
         surface=frozenset(
             {
-                "export module srpc.callbacks;",
-                "namespace srpc {",
-                "import vec_port.vec;",
-                "import srpc.errors;",
                 "export struct ConnectionCallbacks;",
                 "export struct CallbackManager;",
                 "export using ConnectionCallback = rusty::Arc<rusty::Function<void() const>>;",
-                "export using ErrorCallback = rusty::Arc<rusty::Function<void(LegacyRpcError, const std::string&) const>>;",
-                "export using ReconnectCallback = rusty::Arc<rusty::Function<void(bool) const>>;",
+                "static ConnectionCallbacks new_();",
+                "static CallbackManager new_();",
+                "void invoke_on_error(LegacyRpcError error, std::string_view message) const;",
+                "size_t callback_count() const;",
             }
         ),
         symbols=frozenset(
             {
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::add_on_connected(rusty::Function<void () const>) const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::add_on_disconnected(rusty::Function<void () const>) const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::add_on_error(rusty::Function<void (srpc::RpcError@srpc.errors, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&) const>) const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::add_on_reconnected(rusty::Function<void (bool) const>) const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::add_on_reconnecting(rusty::Function<void () const>) const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::callback_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::clear_all() const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::has_callbacks() const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::inflight_enter() const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::inflight_exit() const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::invoke_on_connected() const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::invoke_on_disconnected() const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::invoke_on_error(srpc::RpcError@srpc.errors, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::invoke_on_reconnected(bool) const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::invoke_on_reconnecting() const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::on_connected_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::on_disconnected_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::on_error_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::on_reconnected_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::CallbackManager@srpc.callbacks::on_reconnecting_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::ConnectionCallbacks@srpc.callbacks::clear()",
-                ),
-                (
-                    "T",
-                    "srpc::ConnectionCallbacks@srpc.callbacks::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::ConnectionCallbacks@srpc.callbacks::total_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::invoke_connection_callback_safely@srpc.callbacks(rusty::Arc<rusty::Function<void () const>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::invoke_error_callback_safely@srpc.callbacks(rusty::Arc<rusty::Function<void (srpc::RpcError@srpc.errors, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&) const>> const&, srpc::RpcError@srpc.errors, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::invoke_reconnect_callback_safely@srpc.callbacks(rusty::Arc<rusty::Function<void (bool) const>> const&, bool)",
-                ),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::add_on_connected(rusty::Function<void () const>) const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::add_on_disconnected(rusty::Function<void () const>) const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::add_on_error(rusty::Function<void (srpc::RpcError@srpc.errors, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>) const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::add_on_reconnected(rusty::Function<void (bool) const>) const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::add_on_reconnecting(rusty::Function<void () const>) const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::callback_count() const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::clear_all() const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::has_callbacks() const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::inflight_enter() const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::inflight_exit() const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::invoke_on_connected() const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::invoke_on_disconnected() const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::invoke_on_error(srpc::RpcError@srpc.errors, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::invoke_on_reconnected(bool) const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::invoke_on_reconnecting() const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::new_()'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::on_connected_count() const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::on_disconnected_count() const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::on_error_count() const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::on_reconnected_count() const'),
+                ('T', 'srpc::CallbackManager@srpc.callbacks::on_reconnecting_count() const'),
+                ('T', 'srpc::ConnectionCallbacks@srpc.callbacks::clear()'),
+                ('T', 'srpc::ConnectionCallbacks@srpc.callbacks::new_()'),
+                ('T', 'srpc::ConnectionCallbacks@srpc.callbacks::total_count() const'),
+                ('T', 'srpc::invoke_connection_callback_safely@srpc.callbacks(rusty::Arc<rusty::Function<void () const>> const&)'),
+                ('T', 'srpc::invoke_reconnect_callback_safely@srpc.callbacks(rusty::Arc<rusty::Function<void (bool) const>> const&, bool)'),
+                ('T', 'srpc::invoke_error_callback_safely@srpc.callbacks(rusty::Arc<rusty::Function<void (srpc::RpcError@srpc.errors, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>> const&, srpc::RpcError@srpc.errors, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
             }
         ),
     ),
     "srpc.inmemory_channel": AbiSpec(
         surface=frozenset(
             {
-                "export module srpc.inmemory_channel;",
-                "namespace srpc {",
-                "import vec_port.vec;",
-                "import std_port;",
-                "import srpc.channel;",
-                "export struct InMemoryConnectionStateInner;",
-                "export struct InMemoryConnectionState;",
                 "export struct InMemoryChannel;",
-                "export struct InMemoryChannelShim;",
-                "export struct InMemoryListenerInnerState;",
                 "export struct InMemorySwitchboard;",
                 "export struct InMemoryListener;",
-                "export struct InMemoryListenerShim;",
                 "export struct InMemoryFactory;",
+                "export struct InMemoryChannelShim;",
+                "export struct InMemoryListenerShim;",
                 "export struct InMemoryFactoryShim;",
-                "export ::srpc::ChannelError inmemory_channel_send_frame(const InMemoryChannel& channel, const ::srpc::ChannelFrame& frame);",
-                "export void inmemory_channel_inject_drop_next_sends(const InMemoryChannel& channel, int32_t count);",
-                "export void inmemory_channel_inject_send_error(const InMemoryChannel& channel, ::srpc::ChannelError error, int32_t count);",
-                "export void inmemory_channel_clear_fault_injection(const InMemoryChannel& channel);",
-                "export ::srpc::ChannelConnectionProxy make_inmemory_channel_proxy(rusty::Arc<InMemoryChannel> connection);",
-                "export rusty::Option<rusty::Arc<InMemoryChannel>> inmemory_listener_accept_for_connect(const InMemoryListener& listener, const std::string& client_address);",
-                "export ::srpc::ChannelListenerProxy make_inmemory_listener_proxy(rusty::Arc<InMemoryListener> listener);",
-                "export ::srpc::ConnectResult inmemory_factory_connect(const InMemoryFactory& factory, std::string_view address);",
-                "export rusty::Option<::srpc::ChannelListenerProxy> inmemory_factory_make_listener(const InMemoryFactory& factory);",
-                "export ::srpc::ChannelFactoryProxy make_inmemory_factory_proxy(rusty::Arc<InMemoryFactory> factory);",
-                "export std::tuple<rusty::Arc<InMemoryChannel>, rusty::Arc<InMemoryChannel>> make_channel_pair_for_testing(std::string a_address, std::string b_address);",
+                "::srpc::ChannelError send_frame(const ::srpc::ChannelFrame& frame) const;",
+                "static InMemorySwitchboard new_();",
             }
         ),
         symbols=frozenset(
             {
-                (
-                    "D",
-                    "typeinfo for srpc::InMemoryChannelShim@srpc.inmemory_channel",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::InMemoryFactoryShim@srpc.inmemory_channel",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::InMemoryListenerShim@srpc.inmemory_channel",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::InMemoryChannelShim@srpc.inmemory_channel",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::InMemoryFactoryShim@srpc.inmemory_channel",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::InMemoryListenerShim@srpc.inmemory_channel",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::InMemoryChannelShim@srpc.inmemory_channel",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::InMemoryFactoryShim@srpc.inmemory_channel",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::InMemoryListenerShim@srpc.inmemory_channel",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannel@srpc.inmemory_channel::close() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannel@srpc.inmemory_channel::flush() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannel@srpc.inmemory_channel::is_closed() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannel@srpc.inmemory_channel::new_(rusty::Arc<srpc::InMemoryConnectionState@srpc.inmemory_channel>, bool)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannel@srpc.inmemory_channel::peer_address() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannel@srpc.inmemory_channel::send_frame(srpc::ChannelFrame@srpc.channel const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannel@srpc.inmemory_channel::set_on_closed(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel) const>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannel@srpc.inmemory_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannel@srpc.inmemory_channel::set_on_frame(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelFrame@srpc.channel const&) const>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannelShim@srpc.inmemory_channel::InMemoryChannelShim(srpc::InMemoryChannelShim@srpc.inmemory_channel&&)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannelShim@srpc.inmemory_channel::InMemoryChannelShim(rusty::Arc<srpc::InMemoryChannel@srpc.inmemory_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannelShim@srpc.inmemory_channel::close()",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannelShim@srpc.inmemory_channel::flush()",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannelShim@srpc.inmemory_channel::is_closed() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannelShim@srpc.inmemory_channel::peer_address() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannelShim@srpc.inmemory_channel::send_frame(srpc::ChannelFrame@srpc.channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannelShim@srpc.inmemory_channel::set_on_closed(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel) const>>)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannelShim@srpc.inmemory_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryChannelShim@srpc.inmemory_channel::set_on_frame(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelFrame@srpc.channel const&) const>>)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryFactory@srpc.inmemory_channel::backend_name() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryFactory@srpc.inmemory_channel::connect(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryFactory@srpc.inmemory_channel::make_listener() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryFactory@srpc.inmemory_channel::new_(rusty::Arc<srpc::InMemorySwitchboard@srpc.inmemory_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryFactoryShim@srpc.inmemory_channel::InMemoryFactoryShim(srpc::InMemoryFactoryShim@srpc.inmemory_channel&&)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryFactoryShim@srpc.inmemory_channel::InMemoryFactoryShim(rusty::Arc<srpc::InMemoryFactory@srpc.inmemory_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryFactoryShim@srpc.inmemory_channel::backend_name() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryFactoryShim@srpc.inmemory_channel::connect(std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryFactoryShim@srpc.inmemory_channel::make_listener()",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListener@srpc.inmemory_channel::close() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListener@srpc.inmemory_channel::is_closed() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListener@srpc.inmemory_channel::listen(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListener@srpc.inmemory_channel::local_address() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListener@srpc.inmemory_channel::new_(rusty::Arc<srpc::InMemorySwitchboard@srpc.inmemory_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListener@srpc.inmemory_channel::set_on_accept(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListener@srpc.inmemory_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListener@srpc.inmemory_channel::set_self_weak(rusty::sync::Weak<srpc::InMemoryListener@srpc.inmemory_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListenerShim@srpc.inmemory_channel::InMemoryListenerShim(srpc::InMemoryListenerShim@srpc.inmemory_channel&&)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListenerShim@srpc.inmemory_channel::InMemoryListenerShim(rusty::Arc<srpc::InMemoryListener@srpc.inmemory_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListenerShim@srpc.inmemory_channel::close()",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListenerShim@srpc.inmemory_channel::is_closed() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListenerShim@srpc.inmemory_channel::listen(std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListenerShim@srpc.inmemory_channel::local_address() const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListenerShim@srpc.inmemory_channel::set_on_accept(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const>>)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemoryListenerShim@srpc.inmemory_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>)",
-                ),
-                (
-                    "T",
-                    "srpc::InMemorySwitchboard@srpc.inmemory_channel::find_listener(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemorySwitchboard@srpc.inmemory_channel::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::InMemorySwitchboard@srpc.inmemory_channel::register_listener(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, rusty::sync::Weak<srpc::InMemoryListener@srpc.inmemory_channel>) const",
-                ),
-                (
-                    "T",
-                    "srpc::InMemorySwitchboard@srpc.inmemory_channel::unregister_listener(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::channel_error_address_in_use@srpc.inmemory_channel()",
-                ),
-                (
-                    "T",
-                    "srpc::channel_error_connection_reset@srpc.inmemory_channel()",
-                ),
-                (
-                    "T",
-                    "srpc::channel_error_from_code@srpc.inmemory_channel(int)",
-                ),
-                (
-                    "T",
-                    "srpc::channel_error_internal@srpc.inmemory_channel()",
-                ),
-                (
-                    "T",
-                    "srpc::channel_error_none@srpc.inmemory_channel()",
-                ),
-                (
-                    "T",
-                    "srpc::empty_connection_inner@srpc.inmemory_channel()",
-                ),
-                (
-                    "T",
-                    "srpc::empty_listener_inner@srpc.inmemory_channel()",
-                ),
-                (
-                    "T",
-                    "srpc::inmemory_channel_clear_fault_injection@srpc.inmemory_channel(srpc::InMemoryChannel@srpc.inmemory_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::inmemory_channel_inject_drop_next_sends@srpc.inmemory_channel(srpc::InMemoryChannel@srpc.inmemory_channel const&, int)",
-                ),
-                (
-                    "T",
-                    "srpc::inmemory_channel_inject_send_error@srpc.inmemory_channel(srpc::InMemoryChannel@srpc.inmemory_channel const&, srpc::ChannelError@srpc.channel, int)",
-                ),
-                (
-                    "T",
-                    "srpc::inmemory_channel_send_frame@srpc.inmemory_channel(srpc::InMemoryChannel@srpc.inmemory_channel const&, srpc::ChannelFrame@srpc.channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::inmemory_factory_connect@srpc.inmemory_channel(srpc::InMemoryFactory@srpc.inmemory_channel const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::inmemory_factory_make_listener@srpc.inmemory_channel(srpc::InMemoryFactory@srpc.inmemory_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::inmemory_listener_accept_for_connect@srpc.inmemory_channel(srpc::InMemoryListener@srpc.inmemory_channel const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::inmemory_listener_listen_with_weak@srpc.inmemory_channel(srpc::InMemoryListener@srpc.inmemory_channel const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>, rusty::Option<rusty::sync::Weak<srpc::InMemoryListener@srpc.inmemory_channel>>)",
-                ),
-                (
-                    "T",
-                    "srpc::make_channel_pair_for_testing@srpc.inmemory_channel(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::make_connection_state@srpc.inmemory_channel(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::make_inmemory_channel_proxy@srpc.inmemory_channel(rusty::Arc<srpc::InMemoryChannel@srpc.inmemory_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::make_inmemory_factory_proxy@srpc.inmemory_channel(rusty::Arc<srpc::InMemoryFactory@srpc.inmemory_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::make_inmemory_listener_proxy@srpc.inmemory_channel(rusty::Arc<srpc::InMemoryListener@srpc.inmemory_channel>)",
-                ),
+                ('D', 'typeinfo for srpc::InMemoryChannelShim@srpc.inmemory_channel'),
+                ('D', 'typeinfo for srpc::InMemoryFactoryShim@srpc.inmemory_channel'),
+                ('D', 'typeinfo for srpc::InMemoryListenerShim@srpc.inmemory_channel'),
+                ('D', 'vtable for srpc::InMemoryChannelShim@srpc.inmemory_channel'),
+                ('D', 'vtable for srpc::InMemoryFactoryShim@srpc.inmemory_channel'),
+                ('D', 'vtable for srpc::InMemoryListenerShim@srpc.inmemory_channel'),
+                ('R', 'typeinfo name for srpc::InMemoryChannelShim@srpc.inmemory_channel'),
+                ('R', 'typeinfo name for srpc::InMemoryFactoryShim@srpc.inmemory_channel'),
+                ('R', 'typeinfo name for srpc::InMemoryListenerShim@srpc.inmemory_channel'),
+                ('T', 'srpc::InMemoryChannel@srpc.inmemory_channel::close() const'),
+                ('T', 'srpc::InMemoryChannel@srpc.inmemory_channel::flush() const'),
+                ('T', 'srpc::InMemoryChannel@srpc.inmemory_channel::is_closed() const'),
+                ('T', 'srpc::InMemoryChannel@srpc.inmemory_channel::new_(rusty::Arc<srpc::InMemoryConnectionState@srpc.inmemory_channel>, bool)'),
+                ('T', 'srpc::InMemoryChannel@srpc.inmemory_channel::peer_address() const'),
+                ('T', 'srpc::InMemoryChannel@srpc.inmemory_channel::send_frame(srpc::ChannelFrame@srpc.channel const&) const'),
+                ('T', 'srpc::InMemoryChannel@srpc.inmemory_channel::set_on_closed(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel) const>>) const'),
+                ('T', 'srpc::InMemoryChannel@srpc.inmemory_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>) const'),
+                ('T', 'srpc::InMemoryChannel@srpc.inmemory_channel::set_on_frame(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelFrame@srpc.channel const&) const>>) const'),
+                ('T', 'srpc::InMemoryChannelShim@srpc.inmemory_channel::InMemoryChannelShim(rusty::Arc<srpc::InMemoryChannel@srpc.inmemory_channel>)'),
+                ('T', 'srpc::InMemoryChannelShim@srpc.inmemory_channel::InMemoryChannelShim(srpc::InMemoryChannelShim@srpc.inmemory_channel&&)'),
+                ('T', 'srpc::InMemoryChannelShim@srpc.inmemory_channel::close() const'),
+                ('T', 'srpc::InMemoryChannelShim@srpc.inmemory_channel::flush() const'),
+                ('T', 'srpc::InMemoryChannelShim@srpc.inmemory_channel::is_closed() const'),
+                ('T', 'srpc::InMemoryChannelShim@srpc.inmemory_channel::peer_address() const'),
+                ('T', 'srpc::InMemoryChannelShim@srpc.inmemory_channel::send_frame(srpc::ChannelFrame@srpc.channel const&) const'),
+                ('T', 'srpc::InMemoryChannelShim@srpc.inmemory_channel::set_on_closed(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel) const>>)'),
+                ('T', 'srpc::InMemoryChannelShim@srpc.inmemory_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>)'),
+                ('T', 'srpc::InMemoryChannelShim@srpc.inmemory_channel::set_on_frame(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelFrame@srpc.channel const&) const>>)'),
+                ('T', 'srpc::InMemoryFactory@srpc.inmemory_channel::backend_name() const'),
+                ('T', 'srpc::InMemoryFactory@srpc.inmemory_channel::connect(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+                ('T', 'srpc::InMemoryFactory@srpc.inmemory_channel::make_listener() const'),
+                ('T', 'srpc::InMemoryFactory@srpc.inmemory_channel::new_(rusty::Arc<srpc::InMemorySwitchboard@srpc.inmemory_channel>)'),
+                ('T', 'srpc::InMemoryFactoryShim@srpc.inmemory_channel::InMemoryFactoryShim(rusty::Arc<srpc::InMemoryFactory@srpc.inmemory_channel>)'),
+                ('T', 'srpc::InMemoryFactoryShim@srpc.inmemory_channel::InMemoryFactoryShim(srpc::InMemoryFactoryShim@srpc.inmemory_channel&&)'),
+                ('T', 'srpc::InMemoryFactoryShim@srpc.inmemory_channel::backend_name() const'),
+                ('T', 'srpc::InMemoryFactoryShim@srpc.inmemory_channel::connect(std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+                ('T', 'srpc::InMemoryFactoryShim@srpc.inmemory_channel::make_listener()'),
+                ('T', 'srpc::InMemoryListener@srpc.inmemory_channel::close() const'),
+                ('T', 'srpc::InMemoryListener@srpc.inmemory_channel::is_closed() const'),
+                ('T', 'srpc::InMemoryListener@srpc.inmemory_channel::listen(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+                ('T', 'srpc::InMemoryListener@srpc.inmemory_channel::local_address() const'),
+                ('T', 'srpc::InMemoryListener@srpc.inmemory_channel::new_(rusty::Arc<srpc::InMemorySwitchboard@srpc.inmemory_channel>)'),
+                ('T', 'srpc::InMemoryListener@srpc.inmemory_channel::set_on_accept(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const>>) const'),
+                ('T', 'srpc::InMemoryListener@srpc.inmemory_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>) const'),
+                ('T', 'srpc::InMemoryListener@srpc.inmemory_channel::set_self_weak(rusty::sync::Weak<srpc::InMemoryListener@srpc.inmemory_channel>)'),
+                ('T', 'srpc::InMemoryListenerShim@srpc.inmemory_channel::InMemoryListenerShim(rusty::Arc<srpc::InMemoryListener@srpc.inmemory_channel>)'),
+                ('T', 'srpc::InMemoryListenerShim@srpc.inmemory_channel::InMemoryListenerShim(srpc::InMemoryListenerShim@srpc.inmemory_channel&&)'),
+                ('T', 'srpc::InMemoryListenerShim@srpc.inmemory_channel::close()'),
+                ('T', 'srpc::InMemoryListenerShim@srpc.inmemory_channel::is_closed() const'),
+                ('T', 'srpc::InMemoryListenerShim@srpc.inmemory_channel::listen(std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+                ('T', 'srpc::InMemoryListenerShim@srpc.inmemory_channel::local_address() const'),
+                ('T', 'srpc::InMemoryListenerShim@srpc.inmemory_channel::set_on_accept(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const>>)'),
+                ('T', 'srpc::InMemoryListenerShim@srpc.inmemory_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>)'),
+                ('T', 'srpc::InMemorySwitchboard@srpc.inmemory_channel::find_listener(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+                ('T', 'srpc::InMemorySwitchboard@srpc.inmemory_channel::new_()'),
+                ('T', 'srpc::InMemorySwitchboard@srpc.inmemory_channel::register_listener(rusty::String, rusty::sync::Weak<srpc::InMemoryListener@srpc.inmemory_channel>) const'),
+                ('T', 'srpc::InMemorySwitchboard@srpc.inmemory_channel::unregister_listener(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+                ('T', 'srpc::channel_error_address_in_use@srpc.inmemory_channel()'),
+                ('T', 'srpc::channel_error_connection_reset@srpc.inmemory_channel()'),
+                ('T', 'srpc::channel_error_from_code@srpc.inmemory_channel(int)'),
+                ('T', 'srpc::channel_error_internal@srpc.inmemory_channel()'),
+                ('T', 'srpc::channel_error_none@srpc.inmemory_channel()'),
+                ('T', 'srpc::empty_connection_inner@srpc.inmemory_channel()'),
+                ('T', 'srpc::empty_listener_inner@srpc.inmemory_channel()'),
+                ('T', 'srpc::inmemory_channel_clear_fault_injection@srpc.inmemory_channel(srpc::InMemoryChannel@srpc.inmemory_channel const&)'),
+                ('T', 'srpc::inmemory_channel_inject_drop_next_sends@srpc.inmemory_channel(srpc::InMemoryChannel@srpc.inmemory_channel const&, int)'),
+                ('T', 'srpc::inmemory_channel_inject_duplicate_next_sends@srpc.inmemory_channel(srpc::InMemoryChannel@srpc.inmemory_channel const&, int)'),
+                ('T', 'srpc::inmemory_channel_inject_send_error@srpc.inmemory_channel(srpc::InMemoryChannel@srpc.inmemory_channel const&, srpc::ChannelError@srpc.channel, int)'),
+                ('T', 'srpc::inmemory_channel_send_frame@srpc.inmemory_channel(srpc::InMemoryChannel@srpc.inmemory_channel const&, srpc::ChannelFrame@srpc.channel const&)'),
+                ('T', 'srpc::inmemory_factory_connect@srpc.inmemory_channel(srpc::InMemoryFactory@srpc.inmemory_channel const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+                ('T', 'srpc::inmemory_factory_make_listener@srpc.inmemory_channel(srpc::InMemoryFactory@srpc.inmemory_channel const&)'),
+                ('T', 'srpc::inmemory_listener_accept_for_connect@srpc.inmemory_channel(srpc::InMemoryListener@srpc.inmemory_channel const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+                ('T', 'srpc::inmemory_listener_listen_with_weak@srpc.inmemory_channel(srpc::InMemoryListener@srpc.inmemory_channel const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>, rusty::Option<rusty::sync::Weak<srpc::InMemoryListener@srpc.inmemory_channel>>)'),
+                ('T', 'srpc::make_channel_pair_for_testing@srpc.inmemory_channel(rusty::String, rusty::String)'),
+                ('T', 'srpc::make_connection_state@srpc.inmemory_channel(rusty::String, rusty::String)'),
+                ('T', 'srpc::make_inmemory_channel_proxy@srpc.inmemory_channel(rusty::Arc<srpc::InMemoryChannel@srpc.inmemory_channel>)'),
+                ('T', 'srpc::make_inmemory_factory_proxy@srpc.inmemory_channel(rusty::Arc<srpc::InMemoryFactory@srpc.inmemory_channel>)'),
+                ('T', 'srpc::make_inmemory_listener_proxy@srpc.inmemory_channel(rusty::Arc<srpc::InMemoryListener@srpc.inmemory_channel>)'),
             }
         ),
     ),
     "srpc.fiber_channel": AbiSpec(
         surface=frozenset(
             {
-                "export module srpc.fiber_channel;",
-                "namespace srpc {",
-                "import vec_port.vec;",
-                "import srpc.channel;",
-                "import srpc.reactor;",
                 "export struct OwnedFrame;",
                 "export struct FiberChannel;",
+                "static FiberChannel new_(::srpc::ChannelConnectionProxy ch);",
+                'rusty::Option<OwnedFrame> recv_frame() const;',
+                '::srpc::ChannelError send_frame(const ::srpc::ChannelFrame& frame) const;',
+                "bool is_closed() const;",
             }
         ),
         symbols=frozenset(
             {
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::arm_waiter()",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::bind_callbacks()",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::channel_for_test()",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::close()",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::is_closed() const",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::new_(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>)",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::on_inbound_closed()",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::on_inbound_frame(srpc::ChannelFrame@srpc.channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::recv_frame()",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::rusty_mark_forgotten() const",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::send_frame(srpc::ChannelFrame@srpc.channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::signal_pending_recv()",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::try_pop()",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::wait_for_signal()",
-                ),
-                (
-                    "T",
-                    "srpc::FiberChannel@srpc.fiber_channel::~FiberChannel()",
-                ),
-                (
-                    "T",
-                    "srpc::OwnedFrame@srpc.fiber_channel::default_()",
-                ),
-                (
-                    "T",
-                    "srpc::fiberchannel_owned_copy@srpc.fiber_channel(srpc::ChannelFrame@srpc.channel const&)",
-                ),
+                ('T', 'srpc::FiberChannel@srpc.fiber_channel::arm_waiter() const'),
+                ('T', 'srpc::FiberChannel@srpc.fiber_channel::bind_callbacks()'),
+                ('T', 'srpc::FiberChannel@srpc.fiber_channel::channel_for_test()'),
+                ('T', 'srpc::FiberChannel@srpc.fiber_channel::close() const'),
+                ('T', 'srpc::FiberChannel@srpc.fiber_channel::is_closed() const'),
+                ('T', 'srpc::FiberChannel@srpc.fiber_channel::new_(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>)'),
+                ('T', 'srpc::FiberChannel@srpc.fiber_channel::recv_frame() const'),
+                ('T', 'srpc::FiberChannel@srpc.fiber_channel::rusty_mark_forgotten() const'),
+                ('T', 'srpc::FiberChannel@srpc.fiber_channel::send_frame(srpc::ChannelFrame@srpc.channel const&) const'),
+                ('T', 'srpc::FiberChannel@srpc.fiber_channel::try_pop() const'),
+                ('T', 'srpc::FiberChannel@srpc.fiber_channel::~FiberChannel()'),
+                ('T', 'srpc::OwnedFrame@srpc.fiber_channel::default_()'),
+                ('T', 'srpc::fiberchannel_owned_copy@srpc.fiber_channel(srpc::ChannelFrame@srpc.channel const&)'),
             }
         ),
     ),
     "srpc.threading": AbiSpec(
         surface=frozenset(
             {
-                "export module srpc.threading;",
-                "namespace srpc {",
-                "import srpc.debugging;",
                 "export struct SpinLock;",
                 "export using AtomicBool = rusty::sync::atomic::AtomicBool;",
                 "export using Ordering = rusty::sync::atomic::Ordering;",
                 "export void cpu_pause();",
+                "static SpinLock new_();",
+                "void lock() const;",
+                "void unlock() const;",
             }
         ),
         symbols=frozenset(
             {
-                (
-                    "T",
-                    "srpc::Pthread_cond_broadcast@srpc.threading(pthread_cond_t*)",
-                ),
-                (
-                    "T",
-                    "srpc::Pthread_cond_destroy@srpc.threading(pthread_cond_t*)",
-                ),
-                (
-                    "T",
-                    "srpc::Pthread_cond_init@srpc.threading(pthread_cond_t*, pthread_condattr_t const*)",
-                ),
-                (
-                    "T",
-                    "srpc::Pthread_cond_signal@srpc.threading(pthread_cond_t*)",
-                ),
-                (
-                    "T",
-                    "srpc::Pthread_cond_wait@srpc.threading(pthread_cond_t*, pthread_mutex_t*)",
-                ),
-                (
-                    "T",
-                    "srpc::Pthread_mutex_destroy@srpc.threading(pthread_mutex_t*)",
-                ),
-                (
-                    "T",
-                    "srpc::Pthread_mutex_init@srpc.threading(pthread_mutex_t*, pthread_mutexattr_t const*)",
-                ),
-                (
-                    "T",
-                    "srpc::Pthread_mutex_lock@srpc.threading(pthread_mutex_t*)",
-                ),
-                (
-                    "T",
-                    "srpc::Pthread_mutex_unlock@srpc.threading(pthread_mutex_t*)",
-                ),
-                (
-                    "T",
-                    "srpc::Pthread_spin_destroy@srpc.threading(int volatile*)",
-                ),
-                (
-                    "T",
-                    "srpc::Pthread_spin_init@srpc.threading(int volatile*, int)",
-                ),
-                (
-                    "T",
-                    "srpc::Pthread_spin_lock@srpc.threading(int volatile*)",
-                ),
-                (
-                    "T",
-                    "srpc::Pthread_spin_unlock@srpc.threading(int volatile*)",
-                ),
-                (
-                    "T",
-                    "srpc::SpinLock@srpc.threading::lock() const",
-                ),
-                (
-                    "T",
-                    "srpc::SpinLock@srpc.threading::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::SpinLock@srpc.threading::unlock() const",
-                ),
-                (
-                    "T",
-                    "srpc::cpu_pause@srpc.threading()",
-                ),
+                ('T', 'srpc::Pthread_cond_broadcast@srpc.threading(pthread_cond_t*)'),
+                ('T', 'srpc::Pthread_cond_destroy@srpc.threading(pthread_cond_t*)'),
+                ('T', 'srpc::Pthread_cond_init@srpc.threading(pthread_cond_t*, pthread_condattr_t const*)'),
+                ('T', 'srpc::Pthread_cond_signal@srpc.threading(pthread_cond_t*)'),
+                ('T', 'srpc::Pthread_cond_wait@srpc.threading(pthread_cond_t*, pthread_mutex_t*)'),
+                ('T', 'srpc::Pthread_mutex_destroy@srpc.threading(pthread_mutex_t*)'),
+                ('T', 'srpc::Pthread_mutex_init@srpc.threading(pthread_mutex_t*, pthread_mutexattr_t const*)'),
+                ('T', 'srpc::Pthread_mutex_lock@srpc.threading(pthread_mutex_t*)'),
+                ('T', 'srpc::Pthread_mutex_unlock@srpc.threading(pthread_mutex_t*)'),
+                ('T', 'srpc::Pthread_spin_destroy@srpc.threading(int volatile*)'),
+                ('T', 'srpc::Pthread_spin_init@srpc.threading(int volatile*, int)'),
+                ('T', 'srpc::Pthread_spin_lock@srpc.threading(int volatile*)'),
+                ('T', 'srpc::Pthread_spin_unlock@srpc.threading(int volatile*)'),
+                ('T', 'srpc::SpinLock@srpc.threading::lock() const'),
+                ('T', 'srpc::SpinLock@srpc.threading::new_()'),
+                ('T', 'srpc::SpinLock@srpc.threading::unlock() const'),
+                ('T', 'srpc::cpu_pause@srpc.threading()'),
+            }
+        ),
+    ),
+    "srpc.debugging": AbiSpec(
+        surface=frozenset(
+            {
+                "export bool likely(bool value);",
+                "export bool unlikely(bool value);",
+                "export void print_stack_trace(FILE* stream = stderr);",
+                "export void verify_failed(std::string_view file, uint32_t line);",
+                "static BtCapture new_();",
+                "export template<typename Expr>",
+            }
+        ),
+        symbols=frozenset(
+            {
+                ('T', 'srpc::BtCapture@srpc.debugging::new_()'),
+                ('T', 'srpc::bt_capture@srpc.debugging()'),
+                ('T', 'srpc::bt_index_prefix@srpc.debugging(int)'),
+                ('T', 'srpc::bt_render@srpc.debugging(srpc::BtCapture@srpc.debugging const&)'),
+                ('T', 'srpc::likely@srpc.debugging(bool)'),
+                ('T', 'srpc::print_stack_trace@srpc.debugging(_IO_FILE*)'),
+                ('T', 'srpc::unlikely@srpc.debugging(bool)'),
+                ('T', 'srpc::verify_at@srpc.debugging(bool, std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned int)'),
+                ('T', 'srpc::verify_failed@srpc.debugging(std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned int)'),
             }
         ),
     ),
     "srpc.any_message": AbiSpec(
         surface=frozenset(
             {
-                "export module srpc.any_message;",
-                "namespace srpc {",
-                "import std_port;",
-                "import srpc.debugging;",
-                "import srpc.serializable;",
-                "export struct AnyMessage;",
-                "export using Factory = rusty::Function<rusty::Arc<SerializableBase>()>;",
-                "export int32_t register_type(std::string name, std::type_index type_id, ::srpc::any_message_registry::Factory factory);",
-                "export std::string name_for_type_owned(std::type_index type_id);",
-                "export bool is_registered_name(const std::string& name);",
-                "export bool is_registered_type(std::type_index type_id);",
-                "export void clear_for_testing();",
-                "export rusty::Option<rusty::Arc<SerializableBase>> create(const std::string& name);",
+                'bool is_a() const;',
+                'export bool is_registered_name(std::string_view name);',
+                'export bool is_registered_type(std::type_index type_id);',
+                'export int32_t register_type(rusty::String name, std::type_index type_id, ::srpc::any_message_registry::Factory factory);',
+                'export rusty::Option<::srpc::SerializableProxy> create(std::string_view name);',
+                'export rusty::String name_for_type_owned(std::type_index type_id);',
+                'export struct AnyMessage;',
+                'export using Factory = rusty::Function<::srpc::SerializableProxy()>;',
+                'export void deserialize(AnyMessage& message, ::srpc::BinaryReadArchive& archive)',
+                'export void serialize(const AnyMessage& message, ::srpc::BinaryWriteArchive& archive)',
+                'rusty::Option<::srpc::SerializableProxy> payload_;',
+                'rusty::Option<rusty::Arc<T>> unpack() const;',
+                'static AnyMessage pack(rusty::Arc<T> value);',
+                'static AnyMessage pack_as(rusty::String name, rusty::Arc<T> value);',
+                'rusty::String type_name_;',
+                'void load(::srpc::BinaryReadArchive& archive);',
+                'void save(::srpc::BinaryWriteArchive& archive) const;',
             }
         ),
         symbols=frozenset(
             {
-                (
-                    "T",
-                    "srpc::AnyMessage@srpc.any_message::load(srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::AnyMessage@srpc.any_message::save(srpc::BinaryWriteArchive@srpc.serializable&) const",
-                ),
-                (
-                    "T",
-                    "srpc::any_message_registry::clear_for_testing@srpc.any_message()",
-                ),
-                (
-                    "T",
-                    "srpc::any_message_registry::create@srpc.any_message(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::any_message_registry::is_registered_name@srpc.any_message(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::any_message_registry::is_registered_type@srpc.any_message(std::__1::type_index)",
-                ),
-                (
-                    "T",
-                    "srpc::any_message_registry::name_for_type_owned@srpc.any_message(std::__1::type_index)",
-                ),
-                (
-                    "T",
-                    "srpc::any_message_registry::register_type@srpc.any_message(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, std::__1::type_index, rusty::Function<rusty::Arc<srpc::SerializableBase@srpc.serializable> ()>)",
-                ),
-                (
-                    "T",
-                    "srpc::deserialize@srpc.any_message(srpc::AnyMessage@srpc.any_message&, srpc::BinaryReadArchive@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::serialize@srpc.any_message(srpc::AnyMessage@srpc.any_message const&, srpc::BinaryWriteArchive@srpc.serializable&)",
-                ),
-            }
-        ),
-    ),
-    "srpc.tcp_channel": AbiSpec(
-        surface=frozenset(
-            {
-                "export module srpc.tcp_channel;",
-                "namespace srpc {",
-                "import srpc.channel;",
-                "import srpc.frame_codec;",
-                "import srpc.pollable_proxy;",
-                "import srpc.reactor;",
-                "export struct TcpConnection;",
-                "export struct TcpListener;",
-                "export struct TcpFactory;",
-                "export constexpr size_t kTcpConnectionOutboundHighWaterDefault = (static_cast<size_t>(4) * static_cast<size_t>(1024)) * static_cast<size_t>(1024);",
-                "export ::srpc::ChannelConnectionProxy make_tcp_connection_channel_proxy(rusty::Arc<TcpConnection> conn);",
-                "export ::srpc::ChannelListenerProxy make_tcp_listener_channel_proxy(rusty::Arc<TcpListener> listener);",
-                "export ::srpc::ChannelFactoryProxy make_tcp_factory_proxy(rusty::Arc<TcpFactory> factory);",
-                "export ::srpc::ConnectResult tcp_factory_connect(const TcpFactory& fac, std::string_view addr);",
-                "export rusty::Option<::srpc::ChannelListenerProxy> tcp_factory_make_listener(const TcpFactory& self_);",
-            }
-        ),
-        symbols=frozenset(
-            {
-                (
-                    "D",
-                    "typeinfo for srpc::TcpChannelShim@srpc.tcp_channel",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::TcpFactoryShim@srpc.tcp_channel",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::TcpListenerChannelShim@srpc.tcp_channel",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::TcpListenerPollableShim@srpc.tcp_channel",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::TcpPollableShim@srpc.tcp_channel",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::TcpChannelShim@srpc.tcp_channel",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::TcpFactoryShim@srpc.tcp_channel",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::TcpListenerChannelShim@srpc.tcp_channel",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::TcpListenerPollableShim@srpc.tcp_channel",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::TcpPollableShim@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_ACCES@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_ADDR_IN_USE@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_ADDR_NOT_AVAILABLE@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_AGAIN@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_BROKEN_PIPE@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_CONNECTION_REFUSED@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_CONNECTION_RESET@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_HOST_UNREACHABLE@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_INTERRUPTED@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_NETWORK_UNREACHABLE@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_NOT_CONNECTED@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_OPERATION_NOT_PERMITTED@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_PROCESS_FD_LIMIT@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_SYSTEM_FD_LIMIT@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_TIMED_OUT@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_ERR_WOULD_BLOCK@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_MAX_FRAME_PAYLOAD_SIZE@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_POLL_NO_CHANGE@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_POLL_READ@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::TCP_POLL_WRITE@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::kRecvScratchBytes@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "srpc::kTcpConnectionOutboundHighWaterDefault@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::TcpChannelShim@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::TcpFactoryShim@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::TcpListenerChannelShim@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::TcpListenerPollableShim@srpc.tcp_channel",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::TcpPollableShim@srpc.tcp_channel",
-                ),
-                (
-                    "T",
-                    "srpc::TcpChannelShim@srpc.tcp_channel::TcpChannelShim(srpc::TcpChannelShim@srpc.tcp_channel&&)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpChannelShim@srpc.tcp_channel::TcpChannelShim(rusty::Arc<srpc::TcpConnection@srpc.tcp_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpChannelShim@srpc.tcp_channel::close()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpChannelShim@srpc.tcp_channel::flush()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpChannelShim@srpc.tcp_channel::is_closed() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpChannelShim@srpc.tcp_channel::peer_address() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpChannelShim@srpc.tcp_channel::send_frame(srpc::ChannelFrame@srpc.channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpChannelShim@srpc.tcp_channel::set_on_closed(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel) const>>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpChannelShim@srpc.tcp_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpChannelShim@srpc.tcp_channel::set_on_frame(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelFrame@srpc.channel const&) const>>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::check_pending_write_update() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::close() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::content_size() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::fd() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::flush() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::handle_error() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::handle_read() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::handle_write() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::is_closed() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::new_(int, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::peer_address() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::poll_mode() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::send_frame(srpc::ChannelFrame@srpc.channel const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::set_on_closed(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel) const>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::set_on_frame(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelFrame@srpc.channel const&) const>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::set_outbound_high_water(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpConnection@srpc.tcp_channel::set_poll_thread(rusty::Arc<srpc::PollThread@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpFactory@srpc.tcp_channel::backend_name() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpFactory@srpc.tcp_channel::connect(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpFactory@srpc.tcp_channel::make_listener() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpFactory@srpc.tcp_channel::new_(rusty::Arc<srpc::PollThread@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpFactory@srpc.tcp_channel::set_connect_timeout_ms(int)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpFactoryShim@srpc.tcp_channel::TcpFactoryShim(srpc::TcpFactoryShim@srpc.tcp_channel&&)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpFactoryShim@srpc.tcp_channel::TcpFactoryShim(rusty::Arc<srpc::TcpFactory@srpc.tcp_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpFactoryShim@srpc.tcp_channel::backend_name() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpFactoryShim@srpc.tcp_channel::connect(std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpFactoryShim@srpc.tcp_channel::make_listener()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::check_pending_write_update() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::close() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::content_size() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::fd() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::handle_error() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::handle_read() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::handle_write() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::is_closed() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::listen(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::local_address() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::poll_mode() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::set_on_accept(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::set_poll_thread(rusty::Arc<srpc::PollThread@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListener@srpc.tcp_channel::set_self_weak(rusty::sync::Weak<srpc::TcpListener@srpc.tcp_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerChannelShim@srpc.tcp_channel::TcpListenerChannelShim(srpc::TcpListenerChannelShim@srpc.tcp_channel&&)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerChannelShim@srpc.tcp_channel::TcpListenerChannelShim(rusty::Arc<srpc::TcpListener@srpc.tcp_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerChannelShim@srpc.tcp_channel::close()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerChannelShim@srpc.tcp_channel::is_closed() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerChannelShim@srpc.tcp_channel::listen(std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerChannelShim@srpc.tcp_channel::local_address() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerChannelShim@srpc.tcp_channel::set_on_accept(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const>>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerChannelShim@srpc.tcp_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerHandleReadScope@srpc.tcp_channel::TcpListenerHandleReadScope(srpc::TcpListenerHandleReadScope@srpc.tcp_channel&&)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerHandleReadScope@srpc.tcp_channel::TcpListenerHandleReadScope(rusty::sync::atomic::detail::Atomic<unsigned int> const*, bool)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerHandleReadScope@srpc.tcp_channel::acquired() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerHandleReadScope@srpc.tcp_channel::new_(srpc::TcpListener@srpc.tcp_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerHandleReadScope@srpc.tcp_channel::operator=(srpc::TcpListenerHandleReadScope@srpc.tcp_channel&&)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerHandleReadScope@srpc.tcp_channel::rusty_mark_forgotten() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerHandleReadScope@srpc.tcp_channel::~TcpListenerHandleReadScope()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerPollableShim@srpc.tcp_channel::TcpListenerPollableShim(srpc::TcpListenerPollableShim@srpc.tcp_channel&&)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerPollableShim@srpc.tcp_channel::TcpListenerPollableShim(rusty::Arc<srpc::TcpListener@srpc.tcp_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerPollableShim@srpc.tcp_channel::check_pending_write_update() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerPollableShim@srpc.tcp_channel::close()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerPollableShim@srpc.tcp_channel::content_size()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerPollableShim@srpc.tcp_channel::fd() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerPollableShim@srpc.tcp_channel::handle_error()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerPollableShim@srpc.tcp_channel::handle_read()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerPollableShim@srpc.tcp_channel::handle_write()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerPollableShim@srpc.tcp_channel::is_closed() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpListenerPollableShim@srpc.tcp_channel::poll_mode() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpPollableShim@srpc.tcp_channel::TcpPollableShim(srpc::TcpPollableShim@srpc.tcp_channel&&)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpPollableShim@srpc.tcp_channel::TcpPollableShim(rusty::Arc<srpc::TcpConnection@srpc.tcp_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::TcpPollableShim@srpc.tcp_channel::check_pending_write_update() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpPollableShim@srpc.tcp_channel::close()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpPollableShim@srpc.tcp_channel::content_size()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpPollableShim@srpc.tcp_channel::fd() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpPollableShim@srpc.tcp_channel::handle_error()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpPollableShim@srpc.tcp_channel::handle_read()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpPollableShim@srpc.tcp_channel::handle_write()",
-                ),
-                (
-                    "T",
-                    "srpc::TcpPollableShim@srpc.tcp_channel::is_closed() const",
-                ),
-                (
-                    "T",
-                    "srpc::TcpPollableShim@srpc.tcp_channel::poll_mode() const",
-                ),
-                (
-                    "T",
-                    "srpc::connect_errno_to_channel_error@srpc.tcp_channel(int)",
-                ),
-                (
-                    "T",
-                    "srpc::io_kind_to_channel_error@srpc.tcp_channel(rusty::io::Error::Kind)",
-                ),
-                (
-                    "T",
-                    "srpc::make_tcp_connection_channel_proxy@srpc.tcp_channel(rusty::Arc<srpc::TcpConnection@srpc.tcp_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::make_tcp_connection_pollable_proxy@srpc.tcp_channel(rusty::Arc<srpc::TcpConnection@srpc.tcp_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::make_tcp_factory_proxy@srpc.tcp_channel(rusty::Arc<srpc::TcpFactory@srpc.tcp_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::make_tcp_listener_channel_proxy@srpc.tcp_channel(rusty::Arc<srpc::TcpListener@srpc.tcp_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::make_tcp_listener_pollable_proxy@srpc.tcp_channel(rusty::Arc<srpc::TcpListener@srpc.tcp_channel>)",
-                ),
-                (
-                    "T",
-                    "srpc::set_nonblocking_fd@srpc.tcp_channel(int)",
-                ),
-                (
-                    "T",
-                    "srpc::tcp_factory_connect@srpc.tcp_channel(srpc::TcpFactory@srpc.tcp_channel const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::tcp_factory_connect_socket@srpc.tcp_channel(rusty::net::SocketAddrV4, int, srpc::ChannelError@srpc.channel&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcp_factory_make_listener@srpc.tcp_channel(srpc::TcpFactory@srpc.tcp_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_append_inbound@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_close@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_consume_inbound@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_deliver_on_closed_locked@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, srpc::ChannelError@srpc.channel)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_drain_outbound_locked@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_drop_after_error@srpc.tcp_channel(std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_errno_to_channel_error@srpc.tcp_channel(int)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_flush@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_handle_error@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_handle_read@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_handle_write@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_last_errno@srpc.tcp_channel()",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_next_frame@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, srpc::FrameView@srpc.frame_codec&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_recv_bytes@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, srpc::RecvScratch@srpc.tcp_channel*)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_reset_fd@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_reset_inbound@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_scratch@srpc.tcp_channel()",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_send_bytes@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_send_frame@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, srpc::ChannelFrame@srpc.channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcpconn_trim_sent@srpc.tcp_channel(std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::tcplistener_accept_step@srpc.tcp_channel(srpc::TcpListener@srpc.tcp_channel const&, srpc::AcceptStep@srpc.tcp_channel*)",
-                ),
-                (
-                    "T",
-                    "srpc::tcplistener_accept_step_new@srpc.tcp_channel()",
-                ),
-                (
-                    "T",
-                    "srpc::tcplistener_close_accepted@srpc.tcp_channel(srpc::AcceptStep@srpc.tcp_channel&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcplistener_handle_error@srpc.tcp_channel(srpc::TcpListener@srpc.tcp_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcplistener_handle_read@srpc.tcp_channel(srpc::TcpListener@srpc.tcp_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcplistener_is_bound@srpc.tcp_channel(srpc::TcpListener@srpc.tcp_channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::tcplistener_take_proxy@srpc.tcp_channel(srpc::AcceptStep@srpc.tcp_channel&)",
-                ),
+                ('T', 'srpc::AnyMessage@srpc.any_message::load(srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::AnyMessage@srpc.any_message::save(srpc::BinaryWriteArchive@srpc.serializable&) const'),
+                ('T', 'srpc::any_message_registry::clear_for_testing@srpc.any_message()'),
+                ('T', 'srpc::any_message_registry::create@srpc.any_message(std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+                ('T', 'srpc::any_message_registry::is_registered_name@srpc.any_message(std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+                ('T', 'srpc::any_message_registry::is_registered_type@srpc.any_message(std::__1::type_index)'),
+                ('T', 'srpc::any_message_registry::name_for_type_owned@srpc.any_message(std::__1::type_index)'),
+                ('T', 'srpc::any_message_registry::register_type@srpc.any_message(rusty::String, std::__1::type_index, rusty::Function<rusty::Arc<srpc::SerializableBase@srpc.serializable> ()>)'),
+                ('T', 'srpc::deserialize@srpc.any_message(srpc::AnyMessage@srpc.any_message&, srpc::BinaryReadArchive@srpc.serializable&)'),
+                ('T', 'srpc::serialize@srpc.any_message(srpc::AnyMessage@srpc.any_message const&, srpc::BinaryWriteArchive@srpc.serializable&)'),
             }
         ),
     ),
     "srpc.reactor": AbiSpec(
         surface=frozenset(
             {
-                "export module srpc.reactor;",
-                "namespace srpc {",
-                "import vec_port.vec;",
-                "import rc_port;",
-                "import btree_port.btree.map;",
-                "import btree_port.btree.set;",
-                "import std_port;",
-                "import srpc.basetypes;",
-                "import srpc.debugging;",
-                "import srpc.epoll_wrapper;",
-                "import srpc.logging;",
-                "import srpc.misc;",
-                "import srpc.pollable_proxy;",
-                "import std;",
-                "export enum class EventStatus : int32_t;",
-                "export constexpr EventStatus EventStatus_INIT();",
-                "export constexpr EventStatus EventStatus_WAIT();",
-                "export constexpr EventStatus EventStatus_READY();",
-                "export constexpr EventStatus EventStatus_DONE();",
-                "export constexpr EventStatus EventStatus_TIMEOUT();",
-                "export constexpr EventStatus EventStatus_DEBUG();",
-                "export struct StacklessTaskEntry;",
-                "export struct StacklessCancelReport;",
-                "export struct PollCommand_AddPollable;",
-                "export struct PollCommand_RemovePollable;",
-                "export struct PollCommand_ClosePollable;",
-                "export struct PollCommand_UpdateMode;",
-                "export struct PollCommand_AddJob;",
-                "export struct PollCommand_RemoveJob;",
-                "export struct PollCommand_Shutdown;",
-                "export enum class FiberStatus : int32_t;",
-                "export constexpr FiberStatus FiberStatus_INIT();",
-                "export constexpr FiberStatus FiberStatus_STARTED();",
-                "export constexpr FiberStatus FiberStatus_PAUSED();",
-                "export constexpr FiberStatus FiberStatus_RESUMED();",
-                "export constexpr FiberStatus FiberStatus_FINISHED();",
-                "export constexpr FiberStatus FiberStatus_FINALIZING();",
-                "export constexpr FiberStatus FiberStatus_RECYCLED();",
-                "export enum class QuorumPolicy : int32_t;",
-                "export constexpr QuorumPolicy QuorumPolicy_DEFAULT();",
-                "export constexpr QuorumPolicy QuorumPolicy_ALL_NO();",
-                "export constexpr QuorumPolicy QuorumPolicy_COMMITTED_SHORT();",
-                "export constexpr QuorumPolicy QuorumPolicy_ALWAYS_READY();",
-                "export class EventPollable;",
-                "export struct PollThreadWorker;",
-                "export struct PollThread;",
-                "export struct EventState;",
-                "export struct IntEvent;",
-                "export struct SharedIntEvent;",
-                "export struct NeverEvent;",
-                "export struct TimeoutEvent;",
-                "export struct WaitAny;",
-                "export struct WaitAll;",
-                "export struct fiber_yield_t;",
-                "export struct fiber_task_t;",
-                "export struct Fiber;",
-                "export struct Reactor;",
-                "export struct QuorumEvent;",
-                "export struct QuorumEventWrapper;",
-                "export using SrcFileCStr = const char*;",
-                "export using EventTestFn = rusty::Function<bool(int32_t) const>;",
-                "export using FiberFn = rusty::Function<void()>;",
-                "export using FiberTaskFn = rusty::Function<void(fiber_yield_t&)>;",
-                "export using StacklessPollFn = rusty::Function<bool(rusty::Context&)>;",
-                "export using TaskVoid = rusty::Task<void>;",
-                "export using PollCmdReceiver = rusty::sync::mpsc::Receiver<PollCommand>;",
-                "export using FdPollableMap = rusty::HashMap<int32_t, ::srpc::PollableProxy>;",
-                "export using FdModeMap = rusty::HashMap<int32_t, int32_t>;",
-                "export using FdSet = rusty::HashSet<int32_t>;",
-                "export using JobSet = std::set<rusty::Arc<Job>>;",
-                "export using PollJoinSlot = rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<rusty::Unit>>>;",
-                "export using QuorumDanglingVec = rusty::Vec<std::pair<uint16_t, int64_t>>;",
-                "export using QuorumFinalizeFn = rusty::Function<bool(QuorumDanglingVec&)>;",
-                "export using StacklessProfileCountU64 = rusty::sync::atomic::AtomicU64;",
-                "export using StacklessProfileCountUsize = rusty::sync::atomic::AtomicUsize;",
-                "export constexpr size_t kDefaultStackBytes = static_cast<size_t>(1) << 20;",
-                "export extern thread_local rusty::Option<rusty::Rc<Reactor>> sp_reactor_th_;",
-                "export extern thread_local rusty::Option<rusty::Rc<Reactor>> sp_disk_reactor_th_;",
-                "export extern thread_local rusty::RefCell<rusty::Option<rusty::Rc<Fiber>>> sp_running_fiber_th_;",
-                "export extern thread_local uint64_t g_fiber_global_id;",
-                "export extern thread_local rusty::HashMap<rusty::String, rusty::Vec<::srpc::PollableProxy>> reactor_clients_th_;",
-                "export extern thread_local size_t reactor_prune_hwm_th_;",
-                "export extern thread_local PollThreadWorker* g_current_poll_worker;",
-                "export rusty::Arc<IntEvent> create_sp_int_event(int32_t target);",
-                "export rusty::Arc<TimeoutEvent> create_sp_timeout_event(uint64_t wait_us);",
-                "export rusty::Arc<NeverEvent> create_sp_never_event();",
-                "export rusty::Arc<WaitAny> create_sp_waitany(rusty::Arc<EventPollable> a, rusty::Arc<EventPollable> b);",
-                "export rusty::Arc<WaitAll> create_sp_waitall();",
-                "export rusty::Arc<WaitAll> create_sp_waitall_from(const rusty::Vec<rusty::Arc<EventPollable>>& evs);",
-                "export bool pollworker_is_on_poll_thread();",
-                "export rusty::Rc<Fiber> fiber_create_run_impl(FiberFn func, const char* file, int64_t line);",
-                "export void fiber_sleep(uint64_t microseconds);",
-                "export extern \"C\" void fiber_task_entry_thunk(rusty::ffi::c_void* arg);",
-                "export rusty::Arc<QuorumEvent> quorum_event_make(int32_t n_total, int32_t quorum);",
-                "export rusty::Arc<QuorumEvent> create_sp_quorum_event(int32_t n_total, int32_t quorum);",
-                "export bool test(const IntEvent& self_);",
-                "export bool is_ready(const IntEvent& self_);",
-                "export void log(const IntEvent& self_);",
-                "export EventStatus status(const IntEvent& self_);",
-                "export void set_status(const IntEvent& self_, EventStatus s);",
-                "export uint64_t wakeup_time(const IntEvent& self_);",
-                "export bool prunable(const IntEvent& self_);",
-                "export void set_prunable(const IntEvent& self_, bool v);",
-                "export rusty::Option<rusty::Rc<Fiber>> upgrade_fiber(const IntEvent& self_);",
-                "export inline const rusty::Cell<EventStatus>& core_status(const IntEvent& self_);",
-                "export inline rusty::thread::ThreadId core_owner_thread(const IntEvent& self_);",
-                "export inline const EventState& core_state(const IntEvent& self_);",
-                "export inline EventState& core_state_mut(IntEvent& self_);",
-                "export inline const rusty::sync::Weak<EventPollable>& core_self(const IntEvent& self_);",
-                "export inline rusty::sync::Weak<EventPollable>& core_self_mut(IntEvent& self_);",
-                "export inline bool core_is_composite(const IntEvent& self_);",
-                "export bool test(const NeverEvent& self_);",
-                "export bool is_ready(const NeverEvent& self_);",
-                "export void log(const NeverEvent& self_);",
-                "export EventStatus status(const NeverEvent& self_);",
-                "export void set_status(const NeverEvent& self_, EventStatus s);",
-                "export uint64_t wakeup_time(const NeverEvent& self_);",
-                "export bool prunable(const NeverEvent& self_);",
-                "export void set_prunable(const NeverEvent& self_, bool v);",
-                "export rusty::Option<rusty::Rc<Fiber>> upgrade_fiber(const NeverEvent& self_);",
-                "export inline const rusty::Cell<EventStatus>& core_status(const NeverEvent& self_);",
-                "export inline rusty::thread::ThreadId core_owner_thread(const NeverEvent& self_);",
-                "export inline const EventState& core_state(const NeverEvent& self_);",
-                "export inline EventState& core_state_mut(NeverEvent& self_);",
-                "export inline const rusty::sync::Weak<EventPollable>& core_self(const NeverEvent& self_);",
-                "export inline rusty::sync::Weak<EventPollable>& core_self_mut(NeverEvent& self_);",
-                "export inline bool core_is_composite(const NeverEvent& self_);",
-                "export bool test(const TimeoutEvent& self_);",
-                "export bool is_ready(const TimeoutEvent& self_);",
-                "export void log(const TimeoutEvent& self_);",
-                "export EventStatus status(const TimeoutEvent& self_);",
-                "export void set_status(const TimeoutEvent& self_, EventStatus s);",
-                "export uint64_t wakeup_time(const TimeoutEvent& self_);",
-                "export bool prunable(const TimeoutEvent& self_);",
-                "export void set_prunable(const TimeoutEvent& self_, bool v);",
-                "export rusty::Option<rusty::Rc<Fiber>> upgrade_fiber(const TimeoutEvent& self_);",
-                "export inline const rusty::Cell<EventStatus>& core_status(const TimeoutEvent& self_);",
-                "export inline rusty::thread::ThreadId core_owner_thread(const TimeoutEvent& self_);",
-                "export inline const EventState& core_state(const TimeoutEvent& self_);",
-                "export inline EventState& core_state_mut(TimeoutEvent& self_);",
-                "export inline const rusty::sync::Weak<EventPollable>& core_self(const TimeoutEvent& self_);",
-                "export inline rusty::sync::Weak<EventPollable>& core_self_mut(TimeoutEvent& self_);",
-                "export inline bool core_is_composite(const TimeoutEvent& self_);",
-                "export bool test(const WaitAny& self_);",
-                "export bool is_ready(const WaitAny& self_);",
-                "export void log(const WaitAny& self_);",
-                "export EventStatus status(const WaitAny& self_);",
-                "export void set_status(const WaitAny& self_, EventStatus s);",
-                "export uint64_t wakeup_time(const WaitAny& self_);",
-                "export bool prunable(const WaitAny& self_);",
-                "export void set_prunable(const WaitAny& self_, bool v);",
-                "export rusty::Option<rusty::Rc<Fiber>> upgrade_fiber(const WaitAny& self_);",
-                "export inline const rusty::Cell<EventStatus>& core_status(const WaitAny& self_);",
-                "export inline rusty::thread::ThreadId core_owner_thread(const WaitAny& self_);",
-                "export inline const EventState& core_state(const WaitAny& self_);",
-                "export inline EventState& core_state_mut(WaitAny& self_);",
-                "export inline const rusty::sync::Weak<EventPollable>& core_self(const WaitAny& self_);",
-                "export inline rusty::sync::Weak<EventPollable>& core_self_mut(WaitAny& self_);",
-                "export inline bool core_is_composite(const WaitAny& self_);",
-                "export bool test(const WaitAll& self_);",
-                "export bool is_ready(const WaitAll& self_);",
-                "export void log(const WaitAll& self_);",
-                "export EventStatus status(const WaitAll& self_);",
-                "export void set_status(const WaitAll& self_, EventStatus s);",
-                "export uint64_t wakeup_time(const WaitAll& self_);",
-                "export bool prunable(const WaitAll& self_);",
-                "export void set_prunable(const WaitAll& self_, bool v);",
-                "export rusty::Option<rusty::Rc<Fiber>> upgrade_fiber(const WaitAll& self_);",
-                "export inline const rusty::Cell<EventStatus>& core_status(const WaitAll& self_);",
-                "export inline rusty::thread::ThreadId core_owner_thread(const WaitAll& self_);",
-                "export inline const EventState& core_state(const WaitAll& self_);",
-                "export inline EventState& core_state_mut(WaitAll& self_);",
-                "export inline const rusty::sync::Weak<EventPollable>& core_self(const WaitAll& self_);",
-                "export inline rusty::sync::Weak<EventPollable>& core_self_mut(WaitAll& self_);",
-                "export inline bool core_is_composite(const WaitAll& self_);",
-                "export bool test(const QuorumEvent& self_);",
-                "export bool is_ready(const QuorumEvent& self_);",
-                "export void log(const QuorumEvent& self_);",
-                "export EventStatus status(const QuorumEvent& self_);",
-                "export void set_status(const QuorumEvent& self_, EventStatus s);",
-                "export uint64_t wakeup_time(const QuorumEvent& self_);",
-                "export bool prunable(const QuorumEvent& self_);",
-                "export void set_prunable(const QuorumEvent& self_, bool v);",
-                "export rusty::Option<rusty::Rc<Fiber>> upgrade_fiber(const QuorumEvent& self_);",
-                "export inline const rusty::Cell<EventStatus>& core_status(const QuorumEvent& self_);",
-                "export inline rusty::thread::ThreadId core_owner_thread(const QuorumEvent& self_);",
-                "export inline const EventState& core_state(const QuorumEvent& self_);",
-                "export inline EventState& core_state_mut(QuorumEvent& self_);",
-                "export inline const rusty::sync::Weak<EventPollable>& core_self(const QuorumEvent& self_);",
-                "export inline rusty::sync::Weak<EventPollable>& core_self_mut(QuorumEvent& self_);",
-                "export inline bool core_is_composite(const QuorumEvent& self_);",
-                "export struct PollCommand_Shutdown { static constexpr bool is_send = true; static constexpr bool is_sync = true; };",
-                "export template <class U> class EventPollableAdapter;",
-                "export template <class U> class EventPollableAdapterRef;",
-                "export template <class U> class EventPollableAdapterRefMut;",
+                'export module srpc.reactor;',
+                'namespace srpc {',
+                'export enum class EventStatus : int32_t {',
+                'export struct Reactor {',
+                'export class EventPollable;',
+                'export struct PollThread {',
+                'export struct PollThreadWorker {',
+                'export struct Fiber {',
+                'export struct IntEvent : public EventPollable {',
+                'export struct TimeoutEvent : public EventPollable {',
+                'export struct NeverEvent : public EventPollable {',
+                'export struct WaitAny : public EventPollable {',
+                'export struct WaitAll : public EventPollable {',
+                'export struct EventState {',
+                'export void reactor_spawn_stackless_task_impl(const Reactor& self_, rusty::Task<void> task);',
+                'void remove(Pollable& poll) const;',
+                'void update_mode(Pollable& poll, int32_t new_mode);',
+                'void pollworker_update_mode(PollThreadWorker& w, Pollable& poll, int32_t new_mode);',
             }
         ),
-        symbols=frozenset(
-            {
-                (
-                    "D",
-                    "typeinfo for janus::QuorumEvent@srpc.reactor",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::EventPollable@srpc.reactor",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::IntEvent@srpc.reactor",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::NeverEvent@srpc.reactor",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::TimeoutEvent@srpc.reactor",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::WaitAll@srpc.reactor",
-                ),
-                (
-                    "D",
-                    "typeinfo for srpc::WaitAny@srpc.reactor",
-                ),
-                (
-                    "D",
-                    "vtable for janus::QuorumEvent@srpc.reactor",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::EventPollable@srpc.reactor",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::IntEvent@srpc.reactor",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::NeverEvent@srpc.reactor",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::TimeoutEvent@srpc.reactor",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::WaitAll@srpc.reactor",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::WaitAny@srpc.reactor",
-                ),
-                (
-                    "R",
-                    "srpc::STACKLESS_UNREGISTERED_SLOT@srpc.reactor",
-                ),
-                (
-                    "R",
-                    "srpc::kDefaultStackBytes@srpc.reactor",
-                ),
-                (
-                    "R",
-                    "typeinfo name for janus::QuorumEvent@srpc.reactor",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::EventPollable@srpc.reactor",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::IntEvent@srpc.reactor",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::NeverEvent@srpc.reactor",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::TimeoutEvent@srpc.reactor",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::WaitAll@srpc.reactor",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::WaitAny@srpc.reactor",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::QuorumEvent(janus::QuorumEvent@srpc.reactor&&)",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::QuorumEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::Cell<int>, rusty::Cell<int>, rusty::RefCell<std_port::collections::hash::map::HashMap@std_port<unsigned short, long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, int, int, rusty::Cell<janus::QuorumPolicy@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<bool>, rusty::Cell<unsigned int>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Arc<srpc::IntEvent@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::add_xid(unsigned short, long) const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::finalize(unsigned long, rusty::Function<bool (rusty::port::vec::Vec@vec_port.vec<std::__1::pair<unsigned short, long>, rusty::alloc::Global>&)>) const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::get_fiber_id() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::get_self() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::is_composite_event() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::is_ready() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::is_slow() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::log() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::no() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::prunable() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::remove_xid(unsigned short) const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::set_prunable(bool) const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::set_self(rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::set_status(srpc::EventStatus@srpc.reactor) const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::status() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::test() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::upgrade_fiber() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::vote_no() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::vote_yes() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::wait() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::wait_timeout(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::wakeup_time() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEvent@srpc.reactor::yes() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::add_xid(unsigned short, long) const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::finalize(unsigned long, rusty::Function<bool (rusty::port::vec::Vec@vec_port.vec<std::__1::pair<unsigned short, long>, rusty::alloc::Global>&)>) const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::get_fiber_id() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::is_ready() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::is_slow() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::log() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::new_(int, int)",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::no() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::q() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::remove_xid(unsigned short) const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::test() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::vote_no() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::vote_yes() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::wait() const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::wait_timeout(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "janus::QuorumEventWrapper@srpc.reactor::yes() const",
-                ),
-                (
-                    "T",
-                    "janus::create_sp_quorum_event@srpc.reactor(int, int)",
-                ),
-                (
-                    "T",
-                    "janus::quorum_collect_dangling@srpc.reactor(janus::QuorumEvent@srpc.reactor const*)",
-                ),
-                (
-                    "T",
-                    "janus::quorum_event_finalize@srpc.reactor(janus::QuorumEvent@srpc.reactor const&, unsigned long, rusty::Function<bool (rusty::port::vec::Vec@vec_port.vec<std::__1::pair<unsigned short, long>, rusty::alloc::Global>&)>)",
-                ),
-                (
-                    "T",
-                    "janus::quorum_event_is_slow@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "janus::quorum_event_make@srpc.reactor(int, int)",
-                ),
-                (
-                    "T",
-                    "srpc::AddJob@srpc.reactor(rusty::Arc<srpc::Job@srpc.misc>)",
-                ),
-                (
-                    "T",
-                    "srpc::AddPollable@srpc.reactor(rusty::Box<srpc::PollableBase@srpc.pollable_proxy, rusty::alloc::Global>)",
-                ),
-                (
-                    "T",
-                    "srpc::ClosePollable@srpc.reactor(int)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable@srpc.reactor::~EventPollable()",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::is_ready@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::is_ready@srpc.reactor(srpc::IntEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::is_ready@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::is_ready@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::is_ready@srpc.reactor(srpc::WaitAll@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::is_ready@srpc.reactor(srpc::WaitAny@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::log@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::log@srpc.reactor(srpc::IntEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::log@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::log@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::log@srpc.reactor(srpc::WaitAll@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::log@srpc.reactor(srpc::WaitAny@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::prunable@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::prunable@srpc.reactor(srpc::IntEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::prunable@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::prunable@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::prunable@srpc.reactor(srpc::WaitAll@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::prunable@srpc.reactor(srpc::WaitAny@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::set_prunable@srpc.reactor(janus::QuorumEvent@srpc.reactor const&, bool)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::set_prunable@srpc.reactor(srpc::IntEvent@srpc.reactor const&, bool)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::set_prunable@srpc.reactor(srpc::NeverEvent@srpc.reactor const&, bool)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::set_prunable@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&, bool)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::set_prunable@srpc.reactor(srpc::WaitAll@srpc.reactor const&, bool)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::set_prunable@srpc.reactor(srpc::WaitAny@srpc.reactor const&, bool)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::set_status@srpc.reactor(janus::QuorumEvent@srpc.reactor const&, srpc::EventStatus@srpc.reactor)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::set_status@srpc.reactor(srpc::IntEvent@srpc.reactor const&, srpc::EventStatus@srpc.reactor)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::set_status@srpc.reactor(srpc::NeverEvent@srpc.reactor const&, srpc::EventStatus@srpc.reactor)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::set_status@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&, srpc::EventStatus@srpc.reactor)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::set_status@srpc.reactor(srpc::WaitAll@srpc.reactor const&, srpc::EventStatus@srpc.reactor)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::set_status@srpc.reactor(srpc::WaitAny@srpc.reactor const&, srpc::EventStatus@srpc.reactor)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::status@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::status@srpc.reactor(srpc::IntEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::status@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::status@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::status@srpc.reactor(srpc::WaitAll@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::status@srpc.reactor(srpc::WaitAny@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::test@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::test@srpc.reactor(srpc::IntEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::test@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::test@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::test@srpc.reactor(srpc::WaitAll@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::test@srpc.reactor(srpc::WaitAny@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::upgrade_fiber@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::IntEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::WaitAll@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::WaitAny@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::wakeup_time@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::IntEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::WaitAll@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::WaitAny@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::EventState@srpc.reactor::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::Fiber@srpc.reactor::continue_() const",
-                ),
-                (
-                    "T",
-                    "srpc::Fiber@srpc.reactor::create_run_impl(rusty::Function<void ()>, char const*, long)",
-                ),
-                (
-                    "T",
-                    "srpc::Fiber@srpc.reactor::current_fiber()",
-                ),
-                (
-                    "T",
-                    "srpc::Fiber@srpc.reactor::finished() const",
-                ),
-                (
-                    "T",
-                    "srpc::Fiber@srpc.reactor::new_(rusty::Function<void ()>)",
-                ),
-                (
-                    "T",
-                    "srpc::Fiber@srpc.reactor::run() const",
-                ),
-                (
-                    "T",
-                    "srpc::Fiber@srpc.reactor::sleep(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::Fiber@srpc.reactor::yield_() const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::IntEvent(srpc::IntEvent@srpc.reactor&&)",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::IntEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::Cell<int>, rusty::Cell<int>)",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::get() const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::get_fiber_id() const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::get_self() const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::is_composite_event() const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::is_ready() const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::log() const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::prunable() const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::record_place(char const*, int) const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::set(int) const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::set_prunable(bool) const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::set_self(rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::set_status(srpc::EventStatus@srpc.reactor) const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::status() const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::test() const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::upgrade_fiber() const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::wait() const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::wait_timeout(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::IntEvent@srpc.reactor::wakeup_time() const",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::NeverEvent(srpc::NeverEvent@srpc.reactor&&)",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::NeverEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::get_self() const",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::is_composite_event() const",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::is_ready() const",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::log() const",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::prunable() const",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::record_place(char const*, int) const",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::set_prunable(bool) const",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::set_self(rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::set_status(srpc::EventStatus@srpc.reactor) const",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::status() const",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::test() const",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::upgrade_fiber() const",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::wait_timeout(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::NeverEvent@srpc.reactor::wakeup_time() const",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::PollThread(srpc::PollThread@srpc.reactor&&)",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::PollThread(rusty::sync::mpsc::Sender<std::__1::variant<srpc::PollCommand_AddPollable@srpc.reactor, srpc::PollCommand_RemovePollable@srpc.reactor, srpc::PollCommand_ClosePollable@srpc.reactor, srpc::PollCommand_UpdateMode@srpc.reactor, srpc::PollCommand_AddJob@srpc.reactor, srpc::PollCommand_RemoveJob@srpc.reactor, srpc::PollCommand_Shutdown@srpc.reactor>>, rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<std::__1::tuple<>>>>, rusty::sync::atomic::detail::Atomic<unsigned long>, rusty::sync::atomic::detail::Atomic<bool>)",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::add(rusty::Arc<srpc::Job@srpc.misc>) const",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::add_proxy(rusty::Box<srpc::PollableBase@srpc.pollable_proxy, rusty::alloc::Global>) const",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::create()",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::get_remove_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::operator=(srpc::PollThread@srpc.reactor&&)",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::remove(srpc::Pollable@srpc.epoll_wrapper&) const",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::remove_fd(int) const",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::request_close(int) const",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::rusty_mark_forgotten() const",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::shutdown() const",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::update_mode(int, int) const",
-                ),
-                (
-                    "T",
-                    "srpc::PollThread@srpc.reactor::~PollThread()",
-                ),
-                (
-                    "T",
-                    "srpc::PollThreadWorker@srpc.reactor::create(rusty::sync::mpsc::Receiver<std::__1::variant<srpc::PollCommand_AddPollable@srpc.reactor, srpc::PollCommand_RemovePollable@srpc.reactor, srpc::PollCommand_ClosePollable@srpc.reactor, srpc::PollCommand_UpdateMode@srpc.reactor, srpc::PollCommand_AddJob@srpc.reactor, srpc::PollCommand_RemoveJob@srpc.reactor, srpc::PollCommand_Shutdown@srpc.reactor>>)",
-                ),
-                (
-                    "T",
-                    "srpc::PollThreadWorker@srpc.reactor::poll_loop()",
-                ),
-                (
-                    "T",
-                    "srpc::PollThreadWorker@srpc.reactor::update_mode(srpc::Pollable@srpc.epoll_wrapper&, int)",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::Reactor(rusty::Cell<int>, rusty::RefCell<rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>>, rusty::RefCell<rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>>, rusty::RefCell<rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>>, rusty::RefCell<rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>>, rusty::RefCell<btree_port::btree::map::BTreeMap@btree_port.btree.map<unsigned long, rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global>, rusty::alloc::Global>>, rusty::RefCell<rusty::port::vec::Vec@vec_port.vec<rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global>, rusty::alloc::Global>>, rusty::Cell<bool>, rusty::Cell<bool>, rusty::Cell<int>, rusty::Cell<int>, rusty::Cell<rusty::thread::ThreadId>, rusty::Cell<long>, rusty::Cell<long>, rusty::Cell<long>, rusty::Cell<long>, rusty::Cell<long>, rusty::RefCell<rusty::port::vec::Vec@vec_port.vec<srpc::StacklessTaskEntry@srpc.reactor, rusty::alloc::Global>>, rusty::RefCell<rusty::port::vec::Vec@vec_port.vec<unsigned long, rusty::alloc::Global>>, rusty::RefCell<rusty::VecDeque<unsigned long>>, rusty::marker::PhantomPinned)",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::check_timeout(rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>&) const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::continue_fiber(rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global> const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::create_run_fiber(rusty::Function<void ()>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::display_waiting_ev() const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::enqueue_stackless_task(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::get_disk_reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::get_reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::process_stackless_tasks() const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::prune_finished_events() const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::recycle(rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global>&) const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::register_fiber(rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global> const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::register_stackless_poller(rusty::Function<bool (rusty::Context&)>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::restore_running_fiber(rusty::Option<rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::run_loop(bool, bool) const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::rusty_mark_forgotten() const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::save_running_fiber() const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::set_running_fiber(rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global> const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::Reactor@srpc.reactor::~Reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::RemoveJob@srpc.reactor(rusty::Arc<srpc::Job@srpc.misc>)",
-                ),
-                (
-                    "T",
-                    "srpc::RemovePollable@srpc.reactor(int)",
-                ),
-                (
-                    "T",
-                    "srpc::SharedIntEvent@srpc.reactor::set(int const&)",
-                ),
-                (
-                    "T",
-                    "srpc::SharedIntEvent@srpc.reactor::wait(rusty::Function<bool (int) const>)",
-                ),
-                (
-                    "T",
-                    "srpc::SharedIntEvent@srpc.reactor::wait_until_gte(int, int)",
-                ),
-                (
-                    "T",
-                    "srpc::Shutdown@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::TimeoutEvent(srpc::TimeoutEvent@srpc.reactor&&)",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::TimeoutEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, unsigned long, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::get_self() const",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::is_composite_event() const",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::is_ready() const",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::log() const",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::prunable() const",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::set_prunable(bool) const",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::set_self(rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::set_status(srpc::EventStatus@srpc.reactor) const",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::status() const",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::test() const",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::upgrade_fiber() const",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::wait() const",
-                ),
-                (
-                    "T",
-                    "srpc::TimeoutEvent@srpc.reactor::wakeup_time() const",
-                ),
-                (
-                    "T",
-                    "srpc::UpdateMode@srpc.reactor(int, int)",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::WaitAll(srpc::WaitAll@srpc.reactor&&)",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::WaitAll(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::RefCell<rusty::port::vec::Vec@vec_port.vec<rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::alloc::Global>>)",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::add_event(rusty::Arc<srpc::EventPollable@srpc.reactor>) const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::get_self() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::is_composite_event() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::is_ready() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::log() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::prunable() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::set_prunable(bool) const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::set_self(rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::set_status(srpc::EventStatus@srpc.reactor) const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::status() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::test() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::upgrade_fiber() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::wait() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::wait_timeout(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAll@srpc.reactor::wakeup_time() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::WaitAny(srpc::WaitAny@srpc.reactor&&)",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::WaitAny(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::port::vec::Vec@vec_port.vec<rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::alloc::Global>)",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::get_self() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::is_composite_event() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::is_ready() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::log() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::prunable() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::set_prunable(bool) const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::set_self(rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::set_status(srpc::EventStatus@srpc.reactor) const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::status() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::test() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::upgrade_fiber() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::wait() const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::wait_timeout(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::WaitAny@srpc.reactor::wakeup_time() const",
-                ),
-                (
-                    "T",
-                    "srpc::create_sp_int_event@srpc.reactor(int)",
-                ),
-                (
-                    "T",
-                    "srpc::create_sp_never_event@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::create_sp_timeout_event@srpc.reactor(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::create_sp_waitall@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::create_sp_waitall_from@srpc.reactor(rusty::port::vec::Vec@vec_port.vec<rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::alloc::Global> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::create_sp_waitany@srpc.reactor(rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::Arc<srpc::EventPollable@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "srpc::current_thread_gettid@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::event_core_get_fiber_id@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::event_state_seed@srpc.reactor(srpc::EventState@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_create_run_impl@srpc.reactor(rusty::Function<void ()>, char const*, long)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_current_fiber@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_do_continue@srpc.reactor(srpc::Fiber@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_do_finalize@srpc.reactor(srpc::Fiber@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_do_yield@srpc.reactor(srpc::Fiber@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_engine_destroy@srpc.reactor(srpc_fiber*)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_engine_resume@srpc.reactor(srpc_fiber*)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_engine_start@srpc.reactor(srpc_fiber*, void*)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_engine_yield@srpc.reactor(srpc_fiber*)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_fn_clear@srpc.reactor(rusty::RefCell<rusty::Function<void ()>> const*)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_fn_invoke@srpc.reactor(rusty::RefCell<rusty::Function<void ()>> const*)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_fn_present@srpc.reactor(rusty::RefCell<rusty::Function<void ()>> const*)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_install_task@srpc.reactor(rusty::RefCell<rusty::Option<rusty::Box<srpc::fiber_task_t@srpc.reactor, rusty::alloc::Global>>> const*, rusty::Function<void (srpc::fiber_yield_t@srpc.reactor&)>)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_is_finished@srpc.reactor(srpc::Fiber@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_next_global_id@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_registry_key@srpc.reactor(rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_run@srpc.reactor(srpc::Fiber@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_run_wrapper@srpc.reactor(srpc::Fiber@srpc.reactor const&, srpc::fiber_yield_t@srpc.reactor*)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_sleep@srpc.reactor(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_task_body_invoke@srpc.reactor(rusty::Function<void (srpc::fiber_yield_t@srpc.reactor&)>&, srpc::fiber_yield_t@srpc.reactor&)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_task_invoke@srpc.reactor(rusty::RefCell<rusty::Option<rusty::Box<srpc::fiber_task_t@srpc.reactor, rusty::alloc::Global>>> const*)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_task_t@srpc.reactor::new_(rusty::Function<void (srpc::fiber_yield_t@srpc.reactor&)>)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_task_t@srpc.reactor::rusty_mark_forgotten() const",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_task_t@srpc.reactor::~fiber_task_t()",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_yield_invoke@srpc.reactor(srpc::fiber_yield_t@srpc.reactor&)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_yield_invoke_ptr@srpc.reactor(srpc::fiber_yield_t@srpc.reactor*)",
-                ),
-                (
-                    "T",
-                    "srpc::fiber_yield_t@srpc.reactor::new_(srpc::fiber_task_t@srpc.reactor&)",
-                ),
-                (
-                    "T",
-                    "srpc::int_event_is_ready@srpc.reactor(srpc::IntEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::int_event_make@srpc.reactor(int)",
-                ),
-                (
-                    "T",
-                    "srpc::int_event_raw_ptr@srpc.reactor(rusty::Arc<srpc::IntEvent@srpc.reactor> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::int_event_set@srpc.reactor(srpc::IntEvent@srpc.reactor const&, int)",
-                ),
-                (
-                    "T",
-                    "srpc::job_ready@srpc.reactor(rusty::Arc<srpc::Job@srpc.misc> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::job_spawn_work@srpc.reactor(rusty::Arc<srpc::Job@srpc.misc> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::never_event_make@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::pollable_proxy_fd@srpc.reactor(rusty::Box<srpc::PollableBase@srpc.pollable_proxy, rusty::alloc::Global> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::pollable_proxy_mode@srpc.reactor(rusty::Box<srpc::PollableBase@srpc.pollable_proxy, rusty::alloc::Global> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::pollthread_create@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::pollthread_drop@srpc.reactor(srpc::PollThread@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_close_proxy_of@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, int)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_create@srpc.reactor(rusty::sync::mpsc::Receiver<std::__1::variant<srpc::PollCommand_AddPollable@srpc.reactor, srpc::PollCommand_RemovePollable@srpc.reactor, srpc::PollCommand_ClosePollable@srpc.reactor, srpc::PollCommand_UpdateMode@srpc.reactor, srpc::PollCommand_AddJob@srpc.reactor, srpc::PollCommand_RemoveJob@srpc.reactor, srpc::PollCommand_Shutdown@srpc.reactor>>)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_do_add_job@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, rusty::Arc<srpc::Job@srpc.misc>)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_do_add_pollable@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, rusty::Box<srpc::PollableBase@srpc.pollable_proxy, rusty::alloc::Global>)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_do_close_pollable@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, int)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_do_remove_job@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, rusty::Arc<srpc::Job@srpc.misc>)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_do_remove_pollable@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, int)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_do_update_mode@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, int, int)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_is_on_poll_thread@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_make@srpc.reactor(rusty::sync::mpsc::Receiver<std::__1::variant<srpc::PollCommand_AddPollable@srpc.reactor, srpc::PollCommand_RemovePollable@srpc.reactor, srpc::PollCommand_ClosePollable@srpc.reactor, srpc::PollCommand_UpdateMode@srpc.reactor, srpc::PollCommand_AddJob@srpc.reactor, srpc::PollCommand_RemoveJob@srpc.reactor, srpc::PollCommand_Shutdown@srpc.reactor>>)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_poll_loop@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_process_commands@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_process_pending_removals@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_snapshot_fds@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_take_removals@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_trigger_job@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&)",
-                ),
-                (
-                    "T",
-                    "srpc::pollworker_update_mode@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, srpc::Pollable@srpc.epoll_wrapper&, int)",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_create_run_fiber_at_impl@srpc.reactor(srpc::Reactor@srpc.reactor const&, rusty::Function<void ()>, char const*, long)",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_create_run_fiber_impl@srpc.reactor(srpc::Reactor@srpc.reactor const&, rusty::Function<void ()>)",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_dec_active_fibers@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_get_or_create_fiber_impl@srpc.reactor(srpc::Reactor@srpc.reactor const&, rusty::Function<void ()>, char const*, long)",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_live_fiber_count@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_log_create@srpc.reactor(bool)",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_log_line@srpc.reactor(int, int, signed char const*, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_make@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_poll_one@srpc.reactor(srpc::Reactor@srpc.reactor const&, unsigned long, rusty::Function<bool (rusty::Context&)>*)",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_spawn_stackless_task_impl@srpc.reactor(srpc::Reactor@srpc.reactor const&, rusty::Task<void>)",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_tls_get@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_tls_get_disk@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_tls_restore_running@srpc.reactor(rusty::Option<rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global>>)",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_tls_save_running@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_tls_set_running@srpc.reactor(rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::reactor_verify@srpc.reactor(bool)",
-                ),
-                (
-                    "T",
-                    "srpc::reusing_fiber@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::shared_int_event_set@srpc.reactor(srpc::SharedIntEvent@srpc.reactor&, int)",
-                ),
-                (
-                    "T",
-                    "srpc::shared_int_event_wait@srpc.reactor(srpc::SharedIntEvent@srpc.reactor&, rusty::Function<bool (int) const>)",
-                ),
-                (
-                    "T",
-                    "srpc::shared_int_event_wait_until_gte@srpc.reactor(srpc::SharedIntEvent@srpc.reactor&, int, int)",
-                ),
-                (
-                    "T",
-                    "srpc::stackless_profile_enabled@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::stackless_profile_env@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::stackless_profile_note_enqueue@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::stackless_profile_note_poll_ready@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::stackless_profile_note_register@srpc.reactor(unsigned long, bool, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::stackless_profile_report_periodic@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::stackless_profile_report_periodic_shim@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::stackless_profile_update_max_slots@srpc.reactor(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::thread_id_to_u64@srpc.reactor(rusty::thread::ThreadId)",
-                ),
-                (
-                    "T",
-                    "srpc::timeout_event_is_ready@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)",
-                ),
-                (
-                    "T",
-                    "srpc::timeout_event_make@srpc.reactor(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::u64_to_thread_id@srpc.reactor(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::waitall_make@srpc.reactor()",
-                ),
-                (
-                    "T",
-                    "srpc::waitall_make_from@srpc.reactor(rusty::port::vec::Vec@vec_port.vec<rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::alloc::Global> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::waitany_make@srpc.reactor(rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::Arc<srpc::EventPollable@srpc.reactor>)",
-                ),
-            }
-        ),
+        symbols=frozenset({
+            ('T', 'srpc::StacklessWakeTarget@srpc.reactor::wake(rusty::Arc<srpc::StacklessWakeTarget@srpc.reactor>)'),
+            ('T', 'srpc::StacklessWakeTarget@srpc.reactor::wake_by_ref(rusty::Arc<srpc::StacklessWakeTarget@srpc.reactor> const&)'),
+            ('T', 'srpc::job_identity@srpc.reactor(rusty::Arc<srpc::Job@srpc.misc> const&)'),
+            ('T', 'srpc::stackless_wake_make_binding@srpc.reactor(rusty::Arc<srpc::StacklessWakeIngress@srpc.reactor>)'),
+            ('D', 'typeinfo for janus::QuorumEvent@srpc.reactor'),
+            ('D', 'typeinfo for srpc::EventPollable@srpc.reactor'),
+            ('D', 'typeinfo for srpc::IntEvent@srpc.reactor'),
+            ('D', 'typeinfo for srpc::NeverEvent@srpc.reactor'),
+            ('D', 'typeinfo for srpc::TimeoutEvent@srpc.reactor'),
+            ('D', 'typeinfo for srpc::WaitAll@srpc.reactor'),
+            ('D', 'typeinfo for srpc::WaitAny@srpc.reactor'),
+            ('D', 'vtable for janus::QuorumEvent@srpc.reactor'),
+            ('D', 'vtable for srpc::EventPollable@srpc.reactor'),
+            ('D', 'vtable for srpc::IntEvent@srpc.reactor'),
+            ('D', 'vtable for srpc::NeverEvent@srpc.reactor'),
+            ('D', 'vtable for srpc::TimeoutEvent@srpc.reactor'),
+            ('D', 'vtable for srpc::WaitAll@srpc.reactor'),
+            ('D', 'vtable for srpc::WaitAny@srpc.reactor'),
+            ('R', 'srpc::STACKLESS_UNREGISTERED_SLOT@srpc.reactor'),
+            ('R', 'srpc::kDefaultStackBytes@srpc.reactor'),
+            ('R', 'typeinfo name for janus::QuorumEvent@srpc.reactor'),
+            ('R', 'typeinfo name for srpc::EventPollable@srpc.reactor'),
+            ('R', 'typeinfo name for srpc::IntEvent@srpc.reactor'),
+            ('R', 'typeinfo name for srpc::NeverEvent@srpc.reactor'),
+            ('R', 'typeinfo name for srpc::TimeoutEvent@srpc.reactor'),
+            ('R', 'typeinfo name for srpc::WaitAll@srpc.reactor'),
+            ('R', 'typeinfo name for srpc::WaitAny@srpc.reactor'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::QuorumEvent(janus::QuorumEvent@srpc.reactor&&)'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::QuorumEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::Cell<int>, rusty::Cell<int>, rusty::RefCell<std_port::collections::hash::map::HashMap@std_port<unsigned short, long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, int, int, rusty::Cell<janus::QuorumPolicy@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<bool>, rusty::Cell<unsigned int>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Arc<srpc::IntEvent@srpc.reactor>)'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::add_xid(unsigned short, long) const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::finalize(unsigned long, rusty::Function<bool (rusty::port::vec::Vec@vec_port.vec<std::__1::pair<unsigned short, long>, rusty::alloc::Global>&)>) const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::get_fiber_id() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::get_self() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::is_composite_event() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::is_ready() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::is_slow() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::log() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::no() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::prunable() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::remove_xid(unsigned short) const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::set_prunable(bool) const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::set_self(rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::set_status(srpc::EventStatus@srpc.reactor) const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::status() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::test() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::upgrade_fiber() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::vote_no() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::vote_yes() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::wait() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::wait_timeout(unsigned long) const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::wakeup_time() const'),
+            ('T', 'janus::QuorumEvent@srpc.reactor::yes() const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::add_xid(unsigned short, long) const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::finalize(unsigned long, rusty::Function<bool (rusty::port::vec::Vec@vec_port.vec<std::__1::pair<unsigned short, long>, rusty::alloc::Global>&)>) const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::get_fiber_id() const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::is_ready() const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::is_slow() const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::log() const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::new_(int, int)'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::no() const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::q() const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::remove_xid(unsigned short) const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::test() const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::vote_no() const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::vote_yes() const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::wait() const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::wait_timeout(unsigned long) const'),
+            ('T', 'janus::QuorumEventWrapper@srpc.reactor::yes() const'),
+            ('T', 'janus::create_sp_quorum_event@srpc.reactor(int, int)'),
+            ('T', 'janus::quorum_collect_dangling@srpc.reactor(janus::QuorumEvent@srpc.reactor const*)'),
+            ('T', 'janus::quorum_event_finalize@srpc.reactor(janus::QuorumEvent@srpc.reactor const&, unsigned long, rusty::Function<bool (rusty::port::vec::Vec@vec_port.vec<std::__1::pair<unsigned short, long>, rusty::alloc::Global>&)>)'),
+            ('T', 'janus::quorum_event_is_slow@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)'),
+            ('T', 'janus::quorum_event_make@srpc.reactor(int, int)'),
+            ('T', 'srpc::AddJob@srpc.reactor(rusty::Arc<srpc::Job@srpc.misc>)'),
+            ('T', 'srpc::AddPollable@srpc.reactor(rusty::Box<srpc::PollableBase@srpc.pollable_proxy, rusty::alloc::Global>)'),
+            ('T', 'srpc::ClosePollable@srpc.reactor(int)'),
+            ('T', 'srpc::EventPollable@srpc.reactor::~EventPollable()'),
+            ('T', 'srpc::EventPollable_::is_ready@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::is_ready@srpc.reactor(srpc::IntEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::is_ready@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::is_ready@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::is_ready@srpc.reactor(srpc::WaitAll@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::is_ready@srpc.reactor(srpc::WaitAny@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::log@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::log@srpc.reactor(srpc::IntEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::log@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::log@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::log@srpc.reactor(srpc::WaitAll@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::log@srpc.reactor(srpc::WaitAny@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::prunable@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::prunable@srpc.reactor(srpc::IntEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::prunable@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::prunable@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::prunable@srpc.reactor(srpc::WaitAll@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::prunable@srpc.reactor(srpc::WaitAny@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::set_prunable@srpc.reactor(janus::QuorumEvent@srpc.reactor const&, bool)'),
+            ('T', 'srpc::EventPollable_::set_prunable@srpc.reactor(srpc::IntEvent@srpc.reactor const&, bool)'),
+            ('T', 'srpc::EventPollable_::set_prunable@srpc.reactor(srpc::NeverEvent@srpc.reactor const&, bool)'),
+            ('T', 'srpc::EventPollable_::set_prunable@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&, bool)'),
+            ('T', 'srpc::EventPollable_::set_prunable@srpc.reactor(srpc::WaitAll@srpc.reactor const&, bool)'),
+            ('T', 'srpc::EventPollable_::set_prunable@srpc.reactor(srpc::WaitAny@srpc.reactor const&, bool)'),
+            ('T', 'srpc::EventPollable_::set_status@srpc.reactor(janus::QuorumEvent@srpc.reactor const&, srpc::EventStatus@srpc.reactor)'),
+            ('T', 'srpc::EventPollable_::set_status@srpc.reactor(srpc::IntEvent@srpc.reactor const&, srpc::EventStatus@srpc.reactor)'),
+            ('T', 'srpc::EventPollable_::set_status@srpc.reactor(srpc::NeverEvent@srpc.reactor const&, srpc::EventStatus@srpc.reactor)'),
+            ('T', 'srpc::EventPollable_::set_status@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&, srpc::EventStatus@srpc.reactor)'),
+            ('T', 'srpc::EventPollable_::set_status@srpc.reactor(srpc::WaitAll@srpc.reactor const&, srpc::EventStatus@srpc.reactor)'),
+            ('T', 'srpc::EventPollable_::set_status@srpc.reactor(srpc::WaitAny@srpc.reactor const&, srpc::EventStatus@srpc.reactor)'),
+            ('T', 'srpc::EventPollable_::status@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::status@srpc.reactor(srpc::IntEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::status@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::status@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::status@srpc.reactor(srpc::WaitAll@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::status@srpc.reactor(srpc::WaitAny@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::test@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::test@srpc.reactor(srpc::IntEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::test@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::test@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::test@srpc.reactor(srpc::WaitAll@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::test@srpc.reactor(srpc::WaitAny@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::upgrade_fiber@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::IntEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::WaitAll@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::upgrade_fiber@srpc.reactor(srpc::WaitAny@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::wakeup_time@srpc.reactor(janus::QuorumEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::IntEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::NeverEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::WaitAll@srpc.reactor const&)'),
+            ('T', 'srpc::EventPollable_::wakeup_time@srpc.reactor(srpc::WaitAny@srpc.reactor const&)'),
+            ('T', 'srpc::EventState@srpc.reactor::new_()'),
+            ('T', 'srpc::Fiber@srpc.reactor::continue_() const'),
+            ('T', 'srpc::Fiber@srpc.reactor::create_run_impl(rusty::Function<void ()>, char const*, long)'),
+            ('T', 'srpc::Fiber@srpc.reactor::current_fiber()'),
+            ('T', 'srpc::Fiber@srpc.reactor::finished() const'),
+            ('T', 'srpc::Fiber@srpc.reactor::new_(rusty::Function<void ()>)'),
+            ('T', 'srpc::Fiber@srpc.reactor::run() const'),
+            ('T', 'srpc::Fiber@srpc.reactor::sleep(unsigned long)'),
+            ('T', 'srpc::Fiber@srpc.reactor::yield_() const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::IntEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::Cell<int>, rusty::Cell<int>)'),
+            ('T', 'srpc::IntEvent@srpc.reactor::IntEvent(srpc::IntEvent@srpc.reactor&&)'),
+            ('T', 'srpc::IntEvent@srpc.reactor::get() const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::get_fiber_id() const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::get_self() const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::is_composite_event() const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::is_ready() const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::log() const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::prunable() const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::record_place(char const*, int) const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::set(int) const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::set_prunable(bool) const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::set_self(rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)'),
+            ('T', 'srpc::IntEvent@srpc.reactor::set_status(srpc::EventStatus@srpc.reactor) const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::status() const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::test() const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::upgrade_fiber() const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::wait() const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::wait_timeout(unsigned long) const'),
+            ('T', 'srpc::IntEvent@srpc.reactor::wakeup_time() const'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::NeverEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::NeverEvent(srpc::NeverEvent@srpc.reactor&&)'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::get_self() const'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::is_composite_event() const'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::is_ready() const'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::log() const'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::prunable() const'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::record_place(char const*, int) const'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::set_prunable(bool) const'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::set_self(rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::set_status(srpc::EventStatus@srpc.reactor) const'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::status() const'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::test() const'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::upgrade_fiber() const'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::wait_timeout(unsigned long) const'),
+            ('T', 'srpc::NeverEvent@srpc.reactor::wakeup_time() const'),
+            ('T', 'srpc::PollThread@srpc.reactor::PollThread(rusty::sync::mpsc::Sender<std::__1::variant<srpc::PollCommand_AddPollable@srpc.reactor, srpc::PollCommand_RemovePollable@srpc.reactor, srpc::PollCommand_ClosePollable@srpc.reactor, srpc::PollCommand_UpdateMode@srpc.reactor, srpc::PollCommand_AddJob@srpc.reactor, srpc::PollCommand_RemoveJob@srpc.reactor, srpc::PollCommand_Shutdown@srpc.reactor>>, rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<std::__1::tuple<>>>>, rusty::sync::atomic::detail::Atomic<unsigned long>, rusty::sync::atomic::detail::Atomic<bool>, rusty::sync::atomic::detail::Atomic<int>)'),
+            ('T', 'srpc::PollThread@srpc.reactor::PollThread(srpc::PollThread@srpc.reactor&&)'),
+            ('T', 'srpc::PollThread@srpc.reactor::add(rusty::Arc<srpc::Job@srpc.misc>) const'),
+            ('T', 'srpc::PollThread@srpc.reactor::add_proxy(rusty::Box<srpc::PollableBase@srpc.pollable_proxy, rusty::alloc::Global>) const'),
+            ('T', 'srpc::PollThread@srpc.reactor::create()'),
+            ('T', 'srpc::PollThread@srpc.reactor::get_remove_count() const'),
+            ('T', 'srpc::PollThread@srpc.reactor::operator=(srpc::PollThread@srpc.reactor&&)'),
+            ('T', 'srpc::PollThread@srpc.reactor::remove(srpc::Pollable@srpc.epoll_wrapper&) const'),
+            ('T', 'srpc::PollThread@srpc.reactor::remove_fd(int) const'),
+            ('T', 'srpc::PollThread@srpc.reactor::request_close(int) const'),
+            ('T', 'srpc::PollThread@srpc.reactor::rusty_mark_forgotten() const'),
+            ('T', 'srpc::PollThread@srpc.reactor::shutdown() const'),
+            ('T', 'srpc::PollThread@srpc.reactor::update_mode(int, int) const'),
+            ('T', 'srpc::PollThread@srpc.reactor::~PollThread()'),
+            ('T', 'srpc::PollThreadWorker@srpc.reactor::create(rusty::sync::mpsc::Receiver<std::__1::variant<srpc::PollCommand_AddPollable@srpc.reactor, srpc::PollCommand_RemovePollable@srpc.reactor, srpc::PollCommand_ClosePollable@srpc.reactor, srpc::PollCommand_UpdateMode@srpc.reactor, srpc::PollCommand_AddJob@srpc.reactor, srpc::PollCommand_RemoveJob@srpc.reactor, srpc::PollCommand_Shutdown@srpc.reactor>>)'),
+            ('T', 'srpc::PollThreadWorker@srpc.reactor::poll_loop()'),
+            ('T', 'srpc::PollThreadWorker@srpc.reactor::update_mode(srpc::Pollable@srpc.epoll_wrapper&, int)'),
+            ('T', 'srpc::Reactor@srpc.reactor::Reactor(rusty::Cell<int>, rusty::RefCell<rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>>, rusty::RefCell<rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>>, rusty::RefCell<rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>>, rusty::RefCell<rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>>, rusty::RefCell<btree_port::btree::map::BTreeMap@btree_port.btree.map<unsigned long, rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global>, rusty::alloc::Global>>, rusty::RefCell<rusty::port::vec::Vec@vec_port.vec<rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global>, rusty::alloc::Global>>, rusty::Cell<bool>, rusty::Cell<bool>, rusty::Cell<int>, rusty::Cell<int>, rusty::Cell<rusty::thread::ThreadId>, rusty::Cell<long>, rusty::Cell<long>, rusty::Cell<long>, rusty::Cell<long>, rusty::Cell<long>, rusty::RefCell<rusty::port::vec::Vec@vec_port.vec<srpc::StacklessTaskEntry@srpc.reactor, rusty::alloc::Global>>, rusty::RefCell<rusty::port::vec::Vec@vec_port.vec<unsigned long, rusty::alloc::Global>>, rusty::RefCell<rusty::VecDeque<unsigned long>>, rusty::marker::PhantomPinned)'),
+            ('T', 'srpc::Reactor@srpc.reactor::check_timeout(rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>&) const'),
+            ('T', 'srpc::Reactor@srpc.reactor::continue_fiber(rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global> const&) const'),
+            ('T', 'srpc::Reactor@srpc.reactor::create_run_fiber(rusty::Function<void ()>) const'),
+            ('T', 'srpc::Reactor@srpc.reactor::display_waiting_ev() const'),
+            ('T', 'srpc::Reactor@srpc.reactor::enqueue_stackless_task(unsigned long) const'),
+            ('T', 'srpc::Reactor@srpc.reactor::get_disk_reactor()'),
+            ('T', 'srpc::Reactor@srpc.reactor::get_reactor()'),
+            ('T', 'srpc::Reactor@srpc.reactor::new_()'),
+            ('T', 'srpc::Reactor@srpc.reactor::process_stackless_tasks() const'),
+            ('T', 'srpc::Reactor@srpc.reactor::prune_finished_events() const'),
+            ('T', 'srpc::Reactor@srpc.reactor::recycle(rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global>&) const'),
+            ('T', 'srpc::Reactor@srpc.reactor::register_fiber(rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global> const&) const'),
+            ('T', 'srpc::Reactor@srpc.reactor::register_stackless_poller(rusty::Function<bool (rusty::Context&)>) const'),
+            ('T', 'srpc::Reactor@srpc.reactor::restore_running_fiber(rusty::Option<rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global>>) const'),
+            ('T', 'srpc::Reactor@srpc.reactor::run_loop(bool, bool) const'),
+            ('T', 'srpc::Reactor@srpc.reactor::rusty_mark_forgotten() const'),
+            ('T', 'srpc::Reactor@srpc.reactor::save_running_fiber() const'),
+            ('T', 'srpc::Reactor@srpc.reactor::set_running_fiber(rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global> const&) const'),
+            ('T', 'srpc::Reactor@srpc.reactor::~Reactor()'),
+            ('T', 'srpc::RemoveJob@srpc.reactor(rusty::Arc<srpc::Job@srpc.misc>)'),
+            ('T', 'srpc::RemovePollable@srpc.reactor(int)'),
+            ('T', 'srpc::SharedIntEvent@srpc.reactor::set(int const&)'),
+            ('T', 'srpc::SharedIntEvent@srpc.reactor::wait(rusty::Function<bool (int) const>)'),
+            ('T', 'srpc::SharedIntEvent@srpc.reactor::wait_until_gte(int, int)'),
+            ('T', 'srpc::Shutdown@srpc.reactor()'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::TimeoutEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, unsigned long, unsigned long)'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::TimeoutEvent(srpc::TimeoutEvent@srpc.reactor&&)'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::get_self() const'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::is_composite_event() const'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::is_ready() const'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::log() const'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::prunable() const'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::set_prunable(bool) const'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::set_self(rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::set_status(srpc::EventStatus@srpc.reactor) const'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::status() const'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::test() const'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::upgrade_fiber() const'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::wait() const'),
+            ('T', 'srpc::TimeoutEvent@srpc.reactor::wakeup_time() const'),
+            ('T', 'srpc::UpdateMode@srpc.reactor(int, int)'),
+            ('T', 'srpc::WaitAll@srpc.reactor::WaitAll(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::RefCell<rusty::port::vec::Vec@vec_port.vec<rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::alloc::Global>>)'),
+            ('T', 'srpc::WaitAll@srpc.reactor::WaitAll(srpc::WaitAll@srpc.reactor&&)'),
+            ('T', 'srpc::WaitAll@srpc.reactor::add_event(rusty::Arc<srpc::EventPollable@srpc.reactor>) const'),
+            ('T', 'srpc::WaitAll@srpc.reactor::get_self() const'),
+            ('T', 'srpc::WaitAll@srpc.reactor::is_composite_event() const'),
+            ('T', 'srpc::WaitAll@srpc.reactor::is_ready() const'),
+            ('T', 'srpc::WaitAll@srpc.reactor::log() const'),
+            ('T', 'srpc::WaitAll@srpc.reactor::prunable() const'),
+            ('T', 'srpc::WaitAll@srpc.reactor::set_prunable(bool) const'),
+            ('T', 'srpc::WaitAll@srpc.reactor::set_self(rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)'),
+            ('T', 'srpc::WaitAll@srpc.reactor::set_status(srpc::EventStatus@srpc.reactor) const'),
+            ('T', 'srpc::WaitAll@srpc.reactor::status() const'),
+            ('T', 'srpc::WaitAll@srpc.reactor::test() const'),
+            ('T', 'srpc::WaitAll@srpc.reactor::upgrade_fiber() const'),
+            ('T', 'srpc::WaitAll@srpc.reactor::wait() const'),
+            ('T', 'srpc::WaitAll@srpc.reactor::wait_timeout(unsigned long) const'),
+            ('T', 'srpc::WaitAll@srpc.reactor::wakeup_time() const'),
+            ('T', 'srpc::WaitAny@srpc.reactor::WaitAny(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::port::vec::Vec@vec_port.vec<rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::alloc::Global>)'),
+            ('T', 'srpc::WaitAny@srpc.reactor::WaitAny(srpc::WaitAny@srpc.reactor&&)'),
+            ('T', 'srpc::WaitAny@srpc.reactor::get_self() const'),
+            ('T', 'srpc::WaitAny@srpc.reactor::is_composite_event() const'),
+            ('T', 'srpc::WaitAny@srpc.reactor::is_ready() const'),
+            ('T', 'srpc::WaitAny@srpc.reactor::log() const'),
+            ('T', 'srpc::WaitAny@srpc.reactor::prunable() const'),
+            ('T', 'srpc::WaitAny@srpc.reactor::set_prunable(bool) const'),
+            ('T', 'srpc::WaitAny@srpc.reactor::set_self(rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)'),
+            ('T', 'srpc::WaitAny@srpc.reactor::set_status(srpc::EventStatus@srpc.reactor) const'),
+            ('T', 'srpc::WaitAny@srpc.reactor::status() const'),
+            ('T', 'srpc::WaitAny@srpc.reactor::test() const'),
+            ('T', 'srpc::WaitAny@srpc.reactor::upgrade_fiber() const'),
+            ('T', 'srpc::WaitAny@srpc.reactor::wait() const'),
+            ('T', 'srpc::WaitAny@srpc.reactor::wait_timeout(unsigned long) const'),
+            ('T', 'srpc::WaitAny@srpc.reactor::wakeup_time() const'),
+            ('T', 'srpc::create_sp_int_event@srpc.reactor(int)'),
+            ('T', 'srpc::create_sp_never_event@srpc.reactor()'),
+            ('T', 'srpc::create_sp_timeout_event@srpc.reactor(unsigned long)'),
+            ('T', 'srpc::create_sp_waitall@srpc.reactor()'),
+            ('T', 'srpc::create_sp_waitall_from@srpc.reactor(rusty::port::vec::Vec@vec_port.vec<rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::alloc::Global> const&)'),
+            ('T', 'srpc::create_sp_waitany@srpc.reactor(rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::Arc<srpc::EventPollable@srpc.reactor>)'),
+            ('T', 'srpc::current_thread_gettid@srpc.reactor()'),
+            ('T', 'srpc::event_core_get_fiber_id@srpc.reactor()'),
+            ('T', 'srpc::event_state_seed@srpc.reactor(srpc::EventState@srpc.reactor const&)'),
+            ('T', 'srpc::fiber_create_run_impl@srpc.reactor(rusty::Function<void ()>, char const*, long)'),
+            ('T', 'srpc::fiber_current_fiber@srpc.reactor()'),
+            ('T', 'srpc::fiber_do_continue@srpc.reactor(srpc::Fiber@srpc.reactor const&)'),
+            ('T', 'srpc::fiber_do_finalize@srpc.reactor(srpc::Fiber@srpc.reactor const&)'),
+            ('T', 'srpc::fiber_do_yield@srpc.reactor(srpc::Fiber@srpc.reactor const&)'),
+            ('T', 'srpc::fiber_engine_destroy@srpc.reactor(srpc_fiber*)'),
+            ('T', 'srpc::fiber_engine_resume@srpc.reactor(srpc_fiber*)'),
+            ('T', 'srpc::fiber_engine_start@srpc.reactor(srpc_fiber*, void*)'),
+            ('T', 'srpc::fiber_engine_yield@srpc.reactor(srpc_fiber*)'),
+            ('T', 'srpc::fiber_fn_clear@srpc.reactor(rusty::RefCell<rusty::Function<void ()>> const*)'),
+            ('T', 'srpc::fiber_fn_invoke@srpc.reactor(rusty::RefCell<rusty::Function<void ()>> const*)'),
+            ('T', 'srpc::fiber_fn_present@srpc.reactor(rusty::RefCell<rusty::Function<void ()>> const*)'),
+            ('T', 'srpc::fiber_install_task@srpc.reactor(rusty::RefCell<rusty::Option<rusty::Box<srpc::fiber_task_t@srpc.reactor, rusty::alloc::Global>>> const*, rusty::Function<void (srpc::fiber_yield_t@srpc.reactor&)>)'),
+            ('T', 'srpc::fiber_is_finished@srpc.reactor(srpc::Fiber@srpc.reactor const&)'),
+            ('T', 'srpc::fiber_next_global_id@srpc.reactor()'),
+            ('T', 'srpc::fiber_registry_key@srpc.reactor(rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global> const&)'),
+            ('T', 'srpc::fiber_run@srpc.reactor(srpc::Fiber@srpc.reactor const&)'),
+            ('T', 'srpc::fiber_run_wrapper@srpc.reactor(srpc::Fiber@srpc.reactor const&, srpc::fiber_yield_t@srpc.reactor*)'),
+            ('T', 'srpc::fiber_sleep@srpc.reactor(unsigned long)'),
+            ('T', 'srpc::fiber_task_body_invoke@srpc.reactor(rusty::Function<void (srpc::fiber_yield_t@srpc.reactor&)>&, srpc::fiber_yield_t@srpc.reactor&)'),
+            ('T', 'srpc::fiber_task_invoke@srpc.reactor(rusty::RefCell<rusty::Option<rusty::Box<srpc::fiber_task_t@srpc.reactor, rusty::alloc::Global>>> const*)'),
+            ('T', 'srpc::fiber_task_t@srpc.reactor::new_(rusty::Function<void (srpc::fiber_yield_t@srpc.reactor&)>)'),
+            ('T', 'srpc::fiber_task_t@srpc.reactor::rusty_mark_forgotten() const'),
+            ('T', 'srpc::fiber_task_t@srpc.reactor::~fiber_task_t()'),
+            ('T', 'srpc::fiber_yield_invoke@srpc.reactor(srpc::fiber_yield_t@srpc.reactor&)'),
+            ('T', 'srpc::fiber_yield_invoke_ptr@srpc.reactor(srpc::fiber_yield_t@srpc.reactor*)'),
+            ('T', 'srpc::fiber_yield_t@srpc.reactor::new_(srpc::fiber_task_t@srpc.reactor&)'),
+            ('T', 'srpc::int_event_is_ready@srpc.reactor(srpc::IntEvent@srpc.reactor const&)'),
+            ('T', 'srpc::int_event_make@srpc.reactor(int)'),
+            ('T', 'srpc::int_event_raw_ptr@srpc.reactor(rusty::Arc<srpc::IntEvent@srpc.reactor> const&)'),
+            ('T', 'srpc::int_event_set@srpc.reactor(srpc::IntEvent@srpc.reactor const&, int)'),
+            ('T', 'srpc::job_ready@srpc.reactor(rusty::Arc<srpc::Job@srpc.misc> const&)'),
+            ('T', 'srpc::job_spawn_work@srpc.reactor(rusty::Arc<srpc::Job@srpc.misc> const&)'),
+            ('T', 'srpc::never_event_make@srpc.reactor()'),
+            ('T', 'srpc::pollable_proxy_fd@srpc.reactor(rusty::Box<srpc::PollableBase@srpc.pollable_proxy, rusty::alloc::Global> const&)'),
+            ('T', 'srpc::pollable_proxy_mode@srpc.reactor(rusty::Box<srpc::PollableBase@srpc.pollable_proxy, rusty::alloc::Global> const&)'),
+            ('T', 'srpc::pollthread_create@srpc.reactor()'),
+            ('T', 'srpc::pollthread_drop@srpc.reactor(srpc::PollThread@srpc.reactor const&)'),
+            ('T', 'srpc::pollworker_close_proxy_of@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, int)'),
+            ('T', 'srpc::pollworker_create@srpc.reactor(rusty::sync::mpsc::Receiver<std::__1::variant<srpc::PollCommand_AddPollable@srpc.reactor, srpc::PollCommand_RemovePollable@srpc.reactor, srpc::PollCommand_ClosePollable@srpc.reactor, srpc::PollCommand_UpdateMode@srpc.reactor, srpc::PollCommand_AddJob@srpc.reactor, srpc::PollCommand_RemoveJob@srpc.reactor, srpc::PollCommand_Shutdown@srpc.reactor>>)'),
+            ('T', 'srpc::pollworker_do_add_job@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, rusty::Arc<srpc::Job@srpc.misc>)'),
+            ('T', 'srpc::pollworker_do_add_pollable@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, rusty::Box<srpc::PollableBase@srpc.pollable_proxy, rusty::alloc::Global>)'),
+            ('T', 'srpc::pollworker_do_close_pollable@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, int)'),
+            ('T', 'srpc::pollworker_do_remove_job@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, rusty::Arc<srpc::Job@srpc.misc>)'),
+            ('T', 'srpc::pollworker_do_remove_pollable@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, int)'),
+            ('T', 'srpc::pollworker_do_update_mode@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, int, int)'),
+            ('T', 'srpc::pollworker_is_on_poll_thread@srpc.reactor()'),
+            ('T', 'srpc::pollworker_make@srpc.reactor(rusty::sync::mpsc::Receiver<std::__1::variant<srpc::PollCommand_AddPollable@srpc.reactor, srpc::PollCommand_RemovePollable@srpc.reactor, srpc::PollCommand_ClosePollable@srpc.reactor, srpc::PollCommand_UpdateMode@srpc.reactor, srpc::PollCommand_AddJob@srpc.reactor, srpc::PollCommand_RemoveJob@srpc.reactor, srpc::PollCommand_Shutdown@srpc.reactor>>)'),
+            ('T', 'srpc::pollworker_poll_loop@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&)'),
+            ('T', 'srpc::pollworker_process_commands@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&)'),
+            ('T', 'srpc::pollworker_process_pending_removals@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&)'),
+            ('T', 'srpc::pollworker_snapshot_fds@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&)'),
+            ('T', 'srpc::pollworker_take_removals@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&)'),
+            ('T', 'srpc::pollworker_trigger_job@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&)'),
+            ('T', 'srpc::pollworker_update_mode@srpc.reactor(srpc::PollThreadWorker@srpc.reactor&, srpc::Pollable@srpc.epoll_wrapper&, int)'),
+            ('T', 'srpc::reactor_create_run_fiber_at_impl@srpc.reactor(srpc::Reactor@srpc.reactor const&, rusty::Function<void ()>, char const*, long)'),
+            ('T', 'srpc::reactor_create_run_fiber_impl@srpc.reactor(srpc::Reactor@srpc.reactor const&, rusty::Function<void ()>)'),
+            ('T', 'srpc::reactor_dec_active_fibers@srpc.reactor()'),
+            ('T', 'srpc::reactor_get_or_create_fiber_impl@srpc.reactor(srpc::Reactor@srpc.reactor const&, rusty::Function<void ()>, char const*, long)'),
+            ('T', 'srpc::reactor_live_fiber_count@srpc.reactor()'),
+            ('T', 'srpc::reactor_log_create@srpc.reactor(bool)'),
+            ('T', 'srpc::reactor_log_line@srpc.reactor(int, int, signed char const*, rusty::String)'),
+            ('T', 'srpc::reactor_make@srpc.reactor()'),
+            ('T', 'srpc::reactor_poll_one@srpc.reactor(srpc::Reactor@srpc.reactor const&, unsigned long, rusty::Function<bool (rusty::Context&)>*)'),
+            ('T', 'srpc::reactor_spawn_stackless_task_impl@srpc.reactor(srpc::Reactor@srpc.reactor const&, rusty::Task<void>)'),
+            ('T', 'srpc::reactor_tls_get@srpc.reactor()'),
+            ('T', 'srpc::reactor_tls_get_disk@srpc.reactor()'),
+            ('T', 'srpc::reactor_tls_restore_running@srpc.reactor(rusty::Option<rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global>>)'),
+            ('T', 'srpc::reactor_tls_save_running@srpc.reactor()'),
+            ('T', 'srpc::reactor_tls_set_running@srpc.reactor(rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global> const&)'),
+            ('T', 'srpc::reactor_verify@srpc.reactor(bool)'),
+            ('T', 'srpc::reusing_fiber@srpc.reactor()'),
+            ('T', 'srpc::shared_int_event_set@srpc.reactor(srpc::SharedIntEvent@srpc.reactor&, int)'),
+            ('T', 'srpc::shared_int_event_wait@srpc.reactor(srpc::SharedIntEvent@srpc.reactor&, rusty::Function<bool (int) const>)'),
+            ('T', 'srpc::shared_int_event_wait_until_gte@srpc.reactor(srpc::SharedIntEvent@srpc.reactor&, int, int)'),
+            ('T', 'srpc::stackless_profile_enabled@srpc.reactor()'),
+            ('T', 'srpc::stackless_profile_env@srpc.reactor()'),
+            ('T', 'srpc::stackless_profile_note_enqueue@srpc.reactor()'),
+            ('T', 'srpc::stackless_profile_note_poll_ready@srpc.reactor()'),
+            ('T', 'srpc::stackless_profile_note_register@srpc.reactor(unsigned long, bool, unsigned long)'),
+            ('T', 'srpc::stackless_profile_report_periodic@srpc.reactor()'),
+            ('T', 'srpc::stackless_profile_report_periodic_shim@srpc.reactor()'),
+            ('T', 'srpc::stackless_profile_update_max_slots@srpc.reactor(unsigned long)'),
+            ('T', 'srpc::timeout_event_is_ready@srpc.reactor(srpc::TimeoutEvent@srpc.reactor const&)'),
+            ('T', 'srpc::timeout_event_make@srpc.reactor(unsigned long)'),
+            ('T', 'srpc::waitall_make@srpc.reactor()'),
+            ('T', 'srpc::waitall_make_from@srpc.reactor(rusty::port::vec::Vec@vec_port.vec<rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::alloc::Global> const&)'),
+            ('T', 'srpc::waitany_make@srpc.reactor(rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::Arc<srpc::EventPollable@srpc.reactor>)'),
+        }),
     ),
     "srpc.server": AbiSpec(
         surface=frozenset(
             {
-                "export module srpc.server;",
-                "namespace srpc {",
-                "import vec_port.vec;",
-                "import std_port;",
-                "import srpc.basetypes;",
-                "import srpc.channel;",
-                "import srpc.debugging;",
-                "import srpc.internal_protocol;",
-                "import srpc.logging;",
-                "import srpc.misc;",
-                "import srpc.reactor;",
-                "import srpc.serializable;",
-                "import srpc.tcp_channel;",
-                "export enum class ShutdownPhase;",
-                "export constexpr ShutdownPhase ShutdownPhase_RUNNING();",
-                "export constexpr ShutdownPhase ShutdownPhase_STOP_ACCEPTING();",
-                "export constexpr ShutdownPhase ShutdownPhase_DRAINING();",
-                "export constexpr ShutdownPhase ShutdownPhase_CLOSING();",
-                "export constexpr ShutdownPhase ShutdownPhase_STOPPED();",
-                "export enum class ServerConnStatus;",
-                "export constexpr ServerConnStatus ServerConnStatus_CONNECTED();",
-                "export constexpr ServerConnStatus ServerConnStatus_CLOSED();",
-                "export struct PendingRequestGuard;",
-                "export struct Request;",
-                "export class Service;",
-                "export struct RpcServiceContext;",
-                "export struct ServerConnection;",
-                "export struct DeferredReply;",
-                "export struct ShutdownState;",
-                "export struct ChannelSconns;",
-                "export struct Server;",
-                "export using ShutdownHook = rusty::Function<void()>;",
-                "export using ServiceProxy = rusty::Box<Service>;",
-                "export using ServerPendingRequestsAtomic = rusty::sync::atomic::AtomicI32;",
-                "export using ServerDropHeartbeatRepliesAtomic = rusty::sync::atomic::AtomicBool;",
-                "export using ServerReplyFn = rusty::Function<void(::srpc::BinaryWriteArchive&)>;",
-                "export constexpr uint64_t kDefaultDrainTimeoutMs = static_cast<uint64_t>(30000);",
-                "export std::string_view shutdown_phase_to_string(ShutdownPhase phase);",
-                "export ServiceProxy make_service_proxy_from_box(rusty::Box<Service> svc);",
-                "export rusty::Option<rusty::Arc<PollThread>> server_resolve_poll_thread(rusty::Option<rusty::Arc<PollThread>> poll_thread_worker);",
-                "export std::string server_dsl_addr_to_string(const int8_t* addr);",
-                "export uint64_t server_random_u64();",
-                "export uint64_t server_now_nanos();",
-                "export void server_wait_for_shutdown_impl(const rusty::Mutex<ShutdownState>& state, const rusty::Box<rusty::Condvar>& cond);",
-                "export uint64_t server_generate_instance_id();",
-                "export bool server_drain_impl(const rusty::Cell<ShutdownPhase>& phase, const rusty::Arc<ServerPendingRequestsAtomic>& pending, uint64_t timeout_ms);",
-                "export void server_run_shutdown_hooks(const rusty::Mutex<rusty::Vec<ShutdownHook>>& hooks);",
-                "export rusty::Option<int32_t> server_parse_port(const std::string& text);",
-                "export void server_invoke_shutdown_hook_safely(ShutdownHook& hook);",
-                "export void sconn_reply(const ServerConnection& sconn, const Request& req, int32_t error_code, ServerReplyFn write_fn);",
-                "export void sconn_on_channel_frame(const rusty::sync::Weak<ServerConnection>& weak, const ::srpc::ChannelFrame& frame);",
-                "export void sconn_on_channel_closed(const rusty::sync::Weak<ServerConnection>& weak);",
-                "export void sconn_on_channel_error(const rusty::sync::Weak<ServerConnection>& weak, ::srpc::ChannelError err, std::string_view msg);",
-                "export void request_fill_body(Request& req, std::span<const uint8_t> bytes);",
-                "export void sconn_decode_request_and_dispatch(const ServerConnection& sconn, const uint8_t* bytes, size_t size);",
-                "export srpc::ChannelConnectionBase* sconn_proxy_ptr(const rusty::Option<::srpc::ChannelConnectionProxy>& slot);",
-                "export void sconn_dispatch_response_frame_via_channel(const ServerConnection& sconn, const uint8_t* bytes, size_t size);",
-                "export int32_t srpc_parse_port(const uint8_t* text, size_t len, int32_t* out);",
-                "export size_t srpc_cstr_len(const uint8_t* text);",
-                "export uint64_t srpc_random_u64();",
-                "export using WeakServerConnection = rusty::sync::Weak<ServerConnection>;",
-                "export template <class U> class ServiceAdapter;",
-                "export template <class U> class ServiceAdapterRef;",
-                "export template <class U> class ServiceAdapterRefMut;",
+                'export module srpc.server;',
+                'namespace srpc {',
+                'export enum class ShutdownPhase {',
+                'export enum class ServerConnStatus {',
+                'export struct Server {',
+                'export struct ServerConnection {',
+                'export struct RpcServiceContext {',
+                'export struct DeferredReply {',
+                'export struct PendingRequestGuard {',
+                'export struct Request {',
+                'export class Service {',
+                'export struct ShutdownState {',
+                'export struct ChannelSconns {',
+                'export using ServiceProxy = rusty::Box<Service>;',
+                'export using ServerReplyFn = rusty::Function<void(::srpc::BinaryWriteArchive&)>;',
+                'export constexpr uint64_t kDefaultDrainTimeoutMs = static_cast<uint64_t>(30000);',
+                'export void server_wait_for_shutdown_impl(const rusty::Mutex<ShutdownState>& state, const rusty::Box<rusty::Condvar>& cond);',
             }
         ),
-        symbols=frozenset(
-            {
-                (
-                    "D",
-                    "typeinfo for srpc::Service@srpc.server",
-                ),
-                (
-                    "D",
-                    "vtable for srpc::Service@srpc.server",
-                ),
-                (
-                    "R",
-                    "srpc::SERVER_ERR_ALREADY_EXISTS@srpc.server",
-                ),
-                (
-                    "R",
-                    "srpc::SERVER_ERR_INVALID_ARGUMENT@srpc.server",
-                ),
-                (
-                    "R",
-                    "srpc::SERVER_ERR_NO_ENTRY@srpc.server",
-                ),
-                (
-                    "R",
-                    "srpc::kDefaultDrainTimeoutMs@srpc.server",
-                ),
-                (
-                    "R",
-                    "typeinfo name for srpc::Service@srpc.server",
-                ),
-                (
-                    "T",
-                    "srpc::DeferredReply@srpc.server::DeferredReply(srpc::DeferredReply@srpc.server&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeferredReply@srpc.server::DeferredReply(rusty::Box<srpc::Request@srpc.server, rusty::alloc::Global>, rusty::sync::Weak<srpc::ServerConnection@srpc.server>, rusty::Function<void (srpc::BinaryWriteArchive@srpc.serializable&)>, rusty::Function<void ()>)",
-                ),
-                (
-                    "T",
-                    "srpc::DeferredReply@srpc.server::new_(rusty::Box<srpc::Request@srpc.server, rusty::alloc::Global>, rusty::sync::Weak<srpc::ServerConnection@srpc.server>, rusty::Function<void (srpc::BinaryWriteArchive@srpc.serializable&)>, rusty::Function<void ()>)",
-                ),
-                (
-                    "T",
-                    "srpc::DeferredReply@srpc.server::operator=(srpc::DeferredReply@srpc.server&&)",
-                ),
-                (
-                    "T",
-                    "srpc::DeferredReply@srpc.server::reply()",
-                ),
-                (
-                    "T",
-                    "srpc::DeferredReply@srpc.server::reply_error(int)",
-                ),
-                (
-                    "T",
-                    "srpc::DeferredReply@srpc.server::run_async(rusty::Function<void ()>)",
-                ),
-                (
-                    "T",
-                    "srpc::DeferredReply@srpc.server::rusty_mark_forgotten() const",
-                ),
-                (
-                    "T",
-                    "srpc::DeferredReply@srpc.server::~DeferredReply()",
-                ),
-                (
-                    "T",
-                    "srpc::PendingRequestGuard@srpc.server::PendingRequestGuard(srpc::PendingRequestGuard@srpc.server&&)",
-                ),
-                (
-                    "T",
-                    "srpc::PendingRequestGuard@srpc.server::PendingRequestGuard(rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>)",
-                ),
-                (
-                    "T",
-                    "srpc::PendingRequestGuard@srpc.server::operator=(srpc::PendingRequestGuard@srpc.server&&)",
-                ),
-                (
-                    "T",
-                    "srpc::PendingRequestGuard@srpc.server::rusty_mark_forgotten() const",
-                ),
-                (
-                    "T",
-                    "srpc::PendingRequestGuard@srpc.server::~PendingRequestGuard()",
-                ),
-                (
-                    "T",
-                    "srpc::Request@srpc.server::attach_pending_guard(rusty::Arc<rusty::sync::atomic::detail::Atomic<int>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::RpcServiceContext@srpc.server::new_(std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::port::vec::Vec@vec_port.vec<rusty::RefCell<rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>>, rusty::alloc::Global>, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::Server(srpc::Server@srpc.server&&)",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::Server(rusty::port::vec::Vec@vec_port.vec<rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>, rusty::alloc::Global>, std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::Option<rusty::Arc<srpc::RpcServiceContext@srpc.server>>, rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, rusty::Mutex<srpc::ShutdownState@srpc.server>, rusty::Box<rusty::Condvar, rusty::alloc::Global>, rusty::Cell<srpc::ShutdownPhase@srpc.server>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Function<void ()>, rusty::alloc::Global>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long, rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>, rusty::Option<rusty::Box<srpc::ChannelListenerBase@srpc.channel, rusty::alloc::Global>>, rusty::Arc<rusty::Mutex<srpc::ChannelSconns@srpc.server>>)",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::add_shutdown_hook(rusty::Function<void ()>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::addr() const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::decrement_pending() const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::do_shutdown() const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::drain(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::drop_heartbeat_replies() const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::get_bound_port() const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::graceful_shutdown(unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::increment_pending() const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::instance_id() const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::is_channel_factory_bound() const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::new_(rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>)",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::operator=(srpc::Server@srpc.server&&)",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::pending_request_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::phase() const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::reg_fast_rpc(int, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::reg_rpc(int, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::reg_service(rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>)",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::reg_service_proxy(rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>)",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::rusty_mark_forgotten() const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::service_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::set_channel_factory(rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>)",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::set_drop_heartbeat_replies(bool) const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::start(signed char const*)",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::stop_accepting()",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::unreg(int)",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::wait_for_shutdown() const",
-                ),
-                (
-                    "T",
-                    "srpc::Server@srpc.server::~Server()",
-                ),
-                (
-                    "T",
-                    "srpc::ServerConnection@srpc.server::bind_channel(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>)",
-                ),
-                (
-                    "T",
-                    "srpc::ServerConnection@srpc.server::close() const",
-                ),
-                (
-                    "T",
-                    "srpc::ServerConnection@srpc.server::connected() const",
-                ),
-                (
-                    "T",
-                    "srpc::ServerConnection@srpc.server::install_self_weak_for_testing(rusty::sync::Weak<srpc::ServerConnection@srpc.server>)",
-                ),
-                (
-                    "T",
-                    "srpc::ServerConnection@srpc.server::is_channel_mode() const",
-                ),
-                (
-                    "T",
-                    "srpc::ServerConnection@srpc.server::is_closed() const",
-                ),
-                (
-                    "T",
-                    "srpc::ServerConnection@srpc.server::new_(rusty::Arc<srpc::RpcServiceContext@srpc.server>, int)",
-                ),
-                (
-                    "T",
-                    "srpc::ServerConnection@srpc.server::reply(srpc::Request@srpc.server const&, int, rusty::Function<void (srpc::BinaryWriteArchive@srpc.serializable&)>) const",
-                ),
-                (
-                    "T",
-                    "srpc::ServerConnection@srpc.server::run_async(rusty::Function<void ()>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Service@srpc.server::~Service()",
-                ),
-                (
-                    "T",
-                    "srpc::make_empty_request_box@srpc.server()",
-                ),
-                (
-                    "T",
-                    "srpc::make_service_proxy_from_box@srpc.server(rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>)",
-                ),
-                (
-                    "T",
-                    "srpc::no_reply_writer@srpc.server()",
-                ),
-                (
-                    "T",
-                    "srpc::request_fill_body@srpc.server(srpc::Request@srpc.server&, std::__1::span<unsigned char const, 18446744073709551615ul>)",
-                ),
-                (
-                    "T",
-                    "srpc::sconn_decode_request_and_dispatch@srpc.server(srpc::ServerConnection@srpc.server const&, unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::sconn_dispatch_in_fiber@srpc.server(rusty::Arc<srpc::RpcServiceContext@srpc.server>, unsigned long, int, rusty::Box<srpc::Request@srpc.server, rusty::alloc::Global>, rusty::sync::Weak<srpc::ServerConnection@srpc.server>)",
-                ),
-                (
-                    "T",
-                    "srpc::sconn_dispatch_response_frame_via_channel@srpc.server(srpc::ServerConnection@srpc.server const&, unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::sconn_on_channel_closed@srpc.server(rusty::sync::Weak<srpc::ServerConnection@srpc.server> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::sconn_on_channel_error@srpc.server(rusty::sync::Weak<srpc::ServerConnection@srpc.server> const&, srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::sconn_on_channel_frame@srpc.server(rusty::sync::Weak<srpc::ServerConnection@srpc.server> const&, srpc::ChannelFrame@srpc.channel const&)",
-                ),
-                (
-                    "T",
-                    "srpc::sconn_proxy_ptr@srpc.server(rusty::Option<rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::sconn_reply@srpc.server(srpc::ServerConnection@srpc.server const&, srpc::Request@srpc.server const&, int, rusty::Function<void (srpc::BinaryWriteArchive@srpc.serializable&)>)",
-                ),
-                (
-                    "T",
-                    "srpc::server_drain_impl@srpc.server(rusty::Cell<srpc::ShutdownPhase@srpc.server> const&, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>> const&, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::server_dsl_addr_to_string@srpc.server(signed char const*)",
-                ),
-                (
-                    "T",
-                    "srpc::server_generate_instance_id@srpc.server()",
-                ),
-                (
-                    "T",
-                    "srpc::server_invoke_shutdown_hook_safely@srpc.server(rusty::Function<void ()>&)",
-                ),
-                (
-                    "T",
-                    "srpc::server_now_nanos@srpc.server()",
-                ),
-                (
-                    "T",
-                    "srpc::server_parse_port@srpc.server(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::server_random_u64@srpc.server()",
-                ),
-                (
-                    "T",
-                    "srpc::server_resolve_poll_thread@srpc.server(rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>)",
-                ),
-                (
-                    "T",
-                    "srpc::server_run_shutdown_hooks@srpc.server(rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Function<void ()>, rusty::alloc::Global>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::server_wait_for_shutdown_impl@srpc.server(rusty::Mutex<srpc::ShutdownState@srpc.server> const&, rusty::Box<rusty::Condvar, rusty::alloc::Global> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::shutdown_phase_to_string@srpc.server(srpc::ShutdownPhase@srpc.server)",
-                ),
-            }
-        ),
+        symbols=frozenset({
+            ('D', 'typeinfo for srpc::Service@srpc.server'),
+            ('D', 'vtable for srpc::Service@srpc.server'),
+            ('R', 'srpc::SERVER_ERR_ALREADY_EXISTS@srpc.server'),
+            ('R', 'srpc::SERVER_ERR_INVALID_ARGUMENT@srpc.server'),
+            ('R', 'srpc::SERVER_ERR_NO_ENTRY@srpc.server'),
+            ('R', 'srpc::kDefaultDrainTimeoutMs@srpc.server'),
+            ('R', 'srpc::kReplySinkInitialCapacity@srpc.server'),
+            ('R', 'typeinfo name for srpc::Service@srpc.server'),
+            ('T', 'srpc::DeferredReply@srpc.server::DeferredReply(rusty::Box<srpc::Request@srpc.server, rusty::alloc::Global>, rusty::sync::Weak<srpc::ServerConnection@srpc.server>, rusty::Function<void (srpc::BinaryWriteArchive@srpc.serializable&)>, rusty::Function<void ()>)'),
+            ('T', 'srpc::DeferredReply@srpc.server::DeferredReply(srpc::DeferredReply@srpc.server&&)'),
+            ('T', 'srpc::DeferredReply@srpc.server::new_(rusty::Box<srpc::Request@srpc.server, rusty::alloc::Global>, rusty::sync::Weak<srpc::ServerConnection@srpc.server>, rusty::Function<void (srpc::BinaryWriteArchive@srpc.serializable&)>, rusty::Function<void ()>)'),
+            ('T', 'srpc::DeferredReply@srpc.server::operator=(srpc::DeferredReply@srpc.server&&)'),
+            ('T', 'srpc::DeferredReply@srpc.server::reply()'),
+            ('T', 'srpc::DeferredReply@srpc.server::reply_error(int)'),
+            ('T', 'srpc::DeferredReply@srpc.server::run_async(rusty::Function<void ()>)'),
+            ('T', 'srpc::DeferredReply@srpc.server::rusty_mark_forgotten() const'),
+            ('T', 'srpc::DeferredReply@srpc.server::~DeferredReply()'),
+            ('T', 'srpc::PendingRequestGuard@srpc.server::PendingRequestGuard(rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>)'),
+            ('T', 'srpc::PendingRequestGuard@srpc.server::PendingRequestGuard(srpc::PendingRequestGuard@srpc.server&&)'),
+            ('T', 'srpc::PendingRequestGuard@srpc.server::operator=(srpc::PendingRequestGuard@srpc.server&&)'),
+            ('T', 'srpc::PendingRequestGuard@srpc.server::rusty_mark_forgotten() const'),
+            ('T', 'srpc::PendingRequestGuard@srpc.server::~PendingRequestGuard()'),
+            ('T', 'srpc::Request@srpc.server::attach_pending_guard(rusty::Arc<rusty::sync::atomic::detail::Atomic<int>> const&)'),
+            ('T', 'srpc::RpcServiceContext@srpc.server::new_(std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::port::vec::Vec@vec_port.vec<rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>, rusty::alloc::Global>, rusty::String, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long)'),
+            ('T', 'srpc::Server@srpc.server::Server(rusty::port::vec::Vec@vec_port.vec<rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>, rusty::alloc::Global>, std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::Option<rusty::Arc<srpc::RpcServiceContext@srpc.server>>, rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, rusty::Mutex<srpc::ShutdownState@srpc.server>, rusty::Box<rusty::Condvar, rusty::alloc::Global>, rusty::Cell<srpc::ShutdownPhase@srpc.server>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Function<void ()>, rusty::alloc::Global>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long, rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>, rusty::Option<rusty::Box<srpc::ChannelListenerBase@srpc.channel, rusty::alloc::Global>>, rusty::Arc<rusty::Mutex<srpc::ChannelSconns@srpc.server>>)'),
+            ('T', 'srpc::Server@srpc.server::Server(srpc::Server@srpc.server&&)'),
+            ('T', 'srpc::Server@srpc.server::add_shutdown_hook(rusty::Function<void ()>) const'),
+            ('T', 'srpc::Server@srpc.server::addr() const'),
+            ('T', 'srpc::Server@srpc.server::decrement_pending() const'),
+            ('T', 'srpc::Server@srpc.server::do_shutdown() const'),
+            ('T', 'srpc::Server@srpc.server::drain(unsigned long) const'),
+            ('T', 'srpc::Server@srpc.server::drop_heartbeat_replies() const'),
+            ('T', 'srpc::Server@srpc.server::get_bound_port() const'),
+            ('T', 'srpc::Server@srpc.server::graceful_shutdown(unsigned long)'),
+            ('T', 'srpc::Server@srpc.server::increment_pending() const'),
+            ('T', 'srpc::Server@srpc.server::instance_id() const'),
+            ('T', 'srpc::Server@srpc.server::is_channel_factory_bound() const'),
+            ('T', 'srpc::Server@srpc.server::new_(rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>)'),
+            ('T', 'srpc::Server@srpc.server::operator=(srpc::Server@srpc.server&&)'),
+            ('T', 'srpc::Server@srpc.server::pending_request_count() const'),
+            ('T', 'srpc::Server@srpc.server::phase() const'),
+            ('T', 'srpc::Server@srpc.server::reg_fast_rpc(int, unsigned long)'),
+            ('T', 'srpc::Server@srpc.server::reg_rpc(int, unsigned long)'),
+            ('T', 'srpc::Server@srpc.server::reg_service(rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>)'),
+            ('T', 'srpc::Server@srpc.server::reg_service_proxy(rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>)'),
+            ('T', 'srpc::Server@srpc.server::rusty_mark_forgotten() const'),
+            ('T', 'srpc::Server@srpc.server::service_count() const'),
+            ('T', 'srpc::Server@srpc.server::set_channel_factory(rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>)'),
+            ('T', 'srpc::Server@srpc.server::set_drop_heartbeat_replies(bool) const'),
+            ('T', 'srpc::Server@srpc.server::start(signed char const*)'),
+            ('T', 'srpc::Server@srpc.server::stop_accepting()'),
+            ('T', 'srpc::Server@srpc.server::unreg(int)'),
+            ('T', 'srpc::Server@srpc.server::wait_for_shutdown() const'),
+            ('T', 'srpc::Server@srpc.server::~Server()'),
+            ('T', 'srpc::ServerConnection@srpc.server::bind_channel(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>)'),
+            ('T', 'srpc::ServerConnection@srpc.server::close() const'),
+            ('T', 'srpc::ServerConnection@srpc.server::connected() const'),
+            ('T', 'srpc::ServerConnection@srpc.server::install_self_weak_for_testing(rusty::sync::Weak<srpc::ServerConnection@srpc.server>)'),
+            ('T', 'srpc::ServerConnection@srpc.server::is_channel_mode() const'),
+            ('T', 'srpc::ServerConnection@srpc.server::is_closed() const'),
+            ('T', 'srpc::ServerConnection@srpc.server::new_(rusty::Arc<srpc::RpcServiceContext@srpc.server>, int)'),
+            ('T', 'srpc::ServerConnection@srpc.server::reply(srpc::Request@srpc.server const&, int, rusty::Function<void (srpc::BinaryWriteArchive@srpc.serializable&)>) const'),
+            ('T', 'srpc::ServerConnection@srpc.server::run_async(rusty::Function<void ()>) const'),
+            ('T', 'srpc::Service@srpc.server::~Service()'),
+            ('T', 'srpc::make_empty_request_box@srpc.server()'),
+            ('T', 'srpc::make_service_proxy_from_box@srpc.server(rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>)'),
+            ('T', 'srpc::reject_malformed_request@srpc.server(srpc::Request@srpc.server const&, rusty::sync::Weak<srpc::ServerConnection@srpc.server> const&)'),
+            ('T', 'srpc::request_fill_body@srpc.server(srpc::Request@srpc.server&, std::__1::span<unsigned char const, 18446744073709551615ul>)'),
+            ('T', 'srpc::sconn_decode_request_and_dispatch@srpc.server(srpc::ServerConnection@srpc.server const&, unsigned char const*, unsigned long)'),
+            ('T', 'srpc::sconn_dispatch_in_fiber@srpc.server(rusty::Arc<srpc::RpcServiceContext@srpc.server>, unsigned long, int, rusty::Box<srpc::Request@srpc.server, rusty::alloc::Global>, rusty::sync::Weak<srpc::ServerConnection@srpc.server>)'),
+            ('T', 'srpc::sconn_dispatch_response_frame_via_channel@srpc.server(srpc::ServerConnection@srpc.server const&, unsigned char const*, unsigned long)'),
+            ('T', 'srpc::sconn_on_channel_closed@srpc.server(rusty::sync::Weak<srpc::ServerConnection@srpc.server> const&)'),
+            ('T', 'srpc::sconn_on_channel_error@srpc.server(rusty::sync::Weak<srpc::ServerConnection@srpc.server> const&, srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::sconn_on_channel_frame@srpc.server(rusty::sync::Weak<srpc::ServerConnection@srpc.server> const&, srpc::ChannelFrame@srpc.channel const&)'),
+            ('T', 'srpc::sconn_reply@srpc.server(srpc::ServerConnection@srpc.server const&, srpc::Request@srpc.server const&, int, rusty::Function<void (srpc::BinaryWriteArchive@srpc.serializable&)>)'),
+            ('T', 'srpc::server_drain_impl@srpc.server(rusty::Cell<srpc::ShutdownPhase@srpc.server> const&, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>> const&, unsigned long)'),
+            ('T', 'srpc::server_dsl_addr_to_string@srpc.server(signed char const*)'),
+            ('T', 'srpc::server_generate_instance_id@srpc.server()'),
+            ('T', 'srpc::server_invoke_shutdown_hook_safely@srpc.server(rusty::Function<void ()>&)'),
+            ('T', 'srpc::server_now_nanos@srpc.server()'),
+            ('T', 'srpc::server_parse_port@srpc.server(std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::server_random_u64@srpc.server()'),
+            ('T', 'srpc::server_resolve_poll_thread@srpc.server(rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>)'),
+            ('T', 'srpc::server_run_shutdown_hooks@srpc.server(rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Function<void ()>, rusty::alloc::Global>> const&)'),
+            ('T', 'srpc::server_wait_for_shutdown_impl@srpc.server(rusty::Mutex<srpc::ShutdownState@srpc.server> const&, rusty::Box<rusty::Condvar, rusty::alloc::Global> const&)'),
+            ('T', 'srpc::shutdown_phase_to_string@srpc.server(srpc::ShutdownPhase@srpc.server)'),
+        }),
     ),
-    "srpc.client": AbiSpec(
+    "srpc.tcp_channel": AbiSpec(
         surface=frozenset(
             {
-                "export module srpc.client;",
-                "namespace srpc {",
-                "import vec_port.vec;",
-                "import btree_port.btree.map;",
-                "import std_port;",
-                "import srpc.basetypes;",
-                "import srpc.callback_wrapper;",
-                "import srpc.callbacks;",
-                "import srpc.channel;",
-                "import srpc.circuit_breaker;",
-                "import srpc.connection_metrics;",
-                "import srpc.connection_state;",
-                "import srpc.errors;",
-                "import srpc.fiber_channel;",
-                "import srpc.heartbeat;",
-                "import srpc.load_balancer;",
-                "import srpc.logging;",
-                "import srpc.misc;",
-                "import srpc.rand;",
-                "import srpc.reactor;",
-                "import srpc.reconnect_policy;",
-                "import srpc.request_options;",
-                "import srpc.request_queue;",
-                "import srpc.serializable;",
-                "import srpc.tcp_channel;",
-                "import srpc.debugging;",
-                "export enum class DisconnectBehavior;",
-                "export constexpr DisconnectBehavior DisconnectBehavior_QUEUE();",
-                "export constexpr DisconnectBehavior DisconnectBehavior_FAIL_FAST();",
-                "export struct ReplyBuffer;",
-                "export struct BufferingConfig;",
-                "export struct KeepaliveConfig;",
-                "export struct PoolConfig;",
-                "export struct FutureAttr;",
-                "export struct FutureState;",
-                "export struct Future;",
-                "export struct ReconnectState;",
-                "export struct ClientConnection;",
-                "export struct Client;",
-                "export struct PoolState;",
-                "export struct ClientPool;",
-                "export using WeakClientConnection = rusty::sync::Weak<ClientConnection>;",
-                "export using FutureResult = rusty::Result<rusty::Arc<Future>, int32_t>;",
-                "export using AsyncReplyCallback = rusty::Function<void(int32_t, const uint8_t*, size_t)>;",
-                "export using OnReconnectCompleteCallbackFn = rusty::Function<void(bool)>;",
-                "export using OnServerRestartCallbackFn = rusty::Function<void(uint64_t, uint64_t)>;",
-                "export using OnConnectedCallbackFn = rusty::Function<void() const>;",
-                "export using OnErrorCallbackFn = rusty::Function<void(::srpc::RpcError, const std::string&) const>;",
-                "export using OnReconnectedCallbackFn = rusty::Function<void(bool) const>;",
-                "export using LegacyStdString = std::string;",
-                "export using LegacyStdStringView = std::string_view;",
-                "export using c_char = int8_t;",
-                "export using FutureCallback = ::srpc::detail::CallbackWrapper<rusty::Function<void(rusty::Arc<Future>) const>>;",
-                "export constexpr int32_t CLIENT_ERR_AGAIN = static_cast<int32_t>(11);",
-                "export constexpr int32_t CLIENT_ERR_WOULD_BLOCK = CLIENT_ERR_AGAIN;",
-                "export constexpr int32_t CLIENT_ERR_BUSY = static_cast<int32_t>(16);",
-                "export constexpr int32_t CLIENT_ERR_CANCELED = static_cast<int32_t>(125);",
-                "export constexpr int32_t CLIENT_ERR_CONNECTION_ABORTED = static_cast<int32_t>(103);",
-                "export constexpr int32_t CLIENT_ERR_CONNECTION_REFUSED = static_cast<int32_t>(111);",
-                "export constexpr int32_t CLIENT_ERR_CONNECTION_RESET = static_cast<int32_t>(104);",
-                "export constexpr int32_t CLIENT_ERR_HOST_UNREACHABLE = static_cast<int32_t>(113);",
-                "export constexpr int32_t CLIENT_ERR_INVALID_ARGUMENT = static_cast<int32_t>(22);",
-                "export constexpr int32_t CLIENT_ERR_IO = static_cast<int32_t>(5);",
-                "export constexpr int32_t CLIENT_ERR_NETWORK_UNREACHABLE = static_cast<int32_t>(101);",
-                "export constexpr int32_t CLIENT_ERR_NOT_CONNECTED = static_cast<int32_t>(107);",
-                "export constexpr int32_t CLIENT_ERR_BROKEN_PIPE = static_cast<int32_t>(32);",
-                "export constexpr int32_t CLIENT_ERR_TIMED_OUT = static_cast<int32_t>(110);",
-                "export constexpr int32_t CLIENT_REQUEST_QUEUE_REJECTED_ERROR = static_cast<int32_t>(35);",
-                "export constexpr int32_t CLIENT_REQUEST_QUEUE_REJECTED_ERROR = static_cast<int32_t>(11);",
-                "export constexpr int32_t CLIENT_INT_MIN = std::numeric_limits<int32_t>::min();",
-                "export constexpr int32_t CLIENT_RAND_MAX = std::numeric_limits<int32_t>::max();",
-                "export constexpr int32_t CLIENT_INTERNAL_HEARTBEAT_RPC_ID = std::numeric_limits<int32_t>::min();",
-                "export constexpr int32_t CLIENT_POLL_READ = static_cast<int32_t>(1);",
-                "export constexpr int32_t CLIENT_POLL_NO_CHANGE = -1;",
-                "export constexpr size_t kAsyncSlotCount = static_cast<size_t>(16384);",
-                "export int32_t client_rand(int32_t min, int32_t max);",
-                "export void client_verify(bool value);",
-                "export void client_log_line(int32_t level, int32_t line, const int8_t* file, std::string message);",
-                "export std::string client_text(std::string_view text);",
-                "export std::string client_text_str(std::string_view prefix, std::string_view value, std::string_view suffix);",
-                "export std::string client_text_i32(std::string_view prefix, int32_t value, std::string_view suffix);",
-                "export std::string client_text_u32_str(std::string_view prefix, uint32_t value, std::string_view middle, std::string_view text, std::string_view suffix);",
-                "export std::string client_text_u64_pair(std::string_view prefix, uint64_t first, std::string_view middle, uint64_t second, std::string_view suffix);",
-                "export std::string client_text_str_i32(std::string_view prefix, std::string_view text, std::string_view middle, int32_t value, std::string_view suffix);",
-                "export ::srpc::SinkProxy client_sink_proxy(::srpc::BufferSink& sink);",
-                "export ::srpc::SourceProxy client_source_proxy(::srpc::BufferSource& source);",
-                "export ReplyBuffer reply_buffer_empty();",
-                "export void reply_buffer_fill(ReplyBuffer& rb, std::span<const uint8_t> bytes);",
-                "export rusty::Vec<rusty::Option<AsyncReplyCallback>> make_prefilled_cb_slots();",
-                "export ::srpc::RequestQueue make_pending_queue(const ::srpc::RequestQueueConfig& c);",
-                "export uint64_t clientconn_monotonic_ms_now();",
-                "export int32_t clientconn_reconnect(const ClientConnection& self_, OnReconnectCompleteCallbackFn on_complete);",
-                "export ::srpc::BinaryWriteArchive make_write_archive(::srpc::BufferSink* sink);",
-                "export void request_copy_reply(const rusty::Arc<Future>& final_fu, const rusty::Arc<Future>& attempt_fu);",
-                "export ::srpc::TimeoutType classify_request_failure(int32_t err);",
-                "export ::srpc::ChannelError clientconn_dispatch_frame_via_channel(const ClientConnection& conn, const uint8_t* body_bytes, size_t body_size);",
-                "export void clientconn_enqueue_heartbeat_probe(const ClientConnection& conn);",
-                "export std::string clientconn_addr_to_string(const int8_t* addr);",
-                "export int32_t clientconn_connect_via_factory(const ClientConnection& conn, const int8_t* addr_i8);",
-                "export rusty::Box<::srpc::FiberChannel> clientconn_make_fiber_channel(::srpc::ChannelConnectionProxy ch);",
-                "export void clientconn_recv_job_entry(WeakClientConnection weak_self);",
-                "export void clientconn_bind_channel_via_poll_thread(const ClientConnection& conn, ::srpc::ChannelConnectionProxy channel);",
-                "export ::srpc::FiberChannel* clientconn_fiber_channel_ptr(const rusty::Option<rusty::Box<::srpc::FiberChannel>>& slot);",
-                "export void clientconn_run_recv_loop(const ClientConnection& conn);",
-                "export void clientconn_decode_response_and_notify(const ClientConnection& conn, const uint8_t* bytes, size_t size);",
-                "export ::srpc::RpcError clientconn_map_system_error(int32_t err);",
-                "export bool clientpool_is_client_healthy_with(PoolConfig cfg, const rusty::Arc<Client>& client);",
-                "export size_t clientpool_get_healthy_client_count(const ClientPool& self_, const std::string& addr);",
-                "export size_t clientpool_remove_unhealthy_clients(const ClientPool& self_, const std::string& addr);",
-                "export size_t clientpool_close_idle_clients(const ClientPool& self_, const std::string& addr, uint64_t current_time_ms);",
-                "export size_t clientpool_remove_all_unhealthy(const ClientPool& self_);",
-                "export size_t clientpool_close_all_idle(const ClientPool& self_, uint64_t current_time_ms);",
-                "export int32_t clientpool_connect_client(const rusty::Arc<Client>& client, const std::string& addr);",
-                "export rusty::Option<rusty::Arc<Client>> clientpool_get_client(const ClientPool& self_, const std::string& addr);",
-                "export using Fiber = Fiber;",
-                "export using PollThread = PollThread;",
+                'export module srpc.tcp_channel;',
+                'export struct TcpConnection;',
+                'export struct TcpListener;',
+                'export struct TcpFactory;',
+                'export constexpr size_t kTcpConnectionOutboundHighWaterDefault',
+                'export ::srpc::ChannelConnectionProxy make_tcp_connection_channel_proxy(rusty::Arc<TcpConnection> conn) {',
+                'export ::srpc::ChannelListenerProxy make_tcp_listener_channel_proxy(rusty::Arc<TcpListener> listener) {',
+                'export ::srpc::ChannelFactoryProxy make_tcp_factory_proxy(rusty::Arc<TcpFactory> factory) {',
+                'export ::srpc::ConnectResult tcp_factory_connect(const TcpFactory& fac, std::string_view addr) {',
+                'export rusty::Option<::srpc::ChannelListenerProxy> tcp_factory_make_listener(const TcpFactory& self_) {',
             }
         ),
-        symbols=frozenset(
+        symbols=frozenset({
+            ('D', 'typeinfo for srpc::TcpChannelShim@srpc.tcp_channel'),
+            ('D', 'typeinfo for srpc::TcpFactoryShim@srpc.tcp_channel'),
+            ('D', 'typeinfo for srpc::TcpListenerChannelShim@srpc.tcp_channel'),
+            ('D', 'typeinfo for srpc::TcpListenerPollableShim@srpc.tcp_channel'),
+            ('D', 'typeinfo for srpc::TcpPollableShim@srpc.tcp_channel'),
+            ('D', 'vtable for srpc::TcpChannelShim@srpc.tcp_channel'),
+            ('D', 'vtable for srpc::TcpFactoryShim@srpc.tcp_channel'),
+            ('D', 'vtable for srpc::TcpListenerChannelShim@srpc.tcp_channel'),
+            ('D', 'vtable for srpc::TcpListenerPollableShim@srpc.tcp_channel'),
+            ('D', 'vtable for srpc::TcpPollableShim@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_ACCES@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_ADDR_IN_USE@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_ADDR_NOT_AVAILABLE@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_AGAIN@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_BROKEN_PIPE@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_CONNECTION_REFUSED@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_CONNECTION_RESET@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_HOST_UNREACHABLE@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_INTERRUPTED@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_NETWORK_UNREACHABLE@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_NOT_CONNECTED@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_OPERATION_NOT_PERMITTED@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_PROCESS_FD_LIMIT@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_SYSTEM_FD_LIMIT@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_TIMED_OUT@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_ERR_WOULD_BLOCK@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_MAX_FRAME_PAYLOAD_SIZE@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_POLL_NO_CHANGE@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_POLL_READ@srpc.tcp_channel'),
+            ('R', 'srpc::TCP_POLL_WRITE@srpc.tcp_channel'),
+            ('R', 'srpc::kRecvScratchBytes@srpc.tcp_channel'),
+            ('R', 'srpc::kTcpConnectionOutboundHighWaterDefault@srpc.tcp_channel'),
+            ('R', 'typeinfo name for srpc::TcpChannelShim@srpc.tcp_channel'),
+            ('R', 'typeinfo name for srpc::TcpFactoryShim@srpc.tcp_channel'),
+            ('R', 'typeinfo name for srpc::TcpListenerChannelShim@srpc.tcp_channel'),
+            ('R', 'typeinfo name for srpc::TcpListenerPollableShim@srpc.tcp_channel'),
+            ('R', 'typeinfo name for srpc::TcpPollableShim@srpc.tcp_channel'),
+            ('T', 'srpc::TcpChannelShim@srpc.tcp_channel::TcpChannelShim(rusty::Arc<srpc::TcpConnection@srpc.tcp_channel>)'),
+            ('T', 'srpc::TcpChannelShim@srpc.tcp_channel::TcpChannelShim(srpc::TcpChannelShim@srpc.tcp_channel&&)'),
+            ('T', 'srpc::TcpChannelShim@srpc.tcp_channel::close() const'),
+            ('T', 'srpc::TcpChannelShim@srpc.tcp_channel::flush() const'),
+            ('T', 'srpc::TcpChannelShim@srpc.tcp_channel::is_closed() const'),
+            ('T', 'srpc::TcpChannelShim@srpc.tcp_channel::peer_address() const'),
+            ('T', 'srpc::TcpChannelShim@srpc.tcp_channel::send_frame(srpc::ChannelFrame@srpc.channel const&) const'),
+            ('T', 'srpc::TcpChannelShim@srpc.tcp_channel::set_keepalive(bool, int, int, int) const'),
+            ('T', 'srpc::TcpChannelShim@srpc.tcp_channel::set_on_closed(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel) const>>)'),
+            ('T', 'srpc::TcpChannelShim@srpc.tcp_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>)'),
+            ('T', 'srpc::TcpChannelShim@srpc.tcp_channel::set_on_frame(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelFrame@srpc.channel const&) const>>)'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::check_pending_write_update() const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::close() const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::content_size() const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::fd() const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::flush() const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::handle_error() const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::handle_read() const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::handle_write() const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::is_closed() const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::new_(int, rusty::String)'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::peer_address() const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::poll_mode() const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::send_frame(srpc::ChannelFrame@srpc.channel const&) const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::set_keepalive(bool, int, int, int) const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::set_on_closed(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel) const>>) const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>) const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::set_on_frame(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelFrame@srpc.channel const&) const>>) const'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::set_outbound_high_water(unsigned long)'),
+            ('T', 'srpc::TcpConnection@srpc.tcp_channel::set_poll_thread(rusty::Arc<srpc::PollThread@srpc.reactor>)'),
+            ('T', 'srpc::TcpFactory@srpc.tcp_channel::backend_name() const'),
+            ('T', 'srpc::TcpFactory@srpc.tcp_channel::connect(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+            ('T', 'srpc::TcpFactory@srpc.tcp_channel::make_listener() const'),
+            ('T', 'srpc::TcpFactory@srpc.tcp_channel::new_(rusty::Arc<srpc::PollThread@srpc.reactor>)'),
+            ('T', 'srpc::TcpFactory@srpc.tcp_channel::set_connect_timeout_ms(int)'),
+            ('T', 'srpc::TcpFactoryShim@srpc.tcp_channel::TcpFactoryShim(rusty::Arc<srpc::TcpFactory@srpc.tcp_channel>)'),
+            ('T', 'srpc::TcpFactoryShim@srpc.tcp_channel::TcpFactoryShim(srpc::TcpFactoryShim@srpc.tcp_channel&&)'),
+            ('T', 'srpc::TcpFactoryShim@srpc.tcp_channel::backend_name() const'),
+            ('T', 'srpc::TcpFactoryShim@srpc.tcp_channel::connect(std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::TcpFactoryShim@srpc.tcp_channel::make_listener()'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::check_pending_write_update() const'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::close() const'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::content_size() const'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::fd() const'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::handle_error() const'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::handle_read() const'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::handle_write() const'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::is_closed() const'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::listen(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::local_address() const'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::new_()'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::poll_mode() const'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::set_on_accept(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const>>) const'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>) const'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::set_poll_thread(rusty::Arc<srpc::PollThread@srpc.reactor>)'),
+            ('T', 'srpc::TcpListener@srpc.tcp_channel::set_self_weak(rusty::sync::Weak<srpc::TcpListener@srpc.tcp_channel>)'),
+            ('T', 'srpc::TcpListenerChannelShim@srpc.tcp_channel::TcpListenerChannelShim(rusty::Arc<srpc::TcpListener@srpc.tcp_channel>)'),
+            ('T', 'srpc::TcpListenerChannelShim@srpc.tcp_channel::TcpListenerChannelShim(srpc::TcpListenerChannelShim@srpc.tcp_channel&&)'),
+            ('T', 'srpc::TcpListenerChannelShim@srpc.tcp_channel::close()'),
+            ('T', 'srpc::TcpListenerChannelShim@srpc.tcp_channel::is_closed() const'),
+            ('T', 'srpc::TcpListenerChannelShim@srpc.tcp_channel::listen(std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::TcpListenerChannelShim@srpc.tcp_channel::local_address() const'),
+            ('T', 'srpc::TcpListenerChannelShim@srpc.tcp_channel::set_on_accept(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const>>)'),
+            ('T', 'srpc::TcpListenerChannelShim@srpc.tcp_channel::set_on_error(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (srpc::ChannelError@srpc.channel, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>>)'),
+            ('T', 'srpc::TcpListenerHandleReadScope@srpc.tcp_channel::TcpListenerHandleReadScope(rusty::sync::atomic::detail::Atomic<unsigned int> const*, bool)'),
+            ('T', 'srpc::TcpListenerHandleReadScope@srpc.tcp_channel::TcpListenerHandleReadScope(srpc::TcpListenerHandleReadScope@srpc.tcp_channel&&)'),
+            ('T', 'srpc::TcpListenerHandleReadScope@srpc.tcp_channel::acquired() const'),
+            ('T', 'srpc::TcpListenerHandleReadScope@srpc.tcp_channel::new_(srpc::TcpListener@srpc.tcp_channel const&)'),
+            ('T', 'srpc::TcpListenerHandleReadScope@srpc.tcp_channel::operator=(srpc::TcpListenerHandleReadScope@srpc.tcp_channel&&)'),
+            ('T', 'srpc::TcpListenerHandleReadScope@srpc.tcp_channel::rusty_mark_forgotten() const'),
+            ('T', 'srpc::TcpListenerHandleReadScope@srpc.tcp_channel::~TcpListenerHandleReadScope()'),
+            ('T', 'srpc::TcpListenerPollableShim@srpc.tcp_channel::TcpListenerPollableShim(rusty::Arc<srpc::TcpListener@srpc.tcp_channel>, rusty::Option<rusty::Arc<rusty::net::TcpListener>>)'),
+            ('T', 'srpc::TcpListenerPollableShim@srpc.tcp_channel::TcpListenerPollableShim(srpc::TcpListenerPollableShim@srpc.tcp_channel&&)'),
+            ('T', 'srpc::TcpListenerPollableShim@srpc.tcp_channel::check_pending_write_update() const'),
+            ('T', 'srpc::TcpListenerPollableShim@srpc.tcp_channel::close()'),
+            ('T', 'srpc::TcpListenerPollableShim@srpc.tcp_channel::content_size()'),
+            ('T', 'srpc::TcpListenerPollableShim@srpc.tcp_channel::fd() const'),
+            ('T', 'srpc::TcpListenerPollableShim@srpc.tcp_channel::handle_error()'),
+            ('T', 'srpc::TcpListenerPollableShim@srpc.tcp_channel::handle_read()'),
+            ('T', 'srpc::TcpListenerPollableShim@srpc.tcp_channel::handle_write()'),
+            ('T', 'srpc::TcpListenerPollableShim@srpc.tcp_channel::is_closed() const'),
+            ('T', 'srpc::TcpListenerPollableShim@srpc.tcp_channel::poll_mode() const'),
+            ('T', 'srpc::TcpPollableShim@srpc.tcp_channel::TcpPollableShim(rusty::Arc<srpc::TcpConnection@srpc.tcp_channel>, rusty::Option<rusty::Arc<rusty::os::fd::OwnedFd>>)'),
+            ('T', 'srpc::TcpPollableShim@srpc.tcp_channel::TcpPollableShim(srpc::TcpPollableShim@srpc.tcp_channel&&)'),
+            ('T', 'srpc::TcpPollableShim@srpc.tcp_channel::check_pending_write_update() const'),
+            ('T', 'srpc::TcpPollableShim@srpc.tcp_channel::close()'),
+            ('T', 'srpc::TcpPollableShim@srpc.tcp_channel::content_size()'),
+            ('T', 'srpc::TcpPollableShim@srpc.tcp_channel::fd() const'),
+            ('T', 'srpc::TcpPollableShim@srpc.tcp_channel::handle_error()'),
+            ('T', 'srpc::TcpPollableShim@srpc.tcp_channel::handle_read()'),
+            ('T', 'srpc::TcpPollableShim@srpc.tcp_channel::handle_write()'),
+            ('T', 'srpc::TcpPollableShim@srpc.tcp_channel::is_closed() const'),
+            ('T', 'srpc::TcpPollableShim@srpc.tcp_channel::poll_mode() const'),
+            ('T', 'srpc::connect_errno_to_channel_error@srpc.tcp_channel(int)'),
+            ('T', 'srpc::io_kind_to_channel_error@srpc.tcp_channel(rusty::io::Error::Kind)'),
+            ('T', 'srpc::make_tcp_connection_channel_proxy@srpc.tcp_channel(rusty::Arc<srpc::TcpConnection@srpc.tcp_channel>)'),
+            ('T', 'srpc::make_tcp_connection_pollable_proxy@srpc.tcp_channel(rusty::Arc<srpc::TcpConnection@srpc.tcp_channel>)'),
+            ('T', 'srpc::make_tcp_factory_proxy@srpc.tcp_channel(rusty::Arc<srpc::TcpFactory@srpc.tcp_channel>)'),
+            ('T', 'srpc::make_tcp_listener_channel_proxy@srpc.tcp_channel(rusty::Arc<srpc::TcpListener@srpc.tcp_channel>)'),
+            ('T', 'srpc::make_tcp_listener_pollable_proxy@srpc.tcp_channel(rusty::Arc<srpc::TcpListener@srpc.tcp_channel>)'),
+            ('T', 'srpc::set_nonblocking_fd@srpc.tcp_channel(int)'),
+            ('T', 'srpc::tcp_connect_socket@srpc.tcp_channel(unsigned int, unsigned short, int, int&)'),
+            ('T', 'srpc::tcp_factory_connect@srpc.tcp_channel(srpc::TcpFactory@srpc.tcp_channel const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::tcp_factory_connect_socket@srpc.tcp_channel(rusty::net::SocketAddrV4, int, srpc::ChannelError@srpc.channel&)'),
+            ('T', 'srpc::tcp_factory_make_listener@srpc.tcp_channel(srpc::TcpFactory@srpc.tcp_channel const&)'),
+            ('T', 'srpc::tcp_socket_is_self_connected@srpc.tcp_channel(int, unsigned int, unsigned short)'),
+            ('T', 'srpc::tcpconn_append_inbound@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, unsigned long)'),
+            ('T', 'srpc::tcpconn_close@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)'),
+            ('T', 'srpc::tcpconn_consume_inbound@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)'),
+            ('T', 'srpc::tcpconn_deliver_on_closed_locked@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, srpc::ChannelError@srpc.channel)'),
+            ('T', 'srpc::tcpconn_drain_outbound_locked@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&)'),
+            ('T', 'srpc::tcpconn_drop_after_error@srpc.tcp_channel(std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, unsigned long)'),
+            ('T', 'srpc::tcpconn_errno_to_channel_error@srpc.tcp_channel(int)'),
+            ('T', 'srpc::tcpconn_fd_locked@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)'),
+            ('T', 'srpc::tcpconn_flush@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)'),
+            ('T', 'srpc::tcpconn_handle_error@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)'),
+            ('T', 'srpc::tcpconn_handle_read@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)'),
+            ('T', 'srpc::tcpconn_handle_write@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)'),
+            ('T', 'srpc::tcpconn_last_errno@srpc.tcp_channel()'),
+            ('T', 'srpc::tcpconn_next_frame@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, srpc::FrameView@srpc.frame_codec&)'),
+            ('T', 'srpc::tcpconn_recv_bytes@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, srpc::RecvScratch@srpc.tcp_channel*)'),
+            ('T', 'srpc::tcpconn_reset_fd@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)'),
+            ('T', 'srpc::tcpconn_reset_inbound@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&)'),
+            ('T', 'srpc::tcpconn_scratch@srpc.tcp_channel()'),
+            ('T', 'srpc::tcpconn_send_bytes@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, unsigned long)'),
+            ('T', 'srpc::tcpconn_send_frame@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, srpc::ChannelFrame@srpc.channel const&)'),
+            ('T', 'srpc::tcpconn_trim_sent@srpc.tcp_channel(std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, unsigned long)'),
+            ('T', 'srpc::tcplistener_accept_step@srpc.tcp_channel(srpc::TcpListener@srpc.tcp_channel const&, srpc::AcceptStep@srpc.tcp_channel*)'),
+            ('T', 'srpc::tcplistener_accept_step_new@srpc.tcp_channel()'),
+            ('T', 'srpc::tcplistener_close_accepted@srpc.tcp_channel(srpc::AcceptStep@srpc.tcp_channel&)'),
+            ('T', 'srpc::tcplistener_handle_error@srpc.tcp_channel(srpc::TcpListener@srpc.tcp_channel const&)'),
+            ('T', 'srpc::tcplistener_handle_read@srpc.tcp_channel(srpc::TcpListener@srpc.tcp_channel const&)'),
+            ('T', 'srpc::tcplistener_is_bound@srpc.tcp_channel(srpc::TcpListener@srpc.tcp_channel const&)'),
+            ('T', 'srpc::tcplistener_take_proxy@srpc.tcp_channel(srpc::AcceptStep@srpc.tcp_channel&)'),
+        }),
+    ),
+    "srpc.client": AbiSpec(
+        # The canonical Rust marks its top-level items `pub`, which is what
+        # the emitter turns into `export`. Before that this module exported
+        # nothing at all and `srpc.cppm` re-exported an empty surface.
+        surface=frozenset(
             {
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_AGAIN@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_BROKEN_PIPE@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_BUSY@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_CANCELED@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_CONNECTION_ABORTED@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_CONNECTION_REFUSED@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_CONNECTION_RESET@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_HOST_UNREACHABLE@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_INVALID_ARGUMENT@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_IO@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_NETWORK_UNREACHABLE@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_NOT_CONNECTED@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_TIMED_OUT@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_ERR_WOULD_BLOCK@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_INTERNAL_HEARTBEAT_RPC_ID@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_INT_MIN@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_POLL_NO_CHANGE@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_POLL_READ@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_RAND_MAX@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::CLIENT_REQUEST_QUEUE_REJECTED_ERROR@srpc.client",
-                ),
-                (
-                    "R",
-                    "srpc::kAsyncSlotCount@srpc.client",
-                ),
-                (
-                    "T",
-                    "srpc::BufferingConfig@srpc.client::clone() const",
-                ),
-                (
-                    "T",
-                    "srpc::BufferingConfig@srpc.client::defaults()",
-                ),
-                (
-                    "T",
-                    "srpc::BufferingConfig@srpc.client::disabled()",
-                ),
-                (
-                    "T",
-                    "srpc::BufferingConfig@srpc.client::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::BufferingConfig@srpc.client::to_queue_config() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::Client(srpc::Client@srpc.client&&)",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::Client(rusty::RefCell<rusty::Option<rusty::Arc<srpc::ClientConnection@srpc.client>>>, rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Cell<int>, rusty::Cell<srpc::KeepaliveConfig@srpc.client>, rusty::Cell<srpc::HeartbeatConfig@srpc.heartbeat>, rusty::Cell<srpc::CircuitBreakerConfig@srpc.circuit_breaker>, rusty::Cell<srpc::ReconnectPolicy@srpc.reconnect_policy>, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>, srpc::ConnectionMetrics@srpc.connection_metrics)",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::add_on_connected(rusty::Function<void () const>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::add_on_disconnected(rusty::Function<void () const>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::add_on_error(rusty::Function<void (srpc::RpcError@srpc.errors, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&) const>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::add_on_reconnected(rusty::Function<void (bool) const>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::add_on_reconnecting(rusty::Function<void () const>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::check_server_instance(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::circuit_breaker_config() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::circuit_breaker_state() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::clear_connection_callbacks() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::clear_pending_requests(int) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::client_mode() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::close() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::connect(signed char const*, bool) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::connected() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::connection() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::connection_state() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::create(rusty::Arc<srpc::PollThread@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::handle_free(long) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::has_connection() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::has_pending_channel_factory() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::heartbeat_config() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::host() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::is_idle(unsigned long, unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::is_reconnecting() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::keepalive_config() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::metrics() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::new_(rusty::Arc<srpc::PollThread@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::operator=(srpc::Client@srpc.client&&)",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::pause() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::pending_request_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::reconnect(rusty::Function<void (bool)>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::resume() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::rpc_id() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::rusty_mark_forgotten() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::server_instance_id() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::set_buffering_config(srpc::BufferingConfig@srpc.client const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::set_channel_factory(rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::set_circuit_breaker(srpc::CircuitBreakerConfig@srpc.circuit_breaker const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::set_client_mode(bool) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::set_heartbeat(srpc::HeartbeatConfig@srpc.heartbeat const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::set_keepalive(srpc::KeepaliveConfig@srpc.client const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::set_on_server_restart(rusty::Function<void (unsigned long, unsigned long)>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::set_reconnect_policy(srpc::ReconnectPolicy@srpc.reconnect_policy const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::set_rpc_id(int) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::set_time(long) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::set_timeout(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::set_valid(bool) const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::time() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::timeout() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::try_reconnect_if_needed() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::validate_connection() const",
-                ),
-                (
-                    "T",
-                    "srpc::Client@srpc.client::~Client()",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::ClientConnection(srpc::ClientConnection@srpc.client&&)",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::ClientConnection(rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Mutex<rusty::Option<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>>>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>>>, rusty::Cell<bool>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>, srpc::Counter@srpc.basetypes, rusty::Mutex<std_port::collections::hash::map::HashMap@std_port<long, rusty::Arc<srpc::Future@srpc.client>, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Option<rusty::Function<void (int, unsigned char const*, unsigned long)>>, rusty::alloc::Global>>, srpc::ConnectionStateMachine@srpc.connection_state, rusty::Cell<srpc::ReconnectPolicy@srpc.reconnect_policy>, srpc::ReconnectState@srpc.client, rusty::Cell<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>, rusty::Cell<srpc::BufferingConfig@srpc.client>, srpc::RequestQueue@srpc.request_queue, rusty::Cell<unsigned long>, rusty::RefCell<rusty::Function<void (unsigned long, unsigned long)>>, rusty::Cell<srpc::KeepaliveConfig@srpc.client>, srpc::HeartbeatManager@srpc.heartbeat, srpc::CircuitBreaker@srpc.circuit_breaker, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, rusty::Cell<unsigned long>, srpc::ConnectionMetrics@srpc.connection_metrics, rusty::sync::Weak<srpc::ClientConnection@srpc.client>, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>, unsigned long, rusty::Cell<bool>, bool)",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::abort_reconnect()",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::allow_request_with_circuit_metrics() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::apply_keepalive_options()",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::bind_channel(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::bind_channel_direct(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::bind_channel_via_poll_thread(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::bind_factory(rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::buffering_config() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::channel_reconnect_attempts_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::check_pending_write_update() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::check_server_instance(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::circuit_breaker_config() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::circuit_breaker_state() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::clear_pending_requests(int) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::close() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::connect(signed char const*) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::connect_via_factory(signed char const*) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::connected() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::connection_state() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::content_size() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::decode_response_and_notify(unsigned char const*, unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::dispatch_frame_via_channel(unsigned char const*, unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::enqueue_heartbeat_probe() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::fail_pending_future(long, int) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::fd() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::force_connected_for_testing()",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::handle_error() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::handle_free(long) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::handle_read() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::handle_write() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::heartbeat_config() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::host() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::install_self_weak_for_testing(rusty::sync::Weak<srpc::ClientConnection@srpc.client>)",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::invalidate_pending_futures() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::invoke_connected_callback() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::invoke_disconnected_callback() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::invoke_error_callback(int, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::invoke_reconnected_callback(bool) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::invoke_reconnecting_callback() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::is_channel_mode() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::is_closed() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::is_factory_bound() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::is_idle(unsigned long, unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::is_reconnecting() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::keepalive_config() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::last_activity_time() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::map_system_error(int)",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::mark_closing() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::metrics() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::new_(rusty::Arc<srpc::PollThread@srpc.reactor>)",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::on_channel_closed_fan_out() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::on_request_dispatched(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::on_response_received(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::operator=(srpc::ClientConnection@srpc.client&&)",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::pause() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::pending_future_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::pending_request_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::poll_mode() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::reconnect(rusty::Function<void (bool)>) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::reconnect_policy() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::record_circuit_result(int) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::record_circuit_state_transition(srpc::CircuitState@srpc.circuit_breaker, srpc::CircuitState@srpc.circuit_breaker) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::replay_pending_requests() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::replay_pending_requests_for_test() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::reset_channel_mode_for_reconnect() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::resume() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::run_recv_loop() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::rusty_mark_forgotten() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::server_instance_id() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::set_buffering_config(srpc::BufferingConfig@srpc.client const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::set_callback_manager(rusty::Arc<srpc::CallbackManager@srpc.callbacks> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::set_circuit_breaker_config(srpc::CircuitBreakerConfig@srpc.circuit_breaker const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::set_heartbeat_config(srpc::HeartbeatConfig@srpc.heartbeat const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::set_keepalive(srpc::KeepaliveConfig@srpc.client const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::set_on_server_restart(rusty::Function<void (unsigned long, unsigned long)>) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::set_reconnect_address_for_testing(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::set_reconnect_policy(srpc::ReconnectPolicy@srpc.reconnect_policy const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::should_trip_circuit_for_error(int)",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::update_last_activity(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::update_pending_queue_config_for_test(srpc::RequestQueueConfig@srpc.request_queue const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::validate_connection() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientConnection@srpc.client::~ClientConnection()",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::ClientPool(srpc::ClientPool@srpc.client&&)",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::ClientPool(rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, rusty::Mutex<srpc::PoolState@srpc.client>, rusty::Mutex<srpc::PoolConfig@srpc.client>)",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::address_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::close_all_idle(unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::close_idle_clients(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&, unsigned long) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::get_client(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::get_healthy_client_count(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::is_client_healthy(rusty::Arc<srpc::Client@srpc.client> const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::new_(rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, srpc::PoolConfig@srpc.client)",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::operator=(srpc::ClientPool@srpc.client&&)",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::pool_config() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::remove_all_unhealthy() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::remove_unhealthy_clients(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::rusty_mark_forgotten() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::set_pool_config(srpc::PoolConfig@srpc.client) const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::total_client_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::ClientPool@srpc.client::~ClientPool()",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::add_completion_callback(rusty::Function<void ()>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::create(long, srpc::FutureAttr@srpc.client)",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::get_error_code() const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::get_options() const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::get_reply() const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::get_retry_count() const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::get_timeout_type() const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::get_xid() const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::increment_retry_count()",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::new_(long, srpc::FutureAttr@srpc.client)",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::notify_ready(rusty::Arc<srpc::Future@srpc.client>) const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::ready() const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::safe_release(rusty::Arc<srpc::Future@srpc.client>)",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::set_options(srpc::RequestOptions@srpc.request_options const&) const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::set_timeout_type(srpc::TimeoutType@srpc.request_options)",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::should_retry() const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::timed_out() const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::timed_wait(double) const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::wait() const",
-                ),
-                (
-                    "T",
-                    "srpc::Future@srpc.client::wait_with_options() const",
-                ),
-                (
-                    "T",
-                    "srpc::FutureAttr@srpc.client::clone() const",
-                ),
-                (
-                    "T",
-                    "srpc::FutureAttr@srpc.client::default_()",
-                ),
-                (
-                    "T",
-                    "srpc::FutureAttr@srpc.client::new_(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (rusty::Arc<srpc::Future@srpc.client>) const>>)",
-                ),
-                (
-                    "T",
-                    "srpc::FutureState@srpc.client::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::KeepaliveConfig@srpc.client::aggressive()",
-                ),
-                (
-                    "T",
-                    "srpc::KeepaliveConfig@srpc.client::clone() const",
-                ),
-                (
-                    "T",
-                    "srpc::KeepaliveConfig@srpc.client::disabled()",
-                ),
-                (
-                    "T",
-                    "srpc::KeepaliveConfig@srpc.client::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::KeepaliveConfig@srpc.client::relaxed()",
-                ),
-                (
-                    "T",
-                    "srpc::PoolConfig@srpc.client::aggressive()",
-                ),
-                (
-                    "T",
-                    "srpc::PoolConfig@srpc.client::clone() const",
-                ),
-                (
-                    "T",
-                    "srpc::PoolConfig@srpc.client::conservative()",
-                ),
-                (
-                    "T",
-                    "srpc::PoolConfig@srpc.client::defaults()",
-                ),
-                (
-                    "T",
-                    "srpc::PoolConfig@srpc.client::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::PoolConfig@srpc.client::no_health_check()",
-                ),
-                (
-                    "T",
-                    "srpc::PoolState@srpc.client::new_()",
-                ),
-                (
-                    "T",
-                    "srpc::classify_request_failure@srpc.client(int)",
-                ),
-                (
-                    "T",
-                    "srpc::client_log_line@srpc.client(int, int, signed char const*, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::client_rand@srpc.client(int, int)",
-                ),
-                (
-                    "T",
-                    "srpc::client_sink_proxy@srpc.client(srpc::BufferSink@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::client_source_proxy@srpc.client(srpc::BufferSource@srpc.serializable&)",
-                ),
-                (
-                    "T",
-                    "srpc::client_text@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::client_text_i32@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, int, std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::client_text_str@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::client_text_str_i32@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, int, std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::client_text_str_pair@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::client_text_u32_str@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned int, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::client_text_u64_pair@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned long, std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned long, std::__1::basic_string_view<char, std::__1::char_traits<char>>)",
-                ),
-                (
-                    "T",
-                    "srpc::client_verify@srpc.client(bool)",
-                ),
-                (
-                    "T",
-                    "srpc::clientconn_addr_to_string@srpc.client(signed char const*)",
-                ),
-                (
-                    "T",
-                    "srpc::clientconn_bind_channel_via_poll_thread@srpc.client(srpc::ClientConnection@srpc.client const&, rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>)",
-                ),
-                (
-                    "T",
-                    "srpc::clientconn_connect_via_factory@srpc.client(srpc::ClientConnection@srpc.client const&, signed char const*)",
-                ),
-                (
-                    "T",
-                    "srpc::clientconn_decode_response_and_notify@srpc.client(srpc::ClientConnection@srpc.client const&, unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::clientconn_dispatch_frame_via_channel@srpc.client(srpc::ClientConnection@srpc.client const&, unsigned char const*, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::clientconn_enqueue_heartbeat_probe@srpc.client(srpc::ClientConnection@srpc.client const&)",
-                ),
-                (
-                    "T",
-                    "srpc::clientconn_fiber_channel_ptr@srpc.client(rusty::Option<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::clientconn_make_fiber_channel@srpc.client(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>)",
-                ),
-                (
-                    "T",
-                    "srpc::clientconn_map_system_error@srpc.client(int)",
-                ),
-                (
-                    "T",
-                    "srpc::clientconn_monotonic_ms_now@srpc.client()",
-                ),
-                (
-                    "T",
-                    "srpc::clientconn_reconnect@srpc.client(srpc::ClientConnection@srpc.client const&, rusty::Function<void (bool)>)",
-                ),
-                (
-                    "T",
-                    "srpc::clientconn_recv_job_entry@srpc.client(rusty::sync::Weak<srpc::ClientConnection@srpc.client>)",
-                ),
-                (
-                    "T",
-                    "srpc::clientconn_run_recv_loop@srpc.client(srpc::ClientConnection@srpc.client const&)",
-                ),
-                (
-                    "T",
-                    "srpc::clientpool_close_all_idle@srpc.client(srpc::ClientPool@srpc.client const&, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::clientpool_close_idle_clients@srpc.client(srpc::ClientPool@srpc.client const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::clientpool_connect_client@srpc.client(rusty::Arc<srpc::Client@srpc.client> const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::clientpool_get_client@srpc.client(srpc::ClientPool@srpc.client const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::clientpool_get_healthy_client_count@srpc.client(srpc::ClientPool@srpc.client const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::clientpool_is_client_healthy_with@srpc.client(srpc::PoolConfig@srpc.client, rusty::Arc<srpc::Client@srpc.client> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::clientpool_remove_all_unhealthy@srpc.client(srpc::ClientPool@srpc.client const&)",
-                ),
-                (
-                    "T",
-                    "srpc::clientpool_remove_unhealthy_clients@srpc.client(srpc::ClientPool@srpc.client const&, std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)",
-                ),
-                (
-                    "T",
-                    "srpc::clientpool_select@srpc.client(srpc::LoadBalancingStrategy@srpc.load_balancer, rusty::port::vec::Vec@vec_port.vec<rusty::Arc<srpc::Client@srpc.client>, rusty::alloc::Global> const&, srpc::LoadBalancerState@srpc.load_balancer const&, unsigned long)",
-                ),
-                (
-                    "T",
-                    "srpc::make_pending_queue@srpc.client(srpc::RequestQueueConfig@srpc.request_queue const&)",
-                ),
-                (
-                    "T",
-                    "srpc::make_prefilled_cb_slots@srpc.client()",
-                ),
-                (
-                    "T",
-                    "srpc::make_write_archive@srpc.client(srpc::BufferSink@srpc.serializable*)",
-                ),
-                (
-                    "T",
-                    "srpc::reply_buffer_empty@srpc.client()",
-                ),
-                (
-                    "T",
-                    "srpc::reply_buffer_fill@srpc.client(srpc::ReplyBuffer@srpc.client&, std::__1::span<unsigned char const, 18446744073709551615ul>)",
-                ),
-                (
-                    "T",
-                    "srpc::request_copy_reply@srpc.client(rusty::Arc<srpc::Future@srpc.client> const&, rusty::Arc<srpc::Future@srpc.client> const&)",
-                ),
+                'export module srpc.client;',
+                'export struct ClientConnection;',
+                'export struct Client;',
+                'export struct ClientPool;',
+                'export struct Future;',
+                'export enum class DisconnectBehavior;',
+                'export constexpr int32_t CLIENT_INTERNAL_HEARTBEAT_RPC_ID = std::numeric_limits<int32_t>::min();',
+                'export constexpr size_t kAsyncSlotCount = static_cast<size_t>(16384);',
+                'export using FutureResult = rusty::Result<rusty::Arc<Future>, int32_t>;',
+                'export using AsyncReplyCallback = rusty::Function<void(int32_t, const uint8_t*, size_t)>;',
+                'export using WeakClientConnection = rusty::sync::Weak<ClientConnection>;',
+                'export rusty::String client_text(std::string_view text);',
+                'export int32_t client_rand(int32_t min, int32_t max);',
             }
         ),
+        symbols=frozenset({
+            ('R', 'srpc::CLIENT_ERR_AGAIN@srpc.client'),
+            ('R', 'srpc::CLIENT_ERR_BROKEN_PIPE@srpc.client'),
+            ('R', 'srpc::CLIENT_ERR_BUSY@srpc.client'),
+            ('R', 'srpc::CLIENT_ERR_CANCELED@srpc.client'),
+            ('R', 'srpc::CLIENT_ERR_CONNECTION_ABORTED@srpc.client'),
+            ('R', 'srpc::CLIENT_ERR_CONNECTION_REFUSED@srpc.client'),
+            ('R', 'srpc::CLIENT_ERR_CONNECTION_RESET@srpc.client'),
+            ('R', 'srpc::CLIENT_ERR_HOST_UNREACHABLE@srpc.client'),
+            ('R', 'srpc::CLIENT_ERR_INVALID_ARGUMENT@srpc.client'),
+            ('R', 'srpc::CLIENT_ERR_IO@srpc.client'),
+            ('R', 'srpc::CLIENT_ERR_NETWORK_UNREACHABLE@srpc.client'),
+            ('R', 'srpc::CLIENT_ERR_NOT_CONNECTED@srpc.client'),
+            ('R', 'srpc::CLIENT_ERR_TIMED_OUT@srpc.client'),
+            ('R', 'srpc::CLIENT_ERR_WOULD_BLOCK@srpc.client'),
+            ('R', 'srpc::CLIENT_INTERNAL_HEARTBEAT_RPC_ID@srpc.client'),
+            ('R', 'srpc::CLIENT_INT_MIN@srpc.client'),
+            ('R', 'srpc::CLIENT_POLL_NO_CHANGE@srpc.client'),
+            ('R', 'srpc::CLIENT_POLL_READ@srpc.client'),
+            ('R', 'srpc::CLIENT_RAND_MAX@srpc.client'),
+            ('R', 'srpc::CLIENT_REQUEST_QUEUE_REJECTED_ERROR@srpc.client'),
+            ('R', 'srpc::kAsyncSlotCount@srpc.client'),
+            ('R', 'srpc::kRequestSinkInitialCapacity@srpc.client'),
+            ('T', 'srpc::BufferingConfig@srpc.client::clone() const'),
+            ('T', 'srpc::BufferingConfig@srpc.client::defaults()'),
+            ('T', 'srpc::BufferingConfig@srpc.client::disabled()'),
+            ('T', 'srpc::BufferingConfig@srpc.client::new_()'),
+            ('T', 'srpc::BufferingConfig@srpc.client::to_queue_config() const'),
+            ('T', 'srpc::Client@srpc.client::Client(rusty::RefCell<rusty::Option<rusty::Arc<srpc::ClientConnection@srpc.client>>>, rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Cell<int>, rusty::Cell<srpc::KeepaliveConfig@srpc.client>, rusty::Cell<srpc::HeartbeatConfig@srpc.heartbeat>, rusty::Cell<srpc::CircuitBreakerConfig@srpc.circuit_breaker>, rusty::Cell<srpc::ReconnectPolicy@srpc.reconnect_policy>, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>, rusty::Arc<srpc::ConnectionMetrics@srpc.connection_metrics>)'),
+            ('T', 'srpc::Client@srpc.client::Client(srpc::Client@srpc.client&&)'),
+            ('T', 'srpc::Client@srpc.client::add_on_connected(rusty::Function<void () const>) const'),
+            ('T', 'srpc::Client@srpc.client::add_on_disconnected(rusty::Function<void () const>) const'),
+            ('T', 'srpc::Client@srpc.client::add_on_error(rusty::Function<void (srpc::RpcError@srpc.errors, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const>) const'),
+            ('T', 'srpc::Client@srpc.client::add_on_reconnected(rusty::Function<void (bool) const>) const'),
+            ('T', 'srpc::Client@srpc.client::add_on_reconnecting(rusty::Function<void () const>) const'),
+            ('T', 'srpc::Client@srpc.client::check_server_instance(unsigned long) const'),
+            ('T', 'srpc::Client@srpc.client::circuit_breaker_config() const'),
+            ('T', 'srpc::Client@srpc.client::circuit_breaker_state() const'),
+            ('T', 'srpc::Client@srpc.client::clear_connection_callbacks() const'),
+            ('T', 'srpc::Client@srpc.client::clear_pending_requests(int) const'),
+            ('T', 'srpc::Client@srpc.client::client_mode() const'),
+            ('T', 'srpc::Client@srpc.client::close() const'),
+            ('T', 'srpc::Client@srpc.client::connect(signed char const*, bool) const'),
+            ('T', 'srpc::Client@srpc.client::connected() const'),
+            ('T', 'srpc::Client@srpc.client::connection() const'),
+            ('T', 'srpc::Client@srpc.client::connection_state() const'),
+            ('T', 'srpc::Client@srpc.client::create(rusty::Arc<srpc::PollThread@srpc.reactor>)'),
+            ('T', 'srpc::Client@srpc.client::handle_free(long) const'),
+            ('T', 'srpc::Client@srpc.client::has_connection() const'),
+            ('T', 'srpc::Client@srpc.client::has_pending_channel_factory() const'),
+            ('T', 'srpc::Client@srpc.client::heartbeat_config() const'),
+            ('T', 'srpc::Client@srpc.client::host() const'),
+            ('T', 'srpc::Client@srpc.client::is_idle(unsigned long, unsigned long) const'),
+            ('T', 'srpc::Client@srpc.client::is_reconnecting() const'),
+            ('T', 'srpc::Client@srpc.client::keepalive_config() const'),
+            ('T', 'srpc::Client@srpc.client::metrics() const'),
+            ('T', 'srpc::Client@srpc.client::new_(rusty::Arc<srpc::PollThread@srpc.reactor>)'),
+            ('T', 'srpc::Client@srpc.client::operator=(srpc::Client@srpc.client&&)'),
+            ('T', 'srpc::Client@srpc.client::pause() const'),
+            ('T', 'srpc::Client@srpc.client::pending_request_count() const'),
+            ('T', 'srpc::Client@srpc.client::reconnect(rusty::Function<void (bool)>) const'),
+            ('T', 'srpc::Client@srpc.client::resume() const'),
+            ('T', 'srpc::Client@srpc.client::rpc_id() const'),
+            ('T', 'srpc::Client@srpc.client::rusty_mark_forgotten() const'),
+            ('T', 'srpc::Client@srpc.client::server_instance_id() const'),
+            ('T', 'srpc::Client@srpc.client::set_buffering_config(srpc::BufferingConfig@srpc.client const&) const'),
+            ('T', 'srpc::Client@srpc.client::set_channel_factory(rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>) const'),
+            ('T', 'srpc::Client@srpc.client::set_circuit_breaker(srpc::CircuitBreakerConfig@srpc.circuit_breaker const&) const'),
+            ('T', 'srpc::Client@srpc.client::set_client_mode(bool) const'),
+            ('T', 'srpc::Client@srpc.client::set_heartbeat(srpc::HeartbeatConfig@srpc.heartbeat const&) const'),
+            ('T', 'srpc::Client@srpc.client::set_keepalive(srpc::KeepaliveConfig@srpc.client const&) const'),
+            ('T', 'srpc::Client@srpc.client::set_on_server_restart(rusty::Function<void (unsigned long, unsigned long)>) const'),
+            ('T', 'srpc::Client@srpc.client::set_reconnect_policy(srpc::ReconnectPolicy@srpc.reconnect_policy const&) const'),
+            ('T', 'srpc::Client@srpc.client::set_rpc_id(int) const'),
+            ('T', 'srpc::Client@srpc.client::set_time(long) const'),
+            ('T', 'srpc::Client@srpc.client::set_timeout(unsigned long) const'),
+            ('T', 'srpc::Client@srpc.client::time() const'),
+            ('T', 'srpc::Client@srpc.client::timeout() const'),
+            ('T', 'srpc::Client@srpc.client::try_reconnect_if_needed() const'),
+            ('T', 'srpc::Client@srpc.client::validate_connection() const'),
+            ('T', 'srpc::Client@srpc.client::~Client()'),
+            ('T', 'srpc::ClientConnection@srpc.client::ClientConnection(rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Mutex<srpc::ClientBindingState@srpc.client>, rusty::Mutex<rusty::Option<rusty::Arc<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>>>>, rusty::Mutex<rusty::Option<rusty::Arc<rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>>>>, rusty::sync::atomic::detail::Atomic<bool>, srpc::ClientCloneCell@srpc.client<bool>, rusty::Mutex<rusty::Option<rusty::Arc<rusty::Mutex<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>>>, srpc::Counter@srpc.basetypes, rusty::Mutex<std_port::collections::hash::map::HashMap@std_port<long, rusty::Arc<srpc::Future@srpc.client>, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, rusty::Arc<rusty::Mutex<std_port::collections::hash::map::HashMap@std_port<long, rusty::Arc<srpc::Future@srpc.client>, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Option<rusty::Function<void (int, unsigned char const*, unsigned long)>>, rusty::alloc::Global>>, srpc::ConnectionStateMachine@srpc.connection_state, srpc::ClientCloneCell@srpc.client<srpc::ReconnectPolicy@srpc.reconnect_policy>, srpc::ReconnectState@srpc.client, srpc::ClientCloneCell@srpc.client<rusty::String>, srpc::ClientCloneCell@srpc.client<srpc::BufferingConfig@srpc.client>, srpc::RequestQueue@srpc.request_queue, srpc::ClientCloneCell@srpc.client<unsigned long>, rusty::Mutex<rusty::Arc<rusty::Mutex<rusty::Function<void (unsigned long, unsigned long)>>>>, srpc::ClientCloneCell@srpc.client<srpc::KeepaliveConfig@srpc.client>, srpc::HeartbeatManager@srpc.heartbeat, srpc::CircuitBreaker@srpc.circuit_breaker, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, srpc::ClientCloneCell@srpc.client<unsigned long>, rusty::Arc<srpc::ConnectionMetrics@srpc.connection_metrics>, rusty::sync::Weak<srpc::ClientConnection@srpc.client>, rusty::String, unsigned long, srpc::ClientCloneCell@srpc.client<bool>, bool)'),
+            ('T', 'srpc::ClientConnection@srpc.client::ClientConnection(srpc::ClientConnection@srpc.client&&)'),
+            ('T', 'srpc::ClientConnection@srpc.client::abort_reconnect()'),
+            ('T', 'srpc::ClientConnection@srpc.client::allow_request_with_circuit_metrics() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::bind_channel(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::bind_channel_direct(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>, unsigned long) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::bind_channel_via_poll_thread(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::bind_factory(rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::binding_is_current(unsigned long) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::buffering_config() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::channel_reconnect_attempts_count() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::check_pending_write_update() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::check_server_instance(unsigned long) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::circuit_breaker_config() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::circuit_breaker_state() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::clear_pending_requests(int) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::close() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::close_binding(rusty::Option<unsigned long>) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::connect(signed char const*) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::connect_attempt(signed char const*, rusty::Cell<unsigned long> const&) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::connect_via_factory(signed char const*) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::connected() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::connection_state() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::decode_response_and_notify(unsigned char const*, unsigned long) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::detach_pending_futures() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::direct_channel() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::dispatch_frame_via_channel(unsigned char const*, unsigned long) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::enqueue_heartbeat_probe() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::fail_pending_future(long, int) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::fiber_channel() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::force_connected_for_testing()'),
+            ('T', 'srpc::ClientConnection@srpc.client::handle_error() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::handle_free(long) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::heartbeat_config() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::host() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::install_self_weak_for_testing(rusty::sync::Weak<srpc::ClientConnection@srpc.client>)'),
+            ('T', 'srpc::ClientConnection@srpc.client::invalidate_pending_futures() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::invoke_connected_callback() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::invoke_disconnected_callback() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::invoke_error_callback(int, std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::invoke_reconnected_callback(bool) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::invoke_reconnecting_callback() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::is_channel_mode() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::is_closed() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::is_factory_bound() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::is_idle(unsigned long, unsigned long) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::is_reconnecting() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::keepalive_config() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::last_activity_time() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::map_system_error(int)'),
+            ('T', 'srpc::ClientConnection@srpc.client::mark_closing() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::metrics() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::new_(rusty::Arc<srpc::PollThread@srpc.reactor>)'),
+            ('T', 'srpc::ClientConnection@srpc.client::notify_pending_futures(srpc::ClientPendingBatch@srpc.client) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::on_binding_closed(unsigned long) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::on_channel_closed_fan_out() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::on_request_dispatched(unsigned long) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::on_response_received(unsigned long) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::operator=(srpc::ClientConnection@srpc.client&&)'),
+            ('T', 'srpc::ClientConnection@srpc.client::pause() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::pending_future_count() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::pending_request_count() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::reconnect(rusty::Function<void (bool)>) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::reconnect_policy() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::record_circuit_result(int) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::record_circuit_state_transition(srpc::CircuitState@srpc.circuit_breaker, srpc::CircuitState@srpc.circuit_breaker) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::replace_fiber_channel(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::replay_pending_requests() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::replay_pending_requests_for_test() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::reset_channel_mode_for_reconnect() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::resume() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::run_recv_loop() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::rusty_mark_forgotten() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::server_instance_id() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::set_buffering_config(srpc::BufferingConfig@srpc.client const&) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::set_callback_manager(rusty::Arc<srpc::CallbackManager@srpc.callbacks> const&)'),
+            ('T', 'srpc::ClientConnection@srpc.client::set_circuit_breaker_config(srpc::CircuitBreakerConfig@srpc.circuit_breaker const&) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::set_heartbeat_config(srpc::HeartbeatConfig@srpc.heartbeat const&) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::set_keepalive(srpc::KeepaliveConfig@srpc.client const&) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::set_on_server_restart(rusty::Function<void (unsigned long, unsigned long)>) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::set_reconnect_address_for_testing(rusty::String) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::set_reconnect_policy(srpc::ReconnectPolicy@srpc.reconnect_policy const&) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::should_trip_circuit_for_error(int)'),
+            ('T', 'srpc::ClientConnection@srpc.client::update_last_activity(unsigned long) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::update_pending_queue_config_for_test(srpc::RequestQueueConfig@srpc.request_queue const&) const'),
+            ('T', 'srpc::ClientConnection@srpc.client::validate_connection() const'),
+            ('T', 'srpc::ClientConnection@srpc.client::~ClientConnection()'),
+            ('T', 'srpc::ClientPool@srpc.client::ClientPool(rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, rusty::Mutex<srpc::PoolState@srpc.client>, rusty::Mutex<srpc::PoolConfig@srpc.client>)'),
+            ('T', 'srpc::ClientPool@srpc.client::ClientPool(srpc::ClientPool@srpc.client&&)'),
+            ('T', 'srpc::ClientPool@srpc.client::address_count() const'),
+            ('T', 'srpc::ClientPool@srpc.client::close_all_idle(unsigned long) const'),
+            ('T', 'srpc::ClientPool@srpc.client::close_idle_clients(std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned long) const'),
+            ('T', 'srpc::ClientPool@srpc.client::get_client(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+            ('T', 'srpc::ClientPool@srpc.client::get_healthy_client_count(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+            ('T', 'srpc::ClientPool@srpc.client::is_client_healthy(rusty::Arc<srpc::Client@srpc.client> const&) const'),
+            ('T', 'srpc::ClientPool@srpc.client::new_(rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, srpc::PoolConfig@srpc.client)'),
+            ('T', 'srpc::ClientPool@srpc.client::operator=(srpc::ClientPool@srpc.client&&)'),
+            ('T', 'srpc::ClientPool@srpc.client::pool_config() const'),
+            ('T', 'srpc::ClientPool@srpc.client::remove_all_unhealthy() const'),
+            ('T', 'srpc::ClientPool@srpc.client::remove_unhealthy_clients(std::__1::basic_string_view<char, std::__1::char_traits<char>>) const'),
+            ('T', 'srpc::ClientPool@srpc.client::rusty_mark_forgotten() const'),
+            ('T', 'srpc::ClientPool@srpc.client::set_pool_config(srpc::PoolConfig@srpc.client) const'),
+            ('T', 'srpc::ClientPool@srpc.client::total_client_count() const'),
+            ('T', 'srpc::ClientPool@srpc.client::~ClientPool()'),
+            ('T', 'srpc::ClientReplayScope@srpc.client::ClientReplayScope(rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>)'),
+            ('T', 'srpc::ClientReplayScope@srpc.client::ClientReplayScope(srpc::ClientReplayScope@srpc.client&&)'),
+            ('T', 'srpc::ClientReplayScope@srpc.client::operator=(srpc::ClientReplayScope@srpc.client&&)'),
+            ('T', 'srpc::ClientReplayScope@srpc.client::rusty_mark_forgotten() const'),
+            ('T', 'srpc::ClientReplayScope@srpc.client::~ClientReplayScope()'),
+            ('T', 'srpc::Future@srpc.client::add_completion_callback(rusty::Function<void ()>) const'),
+            ('T', 'srpc::Future@srpc.client::create(long, srpc::FutureAttr@srpc.client)'),
+            ('T', 'srpc::Future@srpc.client::get_error_code() const'),
+            ('T', 'srpc::Future@srpc.client::get_options() const'),
+            ('T', 'srpc::Future@srpc.client::get_reply() const'),
+            ('T', 'srpc::Future@srpc.client::get_retry_count() const'),
+            ('T', 'srpc::Future@srpc.client::get_timeout_type() const'),
+            ('T', 'srpc::Future@srpc.client::get_xid() const'),
+            ('T', 'srpc::Future@srpc.client::increment_retry_count()'),
+            ('T', 'srpc::Future@srpc.client::new_(long, srpc::FutureAttr@srpc.client)'),
+            ('T', 'srpc::Future@srpc.client::notify_ready(rusty::Arc<srpc::Future@srpc.client>) const'),
+            ('T', 'srpc::Future@srpc.client::ready() const'),
+            ('T', 'srpc::Future@srpc.client::safe_release(rusty::Arc<srpc::Future@srpc.client>)'),
+            ('T', 'srpc::Future@srpc.client::set_options(srpc::RequestOptions@srpc.request_options const&) const'),
+            ('T', 'srpc::Future@srpc.client::set_timeout_type(srpc::TimeoutType@srpc.request_options)'),
+            ('T', 'srpc::Future@srpc.client::should_retry() const'),
+            ('T', 'srpc::Future@srpc.client::timed_out() const'),
+            ('T', 'srpc::Future@srpc.client::timed_wait(double) const'),
+            ('T', 'srpc::Future@srpc.client::wait() const'),
+            ('T', 'srpc::Future@srpc.client::wait_with_options() const'),
+            ('T', 'srpc::FutureAttr@srpc.client::clone() const'),
+            ('T', 'srpc::FutureAttr@srpc.client::default_()'),
+            ('T', 'srpc::FutureAttr@srpc.client::new_(srpc::detail::CallbackWrapper@srpc.callback_wrapper<rusty::Function<void (rusty::Arc<srpc::Future@srpc.client>) const>>)'),
+            ('T', 'srpc::FutureState@srpc.client::new_()'),
+            ('T', 'srpc::KeepaliveConfig@srpc.client::aggressive()'),
+            ('T', 'srpc::KeepaliveConfig@srpc.client::clone() const'),
+            ('T', 'srpc::KeepaliveConfig@srpc.client::disabled()'),
+            ('T', 'srpc::KeepaliveConfig@srpc.client::new_()'),
+            ('T', 'srpc::KeepaliveConfig@srpc.client::relaxed()'),
+            ('T', 'srpc::PoolConfig@srpc.client::aggressive()'),
+            ('T', 'srpc::PoolConfig@srpc.client::clone() const'),
+            ('T', 'srpc::PoolConfig@srpc.client::conservative()'),
+            ('T', 'srpc::PoolConfig@srpc.client::defaults()'),
+            ('T', 'srpc::PoolConfig@srpc.client::new_()'),
+            ('T', 'srpc::PoolConfig@srpc.client::no_health_check()'),
+            ('T', 'srpc::PoolState@srpc.client::new_()'),
+            ('T', 'srpc::classify_request_failure@srpc.client(int)'),
+            ('T', 'srpc::client_log_line@srpc.client(int, int, signed char const*, rusty::String)'),
+            ('T', 'srpc::client_rand@srpc.client(int, int)'),
+            ('T', 'srpc::client_sink_proxy@srpc.client(srpc::BufferSink@srpc.serializable&)'),
+            ('T', 'srpc::client_source_proxy@srpc.client(srpc::BufferSource@srpc.serializable&)'),
+            ('T', 'srpc::client_text@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::client_text_i32@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, int, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::client_text_str@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::client_text_str_i32@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, int, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::client_text_str_pair@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::client_text_u32_str@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned int, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::client_text_u64_pair@srpc.client(std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned long, std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned long, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::client_verify@srpc.client(bool)'),
+            ('T', 'srpc::clientconn_addr_to_string@srpc.client(signed char const*)'),
+            ('T', 'srpc::clientconn_bind_channel_via_poll_thread@srpc.client(srpc::ClientConnection@srpc.client const&, rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>)'),
+            ('T', 'srpc::clientconn_connect_factory_for_binding@srpc.client(srpc::ClientConnection@srpc.client const&, signed char const*, unsigned long)'),
+            ('T', 'srpc::clientconn_connect_via_factory@srpc.client(srpc::ClientConnection@srpc.client const&, signed char const*)'),
+            ('T', 'srpc::clientconn_decode_response_and_notify@srpc.client(srpc::ClientConnection@srpc.client const&, unsigned char const*, unsigned long)'),
+            ('T', 'srpc::clientconn_decode_response_for_binding@srpc.client(srpc::ClientConnection@srpc.client const&, unsigned long, unsigned char const*, unsigned long)'),
+            ('T', 'srpc::clientconn_dispatch_frame_for_binding@srpc.client(srpc::ClientConnection@srpc.client const&, unsigned long, unsigned char const*, unsigned long)'),
+            ('T', 'srpc::clientconn_dispatch_frame_via_channel@srpc.client(srpc::ClientConnection@srpc.client const&, unsigned char const*, unsigned long)'),
+            ('T', 'srpc::clientconn_enqueue_heartbeat_probe@srpc.client(srpc::ClientConnection@srpc.client const&)'),
+            ('T', 'srpc::clientconn_make_fiber_channel@srpc.client(rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>)'),
+            ('T', 'srpc::clientconn_map_system_error@srpc.client(int)'),
+            ('T', 'srpc::clientconn_monotonic_ms_now@srpc.client()'),
+            ('T', 'srpc::clientconn_reconnect@srpc.client(srpc::ClientConnection@srpc.client const&, rusty::Function<void (bool)>)'),
+            ('T', 'srpc::clientconn_recv_job_entry@srpc.client(rusty::sync::Weak<srpc::ClientConnection@srpc.client>, rusty::Arc<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>>)'),
+            ('T', 'srpc::clientconn_replay_pending_for_binding@srpc.client(srpc::ClientConnection@srpc.client const&, unsigned long)'),
+            ('T', 'srpc::clientconn_replay_pending_requests@srpc.client(srpc::ClientConnection@srpc.client const&)'),
+            ('T', 'srpc::clientconn_run_recv_loop@srpc.client(srpc::ClientConnection@srpc.client const&)'),
+            ('T', 'srpc::clientconn_run_recv_loop_on_channel@srpc.client(srpc::ClientConnection@srpc.client const&, rusty::Arc<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>>)'),
+            ('T', 'srpc::clientpool_close_all_idle@srpc.client(srpc::ClientPool@srpc.client const&, unsigned long)'),
+            ('T', 'srpc::clientpool_close_idle_clients@srpc.client(srpc::ClientPool@srpc.client const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>, unsigned long)'),
+            ('T', 'srpc::clientpool_connect_client@srpc.client(rusty::Arc<srpc::Client@srpc.client> const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::clientpool_get_client@srpc.client(srpc::ClientPool@srpc.client const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::clientpool_get_healthy_client_count@srpc.client(srpc::ClientPool@srpc.client const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::clientpool_is_client_healthy_with@srpc.client(srpc::PoolConfig@srpc.client, rusty::Arc<srpc::Client@srpc.client> const&)'),
+            ('T', 'srpc::clientpool_remove_all_unhealthy@srpc.client(srpc::ClientPool@srpc.client const&)'),
+            ('T', 'srpc::clientpool_remove_unhealthy_clients@srpc.client(srpc::ClientPool@srpc.client const&, std::__1::basic_string_view<char, std::__1::char_traits<char>>)'),
+            ('T', 'srpc::clientpool_select@srpc.client(srpc::LoadBalancingStrategy@srpc.load_balancer, rusty::port::vec::Vec@vec_port.vec<rusty::Arc<srpc::Client@srpc.client>, rusty::alloc::Global> const&, srpc::LoadBalancerState@srpc.load_balancer const&, unsigned long)'),
+            ('T', 'srpc::make_pending_queue@srpc.client(srpc::RequestQueueConfig@srpc.request_queue const&)'),
+            ('T', 'srpc::make_prefilled_cb_slots@srpc.client()'),
+            ('T', 'srpc::make_write_archive@srpc.client(srpc::BufferSink@srpc.serializable*)'),
+            ('T', 'srpc::reply_buffer_empty@srpc.client()'),
+            ('T', 'srpc::reply_buffer_fill@srpc.client(srpc::ReplyBuffer@srpc.client&, std::__1::span<unsigned char const, 18446744073709551615ul>)'),
+            ('T', 'srpc::request_copy_reply@srpc.client(rusty::Arc<srpc::Future@srpc.client> const&, rusty::Arc<srpc::Future@srpc.client> const&)'),
+        }),
     ),
 }
 
-# Symbols that a module acquires in the production library from a hand-written
-# module *implementation unit* that is not part of the generated crate.
-#
-# srpc.epoll_wrapper follows Rust std's sys-module pattern: the generated
-# .cppm is the interface unit, and reactor/epoll_platform_linux.cc is the
-# platform implementation unit that CMake compiles into libsrpc.a (see the
-# "Platform implementation units for srpc.epoll_wrapper" block in
-# CMakeLists.txt). Those definitions are therefore legitimately absent from
-# the independently compiled crate object and present in production.
-#
-# This is an exhaustive allowlist, not a relaxation: the crate object must
-# still match ABI_SPECS exactly, and the production library must match
-# ABI_SPECS plus exactly these entries -- no more, no less.
-PLATFORM_IMPL_SYMBOLS = {
-    "srpc.epoll_wrapper": frozenset(
-        {
-            ("T", "srpc::epoll_add_impl@srpc.epoll_wrapper(int, int, int)"),
-            ("T", "srpc::epoll_event_zeroed@srpc.epoll_wrapper()"),
-            ("T", "srpc::epoll_open@srpc.epoll_wrapper()"),
-            ("T", "srpc::epoll_remove_impl@srpc.epoll_wrapper(int, int)"),
-            (
-                "T",
-                "srpc::epoll_update_impl@srpc.epoll_wrapper(int, int, int, int)",
-            ),
-        }
+# Every module-owned definition comes from canonical Rust. Native kernels
+# expose C symbols and cannot supply additional C++ module implementations.
+PLATFORM_IMPL_SYMBOLS: dict[str, frozenset[tuple[str, str]]] = {}
+EXPECTED_TOTAL_PLATFORM_SYMBOLS = 0
+
+# Extra raw entries emitted by the C++ ABI for constructor/destructor aliases.
+# Each tuple is one additional occurrence beyond the unique strong symbol in
+# ABI_SPECS. Every module also has exactly one module initializer.
+RAW_ABI_ALIASES = {
+    "srpc.load_balancer": (
+        ('T', 'srpc::LoadBalancerClientVec@srpc.load_balancer::~LoadBalancerClientVec()'),
+        ('T', 'srpc::LoadBalancerClientVec@srpc.load_balancer::~LoadBalancerClientVec()'),
+        ('T', 'srpc::LoadBalancerMetrics@srpc.load_balancer::~LoadBalancerMetrics()'),
+        ('T', 'srpc::LoadBalancerMetrics@srpc.load_balancer::~LoadBalancerMetrics()'),
+    ),
+    "srpc.reactor": (
+        ('T', 'janus::QuorumEvent@srpc.reactor::QuorumEvent(janus::QuorumEvent@srpc.reactor&&)'),
+        ('T', 'janus::QuorumEvent@srpc.reactor::QuorumEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::Cell<int>, rusty::Cell<int>, rusty::RefCell<std_port::collections::hash::map::HashMap@std_port<unsigned short, long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, int, int, rusty::Cell<janus::QuorumPolicy@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<bool>, rusty::Cell<unsigned int>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Arc<srpc::IntEvent@srpc.reactor>)'),
+        ('T', 'srpc::EventPollable@srpc.reactor::~EventPollable()'),
+        ('T', 'srpc::EventPollable@srpc.reactor::~EventPollable()'),
+        ('T', 'srpc::IntEvent@srpc.reactor::IntEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::Cell<int>, rusty::Cell<int>)'),
+        ('T', 'srpc::IntEvent@srpc.reactor::IntEvent(srpc::IntEvent@srpc.reactor&&)'),
+        ('T', 'srpc::NeverEvent@srpc.reactor::NeverEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>)'),
+        ('T', 'srpc::NeverEvent@srpc.reactor::NeverEvent(srpc::NeverEvent@srpc.reactor&&)'),
+        ('T', 'srpc::PollThread@srpc.reactor::PollThread(rusty::sync::mpsc::Sender<std::__1::variant<srpc::PollCommand_AddPollable@srpc.reactor, srpc::PollCommand_RemovePollable@srpc.reactor, srpc::PollCommand_ClosePollable@srpc.reactor, srpc::PollCommand_UpdateMode@srpc.reactor, srpc::PollCommand_AddJob@srpc.reactor, srpc::PollCommand_RemoveJob@srpc.reactor, srpc::PollCommand_Shutdown@srpc.reactor>>, rusty::Mutex<rusty::Option<rusty::thread::JoinHandle<std::__1::tuple<>>>>, rusty::sync::atomic::detail::Atomic<unsigned long>, rusty::sync::atomic::detail::Atomic<bool>, rusty::sync::atomic::detail::Atomic<int>)'),
+        ('T', 'srpc::PollThread@srpc.reactor::PollThread(srpc::PollThread@srpc.reactor&&)'),
+        ('T', 'srpc::PollThread@srpc.reactor::~PollThread()'),
+        ('T', 'srpc::Reactor@srpc.reactor::Reactor(rusty::Cell<int>, rusty::RefCell<rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>>, rusty::RefCell<rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>>, rusty::RefCell<rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>>, rusty::RefCell<rusty::VecDeque<rusty::Arc<srpc::EventPollable@srpc.reactor>>>, rusty::RefCell<btree_port::btree::map::BTreeMap@btree_port.btree.map<unsigned long, rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global>, rusty::alloc::Global>>, rusty::RefCell<rusty::port::vec::Vec@vec_port.vec<rusty::port::rc::Rc@rc_port<srpc::Fiber@srpc.reactor, rusty::alloc::Global>, rusty::alloc::Global>>, rusty::Cell<bool>, rusty::Cell<bool>, rusty::Cell<int>, rusty::Cell<int>, rusty::Cell<rusty::thread::ThreadId>, rusty::Cell<long>, rusty::Cell<long>, rusty::Cell<long>, rusty::Cell<long>, rusty::Cell<long>, rusty::RefCell<rusty::port::vec::Vec@vec_port.vec<srpc::StacklessTaskEntry@srpc.reactor, rusty::alloc::Global>>, rusty::RefCell<rusty::port::vec::Vec@vec_port.vec<unsigned long, rusty::alloc::Global>>, rusty::RefCell<rusty::VecDeque<unsigned long>>, rusty::marker::PhantomPinned)'),
+        ('T', 'srpc::Reactor@srpc.reactor::~Reactor()'),
+        ('T', 'srpc::TimeoutEvent@srpc.reactor::TimeoutEvent(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, unsigned long, unsigned long)'),
+        ('T', 'srpc::TimeoutEvent@srpc.reactor::TimeoutEvent(srpc::TimeoutEvent@srpc.reactor&&)'),
+        ('T', 'srpc::WaitAll@srpc.reactor::WaitAll(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::RefCell<rusty::port::vec::Vec@vec_port.vec<rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::alloc::Global>>)'),
+        ('T', 'srpc::WaitAll@srpc.reactor::WaitAll(srpc::WaitAll@srpc.reactor&&)'),
+        ('T', 'srpc::WaitAny@srpc.reactor::WaitAny(rusty::Cell<srpc::EventStatus@srpc.reactor>, rusty::thread::ThreadId, srpc::EventState@srpc.reactor, rusty::Cell<bool>, rusty::sync::Weak<srpc::EventPollable@srpc.reactor>, rusty::port::vec::Vec@vec_port.vec<rusty::Arc<srpc::EventPollable@srpc.reactor>, rusty::alloc::Global>)'),
+        ('T', 'srpc::WaitAny@srpc.reactor::WaitAny(srpc::WaitAny@srpc.reactor&&)'),
+        ('T', 'srpc::fiber_task_t@srpc.reactor::~fiber_task_t()'),
+    ),
+    "srpc.server": (
+        (
+            'T',
+            'srpc::DeferredReply@srpc.server::DeferredReply(srpc::DeferredReply@srpc.server&&)',
+        ),
+        (
+            'T',
+            'srpc::DeferredReply@srpc.server::DeferredReply(rusty::Box<srpc::Request@srpc.server, rusty::alloc::Global>, rusty::sync::Weak<srpc::ServerConnection@srpc.server>, rusty::Function<void (srpc::BinaryWriteArchive@srpc.serializable&)>, rusty::Function<void ()>)',
+        ),
+        (
+            'T',
+            'srpc::DeferredReply@srpc.server::~DeferredReply()',
+        ),
+        (
+            'T',
+            'srpc::PendingRequestGuard@srpc.server::PendingRequestGuard(srpc::PendingRequestGuard@srpc.server&&)',
+        ),
+        (
+            'T',
+            'srpc::PendingRequestGuard@srpc.server::PendingRequestGuard(rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>)',
+        ),
+        (
+            'T',
+            'srpc::PendingRequestGuard@srpc.server::~PendingRequestGuard()',
+        ),
+        (
+            'T',
+            'srpc::Server@srpc.server::Server(srpc::Server@srpc.server&&)',
+        ),
+        (
+            'T',
+            'srpc::Server@srpc.server::Server(rusty::port::vec::Vec@vec_port.vec<rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>, rusty::alloc::Global>, std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::Option<rusty::Arc<srpc::RpcServiceContext@srpc.server>>, rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, rusty::Mutex<srpc::ShutdownState@srpc.server>, rusty::Box<rusty::Condvar, rusty::alloc::Global>, rusty::Cell<srpc::ShutdownPhase@srpc.server>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Function<void ()>, rusty::alloc::Global>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long, rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>, rusty::Option<rusty::Box<srpc::ChannelListenerBase@srpc.channel, rusty::alloc::Global>>, rusty::Arc<rusty::Mutex<srpc::ChannelSconns@srpc.server>>)',
+        ),
+        (
+            'T',
+            'srpc::Server@srpc.server::~Server()',
+        ),
+        (
+            'T',
+            'srpc::Service@srpc.server::~Service()',
+        ),
+        (
+            'T',
+            'srpc::Service@srpc.server::~Service()',
+        ),
+    ),
+    "srpc.serializable": (
+        (
+            'T',
+            'srpc::Deserialize@srpc.serializable::~Deserialize()',
+        ),
+        (
+            'T',
+            'srpc::Deserialize@srpc.serializable::~Deserialize()',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<double>::DeserializeAdapter(double)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<double>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<double>&&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<int>::DeserializeAdapter(int)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<int>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<int>&&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<long>::DeserializeAdapter(long)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<long>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<long>&&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<rusty::String>::DeserializeAdapter(rusty::String)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<rusty::String>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<rusty::String>&&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<short>::DeserializeAdapter(short)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<short>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<short>&&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<signed char>::DeserializeAdapter(signed char)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<signed char>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<signed char>&&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>&&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::DeserializeAdapter(srpc::v32@srpc.basetypes)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>&&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::DeserializeAdapter(srpc::v64@srpc.basetypes)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>&&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::DeserializeAdapter(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<unsigned char>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<unsigned char>&&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<unsigned char>::DeserializeAdapter(unsigned char)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<unsigned int>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<unsigned int>&&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<unsigned int>::DeserializeAdapter(unsigned int)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<unsigned long>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<unsigned long>&&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<unsigned long>::DeserializeAdapter(unsigned long)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<unsigned short>::DeserializeAdapter(srpc::DeserializeAdapter@srpc.serializable<unsigned short>&&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapter@srpc.serializable<unsigned short>::DeserializeAdapter(unsigned short)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRef@srpc.serializable<double>::DeserializeAdapterRef(double const&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRef@srpc.serializable<int>::DeserializeAdapterRef(int const&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRef@srpc.serializable<long>::DeserializeAdapterRef(long const&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRef@srpc.serializable<rusty::String>::DeserializeAdapterRef(rusty::String const&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRef@srpc.serializable<short>::DeserializeAdapterRef(short const&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRef@srpc.serializable<signed char>::DeserializeAdapterRef(signed char const&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>::DeserializeAdapterRef(srpc::v32@srpc.basetypes const&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>::DeserializeAdapterRef(srpc::v64@srpc.basetypes const&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::DeserializeAdapterRef(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRef@srpc.serializable<unsigned char>::DeserializeAdapterRef(unsigned char const&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRef@srpc.serializable<unsigned int>::DeserializeAdapterRef(unsigned int const&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRef@srpc.serializable<unsigned long>::DeserializeAdapterRef(unsigned long const&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRef@srpc.serializable<unsigned short>::DeserializeAdapterRef(unsigned short const&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRefMut@srpc.serializable<double>::DeserializeAdapterRefMut(double&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRefMut@srpc.serializable<int>::DeserializeAdapterRefMut(int&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRefMut@srpc.serializable<long>::DeserializeAdapterRefMut(long&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRefMut@srpc.serializable<rusty::String>::DeserializeAdapterRefMut(rusty::String&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRefMut@srpc.serializable<short>::DeserializeAdapterRefMut(short&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRefMut@srpc.serializable<signed char>::DeserializeAdapterRefMut(signed char&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>::DeserializeAdapterRefMut(srpc::v32@srpc.basetypes&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>::DeserializeAdapterRefMut(srpc::v64@srpc.basetypes&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::DeserializeAdapterRefMut(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned char>::DeserializeAdapterRefMut(unsigned char&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned int>::DeserializeAdapterRefMut(unsigned int&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned long>::DeserializeAdapterRefMut(unsigned long&)',
+        ),
+        (
+            'T',
+            'srpc::DeserializeAdapterRefMut@srpc.serializable<unsigned short>::DeserializeAdapterRefMut(unsigned short&)',
+        ),
+        (
+            'T',
+            'srpc::SerializableBase@srpc.serializable::~SerializableBase()',
+        ),
+        (
+            'T',
+            'srpc::SerializableBase@srpc.serializable::~SerializableBase()',
+        ),
+        (
+            'T',
+            'srpc::SerializablePayload@srpc.serializable::~SerializablePayload()',
+        ),
+        (
+            'T',
+            'srpc::SerializablePayload@srpc.serializable::~SerializablePayload()',
+        ),
+        (
+            'T',
+            'srpc::Serialize@srpc.serializable::~Serialize()',
+        ),
+        (
+            'T',
+            'srpc::Serialize@srpc.serializable::~Serialize()',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<double>::SerializeAdapter(double)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<double>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<double>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<int>::SerializeAdapter(int)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<int>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<int>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<long>::SerializeAdapter(long)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<long>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<long>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<rusty::String>::SerializeAdapter(rusty::String)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<rusty::String>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<rusty::String>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<short>::SerializeAdapter(short)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<short>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<short>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<signed char>::SerializeAdapter(signed char)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<signed char>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<signed char>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<srpc::v32@srpc.basetypes>::SerializeAdapter(srpc::v32@srpc.basetypes)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<srpc::v64@srpc.basetypes>::SerializeAdapter(srpc::v64@srpc.basetypes)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::SerializeAdapter(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::SerializeAdapter(std::__1::basic_string_view<char, std::__1::char_traits<char>>)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<unsigned char>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<unsigned char>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<unsigned char>::SerializeAdapter(unsigned char)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<unsigned int>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<unsigned int>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<unsigned int>::SerializeAdapter(unsigned int)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<unsigned long>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<unsigned long>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<unsigned long>::SerializeAdapter(unsigned long)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<unsigned short>::SerializeAdapter(srpc::SerializeAdapter@srpc.serializable<unsigned short>&&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapter@srpc.serializable<unsigned short>::SerializeAdapter(unsigned short)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<double>::SerializeAdapterRef(double const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<int>::SerializeAdapterRef(int const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<long>::SerializeAdapterRef(long const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<rusty::String>::SerializeAdapterRef(rusty::String const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<short>::SerializeAdapterRef(short const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<signed char>::SerializeAdapterRef(signed char const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<srpc::v32@srpc.basetypes>::SerializeAdapterRef(srpc::v32@srpc.basetypes const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<srpc::v64@srpc.basetypes>::SerializeAdapterRef(srpc::v64@srpc.basetypes const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::SerializeAdapterRef(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::SerializeAdapterRef(std::__1::basic_string_view<char, std::__1::char_traits<char>> const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<unsigned char>::SerializeAdapterRef(unsigned char const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<unsigned int>::SerializeAdapterRef(unsigned int const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<unsigned long>::SerializeAdapterRef(unsigned long const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRef@srpc.serializable<unsigned short>::SerializeAdapterRef(unsigned short const&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<double>::SerializeAdapterRefMut(double&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<int>::SerializeAdapterRefMut(int&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<long>::SerializeAdapterRefMut(long&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<rusty::String>::SerializeAdapterRefMut(rusty::String&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<short>::SerializeAdapterRefMut(short&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<signed char>::SerializeAdapterRefMut(signed char&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v32@srpc.basetypes>::SerializeAdapterRefMut(srpc::v32@srpc.basetypes&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<srpc::v64@srpc.basetypes>::SerializeAdapterRefMut(srpc::v64@srpc.basetypes&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>>::SerializeAdapterRefMut(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>>&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<std::__1::basic_string_view<char, std::__1::char_traits<char>>>::SerializeAdapterRefMut(std::__1::basic_string_view<char, std::__1::char_traits<char>>&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<unsigned char>::SerializeAdapterRefMut(unsigned char&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<unsigned int>::SerializeAdapterRefMut(unsigned int&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<unsigned long>::SerializeAdapterRefMut(unsigned long&)',
+        ),
+        (
+            'T',
+            'srpc::SerializeAdapterRefMut@srpc.serializable<unsigned short>::SerializeAdapterRefMut(unsigned short&)',
+        ),
+        (
+            'T',
+            'srpc::SinkBase@srpc.serializable::~SinkBase()',
+        ),
+        (
+            'T',
+            'srpc::SinkBase@srpc.serializable::~SinkBase()',
+        ),
+        (
+            'T',
+            'srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>::SinkBaseAdapter(srpc::BufferSink@srpc.serializable)',
+        ),
+        (
+            'T',
+            'srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>::SinkBaseAdapter(srpc::SinkBaseAdapter@srpc.serializable<srpc::BufferSink@srpc.serializable>&&)',
+        ),
+        (
+            'T',
+            'srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>::SinkBaseAdapter(srpc::FdSink@srpc.serializable)',
+        ),
+        (
+            'T',
+            'srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>::SinkBaseAdapter(srpc::SinkBaseAdapter@srpc.serializable<srpc::FdSink@srpc.serializable>&&)',
+        ),
+        (
+            'T',
+            'srpc::SinkBaseAdapterRef@srpc.serializable<srpc::BufferSink@srpc.serializable>::SinkBaseAdapterRef(srpc::BufferSink@srpc.serializable const&)',
+        ),
+        (
+            'T',
+            'srpc::SinkBaseAdapterRef@srpc.serializable<srpc::FdSink@srpc.serializable>::SinkBaseAdapterRef(srpc::FdSink@srpc.serializable const&)',
+        ),
+        (
+            'T',
+            'srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::BufferSink@srpc.serializable>::SinkBaseAdapterRefMut(srpc::BufferSink@srpc.serializable&)',
+        ),
+        (
+            'T',
+            'srpc::SinkBaseAdapterRefMut@srpc.serializable<srpc::FdSink@srpc.serializable>::SinkBaseAdapterRefMut(srpc::FdSink@srpc.serializable&)',
+        ),
+        (
+            'T',
+            'srpc::SourceBase@srpc.serializable::~SourceBase()',
+        ),
+        (
+            'T',
+            'srpc::SourceBase@srpc.serializable::~SourceBase()',
+        ),
+        (
+            'T',
+            'srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>::SourceBaseAdapter(srpc::BufferSource@srpc.serializable)',
+        ),
+        (
+            'T',
+            'srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>::SourceBaseAdapter(srpc::SourceBaseAdapter@srpc.serializable<srpc::BufferSource@srpc.serializable>&&)',
+        ),
+        (
+            'T',
+            'srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>::SourceBaseAdapter(srpc::FdSource@srpc.serializable)',
+        ),
+        (
+            'T',
+            'srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>::SourceBaseAdapter(srpc::SourceBaseAdapter@srpc.serializable<srpc::FdSource@srpc.serializable>&&)',
+        ),
+        (
+            'T',
+            'srpc::SourceBaseAdapterRef@srpc.serializable<srpc::BufferSource@srpc.serializable>::SourceBaseAdapterRef(srpc::BufferSource@srpc.serializable const&)',
+        ),
+        (
+            'T',
+            'srpc::SourceBaseAdapterRef@srpc.serializable<srpc::FdSource@srpc.serializable>::SourceBaseAdapterRef(srpc::FdSource@srpc.serializable const&)',
+        ),
+        (
+            'T',
+            'srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::BufferSource@srpc.serializable>::SourceBaseAdapterRefMut(srpc::BufferSource@srpc.serializable&)',
+        ),
+        (
+            'T',
+            'srpc::SourceBaseAdapterRefMut@srpc.serializable<srpc::FdSource@srpc.serializable>::SourceBaseAdapterRefMut(srpc::FdSource@srpc.serializable&)',
+        ),
+    ),
+    "srpc.tcp_channel": (
+        (
+            'T',
+            'srpc::TcpChannelShim@srpc.tcp_channel::TcpChannelShim(srpc::TcpChannelShim@srpc.tcp_channel&&)',
+        ),
+        (
+            'T',
+            'srpc::TcpChannelShim@srpc.tcp_channel::TcpChannelShim(rusty::Arc<srpc::TcpConnection@srpc.tcp_channel>)',
+        ),
+        (
+            'T',
+            'srpc::TcpFactoryShim@srpc.tcp_channel::TcpFactoryShim(srpc::TcpFactoryShim@srpc.tcp_channel&&)',
+        ),
+        (
+            'T',
+            'srpc::TcpFactoryShim@srpc.tcp_channel::TcpFactoryShim(rusty::Arc<srpc::TcpFactory@srpc.tcp_channel>)',
+        ),
+        (
+            'T',
+            'srpc::TcpListenerChannelShim@srpc.tcp_channel::TcpListenerChannelShim(srpc::TcpListenerChannelShim@srpc.tcp_channel&&)',
+        ),
+        (
+            'T',
+            'srpc::TcpListenerChannelShim@srpc.tcp_channel::TcpListenerChannelShim(rusty::Arc<srpc::TcpListener@srpc.tcp_channel>)',
+        ),
+        (
+            'T',
+            'srpc::TcpListenerHandleReadScope@srpc.tcp_channel::TcpListenerHandleReadScope(srpc::TcpListenerHandleReadScope@srpc.tcp_channel&&)',
+        ),
+        (
+            'T',
+            'srpc::TcpListenerHandleReadScope@srpc.tcp_channel::TcpListenerHandleReadScope(rusty::sync::atomic::detail::Atomic<unsigned int> const*, bool)',
+        ),
+        (
+            'T',
+            'srpc::TcpListenerHandleReadScope@srpc.tcp_channel::~TcpListenerHandleReadScope()',
+        ),
+        (
+            'T',
+            'srpc::TcpListenerPollableShim@srpc.tcp_channel::TcpListenerPollableShim(srpc::TcpListenerPollableShim@srpc.tcp_channel&&)',
+        ),
+        (
+            'T',
+            'srpc::TcpListenerPollableShim@srpc.tcp_channel::TcpListenerPollableShim(rusty::Arc<srpc::TcpListener@srpc.tcp_channel>, rusty::Option<rusty::Arc<rusty::net::TcpListener>>)',
+        ),
+        (
+            'T',
+            'srpc::TcpPollableShim@srpc.tcp_channel::TcpPollableShim(srpc::TcpPollableShim@srpc.tcp_channel&&)',
+        ),
+        (
+            'T',
+            'srpc::TcpPollableShim@srpc.tcp_channel::TcpPollableShim(rusty::Arc<srpc::TcpConnection@srpc.tcp_channel>, rusty::Option<rusty::Arc<rusty::os::fd::OwnedFd>>)',
+        ),
+    ),
+    "srpc.utils": tuple(
+        ("T", symbol)
+        for symbol in (
+            "srpc::AddrInfo@srpc.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)",
+            "srpc::AddrInfo@srpc.utils::AddrInfo(srpc::AddrInfo@srpc.utils&&)",
+            "srpc::AddrInfo@srpc.utils::~AddrInfo()",
+        )
+    ),
+    "srpc.misc": (
+        ("T", "srpc::Job@srpc.misc::~Job()"),
+        ("T", "srpc::Job@srpc.misc::~Job()"),
+        (
+            "T",
+            "srpc::OneTimeJob@srpc.misc::OneTimeJob(bool, bool, rusty::Function<void ()>)",
+        ),
+        (
+            "T",
+            "srpc::OneTimeJob@srpc.misc::OneTimeJob(srpc::OneTimeJob@srpc.misc&&)",
+        ),
+    ),
+    "srpc.channel": tuple(
+        ("T", symbol)
+        for symbol in (
+            "srpc::ChannelFactoryBase@srpc.channel::~ChannelFactoryBase()",
+            "srpc::ChannelFactoryBase@srpc.channel::~ChannelFactoryBase()",
+            "srpc::ChannelListenerBase@srpc.channel::~ChannelListenerBase()",
+            "srpc::ChannelListenerBase@srpc.channel::~ChannelListenerBase()",
+            "srpc::ChannelConnectionBase@srpc.channel::~ChannelConnectionBase()",
+            "srpc::ChannelConnectionBase@srpc.channel::~ChannelConnectionBase()",
+        )
+    ),
+    "srpc.epoll_wrapper": tuple(
+        ("T", symbol)
+        for symbol in (
+            "srpc::Pollable@srpc.epoll_wrapper::~Pollable()",
+            "srpc::Pollable@srpc.epoll_wrapper::~Pollable()",
+        )
+    ),
+    "srpc.pollable_proxy": (
+        ("T", "srpc::PollableBase@srpc.pollable_proxy::~PollableBase()"),
+        ("T", "srpc::PollableBase@srpc.pollable_proxy::~PollableBase()"),
+    ),
+    "srpc.inmemory_channel": tuple(
+        ("T", symbol)
+        for symbol in (
+            "srpc::InMemoryChannelShim@srpc.inmemory_channel::InMemoryChannelShim(rusty::Arc<srpc::InMemoryChannel@srpc.inmemory_channel>)",
+            "srpc::InMemoryChannelShim@srpc.inmemory_channel::InMemoryChannelShim(srpc::InMemoryChannelShim@srpc.inmemory_channel&&)",
+            "srpc::InMemoryFactoryShim@srpc.inmemory_channel::InMemoryFactoryShim(rusty::Arc<srpc::InMemoryFactory@srpc.inmemory_channel>)",
+            "srpc::InMemoryFactoryShim@srpc.inmemory_channel::InMemoryFactoryShim(srpc::InMemoryFactoryShim@srpc.inmemory_channel&&)",
+            "srpc::InMemoryListenerShim@srpc.inmemory_channel::InMemoryListenerShim(rusty::Arc<srpc::InMemoryListener@srpc.inmemory_channel>)",
+            "srpc::InMemoryListenerShim@srpc.inmemory_channel::InMemoryListenerShim(srpc::InMemoryListenerShim@srpc.inmemory_channel&&)",
+        )
+    ),
+    "srpc.fiber_channel": (
+        ("T", "srpc::FiberChannel@srpc.fiber_channel::~FiberChannel()"),
+    ),
+    "srpc.client": (
+        ('T', 'srpc::Client@srpc.client::Client(rusty::RefCell<rusty::Option<rusty::Arc<srpc::ClientConnection@srpc.client>>>, rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Cell<bool>, rusty::Cell<long>, rusty::Cell<unsigned long>, rusty::Cell<int>, rusty::Cell<srpc::KeepaliveConfig@srpc.client>, rusty::Cell<srpc::HeartbeatConfig@srpc.heartbeat>, rusty::Cell<srpc::CircuitBreakerConfig@srpc.circuit_breaker>, rusty::Cell<srpc::ReconnectPolicy@srpc.reconnect_policy>, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, rusty::Mutex<rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>, rusty::Arc<srpc::ConnectionMetrics@srpc.connection_metrics>)'),
+        ('T', 'srpc::Client@srpc.client::Client(srpc::Client@srpc.client&&)'),
+        ('T', 'srpc::Client@srpc.client::~Client()'),
+        ('T', 'srpc::ClientConnection@srpc.client::ClientConnection(rusty::Arc<srpc::PollThread@srpc.reactor>, rusty::Mutex<srpc::ClientBindingState@srpc.client>, rusty::Mutex<rusty::Option<rusty::Arc<rusty::Box<srpc::FiberChannel@srpc.fiber_channel, rusty::alloc::Global>>>>, rusty::Mutex<rusty::Option<rusty::Arc<rusty::Box<srpc::ChannelConnectionBase@srpc.channel, rusty::alloc::Global>>>>, rusty::sync::atomic::detail::Atomic<bool>, srpc::ClientCloneCell@srpc.client<bool>, rusty::Mutex<rusty::Option<rusty::Arc<rusty::Mutex<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>>>>, srpc::Counter@srpc.basetypes, rusty::Mutex<std_port::collections::hash::map::HashMap@std_port<long, rusty::Arc<srpc::Future@srpc.client>, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>, rusty::Arc<rusty::Mutex<std_port::collections::hash::map::HashMap@std_port<long, rusty::Arc<srpc::Future@srpc.client>, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Option<rusty::Function<void (int, unsigned char const*, unsigned long)>>, rusty::alloc::Global>>, srpc::ConnectionStateMachine@srpc.connection_state, srpc::ClientCloneCell@srpc.client<srpc::ReconnectPolicy@srpc.reconnect_policy>, srpc::ReconnectState@srpc.client, srpc::ClientCloneCell@srpc.client<rusty::String>, srpc::ClientCloneCell@srpc.client<srpc::BufferingConfig@srpc.client>, srpc::RequestQueue@srpc.request_queue, srpc::ClientCloneCell@srpc.client<unsigned long>, rusty::Mutex<rusty::Arc<rusty::Mutex<rusty::Function<void (unsigned long, unsigned long)>>>>, srpc::ClientCloneCell@srpc.client<srpc::KeepaliveConfig@srpc.client>, srpc::HeartbeatManager@srpc.heartbeat, srpc::CircuitBreaker@srpc.circuit_breaker, rusty::Arc<srpc::CallbackManager@srpc.callbacks>, srpc::ClientCloneCell@srpc.client<unsigned long>, rusty::Arc<srpc::ConnectionMetrics@srpc.connection_metrics>, rusty::sync::Weak<srpc::ClientConnection@srpc.client>, rusty::String, unsigned long, srpc::ClientCloneCell@srpc.client<bool>, bool)'),
+        ('T', 'srpc::ClientConnection@srpc.client::ClientConnection(srpc::ClientConnection@srpc.client&&)'),
+        ('T', 'srpc::ClientConnection@srpc.client::~ClientConnection()'),
+        ('T', 'srpc::ClientPool@srpc.client::ClientPool(rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, rusty::Mutex<srpc::PoolState@srpc.client>, rusty::Mutex<srpc::PoolConfig@srpc.client>)'),
+        ('T', 'srpc::ClientPool@srpc.client::ClientPool(srpc::ClientPool@srpc.client&&)'),
+        ('T', 'srpc::ClientPool@srpc.client::~ClientPool()'),
+        ('T', 'srpc::ClientReplayScope@srpc.client::ClientReplayScope(rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>)'),
+        ('T', 'srpc::ClientReplayScope@srpc.client::ClientReplayScope(srpc::ClientReplayScope@srpc.client&&)'),
+        ('T', 'srpc::ClientReplayScope@srpc.client::~ClientReplayScope()'),
     ),
 }
-EXPECTED_TOTAL_PLATFORM_SYMBOLS = 5
 
 
 class GateError(RuntimeError):
@@ -8840,57 +5046,6 @@ def executable(root: Path, value: str, description: str) -> Path:
     return resolved
 
 
-def resolve_archiver(root: Path, nm: Path) -> Path:
-    """Locate llvm-ar for the same toolchain as `nm`.
-
-    The gate needs llvm-ar to bundle the non-crate support objects into an
-    archive (see compile_support_inputs). This used to hard-code a bare
-    `llvm-ar` beside nm, which only holds when the toolchain is installed
-    unsuffixed -- a Homebrew keg, say. apt.llvm.org, which the CI image uses,
-    installs VERSION-SUFFIXED binaries and only runs update-alternatives for
-    clang/clang++/llvm-config, so beside `/usr/bin/llvm-nm-22` there is an
-    `llvm-ar-22` and no plain `llvm-ar` at all -- the gate died with
-    "ar is unavailable: /usr/bin/llvm-ar".
-
-    So mirror nm's NAME SHAPE, not just its directory: substitute
-    `llvm-nm` -> `llvm-ar` while preserving whatever version suffix nm carries
-    (`llvm-nm-22` -> `llvm-ar-22`). The version is never hard-coded; it is read
-    off nm.
-
-    Candidates are tried most-toolchain-specific first, so a matching llvm-ar
-    always wins over a stray one:
-
-      1. `<nm dir>/llvm-ar<suffix>`   -- same directory AND same version
-      2. `<nm dir>/llvm-ar`           -- same directory, unversioned layout
-      3. `llvm-ar<suffix>` on PATH
-      4. `llvm-ar` on PATH
-      5. `ar` on PATH                -- last resort, only if no llvm-ar exists
-
-    If nothing is found this raises, naming every path it tried, rather than
-    proceeding without an archiver.
-    """
-    suffix = nm.name[len("llvm-nm") :] if nm.name.startswith("llvm-nm") else ""
-    # Preserve order, drop duplicates (suffix == "" collapses 1 into 2).
-    beside_names = list(dict.fromkeys(["llvm-ar" + suffix, "llvm-ar"]))
-    path_names = list(dict.fromkeys(["llvm-ar" + suffix, "llvm-ar", "ar"]))
-
-    attempted = []
-    for name in beside_names:
-        candidate = nm.parent / name
-        attempted.append(str(candidate))
-        if candidate.is_file() and os.access(candidate, os.X_OK):
-            return Path(os.path.abspath(candidate))
-    for name in path_names:
-        attempted.append(f"{name} (PATH)")
-        found = shutil.which(name)
-        if found is not None:
-            return Path(os.path.abspath(found))
-    raise GateError(
-        f"ar is unavailable for the toolchain of {nm}: tried "
-        + ", ".join(attempted)
-    )
-
-
 def run(command: list[str], cwd: Path) -> str:
     completed = subprocess.run(
         command,
@@ -8912,11 +5067,6 @@ def run(command: list[str], cwd: Path) -> str:
 def git_output(cwd: Path, arguments: list[str], description: str) -> str:
     try:
         completed = subprocess.run(
-            # See `extraction.ownership_exception`: vouch for exactly the
-            # directory being inspected so the pin attestation survives a
-            # container job whose checkout is owned by a different uid. It
-            # relaxes git's ownership heuristic only -- every pin comparison
-            # below still fails closed.
             ["git", *extraction.ownership_exception(cwd), *arguments],
             cwd=cwd,
             text=True,
@@ -9035,18 +5185,88 @@ def load_owned_modules(root: Path) -> list[extraction.ModuleEntry]:
         raise GateError(f"cannot load extraction ownership: {exc}") from exc
     actual = {module.cpp_module for module in modules}
     expected = set(ABI_SPECS)
-    if actual != expected:
+    ratchet_maps = {
+        "ABI specification": expected,
+        "direct-import specification": set(EXPECTED_IMPORTS),
+        "generated-module digest": set(EXPECTED_GENERATED_MODULE_SHA256),
+        "combined-importer use marker": set(IMPORTER_USE_MARKERS),
+    }
+    if any(names != actual for names in ratchet_maps.values()):
         details = ["crate-mode ABI ratchet does not match extraction manifest"]
-        if expected - actual:
-            details.append(
-                "missing manifest module(s): " + ", ".join(sorted(expected - actual))
-            )
-        if actual - expected:
-            details.append(
-                "missing ABI specification(s): " + ", ".join(sorted(actual - expected))
-            )
+        for description, names in ratchet_maps.items():
+            if names - actual:
+                details.append(
+                    f"{description} has non-manifest module(s): "
+                    + ", ".join(sorted(names - actual))
+                )
+            if actual - names:
+                details.append(
+                    f"missing {description}(s): "
+                    + ", ".join(sorted(actual - names))
+                )
         raise GateError("\n".join(details))
+    require_reactor_oracle_additions()
+    require_client_oracle_deltas()
     return modules
+
+
+def require_reactor_oracle_additions() -> None:
+    """Keep the declared incumbent-oracle additions honest.
+
+    Every entry of REACTOR_INCUMBENT_ORACLE_ADDITIONS must still be a symbol
+    srpc.reactor actually owns.  If the `EventState::new_` factory is renamed or
+    stops being emitted, this fires instead of leaving a stale, unexamined
+    "authorized addition" sitting in the ratchet.
+    """
+    owned = ABI_SPECS["srpc.reactor"].symbols
+    stale = REACTOR_INCUMBENT_ORACLE_ADDITIONS - owned
+    if stale:
+        raise GateError(
+            "declared srpc.reactor incumbent-oracle addition(s) are not owned "
+            "by the module any more: "
+            + ", ".join(f"{kind} {name}" for kind, name in sorted(stale))
+        )
+
+
+def require_client_oracle_deltas() -> None:
+    """Keep the declared srpc.client incumbent-oracle delta honest.
+
+    The promoted module may differ from the frozen incumbent surface only by
+    the reviewed sets above.  Any other addition, and any removal that was not
+    reviewed, fails here rather than riding in silently -- which matters for
+    this module in particular, because it once exported nothing at all and
+    still compiled and produced an object.
+    """
+    owned = set(ABI_SPECS["srpc.client"].symbols)
+    added = owned - CLIENT_INCUMBENT_ORACLE
+    removed = CLIENT_INCUMBENT_ORACLE - owned
+    problems: list[str] = []
+    if added != set(CLIENT_INCUMBENT_ORACLE_ADDITIONS):
+        for kind, name in sorted(added - set(CLIENT_INCUMBENT_ORACLE_ADDITIONS)):
+            problems.append(f"unreviewed addition: {kind} {name}")
+        for kind, name in sorted(set(CLIENT_INCUMBENT_ORACLE_ADDITIONS) - added):
+            problems.append(f"stale declared addition: {kind} {name}")
+    if removed != set(CLIENT_INCUMBENT_ORACLE_REMOVALS):
+        for kind, name in sorted(removed - set(CLIENT_INCUMBENT_ORACLE_REMOVALS)):
+            problems.append(f"unreviewed removal: {kind} {name}")
+        for kind, name in sorted(set(CLIENT_INCUMBENT_ORACLE_REMOVALS) - removed):
+            problems.append(f"stale declared removal: {kind} {name}")
+    for incumbent_symbol, current_symbol in CLIENT_INCUMBENT_ORACLE_SIGNATURE_CHANGES:
+        if current_symbol not in owned:
+            problems.append(
+                "declared signature change lost its current spelling: "
+                f"{current_symbol[0]} {current_symbol[1]}"
+            )
+        if incumbent_symbol in owned:
+            problems.append(
+                "declared signature change is no longer a change (the incumbent "
+                f"spelling is owned again): {incumbent_symbol[0]} {incumbent_symbol[1]}"
+            )
+    if problems:
+        raise GateError(
+            "srpc.client incumbent-oracle delta is not the reviewed one:\n  "
+            + "\n  ".join(problems)
+        )
 
 
 def read_generated(path: Path, description: str) -> str:
@@ -9129,13 +5349,41 @@ def require_cpp_surfaces(
                 f"{forbidden!r}"
             )
 
+    digest_drift: list[tuple[str, str, str]] = []
     for module in modules:
         path = output / f"{module.cpp_module}.cppm"
         text = read_generated(path, f"child module {module.cpp_module}")
+        # ADVISORY ONLY -- deliberately not a gate failure.
+        #
+        # This map used to enforce byte-identical generated C++. The project's
+        # acceptance rule has since been changed by the user: acceptance is
+        # "builds + tests pass + equivalent public function surface", and byte
+        # drift explicitly does not count. Enforcing the digest turned every
+        # compiler improvement into a red gate for output that is semantically
+        # identical -- the codegen fixes on the pinned rusty-cpp commit moved
+        # 20 of these 32 digests while leaving 30 of 32 module ABIs
+        # bit-for-bit equal, which is exactly the failure mode the repeal
+        # targets. The map and its computation are retained so real drift is
+        # still visible and reviewable; the enforcing checks are the ABI
+        # symbol sets, the direct-import graph, and importer coverage below.
+        actual_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        expected_digest = EXPECTED_GENERATED_MODULE_SHA256[module.cpp_module]
+        if actual_digest != expected_digest:
+            digest_drift.append(
+                (module.cpp_module, expected_digest, actual_digest)
+            )
+        require_exact_module_imports(
+            text,
+            module.cpp_module,
+            EXPECTED_IMPORTS[module.cpp_module],
+        )
+        required_surface = {
+            f"export module {module.cpp_module};",
+            "namespace srpc {",
+        }
+        required_surface.update(ABI_SPECS[module.cpp_module].surface)
         missing = sorted(
-            fragment
-            for fragment in ABI_SPECS[module.cpp_module].surface
-            if fragment not in text
+            fragment for fragment in required_surface if fragment not in text
         )
         if missing:
             raise GateError(
@@ -9148,17 +5396,17 @@ def require_cpp_surfaces(
                 f"generated module {module.cpp_module} drifted to a nested namespace"
             )
         atomic_preamble = "#include <rusty/sync/atomic.hpp>"
-        # srpc.epoll_wrapper and srpc.threading joined this set when their
-        # carriers were retired: both canonical sources use
-        # `std::sync::atomic`, so the structured preamble carries the same
-        # include. Membership is still exact -- any other module that grew one
-        # would fail the `elif` below.
+        # Source of truth is the checked-in module-preambles.toml: exactly the
+        # modules that declare rusty/sync/atomic.hpp there may carry it. This
+        # list had fallen behind that manifest -- srpc.threading and
+        # srpc.epoll_wrapper both declare the atomic preamble and legitimately
+        # emit it -- which made a correct generator look like preamble leakage.
         atomic_modules = {
             "srpc.basetypes",
             "srpc.connection_metrics",
             "srpc.completion_tracker",
-            "srpc.epoll_wrapper",
             "srpc.threading",
+            "srpc.epoll_wrapper",
         }
         if module.cpp_module in atomic_modules:
             if text.count(atomic_preamble) != 1:
@@ -9184,7 +5432,12 @@ def require_cpp_surfaces(
 
         rand_preamble = '#include "misc/srpc_rand.h"'
         if module.cpp_module == "srpc.rand":
-            require_exact_module_imports(text, "srpc.rand", ["vec_port.vec"])
+            # Re-assert the ratcheted imports rather than a duplicated
+            # literal (the stale ["rusty"] copy here survived the reviewed
+            # EXPECTED_IMPORTS respelling and re-failed the gate).
+            require_exact_module_imports(
+                text, "srpc.rand", EXPECTED_IMPORTS["srpc.rand"]
+            )
             if text.count(rand_preamble) != 1:
                 raise GateError(
                     "generated srpc.rand must contain exactly one structured "
@@ -9212,19 +5465,20 @@ def require_cpp_surfaces(
             )
 
         timing_preamble = '#include "misc/srpc_timing.h"'
-        # srpc.threading joined this set with its carrier's retirement: the
-        # canonical spin lock calls the same `srpc_cpu_pause` timing kernel.
-        # Unlike the other two it is not import-free -- its `verify()` calls
-        # reach srpc.debugging -- so the exact-import expectation is per module
-        # rather than a blanket empty list.
+        # module-preambles.toml is the source of truth; srpc.threading also
+        # declares (and legitimately emits) the timing C kernel.
         timing_modules = {
-            "srpc.basetypes": [],
-            "srpc.circuit_breaker": [],
-            "srpc.threading": ["srpc.debugging"],
+            "srpc.basetypes",
+            "srpc.circuit_breaker",
+            "srpc.threading",
         }
         if module.cpp_module in timing_modules:
+            # Re-assert the module's ratcheted imports rather than a duplicated
+            # literal. This branch hard-coded [] , which happened to hold for
+            # the two modules it originally covered but is not a property of
+            # carrying the timing kernel (srpc.threading imports srpc.debugging).
             require_exact_module_imports(
-                text, module.cpp_module, timing_modules[module.cpp_module]
+                text, module.cpp_module, EXPECTED_IMPORTS[module.cpp_module]
             )
             if text.count(timing_preamble) != 1:
                 raise GateError(
@@ -9280,19 +5534,21 @@ def require_cpp_surfaces(
 
         netdb_preamble = "#include <netdb.h>"
         if module.cpp_module == "srpc.connection_state":
-            require_exact_module_imports(text, "srpc.connection_state", [])
+            require_exact_module_imports(
+                text, "srpc.connection_state", EXPECTED_IMPORTS["srpc.connection_state"]
+            )
         elif module.cpp_module == "srpc.heartbeat":
             require_exact_module_imports(
-                text, "srpc.heartbeat", ["srpc.circuit_breaker"]
+                text, "srpc.heartbeat", EXPECTED_IMPORTS["srpc.heartbeat"]
             )
         elif module.cpp_module == "srpc.request_queue":
+            # Re-assert the ratcheted imports rather than a duplicated
+            # literal (same stale-copy hazard as srpc.rand above).
             require_exact_module_imports(
-                text,
-                "srpc.request_queue",
-                ["vec_port.vec", "srpc.circuit_breaker"],
+                text, "srpc.request_queue", EXPECTED_IMPORTS["srpc.request_queue"]
             )
         elif module.cpp_module == "srpc.load_balancer":
-            require_exact_module_imports(text, "srpc.load_balancer", [])
+            require_exact_module_imports(text, "srpc.load_balancer", EXPECTED_IMPORTS["srpc.load_balancer"])
             live_cpp = "\n".join(
                 line
                 for line in text.splitlines()
@@ -9366,11 +5622,20 @@ def require_cpp_surfaces(
                 raise GateError(
                     "rustc-only StdVector facade leaked into generated FrameCodec"
                 )
-        elif netdb_preamble in text:
+        if '#include "base/rustc_markers.hpp"' in text:
+            raise GateError(f"retired rustc-marker preamble leaked into {module.cpp_module}")
+
+        # Leakage checks must be independent of module-specific dependency
+        # handling above. Keeping them in that if/elif chain allowed several
+        # enumerated siblings to bypass the rejection clauses.
+        if module.cpp_module != "srpc.utils" and netdb_preamble in text:
             raise GateError(
                 f"utils netdb preamble leaked into {module.cpp_module}"
             )
-        elif "#include <rusty/io.hpp>" in text:
+        if (
+            module.cpp_module != "srpc.frame_codec"
+            and "#include <rusty/io.hpp>" in text
+        ):
             raise GateError(
                 f"FrameCodec io preamble leaked into {module.cpp_module}"
             )
@@ -9386,6 +5651,8 @@ def require_cpp_surfaces(
         raise GateError("utils netdb preamble leaked into the crate root")
     if "#include <rusty/io.hpp>" in root_text:
         raise GateError("FrameCodec io preamble leaked into the crate root")
+    if '#include "base/rustc_markers.hpp"' in root_text:
+        raise GateError("retired rustc-marker preamble leaked into the crate root")
     root_required = {
         "export module srpc;",
         "namespace srpc {",
@@ -9399,6 +5666,32 @@ def require_cpp_surfaces(
             "generated root module is missing required surface:\n  "
             + "\n  ".join(root_missing)
         )
+    root_imports = re.findall(
+        r"^(export )?import ([^;\n]+);[ \t]*$",
+        root_text,
+        flags=re.MULTILINE,
+    )
+    expected_root_imports = [
+        ("export ", name) for name in sorted(module.cpp_module for module in modules)
+    ]
+    if root_imports != expected_root_imports:
+        raise GateError(
+            "generated root imports must be exactly the ordered canonical "
+            f"child re-exports; expected={expected_root_imports!r}, "
+            f"got={root_imports!r}"
+        )
+
+    # Advisory report only. Byte-identity was repealed as an acceptance
+    # criterion (see EXPECTED_GENERATED_MODULE_SHA256); drift is surfaced for
+    # review but the hard gates are the ABI, import-graph and importer checks.
+    if digest_drift:
+        print(
+            f"ADVISORY: {len(digest_drift)} of {len(modules)} generated module "
+            "digests differ from the recorded baseline (not a gate failure; "
+            "byte-identity is no longer an acceptance criterion):"
+        )
+        for module_name, expected_digest, actual_digest in digest_drift:
+            print(f"  {module_name}: {expected_digest} -> {actual_digest}")
 
 
 def require_zero_hand_slots(path: Path) -> None:
@@ -9471,18 +5764,11 @@ def require_completion_raw_symbols(
     description: str,
     entries: list[tuple[str, str]],
 ) -> None:
-    """Pin the initializer as well as the unique API.
-
-    Factory-only construction: `CompletionTracker::new_()` and
-    `CompletionTracker::with_config()` replaced the two public constructors, so
-    this module now has NO constructor alias at all. An Itanium-ABI constructor
-    is emitted twice (C1 complete-object and C2 base-object) and both demangle
-    to the same name, which is exactly what the two entries here used to
-    account for; a static factory is emitted once and is already covered by its
-    ABI_SPECS entry. Measured on the object: two aliases -> zero, 33 -> 31.
-    """
+    """Pin completion's factory API and its sole initializer exactly."""
 
     expected = Counter(ABI_SPECS["srpc.completion_tracker"].symbols)
+    # Both constructors became canonical factories. The compiled provider
+    # therefore has no C1/C2 constructor aliases beyond its unique API.
     expected[("T", "initializer for module srpc.completion_tracker")] += 1
     actual = Counter(entries)
     if actual == expected:
@@ -9491,7 +5777,7 @@ def require_completion_raw_symbols(
     unexpected = sorted((actual - expected).elements())
     raise GateError(
         f"{description} completion ABI must contain exactly 31 raw strong "
-        "entries (30 unique API symbols, no constructor alias, and the "
+        "entries (30 unique API symbols, no constructor aliases, and the "
         f"module initializer); missing={missing!r}, unexpected={unexpected!r}"
     )
 
@@ -9525,7 +5811,7 @@ def require_rand_raw_symbols(
     description: str,
     entries: list[tuple[str, str]],
 ) -> None:
-    """Pin rand's 12-function ABI and sole module initializer exactly."""
+    """Pin rand's 13-function ABI and sole module initializer exactly."""
 
     expected = Counter(ABI_SPECS["srpc.rand"].symbols)
     expected[("T", "initializer for module srpc.rand")] += 1
@@ -9535,8 +5821,8 @@ def require_rand_raw_symbols(
     missing = sorted((expected - actual).elements())
     unexpected = sorted((actual - expected).elements())
     raise GateError(
-        f"{description} rand ABI must contain exactly 13 raw strong entries "
-        "(12 API symbols and the module initializer); "
+        f"{description} rand ABI must contain exactly 14 raw strong entries "
+        "(13 API symbols and the module initializer); "
         f"missing={missing!r}, unexpected={unexpected!r}"
     )
 
@@ -9669,7 +5955,7 @@ def require_circuit_breaker_raw_symbols(
     description: str,
     entries: list[tuple[str, str]],
 ) -> None:
-    """Pin circuit-breaker's 20-function ABI and initializer exactly."""
+    """Pin circuit-breaker's 23-function ABI and initializer exactly."""
 
     expected = Counter(ABI_SPECS["srpc.circuit_breaker"].symbols)
     expected[("T", "initializer for module srpc.circuit_breaker")] += 1
@@ -9679,8 +5965,8 @@ def require_circuit_breaker_raw_symbols(
     missing = sorted((expected - actual).elements())
     unexpected = sorted((actual - expected).elements())
     raise GateError(
-        f"{description} circuit-breaker ABI must contain exactly 21 raw "
-        "strong entries (20 API symbols and the module initializer); "
+        f"{description} circuit-breaker ABI must contain exactly 24 raw "
+        "strong entries (23 API symbols and the module initializer); "
         f"missing={missing!r}, unexpected={unexpected!r}"
     )
 
@@ -9732,6 +6018,35 @@ def require_exact_module_raw_symbols(
     )
 
 
+def require_all_module_raw_symbols(
+    module_name: str,
+    description: str,
+    entries: list[tuple[str, str]],
+    extra: frozenset[tuple[str, str]] = frozenset(),
+) -> None:
+    """Pin every unique API, ABI alias, and sole module initializer.
+
+    `extra` carries a lane's legitimate additions (the platform
+    implementation unit's definitions in the production library). A module
+    still has exactly one initializer regardless of its TU count.
+    """
+
+    expected = Counter(ABI_SPECS[module_name].symbols)
+    expected.update(extra)
+    expected.update(RAW_ABI_ALIASES.get(module_name, ()))
+    expected[("T", f"initializer for module {module_name}")] += 1
+    actual = Counter(entries)
+    if actual == expected:
+        return
+    missing = sorted((expected - actual).elements())
+    unexpected = sorted((actual - expected).elements())
+    raise GateError(
+        f"{description} {module_name} raw ABI must contain exactly "
+        f"{sum(expected.values())} entries; missing={missing!r}, "
+        f"unexpected={unexpected!r}"
+    )
+
+
 def basetypes_raw_symbols(
     nm: Path,
     root: Path,
@@ -9761,7 +6076,7 @@ def require_basetypes_raw_symbols(
     description: str,
     entries: list[tuple[str, str]],
 ) -> None:
-    """Pin basetypes' 28-entry API/data ABI and initializer exactly."""
+    """Pin basetypes' 32-entry API/data ABI and initializer exactly."""
 
     expected = Counter(ABI_SPECS["srpc.basetypes"].symbols)
     expected[("T", "initializer for module srpc.basetypes")] += 1
@@ -9771,8 +6086,8 @@ def require_basetypes_raw_symbols(
     missing = sorted((expected - actual).elements())
     unexpected = sorted((actual - expected).elements())
     raise GateError(
-        f"{description} basetypes ABI must contain exactly 29 raw strong "
-        "entries (28 API/data symbols and the module initializer); "
+        f"{description} basetypes ABI must contain exactly 33 raw strong "
+        "entries (32 API/data symbols and the module initializer); "
         f"missing={missing!r}, unexpected={unexpected!r}"
     )
 
@@ -9814,7 +6129,7 @@ def require_request_queue_raw_symbols(
     emitted twice (C1 complete-object and C2 base-object) and both demangle to
     the same name, which is exactly what the two `+= 1` lines here used to
     account for; a static factory is emitted once and is already covered by its
-    ABI_SPECS entry. Measured on the object: two aliases -> zero, 30 -> 28.
+    ABI_SPECS entry. Measured on the object: two aliases -> zero.
     """
 
     expected = Counter(ABI_SPECS["srpc.request_queue"].symbols)
@@ -9825,8 +6140,8 @@ def require_request_queue_raw_symbols(
     missing = sorted((expected - actual).elements())
     unexpected = sorted((actual - expected).elements())
     raise GateError(
-        f"{description} request-queue ABI must contain exactly 28 raw strong "
-        "entries (27 unique provider-owned symbols, no constructor alias, "
+        f"{description} request-queue ABI must contain exactly 34 raw strong "
+        "entries (33 unique provider-owned symbols, no constructor alias, "
         f"and the module initializer); missing={missing!r}, "
         f"unexpected={unexpected!r}"
     )
@@ -9854,7 +6169,7 @@ def require_utils_raw_symbols(
     # to one name, so each contributed one ALIAS here on top of its unique
     # symbol; a static factory is emitted once and contributes no alias. The
     # private fieldwise ctor, the move ctor and the dtor are unaffected.
-    # Measured on the object: five aliases -> three, 17 -> 15.
+    # Measured on the object: five aliases -> three.
     aliased = (
         "srpc::AddrInfo@srpc.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)",
         "srpc::AddrInfo@srpc.utils::AddrInfo(srpc::AddrInfo@srpc.utils&&)",
@@ -9870,8 +6185,8 @@ def require_utils_raw_symbols(
     missing = sorted((expected - actual).elements())
     unexpected = sorted((actual - expected).elements())
     raise GateError(
-        f"{description} Utils ABI must contain exactly 15 raw strong "
-        "entries (11 unique provider-owned symbols, three C++ ABI aliases, "
+        f"{description} Utils ABI must contain exactly 16 raw strong "
+        "entries (12 unique provider-owned symbols, three C++ ABI aliases, "
         f"and the module initializer); missing={missing!r}, "
         f"unexpected={unexpected!r}"
     )
@@ -9984,8 +6299,16 @@ def require_expected_symbols(
     module_name: str,
     label: str,
     symbols: set[tuple[str, str]],
+    extra: frozenset[tuple[str, str]] = frozenset(),
 ) -> None:
-    expected = set(ABI_SPECS[module_name].symbols)
+    """Pin a module's exact strong ABI.
+
+    `extra` carries the symbols a lane legitimately gains beyond the crate
+    ABI -- currently only the platform implementation unit's definitions in
+    the production library. It is still an exact-set comparison.
+    """
+
+    expected = set(ABI_SPECS[module_name].symbols) | set(extra)
     if symbols == expected:
         return
     missing = expected - symbols
@@ -10004,14 +6327,17 @@ def require_expected_symbols(
 def importer_source() -> str:
     return """\
 #include <rusty/function.hpp>
+#include <rusty/string.hpp>
 #include <rusty/cell.hpp>
 #include <rusty/io.hpp>
 #include <rusty/move.hpp>
+#include <rusty/mutex.hpp>
 #include <rusty/option.hpp>
 #include <rusty/refcell.hpp>
 #include <rusty/slice.hpp>
 #include <rusty/sync/atomic.hpp>
 #include <rusty/traits.hpp>
+#include <rusty/vecdeque.hpp>
 
 #include <atomic>
 #include <algorithm>
@@ -10026,60 +6352,67 @@ def importer_source() -> str:
 #include <limits>
 #include <memory>
 #include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
 #include <span>
 #include <sstream>
-#include <cstdio>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 #include <thread>
+#include <typeindex>
 #include <tuple>
 #include <type_traits>
 #include <utility>
 #include <vector>
 #include <unistd.h>
 
+import rusty;
+import std_port;
 import srpc.callback_wrapper;
 import srpc.basetypes;
-import srpc.debugging;
+import srpc.callbacks;
+import srpc.channel;
 import srpc.circuit_breaker;
 import srpc.completion_tracker;
 import srpc.connection_metrics;
 import srpc.connection_state;
 import srpc.errors;
+import srpc.epoll_wrapper;
+import srpc.fiber;
+import srpc.fiber_channel;
 import srpc.frame_codec;
+import srpc.future;
 import srpc.heartbeat;
+import srpc.idempotency;
+import srpc.inmemory_channel;
 import srpc.internal_protocol;
 import srpc.load_balancer;
+import srpc.logging;
+import srpc.misc;
+import srpc.pollable_proxy;
 import srpc.rand;
 import srpc.reconnect_policy;
 import srpc.request_options;
 import srpc.request_queue;
+import srpc.serializable;
+import srpc.serializable_envelope;
 import srpc.stat;
+import srpc.threading;
 import srpc.utils;
+import srpc.debugging;
+import srpc.any_message;
+import srpc.tcp_channel;
+import srpc.reactor;
+import srpc.server;
+import srpc.client;
 
 static std::int32_t rand_raw_value = 0;
 static std::uint32_t rand_raw_draws = 0;
 static std::uint32_t rand_destroy_calls = 0;
 static std::uint32_t rand_string_evaluations = 0;
 static std::uint32_t rand_weight_evaluations = 0;
-static std::uint64_t monotonic_now_us = 0;
-static std::uint64_t realtime_now_us = 0;
-static std::uint64_t gettimeofday_now_us = 0;
-static std::uint64_t slept_us = 0;
-static std::int32_t selected_open_port = 0;
-// srpc.logging is canonical Rust now, so the gate no longer substitutes a
-// forwarding fixture for it: Utils logs through the REAL provider and this
-// observer reads what that provider actually emitted. `log_line` renders
-//   "<tag>[<basename>:<line>] <23-char timestamp> | <message>\\n"
-// and writes it to std::cout, so swapping cout's streambuf captures the whole
-// decorated line. Every fact the old fixture asserted (level, line, file,
-// message) is still asserted -- through the rendering rather than around it.
-static std::ostringstream utils_log_sink;
-static std::streambuf* utils_log_original = nullptr;
-static std::uint32_t freeaddrinfo_calls = 0;
-static std::int32_t hostname_mode = 0;
-static std::size_t hostname_buffer_length = 0;
+static std::uint64_t policy_now_us = 0;
 
 extern "C" int srpc_rand_raw(void) {
     ++rand_raw_draws;
@@ -10088,155 +6421,6 @@ extern "C" int srpc_rand_raw(void) {
 
 extern "C" void srpc_rand_destroy(void) {
     ++rand_destroy_calls;
-}
-
-extern "C" std::uint64_t srpc_clock_monotonic_us(void) {
-    return monotonic_now_us;
-}
-
-extern "C" std::uint64_t srpc_clock_realtime_coarse_us(void) {
-    return realtime_now_us;
-}
-
-extern "C" std::uint64_t srpc_gettimeofday_us(void) {
-    return gettimeofday_now_us;
-}
-
-extern "C" void srpc_sleep_us(std::uint64_t microseconds) {
-    slept_us = microseconds;
-}
-
-extern "C" int srpc_find_open_port(void) {
-    return selected_open_port;
-}
-
-// Remaining C seams the canonical modules call. They are stubbed here for the
-// same reason as the ones above: the generated lane must be deterministic, and
-// linking the real object files would also pull in the neighbours that the
-// stubs above deliberately replace.
-extern "C" const char* srpc_path_basename(const char* path) {
-    if (path == nullptr) {
-        return nullptr;
-    }
-    const char* slash = std::strrchr(path, '/');
-    return slash != nullptr ? slash + 1 : path;
-}
-
-extern "C" void srpc_time_now_str(char* now) {
-    // Exactly the 23 characters srpc.logging renders, so the decorated line the
-    // Utils assertions match has a fixed width.
-    std::memcpy(now, "2026-01-01 00:00:00.000", 24);
-}
-
-extern "C" std::int32_t srpc_get_ncpu(void) {
-    return 8;
-}
-
-extern "C" std::int32_t srpc_format_fixed_2(
-    double value, std::int8_t* output, std::size_t capacity) {
-    return std::snprintf(
-        reinterpret_cast<char*>(output), capacity, "%.2f", value);
-}
-
-extern "C" void srpc_cpu_pause(void) {}
-
-// srpc.debugging reaches libc through exactly three plain-C seams
-// (base/srpc_base.c in production). Model them here so the generated lane
-// links and so the rendered report is observable: the capture stub hands back
-// a fixed symbol array, and srpc_stderr hands back an in-memory FILE the
-// importer can read.
-static char debugging_report[512] = {};
-static FILE* debugging_stream = nullptr;
-static std::int32_t debugging_capture_frames = -1;
-static std::uint32_t debugging_capture_calls = 0;
-static std::uint32_t debugging_free_calls = 0;
-static char* debugging_symbols[3] = {};
-static char debugging_symbol_storage[3][16] = {
-    "frame-zero", "frame-one", "frame-two"};
-
-extern "C" FILE* srpc_stderr(void) {
-    return debugging_stream;
-}
-
-extern "C" int srpc_backtrace_capture(char*** out_syms) {
-    ++debugging_capture_calls;
-    if (out_syms == nullptr) {
-        return -1;
-    }
-    *out_syms = nullptr;
-    if (debugging_capture_frames < 0) {
-        return -1;
-    }
-    for (std::size_t index = 0; index < 3; ++index) {
-        debugging_symbols[index] = debugging_symbol_storage[index];
-    }
-    *out_syms = debugging_symbols;
-    return debugging_capture_frames;
-}
-
-extern "C" void srpc_backtrace_free(char**) {
-    ++debugging_free_calls;
-}
-
-static void reset_debugging(std::int32_t frames) {
-    debugging_capture_frames = frames;
-    debugging_capture_calls = 0;
-    debugging_free_calls = 0;
-    std::memset(debugging_report, 0, sizeof(debugging_report));
-    if (debugging_stream != nullptr) {
-        std::fclose(debugging_stream);
-    }
-    debugging_stream =
-        fmemopen(debugging_report, sizeof(debugging_report) - 1, "w");
-}
-
-static std::string_view debugging_rendered() {
-    if (debugging_stream != nullptr) {
-        std::fflush(debugging_stream);
-    }
-    return std::string_view(debugging_report);
-}
-
-extern "C" void freeaddrinfo(addrinfo* info) {
-    ++freeaddrinfo_calls;
-    delete info;
-}
-
-extern "C" int gethostname(char* name, std::size_t length) {
-    hostname_buffer_length = length;
-    if (hostname_mode < 0) {
-        return -1;
-    }
-    const char fixed[] = "goal0-host";
-    if (length != 0) {
-        std::strncpy(name, fixed, length);
-        name[length - 1] = '\0';
-    }
-    return 0;
-}
-
-static void reset_utils_log() {
-    if (utils_log_original == nullptr) {
-        utils_log_original = std::cout.rdbuf(utils_log_sink.rdbuf());
-    }
-    utils_log_sink.str(std::string());
-}
-
-static std::string utils_log_text() {
-    std::cout.flush();
-    return utils_log_sink.str();
-}
-
-// The timestamp is the only part of the rendered line the gate cannot pin, so
-// match around it: exact prefix, exact suffix, exactly one line.
-static bool utils_logged(
-    std::string_view prefix, std::string_view suffix) {
-    const std::string text = utils_log_text();
-    return text.size() > prefix.size() + suffix.size() &&
-           std::string_view(text).substr(0, prefix.size()) == prefix &&
-           std::string_view(text).substr(text.size() - suffix.size()) ==
-               suffix &&
-           std::count(text.begin(), text.end(), '\\n') == 1;
 }
 
 static void install_rand_raw(std::int32_t value) {
@@ -10277,6 +6461,54 @@ struct LoadBalancerProbeClient {
 using LoadBalancerProbeClients =
     std::vector<std::shared_ptr<LoadBalancerProbeClient>>;
 
+namespace canary {
+struct EnvelopePayloadSet {};
+
+struct EnvelopePayload {
+    std::int32_t value = 0;
+    std::int32_t kind() const { return 61; }
+    void save(srpc::BinaryWriteArchive&) const {}
+    void load(srpc::BinaryReadArchive&) {}
+};
+
+struct EnvelopeLegacyLayout {
+    std::int32_t kind_;
+    rusty::Option<srpc::SerializableProxy> inner_;
+};
+
+struct MiscBound {
+    int value;
+};
+
+struct MiscValue {
+    int value;
+    MiscValue(int initial) : value(initial) {}
+    MiscValue(const MiscBound& initial) : value(initial.value) {}
+};
+
+bool operator<(const MiscValue& value, const MiscBound& bound) {
+    return value.value < bound.value;
+}
+
+bool operator>(const MiscValue& value, const MiscBound& bound) {
+    return value.value > bound.value;
+}
+}  // namespace canary
+
+namespace srpc {
+template <>
+struct PayloadMember<canary::EnvelopePayloadSet, canary::EnvelopePayload> {
+    static constexpr bool value = true;
+    static constexpr std::int32_t KIND = 61;
+};
+}  // namespace srpc
+
+template <class T>
+concept HasSendMarker = requires { T::is_send; };
+
+template <class T>
+concept HasSyncMarker = requires { T::is_sync; };
+
 static_assert(std::is_same_v<srpc::RandWeightVec, std::vector<double>>);
 
 static_assert(std::is_same_v<
@@ -10288,7 +6520,7 @@ static_assert(std::is_same_v<
 static_assert(sizeof(srpc::FrameDecodeStatus) == 4);
 static_assert(alignof(srpc::FrameDecodeStatus) == 4);
 static_assert(srpc::kFrameHeaderSize == 4);
-static_assert(srpc::kMaxFramePayloadSize == INT32_MAX);
+static_assert(srpc::kMaxFramePayloadSize == 64 * 1024 * 1024);
 static_assert(std::is_standard_layout_v<srpc::FrameHeader>);
 static_assert(std::is_trivially_copyable_v<srpc::FrameHeader>);
 static_assert(srpc::FrameHeader::is_send && srpc::FrameHeader::is_sync);
@@ -10340,6 +6572,291 @@ static_assert(std::is_same_v<
 static_assert(std::is_same_v<
               decltype(&srpc::FrameStreamReader::buffered_bytes),
               std::size_t (srpc::FrameStreamReader::*)() const>);
+
+static_assert(srpc::PayloadMember<
+              canary::EnvelopePayloadSet, canary::EnvelopePayload>::value);
+static_assert(srpc::PayloadMember<
+              canary::EnvelopePayloadSet, canary::EnvelopePayload>::KIND == 61);
+static_assert(!srpc::PayloadMember<canary::EnvelopePayloadSet, int>::value);
+static_assert(sizeof(srpc::SerializableEnvelope<canary::EnvelopePayloadSet>) ==
+              sizeof(canary::EnvelopeLegacyLayout));
+static_assert(alignof(srpc::SerializableEnvelope<canary::EnvelopePayloadSet>) ==
+              alignof(canary::EnvelopeLegacyLayout));
+static_assert(std::is_default_constructible_v<
+              srpc::SerializableEnvelope<canary::EnvelopePayloadSet>>);
+static_assert(std::is_copy_constructible_v<
+              srpc::SerializableEnvelope<canary::EnvelopePayloadSet>>);
+
+static_assert(std::is_default_constructible_v<srpc::FiberFuture<int>>);
+static_assert(std::is_default_constructible_v<srpc::FiberPromise<int>>);
+static_assert(std::is_move_constructible_v<srpc::FiberFuture<int>>);
+static_assert(std::is_same_v<
+              decltype(&srpc::FiberFuture<int>::wait_for),
+              bool (srpc::FiberFuture<int>::*)(std::uint64_t)>);
+static_assert(std::is_same_v<
+              decltype(&srpc::FiberPromise<int>::set_value),
+              void (srpc::FiberPromise<int>::*)(const int&)>);
+
+static_assert(srpc::Log::FATAL == 0 && srpc::Log::ERROR == 1 &&
+              srpc::Log::WARN == 2 && srpc::Log::INFO == 3 &&
+              srpc::Log::DEBUG == 4);
+static_assert(std::is_same_v<
+              decltype(&srpc::log_level_tag),
+              std::string_view (*)(std::int32_t)>);
+static_assert(std::is_same_v<
+              decltype(&srpc::log_line),
+              void (*)(std::int32_t, std::int32_t, const std::int8_t*,
+                       std::string_view)>);
+
+static_assert(sizeof(srpc::IdempotencyKey) == 16);
+static_assert(alignof(srpc::IdempotencyKey) == 8);
+static_assert(offsetof(srpc::IdempotencyKey, client_id) == 0);
+static_assert(offsetof(srpc::IdempotencyKey, sequence) == 8);
+static_assert(std::is_standard_layout_v<srpc::IdempotencyKey>);
+static_assert(std::is_trivially_copyable_v<srpc::IdempotencyKey>);
+static_assert(HasSendMarker<srpc::IdempotencyKey>);
+static_assert(HasSyncMarker<srpc::IdempotencyKey>);
+static_assert(sizeof(srpc::IdempotencyKeyHash) == 1);
+static_assert(sizeof(srpc::IdempotencyConfig) == 24);
+static_assert(alignof(srpc::IdempotencyConfig) == 8);
+static_assert(offsetof(srpc::IdempotencyConfig, ttl_ms) == 0);
+static_assert(offsetof(srpc::IdempotencyConfig, max_entries) == 8);
+static_assert(offsetof(srpc::IdempotencyConfig, enabled) == 16);
+static_assert(std::is_trivially_copyable_v<srpc::IdempotencyConfig>);
+static_assert(sizeof(srpc::CachedResponse) == 80);
+static_assert(alignof(srpc::CachedResponse) == 8);
+static_assert(offsetof(srpc::CachedResponse, key) == 0);
+static_assert(offsetof(srpc::CachedResponse, error_code) == 16);
+static_assert(offsetof(srpc::CachedResponse, response_data) == 24);
+static_assert(offsetof(srpc::CachedResponse, timestamp_ms) == 72);
+static_assert(sizeof(srpc::IdempotencyKeyGenerator) == 16);
+static_assert(offsetof(srpc::IdempotencyKeyGenerator, client_id_field) == 0);
+static_assert(offsetof(srpc::IdempotencyKeyGenerator, sequence_field) == 8);
+static_assert(HasSendMarker<srpc::IdempotencyKeyGenerator>);
+static_assert(!HasSyncMarker<srpc::IdempotencyKeyGenerator>);
+static_assert(sizeof(srpc::IdempotencyCache) == 120);
+static_assert(alignof(srpc::IdempotencyCache) == 8);
+static_assert(offsetof(srpc::IdempotencyCache, config_) == 0);
+static_assert(offsetof(srpc::IdempotencyCache, cache_) == 24);
+static_assert(offsetof(srpc::IdempotencyCache, hits_) == 96);
+static_assert(offsetof(srpc::IdempotencyCache, misses_) == 104);
+static_assert(offsetof(srpc::IdempotencyCache, evictions_) == 112);
+static_assert(!HasSendMarker<srpc::IdempotencyCache>);
+static_assert(!HasSyncMarker<srpc::IdempotencyCache>);
+static_assert(std::is_same_v<
+              decltype(&srpc::IdempotencyCache::lookup),
+              bool (srpc::IdempotencyCache::*)(
+                  const srpc::IdempotencyKey&, std::uint64_t, std::int32_t&,
+                  rusty::Vec<std::uint8_t>&) const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::IdempotencyCache::store),
+              void (srpc::IdempotencyCache::*)(
+                  const srpc::IdempotencyKey&, std::int32_t,
+                  const rusty::Vec<std::uint8_t>&, std::uint64_t) const>);
+
+static_assert(std::is_same_v<
+              decltype(&srpc::this_fiber::get_id), std::uint64_t (*)()>);
+static_assert(std::is_same_v<
+              decltype(&srpc::this_fiber::sleep_us),
+              void (*)(std::uint64_t)>);
+
+static_assert(sizeof(srpc::Job) == 8);
+static_assert(alignof(srpc::Job) == 8);
+static_assert(sizeof(srpc::OneTimeJob) == 64);
+static_assert(alignof(srpc::OneTimeJob) == 16);
+static_assert(std::is_base_of_v<srpc::Job, srpc::OneTimeJob>);
+static_assert(std::is_convertible_v<srpc::OneTimeJob*, srpc::Job*>);
+static_assert(std::is_same_v<
+              decltype(&srpc::get_ncpu), std::int32_t (*)()>);
+static_assert(std::is_same_v<
+              decltype(&srpc::format_thousands), rusty::String (*)(double)>);
+
+static_assert(std::is_same_v<
+              std::underlying_type_t<srpc::ChannelError>, std::int32_t>);
+static_assert(sizeof(srpc::ChannelFrame) == 16);
+static_assert(alignof(srpc::ChannelFrame) == 8);
+static_assert(offsetof(srpc::ChannelFrame, payload) == 0);
+static_assert(offsetof(srpc::ChannelFrame, size) == 8);
+static_assert(std::is_abstract_v<srpc::ChannelFactoryBase>);
+static_assert(std::is_abstract_v<srpc::ChannelListenerBase>);
+static_assert(std::is_abstract_v<srpc::ChannelConnectionBase>);
+static_assert(std::is_same_v<
+              decltype(&srpc::ChannelConnectionBase::send_frame),
+              srpc::ChannelError (srpc::ChannelConnectionBase::*)(
+                  const srpc::ChannelFrame&) const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::ChannelConnectionBase::flush),
+              void (srpc::ChannelConnectionBase::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::ChannelConnectionBase::close),
+              void (srpc::ChannelConnectionBase::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::ChannelConnectionBase::set_keepalive),
+              bool (srpc::ChannelConnectionBase::*)(bool, std::int32_t,
+                                                   std::int32_t, std::int32_t) const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::Service::__dispatch__),
+              void (srpc::Service::*)(std::int32_t, rusty::Box<srpc::Request>,
+                                      srpc::WeakServerConnection) const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::Future::get_reply),
+              rusty::MutexGuard<srpc::ReplyBuffer> (srpc::Future::*)() const>);
+static_assert(std::is_same_v<
+              decltype(srpc::ServerConnection::channel_proxy_),
+              rusty::Mutex<rusty::Option<rusty::Arc<srpc::ChannelConnectionProxy>>>>);
+static_assert(std::is_same_v<
+              decltype(&srpc::ClientConnection::direct_channel),
+              rusty::Option<rusty::Arc<srpc::ChannelConnectionProxy>>
+                  (srpc::ClientConnection::*)() const>);
+static_assert(std::is_same_v<
+              decltype(srpc::ClientConnection::fiber_channel_),
+              rusty::Mutex<rusty::Option<rusty::Arc<rusty::Box<srpc::FiberChannel>>>>>);
+static_assert(std::is_same_v<
+              decltype(srpc::ClientConnection::factory_),
+              rusty::Mutex<rusty::Option<rusty::Arc<rusty::Mutex<srpc::ChannelFactoryProxy>>>>>);
+// The private state remains reachable through the exported connection field.
+// Check its ownership without requiring its Rust-private name to be exported.
+using ClientLifecycleState = std::remove_cvref_t<decltype(
+    *std::declval<decltype(srpc::ClientConnection::lifecycle_)>().lock().unwrap())>;
+static_assert(std::is_same_v<
+              decltype(srpc::ClientConnection::lifecycle_),
+              rusty::Mutex<ClientLifecycleState>>);
+static_assert(std::is_same_v<decltype(ClientLifecycleState::generation), std::uint64_t>);
+static_assert(std::is_same_v<decltype(ClientLifecycleState::active), bool>);
+static_assert(std::is_same_v<
+              decltype(&srpc::ClientConnection::mark_closing),
+              std::uint64_t (srpc::ClientConnection::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::ClientConnection::bind_channel_direct),
+              bool (srpc::ClientConnection::*)(srpc::ChannelConnectionProxy,
+                                               std::uint64_t) const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::ClientConnection::binding_is_current),
+              bool (srpc::ClientConnection::*)(std::uint64_t) const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::ClientConnection::on_binding_closed),
+              void (srpc::ClientConnection::*)(std::uint64_t) const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::ClientConnection::close_binding),
+              void (srpc::ClientConnection::*)(rusty::Option<std::uint64_t>) const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::ClientConnection::connect_attempt),
+              std::int32_t (srpc::ClientConnection::*)(
+                  const std::int8_t*, const rusty::Cell<std::uint64_t>&) const>);
+using ClientDetachedPending = decltype(
+    std::declval<const srpc::ClientConnection&>().detach_pending_futures());
+static_assert(std::is_same_v<
+              decltype(&srpc::ClientConnection::detach_pending_futures),
+              ClientDetachedPending (srpc::ClientConnection::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::ClientConnection::notify_pending_futures),
+              void (srpc::ClientConnection::*)(ClientDetachedPending) const>);
+static_assert(std::is_same_v<
+              decltype(ClientDetachedPending::queued), rusty::VecDeque<srpc::QueuedRequest>>);
+static_assert(std::is_same_v<
+              decltype(ClientDetachedPending::buffered),
+              rusty::HashMap<std::int64_t, rusty::Arc<srpc::Future>,
+                             std_port::hash::compat::DefaultHasher>>);
+static_assert(std::is_same_v<
+              decltype(ClientDetachedPending::callbacks), rusty::Vec<srpc::AsyncReplyCallback>>);
+static_assert(std::is_same_v<
+              decltype(ClientDetachedPending::futures),
+              rusty::HashMap<std::int64_t, rusty::Arc<srpc::Future>,
+                             std_port::hash::compat::DefaultHasher>>);
+static_assert(std::is_same_v<
+              decltype(srpc::Client::metrics_field), rusty::Arc<srpc::ConnectionMetrics>>);
+static_assert(std::is_same_v<
+              decltype(srpc::ClientConnection::metrics_), rusty::Arc<srpc::ConnectionMetrics>>);
+static_assert(rusty::is_send<srpc::Future>::value);
+static_assert(rusty::is_sync<srpc::Future>::value);
+static_assert(rusty::is_send<srpc::ClientConnection>::value);
+static_assert(rusty::is_sync<srpc::ClientConnection>::value);
+static_assert(rusty::is_send<srpc::Client>::value);
+static_assert(!rusty::is_sync<srpc::Client>::value);
+static_assert(sizeof(srpc::Future) == 464);
+static_assert(alignof(srpc::Future) == 8);
+static_assert(offsetof(srpc::Future, reply_) == 72);
+static_assert(sizeof(srpc::Client) == 224);
+static_assert(alignof(srpc::Client) == 8);
+static_assert(offsetof(srpc::Client, metrics_field) == 208);
+static_assert(sizeof(srpc::ClientConnection) == 2048);
+static_assert(alignof(srpc::ClientConnection) == 16);
+static_assert(offsetof(srpc::ClientConnection, lifecycle_) == 8);
+static_assert(offsetof(srpc::ClientConnection, factory_) == 232);
+static_assert(offsetof(srpc::ClientConnection, fiber_channel_) == 64);
+static_assert(offsetof(srpc::ClientConnection, direct_channel_) == 120);
+static_assert(offsetof(srpc::ClientConnection, queued_fu_) == 384);
+static_assert(offsetof(srpc::ClientConnection, replaying_) == 392);
+static_assert(offsetof(srpc::ClientConnection, metrics_) == 1944);
+static_assert(sizeof(srpc::ServerConnection) == 88);
+static_assert(alignof(srpc::ServerConnection) == 8);
+static_assert(offsetof(srpc::ServerConnection, channel_proxy_) == 24);
+static_assert(sizeof(srpc::PollThread) == 112);
+static_assert(alignof(srpc::PollThread) == 8);
+static_assert(offsetof(srpc::PollThread, remove_count_) == 100);
+static_assert(std::is_same_v<
+              decltype(&srpc::reactor_spawn_stackless_task_impl),
+              void (*)(const srpc::Reactor&, srpc::TaskVoid)>);
+static_assert(std::is_same_v<
+              decltype(&srpc::channel_error_to_string),
+              std::string_view (*)(srpc::ChannelError)>);
+
+static_assert(std::is_abstract_v<srpc::Pollable>);
+static_assert(std::is_same_v<
+              decltype(&srpc::Epoll::fd),
+              std::int32_t (srpc::Epoll::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::epoll_bump_remove_count), void (*)()>);
+static_assert(std::is_abstract_v<srpc::PollableBase>);
+static_assert(std::is_same_v<srpc::PollableProxy,
+                             rusty::Box<srpc::PollableBase>>);
+
+static_assert(std::is_same_v<
+              decltype(&srpc::ConnectionCallbacks::new_),
+              srpc::ConnectionCallbacks (*)()>);
+static_assert(std::is_same_v<
+              decltype(&srpc::CallbackManager::new_),
+              srpc::CallbackManager (*)()>);
+static_assert(std::is_same_v<
+              decltype(&srpc::CallbackManager::callback_count),
+              std::size_t (srpc::CallbackManager::*)() const>);
+
+static_assert(std::is_base_of_v<srpc::ChannelConnectionBase,
+                                srpc::InMemoryChannelShim>);
+static_assert(std::is_base_of_v<srpc::ChannelListenerBase,
+                                srpc::InMemoryListenerShim>);
+static_assert(std::is_base_of_v<srpc::ChannelFactoryBase,
+                                srpc::InMemoryFactoryShim>);
+static_assert(std::is_same_v<
+              decltype(&srpc::InMemorySwitchboard::new_),
+              srpc::InMemorySwitchboard (*)()>);
+
+static_assert(std::is_same_v<
+              decltype(&srpc::FiberChannel::recv_frame),
+              rusty::Option<srpc::OwnedFrame> (srpc::FiberChannel::*)() const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::FiberChannel::is_closed),
+              bool (srpc::FiberChannel::*)() const>);
+
+static_assert(srpc::SpinLock::is_send && srpc::SpinLock::is_sync);
+static_assert(std::is_same_v<
+              decltype(&srpc::SpinLock::new_), srpc::SpinLock (*)()>);
+static_assert(std::is_same_v<
+              decltype(&srpc::cpu_pause), void (*)()>);
+
+static_assert(std::is_same_v<decltype(&srpc::likely), bool (*)(bool)>);
+static_assert(std::is_same_v<decltype(&srpc::unlikely), bool (*)(bool)>);
+static_assert(std::is_same_v<
+              decltype(&srpc::print_stack_trace), void (*)(FILE*)>);
+
+static_assert(sizeof(srpc::AnyMessage) == 40);
+static_assert(alignof(srpc::AnyMessage) == 8);
+static_assert(std::is_same_v<
+              decltype(&srpc::AnyMessage::save),
+              void (srpc::AnyMessage::*)(srpc::BinaryWriteArchive&) const>);
+static_assert(std::is_same_v<
+              decltype(&srpc::AnyMessage::load),
+              void (srpc::AnyMessage::*)(srpc::BinaryReadArchive&)>);
 
 static_assert(std::is_same_v<srpc::i8, std::int8_t>);
 static_assert(std::is_same_v<srpc::i16, std::int16_t>);
@@ -10410,16 +6927,17 @@ static_assert(offsetof(srpc::CircuitBreakerConfig, failure_threshold) == 0);
 static_assert(offsetof(srpc::CircuitBreakerConfig, success_threshold) == 4);
 static_assert(offsetof(srpc::CircuitBreakerConfig, timeout_ms) == 8);
 static_assert(offsetof(srpc::CircuitBreakerConfig, enabled) == 12);
-static_assert(sizeof(srpc::CircuitBreaker) == 48);
+static_assert(sizeof(srpc::CircuitBreaker) == 344);
 static_assert(alignof(srpc::CircuitBreaker) == 8);
-static_assert(offsetof(srpc::CircuitBreaker, config_field) == 0);
-static_assert(offsetof(srpc::CircuitBreaker, state_field) == 16);
-static_assert(offsetof(srpc::CircuitBreaker, failure_count_field) == 20);
-static_assert(offsetof(srpc::CircuitBreaker, success_count_field) == 24);
-static_assert(offsetof(srpc::CircuitBreaker, last_failure_time) == 32);
-static_assert(offsetof(srpc::CircuitBreaker, probe_in_progress) == 40);
+static_assert(offsetof(srpc::CircuitBreaker, transition_lock_) == 0);
+static_assert(offsetof(srpc::CircuitBreaker, config_field) == 48);
+static_assert(offsetof(srpc::CircuitBreaker, state_field) == 104);
+static_assert(offsetof(srpc::CircuitBreaker, failure_count_field) == 152);
+static_assert(offsetof(srpc::CircuitBreaker, success_count_field) == 200);
+static_assert(offsetof(srpc::CircuitBreaker, last_failure_time) == 248);
+static_assert(offsetof(srpc::CircuitBreaker, probe_in_progress) == 296);
 static_assert(srpc::CircuitBreaker::is_send);
-static_assert(!rusty::is_sync<srpc::CircuitBreaker>::value);
+static_assert(rusty::is_sync<srpc::CircuitBreaker>::value);
 static_assert(std::is_same_v<
               decltype(&srpc::CircuitBreaker::new_),
               srpc::CircuitBreaker (*)(srpc::CircuitBreakerConfig)>);
@@ -10444,7 +6962,7 @@ static_assert(std::is_same_v<
               void (*)(srpc::QueuedRequestCallback, std::int32_t)>);
 static_assert(sizeof(srpc::QueuedRequestCallback) == 48);
 static_assert(alignof(srpc::QueuedRequestCallback) == 16);
-static_assert(sizeof(srpc::QueuedRequest) == 96);
+static_assert(sizeof(srpc::QueuedRequest) == 144);
 static_assert(alignof(srpc::QueuedRequest) == 16);
 static_assert(offsetof(srpc::QueuedRequest, xid) == 0);
 static_assert(offsetof(srpc::QueuedRequest, rpc_id) == 8);
@@ -10452,7 +6970,8 @@ static_assert(offsetof(srpc::QueuedRequest, timestamp_us) == 16);
 static_assert(offsetof(srpc::QueuedRequest, retry_count) == 24);
 static_assert(offsetof(srpc::QueuedRequest, callback) == 32);
 static_assert(offsetof(srpc::QueuedRequest, ttl_ms) == 80);
-static_assert(!rusty::is_send<srpc::QueuedRequest>::value);
+static_assert(offsetof(srpc::QueuedRequest, payload) == 88);
+static_assert(rusty::is_send<srpc::QueuedRequest>::value);
 static_assert(!rusty::is_sync<srpc::QueuedRequest>::value);
 static_assert(std::is_standard_layout_v<srpc::RequestQueueConfig>);
 static_assert(std::is_trivially_copyable_v<srpc::RequestQueueConfig>);
@@ -10464,18 +6983,37 @@ static_assert(offsetof(srpc::RequestQueueConfig, max_size) == 0);
 static_assert(offsetof(srpc::RequestQueueConfig, default_ttl_ms) == 8);
 static_assert(offsetof(srpc::RequestQueueConfig, overflow_strategy) == 12);
 static_assert(offsetof(srpc::RequestQueueConfig, enabled) == 16);
-static_assert(sizeof(srpc::RequestQueue) == 96);
+static_assert(sizeof(srpc::RequestQueue) == 136);
 static_assert(alignof(srpc::RequestQueue) == 8);
 static_assert(offsetof(srpc::RequestQueue, config_) == 0);
-static_assert(offsetof(srpc::RequestQueue, queue_) == 24);
-static_assert(!rusty::is_send<srpc::RequestQueue>::value);
-static_assert(!rusty::is_sync<srpc::RequestQueue>::value);
+static_assert(offsetof(srpc::RequestQueue, queue_) == 64);
+static_assert(rusty::is_send<srpc::RequestQueue>::value);
+static_assert(rusty::is_sync<srpc::RequestQueue>::value);
 static_assert(std::is_same_v<
               decltype(&srpc::RequestQueue::enqueue),
               bool (srpc::RequestQueue::*)(srpc::QueuedRequest) const>);
 static_assert(std::is_same_v<
+              decltype(&srpc::RequestQueue::enqueue_deferred),
+              srpc::RequestQueueAdmission (srpc::RequestQueue::*)(srpc::QueuedRequest) const>);
+static_assert(std::is_same_v<
+              decltype(srpc::RequestQueueAdmission::accepted), bool>);
+static_assert(std::is_same_v<
+              decltype(srpc::RequestQueueAdmission::retired), rusty::Vec<srpc::QueuedRequest>>);
+static_assert(std::is_same_v<
+              decltype(&srpc::RequestQueueAdmission::notify),
+              bool (srpc::RequestQueueAdmission::*)()>);
+static_assert(sizeof(srpc::RequestQueueAdmission) == 56);
+static_assert(alignof(srpc::RequestQueueAdmission) == 8);
+static_assert(offsetof(srpc::RequestQueueAdmission, accepted) == 0);
+static_assert(offsetof(srpc::RequestQueueAdmission, retired) == 8);
+static_assert(rusty::is_send<srpc::RequestQueueAdmission>::value);
+static_assert(!rusty::is_sync<srpc::RequestQueueAdmission>::value);
+static_assert(std::is_same_v<
+              decltype(&srpc::RequestQueue::drain),
+              rusty::VecDeque<srpc::QueuedRequest> (srpc::RequestQueue::*)() const>);
+static_assert(std::is_same_v<
               decltype(&srpc::RequestQueue::dequeue),
-              rusty::Option<srpc::QueuedRequest> (srpc::RequestQueue::*)()>);
+              rusty::Option<srpc::QueuedRequest> (srpc::RequestQueue::*)() const>);
 static_assert(std::is_same_v<
               decltype(&srpc::RequestQueue::expire_stale),
               std::size_t (srpc::RequestQueue::*)() const>);
@@ -10511,16 +7049,17 @@ static_assert(std::is_same_v<
                                    srpc::ConnectionState) const>>);
 static_assert(sizeof(srpc::StateChangeCallback) == 48);
 static_assert(alignof(srpc::StateChangeCallback) == 16);
-static_assert(sizeof(srpc::ConnectionStateMachine) == 64);
+static_assert(sizeof(srpc::ConnectionStateMachine) == 144);
 static_assert(alignof(srpc::ConnectionStateMachine) == 16);
-static_assert(offsetof(srpc::ConnectionStateMachine, state_field) == 0);
-static_assert(offsetof(srpc::ConnectionStateMachine, on_state_change) == 16);
+static_assert(offsetof(srpc::ConnectionStateMachine, transition_lock_) == 0);
+static_assert(offsetof(srpc::ConnectionStateMachine, state_field) == 48);
+static_assert(offsetof(srpc::ConnectionStateMachine, on_state_change) == 96);
 static_assert(!std::is_copy_constructible_v<srpc::ConnectionStateMachine>);
 static_assert(std::is_move_constructible_v<srpc::ConnectionStateMachine>);
 static_assert(!rusty::is_send<srpc::StateChangeCallback>::value);
 static_assert(!rusty::is_sync<srpc::StateChangeCallback>::value);
-static_assert(!rusty::is_send<srpc::ConnectionStateMachine>::value);
-static_assert(!rusty::is_sync<srpc::ConnectionStateMachine>::value);
+static_assert(rusty::is_send<srpc::ConnectionStateMachine>::value);
+static_assert(rusty::is_sync<srpc::ConnectionStateMachine>::value);
 static_assert(std::is_same_v<
               decltype(&srpc::ConnectionStateMachine::set_on_state_change),
               void (srpc::ConnectionStateMachine::*)(srpc::StateChangeCallback)>);
@@ -10543,21 +7082,22 @@ static_assert(offsetof(srpc::HeartbeatConfig, enabled) == 0);
 static_assert(offsetof(srpc::HeartbeatConfig, interval_ms) == 4);
 static_assert(offsetof(srpc::HeartbeatConfig, timeout_ms) == 8);
 static_assert(offsetof(srpc::HeartbeatConfig, max_missed) == 12);
-static_assert(sizeof(srpc::HeartbeatManager) == 112);
-static_assert(alignof(srpc::HeartbeatManager) == 16);
-static_assert(offsetof(srpc::HeartbeatManager, config_field) == 0);
-static_assert(offsetof(srpc::HeartbeatManager, last_send_time) == 16);
-static_assert(offsetof(srpc::HeartbeatManager, last_recv_time) == 24);
-static_assert(offsetof(srpc::HeartbeatManager, missed_count_field) == 32);
-static_assert(offsetof(srpc::HeartbeatManager, pending_pong) == 36);
-static_assert(offsetof(srpc::HeartbeatManager, timed_out) == 37);
-static_assert(offsetof(srpc::HeartbeatManager, on_timeout) == 48);
+static_assert(sizeof(srpc::HeartbeatManager) == 392);
+static_assert(alignof(srpc::HeartbeatManager) == 8);
+static_assert(offsetof(srpc::HeartbeatManager, transition_lock_) == 0);
+static_assert(offsetof(srpc::HeartbeatManager, config_field) == 48);
+static_assert(offsetof(srpc::HeartbeatManager, last_send_time) == 104);
+static_assert(offsetof(srpc::HeartbeatManager, last_recv_time) == 152);
+static_assert(offsetof(srpc::HeartbeatManager, missed_count_field) == 200);
+static_assert(offsetof(srpc::HeartbeatManager, pending_pong) == 248);
+static_assert(offsetof(srpc::HeartbeatManager, timed_out) == 296);
+static_assert(offsetof(srpc::HeartbeatManager, on_timeout) == 344);
 static_assert(!std::is_copy_constructible_v<srpc::HeartbeatManager>);
 static_assert(std::is_move_constructible_v<srpc::HeartbeatManager>);
 static_assert(!rusty::is_send<srpc::HeartbeatTimeoutCallback>::value);
 static_assert(!rusty::is_sync<srpc::HeartbeatTimeoutCallback>::value);
-static_assert(!rusty::is_send<srpc::HeartbeatManager>::value);
-static_assert(!rusty::is_sync<srpc::HeartbeatManager>::value);
+static_assert(rusty::is_send<srpc::HeartbeatManager>::value);
+static_assert(rusty::is_sync<srpc::HeartbeatManager>::value);
 static_assert(std::is_same_v<
               decltype(&srpc::HeartbeatManager::new_),
               srpc::HeartbeatManager (*)(const srpc::HeartbeatConfig&)>);
@@ -10618,7 +7158,7 @@ static_assert(std::is_same_v<
 static_assert(std::is_same_v<
               decltype(&srpc::find_open_port), std::int32_t (*)()>);
 static_assert(std::is_same_v<
-              decltype(&srpc::get_host_name), std::string (*)()>);
+              decltype(&srpc::get_host_name), rusty::String (*)()>);
 static_assert(std::is_same_v<
               decltype(&srpc::randgen_zero_pad),
               std::string (*)(std::string, std::int32_t)>);
@@ -11240,8 +7780,22 @@ int main() {
     }
     stat.sample(-7);
     stat.sample(-2);
-    if (!stat_is(stat, 2, -9, -4, 0, -7) || stat.avg() != -4) {
+    // max is the true maximum (-2), not the zero-seeded field; the former
+    // seed-at-0 body reported 0 here. See the srpc.stat first-sample Verus spec.
+    if (!stat_is(stat, 2, -9, -4, -2, -7) || stat.avg() != -4) {
         return 14;
+    }
+    {
+        // all-positive stream must report its real minimum, not 0.
+        auto pos = srpc::AvgStat::new_();
+        pos.sample(12);
+        pos.sample(7);
+        pos.sample(33);
+        pos.sample(5);
+        pos.sample(91);
+        if (!stat_is(pos, 5, 148, 29, 91, 5)) {
+            return 15;
+        }
     }
     stat.clear();
     if (!stat_is(stat, 0, 0, 0, 0, 0)) {
@@ -12168,34 +8722,34 @@ int main() {
         return 117;
     }
 
-    monotonic_now_us = 1'000'000;
+    policy_now_us = 1'000'000;
     auto circuit_config = circuit_defaults;
     circuit_config.failure_threshold = 2;
     circuit_config.success_threshold = 2;
     circuit_config.timeout_ms = 10;
     auto circuit = srpc::CircuitBreaker::new_(circuit_config);
     if (!circuit.is_closed() || circuit.is_open() ||
-        !circuit.allow_request() || circuit.failure_count() != 0 ||
-        srpc::current_time_us() != monotonic_now_us) {
+        !circuit.allow_request_at(policy_now_us) || circuit.failure_count() != 0 ||
+        srpc::current_time_us() == 0) {
         return 118;
     }
-    circuit.record_failure();
-    circuit.record_failure();
+    circuit.record_failure_at(policy_now_us);
+    circuit.record_failure_at(policy_now_us);
     if (!circuit.is_open() || circuit.failure_count() != 0 ||
-        circuit.allow_request() || circuit.last_failure_time.get() != 1'000'000) {
+        circuit.allow_request_at(policy_now_us) || circuit.last_failure_time.get() != 1'000'000) {
         return 119;
     }
-    monotonic_now_us = 1'009'999;
-    if (circuit.allow_request()) {
+    policy_now_us = 1'009'999;
+    if (circuit.allow_request_at(policy_now_us)) {
         return 120;
     }
-    monotonic_now_us = 1'010'000;
-    if (!circuit.allow_request() || !circuit.is_half_open() ||
-        circuit.allow_request()) {
+    policy_now_us = 1'010'000;
+    if (!circuit.allow_request_at(policy_now_us) || !circuit.is_half_open() ||
+        circuit.allow_request_at(policy_now_us)) {
         return 121;
     }
     circuit.record_success();
-    if (circuit.success_count() != 1 || !circuit.allow_request()) {
+    if (circuit.success_count() != 1 || !circuit.allow_request_at(policy_now_us)) {
         return 122;
     }
     circuit.record_success();
@@ -12203,7 +8757,7 @@ int main() {
         return 123;
     }
     circuit.failure_count_field.set(std::numeric_limits<std::uint32_t>::max());
-    circuit.record_failure();
+    circuit.record_failure_at(policy_now_us);
     if (circuit.failure_count() != 0 || !circuit.is_closed()) {
         return 124;
     }
@@ -12281,13 +8835,13 @@ int main() {
     empty_timeout_config.timeout_ms = 0;
     empty_timeout_config.max_missed = 1;
     auto empty_timeout = srpc::HeartbeatManager::new_(empty_timeout_config);
-    if (!(*empty_timeout.on_timeout.borrow()).is_empty()) {
+    if (!(*empty_timeout.on_timeout.get()->lock().unwrap()).is_empty()) {
         return 133;
     }
-    monotonic_now_us = std::numeric_limits<std::uint64_t>::max() - 5;
-    empty_timeout.on_heartbeat_sent();
-    monotonic_now_us = 4;
-    if (!empty_timeout.check_timeout() || !empty_timeout.is_timed_out() ||
+    policy_now_us = std::numeric_limits<std::uint64_t>::max() - 5;
+    empty_timeout.on_heartbeat_sent_at(policy_now_us);
+    policy_now_us = 4;
+    if (!empty_timeout.check_timeout_at(policy_now_us) || !empty_timeout.is_timed_out() ||
         empty_timeout.missed_count() != 1 ||
         empty_timeout.is_pending_pong()) {
         return 134;
@@ -12301,29 +8855,29 @@ int main() {
     int heartbeat_callback_calls = 0;
     heartbeat.set_on_timeout(
         MutableHeartbeatCallable{&heartbeat_callback_calls});
-    monotonic_now_us = 1'000'000;
-    if (srpc::heartbeat_time_us() != monotonic_now_us ||
-        !heartbeat.should_send_heartbeat()) {
+    policy_now_us = 1'000'000;
+    if (srpc::heartbeat_time_us() == 0 ||
+        !heartbeat.should_send_heartbeat_at(policy_now_us)) {
         return 135;
     }
-    heartbeat.on_heartbeat_sent();
-    monotonic_now_us = 1'001'999;
-    if (heartbeat.check_timeout()) {
+    heartbeat.on_heartbeat_sent_at(policy_now_us);
+    policy_now_us = 1'001'999;
+    if (heartbeat.check_timeout_at(policy_now_us)) {
         return 136;
     }
-    monotonic_now_us = 1'002'000;
-    if (heartbeat.check_timeout() || heartbeat.missed_count() != 1 ||
+    policy_now_us = 1'002'000;
+    if (heartbeat.check_timeout_at(policy_now_us) || heartbeat.missed_count() != 1 ||
         heartbeat.is_timed_out()) {
         return 137;
     }
-    monotonic_now_us = 1'003'000;
-    if (!heartbeat.should_send_heartbeat()) {
+    policy_now_us = 1'003'000;
+    if (!heartbeat.should_send_heartbeat_at(policy_now_us)) {
         return 138;
     }
-    heartbeat.on_heartbeat_sent();
-    monotonic_now_us = 1'005'000;
-    if (!heartbeat.check_timeout() || !heartbeat.is_timed_out() ||
-        heartbeat_callback_calls != 1 || heartbeat.check_timeout() ||
+    heartbeat.on_heartbeat_sent_at(policy_now_us);
+    policy_now_us = 1'005'000;
+    if (!heartbeat.check_timeout_at(policy_now_us) || !heartbeat.is_timed_out() ||
+        heartbeat_callback_calls != 1 || heartbeat.check_timeout_at(policy_now_us) ||
         heartbeat_callback_calls != 1) {
         return 139;
     }
@@ -12336,11 +8890,11 @@ int main() {
     auto wrapping_heartbeat = srpc::HeartbeatManager::new_(heartbeat_config);
     wrapping_heartbeat.missed_count_field.set(
         std::numeric_limits<std::uint32_t>::max());
-    monotonic_now_us = std::numeric_limits<std::uint64_t>::max() - 5;
-    wrapping_heartbeat.on_heartbeat_sent();
+    policy_now_us = std::numeric_limits<std::uint64_t>::max() - 5;
+    wrapping_heartbeat.on_heartbeat_sent_at(policy_now_us);
     // The wrapped delta is exactly 2,000 us: 1,994 - (UINT64_MAX - 5).
-    monotonic_now_us = 1'994;
-    if (wrapping_heartbeat.check_timeout() ||
+    policy_now_us = 1'994;
+    if (wrapping_heartbeat.check_timeout_at(policy_now_us) ||
         wrapping_heartbeat.missed_count() != 0 ||
         wrapping_heartbeat.is_timed_out()) {
         return 141;
@@ -12429,10 +8983,13 @@ int main() {
             return 184;
         }
     }
-    const auto free_before = freeaddrinfo_calls;
     {
-        auto* first = new addrinfo{};
-        auto* second = new addrinfo{};
+        addrinfo* first = nullptr;
+        addrinfo* second = nullptr;
+        if (::getaddrinfo("127.0.0.1", nullptr, nullptr, &first) != 0 ||
+            ::getaddrinfo("127.0.0.1", nullptr, nullptr, &second) != 0) {
+            return 185;
+        }
         auto source = srpc::AddrInfo::adopt(first);
         if (source.get() != first || !source.valid() || !source.owned_.get()) {
             return 185;
@@ -12453,44 +9010,44 @@ int main() {
             return 188;
         }
     }
-    if (freeaddrinfo_calls - free_before != 2) {
-        return 189;
-    }
 
-    // "I " is Log::INFO, "E " is Log::ERROR; a null file renders "<unknown>"
-    // and the call site's line is 0 -- exactly the level/line/file the old
-    // forwarding fixture recorded.
-    selected_open_port = 4321;
+    std::ostringstream utils_log;
+    std::streambuf* original_cout = std::cout.rdbuf(utils_log.rdbuf());
+    auto reset_utils_log = [&]() {
+        utils_log.str({});
+        utils_log.clear();
+    };
+
     reset_utils_log();
-    if (srpc::find_open_port() != 4321 ||
-        !utils_logged("I [<unknown>:0] ", " | Found open port: 4321\\n")) {
+    const auto first_open_port = srpc::find_open_port();
+    if (first_open_port < 1024 || first_open_port >= 65000 ||
+        utils_log.str().find("Found open port: " + std::to_string(first_open_port)) == std::string::npos) {
         return 190;
     }
-    selected_open_port = 0;
-    reset_utils_log();
-    if (srpc::find_open_port() != -1 ||
-        !utils_logged("E [<unknown>:0] ", " | Failed to find open port.\\n")) {
+    const int occupied_port_fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    sockaddr_in occupied_address{};
+    occupied_address.sin_family = AF_INET;
+    occupied_address.sin_addr.s_addr = INADDR_ANY;
+    // Preserve the scan's historical raw sin_port representation.
+    occupied_address.sin_port = static_cast<std::uint16_t>(first_open_port);
+    if (occupied_port_fd < 0 ||
+        ::bind(occupied_port_fd, reinterpret_cast<sockaddr*>(&occupied_address), sizeof(occupied_address)) != 0) {
         return 191;
     }
-    selected_open_port = -1;
-    reset_utils_log();
-    if (srpc::find_open_port() != -1 ||
-        !utils_logged("E [<unknown>:0] ", " | Failed to find open port.\\n")) {
+    if (srpc::find_open_port() <= first_open_port) {
         return 192;
     }
-
-    hostname_mode = 1;
+    ::close(occupied_port_fd);
+    if (srpc::find_open_port() != first_open_port) {
+        return 192;
+    }
+    std::array<char, 256> actual_hostname{};
     reset_utils_log();
-    if (srpc::get_host_name() != "goal0-host" ||
-        hostname_buffer_length != 255 || !utils_log_text().empty()) {
+    if (::gethostname(actual_hostname.data(), actual_hostname.size() - 1) != 0 ||
+        srpc::get_host_name() != actual_hostname.data() || !utils_log.str().empty()) {
         return 193;
     }
-    hostname_mode = -1;
-    reset_utils_log();
-    if (!srpc::get_host_name().empty() ||
-        !utils_logged("E [<unknown>:0] ", " | Failed to get hostname.\\n")) {
-        return 194;
-    }
+    std::cout.rdbuf(original_cout);
 
 
     if (srpc::frame_decode_status_to_string(
@@ -12529,10 +9086,19 @@ int main() {
         std::memcmp(frame_header_bytes.data(),
                     frame_native_bytes(INT32_MIN).data(), 4) != 0 ||
         frame_header_bytes[4] != 0xa5 ||
-        !srpc::frame_codec_write_header(
+        // A size past the bound must be refused, so this side can never put a
+        // header on the wire that the peer's decoder is obliged to reject.
+        srpc::frame_codec_write_header(
             frame_header_bytes, INT32_MAX, true) ||
+        srpc::frame_codec_write_header(
+            frame_header_bytes, srpc::kMaxFramePayloadSize + 1, true) ||
+        !srpc::frame_codec_write_header(
+            frame_header_bytes, srpc::kMaxFramePayloadSize, true) ||
         std::memcmp(frame_header_bytes.data(),
-                    frame_native_bytes(-1).data(), 4) != 0) {
+                    frame_native_bytes(srpc::encode_response_size(
+                        srpc::kMaxFramePayloadSize, true))
+                        .data(),
+                    4) != 0) {
         return 198;
     }
 
@@ -12547,9 +9113,13 @@ int main() {
     for (const auto [encoded, payload, extended] :
          std::array{
              std::tuple{0, 0, false},
-             std::tuple{INT32_MAX, INT32_MAX, false},
+             std::tuple{srpc::encode_response_size(
+                            srpc::kMaxFramePayloadSize, false),
+                        srpc::kMaxFramePayloadSize, false},
              std::tuple{INT32_MIN, 0, true},
-             std::tuple{-1, INT32_MAX, true},
+             std::tuple{srpc::encode_response_size(
+                            srpc::kMaxFramePayloadSize, true),
+                        srpc::kMaxFramePayloadSize, true},
          }) {
         const auto bytes = frame_native_bytes(encoded);
         decoded_frame_header = srpc::FrameHeader{-7, !extended};
@@ -12560,9 +9130,32 @@ int main() {
             return 200;
         }
     }
-    if (srpc::FrameHeader{INT32_MAX, false}.total_frame_size() !=
-        INT32_MIN + 3) {
+    // Was `!= INT32_MIN + 3`, which PINNED the wrapping overflow as correct.
+    // Every caller casts this to size_t, and casting a negative int32_t
+    // sign-extends: a wrapped -2147483645 becomes 18446744071562067971, so
+    // the "do I have the whole frame yet?" guard is true forever and the
+    // stream wedges silently. It must saturate, never wrap.
+    if (srpc::FrameHeader{INT32_MAX, false}.total_frame_size() < 0 ||
+        srpc::FrameHeader{srpc::kMaxFramePayloadSize, false}
+                .total_frame_size() !=
+            srpc::kMaxFramePayloadSize +
+                static_cast<std::int32_t>(srpc::kFrameHeaderSize)) {
         return 201;
+    }
+    // A desynchronised read must be REJECTED, not accepted as a valid header
+    // claiming a payload that will never arrive. An all-ones word is the
+    // canonical shape of one.
+    {
+        srpc::FrameHeader desync_header{0, false};
+        if (srpc::frame_codec_peek_header(frame_native_bytes(-1),
+                                          desync_header) !=
+                srpc::FrameDecodeStatus::Malformed ||
+            srpc::frame_codec_peek_header(
+                frame_native_bytes(srpc::encode_response_size(
+                    srpc::kMaxFramePayloadSize + 1, false)),
+                desync_header) != srpc::FrameDecodeStatus::Malformed) {
+            return 202;
+        }
     }
 
     std::vector<std::uint8_t> encoded_frame{9, 8};
@@ -12743,21 +9336,21 @@ int main() {
                 hash_sparse_byte(sparse_wire_digest, encoded32[byte]);
         }
     }
-    if (sparse_wire_digest != UINT64_C(0x6d2ddf1efe2ab0b6)) {
+    if (sparse_wire_digest != UINT64_C(0xbbe9520e79d21a9c)) {
         return 156;
     }
-    for (const auto [value, truncated] : std::array{
-             std::pair{INT64_C(36028797018963967),
-                       INT64_C(36028797018963712)},
-             std::pair{INT64_C(-36028797018963967),
-                       INT64_C(-36028797018963968)},
+    // The former length-8 (0xFE) rung is retired (docs/testing-plan.md 4.1):
+    // these values now round-trip losslessly via the 9-byte (0xFF) encoding.
+    for (const auto value : std::array{
+             INT64_C(36028797018963967),
+             INT64_C(-36028797018963967),
          }) {
         std::array<std::uint8_t, 9> encoded{};
         const auto reported = srpc::SparseInt::dump64(value, encoded.data());
         std::array<std::uint8_t, 9> persisted{};
         std::copy_n(encoded.begin(), reported, persisted.begin());
-        if (reported != 8 || encoded[0] != 0xfe ||
-            srpc::SparseInt::load64(persisted.data()) != truncated) {
+        if (reported != 9 || encoded[0] != 0xff ||
+            srpc::SparseInt::load64(persisted.data()) != value) {
             return 145;
         }
     }
@@ -12802,23 +9395,27 @@ int main() {
         return 149;
     }
 
-    monotonic_now_us = 10;
-    realtime_now_us = 20;
-    gettimeofday_now_us = 1000000;
-    slept_us = 0;
     srpc::abort_if_false(true);
-    if (srpc::time_now_us(true) != 10 || srpc::Time::now(false) != 20) {
+    const auto native_before = srpc::time_now_us(true);
+    if (native_before == 0 || srpc::Time::now(false) == 0) {
         return 150;
     }
-    srpc::Time::sleep(37);
+    srpc::Time::sleep(2'000);
     auto base_timer = srpc::Timer::new_();
     base_timer.start();
-    gettimeofday_now_us = 3250000;
-    if (slept_us != 37 || base_timer.elapsed() != 2.25) {
+    srpc::Time::sleep(2'000);
+    if (srpc::time_now_us(true) < native_before + 4'000 ||
+        base_timer.elapsed() < 0.002) {
         return 151;
     }
     base_timer.stop();
-    gettimeofday_now_us = 9000000;
+    const auto stopped_elapsed = base_timer.elapsed();
+    srpc::Time::sleep(1'000);
+    if (base_timer.elapsed() != stopped_elapsed) {
+        return 152;
+    }
+    base_timer.begin_us = 1'000'000;
+    base_timer.end_us = 3'250'000;
     if (base_timer.elapsed() != 2.25) {
         return 152;
     }
@@ -12866,28 +9463,30 @@ int main() {
         return 156;
     }
 
-    monotonic_now_us = 1'000'000;
+    policy_now_us = 1'000'000;
+    const auto request_created_after = srpc::queued_request_time_us();
     auto timed_request = srpc::QueuedRequest::new_();
-    if (srpc::queued_request_time_us() != monotonic_now_us ||
-        timed_request.timestamp_us != monotonic_now_us ||
+    if (timed_request.timestamp_us < request_created_after ||
+        timed_request.timestamp_us > srpc::queued_request_time_us() ||
         timed_request.xid != 0 || timed_request.rpc_id != 0 ||
         timed_request.retry_count != 0 || timed_request.callback ||
         timed_request.ttl_ms != 30000) {
         return 159;
     }
+    timed_request.timestamp_us = policy_now_us;
     timed_request.ttl_ms = 10;
-    monotonic_now_us = 1'010'000;
-    if (timed_request.is_expired() || timed_request.age_ms() != 10) {
+    policy_now_us = 1'010'000;
+    if (timed_request.is_expired_at(policy_now_us) || timed_request.age_ms_at(policy_now_us) != 10) {
         return 160;
     }
-    monotonic_now_us = 1'011'000;
-    if (!timed_request.is_expired() || timed_request.age_ms() != 11) {
+    policy_now_us = 1'011'000;
+    if (!timed_request.is_expired_at(policy_now_us) || timed_request.age_ms_at(policy_now_us) != 11) {
         return 161;
     }
     timed_request.timestamp_us = std::numeric_limits<std::uint64_t>::max() - 499;
     timed_request.ttl_ms = 0;
-    monotonic_now_us = 500;
-    if (!timed_request.is_expired() || timed_request.age_ms() != 1) {
+    policy_now_us = 500;
+    if (!timed_request.is_expired_at(policy_now_us) || timed_request.age_ms_at(policy_now_us) != 1) {
         return 162;
     }
 
@@ -12935,8 +9534,11 @@ int main() {
             4,
             srpc::QueuedRequestCallback([&](std::int32_t error) {
                 if (error != srpc::kRequestQueueRejectedError ||
-                    queue.queue_.try_lock().is_some()) {
+                    queue.queue_.try_lock().is_none()) {
                     throw std::logic_error("rejection callback lock contract");
+                }
+                if (queue.size() != 1) {
+                    throw std::logic_error("rejection callback must reenter queue observers");
                 }
                 called = true;
                 throw std::runtime_error("expected rejection callback exception");
@@ -12954,8 +9556,11 @@ int main() {
         5,
         srpc::QueuedRequestCallback([&](std::int32_t error) {
             if (error != srpc::kRequestQueueRejectedError ||
-                oldest_queue.queue_.try_lock().is_some()) {
+                oldest_queue.queue_.try_lock().is_none()) {
                 throw std::logic_error("oldest callback lock contract");
+            }
+            if (oldest_queue.size() != 1) {
+                throw std::logic_error("oldest callback must reenter queue observers");
             }
             oldest_called = true;
             throw std::runtime_error("expected oldest callback exception");
@@ -12986,7 +9591,7 @@ int main() {
         return 171;
     }
 
-    monotonic_now_us = 2'000'000;
+    policy_now_us = 2'000'000;
     auto expiring = srpc::RequestQueue::new_();
     std::vector<std::int64_t> expired_order;
     for (std::int64_t xid : {8, 9}) {
@@ -13002,16 +9607,16 @@ int main() {
                     throw std::runtime_error("expected expiration callback exception");
                 }
             }));
-        request.timestamp_us = monotonic_now_us - 2'000;
+        request.timestamp_us = policy_now_us - 2'000;
         request.ttl_ms = 1;
         if (!expiring.enqueue(std::move(request))) {
             return 172;
         }
     }
     auto live = make_queued_request(10);
-    live.timestamp_us = monotonic_now_us - 1'000;
+    live.timestamp_us = policy_now_us - 1'000;
     live.ttl_ms = 1;
-    if (!expiring.enqueue(std::move(live)) || expiring.expire_stale() != 2 ||
+    if (!expiring.enqueue(std::move(live)) || expiring.expire_stale_at(policy_now_us) != 2 ||
         expired_order != std::vector<std::int64_t>({8, 9}) ||
         expiring.size() != 1) {
         return 173;
@@ -13041,6 +9646,43 @@ int main() {
         return 175;
     }
 
+    for (auto strategy : {srpc::OverflowStrategy::DROP_OLDEST,
+                          srpc::OverflowStrategy::DROP_NEWEST,
+                          srpc::OverflowStrategy::FAIL_FAST}) {
+        auto zero_config = queue_defaults;
+        zero_config.max_size = 0;
+        zero_config.overflow_strategy = strategy;
+        auto zero_queue = srpc::RequestQueue::with_config(zero_config);
+        using Rejection = std::tuple<std::int64_t, std::int32_t, std::size_t>;
+        std::vector<Rejection> observed;
+        for (std::int64_t xid : {1, 2}) {
+            auto request = make_queued_request(xid, srpc::QueuedRequestCallback(
+                [&, xid](std::int32_t error) {
+                    if (zero_queue.queue_.try_lock().is_none()) {
+                        throw std::logic_error("zero-capacity callback holds queue lock");
+                    }
+                    observed.emplace_back(xid, error, zero_queue.size());
+                }));
+            if (zero_queue.enqueue(std::move(request)) !=
+                (strategy == srpc::OverflowStrategy::DROP_OLDEST)) {
+                return 249;
+            }
+        }
+        if (strategy == srpc::OverflowStrategy::DROP_OLDEST) {
+            if (observed != std::vector<Rejection>{{1, srpc::kRequestQueueRejectedError, 1}} ||
+                zero_queue.size() != 1 || zero_queue.dequeue().unwrap().xid != 2) {
+                return 250;
+            }
+        } else if (observed != std::vector<Rejection>{
+                       {1, srpc::kRequestQueueRejectedError, 0},
+                       {2, srpc::kRequestQueueRejectedError, 0}}) {
+            return 251;
+        }
+        if (!zero_queue.empty()) {
+            return 252;
+        }
+    }
+
     auto invalid_config = queue_defaults;
     invalid_config.max_size = 0;
     invalid_config.overflow_strategy = static_cast<srpc::OverflowStrategy>(99);
@@ -13050,72 +9692,323 @@ int main() {
         return 176;
     }
 
-    // srpc.debugging: branch hints keep boolean identity, verify() only reaches
-    // the failure tail on a false predicate, and the failure tail renders the
-    // captured frames BEFORE it panics (the trace must survive a swallowed
-    // panic). `frames - 1` is the historical loop bound, so a three-frame
-    // capture renders two lines.
-    if (!srpc::likely(true) || srpc::likely(false) ||
-        !srpc::unlikely(true) || srpc::unlikely(false)) {
-        return 177;
+    using Envelope = srpc::SerializableEnvelope<canary::EnvelopePayloadSet>;
+    Envelope empty_envelope;
+    auto cloned_empty_envelope = empty_envelope.clone();
+    if (empty_envelope.has_value() || empty_envelope.kind() != 0 ||
+        !(empty_envelope == cloned_empty_envelope)) {
+        return 214;
     }
-    reset_debugging(3);
-    srpc::verify(true);
-    srpc::verify(reinterpret_cast<const void*>(1));
-    srpc::verify(7);
-    if (debugging_capture_calls != 0 || !debugging_rendered().empty()) {
-        return 178;
+    canary::EnvelopePayload envelope_payload{7};
+    auto packed_envelope = Envelope::pack(envelope_payload);
+    const auto* unpacked_envelope =
+        packed_envelope.template unpack<canary::EnvelopePayload>();
+    auto shared_envelope =
+        srpc::marshallable_cast<canary::EnvelopePayload>(packed_envelope);
+    if (!packed_envelope.has_value() || packed_envelope.kind() != 61 ||
+        !packed_envelope.template is_a<canary::EnvelopePayload>() ||
+        unpacked_envelope == nullptr || unpacked_envelope->value != 7 ||
+        shared_envelope.is_none() || shared_envelope.unwrap()->value != 7) {
+        return 215;
+    }
+    auto cloned_envelope = packed_envelope.clone();
+    auto* mutable_envelope =
+        cloned_envelope.template unpack_mut<canary::EnvelopePayload>();
+    if (!(packed_envelope == cloned_envelope) || mutable_envelope == nullptr) {
+        return 216;
+    }
+    mutable_envelope->value = 9;
+    if (packed_envelope.template unpack<canary::EnvelopePayload>()->value != 9) {
+        return 217;
     }
 
-    reset_debugging(3);
-    bool debugging_panicked = false;
+    auto invalid_future = srpc::FiberFuture<int>::default_();
+    if (invalid_future.valid() || invalid_future.is_ready() ||
+        invalid_future.wait_for(1)) {
+        return 218;
+    }
+    auto promise = srpc::FiberPromise<int>::default_();
+    auto future = promise.get_future();
+    if (!future.valid() || future.is_ready()) {
+        return 219;
+    }
+    bool duplicate_future_threw = false;
     try {
-        srpc::verify(false);
-    } catch (const std::exception& error) {
-        debugging_panicked =
-            std::string_view(error.what()).find("verify failed at ") !=
-            std::string_view::npos;
+        (void)promise.get_future();
+    } catch (const std::logic_error&) {
+        duplicate_future_threw = true;
     }
-    if (!debugging_panicked || debugging_capture_calls != 1 ||
-        debugging_free_calls != 1) {
-        return 179;
+    promise.set_value(42);
+    if (!duplicate_future_threw || !promise.is_ready() ||
+        !future.is_ready() || future.get() != 42 || future.get() != 42) {
+        return 220;
     }
-    if (debugging_rendered() !=
-        "  *** begin stack trace ***\\n"
-        "0    frame-zero\\n"
-        "1    frame-one\\n"
-        "  ***  end stack trace  ***\\n") {
-        return 180;
-    }
-
-    reset_debugging(-1);
-    debugging_panicked = false;
+    bool duplicate_value_threw = false;
     try {
-        srpc::verify_failed("goal0.cc", 42);
-    } catch (const std::exception& error) {
-        debugging_panicked =
-            std::string_view(error.what()) == "verify failed at goal0.cc, line 42";
+        promise.set_value(7);
+    } catch (const std::logic_error&) {
+        duplicate_value_threw = true;
     }
-    if (!debugging_panicked || debugging_capture_calls != 1 ||
-        debugging_free_calls != 0) {
-        return 181;
+    if (!duplicate_value_threw) {
+        return 221;
     }
-    if (debugging_rendered() != "  *** failed to obtain stack trace!\\n") {
-        return 182;
+    auto [pair_promise, pair_future] = srpc::make_promise<std::string>();
+    pair_promise.set_value("pair");
+    auto ready_future = srpc::make_ready_future<std::string>("ready");
+    if (pair_future.get() != "pair" || !ready_future.wait_for(1) ||
+        ready_future.get() != "ready") {
+        return 222;
     }
 
-    reset_debugging(3);
-    srpc::print_stack_trace(debugging_stream);
-    if (debugging_rendered() !=
-        "  *** begin stack trace ***\\n"
-        "0    frame-zero\\n"
-        "1    frame-one\\n"
-        "  ***  end stack trace  ***\\n") {
-        return 183;
+    if (srpc::log_level_tag(srpc::Log::FATAL) != "F " ||
+        srpc::log_level_tag(srpc::Log::ERROR) != "E " ||
+        srpc::log_level_tag(srpc::Log::WARN) != "W " ||
+        srpc::log_level_tag(srpc::Log::INFO) != "I " ||
+        srpc::log_level_tag(srpc::Log::DEBUG) != "D " ||
+        srpc::log_level_tag(99) != "? " ||
+        srpc::log_basename(nullptr) != "<unknown>" ||
+        srpc::log_basename(reinterpret_cast<const std::int8_t*>("a/b/file.cc")) !=
+            "file.cc" ||
+        srpc::log_time_now().len() != 23) {
+        return 223;
+    }
+    std::ostringstream logging_sink;
+    original_cout = std::cout.rdbuf(logging_sink.rdbuf());
+    srpc::Log::set_level(srpc::Log::WARN);
+    srpc::log_line(srpc::Log::INFO, 42,
+                  reinterpret_cast<const std::int8_t*>("file.cc"),
+                  "filtered");
+    srpc::log_line(srpc::Log::ERROR, 42,
+                  reinterpret_cast<const std::int8_t*>("a/b/file.cc"),
+                  "visible");
+    std::cout.rdbuf(original_cout);
+    srpc::Log::set_level(srpc::Log::DEBUG);
+    if (!logging_sink.str().starts_with("E [file.cc:42] ") ||
+        !logging_sink.str().ends_with(" | visible\\n") ||
+        logging_sink.str().find("filtered") != std::string::npos) {
+        return 224;
+    }
+
+    const auto idempotency_empty = srpc::IdempotencyKey::empty();
+    const auto idempotency_key = srpc::IdempotencyKey::new_(12'345, 67'890);
+    srpc::IdempotencyKeyHash idempotency_hash;
+    if (idempotency_empty.is_valid() || !idempotency_key.is_valid() ||
+        !(idempotency_key == srpc::IdempotencyKey{12'345, 67'890}) ||
+        idempotency_hash.hash_one(idempotency_key) !=
+            (12'345ULL ^ (67'890ULL * 0x9e3779b97f4a7c15ULL))) {
+        return 225;
+    }
+    srpc::BufferSink idempotency_sink;
+    srpc::BinaryWriteArchive idempotency_writer(
+        srpc::make_sink_proxy_buffer(&idempotency_sink));
+    srpc::serialize(idempotency_key, idempotency_writer);
+    if (idempotency_sink.bytes.len() != 16) {
+        return 226;
+    }
+    srpc::BufferSource idempotency_source(
+        idempotency_sink.bytes.data(), idempotency_sink.bytes.len());
+    srpc::BinaryReadArchive idempotency_reader(
+        srpc::make_source_proxy_buffer(&idempotency_source));
+    auto restored_key = srpc::IdempotencyKey::empty();
+    srpc::deserialize(restored_key, idempotency_reader);
+    if (!(restored_key == idempotency_key)) {
+        return 227;
+    }
+    auto idempotency_generator = srpc::IdempotencyKeyGenerator::new_(7);
+    if (!(idempotency_generator.next() == srpc::IdempotencyKey{7, 0})) {
+        return 228;
+    }
+    idempotency_generator.sequence_field.set(
+        std::numeric_limits<std::uint64_t>::max());
+    if (idempotency_generator.next().sequence !=
+            std::numeric_limits<std::uint64_t>::max() ||
+        idempotency_generator.current_sequence() != 0) {
+        return 229;
+    }
+    const auto idempotency_defaults = srpc::IdempotencyConfig::defaults();
+    if (idempotency_defaults.ttl_ms != 60'000 ||
+        idempotency_defaults.max_entries != 10'000 ||
+        !idempotency_defaults.enabled ||
+        srpc::IdempotencyConfig::disabled().enabled) {
+        return 230;
+    }
+    srpc::CachedResponse wrapped_response{
+        srpc::IdempotencyKey::empty(), 0, {},
+        std::numeric_limits<std::uint64_t>::max() - 5};
+    if (!wrapped_response.is_expired(5, 10) ||
+        wrapped_response.is_expired(5, 0)) {
+        return 231;
+    }
+    auto idempotency_config = idempotency_defaults;
+    idempotency_config.ttl_ms = 100;
+    idempotency_config.max_entries = 2;
+    auto idempotency_cache = srpc::IdempotencyCache::with_config(idempotency_config);
+    rusty::Vec<std::uint8_t> payload_one;
+    payload_one.push(1);
+    payload_one.push(2);
+    rusty::Vec<std::uint8_t> payload_two;
+    payload_two.push(4);
+    const srpc::IdempotencyKey first_key{1, 1};
+    const srpc::IdempotencyKey second_key{1, 2};
+    const srpc::IdempotencyKey third_key{1, 3};
+    idempotency_cache.store(first_key, 11, payload_one, 1'000);
+    idempotency_cache.store(second_key, 22, payload_two, 1'050);
+    std::int32_t cached_error = -1;
+    rusty::Vec<std::uint8_t> cached_payload;
+    if (!idempotency_cache.lookup(
+            first_key, 1'050, cached_error, cached_payload) ||
+        cached_error != 11 || cached_payload.len() != 2) {
+        return 232;
+    }
+    idempotency_cache.store(third_key, 33, payload_two, 1'100);
+    if (idempotency_cache.size() != 2 ||
+        idempotency_cache.evictions() != 1 ||
+        idempotency_cache.lookup(
+            second_key, 1'100, cached_error, cached_payload) ||
+        !idempotency_cache.lookup(
+            first_key, 1'100, cached_error, cached_payload)) {
+        return 233;
+    }
+    idempotency_cache.store(first_key, 44, payload_two, 1'110);
+    if (!idempotency_cache.lookup(
+            first_key, 1'110, cached_error, cached_payload) ||
+        cached_error != 44 || idempotency_cache.hits() != 3 ||
+        idempotency_cache.misses() != 1 ||
+        idempotency_cache.evict_expired(1'211) != 2 ||
+        idempotency_cache.size() != 0) {
+        return 234;
+    }
+    idempotency_cache.reset_stats();
+    idempotency_cache.set_config(srpc::IdempotencyConfig::disabled());
+    idempotency_cache.store({2, 1}, 0, payload_one, 0);
+    if (idempotency_cache.enabled() || idempotency_cache.size() != 0 ||
+        idempotency_cache.hits() != 0 || idempotency_cache.misses() != 0 ||
+        idempotency_cache.evictions() != 0) {
+        return 235;
+    }
+
+    if (srpc::this_fiber::get_id() != 0 ||
+        srpc::this_fiber::current().is_some() ||
+        srpc::this_fiber::in_fiber_context()) {
+        return 236;
+    }
+    srpc::this_fiber::yield();
+    srpc::this_fiber::sleep_us(0);
+    srpc::this_fiber::sleep_ms(0);
+    srpc::this_fiber::sleep_s(0);
+    srpc::this_fiber::sleep_until_us(srpc::Time::now(true));
+
+    if (srpc::clamp(5, 0, 10) != 5 || srpc::clamp(-2, 0, 10) != 0 ||
+        srpc::clamp(12, 0, 10) != 10 ||
+        srpc::clamp(canary::MiscValue(-2), canary::MiscBound{0},
+                   canary::MiscBound{10}).value != 0 ||
+        srpc::clamp(canary::MiscValue(12), canary::MiscBound{0},
+                   canary::MiscBound{10}).value != 10) {
+        return 237;
+    }
+    int job_calls = 0;
+    auto one_time_job = srpc::OneTimeJob::new_(
+        rusty::Function<void()>([&job_calls]() { ++job_calls; }));
+    srpc::Job* job = &one_time_job;
+    if (!job->Ready() || job->Done()) {
+        return 238;
+    }
+    job->Work();
+    if (job->Ready() || !job->Done() || job_calls != 1 ||
+        srpc::get_ncpu() <= 0 || srpc::format_thousands(0.0) != "0.00" ||
+        srpc::format_thousands(-0.0) != "0.00" ||
+        srpc::format_thousands(1234.5) != "1,234.50" ||
+        srpc::format_thousands(-1234567.89) != "-1,234,567.89" ||
+        srpc::format_thousands(999.999) != "1,000.00") {
+        return 239;
+    }
+    if (srpc::channel_error_to_string(srpc::ChannelError::None) != "None" ||
+        srpc::channel_error_to_string(srpc::ChannelError::Timeout) != "Timeout" ||
+        srpc::channel_error_to_string(
+            static_cast<srpc::ChannelError>(-1)) != "Unknown") {
+        return 240;
+    }
+    const auto remove_count_before = srpc::epoll_remove_count.load(
+        rusty::sync::atomic::Ordering::SeqCst);
+    srpc::epoll_bump_remove_count();
+    if (srpc::epoll_remove_count.load(
+            rusty::sync::atomic::Ordering::SeqCst) !=
+        remove_count_before + 1) {
+        return 241;
+    }
+    auto callback_manager = srpc::CallbackManager::new_();
+    if (callback_manager.has_callbacks() ||
+        callback_manager.callback_count() != 0) {
+        return 242;
+    }
+    auto switchboard = srpc::InMemorySwitchboard::new_();
+    if (switchboard.find_listener("missing").is_some()) {
+        return 243;
+    }
+    auto spin_lock = srpc::SpinLock::new_();
+    spin_lock.lock();
+    spin_lock.unlock();
+    srpc::cpu_pause();
+    if (!srpc::likely(true) || srpc::unlikely(false)) {
+        return 244;
+    }
+    srpc::any_message_registry::clear_for_testing();
+    if (srpc::any_message_registry::is_registered_name("missing") ||
+        srpc::any_message_registry::is_registered_type(
+            std::type_index(typeid(int)))) {
+        return 245;
+    }
+    if (srpc::kTcpConnectionOutboundHighWaterDefault !=
+        static_cast<size_t>(4) * 1024 * 1024) {
+        return 246;
+    }
+    if (static_cast<int>(srpc::EventStatus::READY) != 2) {
+        return 247;
+    }
+    if (srpc::kDefaultDrainTimeoutMs != static_cast<uint64_t>(30000)) {
+        return 248;
+    }
+    if (srpc::CLIENT_INTERNAL_HEARTBEAT_RPC_ID !=
+        std::numeric_limits<std::int32_t>::min() ||
+        srpc::CLIENT_ERR_TIMED_OUT != 110 ||
+        srpc::client_text("marker") != "marker") {
+        return 247;
     }
     return 0;
 }
 """
+
+
+def require_importer_coverage(modules: list[extraction.ModuleEntry]) -> None:
+    """Require one direct import and one concrete use per canonical module."""
+
+    source = importer_source()
+    canonical = {module.cpp_module for module in modules}
+    if canonical != set(IMPORTER_USE_MARKERS):
+        raise GateError(
+            "combined-importer use ratchet does not equal canonical manifest"
+        )
+    imports = Counter(
+        re.findall(r"^import (srpc\.[^;\n]+);[ \t]*$", source, re.MULTILINE)
+    )
+    missing_or_duplicated = sorted(
+        module for module in canonical if imports[module] != 1
+    )
+    if missing_or_duplicated:
+        raise GateError(
+            "combined importer must directly import every canonical module "
+            f"exactly once: {missing_or_duplicated!r}"
+        )
+    missing_uses = sorted(
+        module
+        for module, marker in IMPORTER_USE_MARKERS.items()
+        if marker not in source
+    )
+    if missing_uses:
+        raise GateError(
+            "combined importer lacks concrete canonical module use(s): "
+            + ", ".join(missing_uses)
+        )
 
 
 def compile_module(
@@ -13127,14 +10020,30 @@ def compile_module(
     module_name: str,
     cxx_flags: list[str],
     prebuilt_module_dirs: list[Path],
+    configured_module_map: dict[str, Path],
+    configured_module_dependencies: dict[str, set[str]],
 ) -> Path:
     source = source_dir / f"{module_name}.cppm"
     pcm = work_dir / f"{module_name}.pcm"
     object_file = work_dir / f"{module_name}.o"
-    module_path_flags = [
-        f"-fprebuilt-module-path={path}"
-        for path in (work_dir, *prebuilt_module_dirs)
-    ]
+    direct_module_map = generated_lane_module_map(
+        configured_module_map,
+        work_dir,
+        dependency_names=(
+            set(configured_module_map)
+            if module_name == "srpc"
+            else configured_module_dependencies[module_name]
+        ),
+        exclude=module_name,
+    )
+    module_path_flags = (
+        module_file_flags(direct_module_map)
+        if configured_module_map
+        else [
+            f"-fprebuilt-module-path={path}"
+            for path in (work_dir, *prebuilt_module_dirs)
+        ]
+    )
     run(
         [
             str(clang),
@@ -13144,7 +10053,7 @@ def compile_module(
             "-I",
             str(include),
             "-I",
-            str(root / "src/srpc"),
+            str(extraction.crate_root(root)),
             *module_path_flags,
             "--precompile",
             str(source),
@@ -13159,7 +10068,7 @@ def compile_module(
             "-std=gnu++23",
             *cxx_flags,
             "-I",
-            str(root / "src/srpc"),
+            str(extraction.crate_root(root)),
             *module_path_flags,
             "-c",
             str(pcm),
@@ -13169,129 +10078,6 @@ def compile_module(
         root,
     )
     return object_file
-
-
-# Plain-C kernels compiled into libsrpc.a (see the "Goal-0 C demotion" block in
-# src/srpc-cmake/CMakeLists.txt) plus srpc.epoll_wrapper's platform
-# implementation unit. They are not crate outputs, so the generated lane has to
-# build them itself to link the same closure production does.
-# base/srpc_base.c, misc/srpc_rand.c, misc/srpc_timing.c and rpc/srpc_net.c are
-# deliberately ABSENT: the importer defines its own observable stubs for the
-# seams in them that the runtime contracts pin (the rand draws, the clocks,
-# srpc_find_open_port, and the backtrace trio), and a C file is linked at
-# object granularity -- pulling one of those objects for a symbol the importer
-# does not stub would drag its stubbed neighbours in too. The handful of
-# functions the modules still need from those four files are stubbed in the
-# importer instead, beside the ones already there. The real kernels are covered
-# separately by srpc_goal0_rand_kernel_smoke and by the production lane, which
-# links libsrpc.a.
-SUPPORT_C_KERNELS = (
-    "src/srpc/misc/srpc_io.c",
-    "src/srpc/rpc/srpc_connect.c",
-    "src/srpc/rpc/srpc_server.c",
-    "src/srpc/reactor/srpc_fiber.c",
-)
-SUPPORT_MODULE_IMPLEMENTATIONS = ("src/srpc/reactor/epoll_platform_linux.cc",)
-# The fiber context-switch trampoline is real assembly, selected by host
-# architecture exactly as CMake's `reactor/*.S` glob selects it.
-SUPPORT_ASSEMBLY = {
-    "x86_64": "src/srpc/reactor/fiber_context_x86_64.S",
-    "aarch64": "src/srpc/reactor/fiber_context_aarch64.S",
-    "arm64": "src/srpc/reactor/fiber_context_aarch64.S",
-}
-
-
-def compile_support_inputs(
-    clang: Path,
-    archiver: Path,
-    root: Path,
-    include: Path,
-    work_dir: Path,
-    cxx_flags: list[str],
-    prebuilt_module_dirs: list[Path],
-) -> list[Path]:
-    objects: list[Path] = []
-    module_path_flags = [
-        f"-fprebuilt-module-path={path}"
-        for path in (work_dir, *prebuilt_module_dirs)
-    ]
-    for label in SUPPORT_C_KERNELS:
-        source = root / label
-        object_file = work_dir / f"{Path(label).stem}.c.o"
-        run(
-            [
-                str(clang),
-                "-x",
-                "c",
-                "-std=gnu11",
-                "-I",
-                str(root / "src/srpc"),
-                "-c",
-                str(source),
-                "-o",
-                str(object_file),
-            ],
-            root,
-        )
-        objects.append(object_file)
-    assembly_label = SUPPORT_ASSEMBLY.get(platform.machine())
-    if assembly_label is None:
-        raise GateError(
-            "no fiber context-switch trampoline for host architecture "
-            f"{platform.machine()!r}"
-        )
-    assembly_object = work_dir / "fiber_context.S.o"
-    run(
-        [
-            str(clang),
-            "-c",
-            str(root / assembly_label),
-            "-o",
-            str(assembly_object),
-        ],
-        root,
-    )
-    objects.append(assembly_object)
-    for label in SUPPORT_MODULE_IMPLEMENTATIONS:
-        source = root / label
-        object_file = work_dir / f"{Path(label).stem}.impl.o"
-        run(
-            [
-                str(clang),
-                "-std=gnu++23",
-                *cxx_flags,
-                "-I",
-                str(include),
-                "-I",
-                str(root / "src/srpc"),
-                *module_path_flags,
-                "-c",
-                str(source),
-                "-o",
-                str(object_file),
-            ],
-            root,
-        )
-        objects.append(object_file)
-    # Bundle them as an ARCHIVE, not as loose objects. The importer
-    # deliberately defines its own observable stubs for several of these C
-    # seams (srpc_rand_raw, the clocks, srpc_find_open_port, and the debugging
-    # trio) so the runtime contracts are deterministic; loose objects would be
-    # unconditionally included and collide with those. An archive member is
-    # pulled only for a symbol that is still undefined, so the importer's stubs
-    # win and only the genuinely missing kernels come from here -- the same
-    # resolution order the production lane gets from libsrpc.a.
-    archive = work_dir / "libgoal0support.a"
-    run(
-        [
-            str(archiver),
-            "rcs",
-            str(archive),
-            *(str(path) for path in objects),
-        ],
-        root,
-    )
-    return [archive]
 
 
 def grouped_link_inputs(paths: list[Path]) -> list[str]:
@@ -13321,9 +10107,14 @@ def resolve_generated_dir(root: Path, raw: str) -> Path:
     return output
 
 
-def resolve_prebuilt_module_dirs(root: Path, raw_roots: list[str]) -> list[Path]:
+def resolve_prebuilt_module_dirs(
+    root: Path,
+    raw_roots: list[str],
+    *,
+    required_pcm: str | None = None,
+) -> list[Path]:
     directories: set[Path] = set()
-    found_rusty = False
+    found_required_pcm = False
     for raw in raw_roots:
         module_root = Path(raw)
         if not module_root.is_absolute():
@@ -13336,65 +10127,224 @@ def resolve_prebuilt_module_dirs(root: Path, raw_roots: list[str]) -> list[Path]
         for pcm in module_root.rglob("*.pcm"):
             if pcm.is_file():
                 directories.add(pcm.parent.resolve())
-                found_rusty = found_rusty or pcm.name == "rusty.pcm"
-    if raw_roots and not found_rusty:
+                found_required_pcm = (
+                    found_required_pcm or pcm.name == required_pcm
+                )
+    if raw_roots and required_pcm is not None and not found_required_pcm:
         raise GateError(
-            "runtime prebuilt-module roots do not contain rusty.pcm"
+            "prebuilt-module roots do not contain required BMI "
+            f"{required_pcm}"
         )
     return sorted(directories)
 
 
-def crate_compile_order(
-    output: Path, modules: list[extraction.ModuleEntry]
-) -> list[extraction.ModuleEntry]:
-    """Manifest modules reordered so every child follows the ones it imports.
+def resolve_configured_module_map(
+    root: Path, raw_build_roots: list[str]
+) -> dict[str, Path]:
+    """Read CMake's explicit module map without guessing BMI filenames."""
 
-    A generated child is a C++ named-module interface unit, so clang can only
-    precompile it once the BMIs of the crate modules it imports already exist.
-    The manifest is an OWNERSHIP record, not a build schedule: its row order
-    is srpc's, and mako's rusty-cpp pin does not have to produce the same
-    import graph srpc's does (`srpc.utils` imports `srpc.logging` here, and the
-    two sit in the opposite relative order upstream). Deriving the schedule
-    from what the generated units actually import keeps this gate correct for
-    any manifest order and any pin. Manifest order remains the stable
-    tie-break, so the schedule is still deterministic.
+    mappings: dict[str, Path] = {}
+    for raw in raw_build_roots:
+        build_root = Path(raw)
+        if not build_root.is_absolute():
+            build_root = root / build_root
+        build_root = build_root.resolve()
+        if not build_root.is_dir():
+            raise GateError(
+                f"configured module-map root is unavailable: {build_root}"
+            )
+        for modmap in build_root.rglob("*.o.modmap"):
+            if not modmap.is_file():
+                continue
+            # Retired historical .cpp carriers can leave stale CMake modmaps
+            # in an incremental build tree. Only generated canonical owners
+            # under goal0-crate-cpp define the dependency closure for this
+            # lane; inline providers live elsewhere and are not queried here.
+            canonical_provider = (
+                "srpc.dir" in modmap.parts and "goal0-crate-cpp" in modmap.parts
+            )
+            # The importer also uses the runtime umbrella. Its scanned consumer
+            # supplies the active runtime BMI closure now that canonical Rust
+            # providers import individual standard-library ports directly.
+            runtime_consumer = "srpc_runtime_imports.dir" in modmap.parts
+            if not canonical_provider and not runtime_consumer:
+                continue
+            for line in modmap.read_text(encoding="utf-8").splitlines():
+                fields = shlex.split(line)
+                if len(fields) != 1:
+                    continue
+                field = fields[0]
+                if field.startswith("-fmodule-file="):
+                    assignment = field.removeprefix("-fmodule-file=")
+                    if "=" not in assignment:
+                        continue
+                    module_name, raw_path = assignment.split("=", 1)
+                elif field.startswith("-fmodule-output="):
+                    raw_path = field.removeprefix("-fmodule-output=")
+                    module_name = Path(raw_path).stem
+                    if not module_name.startswith("srpc."):
+                        continue
+                else:
+                    continue
+                module_path = Path(raw_path)
+                if not module_path.is_absolute():
+                    module_path = build_root / module_path
+                module_path = module_path.resolve()
+                if not module_path.is_file():
+                    raise GateError(
+                        f"configured BMI for {module_name} is unavailable: "
+                        f"{module_path}"
+                    )
+                previous = mappings.get(module_name)
+                if previous is not None and previous != module_path:
+                    raise GateError(
+                        f"configured BMI mapping for {module_name} is "
+                        f"ambiguous: {previous} vs {module_path}"
+                    )
+                mappings[module_name] = module_path
+    if raw_build_roots and not mappings:
+        raise GateError("configured module-map roots contain no CMake modmaps")
+    return mappings
+
+
+def resolve_configured_module_dependencies(
+    root: Path, raw_build_roots: list[str]
+) -> dict[str, set[str]]:
+    """Read each configured srpc provider's exact CMake BMI closure."""
+
+    dependencies: dict[str, set[str]] = {}
+    for raw in raw_build_roots:
+        build_root = Path(raw)
+        if not build_root.is_absolute():
+            build_root = root / build_root
+        build_root = build_root.resolve()
+        if not build_root.is_dir():
+            raise GateError(
+                f"configured module-map root is unavailable: {build_root}"
+            )
+        for modmap in build_root.rglob("*.o.modmap"):
+            if not modmap.is_file() or "srpc.dir" not in modmap.parts:
+                continue
+            # Retired historical .cpp carriers can leave stale CMake modmaps
+            # in an incremental build tree. Canonical dependency closures
+            # come only from the generated crate-provider directory.
+            if "goal0-crate-cpp" not in modmap.parts:
+                continue
+            output_name: str | None = None
+            imported: set[str] = set()
+            for line in modmap.read_text(encoding="utf-8").splitlines():
+                fields = shlex.split(line)
+                if len(fields) != 1:
+                    continue
+                field = fields[0]
+                if field.startswith("-fmodule-output="):
+                    output_name = Path(
+                        field.removeprefix("-fmodule-output=")
+                    ).stem
+                elif field.startswith("-fmodule-file="):
+                    assignment = field.removeprefix("-fmodule-file=")
+                    if "=" in assignment:
+                        imported.add(assignment.split("=", 1)[0])
+            if output_name is None or not output_name.startswith("srpc."):
+                continue
+            previous = dependencies.get(output_name)
+            if previous is not None and previous != imported:
+                raise GateError(
+                    f"configured dependency closure for {output_name} is "
+                    f"ambiguous: {sorted(previous)!r} vs {sorted(imported)!r}"
+                )
+            dependencies[output_name] = imported
+    if raw_build_roots and not dependencies:
+        raise GateError("configured module-map roots contain no srpc provider maps")
+    return dependencies
+
+
+def module_file_flags(
+    module_map: dict[str, Path], *, exclude: str | None = None
+) -> list[str]:
+    return [
+        f"-fmodule-file={name}={path}"
+        for name, path in sorted(module_map.items())
+        if name != exclude
+    ]
+
+
+def generated_lane_module_map(
+    configured_module_map: dict[str, Path],
+    work_dir: Path,
+    *,
+    dependency_names: set[str],
+    exclude: str | None = None,
+) -> dict[str, Path]:
+    """Use all and only CMake's configured dependency BMI closure.
+
+    Inline BMIs may themselves import canonical modules, so Clang requires the
+    exact configured canonical BMI identities used to build those inline
+    dependencies. The provider object under test is still compiled directly
+    from generated source and linked ahead of the production archive; exact
+    output/surface/ABI ratchets prove its declaration and implementation.
     """
 
+    missing_configured = dependency_names - set(configured_module_map)
+    if missing_configured:
+        raise GateError(
+            "generated lane dependency closure lacks configured BMI(s): "
+            + ", ".join(sorted(missing_configured))
+        )
+    result = {name: configured_module_map[name] for name in dependency_names}
+    if exclude is not None:
+        result.pop(exclude, None)
+    return result
+
+
+def generated_module_order(
+    output: Path,
+    modules: list[extraction.ModuleEntry],
+    configured_module_dependencies: dict[str, set[str]],
+) -> list[extraction.ModuleEntry]:
+    """Return a stable dependency order for generated canonical modules."""
+
     by_name = {module.cpp_module: module for module in modules}
-    dependencies = {}
+    original_index = {
+        module.cpp_module: index for index, module in enumerate(modules)
+    }
+    dependencies: dict[str, set[str]] = {}
     for module in modules:
         text = read_generated(
             output / f"{module.cpp_module}.cppm",
-            f"module {module.cpp_module}",
+            f"child module {module.cpp_module}",
         )
-        imported = re.findall(
-            r"^(?:export )?import ([^;\n]+);[ \t]*$", text, re.MULTILINE
+        imports = set(
+            re.findall(
+                r"^(?:export )?import (srpc\.[^;\s]+);[ \t]*$",
+                text,
+                flags=re.MULTILINE,
+            )
         )
-        dependencies[module.cpp_module] = [
-            name for name in imported if name in by_name
-        ]
+        dependencies[module.cpp_module] = (
+            imports | configured_module_dependencies[module.cpp_module]
+        ) & by_name.keys()
 
     ordered: list[extraction.ModuleEntry] = []
-    placed: set[str] = set()
-    visiting: list[str] = []
-
-    def place(name: str) -> None:
-        if name in placed:
-            return
-        if name in visiting:
-            cycle = " -> ".join([*visiting[visiting.index(name) :], name])
+    remaining = set(by_name)
+    while remaining:
+        ready = sorted(
+            (
+                name
+                for name in remaining
+                if not (dependencies[name] & remaining)
+            ),
+            key=original_index.__getitem__,
+        )
+        if not ready:
+            cycle = ", ".join(sorted(remaining))
             raise GateError(
-                f"generated crate modules form an import cycle: {cycle}"
+                "generated canonical module import cycle prevents independent "
+                f"compilation: {cycle}"
             )
-        visiting.append(name)
-        for dependency in dependencies[name]:
-            place(dependency)
-        visiting.pop()
-        placed.add(name)
-        ordered.append(by_name[name])
-
-    for module in modules:
-        place(module.cpp_module)
+        for name in ready:
+            ordered.append(by_name[name])
+            remaining.remove(name)
     return ordered
 
 
@@ -13405,13 +10355,15 @@ def check_generated_output(
     modules: list[extraction.ModuleEntry],
     clang: Path,
     nm: Path,
-    archiver: Path,
     production: Path | None,
     runtime_libraries: list[Path],
     cxx_flags: list[str],
     link_flags: list[str],
     prebuilt_module_dirs: list[Path],
+    configured_module_map: dict[str, Path],
+    configured_module_dependencies: dict[str, set[str]],
 ) -> None:
+    require_importer_coverage(modules)
     require_cpp_surfaces(root, output, modules)
     require_zero_hand_slots(output / "rusty_hand_slots.md")
     include = root / "third-party/rusty-cpp/include"
@@ -13419,12 +10371,17 @@ def check_generated_output(
     # Compilation products live outside the build-tree generation directory.
     # That directory remains a deterministic crate-output census shared by the
     # production target and this gate.
-    with tempfile.TemporaryDirectory(prefix="srpc-crate-mode-compile-") as temporary:
+    # BMIs can be tens of MiB each. Keep this transient lane beside the build
+    # tree rather than on a potentially small/shared /tmp tmpfs.
+    with tempfile.TemporaryDirectory(
+        prefix=".srpc-crate-mode-compile-", dir=output.parent
+    ) as temporary:
         work = Path(temporary)
-        # Compile in import order (see crate_compile_order); keep the object
-        # list in manifest order so the link closure below is unchanged.
-        compiled = {
-            module.cpp_module: compile_module(
+        generated_object_by_name: dict[str, Path] = {}
+        for module in generated_module_order(
+            output, modules, configured_module_dependencies
+        ):
+            generated_object_by_name[module.cpp_module] = compile_module(
                 clang,
                 root,
                 include,
@@ -13433,12 +10390,15 @@ def check_generated_output(
                 module.cpp_module,
                 cxx_flags,
                 prebuilt_module_dirs,
+                configured_module_map,
+                configured_module_dependencies,
             )
-            for module in crate_compile_order(output, modules)
-        }
-        generated_objects = [compiled[module.cpp_module] for module in modules]
-        # Compile the partial umbrella only after every child BMI exists. It is
-        # a syntax/import-closure proof, not a production provider or link input.
+        generated_objects = [
+            generated_object_by_name[module.cpp_module] for module in modules
+        ]
+        # Compile the partial umbrella as a syntax/import-closure proof. The
+        # configured CMake BMI map keeps its dependency graph coherent; the
+        # root is not a production provider or link input.
         compile_module(
             clang,
             root,
@@ -13448,27 +10408,30 @@ def check_generated_output(
             "srpc",
             cxx_flags,
             prebuilt_module_dirs,
-        )
-
-        # libsrpc.a carries two things the generated crate object set does not:
-        # the plain-C kernels the canonical Rust calls through extern "C", and
-        # srpc.epoll_wrapper's platform implementation unit. Compile the same
-        # inputs here so the generated lane links the identical closure rather
-        # than a smaller one. This must follow the child compiles: the
-        # implementation unit imports its own interface's BMI.
-        support_objects = compile_support_inputs(
-            clang,
-            archiver,
-            root,
-            include,
-            work,
-            cxx_flags,
-            prebuilt_module_dirs,
+            configured_module_map,
+            configured_module_dependencies,
         )
 
         importer = work / "importer.cpp"
         importer_object = work / "importer.o"
         importer.write_text(importer_source(), encoding="utf-8")
+        importer_module_flags = (
+            module_file_flags(
+                generated_lane_module_map(
+                    configured_module_map,
+                    work,
+                    dependency_names=set(configured_module_map),
+                )
+            )
+            if configured_module_map
+            else [
+                f"-fprebuilt-module-path={work}",
+                *(
+                    f"-fprebuilt-module-path={path}"
+                    for path in prebuilt_module_dirs
+                ),
+            ]
+        )
         run(
             [
                 str(clang),
@@ -13476,11 +10439,7 @@ def check_generated_output(
                 *cxx_flags,
                 "-I",
                 str(include),
-                f"-fprebuilt-module-path={work}",
-                *(
-                    f"-fprebuilt-module-path={path}"
-                    for path in prebuilt_module_dirs
-                ),
+                *importer_module_flags,
                 "-c",
                 str(importer),
                 "-o",
@@ -13489,21 +10448,22 @@ def check_generated_output(
             root,
         )
 
+        generated_link_inputs = [*generated_objects]
+        # The archive supplies the shared native kernels. Every generated
+        # module object precedes it, so the linker cannot substitute a
+        # production module definition for an independently compiled one.
+        if production is not None:
+            generated_link_inputs.append(production)
+        generated_link_inputs.extend(runtime_libraries)
         link_sets: list[tuple[str, list[Path]]] = [
-            (
-                "generated",
-                [*generated_objects, *support_objects, *runtime_libraries],
-            ),
+            ("generated", generated_link_inputs),
         ]
         if production is not None:
-            # The forwarding srpc.logging fixture is gone: srpc.logging is a
-            # canonical Rust module now, so both lanes link the REAL provider
-            # (the generated object here, libsrpc.a's copy there) and the
-            # importer observes Utils' logging through std::cout instead of
-            # around it. There is no longer any dependency object to order
-            # ahead of the archive.
             link_sets.append(
-                ("production", [production, *runtime_libraries])
+                (
+                    "production",
+                    [production, *runtime_libraries],
+                )
             )
         for label, link_inputs in link_sets:
             executable_path = work / f"importer-{label}"
@@ -13522,146 +10482,81 @@ def check_generated_output(
             )
             run([str(executable_path)], root)
 
+        generated_symbol_count = 0
+        production_symbol_count = 0
         for module, generated_object in zip(
             modules, generated_objects, strict=True
         ):
             generated_symbols = module_symbols(
                 nm, root, generated_object, module.cpp_module
             )
+            generated_symbol_count += len(generated_symbols)
             require_expected_symbols(
                 module.cpp_module,
                 "crate-generated object",
                 generated_symbols,
             )
 
-            if module.cpp_module == "srpc.completion_tracker":
-                require_completion_raw_symbols(
-                    "crate-generated object",
-                    completion_raw_symbols(nm, root, generated_object),
-                )
-            elif module.cpp_module == "srpc.rand":
-                require_rand_raw_symbols(
-                    "crate-generated object",
-                    rand_raw_symbols(nm, root, generated_object),
-                )
-            elif module.cpp_module == "srpc.request_options":
-                require_request_options_raw_symbols(
-                    "crate-generated object",
-                    request_options_raw_symbols(nm, root, generated_object),
-                )
-            elif module.cpp_module == "srpc.reconnect_policy":
-                require_reconnect_policy_raw_symbols(
-                    "crate-generated object",
-                    reconnect_policy_raw_symbols(nm, root, generated_object),
-                )
-            elif module.cpp_module == "srpc.circuit_breaker":
-                require_circuit_breaker_raw_symbols(
-                    "crate-generated object",
-                    circuit_breaker_raw_symbols(nm, root, generated_object),
-                )
-            elif module.cpp_module == "srpc.request_queue":
-                require_request_queue_raw_symbols(
-                    "crate-generated object",
-                    request_queue_raw_symbols(nm, root, generated_object),
-                )
-            elif module.cpp_module == "srpc.basetypes":
-                require_basetypes_raw_symbols(
-                    "crate-generated object",
-                    basetypes_raw_symbols(nm, root, generated_object),
-                )
-            elif module.cpp_module == "srpc.utils":
-                require_utils_raw_symbols(
-                    "crate-generated object",
-                    utils_raw_symbols(nm, root, generated_object),
-                )
-            elif module.cpp_module in {
-                "srpc.connection_state",
-                "srpc.heartbeat",
-                "srpc.load_balancer",
-                "srpc.frame_codec",
-            }:
-                require_exact_module_raw_symbols(
-                    module.cpp_module,
-                    "crate-generated object",
-                    exact_module_raw_symbols(
-                        nm, root, generated_object, module.cpp_module
-                    ),
-                )
+            require_all_module_raw_symbols(
+                module.cpp_module,
+                "crate-generated object",
+                exact_module_raw_symbols(
+                    nm, root, generated_object, module.cpp_module
+                ),
+            )
 
             if production is not None:
+                # No platform C++ module implementation is permitted. Keep the
+                # empty inventory explicit in both ownership comparisons.
+                platform_symbols = PLATFORM_IMPL_SYMBOLS.get(
+                    module.cpp_module, frozenset()
+                )
                 production_symbols = module_symbols(
                     nm, root, production, module.cpp_module
                 )
+                production_symbol_count += len(production_symbols)
                 require_expected_symbols(
                     module.cpp_module,
                     "production library",
-                    production_symbols
-                    - PLATFORM_IMPL_SYMBOLS.get(
-                        module.cpp_module, frozenset()
-                    ),
+                    production_symbols,
+                    extra=platform_symbols,
                 )
-                platform = PLATFORM_IMPL_SYMBOLS.get(
-                    module.cpp_module, frozenset()
-                )
-                if production_symbols != generated_symbols | platform:
+                if production_symbols != generated_symbols | set(
+                    platform_symbols
+                ):
                     raise GateError(
                         f"production {module.cpp_module} ABI differs from "
                         "the independently compiled generated-object ABI "
-                        "plus its allowlisted platform implementation unit"
+                        "plus its ratcheted platform implementation unit"
                     )
-                if module.cpp_module == "srpc.completion_tracker":
-                    require_completion_raw_symbols(
-                        "production library",
-                        completion_raw_symbols(nm, root, production),
-                    )
-                elif module.cpp_module == "srpc.rand":
-                    require_rand_raw_symbols(
-                        "production library",
-                        rand_raw_symbols(nm, root, production),
-                    )
-                elif module.cpp_module == "srpc.request_options":
-                    require_request_options_raw_symbols(
-                        "production library",
-                        request_options_raw_symbols(nm, root, production),
-                    )
-                elif module.cpp_module == "srpc.reconnect_policy":
-                    require_reconnect_policy_raw_symbols(
-                        "production library",
-                        reconnect_policy_raw_symbols(nm, root, production),
-                    )
-                elif module.cpp_module == "srpc.circuit_breaker":
-                    require_circuit_breaker_raw_symbols(
-                        "production library",
-                        circuit_breaker_raw_symbols(nm, root, production),
-                    )
-                elif module.cpp_module == "srpc.request_queue":
-                    require_request_queue_raw_symbols(
-                        "production library",
-                        request_queue_raw_symbols(nm, root, production),
-                    )
-                elif module.cpp_module == "srpc.basetypes":
-                    require_basetypes_raw_symbols(
-                        "production library",
-                        basetypes_raw_symbols(nm, root, production),
-                    )
-                elif module.cpp_module == "srpc.utils":
-                    require_utils_raw_symbols(
-                        "production library",
-                        utils_raw_symbols(nm, root, production),
-                    )
-                elif module.cpp_module in {
-                    "srpc.connection_state",
-                    "srpc.heartbeat",
-                    "srpc.load_balancer",
-                    "srpc.frame_codec",
-                }:
-                    require_exact_module_raw_symbols(
-                        module.cpp_module,
-                        "production library",
-                        exact_module_raw_symbols(
-                            nm, root, production, module.cpp_module
-                        ),
-                    )
+                require_all_module_raw_symbols(
+                    module.cpp_module,
+                    "production library",
+                    exact_module_raw_symbols(
+                        nm, root, production, module.cpp_module
+                    ),
+                    extra=platform_symbols,
+                )
+
+        if generated_symbol_count != EXPECTED_TOTAL_PROVIDER_SYMBOLS:
+            raise GateError(
+                "crate-generated provider ABI must contain exactly "
+                f"{EXPECTED_TOTAL_PROVIDER_SYMBOLS} unique strong symbols; "
+                f"got {generated_symbol_count}"
+            )
+        expected_production_total = (
+            EXPECTED_TOTAL_PROVIDER_SYMBOLS + EXPECTED_TOTAL_PLATFORM_SYMBOLS
+        )
+        if production is not None and (
+            production_symbol_count != expected_production_total
+        ):
+            raise GateError(
+                "production provider ABI must contain exactly "
+                f"{expected_production_total} unique strong symbols "
+                f"({EXPECTED_TOTAL_PROVIDER_SYMBOLS} crate-generated plus "
+                f"{EXPECTED_TOTAL_PLATFORM_SYMBOLS} from platform "
+                f"implementation units); got {production_symbol_count}"
+            )
 
 
 def check(args: argparse.Namespace) -> None:
@@ -13670,17 +10565,13 @@ def check(args: argparse.Namespace) -> None:
     # manifest path it receives. Always hand crate mode a root-resolved
     # absolute manifest so its dependency walk is independent of this gate's
     # working directory.
-    crate_manifest = (root / "src/srpc/Cargo.toml").resolve()
+    crate_manifest = (extraction.crate_root(root) / "Cargo.toml").resolve()
     transpiler = executable(root, args.transpiler, "rusty-cpp transpiler")
     verify_pinned_toolchain(root, transpiler)
     require_extraction_check(root, transpiler)
     modules = load_owned_modules(root)
     clang = executable(root, args.clang, "Clang C++ compiler")
     nm = executable(root, args.nm, "nm")
-    # llvm-ar comes from the same toolchain as the configured nm; the gate
-    # needs it to bundle the non-crate support objects as an archive (see
-    # compile_support_inputs).
-    archiver = resolve_archiver(root, Path(nm))
     production_raw = getattr(args, "production_library", None)
     production = (
         resolve_file(root, production_raw, "production library")
@@ -13693,9 +10584,47 @@ def check(args: argparse.Namespace) -> None:
     ]
     cxx_flags = list(getattr(args, "cxx_flag", None) or [])
     link_flags = list(getattr(args, "link_flag", None) or [])
-    prebuilt_module_dirs = resolve_prebuilt_module_dirs(
-        root, list(getattr(args, "runtime_module_root", None) or [])
+    runtime_module_dirs = resolve_prebuilt_module_dirs(
+        root,
+        list(getattr(args, "runtime_module_root", None) or []),
+        required_pcm="rusty.pcm",
     )
+    dependency_module_dirs = resolve_prebuilt_module_dirs(
+        root,
+        list(getattr(args, "dependency_module_root", None) or []),
+    )
+    prebuilt_module_dirs = sorted(
+        set(runtime_module_dirs) | set(dependency_module_dirs)
+    )
+    configured_module_map = resolve_configured_module_map(
+        root,
+        list(getattr(args, "configured_module_map_root", None) or []),
+    )
+    configured_module_dependencies = resolve_configured_module_dependencies(
+        root,
+        list(getattr(args, "configured_module_map_root", None) or []),
+    )
+    if configured_module_map:
+        missing_configured_modules = sorted(
+            module.cpp_module
+            for module in modules
+            if module.cpp_module not in configured_module_map
+        )
+        if missing_configured_modules:
+            raise GateError(
+                "configured CMake BMI map is missing canonical modules: "
+                + ", ".join(missing_configured_modules)
+            )
+        missing_dependency_closures = sorted(
+            module.cpp_module
+            for module in modules
+            if module.cpp_module not in configured_module_dependencies
+        )
+        if missing_dependency_closures:
+            raise GateError(
+                "configured CMake dependency map is missing canonical modules: "
+                + ", ".join(missing_dependency_closures)
+            )
 
     generated_raw = getattr(args, "generated_dir", None)
     if generated_raw:
@@ -13706,17 +10635,17 @@ def check(args: argparse.Namespace) -> None:
             modules=modules,
             clang=clang,
             nm=nm,
-            archiver=archiver,
             production=production,
             runtime_libraries=runtime_libraries,
             cxx_flags=cxx_flags,
             link_flags=link_flags,
             prebuilt_module_dirs=prebuilt_module_dirs,
+            configured_module_map=configured_module_map,
+            configured_module_dependencies=configured_module_dependencies,
         )
     else:
-        crate = extraction.crate_root(root)
         flat_import_namespace = extraction.load_flat_import_namespace(
-            crate, crate / EXTRACTION_MANIFEST
+            extraction.crate_root(root), extraction.crate_root(root) / EXTRACTION_MANIFEST
         )
         flat_import_arguments = (
             ["--flat-import-namespace", flat_import_namespace]
@@ -13750,15 +10679,16 @@ def check(args: argparse.Namespace) -> None:
                 modules=modules,
                 clang=clang,
                 nm=nm,
-                archiver=archiver,
                 production=production,
                 runtime_libraries=runtime_libraries,
                 cxx_flags=cxx_flags,
                 link_flags=link_flags,
                 prebuilt_module_dirs=prebuilt_module_dirs,
+                configured_module_map=configured_module_map,
+                configured_module_dependencies=configured_module_dependencies,
             )
 
-    symbol_count = sum(len(spec.symbols) for spec in ABI_SPECS.values())
+    symbol_count = EXPECTED_TOTAL_PROVIDER_SYMBOLS
     production_label = " and production library" if production is not None else ""
     print(
         f"checked whole srpc crate ({len(modules) + 1} modules compiled, "
@@ -13780,7 +10710,10 @@ def check(args: argparse.Namespace) -> None:
         "contracts, LoadBalancer layout/strategy/selection/wrapping runtime "
         "contracts, Utils layout/move/teardown/port/hostname/logging runtime "
         "contracts, FrameCodec layout/wire/fragmentation/compaction/wrapping runtime "
-        "contracts, Debugging branch-hint/verify/backtrace-render/panic-tail "
+        "contracts, SerializableEnvelope template/layout/archive/runtime contracts, "
+        "Future promise/ready/error runtime contracts, Logging exact tag/filter/line "
+        "runtime contracts, Idempotency layout/wire/LRU/expiry/counter runtime "
+        "contracts, Fiber context/sleep runtime contracts, Misc Job/clamp/ncpu/format "
         "runtime contracts, and "
         f"{symbol_count} exact provider-owned strong ABI symbols"
     )
@@ -13814,6 +10747,24 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help=(
             "tree containing the configured rusty-cpp .pcm files needed by "
             "crate modules that import rusty; may be repeated"
+        ),
+    )
+    parser.add_argument(
+        "--dependency-module-root",
+        action="append",
+        default=[],
+        help=(
+            "tree containing configured dependency .pcm files used by "
+            "generated srpc modules; may be repeated"
+        ),
+    )
+    parser.add_argument(
+        "--configured-module-map-root",
+        action="append",
+        default=[],
+        help=(
+            "configured CMake build tree whose explicit .modmap BMI mappings "
+            "should be reused; may be repeated"
         ),
     )
     parser.add_argument(

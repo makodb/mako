@@ -35,7 +35,7 @@ using rusty::Result;
 // =====================================================================
 
 Result<RaftService::RpcVoteResponse, srpc::i32>
-RaftServiceImpl::Vote(const RpcVoteRequest& req) {
+RaftServiceImpl::Vote(const RpcVoteRequest& req) const {
   RpcVoteResponse resp{};
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
@@ -50,7 +50,7 @@ RaftServiceImpl::Vote(const RpcVoteRequest& req) {
 }
 
 Result<RaftService::RpcVoteDurableResponse, srpc::i32>
-RaftServiceImpl::VoteDurable(const RpcVoteDurableRequest& req) {
+RaftServiceImpl::VoteDurable(const RpcVoteDurableRequest& req) const {
   RpcVoteDurableResponse resp{};
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
@@ -62,7 +62,7 @@ RaftServiceImpl::VoteDurable(const RpcVoteDurableRequest& req) {
 }
 
 Result<RaftService::RpcAppendEntriesResponse, srpc::i32>
-RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
+RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) const {
   RpcAppendEntriesResponse resp{};
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
@@ -83,7 +83,7 @@ RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
 }
 
 Result<RaftService::RpcEmptyAppendEntriesResponse, srpc::i32>
-RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
+RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) const {
   Log_debug("RaftServiceImpl: EmptyAppendEntries answering leader {}", req.leaderSiteId);
   RpcEmptyAppendEntriesResponse resp{};
   RaftServer* svr = GetServer();
@@ -110,7 +110,7 @@ RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
 }
 
 Result<RaftService::RpcAppendEntriesDurableResponse, srpc::i32>
-RaftServiceImpl::AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req) {
+RaftServiceImpl::AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req) const {
   RpcAppendEntriesDurableResponse resp{};
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
@@ -123,7 +123,7 @@ RaftServiceImpl::AppendEntriesDurable(const RpcAppendEntriesDurableRequest& req)
 }
 
 Result<RaftService::RpcTimeoutNowResponse, srpc::i32>
-RaftServiceImpl::TimeoutNow(const RpcTimeoutNowRequest& req) {
+RaftServiceImpl::TimeoutNow(const RpcTimeoutNowRequest& req) const {
   RpcTimeoutNowResponse resp{};
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
@@ -137,7 +137,7 @@ RaftServiceImpl::TimeoutNow(const RpcTimeoutNowRequest& req) {
 }
 
 Result<RaftService::RpcNotifyRestartResponse, srpc::i32>
-RaftServiceImpl::NotifyRestart(const RpcNotifyRestartRequest& req) {
+RaftServiceImpl::NotifyRestart(const RpcNotifyRestartRequest& req) const {
   Log_info("[NOTIFY-RESTART] Received restart notification from site {}",
            req.restartedSiteId);
   RpcNotifyRestartResponse resp{};
@@ -164,7 +164,7 @@ RaftServiceImpl::NotifyRestart(const RpcNotifyRestartRequest& req) {
 }
 
 Result<RaftService::RpcInstallSnapshotResponse, srpc::i32>
-RaftServiceImpl::InstallSnapshot(const RpcInstallSnapshotRequest& req) {
+RaftServiceImpl::InstallSnapshot(const RpcInstallSnapshotRequest& req) const {
   RpcInstallSnapshotResponse resp{};
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
@@ -178,7 +178,7 @@ RaftServiceImpl::InstallSnapshot(const RpcInstallSnapshotRequest& req) {
 }
 
 Result<RaftService::RpcAddServerResponse, srpc::i32>
-RaftServiceImpl::AddServer(const RpcAddServerRequest& req) {
+RaftServiceImpl::AddServer(const RpcAddServerRequest& req) const {
   RpcAddServerResponse resp{};
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
@@ -193,7 +193,7 @@ RaftServiceImpl::AddServer(const RpcAddServerRequest& req) {
 }
 
 Result<RaftService::RpcRemoveServerResponse, srpc::i32>
-RaftServiceImpl::RemoveServer(const RpcRemoveServerRequest& req) {
+RaftServiceImpl::RemoveServer(const RpcRemoveServerRequest& req) const {
   RpcRemoveServerResponse resp{};
   RaftServer* svr = GetServer();
   if (svr == nullptr || svr->IsDisconnected()) {
@@ -238,7 +238,7 @@ void RaftServiceImpl::UpdateServer(siteid_t site_id, RaftServer* new_svr) {
   }
 }
 
-RaftServer* RaftServiceImpl::GetServer() {
+RaftServer* RaftServiceImpl::GetServer() const {
   return svr_.load(std::memory_order_acquire);
 }
 

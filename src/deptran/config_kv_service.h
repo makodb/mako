@@ -30,7 +30,7 @@ public:
     // Read logic, factored out of the RPC handler so it can be unit
     // tested without the RPC machinery (no DeferredReply / socket).
     // @unsafe - KvStore read (port returns Option; adapt to found + out)
-    bool DoReadConfigKey(const std::string& key, std::string* value) {
+    bool DoReadConfigKey(const std::string& key, std::string* value) const {
         if (kv_ == nullptr || value == nullptr) return false;
         auto found = kv_->get(key);
         if (found.is_none()) return false;
@@ -41,7 +41,7 @@ public:
     // @unsafe - RPC handler; delegates to DoReadConfigKey then replies.
     void ReadConfigKey(const RpcReadConfigKeyRequest& req,
                        RpcReadConfigKeyResponse& resp,
-                       srpc::DeferredReply defer) override {
+                       srpc::DeferredReply defer) const override {
         std::string value;
         const bool found = DoReadConfigKey(req.key, &value);
         resp.found = found ? 1 : 0;

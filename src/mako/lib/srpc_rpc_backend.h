@@ -65,7 +65,7 @@ public:
 
     // @safe
     void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req,
-                      srpc::WeakServerConnection weak_sconn);
+                      srpc::WeakServerConnection weak_sconn) const;
 
 private:
     SrpcRpcBackend* backend_;

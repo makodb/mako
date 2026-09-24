@@ -4,6 +4,7 @@
 [submodule "third-party/rusty-cpp"]
 	path = third-party/rusty-cpp
 	url = https://github.com/shuaimu/rusty-cpp
+	branch = codex/canonical-rust-std-support
 [submodule "third-party/googletest"]
 	path = third-party/googletest
 	url = https://github.com/google/googletest.git
@@ -25,14 +26,12 @@
 # src/srpc-cmake/CMakeLists.txt and its own third-party/rusty-cpp; srpc's
 # standalone CMakeLists.txt (which is what needs these) is never read here.
 # Skipping the checkout avoids a SECOND rusty-cpp clone in every one of mako's
-# worktrees, and with it the pin diamond -- srpc pins fa7dd9d9, mako pins
-# a1f8fef8. It lives in the tracked `.gitmodules` rather than local config so
+# worktrees. Both projects now pin 1689f438; Mako's build uses the root
+# checkout. It lives in the tracked `.gitmodules` rather than local config so
 # every clone and CI inherits it; `submodule.<name>.active=false` does NOT
 # work here, `--init` overrides it.
 #
-# These paths do not exist yet. A stanza for an absent path is inert (verified:
-# status/update both exit 0, no phantom directory), and the skip takes effect
-# the moment the gitlinks land.
+# The nested gitlinks remain recorded for standalone SRPC consumers.
 [submodule "src/srpc/third-party/rusty-cpp"]
 	path = src/srpc/third-party/rusty-cpp
 	url = https://github.com/shuaimu/rusty-cpp.git

@@ -15,21 +15,31 @@
 # outputs.
 set(SRPC_SOURCE_DIR "${CMAKE_SOURCE_DIR}/src/srpc")
 
-# srpc: STATIC library compiled from .cpp/.cc implementation units.
-# Files migrated to C++23 named modules keep their .cpp/.cc extension
-# but are wired in via FILE_SET CXX_MODULES below (SRPC_MODULE_SRC).
-# They are explicitly removed from the regular source glob to avoid
-# double-compile. Migration is incremental and measurement-gated — see
-# docs/dev/srpc_module_migration_plan.md.
-file(GLOB SRPC_BENCH_SRC
-    "${SRPC_SOURCE_DIR}/base/*.cpp"
-    "${SRPC_SOURCE_DIR}/misc/*.cpp"
-    "${SRPC_SOURCE_DIR}/rpc/*.cpp"
-    "${SRPC_SOURCE_DIR}/reactor/*.cc"
-    # fiber context-switch trampolines, real assembly (see top-level
-    # CMakeLists enable_language(ASM))
-    "${SRPC_SOURCE_DIR}/reactor/*.S"
-)
+# SRPC_NATIVE_MANIFEST_BEGIN
+# Both build systems compile this same reviewed set of C and assembly leaves.
+set(SRPC_NATIVE_MANIFEST "${SRPC_SOURCE_DIR}/scripts/native-kernel-sources.txt")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${SRPC_NATIVE_MANIFEST}")
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+    set(_SRPC_NATIVE_ARCH x86_64)
+elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    set(_SRPC_NATIVE_ARCH aarch64)
+else()
+    message(FATAL_ERROR "Unsupported SRPC native architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+endif()
+file(STRINGS "${SRPC_NATIVE_MANIFEST}" _SRPC_NATIVE_RECORDS)
+set(SRPC_NATIVE_SOURCES)
+foreach(_SRPC_NATIVE_RECORD IN LISTS _SRPC_NATIVE_RECORDS)
+    if(NOT _SRPC_NATIVE_RECORD MATCHES "^(all|x86_64|aarch64) ([a-zA-Z0-9_/.]+)$")
+        message(FATAL_ERROR "Invalid native kernel manifest record: ${_SRPC_NATIVE_RECORD}")
+    endif()
+    set(_SRPC_NATIVE_SELECTOR "${CMAKE_MATCH_1}")
+    set(_SRPC_NATIVE_PATH "${CMAKE_MATCH_2}")
+    if(_SRPC_NATIVE_SELECTOR STREQUAL "all" OR _SRPC_NATIVE_SELECTOR STREQUAL _SRPC_NATIVE_ARCH)
+        list(APPEND SRPC_NATIVE_SOURCES "${SRPC_SOURCE_DIR}/${_SRPC_NATIVE_PATH}")
+    endif()
+endforeach()
+set(SRPC_BENCH_SRC)
+# SRPC_NATIVE_MANIFEST_END
 
 # Remaining C++23 named-module interface units whose Rust is still embedded in
 # an inline carrier. Keep this census complete so none is also compiled through
@@ -252,11 +262,6 @@ foreach(_SRPC_GOAL0_CHILD IN LISTS SRPC_GOAL0_CRATE_CHILD_SRC)
             "Goal-0 production is missing generated provider: ${_SRPC_GOAL0_CHILD}")
     endif()
 endforeach()
-# Platform implementation units for srpc.epoll_wrapper (Rust std's
-# sys-module pattern): exactly one is compiled, selected below.
-list(REMOVE_ITEM SRPC_BENCH_SRC
-    ${SRPC_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
-
 set(SRPC_CXXFLAGS ${BENCH_CXXFLAGS})
 
 # The `rusty` umbrella module — defined here (not upstream in rusty-cpp)
@@ -326,19 +331,7 @@ if(NOT TARGET srpc)
             FILES ${SRPC_MODULE_SRC}
         )
     endif()
-    # Goal-0 C demotion: syscall ladders that will never be Rust live as
-    # plain C with C signatures (the crate's own extern-C kernels mirror
-    # them); the C++ modules keep thin type-converting shims.
-    target_sources(srpc PRIVATE
-        ${SRPC_SOURCE_DIR}/rpc/srpc_connect.c
-        ${SRPC_SOURCE_DIR}/rpc/srpc_server.c
-        ${SRPC_SOURCE_DIR}/rpc/srpc_net.c
-        ${SRPC_SOURCE_DIR}/misc/srpc_timing.c
-        ${SRPC_SOURCE_DIR}/misc/srpc_rand.c
-        ${SRPC_SOURCE_DIR}/misc/srpc_io.c
-        ${SRPC_SOURCE_DIR}/base/srpc_base.c
-        ${SRPC_SOURCE_DIR}/reactor/srpc_fiber.c
-    )
+    target_sources(srpc PRIVATE ${SRPC_NATIVE_SOURCES})
     # `src/compat` ships shims that fix third-party header gotchas
     # without modifying the submodule (e.g.
     # `compat/rusty/function.hpp` adds `#include <cstdlib>` before
@@ -359,7 +352,6 @@ if(NOT TARGET srpc)
     )
     target_compile_options(srpc PUBLIC ${SRPC_CXXFLAGS})
     target_link_libraries(srpc pthread rusty)
-    target_sources(srpc PRIVATE ${SRPC_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
 
     # Remaining hand-authored SRPC C++ module units for borrow checking. The
     # eighteen canonical Rust modules are checked by rustc and are not duplicated
@@ -437,6 +429,15 @@ add_custom_target(srpc_goal0_source_gate
     COMMAND
         "${Python3_EXECUTABLE}"
         "${CMAKE_SOURCE_DIR}/scripts/tests/test_extract_srpc_rust.py"
+    COMMAND "${CMAKE_COMMAND}" -E env
+        "RUSTY_CPP_TRANSPILER=${RUSTYCPP_TRANSPILER}"
+        "${Python3_EXECUTABLE}" "${CMAKE_SOURCE_DIR}/scripts/tests/test_srpc_crate_mode.py"
+    COMMAND "${Python3_EXECUTABLE}" "${SRPC_SOURCE_DIR}/scripts/check_native_kernels.py"
+    COMMAND "${Python3_EXECUTABLE}" "${SRPC_SOURCE_DIR}/scripts/check_native_abi_bindings.py"
+    COMMAND "${Python3_EXECUTABLE}" "${SRPC_SOURCE_DIR}/scripts/check_rust_independence.py"
+    COMMAND "${Python3_EXECUTABLE}" "${SRPC_SOURCE_DIR}/scripts/tests/test_native_kernels.py"
+    COMMAND "${Python3_EXECUTABLE}" "${SRPC_SOURCE_DIR}/scripts/tests/test_native_abi_bindings.py"
+    COMMAND "${Python3_EXECUTABLE}" "${SRPC_SOURCE_DIR}/scripts/tests/test_rust_independence.py"
     COMMAND
         "${CMAKE_COMMAND}"
         -E env
@@ -449,6 +450,10 @@ add_custom_target(srpc_goal0_source_gate
         --manifest-path "${SRPC_SOURCE_DIR}/Cargo.toml"
     COMMAND
         "${SRPC_CARGO_EXECUTABLE}"
+        test --locked --workspace --doc
+        --manifest-path "${SRPC_SOURCE_DIR}/Cargo.toml"
+    COMMAND
+        "${SRPC_CARGO_EXECUTABLE}"
         clippy
         --locked
         --workspace
@@ -457,7 +462,7 @@ add_custom_target(srpc_goal0_source_gate
         --
         -D warnings
     WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-    COMMENT "Checking remaining inline Rust and canonical rustc crate sources"
+    COMMENT "Checking canonical SRPC sources, native kernels and compiler contracts"
     USES_TERMINAL
     VERBATIM
 )
@@ -520,9 +525,8 @@ set(SRPC_GOAL0_TYPE_MAP
 set(SRPC_GOAL0_CPP_MODULE_INDEX
     ${SRPC_SOURCE_DIR}/cpp-module-index.toml
 )
-# Keep the crate manifest absolute at the process boundary. The crate
-# dependency validator deliberately resolves the exact local `rusty` facade;
-# an absolute entry manifest makes that walk independent of WORKING_DIRECTORY.
+# Keep the crate manifest absolute so source and dependency discovery are
+# independent of the build command's working directory.
 get_filename_component(
     SRPC_GOAL0_CRATE_MANIFEST
     "${SRPC_SOURCE_DIR}/Cargo.toml"
@@ -546,8 +550,6 @@ add_custom_command(
         "${SRPC_GOAL0_TRANSPILER_FINGERPRINT}"
         "${SRPC_GOAL0_CRATE_MANIFEST}"
         "${SRPC_SOURCE_DIR}/Cargo.lock"
-        "${SRPC_SOURCE_DIR}/rusty-rustc/Cargo.toml"
-        "${SRPC_SOURCE_DIR}/rusty-rustc/src/lib.rs"
         "${SRPC_SOURCE_DIR}/rust-modules.toml"
         "${SRPC_GOAL0_MODULE_PREAMBLE}"
         "${SRPC_GOAL0_TYPE_MAP}"
@@ -622,6 +624,21 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     endforeach()
 endif()
 
+# Keep an actual scanned consumer of the runtime umbrella. Canonical providers
+# now import individual std ports, so their dependency graph alone does not
+# build the umbrella BMI that C++ consumers still import. Match srpc's flags
+# and link only the runtime here to avoid the mixed std-module closure below.
+add_library(srpc_runtime_imports OBJECT EXCLUDE_FROM_ALL
+    ${SRPC_SOURCE_DIR}/tests/runtime_imports.cc
+)
+set_target_properties(srpc_runtime_imports PROPERTIES CXX_SCAN_FOR_MODULES ON)
+target_include_directories(srpc_runtime_imports PRIVATE
+    ${SRPC_SOURCE_DIR}
+    ${CMAKE_SOURCE_DIR}/third-party/rusty-cpp/include
+)
+target_compile_options(srpc_runtime_imports PRIVATE ${SRPC_CXXFLAGS})
+target_link_libraries(srpc_runtime_imports PRIVATE rusty)
+
 add_custom_target(srpc_goal0_dual_compile ALL
     COMMAND "$<TARGET_FILE:srpc_goal0_rand_kernel_smoke>"
     COMMAND
@@ -632,11 +649,8 @@ add_custom_target(srpc_goal0_dual_compile ALL
         --production-library "$<TARGET_FILE:srpc>"
         --runtime-module-root
             "${CMAKE_BINARY_DIR}/third-party/rusty-cpp/CMakeFiles"
-        # Canonical srpc.logging / srpc.serializable / srpc.reactor / srpc.future
-        # `import std;`, so the gate's standalone module compiles need CMake's
-        # own std BMI, not just the rusty runtime ones.
-        --runtime-module-root
-            "${CMAKE_BINARY_DIR}/CMakeFiles/__cmake_cxx_std_23.dir"
+        --dependency-module-root "${CMAKE_BINARY_DIR}/CMakeFiles"
+        --configured-module-map-root "${CMAKE_BINARY_DIR}"
         ${SRPC_GOAL0_RUNTIME_LIBRARY_ARGS}
         ${SRPC_GOAL0_DIRECT_TOOLCHAIN_ARGS}
         --clang "${CMAKE_CXX_COMPILER}"
@@ -650,5 +664,6 @@ add_dependencies(srpc_goal0_dual_compile
     srpc
     srpc_goal0_crate_codegen
     srpc_goal0_rand_kernel_smoke
+    srpc_runtime_imports
     ${SRPC_GOAL0_RUNTIME_TARGETS}
 )
