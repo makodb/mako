@@ -252,10 +252,9 @@ foreach(_SRPC_GOAL0_CHILD IN LISTS SRPC_GOAL0_CRATE_CHILD_SRC)
             "Goal-0 production is missing generated provider: ${_SRPC_GOAL0_CHILD}")
     endif()
 endforeach()
-# Platform implementation units for srpc.epoll_wrapper (Rust std's
-# sys-module pattern): exactly one is compiled, selected below.
-list(REMOVE_ITEM SRPC_BENCH_SRC
-    ${SRPC_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
+# srpc.epoll_wrapper's platform implementation is reactor/srpc_epoll.c now,
+# a plain C leaf in the native manifest above, so there is no C++ carrier to
+# exclude from the module list.
 
 set(SRPC_CXXFLAGS ${BENCH_CXXFLAGS})
 
@@ -329,16 +328,33 @@ if(NOT TARGET srpc)
     # Goal-0 C demotion: syscall ladders that will never be Rust live as
     # plain C with C signatures (the crate's own extern-C kernels mirror
     # them); the C++ modules keep thin type-converting shims.
-    target_sources(srpc PRIVATE
-        ${SRPC_SOURCE_DIR}/rpc/srpc_connect.c
-        ${SRPC_SOURCE_DIR}/rpc/srpc_server.c
-        ${SRPC_SOURCE_DIR}/rpc/srpc_net.c
-        ${SRPC_SOURCE_DIR}/misc/srpc_timing.c
-        ${SRPC_SOURCE_DIR}/misc/srpc_rand.c
-        ${SRPC_SOURCE_DIR}/misc/srpc_io.c
-        ${SRPC_SOURCE_DIR}/base/srpc_base.c
-        ${SRPC_SOURCE_DIR}/reactor/srpc_fiber.c
-    )
+    # The C and assembly leaves come from srpc's own reviewed manifest rather
+    # than a list repeated here, so Mako's glue cannot drift from the set
+    # upstream compiles -- which is exactly what happened when srpc replaced
+    # reactor/epoll_platform_linux.cc (a DSL carrier, hence C++-mangled and
+    # unreachable from the Rust lane) with the plain-C reactor/srpc_epoll.c.
+    file(STRINGS "${SRPC_SOURCE_DIR}/scripts/native-kernel-sources.txt"
+        _MAKO_SRPC_NATIVE_RECORDS)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|AMD64|amd64)$")
+        set(_MAKO_SRPC_NATIVE_ARCH x86_64)
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+        set(_MAKO_SRPC_NATIVE_ARCH aarch64)
+    else()
+        message(FATAL_ERROR
+            "Unsupported SRPC native architecture: ${CMAKE_SYSTEM_PROCESSOR}")
+    endif()
+    set(_MAKO_SRPC_NATIVE_SOURCES)
+    foreach(_MAKO_SRPC_RECORD IN LISTS _MAKO_SRPC_NATIVE_RECORDS)
+        if(NOT _MAKO_SRPC_RECORD MATCHES "^(all|x86_64|aarch64) ([a-zA-Z0-9_/.]+)$")
+            message(FATAL_ERROR
+                "Invalid native kernel manifest record: ${_MAKO_SRPC_RECORD}")
+        endif()
+        if(CMAKE_MATCH_1 STREQUAL "all" OR CMAKE_MATCH_1 STREQUAL _MAKO_SRPC_NATIVE_ARCH)
+            list(APPEND _MAKO_SRPC_NATIVE_SOURCES
+                "${SRPC_SOURCE_DIR}/${CMAKE_MATCH_2}")
+        endif()
+    endforeach()
+    target_sources(srpc PRIVATE ${_MAKO_SRPC_NATIVE_SOURCES})
     # `src/compat` ships shims that fix third-party header gotchas
     # without modifying the submodule (e.g.
     # `compat/rusty/function.hpp` adds `#include <cstdlib>` before
@@ -359,7 +375,6 @@ if(NOT TARGET srpc)
     )
     target_compile_options(srpc PUBLIC ${SRPC_CXXFLAGS})
     target_link_libraries(srpc pthread rusty)
-    target_sources(srpc PRIVATE ${SRPC_SOURCE_DIR}/reactor/epoll_platform_linux.cc)
 
     # Remaining hand-authored SRPC C++ module units for borrow checking. The
     # eighteen canonical Rust modules are checked by rustc and are not duplicated
