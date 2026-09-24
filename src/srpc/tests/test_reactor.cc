@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <rusty/arc.hpp>
+#include <rusty/async.hpp>
 #include <rusty/function.hpp>
 #include <rusty/mutex.hpp>
 #include "../srpc.hpp"
@@ -32,8 +33,11 @@ using namespace std::chrono;
 // @unsafe - Uses mutable fields for interior mutability in test scenarios
 class TestPollable {
 private:
-    mutable int fd_;  // mutable: close() clears it through const access
-    mutable int mode_;  // mutable to allow modification through const methods
+    // Only the poll owner closes after publication, until it is joined.
+    // Caller close follows join; handlers are installed before publication.
+    mutable int fd_;
+    // The caller can change mode while the owner reads the initial registration.
+    mutable std::atomic<int> mode_;
     mutable rusty::Function<void()> read_handler_;  // mutable handler
     mutable rusty::Function<void()> write_handler_;  // mutable handler
     mutable rusty::Function<void()> error_handler_;  // mutable handler
@@ -43,7 +47,7 @@ public:
         : fd_(fd), mode_(mode) {}
 
     TestPollable(TestPollable&& o) noexcept
-        : fd_(o.fd_), mode_(o.mode_),
+        : fd_(o.fd_), mode_(o.mode_.load(std::memory_order_relaxed)),
           read_handler_(std::move(o.read_handler_)),
           write_handler_(std::move(o.write_handler_)),
           error_handler_(std::move(o.error_handler_)) {}
@@ -53,13 +57,13 @@ public:
     }
 
     int poll_mode() const {
-        return mode_;
+        return mode_.load(std::memory_order_relaxed);
     }
 
     // @unsafe - Modifies mutable field
     void set_mode(int mode) const {  // const method
         // @unsafe {
-        mode_ = mode;
+        mode_.store(mode, std::memory_order_relaxed);
         // }
     }
 
@@ -181,17 +185,12 @@ TEST_F(ReactorTest, AddRemoveFd) {
         poll_thread_worker_.as_ref().unwrap()->add_proxy(make_pollable_proxy_from_typed_arc(p.clone()));
     }
 
-    // Allow worker thread time to process the add command via channel
-    std::this_thread::sleep_for(milliseconds(50));
-
-    {
-        poll_thread_worker_.as_ref().unwrap()->remove_fd((*p).fd());
-    }
-
-    // Allow worker thread time to process the remove command
-    std::this_thread::sleep_for(milliseconds(50));
-
-    close(fd1);
+    poll_thread_worker_.as_ref().unwrap()->remove_fd(p->fd());
+    // Commands are asynchronous. Joining drains removal before the caller
+    // closes its descriptor; a delay is not a synchronization boundary.
+    poll_thread_worker_.as_ref().unwrap()->shutdown();
+    EXPECT_GE(p->fd(), 0);  // remove_fd unregisters without closing the owner.
+    p->close();
     close(fd2);
 }
 
@@ -224,7 +223,8 @@ TEST_F(ReactorTest, PollReadEvent) {
     {
         poll_thread_worker_.as_ref().unwrap()->remove_fd((*p).fd());
     }
-    close(fd1);
+    poll_thread_worker_.as_ref().unwrap()->shutdown();
+    p->close();
     close(fd2);
 }
 
@@ -250,7 +250,8 @@ TEST_F(ReactorTest, PollWriteEvent) {
     {
         poll_thread_worker_.as_ref().unwrap()->remove_fd((*p).fd());
     }
-    close(fd1);
+    poll_thread_worker_.as_ref().unwrap()->shutdown();
+    p->close();
     close(fd2);
 }
 
@@ -292,9 +293,10 @@ TEST_F(ReactorTest, MultipleEvents) {
         poll_thread_worker_.as_ref().unwrap()->remove_fd((*p2).fd());
     }
 
-    close(fd1);
+    poll_thread_worker_.as_ref().unwrap()->shutdown();
+    p1->close();
+    p2->close();
     close(fd2);
-    close(fd3);
     close(fd4);
 }
 
@@ -336,7 +338,8 @@ TEST_F(ReactorTest, UpdateMode) {
     {
         poll_thread_worker_.as_ref().unwrap()->remove_fd((*p).fd());
     }
-    close(fd1);
+    poll_thread_worker_.as_ref().unwrap()->shutdown();
+    p->close();
     close(fd2);
 }
 
@@ -368,7 +371,8 @@ TEST_F(ReactorTest, ErrorHandling) {
     {
         poll_thread_worker_.as_ref().unwrap()->remove_fd((*p).fd());
     }
-    close(fd1);
+    poll_thread_worker_.as_ref().unwrap()->shutdown();
+    p->close();
 }
 
 // Reactor-specific tests
@@ -515,9 +519,12 @@ TEST_F(ReactorTest, StressTest) {
         }
     }
 
-    for (auto& [fd1, fd2] : socket_pairs) {
-        close(fd1);
-        close(fd2);
+    poll_thread_worker_.as_ref().unwrap()->shutdown();
+    for (const auto& pollable : pollables) {
+        pollable->close();
+    }
+    for (const auto& pair : socket_pairs) {
+        close(pair.second);
     }
 }
 
@@ -586,10 +593,10 @@ TEST_F(ReactorTest, DestructorCleanupWithoutExplicitRemove) {
     // for each pollable, so the count will be NUM_POLLABLES.
     EXPECT_EQ(final_remove_count, NUM_POLLABLES);
 
-    // Clean up socket pairs
-    for (auto& [fd1, fd2] : socket_pairs) {
-        close(fd1);
-        close(fd2);
+    // Shutdown closed the registered ends through their pollable owners.
+    // Only the unregistered peer descriptors still belong to this scope.
+    for (const auto& pair : socket_pairs) {
+        close(pair.second);
     }
 }
 
@@ -599,3 +606,48 @@ int main(int argc, char** argv) {
 }
 
 // } @unsafe
+
+// The thread_local! pilot: the emitted `thread_local rusty::LocalKey<...>`
+// must give each thread an independent counter, lazily initialized per
+// thread -- the property the reactor's nine thread-local statics rely on,
+// and the one that silently vanishes under rustc's plain `static mut`
+// (which is why the pilot exists in both batteries).
+TEST(MiscTest, ThreadLocalLoweringIsPerThread) {
+    EXPECT_EQ(srpc::thread_slot_bump(), 1);
+    EXPECT_EQ(srpc::thread_slot_bump(), 2);
+    long other_first = 0;
+    long other_second = 0;
+    std::thread bumper([&] {
+        other_first = srpc::thread_slot_bump();
+        other_second = srpc::thread_slot_bump();
+    });
+    bumper.join();
+    EXPECT_EQ(other_first, 1);
+    EXPECT_EQ(other_second, 2);
+    EXPECT_EQ(srpc::thread_slot_bump(), 3);
+}
+
+// The async-fn lowering, driven both ways the C++ lane can: the transpiler
+// emits base/misc.rs's `async fn` pair as coroutines returning
+// `rusty::Task<int64_t>`, so a direct poll must resolve a leaf-only await
+// chain in one step, and the generated-wrapper spawn path must deliver the
+// result synchronously when the first poll is ready (the same
+// `reactor_spawn_stackless_task_with_result` call rpcgen's async wrappers
+// make).
+TEST(StacklessTest, AsyncFnLoweringResolvesByPollAndBySpawn) {
+    // Direct poll: co_await chain inside async_double_twice.
+    auto task = srpc::async_double_twice(10);
+    rusty::Waker waker{[] {}};
+    rusty::Context cx{&waker};
+    auto polled = task.poll(cx);
+    ASSERT_TRUE(polled.is_ready());
+    EXPECT_EQ(polled.value, 40);
+
+    // Spawn path: ready-on-first-poll tasks complete inside the call.
+    long got = 0;
+    srpc::reactor_spawn_stackless_task_with_result(
+        *srpc::Reactor::get_reactor(),
+        srpc::async_double(21),
+        [&got](long value) { got = value; });
+    EXPECT_EQ(got, 42);
+}

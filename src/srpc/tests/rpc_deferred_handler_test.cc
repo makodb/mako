@@ -13,15 +13,15 @@ using namespace std::chrono_literals;
 
 class DeferTestService : public BenchmarkService {
 public:
-    std::atomic<int> deferred_call_count{0};
-    std::atomic<bool> should_drop_reply{false};
-    std::atomic<bool> should_delay_reply{false};
-    std::atomic<int> delay_ms{0};
+    mutable std::atomic<int> deferred_call_count{0};
+    mutable std::atomic<bool> should_drop_reply{false};
+    mutable std::atomic<bool> should_delay_reply{false};
+    mutable std::atomic<int> delay_ms{0};
 
     void deferred_echo(
         const RpcDeferredEchoRequest& req,
         RpcDeferredEchoResponse& resp,
-        DeferredReply defer) override {
+        DeferredReply defer) const override {
         deferred_call_count++;
         resp.result = req.val * 2;
 

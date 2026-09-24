@@ -32,13 +32,13 @@ public:
     explicit TimeoutRetryService(int drops_before_reply)
         : drops_before_reply_(drops_before_reply) {}
 
-    std::atomic<int> call_count{0};
+    mutable std::atomic<int> call_count{0};
 
     int __reg_to__(Server& svr, size_t svc_index) override {
         return svr.reg_rpc(kRpcId, svc_index);
     }
 
-    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override {
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) const override {
         if (rpc_id != kRpcId) {
             return;
         }

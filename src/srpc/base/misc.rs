@@ -6,11 +6,9 @@
 
 #![allow(non_snake_case)]
 
-use rusty::cpp_inherit;
+use std::cell::Cell;
 
-// Consumer type mappings restore the historical `std::string` spelling. The
-// rustc-only byte model also exposes the C++-spelled `push_back` operation.
-type LegacyStdString = rusty::LoggingString;
+
 
 /// Clamp a value between potentially heterogeneous bounds.
 //
@@ -105,7 +103,7 @@ impl OneTimeJob {
 // Direct inheritance is required by existing Arc<OneTimeJob> -> Arc<Job>
 // upcasts. The crate root imports a rustc-only no-op macro with this name;
 // rusty-cpp consumes the retained attribute during production generation.
-#[cpp_inherit]
+#[cfg_attr(any(), cpp_inherit)]
 #[allow(unsafe_code)]
 unsafe impl Job for OneTimeJob {
     fn Ready(&mut self) -> bool {
@@ -126,7 +124,7 @@ unsafe impl Job for OneTimeJob {
 /// Format a number with two fractional digits and comma-separated thousands.
 #[allow(clippy::manual_is_multiple_of)]
 #[allow(unsafe_code)]
-pub fn format_thousands(val: f64) -> LegacyStdString {
+pub fn format_thousands(val: f64) -> String {
     // A fixed buffer covers the longest finite f64 rendered with two decimal
     // places (sign + 309 integer digits + separator + two fraction digits).
     let mut bytes = [0_i8; 384];
@@ -153,18 +151,61 @@ pub fn format_thousands(val: f64) -> LegacyStdString {
         && bytes[2] == b'.' as i8
         && bytes[3] == b'0' as i8
         && bytes[4] == b'0' as i8;
-    let mut out: LegacyStdString = Default::default();
+    let mut out: Vec<u8> = Vec::new();
     let mut index = if negative_zero { 1usize } else { 0usize };
     while index < dot {
         if (dot - index) % 3 == 0 && index != 0 && bytes[index - 1] != b'-' as i8 {
-            out.push_back(b',' as i8);
+            out.push(b',');
         }
-        out.push_back(bytes[index]);
+        out.push(bytes[index] as u8);
         index += 1;
     }
     while index < formatted_len {
-        out.push_back(bytes[index]);
+        out.push(bytes[index] as u8);
         index += 1;
     }
-    out
+    // Digits, separators and a sign only: ASCII, so this is lossless.
+    String::from(String::from_utf8_lossy(out.as_slice()))
+}
+
+// Why these two functions exist: they are the executable proof that the
+// async-fn lowering is live end to end.  The transpiler emits each
+// `async fn` as a C++ coroutine returning `rusty::Task<T>` (`return` and the
+// trailing expression become `co_return`, `.await` becomes `co_await`), and
+// under rustc the same source is an ordinary Rust future.  `async_double`
+// is the leaf; `async_double_twice` awaits it twice, pinning sequential
+// `co_await` chaining.  Both are driven by tests in both lanes and by the
+// out-of-repo bench's `-m async` handler, which spawns them through the same
+// `reactor_spawn_stackless_task_with_result` path the generated C++ async
+// wrappers use.  Keep them side-effect-free: their observable value is the
+// lowering itself.
+// Why this pair exists: the executable pilot for the `thread_local!`
+// lowering, on the same pattern as the async pair below.  The transpiler
+// emits the declaration as `thread_local rusty::LocalKey<T>` (per-thread
+// storage, lazily initialized per thread, destroyed at thread exit -- the
+// std::thread::LocalKey semantics) and the `.with(closure)` access sites
+// lower through the ordinary method-call path.  Under rustc this is the
+// real std macro.  Both lanes' batteries assert two threads see independent
+// counters -- the exact property the reactor's nine statics need before
+// they can migrate off `#[cfg_attr(any(), thread_local)]` + `static mut`.
+thread_local! {
+    static TL_BUMP_COUNTER: Cell<i64> = const { Cell::new(0) };
+}
+
+// Per-thread monotonic counter: each calling thread sees 1, 2, 3, ...
+// regardless of what other threads do.
+pub fn thread_slot_bump() -> i64 {
+    TL_BUMP_COUNTER.with(|counter| {
+        counter.set(counter.get() + 1);
+        counter.get()
+    })
+}
+
+pub async fn async_double(x: i64) -> i64 {
+    x * 2
+}
+
+pub async fn async_double_twice(x: i64) -> i64 {
+    let once = async_double(x).await;
+    async_double(once).await
 }

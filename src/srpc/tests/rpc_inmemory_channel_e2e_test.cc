@@ -24,7 +24,7 @@
 // ReconnectPolicy lives in srpc.reconnect_policy (trimmed from the
 // consumer umbrella in 08b68144) — import directly.
 import srpc.reconnect_policy;
-#include "../rpc/inmemory_channel.hpp"
+import srpc.inmemory_channel;
 
 import std;
 
@@ -47,7 +47,7 @@ class EchoService {
     }
 
     void __dispatch__(i32 /*rpc_id*/, rusty::Box<Request> req,
-                      WeakServerConnection sconn) {
+                      WeakServerConnection sconn) const {
         std::string echo;
         srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
         srpc::Deserialize_::deserialize(echo, __req_ar__);

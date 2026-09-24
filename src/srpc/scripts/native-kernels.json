@@ -1,0 +1,115 @@
+{
+  "schema_version": 1,
+  "roles": {
+    "os-leaf": "Individual OS/libc operation, ABI layout, errno, or resource allocation.",
+    "clock": "Native clock reads and local-calendar field extraction; canonical Rust formats time.",
+    "entropy": "Native thread-local random seed and raw entropy draw; canonical Rust owns range policy.",
+    "context-switch": "Machine registers, guarded stack allocation, TLS active context, and stack transfer.",
+    "c-declarations": "Declarations and C layouts for reviewed native leaves.",
+    "import-shim": "Legacy include compatibility that imports generated canonical modules.",
+    "trait-dispatch": "C++ ADL or erased trait forwarding and native declarations; no serialization algorithm."
+  },
+  "files": {
+    "base/srpc_base.c": {
+      "role": "os-leaf",
+      "sha256": "5ad51be942a2bf95d099a5e6e0e5e7cca31be93a9771585337b2c31eec973345"
+    },
+    "misc/serializable_adapters.hpp": {
+      "role": "trait-dispatch",
+      "sha256": "461dbc058ce8ffa03a51550c297c5a00917a4633e9b8f6e12cfa858fc31b4d4f"
+    },
+    "misc/serializable_support.hpp": {
+      "role": "trait-dispatch",
+      "sha256": "1e52ecdf4fc1607283b8141cd66e6143d3dbe1041bc4ba289f3cca3a15fd24cd"
+    },
+    "misc/srpc_io.c": {
+      "role": "os-leaf",
+      "sha256": "ea2bd87c06a353cbb268fc62f013717df7c3d513be7e8c78820a27c597af049c"
+    },
+    "misc/srpc_rand.c": {
+      "role": "entropy",
+      "sha256": "9c184cc8b41d4cacdcd0f591eae0d932ca4a7ee7de9a1130c0310c08da207b35"
+    },
+    "misc/srpc_rand.h": {
+      "role": "c-declarations",
+      "sha256": "bc5fd2a855a7fd8cfbd594306a71f7638d6cecc8b8be5578a4a7aed20f8ba6e6"
+    },
+    "misc/srpc_timing.c": {
+      "role": "clock",
+      "sha256": "b6316c87262519b5e2585c5706a9884f228fe73a3e24392522495f8085184f25"
+    },
+    "misc/srpc_timing.h": {
+      "role": "c-declarations",
+      "sha256": "830a39d3b388eeacea63bb849dfb827b98ce784ba85bfe0efeeac420994869ac"
+    },
+    "reactor/fiber_context_aarch64.S": {
+      "role": "context-switch",
+      "sha256": "74dfd00cb6c6bb8457756cdf73d460939cd6437fd94bfc340585130957267764"
+    },
+    "reactor/fiber_context_x86_64.S": {
+      "role": "context-switch",
+      "sha256": "ccf7126c8f0fa394d032c3c33e50a5afdde8c1e5d3a8008c30593b395fc05971"
+    },
+    "reactor/srpc_epoll.c": {
+      "role": "os-leaf",
+      "sha256": "87f2d56e641b0eabdced32d258b0e65ce543020227d58a2815108e09d58434a8"
+    },
+    "reactor/srpc_epoll.h": {
+      "role": "c-declarations",
+      "sha256": "3370a01d92139d1d6e7682d47b273201c5d75f7b0b54198e123b2ee173343fe7"
+    },
+    "reactor/srpc_fiber.c": {
+      "role": "context-switch",
+      "sha256": "2828dc738ccf83b8f9cb342a3637fa003c53f70c7a70ef9e86c18736110bace5"
+    },
+    "reactor/srpc_fiber.h": {
+      "role": "c-declarations",
+      "sha256": "817f0253325746608ff1b37439023a80adc93d08b4e0144b55f2238c8b0e6935"
+    },
+    "rpc/srpc_connect.c": {
+      "role": "os-leaf",
+      "sha256": "a9a9e7acd10d57a34cb61340bba32737bb507754564987cb7d38ad7bc954eb68"
+    },
+    "rpc/srpc_connect.h": {
+      "role": "c-declarations",
+      "sha256": "3b44312d8103b868601a249d537c67111692746e3407e64448089cdd897f6a8c"
+    },
+    "rpc/srpc_net.c": {
+      "role": "os-leaf",
+      "sha256": "68acfbc78a9915488362ead9f86c2ffbab18c61611d974c42baba8a871ce2de9"
+    },
+    "rpc/srpc_server.c": {
+      "role": "os-leaf",
+      "sha256": "0a5a2d1cc382c118ec1e74d6a8fc3df0188af1035e5835a3f5817aa96e6e9c22"
+    },
+    "rpc/srpc_server.h": {
+      "role": "c-declarations",
+      "sha256": "e6b6e214211dc030251567cba58c6e77178e201aef96dba02dab3310504dbda3"
+    },
+    "srpc.hpp": {
+      "role": "import-shim",
+      "sha256": "31fc5c7f5d0b4e74fd6db23f9b0d42d1ad54a4b45db5df51ac34fc0ca0de230e"
+    },
+    "std_compat.hpp": {
+      "role": "import-shim",
+      "sha256": "5de0052835664070590156a194625781daba902f1751d5bb43e076fa34018891"
+    }
+  },
+  "sources": {
+    "base/srpc_base.c": "all",
+    "misc/srpc_io.c": "all",
+    "misc/srpc_rand.c": "all",
+    "misc/srpc_timing.c": "all",
+    "reactor/fiber_context_aarch64.S": "aarch64",
+    "reactor/fiber_context_x86_64.S": "x86_64",
+    "reactor/srpc_epoll.c": "all",
+    "reactor/srpc_fiber.c": "all",
+    "rpc/srpc_connect.c": "all",
+    "rpc/srpc_net.c": "all",
+    "rpc/srpc_server.c": "all"
+  },
+  "consumers": {
+    "build.rs": "59fbcf64741d1107424ddb28b620cfb1faeed5b73a1e61d33ca947bf7ce2368f",
+    "CMakeLists.txt:native-manifest": "04b3201bdab26052c7483295287e0902c4804c4419b7f16c7e3d594ca368e29c"
+  }
+}

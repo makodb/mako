@@ -1,8 +1,50 @@
 #!/usr/bin/env python3
+"""Lint the ```cpp fences in docs/srpc-cpp-book.md, and (when a build tree is
+available) syntax-check the compile-tagged snippets against the real srpc
+module graph.
+
+Two independent halves
+----------------------
+1. **Fence lint** (`extract_and_validate_cpp_snippets`) — pure text
+   processing.  Every ```cpp fence in the book must carry exactly one tag
+   from ALLOWED_CPP_TAGS, and compile tags must not be mixed with each
+   other or with `srpc-no-compile`.  This half needs nothing but the book,
+   so `--lint-only` runs it on a bare checkout with no submodules, no
+   compiler and no build directory.
+
+2. **Snippet compile** — wraps each compile-tagged snippet in a profile
+   preamble and runs `clang++ -fsyntax-only` over it.  This needs the whole
+   toolchain: Clang 22 with libc++, the rusty-cpp submodule headers, and a
+   configured build tree that has already built `srpc` (so the BMIs and the
+   battery module map exist).  When any of that is missing the half prints
+   a skip line and the test still exits 0 — a docs lint must not fail
+   because the C++ build was never configured.
+
+Why the compile half looks the way it does
+------------------------------------------
+* Module discovery reads `goal0-battery-modules.modmap`, the Clang response
+  file `scripts/emit_module_map.py` writes and CMakeLists.txt attaches to
+  every Goal-0 battery target (`srpc_battery_modmap`).  It holds one
+  `-fmodule-file="name=/abs/path.bmi"` line per module srpc was built
+  against, `std` and the rusty ports included.  That is the same mechanism
+  the battery's own pure-consumer TUs use, and it is the only one this repo
+  has: `CMAKE_EXPORT_COMPILE_COMMANDS` is set nowhere, so there is no
+  `compile_commands.json` to scrape.
+* `-std=gnu++23`, not `-std=c++23`.  CMakeLists.txt sets
+  `CMAKE_CXX_EXTENSIONS ON`, and the rusty umbrella is compiled
+  `-std=gnu++23` precisely so consumers can `import rusty;` without
+  tripping Clang's "GNU extensions was disabled in precompiled file"
+  PCM-config check.  A consumer built `-std=c++23` fails that check.
+* `-stdlib=libc++`, matching the project-wide `add_compile_options`.
+* `-march=native`, matching the target features recorded in the production
+  BMIs. Clang rejects consumers with a different feature set.
+* The snippet units `#include "srpc.hpp"` — the umbrella lives at the
+  repository root, and `-I <repo root>` is what the battery targets pass.
+"""
 
 import argparse
-import json
-import shlex
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -28,76 +70,78 @@ COMMON_SNIPPET_PREAMBLE = """#include <errno.h>
 #include <rusty/result.hpp>
 """
 
+# `scripts/emit_module_map.py --output ${CMAKE_CURRENT_BINARY_DIR}/...`;
+# srpc's CMakeLists.txt is the top-level list file, so this normally sits
+# directly in the build directory (see the `srpc_battery_modmap` target).
+BATTERY_MODMAP_NAME = "goal0-battery-modules.modmap"
 
-def load_cmake_module_compile_context(
+# Mirrors the SRPC_CLANG22_HINTS search in CMakeLists.txt.  SRPC hard-requires
+# Clang 22 (`message(FATAL_ERROR "SRPC requires Clang 22 or newer")`), so a
+# stray `g++` on PATH is never an acceptable default here.
+CXX_CANDIDATE_NAMES = ("clang++-22", "clang++")
+CLANG22_HINT_DIRS = (
+    "/home/linuxbrew/.linuxbrew/opt/llvm@22/bin",
+    "$HOMEBREW_PREFIX/opt/llvm@22/bin",
+    "/opt/homebrew/opt/llvm@22/bin",
+    "/usr/local/opt/llvm@22/bin",
+    "$HOME/.linuxbrew/opt/llvm@22/bin",
+)
+
+
+def find_battery_modmap(
     repo_root: Path, requested_build_dir: Path | None
-) -> tuple[str, list[str], Path] | None:
+) -> tuple[Path, Path] | None:
+    """Locate the module map CMake hands the Goal-0 battery targets.
+
+    Returns (modmap path, build directory) or None.  The map's
+    `-fmodule-file=` paths are already absolute (emit_module_map.py resolves
+    every relative reference against --build-dir), so the build directory is
+    returned only to use as the compiler's working directory.
+    """
     candidate_build_dirs: list[Path] = []
     if requested_build_dir is not None:
         candidate_build_dirs.append(requested_build_dir)
     else:
-        candidate_build_dirs.extend([repo_root / "build", repo_root / "cmake-build-debug"])
+        candidate_build_dirs.extend(
+            [
+                repo_root / "build",
+                repo_root / "cmake-build-debug",
+                repo_root / "cmake-build-release",
+            ]
+        )
 
     for build_dir in candidate_build_dirs:
-        compile_db = build_dir / "compile_commands.json"
-        if not compile_db.exists():
+        if not build_dir.is_dir():
             continue
+        direct = build_dir / BATTERY_MODMAP_NAME
+        if direct.is_file():
+            return direct, build_dir
+        # srpc added as a superproject subdirectory puts the map under the
+        # matching binary subdirectory instead.
+        nested = sorted(build_dir.rglob(BATTERY_MODMAP_NAME))
+        if nested:
+            return nested[0], build_dir
 
-        try:
-            entries = json.loads(compile_db.read_text(encoding="utf-8"))
-        except Exception:
-            continue
+    return None
 
-        def pick_entry() -> dict | None:
-            preferred_suffixes = (
-                "src/srpc/tests/test_rpc.cc",
-                "src/srpc/tests/rpc_docs_symbols_test.cc",
-            )
-            for suffix in preferred_suffixes:
-                for entry in entries:
-                    cmd = entry.get("command", "")
-                    src = entry.get("file", "")
-                    if src.endswith(suffix) and ".o.modmap" in cmd:
-                        return entry
-            for entry in entries:
-                cmd = entry.get("command", "")
-                src = entry.get("file", "")
-                if ".o.modmap" in cmd and "src/srpc/" in src:
-                    return entry
-            return None
 
-        entry = pick_entry()
-        if entry is None:
-            continue
-
-        tokens = shlex.split(entry.get("command", ""))
-        if not tokens:
-            continue
-        compiler = tokens[0]
-        source_file = entry.get("file", "")
-
-        reusable_flags: list[str] = []
-        i = 1
-        while i < len(tokens):
-            tok = tokens[i]
-            if tok in {"-o", "-c", "-MF", "-MT", "-MQ", "-MJ"}:
-                i += 2
-                continue
-            if tok in {"-MD", "-MP"}:
-                i += 1
-                continue
-            if tok == source_file:
-                i += 1
-                continue
-            if tok.startswith("@"):
-                modmap = tok[1:]
-                if not Path(modmap).is_absolute():
-                    tok = "@" + str((build_dir / modmap).resolve())
-            reusable_flags.append(tok)
-            i += 1
-
-        return compiler, reusable_flags, build_dir
-
+def resolve_cxx(requested: str | None) -> str | None:
+    """Pick the C++ driver: --cxx if given, else Clang 22 the way CMake finds it."""
+    if requested:
+        return shutil.which(requested) or (
+            requested if Path(requested).is_file() else None
+        )
+    search_dirs = [
+        Path(os.path.expandvars(os.path.expanduser(d))) for d in CLANG22_HINT_DIRS
+    ]
+    for name in CXX_CANDIDATE_NAMES:
+        for directory in search_dirs:
+            candidate = directory / name
+            if candidate.is_file():
+                return str(candidate)
+        found = shutil.which(name)
+        if found:
+            return found
     return None
 
 
@@ -152,13 +196,13 @@ def extract_and_validate_cpp_snippets(book_text: str):
     return snippets, violations, total_cpp_fences
 
 
-def build_compile_unit(profile: str, idx: int, snippet: str) -> str:
-    if profile == "reliability":
-        return f"""{COMMON_SNIPPET_PREAMBLE}
-#include <time.h>
-#include "srpc/srpc.hpp"
-
-// Trimmed from the consumer umbrella (08b68144) — snippets exercising
+# srpc.hpp deliberately comments these six imports out ("trimmed from consumer
+# umbrella: nothing outside srpc names it"), but every one is a real module
+# declared in rust-modules.toml, so snippets that touch the reliability and
+# metrics surface import them directly — exactly as tests/test_load_balancer.cc
+# does for srpc.connection_metrics and srpc.load_balancer.
+TRIMMED_MODULE_IMPORTS = """// Trimmed from the consumer umbrella — srpc.hpp comments these six out
+// because nothing outside srpc names them. Snippets exercising the
 // reliability/metrics APIs import the modules directly.
 import srpc.circuit_breaker;
 import srpc.connection_metrics;
@@ -166,9 +210,22 @@ import srpc.heartbeat;
 import srpc.load_balancer;
 import srpc.reconnect_policy;
 import srpc.request_options;
+"""
 
+# The umbrella is `srpc.hpp` at the repository root; `-I <repo root>` is on the
+# command line, matching how tests/*.cc reach it as "../srpc.hpp".
+SNIPPET_UNIT_HEADER = f"""{COMMON_SNIPPET_PREAMBLE}
+#include <time.h>
+#include "srpc.hpp"
+
+{TRIMMED_MODULE_IMPORTS}
 using namespace srpc;
+"""
 
+
+def build_compile_unit(profile: str, idx: int, snippet: str) -> str:
+    if profile == "reliability":
+        return f"""{SNIPPET_UNIT_HEADER}
 void snippet_{idx}() {{
 {snippet}
 }}
@@ -179,21 +236,7 @@ int main() {{
 }}
 """
     if profile == "client":
-        return f"""{COMMON_SNIPPET_PREAMBLE}
-#include <time.h>
-#include "srpc/srpc.hpp"
-
-// Trimmed from the consumer umbrella (08b68144) — snippets exercising
-// reliability/metrics APIs import the modules directly.
-import srpc.circuit_breaker;
-import srpc.connection_metrics;
-import srpc.heartbeat;
-import srpc.load_balancer;
-import srpc.reconnect_policy;
-import srpc.request_options;
-
-using namespace srpc;
-
+        return f"""{SNIPPET_UNIT_HEADER}
 struct ClientHarness {{
     rusty::Arc<Client> arc;
 
@@ -232,21 +275,7 @@ int main() {{
 }}
 """
     if profile == "server":
-        return f"""{COMMON_SNIPPET_PREAMBLE}
-#include <time.h>
-#include "srpc/srpc.hpp"
-
-// Trimmed from the consumer umbrella (08b68144) — snippets exercising
-// reliability/metrics APIs import the modules directly.
-import srpc.circuit_breaker;
-import srpc.connection_metrics;
-import srpc.heartbeat;
-import srpc.load_balancer;
-import srpc.reconnect_policy;
-import srpc.request_options;
-
-using namespace srpc;
-
+        return f"""{SNIPPET_UNIT_HEADER}
 inline int compute(int v) {{ return v; }}
 
 class MyService : public Service {{
@@ -257,7 +286,7 @@ public:
         return 0;
     }}
 
-    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override {{
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) const override {{
         (void)rpc_id;
         (void)req;
         (void)weak_sconn;
@@ -274,30 +303,29 @@ int main() {{
 }}
 """
     if profile == "codegen":
-        return f"""{COMMON_SNIPPET_PREAMBLE}
-#include <time.h>
-#include "srpc/srpc.hpp"
-
-// Trimmed from the consumer umbrella (08b68144) — snippets exercising
-// reliability/metrics APIs import the modules directly.
-import srpc.circuit_breaker;
-import srpc.connection_metrics;
-import srpc.heartbeat;
-import srpc.load_balancer;
-import srpc.reconnect_policy;
-import srpc.request_options;
-
-using namespace srpc;
-
+        # No `Marshal`, no `operator>>`: SRPC has neither (docs/srpc-cpp-book.md
+        # serialization chapter). Generated code calls the two free dispatchers
+        # `srpc::Serialize_::serialize` / `srpc::Deserialize_::deserialize`
+        # over a BinaryWriteArchive / BinaryReadArchive; canonical source is
+        # misc/serializable.rs (module srpc.serializable, which srpc.hpp
+        # imports).
+        return f"""{SNIPPET_UNIT_HEADER}
 struct UserInfo {{
     int id = 0;
     std::string name;
     double balance = 0.0;
 }};
 
-inline Marshal& operator>>(Marshal& m, UserInfo& user) {{
-    m >> user.id >> user.name >> user.balance;
-    return m;
+inline void serialize_user(const UserInfo& user, BinaryWriteArchive& ar) {{
+    Serialize_::serialize(user.id, ar);
+    Serialize_::serialize(user.name, ar);
+    Serialize_::serialize(user.balance, ar);
+}}
+
+inline void deserialize_user(UserInfo& user, BinaryReadArchive& ar) {{
+    Deserialize_::deserialize(user.id, ar);
+    Deserialize_::deserialize(user.name, ar);
+    Deserialize_::deserialize(user.balance, ar);
 }}
 
 class MyServiceProxy {{
@@ -310,9 +338,12 @@ public:
         return 0;
     }}
 
+    // `request` takes three arguments — (rpc_id, attr, write_fn). The
+    // two-argument overload was deliberately collapsed away; see
+    // rpc/client.rs `fn request(&self, rpc_id: i32, attr: &FutureAttr, write_fn: F)`.
     FutureResult async_get_user(i32 id) {{
         (void)id;
-        return client_->request(0x1001, [](BinaryWriteArchive&) {{}});
+        return client_->request(0x1001, FutureAttr(), [](BinaryWriteArchive&) {{}});
     }}
 
 private:
@@ -334,6 +365,37 @@ int main() {{
     raise ValueError(f"unknown snippet compile profile: {profile}")
 
 
+def snippet_compile_command(cxx: str, repo_root: Path, modmap: Path | None) -> list[str]:
+    cmd = [
+        cxx,
+        # gnu++23, NOT c++23: CMAKE_CXX_EXTENSIONS is ON project-wide and the
+        # rusty umbrella BMI is built -std=gnu++23, so a consumer without GNU
+        # extensions trips Clang's "GNU extensions was disabled in precompiled
+        # file" PCM-config check.
+        "-std=gnu++23",
+        "-stdlib=libc++",
+        "-march=native",
+        "-w",
+        "-fsyntax-only",
+    ]
+    if modmap is not None:
+        # Response file of -fmodule-file="name=/abs/path.bmi" lines, naming
+        # every BMI srpc was built against (std and the rusty ports included).
+        cmd.append(f"@{modmap}")
+    cmd.extend(
+        [
+            "-I",
+            str(repo_root),
+            "-I",
+            str(repo_root / "third-party/rusty-cpp/include"),
+            "-x",
+            "c++",
+            "-",
+        ]
+    )
+    return cmd
+
+
 def compile_snippet(
     cxx: str,
     repo_root: Path,
@@ -342,26 +404,12 @@ def compile_snippet(
     profile: str,
     snippet: str,
     timeout_sec: float,
-    compile_context: tuple[str, list[str], Path] | None,
+    modmap: Path | None,
+    build_dir: Path | None,
 ):
     unit = build_compile_unit(profile, idx, snippet)
-    run_cwd = None
-    if compile_context is not None:
-        cmake_cxx, cmake_flags, cmake_build_dir = compile_context
-        cmd = [cmake_cxx] + cmake_flags + ["-fsyntax-only", "-x", "c++", "-"]
-        run_cwd = str(cmake_build_dir)
-    else:
-        cmd = [cxx, "-std=c++23", "-w", "-fsyntax-only", "-x", "c++", "-"]
-    cmd.extend(
-        [
-            "-I",
-            str(repo_root),
-            "-I",
-            str(repo_root / "src/srpc"),
-            "-I",
-            str(repo_root / "third-party/rusty-cpp/include"),
-        ]
-    )
+    cmd = snippet_compile_command(cxx, repo_root, modmap)
+    run_cwd = str(build_dir) if build_dir is not None else None
     try:
         proc = subprocess.run(
             cmd,
@@ -391,13 +439,36 @@ def compile_snippet(
     return True, ""
 
 
+def default_repo_root() -> Path:
+    return Path(__file__).resolve().parent.parent
+
+
 def main():
-    parser = argparse.ArgumentParser(description="Compile/lint srpc-book cpp snippets.")
-    parser.add_argument("--book", required=True, help="Path to docs/srpc-book.md")
-    parser.add_argument("--repo", required=True, help="Repository root path")
-    parser.add_argument("--cxx", default="g++", help="C++ compiler executable")
+    parser = argparse.ArgumentParser(description="Compile/lint SRPC C++ companion snippets.")
+    parser.add_argument(
+        "--book",
+        default=None,
+        help="Path to docs/srpc-cpp-book.md (default: <repo>/docs/srpc-cpp-book.md)",
+    )
+    parser.add_argument(
+        "--repo",
+        default=None,
+        help="Repository root path (default: the directory containing tests/)",
+    )
+    parser.add_argument(
+        "--cxx",
+        default=None,
+        help="C++ compiler executable (default: clang++-22, then clang++; "
+             "SRPC requires Clang 22 with libc++)",
+    )
     parser.add_argument("--build-dir", default=None, help="CMake build directory for module flags")
     parser.add_argument("--min-snippets", type=int, default=1, help="Minimum required tagged snippets")
+    parser.add_argument(
+        "--lint-only",
+        action="store_true",
+        help="Validate cpp fence tags and stop. Needs no compiler, no submodules "
+             "and no build tree.",
+    )
     parser.add_argument(
         "--snippet-timeout-sec",
         type=float,
@@ -406,20 +477,14 @@ def main():
     )
     args = parser.parse_args()
 
-    repo_root = Path(args.repo).resolve()
+    repo_root = Path(args.repo).resolve() if args.repo else default_repo_root()
     build_dir = Path(args.build_dir).resolve() if args.build_dir else None
-    book_path = Path(args.book).resolve()
+    book_path = (
+        Path(args.book).resolve() if args.book else repo_root / "docs" / "srpc-cpp-book.md"
+    )
 
     if not book_path.exists():
         print(f"book not found: {book_path}", file=sys.stderr)
-        return 2
-
-    rusty_include = repo_root / "third-party/rusty-cpp/include/rusty"
-    if not rusty_include.exists():
-        print(
-            f"missing Rusty C++ headers at {rusty_include}; run submodule update before this test",
-            file=sys.stderr,
-        )
         return 2
 
     book_text = book_path.read_text(encoding="utf-8")
@@ -430,7 +495,7 @@ def main():
         return 2
 
     if total_cpp_fences == 0:
-        print("expected at least one cpp fence in srpc-book", file=sys.stderr)
+        print("expected at least one cpp fence in srpc-cpp-book", file=sys.stderr)
         return 2
 
     if violations:
@@ -445,18 +510,56 @@ def main():
         )
         return 2
 
-    compile_context = load_cmake_module_compile_context(repo_root, build_dir)
+    print(
+        f"fence lint OK: {total_cpp_fences} cpp fences, all tagged; "
+        f"{len(snippets)} carry a compile tag"
+    )
+
+    if args.lint_only:
+        print("--lint-only: skipping the snippet compile half")
+        return 0
+
+    # --- compile half: every precondition is a skip, never a failure ---
+    rusty_include = repo_root / "third-party/rusty-cpp/include/rusty"
+    if not rusty_include.is_dir():
+        print(
+            f"SKIP compile half: no Rusty C++ headers at {rusty_include} "
+            "(run `git submodule update --init --recursive`)"
+        )
+        return 0
+
+    cxx = resolve_cxx(args.cxx)
+    if cxx is None:
+        requested = args.cxx or "/".join(CXX_CANDIDATE_NAMES)
+        print(
+            f"SKIP compile half: no usable C++ driver ({requested} not found); "
+            "SRPC requires Clang 22 with libc++"
+        )
+        return 0
+
+    located = find_battery_modmap(repo_root, build_dir)
+    if located is None:
+        searched = str(build_dir) if build_dir else "build/, cmake-build-debug/, cmake-build-release/"
+        print(
+            f"SKIP compile half: no {BATTERY_MODMAP_NAME} under {searched}. "
+            "Configure CMake and build the `srpc_battery_modmap` target "
+            "(it depends on `srpc`, so the BMIs exist) first."
+        )
+        return 0
+    modmap, modmap_build_dir = located
+
     failures = []
     for idx, (line_no, profile, snippet) in enumerate(snippets, start=1):
         ok, message = compile_snippet(
-            args.cxx,
+            cxx,
             repo_root,
             idx,
             line_no,
             profile,
             snippet,
             args.snippet_timeout_sec,
-            compile_context,
+            modmap,
+            modmap_build_dir,
         )
         if not ok:
             failures.append(message)
@@ -465,7 +568,10 @@ def main():
         print("\n\n".join(failures), file=sys.stderr)
         return 1
 
-    print(f"compiled {len(snippets)} tagged srpc-book snippets successfully")
+    print(
+        f"compiled {len(snippets)} tagged C++ companion snippets successfully "
+        f"({cxx}, module map {modmap})"
+    )
     return 0
 
 

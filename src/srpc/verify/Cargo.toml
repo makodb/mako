@@ -1,0 +1,34 @@
+# Verus verification harness for srpc.
+#
+# This package exists ONLY to run `cargo verus verify`. It is excluded from the
+# srpc workspace (see the root Cargo.toml `[workspace] exclude`), so it never
+# enters the production `cargo build` or the rusty-cpp C++ transpile, and it is
+# the reason srpc's own manifest carries no `vstd` dependency.
+#
+# The modules under src/ are `#[path]` links to the REAL srpc sources -- the
+# same bytes rustc compiles and rusty-cpp translates -- so this verifies the
+# actual code in place, not an extracted copy. Those sources gate their specs
+# behind `#[cfg(verus)]`; `.cargo/config.toml` turns `verus` on for this crate
+# so `cargo verus verify` activates them (see that file for why `verus` and not
+# the `verus_only` cfg cargo-verus sets by default).
+#
+# Usage:  cd verify && cargo verus verify     (or: scripts/verify_srpc.sh)
+[package]
+name = "srpc-verify"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Own single-package workspace, independent of the srpc workspace root.
+[workspace]
+
+[dependencies]
+vstd = "=0.0.0-2026-08-30-0159"
+
+[package.metadata.verus]
+verify = true
+
+[lints.rust]
+# `verus` is forced on for this crate (see .cargo/config.toml); declare it so
+# cargo does not warn the gated annotations' cfg is unexpected.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus)'] }

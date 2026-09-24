@@ -58,43 +58,55 @@ namespace {
 // the shipped C++ ABI.  Keep every historical boundary pinned: using fresh
 // mutex wrappers for fd/listener/inbound state shifts the callback fields and
 // breaks already-compiled consumers even when method symbols are unchanged.
-static_assert(sizeof(TcpConnection) == 344);
+// Re-pinned after fd_ became UnsafeCell<Option<Arc<LegacyOwnedFd>>> -- the
+// descriptor lease that lets a close race an epoll operation safely.  A
+// rusty::Option<Arc<..>> is 16 bytes where the bare OwnedFd was 4 (+4 pad), so
+// every field after fd_ moves +8 and sizeof goes 344 -> 352.  These values are
+// measured from the generated module (undefined-template probe), not derived.
+static_assert(sizeof(TcpConnection) == 352);
 static_assert(alignof(TcpConnection) == 8);
 static_assert(rusty::is_send<TcpConnection>::value);
 static_assert(rusty::is_sync<TcpConnection>::value);
 static_assert(offsetof(TcpConnection, fd_) == 0);
-static_assert(offsetof(TcpConnection, peer_address_) == 8);
-static_assert(offsetof(TcpConnection, outbound_high_water_) == 32);
-static_assert(offsetof(TcpConnection, outbound_) == 40);
-static_assert(offsetof(TcpConnection, inbound_) == 104);
-static_assert(offsetof(TcpConnection, closed_) == 152);
-static_assert(offsetof(TcpConnection, on_closed_fired_) == 153);
-static_assert(offsetof(TcpConnection, pending_write_update_) == 154);
-static_assert(offsetof(TcpConnection, poll_thread_) == 160);
-static_assert(offsetof(TcpConnection, on_frame_) == 176);
-static_assert(offsetof(TcpConnection, on_closed_) == 232);
-static_assert(offsetof(TcpConnection, on_error_) == 288);
+static_assert(offsetof(TcpConnection, peer_address_) == 16);
+static_assert(offsetof(TcpConnection, outbound_high_water_) == 40);
+static_assert(offsetof(TcpConnection, outbound_) == 48);
+static_assert(offsetof(TcpConnection, inbound_) == 112);
+static_assert(offsetof(TcpConnection, closed_) == 160);
+static_assert(offsetof(TcpConnection, on_closed_fired_) == 161);
+static_assert(offsetof(TcpConnection, pending_write_update_) == 162);
+static_assert(offsetof(TcpConnection, poll_thread_) == 168);
+static_assert(offsetof(TcpConnection, on_frame_) == 184);
+static_assert(offsetof(TcpConnection, on_closed_) == 240);
+static_assert(offsetof(TcpConnection, on_error_) == 296);
 
-static_assert(sizeof(TcpListener) == 192);
+// Re-pinned with TcpConnection above: listener_ became
+// RefCell<Option<Arc<LegacyTcpListener>>> (the listener's descriptor lease),
+// which is a borrow flag plus a 16-byte Option<Arc<..>> where the old handle
+// was 8 bytes total, so every later field moves +16 and sizeof goes 192 -> 208.
+// Measured from the generated module, not derived.
+static_assert(sizeof(TcpListener) == 208);
 static_assert(alignof(TcpListener) == 8);
 static_assert(rusty::is_send<TcpListener>::value);
 static_assert(rusty::is_sync<TcpListener>::value);
 static_assert(offsetof(TcpListener, listener_) == 0);
-static_assert(offsetof(TcpListener, bound_address_) == 8);
-static_assert(offsetof(TcpListener, closed_) == 40);
-static_assert(offsetof(TcpListener, listened_) == 41);
-static_assert(offsetof(TcpListener, accept_callback_thread_) == 44);
-static_assert(offsetof(TcpListener, poll_thread_) == 48);
-static_assert(offsetof(TcpListener, self_weak_) == 64);
-static_assert(offsetof(TcpListener, on_accept_) == 80);
-static_assert(offsetof(TcpListener, on_error_) == 136);
+static_assert(offsetof(TcpListener, bound_address_) == 24);
+static_assert(offsetof(TcpListener, closed_) == 56);
+static_assert(offsetof(TcpListener, listened_) == 57);
+static_assert(offsetof(TcpListener, accept_callback_thread_) == 60);
+static_assert(offsetof(TcpListener, poll_thread_) == 64);
+static_assert(offsetof(TcpListener, self_weak_) == 80);
+static_assert(offsetof(TcpListener, on_accept_) == 96);
+static_assert(offsetof(TcpListener, on_error_) == 152);
 
 static_assert(sizeof(TcpFactory) == 16);
 static_assert(alignof(TcpFactory) == 8);
 static_assert(offsetof(TcpFactory, poll_thread_) == 0);
 static_assert(offsetof(TcpFactory, connect_timeout_ms_) == 8);
 
-int connect_to_listener(const std::string& address) {
+int connect_to_listener(const rusty::String& listener_address) {
+    // The listener reports its address as a rusty::String; parse it as std::string.
+    const std::string address(listener_address.c_str());
     const auto colon = address.rfind(':');
     if (colon == std::string::npos) return -1;
     const int port = std::atoi(address.c_str() + colon + 1);
@@ -434,6 +446,28 @@ TEST_F(TcpConnectionTest, CloseIsIdempotent) {
     EXPECT_TRUE(conn().is_closed());
     mut_conn().close();
     mut_conn().close();
+    EXPECT_EQ(closes_seen, 1);
+}
+
+TEST_F(TcpConnectionTest, FlushFailureStillDeliversOneReentrantCloseCallback) {
+    int closes_seen = 0;
+    mut_conn().set_on_closed(OnClosedCallback::from_callable([&](ChannelError reason) {
+        EXPECT_EQ(reason, ChannelError::None);
+        ++closes_seen;
+        EXPECT_EQ(conn().fd(), -1);
+        mut_conn().close();
+        mut_conn().set_on_closed(OnClosedCallback{});
+    }));
+    const std::uint8_t bytes[] = {0x11, 0x22, 0x33};
+    ASSERT_EQ(mut_conn().send_frame(ChannelFrame{bytes, sizeof(bytes)}), ChannelError::None);
+    ASSERT_EQ(::close(peer_fd_), 0);
+    peer_fd_ = -1;
+    mut_conn().flush();
+    ASSERT_TRUE(conn().is_closed());
+    EXPECT_EQ(closes_seen, 0);
+    mut_conn().close();
+    mut_conn().close();
+    EXPECT_EQ(conn().fd(), -1);
     EXPECT_EQ(closes_seen, 1);
 }
 

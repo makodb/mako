@@ -11,15 +11,14 @@
 // de-modularization the textual `#include` would expose them
 // globally. Tests that need the old srpc-internal helpers can
 // include `<base/unittest.hpp>` explicitly.
-#include "rpc/frame_codec.hpp"
-#include "rpc/fiber_channel.hpp"
-#include "base/all.hpp"
-#include "misc/serializable.hpp"
-// removed `#include "misc/recorder.hpp"`
-// — `Recorder` class deleted; was unused after Phase 4e-35.
-#include "rpc/idempotency.hpp"
-#include "rpc/request_queue.hpp"
-#include "rpc/completion_tracker.hpp"
+
+// The STL headers the deleted `rpc/fiber_channel.hpp` and
+// `rpc/frame_codec.hpp` shims used to contribute. `<memory>` is
+// load-bearing rather than decorative: it is the anchor that keeps
+// libc++ `operator new` in global-module attachment for downstream TUs.
+#include <memory>
+#include <queue>
+#include <stack>
 
 // Imports go AFTER textual `#include`s. libc++ rejects the order
 // `import std; ... #include <vector>` (the include lands after the
@@ -30,6 +29,7 @@ import srpc.callbacks;
 import srpc.channel;
 // import srpc.circuit_breaker;  // trimmed from consumer umbrella: nothing outside srpc names it (build-time opt)
 import srpc.client;
+import srpc.completion_tracker;
 // import srpc.connection_metrics;  // trimmed from consumer umbrella: nothing outside srpc names it (build-time opt)
 import srpc.connection_state;
 import srpc.debugging;
@@ -37,8 +37,10 @@ import srpc.debugging;
 import srpc.errors;
 import srpc.fiber;
 import srpc.fiber_channel;
+import srpc.frame_codec;
 import srpc.future;
 // import srpc.heartbeat;  // trimmed from consumer umbrella: nothing outside srpc names it (build-time opt)
+import srpc.idempotency;
 // import srpc.internal_protocol;  // trimmed from consumer umbrella: nothing outside srpc names it (build-time opt)
 // import srpc.load_balancer;  // trimmed from consumer umbrella: nothing outside srpc names it (build-time opt)
 import srpc.logging;
@@ -48,6 +50,8 @@ import srpc.rand;
 import srpc.reactor;
 // import srpc.reconnect_policy;  // trimmed from consumer umbrella: nothing outside srpc names it (build-time opt)
 // import srpc.request_options;  // trimmed from consumer umbrella: nothing outside srpc names it (build-time opt)
+import srpc.request_queue;
+import srpc.serializable;
 import srpc.server;
 import srpc.stat;
 import srpc.tcp_channel;

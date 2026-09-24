@@ -1,18 +1,10 @@
-//! Fiber-blocking receive wrapper for the callback-driven channel facade.
+//! Fiber receive wrapper for callback-driven channels.
 //!
-//! This is the valid-Rust owner of the legacy `srpc.fiber_channel` module.  A
-//! `FiberChannel` must reach its final address before [`FiberChannel::bind_callbacks`]
-//! is called: the installed callbacks retain a raw pointer to the wrapper.  The
-//! pin marker makes the generated C++ type non-copyable and non-movable, as the
-//! original class was, and `Drop` detaches all three callbacks before the
-//! connection and waiter state are destroyed.
-//!
-//! Inbound callbacks and `recv_frame` run on the connection's reactor thread;
-//! construction, binding, and destruction belong there too.  The inbound queue
-//! and optional waiter retain their independent mutexes to preserve the legacy
-//! reentrancy and arm/wake ordering.  The waiter mutex is always released before
-//! `IntEvent::set` or `wait`, because either operation may transfer control back
-//! into the reactor.  Only one fiber may call `recv_frame` at a time.
+//! Callbacks own the synchronized frame queue and closed flag, so delivery may
+//! come from another thread and an in-flight callback may outlive the wrapper.
+//! Each recv_frame call owns its reactor event locally. The owner thread polls
+//! the shared readiness predicate and resumes the waiting fiber. Only one
+//! fiber may receive at a time. Drop detaches callbacks from the connection.
 
 #![allow(
     non_camel_case_types,
@@ -23,12 +15,14 @@
     clippy::type_complexity
 )]
 
-use cpp::srpc::reactor as cpp_reactor;
-use rusty as cpp;
-use std::cell::Cell;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::collections::VecDeque;
 use std::marker::PhantomPinned;
 use std::sync::{Arc, Mutex};
+
+#[allow(unused_imports)]
+use crate::reactor as _;
+use crate::reactor::EventTestFn;
 
 use crate::channel::{
     ChannelConnectionBase, ChannelConnectionProxy, ChannelError, ChannelFrame,
@@ -53,61 +47,44 @@ pub struct OwnedFrame {
 
 /// Fiber-style adapter over one callback-driven channel connection.
 ///
-/// Construction and destruction, callback binding, and `recv_frame` belong on
-/// the reactor thread.  `send_frame`, `close`, and `is_closed` preserve the
-/// channel facade's thread-safety contract.  Call `bind_callbacks` only after
-/// the value is pinned at its final address.
+/// `recv_frame` and its event remain on the owning reactor thread. Callback
+/// delivery can run on any transport thread: shared queue and closed state
+/// are synchronized, and the owner observes readiness through its event.
 #[repr(C)]
 #[cfg_attr(any(), cpp_no_fieldwise_ctor)]
 pub struct FiberChannel {
     pub ch_: ChannelConnectionProxy,
-    pub queue_: Mutex<LegacyStdDeque<OwnedFrame>>,
-    pub pending_recv_event_: Mutex<Option<Arc<rusty::ReactorIntEvent>>>,
-    pub closed_: Cell<bool>,
+    pub queue_: Arc<Mutex<LegacyStdDeque<OwnedFrame>>>,
+    pub closed_: Arc<AtomicBool>,
     _pin: PhantomPinned,
 }
 
 impl FiberChannel {
-    /// Construct an unbound wrapper.  Bind only after placing it at a stable
-    /// address (normally inside `Box`/`rusty::Box`).
+    /// Construct an unbound receive wrapper.
     pub fn new(ch: ChannelConnectionProxy) -> FiberChannel {
         FiberChannel {
             ch_: ch,
-            queue_: Mutex::new(Default::default()),
-            pending_recv_event_: Mutex::new(None),
-            closed_: Cell::new(false),
+            queue_: Arc::new(Mutex::new(Default::default())),
+            closed_: Arc::new(AtomicBool::new(false)),
             _pin: PhantomPinned,
         }
     }
 
-    /// Install the connection callbacks after this wrapper reaches its final
-    /// address.  Rebinding replaces the previous callback set.
+    /// Bind callbacks to shared receive state. An in-flight callback retains
+    /// its state even when this wrapper is dropped or its callbacks are replaced.
     pub fn bind_callbacks(&mut self) {
-        let self_ptr: *mut FiberChannel = &raw mut *self;
-
-        // Store the pinned address as an integer so the callback itself meets
-        // the channel facade's Send+Sync capture contract. The reactor-thread
-        // affinity documented on FiberChannel remains the safety invariant
-        // governing the dereference.
-        let frame_self: usize = self_ptr as usize;
+        let queue: Arc<Mutex<LegacyStdDeque<OwnedFrame>>> = self.queue_.clone();
         let frame_callback: Box<dyn Fn(&ChannelFrame) + Send + Sync> = Box::new(move |frame| {
-            // SAFETY: `bind_callbacks` requires a pinned wrapper and Drop
-            // detaches this callback before tearing down any member.
-            unsafe { (*(frame_self as *mut FiberChannel)).on_inbound_frame(frame) };
+            let copy = fiberchannel_owned_copy(frame);
+            queue.lock().unwrap().push_back(copy);
         });
         let ch: &mut Box<LegacyChannelConnectionBase> = &mut self.ch_;
-        ch.set_on_frame(OnFrameCallback::from_callable(
-            frame_callback,
-        ));
-
-        let closed_self: usize = self_ptr as usize;
+        ch.set_on_frame(OnFrameCallback::from_callable(frame_callback));
+        let closed: Arc<AtomicBool> = self.closed_.clone();
         let closed_callback: Box<dyn Fn(ChannelError) + Send + Sync> = Box::new(move |_reason| {
-            // SAFETY: same pin-and-detach invariant as the frame callback.
-            unsafe { (*(closed_self as *mut FiberChannel)).on_inbound_closed() };
+            closed.store(true, Ordering::Release);
         });
-        ch.set_on_closed(OnClosedCallback::from_callable(
-            closed_callback,
-        ));
+        ch.set_on_closed(OnClosedCallback::from_callable(closed_callback));
 
         // Fatal errors are followed by on_closed.  Non-fatal errors are
         // intentionally ignored at this layer, matching the original wrapper.
@@ -118,7 +95,7 @@ impl FiberChannel {
         ));
     }
 
-    fn try_pop(&mut self) -> Option<OwnedFrame> {
+    fn try_pop(&self) -> Option<OwnedFrame> {
         let mut guard = self.queue_.lock().unwrap();
         if guard.is_empty() {
             return None;
@@ -134,86 +111,44 @@ impl FiberChannel {
 
     /// Suspend until one frame is available or the channel has closed.
     /// Queued frames are always drained before `None` is returned.
-    pub fn recv_frame(&mut self) -> Option<OwnedFrame> {
+    pub fn recv_frame(&self) -> Option<OwnedFrame> {
         loop {
             if let Some(frame) = self.try_pop() {
                 return Some(frame);
             }
-            if self.closed_.get() {
+            if self.closed_.load(Ordering::Acquire) {
                 return None;
             }
 
-            self.arm_waiter();
+            let event = self.arm_waiter();
 
-            // Close the empty-check/arm race before suspending.  A callback
-            // that ran before arming made either the queue or closed latch
-            // observable here; a callback after this check sees the waiter.
+            // Recheck after arming. A later delivery remains visible through
+            // the event predicate when the owner next polls its waiting events.
             let mut should_wait: bool = true;
             {
                 let guard = self.queue_.lock().unwrap();
-                if !guard.is_empty() || self.closed_.get() {
+                if !guard.is_empty() || self.closed_.load(Ordering::Acquire) {
                     should_wait = false;
                 }
             }
             if should_wait {
-                self.wait_for_signal();
+                event.wait();
             }
 
-            let mut event_guard = self.pending_recv_event_.lock().unwrap();
-            *event_guard = None;
         }
     }
 
-    fn on_inbound_frame(&mut self, frame: &ChannelFrame) {
-        let copy: OwnedFrame = fiberchannel_owned_copy(frame);
-        {
-            let mut guard = self.queue_.lock().unwrap();
-            guard.push_back(copy);
-        }
-        self.signal_pending_recv();
-    }
-
-    fn on_inbound_closed(&mut self) {
-        self.closed_.set(true);
-        self.signal_pending_recv();
-    }
-
-    fn signal_pending_recv(&mut self) {
-        let held: Option<Arc<rusty::ReactorIntEvent>> = {
-            let guard = self.pending_recv_event_.lock().unwrap();
-            (*guard).clone()
-        };
-        if let Some(event) = held {
-            // SAFETY: the indexed foreign method is `IntEvent::set(int32_t)
-            // const`; the live Arc keeps its receiver valid for the call.
-            unsafe {
-                cpp_reactor::IntEvent::set(&*event, 1_i32);
-            }
-        }
-    }
-
-    fn arm_waiter(&mut self) {
-        let event: Arc<rusty::ReactorIntEvent> = unsafe {
-            // SAFETY: the reactor factory registers a fresh IntEvent owned by
-            // the returned Arc.  This method runs on the reactor thread.
-            cpp_reactor::create_sp_int_event(1_i32)
-        };
-        let mut guard = self.pending_recv_event_.lock().unwrap();
-        *guard = Some(event);
-    }
-
-    fn wait_for_signal(&mut self) {
-        let held: Option<Arc<rusty::ReactorIntEvent>> = {
-            let guard = self.pending_recv_event_.lock().unwrap();
-            (*guard).clone()
-        };
-        if let Some(event) = held {
-            // SAFETY: `wait` is the reactor's fiber-suspending const method.
-            // The cloned Arc keeps the event alive across the suspension.
-            unsafe {
-                cpp_reactor::IntEvent::wait(&*event);
-            }
-        }
+    fn arm_waiter(&self) -> Arc<crate::reactor::IntEvent> {
+        let event: Arc<crate::reactor::IntEvent> = crate::reactor::create_sp_int_event(1_i32);
+        let queue: Arc<Mutex<LegacyStdDeque<OwnedFrame>>> = self.queue_.clone();
+        let closed: Arc<AtomicBool> = self.closed_.clone();
+        let predicate: EventTestFn = Some(Box::new(move |_value| {
+            closed.load(Ordering::Acquire) || !queue.lock().unwrap().is_empty()
+        }));
+        // Only the owner reactor touches the event. Transport callbacks
+        // publish queue/closed state through the mutex and atomic latch.
+        *event.state_.test_.borrow_mut() = predicate;
+        event
     }
 
     /// # Safety
@@ -221,15 +156,15 @@ impl FiberChannel {
     /// `frame` must satisfy the channel facade's raw payload validity
     /// contract for this synchronous call.
     pub unsafe fn send_frame(
-        &mut self,
+        &self,
         frame: &ChannelFrame,
     ) -> ChannelError {
-        let ch: &mut Box<LegacyChannelConnectionBase> = &mut self.ch_;
+        let ch: &dyn ChannelConnectionBase = &*self.ch_;
         unsafe { ch.send_frame(frame) }
     }
 
-    pub fn close(&mut self) {
-        let ch: &mut Box<LegacyChannelConnectionBase> = &mut self.ch_;
+    pub fn close(&self) {
+        let ch: &dyn ChannelConnectionBase = &*self.ch_;
         ch.close();
     }
 
@@ -237,7 +172,7 @@ impl FiberChannel {
     /// close, so preserve the current disjunction rather than consulting only
     /// one side.
     pub fn is_closed(&self) -> bool {
-        if self.closed_.get() {
+        if self.closed_.load(Ordering::Acquire) {
             return true;
         }
         let ch: &Box<LegacyChannelConnectionBase> = &self.ch_;

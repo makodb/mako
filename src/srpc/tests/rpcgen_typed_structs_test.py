@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
-import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -26,15 +26,10 @@ service Beta {
 
 
 def run_rpcgen(repo_root: Path, rpc_path: Path) -> None:
-    cmd = [str(repo_root / "bin/rpcgen"), "--cpp", str(rpc_path)]
-    proc = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
-    if proc.returncode != 0:
-        raise RuntimeError(
-            "rpcgen failed\n"
-            f"command: {' '.join(cmd)}\n"
-            f"stdout:\n{proc.stdout}\n"
-            f"stderr:\n{proc.stderr}"
-        )
+    sys.path.insert(0, str(repo_root / "pylib"))
+    from simplerpcgen import rpcgen
+
+    rpcgen(str(rpc_path), ["cpp"])
 
 
 def section_between(text: str, start_marker: str, end_marker: str) -> str:
@@ -138,27 +133,27 @@ def verify_alpha_service_block(block: str) -> None:
 
     assert_contains(
         block,
-        "virtual rusty::Result<RpcPingResponse, srpc::i32> ping(const RpcPingRequest& req);",
+        "virtual rusty::Result<RpcPingResponse, srpc::i32> ping(const RpcPingRequest& req) const;",
     )
     assert_contains(
         block,
-        "virtual rusty::Result<RpcNopResponse, srpc::i32> nop(const RpcNopRequest& req);",
+        "virtual rusty::Result<RpcNopResponse, srpc::i32> nop(const RpcNopRequest& req) const;",
     )
     assert_contains(
         block,
-        "virtual rusty::Result<RpcUnnamedResponse, srpc::i32> unnamed(const RpcUnnamedRequest& req);",
+        "virtual rusty::Result<RpcUnnamedResponse, srpc::i32> unnamed(const RpcUnnamedRequest& req) const;",
     )
     assert_contains(
         block,
-        "virtual rusty::Result<RpcMultiResponse, srpc::i32> multi(const RpcMultiRequest& req);",
+        "virtual rusty::Result<RpcMultiResponse, srpc::i32> multi(const RpcMultiRequest& req) const;",
     )
     assert_contains(
         block,
-        "virtual rusty::Result<RpcAsyncSleepResponse, srpc::i32> async_sleep(const RpcAsyncSleepRequest& req);",
+        "virtual rusty::Result<RpcAsyncSleepResponse, srpc::i32> async_sleep(const RpcAsyncSleepRequest& req) const;",
     )
     assert_contains(
         block,
-        "virtual rusty::Task<rusty::Result<RpcAsyncWaitResponse, srpc::i32>> async_wait(const RpcAsyncWaitRequest& req);",
+        "virtual rusty::Task<rusty::Result<RpcAsyncWaitResponse, srpc::i32>> async_wait(const RpcAsyncWaitRequest& req) const;",
     )
     assert_contains(
         block,
@@ -167,17 +162,21 @@ def verify_alpha_service_block(block: str) -> None:
     assert_contains(
         block,
         "// @safe\n"
-        "    virtual void stream(const RpcStreamRequest& req, RpcStreamResponse& resp, srpc::DeferredReply defer);",
+        "    virtual void stream(const RpcStreamRequest& req, RpcStreamResponse& resp, srpc::DeferredReply defer) const;",
     )
     assert_contains(
         block,
         "// @safe\n"
-        "    void __ping__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {\n"
+        "    void __ping__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {\n"
         "        // @unsafe\n"
         "        {\n"
         "            RpcPingRequest __typed_req__;\n"
         "            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));\n"
         "            srpc::Deserialize_::deserialize(__typed_req__.id, __req_ar__);\n"
+        "            if (__req_ar__.failed()) {\n"
+        "                srpc::reject_malformed_request(*req, weak_sconn);\n"
+        "                return;\n"
+        "            }\n"
         "            auto __typed_result__ = this->ping(__typed_req__);\n"
         "            auto sconn_opt = weak_sconn.upgrade();\n"
         "            if (sconn_opt.is_some()) {\n"
@@ -197,7 +196,7 @@ def verify_alpha_service_block(block: str) -> None:
     )
     assert_contains(
         block,
-        "void __nop__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {\n"
+        "void __nop__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {\n"
         "        // @unsafe\n"
         "        {\n"
         "            RpcNopRequest __typed_req__;\n"
@@ -219,12 +218,16 @@ def verify_alpha_service_block(block: str) -> None:
     )
     assert_contains(
         block,
-        "void __unnamed__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {\n"
+        "void __unnamed__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {\n"
         "        // @unsafe\n"
         "        {\n"
         "            RpcUnnamedRequest __typed_req__;\n"
         "            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));\n"
         "            srpc::Deserialize_::deserialize(__typed_req__.in_0, __req_ar__);\n"
+        "            if (__req_ar__.failed()) {\n"
+        "                srpc::reject_malformed_request(*req, weak_sconn);\n"
+        "                return;\n"
+        "            }\n"
         "            auto __typed_result__ = this->unnamed(__typed_req__);\n"
         "            auto sconn_opt = weak_sconn.upgrade();\n"
         "            if (sconn_opt.is_some()) {\n"
@@ -244,13 +247,17 @@ def verify_alpha_service_block(block: str) -> None:
     )
     assert_contains(
         block,
-        "void __multi__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {\n"
+        "void __multi__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {\n"
         "        // @unsafe\n"
         "        {\n"
         "            RpcMultiRequest __typed_req__;\n"
         "            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));\n"
         "            srpc::Deserialize_::deserialize(__typed_req__.left, __req_ar__);\n"
         "            srpc::Deserialize_::deserialize(__typed_req__.right, __req_ar__);\n"
+        "            if (__req_ar__.failed()) {\n"
+        "                srpc::reject_malformed_request(*req, weak_sconn);\n"
+        "                return;\n"
+        "            }\n"
         "            auto __typed_result__ = this->multi(__typed_req__);\n"
         "            auto sconn_opt = weak_sconn.upgrade();\n"
         "            if (sconn_opt.is_some()) {\n"
@@ -271,12 +278,16 @@ def verify_alpha_service_block(block: str) -> None:
     )
     assert_contains(
         block,
-        "void __async_sleep__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {\n"
+        "void __async_sleep__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {\n"
         "        // @unsafe\n"
         "        {\n"
         "            RpcAsyncSleepRequest __typed_req__;\n"
         "            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));\n"
         "            srpc::Deserialize_::deserialize(__typed_req__.delay_ms, __req_ar__);\n"
+        "            if (__req_ar__.failed()) {\n"
+        "                srpc::reject_malformed_request(*req, weak_sconn);\n"
+        "                return;\n"
+        "            }\n"
         "            auto __fiber_req__ = std::move(req);\n"
         "            auto __fiber_weak_sconn__ = weak_sconn;\n"
         "            auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {\n"
@@ -300,12 +311,16 @@ def verify_alpha_service_block(block: str) -> None:
     )
     assert_contains(
         block,
-        "void __async_wait__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {\n"
+        "void __async_wait__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {\n"
         "        // @unsafe\n"
         "        {\n"
         "            RpcAsyncWaitRequest __typed_req__;\n"
         "            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));\n"
         "            srpc::Deserialize_::deserialize(__typed_req__.value, __req_ar__);\n"
+        "            if (__req_ar__.failed()) {\n"
+        "                srpc::reject_malformed_request(*req, weak_sconn);\n"
+        "                return;\n"
+        "            }\n"
         "            auto __async_req__ = std::move(req);\n"
         "            auto __async_weak_sconn__ = weak_sconn;\n"
         "            auto __async_task__ = this->async_wait(__typed_req__);\n"
@@ -329,12 +344,16 @@ def verify_alpha_service_block(block: str) -> None:
     assert_contains(
         block,
         "// @safe\n"
-        "    void __stream__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {\n"
+        "    void __stream__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {\n"
         "        // @unsafe\n"
         "        {\n"
         "            RpcStreamRequest __typed_req__;\n"
         "            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));\n"
         "            srpc::Deserialize_::deserialize(__typed_req__.stream_id, __req_ar__);\n"
+        "            if (__req_ar__.failed()) {\n"
+        "                srpc::reject_malformed_request(*req, weak_sconn);\n"
+        "                return;\n"
+        "            }\n"
         "            auto __typed_resp__ = std::make_shared<RpcStreamResponse>();\n"
         "            auto __defer__ = srpc::DeferredReply::new_(\n"
         "                std::move(req),\n"
@@ -370,16 +389,20 @@ def verify_beta_service_block(block: str) -> None:
     )
     assert_contains(
         block,
-        "virtual rusty::Result<RpcPingResponse, srpc::i32> ping(const RpcPingRequest& req);",
+        "virtual rusty::Result<RpcPingResponse, srpc::i32> ping(const RpcPingRequest& req) const;",
     )
     assert_contains(
         block,
-        "void __ping__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {\n"
+        "void __ping__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {\n"
         "        // @unsafe\n"
         "        {\n"
         "            RpcPingRequest __typed_req__;\n"
         "            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));\n"
         "            srpc::Deserialize_::deserialize(__typed_req__.other_id, __req_ar__);\n"
+        "            if (__req_ar__.failed()) {\n"
+        "                srpc::reject_malformed_request(*req, weak_sconn);\n"
+        "                return;\n"
+        "            }\n"
         "            auto __typed_result__ = this->ping(__typed_req__);\n"
         "            auto sconn_opt = weak_sconn.upgrade();\n"
         "            if (sconn_opt.is_some()) {\n"

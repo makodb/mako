@@ -1,13 +1,11 @@
 // Canonical Rust source for the srpc.utils module.
 // Compiled directly by rustc and translated by rusty-cpp crate mode.
-use cpp::srpc::logging as cpp_logging;
-use rusty as cpp;
+use crate::logging::log_line;
 use std::cell::Cell;
 
 // The emitter maps these source-level aliases back to the exact legacy C++
 // spellings (`addrinfo` and `std::string`) through the checked type-map.
 type LegacyAddrInfo = core::ffi::c_void;
-type LegacyStdString = String;
 
 #[allow(unsafe_code)]
 mod utils_ffi {
@@ -15,7 +13,12 @@ mod utils_ffi {
 
     unsafe extern "C" {
         pub(super) fn freeaddrinfo(info: *mut LegacyAddrInfo);
-        pub(super) fn srpc_find_open_port() -> i32;
+        pub(super) fn srpc_net_socket_open() -> i32;
+        pub(super) fn srpc_net_resolve_any() -> *mut LegacyAddrInfo;
+        pub(super) fn srpc_net_bind_port(fd: i32, address: *mut LegacyAddrInfo, port_native: u16) -> i32;
+        pub(super) fn srpc_net_socket_name_status(fd: i32) -> i32;
+        pub(super) fn srpc_net_close(fd: i32) -> i32;
+        pub(super) fn srpc_net_hostname(buffer: *mut u8, capacity: usize) -> i32;
     }
 }
 
@@ -71,32 +74,74 @@ impl Drop for AddrInfo {
     }
 }
 
-/// Return the first bindable port from the existing terminal C scan, or -1.
+// Scan and cleanup are shared by both compiler lanes. The C operations only
+// construct platform address layouts and execute individual socket calls.
+#[allow(unsafe_code)]
+fn scan_open_port() -> i32 {
+    let fd = unsafe { utils_ffi::srpc_net_socket_open() };
+    if fd < 0 {
+        return -1;
+    }
+    let local = unsafe { utils_ffi::srpc_net_resolve_any() };
+    if local.is_null() {
+        unsafe { utils_ffi::srpc_net_close(fd) };
+        return -1;
+    }
+    let mut port: i32 = 0;
+    let mut candidate: i32 = 1024;
+    while candidate < 65000 {
+        if unsafe { utils_ffi::srpc_net_bind_port(fd, local, candidate as u16) } != 0 {
+            candidate += 1;
+            continue;
+        }
+        if unsafe { utils_ffi::srpc_net_socket_name_status(fd) } != 0 {
+            port = -1;
+        } else {
+            port = candidate;
+        }
+        break;
+    }
+    unsafe {
+        utils_ffi::freeaddrinfo(local);
+        utils_ffi::srpc_net_close(fd);
+    }
+    port
+}
+
+/// Return the first bindable port in the historical scan order, or -1.
 #[allow(unsafe_code)]
 pub fn find_open_port() -> i32 {
-    let port = unsafe { utils_ffi::srpc_find_open_port() };
+    let port = scan_open_port();
     if port > 0 {
-        let mut message: LegacyStdString = "Found open port: ".to_string();
+        let mut message: String = "Found open port: ".to_string();
         message += &port.to_string();
         // SAFETY: the file pointer is null, so the logger performs no path scan.
-        unsafe { cpp_logging::log_line(3, 0, core::ptr::null(), &message) };
+        unsafe { log_line(3, 0, core::ptr::null(), &message) };
         return port;
     }
 
-    let message: LegacyStdString = "Failed to find open port.".to_string();
+    let message: String = "Failed to find open port.".to_string();
     // SAFETY: the file pointer is null, so the logger performs no path scan.
-    unsafe { cpp_logging::log_line(1, 0, core::ptr::null(), &message) };
+    unsafe { log_line(1, 0, core::ptr::null(), &message) };
     -1
 }
 
 /// Return the host name, logging and preserving an empty result on failure.
 #[allow(unsafe_code)]
-pub fn get_host_name() -> LegacyStdString {
-    let name: LegacyStdString = rusty::sys::env::hostname();
+pub fn get_host_name() -> String {
+    let mut bytes: [u8; 256] = [0; 256];
+    let status = unsafe { utils_ffi::srpc_net_hostname(bytes.as_mut_ptr(), 255) };
+    let mut length: usize = 0;
+    if status == 0 {
+        while length < 255 && bytes[length] != 0 {
+            length += 1;
+        }
+    }
+    let name: String = String::from_utf8_lossy(&bytes[..length]).to_string();
     if name.is_empty() {
-        let message: LegacyStdString = "Failed to get hostname.".to_string();
+        let message: String = "Failed to get hostname.".to_string();
         // SAFETY: the file pointer is null, so the logger performs no path scan.
-        unsafe { cpp_logging::log_line(1, 0, core::ptr::null(), &message) };
+        unsafe { log_line(1, 0, core::ptr::null(), &message) };
     }
     name
 }

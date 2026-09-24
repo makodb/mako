@@ -12,8 +12,7 @@ use crate::callback_wrapper as _;
 // Native Rust owns a String.  The C++ consumer maps this private alias to
 // std::string so trait return types remain byte-for-byte compatible with the
 // existing channel implementations.
-type LegacyStdString = String;
-type LegacyCallbackWrapper<F> = rusty::CallbackWrapper<F>;
+type LegacyCallbackWrapper<F> = crate::callback_wrapper::detail::CallbackWrapper<F>;
 
 /// Transport error returned by every channel tier.
 #[repr(i32)]
@@ -72,7 +71,7 @@ pub type OnErrorCallback =
     LegacyCallbackWrapper<Box<dyn Fn(self::ChannelError, &str) + Send + Sync>>;
 
 /// Abstract transport connection implemented by TCP and in-memory channels.
-pub trait ChannelConnectionBase {
+pub trait ChannelConnectionBase: Send + Sync {
     /// Send one frame whose payload is described by a raw pointer.
     ///
     /// # Safety
@@ -81,11 +80,17 @@ pub trait ChannelConnectionBase {
     /// and readable for exactly `frame.size` bytes for this synchronous call.
     /// The range must not be concurrently mutated.
     #[allow(unsafe_code)]
-    unsafe fn send_frame(&mut self, frame: &self::ChannelFrame) -> self::ChannelError;
-    fn flush(&mut self);
-    fn close(&mut self);
+    unsafe fn send_frame(&self, frame: &self::ChannelFrame) -> self::ChannelError;
+    fn flush(&self);
+    fn close(&self);
     fn is_closed(&self) -> bool;
-    fn peer_address(&self) -> LegacyStdString;
+    fn peer_address(&self) -> String;
+    /// Apply TCP keepalive settings. Returns false when this transport has no
+    /// TCP socket or the OS rejects an option. Non-TCP transports do not use
+    /// TCP keepalive and inherit the unsupported result.
+    fn set_keepalive(&self, _enabled: bool, _idle_sec: i32, _interval_sec: i32, _count: i32) -> bool {
+        false
+    }
     fn set_on_frame(&mut self, callback: self::OnFrameCallback);
     fn set_on_closed(&mut self, callback: self::OnClosedCallback);
     fn set_on_error(&mut self, callback: self::OnErrorCallback);
@@ -94,35 +99,27 @@ pub trait ChannelConnectionBase {
 /// Owned, non-nullable connection handle.
 pub type ChannelConnectionProxy = Box<dyn ChannelConnectionBase>;
 
+/// A connection argument that may be absent at a transport boundary.
+pub type NullableChannelConnectionProxy = Option<ChannelConnectionProxy>;
+
 pub type OnAcceptCallback =
-    LegacyCallbackWrapper<Box<dyn Fn(self::ChannelConnectionProxy) + Send + Sync>>;
+    LegacyCallbackWrapper<Box<dyn Fn(self::NullableChannelConnectionProxy) + Send + Sync>>;
 
 /// Abstract accept loop implemented by transport listeners.
 ///
 /// # Safety
 ///
-/// `OneTimeJob`'s callable is `Box<dyn FnMut() + Send + Sync>` (see
-/// `base/misc.cpp`), and `Server::drop` moves an owning
-/// `Box<dyn ChannelListenerBase>` into the poll-thread close job, so the
-/// handle itself must be able to cross threads.  `Send + Sync` records that.
-/// The trait is `unsafe` because every implementor here reaches C++ backend
-/// state (an fd, an in-memory registry) whose thread-safety the Rust type
-/// system cannot see: `TcpListener` and `TcpConnection` already carry
-/// hand-written `unsafe impl Send`/`unsafe impl Sync` for exactly that
-/// reason.  An implementor asserts that its backend is safe to close from,
-/// and accept on, a thread other than the one that created it.
-///
-/// This is the same shape the reactor promotion used for
-/// `pub unsafe trait Job: Send + Sync`, and it is the form the emitter's
-/// `cpp_import_namespace` leaf contract requires: a leaf trait carrying both
-/// `Send` and `Sync` must be declared `unsafe` (a bare `Send` supertrait may
-/// stay safe, which is why `PollableBase: Send` does).
+/// Server teardown transfers listener ownership to a poll-thread job.
+/// Implementors must keep listener storage and registered callbacks valid
+/// throughout polling and close. Rust checks the `Send + Sync` bounds on
+/// their shared state; canonical TCP and in-memory listeners use synchronized
+/// ownership for callbacks and native resources.
 #[allow(unsafe_code)]
 pub unsafe trait ChannelListenerBase: Send + Sync {
     fn listen(&mut self, address: &str) -> self::ChannelError;
     fn close(&mut self);
     fn is_closed(&self) -> bool;
-    fn local_address(&self) -> LegacyStdString;
+    fn local_address(&self) -> String;
     fn set_on_accept(&mut self, callback: self::OnAcceptCallback);
     fn set_on_error(&mut self, callback: self::OnErrorCallback);
 }
@@ -138,11 +135,14 @@ pub struct ConnectResult {
 }
 
 /// Factory for transport connections and listeners.
-pub trait ChannelFactoryBase {
+pub trait ChannelFactoryBase: Send {
     fn connect(&mut self, address: &str) -> self::ConnectResult;
     fn make_listener(&mut self) -> Option<self::ChannelListenerProxy>;
-    fn backend_name(&self) -> LegacyStdString;
+    fn backend_name(&self) -> String;
 }
 
 /// Owned, non-nullable factory handle.
 pub type ChannelFactoryProxy = Box<dyn ChannelFactoryBase>;
+
+/// A factory argument that may be absent at a client or server boundary.
+pub type NullableChannelFactoryProxy = Option<ChannelFactoryProxy>;

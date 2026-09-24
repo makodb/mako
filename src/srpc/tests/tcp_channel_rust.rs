@@ -1,8 +1,8 @@
 #![allow(unsafe_code)]
 
-use srpc::channel::{ChannelError, OnAcceptCallback, OnClosedCallback};
+use srpc::callback_wrapper::detail::CallbackWrapper;
+use srpc::channel::{ChannelError, ChannelFrame, OnAcceptCallback, OnClosedCallback};
 use srpc::tcp_channel::{kTcpConnectionOutboundHighWaterDefault, TcpConnection, TcpListener};
-use rusty::CallbackWrapper;
 use std::net::TcpStream;
 use std::os::fd::IntoRawFd;
 use std::os::unix::net::UnixStream;
@@ -12,50 +12,6 @@ use std::thread;
 use std::time::Duration;
 
 fn assert_send_sync<T: Send + Sync>() {}
-
-static NEXT_TEST_THREAD_ID: AtomicU32 = AtomicU32::new(1);
-
-thread_local! {
-    static TEST_THREAD_ID: u32 = NEXT_TEST_THREAD_ID.fetch_add(1, Ordering::Relaxed);
-}
-
-// Cargo's Rust lane does not compile the production plain-C syscall seam.
-// These inert definitions satisfy references in unexercised TCP I/O helpers;
-// the CMake/Clang runtime lane links and exercises rpc/srpc_connect.c itself.
-#[no_mangle]
-pub extern "C" fn srpc_tcp_recv_scratch() -> *mut u8 {
-    core::ptr::null_mut()
-}
-
-#[no_mangle]
-pub extern "C" fn srpc_tcp_recv_bytes(_fd: i32, _data: *mut u8, _size: usize) -> i64 {
-    -1
-}
-
-#[no_mangle]
-pub extern "C" fn srpc_tcp_send_bytes(_fd: i32, _data: *const u8, _size: usize) -> i64 {
-    -1
-}
-
-#[no_mangle]
-pub extern "C" fn srpc_tcp_shutdown(_fd: i32) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn srpc_tcp_set_nonblocking(_fd: i32) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn srpc_tcp_last_errno() -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn srpc_tcp_current_thread_id() -> u32 {
-    TEST_THREAD_ID.with(|thread_id| *thread_id)
-}
 
 #[test]
 fn fresh_listener_preserves_the_invalid_fd_and_basic_pollable_contract() {
@@ -316,4 +272,38 @@ fn accept_callback_can_close_its_listener_without_deadlocking() {
     closed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
     assert!(listener.is_closed());
     assert_eq!(listener.fd(), -1);
+}
+
+#[test]
+fn flush_failure_still_delivers_one_reentrant_close_callback() {
+    let (owned, peer) = UnixStream::pair().unwrap();
+    owned.set_nonblocking(true).unwrap();
+    // SAFETY: into_raw_fd transfers the stream's sole descriptor ownership.
+    let connection = Arc::new(unsafe {
+        TcpConnection::new(owned.into_raw_fd(), "flush-failure".to_string())
+    });
+    let callbacks = Arc::new(AtomicU32::new(0));
+    let observed = callbacks.clone();
+    let weak = Arc::downgrade(&connection);
+    connection.set_on_closed(CallbackWrapper::from_callable(Box::new(move |reason| {
+        assert_eq!(reason, ChannelError::None);
+        observed.fetch_add(1, Ordering::SeqCst);
+        if let Some(connection) = weak.upgrade() {
+            assert_eq!(connection.fd(), -1);
+            connection.close();
+            connection.set_on_closed(OnClosedCallback::default());
+        }
+    })));
+    let bytes = [0x11, 0x22, 0x33];
+    let frame = ChannelFrame { payload: bytes.as_ptr(), size: bytes.len() };
+    // SAFETY: frame points at the live, immutable bytes for this call.
+    assert_eq!(unsafe { connection.send_frame(&frame) }, ChannelError::None);
+    drop(peer);
+    connection.flush();
+    assert!(connection.is_closed(), "peer closure must produce a real write failure");
+    assert_eq!(callbacks.load(Ordering::SeqCst), 0);
+    connection.close();
+    connection.close();
+    assert_eq!(connection.fd(), -1);
+    assert_eq!(callbacks.load(Ordering::SeqCst), 1);
 }

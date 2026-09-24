@@ -1,0 +1,29 @@
+# LeakSanitizer suppressions for the SRPC runtime battery.
+#
+# The reactor retains every fiber it creates in its `fibers_` registry until
+# the reactor ITSELF is destroyed -- documented behaviour (docs/srpc-book.md
+# ch.3: "the reactor's fibers_ registry holds its own reference until the fiber
+# finishes and is recycled ... stays alive until the reactor itself is
+# destroyed"). The runtime-battery suites create reactors and fibers and then
+# exit the process without tearing the reactor down, so LSan sees those
+# retained fiber-task allocations as leaks. They are by-design retention, not
+# leaks.
+#
+# These suppressions cover exactly the fiber-creation allocation paths (every
+# leak origin observed across test_fiber / test_fiber_runtime /
+# test_timeout_race / test_reactor_extended routes through one of them). A
+# genuine leak in any OTHER code path still surfaces, and AddressSanitizer's
+# memory-error checking (use-after-free, heap/stack overflow) is unaffected by
+# these -- that dimension runs fully and is what most protects the framer,
+# serialization and `unsafe` code. This mirrors gRPC's lsan_suppressions.txt
+# and Cap'n Proto's / Thrift's valgrind suppression practice for runtimes with
+# intentionally retained allocations.
+#
+# The proper fix is for the battery suites to destroy their reactors on
+# teardown; until then these suppressions keep the leak dimension usable
+# instead of drowned in known retention.
+leak:srpc::fiber_install_task
+leak:srpc::reactor_create_run_fiber
+leak:srpc::fiber_create_run_impl
+leak:srpc::reactor_get_or_create_fiber_impl
+leak:srpc::fiber_run
