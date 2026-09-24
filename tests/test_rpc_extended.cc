@@ -21,14 +21,14 @@ using namespace std::chrono;
 // Extended test service with more failure scenarios
 class ExtendedTestService : public benchmark::BenchmarkService {
 public:
-    std::atomic<int> call_count{0};
-    std::atomic<bool> should_crash{false};
-    std::atomic<bool> should_delay{false};
-    std::atomic<int> delay_ms{100};
-    std::atomic<bool> should_throw{false};
+    mutable std::atomic<int> call_count{0};
+    mutable std::atomic<bool> should_crash{false};
+    mutable std::atomic<bool> should_delay{false};
+    mutable std::atomic<int> delay_ms{100};
+    mutable std::atomic<bool> should_throw{false};
 
     rusty::Result<BenchmarkService::RpcFastNopResponse, i32>
-    fast_nop(const BenchmarkService::RpcFastNopRequest& req) override {
+    fast_nop(const BenchmarkService::RpcFastNopRequest& req) const override {
         (void)req;
         call_count++;
         if (should_throw) {
@@ -42,7 +42,7 @@ public:
     }
 
     rusty::Result<BenchmarkService::RpcNopResponse, i32>
-    nop(const BenchmarkService::RpcNopRequest& req) override {
+    nop(const BenchmarkService::RpcNopRequest& req) const override {
         (void)req;
         call_count++;
         if (should_delay) {
@@ -53,7 +53,7 @@ public:
     }
 
     rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>
-    fast_prime(const BenchmarkService::RpcFastPrimeRequest& req) override {
+    fast_prime(const BenchmarkService::RpcFastPrimeRequest& req) const override {
         call_count++;
         bool is_prime = true;
         if (req.n <= 1) {
@@ -72,7 +72,7 @@ public:
     }
 
     rusty::Result<BenchmarkService::RpcPrimeResponse, i32>
-    prime(const BenchmarkService::RpcPrimeRequest& req) override {
+    prime(const BenchmarkService::RpcPrimeRequest& req) const override {
         BenchmarkService::RpcFastPrimeRequest fast_req{};
         fast_req.n = req.n;
         auto fast_ret = fast_prime(fast_req);
@@ -86,7 +86,7 @@ public:
     }
 
     rusty::Result<BenchmarkService::RpcFastVecResponse, i32>
-    fast_vec(const BenchmarkService::RpcFastVecRequest& req) override {
+    fast_vec(const BenchmarkService::RpcFastVecRequest& req) const override {
         call_count++;
         BenchmarkService::RpcFastVecResponse resp{};
         for (i32 i = 0; i < req.n; i++) {
@@ -96,7 +96,7 @@ public:
     }
 
     rusty::Result<BenchmarkService::RpcSleepResponse, i32>
-    sleep(const BenchmarkService::RpcSleepRequest& req) override {
+    sleep(const BenchmarkService::RpcSleepRequest& req) const override {
         call_count++;
         std::this_thread::sleep_for(std::chrono::duration<double>(req.sec));
         BenchmarkService::RpcSleepResponse resp{};
@@ -145,7 +145,7 @@ namespace {
 rusty::Arc<RpcServiceContext> make_test_rpc_context() {
     rusty::HashMap<i32, size_t> rpc_to_service;
     rusty::HashSet<i32> fast_rpc_ids;
-    rusty::Vec<rusty::RefCell<ServiceProxy>> services;
+    rusty::Vec<ServiceProxy> services;
     return rusty::Arc<RpcServiceContext>::new_(
         RpcServiceContext::new_(
             std::move(rpc_to_service),

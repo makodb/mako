@@ -1,0 +1,38 @@
+# Rust-lane microbenchmark harness for srpc's hot leaf codecs.
+#
+# This package exists ONLY to measure. Like verify/, it is excluded from the
+# srpc workspace (see the root Cargo.toml `[workspace] exclude`) and carries its
+# own `[workspace]` table, so:
+#
+#   * `cargo test --locked --workspace --all-targets` -- what the source gate
+#     runs, under RUSTFLAGS=-Dwarnings -- never sees it. A benchmark is not a
+#     correctness gate, and it must not add compile time or lint surface to one.
+#   * rusty-cpp never transpiles it, so it cannot affect the C++ ABI.
+#
+# It depends on `srpc` as an ordinary path dependency rather than `#[path]`-
+# linking the sources the way verify/ does: Verus has to see module source with
+# `#[cfg(verus)]` active, but a benchmark just needs the compiled functions, and
+# going through the real public API is both simpler and a more honest measure of
+# what a consumer gets.
+#
+# Usage:  scripts/run_microbench.sh          (or: cd bench && cargo run --release)
+[package]
+name = "srpc-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+# Own single-package workspace, independent of the srpc workspace root.
+[workspace]
+
+[dependencies]
+srpc = { path = ".." }
+
+# A benchmark measured in a debug build measures nothing. Pin the optimisation
+# settings here so `cargo run --release` cannot be accidentally under-tuned, and
+# so two runs from different shells are comparable.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+debug = true

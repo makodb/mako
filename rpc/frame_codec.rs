@@ -6,8 +6,84 @@ use crate::internal_protocol::{
     encode_response_size, response_has_extended_header, response_payload_size,
 };
 
+// Verus specs (behind #[cfg(verus)], invisible to rustc and rusty-cpp) pin the
+// peek-header bound (T4-style workaround for the from_ne_bytes wall, see
+// docs/verification.md). The enum/struct they mention are admitted in
+// verify/src/frame_codec_proofs.rs via external type specifications.
+#[cfg(verus)]
+use vstd::prelude::*;
+
+// The 4-byte header word, read out of the leading bytes.
+//
+// Verus cannot process `i32::from_ne_bytes`: vstd does not specify it, and its
+// const-generic array signature cannot be matched by `assume_specification`. So
+// the call is isolated here and this body is trusted (`external_body`) -- the
+// same shape vstd's own bytes.rs uses to wrap the std byte calls.
+//
+// The `ensures` is a TRUSTED AXIOM, and it is target-conditional: it states the
+// little-endian decomposition, which is what native-endian marshalling is on the
+// little-endian targets srpc supports (x86_64, aarch64-LE) -- the same assumption
+// tests/wire_golden_rust.rs already encodes in its byte vectors. It could not be
+// stated as the endian-agnostic "from(to(x)) == x", because that would require
+// calling one exec helper inside the other's spec, which Verus disallows.
+//
+// SCOPE: only the write->peek round trip (T5) rests on this. The peek-header
+// bound (T6) does NOT -- that follows from the two range guards regardless of
+// what these bytes decode to.
+#[cfg_attr(verus, verus_verify(external_body))]
+#[cfg_attr(verus, verus_spec(r =>
+    ensures r == ((((b0 as u32) | ((b1 as u32) << 8) | ((b2 as u32) << 16)
+        | ((b3 as u32) << 24))) as i32),
+))]
+fn header_word_from_bytes(b0: u8, b1: u8, b2: u8, b3: u8) -> i32 {
+    i32::from_ne_bytes([b0, b1, b2, b3])
+}
+
+// The store side of the same trusted boundary (wraps `to_ne_bytes`), with the
+// matching little-endian axiom. Same scope caveat as above.
+#[cfg_attr(verus, verus_verify(external_body))]
+#[cfg_attr(verus, verus_spec(
+    requires out_buf.len() >= 4,
+    ensures
+        final(out_buf)@.len() == old(out_buf)@.len(),
+        final(out_buf)@[0] == (((w as u32)) & 0xFF) as u8,
+        final(out_buf)@[1] == (((w as u32) >> 8) & 0xFF) as u8,
+        final(out_buf)@[2] == (((w as u32) >> 16) & 0xFF) as u8,
+        final(out_buf)@[3] == (((w as u32) >> 24) & 0xFF) as u8,
+))]
+fn store_header_word(out_buf: &mut [u8], w: i32) {
+    let bytes: [u8; 4] = w.to_ne_bytes();
+    out_buf[0] = bytes[0];
+    out_buf[1] = bytes[1];
+    out_buf[2] = bytes[2];
+    out_buf[3] = bytes[3];
+}
+
+#[cfg_attr(verus, verus_verify)]
 pub const kFrameHeaderSize: usize = 4;
-pub const kMaxFramePayloadSize: i32 = 0x7fffffff;
+// Largest payload a single frame may carry.
+//
+// This is a STREAM-INTEGRITY bound, not a resource policy. The 4-byte header
+// is the only framing signal on the wire, so if a connection ever
+// desynchronises -- a short write, a reconnect that resumes mid-frame, a bug
+// upstream -- the decoder reads payload bytes as a header and gets a garbage
+// length. With no bound it ACCEPTS that length and waits for bytes that will
+// never arrive: next_frame() returns NeedMoreBytes forever, consume_frame()
+// never advances the cursor, the buffer is never compacted, and the
+// connection wedges silently -- no error, no log, no close, no reconnect.
+//
+// A bound turns that into Malformed -> error -> close -> reconnect, which is
+// a failure the caller can see and recover from.
+//
+// 64 MiB is far above any real srpc message and rejects 127/128 of the
+// 31-bit size space, so a desync is caught on the first bad header with high
+// probability. It is the only knob: raise it if a legitimate message ever
+// needs to be larger.
+//
+// It must also stay <= i32::MAX - kFrameHeaderSize, so that
+// FrameHeader::total_frame_size() cannot overflow.
+#[cfg_attr(verus, verus_verify)]
+pub const kMaxFramePayloadSize: i32 = 64 * 1024 * 1024;
 
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, PartialEq, Eq))]
 #[repr(i32)]
@@ -39,11 +115,48 @@ pub struct FrameHeader {
 
 impl FrameHeader {
     pub fn total_frame_size(&self) -> i32 {
-        self.payload_size.wrapping_add(kFrameHeaderSize as i32)
+        // Saturating, not wrapping. Every caller does `total_frame_size() as
+        // usize`, and casting a NEGATIVE i32 to usize sign-extends: a wrapped
+        // -2147483645 becomes 18446744071562067971, which makes the
+        // `rem.len() < total` guard true forever and wedges the stream.
+        // Saturation keeps a malformed header merely unsatisfiable rather
+        // than catastrophically so; peek_header rejects it before that.
+        self.payload_size.saturating_add(kFrameHeaderSize as i32)
     }
 }
 
-#[allow(clippy::absurd_extreme_comparisons)]
+// T5 (encode side): on success the four leader bytes are the little-endian
+// image of encode_response_size(payload_size, flag). encode's definition is
+// inlined because a spec cannot call an exec function.
+#[cfg_attr(verus, verus_spec(r =>
+    ensures
+        final(out_buf)@.len() == old(out_buf)@.len(),
+        // succeeds exactly on the in-range, big-enough-buffer case
+        (0i32 <= payload_size && payload_size <= kMaxFramePayloadSize
+            && old(out_buf)@.len() >= kFrameHeaderSize) ==> r == true,
+        (r == true) ==> (
+            final(out_buf)@[0] == ((((if extended_header_flag {
+                ((payload_size as u32) & 0x7fffffffu32) | 0x80000000u32
+            } else {
+                (payload_size as u32) & 0x7fffffffu32
+            }) as i32) as u32) & 0xFF) as u8
+            && final(out_buf)@[1] == (((((if extended_header_flag {
+                ((payload_size as u32) & 0x7fffffffu32) | 0x80000000u32
+            } else {
+                (payload_size as u32) & 0x7fffffffu32
+            }) as i32) as u32) >> 8) & 0xFF) as u8
+            && final(out_buf)@[2] == (((((if extended_header_flag {
+                ((payload_size as u32) & 0x7fffffffu32) | 0x80000000u32
+            } else {
+                (payload_size as u32) & 0x7fffffffu32
+            }) as i32) as u32) >> 16) & 0xFF) as u8
+            && final(out_buf)@[3] == (((((if extended_header_flag {
+                ((payload_size as u32) & 0x7fffffffu32) | 0x80000000u32
+            } else {
+                (payload_size as u32) & 0x7fffffffu32
+            }) as i32) as u32) >> 24) & 0xFF) as u8
+        ),
+))]
 pub fn frame_codec_write_header(
     out_buf: &mut [u8],
     payload_size: i32,
@@ -59,22 +172,58 @@ pub fn frame_codec_write_header(
         return false;
     }
     let encoded: i32 = encode_response_size(payload_size, extended_header_flag);
-    let bytes: [u8; 4] = encoded.to_ne_bytes();
-    out_buf[0] = bytes[0];
-    out_buf[1] = bytes[1];
-    out_buf[2] = bytes[2];
-    out_buf[3] = bytes[3];
+    store_header_word(out_buf, encoded);
     true
 }
 
+// T6: a Complete decode always reports a payload size inside the valid range,
+// which is what makes the reader's `as usize` casts safe. The bound follows from
+// the two guards below (< 0 and > kMaxFramePayloadSize both reject before
+// Complete), so it holds for whatever the leader bytes decode to.
+// T5 (decode side) is the second clause: on Complete the reported size and flag
+// are the internal_protocol decode of the little-endian leader word. Those
+// decodes are inlined (a spec cannot call an exec function); the word itself
+// comes from the trusted little-endian axiom on header_word_from_bytes.
+#[cfg_attr(verus, verus_spec(r =>
+    ensures
+        // reports Complete exactly when the buffer is long enough and the
+        // decoded size is within the frame bound (it is never negative)
+        (buf@.len() >= kFrameHeaderSize
+            && 0i32 <= (((((((buf@[0] as u32) | ((buf@[1] as u32) << 8)
+                | ((buf@[2] as u32) << 16) | ((buf@[3] as u32) << 24))) as i32) as u32)
+                & 0x7fffffffu32) as i32)
+            && (((((((buf@[0] as u32) | ((buf@[1] as u32) << 8) | ((buf@[2] as u32) << 16)
+                | ((buf@[3] as u32) << 24))) as i32) as u32) & 0x7fffffffu32) as i32)
+                <= kMaxFramePayloadSize) ==> r == FrameDecodeStatus::Complete,
+        (r == FrameDecodeStatus::Complete) ==> (
+            0i32 <= final(out_header).payload_size
+                && final(out_header).payload_size <= kMaxFramePayloadSize
+        ),
+        (r == FrameDecodeStatus::Complete) ==> (
+            final(out_header).payload_size == (((((((buf@[0] as u32)
+                | ((buf@[1] as u32) << 8) | ((buf@[2] as u32) << 16)
+                | ((buf@[3] as u32) << 24))) as i32) as u32) & 0x7fffffffu32) as i32)
+            && final(out_header).extended_header_flag == (((((((buf@[0] as u32)
+                | ((buf@[1] as u32) << 8) | ((buf@[2] as u32) << 16)
+                | ((buf@[3] as u32) << 24))) as i32) as u32) & 0x80000000u32) != 0)
+        ),
+))]
 pub fn frame_codec_peek_header(buf: &[u8], out_header: &mut FrameHeader) -> FrameDecodeStatus {
     if buf.len() < kFrameHeaderSize {
         return FrameDecodeStatus::NeedMoreBytes;
     }
-    let encoded = i32::from_ne_bytes([buf[0], buf[1], buf[2], buf[3]]);
+    let encoded = header_word_from_bytes(buf[0], buf[1], buf[2], buf[3]);
     let extended_header_flag = response_has_extended_header(encoded);
     let payload_size = response_payload_size(encoded);
+    // response_payload_size() masks with kResponseSizeMask, so payload_size
+    // is never negative -- this arm is defence in depth, not the live check.
     if payload_size < 0 {
+        return FrameDecodeStatus::Malformed;
+    }
+    // The live check. Before kMaxFramePayloadSize had a real value this was
+    // unsatisfiable and the decoder could not reject ANY header, so a
+    // desynchronised stream was indistinguishable from a slow one.
+    if payload_size > kMaxFramePayloadSize {
         return FrameDecodeStatus::Malformed;
     }
     out_header.payload_size = payload_size;
@@ -89,7 +238,7 @@ pub struct FrameView {
     pub payload_size: usize,
 }
 
-type FrameBytes = rusty::StdVector<u8>;
+type FrameBytes = Vec<u8>;
 pub type FrameCursor = std::io::Cursor<FrameBytes>;
 
 pub fn make_frame_cursor() -> FrameCursor {

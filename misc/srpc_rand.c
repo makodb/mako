@@ -1,12 +1,11 @@
-/* srpc_rand.c — the per-thread PRNG seed store as plain C (Goal-0 C
- * demotion). Contract mirrors srpc_net.c / srpc_timing.c: no C++ type
- * crosses this boundary, and all range/scale logic stays in the DSL
- * statics on the C++ side.
+/* Shared native PRNG seed storage and raw draws. Canonical misc/rand.rs
+ * owns range and scale calculations in both the rustc and generated C++
+ * builds; only C ABI types cross this boundary.
  *
  * Everything here was srpc::randgen_* in misc/rand.cpp: pthread_key
  * plumbing with a raw `free` destructor, pthread_getspecific returning
- * void*, malloc, a raw `unsigned int*` seed, and rand_r over it. None
- * of it can be inline-Rust DSL, and none of it needs C++.
+ * void*, malloc, a raw `unsigned int*` seed, and rand_r over it. These
+ * platform resources remain in the kernel shared by both builds.
  */
 
 #include <pthread.h>

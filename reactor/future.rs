@@ -5,43 +5,35 @@
 use std::cell::Cell;
 use std::sync::Arc;
 
-// `rusty` is the rustc-only facade package. The emitter drops this alias and
-// treats the following `cpp::` paths as checked C++ named-module imports.
-use cpp::srpc::reactor as cpp_reactor;
-use cpp::std as cpp_std;
-use rusty as cpp;
+#[allow(unused_imports)]
+use crate::reactor as _;
 
 /// Construct the `BoxEvent<T>` state owned by a new promise.
-#[allow(unsafe_code)]
-pub fn fiber_make_state<T>() -> Arc<rusty::ReactorBoxEvent<T>> {
-    // SAFETY: `create_sp_box_event<T>` has no caller-side safety
-    // precondition; the explicit block records the foreign C++ module call.
-    unsafe { cpp_reactor::create_sp_box_event::<T>() }
+pub fn fiber_make_state<T: Clone + Default + 'static>() -> Arc<crate::reactor::BoxEvent<T>> {
+    crate::reactor::create_sp_box_event::<T>()
 }
 
 /// Construct the empty state used by a default/moved-from future.
-pub fn fiber_null_state<T>() -> Option<Arc<rusty::ReactorBoxEvent<T>>> {
+pub fn fiber_null_state<T>() -> Option<Arc<crate::reactor::BoxEvent<T>>> {
     None
 }
 
 #[repr(C)]
 pub struct FiberPromise<T> {
-    pub state_: Option<Arc<rusty::ReactorBoxEvent<T>>>,
+    pub state_: Option<Arc<crate::reactor::BoxEvent<T>>>,
     pub future_retrieved_: Cell<bool>,
 }
 
-impl<T> Default for FiberPromise<T> {
-    #[allow(unsafe_code)]
+impl<T: Clone + Default + 'static> Default for FiberPromise<T> {
     fn default() -> FiberPromise<T> {
         FiberPromise {
-            // SAFETY: the foreign factory has no caller-side precondition.
-            state_: Some(unsafe { cpp_reactor::create_sp_box_event::<T>() }),
+            state_: Some(crate::reactor::create_sp_box_event::<T>()),
             future_retrieved_: Cell::new(false),
         }
     }
 }
 
-impl<T> FiberPromise<T> {
+impl<T: Clone + Default + 'static> FiberPromise<T> {
     pub fn get_future(&mut self) -> FiberFuture<T> {
         fiber_promise_get_future(self)
     }
@@ -70,7 +62,7 @@ impl<T> FiberPromise<T> {
 
 #[repr(C)]
 pub struct FiberFuture<T> {
-    pub state_: Option<Arc<rusty::ReactorBoxEvent<T>>>,
+    pub state_: Option<Arc<crate::reactor::BoxEvent<T>>>,
     pub nc_: Cell<bool>,
 }
 
@@ -83,7 +75,7 @@ impl<T> Default for FiberFuture<T> {
     }
 }
 
-impl<T> FiberFuture<T> {
+impl<T: Clone + Default + 'static> FiberFuture<T> {
     pub fn get(&mut self) -> T
     where
         T: Clone,
@@ -127,35 +119,35 @@ impl<T> FiberFuture<T> {
 
 /// Retrieve the unique future and share the promise's event state with it.
 #[allow(clippy::field_reassign_with_default)]
-pub fn fiber_promise_get_future<T>(self_: &mut FiberPromise<T>) -> FiberFuture<T> {
+pub fn fiber_promise_get_future<T: Clone + Default + 'static>(self_: &mut FiberPromise<T>) -> FiberFuture<T> {
     assert!(
         !self_.future_retrieved_.get(),
         "FiberFuture already retrieved from FiberPromise"
     );
     self_.future_retrieved_.set(true);
-    let mut future: FiberFuture<T> = Default::default();
+    let mut future: FiberFuture<T> = FiberFuture::<T>::default();
     future.state_ = self_.state_.clone();
     future
 }
 
+/// The Rust tuple keeps the established std::pair C++ profile.
+pub type PromisePair<Promise, Future> = (Promise, Future);
+
 /// Create a promise/future pair sharing one event state.
-#[allow(unsafe_code)]
 #[allow(unused_mut)]
-pub fn make_promise<T>() -> rusty::StdPair<FiberPromise<T>, FiberFuture<T>> {
-    let mut promise: FiberPromise<T> = Default::default();
+pub fn make_promise<T: Clone + Default + 'static>() -> PromisePair<FiberPromise<T>, FiberFuture<T>> {
+    let mut promise: FiberPromise<T> = FiberPromise::<T>::default();
     // `mut` is load-bearing for C++: it prevents std::move from degrading to
-    // a deleted copy when the move-only future enters std::make_pair.
+    // a deleted copy when the move-only future enters the pair.
     let mut future: FiberFuture<T> = promise.get_future();
-    // SAFETY: `std::make_pair` has no caller-side safety precondition; the
-    // explicit block records the checked foreign C++ module call.
-    unsafe { cpp_std::make_pair(promise, future) }
+    (promise, future)
 }
 
 /// Create a future whose value has already been delivered.
-pub fn make_ready_future<T>(value: T) -> FiberFuture<T> {
-    let mut promise: FiberPromise<T> = Default::default();
+pub fn make_ready_future<T: Clone + Default + 'static>(value: T) -> FiberFuture<T> {
+    let mut promise: FiberPromise<T> = FiberPromise::<T>::default();
     let future: FiberFuture<T> = promise.get_future();
     let ev = promise.state_.as_ref().unwrap();
-    (*ev).set(value);
+    (*ev).set(&value);
     future
 }

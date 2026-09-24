@@ -10,7 +10,7 @@ struct Metrics {
     completed: u64,
 }
 
-impl rusty::LoadBalancerMetrics for Metrics {
+impl srpc::load_balancer::LoadBalancerMetrics for Metrics {
     fn in_flight_requests(&self) -> u64 {
         self.pending
     }
@@ -28,7 +28,7 @@ struct Client {
     metrics: Metrics,
 }
 
-impl rusty::LoadBalancerClient for Client {
+impl srpc::load_balancer::LoadBalancerClient for Client {
     type Metrics = Metrics;
 
     fn metrics(&self) -> &Metrics {

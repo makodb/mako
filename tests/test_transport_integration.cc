@@ -72,7 +72,7 @@ public:
     }
 
     void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req,
-                      srpc::WeakServerConnection weak_sconn) override {
+                      srpc::WeakServerConnection weak_sconn) const override {
         handler_(static_cast<uint8_t>(rpc_id), std::move(req), weak_sconn);
     }
 
@@ -95,7 +95,7 @@ public:
     }
 
     void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req,
-                      srpc::WeakServerConnection weak_sconn) override {
+                      srpc::WeakServerConnection weak_sconn) const override {
         if (rpc_id == rpc_id_) {
             handler_(std::move(req), weak_sconn);
         }

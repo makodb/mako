@@ -3,7 +3,6 @@
 
 #include <gtest/gtest.h>
 #include "../srpc.hpp"
-#include "../misc/serializable.hpp"  // wrap_serializable, serializable_cast
 #include "deptran/tpc_command.h"
 #include "deptran/raft/replicated_db.h"
 #include "deptran/paxos_worker.h"
@@ -11,6 +10,7 @@
 
 import std;
 import rusty;
+import srpc.serializable;  // wrap_serializable, serializable_cast
 
 using namespace srpc;
 

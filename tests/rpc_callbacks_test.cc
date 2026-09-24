@@ -39,7 +39,7 @@ TEST(CallbackManagerTest, AddOnDisconnected) {
 
 TEST(CallbackManagerTest, AddOnError) {
     auto mgr = CallbackManager::new_();
-    mgr.add_on_error([](RpcError, const std::string&) {});
+    mgr.add_on_error([](RpcError, std::string_view) {});
     EXPECT_EQ(mgr.on_error_count(), 1u);
     EXPECT_EQ(mgr.callback_count(), 1u);
 }
@@ -71,7 +71,7 @@ TEST(CallbackManagerTest, MultipleEventTypes) {
     auto mgr = CallbackManager::new_();
     mgr.add_on_connected([]() {});
     mgr.add_on_disconnected([]() {});
-    mgr.add_on_error([](RpcError, const std::string&) {});
+    mgr.add_on_error([](RpcError, std::string_view) {});
     mgr.add_on_reconnecting([]() {});
     mgr.add_on_reconnected([](bool) {});
     EXPECT_EQ(mgr.callback_count(), 5u);
@@ -107,7 +107,7 @@ TEST(CallbackManagerTest, InvokeOnErrorWithParams) {
     RpcError received_error = RpcError::OK;
     std::string received_message;
 
-    mgr.add_on_error([&](RpcError error, const std::string& msg) {
+    mgr.add_on_error([&](RpcError error, std::string_view msg) {
         received_error = error;
         received_message = msg;
     });
@@ -198,7 +198,7 @@ TEST(CallbackManagerTest, ClearAll) {
     auto mgr = CallbackManager::new_();
     mgr.add_on_connected([]() {});
     mgr.add_on_disconnected([]() {});
-    mgr.add_on_error([](RpcError, const std::string&) {});
+    mgr.add_on_error([](RpcError, std::string_view) {});
     mgr.add_on_reconnecting([]() {});
     mgr.add_on_reconnected([](bool) {});
 
@@ -213,7 +213,7 @@ TEST(CallbackManagerTest, ClearAllClearsAllTypes) {
     auto mgr = CallbackManager::new_();
     mgr.add_on_connected([]() {});
     mgr.add_on_connected([]() {});
-    mgr.add_on_error([](RpcError, const std::string&) {});
+    mgr.add_on_error([](RpcError, std::string_view) {});
 
     mgr.clear_all();
 
@@ -296,7 +296,7 @@ TEST(CallbackManagerTest, TypicalUsagePattern) {
 
     mgr.add_on_connected([&events]() { events.push_back("connected"); });
     mgr.add_on_disconnected([&events]() { events.push_back("disconnected"); });
-    mgr.add_on_error([&events](RpcError, const std::string&) {
+    mgr.add_on_error([&events](RpcError, std::string_view) {
         events.push_back("error");
     });
     mgr.add_on_reconnecting([&events]() { events.push_back("reconnecting"); });

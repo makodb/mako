@@ -1,21 +1,5 @@
 use srpc::debugging;
 
-#[allow(unsafe_code)]
-#[unsafe(no_mangle)]
-extern "C" fn srpc_stderr() -> *mut rusty::CFile {
-    core::ptr::null_mut()
-}
-
-#[allow(unsafe_code)]
-#[unsafe(no_mangle)]
-extern "C" fn srpc_backtrace_capture(_out_symbols: *mut *mut *mut i8) -> i32 {
-    -1_i32
-}
-
-#[allow(unsafe_code)]
-#[unsafe(no_mangle)]
-extern "C" fn srpc_backtrace_free(_symbols: *mut *mut i8) {}
-
 #[test]
 fn branch_hints_preserve_boolean_identity() {
     assert!(debugging::likely(true));
@@ -26,6 +10,24 @@ fn branch_hints_preserve_boolean_identity() {
 
 #[test]
 fn explicit_rust_source_location_drives_the_success_path() {
-    let location = rusty::SourceLocation::current();
-    debugging::verify(&true, &location);
+    let location = core::panic::Location::caller();
+    debugging::verify(&true, location);
+}
+
+#[test]
+fn source_location_records_the_caller() {
+    let expected_line = line!() + 1;
+    let location = core::panic::Location::caller();
+    assert_eq!(location.file(), file!());
+    assert_eq!(location.line(), expected_line);
+}
+
+#[test]
+fn verification_failure_renders_a_real_backtrace_and_reports_the_call_site() {
+    let failure = std::panic::catch_unwind(|| debugging::verify_at(false, "canonical-test.rs", 37));
+    let payload = failure.expect_err("a failed verification must panic");
+    let message = payload.downcast_ref::<String>().map(String::as_str)
+        .or_else(|| payload.downcast_ref::<&str>().copied()).unwrap();
+    assert!(message.contains("canonical-test.rs"), "{message}");
+    assert!(message.contains("37"), "{message}");
 }

@@ -55,12 +55,12 @@ class CountingPollable {
 
   // Movable so it can be constructed into an Arc.
   CountingPollable(CountingPollable&& o) noexcept
-      : fd_(o.fd_), mode_(o.mode_),
+      : fd_(o.fd_), mode_(o.mode_.load(std::memory_order_relaxed)),
         read_count_(o.read_count_), write_count_(o.write_count_),
         close_count_(o.close_count_) {}
 
   int fd() const { return fd_; }
-  int poll_mode() const { return mode_; }
+  int poll_mode() const { return mode_.load(std::memory_order_relaxed); }
   size_t content_size() const { return 0; }
   bool handle_read() const {
     char buf[32];
@@ -83,17 +83,20 @@ class CountingPollable {
       fd_ = -1;
     }
     if (close_count_ != nullptr) {
-      close_count_->fetch_add(1, std::memory_order_relaxed);
+      // Publish descriptor retirement before a caller reuses its number.
+      close_count_->fetch_add(1, std::memory_order_release);
     }
   }
   bool check_pending_write_update() const { return false; }
   bool is_closed() const { return fd_ < 0; }
 
-  void set_mode(int mode) const { mode_ = mode; }
+  void set_mode(int mode) const { mode_.store(mode, std::memory_order_relaxed); }
 
  private:
+  // Only the poll owner mutates fd_ until join; caller close follows join.
   mutable int fd_;
-  mutable int mode_;
+  // The caller updates this while the poll owner can read registration mode.
+  mutable std::atomic<int> mode_;
   std::atomic<int>* read_count_;
   std::atomic<int>* write_count_;
   std::atomic<int>* close_count_;
@@ -113,8 +116,13 @@ class PlainPollable {
         write_count_(write_count),
         close_count_(close_count) {}
 
+  PlainPollable(PlainPollable&& o) noexcept
+      : fd_(o.fd_), mode_(o.mode_.load(std::memory_order_relaxed)),
+        read_count_(o.read_count_), write_count_(o.write_count_),
+        close_count_(o.close_count_) {}
+
   int fd() const { return fd_; }
-  int poll_mode() const { return mode_; }
+  int poll_mode() const { return mode_.load(std::memory_order_relaxed); }
   size_t content_size() const { return 0; }
   bool handle_read() const {
     char buf[32];
@@ -137,23 +145,27 @@ class PlainPollable {
       fd_ = -1;
     }
     if (close_count_ != nullptr) {
-      close_count_->fetch_add(1, std::memory_order_relaxed);
+      // Publish descriptor retirement before a caller reuses its number.
+      close_count_->fetch_add(1, std::memory_order_release);
     }
   }
   bool check_pending_write_update() const { return false; }
   bool is_closed() const { return fd_ < 0; }
 
-  void set_mode(int mode) const { mode_ = mode; }
+  void set_mode(int mode) const { mode_.store(mode, std::memory_order_relaxed); }
 
  private:
+  // Only the poll owner mutates fd_ until join; caller close follows join.
   mutable int fd_;
-  mutable int mode_;
+  // The caller updates this while the poll owner can read registration mode.
+  mutable std::atomic<int> mode_;
   std::atomic<int>* read_count_;
   std::atomic<int>* write_count_;
   std::atomic<int>* close_count_;
 };
 
 TEST(RpcPollThreadProxyStorageTest, RequestCloseInvokesCloseAfterCallerArcReleased) {
+  std::atomic<int> close_count{0};
   auto poll_thread = PollThread::create();
 
   int sv[2];
@@ -161,7 +173,6 @@ TEST(RpcPollThreadProxyStorageTest, RequestCloseInvokesCloseAfterCallerArcReleas
   ASSERT_EQ(::fcntl(sv[0], F_SETFL, O_NONBLOCK), 0);
   ASSERT_EQ(::fcntl(sv[1], F_SETFL, O_NONBLOCK), 0);
 
-  std::atomic<int> close_count{0};
   int tracked_fd = -1;
   {
     auto pollable = rusty::Arc<CountingPollable>::new_(
@@ -173,14 +184,15 @@ TEST(RpcPollThreadProxyStorageTest, RequestCloseInvokesCloseAfterCallerArcReleas
   std::this_thread::sleep_for(milliseconds(60));
   poll_thread->request_close(tracked_fd);
 
-  ASSERT_TRUE(wait_until([&] { return close_count.load(std::memory_order_relaxed) >= 1; }, 1000));
-  EXPECT_EQ(close_count.load(std::memory_order_relaxed), 1);
+  ASSERT_TRUE(wait_until([&] { return close_count.load(std::memory_order_acquire) >= 1; }, 1000));
+  EXPECT_EQ(close_count.load(std::memory_order_acquire), 1);
 
   poll_thread->shutdown();
   ::close(sv[1]);
 }
 
 TEST(RpcPollThreadProxyStorageTest, UpdateModeAndRemoveCommandsOperateThroughProxyStorage) {
+  std::atomic<int> write_count{0};
   auto poll_thread = PollThread::create();
 
   int sv[2];
@@ -188,7 +200,6 @@ TEST(RpcPollThreadProxyStorageTest, UpdateModeAndRemoveCommandsOperateThroughPro
   ASSERT_EQ(::fcntl(sv[0], F_SETFL, O_NONBLOCK), 0);
   ASSERT_EQ(::fcntl(sv[1], F_SETFL, O_NONBLOCK), 0);
 
-  std::atomic<int> write_count{0};
   auto pollable = rusty::Arc<CountingPollable>::new_(
       CountingPollable(sv[0], PollMode::READ, nullptr, &write_count, nullptr));
 
@@ -206,12 +217,17 @@ TEST(RpcPollThreadProxyStorageTest, UpdateModeAndRemoveCommandsOperateThroughPro
   std::this_thread::sleep_for(milliseconds(150));
   EXPECT_EQ(write_count.load(std::memory_order_relaxed), stable_count);
 
-  pollable->close();
+  // Removal is asynchronous; join before closing the caller-owned descriptor.
   poll_thread->shutdown();
+  pollable->close();
   ::close(sv[1]);
 }
 
 TEST(RpcPollThreadProxyStorageTest, FdReuseDispatchesToCurrentProxyInstance) {
+  std::atomic<int> first_read_count{0};
+  std::atomic<int> first_close_count{0};
+  std::atomic<int> second_read_count{0};
+  std::atomic<int> second_close_count{0};
   auto poll_thread = PollThread::create();
 
   int first_sv[2];
@@ -219,8 +235,6 @@ TEST(RpcPollThreadProxyStorageTest, FdReuseDispatchesToCurrentProxyInstance) {
   ASSERT_EQ(::fcntl(first_sv[0], F_SETFL, O_NONBLOCK), 0);
   ASSERT_EQ(::fcntl(first_sv[1], F_SETFL, O_NONBLOCK), 0);
 
-  std::atomic<int> first_read_count{0};
-  std::atomic<int> first_close_count{0};
   auto first_pollable = rusty::Arc<CountingPollable>::new_(
       CountingPollable(first_sv[0], PollMode::READ, &first_read_count, nullptr, &first_close_count));
   const int reused_fd = first_pollable->fd();
@@ -230,7 +244,7 @@ TEST(RpcPollThreadProxyStorageTest, FdReuseDispatchesToCurrentProxyInstance) {
   ASSERT_TRUE(wait_until([&] { return first_read_count.load(std::memory_order_relaxed) >= 1; }, 1000));
 
   poll_thread->request_close(reused_fd);
-  ASSERT_TRUE(wait_until([&] { return first_close_count.load(std::memory_order_relaxed) >= 1; }, 1000));
+  ASSERT_TRUE(wait_until([&] { return first_close_count.load(std::memory_order_acquire) >= 1; }, 1000));
   ::close(first_sv[1]);
 
   int second_sv[2] = {-1, -1};
@@ -253,8 +267,6 @@ TEST(RpcPollThreadProxyStorageTest, FdReuseDispatchesToCurrentProxyInstance) {
 
   const int first_reads_after_close = first_read_count.load(std::memory_order_relaxed);
 
-  std::atomic<int> second_read_count{0};
-  std::atomic<int> second_close_count{0};
   auto second_pollable = rusty::Arc<CountingPollable>::new_(
       CountingPollable(second_sv[0], PollMode::READ, &second_read_count, nullptr, &second_close_count));
   poll_thread->add_proxy(make_pollable_proxy_from_typed_arc(second_pollable.clone()));
@@ -264,13 +276,16 @@ TEST(RpcPollThreadProxyStorageTest, FdReuseDispatchesToCurrentProxyInstance) {
   EXPECT_EQ(first_read_count.load(std::memory_order_relaxed), first_reads_after_close);
 
   poll_thread->request_close(reused_fd);
-  ASSERT_TRUE(wait_until([&] { return second_close_count.load(std::memory_order_relaxed) >= 1; }, 1000));
+  ASSERT_TRUE(wait_until([&] { return second_close_count.load(std::memory_order_acquire) >= 1; }, 1000));
 
   poll_thread->shutdown();
   ::close(second_sv[1]);
 }
 
 TEST(RpcPollThreadProxyStorageTest, DirectTypedProxySupportsNonPollableClass) {
+  std::atomic<int> read_count{0};
+  std::atomic<int> write_count{0};
+  std::atomic<int> close_count{0};
   auto poll_thread = PollThread::create();
 
   int sv[2];
@@ -278,9 +293,6 @@ TEST(RpcPollThreadProxyStorageTest, DirectTypedProxySupportsNonPollableClass) {
   ASSERT_EQ(::fcntl(sv[0], F_SETFL, O_NONBLOCK), 0);
   ASSERT_EQ(::fcntl(sv[1], F_SETFL, O_NONBLOCK), 0);
 
-  std::atomic<int> read_count{0};
-  std::atomic<int> write_count{0};
-  std::atomic<int> close_count{0};
   auto plain = rusty::Arc<PlainPollable>::new_(
       PlainPollable(sv[0], PollMode::READ, &read_count, &write_count, &close_count));
   const int fd = plain->fd();
@@ -296,7 +308,7 @@ TEST(RpcPollThreadProxyStorageTest, DirectTypedProxySupportsNonPollableClass) {
   ASSERT_TRUE(wait_until([&] { return write_count.load(std::memory_order_relaxed) >= 1; }, 1000));
 
   poll_thread->request_close(fd);
-  ASSERT_TRUE(wait_until([&] { return close_count.load(std::memory_order_relaxed) >= 1; }, 1000));
+  ASSERT_TRUE(wait_until([&] { return close_count.load(std::memory_order_acquire) >= 1; }, 1000));
 
   poll_thread->shutdown();
   ::close(sv[1]);

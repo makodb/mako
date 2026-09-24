@@ -398,7 +398,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         switch (rpc_id) {
         case FAST_PRIME: __fast_prime__wrapper__(std::move(req), weak_sconn); break;
         case FAST_DOT_PROD: __fast_dot_prod__wrapper__(std::move(req), weak_sconn); break;
@@ -417,39 +417,43 @@ public:
     }
     // typed service signatures
     // @safe
-    virtual rusty::Result<RpcFastPrimeResponse, srpc::i32> fast_prime(const RpcFastPrimeRequest& req);
+    virtual rusty::Result<RpcFastPrimeResponse, srpc::i32> fast_prime(const RpcFastPrimeRequest& req) const;
     // @safe
-    virtual rusty::Result<RpcFastDotProdResponse, srpc::i32> fast_dot_prod(const RpcFastDotProdRequest& req);
+    virtual rusty::Result<RpcFastDotProdResponse, srpc::i32> fast_dot_prod(const RpcFastDotProdRequest& req) const;
     // @safe
-    virtual rusty::Result<RpcFastAddResponse, srpc::i32> fast_add(const RpcFastAddRequest& req);
+    virtual rusty::Result<RpcFastAddResponse, srpc::i32> fast_add(const RpcFastAddRequest& req) const;
     // @safe
-    virtual rusty::Result<RpcFastNopResponse, srpc::i32> fast_nop(const RpcFastNopRequest& req);
+    virtual rusty::Result<RpcFastNopResponse, srpc::i32> fast_nop(const RpcFastNopRequest& req) const;
     // @safe
-    virtual rusty::Result<RpcFastVecResponse, srpc::i32> fast_vec(const RpcFastVecRequest& req);
+    virtual rusty::Result<RpcFastVecResponse, srpc::i32> fast_vec(const RpcFastVecRequest& req) const;
     // @safe
-    virtual rusty::Result<RpcPrimeResponse, srpc::i32> prime(const RpcPrimeRequest& req);
+    virtual rusty::Result<RpcPrimeResponse, srpc::i32> prime(const RpcPrimeRequest& req) const;
     // @safe
-    virtual rusty::Result<RpcDotProdResponse, srpc::i32> dot_prod(const RpcDotProdRequest& req);
+    virtual rusty::Result<RpcDotProdResponse, srpc::i32> dot_prod(const RpcDotProdRequest& req) const;
     // @safe
-    virtual rusty::Result<RpcAddResponse, srpc::i32> add(const RpcAddRequest& req);
+    virtual rusty::Result<RpcAddResponse, srpc::i32> add(const RpcAddRequest& req) const;
     // @safe
-    virtual rusty::Result<RpcNopResponse, srpc::i32> nop(const RpcNopRequest& req);
+    virtual rusty::Result<RpcNopResponse, srpc::i32> nop(const RpcNopRequest& req) const;
     // @safe
-    virtual rusty::Task<rusty::Result<RpcAsyncNopResponse, srpc::i32>> async_nop(const RpcAsyncNopRequest& req);
+    virtual rusty::Task<rusty::Result<RpcAsyncNopResponse, srpc::i32>> async_nop(const RpcAsyncNopRequest& req) const;
     // @safe
-    virtual rusty::Result<RpcSleepResponse, srpc::i32> sleep(const RpcSleepRequest& req);
+    virtual rusty::Result<RpcSleepResponse, srpc::i32> sleep(const RpcSleepRequest& req) const;
     // @safe
-    virtual void deferred_echo(const RpcDeferredEchoRequest& req, RpcDeferredEchoResponse& resp, srpc::DeferredReply defer);
+    virtual void deferred_echo(const RpcDeferredEchoRequest& req, RpcDeferredEchoResponse& resp, srpc::DeferredReply defer) const;
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
 private:
     // @safe
-    void __fast_prime__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __fast_prime__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcFastPrimeRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.n, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_result__ = this->fast_prime(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -467,13 +471,17 @@ private:
         }
     }
     // @safe
-    void __fast_dot_prod__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __fast_dot_prod__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcFastDotProdRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.p1, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.p2, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_result__ = this->fast_dot_prod(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -491,13 +499,17 @@ private:
         }
     }
     // @safe
-    void __fast_add__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __fast_add__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcFastAddRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.a, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.b, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_result__ = this->fast_add(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -515,12 +527,16 @@ private:
         }
     }
     // @safe
-    void __fast_nop__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __fast_nop__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcFastNopRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.in_0, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_result__ = this->fast_nop(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -537,12 +553,16 @@ private:
         }
     }
     // @safe
-    void __fast_vec__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __fast_vec__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcFastVecRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.n, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_result__ = this->fast_vec(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -560,12 +580,16 @@ private:
         }
     }
     // @safe
-    void __prime__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __prime__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcPrimeRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.n, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_result__ = this->prime(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -583,13 +607,17 @@ private:
         }
     }
     // @safe
-    void __dot_prod__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __dot_prod__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcDotProdRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.p1, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.p2, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_result__ = this->dot_prod(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -607,13 +635,17 @@ private:
         }
     }
     // @safe
-    void __add__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __add__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcAddRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.a, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.b, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_result__ = this->add(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -631,12 +663,16 @@ private:
         }
     }
     // @safe
-    void __nop__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __nop__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcNopRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.in_0, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_result__ = this->nop(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -653,12 +689,16 @@ private:
         }
     }
     // @safe
-    void __async_nop__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __async_nop__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcAsyncNopRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.in_0, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __async_req__ = std::move(req);
             auto __async_weak_sconn__ = weak_sconn;
             auto __async_task__ = this->async_nop(__typed_req__);
@@ -678,12 +718,16 @@ private:
         }
     }
     // @safe
-    void __sleep__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __sleep__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcSleepRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.sec, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_result__ = this->sleep(__typed_req__);
             auto sconn_opt = weak_sconn.upgrade();
             if (sconn_opt.is_some()) {
@@ -700,12 +744,16 @@ private:
         }
     }
     // @safe
-    void __deferred_echo__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __deferred_echo__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcDeferredEchoRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.val, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_resp__ = std::make_shared<RpcDeferredEchoResponse>();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),

@@ -18,9 +18,9 @@ fn spin_lock_layout_traits_and_basic_state_are_pinned() {
 
 #[test]
 fn pthread_wrapper_signatures_remain_explicitly_unsafe() {
-    let _spin_init: unsafe fn(*mut rusty::PthreadSpinlock, i32) = srpc::threading::Pthread_spin_init;
-    let _mutex_init: unsafe fn(*mut rusty::PthreadMutex, *const rusty::PthreadMutexAttr) =
+    let _spin_init: unsafe fn(*mut srpc::threading::PthreadSpinlock, i32) = srpc::threading::Pthread_spin_init;
+    let _mutex_init: unsafe fn(*mut srpc::threading::PthreadMutex, *const srpc::threading::PthreadMutexAttr) =
         srpc::threading::Pthread_mutex_init;
-    let _cond_wait: unsafe fn(*mut rusty::PthreadCond, *mut rusty::PthreadMutex) =
+    let _cond_wait: unsafe fn(*mut srpc::threading::PthreadCond, *mut srpc::threading::PthreadMutex) =
         srpc::threading::Pthread_cond_wait;
 }

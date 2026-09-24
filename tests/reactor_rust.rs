@@ -13,26 +13,28 @@ fn worker_transfer_types_prove_auto_traits() {
     assert_send_sync::<PollThread>();
     assert_send::<PollableProxy>();
     assert_send_sync::<Arc<dyn Job>>();
-    assert_send_sync::<rusty::Waker>();
+    assert_send_sync::<std::task::Waker>();
 }
 
 #[test]
 fn historical_export_surface_is_rust_visible() {
-    type SpawnWithResultFn = fn(&Reactor, rusty::Task<()>, fn(()));
+    type SpawnWithResultFn = fn(&Reactor, TaskVoid, fn(()));
     let _spawn_with_result: SpawnWithResultFn =
         reactor_spawn_stackless_task_with_result::<(), fn(())>;
 
-    let _: *const _ = &raw const sp_reactor_th_;
-    let _: *const _ = &raw const sp_disk_reactor_th_;
-    let _: *const _ = &raw const sp_running_fiber_th_;
-    let _: *const _ = &raw const g_fiber_global_id;
-    let _: *const _ = &raw const reactor_clients_th_;
-    let _: *const _ = &raw const reactor_prune_hwm_th_;
-    let _: *const _ = &raw const g_current_poll_worker;
+    // The seven per-thread statics are LocalKeys now; visibility is proven
+    // by reading each through its closure-only accessor.
+    sp_reactor_th_.with(|slot| assert!(slot.borrow().is_none()));
+    sp_disk_reactor_th_.with(|slot| assert!(slot.borrow().is_none()));
+    sp_running_fiber_th_.with(|slot| assert!(slot.borrow().is_none()));
+    g_fiber_global_id.with(|id| assert_eq!(id.get(), 0));
+    reactor_clients_th_.with(|clients| assert!(clients.borrow().is_empty()));
+    reactor_prune_hwm_th_.with(|hwm| assert_eq!(hwm.get(), 64));
+    g_current_poll_worker.with(|worker| assert!(worker.get().is_null()));
 
-    let dangling: QuorumDanglingVec = vec![rusty::StdPair::new(7u16, 11i64)];
-    assert_eq!(dangling[0].first, 7u16);
-    assert_eq!(dangling[0].second, 11i64);
+    let dangling: QuorumDanglingVec = vec![(7u16, 11i64)];
+    assert_eq!(dangling[0].0, 7u16);
+    assert_eq!(dangling[0].1, 11i64);
 
 }
 
@@ -43,15 +45,15 @@ fn stackless_wakers_use_owner_ingress_and_stable_bindings() {
     for required in [
         "struct StacklessWakeIngress",
         "struct StacklessWakeBinding",
-        "static mut OWNERS: *mut Vec<StacklessWakeOwner>",
+        "static OWNERS: Cell<*mut Vec<StacklessWakeOwner>>",
         "stackless_wake_release_empty_storage::<WakeDomain>",
         "stackless_wake_take_pending::<()>",
         "stackless_wake_shutdown_begin::<()>",
-        "if !ingress.accepting.load(rusty::sync::atomic::Ordering::Acquire)",
+        "if !ingress.accepting.load(std::sync::atomic::Ordering::Acquire)",
         "core::mem::take(&mut *tasks_guard)",
         "drop(retired_tasks);",
         "drop(poll_fn);",
-        "thread_id_: Cell::new(rusty::thread::current_id())",
+        "thread_id_: Cell::new(std::thread::current().id())",
     ] {
         assert!(source.contains(required), "missing stackless safety contract: {required}");
     }
@@ -142,7 +144,7 @@ fn teardown_paths_report_cancelled_waiters_instead_of_silence() {
         "g_stackless_cancel.teardown_tasks.fetch_add(",
         "g_stackless_cancel.admitted_completions.fetch_add(",
         // shutdown drains the ingress rather than stranding tickets
-        "ticket.enqueued.store(false, rusty::sync::atomic::Ordering::Release);",
+        "ticket.enqueued.store(false, std::sync::atomic::Ordering::Release);",
         // a rejected registration is not a successful spawn
         "if idx == STACKLESS_UNREGISTERED_SLOT {",
     ] {
@@ -257,4 +259,26 @@ fn incumbent_concrete_layouts_are_pinned() {
     check!(QuorumEventWrapper, 8, 8);
 
     assert!(mismatches.is_empty(), "{}", mismatches.join("\n"));
+}
+
+#[test]
+fn native_fiber_layout_matches_the_c_and_assembly_contract() {
+    use core::mem::offset_of;
+    let word = size_of::<usize>();
+    #[cfg(target_arch = "x86_64")]
+    let context_words = 8;
+    #[cfg(target_arch = "aarch64")]
+    let context_words = 13;
+    let context_size = context_words * word;
+    assert_eq!(size_of::<srpc_fiber_ctx>(), context_size);
+    assert_eq!(align_of::<srpc_fiber_ctx>(), word);
+    assert_eq!(offset_of!(srpc_fiber, caller_ctx), 0);
+    assert_eq!(offset_of!(srpc_fiber, fiber_ctx), context_size);
+    assert_eq!(offset_of!(srpc_fiber, stack_mapping), 2 * context_size);
+    assert_eq!(offset_of!(srpc_fiber, stack_mapping_bytes), 2 * context_size + word);
+    assert_eq!(offset_of!(srpc_fiber, state), 2 * context_size + 2 * word);
+    assert_eq!(offset_of!(srpc_fiber, entry_fn), 2 * context_size + 3 * word);
+    assert_eq!(offset_of!(srpc_fiber, entry_arg), 2 * context_size + 4 * word);
+    assert_eq!(size_of::<srpc_fiber>(), 2 * context_size + 5 * word);
+    assert_eq!(align_of::<srpc_fiber>(), word);
 }

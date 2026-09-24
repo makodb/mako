@@ -29,14 +29,14 @@ using namespace std::chrono;
 // @safe - Test service for stress scenarios
 class StressTestService : public benchmark::BenchmarkService {
 public:
-    std::atomic<uint64_t> request_count{0};
-    std::atomic<uint64_t> completed_count{0};
-    std::atomic<bool> should_delay{false};
-    std::atomic<uint32_t> delay_ms{0};
+    mutable std::atomic<uint64_t> request_count{0};
+    mutable std::atomic<uint64_t> completed_count{0};
+    mutable std::atomic<bool> should_delay{false};
+    mutable std::atomic<uint32_t> delay_ms{0};
 
     // @safe - Increments counters atomically
     rusty::Result<BenchmarkService::RpcFastNopResponse, i32>
-    fast_nop(const BenchmarkService::RpcFastNopRequest& req) override {
+    fast_nop(const BenchmarkService::RpcFastNopRequest& req) const override {
         (void)req;
         request_count++;
         if (should_delay && delay_ms > 0) {
@@ -49,7 +49,7 @@ public:
 
     // @safe - Increments counters atomically
     rusty::Result<BenchmarkService::RpcNopResponse, i32>
-    nop(const BenchmarkService::RpcNopRequest& req) override {
+    nop(const BenchmarkService::RpcNopRequest& req) const override {
         (void)req;
         request_count++;
         if (should_delay && delay_ms > 0) {
@@ -62,7 +62,7 @@ public:
 
     // @safe - Stub implementation
     rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>
-    fast_prime(const BenchmarkService::RpcFastPrimeRequest& req) override {
+    fast_prime(const BenchmarkService::RpcFastPrimeRequest& req) const override {
         (void)req;
         BenchmarkService::RpcFastPrimeResponse resp{};
         resp.flag = 1;
@@ -71,7 +71,7 @@ public:
 
     // @safe - Stub implementation
     rusty::Result<BenchmarkService::RpcFastVecResponse, i32>
-    fast_vec(const BenchmarkService::RpcFastVecRequest& req) override {
+    fast_vec(const BenchmarkService::RpcFastVecRequest& req) const override {
         BenchmarkService::RpcFastVecResponse resp{};
         for (i32 i = 0; i < req.n; i++) resp.v.push_back(i);
         return rusty::Result<BenchmarkService::RpcFastVecResponse, i32>::Ok(resp);
@@ -79,7 +79,7 @@ public:
 
     // @safe - Sleep implementation
     rusty::Result<BenchmarkService::RpcSleepResponse, i32>
-    sleep(const BenchmarkService::RpcSleepRequest& req) override {
+    sleep(const BenchmarkService::RpcSleepRequest& req) const override {
         std::this_thread::sleep_for(std::chrono::duration<double>(req.sec));
         BenchmarkService::RpcSleepResponse resp{};
         return rusty::Result<BenchmarkService::RpcSleepResponse, i32>::Ok(resp);

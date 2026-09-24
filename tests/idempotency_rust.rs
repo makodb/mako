@@ -1,3 +1,5 @@
+mod serialization_helpers;
+use serialization_helpers::{encode, decode};
 use srpc::idempotency::{
     cached_response_get, cached_response_set, deserialize, serialize, CachedResponse,
     IdempotencyCache, IdempotencyConfig, IdempotencyKey, IdempotencyKeyGenerator,
@@ -55,26 +57,28 @@ fn archive_bytes_match_an_independent_native_endian_oracle() {
     expected.extend_from_slice(&key.client_id.to_ne_bytes());
     expected.extend_from_slice(&key.sequence.to_ne_bytes());
 
-    let mut writer = rusty::BinaryWriteArchive::default();
-    serialize(&key, &mut writer);
-    let actual = writer.into_bytes();
+    let actual = encode(|archive| serialize(&key, archive));
     assert_eq!(actual, expected);
 
     // Decode bytes built by the independent oracle, rather than feeding the
     // serializer's output directly back into the deserializer.
-    let mut reader = rusty::BinaryReadArchive::from_bytes(expected);
-    let mut restored = IdempotencyKey::empty();
-    deserialize(&mut restored, &mut reader);
+    let (restored, remaining) = decode(&expected, |archive| {
+        let mut key = IdempotencyKey::empty();
+        deserialize(&mut key, archive);
+        key
+    });
+    assert_eq!(remaining, 0);
     assert_eq!(restored.client_id, key.client_id);
     assert_eq!(restored.sequence, key.sequence);
 }
 
 #[test]
-#[should_panic(expected = "binary archive source is truncated")]
-fn truncated_archive_aborts_the_rust_model() {
-    let mut reader = rusty::BinaryReadArchive::from_bytes(vec![0u8; 15]);
-    let mut restored = IdempotencyKey::empty();
-    deserialize(&mut restored, &mut reader);
+#[should_panic(expected = "verify failed")]
+fn truncated_archive_reports_verification_failure() {
+    decode(&[0u8; 15], |archive| {
+        let mut restored = IdempotencyKey::empty();
+        deserialize(&mut restored, archive);
+    });
 }
 
 #[test]
