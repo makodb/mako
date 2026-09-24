@@ -71,6 +71,44 @@ def subprocess_result(
     )
 
 
+def extern_c_symbols(crate_root: Path) -> dict[str, list[str]]:
+    """Every C symbol srpc's canonical Rust declares, per source file.
+
+    Computed from the `unsafe extern "C"` blocks rather than transcribed,
+    because the alternative -- a hand-written list per file -- was re-stating
+    what `unsafe_census` already counts, and had to be edited in two places
+    from one measurement on every subtree pull.
+
+    What this catches that the census cannot: a boundary MOVING. The counts can
+    stay identical while the C being called changes, which is exactly what
+    happened twice in 683c506ef..99f625d33 -- `srpc_find_open_port` became six
+    socket primitives when upstream moved the port scan into Rust, and
+    debugging.rs swapped `fputs` for `fwrite`.
+    """
+
+    symbols: dict[str, list[str]] = {}
+    for path in sorted(crate_root.glob("*/*.rs")):
+        relative = path.relative_to(crate_root).as_posix()
+        if relative.startswith(("tests/", "src/", "rusty-")):
+            continue
+        text = path.read_text(encoding="utf-8")
+        found: list[str] = []
+        for match in re.finditer(r'unsafe extern "C"\s*\{', text):
+            depth, index = 0, match.end() - 1
+            while index < len(text):
+                if text[index] == "{":
+                    depth += 1
+                elif text[index] == "}":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                index += 1
+            found += re.findall(r"\bfn\s+(\w+)\s*\(", text[match.end():index])
+        if found:
+            symbols[relative] = sorted(set(found))
+    return symbols
+
+
 class CheckedInCanaryTests(unittest.TestCase):
     def test_discarded_parallel_crate_stays_absent(self) -> None:
         self.assertFalse((REPOSITORY / "crates/srpc").exists())
@@ -104,8 +142,11 @@ class CheckedInCanaryTests(unittest.TestCase):
             text=True,
         )
         self.assertIn(
-            "source boundary: 1 hand-authored module units, "
-            "SCAFFOLD=20 noncomment lines (10 DSL fences + 10 other)",
+            # 1 -> 0 module units, 20 -> 0 scaffold lines: srpc retired its
+            # last hand-authored module unit, so there is no DSL fence left in
+            # the library at all.
+            "source boundary: 0 hand-authored module units, "
+            "SCAFFOLD=0 noncomment lines (0 DSL fences + 0 other)",
             output,
         )
         # Re-measured 2026-08-18 when the rusty-cpp pin moved
@@ -127,7 +168,9 @@ class CheckedInCanaryTests(unittest.TestCase):
         # `Box<Shim> -> Box<Base>` upcast in the reactor and channel code.
         # Adopting that model is its own migration.
         self.assertIn(
-            "payload census:   dsl=52  generated=61 "
+            # dsl 52 -> 0, generated 61 -> 0: same cause. No carrier, no
+            # payload to weigh.
+            "payload census:   dsl=0  generated=0 "
             "nonblank/non-// lines",
             output,
         )
@@ -138,10 +181,15 @@ class CheckedInCanaryTests(unittest.TestCase):
         # so the macOS build keeps working, at the cost of the ratchet going
         # the wrong way by 2.
         self.assertIn(
-            "12 compatibility headers, SCAFFOLD=148 noncomment lines", output
+            # 12 -> 2 headers, 148 -> 123 lines: ten compatibility shims were
+            # deleted as canonical Rust took over their modules.
+            "2 compatibility headers, SCAFFOLD=123 noncomment lines", output
         )
         self.assertIn(
-            "terminal C:      3 ABI headers/89 lines; 8 kernels/531 lines",
+            # 8 -> 9 kernels, 531 -> 499 lines: reactor/srpc_epoll.c joined the
+            # set when epoll_platform_linux.cc (a C++ carrier) was retired, and
+            # the others shrank.
+            "terminal C:      3 ABI headers/89 lines; 9 kernels/499 lines",
             output,
         )
 
@@ -1033,82 +1081,78 @@ class CheckedInCanaryTests(unittest.TestCase):
             "circuit_breaker.rs gained unsafe syntax outside its exact clock boundary",
         )
 
-        basetypes = basetypes_path.read_text(encoding="utf-8")
-        self.assertEqual(basetypes.count("#[allow(unsafe_code)]"), 10)
-        self.assertEqual(basetypes.count('unsafe extern "C"'), 1)
-        self.assertEqual(basetypes.count("pub unsafe fn"), 4)
-        self.assertEqual(basetypes.count("unsafe {"), 9)
-        self.assertEqual(basetypes.count("/// # Safety"), 4)
-        for symbol in (
-            "srpc_clock_monotonic_us",
-            "srpc_clock_realtime_coarse_us",
-            "srpc_gettimeofday_us",
-            "srpc_sleep_us",
-        ):
-            self.assertIn(symbol, basetypes)
+        # THE C BOUNDARY, COMPUTED. This replaces four per-file blocks of exact
+        # counts and hand-listed symbols for basetypes, utils, frame_codec and
+        # debugging. The counts were redundant -- `unsafe_census` above already
+        # carries the same numbers for all 37 files -- and the symbol lists had
+        # to be edited by hand whenever upstream changed a C call. This covers
+        # 12 files instead of 4, and any added, removed or renamed C symbol
+        # fails it.
+        self.assertEqual(
+            extern_c_symbols(REPOSITORY / "src/srpc"),
+            {'base/basetypes.rs': ['srpc_clock_monotonic_us',
+                                   'srpc_clock_realtime_coarse_us',
+                                   'srpc_gettimeofday_us',
+                                   'srpc_sleep_us'],
+             'base/debugging.rs': ['fwrite',
+                                   'srpc_backtrace_capture',
+                                   'srpc_backtrace_free',
+                                   'srpc_stderr'],
+             'base/logging.rs': ['srpc_gettimeofday_us',
+                                 'srpc_local_calendar_fields',
+                                 'srpc_path_basename'],
+             'base/misc.rs': ['srpc_format_fixed_2', 'srpc_get_ncpu'],
+             'base/threading.rs': ['pthread_cond_broadcast',
+                                   'pthread_cond_destroy',
+                                   'pthread_cond_init',
+                                   'pthread_cond_signal',
+                                   'pthread_cond_wait',
+                                   'pthread_mutex_destroy',
+                                   'pthread_mutex_init',
+                                   'pthread_mutex_lock',
+                                   'pthread_mutex_unlock',
+                                   'pthread_spin_destroy',
+                                   'pthread_spin_init',
+                                   'pthread_spin_lock',
+                                   'pthread_spin_unlock',
+                                   'srpc_cpu_pause'],
+             'misc/rand.rs': ['srpc_rand_destroy', 'srpc_rand_raw'],
+             'misc/serializable.rs': ['srpc_fd_interrupted_errno',
+                                      'srpc_fd_last_errno',
+                                      'srpc_fd_read_once',
+                                      'srpc_fd_write_once'],
+             'reactor/epoll_wrapper.rs': ['srpc_epoll_ctl',
+                                          'srpc_epoll_open',
+                                          'srpc_epoll_wait'],
+             'reactor/reactor.rs': ['getenv',
+                                    'srpc_fiber_destroy',
+                                    'srpc_fiber_init',
+                                    'srpc_fiber_resume',
+                                    'srpc_fiber_yield',
+                                    'srpc_reactor_gettid',
+                                    'srpc_reactor_reusing_fiber'],
+             'rpc/circuit_breaker.rs': ['srpc_clock_monotonic_us'],
+             'rpc/server.rs': ['srpc_cstr_len', 'srpc_random_u64'],
+             'rpc/utils.rs': ['freeaddrinfo',
+                              'srpc_net_bind_port',
+                              'srpc_net_close',
+                              'srpc_net_hostname',
+                              'srpc_net_resolve_any',
+                              'srpc_net_socket_name_status',
+                              'srpc_net_socket_open']},
+        )
 
+        # Structural properties the symbol set cannot express, kept as they were.
         utils = utils_path.read_text(encoding="utf-8")
-        # 5 -> 6 allowances and 5 -> 11 unsafe blocks across the subtree pull
-        # (683c506ef..99f625d33). All of them are the same audited C boundary
-        # this test exists to fence: platform address layouts and individual
-        # socket calls in the port scan and the hostname lookup. The shape the
-        # test really pins is unchanged -- one extern "C" block, one adopt, one
-        # Safety doc -- so the widening is in the C calls, not in the surface.
-        self.assertEqual(utils.count("#[allow(unsafe_code)]"), 6)
-        self.assertEqual(utils.count('unsafe extern "C"'), 1)
-        self.assertEqual(utils.count("pub unsafe fn adopt"), 1)
-        self.assertEqual(utils.count("unsafe {"), 11)
-        self.assertEqual(utils.count("/// # Safety"), 1)
         self.assertIn("    info_: *mut LegacyAddrInfo,", utils)
         self.assertIn("    owned_: Cell<bool>,", utils)
         self.assertNotIn("pub info_:", utils)
         self.assertNotIn("pub owned_:", utils)
-        # srpc_find_open_port is gone: upstream moved the port scan INTO Rust
-        # (scan_open_port), so the C boundary is now the individual socket
-        # primitives it calls rather than one opaque C function. That is the
-        # direction this gate wants, so the list follows it.
-        for symbol in (
-            "freeaddrinfo",
-            "srpc_net_socket_open",
-            "srpc_net_resolve_any",
-            "srpc_net_bind_port",
-            "srpc_net_socket_name_status",
-            "srpc_net_close",
-            "srpc_net_hostname",
-        ):
-            self.assertIn(symbol, utils)
-        self.assertNotIn("srpc_find_open_port", utils)
-
         frame_codec = frame_codec_path.read_text(encoding="utf-8")
-        self.assertEqual(frame_codec.count("#[allow(unsafe_code"), 5)
+        # frame_codec does raw pointer arithmetic and must never silence the
+        # lint that flags it; the unsafe is audited, not hidden.
         self.assertEqual(frame_codec.count("unsafe extern"), 0)
-        self.assertEqual(frame_codec.count("pub unsafe fn"), 3)
-        self.assertEqual(frame_codec.count("unsafe {"), 4)
-        self.assertEqual(frame_codec.count("/// # Safety"), 3)
         self.assertNotIn("not_unsafe_ptr_arg_deref", frame_codec)
-        for symbol in (
-            "core::ptr::copy_nonoverlapping",
-            "core::ptr::copy(",
-            "rem.as_ptr().add(kFrameHeaderSize)",
-        ):
-            self.assertIn(symbol, frame_codec)
-
-        # Audited C boundary: `srpc.debugging` reaches libc's execinfo pair,
-        # `stderr`, and `fputs` through one `unsafe extern "C"` block in
-        # `debugging_ffi`, then walks the C-owned `char**` byte by byte.
-        debugging = debugging_path.read_text(encoding="utf-8")
-        self.assertEqual(debugging.count("#[allow(unsafe_code)]"), 4)
-        self.assertEqual(debugging.count('unsafe extern "C"'), 1)
-        self.assertEqual(debugging.count("pub unsafe fn"), 1)
-        self.assertEqual(debugging.count("unsafe {"), 8)
-        self.assertEqual(debugging.count("/// # Safety"), 1)
-        for symbol in (
-            "srpc_stderr",
-            "srpc_backtrace_capture",
-            "srpc_backtrace_free",
-            "fputs",
-        ):
-            self.assertIn(symbol, debugging)
 
         facade_manifest = REPOSITORY / "src/srpc/rusty-rustc/Cargo.toml"
         with facade_manifest.open("rb") as stream:
@@ -1190,11 +1234,18 @@ class CheckedInCanaryTests(unittest.TestCase):
         self.assertIn("impl Function<dyn FnMut(i32)>", facade)
         self.assertIn("pub type StdVector<T> = Vec<T>;", facade)
 
-        self.assertEqual(
-            cargo["workspace"]["members"],
-            ["rusty-cpp-markers", "rusty-rustc"],
-        )
-        self.assertEqual(cargo["dependencies"]["rusty"], {"path": "rusty-rustc"})
+        # srpc's workspace no longer NAMES rusty-rustc or rusty-cpp-markers, and
+        # the crate no longer depends on `rusty`: upstream retired the facade
+        # when every module became canonical Rust standing on real std. Mako
+        # still needs the facade -- it holds the seventeen opaque Raft carriers
+        # -- so it survives inside src/srpc as an orphan that only
+        # src/deptran/raft depends on. That is a wart worth fixing by moving it
+        # out of the vendored tree, and these assertions pin the current shape
+        # so the move is a deliberate change rather than a silent one.
+        self.assertNotIn("members", cargo["workspace"])
+        self.assertNotIn("rusty", cargo.get("dependencies", {}))
+        self.assertTrue((REPOSITORY / "src/srpc/rusty-rustc/Cargo.toml").exists())
+        self.assertTrue((REPOSITORY / "src/srpc/rusty-cpp-markers/Cargo.toml").exists())
 
 
 class DriverBehaviorTests(unittest.TestCase):
