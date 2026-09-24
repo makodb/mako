@@ -188,31 +188,44 @@ fn sparse_int_boundaries_and_deterministic_wire_corpus() {
         wire_digest = hash_i64_wire_record(wire_digest, value);
         wire_digest = hash_i32_wire_record(wire_digest, value as i32);
     }
-    // Legacy-carrier-derived FNV-1a digest over the reported length and every
-    // byte actually written (including byte nine in the length-eight case).
-    assert_eq!(wire_digest, 0x6d2d_df1e_fe2a_b0b6);
+    // FNV-1a digest over the reported length and every byte actually written.
+    // Was 0x6d2d_df1e_fe2a_b0b6 while the length-eight rung existed.
+    assert_eq!(wire_digest, 0xbbe9_520e_79d2_1a9c);
 
-    // Preserve the archive-visible legacy length-eight quirk exactly: the
-    // encoder writes marker + eight payload bytes but reports eight. A caller
-    // that persists only the reported count drops the low payload byte; the
-    // matching decoder reads a zero-filled ninth byte.
-    unsafe fn archive_length_eight_round_trip(value: i64) -> i64 {
+    // THE LENGTH-EIGHT RUNG IS GONE, and this pins that it stays gone.
+    //
+    // It used to write a 0xFE marker plus eight payload bytes and report a
+    // length of eight, so the frame kept the always-zero high byte and
+    // dropped the significant low one. A caller that persisted only the
+    // reported count -- which is all a socket sends -- lost data. This test
+    // previously asserted that loss as intended behaviour, which is how the
+    // defect survived: it is only visible if you truncate to the reported
+    // length, and a round trip through the untruncated buffer looks fine.
+    unsafe fn wire_round_trip(value: i64) -> (usize, i64) {
         let mut encoded = [0u8; 9];
         let reported = unsafe { SparseInt::dump64(value, encoded.as_mut_ptr()) };
-        assert_eq!(reported, 8);
-        assert_eq!(encoded[0], 0xfe);
+        // Only the reported bytes reach the wire.
         let mut persisted = [0u8; 9];
         persisted[..reported].copy_from_slice(&encoded[..reported]);
-        unsafe { SparseInt::load64(persisted.as_ptr()) }
+        (reported, unsafe { SparseInt::load64(persisted.as_ptr()) })
     }
-    assert_eq!(
-        unsafe { archive_length_eight_round_trip(36_028_797_018_963_967) },
-        36_028_797_018_963_712
-    );
-    assert_eq!(
-        unsafe { archive_length_eight_round_trip(-36_028_797_018_963_967) },
-        -36_028_797_018_963_968
-    );
+    for value in [
+        36_028_797_018_963_967_i64,
+        -36_028_797_018_963_967,
+        1_125_899_906_842_795,
+        562_949_953_421_313,
+        4_503_599_627_370_751,
+        281_474_976_710_656,
+    ] {
+        assert_ne!(SparseInt::val_size(value), 8, "no value may select the retired rung");
+        let (reported, decoded) = unsafe { wire_round_trip(value) };
+        assert_eq!(reported, 9, "the band folds into the nine-byte 0xFF form");
+        assert_eq!(decoded, value, "truncating to the reported length must be lossless");
+    }
+
+    // 0xFE still DECODES, so archived frames written by an old sender read
+    // exactly as they always did. Only the encoder stopped producing them.
+    assert_eq!(SparseInt::buf_size(0xfe), 8);
 }
 
 #[test]

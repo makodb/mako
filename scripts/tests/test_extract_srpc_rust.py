@@ -1254,7 +1254,13 @@ class CheckedInCanaryTests(unittest.TestCase):
         # 13641 -> 13681: +40, the RPC server now carries a shared admission
         # gate so Raft can reject non-heartbeat traffic until durable recovery
         # and committed replay have completed.
-        self.assertEqual(canonical_lines, 13681)
+        # 13681 -> 13675: -6, retiring SparseInt's 0xFE length-8 rung, which
+        # wrote eight payload bytes and reported a length of seven's worth, so
+        # the low byte never reached the wire. val_size loses its 8 arm (-2)
+        # and dump64 loses the `if n == 8` block (-4); the band folds into the
+        # nine-byte 0xFF form, which any old receiver already decodes. Matches
+        # upstream e113960af, so a subtree pull resolves to their ledger entry.
+        self.assertEqual(canonical_lines, 13675)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"

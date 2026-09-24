@@ -7,6 +7,7 @@ name = "raft"
 version = "0.0.0"
 dependencies = [
  "rusty",
+ "srpc",
 ]
 
 [[package]]
@@ -19,3 +20,10 @@ dependencies = [
 [[package]]
 name = "rusty-cpp-markers"
 version = "0.0.0"
+
+[[package]]
+name = "srpc"
+version = "0.0.0"
+dependencies = [
+ "rusty",
+]

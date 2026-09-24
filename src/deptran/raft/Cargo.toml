@@ -49,6 +49,7 @@ raft_test = []
 
 [dependencies]
 rusty = { path = "../../srpc/rusty-rustc" }
+srpc = { path = "../../srpc" }
 
 [lints.rust]
 unsafe_code = "allow"   # the CRC32 kernel is deliberately unsafe; see its # Safety doc
