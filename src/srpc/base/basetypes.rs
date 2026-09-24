@@ -133,10 +133,7 @@ impl SparseInt {
                 *buf.add((1 + j) as usize) = ((u >> (8 * ((7 - j) as u32))) & 0xFF) as u8;
                 j += 1;
             }
-            if n == 8 {
-                *buf.add(0) = 0xFE;
-                return 8;
-            }
+            // val_size never returns 8 any more, so there is no 0xFE arm here.
             *buf.add(0) = 0xFF;
         }
         9
@@ -237,9 +234,20 @@ impl SparseInt {
             6
         } else if (-281_474_976_710_656..=281_474_976_710_655).contains(&val) {
             7
-        } else if (-36_028_797_018_963_968..=36_028_797_018_963_967).contains(&val) {
-            8
         } else {
+            // NO 8-BYTE CLASS. The 0xFE rung's budget is a marker plus seven
+            // payload bytes, but dump64 laid out eight MSB-first and reported
+            // a length of 8, so the frame kept the always-zero high byte and
+            // dropped the significant low one: any i64 in roughly
+            // [2^48, 2^55) with a non-zero low byte was silently corrupted
+            // (36028797018963967 decoded as 36028797018963712).
+            //
+            // The band folds into the nine-byte 0xFF form rather than getting
+            // a corrected seven-byte layout, because that is readable in the
+            // direction that matters: a new sender's 0xFF frame decodes on any
+            // old receiver, since 0xFF was always the nine-byte marker, and
+            // historical 0xFE data still reads exactly as before. load64 and
+            // buf_size are untouched.
             9
         }
     }

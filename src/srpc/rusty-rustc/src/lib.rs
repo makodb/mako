@@ -1721,8 +1721,21 @@ pub mod rusty {
             let octets = value.ip().octets();
             SockAddrIn {
                 sin_addr: InAddr {
-                    s_addr: u32::from_ne_bytes(octets).to_be(),
+                    // NO byte swap. `in_addr::s_addr` is not an integer whose
+                    // value means anything -- it is four bytes in network
+                    // order, which is what `octets()` already returns. Reading
+                    // them with from_ne_bytes and writing the result back is
+                    // the identity on any endianness, so the address lands in
+                    // memory exactly as given.
+                    //
+                    // The `.to_be()` that was here swapped a second time and
+                    // turned 127.0.0.1 into 1.0.0.127, so every connect timed
+                    // out. It never showed up in the C++ lane, which routes
+                    // this name to a different helper through the type map.
+                    s_addr: u32::from_ne_bytes(octets),
                 },
+                // sin_port DOES stay swapped: it is a genuine 16-bit integer
+                // field that the wire wants in network order.
                 sin_port: value.port().to_be(),
             }
         }
