@@ -181,7 +181,7 @@ The `app_next_` callback is the critical integration point: both Paxos and Raft 
 ### 4.4 Communicator (`src/deptran/communicator.h:372-622`)
 
 The RPC layer for inter-node communication:
-- **Connection management**: `rpc_clients_` map using `rusty::Arc<rrr::Client>` (line 380)
+- **Connection management**: `rpc_clients_` map using `rusty::Arc<srpc::Client>` (line 380)
 - **Leader tracking**: `leader_cache_` for partition-to-leader mapping (line 383)
 - **Broadcast primitives**: `BroadcastDispatch()`, `SendPrepare()`, `SendCommit()` (lines 478-500)
 - **View management**: `partition_views_` tracks current leader for each partition (line 389)

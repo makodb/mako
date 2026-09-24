@@ -94,7 +94,7 @@ private:
 
 ## Implementation Steps
 
-1. Create `src/rrr/rpc/request_queue.hpp` with:
+1. Create `src/srpc/rpc/request_queue.hpp` with:
    - QueuedRequest struct
    - RequestQueueConfig struct
    - OverflowStrategy enum
@@ -126,7 +126,7 @@ Unit tests (`test/rpc_request_queue_test.cc`):
 
 | File | Change |
 |------|--------|
-| `src/rrr/rpc/request_queue.hpp` | New file: RequestQueue class |
+| `src/srpc/rpc/request_queue.hpp` | New file: RequestQueue class |
 | `test/rpc_request_queue_test.cc` | New test file |
 | `CMakeLists.txt` | Add test target |
 

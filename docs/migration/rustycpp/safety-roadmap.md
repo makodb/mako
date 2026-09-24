@@ -1,10 +1,10 @@
-# RRR/RPC Memory Safety Roadmap with RustyCpp
+# SRPC/RPC Memory Safety Roadmap with RustyCpp
 
 > **Historical snapshot.** This roadmap predates the canonical-Rust Goal 0
 > ownership model and is not the current status or execution order. See
-> `docs/dev/goal0_completion_plan.md` and `src/rrr/RUST_CANARY.md` for the live
-> plan. In particular, `rrr.basetypes` is now owned by
-> `src/rrr/src/basetypes.rs`; the `basetypes.hpp/cpp` actions below are
+> `docs/dev/goal0_completion_plan.md` and `src/srpc/RUST_CANARY.md` for the live
+> plan. In particular, `srpc.basetypes` is now owned by
+> `src/srpc/src/basetypes.rs`; the `basetypes.hpp/cpp` actions below are
 > superseded.
 
 ## Current Status
@@ -14,7 +14,7 @@
 - Currently only enabled for `dbtest` target
 
 ## Roadmap Overview
-Transform RRR/RPC library to be memory-safe using RustyCpp borrow checking, eliminating undefined behavior and memory bugs.
+Transform SRPC/RPC library to be memory-safe using RustyCpp borrow checking, eliminating undefined behavior and memory bugs.
 
 ---
 
@@ -23,7 +23,7 @@ Transform RRR/RPC library to be memory-safe using RustyCpp borrow checking, elim
 **Timeline**: 1-2 weeks  
 **Priority**: CRITICAL - Everything depends on these
 
-### 2.1 Base Types Module (`src/rrr/base/`)
+### 2.1 Base Types Module (`src/srpc/base/`)
 | File | Status | Key Changes Needed | Unsafe Blocks |
 |------|--------|-------------------|---------------|
 | `basetypes.hpp/cpp` | 🔴 Not Started | - Convert `RefCounted` to `std::shared_ptr`<br>- Fix `Counter` atomic operations<br>- Make `NoCopy` use delete operators | None expected |
@@ -32,7 +32,7 @@ Transform RRR/RPC library to be memory-safe using RustyCpp borrow checking, elim
 | `debugging.hpp/cpp` | 🔴 Not Started | - Make stack trace safe<br>- Fix `verify()` macro | Signal handlers |
 | `logging.hpp/cpp` | 🔴 Not Started | - Remove static mutable state<br>- Thread-safe initialization<br>- Fix `Log::info` vs `Log_info` usage | None expected |
 
-### 2.2 Memory & Marshaling (`src/rrr/misc/`)
+### 2.2 Memory & Marshaling (`src/srpc/misc/`)
 | File | Status | Key Changes Needed | Unsafe Blocks |
 |------|--------|-------------------|---------------|
 | `marshal.hpp/cpp` | 🔴 Not Started | - Use `std::span` for buffers<br>- Clear ownership model<br>- Safe type punning | Performance critical |
@@ -51,7 +51,7 @@ Transform RRR/RPC library to be memory-safe using RustyCpp borrow checking, elim
 **Timeline**: 1-2 weeks  
 **Priority**: HIGH
 
-### 3.1 Reactor Pattern (`src/rrr/reactor/`)
+### 3.1 Reactor Pattern (`src/srpc/reactor/`)
 | File | Status | Key Changes Needed | Unsafe Blocks |
 |------|--------|-------------------|---------------|
 | `reactor.h/cc` | 🔴 Not Started | - Fix `Pollable` ownership<br>- Coroutine scheduler safety<br>- Event lifetime management | epoll/kqueue FFI |
@@ -59,7 +59,7 @@ Transform RRR/RPC library to be memory-safe using RustyCpp borrow checking, elim
 | `coroutine.cc` | 🔴 Not Started | - Stack allocation safety<br>- Context switching | setjmp/longjmp |
 | `epoll_wrapper.h/cc` | 🔴 Not Started | - RAII for file descriptors<br>- Safe event structure | System calls |
 
-### 3.2 RPC Core (`src/rrr/rpc/`)
+### 3.2 RPC Core (`src/srpc/rpc/`)
 | File | Status | Key Changes Needed | Unsafe Blocks |
 |------|--------|-------------------|---------------|
 | `server.hpp/cpp` | 🔴 Not Started | - Fix `ServerConnection` lifetime<br>- ThreadPool integration<br>- Remove `verify(0)` debug code | None expected |
@@ -79,7 +79,7 @@ Transform RRR/RPC library to be memory-safe using RustyCpp borrow checking, elim
 **Priority**: MEDIUM
 
 ### 4.1 Code Generation Updates
-- [ ] Update RPC code generator templates (`src/rrr/pylib/simplerpcgen/`)
+- [ ] Update RPC code generator templates (`src/srpc/pylib/simplerpcgen/`)
 - [ ] Ensure generated code is borrow-check compliant
 - [ ] Fix service registration patterns
 
@@ -108,7 +108,7 @@ Transform RRR/RPC library to be memory-safe using RustyCpp borrow checking, elim
 
 ### 5.2 Documentation
 - [ ] Document all `unsafe` blocks with justification
-- [ ] Update RRR-RPC guide
+- [ ] Update SRPC-RPC guide
 - [ ] Create migration guide for users
 - [ ] Document new safety patterns
 
@@ -241,11 +241,11 @@ Each `unsafe` block MUST have:
 ## Quick Reference
 
 ### File Priority Order
-1. **Start Here**: `src/rrr/base/basetypes.hpp`
-2. **Then**: `src/rrr/base/threading.hpp`
-3. **Then**: `src/rrr/misc/marshal.hpp`
-4. **Then**: `src/rrr/reactor/reactor.h`
-5. **Finally**: `src/rrr/rpc/server.hpp`
+1. **Start Here**: `src/srpc/base/basetypes.hpp`
+2. **Then**: `src/srpc/base/threading.hpp`
+3. **Then**: `src/srpc/misc/marshal.hpp`
+4. **Then**: `src/srpc/reactor/reactor.h`
+5. **Finally**: `src/srpc/rpc/server.hpp`
 
 ### Common Issues & Solutions
 
@@ -259,17 +259,17 @@ Each `unsafe` block MUST have:
 ### Build Commands
 
 ```bash
-# Enable borrow checking for RRR
+# Enable borrow checking for SRPC
 cmake .. -DENABLE_BORROW_CHECKING=ON
 
 # Build with borrow checking
 make -j8
 
 # Run borrow check only
-make borrow_check_rrr
+make borrow_check_srpc
 
 # Run tests with sanitizers
-./test_rrr --asan --ubsan
+./test_srpc --asan --ubsan
 ```
 
 ---
@@ -277,8 +277,8 @@ make borrow_check_rrr
 ## Next Immediate Actions
 
 1. **Today**: 
-   - [ ] Add RRR to CMake borrow checking targets
-   - [ ] Start with `src/rrr/base/basetypes.hpp`
+   - [ ] Add SRPC to CMake borrow checking targets
+   - [ ] Start with `src/srpc/base/basetypes.hpp`
    - [ ] Create first safe class (Counter)
 
 2. **This Week**:

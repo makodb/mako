@@ -70,7 +70,7 @@ These are called from `raft_main_helper.cc::apply_callbacks_for_partition()` whi
 
 Remote replicas' `Communicator` objects expect to connect to ALL partition ports (e.g., 27001-27006 for 6 partitions). With only one real `RaftWorker` bound to port 27001, ports 27002-27006 would be unbound.
 
-Solution: Create lightweight `rrr::Server` instances on each extra port, registering the same `RaftService` pointing to the single `RaftServer`. This means:
+Solution: Create lightweight `srpc::Server` instances on each extra port, registering the same `RaftService` pointing to the single `RaftServer`. This means:
 - All incoming `AppendEntries` and `RequestVote` RPCs reach the single Raft instance regardless of which port they arrive on
 - Each stub has its own `PollThread` for I/O
 - Stubs are created in `create_stub_servers()` and destroyed in `destroy_stub_servers()`

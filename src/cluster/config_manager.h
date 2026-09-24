@@ -5,7 +5,7 @@ module;
 #include <charconv>
 
 // deref_if_pointer_like (raw-pointer field method calls) used by the
-// DSL-generated bodies below. rusty, not rrr.
+// DSL-generated bodies below. rusty, not srpc.
 #include <rusty/slice.hpp>
 
 export module cluster:config_manager;

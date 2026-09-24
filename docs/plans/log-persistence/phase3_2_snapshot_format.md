@@ -129,7 +129,7 @@ For initial implementation, skip compression (set to NONE). This can be added la
 
 ## Implementation
 
-### File: `src/rrr/rpc/snapshot_format.hpp`
+### File: `src/srpc/rpc/snapshot_format.hpp`
 
 Contains:
 - SnapshotCompression enum
@@ -147,7 +147,7 @@ Contains:
 
 ## Files Created
 
-- `src/rrr/rpc/snapshot_format.hpp` (~200 LOC)
+- `src/srpc/rpc/snapshot_format.hpp` (~200 LOC)
 
 ## LOC Estimate
 

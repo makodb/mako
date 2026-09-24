@@ -18,8 +18,8 @@ synchronisation costs rather than network round-trip time.
 
 ### 2.2 Transport
 
-All tests use the **rrr (TCP/IP RPC)** transport backend (default).
-eRPC (RDMA) is not used in these benchmarks.  The rrr transport adds
+All tests use the **srpc (TCP/IP RPC)** transport backend (default).
+eRPC (RDMA) is not used in these benchmarks.  The srpc transport adds
 ~10-50 us latency per RPC call even on localhost.
 
 ### 2.3 Build Configuration

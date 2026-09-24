@@ -184,7 +184,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       3. For `.h` files: annotate all method declarations in headers. Safety annotations propagate from headers to implementations automatically.
       4. **Goal is maximum safe coverage**. Ideally 100% `@safe`, but realistically some functions will need `@unsafe` — that is acceptable. Leave clear comments on every `@unsafe` function/block explaining what prevents it from being safe.
     - **Handling RustyCpp False Positives and Errors from External Files**:
-      - **RustyCpp is still under active development** and may produce false positives or errors originating from files **outside** the raft module (e.g., headers in `src/rrr/`, `src/deptran/`, `src/mako/`, or third-party includes).
+      - **RustyCpp is still under active development** and may produce false positives or errors originating from files **outside** the raft module (e.g., headers in `src/srpc/`, `src/deptran/`, `src/mako/`, or third-party includes).
       - If the borrow checker reports errors in files **outside** `src/deptran/raft/` that are blocking your progress, you are allowed to go into those external files and mark the offending code `// @unsafe` to suppress the false positive. Add a comment like: `// @unsafe - marked unsafe to suppress rusty-cpp false positive (rusty-cpp is under development)`
       - Do NOT try to fully migrate external files — just apply the minimal `@unsafe` annotation needed to unblock the raft file you are working on.
       - If an error seems like a genuine rusty-cpp bug (not a real safety issue), note it in a comment near the `@unsafe` annotation so it can be revisited later.
@@ -401,7 +401,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Bug: Race condition in `GetOrCreateClient()` — iterator used after mutex unlock (general fix, affected Raft tests too)
         - Process cleanup: Raft processes sometimes hung during shutdown — required careful SIGKILL handling in CI scripts
         - Port conflicts: Paxos uses 17xxx, Raft uses 27xxx — needed separate port ranges to avoid collision when both are tested
-        - **Result**: Created `doc/thesis/04-mako-integration/challenges.md` covering 8 integration challenges with root cause analysis, exact fix locations, and verification results. Bug 1: simpleRaft.cc missing set_replication_type(RAFT) before setup() (fix at simpleRaft.cc:92). Bug 2: dbtest auto-detection failure - YAML parsed inside dispatch target (fix: detect_replication_type_from_config in mako.hh:779-816 with priority chain table). Bug 3: FAIL_NEW_VERSION cross-shard RPC timeouts during Raft elections (fix: 4 is_using_raft() guards at mako.hh:650,662,700,722). Bug 4: GetOrCreateClient() TOCTOU race condition - iterator used after mutex unlock (fix at rrr_rpc_backend.cc:206-211, commit c84909cc). Challenge 5: process cleanup with 3-layer SIGKILL + port polling in ci_mako_raft.sh. Challenge 6: port conflict separation (Paxos 17xxx / Raft 27xxx / tests 38xxx). Challenge 7: Jetpack recovery incompatibility with forced MAKO_DISABLE_JETPACK=1. Challenge 8: transport layer shutdown races with 5 coordinated atomic/locking fixes. Summary table with 8 bugs, key architectural lesson about dispatcher critical point.
+        - **Result**: Created `doc/thesis/04-mako-integration/challenges.md` covering 8 integration challenges with root cause analysis, exact fix locations, and verification results. Bug 1: simpleRaft.cc missing set_replication_type(RAFT) before setup() (fix at simpleRaft.cc:92). Bug 2: dbtest auto-detection failure - YAML parsed inside dispatch target (fix: detect_replication_type_from_config in mako.hh:779-816 with priority chain table). Bug 3: FAIL_NEW_VERSION cross-shard RPC timeouts during Raft elections (fix: 4 is_using_raft() guards at mako.hh:650,662,700,722). Bug 4: GetOrCreateClient() TOCTOU race condition - iterator used after mutex unlock (fix at srpc_rpc_backend.cc:206-211, commit c84909cc). Challenge 5: process cleanup with 3-layer SIGKILL + port polling in ci_mako_raft.sh. Challenge 6: port conflict separation (Paxos 17xxx / Raft 27xxx / tests 38xxx). Challenge 7: Jetpack recovery incompatibility with forced MAKO_DISABLE_JETPACK=1. Challenge 8: transport layer shutdown races with 5 coordinated atomic/locking fixes. Summary table with 8 bugs, key architectural lesson about dispatcher critical point.
     - [x] *high* Task 6: `doc/thesis/05-standalone-testing/` — Standalone Raft Testing
       - [x] `doc/thesis/05-standalone-testing/test_framework.md` — Test infrastructure
         - `RaftLabTest` class: coroutine-based test harness in `test.h`/`test.cc`
@@ -454,12 +454,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - [x] *high* Task 8: `doc/thesis/07-performance/` — Performance Analysis and Paxos Comparison
       - [x] `doc/thesis/07-performance/methodology.md` — Benchmark methodology
         - Test environment: single localhost machine, all replicas co-located
-        - Transport: rrr (TCP/IP RPC), not eRPC
+        - Transport: srpc (TCP/IP RPC), not eRPC
         - Workload: TPC-C (NewOrder, Payment, Delivery, OrderStatus, StockLevel)
         - Configuration: 6 worker threads per replica, 6 warehouses per shard
         - Metrics collected: `agg_persist_throughput`, commit counts, latencies, abort ratios, `replay_batch`
         - Caveats: single-node testing, resource contention, test duration differences
-        - **Result**: Created `doc/thesis/07-performance/methodology.md` documenting benchmark methodology. Test environment: single localhost machine, rrr TCP/IP transport (10-50us latency), release mode with jemalloc. TPC-C workload: NewOrder 45%, Payment 43%, Delivery/OrderStatus/StockLevel 4% each. 4 test configurations detailed with comparison tables: 1-shard TPC-C (Paxos 4 processes vs Raft 3, 40s vs 60s duration), 2-shard TPC-C (8 vs 6 processes, 120s polling), 1-shard simple tx, 2-shard simple tx. Primary metrics: agg_persist_throughput, replay_batch, NewOrder_remote_abort_ratio. Per-transaction metrics: attempts/commits/avg/p50/p99 latency/abort ratio. 6 caveats: single-node deployment (CPU contention), test duration difference (40s vs 60s), process count difference (4 vs 3), Multi-Paxos pipelining vs Raft sequential log, warmup period (~5s), resource contention (18-48 threads).
+        - **Result**: Created `doc/thesis/07-performance/methodology.md` documenting benchmark methodology. Test environment: single localhost machine, srpc TCP/IP transport (10-50us latency), release mode with jemalloc. TPC-C workload: NewOrder 45%, Payment 43%, Delivery/OrderStatus/StockLevel 4% each. 4 test configurations detailed with comparison tables: 1-shard TPC-C (Paxos 4 processes vs Raft 3, 40s vs 60s duration), 2-shard TPC-C (8 vs 6 processes, 120s polling), 1-shard simple tx, 2-shard simple tx. Primary metrics: agg_persist_throughput, replay_batch, NewOrder_remote_abort_ratio. Per-transaction metrics: attempts/commits/avg/p50/p99 latency/abort ratio. 6 caveats: single-node deployment (CPU contention), test duration difference (40s vs 60s), process count difference (4 vs 3), Multi-Paxos pipelining vs Raft sequential log, warmup period (~5s), resource contention (18-48 threads).
       - [x] `doc/thesis/07-performance/results.md` — Detailed benchmark results
         - Table: 1-shard TPC-C — Paxos (133,931 ops/sec) vs Raft (96,463 ops/sec)
         - Table: 2-shard TPC-C — Paxos (~8,500/shard) vs Raft (~8,560/shard)
@@ -523,8 +523,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] `doc/thesis/09-appendix/glossary.md` — Terms and definitions
         - Raft-specific: term, log index, commit index, match index, next index, election timeout, heartbeat
         - Mako-specific: shard, partition, partition group, watermark, epoch, NO-OP
-        - System-specific: RPC, rrr framework, eRPC, DPDK, Masstree, OCC, 2PC
-        - **Result**: Created `doc/thesis/09-appendix/glossary.md` with 5 sections, 50+ terms defined. Raft terms: term, log index, commit index, match index, next index, election timeout, heartbeat, leader/follower/candidate, RequestVote, AppendEntries, TimeoutNow, preferred leader, NO-OP, log compaction. Mako terms: shard, partition, partition group, watermark, epoch, speculative execution, agg_persist_throughput, replay_batch, learner, preferred replica. Transaction terms: TPC-C and 5 transaction types, OCC, 2PC, abort ratio, commit latency. System terms: rrr, eRPC, DPDK, Masstree, RocksDB, jemalloc, RustyCpp, Marshal, dbtest, simpleRaft, simpleTransactionRepRaft, GDB, coroutine, fiber. Persistence terms: WAL, fsync, WriteBatch, snapshot, CURRENT file.
+        - System-specific: RPC, srpc framework, eRPC, DPDK, Masstree, OCC, 2PC
+        - **Result**: Created `doc/thesis/09-appendix/glossary.md` with 5 sections, 50+ terms defined. Raft terms: term, log index, commit index, match index, next index, election timeout, heartbeat, leader/follower/candidate, RequestVote, AppendEntries, TimeoutNow, preferred leader, NO-OP, log compaction. Mako terms: shard, partition, partition group, watermark, epoch, speculative execution, agg_persist_throughput, replay_batch, learner, preferred replica. Transaction terms: TPC-C and 5 transaction types, OCC, 2PC, abort ratio, commit latency. System terms: srpc, eRPC, DPDK, Masstree, RocksDB, jemalloc, RustyCpp, Marshal, dbtest, simpleRaft, simpleTransactionRepRaft, GDB, coroutine, fiber. Persistence terms: WAL, fsync, WriteBatch, snapshot, CURRENT file.
       - [x] `doc/thesis/09-appendix/rustycpp_safety.md` — RustyCpp safety annotations in Raft code
         - Which Raft methods are `@safe` and why
         - Which Raft methods are `@unsafe` and why (persistence I/O, state mutation, RPC calls)
@@ -665,15 +665,15 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
   - [x] *medium* Fix destructor deadlock risk: async_threads_mtx_ held during join() in destructor can deadlock with in-flight RPC handlers. Fix: swap vector out under lock, join without lock. [ISSUE-db176a90-1] [FIXED 2026-02-10, 22:30]
   - [x] *medium* Fix unbounded thread handle accumulation in async_threads_. Add completion flag per thread, prune finished threads at each insertion. [ISSUE-db176a90-2] [FIXED 2026-02-10, 22:30]
   - [x] *medium* Fix replication port conflicts on shared server: zyang2's long-running processes occupy 17xxx-26xxx (Paxos) and 27xxx-28xxx (Raft) port ranges, causing follower processes to fail with EADDRINUSE. Fix: change Paxos port base to 45xxx-54xxx and Raft to 55xxx-56xxx. Files: generator.py, raft2_shardidx0.yml, raft6_shardidx0.yml, raft6_shardidx1.yml (all paxos*_shardidxN.yml are auto-generated and not tracked). [FIXED 2026-02-15, 01:00 - 14/15 CI tests pass, 0 port bind errors.]
-  - [x] *medium* Fix data race in RrrRpcBackend statistics counters: non-atomic uint64_t/int counters accessed concurrently from network threads (writers) and PrintStats/Stop (readers). Fix: make all 4 counters std::atomic with memory_order_relaxed for both fetch_add (writes) and load (reads). [CI-shard2ReplicationRaft-segfault] [FIXED 2026-02-13, 20:18 - Files: rrr_rpc_backend.h (declarations), rrr_rpc_backend.cc (16 access sites). All 19 CI tests pass.]
-  - [x] *high* Investigate intermittent segfault in RrrRpcBackend::Stop during shutdown [CI-a6bed72c] [FIXED 2026-02-03, 23:05]
-    - Problem: shardNoReplication test fails with segfault in shard 0 during RrrRpcBackend::Stop
-    - Evidence: CI run #21649096526 failed - "Segmentation fault" at rrr_rpc_backend.cc during client connection close
+  - [x] *medium* Fix data race in SrpcRpcBackend statistics counters: non-atomic uint64_t/int counters accessed concurrently from network threads (writers) and PrintStats/Stop (readers). Fix: make all 4 counters std::atomic with memory_order_relaxed for both fetch_add (writes) and load (reads). [CI-shard2ReplicationRaft-segfault] [FIXED 2026-02-13, 20:18 - Files: srpc_rpc_backend.h (declarations), srpc_rpc_backend.cc (16 access sites). All 19 CI tests pass.]
+  - [x] *high* Investigate intermittent segfault in SrpcRpcBackend::Stop during shutdown [CI-a6bed72c] [FIXED 2026-02-03, 23:05]
+    - Problem: shardNoReplication test fails with segfault in shard 0 during SrpcRpcBackend::Stop
+    - Evidence: CI run #21649096526 failed - "Segmentation fault" at srpc_rpc_backend.cc during client connection close
     - Root cause: Race condition in GetOrCreateClient() - iterator used after mutex unlock
       - Code: `clients_lock_.unlock(); return it->second.clone();` - iterator invalid if another thread clears map
     - Fix: Clone Arc BEFORE unlocking mutex: `auto result = it->second.clone(); clients_lock_.unlock(); return result;`
-    - Files changed: src/mako/lib/rrr_rpc_backend.cc (line 204-211)
-    - Verified: shardNoReplication passed 5/5 runs, rrrTests 66/66 passed, shard2Replication passed
+    - Files changed: src/mako/lib/srpc_rpc_backend.cc (line 204-211)
+    - Verified: shardNoReplication passed 5/5 runs, srpcTests 66/66 passed, shard2Replication passed
   - [x] *high* Unify client-server interfaces in simpleTransactionRep.cc [issue-1.md] [DONE 2026-01-25, 06:44]
     - Plan: docs/dev/unify_client_server_interface_plan.md
     - Requirements from issue-1.md:
@@ -695,7 +695,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - Fix: Added `std::atomic<uint32_t> next_txn_counter_` to MakoClientService. txn_id = (client_id << 32) | counter++.
     - Updated docs/client_server_architecture.md to document the implementation.
     - Plan: docs/dev/fix_txn_id_collision_plan.md
-    - All CI tests passed (19 suites, 65/65 rrrTests).
+    - All CI tests passed (19 suites, 65/65 srpcTests).
   - [x] *high* Implement actual Commit/Rollback logic in MakoClientService. [ISSUE-1886cab7-2] [FIXED 2026-01-23, 05:30]
     - Analysis: MakoClientService already delegates to ShardReceiver methods (BeginClientTransaction, CommitClientTransaction, RollbackClientTransaction).
     - Bug Found: RollbackClientTransaction incorrectly called `db->shard_abort_txn(nullptr)` which operates on thread-local state, not the client's transaction.
@@ -711,21 +711,21 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Atomic counter sequential and concurrent behavior
       - Multi-service counter independence
     - Plan: docs/dev/test_client_service_plan.md
-    - All CI tests passed (19 suites + new test_client_service, 65/65 rrrTests).
+    - All CI tests passed (19 suites + new test_client_service, 65/65 srpcTests).
   - [x] *medium* Unify client mode test path with local mode. [ISSUE-33b02756-2] [DONE 2026-01-23, 06:30]
     - Created `run_simple_test(IDatabase* db, std::string test_prefix)` unified test function
     - Same function works for both local DB and RemoteDB via IDatabase interface
     - Tests: 5 writes, 5 reads with verification, rollback behavior test
     - Updated run_client_mode() to use unified test function
     - Plan: docs/dev/unify_client_mode_plan.md
-    - All CI tests passed (19 suites, 66/66 rrrTests).
+    - All CI tests passed (19 suites, 66/66 srpcTests).
   - [x] *high* bug. shard2Replication still fails on ci server (run via ./ci/ci.sh shard2Replication) from time to time (not always), please investigate and fix. I'm confirmed that there are issues. For example, the latest run failed on shard2Replication https://github.com/makodb/mako/actions/runs/21119439267/job/60729910874. Don't mark it as completed if you don't find any bug. The fix should be minimal. [FIXED 2026-01-19, 06:00]
     - Root cause: Race condition in FastTransport between stats()/Statistics() and destructor
     - The benchmark thread calls Statistics() -> PrintStats() while another thread runs destructor
     - Use-after-free when destructor deletes backend_ while stats() is accessing it
     - Fix: Added backend_mutex_ and shutting_down_ atomic flag to protect concurrent access
     - Files changed: src/mako/lib/fasttransport.h, src/mako/lib/fasttransport.cc
-    - Verified: 5 consecutive shard2Replication runs + rrrTests (65/65 pass)
+    - Verified: 5 consecutive shard2Replication runs + srpcTests (65/65 pass)
   - [x] *high* Avoid duplication in decoupled client-server. [DONE 2026-01-21, 17:45]
     - Sub-task 1: Consolidated 5 docs into 2: `docs/client_server_architecture.md` (current implementation) and `docs/client_server_roadmap.md` (future plans). Deleted 5 outdated docs from docs/dev/.
     - Sub-task 2: Created IDatabase/ITable abstract interfaces in `src/mako/idb.hh`. Both DB and RemoteDB now inherit from IDatabase. LocalTable (`src/mako/local_table.hh`) wraps mbta_sharded_ordered_index. Updated `simpleTransactionRep.cc` to use IDatabase - same code path works for both local and remote.
@@ -872,14 +872,14 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Test 4 not supported in single-shard mode by design: client TCP server requires helper servers which only exist in multi-shard (nshards > 1) deployments
       - Updated test script with clear documentation pointing to multi-shard tests (shard2Replication, multiShardSingleProcess)
     - [x] *medium* Using existing RPC framework (see `rpc_setup.cc`) instead of reinventing it via raw socket. Expected results: avoid using any raw socket invoke in `remote_db.hh`, such as `::write`, `::socket` etc. [DONE 2026-01-17, 00:25]
-      - Upstream commit 1886cab7 refactored from raw TCP sockets to RRR RPC framework
-      - remote_db.hh now uses rrr::Client, rrr::PollThread, MakoClientProxy
+      - Upstream commit 1886cab7 refactored from raw TCP sockets to SRPC RPC framework
+      - remote_db.hh now uses srpc::Client, srpc::PollThread, MakoClientProxy
       - No raw socket calls (::write, ::socket, ::read, ::connect) remain in remote_db.hh
       - Also converted std::unique_ptr to rusty::Option<rusty::Box> for proxy_ and tables_
     - [x] *medium* revise decoupled client implementations (commits between `6a5f8ad0e4b4ec8f06a92300381fba2ba760420d` and `1a049ce36ee68795756754a5a13abf467f07a0e2`) to satisfy rusty safe code. [DONE 2026-01-17, 00:30]
       - Verified all new files are properly annotated with @safe comments
-      - client_proxy.h/cc: Uses rusty::Arc<rrr::Client>, all methods marked @safe
-      - client_service.h/cc: Uses rusty::Box<rrr::Request>, all handlers marked @safe
+      - client_proxy.h/cc: Uses rusty::Arc<srpc::Client>, all methods marked @safe
+      - client_service.h/cc: Uses rusty::Box<srpc::Request>, all handlers marked @safe
       - remote_db.hh: Converted std::unique_ptr to rusty::Option<rusty::Box>
       - client_tcp_server.h: Documented acceptable std::unique_ptr usage for non-movable types
   - [x] *high* Rocksdb interface: expose rocksdb-like interface to users 
@@ -910,7 +910,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - config_store.cc: All RocksDB methods marked @unsafe with block reasons for each operation
       - config_client.h: Fixed destructor and disconnect() annotations from @safe to @unsafe
     - Conclusion: The code is fundamentally doing I/O which is inherently unsafe in rusty-cpp sense. The proper approach is to mark these functions as @unsafe at function level and document specific unsafe operations with `// @unsafe { reason }` blocks. 
-  - [x] *high* bug investigate, ci server fails repeatedly when running ./ci/ci.sh rrrTests [DONE 2026-01-09]
+  - [x] *high* bug investigate, ci server fails repeatedly when running ./ci/ci.sh srpcTests [DONE 2026-01-09]
     - Root cause 1: `Client::close()` was clearing connection to None, losing address for reconnect
       - Fix: Modified `Client::close()` to call `conn.close()` but NOT clear to None
     - Root cause 2: `replay_pending_requests()` didn't reset Marshal's write_cnt_ after read_from_marshal
@@ -919,9 +919,9 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Fix: Modified `PollWrapper::Add()` to handle EEXIST by removing then re-adding
     - Root cause 4: `ErrorCategoriesWithCircuitBreaker` test used wrong error types
       - Fix: Changed `SERVICE_UNAVAILABLE` (APPLICATION error) to `CONNECTION_RESET` (CONNECTION error)
-    - All 42 rrrTests now pass consistently
-  - [x] *high* bug. the rrrTests ci still fails on ci server, please investigate and fix. verify fix by running it 10 times. [DONE 2026-01-10, 02:10]
-    - Verified: All 45 rrrTests pass consistently (ran 10 times, all passed)
+    - All 42 srpcTests now pass consistently
+  - [x] *high* bug. the srpcTests ci still fails on ci server, please investigate and fix. verify fix by running it 10 times. [DONE 2026-01-10, 02:10]
+    - Verified: All 45 srpcTests pass consistently (ran 10 times, all passed)
     - Full CI suite passed successfully
     - GitHub Actions CI shows recent successful runs
     - Previous fix (Phase 5.1 with Client::close() race condition) resolved the issue
@@ -932,7 +932,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - "Cannot modify field 'm_pNode' in const method"
       - "Cannot call method on 'this.epochs_': field is borrowed by ei"
     - Fix: Temporarily disabled borrow checking for files that trigger these false positives in CMakeLists.txt:
-      - RRR library: Changed to explicit empty file list (RRR_BORROW_SRC)
+      - SRPC library: Changed to explicit empty file list (SRPC_BORROW_SRC)
       - Deptran: Disabled borrow checking (DEPTRAN_BORROW_SRC set to empty)
       - Masstree: Commented out borrow checking glob
       - Test files: Disabled borrow checking targets
@@ -943,7 +943,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - Waiting for fix before re-enabling borrow checking
     - [x] Re-check rusty-cpp for fix to "Cannot return 'value'" false positive (fixed 2026-01-04)
       - Commit e5b380e fixed the remaining false positives
-      - Re-enabled borrow checking for 14 RRR files:
+      - Re-enabled borrow checking for 14 SRPC files:
         - Reactor: coroutine.cc, event.cc, quorum_event.cc, epoll_wrapper.cc
         - Base: logging.cpp, misc.cpp, basetypes.cpp, debugging.cpp, threading.cpp
         - Misc: alock.cpp, marshal.cpp
@@ -972,10 +972,10 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] Task 5: Map containers to RefCell (processors_, opened_files_) [DONE]
         - Removed as dead code - these fields were declared but never used anywhere
       - [x] Task 6: Remove @unsafe blocks, add reactor.cc to borrow checking [DONE]
-        - Added reactor.cc to RRR_BORROW_SRC in CMakeLists.txt (now 15 RRR files under borrow checking)
+        - Added reactor.cc to SRPC_BORROW_SRC in CMakeLists.txt (now 15 SRPC files under borrow checking)
         - Fixed Rc::clone() false positive with @unsafe annotation in recycle()
         - All reactor tests pass 
-  - [x] *medium* Make rrr code naming following rust convention, e.g., class/types use UpperCamelCase, methods use snake_case. [Analysis: doc/naming_convention_analysis.md] [DONE]
+  - [x] *medium* Make srpc code naming following rust convention, e.g., class/types use UpperCamelCase, methods use snake_case. [Analysis: doc/naming_convention_analysis.md] [DONE]
     - [x] reactor/event.h - Rename Event methods to snake_case (IsReady->is_ready, Test->test, Wait->wait, etc.) [DONE: commit d11bf085b]
     - [x] reactor/reactor.h - Rename Reactor methods to snake_case (GetReactor->get_reactor, Loop->loop, CreateSpEvent->create_sp_event, etc.) [DONE]
     - [x] reactor/coroutine.h - Rename Coroutine methods to snake_case (CreateRun->create_run, Yield->yield_, Continue->continue_, etc.) [DONE]
@@ -985,12 +985,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - [x] misc/alock.hpp - Rename ALock methods to snake_case (Lock->lock_sync, DisableWound->disable_wound) [DONE]
     - [x] rpc/*.hpp - Already follows snake_case convention [DONE]
     - [x] Update all call sites throughout codebase for each renamed method [DONE: call sites updated in each task above]
-  - [x] *medium* Make rrr code rusty-cpp safe. Expected results: only system calls and some really low-level code like memcpy are left in unsafe blocks, rest of the code are converted to rusty safe. [Plan: doc/rrr_safety_conversion_plan.md] [DONE]
+  - [x] *medium* Make srpc code rusty-cpp safe. Expected results: only system calls and some really low-level code like memcpy are left in unsafe blocks, rest of the code are converted to rusty safe. [Plan: doc/srpc_safety_conversion_plan.md] [DONE]
     - [x] Phase 1: Small utility files [DONE]
-      - [x] base/strop.cpp (92 lines) - Add safety annotations [DONE - 16 RRR files now under borrow checking]
-      - [x] base/unittest.cpp (144 lines) - Add safety annotations [DONE - 17 RRR files now under borrow checking]
-      - [x] misc/rand.cpp (147 lines) - Add safety annotations [DONE - 18 RRR files now under borrow checking]
-      - [x] misc/recorder.cpp (175 lines) - Add safety annotations [DONE - 19 RRR files now under borrow checking]
+      - [x] base/strop.cpp (92 lines) - Add safety annotations [DONE - 16 SRPC files now under borrow checking]
+      - [x] base/unittest.cpp (144 lines) - Add safety annotations [DONE - 17 SRPC files now under borrow checking]
+      - [x] misc/rand.cpp (147 lines) - Add safety annotations [DONE - 18 SRPC files now under borrow checking]
+      - [x] misc/recorder.cpp (175 lines) - Add safety annotations [DONE - 19 SRPC files now under borrow checking]
     - [x] Phase 2: Message queue (mq) files [REMOVED - dead code using legacy APR, was not compiled]
     - [x] Phase 3: Remote logging (rlog) files [REMOVED - dead code, not compiled or referenced]
   - [x] *high* Fix 2-shard replication test failures (shard2ReplicationRaft) [DONE 2026-01-04]
@@ -1001,8 +1001,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       client_control() calls when using Raft (Raft handles leader changes internally).
     - Result: shard2ReplicationRaft now passes (8370 ops/sec, 1.5% abort ratio)
   - [x] *high* RPC Reliability Enhancement: Crash handling, reconnection, and fault tolerance [DONE 2026-01-10]
-    - **Goal**: Enhance `src/rrr/rpc/` to support server/client crash handling, automatic reconnection, and improved reliability
-    - **Scope**: rrr/rpc module only (TCP-based RPC). eRPC (RDMA backend) is out of scope - it has its own reliability mechanisms.
+    - **Goal**: Enhance `src/srpc/rpc/` to support server/client crash handling, automatic reconnection, and improved reliability
+    - **Scope**: srpc/rpc module only (TCP-based RPC). eRPC (RDMA backend) is out of scope - it has its own reliability mechanisms.
     - **Current State Analysis**:
       - No automatic reconnection - client must manually call `connect()` after failure
       - No message durability - in-flight messages lost on disconnect
@@ -1012,7 +1012,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - **Implementation Plan**: See `doc/rpc_reliability_plan.md`
     - [x] **Phase 1: Connection State Management** [DONE]
       - [x] *high* 1.1 Implement Connection State Machine [Plan: doc/rpc/phase1_connection_state.md] [DONE]
-        - Created `src/rrr/rpc/connection_state.hpp` with ConnectionState enum and ConnectionStateMachine class
+        - Created `src/srpc/rpc/connection_state.hpp` with ConnectionState enum and ConnectionStateMachine class
         - ConnectionState enum: NEW, CONNECTING, CONNECTED, DISCONNECTING, DISCONNECTED, FAILED
         - ConnectionStateMachine: state transitions with validation and callbacks;
           Cell-backed mutation is single-threaded (Send, not Sync)
@@ -1021,8 +1021,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Fixed pre-existing AddrInfo::release() raw pointer violation in utils.hpp
         - ~170 LOC (connection_state.hpp) + ~50 LOC integration changes
       - [x] *high* 1.2 Add Reconnection Policy Configuration [Plan: doc/rpc/phase1_reconnect_policy.md] [DONE]
-        - Canonical source is now `src/rrr/src/reconnect_policy.rs`; rusty-cpp
-          generates the `rrr.reconnect_policy` C++ module
+        - Canonical source is now `src/srpc/src/reconnect_policy.rs`; rusty-cpp
+          generates the `srpc.reconnect_policy` C++ module
         - ReconnectPolicy struct with all config fields
         - Policy presets: aggressive (fast/unlimited), conservative (default), no_retry
         - ReconnectCalculator class with exponential backoff and jitter
@@ -1035,8 +1035,8 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Callback support for async completion notification
         - ~100 LOC in headers + ~60 LOC in implementation
       - [x] *medium* 1.4 Circuit Breaker Pattern [deps: 1.1] [Plan: doc/rpc/phase1_circuit_breaker.md] [DONE]
-        - Canonical source is now `src/rrr/src/circuit_breaker.rs`; rusty-cpp
-          generates the `rrr.circuit_breaker` C++ module
+        - Canonical source is now `src/srpc/src/circuit_breaker.rs`; rusty-cpp
+          generates the `srpc.circuit_breaker` C++ module
         - CircuitState enum: CLOSED, OPEN, HALF_OPEN
         - CircuitBreakerConfig with presets: sensitive(), relaxed(), disabled()
         - CircuitBreaker class with allow_request(), record_success/failure()
@@ -1044,7 +1044,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Cell-backed mutable state is Send but not Sync; callers serialize mutation
     - [x] **Phase 2: Message Durability and Request Management** [DONE]
       - [x] *medium* 2.1 Request Queue with Persistence Option [Plan: doc/rpc/phase2_request_queue.md] [DONE]
-        - Created `src/rrr/rpc/request_queue.hpp` (~280 LOC)
+        - Created `src/srpc/rpc/request_queue.hpp` (~280 LOC)
         - QueuedRequest struct with xid, rpc_id, timestamp, retry_count, payload, callback, ttl_ms
         - RequestQueueConfig with presets: defaults(), small(), large(), disabled()
         - Overflow strategies: DROP_OLDEST, DROP_NEWEST, FAIL_FAST
@@ -1058,7 +1058,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Implemented queue replay in `replay_pending_requests()` called after reconnection
         - Unit tests: 17 tests in `test/rpc_request_buffering_test.cc`
       - [x] *low* 2.3 Idempotency Support [deps: 2.2] [DONE 2026-01-10]
-        - Created `src/rrr/rpc/idempotency.hpp` (~450 LOC)
+        - Created `src/srpc/rpc/idempotency.hpp` (~450 LOC)
         - IdempotencyKey: client_id + sequence for unique request identification
         - IdempotencyKeyGenerator: thread-safe sequence generation via rusty::Cell
         - IdempotencyConfig: configurable TTL, max_entries, presets (defaults, small, large, disabled)
@@ -1069,7 +1069,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Marshal operators for IdempotencyKey serialization
         - Created test/test_idempotency.cc with 32 tests (all passing)
       - [x] *medium* 2.4 Request Timeout and Retry Logic [deps: 1.2] [Plan: doc/rpc/phase2_timeout_retry.md] [DONE 2026-01-10]
-        - Created the `rrr.request_options` module; its canonical source is now `src/rrr/src/request_options.rs`
+        - Created the `srpc.request_options` module; its canonical source is now `src/srpc/src/request_options.rs`
         - TimeoutType enum: NONE, CONNECT_TIMEOUT, REQUEST_TIMEOUT, RESPONSE_TIMEOUT, TOTAL_TIMEOUT
         - RequestOptions struct: timeout_ms, total_timeout_ms, max_retries, base/max_delay_ms, jitter_factor, idempotent
         - Presets: defaults(), with_retry(), idempotent_retry(), no_timeout(), fast(), patient()
@@ -1079,14 +1079,14 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - 30 unit tests in test/rpc_timeout_retry_test.cc
     - [x] **Phase 3: Health Monitoring** [DONE]
       - [x] *high* 3.1 Heartbeat/Keep-Alive Mechanism [deps: 1.3] [Plan: doc/rpc/phase3_heartbeat.md] [DONE]
-        - Created `src/rrr/rpc/heartbeat.hpp` (~240 LOC)
+        - Created `src/srpc/rpc/heartbeat.hpp` (~240 LOC)
         - HeartbeatConfig with presets: aggressive(), relaxed(), disabled()
         - HeartbeatManager class for tracking heartbeat state
         - Caller-driven design: should_send_heartbeat(), on_heartbeat_sent(), on_pong_received()
         - Timeout detection with callback support: check_timeout(), set_on_timeout()
         - Cell-backed mutable state is single-threaded (Send, not Sync)
       - [x] *low* 3.2 Connection Health Metrics [Plan: doc/rpc/phase3_metrics.md] [DONE 2026-01-09]
-        - Created `src/rrr/rpc/connection_metrics.hpp` (~180 LOC)
+        - Created `src/srpc/rpc/connection_metrics.hpp` (~180 LOC)
         - `ConnectionMetrics` class with atomic thread-safe counters
         - Tracks requests_sent/completed/failed/timed_out, bytes_sent/received
         - Tracks reconnect_count, connect_time, latency (min/max/avg)
@@ -1121,7 +1121,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - 11 unit tests in test/rpc_restart_detection_test.cc
         - ~100 LOC
       - [x] *low* 4.3 Request Completion Tracking [deps: 2.3, 4.2] [DONE 2026-01-10]
-        - Created `src/rrr/rpc/completion_tracker.hpp` (~300 LOC)
+        - Created `src/srpc/rpc/completion_tracker.hpp` (~300 LOC)
         - CompletionTracker: LRU-based completion log with TTL expiration
           - Thread-safe via rusty::Mutex
           - Statistics: total_tracked, queries, query_hits, evictions
@@ -1142,7 +1142,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Created test/rpc_client_pool_test.cc with 20 tests (all passing)
         - ~250 LOC
       - [x] *low* 5.2 Load Balancing Strategies [deps: 3.2, 5.1] [DONE 2026-01-10]
-        - Created `src/rrr/rpc/load_balancer.hpp` (~170 LOC)
+        - Created `src/srpc/rpc/load_balancer.hpp` (~170 LOC)
         - LoadBalancingStrategy enum: RANDOM, ROUND_ROBIN, LEAST_CONNECTIONS, LEAST_LATENCY
         - LoadBalancerState class for round-robin index tracking via rusty::Cell
         - LoadBalancer class with select() template method for all strategies
@@ -1157,13 +1157,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - ~110 LOC
     - [x] **Phase 6: Error Handling Improvements** [DONE]
       - [x] *high* 6.1 Structured Error Types [Plan: doc/rpc/phase6_error_types.md] [DONE]
-        - Created `src/rrr/rpc/errors.hpp` (~230 LOC)
+        - Created `src/srpc/rpc/errors.hpp` (~230 LOC)
         - RpcErrorCategory: NONE, CONNECTION, PROTOCOL, APPLICATION, TIMEOUT, INTERNAL
         - RpcError enum with 25+ detailed error codes
         - RpcException class with category, code, message, retryable checks
         - Helper functions: is_connection_error(), is_timeout_error(), is_retryable_error()
       - [x] *medium* 6.2 Error Callbacks and Hooks [deps: 6.1] [Plan: doc/rpc/phase6_callbacks.md] [DONE]
-        - Created `src/rrr/rpc/callbacks.hpp` (~240 LOC)
+        - Created `src/srpc/rpc/callbacks.hpp` (~240 LOC)
         - CallbackManager class with thread-safe registration and invocation
         - `ConnectionCallbacks`: on_connected, on_disconnected, on_error, on_reconnecting, on_reconnected
         - Multiple callbacks per event with exception safety
@@ -1267,7 +1267,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - **Files Changed**: config.h/cc, coordinator.h/cc, classic/coordinator.cc, constants.h, procedure.h, shard_failure_controller.h, CMakeLists.txt
   - [x] *high* Shard Crash and Reboot Recovery (Simple Mode) [DONE 2026-01-09]
     - **Goal**: Support shard servers crashing and rebooting while system continues operating
-    - **Scope**: rrr/rpc module only. No replication, no RocksDB recovery - shard reboots to empty state.
+    - **Scope**: srpc/rpc module only. No replication, no RocksDB recovery - shard reboots to empty state.
     - **Implementation Plan**: See `doc/shard_crash_reboot_plan.md`
     - **Summary**: Implemented client reconnection support with health checking in ClientPool::get_client()
     - [x] **Task 1: Research Current Behavior** - Analyzed handle_error() flow and failure points
@@ -1280,12 +1280,12 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - **Dependencies**: RPC Reliability Enhancement (complete), Transaction Timeout (complete)
     - [x] **Phase 1: Persistent Log Storage** (~400 LOC)
       - [x] 1.1 Log Persistence Interface - Abstract `LogStorage` interface with append/read/truncate [DONE 2026-01-10, 04:30]
-        - Created `src/rrr/rpc/log_storage.hpp`: LogEntry struct + LogStorage abstract interface
-        - Created `src/rrr/rpc/memory_log_storage.hpp`: InMemoryLogStorage implementation
+        - Created `src/srpc/rpc/log_storage.hpp`: LogEntry struct + LogStorage abstract interface
+        - Created `src/srpc/rpc/memory_log_storage.hpp`: InMemoryLogStorage implementation
         - Created `test/rpc_log_storage_test.cc`: 35 unit tests (all passing)
         - Plan: `doc/dev/phase1_1_log_persistence_interface.md`
       - [x] 1.2 RocksDB Log Backend - Implement `RocksDBLogStorage` with batch writes [DONE 2026-01-10, 05:00]
-        - Created `src/rrr/rpc/rocksdb_log_storage.hpp`: RocksDBLogStorage implementation (~350 LOC)
+        - Created `src/srpc/rpc/rocksdb_log_storage.hpp`: RocksDBLogStorage implementation (~350 LOC)
         - Created `test/rpc_rocksdb_log_storage_test.cc`: 35 unit tests (persistence, thread safety)
         - Plan: `doc/dev/phase1_2_rocksdb_log_backend.md`
       - [x] 1.3 Raft Integration - Modify RaftServer to use LogStorage, persist term/vote/log/commit [DONE 2026-01-10, 06:00]
@@ -1301,7 +1301,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Plan: `doc/dev/phase1_4_paxos_integration.md`
     - [x] **Phase 2: State Recovery on Startup** (~350 LOC) [DONE 2026-01-10]
       - [x] 2.1 Recovery Manager - Detect fresh start vs recovery, coordinate sequence [DONE 2026-01-10, 09:15]
-        - Created `src/rrr/rpc/recovery_manager.hpp`: RecoveryMode enum, RecoveryConfig, RecoveryResult, RecoveryManager class
+        - Created `src/srpc/rpc/recovery_manager.hpp`: RecoveryMode enum, RecoveryConfig, RecoveryResult, RecoveryManager class
         - Integrated with ServerWorker::InitializeRecovery() for Raft and Paxos servers
         - Storage paths: `/tmp/<username>_mako_log_shard<N>_replica<M>`
         - All tests pass: shard1Replication (183695 ops/sec), shard1ReplicationRaft (67136 ops/sec)
@@ -1326,7 +1326,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Plan: `doc/dev/phase2_4_state_machine_recovery.md`
     - [x] **Phase 3: Snapshot Support** (~450 LOC) [DONE 2026-01-10]
       - [x] 3.1 Snapshot Interface - SnapshotManager with take/load/list methods [DONE 2026-01-10]
-        - Created `src/rrr/rpc/snapshot_manager.hpp` (~290 LOC)
+        - Created `src/srpc/rpc/snapshot_manager.hpp` (~290 LOC)
         - SnapshotMetadata: last_included_index/term, timestamp, size, checksum
         - SnapshotReader/Writer: abstract streaming interfaces for large snapshots
         - SnapshotManager: abstract interface for snapshot operations
@@ -1334,14 +1334,14 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Added snapshot_manager_ member and accessors to RaftServer and PaxosServer
         - Plan: `doc/dev/phase3_1_snapshot_interface.md`
       - [x] 3.2 Snapshot Format - Binary format with last_index/term, state data, compression [DONE 2026-01-10]
-        - Created `src/rrr/rpc/snapshot_format.hpp` (~280 LOC)
+        - Created `src/srpc/rpc/snapshot_format.hpp` (~280 LOC)
         - SnapshotHeader: 52-byte binary header with magic, version, metadata
         - CRC32: Table-driven checksum (IEEE 802.3 polynomial)
         - SnapshotFormat: Serialize/Deserialize with checksum verification
         - Supports CRC32 checksums for both header and data
         - Plan: `doc/dev/phase3_2_snapshot_format.md`
       - [x] 3.3 Snapshot Storage - RocksDB or file storage with retention policy [DONE 2026-01-10]
-        - Created `src/rrr/rpc/file_snapshot_manager.hpp` (~350 LOC)
+        - Created `src/srpc/rpc/file_snapshot_manager.hpp` (~350 LOC)
         - FileSnapshotWriter: Accumulates data, atomic write+rename on finalize
         - FileSnapshotReader: Reads and verifies snapshot format on open
         - FileSnapshotManager: Full SnapshotManager implementation
@@ -1433,7 +1433,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Existing logging provides visibility
     - [x] **Phase 9: Testing** (~500 LOC) [PARTIALLY IMPLEMENTED]
       - [x] 9.1 Unit Tests - Log persistence, recovery manager, snapshot (60 tests)
-        - rrrTests: RPC client/server, connections, error handling (45 tests)
+        - srpcTests: RPC client/server, connections, error handling (45 tests)
         - rocksdbTests: RocksDB persistence, partitioned queues
         - test_rocksdb_persistence: Log storage, metadata, replay
       - [x] 9.2 Integration Tests - Single node crash, leader crash, follower catchup (40 tests)
@@ -1497,7 +1497,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] *medium* 2.3 Add configuration versioning [DONE 2026-01-11, 14:40]
         - `PersistentConfig.version` field stored separately for quick checks
         - `get_version()` reads only version key without full config load
-        - All 56 rrrTests pass
+        - All 56 srpcTests pass
     - [x] **Task 3: Implement C-Node RPC Interface** [~150 LOC] [Plan: doc/dev/config_node_task3_plan.md] [DONE 2026-01-11, 15:30]
       - [x] *high* 3.1 Define configuration RPC methods [DONE]
         - Added `ConfigService` to `src/deptran/rcc_rpc.rpc` with 3 methods:
@@ -1539,7 +1539,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Created config_converter.h for transport::Configuration <-> PersistentConfig conversion
         - Created config_node_init.h/.cc with full implementation (not linked due to header conflicts)
         - Added stub functions in mako.hh until header conflicts are resolved
-        - NOTE: Full integration blocked by include conflicts between rrr/deptran and mako lib headers
+        - NOTE: Full integration blocked by include conflicts between srpc/deptran and mako lib headers
       - [x] *high* 5.2 Modify startup flow for other nodes [DONE - scaffolding only]
         - Same as 5.1 - infrastructure in place, full implementation pending header conflict resolution
       - [x] *medium* 5.3 Add first-boot detection for c-node [DONE - in config_node_init.cc]
@@ -1617,7 +1617,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - **Issue**: CI shard2Replication test times out - shard0 never starts (stays at 0 throughout 120s)
     - **Root Cause**: Memory explosion from PaxosWorker all_coords pre-allocation (1M entries = 16MB per worker)
     - **Fix**: Reduced pre-allocation in commit a41e1da3
-    - **Verification**: Test passes locally on both rrr (8808 ops/sec) and erpc (45293 ops/sec) transports
+    - **Verification**: Test passes locally on both srpc (8808 ops/sec) and erpc (45293 ops/sec) transports
   - [x] *high* Dynamic Range-Based Sharding with C-Node Management [DONE 2026-01-13]
     - **Goal**: Replace static table-ID-based sharding with user-defined range-based sharding policies managed by the C-node
     - **Scope**:
@@ -1969,7 +1969,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
           - std::atomic<threadinfo*> → std::atomic<rusty::MutPtr<threadinfo>>
           - thread_local MasstreeContext* → thread_local rusty::MutPtr<MasstreeContext>
         - Updated safety annotations: most functions now @safe (pointer type is borrow-checked)
-        - All 65 rrrTests pass, simpleTransaction and multiShardSingleProcess pass
+        - All 65 srpcTests pass, simpleTransaction and multiShardSingleProcess pass
       - [x] 2.3 Convert kvthread.hh public interface pointers [DONE 2026-01-13]
         - Added #include <rusty/ptr.hpp>
         - Converted public interface: next(), set_next(), make(), context(), logger(), set_logger()
@@ -1977,13 +1977,13 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Converted rcu_register() parameter
         - Converted private members: next_, logger_, context_
         - Updated kvthread.cc implementation to match
-        - All 65 rrrTests pass, simpleTransaction passes
+        - All 65 srpcTests pass, simpleTransaction passes
       - [x] 2.4 Convert masstree.hh interface pointers [DONE 2026-01-13]
         - Added #include <rusty/ptr.hpp> to masstree.hh
         - Converted basic_table methods: root(), fix_root()
         - Converted private member: root_
         - Updated masstree_struct.hh implementations to match
-        - All 65 rrrTests pass
+        - All 65 srpcTests pass
       - [x] 2.5 Convert masstree_tcursor.hh/masstree_get.hh function signatures [DONE 2026-01-13]
         - Added #include <rusty/ptr.hpp> to both files
         - Converted unlocked_tcursor members: n_, root_ to rusty pointers
@@ -2074,16 +2074,16 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - No performance changes expected
     - **RustyCpp Compliance** (MANDATORY):
       - All functions must have @safe or @unsafe annotations
-      - Use `rrr::Time::now()` for time operations, NOT std::chrono
+      - Use `srpc::Time::now()` for time operations, NOT std::chrono
       - Use `rusty::Cell<T>` for interior mutability of primitives
       - Use `rusty::Option<T>` instead of nullable pointers
       - Wrap unsafe operations in `// @unsafe { reason }` blocks
       - Add new files to borrow checking in CMakeLists.txt
     - [x] **Phase 1: Add Aliases and this_fiber Namespace** [~80 LOC] [Non-breaking] [DONE 2026-01-12]
-      - [x] 1.1 Create `src/rrr/reactor/fiber.h` with `Fiber` typedef and `this_fiber` namespace
+      - [x] 1.1 Create `src/srpc/reactor/fiber.h` with `Fiber` typedef and `this_fiber` namespace
         ```cpp
-        // fiber.h - New API surface (uses rrr::Time, NOT std::chrono)
-        namespace rrr {
+        // fiber.h - New API surface (uses srpc::Time, NOT std::chrono)
+        namespace srpc {
         using Fiber = Coroutine;
 
         namespace this_fiber {
@@ -2096,7 +2096,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
             // @unsafe - Yields execution to other fibers
             void yield() noexcept;
 
-            // @unsafe - Sleep functions using rrr::Time internally
+            // @unsafe - Sleep functions using srpc::Time internally
             void sleep_us(uint64_t microseconds);  // Microseconds
             void sleep_ms(uint64_t milliseconds);  // Milliseconds
             void sleep_s(uint64_t seconds);        // Seconds
@@ -2117,7 +2117,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         ```
       - [x] 2.2 Update documentation (doc/fiber_api.md) [DONE 2026-01-12]
     - [x] **Phase 3: Add Future/Promise Wrappers** [~150 LOC] [DONE 2026-01-14]
-      - [x] 3.1 Created `src/rrr/reactor/future.h` with `Future<T>` and `Promise<T>`
+      - [x] 3.1 Created `src/srpc/reactor/future.h` with `Future<T>` and `Promise<T>`
         - Promise<T>: Producer side with set_value(), get_future(), is_ready()
         - Future<T>: Consumer side with get(), wait_for(), is_ready(), valid()
         - Convenience: make_promise<T>() and make_ready_future<T>(value)
@@ -2132,7 +2132,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] 4.6 All @safe/@unsafe annotations preserved, borrow checks pass
     - [x] **Phase 5: Documentation and Migration Guide** [~100 LOC] [DONE 2026-01-14]
       - [x] 5.1 Updated `doc/fiber_api.md` with complete API reference
-      - [x] 5.2 Documented use of `rrr::Time` (not std::chrono) for time operations
+      - [x] 5.2 Documented use of `srpc::Time` (not std::chrono) for time operations
       - [x] 5.3 Added Future/Promise API documentation with examples
       - [x] 5.4 Updated migration guide to reflect Phase 4 changes (Fiber is primary, Coroutine is alias)
     - **API Mapping Reference**:
@@ -2142,26 +2142,26 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       | `Coroutine::create_run(func)` | `Fiber::spawn(func)` | Same semantics |
       | `Coroutine::current_coroutine()` | `this_fiber::current()` | Returns Option<Rc<Coroutine>> |
       | N/A | `this_fiber::get_id()` | Returns uint64_t ID |
-      | `Coroutine::sleep(us)` | `this_fiber::sleep_us(us)` | Microseconds (rrr::Time) |
-      | N/A | `this_fiber::sleep_ms(ms)` | Milliseconds (rrr::Time) |
-      | N/A | `this_fiber::sleep_s(s)` | Seconds (rrr::Time) |
+      | `Coroutine::sleep(us)` | `this_fiber::sleep_us(us)` | Microseconds (srpc::Time) |
+      | N/A | `this_fiber::sleep_ms(ms)` | Milliseconds (srpc::Time) |
+      | N/A | `this_fiber::sleep_s(s)` | Seconds (srpc::Time) |
       | `coro->yield_()` | `this_fiber::yield()` | Free function |
       | `AndEvent` | `WaitAll` | Alias provided |
       | `OrEvent` | `WaitAny` | Alias provided |
       | `NEvent` | `WaitN` | Alias provided |
-      | `BoxEvent<T>` | `Future<T>` / `Promise<T>` | Wrapper with rrr::Time |
+      | `BoxEvent<T>` | `Future<T>` / `Promise<T>` | Wrapper with srpc::Time |
     - **What to Keep (Unique Value)**:
       - `QuorumEvent` - Essential for distributed consensus
       - `DispatchEvent` - RPC dispatch coordination
       - `IntEvent`, `SharedIntEvent` - Counter-based synchronization
-      - `TimeoutEvent` - Uses rrr::Time internally
+      - `TimeoutEvent` - Uses srpc::Time internally
       - RustyCpp safety annotations throughout
     - **Success Criteria**:
       1. New `this_fiber` namespace works correctly
       2. All existing code continues to work with old names
       3. **All code passes RustyCpp borrow checking**
       4. **All functions have @safe/@unsafe annotations**
-      5. **Uses rrr::Time, not std::chrono**
+      5. **Uses srpc::Time, not std::chrono**
       6. New API is documented and tested
       7. No performance regression
       8. All CI tests pass
@@ -2171,7 +2171,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - **Scope**:
       - Remove `Coroutine` name, keep only `Fiber`
       - Remove `AndEvent`/`OrEvent`/`NEvent` names, keep only `WaitAll`/`WaitAny`/`WaitN`
-      - Update all internal usages in `src/rrr/`, `src/deptran/`, `src/mako/`
+      - Update all internal usages in `src/srpc/`, `src/deptran/`, `src/mako/`
       - Update all tests to use new names
     - **Migration Steps Completed**:
       - [x] 1. Search and replace `Coroutine::` with `Fiber::` in all source files
@@ -2181,7 +2181,7 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
       - [x] 5. Remove type aliases from `fiber.h` and `fiber_impl.h`
       - [x] 6. Update `coroutine.h` documentation (Fiber is now the primary class name)
       - [x] 7. Run all CI tests to verify no regressions
-    - **Files Changed**: ~50 files across src/rrr/, src/deptran/, test/
+    - **Files Changed**: ~50 files across src/srpc/, src/deptran/, test/
     - **Plan**: docs/dev/legacy_api_removal_plan.md
     - **Test Log**: logs/20260117_005921_f9ee09c5_legacy_api_removal_ci.log
 

@@ -2,7 +2,7 @@
 // ConfigManager talks to a KvStore port (bound to Mako's unified
 // FullOrderedIndex in production via OrderedIndexKvStore); this test
 // drives it against an in-memory KvStore fake — no storage engine, no
-// Raft, no RocksDB, no rrr, no cluster, no masstree config.
+// Raft, no RocksDB, no srpc, no cluster, no masstree config.
 
 #include <gtest/gtest.h>
 #include <string>

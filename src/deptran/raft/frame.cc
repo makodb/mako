@@ -258,13 +258,13 @@ RaftServer *RaftFrame::CreateRaftScheduler() {
 
 // @unsafe - returns raw pointer to owned member, external calls marked @external [safe]
 Communicator *RaftFrame::CreateCommo(
-    rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_worker) {
+    rusty::Option<rusty::Arc<srpc::PollThread>> poll_thread_worker) {
   // We only have 1 instance of RaftFrame object that is returned from
   // GetFrame method. RaftCommo currently seems ok to share among the
   // clients of this method.
   Log_info("CreateCommo: Thread ID = {}", std::this_thread::get_id());
   {
-    auto guard = rrr::sp_running_fiber_th_.borrow();
+    auto guard = srpc::sp_running_fiber_th_.borrow();
     Log_info("CreateCommo: sp_running_fiber_th_ = {}", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
   }
   if (commo_ == nullptr) {
@@ -308,7 +308,7 @@ Communicator *RaftFrame::CreateCommo(
         Log_info("Test fiber: Starting execution");
         Log_info("Test fiber: Thread ID = {}", std::this_thread::get_id());
         {
-          auto guard = rrr::sp_running_fiber_th_.borrow();
+          auto guard = srpc::sp_running_fiber_th_.borrow();
           Log_info("Test fiber: sp_running_fiber_th_ = {}", (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
         }
 
@@ -354,20 +354,20 @@ Communicator *RaftFrame::CreateCommo(
 }
 
 // @unsafe - external calls marked @external [safe]
-std::vector<rrr::ServiceProxy>
+std::vector<srpc::ServiceProxy>
 RaftFrame::CreateRpcServices(uint32_t site_id,
                                    TxLogServer *rep_sched,
-                                   rusty::Arc<rrr::PollThread> poll_thread_worker) {
+                                   rusty::Arc<srpc::PollThread> poll_thread_worker) {
   auto config = Config::GetConfig();
-  auto result = std::vector<rrr::ServiceProxy>();
+  auto result = std::vector<srpc::ServiceProxy>();
   switch (config->replica_proto_) {
     // The service holds the server as RaftSpecific*, fixed at construction;
-    // the poll thread is owned by the rrr::Server that registers this proxy.
+    // the poll thread is owned by the srpc::Server that registers this proxy.
     // rep_sched is the scheduler this frame created, and svr_ is the typed
     // back-reference to the same object, so no RTTI is needed to get there.
     case MODE_RAFT: {
       verify(svr_ != nullptr && rep_sched == svr_);
-      result.push_back(rrr::make_service_proxy_from_typed_box(
+      result.push_back(srpc::make_service_proxy_from_typed_box(
           rusty::make_box<RaftServiceImpl>(svr_)));
       break;
     }

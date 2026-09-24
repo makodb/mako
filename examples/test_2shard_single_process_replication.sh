@@ -71,7 +71,7 @@ SHARD1_P1_PID=""
 CLEANUP_DONE=0
 
 # Determine transport type and create unique log prefix
-transport="rrr"
+transport="srpc"
 log_prefix="${script_name}_${transport}"
 
 # Kill only dbtest worker processes by executable name.

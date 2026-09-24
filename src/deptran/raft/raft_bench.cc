@@ -59,7 +59,7 @@
 #include <time.h>
 
 #include "deptran/replication_helper.h"
-#include "rrr_log.h"
+#include "srpc_log.h"
 
 import std;
 
@@ -137,7 +137,7 @@ struct Options {
   // an uncapped atomic, so hitting this cap costs percentile resolution only,
   // and the record says so via samples_dropped.
   long long max_samples = 4000000;
-  int log_level = rrr::Log::WARN;
+  int log_level = srpc::Log::WARN;
   std::string out_path{};
   std::string proc_name = "localhost";
   std::vector<std::string> configs{};
@@ -873,7 +873,7 @@ int main(int argc, char** argv) {
   // ("[APPLY-LOGS] site=... applying index=..."), and janus's static
   // initialiser leaves the level at INFO. Measuring at INFO measures the
   // logger, so lower it before setup() brings any worker up.
-  rrr::Log::set_level(opt.log_level);
+  srpc::Log::set_level(opt.log_level);
 
   // Make the group mode explicit and authoritative rather than inheriting the
   // compile-time default (trap T3: SINGLE_RAFT_INSTANCE is ON, so the default

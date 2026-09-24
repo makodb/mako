@@ -1260,7 +1260,7 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
 //
 // The wire reply is read out by the caller and arrives here as three scalars.
 // That is the same "convert at the edge" split the rest of the file uses: the
-// rrr response object never crosses, only what it says.
+// srpc response object never crosses, only what it says.
 //
 // The caller keeps four things because none of them are decisions:
 // LogTermChange and the backoff-rung logging (both pure logging, and both
@@ -1548,7 +1548,7 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase,
             {
                 let _lock = RaftLockGuard::new(&mut server.mtx_);
                 // What the reply MEANS is heartbeat_apply_append_reply. It
-                // reads the wire response as three scalars -- the rrr object
+                // reads the wire response as three scalars -- the srpc object
                 // itself never crosses -- and returns what to do about it.
                 let response_available: bool =
                     !(!resp.status_ && resp.term_ == 0
@@ -1994,7 +1994,7 @@ pub unsafe fn raft_on_request_vote(
 
 // ==========================================================================
 // The two inbound RPC bodies. Both keep a one-line C++ entry point, because
-// the rrr service layer calls them by name on RaftServer.
+// the srpc service layer calls them by name on RaftServer.
 // ==========================================================================
 #[allow(clippy::too_many_arguments)]
 // Called directly by RaftServerBase::OnRequestVote (server_h.rs).

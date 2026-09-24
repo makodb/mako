@@ -1,25 +1,27 @@
 # RustyCpp Migration Plan for Raft Module
 
-**Last Updated**: 2025-10-30
-**Status**: Phase 2 - Ownership Migration (COMPLETE), Phase 3 BLOCKED
+**Last Updated**: 2025-10-30 (plan body) · 2026-09-17 (dated re-checks against pin `a1f8fef8`)
+**Status**: Phase 2 - Ownership Migration (COMPLETE); Phase 3 blocker **retracted 2026-09-17** (see below)
 **Owner**: Migration team
 **Original Estimated Duration**: 5-6 weeks
 **Actual Progress**: Phases 0-2 complete (3 weeks ahead of schedule)
 
-**⚠️ IMPORTANT**: Phase 3 (migrate to rusty structures) is **BLOCKED** because `shared_ptr<Marshallable>` is used in virtual function interfaces (`Coordinator::Submit()`) that are shared across multiple protocol modules (Paxos, MongoDB, Copilot, etc.). Migrating Raft alone would break polymorphism. The Janus module included in the original impact analysis has since been retired. See [Phase 3](#phase-3-migrate-data-structures-week-3) for details.
+**⚠️ BLOCKER RETRACTED (re-checked 2026-09-17, pin `a1f8fef8`)**: this document used to open by declaring Phase 3 **BLOCKED** because `shared_ptr<Marshallable>` sat in the virtual `Coordinator::Submit()` interface. It no longer does. `src/deptran/coordinator.h:233` now reads `virtual void Submit(const janus::Command& cmd, rusty::Function<void()> commit_callback = {}, rusty::Function<void()> exe_callback = {})`, and `janus::Command` is a value envelope that packs a `rusty::Arc<T>` (`src/deptran/mako_commands.h:433`). Each of the three sub-blockers was cleared out of band: `RaftData::log_`/`accepted_cmd_`/`committed_cmd_` became `janus::Command` in `ebc09e751` (2026-05-03); the `Coordinator::Submit`/`BulkSubmit`/`assignCmd` virtuals in `3f43bdf34` (2026-05-03); `shared_ptr<IntEvent>` → `rusty::Arc<IntEvent>` in `18e22958e` (2026-07-20). Measured today, `src/deptran/raft/*.{h,cc}` carries **zero** non-comment `shared_ptr<Marshallable>` and **zero** `shared_ptr<IntEvent>`; the only Phase 3 item left in Raft is `shared_ptr<RaftData>` (`server.h:548,560`). The 2025-10-30 blocker analysis is kept as history in [Phase 3](#phase-3-migrate-data-structures-week-3); the Janus and MongoDB modules it names have since been retired (`abfb6ea96`, `4745476e0`).
 
 ---
 
 ## 🚨 QUICK START FOR NEW CONTRIBUTORS
 
-**Current Phase**: Phase 3 - Data Structures (Ready to start)
+**Current Phase**: Phase 3 - Data Structures (unblocked 2026-09-17; the one Raft item left is `shared_ptr<RaftData>`)
 **What's been done**:
 - ✅ All .cc file functions annotated with `@safe`/`@unsafe`
 - ✅ Memory leaks fixed (Timer, Frame destructor)
 - ✅ Frame ownership migrated to smart pointers (unique_ptr)
-**What to do next**: Migrate `shared_ptr` → `rusty::Arc` in data structures OR cleanup code
+**What to do next**: Migrate the remaining `shared_ptr<RaftData>` → `rusty::Arc<RaftData>` (`server.h:548,560`) OR cleanup code
 **How to test**: `cd build && make borrow_check_raft`
 **See**: [Current Progress](#current-progress) and [What's Next](#whats-next)
+
+**Scope — what this doc is *not***: this plan covers the `@safe`/`@unsafe` borrow checker and smart-pointer ownership only. It does **not** cover the inline-Rust DSL conversion workflow. If you are writing *new* code, or converting existing C++ into Rust, go to [`docs/porting-cpp-to-rust-dsl.md`](../../porting-cpp-to-rust-dsl.md) instead — §3 "Making C++ Conversion-Friendly" is the pre-conversion rulebook. (Project rule, `CLAUDE.md`: "New code SHOULD be authored in Rust, not hand-written C++.") Note also that the plan below is **unowned**, not blocked: the Phase 3 blocker it was parked on was retracted on 2026-09-17 (see the top), and what remains of it is small and self-contained.
 
 ---
 
@@ -55,7 +57,7 @@
   - **Step 2.2**: `svr_` migrated to `std::unique_ptr<RaftServer>` ✅
   - **Step 2.3**: Ownership semantics documented ✅
 
-- **Phase 3 - Migrate Data Structures**: ⚠️ BLOCKED (requires system-wide changes - see Phase 3 details)
+- **Phase 3 - Migrate Data Structures**: 📍 UNBLOCKED (re-checked 2026-09-17 — the system-wide `Submit()` change landed in `3f43bdf34`; see Phase 3 details)
 - **Phase 4 - Cleanup**: 📍 READY TO START (recommended next step)
 - **Phase 5 - Enable More Safety**: Deferred (most functions already annotated)
 
@@ -73,7 +75,7 @@ The tables below reflect the exact annotations currently in-tree. “Reason” e
 
 #### `service.cc`
 - **@safe**: `RaftServiceImpl::RaftServiceImpl`, `HandleVote`, `HandleAppendEntries`, `HandleEmptyAppendEntries`  
-  _Notes_: `Handle*` helpers dispatch onto the scheduler via `Coroutine::CreateRun`. The coroutine helper is annotated in `rrr` and the lambdas avoid raw pointer manipulation.
+  _Notes_: `Handle*` helpers dispatch onto the scheduler via `Coroutine::CreateRun`. The coroutine helper is annotated in `srpc` and the lambdas avoid raw pointer manipulation.
 - **@unsafe**: _none_
 
 #### `frame.cc`
@@ -109,12 +111,13 @@ The tables below reflect the exact annotations currently in-tree. “Reason” e
 
 #### 📚 Related Files Annotated (Outside Raft Module)
 
-##### src/rrr/reactor/coroutine.h
+##### src/srpc/reactor/coroutine.h
 - `Coroutine::CreateRun()` template - **@unsafe** (annotated for documentation, but checker ignores it - see template limitation)
   - Despite annotation, this appears as "undeclared" when called from any @safe function
   - This is due to template limitation in the borrow checker
+  - ⚠️ **Superseded (re-checked 2026-09-16, pin `a1f8fef8`)**: template annotations are now honoured — `CreateRun` is no longer "undeclared". See the dated note in the [RustyCpp Checker Guide](#rustycpp-checker-comprehensive-guide) below.
 
-##### src/rrr/base/logging.hpp
+##### src/srpc/base/logging.hpp
 - **ALL logging functions marked @unsafe** (critical for frame.cc to pass)
   - `Log::info()` (both overloads) - **@unsafe**
   - `Log::debug()` (both overloads) - **@unsafe**
@@ -140,6 +143,7 @@ The tables below reflect the exact annotations currently in-tree. “Reason” e
 - 📌 **Phase 0.4 - Header/inline coverage**: BLOCKED until rusty-cpp fixes template support
   - Cannot annotate inline functions in headers that call template functions
   - Template functions are completely ignored by the borrow checker (see [RustyCpp Checker Guide](#rustycpp-checker-comprehensive-guide))
+  - ⚠️ **Superseded (re-checked 2026-09-16, pin `a1f8fef8`)**: rusty-cpp added template support, so this blocker is gone — the three headers below can be annotated now. See the dated note in the [RustyCpp Checker Guide](#rustycpp-checker-comprehensive-guide).
   - Once rusty-cpp adds template support, return to annotate inline functions in:
     - `server.h` (inline helpers like `resetTimerBatch()`)
     - `commo.h` (inline wrappers)
@@ -147,7 +151,7 @@ The tables below reflect the exact annotations currently in-tree. “Reason” e
 
 **Ready to Start:**
 - **Recommended**: Phase 4 - Code cleanup (remove commented code, improve docs)
-- **Blocked**: Phase 3 - Migrate data structures (requires system-wide Coordinator interface changes)
+- **Unblocked (re-checked 2026-09-17)**: Phase 3 - Migrate data structures. The system-wide Coordinator interface change landed in `3f43bdf34` (2026-05-03); only `shared_ptr<RaftData>` is left
 - **Alternative**: Document current state and success metrics
 
 ### 🎯 Old Next Steps (Archived)
@@ -234,7 +238,13 @@ If `resetTimerBatch()` is never called from any .cc file → it will NOT be chec
 
 #### Template Functions - Critical Limitation ⚠️
 
-**🚨 DISCOVERED ISSUE**: Template function annotations are **COMPLETELY IGNORED** by the borrow checker!
+**⚠️ HISTORICAL — SUPERSEDED (re-checked 2026-09-16, rusty-cpp pin `a1f8fef8`)**: this section recorded that template function annotations were **COMPLETELY IGNORED** by the borrow checker. That is no longer true — the upstream fix is in the pinned tree. See `third-party/rusty-cpp/docs/features/template_support.md`, "**Status**: ✅ **COMPLETE**" (its header says "10/11 non-ignored tests passing", its updated results section says "**11 tests passing** ✅ … **100% pass rate!**"), and `third-party/rusty-cpp/CLAUDE.md:101`, "✅ **Full Template Support**", which lists "Safety annotation support - Template functions recognized in @safe annotation parser".
+
+Re-verified on exactly the shape this section complains about — a `template` static method on a *non*-template class, i.e. `Coroutine::CreateRun`. With `CreateRun` annotated `// @safe` and the caller annotated `// @safe`, `rusty-cpp-checker` reports **no violations**: the annotation on the template *is* read. With `CreateRun` annotated `// @unsafe` the diagnostic is now `Calling unsafe function 'Coroutine::CreateRun (non-safe - use @unsafe block)' … requires unsafe context` — an *unsafe-context* error, **not** the "Calling undeclared function" error quoted below.
+
+Still genuinely unsupported: SFINAE and partial specialization (`template_support.md:22`; variadic templates are listed as supported at `CLAUDE.md:107` but still listed as unsupported at `CLAUDE.md:671` — the upstream doc contradicts itself there). Implicit instantiations remain invisible to LibClang, but that is **by design** — analysis runs on the generic declaration, which is equivalent for move/borrow checking (`template_support.md:44`, `:51`–`:53`).
+
+By the staleness heuristic in the porting field guide (§8.45), this was a "the tool doesn't do it yet" limitation rather than a gap in the language itself — exactly the class that expires. **Keep the walkthrough below for the annotation idiom; its "undeclared" claim is history.**
 
 ```cpp
 // coroutine.h
@@ -295,7 +305,7 @@ void HandleAppendEntries(...) {
 - Any `std::` template functions without explicit external annotations
 - Any custom template functions
 
-**From RustyCpp Documentation:**
+**From RustyCpp documentation (as of 2025-10-30 — superseded; kept for history):**
 ```
 ### What's Not Implemented Yet ❌
 - ❌ **Templates**
@@ -303,6 +313,19 @@ void HandleAppendEntries(...) {
   - No instantiation tracking
   - Generic code goes unchecked
 ```
+
+**Current status (re-checked 2026-09-16, rusty-cpp pin `a1f8fef8`)**: that bullet is gone from `third-party/rusty-cpp/CLAUDE.md`. Its "What's Implemented" list now reads (abridged):
+```
+- ✅ **Full Template Support** - Complete analysis of C++ template code
+  - Template free functions analyzed with generic types
+  - Template class methods fully supported (all qualifiers: const, non-const, &&)
+  - Multiple type parameters (T, U, etc.)
+  - Move detection and borrow checking in templates
+  - Analyzes template declarations (no instantiation needed!)
+  - **Variadic template parameter pack tracking** (NEW!)
+  - 100% test pass rate on template test suite
+```
+and `third-party/rusty-cpp/docs/features/template_support.md` marks the work ✅ COMPLETE (header: "10/11 non-ignored tests passing"; updated results section: "**11 tests passing** ✅ … **100% pass rate!**" with "**6 tests ignored** (advanced features: SFINAE, variadic templates, partial specialization)"). "No instantiation tracking" is still literally true and still **by design** — "**Key Insight**: We don't actually need instantiations! Our borrow checking and move detection work on **generic types**" (`template_support.md:53`).
 
 #### Annotation Requirements - Critical Discovery ⚠️
 
@@ -329,7 +352,7 @@ static void error(int line, const char* file, const char* fmt, ...);
 **Why this matters:**
 - The borrow checker looks for annotations **directly before** each function signature
 - A single comment at the top of a group is NOT parsed as applying to all functions
-- This was the root cause of `frame.cc` failing with "undeclared function rrr::Log::info" errors
+- This was the root cause of `frame.cc` failing with "undeclared function srpc::Log::info" errors
 - Required annotating ALL 10 logging function overloads in `logging.hpp` individually
 
 **Example from logging.hpp fix:**
@@ -477,7 +500,7 @@ Migrate the Raft consensus implementation (`src/deptran/raft/`) to use RustyCpp 
 - **Memory Leaks Found**: Timer object not properly deleted (line 17 in `server.cc`)
 - **Unclear Ownership**: Raw pointers throughout (Frame*, RaftCommo*, RaftServer*)
 - **Safety Guarantees**: Enable compile-time memory safety checks
-- **Consistency**: Align with project-wide RustyCpp migration (RRR already uses Arc)
+- **Consistency**: Align with project-wide RustyCpp migration (SRPC already uses Arc)
 
 ### Scope
 - **~4000 lines of code** across 9 files
@@ -568,6 +591,8 @@ auto res = std::make_shared<SendAppendEntriesResults>(); // ✅
 | `shared_ptr<IntEvent>` | ~5 | commo.cc, server.h | Needs migration to Arc |
 | `rusty::Arc<PollThreadWorker>` | 1 | commo.cc | ✅ Already RustyCpp! |
 | Raw pointers | ~6 | server.h, frame.h | ❌ Needs migration |
+
+⚠️ **Superseded (re-checked 2026-09-17, pin `a1f8fef8`)**: rows 1 and 3 are done. `src/deptran/raft/*.{h,cc}` now has zero non-comment `shared_ptr<Marshallable>` (it travels as the value type `janus::Command`, which packs a `rusty::Arc<T>`) and zero `shared_ptr<IntEvent>` (`server.h:567` is `rusty::Option<rusty::Arc<IntEvent>>`). The `shared_ptr<RaftData>` row still holds: `server.h:548,560`.
 
 ---
 
@@ -950,11 +975,13 @@ class RaftServer : public TxLogServer {
 ### Phase 3: Migrate Data Structures (Week 3)
 **Goal**: Replace std::shared_ptr with rusty::Arc in data structures
 
-**Status**: ⚠️ BLOCKED - Cannot proceed without system-wide changes
-**Risk**: Medium-High (lots of shared_ptr usage)
-**Estimated Time**: 7-10 days (if unblocked)
+**Status**: 📍 UNBLOCKED (re-checked 2026-09-17, pin `a1f8fef8`) — the blocker analysis below is history
+**Risk**: Low for what remains (`shared_ptr<RaftData>` only)
+**Estimated Time**: 7-10 days was the estimate for the whole of Phase 3; most of it landed elsewhere
 
-**🚨 BLOCKER IDENTIFIED (2025-10-30):**
+⚠️ **Superseded (re-checked 2026-09-17)**: everything from here to the end of Step 3.3 is the 2025-10-30 analysis, retained so the reasoning stays auditable. Its premise is dead: `Coordinator::Submit` takes `const janus::Command&` (`coordinator.h:233`), not `shared_ptr<Marshallable>&`. Steps 3.1 and 3.2 landed as `janus::Command` (`ebc09e751`, `3f43bdf34`, both 2026-05-03) rather than as `rusty::Arc<Marshallable>`; Step 3.3 landed as written (`18e22958e`, 2026-07-20). Only `shared_ptr<RaftData>` is still open.
+
+**🚨 BLOCKER IDENTIFIED (2025-10-30, since retracted):**
 
 **Cannot migrate `shared_ptr<Marshallable>` → `rusty::Arc<Marshallable>` in Raft module alone.**
 
@@ -976,7 +1003,7 @@ class CoordinatorRaft : public Coordinator {
 - ❌ Changing Raft's Submit signature would break virtual function override
 - ❌ Cannot change base class without affecting ALL protocol modules:
   - `paxos/coordinator.h`
-  - `mongodb/coordinator.h`
+  - `mongodb/coordinator.h` (module removed in `4745476e0`)
   - `copilot/coordinator.h`
   - `janus/coordinator.h` (retired after this analysis)
   - 10+ other modules
@@ -995,10 +1022,12 @@ class CoordinatorRaft : public Coordinator {
 
 **Decision**: Phase 3 deferred. Focus on self-contained improvements (Phase 4 - Cleanup).
 
-#### Step 3.1: Migrate RaftData Smart Pointers ⚠️ BLOCKED
+#### Step 3.1: Migrate RaftData Smart Pointers ✅ DONE (differently)
 **Files**: `server.h`, `server.cc`
 
-**Blocker**: `RaftData::log_` is used in `Submit(shared_ptr<Marshallable>&)` which is a virtual function inherited from base `Coordinator` class. Changing this requires system-wide migration.
+**Blocker (2025-10-30, retracted)**: `RaftData::log_` is used in `Submit(shared_ptr<Marshallable>&)` which is a virtual function inherited from base `Coordinator` class. Changing this requires system-wide migration.
+
+⚠️ **Superseded (re-checked 2026-09-17)**: the system-wide migration was done. `ebc09e751` (2026-05-03) turned all three fields into the value type `janus::Command`; `server.h:94-98` now reads `Command accepted_cmd_{}; Command committed_cmd_{}; Command log_{};`. The `rusty::Arc` landed one level down, inside `Command`.
 
 **Before (Original):**
 ```cpp
@@ -1059,10 +1088,12 @@ struct RaftData {
 
 ---
 
-#### Step 3.2: Migrate Marshallable Parameters ⚠️ BLOCKED
+#### Step 3.2: Migrate Marshallable Parameters ✅ DONE (differently)
 **Files**: `server.h`, `server.cc`, `commo.h`, `commo.cc`, `coordinator.h`, `coordinator.cc`
 
-**Blocker**: Same as Step 3.1 - all Marshallable pointers flow through the virtual `Submit()` interface.
+**Blocker (2025-10-30, retracted)**: Same as Step 3.1 - all Marshallable pointers flow through the virtual `Submit()` interface.
+
+⚠️ **Superseded (re-checked 2026-09-17)**: `3f43bdf34` (2026-05-03) migrated the `Submit`/`BulkSubmit`/`assignCmd` virtuals to `const janus::Command&`, and the Raft signatures followed: `server.h:594` is `bool Start(const janus::Command& cmd, ...)`, `server.h:627` is `void SetLocalAppend(const janus::Command& cmd, ...)`, `commo.h:154` takes `const janus::Command& cmd`. The grep in the Strategy below now returns comments only.
 
 **Scope**: Function parameters and return values
 
@@ -1110,10 +1141,12 @@ rusty::Arc<IntEvent> SendAppendEntries2(..., rusty::Arc<Marshallable> cmd, ...);
 
 ---
 
-#### Step 3.3: Migrate IntEvent Smart Pointers ⚠️ BLOCKED
+#### Step 3.3: Migrate IntEvent Smart Pointers ✅ DONE
 **Files**: `commo.h`, `commo.cc`, `server.h`
 
-**Blocker**: `shared_ptr<IntEvent>` is created by `Reactor::CreateSpEvent<IntEvent>()` which is part of the RRR reactor framework API (outside Raft module). Cannot change without modifying reactor interface.
+**Blocker (2025-10-30, retracted)**: `shared_ptr<IntEvent>` is created by `Reactor::CreateSpEvent<IntEvent>()` which is part of the SRPC reactor framework API (outside Raft module). Cannot change without modifying reactor interface.
+
+⚠️ **Superseded (re-checked 2026-09-17)**: the reactor interface *was* changed. `18e22958e` (2026-07-20) migrated event handles to `rusty::Arc`; the factory is now `Reactor::create_sp_event` returning `rusty::Arc<IntEvent>` (cited in `src/deptran/raft/server.h:24`), and `server.h:567` is `rusty::Option<rusty::Arc<IntEvent>> ready_for_replication_{rusty::None}`. No `shared_ptr<IntEvent>` remains anywhere under `src/deptran/raft/`.
 
 **Before (Original)**:
 ```cpp
@@ -1129,10 +1162,10 @@ rusty::Arc<IntEvent> ready_for_replication_;
 rusty::Arc<IntEvent> SendAppendEntries2(...);
 ```
 
-**Note**: Check if IntEvent is defined in RRR framework
-- RRR already uses RustyCpp (we saw `rusty::Arc<PollThreadWorker>`)
+**Note**: Check if IntEvent is defined in SRPC framework
+- SRPC already uses RustyCpp (we saw `rusty::Arc<PollThreadWorker>`)
 - IntEvent might already have RustyCpp support
-- Check `src/rrr/` for IntEvent definition
+- Check `src/srpc/` for IntEvent definition
 
 **Testing**: Same as previous steps
 
@@ -2082,7 +2115,7 @@ git checkout rustycpp-phase-N-complete
 
 ### Upstream Dependencies
 - ✅ RustyCpp library available in `third-party/rusty-cpp/`
-- ✅ RRR framework already uses `rusty::Arc<PollThreadWorker>`
+- ✅ SRPC framework already uses `rusty::Arc<PollThreadWorker>`
 - ⚠️ Parent classes (TxLogServer, Coordinator, Communicator) use raw pointers
   - **Decision**: Keep raw pointer interfaces for now, migrate internals only
 
@@ -2178,7 +2211,7 @@ valgrind --leak-check=full --show-leak-kinds=all ./build/raft_test
 - RustyCpp documentation: `third-party/rusty-cpp/README.md`
 - Project migration guide: `CLAUDE.md`
 - RustyCpp examples: `third-party/rusty-cpp/examples/`
-- RRR framework (already migrated): `src/rrr/`
+- SRPC framework (already migrated): `src/srpc/`
 
 ### Contact
 - Questions: [Add contact info]

@@ -68,7 +68,7 @@ using LearnerAction = std::function<int(int, Command)>;
 // emitter carries a Rust path into C++ verbatim, and inline mode has no
 // `--type-map` to rewrite it. The canonical Rust names these two as
 // `rusty::Communicator` and `rusty::LearnerAction` (modelled opaquely in
-// src/rrr/rusty-rustc/src/lib.rs); these aliases are the C++ half.
+// src/srpc/rusty-rustc/src/lib.rs); these aliases are the C++ half.
 //
 // Aliases, deliberately, rather than a `use rusty::*;` glob in the DSL block.
 // The glob emits `using namespace rusty;` INSIDE `namespace janus`, and this
@@ -80,7 +80,7 @@ using LearnerAction = ::janus::LearnerAction;
 // Named by RaftSpecific's signatures below. They are Raft's, and they sit in
 // the shared header only because RaftSpecific does (see the DSL block for
 // why); the Rust side models them as opaque carriers in
-// src/rrr/rusty-rustc/src/lib.rs, with the layout pinned in raft/server.h.
+// src/srpc/rusty-rustc/src/lib.rs, with the layout pinned in raft/server.h.
 using RaftCommand = ::janus::Command;
 using RaftLeaderChangeCb = ::std::function<void(bool)>;
 using RaftByteString = ::std::string;

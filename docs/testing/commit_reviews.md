@@ -245,7 +245,7 @@ std::thread([this, term_copy, voter_copy, can_id_copy, par_id_copy]() {
 
 Major cleanup moving docs to organized subdirectories (getting-started/, architecture/, developer/, rpc/, migration/, plans/, etc.). Removed stubs and outdated docs. Updated index.md navigation.
 
-**CI Note**: Run #21649096526 failed with intermittent segfault in shardNoReplication test. Investigation shows this is NOT caused by this commit (no C++ changes). Test passes consistently locally (4/4 runs). The failure is an intermittent race condition in RrrRpcBackend::Stop during shutdown, likely triggered by CI environment timing.
+**CI Note**: Run #21649096526 failed with intermittent segfault in shardNoReplication test. Investigation shows this is NOT caused by this commit (no C++ changes). Test passes consistently locally (4/4 runs). The failure is an intermittent race condition in SrpcRpcBackend::Stop during shutdown, likely triggered by CI environment timing.
 
 ---
 
@@ -906,9 +906,9 @@ uint64_t txn_id = static_cast<uint64_t>(client_id);
 **Evidence**: `src/mako/client_service.cc:89-127`
 ```cpp
 void MakoClientService::HandleCommit(...) {
-    rrr::i64 txn_id;
+    srpc::i64 txn_id;
     req->m >> txn_id;
-    rrr::i32 status = ErrorCode::SUCCESS;  // Always returns SUCCESS!
+    srpc::i32 status = ErrorCode::SUCCESS;  // Always returns SUCCESS!
     // No actual commit logic
 }
 
@@ -964,7 +964,7 @@ void MakoClientService::HandleRollback(...) {
 ### ISSUE-131c2bff-1 [S2 - medium]
 **Category**: Reinventing wheels
 **Evidence**: `src/mako/lib/client_tcp_server.h` - Custom TCP server implementation
-**Problem**: This commit introduced a custom TCP server that was later replaced by RRR RPC in commit 1886cab7. While this worked, it duplicated functionality that already existed in the RRR framework.
+**Problem**: This commit introduced a custom TCP server that was later replaced by SRPC RPC in commit 1886cab7. While this worked, it duplicated functionality that already existed in the SRPC framework.
 **Action**: N/A - Already addressed in subsequent commit 1886cab7.
 **Status**: Addressed by commit 1886cab7
 

@@ -1,13 +1,13 @@
 # SRPC Channel Layer — Design Rationale
 
 This note explains *why* SRPC is being split into an RPC layer and a separate
-**channel layer**, and why the contract in `src/rrr/rpc/channel.hpp` looks the
+**channel layer**, and why the contract in `src/srpc/rpc/channel.hpp` looks the
 way it does. It is the design rationale for Workstream K in
 `docs/TODO-srpc.md`.
 
 ## Problem
 
-Today `ClientConnection` and `ServerConnection` in `src/rrr/rpc/` do all of
+Today `ClientConnection` and `ServerConnection` in `src/srpc/rpc/` do all of
 the following in one class each:
 
 1. Open / close raw `socket(2)` file descriptors.
@@ -80,7 +80,7 @@ interfaces follow the same pattern:
 - Backends provide concrete classes whose member functions match the
   facade conventions; no inheritance.
 
-This stays consistent with the rest of `src/rrr/rpc/`, gives us
+This stays consistent with the rest of `src/srpc/rpc/`, gives us
 type-erasure without virtual dispatch on the hot path, and lets test
 backends and production backends conform to exactly the same contract
 without a class hierarchy.
@@ -111,7 +111,7 @@ the wrong place because it doesn't know which frames matter.
 
 ## What this leaf delivers
 
-`src/rrr/rpc/channel.hpp` plus a contract guard test. **No behavior
+`src/srpc/rpc/channel.hpp` plus a contract guard test. **No behavior
 change for existing callers**: nothing in `client.cpp` / `server.cpp`
 imports the channel module yet. The header just locks the contract so
 that the next leaves (frame codec → TCP backend → in-memory backend →
@@ -213,7 +213,7 @@ we see a real throughput case where it matters.
 
 ## What this leaf delivers
 
-`src/rrr/rpc/frame_codec.hpp` + `frame_codec.cpp` + a 25-test
+`src/srpc/rpc/frame_codec.hpp` + `frame_codec.cpp` + a 25-test
 contract guard suite. **No behavior change for existing callers**:
 nothing in `client.cpp` / `server.cpp` imports the codec module yet.
 The next leaf (TCP backend) will use it; the leaf after (client.cpp
@@ -310,7 +310,7 @@ network setup.
 
 ## What this sub-leaf delivers
 
-`src/rrr/rpc/tcp_channel.hpp` + `tcp_channel.cpp` + a 20-test
+`src/srpc/rpc/tcp_channel.hpp` + `tcp_channel.cpp` + a 20-test
 suite. **No behavior change for existing callers**: nothing in
 `client.cpp` / `server.cpp` uses `TcpConnection` yet. The
 listener (sub-leaf 3b), factory + integration tests (sub-leaf 3c),
@@ -392,8 +392,8 @@ the listener) is sub-leaf 3c.
 ## What this sub-leaf delivers
 
 `TcpListener` declarations and impl in the existing
-`src/rrr/rpc/tcp_channel.{hpp,cpp}` files, plus a 20-test suite
-in `src/rrr/tests/rpc_tcp_listener_test.cc`. Sub-leaf 3c wires
+`src/srpc/rpc/tcp_channel.{hpp,cpp}` files, plus a 20-test suite
+in `src/srpc/tests/rpc_tcp_listener_test.cc`. Sub-leaf 3c wires
 this and `TcpConnection` together via `TcpFactory` and registers
 both with a `PollThread`; the client / server refactor leaves come
 after that.
@@ -501,9 +501,9 @@ upper bound is mostly a safety net.
 ## What this sub-leaf delivers
 
 `TcpFactory` declarations + impl in the existing
-`src/rrr/rpc/tcp_channel.{hpp,cpp}` files, plus a 7-test
+`src/srpc/rpc/tcp_channel.{hpp,cpp}` files, plus a 7-test
 integration suite in
-`src/rrr/tests/rpc_tcp_factory_test.cc`. The TCP backend is
+`src/srpc/tests/rpc_tcp_factory_test.cc`. The TCP backend is
 now feature-complete from the channel layer's perspective: a
 factory produces connections and listeners that conform to
 `ChannelFactoryFacade`, register themselves with the poll thread,
@@ -706,7 +706,7 @@ Two `rusty-cpp` public headers reach `<immintrin.h>` for x86 SIMD:
 
 When a module-interface unit's global module fragment includes
 `rusty/rusty.hpp` (the umbrella that pulls hashmap.hpp), the SIMD
-intrinsics propagate into the rrr module surface. clang21+
+intrinsics propagate into the srpc module surface. clang21+
 introduced a strict static-inline mangle-name check that rejects
 duplicate definitions of intrinsics like `_mm_movemask_epi8` when
 the same TU reaches `<emmintrin.h>` both through the module GMF

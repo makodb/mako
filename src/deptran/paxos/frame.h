@@ -20,11 +20,11 @@ class MultiPaxosFrame : public Frame {
   BulkCoordinatorMultiPaxos *CreateBulkCoordinator();
   TxLogServer *CreateScheduler() override;
   Communicator *CreateCommo(
-      rusty::Option<rusty::Arc<rrr::PollThread>> poll = rusty::None) override;
-  std::vector<rrr::ServiceProxy> CreateRpcServices(
+      rusty::Option<rusty::Arc<srpc::PollThread>> poll = rusty::None) override;
+  std::vector<srpc::ServiceProxy> CreateRpcServices(
       uint32_t site_id,
       TxLogServer *rep_sched,
-      rusty::Arc<rrr::PollThread> poll_thread_worker) override;
+      rusty::Arc<srpc::PollThread> poll_thread_worker) override;
 };
 
 } // namespace janus

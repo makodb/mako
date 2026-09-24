@@ -8,17 +8,17 @@
  *
  * Threading model:
  *  - `on_reply` is called from sub-fibers that completed their per-peer
- *    `transport_->send_*` call. Within rrr, those sub-fibers all run on
+ *    `transport_->send_*` call. Within srpc, those sub-fibers all run on
  *    the same `PollThread` as the orchestrator, so concurrency is
  *    cooperative — but the `rusty::Mutex` + atomic counter keep the
  *    structure correct even if a caller spawns threads.
- *  - `wait_until_quorum` yields the calling fiber on an `rrr::IntEvent`
+ *  - `wait_until_quorum` yields the calling fiber on an `srpc::IntEvent`
  *    until `n_needed_` replies have arrived or the timeout elapses.
  *  - `collect` drains the replies under the mutex.
  *
  * Rusty-safety:
- *  - All public methods are `@safe` modulo the `rrr::IntEvent` boundary,
- *    which is annotated `@unsafe` (rrr is a header-as-module library and
+ *  - All public methods are `@safe` modulo the `srpc::IntEvent` boundary,
+ *    which is annotated `@unsafe` (srpc is a header-as-module library and
  *    its `reactor_create_sp_event<…>` returns `std::shared_ptr<Ev>` —
  *    `rusty::Arc<T>` cannot be substituted because the reactor itself
  *    must hold a strong reference, see docs/dev/raft_quorum.md for the
@@ -35,7 +35,7 @@
 #include <rusty/slice.hpp>
 #include <rusty/sync/atomic.hpp>
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 #include "../constants.h"  // siteid_t
 
@@ -43,7 +43,7 @@ namespace janus {
 namespace raft {
 
 // Pure quorum arithmetic stays separate from reply storage, atomics, and the
-// rrr event boundary. `const fn` makes the generated C++ constexpr (and thus
+// srpc event boundary. `const fn` makes the generated C++ constexpr (and thus
 // implicitly inline) without a textual post-processing pass.
 #if RUSTYCPP_RUST
 pub const fn raft_quorum_reached(received: i32, needed: i32) -> bool {
@@ -98,9 +98,9 @@ class RaftQuorum {
   RaftQuorum(int n_total, int n_needed)
       : n_total_(n_total),
         n_needed_(n_needed),
-        // rrr::Reactor::create_sp_event returns rusty::Arc; the reactor
+        // srpc::Reactor::create_sp_event returns rusty::Arc; the reactor
         // owns the event via its all_events_ list.
-        ready_(::rrr::create_sp_int_event(n_needed)),
+        ready_(::srpc::create_sp_int_event(n_needed)),
         replies_(std::vector<std::pair<siteid_t, Reply>>{}) {}
 
   // Non-copyable, non-movable: holds an event registered with the reactor.
@@ -120,7 +120,7 @@ class RaftQuorum {
                 1, ::rusty::sync::atomic::Ordering::AcqRel) +
             1;
     if (raft_quorum_reached(n, n_needed_)) {
-      // @unsafe { rrr::IntEvent::set bumps value_ and triggers Event::test;
+      // @unsafe { srpc::IntEvent::set bumps value_ and triggers Event::test;
       //           multiple sets past the threshold are idempotent because
       //           is_ready() / status_ stays terminal once fired. }
       ready_->set(n);
@@ -130,10 +130,10 @@ class RaftQuorum {
   // @safe - block the calling fiber up to timeout_us; returns whether the
   // quorum threshold was reached.
   bool wait_until_quorum(uint64_t timeout_us) {
-    // @unsafe { rrr::IntEvent::wait yields the fiber via the reactor;
-    //           rrr-boundary call }
+    // @unsafe { srpc::IntEvent::wait yields the fiber via the reactor;
+    //           srpc-boundary call }
     ready_->wait_timeout(timeout_us);
-    // @unsafe { rrr::IntEvent::is_ready compares value_ >= target_ }
+    // @unsafe { srpc::IntEvent::is_ready compares value_ >= target_ }
     return ready_->is_ready();
   }
 
@@ -160,7 +160,7 @@ class RaftQuorum {
   const int n_total_;
   const int n_needed_;
   // See class-level @unsafe note about std::shared_ptr.
-  rusty::Arc<::rrr::IntEvent> ready_;
+  rusty::Arc<::srpc::IntEvent> ready_;
   rusty::sync::atomic::AtomicI32 n_received_{0};
   mutable rusty::Mutex<std::vector<std::pair<siteid_t, Reply>>> replies_;
 };

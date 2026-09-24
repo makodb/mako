@@ -3,12 +3,12 @@
 
 #include "deptran/s_main.h"
 #include <assert.h>
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 import std;
 
 using namespace std;
-using namespace rrr;
+using namespace srpc;
 
 // copy from ./tests/fiber_runtime.cc
 void ASSERT_EQ(bool a) { if (!a) throw; }

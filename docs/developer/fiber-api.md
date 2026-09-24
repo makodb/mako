@@ -1,6 +1,6 @@
 # Fiber API Reference
 
-This document describes the modern Fiber API for working with stackful coroutines in RRR.
+This document describes the modern Fiber API for working with stackful coroutines in SRPC.
 
 ## Overview
 
@@ -10,7 +10,7 @@ following conventions established by Boost.Fiber. Key features:
 - **Clearer Naming**: Uses "Fiber" terminology instead of "Coroutine" (matching industry convention)
 - **this_fiber Namespace**: Provides `this_fiber::get_id()`, `this_fiber::yield()`, `this_fiber::sleep_*()` etc.
 - **Event Combinators**: `WaitAll`, `WaitAny`, `WaitN` for clear event composition
-- **Time API**: Uses `rrr::Time` internally (NOT `std::chrono`)
+- **Time API**: Uses `srpc::Time` internally (NOT `std::chrono`)
 - **Future/Promise**: Async value delivery with fiber-aware blocking
 
 For conceptual background on coroutines vs fibers and the reactor pattern, see [coroutines.md](coroutines.md).
@@ -20,7 +20,7 @@ For conceptual background on coroutines vs fibers and the reactor pattern, see [
 ```cpp
 #include "reactor/fiber.h"
 
-using namespace rrr;
+using namespace srpc;
 
 void example() {
     // Create and run a fiber
@@ -165,7 +165,7 @@ void this_fiber::sleep_us(uint64_t microseconds);
 ```
 
 Suspends the current fiber for the specified number of microseconds.
-Uses `rrr::Time` internally.
+Uses `srpc::Time` internally.
 
 **Example:**
 ```cpp
@@ -197,7 +197,7 @@ void this_fiber::sleep_s(uint64_t seconds);
 ```
 
 Suspends the current fiber for the specified number of seconds.
-Equivalent to `sleep_us(seconds * Time::RRR_USEC_PER_SEC)`.
+Equivalent to `sleep_us(seconds * Time::SRPC_USEC_PER_SEC)`.
 
 **Example:**
 ```cpp
@@ -214,7 +214,7 @@ void this_fiber::sleep_until_us(uint64_t abs_time_us);
 
 Suspends the current fiber until the specified absolute time (in microseconds since epoch).
 If the specified time has already passed, returns immediately.
-Uses `rrr::Time::now()` to get the current time.
+Uses `srpc::Time::now()` to get the current time.
 
 **Example:**
 ```cpp
@@ -275,13 +275,13 @@ Fiber::create_run([&]() {
 
 ## Time API Notes
 
-**Important:** The Fiber API uses `rrr::Time` for all time-related operations, NOT `std::chrono`.
+**Important:** The Fiber API uses `srpc::Time` for all time-related operations, NOT `std::chrono`.
 
 - `Time::now(true)` returns the current time in microseconds (accurate mode)
 - `Time::now(false)` returns cached time (faster, less accurate)
-- `Time::RRR_USEC_PER_SEC` is the number of microseconds per second (1,000,000)
+- `Time::SRPC_USEC_PER_SEC` is the number of microseconds per second (1,000,000)
 
-This is consistent with the rest of the RRR codebase and avoids mixing time representations.
+This is consistent with the rest of the SRPC codebase and avoids mixing time representations.
 
 ## Future/Promise API
 

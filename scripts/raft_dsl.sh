@@ -599,9 +599,9 @@ PYCHK
   # That proved each block was self-contained Rust -- and, because a
   # dependency-free fragment cannot name rusty::Mutex, ::janus::Command, a
   # container, or a type from a sibling carrier, it was also the reason every
-  # block had to be a free function over scalars. src/rrr never operated
-  # under that constraint: scripts/rrr_dsl_check.sh invokes rustc zero times
-  # and rrr verifies at crate level.
+  # block had to be a free function over scalars. src/srpc never operated
+  # under that constraint: scripts/srpc_dsl_check.sh invokes rustc zero times
+  # and srpc verifies at crate level.
   #
   # Verification now happens over the whole module graph in the crate stage
   # below: rustc + clippy over src/deptran/raft, plus a drift check that a
@@ -620,7 +620,7 @@ done
 #
 # The per-carrier rustc stage above proves each carrier is self-contained
 # Rust. This stage proves the same Rust compiles as a MODULE GRAPH, which is
-# what src/rrr does and what makes impl/containers/type-mapped C++ types
+# what src/srpc does and what makes impl/containers/type-mapped C++ types
 # expressible at all. Both run for now; the per-carrier stage is removed in a
 # following commit once they have agreed.
 #
@@ -651,8 +651,8 @@ if [[ -f "${RAFT_CRATE_MANIFEST}" && ${#FILES[@]} -eq ${#EXPECTED_INVENTORY_FILE
     # rusty::sync::Arc, rusty::ReactorPollThread and ::janus::Command all died
     # at E0433/E0573 here, before the emitter was ever consulted. The emitter
     # lowers every one of those correctly -- this invocation was the gate, and
-    # it is a Mako-local script line, not a toolchain limit. src/rrr has never
-    # had it: scripts/rrr_dsl_check.sh invokes rustc zero times.
+    # it is a Mako-local script line, not a toolchain limit. src/srpc has never
+    # had it: scripts/srpc_dsl_check.sh invokes rustc zero times.
     #
     # RUSTFLAGS rather than a -D on the command line, because cargo passes the
     # flag to every crate it builds from this manifest; the per-carrier stage's
@@ -666,8 +666,8 @@ if [[ -f "${RAFT_CRATE_MANIFEST}" && ${#FILES[@]} -eq ${#EXPECTED_INVENTORY_FILE
       sed 's/^/    /' <<<"${output}" | head -30 >&2
       failures=$((failures + 1))
     fi
-    # clippy, as src/rrr's gate does. Absent clippy is a hard failure: the
-    # crate regime rests on matching rrr's verification, not a subset of it.
+    # clippy, as src/srpc's gate does. Absent clippy is a hard failure: the
+    # crate regime rests on matching srpc's verification, not a subset of it.
     if ! command -v cargo-clippy >/dev/null 2>&1 && ! cargo clippy --version >/dev/null 2>&1; then
       echo "FAILED clippy unavailable (required for crate-level verification)" >&2
       failures=$((failures + 1))

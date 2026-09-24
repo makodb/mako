@@ -1213,7 +1213,7 @@ To answer these questions, we run both protocols under the same workloads and co
 
 There is an important trade-off in this approach. By running on localhost, we eliminate the most significant real-world latency source (network round-trips between replicas), which means the measured throughput differences are larger than what would be observed in a geo-replicated deployment. However, this is deliberate: by removing network latency, we isolate the protocol-level differences in CPU overhead and synchronisation costs, which are the factors that the protocol choice directly influences.
 
-**Build configuration.** All tests use release-mode compilation with full optimisation, OCC concurrency control, and the jemalloc memory allocator. The rrr TCP/IP RPC transport backend is used for all communication. The same build configuration is used for both Paxos and Raft tests, ensuring that performance differences are attributable to the protocol and not to build differences.
+**Build configuration.** All tests use release-mode compilation with full optimisation, OCC concurrency control, and the jemalloc memory allocator. The srpc TCP/IP RPC transport backend is used for all communication. The same build configuration is used for both Paxos and Raft tests, ensuring that performance differences are attributable to the protocol and not to build differences.
 
 **Primary workload.** The primary workload is TPC-C, the industry-standard OLTP benchmark. TPC-C was chosen because it is widely understood, has a well-defined transaction mix, and exercises both read and write paths with varying conflict profiles. TPC-C models a wholesale supplier with five transaction types:
 
@@ -1574,7 +1574,7 @@ The process of integrating Raft into a production-grade distributed transaction 
 
 | Term | Definition |
 |------|------------|
-| **rrr** | Mako's custom RPC framework: TCP/IP-based with ~10-50 microsecond latency. The default transport. |
+| **srpc** | Mako's custom RPC framework: TCP/IP-based with ~10-50 microsecond latency. The default transport. |
 | **eRPC** | An alternative RDMA-based RPC backend (~1-2 microsecond latency). Not used for Raft testing. |
 | **RustyCpp** | A static analysis tool enforcing Rust-style ownership and borrowing rules on C++ code. |
 | **Frame** | A factory class in Mako's protocol architecture. Each protocol has a Frame subclass creating protocol-specific components. |

@@ -2,6 +2,13 @@
 
 This document contains detailed information for developers working on Mako.
 
+> **Writing code?** New code should be authored in the rusty-cpp inline-Rust DSL rather than
+> hand-written C++; plain C++ is kept for bridging to not-yet-converted code and for small
+> `@unsafe` kernels the DSL cannot express. See
+> [Porting C++ to an Inline-Rust DSL](../porting-cpp-to-rust-dsl.md) for the authoring workflow
+> and [CLAUDE.md](../../CLAUDE.md#rustycpp-safety-requirements-mandatory) for the mandatory
+> rules (safety annotations, `rusty::` types instead of STL equivalents, borrow checking).
+
 ## Table of Contents
 
 - [Replication Layers](#replication-layers)
@@ -256,7 +263,7 @@ mako/
 │   │   └── ...
 │   ├── mako/              # Mako core (Masstree, watermarks)
 │   ├── bench/             # Benchmarks (TPC-C, TPC-A, RW)
-│   └── rrr/               # RPC framework
+│   └── srpc/               # RPC framework
 ├── config/                # YAML configurations
 ├── ci/
 │   ├── ci.sh              # Mako + Paxos tests

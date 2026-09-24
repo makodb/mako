@@ -1,7 +1,7 @@
 # Design note: converting `class Reactor` to DSL
 
 `reactor.cpp` is the largest remaining block of hand-written C++ in
-`src/rrr` (1483 code lines, 27%), and unlike every file converted so far
+`src/srpc` (1483 code lines, 27%), and unlike every file converted so far
 it is not "a DSL struct with helper kernels" — `class Reactor`
 (lines 1803-2067, ~31 methods, ~24 fields) was never converted.
 
@@ -18,15 +18,15 @@ Nearly every field carries one:
     rusty::Cell<bool> looping_{false};
 
 Rust has no default-field-initializer syntax — probed, it is a parse
-error (playbook §7.49.1), and no transpiler change fixes it.
+error (playbook §8.49.1), and no transpiler change fixes it.
 
 **Route:** a `fn new()` that initialises all ~24 fields explicitly, per
 the CLAUDE.md pattern. Note `Reactor() = default` is currently the only
 constructor, so every construction site gets `Reactor::new_()`.
 
 Now cheaper than it was: `Default::default()` reaches most of these
-(§7.53), so the body is mechanical rather than 24 hand-written
-initialisers — but see the §7.51.2 wrong-type bug, which fires on
+(§8.53), so the body is mechanical rather than 24 hand-written
+initialisers — but see the §8.51.2 wrong-type bug, which fires on
 `#[cpp_ctor]` + a stored parameter + two or more `Default` fields.
 `Reactor::new()` takes no parameters, so it should be clear of it;
 **verify by reading the emitted GEN before building.**
@@ -49,7 +49,7 @@ the precedent that is already in the file.
    than hoist it.
  - **`clients_` is live cross-module.** `src/deptran/communicator.cc`
    calls `Reactor::clients_.contains_key / .insert / .get` (3 sites), so
-   hoisting it to namespace scope is an API change outside `src/rrr` —
+   hoisting it to namespace scope is an API change outside `src/srpc` —
    small, but it lands in the same category as `deserialize_from`'s 88
    call sites: the blast radius leaves the module.
 
@@ -187,7 +187,7 @@ C++ (they are variadic — already in the rewrite backlog); this stage
 does not remove them, it unblocks the class.
 
 **Stage B — convert the class.** Fields + `fn new()` (Default::default
-per §7.53, PhantomPinned field for the move-deletion), statics hoisted,
+per §8.53, PhantomPinned field for the move-deletion), statics hoisted,
 nested struct hoisted, non-template methods declared in the DSL impl with
 bodies delegating to the existing out-of-line definitions renamed as
 `reactor_*` free-fn kernels. This is the indivisible gate.
@@ -209,7 +209,7 @@ struct is constructible in place (so `Rc<Reactor>::make()` keeps working)
 and neither movable nor copyable. This resolves the interaction that
 would otherwise sink it: a deleted-move struct is not an aggregate and
 loses its implicit default ctor, and `fn new() -> Reactor` by value would
-need the deleted move. No parameter on `new()` = clear of the §7.51.2
+need the deleted move. No parameter on `new()` = clear of the §8.51.2
 wrong-type bug.
 
 **Per-method wrinkles:**
@@ -230,7 +230,7 @@ wrong-type bug.
 ## Ref-arg emission fix — spec for a supervised run (not attempted unattended)
 
 Two mangles, both in the `syn::Expr::Reference` arm of
-`emit_expr_to_string` (the §7.50.4 neighborhood):
+`emit_expr_to_string` (the §8.50.4 neighborhood):
 
  1. **Struct-literal field init**: `Context { waker: &waker }` where the
     C++ field is a raw pointer (`Waker*`) emits `.waker = waker` — the
@@ -244,7 +244,7 @@ Two mangles, both in the `syn::Expr::Reference` arm of
     the parameter type, which for `rusty::Function` calls is available
     from the Function's signature.
 
-Deliberately NOT attempted in this run: §7.50.3 demonstrated empirically
+Deliberately NOT attempted in this run: §8.50.3 demonstrated empirically
 that changes in this family can fix their target, pass the whole suite,
 and still break the consumer build — and the working sidestep (kernel
 takes a POINTER; DSL passes `&raw mut x`, which lowers cleanly) costs a
@@ -256,4 +256,4 @@ already applies — `process_stackless_tasks` is the worked example.
 
 Verification requirements when attempted: fresh local-disk suite baseline
 (stash/unstash), regenerate-all + FULL build, and the failing-set
-comparison — with the §7.48 backlog separation if the pin has moved.
+comparison — with the §8.48 backlog separation if the pin has moved.

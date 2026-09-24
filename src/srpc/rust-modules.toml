@@ -1,0 +1,157 @@
+# Canonical Rust ownership for modules compiled directly by rustc and
+# translated into complete C++ module providers by rusty-cpp crate mode.
+schema_version = 2
+
+# Crate-level flat-import namespace: crate mode passes
+# --flat-import-namespace srpc, so every private
+# `use crate::<child>::<Name leaves>;` item in a canonical source carries an
+# implicit cpp_import_namespace(srpc) contract; per-item markers are gone.
+flat_import_namespace = "srpc"
+
+[[module]]
+cpp_module = "srpc.basetypes"
+source = "base/basetypes.rs"
+
+[[module]]
+cpp_module = "srpc.callback_wrapper"
+source = "base/callback_wrapper.rs"
+
+[[module]]
+cpp_module = "srpc.internal_protocol"
+source = "rpc/internal_protocol.rs"
+
+[[module]]
+cpp_module = "srpc.stat"
+source = "misc/stat.rs"
+
+[[module]]
+cpp_module = "srpc.errors"
+source = "rpc/errors.rs"
+
+[[module]]
+cpp_module = "srpc.connection_metrics"
+source = "rpc/connection_metrics.rs"
+
+[[module]]
+cpp_module = "srpc.completion_tracker"
+source = "rpc/completion_tracker.rs"
+
+[[module]]
+cpp_module = "srpc.rand"
+source = "misc/rand.rs"
+
+[[module]]
+cpp_module = "srpc.request_options"
+source = "rpc/request_options.rs"
+
+[[module]]
+cpp_module = "srpc.reconnect_policy"
+source = "rpc/reconnect_policy.rs"
+
+[[module]]
+cpp_module = "srpc.circuit_breaker"
+source = "rpc/circuit_breaker.rs"
+
+[[module]]
+cpp_module = "srpc.connection_state"
+source = "rpc/connection_state.rs"
+
+[[module]]
+cpp_module = "srpc.heartbeat"
+source = "rpc/heartbeat.rs"
+
+[[module]]
+cpp_module = "srpc.request_queue"
+source = "rpc/request_queue.rs"
+
+[[module]]
+cpp_module = "srpc.load_balancer"
+source = "rpc/load_balancer.rs"
+
+[[module]]
+cpp_module = "srpc.utils"
+source = "rpc/utils.rs"
+
+[[module]]
+cpp_module = "srpc.frame_codec"
+source = "rpc/frame_codec.rs"
+
+[[module]]
+cpp_module = "srpc.serializable"
+source = "misc/serializable.rs"
+
+[[module]]
+cpp_module = "srpc.serializable_envelope"
+source = "misc/serializable_envelope.rs"
+
+[[module]]
+cpp_module = "srpc.future"
+source = "reactor/future.rs"
+
+[[module]]
+cpp_module = "srpc.logging"
+source = "base/logging.rs"
+
+[[module]]
+cpp_module = "srpc.idempotency"
+source = "rpc/idempotency.rs"
+
+[[module]]
+cpp_module = "srpc.fiber"
+source = "reactor/fiber.rs"
+
+[[module]]
+cpp_module = "srpc.misc"
+source = "base/misc.rs"
+
+[[module]]
+cpp_module = "srpc.channel"
+source = "rpc/channel.rs"
+
+[[module]]
+cpp_module = "srpc.epoll_wrapper"
+source = "reactor/epoll_wrapper.rs"
+
+[[module]]
+cpp_module = "srpc.pollable_proxy"
+source = "rpc/pollable_proxy.rs"
+
+[[module]]
+cpp_module = "srpc.callbacks"
+source = "rpc/callbacks.rs"
+
+[[module]]
+cpp_module = "srpc.inmemory_channel"
+source = "rpc/inmemory_channel.rs"
+
+[[module]]
+cpp_module = "srpc.fiber_channel"
+source = "rpc/fiber_channel.rs"
+
+[[module]]
+cpp_module = "srpc.threading"
+source = "base/threading.rs"
+
+[[module]]
+cpp_module = "srpc.debugging"
+source = "base/debugging.rs"
+
+[[module]]
+cpp_module = "srpc.any_message"
+source = "misc/any_message.rs"
+
+[[module]]
+cpp_module = "srpc.tcp_channel"
+source = "rpc/tcp_channel.rs"
+
+[[module]]
+cpp_module = "srpc.reactor"
+source = "reactor/reactor.rs"
+
+[[module]]
+cpp_module = "srpc.server"
+source = "rpc/server.rs"
+
+[[module]]
+cpp_module = "srpc.client"
+source = "rpc/client.rs"

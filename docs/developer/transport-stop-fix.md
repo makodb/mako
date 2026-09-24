@@ -1,10 +1,10 @@
-# Transport Stop Fix - Complete RRR Coordination Shutdown Fix
+# Transport Stop Fix - Complete SRPC Coordination Shutdown Fix
 
 ## Background
 
 ### Original Problem (Commit b9d3940)
-- Commit b9d3940 added RRR/RPC support for distributed transaction coordination (previously only the eRPC/DPDK backend, since removed, was supported)
-- The system would hang (continuously printing throughput messages) or coredump when using RRR for coordination
+- Commit b9d3940 added SRPC/RPC support for distributed transaction coordination (previously only the eRPC/DPDK backend, since removed, was supported)
+- The system would hang (continuously printing throughput messages) or coredump when using SRPC for coordination
 - Commit a6f342 attempted to fix the issue by:
   - Adding double `stop()` calls (before and after worker join)
   - Making `ShardClient::stop()` idempotent
@@ -20,7 +20,7 @@ The problem had **multiple critical race conditions**:
    - `Stop()` was not idempotent - multiple concurrent calls could execute simultaneously
    - This led to race conditions, double-delete bugs, and use-after-free crashes
 
-2. **Incomplete RRR Server Shutdown:**
+2. **Incomplete SRPC Server Shutdown:**
    - Helper queue worker threads never received `request_stop()` signals
    - Server wasn't properly shut down in `Stop()` method
    - This caused the "can't stop printing throughput" symptom
@@ -38,7 +38,7 @@ The problem had **multiple critical race conditions**:
 
 ### 1. Atomic Stop Flag
 
-**File: `src/mako/lib/rrr_rpc_backend.h` (line 189)**
+**File: `src/mako/lib/srpc_rpc_backend.h` (line 189)**
 
 Changed `stop_` from plain `bool` to `std::atomic<bool>`:
 
@@ -56,20 +56,20 @@ Also added `#include <atomic>` to the header.
 
 ### 2. Idempotent Stop() Method
 
-**File: `src/mako/lib/rrr_rpc_backend.cc` (line 464)**
+**File: `src/mako/lib/srpc_rpc_backend.cc` (line 464)**
 
 Made Stop() idempotent using atomic compare-exchange:
 
 ```cpp
-void RrrRpcBackend::Stop() {
+void SrpcRpcBackend::Stop() {
     // Make Stop() idempotent - only the first call proceeds
     bool expected = false;
     if (!stop_.compare_exchange_strong(expected, true)) {
-        Notice("RrrRpcBackend::Stop: Already stopped, returning");
+        Notice("SrpcRpcBackend::Stop: Already stopped, returning");
         return;
     }
 
-    Notice("RrrRpcBackend::Stop: BEGIN - Setting stop flag");
+    Notice("SrpcRpcBackend::Stop: BEGIN - Setting stop flag");
 
     // Signal all helper queues to stop (both request and response queues)
     for (auto& entry : queue_holders_) {
@@ -84,7 +84,7 @@ void RrrRpcBackend::Stop() {
     }
 
     // Close all outstanding client connections to unblock any waiting futures
-    std::vector<std::shared_ptr<rrr::Client>> clients_to_close;
+    std::vector<std::shared_ptr<srpc::Client>> clients_to_close;
     {
         std::lock_guard<std::mutex> guard(clients_lock_);
         for (auto& entry : clients_) {
@@ -105,7 +105,7 @@ void RrrRpcBackend::Stop() {
         server_ = nullptr;
     }
 
-    Notice("RrrRpcBackend::Stop: END");
+    Notice("SrpcRpcBackend::Stop: END");
 }
 ```
 
@@ -121,10 +121,10 @@ Added `stop_` checks at the beginning of all RPC send methods to prevent new ope
 
 **SendToAll() (line 273):**
 ```cpp
-bool RrrRpcBackend::SendToAll(...) {
+bool SrpcRpcBackend::SendToAll(...) {
     // Early return if stopping - don't start new RPC operations
     if (stop_) {
-        Warning("RrrRpcBackend::SendToAll: stop requested, not sending");
+        Warning("SrpcRpcBackend::SendToAll: stop requested, not sending");
         return false;
     }
     // ... rest of method
@@ -133,10 +133,10 @@ bool RrrRpcBackend::SendToAll(...) {
 
 **SendToShard() (line 204):**
 ```cpp
-bool RrrRpcBackend::SendToShard(...) {
+bool SrpcRpcBackend::SendToShard(...) {
     // Early return if stopping - don't start new RPC operations
     if (stop_) {
-        Warning("RrrRpcBackend::SendToShard: stop requested, not sending");
+        Warning("SrpcRpcBackend::SendToShard: stop requested, not sending");
         return false;
     }
     // ... rest of method
@@ -145,10 +145,10 @@ bool RrrRpcBackend::SendToShard(...) {
 
 **SendBatchToAll() (line 362):**
 ```cpp
-bool RrrRpcBackend::SendBatchToAll(...) {
+bool SrpcRpcBackend::SendBatchToAll(...) {
     // Early return if stopping - don't start new RPC operations
     if (stop_) {
-        Warning("RrrRpcBackend::SendBatchToAll: stop requested, not sending");
+        Warning("SrpcRpcBackend::SendBatchToAll: stop requested, not sending");
         return false;
     }
     // ... rest of method
@@ -159,10 +159,10 @@ bool RrrRpcBackend::SendBatchToAll(...) {
 
 ### 4. Lock-Protected Stop Check in GetOrCreateClient()
 
-**File: `src/mako/lib/rrr_rpc_backend.cc` (line 167)**
+**File: `src/mako/lib/srpc_rpc_backend.cc` (line 167)**
 
 ```cpp
-std::shared_ptr<rrr::Client> RrrRpcBackend::GetOrCreateClient(...) {
+std::shared_ptr<srpc::Client> SrpcRpcBackend::GetOrCreateClient(...) {
     // ... setup code ...
 
     clients_lock_.lock();
@@ -186,7 +186,7 @@ std::shared_ptr<rrr::Client> RrrRpcBackend::GetOrCreateClient(...) {
 
 ### 5. Post-Wait Stop Check in SendToShard()
 
-**File: `src/mako/lib/rrr_rpc_backend.cc` (line 247)**
+**File: `src/mako/lib/srpc_rpc_backend.cc` (line 247)**
 
 ```cpp
 // Wait for response
@@ -194,14 +194,14 @@ fu->wait();
 
 // Check stop again after wait - client might have been closed during wait
 if (stop_) {
-    Warning("RrrRpcBackend::SendToShard: stop requested after wait, aborting");
-    rrr::Future::safe_release(fu);
+    Warning("SrpcRpcBackend::SendToShard: stop requested after wait, aborting");
+    srpc::Future::safe_release(fu);
     return false;
 }
 
 if (fu->get_error_code() != 0) {
     Warning("RPC error: %d", fu->get_error_code());
-    rrr::Future::safe_release(fu);
+    srpc::Future::safe_release(fu);
     return false;
 }
 ```
@@ -220,7 +220,7 @@ These fixes from a6f342 were kept because they address real issues:
 - Made `ShardClient::stop()` idempotent to allow double-stop pattern
 - Only the first invocation tears down the transport
 
-**File: `src/rrr/reactor/epoll_wrapper.h` (line 207):**
+**File: `src/srpc/reactor/epoll_wrapper.h` (line 207):**
 - Treat `ENOENT`/`EBADF` from `epoll_ctl(…, EPOLL_CTL_MOD …)` as benign races
 - Allows shutdown to proceed when file descriptors vanish during concurrent close
 
@@ -264,7 +264,7 @@ All checks passed!
 **Multiple test runs:** All tests pass without segfaults or hangs.
 
 ### Confirmed Behaviors
-- ✅ RunEventLoop() exits cleanly (confirmed in logs: "RrrRpcBackend::RunEventLoop: Exited cleanly")
+- ✅ RunEventLoop() exits cleanly (confirmed in logs: "SrpcRpcBackend::RunEventLoop: Exited cleanly")
 - ✅ Helper queue worker threads receive stop signals and exit properly
 - ✅ No more "can't stop printing throughput" messages
 - ✅ **No segmentation faults during shutdown** (previously would crash intermittently)
@@ -283,7 +283,7 @@ All checks passed!
 
 ## Summary
 
-The complete fix required addressing **multiple race conditions** in the RRR transport layer shutdown:
+The complete fix required addressing **multiple race conditions** in the SRPC transport layer shutdown:
 
 ### Five Critical Fixes Working Together
 
@@ -318,7 +318,7 @@ These five fixes provide **defense-in-depth** against shutdown races:
 
 ### Files Modified
 
-1. `src/mako/lib/rrr_rpc_backend.h` - Made stop_ atomic, added #include <atomic>
-2. `src/mako/lib/rrr_rpc_backend.cc` - All five race condition fixes above
+1. `src/mako/lib/srpc_rpc_backend.h` - Made stop_ atomic, added #include <atomic>
+2. `src/mako/lib/srpc_rpc_backend.cc` - All five race condition fixes above
 
 Total: ~50 lines of actual logic changes (excluding debug logging)

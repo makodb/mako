@@ -2,17 +2,17 @@
 
 > **Historical design proposal.** This is not a current build or ownership
 > guide. Current Rust/C++ module ownership is tracked in
-> `docs/dev/goal0_completion_plan.md` and `src/rrr/RUST_CANARY.md`.
+> `docs/dev/goal0_completion_plan.md` and `src/srpc/RUST_CANARY.md`.
 
 ## Overview
 
-This document describes the plan to refactor the rrr reactor/coroutine API to follow Boost.Fiber conventions for better clarity and industry alignment.
+This document describes the plan to refactor the srpc reactor/coroutine API to follow Boost.Fiber conventions for better clarity and industry alignment.
 
 ## Background
 
 ### Current State
 
-The Mako codebase uses `rrr::Coroutine` for cooperative multitasking. However, this class is implemented using **Boost.Coroutine2**, which provides **stackful** execution contexts. In modern C++ terminology:
+The Mako codebase uses `srpc::Coroutine` for cooperative multitasking. However, this class is implemented using **Boost.Coroutine2**, which provides **stackful** execution contexts. In modern C++ terminology:
 
 - **Stackful coroutines** (what we have) = **Fibers**
 - **Stackless coroutines** (C++20) = **Coroutines**
@@ -49,7 +49,7 @@ boost::this_fiber::sleep_until(time_point);
 
 All new code MUST follow rusty-safe patterns:
 
-1. **Use rrr::Time, NOT std::chrono** - The codebase uses `rrr::Time::now()` for time operations
+1. **Use srpc::Time, NOT std::chrono** - The codebase uses `srpc::Time::now()` for time operations
 2. **Mark all functions with @safe or @unsafe** - No unmarked functions
 3. **Use rusty types** - `rusty::Option<T>`, `rusty::Cell<T>`, `rusty::Rc<T>`, etc.
 4. **Wrap unsafe operations** - Use `// @unsafe { reason }` blocks
@@ -57,13 +57,13 @@ All new code MUST follow rusty-safe patterns:
 
 ### Time Interface
 
-The codebase uses `rrr::Time`, exported by the `rrr.basetypes` named module
-from canonical `src/rrr/src/basetypes.rs`:
+The codebase uses `srpc::Time`, exported by the `srpc.basetypes` named module
+from canonical `src/srpc/src/basetypes.rs`:
 
 ```cpp
 class Time {
 public:
-    static const uint64_t RRR_USEC_PER_SEC = 1000000;
+    static const uint64_t SRPC_USEC_PER_SEC = 1000000;
 
     // @unsafe - calls clock_gettime
     static uint64_t now(bool accurate = false);  // Returns microseconds
@@ -77,17 +77,17 @@ public:
 
 ### Phase 1: Add Aliases and this_fiber Namespace
 
-Create a new header `src/rrr/reactor/fiber.h` that provides the modern API:
+Create a new header `src/srpc/reactor/fiber.h` that provides the modern API:
 
 ```cpp
 #pragma once
 
 #include "coroutine.h"
-import rrr.basetypes;  // For rrr::Time
+import srpc.basetypes;  // For srpc::Time
 #include <rusty/option.hpp>
 #include <rusty/cell.hpp>
 
-namespace rrr {
+namespace srpc {
 
 // Type alias for clarity
 using Fiber = Coroutine;
@@ -122,28 +122,28 @@ inline void yield() noexcept {
 }
 
 // @unsafe - Sleeps for specified microseconds
-// Uses rrr::Time internally (NOT std::chrono)
+// Uses srpc::Time internally (NOT std::chrono)
 inline void sleep_us(uint64_t microseconds) {
     // @unsafe { Coroutine::sleep uses Time internally }
     Coroutine::sleep(microseconds);
 }
 
 // @unsafe - Sleeps for specified milliseconds
-// Convenience wrapper, uses rrr::Time internally
+// Convenience wrapper, uses srpc::Time internally
 inline void sleep_ms(uint64_t milliseconds) {
     // @unsafe { Coroutine::sleep }
     Coroutine::sleep(milliseconds * 1000);
 }
 
 // @unsafe - Sleeps for specified seconds
-// Convenience wrapper, uses rrr::Time internally
+// Convenience wrapper, uses srpc::Time internally
 inline void sleep_s(uint64_t seconds) {
     // @unsafe { Coroutine::sleep }
-    Coroutine::sleep(seconds * Time::RRR_USEC_PER_SEC);
+    Coroutine::sleep(seconds * Time::SRPC_USEC_PER_SEC);
 }
 
 // @unsafe - Sleeps until specified absolute time (microseconds since epoch)
-// Uses rrr::Time::now() for current time
+// Uses srpc::Time::now() for current time
 inline void sleep_until_us(uint64_t abs_time_us) {
     // @unsafe { Time::now }
     uint64_t now = Time::now(true);
@@ -155,7 +155,7 @@ inline void sleep_until_us(uint64_t abs_time_us) {
 
 } // namespace this_fiber
 
-} // namespace rrr
+} // namespace srpc
 ```
 
 ### Phase 2: Event Combinator Aliases
@@ -164,7 +164,7 @@ Add clearer names for event combinators in `event.h`:
 
 ```cpp
 // In event.h, after class definitions:
-namespace rrr {
+namespace srpc {
 
 // @safe - Type aliases (no runtime behavior)
 // Clearer names for event combinators
@@ -172,12 +172,12 @@ using WaitAll = AndEvent;   // Wait for ALL events to be ready
 using WaitAny = OrEvent;    // Wait for ANY event to be ready
 using WaitN = NEvent;       // Wait for N events to be ready
 
-} // namespace rrr
+} // namespace srpc
 ```
 
 ### Phase 3: Future/Promise Wrappers (Optional)
 
-Create `src/rrr/reactor/future.h` with rusty-safe Future/Promise:
+Create `src/srpc/reactor/future.h` with rusty-safe Future/Promise:
 
 ```cpp
 #pragma once
@@ -189,7 +189,7 @@ Create `src/rrr/reactor/future.h` with rusty-safe Future/Promise:
 #include <stdexcept>
 #include <memory>
 
-namespace rrr {
+namespace srpc {
 
 template<typename T>
 class Future;
@@ -259,7 +259,7 @@ public:
 
     // @unsafe - Wait with timeout (microseconds)
     // Returns true if ready, false if timed out
-    // Uses rrr::Time internally (NOT std::chrono)
+    // Uses srpc::Time internally (NOT std::chrono)
     bool wait_for_us(uint64_t timeout_us) {
         // @unsafe { Event::wait with timeout }
         event_->wait(timeout_us);
@@ -292,7 +292,7 @@ std::pair<Promise<T>, Future<T>> make_promise() {
     return {std::move(p), std::move(f)};
 }
 
-} // namespace rrr
+} // namespace srpc
 ```
 
 ### Phase 4: Internal Rename
@@ -311,7 +311,7 @@ Create comprehensive documentation in `doc/fiber_api.md` covering:
 1. API reference for all new types and functions
 2. Migration guide from old API to new API
 3. Examples showing common patterns
-4. Note about using `rrr::Time` (not std::chrono)
+4. Note about using `srpc::Time` (not std::chrono)
 
 ## Migration Strategy
 
@@ -345,11 +345,11 @@ auto wait_all = std::make_shared<WaitAll>();   // New (preferred)
 
 | File | Action | Description |
 |------|--------|-------------|
-| `src/rrr/reactor/fiber.h` | Create | New public API header with this_fiber namespace |
-| `src/rrr/reactor/future.h` | Create | Future/Promise implementation |
-| `src/rrr/reactor/event.h` | Modify | Add WaitAll/WaitAny/WaitN aliases |
-| `src/rrr/reactor/coroutine.h` | Modify | Internal rename, add Coroutine alias |
-| `src/rrr/reactor/reactor.h` | Modify | Update internal references |
+| `src/srpc/reactor/fiber.h` | Create | New public API header with this_fiber namespace |
+| `src/srpc/reactor/future.h` | Create | Future/Promise implementation |
+| `src/srpc/reactor/event.h` | Modify | Add WaitAll/WaitAny/WaitN aliases |
+| `src/srpc/reactor/coroutine.h` | Modify | Internal rename, add Coroutine alias |
+| `src/srpc/reactor/reactor.h` | Modify | Update internal references |
 | `test/fiber_test.cc` | Create | Tests for new API |
 | `doc/fiber_api.md` | Create | API documentation |
 
@@ -357,7 +357,7 @@ auto wait_all = std::make_shared<WaitAll>();   // New (preferred)
 
 - [ ] All functions have @safe or @unsafe annotations
 - [ ] All unsafe operations wrapped in `// @unsafe { reason }` blocks
-- [ ] Uses `rrr::Time::now()` instead of `std::chrono`
+- [ ] Uses `srpc::Time::now()` instead of `std::chrono`
 - [ ] Uses `rusty::Cell<T>` for interior mutability of primitives
 - [ ] Uses `rusty::Option<T>` instead of nullable pointers
 - [ ] Uses `rusty::Rc<T>` for single-threaded reference counting
@@ -392,7 +392,7 @@ auto wait_all = std::make_shared<WaitAll>();   // New (preferred)
 3. Optional `Future<T>`/`Promise<T>` work correctly
 4. **All code passes RustyCpp borrow checking**
 5. **All functions have @safe/@unsafe annotations**
-6. **Uses rrr::Time, not std::chrono**
+6. **Uses srpc::Time, not std::chrono**
 7. All existing tests pass unchanged
 8. New API has comprehensive tests
 9. Documentation is complete
@@ -420,7 +420,7 @@ auto wait_all = std::make_shared<WaitAll>();   // New (preferred)
 - `QuorumEvent` - Essential for distributed consensus
 - `DispatchEvent` - RPC dispatch coordination
 - `IntEvent`, `SharedIntEvent` - Counter-based synchronization
-- `TimeoutEvent` - Timeout handling with rrr::Time
+- `TimeoutEvent` - Timeout handling with srpc::Time
 - RustyCpp safety annotations throughout
 
 ## Estimated Effort
@@ -438,5 +438,5 @@ auto wait_all = std::make_shared<WaitAll>();   // New (preferred)
 
 - [Boost.Fiber Documentation](https://www.boost.org/doc/libs/1_87_0/libs/fiber/doc/html/fiber/overview.html)
 - [this_fiber Namespace](https://www.boost.org/doc/libs/1_87_0/libs/fiber/doc/html/fiber/fiber_mgmt/this_fiber.html)
-- `src/rrr/src/basetypes.rs` - canonical rrr::Time source
+- `src/srpc/src/basetypes.rs` - canonical srpc::Time source
 - `CLAUDE.md` - RustyCpp safety requirements

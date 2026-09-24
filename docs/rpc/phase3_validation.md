@@ -97,8 +97,8 @@ bool validate_connection() const;
 
 | File | Changes |
 |------|---------|
-| `src/rrr/rpc/client.hpp` | Add KeepaliveConfig, idle tracking, validate_connection() |
-| `src/rrr/rpc/client.cpp` | Implement keepalive setup, validation logic |
+| `src/srpc/rpc/client.hpp` | Add KeepaliveConfig, idle tracking, validate_connection() |
+| `src/srpc/rpc/client.cpp` | Implement keepalive setup, validation logic |
 | `test/rpc_validation_test.cc` | Unit tests |
 | `CMakeLists.txt` | Add test target |
 

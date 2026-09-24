@@ -44,7 +44,7 @@ class ConfigServiceImpl : public ConfigService {
 private:
   ConfigStore& store_;               // Reference to ConfigStore
   rusty::RefCell<rusty::Option<PersistentConfig>> cached_config_;  // Cached config
-  rusty::RefCell<rusty::Option<rrr::Marshal>> cached_marshal_;     // Cached serialized
+  rusty::RefCell<rusty::Option<srpc::Marshal>> cached_marshal_;     // Cached serialized
   rusty::Cell<uint64_t> cached_version_;  // Cached version
 
 public:
@@ -53,11 +53,11 @@ public:
   // RPC handlers
   void GetConfig(uint64_t client_version, uint64_t* current_version,
                  bool_t* has_update, MarshallDeputy* config_data,
-                 rrr::DeferredReply defer) override;
+                 srpc::DeferredReply defer) override;
 
-  void GetConfigVersion(uint64_t* version, rrr::DeferredReply defer) override;
+  void GetConfigVersion(uint64_t* version, srpc::DeferredReply defer) override;
 
-  void HasConfig(bool_t* has_config, rrr::DeferredReply defer) override;
+  void HasConfig(bool_t* has_config, srpc::DeferredReply defer) override;
 
   // Invalidate cache (call after config update)
   void invalidate_cache();

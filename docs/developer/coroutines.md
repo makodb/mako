@@ -1,10 +1,10 @@
-# Understanding Coroutines and the Reactor Pattern in RRR
+# Understanding Coroutines and the Reactor Pattern in SRPC
 
 ## Table of Contents
 1. [Introduction: Why Coroutines?](#introduction-why-coroutines)
 2. [Threads vs Coroutines](#threads-vs-coroutines)
 3. [The Reactor Pattern](#the-reactor-pattern)
-4. [Using RRR Coroutines](#using-rrr-coroutines)
+4. [Using SRPC Coroutines](#using-srpc-coroutines)
 5. [The Event System](#the-event-system)
 6. [The Scheduler: Why Coroutines Need Resume](#the-scheduler-why-coroutines-need-resume)
 7. [Common Patterns and Best Practices](#common-patterns-and-best-practices)
@@ -24,7 +24,7 @@ Imagine you're a chef in a restaurant:
 - **Thread approach**: Hire multiple chefs, each handling one order start-to-finish
 - **Coroutine approach**: One chef efficiently switches between orders while waiting (for oven, boiling water, etc.)
 
-The coroutine approach is what RRR implements - efficient task switching without the overhead of multiple threads.
+The coroutine approach is what SRPC implements - efficient task switching without the overhead of multiple threads.
 
 ## Threads vs Coroutines
 
@@ -47,7 +47,7 @@ std::thread worker([]() {
 
 ### Coroutines (User-level)
 ```cpp
-// RRR coroutine - cheap context switch
+// SRPC coroutine - cheap context switch
 reactor->create_run_coroutine([]() {
     auto event = wait_for_database();
     event->wait();  // Yields to other coroutines
@@ -135,7 +135,7 @@ The only time you need synchronization is when:
 
 ### Key Difference: Stackful vs Stackless
 
-RRR uses **stackful coroutines** (via Boost.Coroutine2):
+SRPC uses **stackful coroutines** (via Boost.Coroutine2):
 - Each coroutine has its own stack
 - Can pause/resume from any function depth
 - Natural code flow (looks like synchronous code)
@@ -192,7 +192,7 @@ std::thread t([]() {
 });
 ```
 
-## Using RRR Coroutines
+## Using SRPC Coroutines
 
 ### Basic Coroutine Creation
 
@@ -357,9 +357,9 @@ std::thread scheduler_thread([]() {
     while (true) {
         sleep(1)
         reactor->check_resume();
-        // the actual api in the rrr reactor is Loop(false), it does the check once
+        // the actual api in the srpc reactor is Loop(false), it does the check once
     }
-    // the rrr api has Loop(true), equivalent to the above loop. 
+    // the srpc api has Loop(true), equivalent to the above loop. 
     // reactor->loop(true);  // true = run forever
 });
 ```
@@ -368,9 +368,9 @@ The loop continuously:
 - Checks timeout conditions
 - Resumes coroutines whose events are satisfied
 
-#### How It Works in RRR: PollThread
+#### How It Works in SRPC: PollThread
 
-In the actual RRR codebase, this scheduler is triggered in `PollThread`. Each `PollThread` owns a reactor and runs the event loop in its thread:
+In the actual SRPC codebase, this scheduler is triggered in `PollThread`. Each `PollThread` owns a reactor and runs the event loop in its thread:
 
 ```cpp
 // Simplified view of how PollThread works
@@ -559,7 +559,7 @@ reactor->create_run_coroutine([]() {
 
 ## Summary
 
-RRR's coroutine system provides:
+SRPC's coroutine system provides:
 - **Lightweight concurrency**: Thousands of concurrent tasks in one thread
 - **Simple async code**: Write async logic that looks synchronous
 - **Efficient I/O handling**: Perfect for network servers with many connections

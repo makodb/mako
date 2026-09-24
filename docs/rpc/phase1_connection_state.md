@@ -141,7 +141,7 @@ Modify `ClientConnection` to use `ConnectionStateMachine`:
 
 ## File Structure
 
-New file: `src/rrr/rpc/connection_state.hpp`
+New file: `src/srpc/rpc/connection_state.hpp`
 
 ## Estimated LOC
 

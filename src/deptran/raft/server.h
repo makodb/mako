@@ -20,12 +20,12 @@
 #include <rusty/num.hpp>
 #include <rusty/array.hpp>   // rusty::len / rusty::is_empty in PeerTable
 #include <rusty/ffi.hpp>   // rusty::ffi::c_void, the election loop opaque handle
-// The rusty:: aliases for the rrr reactor types. server.cc has included this
+// The rusty:: aliases for the srpc reactor types. server.cc has included this
 // since the wake gate landed; the election timer block below is the first DSL
 // in a HEADER to name one, so it must be visible here too. It MUST stay at
 // global scope: included inside `namespace janus` it declares `janus::rusty`,
 // which then shadows ::rusty for every lookup in the file. Its own ordering
-// rule -- after the header that imports rrr.reactor -- is satisfied by
+// rule -- after the header that imports srpc.reactor -- is satisfied by
 // commo.h above.
 import rusty;   // rusty::Vec is a vec_port C++20 module, not a header
 #include "rust_facade_types.h"
@@ -217,7 +217,7 @@ static_assert(static_cast<uint16_t>(INVALID_SITEID) == 65535);
 // arithmetic -- lives in the DSL. The Rust body runs the whole `while` that
 // used to sit inside StartElectionTimer's fiber lambda; C++ keeps only the
 // eight kernels below, each of which is an operation that genuinely cannot
-// cross: a lock, a private member read, an rrr logging macro, or a call into
+// cross: a lock, a private member read, an srpc logging macro, or a call into
 // another RaftServer method.
 //
 // ON THE OPAQUE HANDLE. ElectionTimerLoop carries the server as
@@ -313,7 +313,7 @@ struct AsyncCallbackLifetime {
 // every one aliases a type server.h itself declares, and rust_facade_types.h
 // is included before those declarations exist.
 //
-// The Rust half is src/rrr/rusty-rustc/src/lib.rs, where each name is an
+// The Rust half is src/srpc/rusty-rustc/src/lib.rs, where each name is an
 // opaque struct of the C++ size and alignment (the layout pins below). Rust
 // can hold and move one, default-construct those whose C++ type has an empty
 // state, and copy the Arc handles through their Clone; it cannot look inside.
@@ -341,12 +341,12 @@ using RaftVoteQuorumPtr = ::std::shared_ptr<::janus::RaftVoteQuorumEvent>;
 // Rust; only what is inside each Arc stays opaque, because it is a wire type
 // the marshalling layer owns.
 using RaftTpcCommitPtr = ::rusty::Arc<::janus::TpcCommitCommand>;
-using RaftIntEventPtr = ::rusty::Arc<::rrr::IntEvent>;
-using RaftPollThreadPtr = ::rusty::Arc<::rrr::PollThread>;
+using RaftIntEventPtr = ::rusty::Arc<::srpc::IntEvent>;
+using RaftPollThreadPtr = ::rusty::Arc<::srpc::PollThread>;
 
 // ---------------------------------------------------------------------------
 // LAYOUT PINS. Each of these types has a rustc-side model in
-// src/rrr/rusty-rustc/src/lib.rs that exists so a DSL body can NAME the field.
+// src/srpc/rusty-rustc/src/lib.rs that exists so a DSL body can NAME the field.
 // The models carry the real size and alignment of the C++ type, because
 // rustc compiles RaftServerBase: a model that understated a carrier's size
 // would put every field after it at the wrong offset.
@@ -395,7 +395,7 @@ namespace janus {
 // The small kernels below are DECLARED here and defined in server.cc. They
 // cannot be `extern "C" inline` bodies in the header: such a body is emitted
 // only in a translation unit that uses it, and the only caller is Rust.
-// @unsafe - wraps the rrr `verify` macro so a DSL body can assert.
+// @unsafe - wraps the srpc `verify` macro so a DSL body can assert.
 extern "C" void raft_verify(bool condition);
 
 // @unsafe - the two halves of std::lock_guard<RaftCheckedMutex>, so a DSL
@@ -411,7 +411,7 @@ extern "C" void raft_mutex_unlock(RaftCheckedMutex* mutex);
 extern "C" void raft_std_mutex_lock(std::mutex* mutex);
 extern "C" void raft_std_mutex_unlock(std::mutex* mutex);
 
-// @unsafe - Time::now is an rrr clock read; the argument is the
+// @unsafe - Time::now is an srpc clock read; the argument is the
 // microsecond-resolution flag every Raft call site already passes.
 extern "C" uint64_t raft_time_now_us();
 
@@ -436,10 +436,10 @@ extern "C" bool raft_election_debug_enabled();
 //
 // The two wait entry points are SPLIT rather than moved wholesale, for one
 // reason: creating an `IntEvent` calls the reactor factory
-// `::rrr::create_sp_int_event`, which the DSL cannot name. The rustc facade
-// exposes it only as `rusty::rrr::reactor::create_sp_int_event`, and inline
+// `::srpc::create_sp_int_event`, which the DSL cannot name. The rustc facade
+// exposes it only as `rusty::srpc::reactor::create_sp_int_event`, and inline
 // mode has no `--type-map` to rewrite that path, so spelling it would require
-// a nested `rusty::rrr::reactor` namespace in C++ merely to hold a factory.
+// a nested `rusty::srpc::reactor` namespace in C++ merely to hold a factory.
 // Instead the two wait entry points take the event as a PARAMETER and
 // RaftServer creates it -- `WaitForReplicationOrHeartbeat` and
 // `WaitForElectionTimeoutOrShutdown` in this file, which are the C++ kernels

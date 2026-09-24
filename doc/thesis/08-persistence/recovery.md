@@ -9,7 +9,7 @@ which coordinates between the storage backend and the consensus server.
 
 ## 2. RecoveryMode Enum
 
-**File**: `src/rrr/rpc/recovery_manager.hpp` (267 lines, line 33-37)
+**File**: `src/srpc/rpc/recovery_manager.hpp` (267 lines, line 33-37)
 
 ```cpp
 enum class RecoveryMode {
@@ -29,7 +29,7 @@ The three modes handle different startup scenarios:
 
 ## 3. RecoveryConfig
 
-**File**: `src/rrr/rpc/recovery_manager.hpp` (lines 42-72)
+**File**: `src/srpc/rpc/recovery_manager.hpp` (lines 42-72)
 
 ```cpp
 struct RecoveryConfig {
@@ -61,7 +61,7 @@ This generates paths like `/tmp/alice_mako_log_shard0_replica0`.
 
 ## 4. RecoveryResult
 
-**File**: `src/rrr/rpc/recovery_manager.hpp` (lines 77-102)
+**File**: `src/srpc/rpc/recovery_manager.hpp` (lines 77-102)
 
 ```cpp
 struct RecoveryResult {
@@ -84,7 +84,7 @@ Factory methods:
 
 ## 5. RecoveryManager
 
-**File**: `src/rrr/rpc/recovery_manager.hpp` (lines 116-265)
+**File**: `src/srpc/rpc/recovery_manager.hpp` (lines 116-265)
 
 ### 5.1 Internal State
 
@@ -214,17 +214,17 @@ ServerWorker                RecoveryManager        LogStorage         RaftServer
 
 ```cpp
 // Create recovery config
-rrr::RecoveryConfig config =
-    rrr::RecoveryConfig::for_replica(partition_id, locale_id);
+srpc::RecoveryConfig config =
+    srpc::RecoveryConfig::for_replica(partition_id, locale_id);
 
 // Create manager and storage
-rrr::RecoveryManager recovery_manager(config);
+srpc::RecoveryManager recovery_manager(config);
 auto storage = recovery_manager.create_storage();
 
 // Run recovery
 recovery_manager.recover(
     // set_storage: provide storage to Raft server
-    [raft_server, &storage](std::shared_ptr<rrr::LogStorage> s) {
+    [raft_server, &storage](std::shared_ptr<srpc::LogStorage> s) {
         raft_server->SetLogStorage(s);
     },
     // recover: load state from storage
@@ -232,7 +232,7 @@ recovery_manager.recover(
         return raft_server->RecoverFromStorage();
     },
     // get_stats: extract recovered metadata
-    [&storage](rrr::RecoveryResult& r) {
+    [&storage](srpc::RecoveryResult& r) {
         auto term_opt = storage->get_metadata("currentTerm");
         if (term_opt.is_some()) {
             r.recovered_term = std::stoull(term_opt.unwrap());

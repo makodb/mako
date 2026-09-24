@@ -1,13 +1,13 @@
 # RPC Safety Conversion Plan
 
 > Historical conversion record. Current ownership and Goal-0 status live in
-> `src/rrr/RUST_CANARY.md`; `rpc/utils.cpp` has since been replaced by
-> canonical `src/rrr/src/utils.rs` plus the terminal `srpc_net.c` kernel, and
-> `rpc/frame_codec.cpp` by canonical `src/rrr/src/frame_codec.rs`. FrameCodec's
+> `src/srpc/RUST_CANARY.md`; `rpc/utils.cpp` has since been replaced by
+> canonical `src/srpc/src/utils.rs` plus the terminal `srpc_net.c` kernel, and
+> `rpc/frame_codec.cpp` by canonical `src/srpc/src/frame_codec.rs`. FrameCodec's
 > three raw-pointer entry points are explicit `unsafe fn` APIs with documented
 > readable-range and non-overlap contracts rather than being reported as safe.
 
-This document tracks the plan to convert unsafe code in `src/rrr/rpc/` to safe code.
+This document tracks the plan to convert unsafe code in `src/srpc/rpc/` to safe code.
 
 ## Current State
 

@@ -55,9 +55,9 @@ class ServerControlServiceImpl: public ServerControlService {
 
   // BEGIN typed-rpc-decls (ServerControlServiceImpl)
   // Typed RPC interface overrides (new API).
-  void server_shutdown(const ServerControlService::RpcServerShutdownRequest& req, ServerControlService::RpcServerShutdownResponse& resp, rrr::DeferredReply defer) override;
-  void server_ready(const ServerControlService::RpcServerReadyRequest& req, ServerControlService::RpcServerReadyResponse& resp, rrr::DeferredReply defer) override;
-  void server_heart_beat(const ServerControlService::RpcServerHeartBeatRequest& req, ServerControlService::RpcServerHeartBeatResponse& resp, rrr::DeferredReply defer) override;
+  void server_shutdown(const ServerControlService::RpcServerShutdownRequest& req, ServerControlService::RpcServerShutdownResponse& resp, srpc::DeferredReply defer) override;
+  void server_ready(const ServerControlService::RpcServerReadyRequest& req, ServerControlService::RpcServerReadyResponse& resp, srpc::DeferredReply defer) override;
+  void server_heart_beat(const ServerControlService::RpcServerHeartBeatRequest& req, ServerControlService::RpcServerHeartBeatResponse& resp, srpc::DeferredReply defer) override;
   // END typed-rpc-decls (ServerControlServiceImpl)
 };
 

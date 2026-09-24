@@ -5,7 +5,7 @@ Date: 2026-04-11
 Scope reviewed:
 - `docs/raft-book.md`
 - `src/deptran/raft/*`
-- Related runtime/shutdown paths in `src/deptran/server_worker.cc`, `src/deptran/s_main.cc`, and `src/rrr/rpc/client.{cpp,hpp}`
+- Related runtime/shutdown paths in `src/deptran/server_worker.cc`, `src/deptran/s_main.cc`, and `src/srpc/rpc/client.{cpp,hpp}`
 
 Notes:
 - This is a risk audit, not a claim that every item is an active production bug.
@@ -36,8 +36,8 @@ Notes:
 
 3. RPC client reconnect/retry model uses detached `std::thread`
 - Evidence:
-  - Auto-reconnect spawns detached thread (`src/rrr/rpc/client.cpp:823-845`).
-  - `request_with_options()` spawns one detached thread per request (`src/rrr/rpc/client.hpp:1121-1123`, `:1250`).
+  - Auto-reconnect spawns detached thread (`src/srpc/rpc/client.cpp:823-845`).
+  - `request_with_options()` spawns one detached thread per request (`src/srpc/rpc/client.hpp:1121-1123`, `:1250`).
 - Why it matters:
   - Can create high thread churn under failures/timeouts.
   - Detached workers complicate shutdown determinism and resource accounting.

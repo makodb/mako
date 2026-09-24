@@ -15,8 +15,8 @@ YAML files.
 class ConfigClient {
 private:
     std::string c_node_addr_;           // Address of config node (host:port)
-    rrr::PollMgr* poll_mgr_;            // Polling manager for RPC
-    rrr::Client* rpc_client_;           // RPC client connection
+    srpc::PollMgr* poll_mgr_;            // Polling manager for RPC
+    srpc::Client* rpc_client_;           // RPC client connection
     ConfigServiceProxy* proxy_;         // Generated proxy for ConfigService
 
     // Retry configuration

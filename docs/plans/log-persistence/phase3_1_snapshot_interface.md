@@ -82,7 +82,7 @@ public:
 
 ## Implementation
 
-### File: `src/rrr/rpc/snapshot_manager.hpp`
+### File: `src/srpc/rpc/snapshot_manager.hpp`
 
 Create abstract interface and metadata structures.
 
@@ -99,7 +99,7 @@ Add snapshot manager member and integration hooks.
 
 ## Files Created/Modified
 
-- `src/rrr/rpc/snapshot_manager.hpp` - Interface definitions (~100 LOC)
+- `src/srpc/rpc/snapshot_manager.hpp` - Interface definitions (~100 LOC)
 - Minor additions to Raft/Paxos server headers for snapshot manager member
 
 ## LOC Estimate

@@ -4,7 +4,7 @@
 
 ## Overview
 
-This phase implements graceful server shutdown for the rrr/rpc module, allowing servers to:
+This phase implements graceful server shutdown for the srpc/rpc module, allowing servers to:
 1. Stop accepting new connections
 2. Complete in-flight requests
 3. Execute cleanup hooks
@@ -177,8 +177,8 @@ void Server::shutdown() {
 
 | File | Changes |
 |------|---------|
-| `src/rrr/rpc/server.hpp` | Add ShutdownPhase, hooks, request tracking |
-| `src/rrr/rpc/server.cpp` | Implement new methods |
+| `src/srpc/rpc/server.hpp` | Add ShutdownPhase, hooks, request tracking |
+| `src/srpc/rpc/server.cpp` | Implement new methods |
 | `test/rpc_graceful_shutdown_test.cc` | New test file |
 | `CMakeLists.txt` | Add test target |
 

@@ -7,9 +7,9 @@
  *
  * Design intent:
  *  - Every `handle_*` method on the base returns its reply type
- *    directly. The transport (rrr shim or in-memory channel worker)
+ *    directly. The transport (srpc shim or in-memory channel worker)
  *    invokes the dispatcher and uses the returned value as the reply
- *    payload. No rrr::DeferredReply, no callbacks, no rusty::Function.
+ *    payload. No srpc::DeferredReply, no callbacks, no rusty::Function.
  *  - Concrete adapters:
  *      RaftServerDispatcher (phase 8.2) — delegates to RaftServer
  *                                         methods synchronously.

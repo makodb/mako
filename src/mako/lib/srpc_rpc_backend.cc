@@ -1,0 +1,858 @@
+// -*- mode: c++; c-file-style: "k&r"; c-basic-offset: 4 -*-
+/***********************************************************************
+ *
+ * srpc_rpc_backend.cc:
+ *   srpc/rpc transport backend implementation
+ *
+ **********************************************************************/
+
+#include <std_compat.hpp>  // textual STL before `import std` (mixed with module → abi_tag clash)
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+
+#include "srpc_rpc_backend.h"
+#include "lib/assert.h"
+#include "lib/common.h"
+#include "lib/message.h"
+#include "lib/helper_queue.h"
+#include "thread.h"
+#include "sto/sync_util.hh"
+
+#include <inttypes.h>
+
+import std;
+
+using namespace mako;
+
+// TransportBackendService::__dispatch__ implementation
+// @safe - forwards to SrpcRpcBackend::RequestHandler
+void TransportBackendService::__dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req,
+                                           srpc::WeakServerConnection weak_sconn) {
+    SrpcRpcBackend::RequestHandler(static_cast<uint8_t>(rpc_id), std::move(req), weak_sconn, backend_);
+}
+
+// External callbacks registered by bench.cc and dbtest.cc
+extern std::function<int(int,int)> bench_callback_;
+extern std::function<int(int,int)> dbtest_callback_;
+
+// Constructor
+SrpcRpcBackend::SrpcRpcBackend(const transport::Configuration& config,
+                             int shard_idx,
+                             uint16_t id,
+                             const std::string& cluster)
+    : config_(config),
+      shard_idx_(shard_idx),
+      id_(id),
+      cluster_(cluster),
+      poll_thread_worker_(rusty::None) {
+
+    cluster_role_ = convertCluster(cluster);
+}
+
+// Destructor
+SrpcRpcBackend::~SrpcRpcBackend() {
+    Notice("SrpcRpcBackend::~SrpcRpcBackend: START destructor");
+    Shutdown();
+    Notice("SrpcRpcBackend::~SrpcRpcBackend: Shutdown() completed");
+}
+
+// Initialize the backend
+int SrpcRpcBackend::Initialize(const std::string& local_uri,
+                              uint8_t numa_node,
+                              uint8_t phy_port,
+                              uint8_t st_nr_req_types,
+                              uint8_t end_nr_req_types) {
+
+    // Create PollThread for event-driven I/O
+    poll_thread_worker_ = rusty::Some(srpc::PollThread::create());
+    Notice("SrpcRpcBackend::Initialize: poll_thread_worker_ created, is_some=%d", poll_thread_worker_.is_some());
+
+    // Extract host and port from local_uri (format: "host:port")
+    size_t colon_pos = local_uri.find(':');
+    if (colon_pos == std::string::npos) {
+        Panic("Invalid local_uri format: %s (expected host:port)", local_uri.c_str());
+        return -1;
+    }
+
+    std::string port_str = local_uri.substr(colon_pos + 1);
+
+    // Create server to listen for incoming requests
+    // Use as_ref().unwrap().clone() instead of unwrap() to avoid moving/destroying the Option
+    server_ = new srpc::Server(srpc::Server::new_(poll_thread_worker_.as_ref().unwrap().clone()));
+
+    // Register TransportBackendService to handle all request types in the range
+    auto svc = rusty::make_box<TransportBackendService>(
+        this,
+        static_cast<srpc::i32>(st_nr_req_types),
+        static_cast<srpc::i32>(end_nr_req_types)
+    );
+    server_->reg_service_typed(std::move(svc));
+
+    // Start listening on the port
+    int ret = server_->start(reinterpret_cast<const int8_t*>(("0.0.0.0:" + port_str).c_str()));
+    if (ret != 0) {
+        Panic("Failed to start srpc::Server on port %s", port_str.c_str());
+        return ret;
+    }
+
+    Notice("SrpcRpcBackend initialized on %s (listening on 0.0.0.0:%s)",
+           local_uri.c_str(), port_str.c_str());
+
+    return 0;
+}
+
+// Shutdown
+void SrpcRpcBackend::Shutdown() {
+    // Stop() already handles:
+    // - Setting stop_ flag atomically (idempotent)
+    // - Closing all client connections
+    // - Clearing clients_ map
+    // - Deleting server
+    // - Signaling helper queues to stop
+    Stop();
+
+    Notice("SrpcRpcBackend::Shutdown: About to delete server");
+
+    // Delete server first (before shutting down poll_thread_worker)
+    if (server_) {
+        Notice("SrpcRpcBackend::Shutdown: Server pointer is valid, deleting...");
+        try {
+            delete server_;
+            server_ = nullptr;
+            Notice("SrpcRpcBackend::Shutdown: Server deleted successfully");
+        } catch (const std::exception& e) {
+            Warning("SrpcRpcBackend::Shutdown: Exception during server deletion: %s", e.what());
+            server_ = nullptr;
+        } catch (...) {
+            Warning("SrpcRpcBackend::Shutdown: Unknown exception during server deletion");
+            server_ = nullptr;
+        }
+    } else {
+        Notice("SrpcRpcBackend::Shutdown: Server pointer is null, skipping deletion");
+    }
+
+    Notice("SrpcRpcBackend::Shutdown: About to shutdown poll_thread_worker_");
+
+    // Shutdown poll thread worker explicitly (after server is deleted)
+    if (poll_thread_worker_.is_some()) {
+        Notice("SrpcRpcBackend::Shutdown: poll_thread_worker_ is valid, calling shutdown()");
+        poll_thread_worker_.as_ref().unwrap()->shutdown();
+        Notice("SrpcRpcBackend::Shutdown: poll_thread_worker_->shutdown() completed");
+        poll_thread_worker_ = rusty::None;
+        Notice("SrpcRpcBackend::Shutdown: poll_thread_worker_ reset to None");
+    } else {
+        Notice("SrpcRpcBackend::Shutdown: poll_thread_worker_ is null, skipping shutdown");
+    }
+
+    Notice("SrpcRpcBackend::Shutdown: Shutdown sequence completed, destructor will now exit");
+}
+
+namespace {
+struct ThreadBuffers {
+    std::vector<char> request_buffer;
+    size_t response_len{0};
+};
+
+thread_local ThreadBuffers tls_buffers;
+}
+
+// Allocate request buffer
+char* SrpcRpcBackend::AllocRequestBuffer(size_t req_len, size_t resp_len) {
+    tls_buffers.request_buffer.resize(req_len);
+    tls_buffers.response_len = resp_len;
+    return tls_buffers.request_buffer.data();
+}
+
+// Free request buffer
+void SrpcRpcBackend::FreeRequestBuffer() {
+    tls_buffers.response_len = 0;
+}
+
+// Get or create client connection to a shard
+rusty::Option<rusty::Arc<srpc::Client>> SrpcRpcBackend::GetOrCreateClient(uint8_t shard_idx,
+                                                          uint16_t server_id,
+                                                          int force_center) {
+    int clusterRoleSentTo = cluster_role_;
+
+    // Handle shard failure scenarios
+    auto session_key = std::make_tuple(LOCALHOST_CENTER_INT, shard_idx, server_id);
+
+    if (sync_util::sync_logger::failed_shard_index >= 0) {
+        if (cluster_role_ == LEARNER_CENTER_INT)
+            clusterRoleSentTo = LOCALHOST_CENTER_INT;
+
+        if (cluster_role_ == LOCALHOST_CENTER_INT) {
+            if (shard_idx == sync_util::sync_logger::failed_shard_index) {
+                session_key = std::make_tuple(LEARNER_CENTER_INT, shard_idx, server_id);
+                clusterRoleSentTo = LEARNER_CENTER_INT;
+            }
+        }
+    }
+
+    if (force_center >= 0) {
+        session_key = std::make_tuple(force_center, shard_idx, server_id);
+        clusterRoleSentTo = force_center;
+    }
+
+    // Check if client already exists
+    clients_lock_.lock();
+
+    // Check stop flag while holding lock - if stopping, don't create/return clients
+    if (stop_) {
+        clients_lock_.unlock();
+        Warning("GetOrCreateClient: stop requested, not creating/returning client");
+        return rusty::None;  // Return None
+    }
+
+    auto it = clients_.find(session_key);
+    if (it != clients_.end()) {
+        // Clone the Arc BEFORE unlocking to avoid use-after-free
+        // (another thread could clear clients_ map after we unlock)
+        auto result = it->second.clone();
+        clients_lock_.unlock();
+        Debug("GetOrCreateClient: Reusing existing client for shard %d, server %d", shard_idx, server_id);
+        return result;
+    }
+
+    // Create new client
+    Debug("GetOrCreateClient: Creating new client for shard %d, server %d", shard_idx, server_id);
+
+    // Check if poll_thread_worker_ is still valid (not shutdown yet)
+    if (poll_thread_worker_.is_none()) {
+        Warning("GetOrCreateClient: poll_thread_worker_ is None (backend shutting down)");
+        clients_lock_.unlock();
+        return rusty::None;
+    }
+
+    // Use as_ref().unwrap().clone() instead of unwrap() to avoid moving/destroying the Option
+    rusty::Arc<srpc::Client> client = srpc::Client::create(poll_thread_worker_.as_ref().unwrap().clone());
+
+    // Connect to destination
+    int port = std::atoi(config_.shard(shard_idx, clusterRoleSentTo).port.c_str()) + server_id;
+    std::string addr = config_.shard(shard_idx, clusterRoleSentTo).host + ":" + std::to_string(port);
+
+    Debug("GetOrCreateClient: Connecting to %s", addr.c_str());
+
+    int ret = client->connect(reinterpret_cast<const int8_t*>(addr.c_str()), true);
+    if (ret != 0) {
+        //Warning("Failed to connect to %s (error %d)", addr.c_str(), ret);
+        clients_lock_.unlock();
+        return rusty::None;  // Return None
+    }
+
+    // Store client
+    clients_.emplace(session_key, client.clone());
+    clients_lock_.unlock();
+
+    Debug("Created srpc::Client connection to %s", addr.c_str());
+    return client;
+}
+
+// Send request to single shard
+bool SrpcRpcBackend::SendToShard(TransportReceiver* src,
+                                uint8_t req_type,
+                                uint8_t shard_idx,
+                                uint16_t server_id,
+                                size_t msg_len) {
+    // Early return if stopping - don't start new RPC operations
+    if (stop_) {
+        Warning("SrpcRpcBackend::SendToShard: stop requested, not sending (req_type=%d)", req_type);
+        return false;
+    }
+
+    Debug("SrpcRpcBackend::SendToShard: req_type=%d, shard_idx=%d, server_id=%d, msg_len=%zu",
+          req_type, shard_idx, server_id, msg_len);
+
+    if (shard_idx >= config_.nshards) {
+        Warning("Invalid shardIdx:%d, nshards:%d", shard_idx, config_.nshards);
+        return false;
+    }
+
+    auto client_opt = GetOrCreateClient(shard_idx, server_id);
+    if (client_opt.is_none()) {
+        Warning("Failed to get client for shard %d, server %d", shard_idx, server_id);
+        return false;
+    }
+    rusty::Arc<srpc::Client> client = client_opt.unwrap();
+
+    Debug("SrpcRpcBackend::SendToShard: Got client, calling request");
+
+    // Send request with lambda API
+    auto fu_result = client->request(req_type, srpc::FutureAttr(), [&](srpc::BinaryWriteArchive& out) {
+        out.write_bytes(reinterpret_cast<const std::uint8_t*>(tls_buffers.request_buffer.data()), msg_len);
+    });
+    if (fu_result.is_err()) {
+        Warning("Failed to send request for req_type %d", req_type);
+        return false;
+    }
+    auto fu = fu_result.unwrap();
+
+    msg_size_req_sent_.fetch_add(msg_len, std::memory_order_relaxed);
+    msg_counter_req_sent_.fetch_add(1, std::memory_order_relaxed);
+
+    Debug("SrpcRpcBackend::SendToShard: Request sent");
+
+    Debug("SrpcRpcBackend::SendToShard: Waiting for response");
+
+    // Wait for response
+    fu->timed_wait(1);
+
+    if (fu->timed_out()) {
+        throw 1002;
+    }
+
+    // Check stop again after wait - client might have been closed during wait
+    if (stop_) {
+        Warning("SrpcRpcBackend::SendToShard: stop requested after wait, aborting");
+        return false;  // Arc auto-released
+    }
+
+    if (fu->get_error_code() != 0) {
+        Warning("RPC error: %d", fu->get_error_code());
+        return false;  // Arc auto-released
+    }
+
+    // Final check before accessing response - make sure we're not stopping
+    if (stop_) {
+        Warning("SrpcRpcBackend::SendToShard: stop requested before processing response, aborting");
+        return false;  // Arc auto-released
+    }
+
+    // Read response (guard ensures lifetime safety)
+    auto resp_guard = fu->get_reply();
+    std::vector<char> resp_buffer(tls_buffers.response_len);
+    resp_guard->src.read_bytes(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), tls_buffers.response_len);
+
+    // Deliver response to receiver (only if not stopping)
+    if (!stop_ && src) {
+        src->ReceiveResponse(req_type, resp_buffer.data());
+    }
+
+    // Arc auto-released when fu goes out of scope
+    return !stop_;
+}
+
+// Send request to multiple shards
+bool SrpcRpcBackend::SendToAll(TransportReceiver* src,
+                              uint8_t req_type,
+                              int shards_bit_set,
+                              uint16_t server_id,
+                              size_t resp_len,
+                              size_t req_len,
+                              int force_center) {
+    // Early return if stopping - don't start new RPC operations
+    if (stop_) {
+        Warning("SrpcRpcBackend::SendToAll: stop requested, not sending (req_type=%d)", req_type);
+        return false;
+    }
+
+    Debug("SrpcRpcBackend::SendToAll: req_type=%d, shards_bit_set=%d, server_id=%d, req_len=%zu",
+          req_type, shards_bit_set, server_id, req_len);
+
+    if (!shards_bit_set) return true;
+
+    // Prepare futures for all shards
+    std::vector<rusty::Arc<srpc::Future>> futures;
+
+    for (int shard_idx = 0; shard_idx < config_.nshards; shard_idx++) {
+        if ((shards_bit_set >> shard_idx) % 2 == 0) continue;
+
+        Debug("SrpcRpcBackend::SendToAll: Sending to shard %d", shard_idx);
+
+        auto client_opt = GetOrCreateClient(shard_idx, server_id, force_center);
+        if (client_opt.is_none()) {
+            //Warning("Failed to get client for shard %d", shard_idx);
+            continue;
+        }
+        rusty::Arc<srpc::Client> client = client_opt.unwrap();
+
+        Debug("SrpcRpcBackend::SendToAll: Got client for shard %d, calling request", shard_idx);
+
+        auto fu_result = client->request(req_type, srpc::FutureAttr(), [&](srpc::BinaryWriteArchive& out) {
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(tls_buffers.request_buffer.data()), req_len);
+        });
+        if (fu_result.is_err()) {
+            Warning("Failed to send request for shard %d", shard_idx);
+            continue;
+        }
+        auto fu = fu_result.unwrap();
+
+        msg_size_req_sent_.fetch_add(req_len, std::memory_order_relaxed);
+        msg_counter_req_sent_.fetch_add(1, std::memory_order_relaxed);
+
+        Debug("SrpcRpcBackend::SendToAll: Request sent to shard %d", shard_idx);
+
+        futures.push_back(std::move(fu));
+    }
+
+    Debug("SrpcRpcBackend::SendToAll: Sent to %zu shards, waiting for responses", futures.size());
+
+    // Wait for all responses
+    for (auto& fu : futures) {
+        // Check if stop was requested before waiting
+        if (stop_) {
+            Warning("SrpcRpcBackend::SendToAll: stop requested, aborting wait for response (req_type=%d)", req_type);
+            continue;  // Arc auto-released
+        }
+
+        // Wait for response with timeout, checking stop flag periodically
+        fu->timed_wait(1);
+
+        if (fu->timed_out()) {
+            throw 1002;
+        }
+
+        // Check stop again after wait
+        if (stop_) {
+            Warning("SrpcRpcBackend::SendToAll: stop requested after wait, aborting (req_type=%d)", req_type);
+            continue;  // Arc auto-released
+        }
+
+        if (fu->get_error_code() != 0) {
+            Warning("RPC error: %d", fu->get_error_code());
+            continue;  // Arc auto-released
+        }
+
+        // Read response (guard ensures lifetime safety)
+        auto resp_guard = fu->get_reply();
+        std::vector<char> resp_buffer(resp_len);
+        resp_guard->src.read_bytes(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), resp_len);
+
+        // Deliver response (only if not stopping and src is valid)
+        if (!stop_ && src) {
+            src->ReceiveResponse(req_type, resp_buffer.data());
+        }
+
+        // Arc auto-released at end of loop iteration
+    }
+
+    // All Arcs auto-released when futures vector destroyed
+    return !stop_;
+}
+
+// Send batch request to multiple shards
+bool SrpcRpcBackend::SendBatchToAll(TransportReceiver* src,
+                                   uint8_t req_type,
+                                   uint16_t server_id,
+                                   size_t resp_len,
+                                   const std::map<int, std::pair<char*, size_t>>& data) {
+    // Early return if stopping - don't start new RPC operations
+    if (stop_) {
+        Warning("SrpcRpcBackend::SendBatchToAll: stop requested, not sending (req_type=%d)", req_type);
+        return false;
+    }
+
+    std::vector<rusty::Arc<srpc::Future>> futures;
+
+    for (auto& entry : data) {
+        int shard_idx = entry.first;
+        char* raw_data = entry.second.first;
+        size_t req_len = entry.second.second;
+
+        auto client_opt = GetOrCreateClient(shard_idx, server_id);
+        if (client_opt.is_none()) continue;
+        rusty::Arc<srpc::Client> client = client_opt.unwrap();
+
+        auto fu_result = client->request(req_type, srpc::FutureAttr(), [raw_data, req_len](srpc::BinaryWriteArchive& out) {
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(raw_data), req_len);
+        });
+        if (fu_result.is_err()) continue;
+        auto fu = fu_result.unwrap();
+
+        msg_size_req_sent_.fetch_add(req_len, std::memory_order_relaxed);
+        msg_counter_req_sent_.fetch_add(1, std::memory_order_relaxed);
+
+        futures.push_back(std::move(fu));
+    }
+
+    // Wait for all responses
+    for (auto& fu : futures) {
+        // Check if stop was requested before waiting
+        if (stop_) {
+            Warning("SrpcRpcBackend::SendBatchToAll: stop requested, aborting wait (req_type=%d)", req_type);
+            continue;  // Arc auto-released
+        }
+
+        // Wait for response with timeout, checking stop flag periodically
+        fu->timed_wait(1);
+
+        if (fu->timed_out()) {
+            throw 1002;
+        }
+
+        // Check stop again after wait
+        if (stop_) {
+            Warning("SrpcRpcBackend::SendBatchToAll: stop requested after wait, aborting (req_type=%d)", req_type);
+            continue;  // Arc auto-released
+        }
+
+        if (fu->get_error_code() != 0) {
+            Warning("RPC error: %d", fu->get_error_code());
+            continue;  // Arc auto-released
+        }
+
+        // Read response (guard ensures lifetime safety)
+        auto resp_guard = fu->get_reply();
+        std::vector<char> resp_buffer(resp_len);
+        resp_guard->src.read_bytes(reinterpret_cast<std::uint8_t*>(resp_buffer.data()), resp_len);
+
+        // Deliver response (only if not stopping and src is valid)
+        if (!stop_ && src) {
+            src->ReceiveResponse(req_type, resp_buffer.data());
+        }
+
+        // Arc auto-released at end of loop iteration
+    }
+
+    // All Arcs auto-released when futures vector destroyed
+    return !stop_;
+}
+
+// Run event loop
+void SrpcRpcBackend::RunEventLoop() {
+    // The PollThread runs its own thread for network I/O
+    // Here we process responses from helper threads and send them back
+    Notice("SrpcRpcBackend::RunEventLoop: Starting event loop");
+
+    event_loop_running_.store(true, std::memory_order_release);
+
+    while (!stop_) {
+        // Process responses from all helper queues
+        for (auto& it : queue_holders_response_) {
+            // Check stop flag before processing each queue
+            if (stop_) {
+                break;
+            }
+
+            auto server_id = it.first;
+            auto* server_queue = it.second;
+
+            void* req_handle_ptr;
+            size_t msg_size = 0;
+
+            // Fetch responses from helper thread queue
+            while (!server_queue->is_req_buffer_empty()) {
+                // Check stop flag before processing each response
+                if (stop_) {
+                    break;
+                }
+
+                server_queue->fetch_one_req(&req_handle_ptr, msg_size);
+
+                // Cast back to void* key and lookup SrpcRequestHandle
+                void* key = reinterpret_cast<void*>(req_handle_ptr);
+
+                srpc_request_map_lock_.lock();
+                auto map_it = srpc_request_map_.find(key);
+                if (map_it == srpc_request_map_.end()) {
+                    srpc_request_map_lock_.unlock();
+                    Warning("SrpcRequestHandle not found for key %p", key);
+                    continue;
+                }
+
+                // Move ownership out of map
+                std::unique_ptr<SrpcRequestHandle> srpc_handle = std::move(map_it->second);
+                srpc_request_map_.erase(map_it);
+                srpc_request_map_lock_.unlock();
+
+                // Validate connection is still valid before sending response
+                if (!srpc_handle->sconn) {
+                    Warning("ServerConnection is null, skipping response");
+                    continue;
+                }
+
+                // Send response back via srpc/rpc
+                const_cast<srpc::ServerConnection&>(*srpc_handle->sconn).reply(
+                    *srpc_handle->original_request, 0, [&](srpc::BinaryWriteArchive& out) {
+                        out.write_bytes(reinterpret_cast<const std::uint8_t*>(srpc_handle->response_data.data()), msg_size);
+                    });
+
+                msg_size_resp_sent_.fetch_add(msg_size, std::memory_order_relaxed);
+                msg_counter_resp_sent_.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+
+        // Small sleep to avoid busy-waiting
+        std::this_thread::sleep_for(std::chrono::microseconds(100));
+    }
+
+    Notice("SrpcRpcBackend::RunEventLoop: Stop flag detected, exiting event loop");
+
+    event_loop_running_.store(false, std::memory_order_release);
+
+    Notice("SrpcRpcBackend::RunEventLoop: Exited cleanly");
+}
+
+// Stop event loop
+void SrpcRpcBackend::Stop() {
+    // Make Stop() idempotent - only the first call proceeds
+    bool expected = false;
+    if (!stop_.compare_exchange_strong(expected, true)) {
+        Notice("SrpcRpcBackend::Stop: Already stopped, returning");
+        return;
+    }
+
+    Notice("SrpcRpcBackend::Stop: BEGIN - Setting stop flag");
+
+    // Wait for event loop to actually exit (poll with timeout)
+    Notice("SrpcRpcBackend::Stop: Waiting for event loop to exit...");
+    auto start_time = std::chrono::steady_clock::now();
+    while (event_loop_running_.load(std::memory_order_acquire)) {
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now() - start_time).count();
+
+        if (elapsed > 5000) {
+            Warning("SrpcRpcBackend::Stop: Event loop did not exit within 5 second timeout!");
+            break;
+        }
+
+        // Small sleep to avoid busy-polling
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    if (!event_loop_running_.load(std::memory_order_acquire)) {
+        Notice("SrpcRpcBackend::Stop: Event loop exited successfully");
+    }
+
+    // Signal all helper queues to stop (both request and response queues)
+    Notice("SrpcRpcBackend::Stop: Signaling %zu request queues to stop", queue_holders_.size());
+    for (auto& entry : queue_holders_) {
+        if (entry.second) {
+            Notice("SrpcRpcBackend::Stop: Stopping request queue for server_id %d", entry.first);
+            entry.second->request_stop();
+        }
+    }
+
+    Notice("SrpcRpcBackend::Stop: Signaling %zu response queues to stop", queue_holders_response_.size());
+    for (auto& entry : queue_holders_response_) {
+        if (entry.second) {
+            Notice("SrpcRpcBackend::Stop: Stopping response queue for server_id %d", entry.first);
+            entry.second->request_stop();
+        }
+    }
+
+    // Note: We don't delete the server here because its destructor blocks on Pthread_join
+    // which can deadlock. The server will be cleaned up in the destructor after
+    // poll_thread_worker shutdown.
+    Notice("SrpcRpcBackend::Stop: Server cleanup deferred to destructor");
+
+    // Close all outstanding client connections to unblock any waiting futures.
+    Notice("SrpcRpcBackend::Stop: Closing client connections");
+    std::vector<rusty::Arc<srpc::Client>> clients_to_close;
+    {
+        std::lock_guard<std::mutex> guard(clients_lock_);
+        Notice("SrpcRpcBackend::Stop: Found %zu client connections to close", clients_.size());
+        for (auto& entry : clients_) {
+            if (entry.second) {
+                clients_to_close.push_back(entry.second.clone());
+            }
+        }
+        clients_.clear();
+    }
+
+    for (auto& client : clients_to_close) {
+        try {
+            if (client) {
+                client->close();
+            }
+        } catch (const std::exception& e) {
+            Warning("SrpcRpcBackend::Stop: Exception closing client: %s", e.what());
+        } catch (...) {
+            Warning("SrpcRpcBackend::Stop: Unknown exception closing client");
+        }
+    }
+    Notice("SrpcRpcBackend::Stop: Closed %zu client connections", clients_to_close.size());
+
+    // Clean up any remaining pending requests in the map
+    {
+        std::lock_guard<std::mutex> guard(srpc_request_map_lock_);
+        size_t remaining = srpc_request_map_.size();
+        if (remaining > 0) {
+            Notice("SrpcRpcBackend::Stop: Cleaning up %zu remaining pending requests", remaining);
+            srpc_request_map_.clear();
+        }
+    }
+
+    // @unsafe { std::atomic load for statistics - not borrow-checked }
+    auto resp_size = msg_size_resp_sent_.load(std::memory_order_relaxed);
+    auto resp_count = msg_counter_resp_sent_.load(std::memory_order_relaxed);
+    double resp_avg = resp_count > 0 ? static_cast<double>(resp_size) / static_cast<double>(resp_count) : 0.0;
+    Notice("SrpcRpcBackend stats: msg_size_resp_sent: %" PRIu64 " bytes, counter: %d, avg: %lf",
+           resp_size, resp_count, resp_avg);
+    Notice("SrpcRpcBackend::Stop: END");
+}
+
+
+// @unsafe { std::atomic load for statistics - not borrow-checked }
+void SrpcRpcBackend::PrintStats() {
+    auto req_size = msg_size_req_sent_.load(std::memory_order_relaxed);
+    auto req_count = msg_counter_req_sent_.load(std::memory_order_relaxed);
+    double req_avg = req_count > 0 ? static_cast<double>(req_size) / static_cast<double>(req_count) : 0.0;
+    Notice("SrpcRpcBackend request stats: msg_size_req_sent: %" PRIu64 " bytes, counter: %d, avg: %lf",
+           req_size, req_count, req_avg);
+}
+
+// Static request handler for srpc::Server
+void SrpcRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn, SrpcRpcBackend* backend) {
+    if (!backend) {
+        Warning("RequestHandler called with null backend pointer!");
+        return;
+    }
+
+    // Check if backend is stopping - don't process new requests during shutdown
+    if (backend->stop_) {
+        Debug("RequestHandler: Backend is stopping, ignoring request type %d", req_type);
+        return;
+    }
+    // Upgrade weak reference to get Arc
+    auto sconn_opt = weak_sconn.upgrade();
+    if (!sconn_opt.is_some()) {
+        Warning("ServerConnection closed before handling request");
+        return;
+    }
+    auto sconn = sconn_opt.unwrap();
+
+    // Handle special request types
+    if (req_type == watermarkReqType) {
+        Debug("Received watermarkReqType");
+
+        // Read request
+        basic_request_t basic_req;
+        req->src.read_bytes(reinterpret_cast<std::uint8_t*>(&basic_req), sizeof(basic_req));
+
+        // Prepare response
+        get_int_response_t resp;
+        resp.result = sync_util::sync_logger::retrieveShardW();
+        resp.req_nr = basic_req.req_nr;
+        resp.status = ErrorCode::SUCCESS;
+        resp.shard_index = TThread::get_shard_index();
+
+        // Send response
+        const_cast<srpc::ServerConnection&>(*sconn).reply(*req, 0, [&](srpc::BinaryWriteArchive& out) {
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(&resp), sizeof(resp));
+        });
+
+        backend->msg_size_resp_sent_.fetch_add(sizeof(resp), std::memory_order_relaxed);
+        backend->msg_counter_resp_sent_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    if (req_type == warmupReqType) {
+        Debug("Received warmupReqType");
+
+        warmup_request_t warmup_req;
+        req->src.read_bytes(reinterpret_cast<std::uint8_t*>(&warmup_req), sizeof(warmup_req));
+
+        get_int_response_t resp;
+        resp.result = 1;
+        resp.req_nr = warmup_req.req_nr;
+        resp.status = ErrorCode::SUCCESS;
+        resp.shard_index = TThread::get_shard_index();
+
+        const_cast<srpc::ServerConnection&>(*sconn).reply(*req, 0, [&](srpc::BinaryWriteArchive& out) {
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(&resp), sizeof(resp));
+        });
+
+        backend->msg_size_resp_sent_.fetch_add(sizeof(resp), std::memory_order_relaxed);
+        backend->msg_counter_resp_sent_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    if (req_type == controlReqType) {
+        control_request_t ctrl_req;
+        req->src.read_bytes(reinterpret_cast<std::uint8_t*>(&ctrl_req), sizeof(ctrl_req));
+
+        Warning("Received controlReqType, control: %d, shardIndex: %lld, target_server_id: %llu",
+                ctrl_req.control, ctrl_req.value, ctrl_req.targert_server_id);
+
+        bool is_datacenter_failure = ctrl_req.targert_server_id == 10000;
+
+        if (is_datacenter_failure) {
+            if (dbtest_callback_)
+                dbtest_callback_(ctrl_req.control, ctrl_req.value);
+        } else {
+            if (bench_callback_)
+                bench_callback_(ctrl_req.control, ctrl_req.value);
+        }
+
+        get_int_response_t resp;
+        resp.result = 0;
+        resp.req_nr = ctrl_req.req_nr;
+        resp.status = ErrorCode::SUCCESS;
+        resp.shard_index = TThread::get_shard_index();
+
+        const_cast<srpc::ServerConnection&>(*sconn).reply(*req, 0, [&](srpc::BinaryWriteArchive& out) {
+            out.write_bytes(reinterpret_cast<const std::uint8_t*>(&resp), sizeof(resp));
+        });
+
+        backend->msg_size_resp_sent_.fetch_add(sizeof(resp), std::memory_order_relaxed);
+        backend->msg_counter_resp_sent_.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    // Normal requests: enqueue to helper queue
+    // Extract request size first to determine server ID before creating SrpcRequestHandle
+    size_t req_size = req->src.remaining();
+    if (req_size < sizeof(TargetServerIDReader)) {
+        Warning("Request too small to contain server ID: %zu < %zu", req_size, sizeof(TargetServerIDReader));
+        return;
+    }
+
+    // Peek at request data to extract server ID
+    std::vector<char> temp_buffer(req_size);
+    req->src.read_bytes(reinterpret_cast<std::uint8_t*>(temp_buffer.data()), req_size);
+    auto* target_server_id_reader = (TargetServerIDReader*)temp_buffer.data();
+    uint16_t target_server_id = target_server_id_reader->targert_server_id;
+
+    // Create SrpcRequestHandle with backend and server_id
+    auto srpc_handle = std::make_unique<SrpcRequestHandle>(std::move(req), sconn, req_type, backend, target_server_id);
+
+    // Store the already-extracted request data
+    srpc_handle->request_data = std::move(temp_buffer);
+
+    // Find the appropriate helper queue
+    auto it = backend->queue_holders_.find(target_server_id);
+    if (it == backend->queue_holders_.end()) {
+        Warning("No helper queue found for server_id %d (available queues: %zu)",
+                target_server_id, backend->queue_holders_.size());
+        // Print all available queue IDs
+        for (auto& q : backend->queue_holders_) {
+            Warning("  Available queue for server_id: %d", q.first);
+        }
+        return;
+    }
+    auto* helper_queue = it->second;
+
+    // Allocate response buffer (helper thread will fill this)
+    srpc_handle->response_data.resize(8192);  // Max response size
+
+    // Store in map and get pointer to use as key
+    void* key = srpc_handle.get();
+    backend->srpc_request_map_lock_.lock();
+    backend->srpc_request_map_[key] = std::move(srpc_handle);
+    backend->srpc_request_map_lock_.unlock();
+
+    // Enqueue to helper queue (opaque token)
+    helper_queue->add_one_req(key, 0);
+}
+
+// SrpcRequestHandle::EnqueueResponse - enqueues response to response queue
+void SrpcRequestHandle::EnqueueResponse(size_t msg_size) {
+    if (!backend) {
+        Warning("SrpcRequestHandle::EnqueueResponse: backend is null!");
+        return;
+    }
+
+    // Find the response queue for this server
+    auto it = backend->GetHelperQueuesResponse().find(server_id);
+    if (it == backend->GetHelperQueuesResponse().end()) {
+        Warning("SrpcRequestHandle::EnqueueResponse: No response queue found for server_id %d", server_id);
+        return;
+    }
+
+    auto* response_queue = it->second;
+
+    // Enqueue response (using GetOpaqueHandle as the key, same as for requests)
+    response_queue->add_one_req(GetOpaqueHandle(), msg_size);
+}

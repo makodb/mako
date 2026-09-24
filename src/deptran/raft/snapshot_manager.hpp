@@ -22,7 +22,7 @@
 #include <rusty/option.hpp>
 #include <rusty/slice.hpp>
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 #include "../constants.h"   // slotid_t / ballot_t -- the single definition
 
 namespace janus {

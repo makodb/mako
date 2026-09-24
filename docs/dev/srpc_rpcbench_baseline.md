@@ -20,7 +20,7 @@ Regenerate with `/var/tmp/mako-srpc/segv/bench/capture_baseline.sh`
 | build | as-shipped: C++ `-O2 -march=native`, jemalloc |
 | run length | `-n 8` → **7 samples** (the sampler discards the first reading) |
 | trials | 3 per cell; the table reports the mean of trial means |
-| Nagle | ON — nothing in `src/rrr` sets `TCP_NODELAY` |
+| Nagle | ON — nothing in `src/srpc` sets `TCP_NODELAY` |
 | wakeup | no eventfd anywhere; `epoll_wait` uses a hard 1 ms timeout |
 
 **Counting semantics are frozen, not fixed.** Callback mode counts

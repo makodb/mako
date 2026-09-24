@@ -934,7 +934,7 @@ impl FollowerProgress {
 // re-export of std::vec::Vec and its C++ side is the real vec_port, so both
 // sides are faithful. BTreeMap's rustc model is not -- its insert is a plain
 // push with no key replacement and its get returns the first match
-// (src/rrr/rusty-rustc/src/lib.rs:907) -- so a DSL type owning one would be
+// (src/srpc/rusty-rustc/src/lib.rs:907) -- so a DSL type owning one would be
 // verified against semantics production does not have.
 #[repr(C)]
 pub struct PeerTable {
@@ -1245,7 +1245,7 @@ impl Drop for RaftStdLockGuard {
 }
 
 // The reactor event's two verbs, as kernels. `set` and `wait_timeout` are
-// methods of the rrr::IntEvent behind the Arc, and the emitter renders a
+// methods of the srpc::IntEvent behind the Arc, and the emitter renders a
 // method call on an opaque carrier with a dot where the C++ needs an arrow,
 // so they are named here as functions of the handle. Creation is the facade's
 // `rusty::raft_new_int_event()`; a copy is the carrier's Clone.
@@ -1373,7 +1373,7 @@ impl ReplicationWakeGate {
     // binding of an Option<Arc<T>> THROUGH the Arc. Clippy's suggested
     // `if let rusty::Some(event) = &waiter { event.set(1) }` is the better
     // Rust, and it transpiles, but the binding is emitted as `event.set(1)`
-    // on a `rusty::Arc<rrr::IntEvent>` -- a dot, not an arrow -- which does
+    // on a `rusty::Arc<srpc::IntEvent>` -- a dot, not an arrow -- which does
     // not compile. `as_ref().unwrap()` is emitted as `->set(1)`, which is
     // what the hand-written C++ this replaces already did, but ONLY when the
     // local carries an explicit type; an inferred `let` emits `const auto`
@@ -1542,7 +1542,7 @@ use crate::scheduler_h::TxLogServer;
 use crate::scheduler_h::RaftSpecific;
 use crate::scheduler_h::RaftStartResult;
 
-// The rrr `verify` macro, reachable from a DSL body. extern "C" is the one
+// The srpc `verify` macro, reachable from a DSL body. extern "C" is the one
 // function-declaration form a block can spell that rustc resolves without a
 // Rust definition behind it; server.h defines it just above.
 // improper_ctypes fires on every `*mut RaftServerBase` below, because the
@@ -2289,12 +2289,12 @@ impl RaftServerBase {
         }
     }
 
-    // @unsafe - rrr logging.
+    // @unsafe - srpc logging.
     pub fn ElectionLoopLogStart(&self) {
         rusty::raft_log_debug_0("start timer for election");
     }
 
-    // @unsafe - rrr logging.
+    // @unsafe - srpc logging.
     pub fn ElectionLoopLogFired(&self, tick: &ElectionTick) {
         rusty::raft_log_info_3(
             "[ELECTION_TIMER] Site {}: TIMEOUT FIRED - starting election (elapsed={} > timeout={})",
@@ -2549,7 +2549,7 @@ impl RaftServerBase {
     // This is the error handling those three readers used to express with
     // try/catch around std::stoull. Nothing here can throw: the digits are
     // walked one at a time off the raw pointer, exactly as
-    // src/rrr/base/logging.rs:114 walks a C string, and the overflow test is a
+    // src/srpc/base/logging.rs:114 walks a C string, and the overflow test is a
     // comparison rather than an exception.
     //
     // It is also STRICTER than std::stoull, which stopped at the first non-digit
@@ -3321,7 +3321,7 @@ impl RaftServerBase {
     // raft_on_request_vote, which takes it.
     //
     // Records one RequestVote decision. The reply is written through two
-    // out-params because that is what the rrr service layer's handler owns:
+    // out-params because that is what the srpc service layer's handler owns:
     // ballot_t* and bool_t*, which are int64_t and int8_t.
     #[allow(clippy::too_many_arguments)]
     pub fn doVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
@@ -4607,7 +4607,7 @@ impl TxLogServer for RaftServerBase {
 // is spent here -- the transpiler grants a struct one C++ base -- and
 // RaftSpecific: TxLogServer carries the other, so the emitted C++ is
 // `struct RaftServerBase : public RaftSpecific` with TxLogServer above it.
-// not_unsafe_ptr_arg_deref: the raw pointers are the rrr service's C++
+// not_unsafe_ptr_arg_deref: the raw pointers are the srpc service's C++
 // out-parameters. Start writes through its two under `unsafe`; the three
 // RPC methods hand theirs to the raft_rpc_* kernels untouched.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]

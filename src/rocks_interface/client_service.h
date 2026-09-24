@@ -1,16 +1,16 @@
-// @safe - RRR RPC service for Mako client API
+// @safe - SRPC RPC service for Mako client API
 #pragma once
 
 #include <atomic>
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 #include "mako/lib/server.h"
 
 namespace mako {
 
 /**
- * MakoClientService - RRR RPC service for client-server communication
+ * MakoClientService - SRPC RPC service for client-server communication
  *
  * This service handles RPC requests from remote clients and routes them
  * to the local ShardReceiver for execution.
@@ -26,12 +26,12 @@ namespace mako {
 class MakoClientService {
 public:
     // RPC IDs - matching existing message types in common.h
-    static const rrr::i32 BEGIN_TXN = 20;    // clientBeginTxnReqType
-    static const rrr::i32 COMMIT = 21;       // clientCommitReqType
-    static const rrr::i32 ROLLBACK = 22;     // clientRollbackReqType
-    static const rrr::i32 PUT = 23;          // clientPutReqType
-    static const rrr::i32 GET = 24;          // clientGetReqType
-    static const rrr::i32 DELETE_KEY = 25;   // clientDeleteReqType
+    static const srpc::i32 BEGIN_TXN = 20;    // clientBeginTxnReqType
+    static const srpc::i32 COMMIT = 21;       // clientCommitReqType
+    static const srpc::i32 ROLLBACK = 22;     // clientRollbackReqType
+    static const srpc::i32 PUT = 23;          // clientPutReqType
+    static const srpc::i32 GET = 24;          // clientGetReqType
+    static const srpc::i32 DELETE_KEY = 25;   // clientDeleteReqType
 
     /**
      * Constructor
@@ -46,12 +46,12 @@ public:
 
     /**
      * Register RPC handlers with the server
-     * @param server The RRR server to register with
+     * @param server The SRPC server to register with
      * @param svc_index Index of this service in the server's service list
      * @return 0 on success, error code on failure
      */
     // @safe - Registers RPC IDs with server
-    int __reg_to__(rrr::Server& server, size_t svc_index);
+    int __reg_to__(srpc::Server& server, size_t svc_index);
 
     /**
      * Dispatch incoming RPC request to appropriate handler
@@ -60,8 +60,8 @@ public:
      * @param sconn Weak reference to the server connection for sending reply
      */
     // @safe - Routes requests to handlers
-    void __dispatch__(rrr::i32 rpc_id, rusty::Box<rrr::Request> req,
-                      rrr::WeakServerConnection sconn);
+    void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req,
+                      srpc::WeakServerConnection sconn);
 
     // ========================================================================
     // RPC Handlers
@@ -73,8 +73,8 @@ public:
      * Response: <txn_id: u64> <status: i32>
      */
     // @safe - archive serde over the request body cursor
-    void HandleBeginTxn(rusty::Box<rrr::Request> req,
-                        rrr::WeakServerConnection sconn);
+    void HandleBeginTxn(rusty::Box<srpc::Request> req,
+                        srpc::WeakServerConnection sconn);
 
     /**
      * Handle Commit RPC
@@ -82,8 +82,8 @@ public:
      * Response: <status: i32>
      */
     // @safe - archive serde over the request body cursor
-    void HandleCommit(rusty::Box<rrr::Request> req,
-                      rrr::WeakServerConnection sconn);
+    void HandleCommit(rusty::Box<srpc::Request> req,
+                      srpc::WeakServerConnection sconn);
 
     /**
      * Handle Rollback RPC
@@ -91,8 +91,8 @@ public:
      * Response: <status: i32>
      */
     // @safe - archive serde over the request body cursor
-    void HandleRollback(rusty::Box<rrr::Request> req,
-                        rrr::WeakServerConnection sconn);
+    void HandleRollback(rusty::Box<srpc::Request> req,
+                        srpc::WeakServerConnection sconn);
 
     /**
      * Handle Put RPC
@@ -100,8 +100,8 @@ public:
      * Response: <status: i32>
      */
     // @safe - archive serde over the request body cursor
-    void HandlePut(rusty::Box<rrr::Request> req,
-                   rrr::WeakServerConnection sconn);
+    void HandlePut(rusty::Box<srpc::Request> req,
+                   srpc::WeakServerConnection sconn);
 
     /**
      * Handle Get RPC
@@ -109,8 +109,8 @@ public:
      * Response: <status: i32> <value: string>
      */
     // @safe - archive serde over the request body cursor
-    void HandleGet(rusty::Box<rrr::Request> req,
-                   rrr::WeakServerConnection sconn);
+    void HandleGet(rusty::Box<srpc::Request> req,
+                   srpc::WeakServerConnection sconn);
 
     /**
      * Handle Delete RPC
@@ -118,8 +118,8 @@ public:
      * Response: <status: i32>
      */
     // @safe - archive serde over the request body cursor
-    void HandleDelete(rusty::Box<rrr::Request> req,
-                      rrr::WeakServerConnection sconn);
+    void HandleDelete(rusty::Box<srpc::Request> req,
+                      srpc::WeakServerConnection sconn);
 
 private:
     ShardReceiver* receiver_;  // Not owned, must outlive this service

@@ -359,7 +359,7 @@ Mako supports multiple network transport layers:
 
 ### TCP/IP (Default)
 
-Standard TCP sockets via RRR framework:
+Standard TCP sockets via SRPC framework:
 - **Cross-platform**: Works everywhere
 - **Reliable**: Built-in retransmission
 - **Configuration**: Standard socket options
@@ -440,4 +440,4 @@ host:
 
 ---
 
-**Next**: [Configuration Reference](config.md) | [Architecture Overview](architecture.md) | [Quick Start](quickstart.md)
+**Next**: [Configuration Reference](../configuration/config.md) | [Architecture Overview](../architecture/overview.md) | [Quick Start](quickstart.md)

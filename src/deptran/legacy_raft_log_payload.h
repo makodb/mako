@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "mako_commands.h"
-#include "rrr/misc/serializable.hpp"
+#include "srpc/misc/serializable.hpp"
 
 namespace janus {
 
@@ -29,8 +29,8 @@ struct LegacyRaftValue {
   double double_value = 0;
   std::string string_value;
 
-  void save(rrr::BinaryWriteArchive& ar) const;
-  void load(rrr::BinaryReadArchive& ar);
+  void save(srpc::BinaryWriteArchive& ar) const;
+  void load(srpc::BinaryReadArchive& ar);
 };
 
 // Complete wire state for one historical SimpleCommand.  Vectors are used
@@ -55,8 +55,8 @@ struct LegacyRaftPiece {
   uint64_t timestamp = 0;
   int32_t rank = 0;
 
-  void save(rrr::BinaryWriteArchive& ar) const;
-  void load(rrr::BinaryReadArchive& ar);
+  void save(srpc::BinaryWriteArchive& ar) const;
+  void load(srpc::BinaryReadArchive& ar);
 };
 
 // Reader/writer for command kind 4, retained solely so Raft can replay log
@@ -70,7 +70,7 @@ struct LegacyRaftPiece {
 //
 // New writes never use this type.  save() exists because RocksDB recovery can
 // relay an old entry unchanged to another replica.
-class LegacyVecPieceData : public rrr::Serializable<4> {
+class LegacyVecPieceData : public srpc::Serializable<4> {
  public:
   std::vector<LegacyRaftPiece> pieces;
   double time_sent_from_client = -1e9;
@@ -78,8 +78,8 @@ class LegacyVecPieceData : public rrr::Serializable<4> {
 
   LegacyVecPieceData() = default;
 
-  void save(rrr::BinaryWriteArchive& ar) const;
-  void load(rrr::BinaryReadArchive& ar);
+  void save(srpc::BinaryWriteArchive& ar) const;
+  void load(srpc::BinaryReadArchive& ar);
 
   // Extract the only kind-4 shape emitted by Mako's former Raft application
   // path: one piece whose sole input value is string key 0.
@@ -99,7 +99,7 @@ void EnsureLegacyRaftLogPayloadRegistered();
 // compatibility-only replacement intentionally shares that immutable wire
 // number without adding a new command kind.
 template <>
-struct rrr::PayloadMember<janus::MakoCommands, janus::LegacyVecPieceData> {
+struct srpc::PayloadMember<janus::MakoCommands, janus::LegacyVecPieceData> {
   static constexpr bool value = true;
   static constexpr int32_t KIND = 4;
 };

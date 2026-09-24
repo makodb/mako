@@ -15,7 +15,7 @@ Welcome to the Mako documentation.
 | [RPC Framework](#rpc-framework) | RPC system documentation |
 | [Persistence](#persistence) | Storage and disk persistence |
 | [Performance](#performance) | Profiling and benchmarking |
-| [Migration](#migration) | RustyCpp and Raft migration docs |
+| [Migration](#migration) | Inline-Rust DSL conversion, RustyCpp, and Raft migration docs |
 | [Development Plans](#development-plans) | Active development plans |
 | [Reference](#reference) | Analysis and reference docs |
 | [Testing](#testing) | CI and code review |
@@ -56,18 +56,20 @@ Welcome to the Mako documentation.
 ## Developer Guide
 
 - **[Development Setup](developer/development.md)** - Setting up development environment
-- **[Coroutines & Reactor](developer/coroutines.md)** - Understanding RRR's async model
+- **[Coroutines & Reactor](developer/coroutines.md)** - Understanding SRPC's async model
 - **[Fiber API](developer/fiber-api.md)** - Fiber API documentation
   - [Fiber API Refactoring](developer/fiber-api-refactoring.md)
-- **[Transport Backend](developer/transport-backends.md)** - The rrr/rpc transport layer
+- **[Transport Backend](developer/transport-backends.md)** - The srpc/rpc transport layer
   - [Transport Stop Fix](developer/transport-stop-fix.md)
 - **[C++ Multicore Optimizations](developer/cpp-multicore-optimizations.md)** - CPU optimization techniques
+- **[Storage Interface](storage-interface.md)** - The DSL-authored `OrderedIndex` trait layer and its backends
+- **[RocksDB Interface](rocksdb_interface.md)** - Mako's RocksDB-compatible `ITable`/`IDatabase` API
 
 ---
 
 ## RPC Framework
 
-- **[RPC Overview](rpc/overview.md)** - RRR RPC framework guide
+- **[RPC Overview](rpc/overview.md)** - SRPC RPC framework guide
 - **[RPC API Reference](rpc/api.md)** - RPC reliability API reference
 - **[RPC Reliability](rpc/reliability.md)** - RPC reliability mechanisms
   - [Reliability Plan](rpc/reliability-plan.md)
@@ -106,13 +108,29 @@ Welcome to the Mako documentation.
 
 ## Migration
 
-### RustyCpp Migration (Memory Safety)
+### Rust Conversion (Inline-Rust DSL)
+
+**Start here.** New code is authored in Rust, not hand-written C++ (`CLAUDE.md`, "Rust first"). Which doc answers which question:
+
+| Question | Doc |
+|---------|-------------|
+| How do I convert a C++ class to the DSL? What does the transpiler choke on? | **[Porting C++ to an Inline-Rust DSL](porting-cpp-to-rust-dsl.md)** - the canonical field guide: shape the C++ first (§3), per-class recipe (§4), clearing blockers (§5), build/verify/commit loop (§6), and a numbered ledger of dated per-case findings (§8) |
+| The DSL resists - fix the transpiler, reshape the code, or defer? | [Migration Policy](dev/srpc_migration_policy.md) governs `src/srpc` (fix the translator → rewrite the call site → external C); field guide §5 gives the general reshape-first trade-off |
+| What is converted, what is left? | `python3 scripts/srpc_handwritten_census.py --files` - the measurement of record. The build's source gate runs that script (`srpc_goal0_source_gate` in `src/srpc/CMakeLists.txt`, a dependency of the `srpc` target, via `scripts/tests/test_extract_srpc_rust.py`); `--files` adds the per-file remainder - 168 hand-written lines across 9 production files, measured 2026-09-17 · [srpc Decl Inventory](srpc-inventory.md) for the narrative · [Goal 0 Completion Plan](dev/goal0_completion_plan.md) for plan and disposition - date-check its ratchet heading before quoting a count from it |
+| How do I regenerate / drift-check a block? | `scripts/srpc_dsl_check.sh` for `src/srpc`; `scripts/regen_storage_dsl.sh` for the storage and cluster headers (see Storage Interface under [Developer Guide](#developer-guide)) |
+| Is it a known transpiler limitation? | `third-party/rusty-cpp/docs/KNOWN_LIMITATIONS.md` · `third-party/rusty-cpp/docs/annotation_reference.md` - but re-test before believing one: field guide §8.45 gives the heuristic for which stated limitations have gone stale |
+
+Earlier DSL trackers: [Conversion Tracking](dev/srpc-dsl-conversion-tracking.md) and [Goal 0 Burndown](srpc-goal0-burndown.md) both mark themselves superseded by the completion plan above; [Manual-C++ Burndown Plan](TODO-rusty-rewrite.md) states its baseline at rusty-cpp `63f56ac`.
+
+### RustyCpp Memory Safety (Annotations & Smart Pointers)
+
+The plans below are the `@safe`/`@unsafe` borrow-checker and smart-pointer track (`shared_ptr` → `rusty::Arc`), not the inline-Rust DSL above.
 
 - **[Migration Overview](migration/rustycpp/overview.md)** - Master RustyCpp migration plan
 - **[Safety Roadmap](migration/rustycpp/safety-roadmap.md)** - 5-phase safety roadmap
-- **[RRR Migration](migration/rustycpp/rrr-migration.md)** - RRR-specific migration
+- **[SRPC Migration](migration/rustycpp/srpc-migration.md)** - SRPC-specific migration
 - **[Safety Conversion](migration/rustycpp/safety-conversion.md)** - Safety conversion details
-- **[RRR Unsafe Blocks](migration/rustycpp/rrr-unsafe-blocks.md)** - RRR unsafe code documentation
+- **[SRPC Unsafe Blocks](migration/rustycpp/srpc-unsafe-blocks.md)** - SRPC unsafe code documentation
 - **[Reactor RefCell](migration/rustycpp/reactor-refcell.md)** - Reactor RefCell migration
 - **[Reactor Unsafe Blocks](migration/rustycpp/reactor-unsafe-blocks.md)** - Reactor unsafe code
 - **[Raft Migration](migration/rustycpp/raft-migration.md)** - Raft-specific migration
@@ -174,6 +192,10 @@ Welcome to the Mako documentation.
 - **[TPC-C Sharding](reference/tpcc-sharding.md)** - TPC-C benchmark sharding behavior
 - **[Event Rename Plan](reference/plan_event_rename.md)** - Event class renaming plan
 - **[Glossary](reference/glossary.md)** - Terms and definitions
+- **[Project Status](status.md)** - Per-component production-readiness assessment (2026-04-13)
+- **[User Manual](user-manual.md)** - End-user guide: install, build, run, configure, operate
+- **[Resharding Survey](reference/resharding-survey.md)** - How eight production systems handle resharding
+- **Working notes**: `docs/dev/` holds 37 per-task design notes and plans (transpiler crashes, Marshal/serde, Raft designs, CI fixes); only the few linked from this page are indexed here - grep the directory for the rest
 
 ---
 
@@ -209,7 +231,8 @@ Legacy documentation kept for reference:
 
 - **[Mako Book](mako-book.md)** - Complete developer guide to the Mako transactional datastore
 - **[Raft Book](raft-book.md)** - Detailed guide to Raft consensus implementation in Mako
-- **[SRPC Book](srpc-book.md)** - Technical guide to the RRR/RPC framework
+- **[SRPC Book](srpc-book.md)** - Technical guide to the SRPC/RPC framework
+- **[Masstree Book](masstree-book.md)** - Developer guide to the Masstree in-memory storage engine
 
 ---
 

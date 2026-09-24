@@ -256,8 +256,8 @@ After `[POLL-LOOP] exiting`, no more log messages appear. The process is stuck i
 ## File Locations
 
 ### Modified Files
-- `src/rrr/reactor/reactor.cc` - PollThread, PollThreadWorker, poll_loop drain logic
-- `src/rrr/reactor/reactor.h` - signal_stop(), Loop() with stop_flag parameter
+- `src/srpc/reactor/reactor.cc` - PollThread, PollThreadWorker, poll_loop drain logic
+- `src/srpc/reactor/reactor.h` - signal_stop(), Loop() with stop_flag parameter
 - `src/deptran/raft/raft_worker.cc` - Shutdown sequence with signal_stop()
 
 ### Key Functions

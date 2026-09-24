@@ -233,7 +233,7 @@ The following numbers are from actual benchmark runs on the development system.
 ### System Configuration
 - **Test Date**: January 16, 2026
 - **Platform**: Linux 5.15.0-133-generic
-- **Transport**: rrr (TCP-based RPC)
+- **Transport**: srpc (TCP-based RPC)
 - **Worker Threads**: 6 per shard
 
 ### Throughput Benchmarks

@@ -1,8 +1,8 @@
 // Unit tests for janus::raft::RaftQuorum<Reply> (phase 8.1a).
 //
-// Bootstraps an `rrr::Reactor` + spawns a fiber for each test that
+// Bootstraps an `srpc::Reactor` + spawns a fiber for each test that
 // exercises wait_until_quorum, then drives the reactor's event loop
-// from the test thread. Same pattern as `src/rrr/tests/test_and_event.cc`.
+// from the test thread. Same pattern as `src/srpc/tests/test_and_event.cc`.
 
 #include <stdint.h>
 
@@ -11,7 +11,7 @@
 
 #include "deptran/raft/quorum.hpp"
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 
 import std;
 
@@ -23,7 +23,7 @@ namespace {
 // Helper: drain the reactor's event loop a few times so any fiber waiting
 // on an event has a chance to wake up. `loop(false)` is non-blocking and
 // const, so a `const Reactor*` (what `Rc<Reactor>::get()` yields) is fine.
-void pump_reactor(const ::rrr::Reactor* reactor, int iterations = 8) {
+void pump_reactor(const ::srpc::Reactor* reactor, int iterations = 8) {
   for (int i = 0; i < iterations; ++i) {
     reactor->run_loop(false, true);
   }
@@ -38,7 +38,7 @@ void pump_reactor(const ::rrr::Reactor* reactor, int iterations = 8) {
 TEST(RaftQuorumTest, ConstructionAndAccessors) {
   // Need a reactor on the test thread because RaftQuorum's ctor calls
   // Reactor::create_sp_event<IntEvent>.
-  auto reactor = ::rrr::Reactor::get_reactor();
+  auto reactor = ::srpc::Reactor::get_reactor();
   ASSERT_NE(reactor.get(), nullptr);
 
   RaftQuorum<int> q(/*n_total=*/4, /*n_needed=*/3);
@@ -48,7 +48,7 @@ TEST(RaftQuorumTest, ConstructionAndAccessors) {
 }
 
 TEST(RaftQuorumTest, EmptyCollectIsEmpty) {
-  auto reactor = ::rrr::Reactor::get_reactor();
+  auto reactor = ::srpc::Reactor::get_reactor();
   RaftQuorum<int> q(3, 2);
   auto drained = q.collect();
   EXPECT_TRUE(drained.empty());
@@ -60,7 +60,7 @@ TEST(RaftQuorumTest, EmptyCollectIsEmpty) {
 // ---------------------------------------------------------------------------
 
 TEST(RaftQuorumTest, AllRepliesArrive_WaitReturnsTrue) {
-  auto reactor = ::rrr::Reactor::get_reactor();
+  auto reactor = ::srpc::Reactor::get_reactor();
 
   // Use a heap-allocated quorum so we can capture by raw pointer in
   // the fiber lambda (RaftQuorum is non-movable).
@@ -101,7 +101,7 @@ TEST(RaftQuorumTest, AllRepliesArrive_WaitReturnsTrue) {
 }
 
 TEST(RaftQuorumTest, EarlyQuorum_WaitReturnsBeforeAllReplies) {
-  auto reactor = ::rrr::Reactor::get_reactor();
+  auto reactor = ::srpc::Reactor::get_reactor();
   auto q = std::make_unique<RaftQuorum<int>>(/*n_total=*/5, /*n_needed=*/3);
   std::atomic<bool> waiter_done{false};
   std::atomic<bool> waiter_result{false};
@@ -140,7 +140,7 @@ TEST(RaftQuorumTest, EarlyQuorum_WaitReturnsBeforeAllReplies) {
 }
 
 TEST(RaftQuorumTest, Timeout_WaitReturnsFalseWithPartialReplies) {
-  auto reactor = ::rrr::Reactor::get_reactor();
+  auto reactor = ::srpc::Reactor::get_reactor();
   auto q = std::make_unique<RaftQuorum<int>>(/*n_total=*/5, /*n_needed=*/3);
   std::atomic<bool> waiter_done{false};
   std::atomic<bool> waiter_result{true};  // poisoned; expect to flip false
@@ -177,7 +177,7 @@ TEST(RaftQuorumTest, Timeout_WaitReturnsFalseWithPartialReplies) {
 // ---------------------------------------------------------------------------
 
 TEST(RaftQuorumTest, ReceivedCounterAdvancesPerReply) {
-  auto reactor = ::rrr::Reactor::get_reactor();
+  auto reactor = ::srpc::Reactor::get_reactor();
   RaftQuorum<int> q(4, 3);
 
   EXPECT_EQ(q.received(), 0);
@@ -188,7 +188,7 @@ TEST(RaftQuorumTest, ReceivedCounterAdvancesPerReply) {
 }
 
 TEST(RaftQuorumTest, CollectIsOneShot_SecondCallReturnsEmpty) {
-  auto reactor = ::rrr::Reactor::get_reactor();
+  auto reactor = ::srpc::Reactor::get_reactor();
   RaftQuorum<int> q(2, 2);
   q.on_reply(7, 70);
   q.on_reply(8, 80);
@@ -219,7 +219,7 @@ inline bool operator==(const FakeReply& a, const FakeReply& b) {
 }  // namespace
 
 TEST(RaftQuorumTest, NonTrivialReplyType) {
-  auto reactor = ::rrr::Reactor::get_reactor();
+  auto reactor = ::srpc::Reactor::get_reactor();
   RaftQuorum<FakeReply> q(/*n_total=*/3, /*n_needed=*/2);
 
   q.on_reply(1, FakeReply{true,  5});

@@ -1,6 +1,6 @@
 # Reactor Folder Unsafe Blocks and Functions
 
-This document lists all `@unsafe` annotated blocks and functions in `src/rrr/reactor/`, sorted by LOC.
+This document lists all `@unsafe` annotated blocks and functions in `src/srpc/reactor/`, sorted by LOC.
 
 **Generated**: 2026-01-03
 

@@ -141,22 +141,22 @@ Now that Mako is running, explore more:
 
 ### Learn the Concepts
 - **[Key Concepts](concepts.md)** - Understand shards, replicas, transactions
-- **[Architecture Overview](architecture.md)** - How Mako works internally
-- **[Speculative 2PC](speculative-2pc.md)** - The core innovation
+- **[Architecture Overview](../architecture/overview.md)** - How Mako works internally
+- **[Speculative 2PC](../architecture/speculative-2pc.md)** - The core innovation
 
 ### Deploy Mako
-- **[Configuration Reference](config.md)** - Customize your deployment
-- **[Multi-Datacenter Setup](multi-dc.md)** - Geo-replication across datacenters
-- **[EC2 Deployment](ec2.md)** - Deploy on AWS
+- **[Configuration Reference](../configuration/config.md)** - Customize your deployment
+- **Multi-Datacenter Setup** - Geo-replication across datacenters
+- **[EC2 Deployment (Legacy)](../archive/ec2-legacy.md)** - Deploy on AWS
 
 ### Use Mako
-- **[CRUD Operations](crud/insert.md)** - Basic data operations *(To be implemented)*
-- **[Transactions](transactions/basics.md)** - Understanding distributed transactions *(To be implemented)*
-- **[Client API](clients/cpp.md)** - C++ client library *(To be implemented)*
+- **CRUD Operations** - Basic data operations *(To be implemented)*
+- **Transactions** - Understanding distributed transactions *(To be implemented)*
+- **Client API** - C++ client library *(To be implemented)*
 
 ### Performance
-- **[Benchmarking Guide](performance/benchmarks.md)** - Run comprehensive benchmarks
-- **[Performance Tuning](performance/tuning.md)** - Optimize throughput and latency
+- **Benchmarking Guide** - Run comprehensive benchmarks
+- **[Performance Tuning](../performance/profiling.md)** - Profile CPU and memory, plot benchmark results
 
 ## Common Quick Start Issues
 
@@ -233,7 +233,7 @@ mako/
 │   │   └── masstree/   # Masstree storage engine
 │   ├── deptran/        # Transaction protocols
 │   │   └── paxos/      # Paxos consensus
-│   └── rrr/            # RPC framework
+│   └── srpc/            # RPC framework
 ├── config/             # Configuration files
 │   ├── 1c1s1p.yml      # 1 client, 1 shard, 1 partition
 │   └── ...
@@ -255,19 +255,19 @@ mako/
 
 ### For Users:
 1. Read [Key Concepts](concepts.md) to understand Mako's architecture
-2. Review [Configuration Reference](config.md) for deployment options
-3. Try [EC2 Deployment](ec2.md) for distributed setup
+2. Review [Configuration Reference](../configuration/config.md) for deployment options
+3. Try [EC2 Deployment (Legacy)](../archive/ec2-legacy.md) for distributed setup
 
 ### For Developers:
-1. Explore [Development Setup](dev-setup.md)
-2. Understand [Coroutines & Reactor Pattern](coroutines_guide.md)
-3. Learn about [RustyCpp Memory Safety](rrr-rustycpp-migration-plan.md)
+1. Explore [Development Setup](../developer/development.md)
+2. Understand [Coroutines & Reactor Pattern](../developer/coroutines.md)
+3. Learn about [RustyCpp Memory Safety](../migration/rustycpp/overview.md)
 
 ## Getting Help
 
 - **Issues**: Found a bug? [Report it on GitHub](https://github.com/makodb/mako/issues)
 - **Questions**: [Ask in Discussions](https://github.com/makodb/mako/discussions)
-- **Documentation**: Browse the [full documentation index](index.md)
+- **Documentation**: Browse the [full documentation index](../index.md)
 
 ---
 
@@ -275,4 +275,4 @@ mako/
 
 ---
 
-**Next**: [Key Concepts](concepts.md) | [Configuration Reference](config.md) | [Architecture Overview](architecture.md)
+**Next**: [Key Concepts](concepts.md) | [Configuration Reference](../configuration/config.md) | [Architecture Overview](../architecture/overview.md)

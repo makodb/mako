@@ -5,6 +5,11 @@ the plan documents `silo-masstree-api-unification.md`,
 `mako-nontxn-api-plan.md`, and `ordered-index-trait-plan.md` were
 removed after implementation; `git log --follow docs/` finds them.)
 
+For how to author inline-Rust DSL in general — reshaping C++ so it
+converts, the per-class translation recipe, the lowering footguns — see
+the field guide [porting-cpp-to-rust-dsl.md](porting-cpp-to-rust-dsl.md);
+this page covers only the storage-specific mechanics.
+
 ## One interface, three traits, three backends
 
 The interface is authored as **rusty-cpp inline-Rust traits** in
@@ -70,11 +75,34 @@ e.g. `ShardReceiver::open_tables_table_id`).
   `inline` onto out-of-line definitions inside GEN regions — the
   transpiler's single-TU module precedent is an ODR violation in
   these multi-TU headers. `--check` is the drift guard.
-- The transpiler binary is built from rusty-cpp **upstream main**
-  (parked at `build_local/rusty-cpp-transpiler-<sha>`); the submodule
-  pin does NOT move — upstream main dropped runtime headers rrr
-  needs. Sound because GEN output is plain C++ with no rusty-runtime
-  dependencies.
+- **Which transpiler binary: pass it explicitly.** The committed GEN
+  blocks came from the older `a4bcff5f`-era build the script still
+  names as its default (`build_local/rusty-cpp-transpiler-a4bcff5f`),
+  a path no clean checkout has. The submodule pin has since moved to
+  `a1f8fef8` — upstream main's tip; gitlink = submodule HEAD = the
+  built binary's `--build-info`, `git_dirty=false` — and the rusty
+  runtime headers are present there
+  (`third-party/rusty-cpp/include/rusty/`), so this page's older note
+  ("the pin does NOT move — upstream main dropped runtime headers srpc
+  needs") described July 2026 and is retired. So is its rationale that
+  GEN output has no rusty-runtime dependency: three of the four storage
+  blocks have none, but `mbta_sharded_ordered_index.hh` lowers through
+  `rusty::detail::deref_if_pointer_like` (`rusty/ptr.hpp`), and the
+  cluster blocks below emit `rusty::Option`/`Cell`/`Mutex`/
+  `sync::atomic` over an explicit `#include <rusty/…>`.
+- **Regenerating at the pin is a migration, not a no-op.** Measured
+  2026-09-17 over the FILES list with
+  `third-party/rusty-cpp/target/release/rusty-cpp-transpiler`: 11 files
+  drift (trait forward declarations appear; synthesized copy ctors
+  become `= delete`; `!x` becomes `rusty::detail::rust_not(x)`;
+  `kv_store.h` gains a second GEN region outside `export { }`), and the
+  `inline` post-pass then mis-fires on the pin's column-0 lambda
+  statements (`inline while (…)`). Three — the `#[cpp_inherit]` storage
+  headers — stop outright: `cpp_inherit` now "requires a Cargo manifest
+  so the `rusty` provider can be authenticated", and no `Cargo.toml`
+  sits above `src/mako` or `src/cluster` (only `src/srpc` has one). One
+  (`cluster_config.cc`) reproduces byte-for-byte. `--check` therefore
+  guards drift only against the binary you hand it.
 - Trait → interface lowering: `pub trait` (namespace scope; non-pub
   gets a TU-local wrapper). Struct + `#[cpp_inherit] impl Trait for
   Struct` ADJACENT to the struct lowers to direct inheritance (no
@@ -116,7 +144,7 @@ subtlety that makes this work: a struct is move-only *only* when it
 attaches a trait via `#[cpp_inherit] impl Trait for X` (inheritance). A
 plain struct with an inherent `impl X` lowers to a **copyable aggregate**
 (no synthesized ctor/move) — so these keep living in `std::map`/
-`std::vector` by value, and the rrr marshal reader (default-construct +
+`std::vector` by value, and the srpc marshal reader (default-construct +
 field fill, which stays C++ at the boundary) is unchanged. `get_shard`'s
 binary search is expressed directly in the DSL; the iterator insert and
 map lookups stay as C++ kernels the DSL calls (the same "DSL owns shape,

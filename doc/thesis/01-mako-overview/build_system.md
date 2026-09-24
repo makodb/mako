@@ -147,7 +147,7 @@ The build reads `env.txt` to determine the network transport backend (`CMakeList
 | `ib` | InfiniBand | RoCE support, real eRPC |
 | `dpdk` | DPDK | Kernel bypass, real eRPC |
 
-In the default `eth` mode, eRPC runs in fake mode (`ERPC_FAKE=true`) and all network I/O goes through the `rrr/rpc` TCP/IP stack.
+In the default `eth` mode, eRPC runs in fake mode (`ERPC_FAKE=true`) and all network I/O goes through the `srpc/rpc` TCP/IP stack.
 
 ---
 

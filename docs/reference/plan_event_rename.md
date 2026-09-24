@@ -2,7 +2,7 @@
 
 ## Scope
 
-File: `src/rrr/reactor/event.h` and `src/rrr/reactor/event.cc`
+File: `src/srpc/reactor/event.h` and `src/srpc/reactor/event.cc`
 
 ## Methods to Rename
 

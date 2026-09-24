@@ -10,7 +10,7 @@
  * - Same API as mako::DB for easy migration
  * - All transaction operations are proxied to the server
  * - Transaction state is managed on the server side
- * - Uses RRR RPC framework for communication (replaces raw TCP sockets)
+ * - Uses SRPC RPC framework for communication (replaces raw TCP sockets)
  *
  * Usage:
  *   // Connect to remote server
@@ -39,7 +39,7 @@
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
 #include <rusty/option.hpp>
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 #include <string>
 #include <atomic>
 #include <unordered_map>
@@ -193,7 +193,7 @@ private:
  * RemoteDB - Remote database client proxy
  *
  * This class mirrors the mako::DB interface but proxies all operations
- * to a remote server via RRR RPC. Transaction state is managed on the server.
+ * to a remote server via SRPC RPC. Transaction state is managed on the server.
  * Implements IDatabase interface for unified access with local DB.
  */
 // Forward declaration for friend
@@ -301,7 +301,7 @@ public:
     void InitThread() override {}
 
     // Internal: Send Put/Get/Delete request to server (used by RemoteTable)
-    // @safe - These use RRR RPC
+    // @safe - These use SRPC RPC
     Status SendPut(uint64_t txn_id, uint16_t table_id,
                    const std::string& key, const std::string& value);
     Status SendGet(uint64_t txn_id, uint16_t table_id,
@@ -314,7 +314,7 @@ public:
     // =========================================================================
 
     /**
-     * Connect for the non-transactional API only. Skips the rrr RPC
+     * Connect for the non-transactional API only. Skips the srpc RPC
      * bring-up entirely: the connection is a lazy raw TCP socket
      * speaking ClientTcpServer's [type:1][len:4][payload] framing with
      * the self-contained non-txn request types (14-17). Transactional
@@ -387,9 +387,9 @@ private:
     RemoteOptions options_;
     uint64_t client_id_ = 0;
 
-    // RRR RPC client components
-    rusty::Option<rusty::Arc<rrr::PollThread>> poll_thread_ = rusty::None;
-    rusty::Option<rusty::Arc<rrr::Client>> rpc_client_ = rusty::None;
+    // SRPC RPC client components
+    rusty::Option<rusty::Arc<srpc::PollThread>> poll_thread_ = rusty::None;
+    rusty::Option<rusty::Arc<srpc::Client>> rpc_client_ = rusty::None;
     // @safe - Using rusty::Option<rusty::Box> for proxy ownership
     rusty::Option<rusty::Box<MakoClientProxy>> proxy_ = rusty::None;
     std::mutex rpc_mutex_;  // Protect RPC operations
@@ -457,7 +457,7 @@ inline ITable* RemoteDB::GetTable(const std::string& name) {
     return ptr;
 }
 
-// @safe - Uses RRR RPC for connection (new unified Options overload)
+// @safe - Uses SRPC RPC for connection (new unified Options overload)
 inline Status RemoteDB::Connect(const Options& options, int shard_index, RemoteDB** dbptr) {
     *dbptr = nullptr;
 
@@ -488,7 +488,7 @@ inline Status RemoteDB::Connect(const Options& options, int shard_index, RemoteD
     return Connect(remote_opts, dbptr);
 }
 
-// @safe - Uses RRR RPC for connection (deprecated RemoteOptions overload)
+// @safe - Uses SRPC RPC for connection (deprecated RemoteOptions overload)
 inline Status RemoteDB::Connect(const RemoteOptions& options, RemoteDB** dbptr) {
     *dbptr = nullptr;
 
@@ -502,11 +502,11 @@ inline Status RemoteDB::Connect(const RemoteOptions& options, RemoteDB** dbptr) 
     )) ^ static_cast<uint64_t>(time(nullptr)) ^
        static_cast<uint64_t>(getpid());
 
-    // Create RRR poll thread for async I/O
-    db->poll_thread_ = rusty::Some(rrr::PollThread::create());
+    // Create SRPC poll thread for async I/O
+    db->poll_thread_ = rusty::Some(srpc::PollThread::create());
 
-    // Create RRR client
-    auto client = rrr::Client::create(db->poll_thread_.as_ref().unwrap());
+    // Create SRPC client
+    auto client = srpc::Client::create(db->poll_thread_.as_ref().unwrap());
     db->rpc_client_ = rusty::Some(client);
 
     // Build server address
@@ -552,14 +552,14 @@ inline void RemoteDB::Disconnect() {
         proxy_ = rusty::None;
     }
 
-    // Clear RRR components
+    // Clear SRPC components
     rpc_client_ = rusty::None;
     poll_thread_ = rusty::None;
 
     tables_.clear();
 }
 
-// @safe - Uses RRR RPC
+// @safe - Uses SRPC RPC
 inline void* RemoteDB::BeginTransaction() {
     if (!is_connected_.load() || proxy_.is_none()) {
         return nullptr;
@@ -567,8 +567,8 @@ inline void* RemoteDB::BeginTransaction() {
 
     std::lock_guard<std::mutex> lock(rpc_mutex_);
 
-    rrr::i64 txn_id = 0;
-    rrr::i32 ret = proxy_.as_ref().unwrap()->BeginTxn(static_cast<rrr::i64>(client_id_), &txn_id);
+    srpc::i64 txn_id = 0;
+    srpc::i32 ret = proxy_.as_ref().unwrap()->BeginTxn(static_cast<srpc::i64>(client_id_), &txn_id);
 
     if (ret != 0) {
         return nullptr;
@@ -577,7 +577,7 @@ inline void* RemoteDB::BeginTransaction() {
     return EncodeTxnHandle(static_cast<uint64_t>(txn_id));
 }
 
-// @safe - Uses RRR RPC
+// @safe - Uses SRPC RPC
 inline void RemoteDB::Commit(void* txn) {
     if (!txn || !is_connected_.load() || proxy_.is_none()) {
         return;
@@ -586,11 +586,11 @@ inline void RemoteDB::Commit(void* txn) {
     std::lock_guard<std::mutex> lock(rpc_mutex_);
 
     uint64_t txn_id = DecodeTxnHandle(txn);
-    proxy_.as_ref().unwrap()->Commit(static_cast<rrr::i64>(txn_id));
+    proxy_.as_ref().unwrap()->Commit(static_cast<srpc::i64>(txn_id));
     // Ignore return value for commit (best effort)
 }
 
-// @safe - Uses RRR RPC
+// @safe - Uses SRPC RPC
 inline void RemoteDB::Rollback(void* txn) {
     if (!txn || !is_connected_.load() || proxy_.is_none()) {
         return;
@@ -599,11 +599,11 @@ inline void RemoteDB::Rollback(void* txn) {
     std::lock_guard<std::mutex> lock(rpc_mutex_);
 
     uint64_t txn_id = DecodeTxnHandle(txn);
-    proxy_.as_ref().unwrap()->Rollback(static_cast<rrr::i64>(txn_id));
+    proxy_.as_ref().unwrap()->Rollback(static_cast<srpc::i64>(txn_id));
     // Ignore return value for rollback (best effort)
 }
 
-// @safe - Uses RRR RPC
+// @safe - Uses SRPC RPC
 inline Status RemoteDB::SendPut(uint64_t txn_id, uint16_t table_id,
                                 const std::string& key, const std::string& value) {
     if (!is_connected_.load() || proxy_.is_none()) {
@@ -612,9 +612,9 @@ inline Status RemoteDB::SendPut(uint64_t txn_id, uint16_t table_id,
 
     std::lock_guard<std::mutex> lock(rpc_mutex_);
 
-    rrr::i32 ret = proxy_.as_ref().unwrap()->Put(
-        static_cast<rrr::i64>(txn_id),
-        static_cast<rrr::i32>(table_id),
+    srpc::i32 ret = proxy_.as_ref().unwrap()->Put(
+        static_cast<srpc::i64>(txn_id),
+        static_cast<srpc::i32>(table_id),
         key,
         value
     );
@@ -626,7 +626,7 @@ inline Status RemoteDB::SendPut(uint64_t txn_id, uint16_t table_id,
     }
 }
 
-// @safe - Uses RRR RPC
+// @safe - Uses SRPC RPC
 inline Status RemoteDB::SendGet(uint64_t txn_id, uint16_t table_id,
                                 const std::string& key, std::string& value) {
     if (!is_connected_.load() || proxy_.is_none()) {
@@ -635,9 +635,9 @@ inline Status RemoteDB::SendGet(uint64_t txn_id, uint16_t table_id,
 
     std::lock_guard<std::mutex> lock(rpc_mutex_);
 
-    rrr::i32 ret = proxy_.as_ref().unwrap()->Get(
-        static_cast<rrr::i64>(txn_id),
-        static_cast<rrr::i32>(table_id),
+    srpc::i32 ret = proxy_.as_ref().unwrap()->Get(
+        static_cast<srpc::i64>(txn_id),
+        static_cast<srpc::i32>(table_id),
         key,
         &value
     );
@@ -649,7 +649,7 @@ inline Status RemoteDB::SendGet(uint64_t txn_id, uint16_t table_id,
     }
 }
 
-// @safe - Uses RRR RPC
+// @safe - Uses SRPC RPC
 inline Status RemoteDB::SendDelete(uint64_t txn_id, uint16_t table_id,
                                    const std::string& key) {
     if (!is_connected_.load() || proxy_.is_none()) {
@@ -658,9 +658,9 @@ inline Status RemoteDB::SendDelete(uint64_t txn_id, uint16_t table_id,
 
     std::lock_guard<std::mutex> lock(rpc_mutex_);
 
-    rrr::i32 ret = proxy_.as_ref().unwrap()->Delete(
-        static_cast<rrr::i64>(txn_id),
-        static_cast<rrr::i32>(table_id),
+    srpc::i32 ret = proxy_.as_ref().unwrap()->Delete(
+        static_cast<srpc::i64>(txn_id),
+        static_cast<srpc::i32>(table_id),
         key
     );
 
@@ -676,14 +676,14 @@ inline Status RemoteDB::SendDelete(uint64_t txn_id, uint16_t table_id,
 // Non-transactional KV implementation (raw ClientTcpServer framing)
 // ============================================================================
 
-// @safe - Factory that skips the rrr bring-up (non-txn surface only)
+// @safe - Factory that skips the srpc bring-up (non-txn surface only)
 inline Status RemoteDB::ConnectNontxn(const std::string& host, int port,
                                       RemoteDB** dbptr) {
     *dbptr = nullptr;
     auto* db = new RemoteDB();
     db->options_.server_host = host;
     db->options_.server_port = port;
-    // No poll thread / rrr client / proxy: transactional methods will
+    // No poll thread / srpc client / proxy: transactional methods will
     // report not-connected. The kv socket connects lazily on first op.
     db->is_connected_.store(true);
     *dbptr = db;

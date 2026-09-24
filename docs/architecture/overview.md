@@ -34,7 +34,7 @@ Mako is a **distributed transactional key-value store** with a layered architect
 └──────────────────────┬───────────────────────────────────────┘
                        │
 ┌──────────────────────▼───────────────────────────────────────┐
-│              RRR Communication Layer                          │
+│              SRPC Communication Layer                          │
 │  ┌─────────────┬──────────────┬────────────┬──────────────┐ │
 │  │ TCP Sockets │  Coroutines  │  Reactor   │  Event Loop  │ │
 │  └─────────────┴──────────────┴────────────┴──────────────┘ │
@@ -100,9 +100,9 @@ Each **Shard** manages a partition of data:
 - `TxLogServer`: Shared replication scheduler base for each shard
 - `CoordinatorMultiPaxos`: Paxos consensus implementation
 
-### RRR Communication Layer
+### SRPC Communication Layer
 
-**RRR** (Custom RPC framework) provides:
+**SRPC** (Custom RPC framework) provides:
 
 **Features**:
 - **Asynchronous RPC**: Non-blocking remote procedure calls
@@ -110,7 +110,7 @@ Each **Shard** manages a partition of data:
 - **Reactor Pattern**: Event-driven I/O without threads
 - **Multiple transports**: TCP/IP, DPDK, RDMA
 
-See **[Coroutines & Reactor Guide](coroutines_guide.md)** for details.
+See **[Coroutines & Reactor Guide](../developer/coroutines.md)** for details.
 
 ### Storage Engines
 
@@ -371,7 +371,7 @@ Disk:
 
 ## Network Communication
 
-### RRR Framework
+### SRPC Framework
 
 **Architecture**:
 ```
@@ -398,7 +398,7 @@ Application Thread
 - **Automatic batching** of network I/O
 - **Low latency**: Context switch in nanoseconds
 
-See **[Coroutines Guide](coroutines_guide.md)** for details.
+See **[Coroutines Guide](../developer/coroutines.md)** for details.
 
 ### Transport Options
 
@@ -461,7 +461,7 @@ Mako is migrating to **RustyCpp** for memory safety:
 - Prevent use-after-free
 - Catch memory leaks
 
-See **[RustyCpp Migration Plan](rrr-rustycpp-migration-plan.md)** for details.
+See **[RustyCpp Migration Plan](../migration/rustycpp/overview.md)** for details.
 
 ---
 
@@ -519,4 +519,4 @@ Mako's architecture achieves high performance through:
 
 ---
 
-**Next**: [Speculative 2PC Protocol](speculative-2pc.md) | [Replication & Consensus](replication.md) | [Storage Engine Details](masstree.md)
+**Next**: [Speculative 2PC Protocol](speculative-2pc.md) | [Replication & Consensus](../raft-book.md) | [Storage Engine Details](../masstree-book.md)

@@ -148,7 +148,7 @@ void RaftServiceImpl::HandleVoteDurable(
     const uint64_t& term,
     const siteid_t& voter_id,
     bool_t* ack,
-    rrr::DeferredReply defer) {
+    srpc::DeferredReply defer) {
     RaftServer* svr = GetServer();
     if (svr) {
         svr->OnVoteDurable(term, voter_id);

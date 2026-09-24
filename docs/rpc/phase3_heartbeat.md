@@ -78,7 +78,7 @@ Uses existing reactor timeout events for periodic heartbeats.
 
 ## File Structure
 
-New file: `src/rrr/rpc/heartbeat.hpp`
+New file: `src/srpc/rpc/heartbeat.hpp`
 
 ## Estimated LOC
 

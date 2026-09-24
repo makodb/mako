@@ -108,8 +108,8 @@ size_t close_all_idle(uint64_t current_time_ms);
 
 | File | Changes |
 |------|---------|
-| `src/rrr/rpc/client.hpp` | Add PoolConfig, update ClientPool |
-| `src/rrr/rpc/client.cpp` | Implement new methods |
+| `src/srpc/rpc/client.hpp` | Add PoolConfig, update ClientPool |
+| `src/srpc/rpc/client.cpp` | Implement new methods |
 | `test/rpc_client_pool_test.cc` | Unit tests |
 | `CMakeLists.txt` | Add test target |
 

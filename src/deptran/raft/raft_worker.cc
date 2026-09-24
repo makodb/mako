@@ -341,13 +341,13 @@ void RaftWorker::SetupService() {
   std::string bind_addr = site_info_->GetBindAddress();
 
   // Create poll thread worker
-  svr_poll_thread_worker_ = rusty::Some(rrr::PollThread::create());
+  svr_poll_thread_worker_ = rusty::Some(srpc::PollThread::create());
 
   // Use as_ref().unwrap() to borrow without consuming the Option
   auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
 
   // Create RPC server first (before registering services)
-  rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(poll_worker.clone())));
+  rpc_server_ = new srpc::Server(srpc::Server::new_(rusty::Some(poll_worker.clone())));
   rpc_server_->set_admission_ready(false);
 
   // Create and register Raft services (ownership transferred to rpc_server_)
@@ -471,7 +471,7 @@ bool RaftWorker::WaitForStartup() {
   return true;
 }
 
-// @safe - rrr::Server owns the shared atomic admission flag.
+// @safe - srpc::Server owns the shared atomic admission flag.
 void RaftWorker::SetRpcAdmissionReady(bool ready) {
   if (rpc_server_ != nullptr) {
     rpc_server_->set_admission_ready(ready);
@@ -499,8 +499,8 @@ void RaftWorker::SetupHeartbeat() {
   // Setup heartbeat/control RPC server
   // ServerControlServiceImpl ctor 3rd
   // `Recorder*` parameter removed; updated call site to 2 args.
-  svr_hb_poll_thread_worker_g = rusty::Some(rrr::PollThread::create());
-  hb_rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
+  svr_hb_poll_thread_worker_g = rusty::Some(srpc::PollThread::create());
+  hb_rpc_server_ = new srpc::Server(srpc::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
 
   // Create shared status and pass clone to service
   server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
@@ -530,7 +530,7 @@ void RaftWorker::ShutDown() {
   // server is quiesced. RaftServiceImpl holds a bare RaftSpecific* and its
   // handlers dereference it without any lifetime lease, so a handler fiber
   // that is mid-call on the server PollThread would otherwise still be
-  // running when this thread reaches `delete rep_sched_` below. rrr attaches
+  // running when this thread reaches `delete rep_sched_` below. srpc attaches
   // a pending-request guard to every request for the whole life of its
   // handler fiber, so drain() is the barrier that guarantee needs.
   if (rpc_server_) {
@@ -553,7 +553,7 @@ void RaftWorker::ShutDown() {
     raft_sched_->PrepareForShutdown();
   }
 
-  // rrr::Server::~Server schedules its listener-close job on the PollThread.
+  // srpc::Server::~Server schedules its listener-close job on the PollThread.
   // Keep both owner threads alive until their servers and the Raft scheduler
   // have released every connection and callback.
   if (rpc_server_) {

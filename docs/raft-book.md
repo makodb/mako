@@ -581,7 +581,7 @@ MAKO_RAFT_SNAPSHOT_INTERVAL=10000    # Entries between snapshots (default: 10000
 
 ### Storage Architecture
 
-Three layers in `src/rrr/rpc/`:
+Three layers in `src/srpc/rpc/`:
 
 | Layer | File | Purpose |
 |-------|------|---------|

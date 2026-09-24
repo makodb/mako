@@ -264,7 +264,7 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
   cb();
 }
 
-void PaxosServer::OnForwardToLearner(const rrr::i32& par_id,
+void PaxosServer::OnForwardToLearner(const srpc::i32& par_id,
                                     const uint64_t& slot,
                                     const ballot_t& ballot,
                                     const janus::Command& cmd,

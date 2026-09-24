@@ -5,7 +5,7 @@
 # inline blocks remain the single source of truth. Production continues
 # to compile the committed generated C++.
 #
-# Contrast src/rrr/rust-modules.toml, which is schema_version = 2:
+# Contrast src/srpc/rust-modules.toml, which is schema_version = 2:
 # canonical `.rs` sources compiled directly, with C++ generated into the
 # build tree and the inline carriers deleted. Raft is not there yet --
 # see docs/migration/rustycpp/raft-rust-migration.md stages 3 and 4.

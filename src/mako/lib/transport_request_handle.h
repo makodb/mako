@@ -22,8 +22,8 @@ namespace mako {
  * Abstract interface for transport request handles
  *
  * This interface allows worker threads to process requests without
- * knowing the underlying transport implementation. RrrRequestHandle
- * (src/mako/lib/rrr_rpc_backend.h) is the only implementation.
+ * knowing the underlying transport implementation. SrpcRequestHandle
+ * (src/mako/lib/srpc_rpc_backend.h) is the only implementation.
  */
 class TransportRequestHandle {
 public:
@@ -58,7 +58,7 @@ public:
     /**
      * Enqueue response for sending back to client
      * Called by worker thread after processing request and filling response buffer.
-     * For rrr/rpc: Enqueues to response queue for RunEventLoop to process
+     * For srpc/rpc: Enqueues to response queue for RunEventLoop to process
      * @param msg_size Size of response data in bytes
      */
     virtual void EnqueueResponse(size_t msg_size) = 0;

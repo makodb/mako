@@ -2,7 +2,7 @@
 /***********************************************************************
  *
  * fasttransport.h:
- *   Transport layer over the rrr/rpc (TCP/IP) backend
+ *   Transport layer over the srpc/rpc (TCP/IP) backend
  *
  **********************************************************************/
 
@@ -27,7 +27,7 @@
 #include <netinet/in.h>
 #include <chrono>
 
-namespace mako { class RrrRpcBackend; }
+namespace mako { class SrpcRpcBackend; }
 
 void register_fasttransport_for_bench(std::function<int(int,int)>);
 void register_fasttransport_for_dbtest(std::function<int(int,int)>);
@@ -35,9 +35,9 @@ void set_fasttransport_signal_handlers_enabled(bool enabled);
 
 /*
  * Class FastTransport implements a multi-threaded transport layer
- * over the rrr/rpc (TCP/IP) backend.
+ * over the srpc/rpc (TCP/IP) backend.
  *
- * This class delegates to RrrRpcBackend, the single transport
+ * This class delegates to SrpcRpcBackend, the single transport
  * implementation. It maintains API compatibility with existing code.
  *
  * The Register function is used to register a transport receiver.
@@ -100,10 +100,10 @@ public:
     mako::HelperQueue* GetHelperQueueResponse(uint16_t id);
 
 private:
-    // The rrr/rpc backend. Held by pointer rather than by value only so this
-    // header does not have to pull in rrr_rpc_backend.h -> rrr/rrr.hpp;
+    // The srpc/rpc backend. Held by pointer rather than by value only so this
+    // header does not have to pull in srpc_rpc_backend.h -> srpc/srpc.hpp;
     // fasttransport.cc includes it and owns the lifetime.
-    mako::RrrRpcBackend* backend_{nullptr};
+    mako::SrpcRpcBackend* backend_{nullptr};
 
     // Mutex to protect backend_ during concurrent access (stats vs destructor)
     mutable std::mutex backend_mutex_;

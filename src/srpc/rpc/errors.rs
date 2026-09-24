@@ -1,0 +1,136 @@
+// Canonical Rust source for the srpc.errors module.
+// Compiled directly by rustc and translated by rusty-cpp crate mode.
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum RpcErrorCategory {
+    NONE = 0,
+    CONNECTION = 1,
+    PROTOCOL = 2,
+    APPLICATION = 3,
+    TIMEOUT = 4,
+    INTERNAL = 5,
+}
+
+#[allow(unreachable_patterns)]
+pub fn rpc_error_category_to_string(cat: RpcErrorCategory) -> &'static str {
+    match cat {
+        RpcErrorCategory::NONE => "NONE",
+        RpcErrorCategory::CONNECTION => "CONNECTION",
+        RpcErrorCategory::PROTOCOL => "PROTOCOL",
+        RpcErrorCategory::APPLICATION => "APPLICATION",
+        RpcErrorCategory::TIMEOUT => "TIMEOUT",
+        RpcErrorCategory::INTERNAL => "INTERNAL",
+        _ => "UNKNOWN",
+    }
+}
+
+#[allow(non_camel_case_types)]
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(i32)]
+pub enum RpcError {
+    OK = 0,
+    NOT_CONNECTED = 100,
+    CONNECTION_REFUSED = 101,
+    CONNECTION_RESET = 102,
+    NETWORK_UNREACHABLE = 103,
+    HOST_UNREACHABLE = 104,
+    CONNECTION_CLOSED = 105,
+    CIRCUIT_OPEN = 106,
+    INVALID_MESSAGE = 200,
+    UNKNOWN_RPC_ID = 201,
+    MARSHALLING_ERROR = 202,
+    VERSION_MISMATCH = 203,
+    CHECKSUM_ERROR = 204,
+    RPC_FAILED = 300,
+    SERVICE_UNAVAILABLE = 301,
+    PERMISSION_DENIED = 302,
+    INVALID_ARGUMENT = 303,
+    NOT_FOUND = 304,
+    ALREADY_EXISTS = 305,
+    CONNECT_TIMEOUT = 400,
+    REQUEST_TIMEOUT = 401,
+    RESPONSE_TIMEOUT = 402,
+    IDLE_TIMEOUT = 403,
+    HEARTBEAT_TIMEOUT = 404,
+    UNKNOWN_ERROR = 500,
+    OUT_OF_MEMORY = 501,
+    INVALID_STATE = 502,
+    INTERNAL_ERROR = 503,
+}
+
+#[allow(unreachable_patterns)]
+pub fn rpc_error_to_string(err: RpcError) -> &'static str {
+    match err {
+        RpcError::OK => "OK",
+
+        RpcError::NOT_CONNECTED => "NOT_CONNECTED",
+        RpcError::CONNECTION_REFUSED => "CONNECTION_REFUSED",
+        RpcError::CONNECTION_RESET => "CONNECTION_RESET",
+        RpcError::NETWORK_UNREACHABLE => "NETWORK_UNREACHABLE",
+        RpcError::HOST_UNREACHABLE => "HOST_UNREACHABLE",
+        RpcError::CONNECTION_CLOSED => "CONNECTION_CLOSED",
+        RpcError::CIRCUIT_OPEN => "CIRCUIT_OPEN",
+
+        RpcError::INVALID_MESSAGE => "INVALID_MESSAGE",
+        RpcError::UNKNOWN_RPC_ID => "UNKNOWN_RPC_ID",
+        RpcError::MARSHALLING_ERROR => "MARSHALLING_ERROR",
+        RpcError::VERSION_MISMATCH => "VERSION_MISMATCH",
+        RpcError::CHECKSUM_ERROR => "CHECKSUM_ERROR",
+
+        RpcError::RPC_FAILED => "RPC_FAILED",
+        RpcError::SERVICE_UNAVAILABLE => "SERVICE_UNAVAILABLE",
+        RpcError::PERMISSION_DENIED => "PERMISSION_DENIED",
+        RpcError::INVALID_ARGUMENT => "INVALID_ARGUMENT",
+        RpcError::NOT_FOUND => "NOT_FOUND",
+        RpcError::ALREADY_EXISTS => "ALREADY_EXISTS",
+
+        RpcError::CONNECT_TIMEOUT => "CONNECT_TIMEOUT",
+        RpcError::REQUEST_TIMEOUT => "REQUEST_TIMEOUT",
+        RpcError::RESPONSE_TIMEOUT => "RESPONSE_TIMEOUT",
+        RpcError::IDLE_TIMEOUT => "IDLE_TIMEOUT",
+        RpcError::HEARTBEAT_TIMEOUT => "HEARTBEAT_TIMEOUT",
+
+        RpcError::UNKNOWN_ERROR => "UNKNOWN_ERROR",
+        RpcError::OUT_OF_MEMORY => "OUT_OF_MEMORY",
+        RpcError::INVALID_STATE => "INVALID_STATE",
+        RpcError::INTERNAL_ERROR => "INTERNAL_ERROR",
+
+        _ => "UNKNOWN",
+    }
+}
+
+#[allow(clippy::manual_range_contains)]
+pub fn get_error_category(err: RpcError) -> RpcErrorCategory {
+    let code: i32 = err as i32;
+    if code == 0 { RpcErrorCategory::NONE }
+    else if code >= 100 && code < 200 { RpcErrorCategory::CONNECTION }
+    else if code >= 200 && code < 300 { RpcErrorCategory::PROTOCOL }
+    else if code >= 300 && code < 400 { RpcErrorCategory::APPLICATION }
+    else if code >= 400 && code < 500 { RpcErrorCategory::TIMEOUT }
+    else { RpcErrorCategory::INTERNAL }
+}
+
+#[allow(clippy::manual_range_contains)]
+pub fn is_connection_error(err: RpcError) -> bool {
+    let code: i32 = err as i32;
+    code >= 100 && code < 200
+}
+
+#[allow(clippy::manual_range_contains)]
+pub fn is_timeout_error(err: RpcError) -> bool {
+    let code: i32 = err as i32;
+    code >= 400 && code < 500
+}
+
+#[allow(clippy::if_same_then_else, clippy::needless_bool)]
+pub fn is_retryable_error(err: RpcError) -> bool {
+    if err == RpcError::CONNECTION_RESET { true }
+    else if err == RpcError::NETWORK_UNREACHABLE { true }
+    else if err == RpcError::HOST_UNREACHABLE { true }
+    else if err == RpcError::CONNECT_TIMEOUT { true }
+    else if err == RpcError::REQUEST_TIMEOUT { true }
+    else if err == RpcError::RESPONSE_TIMEOUT { true }
+    else if err == RpcError::SERVICE_UNAVAILABLE { true }
+    else { false }
+}

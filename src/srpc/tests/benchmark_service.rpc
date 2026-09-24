@@ -1,0 +1,33 @@
+// #include <math.h>
+
+// optional %%: marks header section, code above will be copied into begin of generated C++ header
+%%
+
+namespace benchmark
+
+struct point3 {
+    double x;
+    double y;
+    double z;
+};
+
+service Benchmark {
+    fast fast_prime(i32 n | i8 flag);
+    fast fast_dot_prod(point3 p1, point3 p2 | double v);
+    fast fast_add(v32 a, v32 b | v32 a_add_b);
+    fast fast_nop(string);
+    fast fast_vec(i32 n | vector<i64> v);
+    prime(i32 n | i8 flag);
+    dot_prod(point3 p1, point3 p2 | double v);
+    add(v32 a, v32 b | v32 a_add_b);
+    nop(string);
+    async async_nop(string);
+    sleep(double sec);
+    defer deferred_echo(i32 val | i32 result);
+};
+
+%%
+// optional %%: marks footer section, code below will be copied into end of generated C++ header
+
+// BenchmarkService methods are implemented in src/srpc/tests/benchmark_service.cc using
+// typed Rpc*Request/Rpc*Response signatures.

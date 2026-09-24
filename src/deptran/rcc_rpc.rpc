@@ -1,7 +1,7 @@
 #include "constants.h"
 #include "mako_commands.h"
 #include <string>
-using rrr::Fiber;
+using srpc::Fiber;
 %%
 
 namespace janus;

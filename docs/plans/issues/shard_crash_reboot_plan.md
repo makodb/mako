@@ -33,8 +33,8 @@ This document describes the plan to support shard servers crashing and rebooting
 
 | File | Changes |
 |------|---------|
-| `src/rrr/rpc/client.hpp` | Added `connection_state()`, `try_reconnect_if_needed()` |
-| `src/rrr/rpc/client.cpp` | Modified `ClientPool::get_client()` with health checking |
+| `src/srpc/rpc/client.hpp` | Added `connection_state()`, `try_reconnect_if_needed()` |
+| `src/srpc/rpc/client.cpp` | Modified `ClientPool::get_client()` with health checking |
 | `src/deptran/communicator.h` | Added `EnsureClientConnected()` declaration |
 | `src/deptran/communicator.cc` | Added `EnsureClientConnected()` implementation |
 
@@ -187,7 +187,7 @@ Document findings before implementing fixes.
 #### 2.1 Add Auto-Reconnect to Client
 
 ```cpp
-// src/rrr/rpc/client.hpp
+// src/srpc/rpc/client.hpp
 
 class Client {
   bool auto_reconnect_ = true;
@@ -198,7 +198,7 @@ public:
   void set_auto_reconnect(bool enable) { auto_reconnect_ = enable; }
 };
 
-// src/rrr/rpc/client.cpp
+// src/srpc/rpc/client.cpp
 
 void ClientConnection::handle_error(int events) {
   // Existing: transition to FAILED, invalidate futures
@@ -218,7 +218,7 @@ void ClientConnection::handle_error(int events) {
 #### 2.2 Connection Pool Recovery
 
 ```cpp
-// src/rrr/rpc/client.hpp
+// src/srpc/rpc/client.hpp
 
 class ClientPool {
 public:
@@ -482,7 +482,7 @@ This task is simpler than full replication recovery:
 
 ## References
 
-- Connection state machine: `src/rrr/rpc/connection_state.hpp`
-- Reconnection policy: `src/rrr/rpc/reconnect_policy.hpp`
+- Connection state machine: `src/srpc/rpc/connection_state.hpp`
+- Reconnection policy: `src/srpc/rpc/reconnect_policy.hpp`
 - Multi-shard test: `examples/test_multi_shard_single_process.sh`
 - ShardFailureController: `src/mako/benchmarks/shard_failure_controller.h` (to be created)

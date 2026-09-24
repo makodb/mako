@@ -10,3 +10,34 @@
 [submodule "third-party/mako-redis"]
 	path = third-party/mako-redis
 	url = https://github.com/makodb/mako-redis
+
+# srpc's OWN nested submodules, pre-provisioned.
+#
+# `src/srpc` is a verbatim copy of github.com/stonysystems/srpc, which declares
+# these two in its own `.gitmodules`. Git only reads the ROOT `.gitmodules`, so
+# once those gitlinks arrive here (via subtree/subrepo import) they would be
+# orphans: `git submodule status` and `git submodule update --init --recursive`
+# both fail with exit 128 REPO-WIDE -- not just for srpc -- and mako's CI runs
+# `submodules: recursive` (.github/workflows/ci.yml:37,201). Mapping them here
+# is what keeps that working.
+#
+# `update = none` because mako never uses them. mako builds srpc through
+# src/srpc-cmake/CMakeLists.txt and its own third-party/rusty-cpp; srpc's
+# standalone CMakeLists.txt (which is what needs these) is never read here.
+# Skipping the checkout avoids a SECOND rusty-cpp clone in every one of mako's
+# worktrees, and with it the pin diamond -- srpc pins fa7dd9d9, mako pins
+# a1f8fef8. It lives in the tracked `.gitmodules` rather than local config so
+# every clone and CI inherits it; `submodule.<name>.active=false` does NOT
+# work here, `--init` overrides it.
+#
+# These paths do not exist yet. A stanza for an absent path is inert (verified:
+# status/update both exit 0, no phantom directory), and the skip takes effect
+# the moment the gitlinks land.
+[submodule "src/srpc/third-party/rusty-cpp"]
+	path = src/srpc/third-party/rusty-cpp
+	url = https://github.com/shuaimu/rusty-cpp.git
+	update = none
+[submodule "src/srpc/third-party/googletest"]
+	path = src/srpc/third-party/googletest
+	url = https://github.com/google/googletest.git
+	update = none

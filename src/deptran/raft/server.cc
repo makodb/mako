@@ -29,8 +29,8 @@ import std;
 import rusty;   // rusty::BTreeSet is a btree_port C++20 module, not a header
 
 // @external: {
-//   rrr::RandomGenerator::rand_double: [safe, (double, double) -> double]
-//   rrr::RandomGenerator::rand: [safe, (int, int) -> int]
+//   srpc::RandomGenerator::rand_double: [safe, (double, double) -> double]
+//   srpc::RandomGenerator::rand: [safe, (int, int) -> int]
 //   Log_info: [safe, (...) -> void]
 //   Log_debug: [safe, (...) -> void]
 //   Log_warn: [safe, (...) -> void]
@@ -71,8 +71,8 @@ import rusty;   // rusty::BTreeSet is a btree_port C++20 module, not a header
 //   std::shared_ptr::operator=: [safe, (&'a mut, &'a) -> &'a mut]
 //   std::shared_ptr::get: [safe, (&'a) -> *]
 //   operator bool: [safe, (&'a) -> bool]
-//   rrr::Fiber::create_run: [safe, (...) -> owned]
-//   rrr::Fiber::sleep: [safe, (int) -> void]
+//   srpc::Fiber::create_run: [safe, (...) -> owned]
+//   srpc::Fiber::sleep: [safe, (int) -> void]
 //   Reactor::create_sp_event: [safe, (...) -> owned]
 //   Config::GetConfig: [safe, () -> *]
 //   janus::TpcBatchCommand::AddCmds: [safe, (&'a mut, &'a mut) -> void]
@@ -80,10 +80,10 @@ import rusty;   // rusty::BTreeSet is a btree_port C++20 module, not a header
 //   std::thread::joinable: [safe, (&'a) -> bool]
 //   std::thread::join: [safe, (&'a mut) -> void]
 //   std::thread::detach: [safe, (&'a mut) -> void]
-//   rrr::IntEvent::set: [safe, (&'a mut, int) -> void]
-//   rrr::IntEvent::wait: [safe, (&'a, int) -> void]
-//   rrr::Event::wait: [safe, (&'a, int) -> void]
-//   rrr::EventStatus::TIMEOUT: [safe, () -> int]
+//   srpc::IntEvent::set: [safe, (&'a mut, int) -> void]
+//   srpc::IntEvent::wait: [safe, (&'a, int) -> void]
+//   srpc::Event::wait: [safe, (&'a, int) -> void]
+//   srpc::EventStatus::TIMEOUT: [safe, () -> int]
 //   janus::View::View: [safe, (...) -> owned]
 //   janus::View::operator=: [safe, (&'a mut, const &'a) -> &'a mut]
 //   janus::TxLogServer::DestroyTx: [safe, (&'a mut, uint64_t) -> void]
@@ -824,7 +824,7 @@ void raft_noop_command_into(rusty::RaftCommand* dst) {
 // ============================================================================
 // FIBER-HOSTED RUST
 //
-// The three spawn kernels below run Rust-authored bodies on rrr fibers, and
+// The three spawn kernels below run Rust-authored bodies on srpc fibers, and
 // those bodies suspend mid-frame: ReplicationWakeGate::finish_wait_for_work
 // and ::wait_for_election_timeout (IntEvent::wait_timeout), heartbeat phase
 // 2's response-collection poll (raft_fiber_sleep_us), PrepareForShutdown's
@@ -841,7 +841,7 @@ void raft_noop_command_into(rusty::RaftCommand* dst) {
 //     catch on these paths and it catches on the C++ side; the raft crate
 //     builds with panic = "abort" (Cargo.toml) so a Rust panic can never
 //     try.
-//  3. The stack budget is rrr's kDefaultStackBytes (1 MiB,
+//  3. The stack budget is srpc's kDefaultStackBytes (1 MiB,
 //     reactor.rs) with a PROT_NONE guard page below it (srpc_fiber.c:46):
 //     an overflow faults at once, it does not corrupt. Rust's own
 //     stack-overflow message will not appear, the SIGSEGV will.
@@ -1072,12 +1072,12 @@ bool raft_bind_replication_poll(RaftServerBase* self,
   // commo_of verifies the communicator is set, exactly as the
   // RaftServer::commo() it replaces did, so the null test that used to sit
   // here could never be false.
-  rusty::Option<rusty::Arc<rrr::PollThread>> replication_poll =
+  rusty::Option<rusty::Arc<srpc::PollThread>> replication_poll =
       commo_of(commo)->PollThread();
   if (replication_poll.is_none()) {
     return false;
   }
-  rusty::Arc<rrr::PollThread> owner = replication_poll.unwrap();
+  rusty::Arc<srpc::PollThread> owner = replication_poll.unwrap();
   raft_server_bind_replication_wake_owner(self, &owner);
   return true;
 }
@@ -1248,14 +1248,14 @@ void raft_log_set_is_leader_entry(uint16_t site_id, uint32_t loc_id,
 // ConstructRuntime's three kernels: what the C++ constructor did that the
 // generated constructor could not -- see RaftServerBase::ConstructRuntime.
 // The Rust logger's two kernels. The runtime facade formats the
-// line itself and asks two things of rrr's logger (module rrr.logging, the
-// transpiled src/rrr/base/logging.rs): is the level on, and here is a line.
-// Levels are rrr's: ERROR 1, WARN 2, INFO 3, DEBUG 4. Line 0 and a null file,
-// as rrr_log.h's Log_* templates pass. Unused by the transpiled build, whose
+// line itself and asks two things of srpc's logger (module srpc.logging, the
+// transpiled src/srpc/base/logging.rs): is the level on, and here is a line.
+// Levels are srpc's: ERROR 1, WARN 2, INFO 3, DEBUG 4. Line 0 and a null file,
+// as srpc_log.h's Log_* templates pass. Unused by the transpiled build, whose
 // Rust bodies log through the C++ templates in rust_log_shims.h.
-bool raft_log_enabled(int32_t level) { return level <= rrr::Log::level_now(); }
+bool raft_log_enabled(int32_t level) { return level <= srpc::Log::level_now(); }
 void raft_log_line(int32_t level, const uint8_t* text, size_t len) {
-  rrr::log_line(level, 0, nullptr,
+  srpc::log_line(level, 0, nullptr,
                 std::string(reinterpret_cast<const char*>(text), len));
 }
 
@@ -1289,7 +1289,7 @@ bool raft_election_debug_enabled() {
 }
 
 // The carriers' destructors, behind the Rust `Drop` impls in the
-// runtime facade (src/rrr/rusty-rustc). Each runs the C++ destructor in
+// runtime facade (src/srpc/rusty-rustc). Each runs the C++ destructor in
 // place. On a default-constructed carrier -- all zero bytes, the empty state
 // of every one of these types -- each is a no-op, which is what lets Rust
 // default-construct a slot for an _into kernel and drop it unconditionally.
@@ -1648,7 +1648,7 @@ void raft_phase1_send_append(
 // AppendRespView is generated by the block above, so this kernel has to sit
 // below it rather than with the rest of the bridge.
 extern "C" {
-// The three scalars of an rrr AppendEntries reply. The response object is a
+// The three scalars of an srpc AppendEntries reply. The response object is a
 // shared_ptr the DSL only carries; this reads through it.
 AppendRespView raft_append_response_read(
     const rusty::RaftResponsePtr* response) {

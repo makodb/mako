@@ -1,7 +1,7 @@
 #include "service.h"
 #include "server.h"
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 #include <rusty/slice.hpp>
 
 // @external: {
@@ -43,8 +43,8 @@ static_assert(!raft_service_server_unavailable(true, false, true));
 // =====================================================================
 // Fiber-RPC handlers.
 //
-// Each method here is invoked by the rrr-generated wrapper on a fresh
-// Fiber (see src/rrr/pylib/simplerpcgen/lang_cpp.py). We do synchronous
+// Each method here is invoked by the srpc-generated wrapper on a fresh
+// Fiber (see src/srpc/pylib/simplerpcgen/lang_cpp.py). We do synchronous
 // work and return the response struct by value. The framework marshals and sends the
 // reply when the fiber completes; no DeferredReply anywhere.
 //
@@ -56,7 +56,7 @@ static_assert(!raft_service_server_unavailable(true, false, true));
 // depend on (e.g., lost-RPC detection in SendAppendEntries).
 // =====================================================================
 
-Result<RaftService::RpcVoteResponse, rrr::i32>
+Result<RaftService::RpcVoteResponse, srpc::i32>
 RaftServiceImpl::Vote(const RpcVoteRequest& req) {
   RpcVoteResponse resp{};
   RaftSpecific* svr = svr_;
@@ -67,15 +67,15 @@ RaftServiceImpl::Vote(const RpcVoteRequest& req) {
           has_server, disconnected, rpc_ready)) {
     resp.max_ballot = req.cur_term;
     resp.vote_granted = false;
-    return Result<RpcVoteResponse, rrr::i32>::Ok(resp);
+    return Result<RpcVoteResponse, srpc::i32>::Ok(resp);
   }
   svr->OnRequestVote(req.lst_log_idx, req.lst_log_term,
                      req.site_id, req.cur_term,
                      &resp.max_ballot, &resp.vote_granted);
-  return Result<RpcVoteResponse, rrr::i32>::Ok(resp);
+  return Result<RpcVoteResponse, srpc::i32>::Ok(resp);
 }
 
-Result<RaftService::RpcAppendEntriesResponse, rrr::i32>
+Result<RaftService::RpcAppendEntriesResponse, srpc::i32>
 RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
   RpcAppendEntriesResponse resp{};
   RaftSpecific* svr = svr_;
@@ -87,7 +87,7 @@ RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
     resp.followerAppendOK = 0;
     resp.followerCurrentTerm = 0;
     resp.followerLastLogIndex = 0;
-    return Result<RpcAppendEntriesResponse, rrr::i32>::Ok(resp);
+    return Result<RpcAppendEntriesResponse, srpc::i32>::Ok(resp);
   }
   svr->OnAppendEntries(req.leaderCurrentTerm,
                        req.leaderSiteId, req.leaderPrevLogIndex,
@@ -95,10 +95,10 @@ RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
                        req.cmd, req.leaderNextLogTerm,
                        &resp.followerAppendOK, &resp.followerCurrentTerm,
                        &resp.followerLastLogIndex);
-  return Result<RpcAppendEntriesResponse, rrr::i32>::Ok(resp);
+  return Result<RpcAppendEntriesResponse, srpc::i32>::Ok(resp);
 }
 
-Result<RaftService::RpcEmptyAppendEntriesResponse, rrr::i32>
+Result<RaftService::RpcEmptyAppendEntriesResponse, srpc::i32>
 RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
   Log_debug("RaftServiceImpl: EmptyAppendEntries answering leader {}", req.leaderSiteId);
   RpcEmptyAppendEntriesResponse resp{};
@@ -111,7 +111,7 @@ RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
     resp.followerAppendOK = 0;
     resp.followerCurrentTerm = 0;
     resp.followerLastLogIndex = 0;
-    return Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Ok(resp);
+    return Result<RpcEmptyAppendEntriesResponse, srpc::i32>::Ok(resp);
   }
   // OnAppendEntries uses the same fields as the non-empty variant with
   // an empty cmd and leaderNextLogTerm == 0 (heartbeat path).
@@ -123,10 +123,10 @@ RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
                        janus::Command{}, 0,
                        &resp.followerAppendOK, &resp.followerCurrentTerm,
                        &resp.followerLastLogIndex);
-  return Result<RpcEmptyAppendEntriesResponse, rrr::i32>::Ok(resp);
+  return Result<RpcEmptyAppendEntriesResponse, srpc::i32>::Ok(resp);
 }
 
-Result<RaftService::RpcInstallSnapshotResponse, rrr::i32>
+Result<RaftService::RpcInstallSnapshotResponse, srpc::i32>
 RaftServiceImpl::InstallSnapshot(const RpcInstallSnapshotRequest& req) {
   RpcInstallSnapshotResponse resp{};
   RaftSpecific* svr = svr_;
@@ -136,12 +136,12 @@ RaftServiceImpl::InstallSnapshot(const RpcInstallSnapshotRequest& req) {
   if (raft_service_server_unavailable(
           has_server, disconnected, rpc_ready)) {
     resp.term_out = 0;
-    return Result<RpcInstallSnapshotResponse, rrr::i32>::Ok(resp);
+    return Result<RpcInstallSnapshotResponse, srpc::i32>::Ok(resp);
   }
   svr->OnInstallSnapshot(req.term, req.leader_id,
                          req.last_included_index, req.last_included_term,
                          req.data, &resp.term_out);
-  return Result<RpcInstallSnapshotResponse, rrr::i32>::Ok(resp);
+  return Result<RpcInstallSnapshotResponse, srpc::i32>::Ok(resp);
 }
 
 // @unsafe - Stores the raw Raft server pointer for the handlers above.

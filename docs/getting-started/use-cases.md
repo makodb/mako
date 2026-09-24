@@ -525,4 +525,4 @@ txn->commit();
 
 ---
 
-**Next**: [Introduction](introduction.md) | [Architecture Overview](architecture.md) | [Quick Start](quickstart.md)
+**Next**: [Introduction](introduction.md) | [Architecture Overview](../architecture/overview.md) | [Quick Start](quickstart.md)

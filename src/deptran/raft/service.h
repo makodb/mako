@@ -24,23 +24,23 @@ class RaftServiceImpl : public RaftService {
   // longer life than the services registered on it, but that alone says
   // nothing about handlers still executing: a handler fiber that already
   // passed the availability check below can be mid-call while another thread
-  // tears the server down. The owner of the rrr::Server must therefore drain
+  // tears the server down. The owner of the srpc::Server must therefore drain
   // its in-flight requests (set_admission_ready(false) + drain()) before it
   // destroys either the server or this service -- see RaftWorker::ShutDown
   // and destroy_stub_servers().
   RaftSpecific* svr_{nullptr};
 
   // @unsafe - Stores the raw Raft server pointer. The poll thread is owned by
-  // the rrr::Server that registers this proxy and is not passed in.
+  // the srpc::Server that registers this proxy and is not passed in.
   explicit RaftServiceImpl(RaftSpecific* sched);
 
-  // Generated fiber-RPC overrides. The rrr codegen wraps each one in a
+  // Generated fiber-RPC overrides. The srpc codegen wraps each one in a
   // Fiber::create_run; we return a packed response struct and the
   // framework sends the reply on fiber completion. No DeferredReply.
-  rusty::Result<RpcVoteResponse,                rrr::i32> Vote(const RpcVoteRequest& req) override;
-  rusty::Result<RpcAppendEntriesResponse,       rrr::i32> AppendEntries(const RpcAppendEntriesRequest& req) override;
-  rusty::Result<RpcEmptyAppendEntriesResponse,  rrr::i32> EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) override;
-  rusty::Result<RpcInstallSnapshotResponse,     rrr::i32> InstallSnapshot(const RpcInstallSnapshotRequest& req) override;
+  rusty::Result<RpcVoteResponse,                srpc::i32> Vote(const RpcVoteRequest& req) override;
+  rusty::Result<RpcAppendEntriesResponse,       srpc::i32> AppendEntries(const RpcAppendEntriesRequest& req) override;
+  rusty::Result<RpcEmptyAppendEntriesResponse,  srpc::i32> EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) override;
+  rusty::Result<RpcInstallSnapshotResponse,     srpc::i32> InstallSnapshot(const RpcInstallSnapshotRequest& req) override;
 };
 
 } // namespace janus

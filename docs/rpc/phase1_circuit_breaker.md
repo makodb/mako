@@ -1,8 +1,8 @@
 # Phase 1.4: Circuit Breaker Pattern Plan
 
 > Current status (2026-08-12): implemented by canonical
-> `src/rrr/src/circuit_breaker.rs`; rusty-cpp generates the
-> `rrr.circuit_breaker` C++ module. The original header/file sketches below
+> `src/srpc/src/circuit_breaker.rs`; rusty-cpp generates the
+> `srpc.circuit_breaker` C++ module. The original header/file sketches below
 > are historical design notes. The production state is Cell-backed, Send,
 > and deliberately not Sync; callers must serialize mutation.
 
@@ -107,8 +107,8 @@ The circuit breaker is checked before making requests:
 
 ## File Structure
 
-Canonical source: `src/rrr/src/circuit_breaker.rs`; generated provider:
-`rrr.circuit_breaker`.
+Canonical source: `src/srpc/src/circuit_breaker.rs`; generated provider:
+`srpc.circuit_breaker`.
 
 ## Estimated LOC
 

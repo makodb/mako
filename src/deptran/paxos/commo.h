@@ -39,7 +39,7 @@ class MultiPaxosCommo : public Communicator {
  public:
   MultiPaxosCommo() = delete;
   explicit MultiPaxosCommo(
-      rusty::Option<rusty::Arc<rrr::PollThread>> poll = rusty::None);
+      rusty::Option<rusty::Arc<srpc::PollThread>> poll = rusty::None);
 
   shared_ptr<PaxosAcceptQuorumEvent> BroadcastAccept(
       parid_t par_id,

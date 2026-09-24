@@ -30,8 +30,8 @@
 #include <rusty/ptr.hpp>
 #include <rusty/slice.hpp>
 
-#include "rrr/rrr.hpp"
-#include "rrr_log.h"
+#include "srpc/srpc.hpp"
+#include "srpc_log.h"
 
 namespace janus {
 namespace raft {
@@ -500,18 +500,18 @@ class SnapshotFormat {
                         SnapshotCompression compression = SnapshotCompression::NONE,
                         SnapshotChecksumType checksum_type = SnapshotChecksumType::CRC32) {
     if (!output) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: null output");
+      srpc::Log_error("[SNAPSHOT-FORMAT] Serialize: null output");
       return false;
     }
     if (size > 0 && data == nullptr) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: null data with nonzero "
+      srpc::Log_error("[SNAPSHOT-FORMAT] Serialize: null data with nonzero "
                      "size");
       return false;
     }
     if (!snapshot_payload_size_within_limit(
             static_cast<uint64_t>(size),
             static_cast<uint64_t>(MAX_PAYLOAD_SIZE))) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: payload too large "
+      srpc::Log_error("[SNAPSHOT-FORMAT] Serialize: payload too large "
                      "({} > {})",
                      size, MAX_PAYLOAD_SIZE);
       return false;
@@ -519,14 +519,14 @@ class SnapshotFormat {
 
     // Only NONE compression is supported
     if (!snapshot_compression_supported(static_cast<uint8_t>(compression))) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: compression not supported");
+      srpc::Log_error("[SNAPSHOT-FORMAT] Serialize: compression not supported");
       return false;
     }
 
     const uint8_t raw_checksum_type =
         static_cast<uint8_t>(checksum_type);
     if (!snapshot_checksum_type_supported(raw_checksum_type)) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: checksum type not "
+      srpc::Log_error("[SNAPSHOT-FORMAT] Serialize: checksum type not "
                      "supported ({})",
                      raw_checksum_type);
       return false;
@@ -537,14 +537,14 @@ class SnapshotFormat {
     if (!snapshot_serialized_size_fits(
             sizeof(SnapshotHeader), size, checksum_size,
             std::numeric_limits<size_t>::max())) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: size arithmetic overflow");
+      srpc::Log_error("[SNAPSHOT-FORMAT] Serialize: size arithmetic overflow");
       return false;
     }
     const size_t total_size =
         sizeof(SnapshotHeader) + size + checksum_size;
     if (!snapshot_serialized_size_within_limit(
             total_size, MAX_SERIALIZED_SIZE)) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Serialize: envelope too large "
+      srpc::Log_error("[SNAPSHOT-FORMAT] Serialize: envelope too large "
                      "({} > {})",
                      total_size, MAX_SERIALIZED_SIZE);
       return false;
@@ -612,19 +612,19 @@ class SnapshotFormat {
                           uint64_t* last_term,
                           std::string* data) {
     if (!input || !last_index || !last_term || !data) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: null parameters");
+      srpc::Log_error("[SNAPSHOT-FORMAT] Deserialize: null parameters");
       return false;
     }
 
     // Check minimum size
     if (input_size < sizeof(SnapshotHeader)) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: input too small ({} < {})",
+      srpc::Log_error("[SNAPSHOT-FORMAT] Deserialize: input too small ({} < {})",
                 input_size, sizeof(SnapshotHeader));
       return false;
     }
     if (!snapshot_serialized_size_within_limit(
             input_size, MAX_SERIALIZED_SIZE)) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: input too large "
+      srpc::Log_error("[SNAPSHOT-FORMAT] Deserialize: input too large "
                      "({} > {})",
                      input_size, MAX_SERIALIZED_SIZE);
       return false;
@@ -636,18 +636,18 @@ class SnapshotFormat {
 
     // Validate magic and version
     if (!snapshot_magic_valid(header.magic)) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: invalid magic 0x{:08X} (expected 0x{:08X})",
+      srpc::Log_error("[SNAPSHOT-FORMAT] Deserialize: invalid magic 0x{:08X} (expected 0x{:08X})",
                 header.magic, MAGIC);
       return false;
     }
     if (!snapshot_version_valid(header.version)) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: unsupported version {}", header.version);
+      srpc::Log_error("[SNAPSHOT-FORMAT] Deserialize: unsupported version {}", header.version);
       return false;
     }
     if (!snapshot_header_size_valid(
             header.header_size,
             static_cast<uint32_t>(sizeof(SnapshotHeader)))) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: invalid header size {} "
+      srpc::Log_error("[SNAPSHOT-FORMAT] Deserialize: invalid header size {} "
                      "(expected {})",
                      header.header_size, sizeof(SnapshotHeader));
       return false;
@@ -656,19 +656,19 @@ class SnapshotFormat {
     // Verify header CRC
     uint32_t expected_header_crc = CRC32::Calculate(input, 44);
     if (header.header_crc != expected_header_crc) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: header CRC mismatch (0x{:08X} != 0x{:08X})",
+      srpc::Log_error("[SNAPSHOT-FORMAT] Deserialize: header CRC mismatch (0x{:08X} != 0x{:08X})",
                 header.header_crc, expected_header_crc);
       return false;
     }
 
     // Check compression support
     if (!snapshot_compression_supported(header.compression)) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: compression not supported");
+      srpc::Log_error("[SNAPSHOT-FORMAT] Deserialize: compression not supported");
       return false;
     }
 
     if (!snapshot_checksum_type_supported(header.checksum_type)) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: checksum type not "
+      srpc::Log_error("[SNAPSHOT-FORMAT] Deserialize: checksum type not "
                      "supported ({})",
                      header.checksum_type);
       return false;
@@ -677,7 +677,7 @@ class SnapshotFormat {
     if (!snapshot_payload_size_within_limit(
             header.data_size,
             static_cast<uint64_t>(MAX_PAYLOAD_SIZE))) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: payload too large "
+      srpc::Log_error("[SNAPSHOT-FORMAT] Deserialize: payload too large "
                      "({} > {})",
                      header.data_size, MAX_PAYLOAD_SIZE);
       return false;
@@ -691,7 +691,7 @@ class SnapshotFormat {
         snapshot_checksum_size(header.checksum_type);
     if (!snapshot_serialized_size_matches(
             sizeof(SnapshotHeader), data_size, checksum_size, input_size)) {
-      rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: serialized size does not "
+      srpc::Log_error("[SNAPSHOT-FORMAT] Deserialize: serialized size does not "
                      "match header (input={}, payload={}, checksum={})",
                      input_size, data_size, checksum_size);
       return false;
@@ -704,7 +704,7 @@ class SnapshotFormat {
       std::memcpy(&expected_crc, data_ptr + data_size, sizeof(expected_crc));
       uint32_t actual_crc = CRC32::Calculate(data_ptr, data_size);
       if (expected_crc != actual_crc) {
-        rrr::Log_error("[SNAPSHOT-FORMAT] Deserialize: data CRC mismatch (0x{:08X} != 0x{:08X})",
+        srpc::Log_error("[SNAPSHOT-FORMAT] Deserialize: data CRC mismatch (0x{:08X} != 0x{:08X})",
                   expected_crc, actual_crc);
         return false;
       }

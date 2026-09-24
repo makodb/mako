@@ -5,7 +5,7 @@
 namespace janus {
 
 MultiPaxosCommo::MultiPaxosCommo(
-    rusty::Option<rusty::Arc<rrr::PollThread>> poll)
+    rusty::Option<rusty::Arc<srpc::PollThread>> poll)
     : Communicator(std::move(poll)) {}
 
 shared_ptr<PaxosAcceptQuorumEvent> MultiPaxosCommo::BroadcastAccept(
@@ -36,7 +36,7 @@ void MultiPaxosCommo::ForwardToLearner(
     }
 
     FutureAttr attr;
-    attr.callback = rrr::FutureCallback::from_callable(
+    attr.callback = srpc::FutureCallback::from_callable(
         [cb](rusty::Arc<Future> future) {
           if (future->get_error_code() != 0) {
             Log_info("received an error forwarding to learner");
@@ -44,8 +44,8 @@ void MultiPaxosCommo::ForwardToLearner(
           }
           uint64_t returned_slot = 0;
           ballot_t returned_ballot = 0;
-          rrr::deserialize_from(future->get_reply(), returned_slot);
-          rrr::deserialize_from(future->get_reply(), returned_ballot);
+          srpc::deserialize_from(future->get_reply(), returned_slot);
+          srpc::deserialize_from(future->get_reply(), returned_ballot);
           cb(returned_slot, returned_ballot);
         });
 
@@ -54,7 +54,7 @@ void MultiPaxosCommo::ForwardToLearner(
     req.slot = slot;
     req.ballot = ballot;
     req.cmd = cmd;
-    peer->WithClient([&](rrr::Client* client) {
+    peer->WithClient([&](srpc::Client* client) {
       MultiPaxosProxy proxy(client);
       auto result = proxy.async_ForwardToLearnerServer(req, attr);
       if (result.is_ok()) {
@@ -92,7 +92,7 @@ shared_ptr<PaxosAcceptQuorumEvent> MultiPaxosCommo::BroadcastSyncLog(
     }
 
     FutureAttr attr;
-    attr.callback = rrr::FutureCallback::from_callable(
+    attr.callback = srpc::FutureCallback::from_callable(
         [event, cb](rusty::Arc<Future> future) {
           if (future->get_error_code() != 0) {
             Log_info("received an error from SyncLog");
@@ -101,9 +101,9 @@ shared_ptr<PaxosAcceptQuorumEvent> MultiPaxosCommo::BroadcastSyncLog(
           i32 valid = 0;
           i32 ballot = 0;
           janus::Command value;
-          rrr::deserialize_from(future->get_reply(), ballot);
-          rrr::deserialize_from(future->get_reply(), valid);
-          rrr::deserialize_from(future->get_reply(), value);
+          srpc::deserialize_from(future->get_reply(), ballot);
+          srpc::deserialize_from(future->get_reply(), valid);
+          srpc::deserialize_from(future->get_reply(), value);
           cb(std::make_shared<janus::Command>(value), ballot, valid);
           event->FeedResponse(valid);
         });
@@ -111,7 +111,7 @@ shared_ptr<PaxosAcceptQuorumEvent> MultiPaxosCommo::BroadcastSyncLog(
     verify(cmd.has_value());
     MultiPaxosProxy::RpcSyncLogRequest req;
     req.cmd = cmd;
-    peer->WithClient([&](rrr::Client* client) {
+    peer->WithClient([&](srpc::Client* client) {
       MultiPaxosProxy proxy(client);
       auto result = proxy.async_SyncLog(req, attr);
       if (result.is_ok()) {
@@ -149,7 +149,7 @@ shared_ptr<PaxosAcceptQuorumEvent> MultiPaxosCommo::BroadcastBulkAccept(
     }
 
     FutureAttr attr;
-    attr.callback = rrr::FutureCallback::from_callable(
+    attr.callback = srpc::FutureCallback::from_callable(
         [event, cb, site_id](rusty::Arc<Future> future) {
           if (future->get_error_code() != 0) {
             Log_info("received an error from BulkAccept");
@@ -157,8 +157,8 @@ shared_ptr<PaxosAcceptQuorumEvent> MultiPaxosCommo::BroadcastBulkAccept(
           }
           i32 valid = 0;
           i32 ballot = 0;
-          rrr::deserialize_from(future->get_reply(), ballot);
-          rrr::deserialize_from(future->get_reply(), valid);
+          srpc::deserialize_from(future->get_reply(), ballot);
+          srpc::deserialize_from(future->get_reply(), valid);
           if (!valid) {
             Log_debug("Accept invalid response received from {} site", site_id);
           }
@@ -169,7 +169,7 @@ shared_ptr<PaxosAcceptQuorumEvent> MultiPaxosCommo::BroadcastBulkAccept(
     verify(cmd.has_value());
     MultiPaxosProxy::RpcBulkAcceptRequest req;
     req.cmd = cmd;
-    peer->WithClient([&](rrr::Client* client) {
+    peer->WithClient([&](srpc::Client* client) {
       MultiPaxosProxy proxy(client);
       auto result = proxy.async_BulkAccept(req, attr);
       if (result.is_ok()) {
@@ -194,7 +194,7 @@ shared_ptr<PaxosAcceptQuorumEvent> MultiPaxosCommo::BroadcastBulkDecide(
     }
 
     FutureAttr attr;
-    attr.callback = rrr::FutureCallback::from_callable(
+    attr.callback = srpc::FutureCallback::from_callable(
         [event, cb](rusty::Arc<Future> future) {
           if (future->get_error_code() != 0) {
             Log_info("received an error from BulkDecide");
@@ -202,15 +202,15 @@ shared_ptr<PaxosAcceptQuorumEvent> MultiPaxosCommo::BroadcastBulkDecide(
           }
           i32 valid = 0;
           i32 ballot = 0;
-          rrr::deserialize_from(future->get_reply(), ballot);
-          rrr::deserialize_from(future->get_reply(), valid);
+          srpc::deserialize_from(future->get_reply(), ballot);
+          srpc::deserialize_from(future->get_reply(), valid);
           cb(ballot, valid);
           event->FeedResponse(valid);
         });
 
     MultiPaxosProxy::RpcBulkDecideRequest req;
     req.cmd = cmd;
-    peer->WithClient([&](rrr::Client* client) {
+    peer->WithClient([&](srpc::Client* client) {
       MultiPaxosProxy proxy(client);
       auto result = proxy.async_BulkDecide(req, attr);
       if (result.is_ok()) {

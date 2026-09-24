@@ -38,7 +38,7 @@ typedef pair<const char*, pair<int,int>> queue_entry_par;
 // removed
 //   `static std::queue<queue_entry_par> submit_queue_nc;`
 // — only used inside the now-deleted `PollSubQNc` function.
-// removed `static rrr::SpinLock l_;` —
+// removed `static srpc::SpinLock l_;` —
 // declared but no `lock()` / `unlock()` calls anywhere in the file
 // or codebase.
 // removed `static atomic<int> producer{0};`
@@ -537,7 +537,7 @@ void stuff_todo_learner_upgrade(){
 
 void* heartbeatBackground(void* arg) {
   auto poll_arc = PollThread::create();
-  auto rpc_cli = rrr::Client::create(poll_arc);
+  auto rpc_cli = srpc::Client::create(poll_arc);
   auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(0);
   // get the leader's host + port
   auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
@@ -548,7 +548,7 @@ void* heartbeatBackground(void* arg) {
   }
 
   // Arc::get() returns const T*, but proxy doesn't mutate client
-  ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<rrr::Client*>(rpc_cli.get()));
+  ServerControlProxy *client_proxy = new ServerControlProxy(const_cast<srpc::Client*>(rpc_cli.get()));
   while (es->running) {
     ServerControlProxy::RpcServerHeartBeatRequest req;
     auto connected = client_proxy->server_heart_beat(req);

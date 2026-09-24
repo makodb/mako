@@ -3,7 +3,7 @@
 #include <string>
 
 #include "mako_commands.h"
-#include "rrr/misc/serializable.hpp"
+#include "srpc/misc/serializable.hpp"
 
 namespace janus {
 
@@ -18,16 +18,16 @@ namespace janus {
 // without pulling the legacy transaction/storage headers into its live log
 // path.
 class LogEntry
-    : public rrr::Serializable<
-          rrr::PayloadMember<MakoCommands, LogEntry>::KIND> {
+    : public srpc::Serializable<
+          srpc::PayloadMember<MakoCommands, LogEntry>::KIND> {
  public:
   int length = 0;
   std::string log_entry;
 
   LogEntry() = default;
 
-  void save(rrr::BinaryWriteArchive& ar) const;
-  void load(rrr::BinaryReadArchive& ar);
+  void save(srpc::BinaryWriteArchive& ar) const;
+  void load(srpc::BinaryReadArchive& ar);
 };
 
 }  // namespace janus

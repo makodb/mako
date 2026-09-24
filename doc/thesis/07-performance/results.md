@@ -58,7 +58,7 @@ batches while Paxos batches more aggressively.
 | `NewOrder_remote_abort_ratio` | 1.44% | 1.12% | 2.65% | 2.63% |
 
 **Source files**:
-- Paxos: `test_2shard_replication.sh_rrr_shard{0,1}-localhost.log`
+- Paxos: `test_2shard_replication.sh_srpc_shard{0,1}-localhost.log`
 - Raft: `shard{0,1}-localhost.log`
 
 ### 3.2 Aggregate Comparison

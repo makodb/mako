@@ -1,4 +1,4 @@
-# Decoupling Raft from rrr/rpc and rocksdb
+# Decoupling Raft from srpc/rpc and rocksdb
 
 **Status:** in-progress
 **Owner:** Shuai / Claude
@@ -6,7 +6,7 @@
 
 ## Goal
 
-Make `janus::raft::RaftServer` usable without rrr/rpc (no sockets bound,
+Make `janus::raft::RaftServer` usable without srpc/rpc (no sockets bound,
 no fibers) and without rocksdb (no on-disk state). The lab-style
 correctness tests in `src/deptran/raft/test.cc` should run as a single
 in-process binary that wires N `RaftNode`s together with an in-memory
@@ -19,7 +19,7 @@ introduces. No exceptions.
 
 1. **No inheritance / virtual functions.** Use `pro::facade_builder` +
    `pro::proxy<Facade>` for polymorphism, the same idiom used by
-   `MarshallableFacade` / `MarshallableProxy` in `src/rrr/misc/marshal.hpp`.
+   `MarshallableFacade` / `MarshallableProxy` in `src/srpc/misc/marshal.hpp`.
    Define per-method tags with `PRO_DEF_MEM_DISPATCH` and chain them into
    a facade. Adapters provide the concrete implementations and wrap the
    owned state.
@@ -29,12 +29,12 @@ introduces. No exceptions.
    non-rusty caller, marked `@unsafe { ... }`.
 3. **No std smart pointers in new code.** `std::shared_ptr` /
    `std::unique_ptr` / `std::weak_ptr` are banned in new code. If an
-   existing rrr module interface requires them at the boundary, convert
+   existing srpc module interface requires them at the boundary, convert
    at the edge.
 4. **No std containers in new code.** `rusty::Vec`, `rusty::HashMap`,
    `rusty::HashSet`, `rusty::BTreeMap`. If a proxy facade demands a
    specific std type (e.g. `std::shared_ptr<Marshallable>` from
-   rrr-module boundary), isolate the conversion in one spot and mark
+   srpc-module boundary), isolate the conversion in one spot and mark
    it `@unsafe`.
 5. **No `std::optional`, `std::function`, `std::mutex`.**
    `rusty::Option<T>`, `rusty::Function<Sig>`, `rusty::Mutex<T>` (or
@@ -42,7 +42,7 @@ introduces. No exceptions.
    `rusty::Function<void(...)>`.
 6. **No `std::thread` in new files.** `rusty::thread::spawn` +
    `rusty::thread::JoinHandle<void>` — the pattern already used in
-   `src/rrr/misc/recorder.cpp`.
+   `src/srpc/misc/recorder.cpp`.
 7. **Every new function annotated `@safe` or `@unsafe`.** Blocks that
    call unannotated code use `// @unsafe { ... }`.
 
@@ -52,9 +52,9 @@ introduces. No exceptions.
 | ------------------------ | --------------------------------------------------------------------------------------- | ------------------ |
 | Log persistence          | `RocksDBLogStorage`, `MemoryLogStorage` behind `janus::raft::LogStorage` (virtual)      | ✅, but needs proxy port |
 | Snapshot persistence     | `FileSnapshotManager` behind `SnapshotManager` (virtual)                                | ✅, but needs proxy port + `MemorySnapshotManager` |
-| Outbound RPC (8 methods) | `RaftCommo` + rrr `async_*` proxies (`RaftProxy`), `rrr::FutureAttr`, `PollThread`      | ❌                 |
-| Inbound RPC (7 handlers) | `RaftService` registered via `rrr::Server::reg_service_proxy`, `rrr::DeferredReply`      | ❌                 |
-| Timers / scheduling      | `rrr::Fiber`, `Reactor::create_sp_event<TimeoutEvent>`, `PollThread`                     | ❌ (deferred)      |
+| Outbound RPC (8 methods) | `RaftCommo` + srpc `async_*` proxies (`RaftProxy`), `srpc::FutureAttr`, `PollThread`      | ❌                 |
+| Inbound RPC (7 handlers) | `RaftService` registered via `srpc::Server::reg_service_proxy`, `srpc::DeferredReply`      | ❌                 |
+| Timers / scheduling      | `srpc::Fiber`, `Reactor::create_sp_event<TimeoutEvent>`, `PollThread`                     | ❌ (deferred)      |
 
 ### Outbound RPC methods to abstract
 
@@ -86,7 +86,7 @@ From `src/deptran/raft/service.h` (`RaftServiceImpl::Handle*`):
 
 ### Phase 0 — typed request/response structs (≤1 day)
 
-Move RPC payload structs out of rrr-generated types into plain C++
+Move RPC payload structs out of srpc-generated types into plain C++
 headers under `src/deptran/raft/messages.hpp`:
 
 ```cpp
@@ -150,22 +150,22 @@ using TransportProxy = pro::proxy<TransportFacade>;
 `RaftServer` stores a `TransportProxy transport_;` member (the proxy
 owns its adapter). No inheritance; polymorphism is via the proxy.
 
-### Phase 2 — `RrrTransport` adapter (≤1 day)
+### Phase 2 — `SrpcTransport` adapter (≤1 day)
 
 Move the body of every current `RaftCommo::Send*` / `Broadcast*` method
-into a new `RrrTransportAdapter` class with matching method signatures
+into a new `SrpcTransportAdapter` class with matching method signatures
 (plain C++, no inheritance). Then:
 
 ```cpp
-inline TransportProxy make_rrr_transport(rusty::Arc<RrrTransportAdapter> a) {
+inline TransportProxy make_srpc_transport(rusty::Arc<SrpcTransportAdapter> a) {
   return pro::make_proxy<TransportFacade>(std::move(a));
 }
 ```
 
 Production wiring (`RaftWorker::SetupCommo`) constructs the adapter
-and calls `make_rrr_transport`. `RaftCommo` either becomes the adapter
+and calls `make_srpc_transport`. `RaftCommo` either becomes the adapter
 or is retired. The proxy facade forbids accidentally calling a
-transport method with `rrr::Future` in its signature.
+transport method with `srpc::Future` in its signature.
 
 ### Phase 3 — `DispatcherProxy` for inbound (≤1 day)
 
@@ -186,11 +186,11 @@ using DispatcherProxy = pro::proxy<DispatcherFacade>;
 ```
 
 `RaftServer` exposes a `dispatcher()` method that returns a
-`DispatcherProxy` view of itself. `RaftService` (the rrr receiver)
-becomes a thin shim: it unmarshals the rrr request, calls the
+`DispatcherProxy` view of itself. `RaftService` (the srpc receiver)
+becomes a thin shim: it unmarshals the srpc request, calls the
 dispatcher, and supplies a reply-callback that marshals the reply
-back through `rrr::DeferredReply`. No other caller of `RaftService`
-needs rrr knowledge.
+back through `srpc::DeferredReply`. No other caller of `RaftService`
+needs srpc knowledge.
 
 ### Phase 4 — `ChannelTransport` / `ChannelDispatcher` (≤1.5 days)
 
@@ -294,9 +294,9 @@ once phases 0–7 prove the shape is right. Approach: abstract
 
 ## Invariants & non-goals
 
-- **Non-goal:** changing wire format. `RrrTransport` keeps exact wire
+- **Non-goal:** changing wire format. `SrpcTransport` keeps exact wire
   compatibility with the current code. Only the C++ API shape changes.
-- **Non-goal:** removing rrr from production. rrr remains the production
+- **Non-goal:** removing srpc from production. srpc remains the production
   transport; we just hide it behind a proxy so the test path can
   substitute.
 - **Invariant:** production throughput must not regress. All phases
@@ -309,15 +309,15 @@ once phases 0–7 prove the shape is right. Approach: abstract
 src/deptran/raft/
 ├── messages.hpp          (new, phase 0) — plain C++ RPC payload structs
 ├── transport.hpp         (new, phase 1) — TransportFacade + TransportProxy
-├── rrr_transport.hpp/.cc (new, phase 2) — current commo body, renamed
+├── srpc_transport.hpp/.cc (new, phase 2) — current commo body, renamed
 ├── dispatcher.hpp        (new, phase 3) — DispatcherFacade + DispatcherProxy
 ├── channel_transport.hpp/.cc (new, phase 4)
 ├── snapshot_manager_proxy.hpp (new, phase 5)
 ├── memory_snapshot_manager.hpp (new, phase 5)
 ├── raft_node.hpp/.cc     (new, phase 6)
 ├── test_cluster.hpp/.cc  (new, phase 6)
-├── commo.cc/.h           (phase 2: delete or shrink to RrrTransport thunks)
-├── service.cc/.h         (phase 3: shrink to rrr→dispatcher shim)
+├── commo.cc/.h           (phase 2: delete or shrink to SrpcTransport thunks)
+├── service.cc/.h         (phase 3: shrink to srpc→dispatcher shim)
 ├── server.cc/.h          (phases 1, 3: replace commo_/RaftProxy with TransportProxy)
 ├── testconf.cc/.h        (phase 7: accept TestCluster)
 └── test.cc/.h            (phase 7: standalone-binary entrypoint)
@@ -328,7 +328,7 @@ src/deptran/raft/
 1. `make -j` / `cmake --build` is green (both the decoupled lab test
    binary and the production `deptran_server`).
 2. `src/deptran/raft/server.{h,cc}` contains zero references to
-   `rrr::Future`, `rrr::DeferredReply`, `FutureAttr`, `RaftProxy`.
+   `srpc::Future`, `srpc::DeferredReply`, `FutureAttr`, `RaftProxy`.
 3. `raft_lab_standalone` runs `RaftLabTest::Run()` end-to-end without
    binding any socket (verify with `ss -lntp | grep raft_lab_standalone`
    → no output).
@@ -337,7 +337,7 @@ src/deptran/raft/
 5. No `std::shared_ptr` / `std::unique_ptr` / `std::function` /
    `std::thread` / `std::vector` / `std::mutex` / `virtual` appears in
    any new file introduced by this plan. (Exceptions: proxy adapters
-   that have to bridge to existing rrr/rocksdb types — each conversion
+   that have to bridge to existing srpc/rocksdb types — each conversion
    site annotated `@unsafe` with justification.)
 
 ## Tracking
@@ -346,9 +346,9 @@ Phases completed will be checked off as commits land.
 
 - [x] Phase 0 — `messages.hpp`                             (f4356b6c1)
 - [x] Phase 1 — `TransportProxy`                           (ef79abcd1)
-- [x] Phase 2 — `RrrTransport` adapter (fire-and-forget)   (668d2ba84)
+- [x] Phase 2 — `SrpcTransport` adapter (fire-and-forget)   (668d2ba84)
 - [x] Phase 2.5 — callback-shaped quorum RPCs on RaftCommo +
-      full RrrTransportAdapter                            (6cf3dfd21)
+      full SrpcTransportAdapter                            (6cf3dfd21)
 - [x] Phase 3 — `DispatcherProxy` facade                   (4c6a1b102)
 - [x] Phase 4 — `ChannelTransport` + `Switchboard`         (2b39593bf)
 - [x] Phase 5 — `MemorySnapshotManager`                    (b97aff1e6)
@@ -362,7 +362,7 @@ Phases completed will be checked off as commits land.
    — every raft RPC is now declared `fiber` in `src/deptran/rcc_rpc.rpc`;
    the generated wrapper launches `Fiber::create_run` and marshals the
    returned response struct. `RaftServiceImpl` overrides take a request
-   struct and return `Result<Resp, rrr::i32>` directly.
+   struct and return `Result<Resp, srpc::i32>` directly.
 - `raft: snapshot trigger in StartApplyThread (fixes TEST 55)`       (31dc57a37)
    — unrelated snapshot bug fix.
 
@@ -373,7 +373,7 @@ The phase 0–7 work shipped the callback-shaped facades in
 them. That was the right shape before the inbound DeferredReply → fiber
 migration; it is no longer. With `fiber` RPCs in place, both inbound
 and outbound should speak the same synchronous-return shape, using
-`rrr::Future::wait` (rrr side) or `IntEvent::wait` (channel side) to
+`srpc::Future::wait` (srpc side) or `IntEvent::wait` (channel side) to
 yield the caller's fiber until a reply arrives. That uniformity
 eliminates the `RaftQuorum` primitive the earlier plan needed, removes
 every `rusty::Function<void(...)>` reply callback from raft code, and
@@ -386,14 +386,14 @@ One commit, ~400 LOC across existing phase headers + tests. Nothing in
 1 / 3 / 4.
 
 - `transport.hpp` — every quorum/reply-expecting `send_*` returns its
-  reply type (or `rusty::Result<Reply, rrr::i32>` to match the rrr
+  reply type (or `rusty::Result<Reply, srpc::i32>` to match the srpc
   codegen convention). Fire-and-forget methods
   (`send_vote_durable`, `send_append_entries_durable`,
   `send_notify_restart`) stay `void`. Delete every `OnXReply` typedef.
 - `dispatcher.hpp` — every `handle_*` returns its reply type. Delete
   every `OnXReplyDispatch` typedef.
-- `rrr_transport.hpp` — each reply-expecting method becomes a thin
-  wrapper that blocks on the rrr Future. The RaftCommo `*Cb` variants
+- `srpc_transport.hpp` — each reply-expecting method becomes a thin
+  wrapper that blocks on the srpc Future. The RaftCommo `*Cb` variants
   added in phase 2.5 either get synchronous counterparts or get
   rewritten to use `Future::wait` and return the reply. No
   `std::shared_ptr` holder bridging.
@@ -416,7 +416,7 @@ One commit, ~400 LOC across existing phase headers + tests. Nothing in
 1–2 commits, ~800 LOC changed in `server.cc`.
 
 - Add `TransportProxy transport_` on `RaftServer`; initialize in
-  `Setup()` as `make_rrr_transport(commo_, site_id_, partition_id_)`.
+  `Setup()` as `make_srpc_transport(commo_, site_id_, partition_id_)`.
   Production path unchanged underneath.
 - Replace every `commo()->SendX(...)` with `transport_->send_x(...)`.
   Because the facade is now fiber-synchronous, the leader's election
@@ -472,7 +472,7 @@ One commit, ~400 LOC across existing phase headers + tests. Nothing in
   `make_raft_server_dispatcher(server)`.
 - Bring up the server's timers / fibers
   (`StartElectionTimer`, `HeartbeatLoop`, `StartApplyThread`) exactly
-  as `deptran_server` does today. `rrr::Reactor` is still loaded; no
+  as `deptran_server` does today. `srpc::Reactor` is still loaded; no
   sockets are involved.
 - Verify with small gtest cases: election converges, `DoAgreement`
   commits across all nodes, `disconnect(follower)` silences AEs.
@@ -490,7 +490,7 @@ One commit, ~400 LOC across existing phase headers + tests. Nothing in
 - `DoAgreement(cmd, n, wait)` → call leader's log-append path, poll
   `commit_index()` across nodes.
 - `OneLeader()` → scan nodes for `is_leader()`.
-- Keep the existing rrr-based path under a build flag so
+- Keep the existing srpc-based path under a build flag so
   `deptran_server -f raft_lab_test.yml` continues to work.
 
 ### Phase 8.7 — `raft_lab_standalone` runs the full `RaftLabTest::Run()`

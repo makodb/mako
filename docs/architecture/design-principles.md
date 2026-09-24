@@ -206,7 +206,7 @@ Write latency:  ~2 ms (speculative commit)
 Use cooperative multitasking (coroutines) instead of preemptive multitasking (threads) for I/O-bound operations.
 
 **Implementation:**
-- RRR framework provides lightweight coroutines
+- SRPC framework provides lightweight coroutines
 - Reactor pattern for event-driven I/O
 - Thousands of concurrent operations per thread
 - No thread synchronization needed within a reactor
@@ -546,4 +546,4 @@ txn2->batch_put(results);
 
 ---
 
-**Next**: [Architecture Overview](architecture.md) | [Speculative 2PC](speculative-2pc.md) | [Configuration Reference](config.md)
+**Next**: [Architecture Overview](overview.md) | [Speculative 2PC](speculative-2pc.md) | [Configuration Reference](../configuration/config.md)

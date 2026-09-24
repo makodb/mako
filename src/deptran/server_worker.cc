@@ -11,7 +11,7 @@ void ServerWorker::SetupHeartbeat() {
   if (!hb) return;
   auto timeout = Config::GetConfig()->get_ctrl_timeout();
   svr_hb_poll_thread_worker_g = svr_poll_thread_worker_.clone();
-  hb_rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
+  hb_rpc_server_ = new srpc::Server(srpc::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
 
   // Create shared status and pass clone to service
   server_status_ = rusty::Some(rusty::Arc<ServerStatus>::make());
@@ -61,15 +61,15 @@ void ServerWorker::SetupService() {
   int ret;
   std::string bind_addr = site_info_->GetBindAddress();
 
-  // init rrr::PollThread
+  // init srpc::PollThread
   svr_poll_thread_worker_ = rusty::Some(PollThread::create());
-//  svr_thread_pool_ = new rrr::ThreadPool(1);
+//  svr_thread_pool_ = new srpc::ThreadPool(1);
 
   // Use as_ref().unwrap() to borrow without consuming the Option
   auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
 
-  // init rrr::Server first (before registering services)
-  rpc_server_ = new rrr::Server(rrr::Server::new_(rusty::Some(poll_worker.clone())));
+  // init srpc::Server first (before registering services)
+  rpc_server_ = new srpc::Server(srpc::Server::new_(rusty::Some(poll_worker.clone())));
   rpc_server_->set_admission_ready(false);
 
   // Create and register replication services (ownership transferred to
@@ -116,7 +116,7 @@ void ServerWorker::SetupCommo() {
   }
 
   Reactor::get_reactor()->server_id_.set(site_info_->id);
-//  svr_thread_pool_ = new rrr::ThreadPool(1);
+//  svr_thread_pool_ = new srpc::ThreadPool(1);
   auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_(
     [this]() {
       if (rep_sched_) {

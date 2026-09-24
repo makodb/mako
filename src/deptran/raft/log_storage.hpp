@@ -21,17 +21,17 @@
 #include <rusty/cell.hpp>
 #include <rusty/slice.hpp>
 
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 #include "../constants.h"      // slotid_t / ballot_t -- the single definition
 #include "../mako_commands.h"  // janus::Command (SerializableEnvelope<MakoCommands>)
 
 namespace janus {
 namespace raft {
 
-// Bring rrr:: marshalling types into janus::raft:: scope (they live in rrr::).
-using ::rrr::BinaryWriteArchive;
-using ::rrr::BinaryReadArchive;
-using ::rrr::i8;
+// Bring srpc:: marshalling types into janus::raft:: scope (they live in srpc::).
+using ::srpc::BinaryWriteArchive;
+using ::srpc::BinaryReadArchive;
+using ::srpc::i8;
 using ::janus::Command;
 
 // slotid_t / ballot_t come from ../constants.h above. They used to be
@@ -185,21 +185,21 @@ struct LogEntry {
      */
     // @unsafe - delegates to BinaryWriteArchive primitive operators
     void save(BinaryWriteArchive& ar) const {
-        rrr::Serialize_::serialize(slot_id, ar);
-        rrr::Serialize_::serialize(term, ar);
-        rrr::Serialize_::serialize(max_ballot_seen, ar);
-        rrr::Serialize_::serialize(max_ballot_accepted, ar);
-        rrr::Serialize_::serialize(log_entry_bool_to_i8(committed), ar);
-        rrr::Serialize_::serialize(log_entry_bool_to_i8(is_no_op), ar);
+        srpc::Serialize_::serialize(slot_id, ar);
+        srpc::Serialize_::serialize(term, ar);
+        srpc::Serialize_::serialize(max_ballot_seen, ar);
+        srpc::Serialize_::serialize(max_ballot_accepted, ar);
+        srpc::Serialize_::serialize(log_entry_bool_to_i8(committed), ar);
+        srpc::Serialize_::serialize(log_entry_bool_to_i8(is_no_op), ar);
 
         // drive the polymorphic command through Command's
         // own archive operator instead of wrapping it in a temporary
         // MarshallDeputy.  Wire format is identical (Command emits
         // `[v32 kind][payload]`, same as MarshallDeputy post-L9).
         i8 has_command = log_entry_bool_to_i8(command.has_value());
-        rrr::Serialize_::serialize(has_command, ar);
+        srpc::Serialize_::serialize(has_command, ar);
         if (log_entry_i8_to_bool(has_command)) {
-            rrr::Serialize_::serialize(command, ar);
+            srpc::Serialize_::serialize(command, ar);
         }
     }
 
@@ -211,23 +211,23 @@ struct LogEntry {
      */
     // @unsafe - delegates to BinaryReadArchive primitive operators
     void load(BinaryReadArchive& ar) {
-        rrr::Deserialize_::deserialize(slot_id, ar);
-        rrr::Deserialize_::deserialize(term, ar);
-        rrr::Deserialize_::deserialize(max_ballot_seen, ar);
-        rrr::Deserialize_::deserialize(max_ballot_accepted, ar);
+        srpc::Deserialize_::deserialize(slot_id, ar);
+        srpc::Deserialize_::deserialize(term, ar);
+        srpc::Deserialize_::deserialize(max_ballot_seen, ar);
+        srpc::Deserialize_::deserialize(max_ballot_accepted, ar);
 
         i8 committed_byte = 0;
-        rrr::Deserialize_::deserialize(committed_byte, ar);
+        srpc::Deserialize_::deserialize(committed_byte, ar);
         committed = log_entry_i8_to_bool(committed_byte);
 
         i8 is_no_op_byte = 0;
-        rrr::Deserialize_::deserialize(is_no_op_byte, ar);
+        srpc::Deserialize_::deserialize(is_no_op_byte, ar);
         is_no_op = log_entry_i8_to_bool(is_no_op_byte);
 
         i8 has_command = 0;
-        rrr::Deserialize_::deserialize(has_command, ar);
+        srpc::Deserialize_::deserialize(has_command, ar);
         if (log_entry_i8_to_bool(has_command)) {
-            rrr::Deserialize_::deserialize(command, ar);
+            srpc::Deserialize_::deserialize(command, ar);
         } else {
             command = Command{};
         }

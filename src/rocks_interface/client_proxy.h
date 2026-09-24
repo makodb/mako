@@ -1,9 +1,9 @@
-// @safe - RRR RPC client proxy for Mako client API
+// @safe - SRPC RPC client proxy for Mako client API
 #pragma once
 
 #include <rusty/arc.hpp>
 #include <string>
-#include "rrr/rrr.hpp"
+#include "srpc/srpc.hpp"
 #include "client_service.h"  // For RPC IDs
 
 namespace mako {
@@ -11,12 +11,12 @@ namespace mako {
 /**
  * MakoClientProxy - Client-side RPC proxy for Mako database
  *
- * This class wraps rrr::Client and provides a convenient API for
+ * This class wraps srpc::Client and provides a convenient API for
  * remote database operations via RPC.
  *
  * Usage:
- *   auto poll_thread = rrr::PollThread::create();
- *   auto client = rrr::Client::create(poll_thread);
+ *   auto poll_thread = srpc::PollThread::create();
+ *   auto client = srpc::Client::create(poll_thread);
  *   client->connect("localhost:31000");
  *   MakoClientProxy proxy(client);
  *
@@ -31,10 +31,10 @@ class MakoClientProxy {
 public:
     /**
      * Constructor
-     * @param client Connected rrr::Client instance
+     * @param client Connected srpc::Client instance
      */
     // @safe - Simple member initialization
-    explicit MakoClientProxy(rusty::Arc<rrr::Client> client)
+    explicit MakoClientProxy(rusty::Arc<srpc::Client> client)
         : client_(client) {}
 
     // @safe - Default destructor
@@ -51,7 +51,7 @@ public:
      * @return 0 on success, error code on failure
      */
     // @safe - Synchronous RPC call
-    rrr::i32 BeginTxn(rrr::i64 client_id, rrr::i64* txn_id);
+    srpc::i32 BeginTxn(srpc::i64 client_id, srpc::i64* txn_id);
 
     /**
      * Commit a transaction
@@ -59,7 +59,7 @@ public:
      * @return 0 on success, error code on failure
      */
     // @safe - Synchronous RPC call
-    rrr::i32 Commit(rrr::i64 txn_id);
+    srpc::i32 Commit(srpc::i64 txn_id);
 
     /**
      * Rollback a transaction
@@ -67,7 +67,7 @@ public:
      * @return 0 on success, error code on failure
      */
     // @safe - Synchronous RPC call
-    rrr::i32 Rollback(rrr::i64 txn_id);
+    srpc::i32 Rollback(srpc::i64 txn_id);
 
     /**
      * Put a key-value pair
@@ -78,7 +78,7 @@ public:
      * @return 0 on success, error code on failure
      */
     // @safe - Synchronous RPC call
-    rrr::i32 Put(rrr::i64 txn_id, rrr::i32 table_id,
+    srpc::i32 Put(srpc::i64 txn_id, srpc::i32 table_id,
                  const std::string& key, const std::string& value);
 
     /**
@@ -90,7 +90,7 @@ public:
      * @return 0 on success, error code on failure
      */
     // @safe - Synchronous RPC call
-    rrr::i32 Get(rrr::i64 txn_id, rrr::i32 table_id,
+    srpc::i32 Get(srpc::i64 txn_id, srpc::i32 table_id,
                  const std::string& key, std::string* value);
 
     /**
@@ -101,7 +101,7 @@ public:
      * @return 0 on success, error code on failure
      */
     // @safe - Synchronous RPC call
-    rrr::i32 Delete(rrr::i64 txn_id, rrr::i32 table_id,
+    srpc::i32 Delete(srpc::i64 txn_id, srpc::i32 table_id,
                     const std::string& key);
 
     // ========================================================================
@@ -112,46 +112,46 @@ public:
      * Async BeginTxn
      */
     // @safe - Returns Future for async handling
-    rrr::FutureResult async_BeginTxn(rrr::i64 client_id,
-                                     const rrr::FutureAttr& attr = rrr::FutureAttr());
+    srpc::FutureResult async_BeginTxn(srpc::i64 client_id,
+                                     const srpc::FutureAttr& attr = srpc::FutureAttr());
 
     /**
      * Async Commit
      */
     // @safe - Returns Future for async handling
-    rrr::FutureResult async_Commit(rrr::i64 txn_id,
-                                   const rrr::FutureAttr& attr = rrr::FutureAttr());
+    srpc::FutureResult async_Commit(srpc::i64 txn_id,
+                                   const srpc::FutureAttr& attr = srpc::FutureAttr());
 
     /**
      * Async Rollback
      */
     // @safe - Returns Future for async handling
-    rrr::FutureResult async_Rollback(rrr::i64 txn_id,
-                                     const rrr::FutureAttr& attr = rrr::FutureAttr());
+    srpc::FutureResult async_Rollback(srpc::i64 txn_id,
+                                     const srpc::FutureAttr& attr = srpc::FutureAttr());
 
     /**
      * Async Put
      */
     // @safe - Returns Future for async handling
-    rrr::FutureResult async_Put(rrr::i64 txn_id, rrr::i32 table_id,
+    srpc::FutureResult async_Put(srpc::i64 txn_id, srpc::i32 table_id,
                                 const std::string& key, const std::string& value,
-                                const rrr::FutureAttr& attr = rrr::FutureAttr());
+                                const srpc::FutureAttr& attr = srpc::FutureAttr());
 
     /**
      * Async Get
      */
     // @safe - Returns Future for async handling
-    rrr::FutureResult async_Get(rrr::i64 txn_id, rrr::i32 table_id,
+    srpc::FutureResult async_Get(srpc::i64 txn_id, srpc::i32 table_id,
                                 const std::string& key,
-                                const rrr::FutureAttr& attr = rrr::FutureAttr());
+                                const srpc::FutureAttr& attr = srpc::FutureAttr());
 
     /**
      * Async Delete
      */
     // @safe - Returns Future for async handling
-    rrr::FutureResult async_Delete(rrr::i64 txn_id, rrr::i32 table_id,
+    srpc::FutureResult async_Delete(srpc::i64 txn_id, srpc::i32 table_id,
                                    const std::string& key,
-                                   const rrr::FutureAttr& attr = rrr::FutureAttr());
+                                   const srpc::FutureAttr& attr = srpc::FutureAttr());
 
     // ========================================================================
     // Connection management
@@ -174,7 +174,7 @@ public:
     }
 
 private:
-    rusty::Arc<rrr::Client> client_;  // The underlying RPC client
+    rusty::Arc<srpc::Client> client_;  // The underlying RPC client
 };
 
 } // namespace mako

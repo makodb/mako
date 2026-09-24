@@ -235,7 +235,7 @@ static rcu s_instance CACHE_ALIGNED;      // src/mako/rcu.h:293
 static ticker s_instance CACHE_ALIGNED;   // src/mako/ticker.h:188
 
 // SpinLock's atomic flag on its own cache line:
-// src/rrr/base/threading.hpp:104
+// src/srpc/base/threading.hpp:104
 std::atomic<bool> locked_ alignas(64);
 
 // RCU sync checks alignment at construction:
@@ -274,7 +274,7 @@ zero-length array, making `sizeof(Foo) == 64`.
 
 ## 3. Custom Spinlocks
 
-**Files:** `src/mako/spinlock.h`, `src/rrr/base/threading.hpp`, `src/rrr/base/threading.cpp`
+**Files:** `src/mako/spinlock.h`, `src/srpc/base/threading.hpp`, `src/srpc/base/threading.cpp`
 
 ### When to Use Spinlocks vs Mutexes
 
@@ -324,12 +324,12 @@ TTAS first *reads* the value. If it's locked, the read can be served from the
 local cache (shared state, no bus traffic). Only when we see 0 do we attempt CAS.
 This reduces bus traffic from O(N) to O(1) per acquisition.
 
-### Implementation: RRR's Adaptive Spinlock
+### Implementation: SRPC's Adaptive Spinlock
 
-The RRR framework has a more sophisticated spinlock with **exponential backoff**:
+The SRPC framework has a more sophisticated spinlock with **exponential backoff**:
 
 ```cpp
-// src/rrr/base/threading.cpp
+// src/srpc/base/threading.cpp
 
 void SpinLock::lock() {
     // Phase 1: Try immediate CAS (fast path).
@@ -401,7 +401,7 @@ On x86, `PAUSE` (encoding: `F3 90`, also `REP NOP`) does two things:
 
 ## 4. Memory Ordering (Acquire/Release Semantics)
 
-**Files:** `src/mako/circbuf.h`, `src/mako/ticker.h`, `src/rrr/base/threading.hpp`
+**Files:** `src/mako/circbuf.h`, `src/mako/ticker.h`, `src/srpc/base/threading.hpp`
 
 ### The Problem
 
@@ -446,7 +446,7 @@ The pattern:
 3. Consumer does an `acquire` load to read the pointer.
 4. Consumer reads object fields -- guaranteed to see the producer's writes.
 
-**SpinLock** (`src/rrr/base/threading.hpp`):
+**SpinLock** (`src/srpc/base/threading.hpp`):
 
 ```cpp
 // Lock: ACQUIRE -- all critical section reads happen AFTER the lock.
@@ -846,7 +846,7 @@ reducing per-entry overhead.
 ## 8. Thread-Local Storage (TLS)
 
 **Files:** `src/mako/core.h`, `src/mako/masstree/masstree_context.h`,
-`src/rrr/reactor/reactor.h`
+`src/srpc/reactor/reactor.h`
 
 ### The Mechanism
 
@@ -874,7 +874,7 @@ class coreid {
 };
 ```
 
-**Thread-local reactor** (`src/rrr/reactor/reactor.h`):
+**Thread-local reactor** (`src/srpc/reactor/reactor.h`):
 
 ```cpp
 class Reactor {
@@ -1297,7 +1297,7 @@ all dynamic allocation in the hot path.
 
 ## 14. Cooperative Scheduling (Fibers/Coroutines)
 
-**Files:** `src/rrr/reactor/fiber_impl.h`, `src/rrr/reactor/reactor.h`
+**Files:** `src/srpc/reactor/fiber_impl.h`, `src/srpc/reactor/reactor.h`
 
 ### The Problem
 
@@ -1314,7 +1314,7 @@ saving/restoring a few registers -- ~10-100 ns, no kernel involvement.
 ### Implementation
 
 ```cpp
-// src/rrr/reactor/fiber_impl.h
+// src/srpc/reactor/fiber_impl.h
 
 class Fiber {
     rusty::Cell<Status> status_{INIT};
@@ -1345,7 +1345,7 @@ All of this happens **in user space** -- the OS sees a single thread.
 
 ## 15. Work-Stealing Thread Pool
 
-**Files:** `src/rrr/base/threading.cpp`
+**Files:** `src/srpc/base/threading.cpp`
 
 ### The Design
 
@@ -1353,7 +1353,7 @@ Each worker thread has its own private queue. When a worker's queue is empty, it
 **steals** from other workers' queues:
 
 ```cpp
-// src/rrr/base/threading.cpp
+// src/srpc/base/threading.cpp
 
 void ThreadPool::run_thread(int id_in_pool) {
     // Randomized stealing order (avoids all workers stealing from thread 0).

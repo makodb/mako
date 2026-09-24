@@ -1,10 +1,10 @@
 #pragma once
 
-// Inline-mode counterpart of src/rrr/rust-type-map.toml.
+// Inline-mode counterpart of src/srpc/rust-type-map.toml.
 //
 // WHY THIS FILE EXISTS
 //
-// The rusty-cpp transpiler has two modes. Crate mode (which src/rrr uses)
+// The rusty-cpp transpiler has two modes. Crate mode (which src/srpc uses)
 // takes `--type-map`, so a canonical Rust name such as `rusty::ReactorIntEvent`
 // is rewritten to its real C++ spelling `IntEvent` on the way out. Inline mode
 // -- `rusty-cpp-transpiler inline-rust`, which every src/deptran/raft carrier
@@ -13,13 +13,13 @@
 // Rust spells.
 //
 // So the two languages have to agree on one name. Rust's side is fixed: the
-// rustc facade crate (src/rrr/rusty-rustc/src/lib.rs:337-338) publishes these
+// rustc facade crate (src/srpc/rusty-rustc/src/lib.rs:337-338) publishes these
 // reactor types as `rusty::ReactorPollThread` and `rusty::ReactorIntEvent`,
 // and a DSL block must use those names or rustc cannot resolve them at all
 // (the facade-crate constraint in docs/migration/raft/plan.md). This header supplies
 // the other side: the same two names, in C++, aliased to the real types.
 //
-// The pairs below are the same pairs src/rrr/rust-type-map.toml already
+// The pairs below are the same pairs src/srpc/rust-type-map.toml already
 // declares:
 //
 //     ReactorIntEvent   = "IntEvent"
@@ -36,9 +36,9 @@
 // third-party/rusty-cpp refers to either identifier, so nothing existing can
 // bind to them by accident.
 //
-// ORDERING: include this AFTER the header that imports the rrr reactor module
+// ORDERING: include this AFTER the header that imports the srpc reactor module
 // (server.h does). Both targets are owned by the C++20 named module
-// `rrr.reactor`, so they cannot be forward-declared from here -- an alias is
+// `srpc.reactor`, so they cannot be forward-declared from here -- an alias is
 // all this file may contain.
 
 namespace rusty::ffi {
@@ -53,14 +53,14 @@ using c_char = char;
 
 namespace rusty {
 
-using ReactorPollThread = ::rrr::PollThread;
-using ReactorIntEvent = ::rrr::IntEvent;
-using ReactorFiber = ::rrr::Fiber;
+using ReactorPollThread = ::srpc::PollThread;
+using ReactorIntEvent = ::srpc::IntEvent;
+using ReactorFiber = ::srpc::Fiber;
 
 // Opaque carriers. A Raft DSL type may HOLD these and hand them to a kernel;
 // it may never dereference one, which is enforced by the Rust side modelling
 // them as opaque structs of the C++ size and alignment (the layout pins in
-// server.h). See src/rrr/rusty-rustc/src/lib.rs.
+// server.h). See src/srpc/rusty-rustc/src/lib.rs.
 using RaftResponsePtr = ::std::shared_ptr<::janus::AppendEntriesResponse>;
 // RaftCommand is aliased in src/deptran/scheduler.h, where RaftSpecific names it.
 

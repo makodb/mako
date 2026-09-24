@@ -10,7 +10,7 @@
 #include <vector>
 
 #include "constants.h"
-#include "rrr_log.h"
+#include "srpc_log.h"
 
 namespace janus {
 
@@ -71,7 +71,7 @@ class View {
     timestamp_ = std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::system_clock::now().time_since_epoch()).count();
     
-    rrr::Log_info("[VIEW] Updated leader for partition {}: {} -> {}, view_id={}, timestamp={}",
+    srpc::Log_info("[VIEW] Updated leader for partition {}: {} -> {}, view_id={}, timestamp={}",
                   partition_id, old_leader, new_leader, view_id_, timestamp_);
   }
   

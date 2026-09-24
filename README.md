@@ -98,6 +98,7 @@ Mako includes a Redis-compatible layer for:
 | [Full Documentation](docs/index.md) | Complete documentation index |
 | [Developer Guide](docs/developer/development.md) | Build system, testing, architecture |
 | [Transport Backends](docs/developer/transport-backends.md) | RPC and networking options |
+| [Porting C++ to an Inline-Rust DSL](docs/porting-cpp-to-rust-dsl.md) | How new code is authored: the rusty-cpp DSL field guide |
 | [CLAUDE.md](CLAUDE.md) | Codebase guidelines for AI assistants |
 
 ---

@@ -123,7 +123,7 @@ grep "borrow_check" CMakeLists.txt
 # Temporarily disable for debugging
 # In CMakeLists.txt, comment out the borrow_check target
 
-# See doc/rrr-rustycpp-migration-plan.md for migration guide
+# See doc/srpc-rustycpp-migration-plan.md for migration guide
 ```
 
 ---
@@ -767,7 +767,7 @@ gdb ./build/dbtest /tmp/core.dbtest.12345
 
 - **GitHub Issues**: [github.com/makodb/mako/issues](https://github.com/makodb/mako/issues)
 - **GitHub Discussions**: [github.com/makodb/mako/discussions](https://github.com/makodb/mako/discussions)
-- **Documentation**: [doc/index.md](index.md)
+- **Documentation**: [doc/index.md](../index.md)
 
 ### Reporting Bugs
 
@@ -779,7 +779,3 @@ Include:
 5. **Actual behavior**: What actually happens
 6. **Logs**: Relevant log excerpts
 7. **Configuration**: Sanitized config file
-
----
-
-**Next**: [Connection Issues](connection.md) | [Performance Issues](performance.md) | [FAQ](../faq/general.md)

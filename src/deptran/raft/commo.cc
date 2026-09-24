@@ -20,7 +20,7 @@ void CompleteAppendEntriesResponse(
 
 }  // namespace
 
-RaftCommo::RaftCommo(rusty::Option<rusty::Arc<rrr::PollThread>> poll)
+RaftCommo::RaftCommo(rusty::Option<rusty::Arc<srpc::PollThread>> poll)
     : Communicator(std::move(poll)) {}
 
 shared_ptr<AppendEntriesResponse> RaftCommo::SendAppendEntries2(
@@ -46,7 +46,7 @@ shared_ptr<AppendEntriesResponse> RaftCommo::SendAppendEntries2(
   }
 
   FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
+  attr.callback = srpc::FutureCallback::from_callable(
       [response, site_id](rusty::Arc<Future> future) {
         if (commo_future_failed(future->get_error_code())) {
           Log_debug("[APPEND_RPC] Error response from site {}, error_code={}",
@@ -54,9 +54,9 @@ shared_ptr<AppendEntriesResponse> RaftCommo::SendAppendEntries2(
           CompleteAppendEntriesResponse(response);
           return;
         }
-        rrr::deserialize_from(future->get_reply(), response->status);
-        rrr::deserialize_from(future->get_reply(), response->term);
-        rrr::deserialize_from(future->get_reply(), response->last_log_index);
+        srpc::deserialize_from(future->get_reply(), response->status);
+        srpc::deserialize_from(future->get_reply(), response->term);
+        srpc::deserialize_from(future->get_reply(), response->last_log_index);
         Log_debug("[APPEND_RPC] Success response from site {}: status={}, "
                   "term={}, lastLogIndex={}",
                   site_id, response->status, response->term,
@@ -64,7 +64,7 @@ shared_ptr<AppendEntriesResponse> RaftCommo::SendAppendEntries2(
         CompleteAppendEntriesResponse(response);
       });
 
-  peer->WithClient([&](rrr::Client* client) {
+  peer->WithClient([&](srpc::Client* client) {
     RaftProxy proxy(client);
     if (commo_append_entries_empty_from_cmd(cmd.has_value())) {
       Log_debug("Heartbeat AppendEntries to site {} prevLogIndex={}",
@@ -124,7 +124,7 @@ shared_ptr<RaftVoteQuorumEvent> RaftCommo::BroadcastVote(
     }
 
     FutureAttr attr;
-    attr.callback = rrr::FutureCallback::from_callable(
+    attr.callback = srpc::FutureCallback::from_callable(
         [event, site_id](rusty::Arc<Future> future) {
           if (commo_future_failed(future->get_error_code())) {
             Log_debug("[VOTE_RPC] Error response from site {}, error_code={}",
@@ -133,8 +133,8 @@ shared_ptr<RaftVoteQuorumEvent> RaftCommo::BroadcastVote(
           }
           ballot_t term = 0;
           bool_t vote = false;
-          rrr::deserialize_from(future->get_reply(), term);
-          rrr::deserialize_from(future->get_reply(), vote);
+          srpc::deserialize_from(future->get_reply(), term);
+          srpc::deserialize_from(future->get_reply(), vote);
           event->FeedResponse(vote, term);
         });
     RaftProxy::RpcVoteRequest req{};
@@ -142,7 +142,7 @@ shared_ptr<RaftVoteQuorumEvent> RaftCommo::BroadcastVote(
     req.lst_log_term = lst_log_term;
     req.site_id = self_id;
     req.cur_term = cur_term;
-    peer->WithClient([&](rrr::Client* client) {
+    peer->WithClient([&](srpc::Client* client) {
       RaftProxy proxy(client);
       auto result = proxy.async_Vote(req, attr);
       _RPC_COUNT();
@@ -172,7 +172,7 @@ void RaftCommo::SendInstallSnapshot(
   }
 
   FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
+  attr.callback = srpc::FutureCallback::from_callable(
       [callback, site_id](rusty::Arc<Future> future) {
         if (commo_future_failed(future->get_error_code())) {
           Log_debug("[INSTALL-SNAPSHOT-RPC] Failed to send to site {} - error {}",
@@ -183,7 +183,7 @@ void RaftCommo::SendInstallSnapshot(
           return;
         }
         uint64_t follower_term = 0;
-        rrr::deserialize_from(future->get_reply(), follower_term);
+        srpc::deserialize_from(future->get_reply(), follower_term);
         if (callback) {
           callback(follower_term);
         }
@@ -194,7 +194,7 @@ void RaftCommo::SendInstallSnapshot(
   req.last_included_index = last_included_index;
   req.last_included_term = last_included_term;
   req.data = data;
-  peer->WithClient([&](rrr::Client* client) {
+  peer->WithClient([&](srpc::Client* client) {
     RaftProxy proxy(client);
     auto result = proxy.async_InstallSnapshot(req, attr);
     _RPC_COUNT();
@@ -226,7 +226,7 @@ void RaftCommo::SendAppendEntriesCb(
 
   auto cmd_keep = cmd;
   FutureAttr attr;
-  attr.callback = rrr::FutureCallback::from_callable(
+  attr.callback = srpc::FutureCallback::from_callable(
       [on_reply, cmd_keep, site_id](rusty::Arc<Future> future) {
         if (commo_future_failed(future->get_error_code())) {
           Log_debug("[APPEND_RPC_CB] Error from site {} code={}",
@@ -234,14 +234,14 @@ void RaftCommo::SendAppendEntriesCb(
           return;
         }
         raft::AppendEntriesReply reply{};
-        rrr::deserialize_from(future->get_reply(), reply.follower_append_ok);
-        rrr::deserialize_from(future->get_reply(), reply.follower_current_term);
-        rrr::deserialize_from(future->get_reply(),
+        srpc::deserialize_from(future->get_reply(), reply.follower_append_ok);
+        srpc::deserialize_from(future->get_reply(), reply.follower_current_term);
+        srpc::deserialize_from(future->get_reply(),
                               reply.follower_last_log_index);
         on_reply(site_id, reply);
       });
 
-  peer->WithClient([&](rrr::Client* client) {
+  peer->WithClient([&](srpc::Client* client) {
     RaftProxy proxy(client);
     if (commo_append_entries_empty_from_cmd(cmd.has_value())) {
       RaftProxy::RpcEmptyAppendEntriesRequest req{};
@@ -290,7 +290,7 @@ void RaftCommo::BroadcastVoteCb(
       continue;
     }
     FutureAttr attr;
-    attr.callback = rrr::FutureCallback::from_callable(
+    attr.callback = srpc::FutureCallback::from_callable(
         [on_reply, site_id](rusty::Arc<Future> future) {
           if (commo_future_failed(future->get_error_code())) {
             Log_debug("[VOTE_RPC_CB] Error from site {} code={}",
@@ -300,8 +300,8 @@ void RaftCommo::BroadcastVoteCb(
           raft::VoteReply reply{};
           ballot_t term = 0;
           bool_t vote = false;
-          rrr::deserialize_from(future->get_reply(), term);
-          rrr::deserialize_from(future->get_reply(), vote);
+          srpc::deserialize_from(future->get_reply(), term);
+          srpc::deserialize_from(future->get_reply(), vote);
           reply.max_ballot = term;
           reply.vote_granted = vote;
           on_reply(site_id, reply);
@@ -311,7 +311,7 @@ void RaftCommo::BroadcastVoteCb(
     req.lst_log_term = lst_log_term;
     req.site_id = self_id;
     req.cur_term = cur_term;
-    peer->WithClient([&](rrr::Client* client) {
+    peer->WithClient([&](srpc::Client* client) {
       RaftProxy proxy(client);
       auto result = proxy.async_Vote(req, attr);
       _RPC_COUNT();

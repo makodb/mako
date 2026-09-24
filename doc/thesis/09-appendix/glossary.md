@@ -55,19 +55,19 @@
 
 | Term | Definition |
 |------|------------|
-| **rrr** | The custom RPC framework used by Mako.  Provides TCP/IP-based remote procedure calls with ~10-50 us latency on localhost. |
-| **eRPC** | High-performance RDMA-based RPC backend.  ~1-2 us latency.  Optional alternative to rrr.  Not used in CI benchmarks. |
+| **srpc** | The custom RPC framework used by Mako.  Provides TCP/IP-based remote procedure calls with ~10-50 us latency on localhost. |
+| **eRPC** | High-performance RDMA-based RPC backend.  ~1-2 us latency.  Optional alternative to srpc.  Not used in CI benchmarks. |
 | **DPDK** | Data Plane Development Kit.  Kernel-bypass networking library.  Supported by the legacy Deptran transport layer. |
 | **Masstree** | High-performance in-memory concurrent B-tree index.  Used by Mako as the primary storage engine for transaction data. |
 | **RocksDB** | Facebook's persistent key-value store based on LSM trees.  Used for Raft/Paxos log persistence via `RocksDBLogStorage`. |
 | **jemalloc** | A memory allocator designed for multi-threaded applications.  Used by Mako for reduced allocation overhead and better cache behaviour. |
 | **RustyCpp** | A C++ library providing Rust-style smart pointers and safety annotations.  Used for memory safety: `rusty::Box`, `rusty::Arc`, `rusty::Cell`, `rusty::Option`. |
-| **Marshal** | The rrr framework's serialization format.  `to_marshal()` and `from_marshal()` convert structs to/from wire format for RPC. |
+| **Marshal** | The srpc framework's serialization format.  `to_marshal()` and `from_marshal()` convert structs to/from wire format for RPC. |
 | **dbtest** | The main Mako test binary.  Runs TPC-C benchmark with configurable replication (Raft/Paxos), shards, and threads. |
 | **simpleRaft** | Standalone Raft replication test binary.  Submits fixed-size log entries without transaction processing. |
 | **simpleTransactionRepRaft** | Simple key-value transaction test binary with Raft replication and data integrity verification. |
 | **GDB** | GNU Debugger.  `MAKO_NO_GDB=1` is set in CI to disable GDB wrapping, which would break log parsing. |
-| **Coroutine** | Cooperative multitasking primitive used by the rrr framework.  Raft test cases run as coroutines via `RAFT_TEST_CORO` and `Reactor::CreateSpEvent()`. |
+| **Coroutine** | Cooperative multitasking primitive used by the srpc framework.  Raft test cases run as coroutines via `RAFT_TEST_CORO` and `Reactor::CreateSpEvent()`. |
 | **Fiber** | Alternative name for coroutine in parts of the codebase.  `Fiber::create_run()` creates and runs a new coroutine. |
 
 ## 5. Persistence Terms
