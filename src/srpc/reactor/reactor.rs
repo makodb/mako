@@ -1,19 +1,21 @@
 //! Canonical Rust source for the historical `srpc.reactor` provider.
 //!
-//! This file intentionally retains the historical `.cpp` path.  The crate
-//! view is `#[path = "../reactor/reactor.rs"] pub mod reactor;` in the
+//! The crate view is `#[path = "../reactor/reactor.rs"] pub mod reactor;` in the
 //! generated `src/lib.rs`, which points straight back at this source of truth.
 //!
-//! Direct Rust execution of this module is intentionally unsupported for now.
-//! The inert `cfg_attr(any(), thread_local)` markers below preserve the
-//! generated-C++ `thread_local` contract, but rustc sees ordinary mutable
-//! globals.  Cargo therefore supplies parsing, type, auto-trait, and facade
-//! checks only; native generated-C++ TLS and multithread runtime tests remain
-//! mandatory promotion gates.
+//! Per-thread state is spelled with Rust's `thread_local!` macro, which is
+//! real in BOTH lanes: rustc gets the std macro (per-thread by construction),
+//! and the transpiler lowers each declaration to a C++
+//! `inline thread_local rusty::LocalKey<T>` whose closure-only `.with()`
+//! accessor the access sites already use.  This retired the old
+//! `#[cfg_attr(any(), thread_local)]` + `static mut` model, under which the
+//! same statics were silently process-global under rustc and any
+//! multi-threaded use raced.  Native generated-C++ race, teardown, layout,
+//! and symbol gates remain mandatory.
 //!
 //! Stackless wakeups use a private owner-thread ingress.  Wakers retain only
 //! thread-safe heap tickets/queues; the Reactor pointer never crosses threads,
-//! and every Context/Waker allocation remains stable through Task destruction.
+//! and each poll borrows a Context built from an owned standard Waker.
 //! Native generated-C++ race, teardown, layout, and symbol gates are still
 //! mandatory before promotion.
 
@@ -26,60 +28,98 @@
     unused_imports,
     unused_mut,
 )]
-// The `static mut` thread-locals above are this file's rustc-side MODEL of the
-// generated C++ `thread_local` namespace variables (module header, paragraph 2).
-// Under that model every read is a shared reference to a `static mut`, so
-// `static_mut_refs` fires once per access — 15 times — for a hazard the real
-// lowering does not have: each C++ object is per-thread, so no two threads ever
-// alias one. The lint cannot be fixed per site: `thread_local!` changes the
-// generated storage, and dropping `mut` (rustc's own suggestion for the
-// `RefCell` one) does not compile, because a non-`mut` static requires `Sync`
-// and `RefCell<Option<Rc<Fiber>>>` is not. Native generated-C++ TLS, race and
-// teardown gates remain mandatory and are what actually check this.
-#![allow(static_mut_refs)]
 
-use rusty::cpp_inherit;
 use std::cell::{Cell, RefCell, RefMut};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::rc::Rc;
+use std::future::Future;
+use std::pin::Pin;
+use std::task::{Context, Poll, Wake, Waker};
 use std::sync::{Arc, Weak};
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64};
 
 use crate::basetypes::Time;
 use crate::epoll_wrapper::{Epoll, PollMode, PollReady, Pollable};
 use crate::misc::Job;
 use crate::pollable_proxy::{PollableBase, PollableProxy};
-use crate::logging::Log;
-use cpp::srpc::{debugging as cpp_debugging, logging as cpp_logging};
-use cpp::std as cpp_std;
-use rusty as cpp;
+use crate::logging::{log_line, Log};
+use crate::threading as _;
+use crate::debugging::verify_at;
 
-type LegacyStdString = String;
 pub type SrcFileCStr = &'static str;
-pub type EventTestFn = rusty::Function<dyn Fn(i32) -> bool>;
-pub type FiberFn = rusty::Function<dyn FnMut()>;
-pub type FiberTaskFn = rusty::Function<dyn FnMut(&mut fiber_yield_t)>;
-pub type StacklessPollFn = rusty::Function<dyn FnMut(&mut rusty::Context) -> bool>;
-pub type TaskVoid = rusty::Task<()>;
-pub type PollCmdReceiver = rusty::sync::mpsc::Receiver<PollCommand>;
+// Explicit standard identities let the C++ emitter prove imported callback
+// aliases despite this module's thread_local! declarations.
+pub type EventTestFn = ::core::option::Option<
+    ::std::boxed::Box<dyn ::core::ops::Fn(::core::primitive::i32) -> ::core::primitive::bool>,
+>;
+pub type FiberFn = ::core::option::Option<::std::boxed::Box<dyn ::core::ops::FnMut()>>;
+pub type FiberTaskFn = Option<Box<dyn FnMut(&mut fiber_yield_t)>>;
+pub type StacklessPollFn = Option<Box<dyn FnMut(&mut Context<'_>) -> bool>>;
+pub type TaskVoid = Pin<Box<dyn Future<Output = ()>>>;
+pub type PollCmdReceiver = std::sync::mpsc::Receiver<PollCommand>;
 pub type FdPollableMap = HashMap<i32, PollableProxy>;
 pub type FdModeMap = HashMap<i32, i32>;
 pub type FdSet = HashSet<i32>;
-pub type JobSet = rusty::ReactorJobSet<Arc<dyn Job>>;
-pub type PollJoinSlot = rusty::Mutex<Option<rusty::thread::JoinHandle<()>>>;
-// The historical callback ABI is Vec<std::pair<u16, i64>>, not a Rust tuple.
-// Use the checked facade that maps exactly to std::pair in generated C++.
-pub type QuorumDanglingVec = Vec<rusty::StdPair<u16, i64>>;
-pub type QuorumFinalizeFn = rusty::Function<dyn FnMut(&mut QuorumDanglingVec) -> bool>;
-pub type StacklessProfileCountU64 = rusty::sync::atomic::AtomicU64;
-pub type StacklessProfileCountUsize = rusty::sync::atomic::AtomicUsize;
+pub type JobSet = std::collections::BTreeMap<usize, Arc<dyn Job>>;
+pub type PollJoinSlot = std::sync::Mutex<Option<std::thread::JoinHandle<()>>>;
+// The tuple alias keeps the historical std::pair callback element profile.
+pub type QuorumDangling = (u16, i64);
+pub type QuorumDanglingVec = Vec<QuorumDangling>;
+pub type QuorumFinalizeFn = Option<Box<dyn FnMut(&mut QuorumDanglingVec) -> bool>>;
+pub type StacklessProfileCountU64 = std::sync::atomic::AtomicU64;
+pub type StacklessProfileCountUsize = std::sync::atomic::AtomicUsize;
 // rustc models C `char` as an i8 on the supported Unix targets, while the
 // production C++ declaration must retain the distinct built-in `char` type.
 // `rust-type-map.toml` maps this established facade name to C++ `char`.
 type LegacyCChar = i8;
 
-type srpc_fiber_ctx = rusty::ReactorFiberContext;
-type srpc_fiber = rusty::ReactorFiberState;
+/// Native x86-64 fiber register layout, shared with the C/assembly engine.
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[cfg_attr(any(), cpp_native_type)]
+pub struct srpc_fiber_ctx {
+    pub rsp: *mut core::ffi::c_void,
+    pub rip: *mut core::ffi::c_void,
+    pub rbx: usize,
+    pub rbp: usize,
+    pub r12: usize,
+    pub r13: usize,
+    pub r14: usize,
+    pub r15: usize,
+}
+
+/// Native AArch64 register layout from reactor/srpc_fiber.h.
+#[cfg(target_arch = "aarch64")]
+#[repr(C)]
+#[cfg_attr(any(), cpp_native_type)]
+pub struct srpc_fiber_ctx {
+    pub sp: *mut core::ffi::c_void,
+    pub pc: *mut core::ffi::c_void,
+    pub x19: usize,
+    pub x20: usize,
+    pub x21: usize,
+    pub x22: usize,
+    pub x23: usize,
+    pub x24: usize,
+    pub x25: usize,
+    pub x26: usize,
+    pub x27: usize,
+    pub x28: usize,
+    pub fp: usize,
+}
+
+/// Native fiber state shared with reactor/srpc_fiber.h.
+#[repr(C)]
+#[cfg_attr(any(), cpp_native_type)]
+pub struct srpc_fiber {
+    pub caller_ctx: srpc_fiber_ctx,
+    pub fiber_ctx: srpc_fiber_ctx,
+    pub stack_mapping: *mut core::ffi::c_void,
+    pub stack_mapping_bytes: usize,
+    pub state: i32,
+    pub entry_fn: Option<unsafe extern "C" fn(*mut core::ffi::c_void)>,
+    pub entry_arg: *mut core::ffi::c_void,
+}
 
 unsafe extern "C" {
     fn srpc_fiber_init(
@@ -133,22 +173,16 @@ fn reusing_fiber() -> bool {
 // The incumbent had no wrapper at all; it called the imported template
 // directly, which is what this rename restores.
 fn reactor_verify(value: bool) {
-    // The checked foreign facade models the same abort-on-false contract as
-    // the imported `srpc.debugging` provider.
-    unsafe { cpp_debugging::verify(value) };
+    verify_at(value, file!(), line!());
 }
 
 // NOT named `log_line`: the imported `srpc::logging::log_line` lands in the
 // same C++ namespace `srpc`, so a same-named local wrapper joins its overload
-// set and the forwarding call below resolves back to ITSELF. The parameter is
-// `LegacyStdString` (the established alias every other module uses for a
-// value that crosses into the C++ logger) rather than `String`, so the
-// forward is a plain `const std::string&` bind instead of an impossible
-// `rusty::String` -> `std::string` conversion.
-fn reactor_log_line(level: i32, line: i32, file: *const i8, message: LegacyStdString) {
+// set and the forwarding call below resolves back to ITSELF.
+fn reactor_log_line(level: i32, line: i32, file: *const i8, message: String) {
     // The production logger consumes the message synchronously and retains no
     // borrow; the owned Rust value therefore has exactly the required extent.
-    unsafe { cpp_logging::log_line(level, line, file, &message) };
+    unsafe { log_line(level, line, file, &message) };
 }
 
 fn move_matching<T, F>(source: &mut VecDeque<T>, destination: &mut VecDeque<T>, mut predicate: F)
@@ -166,19 +200,16 @@ where
     }
 }
 
-#[cfg_attr(any(), thread_local)]
-pub static mut sp_reactor_th_: Option<Rc<Reactor>> = Option::<Rc<Reactor>>::None;
-#[cfg_attr(any(), thread_local)]
-pub static mut sp_disk_reactor_th_: Option<Rc<Reactor>> = Option::<Rc<Reactor>>::None;
-// MEASURED, not assumed: rustc's own `static_mut_refs` suggestion here —
-// "this type already provides interior mutability, so its binding doesn't
-// need to be declared as mutable" — DOES NOT COMPILE. A non-`mut` static
-// requires `Sync`, and `RefCell<Option<Rc<Fiber>>>` is neither. `static mut`
-// is how rustc models a C++ namespace-scope `thread_local` in this facade
-// (see the module header); the real per-thread storage comes from the
-// marker above. See the crate-level `static_mut_refs` allow below.
-#[cfg_attr(any(), thread_local)]
-pub static mut sp_running_fiber_th_: RefCell<Option<Rc<Fiber>>> = RefCell::new(Option::<Rc<Fiber>>::None);
+thread_local! {
+    pub static sp_reactor_th_: RefCell<Option<Rc<Reactor>>> =
+        const { RefCell::new(Option::<Rc<Reactor>>::None) };
+    pub static sp_disk_reactor_th_: RefCell<Option<Rc<Reactor>>> =
+        const { RefCell::new(Option::<Rc<Reactor>>::None) };
+}
+thread_local! {
+    pub static sp_running_fiber_th_: RefCell<Option<Rc<Fiber>>> =
+        const { RefCell::new(Option::<Rc<Fiber>>::None) };
+}
 
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 #[repr(i32)]
@@ -198,7 +229,7 @@ pub struct EventState {
     pub wakeup_time_: Cell<u64>,
     pub rcd_wait_: Cell<bool>,
     pub wait_place_: RefCell<String>,
-    pub wp_fiber_: RefCell<rusty::rc::Weak<Fiber>>,
+    pub wp_fiber_: RefCell<std::rc::Weak<Fiber>>,
 }
 
 impl EventState {
@@ -209,7 +240,7 @@ impl EventState {
             wakeup_time_: Cell::new(0),
             rcd_wait_: Cell::new(false),
             wait_place_: RefCell::new(String::new()),
-            wp_fiber_: RefCell::new(rusty::rc::Weak::new()),
+            wp_fiber_: RefCell::new(std::rc::Weak::new()),
         }
     }
 }
@@ -228,7 +259,7 @@ pub trait EventPollable {
 
 trait EventCore: EventPollable {
     fn core_status(&self) -> &Cell<EventStatus>;
-    fn core_owner_thread(&self) -> rusty::thread::ThreadId;
+    fn core_owner_thread(&self) -> std::thread::ThreadId;
     fn core_state(&self) -> &EventState;
     fn core_state_mut(&mut self) -> &mut EventState;
     fn core_self(&self) -> &Weak<dyn EventPollable>;
@@ -256,7 +287,7 @@ fn event_core_record_place<W: EventCore>(self_: &W, file: SrcFileCStr, line: i32
 #[repr(C)]
 pub struct BoxEvent<Type> {
     pub status_: Cell<EventStatus>,
-    pub owner_thread_: rusty::thread::ThreadId,
+    pub owner_thread_: std::thread::ThreadId,
     pub state_: EventState,
     pub prunable_: Cell<bool>,
     pub self_: Weak<dyn EventPollable>,
@@ -291,7 +322,7 @@ impl<Type: Clone + Default + 'static> BoxEvent<Type> {
     }
 }
 
-#[cpp_inherit]
+#[cfg_attr(any(), cpp_inherit)]
 impl<Type: Clone + Default + 'static> EventPollable for BoxEvent<Type> {
     fn test(&self) -> bool {
         event_test_impl(self)
@@ -322,7 +353,7 @@ impl<Type: Clone + Default + 'static> EventPollable for BoxEvent<Type> {
 
 impl<Type: Clone + Default + 'static> EventCore for BoxEvent<Type> {
     fn core_status(&self) -> &Cell<EventStatus> { &self.status_ }
-    fn core_owner_thread(&self) -> rusty::thread::ThreadId { self.owner_thread_ }
+    fn core_owner_thread(&self) -> std::thread::ThreadId { self.owner_thread_ }
     fn core_state(&self) -> &EventState { &self.state_ }
     fn core_state_mut(&mut self) -> &mut EventState { &mut self.state_ }
     fn core_self(&self) -> &Weak<dyn EventPollable> { &self.self_ }
@@ -333,7 +364,7 @@ impl<Type: Clone + Default + 'static> EventCore for BoxEvent<Type> {
 fn boxevent_make<Type: Clone + Default + 'static>() -> Arc<BoxEvent<Type>> {
     let sp: Arc<BoxEvent<Type>> = Arc::new(BoxEvent::<Type> {
         status_: Cell::new(EventStatus::INIT),
-        owner_thread_: rusty::thread::current_id(),
+        owner_thread_: std::thread::current().id(),
         state_: EventState::new(),
         prunable_: Cell::new(true),
         self_: Weak::<BoxEvent<Type>>::new(),
@@ -368,7 +399,7 @@ fn boxevent_clear<Type: Default>(ev: &BoxEvent<Type>) {
 #[repr(C)]
 pub struct IntEvent {
     pub status_: Cell<EventStatus>,
-    pub owner_thread_: rusty::thread::ThreadId,
+    pub owner_thread_: std::thread::ThreadId,
     pub state_: EventState,
     pub prunable_: Cell<bool>,
     pub self_: Weak<dyn EventPollable>,
@@ -406,7 +437,7 @@ impl IntEvent {
     }
 }
 
-#[cpp_inherit]
+#[cfg_attr(any(), cpp_inherit)]
 impl EventPollable for IntEvent {
     fn test(&self) -> bool {
         event_test_impl(self)
@@ -437,7 +468,7 @@ impl EventPollable for IntEvent {
 
 impl EventCore for IntEvent {
     fn core_status(&self) -> &Cell<EventStatus> { &self.status_ }
-    fn core_owner_thread(&self) -> rusty::thread::ThreadId { self.owner_thread_ }
+    fn core_owner_thread(&self) -> std::thread::ThreadId { self.owner_thread_ }
     fn core_state(&self) -> &EventState { &self.state_ }
     fn core_state_mut(&mut self) -> &mut EventState { &mut self.state_ }
     fn core_self(&self) -> &Weak<dyn EventPollable> { &self.self_ }
@@ -454,8 +485,8 @@ fn int_event_set(ev: &IntEvent, n: i32) -> i32 {
 
 fn int_event_is_ready(ev: &IntEvent) -> bool {
     let guard = ev.state_.test_.borrow();
-    if !guard.is_empty() {
-        return (*guard)(ev.value_.get());
+    if guard.is_some() {
+        return guard.as_ref().unwrap()(ev.value_.get());
     }
     ev.value_.get() >= ev.target_.get()
 }
@@ -483,7 +514,7 @@ impl SharedIntEvent {
 #[repr(C)]
 pub struct NeverEvent {
     pub status_: Cell<EventStatus>,
-    pub owner_thread_: rusty::thread::ThreadId,
+    pub owner_thread_: std::thread::ThreadId,
     pub state_: EventState,
     pub prunable_: Cell<bool>,
     pub self_: Weak<dyn EventPollable>,
@@ -507,7 +538,7 @@ impl NeverEvent {
     }
 }
 
-#[cpp_inherit]
+#[cfg_attr(any(), cpp_inherit)]
 impl EventPollable for NeverEvent {
     fn test(&self) -> bool {
         event_test_impl(self)
@@ -538,7 +569,7 @@ impl EventPollable for NeverEvent {
 
 impl EventCore for NeverEvent {
     fn core_status(&self) -> &Cell<EventStatus> { &self.status_ }
-    fn core_owner_thread(&self) -> rusty::thread::ThreadId { self.owner_thread_ }
+    fn core_owner_thread(&self) -> std::thread::ThreadId { self.owner_thread_ }
     fn core_state(&self) -> &EventState { &self.state_ }
     fn core_state_mut(&mut self) -> &mut EventState { &mut self.state_ }
     fn core_self(&self) -> &Weak<dyn EventPollable> { &self.self_ }
@@ -549,7 +580,7 @@ impl EventCore for NeverEvent {
 #[repr(C)]
 pub struct TimeoutEvent {
     pub status_: Cell<EventStatus>,
-    pub owner_thread_: rusty::thread::ThreadId,
+    pub owner_thread_: std::thread::ThreadId,
     pub state_: EventState,
     pub prunable_: Cell<bool>,
     pub self_: Weak<dyn EventPollable>,
@@ -572,7 +603,7 @@ impl TimeoutEvent {
     }
 }
 
-#[cpp_inherit]
+#[cfg_attr(any(), cpp_inherit)]
 impl EventPollable for TimeoutEvent {
     fn test(&self) -> bool {
         event_test_impl(self)
@@ -603,7 +634,7 @@ impl EventPollable for TimeoutEvent {
 
 impl EventCore for TimeoutEvent {
     fn core_status(&self) -> &Cell<EventStatus> { &self.status_ }
-    fn core_owner_thread(&self) -> rusty::thread::ThreadId { self.owner_thread_ }
+    fn core_owner_thread(&self) -> std::thread::ThreadId { self.owner_thread_ }
     fn core_state(&self) -> &EventState { &self.state_ }
     fn core_state_mut(&mut self) -> &mut EventState { &mut self.state_ }
     fn core_self(&self) -> &Weak<dyn EventPollable> { &self.self_ }
@@ -618,7 +649,7 @@ fn timeout_event_is_ready(self_: &TimeoutEvent) -> bool {
 #[repr(C)]
 pub struct WaitAny {
     pub status_: Cell<EventStatus>,
-    pub owner_thread_: rusty::thread::ThreadId,
+    pub owner_thread_: std::thread::ThreadId,
     pub state_: EventState,
     pub prunable_: Cell<bool>,
     pub self_: Weak<dyn EventPollable>,
@@ -643,7 +674,7 @@ impl WaitAny {
     }
 }
 
-#[cpp_inherit]
+#[cfg_attr(any(), cpp_inherit)]
 impl EventPollable for WaitAny {
     fn test(&self) -> bool {
         event_test_impl(self)
@@ -679,7 +710,7 @@ impl EventPollable for WaitAny {
 
 impl EventCore for WaitAny {
     fn core_status(&self) -> &Cell<EventStatus> { &self.status_ }
-    fn core_owner_thread(&self) -> rusty::thread::ThreadId { self.owner_thread_ }
+    fn core_owner_thread(&self) -> std::thread::ThreadId { self.owner_thread_ }
     fn core_state(&self) -> &EventState { &self.state_ }
     fn core_state_mut(&mut self) -> &mut EventState { &mut self.state_ }
     fn core_self(&self) -> &Weak<dyn EventPollable> { &self.self_ }
@@ -690,7 +721,7 @@ impl EventCore for WaitAny {
 #[repr(C)]
 pub struct WaitAll {
     pub status_: Cell<EventStatus>,
-    pub owner_thread_: rusty::thread::ThreadId,
+    pub owner_thread_: std::thread::ThreadId,
     pub state_: EventState,
     pub prunable_: Cell<bool>,
     pub self_: Weak<dyn EventPollable>,
@@ -721,7 +752,7 @@ impl WaitAll {
     }
 }
 
-#[cpp_inherit]
+#[cfg_attr(any(), cpp_inherit)]
 impl EventPollable for WaitAll {
     fn test(&self) -> bool {
         event_test_impl(self)
@@ -761,7 +792,7 @@ impl EventPollable for WaitAll {
 
 impl EventCore for WaitAll {
     fn core_status(&self) -> &Cell<EventStatus> { &self.status_ }
-    fn core_owner_thread(&self) -> rusty::thread::ThreadId { self.owner_thread_ }
+    fn core_owner_thread(&self) -> std::thread::ThreadId { self.owner_thread_ }
     fn core_state(&self) -> &EventState { &self.state_ }
     fn core_state_mut(&mut self) -> &mut EventState { &mut self.state_ }
     fn core_self(&self) -> &Weak<dyn EventPollable> { &self.self_ }
@@ -790,7 +821,7 @@ pub struct fiber_task_t {
     pub fn_: FiberTaskFn,
     pub yield_: fiber_yield_t,
     pub fib_: srpc_fiber,
-    pub _pin: rusty::marker::PhantomPinned,
+    pub _pin: std::marker::PhantomPinned,
 }
 
 impl fiber_task_t {
@@ -804,7 +835,7 @@ impl fiber_task_t {
             fib_: unsafe {
                 core::mem::MaybeUninit::<srpc_fiber>::zeroed().assume_init()
             },
-            _pin: rusty::marker::PhantomPinned {},
+            _pin: std::marker::PhantomPinned {},
         }
     }
 }
@@ -828,15 +859,16 @@ pub enum FiberStatus {
     RECYCLED = 6,
 }
 
-#[cfg_attr(any(), thread_local)]
-pub static mut g_fiber_global_id: u64 = 0;
+thread_local! {
+    pub static g_fiber_global_id: Cell<u64> = const { Cell::new(0) };
+}
 
 fn fiber_next_global_id() -> u64 {
-    unsafe {
-        let r = g_fiber_global_id;
-        g_fiber_global_id = r + 1u64;
+    g_fiber_global_id.with(|id| {
+        let r = id.get();
+        id.set(r + 1u64);
         r
-    }
+    })
 }
 
 #[repr(C)]
@@ -860,7 +892,7 @@ pub struct Fiber {
     // transpiler emit DELETED move operations instead, which is the same
     // guarantee the destructor used to provide, stated on purpose.
     // Same precedent as Reactor above.
-    pub _pin: rusty::marker::PhantomPinned,
+    pub _pin: std::marker::PhantomPinned,
 }
 
 impl Fiber {
@@ -874,7 +906,7 @@ impl Fiber {
             func_: RefCell::<FiberFn>::new(func),
             fiber_task_: Default::default(),
             fiber_yield_: Cell::<*mut fiber_yield_t>::new(core::ptr::null_mut()),
-            _pin: rusty::marker::PhantomPinned {},
+            _pin: std::marker::PhantomPinned {},
         }
     }
 
@@ -886,7 +918,7 @@ impl Fiber {
     where
         Func: FnMut() + 'static,
     {
-        Fiber::create_run_impl(FiberFn::from_callable(func), "", 0i64)
+        Fiber::create_run_impl(Some(Box::new(func)), "", 0i64)
     }
 
     pub fn create_run_impl(func: FiberFn, file: SrcFileCStr, line: i64) -> Rc<Fiber> {
@@ -923,25 +955,39 @@ fn fiber_registry_key(fiber: &Rc<Fiber>) -> usize {
 pub struct StacklessTaskEntry {
     pub active: bool,
     pub queued: bool,
-    pub poll_once: rusty::Function<dyn FnMut(&mut rusty::Context) -> bool>,
+    pub poll_once: StacklessPollFn,
 }
 
 const STACKLESS_UNREGISTERED_SLOT: usize = usize::MAX;
 
 struct StacklessWakeTicket {
-    slot: rusty::sync::atomic::AtomicUsize,
-    enqueued: rusty::sync::atomic::AtomicBool,
+    slot: std::sync::atomic::AtomicUsize,
+    enqueued: std::sync::atomic::AtomicBool,
 }
 
 struct StacklessWakeIngress {
-    accepting: rusty::sync::atomic::AtomicBool,
-    pending: rusty::Mutex<VecDeque<Arc<StacklessWakeTicket>>>,
+    accepting: std::sync::atomic::AtomicBool,
+    pending: std::sync::Mutex<VecDeque<Arc<StacklessWakeTicket>>>,
+}
+
+struct StacklessWakeTarget {
+    ingress: Arc<StacklessWakeIngress>,
+    ticket: Arc<StacklessWakeTicket>,
+}
+
+impl Wake for StacklessWakeTarget {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        stackless_wake_request::<()>(&self.ingress, &self.ticket);
+    }
 }
 
 struct StacklessWakeBinding {
     ticket: Arc<StacklessWakeTicket>,
-    waker: rusty::Waker,
-    context: rusty::Context,
+    waker: Waker,
 }
 
 struct StacklessWakeOwner {
@@ -951,16 +997,11 @@ struct StacklessWakeOwner {
 }
 
 struct StacklessResultTaskState<T, OnReady> {
-    // C++ destroys fields in reverse declaration order.  Keep Task last so
-    // its retained Context pointer is destroyed before the early binding.
-    early_binding: Box<StacklessWakeBinding>,
     on_ready: RefCell<Option<OnReady>>,
-    task: RefCell<rusty::Task<T>>,
+    task: RefCell<Pin<Box<dyn Future<Output = T>>>>,
 }
 
 struct StacklessVoidTaskState {
-    // See StacklessResultTaskState: Task must die before its Context/Waker.
-    early_binding: Box<StacklessWakeBinding>,
     task: RefCell<TaskVoid>,
 }
 
@@ -998,20 +1039,20 @@ struct StacklessVoidTaskState {
 // the native battery pins that contract end to end.
 
 struct StacklessCancelCounters {
-    teardown_tasks: rusty::sync::atomic::AtomicU64,
-    admitted_completions: rusty::sync::atomic::AtomicU64,
-    pending_wakes: rusty::sync::atomic::AtomicU64,
-    rejected_spawns: rusty::sync::atomic::AtomicU64,
+    teardown_tasks: std::sync::atomic::AtomicU64,
+    admitted_completions: std::sync::atomic::AtomicU64,
+    pending_wakes: std::sync::atomic::AtomicU64,
+    rejected_spawns: std::sync::atomic::AtomicU64,
 }
 
 // Deliberately the same shape as `g_stackless_profile`, which the incumbent
 // object proves carries no owned strong symbol (it is absent from the 300-entry
 // manifest).  Atomics give interior mutability, so the binding need not be mut.
 static g_stackless_cancel: StacklessCancelCounters = StacklessCancelCounters {
-    teardown_tasks: rusty::sync::atomic::AtomicU64::new(0u64),
-    admitted_completions: rusty::sync::atomic::AtomicU64::new(0u64),
-    pending_wakes: rusty::sync::atomic::AtomicU64::new(0u64),
-    rejected_spawns: rusty::sync::atomic::AtomicU64::new(0u64),
+    teardown_tasks: std::sync::atomic::AtomicU64::new(0u64),
+    admitted_completions: std::sync::atomic::AtomicU64::new(0u64),
+    pending_wakes: std::sync::atomic::AtomicU64::new(0u64),
+    rejected_spawns: std::sync::atomic::AtomicU64::new(0u64),
 };
 
 // Plain aggregate: no derives, no methods, so it contributes no symbol either.
@@ -1027,10 +1068,10 @@ pub struct StacklessCancelReport {
 // the same C7 discipline the wake registry already follows.
 pub fn stackless_cancel_report<WakeDomain>() -> StacklessCancelReport {
     StacklessCancelReport {
-        teardown_tasks: g_stackless_cancel.teardown_tasks.load(rusty::sync::atomic::Ordering::Relaxed),
-        admitted_completions: g_stackless_cancel.admitted_completions.load(rusty::sync::atomic::Ordering::Relaxed),
-        pending_wakes: g_stackless_cancel.pending_wakes.load(rusty::sync::atomic::Ordering::Relaxed),
-        rejected_spawns: g_stackless_cancel.rejected_spawns.load(rusty::sync::atomic::Ordering::Relaxed),
+        teardown_tasks: g_stackless_cancel.teardown_tasks.load(std::sync::atomic::Ordering::Relaxed),
+        admitted_completions: g_stackless_cancel.admitted_completions.load(std::sync::atomic::Ordering::Relaxed),
+        pending_wakes: g_stackless_cancel.pending_wakes.load(std::sync::atomic::Ordering::Relaxed),
+        rejected_spawns: g_stackless_cancel.rejected_spawns.load(std::sync::atomic::Ordering::Relaxed),
     }
 }
 
@@ -1059,9 +1100,10 @@ fn stackless_wake_owners_slot<WakeDomain>() -> *mut *mut Vec<StacklessWakeOwner>
     // Vec would be constructed after the namespace TLS Reactor Rc and hence
     // destroyed before that Reactor at thread exit, invalidating every stable
     // Context binding before Reactor::drop could destroy its Tasks.
-    #[cfg_attr(any(), thread_local)]
-    static mut OWNERS: *mut Vec<StacklessWakeOwner> = core::ptr::null_mut();
-    &raw mut OWNERS
+    thread_local! {
+        static OWNERS: Cell<*mut Vec<StacklessWakeOwner>> = const { Cell::new(core::ptr::null_mut()) };
+    }
+    OWNERS.with(|slot| slot.as_ptr())
 }
 
 fn stackless_wake_owners_existing_ptr<WakeDomain>() -> *mut Vec<StacklessWakeOwner> {
@@ -1111,22 +1153,22 @@ fn stackless_wake_reactor_key<WakeDomain>(reactor: &Reactor) -> usize {
 // MEASURED allow — see the `extra_unused_type_parameters` note on `stackless_wake_owners_slot`.
 #[allow(clippy::extra_unused_type_parameters)]
 fn stackless_wake_request<WakeDomain>(ingress: &Arc<StacklessWakeIngress>, ticket: &Arc<StacklessWakeTicket>) {
-    if !ingress.accepting.load(rusty::sync::atomic::Ordering::Acquire) {
+    if !ingress.accepting.load(std::sync::atomic::Ordering::Acquire) {
         return;
     }
-    if ticket.enqueued.swap(true, rusty::sync::atomic::Ordering::AcqRel) {
+    if ticket.enqueued.swap(true, std::sync::atomic::Ordering::AcqRel) {
         return;
     }
     let mut pending = ingress.pending.lock().unwrap();
-    if ingress.accepting.load(rusty::sync::atomic::Ordering::Acquire) {
+    if ingress.accepting.load(std::sync::atomic::Ordering::Acquire) {
         (*pending).push_back(ticket.clone());
     } else {
-        ticket.enqueued.store(false, rusty::sync::atomic::Ordering::Release);
+        ticket.enqueued.store(false, std::sync::atomic::Ordering::Release);
     }
 }
 
 fn stackless_wake_ingress<WakeDomain>(reactor: &Reactor) -> Arc<StacklessWakeIngress> {
-    reactor_verify(rusty::thread::current_id() == reactor.thread_id_.get());
+    reactor_verify(std::thread::current().id() == reactor.thread_id_.get());
     let key = stackless_wake_reactor_key::<WakeDomain>(reactor);
     let mut reusable: usize = STACKLESS_UNREGISTERED_SLOT;
     unsafe {
@@ -1146,8 +1188,8 @@ fn stackless_wake_ingress<WakeDomain>(reactor: &Reactor) -> Arc<StacklessWakeIng
     }
 
     let ingress = Arc::new(StacklessWakeIngress {
-        accepting: rusty::sync::atomic::AtomicBool::new(true),
-        pending: rusty::Mutex::new(VecDeque::<Arc<StacklessWakeTicket>>::new()),
+        accepting: std::sync::atomic::AtomicBool::new(true),
+        pending: std::sync::Mutex::new(VecDeque::<Arc<StacklessWakeTicket>>::new()),
     });
     let owner = StacklessWakeOwner {
         reactor_key: key,
@@ -1165,30 +1207,16 @@ fn stackless_wake_ingress<WakeDomain>(reactor: &Reactor) -> Arc<StacklessWakeIng
     ingress
 }
 
-fn stackless_wake_make_binding<WakeDomain>(ingress: Arc<StacklessWakeIngress>) -> Box<StacklessWakeBinding> {
+fn stackless_wake_make_binding(ingress: Arc<StacklessWakeIngress>) -> Box<StacklessWakeBinding> {
     let ticket = Arc::new(StacklessWakeTicket {
-        slot: rusty::sync::atomic::AtomicUsize::new(STACKLESS_UNREGISTERED_SLOT),
-        enqueued: rusty::sync::atomic::AtomicBool::new(false),
+        slot: std::sync::atomic::AtomicUsize::new(STACKLESS_UNREGISTERED_SLOT),
+        enqueued: std::sync::atomic::AtomicBool::new(false),
     });
-    let wake_ingress = ingress.clone();
-    let wake_ticket = ticket.clone();
-    let wake_fn: Box<dyn Fn() + Send + Sync> = Box::new(move || {
-        stackless_wake_request::<WakeDomain>(&wake_ingress, &wake_ticket);
-    });
-    let waker = rusty::Waker { wake_fn };
-    let mut binding = Box::new(StacklessWakeBinding {
-        ticket,
-        waker,
-        context: rusty::Context { waker: core::ptr::null_mut() },
-    });
-    binding.context.waker = &raw mut binding.waker;
-    binding
-}
-
-// MEASURED allow — see the `extra_unused_type_parameters` note on `stackless_wake_owners_slot`.
-#[allow(clippy::extra_unused_type_parameters)]
-fn stackless_wake_binding_context<WakeDomain>(binding: &mut Box<StacklessWakeBinding>) -> &mut rusty::Context {
-    &mut binding.context
+    let waker = Waker::from(Arc::new(StacklessWakeTarget {
+        ingress,
+        ticket: ticket.clone(),
+    }));
+    Box::new(StacklessWakeBinding { ticket, waker })
 }
 
 fn stackless_wake_attach<WakeDomain>(reactor: &Reactor, idx: usize, binding: Box<StacklessWakeBinding>) {
@@ -1202,7 +1230,7 @@ fn stackless_wake_attach<WakeDomain>(reactor: &Reactor, idx: usize, binding: Box
                     owners[i].bindings.push(None);
                 }
                 reactor_verify(owners[i].bindings[idx].is_none());
-                binding.ticket.slot.store(idx, rusty::sync::atomic::Ordering::Release);
+                binding.ticket.slot.store(idx, std::sync::atomic::Ordering::Release);
                 owners[i].bindings[idx] = Some(binding);
                 return;
             }
@@ -1212,7 +1240,7 @@ fn stackless_wake_attach<WakeDomain>(reactor: &Reactor, idx: usize, binding: Box
     reactor_verify(false);
 }
 
-fn stackless_wake_context_ptr<WakeDomain>(reactor: &Reactor, idx: usize) -> *mut rusty::Context {
+fn stackless_wake_waker<WakeDomain>(reactor: &Reactor, idx: usize) -> Waker {
     let key = stackless_wake_reactor_key::<WakeDomain>(reactor);
     unsafe {
         let owners = &mut *stackless_wake_owners_ptr::<WakeDomain>();
@@ -1221,12 +1249,13 @@ fn stackless_wake_context_ptr<WakeDomain>(reactor: &Reactor, idx: usize) -> *mut
             if owners[i].reactor_key == key {
                 reactor_verify(idx < owners[i].bindings.len());
                 let binding = owners[i].bindings[idx].as_mut().unwrap();
-                return &raw mut binding.context;
+                return binding.waker.clone();
             }
             i += 1usize;
         }
     }
-    core::ptr::null_mut()
+    reactor_verify(false);
+    std::process::abort();
 }
 
 fn stackless_wake_close<WakeDomain>(reactor: &Reactor, idx: usize) {
@@ -1242,7 +1271,7 @@ fn stackless_wake_close<WakeDomain>(reactor: &Reactor, idx: usize) {
                     let binding = owners[i].bindings[idx].as_ref().unwrap();
                     binding.ticket.slot.store(
                         STACKLESS_UNREGISTERED_SLOT,
-                        rusty::sync::atomic::Ordering::Release,
+                        std::sync::atomic::Ordering::Release,
                     );
                 }
                 return;
@@ -1293,8 +1322,8 @@ fn stackless_wake_take_pending<WakeDomain>(reactor: &Reactor) -> Vec<usize> {
     let mut pending = ingress.pending.lock().unwrap();
     while !(*pending).is_empty() {
         let ticket = (*pending).pop_front().unwrap();
-        ticket.enqueued.store(false, rusty::sync::atomic::Ordering::Release);
-        let idx = ticket.slot.load(rusty::sync::atomic::Ordering::Acquire);
+        ticket.enqueued.store(false, std::sync::atomic::Ordering::Release);
+        let idx = ticket.slot.load(std::sync::atomic::Ordering::Acquire);
         if idx != STACKLESS_UNREGISTERED_SLOT {
             ready.push(idx);
         }
@@ -1321,7 +1350,7 @@ fn stackless_wake_shutdown_begin<WakeDomain>(reactor: &Reactor) {
                         let binding = owners[i].bindings[j].as_ref().unwrap();
                         binding.ticket.slot.store(
                             STACKLESS_UNREGISTERED_SLOT,
-                            rusty::sync::atomic::Ordering::Release,
+                            std::sync::atomic::Ordering::Release,
                         );
                     }
                     j += 1usize;
@@ -1335,7 +1364,7 @@ fn stackless_wake_shutdown_begin<WakeDomain>(reactor: &Reactor) {
         // Reject first.  stackless_wake_request re-checks `accepting` under this
         // same lock before pushing, so once this store is visible no producer
         // can enqueue again and the drain below is final rather than racy.
-        ingress.accepting.store(false, rusty::sync::atomic::Ordering::Release);
+        ingress.accepting.store(false, std::sync::atomic::Ordering::Release);
         // Now drain what is already queued.  These are admitted wakes that will
         // never be delivered: count them as cancelled, and release the ticket
         // Arcs here so no allocation outlives the last waker Arc.  Leaving them
@@ -1346,12 +1375,12 @@ fn stackless_wake_shutdown_begin<WakeDomain>(reactor: &Reactor) {
             let mut pending = ingress.pending.lock().unwrap();
             while !(*pending).is_empty() {
                 let ticket = (*pending).pop_front().unwrap();
-                ticket.enqueued.store(false, rusty::sync::atomic::Ordering::Release);
+                ticket.enqueued.store(false, std::sync::atomic::Ordering::Release);
                 drained += 1u64;
             }
         }
         if drained > 0u64 {
-            g_stackless_cancel.pending_wakes.fetch_add(drained, rusty::sync::atomic::Ordering::Relaxed);
+            g_stackless_cancel.pending_wakes.fetch_add(drained, std::sync::atomic::Ordering::Relaxed);
             reactor_log_line(Log::ERROR, 0i32, core::ptr::null(), format!("[Reactor::teardown] cancelling {} admitted stackless wake(s) that will never be delivered", drained));
         }
     }
@@ -1381,11 +1410,11 @@ fn stackless_wake_unregister<WakeDomain>(reactor: &Reactor) {
     stackless_wake_release_empty_storage::<WakeDomain>(owners_ptr);
 }
 
-#[cfg_attr(any(), thread_local)]
-pub static mut reactor_clients_th_: rusty::HashMap<String, Vec<PollableProxy>> = rusty::HashMap::<String, Vec<PollableProxy>>::new();
-
-#[cfg_attr(any(), thread_local)]
-pub static mut reactor_prune_hwm_th_: usize = 64usize;
+thread_local! {
+    pub static reactor_clients_th_: RefCell<HashMap<String, Vec<PollableProxy>>> =
+        RefCell::new(HashMap::<String, Vec<PollableProxy>>::new());
+    pub static reactor_prune_hwm_th_: Cell<usize> = const { Cell::new(64usize) };
+}
 
 #[repr(C)]
 pub struct Reactor {
@@ -1400,16 +1429,23 @@ pub struct Reactor {
     pub slow_: Cell<bool>,
     pub slow_count_: Cell<i32>,
     pub trying_count_: Cell<i32>,
-    pub thread_id_: Cell<rusty::thread::ThreadId>,
+    pub thread_id_: Cell<std::thread::ThreadId>,
     pub n_created_fibers_: Cell<i64>,
     pub n_busy_fibers_: Cell<i64>,
     pub n_active_fibers_: Cell<i64>,
     pub n_active_fibers_2_: Cell<i64>,
     pub n_idle_fibers_: Cell<i64>,
+    // --- srpc's async runtime (the stackless task executor) -----------------
+    // These three fields ARE the executor's state: a task table, a free list,
+    // and a ready queue.  `run_loop` drains the ready queue via
+    // `process_stackless_tasks()` each pass; waking a task pushes its index
+    // back onto it. Standard pinned Futures are polled with a borrowed
+    // Context, and each Waker owns its wake target. `pollworker_poll_loop`
+    // pumps `run_loop` after every epoll pass. See docs/async-runtime.md.
     pub stackless_tasks_: RefCell<Vec<StacklessTaskEntry>>,
     pub free_stackless_task_slots_: RefCell<Vec<usize>>,
     pub ready_stackless_tasks_: RefCell<VecDeque<usize>>,
-    pub _pin: rusty::marker::PhantomPinned,
+    pub _pin: std::marker::PhantomPinned,
 }
 
 impl Reactor {
@@ -1430,7 +1466,7 @@ impl Reactor {
             // owner here so Drop and the private wake registry remain valid
             // outside the TLS factories; those factories may set the same id
             // again without changing the historical layout or signature.
-            thread_id_: Cell::new(rusty::thread::current_id()),
+            thread_id_: Cell::new(std::thread::current().id()),
             n_created_fibers_: Default::default(),
             n_busy_fibers_: Default::default(),
             n_active_fibers_: Default::default(),
@@ -1439,7 +1475,7 @@ impl Reactor {
             stackless_tasks_: Default::default(),
             free_stackless_task_slots_: Default::default(),
             ready_stackless_tasks_: Default::default(),
-            _pin: rusty::marker::PhantomPinned {},
+            _pin: std::marker::PhantomPinned {},
         }
     }
 
@@ -1459,7 +1495,7 @@ impl Reactor {
         reactor_tls_set_running(fiber);
     }
     pub fn run_loop(&self, infinite: bool, do_check_timeout: bool) {
-        reactor_verify(rusty::thread::current_id() == self.thread_id_.get());
+        reactor_verify(std::thread::current().id() == self.thread_id_.get());
         self.looping_.set(infinite);
         loop {
             let mut found_ready_events = true;
@@ -1559,35 +1595,32 @@ impl Reactor {
 
     pub fn prune_finished_events(&self) {
         let mut guard = self.all_events_.borrow_mut();
-        if guard.len() < unsafe { reactor_prune_hwm_th_ } {
+        if guard.len() < reactor_prune_hwm_th_.with(|hwm| hwm.get()) {
             return;
         }
         guard.retain(move |e: &Arc<dyn EventPollable>| -> bool {
             Arc::strong_count(e) > 1usize || !(*e).prunable()
         });
-        unsafe { reactor_prune_hwm_th_ = guard.len() * 2usize + 64usize };
+        reactor_prune_hwm_th_.with(|hwm| hwm.set(guard.len() * 2usize + 64usize));
     }
-    pub fn create_run_fiber(&self, func: rusty::Function<dyn FnMut()>) -> Rc<Fiber> {
+    pub fn create_run_fiber(&self, func: Option<Box<dyn FnMut()>>) -> Rc<Fiber> {
         reactor_create_run_fiber_impl(self, func)
     }
     pub fn continue_fiber(&self, fiber: &Rc<Fiber>) {
         // Save current running fiber for nesting support.
-        let mut old_fiber: Option<Rc<Fiber>> = None;
-        {
-            let guard = unsafe { sp_running_fiber_th_.borrow() };
-            if (*guard).is_some() {
-                old_fiber = Some((*guard).as_ref().unwrap().clone());
-            }
-        }
-        {
-            let mut guard = unsafe { sp_running_fiber_th_.borrow_mut() };
-            *guard = Some(fiber.clone());
-        }
-        {
-            let guard = unsafe { sp_running_fiber_th_.borrow() };
+        // `(*…)` is load-bearing for the C++ lane: without it the emitter
+        // clones the Ref guard itself (a deleted constructor) instead of
+        // auto-dereffing to the Option the way rustc does.
+        let old_fiber: Option<Rc<Fiber>> =
+            sp_running_fiber_th_.with(|slot| (*slot.borrow()).clone());
+        sp_running_fiber_th_.with(|slot| {
+            *slot.borrow_mut() = Some(fiber.clone());
+        });
+        sp_running_fiber_th_.with(|slot| {
+            let guard = slot.borrow();
             let running: &Rc<Fiber> = (*guard).as_ref().unwrap();
             reactor_verify(!running.finished());
-        }
+        });
         self.n_active_fibers_.set(self.n_active_fibers_.get() + 1i64);
         if fiber.status_.get() == FiberStatus::INIT {
             fiber.run();
@@ -1597,17 +1630,25 @@ impl Reactor {
             fiber.continue_();
         }
         {
-            let guard = unsafe { sp_running_fiber_th_.borrow() };
-            let running: &Rc<Fiber> = (*guard).as_ref().unwrap();
-            if running.finished() {
-                let mut fiber_ref = running.clone();
+            // The finished check happens under the borrow; recycle() runs
+            // after it is released, so a recycle path that re-enters the
+            // running-fiber slot can never double-borrow.
+            let finished_fiber: Option<Rc<Fiber>> = sp_running_fiber_th_.with(|slot| {
+                let guard = slot.borrow();
+                let running: &Rc<Fiber> = (*guard).as_ref().unwrap();
+                if running.finished() {
+                    Some(running.clone())
+                } else {
+                    None
+                }
+            });
+            if let Some(mut fiber_ref) = finished_fiber {
                 self.recycle(&mut fiber_ref);
             }
         }
-        {
-            let mut guard = unsafe { sp_running_fiber_th_.borrow_mut() };
-            *guard = old_fiber;
-        }
+        sp_running_fiber_th_.with(|slot| {
+            *slot.borrow_mut() = old_fiber;
+        });
     }
 
     pub fn display_waiting_ev(&self) {
@@ -1630,7 +1671,7 @@ impl Reactor {
         // Fixes fibers not being recycled when they don't finish immediately.
         if reusing_fiber() {
             fiber.status_.set(FiberStatus::RECYCLED);
-            let empty_fn: rusty::Function<dyn FnMut()> = Default::default();
+            let empty_fn: Option<Box<dyn FnMut()>> = Default::default();
             *fiber.func_.borrow_mut() = empty_fn;
             self.n_idle_fibers_.set(self.n_idle_fibers_.get() + 1i64);
             self.available_fibers_.borrow_mut().push(fiber.clone());
@@ -1640,7 +1681,7 @@ impl Reactor {
     }
 
     pub fn enqueue_stackless_task(&self, idx: usize) {
-        reactor_verify(rusty::thread::current_id() == self.thread_id_.get());
+        reactor_verify(std::thread::current().id() == self.thread_id_.get());
         stackless_profile_note_enqueue();
         {
             let guard = self.stackless_tasks_.borrow();
@@ -1664,9 +1705,9 @@ impl Reactor {
         self.ready_stackless_tasks_.borrow_mut().push_back(idx);
     }
 
-    pub fn register_stackless_poller(&self, poller: rusty::Function<dyn FnMut(&mut rusty::Context) -> bool>) -> usize {
+    pub fn register_stackless_poller(&self, poller: StacklessPollFn) -> usize {
         let ingress = stackless_wake_ingress::<()>(self);
-        if !ingress.accepting.load(rusty::sync::atomic::Ordering::Acquire) {
+        if !ingress.accepting.load(std::sync::atomic::Ordering::Acquire) {
             // Reactor teardown has started.  Destroy the rejected Task-bearing
             // closure without publishing a slot or a Context binding.  Dropping
             // it here destroys the completion callback and its captures on the
@@ -1675,7 +1716,7 @@ impl Reactor {
             // Refusing a spawn is a cancellation, so it is reported, never
             // silent: the caller believes it has scheduled work that will now
             // never run, and anything waiting on that work must be told.
-            g_stackless_cancel.rejected_spawns.fetch_add(1u64, rusty::sync::atomic::Ordering::Relaxed);
+            g_stackless_cancel.rejected_spawns.fetch_add(1u64, std::sync::atomic::Ordering::Relaxed);
             reactor_log_line(Log::ERROR, 0i32, core::ptr::null(), "[Reactor::register_stackless_poller] cancelling a spawn refused during teardown; the task and its completion callback are destroyed now, so waiters are released with an error instead of blocking forever".to_string());
             return STACKLESS_UNREGISTERED_SLOT;
         }
@@ -1704,7 +1745,7 @@ impl Reactor {
             (*tasks_guard)[idx].poll_once = poller;
             stackless_profile_note_register(scanned, true, tasks_guard.len());
         }
-        let binding = stackless_wake_make_binding::<()>(ingress);
+        let binding = stackless_wake_make_binding(ingress);
         stackless_wake_attach::<()>(self, idx, binding);
         idx
     }
@@ -1721,7 +1762,7 @@ impl Reactor {
     // the cast is load-bearing and stays.  Scoped to this one item.
     #[allow(clippy::unnecessary_cast)]
     pub fn process_stackless_tasks(&self) -> bool {
-        reactor_verify(rusty::thread::current_id() == self.thread_id_.get());
+        reactor_verify(std::thread::current().id() == self.thread_id_.get());
         let ingress_ready = stackless_wake_take_pending::<()>(self);
         for idx in ingress_ready {
             self.enqueue_stackless_task(idx);
@@ -1746,13 +1787,13 @@ impl Reactor {
                 // (rusty::Function is move-only; take() leaves an empty one
                 // behind). Reactor is single-threaded: a synchronous waker
                 // during poll only mutates queued/active, never poll_once.
-                let mut poll_fn: rusty::Function<dyn FnMut(&mut rusty::Context) -> bool> = Default::default();
+                let mut poll_fn: StacklessPollFn = Default::default();
                 let mut runnable = false;
                 {
                     let mut tasks_guard = self.stackless_tasks_.borrow_mut();
                     if idx < tasks_guard.len() {
                         (*tasks_guard)[idx].queued = false;
-                        if (*tasks_guard)[idx].active && !(*tasks_guard)[idx].poll_once.is_empty() {
+                        if (*tasks_guard)[idx].active && (*tasks_guard)[idx].poll_once.is_some() {
                             poll_fn = core::mem::take(&mut (*tasks_guard)[idx].poll_once);
                             runnable = true;
                         }
@@ -1767,21 +1808,21 @@ impl Reactor {
                     if ready {
                         // Close the ticket before publishing the slot for
                         // reuse. Then destroy the Task-bearing poll closure
-                        // before releasing its stable Context/Waker binding.
+                        // before releasing its owned Waker binding.
                         stackless_wake_close::<()>(self, idx);
                         let mut tasks_guard = self.stackless_tasks_.borrow_mut();
                         if idx < tasks_guard.len() {
                             stackless_profile_note_poll_ready();
                             (*tasks_guard)[idx].active = false;
                             (*tasks_guard)[idx].queued = false;
-                            let empty_fn: rusty::Function<dyn FnMut(&mut rusty::Context) -> bool> = Default::default();
+                            let empty_fn: StacklessPollFn = Default::default();
                             (*tasks_guard)[idx].poll_once = empty_fn;
                         }
                         drop(tasks_guard);
                         // Task/coroutine destruction may run arbitrary awaiter
                         // destructors that re-enter registration.  Do not
                         // publish this index for reuse until both the old Task
-                        // and its retained Context/Waker binding are gone.
+                        // and its owned Waker binding are gone.
                         drop(poll_fn);
                         stackless_wake_detach::<()>(self, idx);
                         let mut free_guard = self.free_stackless_task_slots_.borrow_mut();
@@ -1841,11 +1882,11 @@ impl Reactor {
 
 impl Drop for Reactor {
     fn drop(&mut self) {
-        reactor_verify(rusty::thread::current_id() == self.thread_id_.get());
+        reactor_verify(std::thread::current().id() == self.thread_id_.get());
         reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), format!("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}",
                   self.all_events_.borrow().len(), self.fibers_.borrow().len()));
         // Reject new foreign wakes first. Destroy every Task-bearing closure
-        // while its stable Context/Waker binding still exists, then retire the
+        // while its owned Waker binding still exists, then retire the
         // private ingress. Reactor's public field layout remains unchanged.
         stackless_wake_shutdown_begin::<()>(self);
         // Count what teardown is about to cancel BEFORE the queues are cleared.
@@ -1869,8 +1910,8 @@ impl Drop for Reactor {
             }
         }
         if outstanding > 0u64 || admitted > 0u64 {
-            g_stackless_cancel.teardown_tasks.fetch_add(outstanding, rusty::sync::atomic::Ordering::Relaxed);
-            g_stackless_cancel.admitted_completions.fetch_add(admitted, rusty::sync::atomic::Ordering::Relaxed);
+            g_stackless_cancel.teardown_tasks.fetch_add(outstanding, std::sync::atomic::Ordering::Relaxed);
+            g_stackless_cancel.admitted_completions.fetch_add(admitted, std::sync::atomic::Ordering::Relaxed);
             reactor_log_line(Log::ERROR, 0i32, core::ptr::null(), format!("[Reactor::~Reactor] cancelling {} outstanding stackless task(s) and {} already-admitted completion(s); their callbacks and captures are destroyed below, which is how waiters learn this failed rather than hanging",
                       outstanding, admitted));
         }
@@ -1887,51 +1928,51 @@ impl Drop for Reactor {
     }
 }
 
-pub fn reactor_spawn_stackless_task_with_result<T: 'static, OnReady>(self_: &Reactor, mut task: rusty::Task<T>, mut on_ready: OnReady)
+// Poll once immediately, register a pending future, and deliver its completed
+// value through on_ready. See docs/async-runtime.md for the wake protocol.
+pub fn reactor_spawn_stackless_task_with_result<T: 'static, OnReady>(self_: &Reactor, mut task: Pin<Box<dyn Future<Output = T>>>, mut on_ready: OnReady)
 where
     OnReady: FnMut(T) + 'static,
 {
-    reactor_verify(rusty::thread::current_id() == self_.thread_id_.get());
+    reactor_verify(std::thread::current().id() == self_.thread_id_.get());
     let ingress = stackless_wake_ingress::<()>(self_);
-    let mut early_binding = stackless_wake_make_binding::<()>(ingress);
+    let mut early_binding = stackless_wake_make_binding(ingress);
     let early_ticket = early_binding.ticket.clone();
-    let ectx: &mut rusty::Context = stackless_wake_binding_context::<()>(&mut early_binding);
-    let mut early_poll = task.poll(ectx);
-    if early_poll.is_ready() {
-        on_ready(early_poll.value);
-        // Task retains Context*. Destroy it explicitly while the heap binding
-        // is still alive; the binding is dropped on return afterwards.
-        drop(task);
+    let mut ectx = Context::from_waker(&early_binding.waker);
+    if let Poll::Ready(value) = task.as_mut().poll(&mut ectx) {
+        on_ready(value);
         return;
     }
 
     let ts = StacklessResultTaskState {
-        early_binding,
         on_ready: RefCell::<Option<OnReady>>::new(Some(on_ready)),
-        task: RefCell::<rusty::Task<T>>::new(task),
+        task: RefCell::<Pin<Box<dyn Future<Output = T>>>>::new(task),
     };
     let state: Arc<StacklessResultTaskState<T, OnReady>> = Arc::new(ts);
     let completion_ticket = early_ticket.clone();
-    let poller = StacklessPollFn::from_callable(move |ctx: &mut rusty::Context| -> bool {
-        // Scoped so the task borrow is released before on_ready runs.
-        let poll_result = state.task.borrow_mut().poll(ctx);
-        if !poll_result.is_ready() {
-            return false;
-        }
-        completion_ticket.slot.store(
-            STACKLESS_UNREGISTERED_SLOT,
-            rusty::sync::atomic::Ordering::Release,
-        );
-        // take() moves the callback out and leaves None, so it fires once.
-        let cb: Option<OnReady> = {
-            let mut cbguard = state.on_ready.borrow_mut();
-            (*cbguard).take()
+    let poller: StacklessPollFn = Some(Box::new(move |ctx: &mut Context<'_>| -> bool {
+        // Release the task borrow before invoking user completion code.
+        let poll_result = {
+            let mut task_guard = state.task.borrow_mut();
+            (*task_guard).as_mut().poll(ctx)
         };
-        if let Some(mut f) = cb {
-            f(poll_result.value);
+        if let Poll::Ready(value) = poll_result {
+            completion_ticket.slot.store(
+                STACKLESS_UNREGISTERED_SLOT,
+                std::sync::atomic::Ordering::Release,
+            );
+            let cb: Option<OnReady> = {
+                let mut cbguard = state.on_ready.borrow_mut();
+                (*cbguard).take()
+            };
+            if let Some(mut f) = cb {
+                f(value);
+            }
+            true
+        } else {
+            false
         }
-        true
-    });
+    }));
     let idx = self_.register_stackless_poller(poller);
     if idx == STACKLESS_UNREGISTERED_SLOT {
         // Teardown refused the registration.  register_stackless_poller has
@@ -1942,7 +1983,7 @@ where
         // waiter blocked on a completion that can never arrive.
         return;
     }
-    early_ticket.slot.store(idx, rusty::sync::atomic::Ordering::Release);
+    early_ticket.slot.store(idx, std::sync::atomic::Ordering::Release);
     let ingress_ready = stackless_wake_take_pending::<()>(self_);
     for ready_idx in ingress_ready {
         self_.enqueue_stackless_task(ready_idx);
@@ -2016,8 +2057,10 @@ pub enum PollCommand {
     Shutdown,
 }
 
-#[cfg_attr(any(), thread_local)]
-pub static mut g_current_poll_worker: *mut PollThreadWorker = core::ptr::null_mut();
+thread_local! {
+    pub static g_current_poll_worker: Cell<*mut PollThreadWorker> =
+        const { Cell::new(core::ptr::null_mut()) };
+}
 
 #[repr(C)]
 pub struct PollThreadWorker {
@@ -2048,24 +2091,19 @@ impl PollThreadWorker {
 }
 
 pub fn pollworker_is_on_poll_thread() -> bool {
-    unsafe { !g_current_poll_worker.is_null() }
-}
-
-fn u64_to_thread_id(bits: u64) -> rusty::thread::ThreadId {
-    // The production facade wraps the platform's opaque thread id. Preserve
-    // the incumbent byte-level round trip without pretending that its native
-    // type is an integer in generated C++.
-    unsafe { core::mem::transmute::<u64, rusty::thread::ThreadId>(bits) }
+    g_current_poll_worker.with(|worker| !worker.get().is_null())
 }
 
 #[repr(C)]
 pub struct PollThread {
-    pub sender_: rusty::sync::mpsc::Sender<PollCommand>,
+    pub sender_: std::sync::mpsc::Sender<PollCommand>,
     pub join_handle_: PollJoinSlot,
-    // Thread id of the poll thread as raw u64 bits (bit_cast of the
-    // native id) — used to detect self-join attempts in shutdown.
+    // Kernel thread ID, with zero meaning the worker has not started.
+    // This avoids inspecting the private representation of std ThreadId.
     pub poll_thread_id_bits_: AtomicU64,
     pub shutdown_called_: AtomicBool,
+    /// Number of removal commands accepted by the worker's command queue.
+    remove_count_: AtomicI32,
 }
 
 impl PollThread {
@@ -2078,7 +2116,7 @@ impl PollThread {
     pub fn shutdown(&self) {
         let main_tid: i64 = current_thread_gettid();
         reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), format!("[PollThread::shutdown] Called from TID={}", main_tid as i32));
-        if self.shutdown_called_.swap(true, rusty::sync::atomic::Ordering::AcqRel) {
+        if self.shutdown_called_.swap(true, std::sync::atomic::Ordering::AcqRel) {
             reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[PollThread::shutdown] Already called, returning".to_string());
             return;
         }
@@ -2092,10 +2130,8 @@ impl PollThread {
         let _dropped_when_worker_gone = self.sender_.send(PollCommand::Shutdown);
         reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[PollThread::shutdown] CmdShutdown sent".to_string());
         // Thread-safe read of the poll thread's id.
-        let current_tid = rusty::thread::current_id();
-        let poll_tid = u64_to_thread_id(
-            self.poll_thread_id_bits_.load(rusty::sync::atomic::Ordering::Acquire));
-        if current_tid == poll_tid {
+        let poll_tid = self.poll_thread_id_bits_.load(std::sync::atomic::Ordering::Acquire);
+        if current_thread_gettid() as u64 == poll_tid {
             reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[PollThread::shutdown] Called from poll thread, skipping join".to_string());
             return;
         }
@@ -2107,7 +2143,7 @@ impl PollThread {
             reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[PollThread::shutdown] join_handle lock acquired".to_string());
             if (*guard).is_some() {
                 reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[PollThread::shutdown] Calling thread.join()...".to_string());
-                (*guard).take().unwrap().join();
+                let _joined = (*guard).take().unwrap().join();
                 reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[PollThread::shutdown] thread.join() completed!".to_string());
             } else {
                 reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[PollThread::shutdown] join_handle is None, thread already joined".to_string());
@@ -2124,27 +2160,29 @@ impl PollThread {
     }
 
     pub fn remove(&self, poll: &mut dyn Pollable) {
-        // Err == the poll worker exited; the fd it would unregister is gone too.
-        let _dropped_when_worker_gone =
-            self.sender_.send(PollCommand::RemovePollable { fd: poll.fd() });
+        self.remove_fd(poll.fd());
     }
 
-    // fd-keyed variant (remove only reads .fd() anyway); lets
-    // shim-only callers avoid the Pollable base entirely.
+    /// Unregister the caller's current descriptor asynchronously.
+    /// The caller must keep that descriptor owned until command processing
+    /// completes, for example by retaining it through worker shutdown.
     pub fn remove_fd(&self, fd: i32) {
-        // Err == the poll worker exited; the fd it would unregister is gone too.
-        let _dropped_when_worker_gone =
-            self.sender_.send(PollCommand::RemovePollable { fd });
+        if self.sender_.send(PollCommand::RemovePollable { fd }).is_ok() {
+            self.remove_count_.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
-    // Thread-safe close: removes from epoll, closes socket, drops
-    // proxy ownership.
+    /// Ask the worker to unregister and close its currently owned descriptor.
+    /// The caller must identify a live registration and must not independently
+    /// close or replace its descriptor while this command is pending.
     pub fn request_close(&self, fd: i32) {
         // Err == the poll worker exited; it already closed everything it owned.
         let _dropped_when_worker_gone =
             self.sender_.send(PollCommand::ClosePollable { fd });
     }
 
+    /// Change the caller's current registration asynchronously. Its descriptor
+    /// must remain owned until this command has been processed.
     pub fn update_mode(&self, fd: i32, new_mode: i32) {
         let result = self.sender_.send(PollCommand::UpdateMode { fd, new_mode });
         if result.is_err() {
@@ -2158,9 +2196,10 @@ impl PollThread {
             self.sender_.send(PollCommand::AddJob { job });
     }
 
-    // For testing — worker state is not reachable across the channel.
+    /// Count accepted remove requests, including requests for an absent fd.
+    /// Requests sent after worker shutdown are rejected and do not count.
     pub fn get_remove_count(&self) -> i32 {
-        0
+        self.remove_count_.load(std::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -2213,7 +2252,7 @@ pub enum QuorumPolicy {
 #[repr(C)]
 pub struct QuorumEvent {
     pub status_: Cell<EventStatus>,
-    pub owner_thread_: rusty::thread::ThreadId,
+    pub owner_thread_: std::thread::ThreadId,
     pub state_: EventState,
     pub prunable_: Cell<bool>,
     pub self_: Weak<dyn EventPollable>,
@@ -2291,7 +2330,7 @@ impl QuorumEvent {
     }
 }
 
-#[cpp_inherit]
+#[cfg_attr(any(), cpp_inherit)]
 impl EventPollable for QuorumEvent {
     fn test(&self) -> bool {
         event_test_impl(self)
@@ -2341,7 +2380,7 @@ impl EventPollable for QuorumEvent {
 
 impl EventCore for QuorumEvent {
     fn core_status(&self) -> &Cell<EventStatus> { &self.status_ }
-    fn core_owner_thread(&self) -> rusty::thread::ThreadId { self.owner_thread_ }
+    fn core_owner_thread(&self) -> std::thread::ThreadId { self.owner_thread_ }
     fn core_state(&self) -> &EventState { &self.state_ }
     fn core_state_mut(&mut self) -> &mut EventState { &mut self.state_ }
     fn core_self(&self) -> &Weak<dyn EventPollable> { &self.self_ }
@@ -2365,8 +2404,11 @@ impl QuorumEventWrapper {
     // "no viable conversion from returned value of type
     // 'const rusty::Arc<QuorumEvent>' to function return type
     // 'const QuorumEvent'" (R/M/obj-D1.log).  The explicit `&(*self.q_)`
-    // lowers to `return *this->q_;`, which is the historical accessor.
+    // lowered to `return *this->q_;` when this was first measured and lowers
+    // to `return (rusty::detail::deref_if_pointer_like(this->q_));` under
+    // rusty-cpp 3e1d9505 -- a dereference either way, which is the point.
     // The C++ ABI contract wins; scoped to this one item.
+    // clippy::explicit_auto_deref -- measured 2026-09-11 (clippy 0.1.97, rusty-cpp 3e1d9505): taking it returns `this->q_` -- the handle -- where `const QuorumEvent&` is declared, dropping the deref_if_pointer_like unwrap the accessor lowers to today (2 emitted lines in srpc.reactor.cppm).
     #[allow(clippy::explicit_auto_deref)]
     pub fn q(&self) -> &QuorumEvent {
         &(*self.q_)
@@ -2416,15 +2458,15 @@ impl QuorumEventWrapper {
 }
 
 fn event_wait_impl<W: EventCore>(ev: &W, timeout: u64) {
-    reactor_verify(unsafe { sp_reactor_th_.is_some() });
+    reactor_verify(sp_reactor_th_.with(|slot| slot.borrow().is_some()));
     // `.clone()` binds a *value* Rc (not a reference).  The field access is
     // spelled without an explicit `(*…)`: Rust auto-derefs the Rc, and the
     // emitter lowers the bare receiver to a direct `(*reactor_th).thread_id_`,
     // so it reaches through the Rc either way.  (Spelling the deref in Rust
     // instead lowers to the generic `deref_if_pointer_like(reactor_th)` —
     // equivalent, and what this file used to emit.)
-    let reactor_th = unsafe { sp_reactor_th_.as_ref().unwrap().clone() };
-    reactor_verify(reactor_th.thread_id_.get() == rusty::thread::current_id());
+    let reactor_th = sp_reactor_th_.with(|slot| slot.borrow().as_ref().unwrap().clone());
+    reactor_verify(reactor_th.thread_id_.get() == std::thread::current().id());
     if ev.core_status().get() == EventStatus::DONE {
         return; // second use of the event
     }
@@ -2462,7 +2504,7 @@ fn event_wait_impl<W: EventCore>(ev: &W, timeout: u64) {
         // Rc::downgrade(rc) factory (mirrors std::rc::Rc::downgrade). `fiber` is
         // cloned (a refcount bump) so the factory consumes the temporary and the
         // original `fiber` stays live for the checks below.
-        *ev.core_state().wp_fiber_.borrow_mut() = ::rusty::port::rc::Rc::<Fiber>::downgrade(&fiber);
+        *ev.core_state().wp_fiber_.borrow_mut() = Rc::<Fiber>::downgrade(&fiber);
         ev.core_status().set(EventStatus::WAIT);
         let fiber_status = fiber.status_.get();
         reactor_verify(fiber_status != FiberStatus::FINISHED && fiber_status != FiberStatus::RECYCLED);
@@ -2476,7 +2518,7 @@ fn event_test_impl<W: EventCore>(ev: &W) -> bool {
         if ev.core_status().get() == EventStatus::INIT {
             ev.core_status().set(EventStatus::DONE);
         } else if ev.core_status().get() == EventStatus::WAIT {
-            if rusty::thread::current_id() == ev.core_owner_thread() {
+            if std::thread::current().id() == ev.core_owner_thread() {
                 // Owner-thread-only: upgrading the weak fiber ref mutates a plain
                 // (non-atomic) Rc strong count; doing this from a foreign thread
                 // races the owner's own Rc<Fiber> clones and corrupts the count.
@@ -2521,7 +2563,7 @@ fn event_state_seed(st: &EventState) {
         // does not compile (`this_` unbound).
         let rc_fiber: Rc<Fiber> = rc_fiber;
         let mut g2 = st.wp_fiber_.borrow_mut();
-        *g2 = rusty::port::rc::Rc::<Fiber>::downgrade(&rc_fiber);
+        *g2 = Rc::<Fiber>::downgrade(&rc_fiber);
     }
 }
 
@@ -2550,7 +2592,7 @@ fn event_state_seed(st: &EventState) {
 fn never_event_make() -> Arc<NeverEvent> {
     let sp = Arc::new(NeverEvent {
         status_: Cell::new(EventStatus::INIT),
-        owner_thread_: rusty::thread::current_id(),
+        owner_thread_: std::thread::current().id(),
         state_: EventState::new(),
         prunable_: Cell::new(true),
         self_: Weak::<NeverEvent>::new(),
@@ -2564,7 +2606,7 @@ fn never_event_make() -> Arc<NeverEvent> {
 fn timeout_event_make(wait_us: u64) -> Arc<TimeoutEvent> {
     let sp = Arc::new(TimeoutEvent {
         status_: Cell::new(EventStatus::INIT),
-        owner_thread_: rusty::thread::current_id(),
+        owner_thread_: std::thread::current().id(),
         state_: EventState::new(),
         prunable_: Cell::new(true),
         self_: Weak::<TimeoutEvent>::new(),
@@ -2580,7 +2622,7 @@ fn timeout_event_make(wait_us: u64) -> Arc<TimeoutEvent> {
 fn int_event_make(target: i32) -> Arc<IntEvent> {
     let sp = Arc::new(IntEvent {
         status_: Cell::new(EventStatus::INIT),
-        owner_thread_: rusty::thread::current_id(),
+        owner_thread_: std::thread::current().id(),
         state_: EventState::new(),
         prunable_: Cell::new(true),
         self_: Weak::<IntEvent>::new(),
@@ -2606,7 +2648,7 @@ fn waitany_make(a: Arc<dyn EventPollable>, b: Arc<dyn EventPollable>) -> Arc<Wai
     events.push(b);
     let sp = Arc::new(WaitAny {
         status_: Cell::new(EventStatus::INIT),
-        owner_thread_: rusty::thread::current_id(),
+        owner_thread_: std::thread::current().id(),
         state_: EventState::new(),
         prunable_: Cell::new(true),
         self_: Weak::<WaitAny>::new(),
@@ -2621,7 +2663,7 @@ fn waitany_make(a: Arc<dyn EventPollable>, b: Arc<dyn EventPollable>) -> Arc<Wai
 fn waitall_make() -> Arc<WaitAll> {
     let sp = Arc::new(WaitAll {
         status_: Cell::new(EventStatus::INIT),
-        owner_thread_: rusty::thread::current_id(),
+        owner_thread_: std::thread::current().id(),
         state_: EventState::new(),
         prunable_: Cell::new(true),
         self_: Weak::<WaitAll>::new(),
@@ -2641,7 +2683,7 @@ fn waitall_make_from(evs: &Vec<Arc<dyn EventPollable>>) -> Arc<WaitAll> {
     }
     let sp = Arc::new(WaitAll {
         status_: Cell::new(EventStatus::INIT),
-        owner_thread_: rusty::thread::current_id(),
+        owner_thread_: std::thread::current().id(),
         state_: EventState::new(),
         prunable_: Cell::new(true),
         self_: Weak::<WaitAll>::new(),
@@ -2690,7 +2732,7 @@ fn shared_int_event_wait_until_gte(sie: &mut SharedIntEvent, x: i32, timeout: i3
 }
 
 fn shared_int_event_wait(sie: &mut SharedIntEvent, f: EventTestFn) {
-    if f(sie.value_) {
+    if f.as_ref().unwrap()(sie.value_) {
         return;
     }
     let ev: Arc<IntEvent> = create_sp_int_event(1);
@@ -2705,13 +2747,13 @@ fn shared_int_event_wait(sie: &mut SharedIntEvent, f: EventTestFn) {
 
 fn fiber_fn_present(f: *const RefCell<FiberFn>) -> bool {
     let g = unsafe { (*f).borrow() };
-    !(*g).is_empty()
+    g.is_some()
 }
 
 fn fiber_fn_invoke(f: *const RefCell<FiberFn>) {
     // borrow_mut: rusty::Function::operator() is non-const.
     let mut g = unsafe { (*f).borrow_mut() };
-    (*g)();
+    g.as_mut().unwrap()();
 }
 
 fn fiber_fn_clear(f: *const RefCell<FiberFn>) {
@@ -2796,7 +2838,7 @@ fn fiber_run(fb: &Fiber) {
     // The closure only reads through this pointer; keep the constness instead
     // of manufacturing a mutable pointer with a const-removal kernel.
     let self_ptr: *const Fiber = fb as *const Fiber;
-    let mut task: FiberTaskFn = FiberTaskFn::from_callable(move |yy: &mut fiber_yield_t| {
+    let mut task: FiberTaskFn = Some(Box::new(move |yy: &mut fiber_yield_t| {
         unsafe {
             // The initial callback must run before fiber_install_task stores
             // its Box. This also proves no RefCell borrow spans engine start.
@@ -2806,7 +2848,7 @@ fn fiber_run(fb: &Fiber) {
             }
             fiber_run_wrapper(&*self_ptr, &raw mut *yy);
         }
-    });
+    }));
     fiber_install_task(&fb.fiber_task_, task);
     {
         let tguard = fb.fiber_task_.borrow();
@@ -2864,10 +2906,10 @@ fn stackless_profile_env() -> bool {
 }
 
 fn stackless_profile_enabled() -> bool {
-    static ENABLED_STATE: rusty::sync::atomic::AtomicUsize =
-        rusty::sync::atomic::AtomicUsize::new(0);
+    static ENABLED_STATE: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
     loop {
-        let observed = ENABLED_STATE.load(rusty::sync::atomic::Ordering::Acquire);
+        let observed = ENABLED_STATE.load(std::sync::atomic::Ordering::Acquire);
         if observed == 2 {
             return false;
         }
@@ -2879,15 +2921,15 @@ fn stackless_profile_enabled() -> bool {
                 .compare_exchange(
                     0,
                     1,
-                    rusty::sync::atomic::Ordering::AcqRel,
-                    rusty::sync::atomic::Ordering::Acquire,
+                    std::sync::atomic::Ordering::AcqRel,
+                    std::sync::atomic::Ordering::Acquire,
                 )
                 .is_ok()
         {
             let enabled = stackless_profile_env();
             ENABLED_STATE.store(
                 if enabled { 3 } else { 2 },
-                rusty::sync::atomic::Ordering::Release,
+                std::sync::atomic::Ordering::Release,
             );
             return enabled;
         }
@@ -2911,43 +2953,46 @@ struct StacklessProfileCounters {
 // Atomics provide interior mutability, so the Rust binding itself need not be
 // `mut`. Explicit zero initializers preserve the former static-storage state.
 static g_stackless_profile: StacklessProfileCounters = StacklessProfileCounters {
-    reg_calls: rusty::sync::atomic::AtomicU64::new(0u64),
-    reg_scan_steps: rusty::sync::atomic::AtomicU64::new(0u64),
-    reg_reuse: rusty::sync::atomic::AtomicU64::new(0u64),
-    reg_new: rusty::sync::atomic::AtomicU64::new(0u64),
-    poll_calls: rusty::sync::atomic::AtomicU64::new(0u64),
-    poll_ready: rusty::sync::atomic::AtomicU64::new(0u64),
-    enqueue_calls: rusty::sync::atomic::AtomicU64::new(0u64),
-    max_slots: rusty::sync::atomic::AtomicUsize::new(0usize),
+    reg_calls: std::sync::atomic::AtomicU64::new(0u64),
+    reg_scan_steps: std::sync::atomic::AtomicU64::new(0u64),
+    reg_reuse: std::sync::atomic::AtomicU64::new(0u64),
+    reg_new: std::sync::atomic::AtomicU64::new(0u64),
+    poll_calls: std::sync::atomic::AtomicU64::new(0u64),
+    poll_ready: std::sync::atomic::AtomicU64::new(0u64),
+    enqueue_calls: std::sync::atomic::AtomicU64::new(0u64),
+    max_slots: std::sync::atomic::AtomicUsize::new(0usize),
 };
 
 fn stackless_profile_update_max_slots(slots: usize) {
-    g_stackless_profile.max_slots.fetch_max(slots, rusty::sync::atomic::Ordering::Relaxed);
+    g_stackless_profile.max_slots.fetch_max(slots, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn stackless_profile_report_periodic() {
     if !stackless_profile_enabled() {
         return;
     }
-    #[cfg_attr(any(), thread_local)] static mut last_report_us: u64 = 0;
+    thread_local! {
+        static last_report_us: Cell<u64> = const { Cell::new(0) };
+    }
     let now_us: u64 = Time::now(true);
-    if unsafe { last_report_us } == 0u64 {
-        unsafe { last_report_us = now_us };
+    let last = last_report_us.with(|stamp| stamp.get());
+    if last == 0u64 {
+        last_report_us.with(|stamp| stamp.set(now_us));
         return;
     }
-    if now_us - unsafe { last_report_us } < 1000000u64 {
+    if now_us - last < 1000000u64 {
         return;
     }
-    unsafe { last_report_us = now_us };
+    last_report_us.with(|stamp| stamp.set(now_us));
 
-    let reg_calls: u64 = g_stackless_profile.reg_calls.load(rusty::sync::atomic::Ordering::Relaxed);
-    let reg_scans: u64 = g_stackless_profile.reg_scan_steps.load(rusty::sync::atomic::Ordering::Relaxed);
-    let reg_reuse: u64 = g_stackless_profile.reg_reuse.load(rusty::sync::atomic::Ordering::Relaxed);
-    let reg_new: u64 = g_stackless_profile.reg_new.load(rusty::sync::atomic::Ordering::Relaxed);
-    let poll_calls: u64 = g_stackless_profile.poll_calls.load(rusty::sync::atomic::Ordering::Relaxed);
-    let poll_ready: u64 = g_stackless_profile.poll_ready.load(rusty::sync::atomic::Ordering::Relaxed);
-    let enqueue_calls: u64 = g_stackless_profile.enqueue_calls.load(rusty::sync::atomic::Ordering::Relaxed);
-    let max_slots: usize = g_stackless_profile.max_slots.load(rusty::sync::atomic::Ordering::Relaxed);
+    let reg_calls: u64 = g_stackless_profile.reg_calls.load(std::sync::atomic::Ordering::Relaxed);
+    let reg_scans: u64 = g_stackless_profile.reg_scan_steps.load(std::sync::atomic::Ordering::Relaxed);
+    let reg_reuse: u64 = g_stackless_profile.reg_reuse.load(std::sync::atomic::Ordering::Relaxed);
+    let reg_new: u64 = g_stackless_profile.reg_new.load(std::sync::atomic::Ordering::Relaxed);
+    let poll_calls: u64 = g_stackless_profile.poll_calls.load(std::sync::atomic::Ordering::Relaxed);
+    let poll_ready: u64 = g_stackless_profile.poll_ready.load(std::sync::atomic::Ordering::Relaxed);
+    let enqueue_calls: u64 = g_stackless_profile.enqueue_calls.load(std::sync::atomic::Ordering::Relaxed);
+    let max_slots: usize = g_stackless_profile.max_slots.load(std::sync::atomic::Ordering::Relaxed);
 
     let mut avg_scan: f64 = 0.0f64;
     if reg_calls > 0u64 {
@@ -2959,25 +3004,23 @@ fn stackless_profile_report_periodic() {
 
 fn stackless_profile_note_enqueue() {
     if stackless_profile_enabled() {
-        g_stackless_profile.enqueue_calls.fetch_add(1u64, rusty::sync::atomic::Ordering::Relaxed);
+        g_stackless_profile.enqueue_calls.fetch_add(1u64, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
 fn reactor_poll_one(r: &Reactor, idx: usize, poll_fn: *mut StacklessPollFn) -> bool {
     if stackless_profile_enabled() {
-        g_stackless_profile.poll_calls.fetch_add(1u64, rusty::sync::atomic::Ordering::Relaxed);
+        g_stackless_profile.poll_calls.fetch_add(1u64, std::sync::atomic::Ordering::Relaxed);
     }
-    // The binding is heap-stable and owned by the private owner-thread
-    // registry. Task::poll may retain Context* until the Task is destroyed.
-    let ctx_ptr = stackless_wake_context_ptr::<()>(r, idx);
-    reactor_verify(!ctx_ptr.is_null());
-    let ctx_ref: &mut rusty::Context = unsafe { &mut *ctx_ptr };
-    unsafe { (*poll_fn)(ctx_ref) }
+    // The Waker owns its wake target; the Context is borrowed for this poll.
+    let waker = stackless_wake_waker::<()>(r, idx);
+    let mut context = Context::from_waker(&waker);
+    unsafe { (*poll_fn).as_mut().unwrap()(&mut context) }
 }
 
 fn stackless_profile_note_poll_ready() {
     if stackless_profile_enabled() {
-        g_stackless_profile.poll_ready.fetch_add(1u64, rusty::sync::atomic::Ordering::Relaxed);
+        g_stackless_profile.poll_ready.fetch_add(1u64, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
@@ -2989,19 +3032,19 @@ fn stackless_profile_note_register(scanned: usize, reuse: bool, slots_now: usize
     if !stackless_profile_enabled() {
         return;
     }
-    g_stackless_profile.reg_calls.fetch_add(1u64, rusty::sync::atomic::Ordering::Relaxed);
-    g_stackless_profile.reg_scan_steps.fetch_add(scanned as u64, rusty::sync::atomic::Ordering::Relaxed);
+    g_stackless_profile.reg_calls.fetch_add(1u64, std::sync::atomic::Ordering::Relaxed);
+    g_stackless_profile.reg_scan_steps.fetch_add(scanned as u64, std::sync::atomic::Ordering::Relaxed);
     if reuse {
-        g_stackless_profile.reg_reuse.fetch_add(1u64, rusty::sync::atomic::Ordering::Relaxed);
+        g_stackless_profile.reg_reuse.fetch_add(1u64, std::sync::atomic::Ordering::Relaxed);
     } else {
-        g_stackless_profile.reg_new.fetch_add(1u64, rusty::sync::atomic::Ordering::Relaxed);
+        g_stackless_profile.reg_new.fetch_add(1u64, std::sync::atomic::Ordering::Relaxed);
         stackless_profile_update_max_slots(slots_now);
     }
 }
 
 fn fiber_current_fiber() -> Option<Rc<Fiber>> {
-    let guard = unsafe { sp_running_fiber_th_.borrow() };
-    Some((*guard).as_ref()?.clone())
+    // Explicit deref: see continue_fiber's old_fiber note.
+    sp_running_fiber_th_.with(|slot| (*slot.borrow()).clone())
 }
 
 // `pub` restores the incumbent carrier's visibility. In the hand-written
@@ -3043,45 +3086,46 @@ fn reactor_log_create(disk: bool) {
 }
 
 fn reactor_tls_get() -> Rc<Reactor> {
-    unsafe {
-        if sp_reactor_th_.is_none() {
+    sp_reactor_th_.with(|slot| {
+        let mut guard = slot.borrow_mut();
+        if guard.is_none() {
             reactor_log_create(false);
             let r = reactor_make();
-            r.thread_id_.set(rusty::thread::current_id());
-            sp_reactor_th_ = Some(r);
+            r.thread_id_.set(std::thread::current().id());
+            *guard = Some(r);
         }
-        sp_reactor_th_.as_ref().unwrap().clone()
-    }
+        guard.as_ref().unwrap().clone()
+    })
 }
 
 fn reactor_tls_get_disk() -> Rc<Reactor> {
-    unsafe {
-        if sp_disk_reactor_th_.is_none() {
+    sp_disk_reactor_th_.with(|slot| {
+        let mut guard = slot.borrow_mut();
+        if guard.is_none() {
             reactor_log_create(true);
             let r = reactor_make();
-            r.thread_id_.set(rusty::thread::current_id());
-            sp_disk_reactor_th_ = Some(r);
+            r.thread_id_.set(std::thread::current().id());
+            *guard = Some(r);
         }
-        sp_disk_reactor_th_.as_ref().unwrap().clone()
-    }
+        guard.as_ref().unwrap().clone()
+    })
 }
 
 fn reactor_tls_save_running() -> Option<Rc<Fiber>> {
-    let guard = unsafe { sp_running_fiber_th_.borrow() };
-    if (*guard).is_some() {
-        return Some((*guard).as_ref().unwrap().clone());
-    }
-    None
+    // Explicit deref: see continue_fiber's old_fiber note.
+    sp_running_fiber_th_.with(|slot| (*slot.borrow()).clone())
 }
 
 fn reactor_tls_restore_running(old_fiber: Option<Rc<Fiber>>) {
-    let mut guard = unsafe { sp_running_fiber_th_.borrow_mut() };
-    *guard = old_fiber;
+    sp_running_fiber_th_.with(|slot| {
+        *slot.borrow_mut() = old_fiber;
+    });
 }
 
 fn reactor_tls_set_running(fiber: &Rc<Fiber>) {
-    let mut guard = unsafe { sp_running_fiber_th_.borrow_mut() };
-    *guard = Some(fiber.clone());
+    sp_running_fiber_th_.with(|slot| {
+        *slot.borrow_mut() = Some(fiber.clone());
+    });
 }
 
 fn reactor_get_or_create_fiber_impl(self_: &Reactor, func: FiberFn, file: SrcFileCStr, line: i64) -> Rc<Fiber> {
@@ -3160,39 +3204,36 @@ fn reactor_create_run_fiber_at_impl(self_: &Reactor, func: FiberFn, file: SrcFil
 
 // MEASURED allow — see the `arc_with_non_send_sync` note on `never_event_make`.
 #[allow(clippy::arc_with_non_send_sync)]
-fn reactor_spawn_stackless_task_impl(self_: &Reactor, mut task: TaskVoid) {
-    reactor_verify(rusty::thread::current_id() == self_.thread_id_.get());
+pub fn reactor_spawn_stackless_task_impl(self_: &Reactor, mut task: TaskVoid) {
+    reactor_verify(std::thread::current().id() == self_.thread_id_.get());
     let ingress = stackless_wake_ingress::<()>(self_);
-    let mut early_binding = stackless_wake_make_binding::<()>(ingress);
+    let mut early_binding = stackless_wake_make_binding(ingress);
     let early_ticket = early_binding.ticket.clone();
-    let ectx: &mut rusty::Context = stackless_wake_binding_context::<()>(&mut early_binding);
-    if task.poll(ectx).is_ready() {
-        // Task retains Context*. Keep the binding alive through destruction.
-        drop(task);
+    let mut ectx = Context::from_waker(&early_binding.waker);
+    if task.as_mut().poll(&mut ectx).is_ready() {
         return;
     }
 
     let ts = StacklessVoidTaskState {
-        early_binding,
         task: RefCell::<TaskVoid>::new(task),
     };
     let state: Arc<StacklessVoidTaskState> = Arc::new(ts);
     let completion_ticket = early_ticket.clone();
-    let poller = StacklessPollFn::from_callable(move |ctx: &mut rusty::Context| -> bool {
+    let poller: StacklessPollFn = Some(Box::new(move |ctx: &mut Context<'_>| -> bool {
         // Scoped so the task borrow is released before the ready-path store.
         let ready: bool = {
             let mut tguard = state.task.borrow_mut();
-            (*tguard).poll(ctx).is_ready()
+            (*tguard).as_mut().poll(ctx).is_ready()
         };
         if !ready {
             return false;
         }
         completion_ticket.slot.store(
             STACKLESS_UNREGISTERED_SLOT,
-            rusty::sync::atomic::Ordering::Release,
+            std::sync::atomic::Ordering::Release,
         );
         true
-    });
+    }));
     let idx = self_.register_stackless_poller(poller);
     if idx == STACKLESS_UNREGISTERED_SLOT {
         // See reactor_spawn_stackless_task_with_result: the rejected poller and
@@ -3201,7 +3242,7 @@ fn reactor_spawn_stackless_task_impl(self_: &Reactor, mut task: TaskVoid) {
         // continuation, so this must not look like a successful spawn.
         return;
     }
-    early_ticket.slot.store(idx, rusty::sync::atomic::Ordering::Release);
+    early_ticket.slot.store(idx, std::sync::atomic::Ordering::Release);
     let ingress_ready = stackless_wake_take_pending::<()>(self_);
     for ready_idx in ingress_ready {
         self_.enqueue_stackless_task(ready_idx);
@@ -3336,19 +3377,9 @@ fn pollworker_poll_loop(w: &mut PollThreadWorker) {
         let mut n: usize = 0;
         while n < closed_fds.len() {
             let fd = closed_fds[n];
-            let proxy_opt = w.fd_to_pollable_.get_mut(&fd);
-            if let Some(p) = proxy_opt {
-                let p: &mut Box<dyn PollableBase> = p;
-                // Remove from epoll if still registered.
-                if w.mode_.contains_key(&fd) {
-                    w.poll_.Remove(fd);
-                }
-                // Invoke the close callback before erasing the map entry
-                // so cleanup hooks run.
-                p.close();
-                w.fd_to_pollable_.remove(&fd);
-                w.mode_.remove(&fd);
-            }
+            // Detach before the callout, retain the proxy lease through DEL,
+            // then invoke close without a live map borrow.
+            pollworker_do_close_pollable(w, fd);
             n += 1;
         }
     }
@@ -3420,37 +3451,56 @@ fn job_spawn_work(job: &Arc<dyn Job>) {
     });
 }
 
+// The C++ BTreeMap uses an explicit new_ factory and has no default constructor.
+#[allow(clippy::mem_replace_with_default)]
 fn pollworker_trigger_job(w: &mut PollThreadWorker) {
-    let jobs_exec = core::mem::take(&mut w.jobs_);
-    for job in jobs_exec.iter() {
+    let jobs_exec = core::mem::replace(&mut w.jobs_, JobSet::new());
+    for job in jobs_exec.values() {
         if job_ready(job) {
             // Ready jobs ran (or are running) — do NOT re-add them.
             job_spawn_work(job);
         } else {
             // Not ready yet — check again on the next pass.
-            w.jobs_.insert(job.clone());
+            w.jobs_.insert(job_identity(job), job.clone());
         }
     }
 }
 
+// Preserve the shared Box reference across HashMap lookup; see the measured
+// lowering requirement on pollable_proxy_fd below.
+#[allow(clippy::borrowed_box)]
 fn pollworker_do_add_pollable(w: &mut PollThreadWorker, poll: PollableProxy) {
     let fd = pollable_proxy_fd(&poll);
     let poll_mode = pollable_proxy_mode(&poll);
 
-    // The pollable can close between CmdAddPollable being enqueued and
-    // processed (teardown racing an accept/connect registration): fd is
-    // then -1 and registering would abort inside Epoll::Add. A closed
-    // pollable can never produce events — drop it.
-    if fd < 0 {
+    // The proxy owns its descriptor through every epoll operation, including
+    // close racing this check. A queued registration already logically closed
+    // needs no epoll entry; dropping the proxy releases its descriptor lease.
+    //
+    // The `&Box<dyn PollableBase>` rebind is a measured lowering requirement,
+    // the same one `old` needs below. The emitter writes `->` for a receiver
+    // whose declared type is literally `&Box<..>`; a by-value receiver of the
+    // alias type `PollableProxy` lowered to `poll.is_closed()` on a
+    // `rusty::Box<PollableBase>` -- "no member named 'is_closed'" -- and the
+    // srpc.reactor module failed to compile. The fn-level `borrowed_box`
+    // allow above covers this rebind too.
+    let poll_ref: &Box<dyn PollableBase> = &poll;
+    if fd < 0 || poll_ref.is_closed() {
         return;
     }
     if w.fd_to_pollable_.contains_key(&fd) {
-        return;
+        let old = w.fd_to_pollable_.get(&fd).unwrap();
+        let old: &Box<dyn PollableBase> = old;
+        if !old.is_closed() {
+            return;
+        }
+        // Retire the closed registration before admitting a replacement,
+        // including any removal queued for the old connection.
+        pollworker_do_close_pollable(w, fd);
     }
     w.fd_to_pollable_.insert(fd, poll);
     w.mode_.insert(fd, poll_mode);
-    // Add fails (-1) on the EBADF teardown race — drop the dead
-    // pollable again.
+    // A failed registration still owns its descriptor until this proxy drops.
     if w.poll_.Add(fd, poll_mode) != 0 {
         w.fd_to_pollable_.remove(&fd);
         w.mode_.remove(&fd);
@@ -3467,17 +3517,17 @@ fn pollworker_do_remove_pollable(w: &mut PollThreadWorker, fd: i32) {
 
 fn pollworker_do_close_pollable(w: &mut PollThreadWorker, fd: i32) {
     w.pending_remove_.remove(&fd);
-    if !w.fd_to_pollable_.contains_key(&fd) {
-        return;
+    let retired = w.fd_to_pollable_.remove(&fd);
+    if let Some(mut poll) = retired {
+        if w.mode_.contains_key(&fd) {
+            w.poll_.Remove(fd);
+        }
+        w.mode_.remove(&fd);
+        // Own the retired proxy across its callout. A close callback may
+        // reenter the worker after the old registration has been removed.
+        let poll: &mut Box<dyn PollableBase> = &mut poll;
+        poll.close();
     }
-    if w.mode_.contains_key(&fd) {
-        w.poll_.Remove(fd);
-    }
-    // Virtual close through the proxy (arrow kernel: unwrap would copy
-    // the move-only Box).
-    pollworker_close_proxy_of(w, fd);
-    w.fd_to_pollable_.remove(&fd);
-    w.mode_.remove(&fd);
 }
 
 fn pollworker_do_update_mode(w: &mut PollThreadWorker, fd: i32, new_mode: i32) {
@@ -3495,12 +3545,17 @@ fn pollworker_do_update_mode(w: &mut PollThreadWorker, fd: i32, new_mode: i32) {
     }
 }
 
+#[allow(unsafe_code)]
+fn job_identity(job: &Arc<dyn Job>) -> usize {
+    Arc::as_ptr(job) as *const () as usize
+}
+
 fn pollworker_do_add_job(w: &mut PollThreadWorker, job: Arc<dyn Job>) {
-    w.jobs_.insert(job);
+    w.jobs_.insert(job_identity(&job), job);
 }
 
 fn pollworker_do_remove_job(w: &mut PollThreadWorker, job: Arc<dyn Job>) {
-    w.jobs_.erase(job);
+    w.jobs_.remove(&job_identity(&job));
 }
 
 fn pollworker_process_pending_removals(w: &mut PollThreadWorker) {
@@ -3569,37 +3624,29 @@ fn pollworker_update_mode(w: &mut PollThreadWorker, poll: &mut dyn Pollable, new
     pollworker_do_update_mode(w, poll.fd(), new_mode);
 }
 
-fn thread_id_to_u64(tid: rusty::thread::ThreadId) -> u64 {
-    unsafe { core::mem::transmute::<rusty::thread::ThreadId, u64>(tid) }
-}
-
 fn pollthread_create() -> Arc<PollThread> {
-    let (sender, receiver) = rusty::sync::mpsc::channel::<PollCommand>();
+    let (sender, receiver) = std::sync::mpsc::channel::<PollCommand>();
     let seed = PollThread {
         sender_: sender,
         join_handle_: PollJoinSlot::new(None),
-        poll_thread_id_bits_: rusty::sync::atomic::AtomicU64::new(0),
-        shutdown_called_: rusty::sync::atomic::AtomicBool::new(false),
+        poll_thread_id_bits_: std::sync::atomic::AtomicU64::new(0),
+        shutdown_called_: std::sync::atomic::AtomicBool::new(false),
+        remove_count_: AtomicI32::new(0),
     };
     let arc: Arc<PollThread> = Arc::new(seed);
     // rusty atomic ops are const, so a const* suffices through the Arc.
-    let thread_id_address = (&arc.poll_thread_id_bits_ as *const rusty::sync::atomic::AtomicU64) as usize;
-    // One-argument spawn.  The production `rusty::thread::spawn` is variadic
-    // (`auto spawn(F&& func, Args&&... args)`), so both `spawn(f, rx)` and
-    // `spawn(f_capturing_rx)` lower to a valid call; the single-callable form
-    // is the one Rust can model, because Rust has no variadic functions and
-    // the canonical client already spells `spawn(move || { ... })`.
-    let handle = rusty::thread::spawn(move || {
-        let tid = rusty::thread::current_id();
-        let thread_id_ptr = thread_id_address as *const rusty::sync::atomic::AtomicU64;
-        unsafe { (*thread_id_ptr).store(thread_id_to_u64(tid), rusty::sync::atomic::Ordering::Release) };
+    let thread_id_address = (&arc.poll_thread_id_bits_ as *const std::sync::atomic::AtomicU64) as usize;
+    let handle = crate::threading::spawn_abort_on_panic(move || {
+        let tid = current_thread_gettid() as u64;
+        let thread_id_ptr = thread_id_address as *const std::sync::atomic::AtomicU64;
+        unsafe { (*thread_id_ptr).store(tid, std::sync::atomic::Ordering::Release) };
         // Raw TLS pointer (not a re-borrow) so fibers on this thread can
         // reach the worker while the borrow_mut guard is held.
         let worker: Rc<RefCell<PollThreadWorker>> = PollThreadWorker::create(receiver);
         let mut guard: RefMut<PollThreadWorker> = worker.borrow_mut();
-        unsafe { g_current_poll_worker = &raw mut *guard };
+        g_current_poll_worker.with(|worker| worker.set(&raw mut *guard));
         guard.poll_loop();
-        unsafe { g_current_poll_worker = core::ptr::null_mut() };
+        g_current_poll_worker.with(|worker| worker.set(core::ptr::null_mut()));
     });
     {
         let mut slot = arc.join_handle_.lock().unwrap();
@@ -3657,8 +3704,8 @@ fn fiber_engine_destroy(fib: *mut srpc_fiber) {
 }
 
 fn fiber_task_body_invoke(f: &mut FiberTaskFn, y: &mut fiber_yield_t) {
-    reactor_verify(!f.is_empty());
-    (*f)(y);
+    reactor_verify(f.is_some());
+    f.as_mut().unwrap()(y);
 }
 
 #[cfg_attr(any(), cpp_namespace(::janus))]
@@ -3667,7 +3714,7 @@ fn fiber_task_body_invoke(f: &mut FiberTaskFn, y: &mut fiber_yield_t) {
 pub fn quorum_event_make(n_total: i32, quorum: i32) -> Arc<QuorumEvent> {
     let sp = Arc::new(QuorumEvent {
         status_: Cell::new(EventStatus::INIT),
-        owner_thread_: rusty::thread::current_id(),
+        owner_thread_: std::thread::current().id(),
         state_: EventState::new(),
         prunable_: Cell::new(true),
         self_: Weak::<QuorumEvent>::new(),
@@ -3699,9 +3746,8 @@ fn quorum_collect_dangling(qe: *const QuorumEvent) -> QuorumDanglingVec {
     let mut v: QuorumDanglingVec = Default::default();
     let guard = unsafe { (*qe).xids_.borrow_mut() };
     for it in (*guard).iter() {
-        // SAFETY: std::make_pair has no caller-side precondition; this checked
-        // foreign call preserves the historical std::pair callback ABI.
-        v.push(unsafe { cpp_std::make_pair(*it.0, *it.1) });
+        let dangling: QuorumDangling = (*it.0, *it.1);
+        v.push(dangling);
     }
     v
 }
@@ -3719,7 +3765,7 @@ fn quorum_event_finalize(qe: &QuorumEvent, timeout: u64,
         if final_ev.status_.get() == EventStatus::TIMEOUT {
             // Didn't receive all RPC replies.
             let dr: &mut QuorumDanglingVec = &mut dangling_rpc;
-            let _ret = finalize_func(dr);
+            let _ret = finalize_func.as_mut().unwrap()(dr);
             // Drain guard: a TIMEOUT'd event is never evicted by the
             // reactor loop (extract takes READY, retain drops DONE), so
             // a registered finalize_event_ would otherwise linger in the
@@ -3741,3 +3787,7 @@ fn quorum_event_is_slow(_qe: &QuorumEvent) -> bool {
     r.slow_.set(false);
     result
 }
+
+#[cfg(test)]
+#[path = "../tests/helpers/pollworker_fd_reuse.rs"]
+mod pollworker_fd_reuse_tests;

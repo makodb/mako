@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "bindings": {
+    "base/threading.rs:struct:srpc.threading::PthreadSpinlock": {
+      "sha256": "6d97a674636effe0cd0c13e0bcceb9f66b19f67ccb4f82218a305c7274fa7b23",
+      "c_type": "::pthread_spinlock_t",
+      "header": "pthread.h"
+    },
+    "base/threading.rs:struct:srpc.threading::PthreadMutex": {
+      "sha256": "3e04107809e3e4362090e4758025096bb092043cbe33bc255ddcfdef68d83bf9",
+      "c_type": "::pthread_mutex_t",
+      "header": "pthread.h"
+    },
+    "base/threading.rs:struct:srpc.threading::PthreadMutexAttr": {
+      "sha256": "a77e0b10321423ccd98d3a683e567710d2cb485d7dbc9a54ad49f71fe8231ed3",
+      "c_type": "::pthread_mutexattr_t",
+      "header": "pthread.h"
+    },
+    "base/threading.rs:struct:srpc.threading::PthreadCond": {
+      "sha256": "920c8f6b523451331ee6e41c249efe6101162a02bda53fc5bc152847a51f7eb3",
+      "c_type": "::pthread_cond_t",
+      "header": "pthread.h"
+    },
+    "base/threading.rs:struct:srpc.threading::PthreadCondAttr": {
+      "sha256": "cf7589ebab57de189a252c4689acead1b3aa54094e5620379591b7dee122c5f3",
+      "c_type": "::pthread_condattr_t",
+      "header": "pthread.h"
+    },
+    "base/debugging.rs:struct:srpc.debugging::CFile": {
+      "sha256": "8e8a451fa5afcb0263680093c1415985ebb871dd71f5d435efb8883de001eebe",
+      "c_type": "FILE",
+      "header": "stdio.h"
+    },
+    "reactor/reactor.rs:struct:srpc.reactor::srpc_fiber_ctx [# [cfg (target_arch = \"x86_64\")]]": {
+      "sha256": "1c63e48340e8eed22d7b1bea28f8bab0434e8ce6d80e307a2eddf7b772174b2a",
+      "c_type": "::srpc_fiber_ctx",
+      "header": "reactor/srpc_fiber.h"
+    },
+    "reactor/reactor.rs:struct:srpc.reactor::srpc_fiber_ctx [# [cfg (target_arch = \"aarch64\")]]": {
+      "sha256": "43e5be391592f29f30faa60bfa291cffaee5724c571167fb8e6714ccb808b8b6",
+      "c_type": "::srpc_fiber_ctx",
+      "header": "reactor/srpc_fiber.h"
+    },
+    "reactor/reactor.rs:struct:srpc.reactor::srpc_fiber": {
+      "sha256": "d798c1f8c886179bd87a86c3366f9ce797a61d9220e7de4a351dc08ac7bb21d8",
+      "c_type": "::srpc_fiber",
+      "header": "reactor/srpc_fiber.h"
+    }
+  }
+}

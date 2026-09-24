@@ -48,28 +48,28 @@ inline v32 compute_add(const v32& a, const v32& b) {
 }  // namespace
 
 rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>
-BenchmarkService::fast_prime(const RpcFastPrimeRequest& req) {
+BenchmarkService::fast_prime(const RpcFastPrimeRequest& req) const {
     RpcFastPrimeResponse resp{};
     resp.flag = compute_prime(req.n);
     return rusty::Result<RpcFastPrimeResponse, i32>::Ok(resp);
 }
 
 rusty::Result<BenchmarkService::RpcFastDotProdResponse, i32>
-BenchmarkService::fast_dot_prod(const RpcFastDotProdRequest& req) {
+BenchmarkService::fast_dot_prod(const RpcFastDotProdRequest& req) const {
     RpcFastDotProdResponse resp{};
     resp.v = compute_dot_prod(req.p1, req.p2);
     return rusty::Result<RpcFastDotProdResponse, i32>::Ok(resp);
 }
 
 rusty::Result<BenchmarkService::RpcFastAddResponse, i32>
-BenchmarkService::fast_add(const RpcFastAddRequest& req) {
+BenchmarkService::fast_add(const RpcFastAddRequest& req) const {
     RpcFastAddResponse resp{};
     resp.a_add_b = compute_add(req.a, req.b);
     return rusty::Result<RpcFastAddResponse, i32>::Ok(resp);
 }
 
 rusty::Result<BenchmarkService::RpcFastNopResponse, i32>
-BenchmarkService::fast_nop(const RpcFastNopRequest& req) {
+BenchmarkService::fast_nop(const RpcFastNopRequest& req) const {
     (void)req;
     int cnt = g_nop_counter.next(1);
     if (cnt % 200000 == 0) {
@@ -79,7 +79,7 @@ BenchmarkService::fast_nop(const RpcFastNopRequest& req) {
 }
 
 rusty::Result<BenchmarkService::RpcFastVecResponse, i32>
-BenchmarkService::fast_vec(const RpcFastVecRequest& req) {
+BenchmarkService::fast_vec(const RpcFastVecRequest& req) const {
     RpcFastVecResponse resp{};
     verify(req.n > 0);
     resp.v.insert(resp.v.begin(), req.n, 1);
@@ -87,28 +87,28 @@ BenchmarkService::fast_vec(const RpcFastVecRequest& req) {
 }
 
 rusty::Result<BenchmarkService::RpcPrimeResponse, i32>
-BenchmarkService::prime(const RpcPrimeRequest& req) {
+BenchmarkService::prime(const RpcPrimeRequest& req) const {
     RpcPrimeResponse resp{};
     resp.flag = compute_prime(req.n);
     return rusty::Result<RpcPrimeResponse, i32>::Ok(resp);
 }
 
 rusty::Result<BenchmarkService::RpcDotProdResponse, i32>
-BenchmarkService::dot_prod(const RpcDotProdRequest& req) {
+BenchmarkService::dot_prod(const RpcDotProdRequest& req) const {
     RpcDotProdResponse resp{};
     resp.v = compute_dot_prod(req.p1, req.p2);
     return rusty::Result<RpcDotProdResponse, i32>::Ok(resp);
 }
 
 rusty::Result<BenchmarkService::RpcAddResponse, i32>
-BenchmarkService::add(const RpcAddRequest& req) {
+BenchmarkService::add(const RpcAddRequest& req) const {
     RpcAddResponse resp{};
     resp.a_add_b = compute_add(req.a, req.b);
     return rusty::Result<RpcAddResponse, i32>::Ok(resp);
 }
 
 rusty::Result<BenchmarkService::RpcNopResponse, i32>
-BenchmarkService::nop(const RpcNopRequest& req) {
+BenchmarkService::nop(const RpcNopRequest& req) const {
     (void)req;
     int cnt = g_nop_counter.next(1);
     if (cnt % 200000 == 0) {
@@ -118,7 +118,7 @@ BenchmarkService::nop(const RpcNopRequest& req) {
 }
 
 rusty::Task<rusty::Result<BenchmarkService::RpcAsyncNopResponse, i32>>
-BenchmarkService::async_nop(const RpcAsyncNopRequest& req) {
+BenchmarkService::async_nop(const RpcAsyncNopRequest& req) const {
     (void)req;
     int cnt = g_nop_counter.next(1);
     if (cnt % 200000 == 0) {
@@ -128,7 +128,7 @@ BenchmarkService::async_nop(const RpcAsyncNopRequest& req) {
 }
 
 rusty::Result<BenchmarkService::RpcSleepResponse, i32>
-BenchmarkService::sleep(const RpcSleepRequest& req) {
+BenchmarkService::sleep(const RpcSleepRequest& req) const {
     int full_sec = static_cast<int>(req.sec);
     int usec = static_cast<int>((req.sec - full_sec) * 1000 * 1000);
     if (full_sec > 0) {
@@ -143,7 +143,7 @@ BenchmarkService::sleep(const RpcSleepRequest& req) {
 void BenchmarkService::deferred_echo(
     const RpcDeferredEchoRequest& req,
     RpcDeferredEchoResponse& resp,
-    srpc::DeferredReply defer) {
+    srpc::DeferredReply defer) const {
     resp.result = req.val * 2;
     defer.reply();
 }

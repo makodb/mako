@@ -72,9 +72,9 @@ class StubChannelAdapter : public ChannelConnectionBase {
  public:
     explicit StubChannelAdapter(std::shared_ptr<StubChannel> p)
         : stub_(std::move(p)) {}
-    ChannelError send_frame(const ChannelFrame& f) override { return stub_->send_frame(f); }
-    void   flush() override              { stub_->flush(); }
-    void   close() override              { stub_->close(); }
+    ChannelError send_frame(const ChannelFrame& f) const override { return stub_->send_frame(f); }
+    void   flush() const override              { stub_->flush(); }
+    void   close() const override              { stub_->close(); }
     bool   is_closed() const override    { return stub_->is_closed(); }
     std::string peer_address() const override { return stub_->peer_address(); }
     void set_on_frame (OnFrameCallback  cb) override { stub_->set_on_frame (std::move(cb)); }
@@ -111,7 +111,7 @@ class RecordingService {
     int __reg_to__(Server&, std::size_t) { return 0; }
 
     void __dispatch__(i32 rpc_id, rusty::Box<Request> req,
-                      WeakServerConnection sconn) {
+                      WeakServerConnection sconn) const {
         std::lock_guard<std::mutex> lk(mu_);
         last_rpc_id_ = rpc_id;
         last_xid_    = req->xid;
@@ -181,7 +181,7 @@ class ServerChannelRecvTest : public ::testing::Test {
         // individual test calls register_service().
         rusty::HashMap<i32, std::size_t> rpc_to_service;
         rusty::HashSet<i32> fast_rpc_ids;
-        rusty::Vec<rusty::RefCell<ServiceProxy>> services;
+        rusty::Vec<ServiceProxy> services;
         auto pending = rusty::Arc<ServerPendingRequestsAtomic>::make(0);
         auto drop = rusty::Arc<ServerDropHeartbeatRepliesAtomic>::make(false);
         ctx_ = rusty::Some(rusty::Arc<RpcServiceContext>::new_(
@@ -310,8 +310,8 @@ TEST_F(ServerChannelRecvTest, RegisteredFastRpcDispatches) {
     auto svc_proxy = make_service_proxy_from_typed_box<RecordingService>(
         std::move(svc_box));
 
-    rusty::Vec<rusty::RefCell<ServiceProxy>> services;
-    services.push(rusty::RefCell<ServiceProxy>(std::move(svc_proxy)));
+    rusty::Vec<ServiceProxy> services;
+    services.push(std::move(svc_proxy));
     rusty::HashMap<i32, std::size_t> rpc_to_service;
     rpc_to_service.insert(RecordingService::kEchoRpcId, std::size_t{0});
     rusty::HashSet<i32> fast_rpc_ids;

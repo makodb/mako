@@ -5,8 +5,6 @@
 //! bytes, while rusty-cpp translates this file into the production C++
 //! module provider.
 
-use cpp::srpc::serializable;
-use rusty as cpp;
 use std::cell::Cell;
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -56,7 +54,7 @@ impl IdempotencyKeyHash {
 }
 
 /// Serialize a key in the legacy archive's native-endian field order.
-pub fn serialize(key: &IdempotencyKey, archive: &mut serializable::BinaryWriteArchive) {
+pub fn serialize(key: &IdempotencyKey, archive: &mut crate::serializable::BinaryWriteArchive) {
     let client_id_pointer = (&key.client_id as *const u64).cast::<u8>();
     // SAFETY: the pointer comes from a live `u64` field, so it names exactly
     // `size_of::<u64>()` readable initialized bytes for this call.
@@ -75,7 +73,7 @@ pub fn serialize(key: &IdempotencyKey, archive: &mut serializable::BinaryWriteAr
 }
 
 /// Deserialize a key from the legacy archive's native-endian field order.
-pub fn deserialize(key: &mut IdempotencyKey, archive: &mut serializable::BinaryReadArchive) {
+pub fn deserialize(key: &mut IdempotencyKey, archive: &mut crate::serializable::BinaryReadArchive) {
     let client_id_pointer = (&mut key.client_id as *mut u64).cast::<u8>();
     // SAFETY: the pointer comes from an exclusive live `u64` field and names
     // exactly `size_of::<u64>()` writable bytes disjoint from archive storage.

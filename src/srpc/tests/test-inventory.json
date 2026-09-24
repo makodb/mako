@@ -1,0 +1,335 @@
+{
+  "version": 1,
+  "runtime": {
+    "tests/client_replay_test.cc": "test_client_replay",
+    "tests/fiber_runtime.cc": "test_fiber_runtime",
+    "tests/fiber_test.cc": "test_fiber",
+    "tests/native_policy_test.cc": "test_native_policy",
+    "tests/reactor_stackless_battery.cc": "reactor_stackless_battery",
+    "tests/rpc_metrics_test.cc": "test_rpc_metrics",
+    "tests/rpc_pollthread_proxy_storage_test.cc": "test_rpc_pollthread_proxy_storage",
+    "tests/rpc_tcp_channel_test.cc": "test_rpc_tcp_channel",
+    "tests/rpc_transport_matrix_test.cc": "test_rpc_transport_matrix",
+    "tests/runtime_parity_test.cc": "test_runtime_parity",
+    "tests/serialization_parity_test.cc": "test_serialization_parity",
+    "tests/test_and_event.cc": "test_and_event",
+    "tests/test_reactor.cc": "test_reactor",
+    "tests/test_reactor_extended.cc": "test_reactor_extended",
+    "tests/test_reactor_minimal.cc": "test_reactor_minimal",
+    "tests/test_timeout_race.cc": "test_timeout_race",
+    "tests/rpc_errors_test.cc": "rpc_errors_test",
+    "tests/rpc_circuit_breaker_test.cc": "rpc_circuit_breaker_test",
+    "tests/rpc_connection_state_test.cc": "rpc_connection_state_test",
+    "tests/rpc_frame_codec_test.cc": "rpc_frame_codec_test",
+    "tests/rpc_heartbeat_test.cc": "rpc_heartbeat_test",
+    "tests/rpc_reconnect_policy_test.cc": "rpc_reconnect_policy_test",
+    "tests/rpc_request_queue_test.cc": "rpc_request_queue_test",
+    "tests/rpc_pollable_proxy_facade_test.cc": "rpc_pollable_proxy_facade_test",
+    "tests/rpc_service_proxy_facade_test.cc": "rpc_service_proxy_facade_test",
+    "tests/rpc_graceful_shutdown_test.cc": "rpc_graceful_shutdown_test",
+    "tests/rpc_restart_detection_test.cc": "rpc_restart_detection_test",
+    "tests/rpc_callbacks_test.cc": "rpc_callbacks_test",
+    "tests/rpc_any_message_test.cc": "rpc_any_message_test",
+    "tests/test_completion_tracker.cc": "test_completion_tracker",
+    "tests/test_idempotency.cc": "test_idempotency",
+    "tests/test_marshal.cc": "test_marshal",
+    "tests/test_timer.cc": "test_timer"
+  },
+  "docs": {
+    "tests/rpc_docs_symbols_test.cc": "test_rpc_docs_symbols"
+  },
+  "support": {
+    "tests/pollworker_fd_reuse_test.cc": "test_reactor_extended",
+    "tests/runtime_imports.cc": "srpc_runtime_imports"
+  },
+  "benchmark": {
+    "tests/benchmark_service.cc": "rpcbench",
+    "tests/rpcbench.cc": "rpcbench"
+  },
+  "excluded": [
+    {
+      "sources": [
+        "tests/bench_future.cc",
+        "tests/bench_marshal.cc",
+        "tests/test_lambda.cc"
+      ],
+      "disposition": "historical-benchmark",
+      "reason": "Historical throughput/copy microbenchmarks, not correctness acceptance. Current runnable benchmarks are rpcbench and bench/.",
+      "rust_cases": [],
+      "cpp_replacements": []
+    },
+    {
+      "sources": [
+        "tests/rpc_log_storage_test.cc",
+        "tests/rpc_rocksdb_log_storage_test.cc",
+        "tests/rpc_marshallable_proxy_test.cc",
+        "tests/test_mako_core_minimal.cc",
+        "tests/testharness.cc"
+      ],
+      "disposition": "upstream",
+      "reason": "Requires Mako deptran, RocksDB or mako headers and application types absent from standalone SRPC.",
+      "rust_cases": [],
+      "cpp_replacements": []
+    },
+    {
+      "sources": [
+        "tests/rpc_chaos_test.cc"
+      ],
+      "disposition": "retired-api",
+      "reason": "Exercises the removed srpc::chaos controller and scenario framework. Native transport fault injection is covered separately; this controller API is not shipped.",
+      "rust_cases": [
+        "tests/inmemory_channel_rust.rs::fault_injection_is_per_side_drop_first_and_clearable"
+      ],
+      "cpp_replacements": []
+    },
+    {
+      "sources": [
+        "tests/rpc_channel_facade_test.cc",
+        "tests/rpc_fiber_channel_test.cc",
+        "tests/rpc_inmemory_channel_test.cc",
+        "tests/rpc_tcp_factory_test.cc",
+        "tests/rpc_tcp_listener_test.cc"
+      ],
+      "disposition": "rust",
+      "reason": "Canonical channel forwarding, lifecycle, callbacks, frame ownership, listener acceptance and transport faults replace stale C++ adapter fixtures. C++ transport and fiber suites retain generated runtime coverage.",
+      "rust_cases": [
+        "tests/channel_rust.rs::connection_proxy_forwards_every_method_and_callbacks_are_usable",
+        "tests/channel_rust.rs::listener_and_factory_proxies_preserve_ownership_and_results",
+        "tests/fiber_channel_rust.rs::callbacks_copy_frames_fifo_and_drain_before_close",
+        "tests/fiber_channel_rust.rs::parked_receive_wakes_after_owner_thread_delivery",
+        "tests/inmemory_channel_rust.rs::fault_injection_is_per_side_drop_first_and_clearable",
+        "tests/tcp_channel_rust.rs::listener_bind_close_and_single_use_state_match_the_cpp_contract",
+        "tests/tcp_channel_rust.rs::close_waits_for_the_whole_accept_driver_with_two_readers"
+      ],
+      "cpp_replacements": [
+        "test_rpc_transport_matrix",
+        "test_rpc_tcp_channel",
+        "test_fiber"
+      ]
+    },
+    {
+      "sources": [
+        "tests/rpc_client_channel_binding_test.cc",
+        "tests/rpc_client_channel_close_test.cc",
+        "tests/rpc_client_channel_factory_test.cc",
+        "tests/rpc_client_channel_recv_test.cc",
+        "tests/rpc_client_channel_send_test.cc"
+      ],
+      "disposition": "rust",
+      "reason": "Replace stale channel adapter ABI fixtures with canonical real-channel requests, controlled response ordering and binding-generation teardown tests.",
+      "rust_cases": [
+        "tests/rpc_protocol_rust.rs::client_demux_handles_out_of_order_unknown_duplicate_and_error_replies",
+        "tests/client_direct_runtime_rust.rs::inline_reply_callback_can_send_again_and_close_the_client_connection",
+        "tests/client_direct_runtime_rust.rs::concurrent_close_detaches_the_slot_while_an_inflight_send_owns_the_channel",
+        "tests/client_runtime_ownership_rust.rs::factory_error_callback_reports_busy_for_a_reentrant_reconnect",
+        "tests/client_runtime_ownership_rust.rs::retired_direct_frame_cannot_complete_a_new_request_or_change_server_identity"
+      ],
+      "cpp_replacements": [
+        "test_rpc_transport_matrix",
+        "test_runtime_parity"
+      ]
+    },
+    {
+      "sources": [
+        "tests/rpc_server_channel_binding_test.cc",
+        "tests/rpc_server_channel_close_test.cc",
+        "tests/rpc_server_channel_factory_test.cc",
+        "tests/rpc_server_channel_recv_test.cc",
+        "tests/rpc_server_channel_send_test.cc"
+      ],
+      "disposition": "rust",
+      "reason": "Canonical factory/accept, request headers, heartbeat/error responses and once-only concurrent close replace stale C++ adapter fixtures.",
+      "rust_cases": [
+        "tests/rpc_protocol_rust.rs::server_dispatch_replies_to_unknown_truncated_and_heartbeat_frames",
+        "tests/rpc_roundtrip_inmemory_rust.rs::client_calls_server_over_the_inmemory_channel_and_reads_the_reply",
+        "tests/server_concurrency_rust.rs::concurrent_close_transitions_and_closes_the_transport_once",
+        "tests/server_concurrency_rust.rs::in_flight_send_pins_channel_after_its_slot_is_removed"
+      ],
+      "cpp_replacements": [
+        "test_rpc_transport_matrix",
+        "rpc_service_proxy_facade_test"
+      ]
+    },
+    {
+      "sources": [
+        "tests/rpc_client_pool_test.cc",
+        "tests/test_load_balancer.cc"
+      ],
+      "disposition": "rust",
+      "reason": "Canonical TCP pool tests exercise minimum population, reuse, round-robin identity, health/idle pruning and per-address floors. Selection algorithms have independent metrics fixtures.",
+      "rust_cases": [
+        "tests/client_pool_rust.rs::pool_populates_minimum_reuses_connections_and_serves_real_requests",
+        "tests/client_pool_rust.rs::unhealthy_pruning_respects_each_address_floor_and_lowered_configuration",
+        "tests/client_pool_rust.rs::disabled_health_checks_and_idle_pruning_obey_configuration",
+        "tests/client_pool_rust.rs::failed_population_does_not_leave_a_cached_address",
+        "tests/load_balancer_rust.rs::all_selection_strategies_preserve_behavior"
+      ],
+      "cpp_replacements": []
+    },
+    {
+      "sources": [
+        "tests/rpc_circuit_breaker_integration_test.cc",
+        "tests/rpc_combined_reliability_test.cc",
+        "tests/rpc_error_integration_test.cc",
+        "tests/rpc_state_integration_test.cc"
+      ],
+      "disposition": "rust",
+      "reason": "Canonical policy state transitions, live connection errors, restart replies, callbacks and real pending-request draining replace benchmark-service fixtures. Large stress loops are not asserted to be identical.",
+      "rust_cases": [
+        "tests/circuit_breaker_rust.rs::closed_open_half_open_and_reset_transitions_are_exact",
+        "tests/rpc_reliability_rust.rs::circuit_breaker_rejects_without_dispatch_and_recovers_through_a_probe",
+        "tests/connection_state_rust.rs::default_empty_callback_and_installed_callback_preserve_state_behavior",
+        "tests/client_surface_rust.rs::inline_error_reply_balances_admission",
+        "tests/rpc_protocol_rust.rs::client_demux_handles_out_of_order_unknown_duplicate_and_error_replies",
+        "tests/server_lifecycle_rust.rs::drain_waits_for_a_real_inflight_request",
+        "tests/manager_concurrency_rust.rs::only_one_concurrent_request_wins_the_half_open_probe"
+      ],
+      "cpp_replacements": [
+        "rpc_errors_test",
+        "rpc_circuit_breaker_test",
+        "rpc_connection_state_test",
+        "rpc_graceful_shutdown_test",
+        "rpc_restart_detection_test"
+      ]
+    },
+    {
+      "sources": [
+        "tests/rpc_partition_test.cc",
+        "tests/rpc_stress_crash_test.cc",
+        "tests/rpc_reconnect_integration_test.cc"
+      ],
+      "disposition": "rust",
+      "reason": "Retain historical stress recipes as reference. Acceptance uses bounded transport faults, server-return reconnect, owned replay and concurrent teardown; it does not claim to run these original long-duration workload schedules or DISABLED_ cases.",
+      "rust_cases": [
+        "tests/inmemory_channel_rust.rs::fault_injection_is_per_side_drop_first_and_clearable",
+        "tests/client_reconnect_rust.rs::explicit_reconnect_recovers_after_the_server_returns",
+        "tests/client_replay_rust.rs::reconnect_replays_owned_bytes_in_order_without_reinvoking_writers",
+        "tests/client_direct_runtime_rust.rs::concurrent_close_detaches_the_slot_while_an_inflight_send_owns_the_channel"
+      ],
+      "cpp_replacements": [
+        "test_client_replay",
+        "test_rpc_transport_matrix"
+      ]
+    },
+    {
+      "sources": [
+        "tests/rpc_request_buffering_test.cc"
+      ],
+      "disposition": "rust",
+      "reason": "Legacy file disables its queue/replay cases. Canonical tests execute owned payload replay, TTL expiration, overflow completion and unlocked callback reentry.",
+      "rust_cases": [
+        "tests/client_replay_rust.rs::reconnect_replays_owned_bytes_in_order_without_reinvoking_writers",
+        "tests/client_replay_rust.rs::reconnect_expires_stale_payloads_without_sending_them",
+        "tests/client_replay_rust.rs::overflow_rejects_the_evicted_future_and_replays_only_the_survivor",
+        "tests/request_queue_rust.rs::callbacks_run_after_unlock_and_can_reenter_the_queue"
+      ],
+      "cpp_replacements": [
+        "test_client_replay",
+        "rpc_request_queue_test"
+      ]
+    },
+    {
+      "sources": [
+        "tests/rpc_timeout_retry_test.cc",
+        "tests/test_future.cc"
+      ],
+      "disposition": "rust",
+      "reason": "Canonical request-options arithmetic, actual retry chains, future deadlines and asynchronous request completion replace duplicated C++ policy/RPC fixtures.",
+      "rust_cases": [
+        "tests/request_options_rust.rs::factories_retry_and_timeout_boundaries_are_exact",
+        "tests/client_retry_rust.rs::request_with_options_walks_the_whole_retry_chain_on_timeouts",
+        "tests/rpc_reliability_rust.rs::non_idempotent_timeout_never_retries_and_total_budget_caps_idempotent_retries",
+        "tests/timeout_conformance_rust.rs::plain_wait_caps_at_one_second_and_latches_timed_out",
+        "tests/client_surface_rust.rs::request_async_delivers_the_reply_to_the_callback"
+      ],
+      "cpp_replacements": [
+        "test_timeout_race",
+        "test_runtime_parity"
+      ]
+    },
+    {
+      "sources": [
+        "tests/rpc_validation_test.cc"
+      ],
+      "disposition": "rust",
+      "reason": "Canonical tests check actual TCP keepalive options, live connection metrics, pool idle pruning and reconnect after server return.",
+      "rust_cases": [
+        "tests/tcp_keepalive_rust.rs::keepalive_updates_real_socket_options_and_preserves_disable_semantics",
+        "tests/tcp_keepalive_rust.rs::client_applies_pending_keepalive_on_bind_and_live_updates_to_the_transport",
+        "tests/client_surface_rust.rs::connection_accessors_and_live_metrics_are_reachable",
+        "tests/client_pool_rust.rs::disabled_health_checks_and_idle_pruning_obey_configuration"
+      ],
+      "cpp_replacements": [
+        "test_rpc_tcp_channel",
+        "test_rpc_metrics"
+      ]
+    },
+    {
+      "sources": [
+        "tests/rpc_marshal_archive_test.cc",
+        "tests/test_marshal_simple.cc"
+      ],
+      "disposition": "rust",
+      "reason": "Canonical archive, envelope, wire and real descriptor tests replace old serialization factories and a missing simple_test_runner.h. Retained C++ suites cover std/rusty container adapters and generated wire output.",
+      "rust_cases": [
+        "tests/serializable_rust.rs::containers_round_trip_through_canonical_generic_dispatch",
+        "tests/serializable_envelope_rust.rs::wire_round_trip_preserves_kind_and_payload",
+        "tests/fd_io_rust.rs::canonical_fd_read_retries_eintr_and_combines_partial_reads",
+        "tests/fd_io_rust.rs::canonical_fd_write_continues_after_an_interrupted_partial_write"
+      ],
+      "cpp_replacements": [
+        "test_serialization_parity",
+        "test_marshal",
+        "rpc_any_message_test"
+      ]
+    },
+    {
+      "sources": [
+        "tests/rpc_inmemory_channel_e2e_test.cc",
+        "tests/test_rpc.cc",
+        "tests/test_rpc_extended.cc",
+        "tests/test_transport_integration.cc"
+      ],
+      "disposition": "rust",
+      "reason": "Canonical real RPC round trips, error demultiplexing, stackful/fast dispatch, owner wake and reconnect cover protocol behavior. Generated transport matrix and parity fixtures cover both languages; original throughput-shaped workloads are not a separate acceptance promise.",
+      "rust_cases": [
+        "tests/rpc_roundtrip_inmemory_rust.rs::client_calls_server_over_the_inmemory_channel_and_reads_the_reply",
+        "tests/rpc_roundtrip_inmemory_rust.rs::unknown_rpc_id_comes_back_as_an_error_not_a_hang",
+        "tests/rpc_runtime_rust.rs::tcp_poll_thread_serves_another_request_while_a_stackful_handler_sleeps",
+        "tests/rpc_protocol_rust.rs::client_demux_handles_out_of_order_unknown_duplicate_and_error_replies"
+      ],
+      "cpp_replacements": [
+        "test_rpc_transport_matrix",
+        "test_runtime_parity",
+        "rpc_service_proxy_facade_test"
+      ]
+    },
+    {
+      "sources": [
+        "tests/test_fragile_minimal.cc"
+      ],
+      "disposition": "rust",
+      "reason": "Historical logging/marshal/reactor smoke program uses stale formatting. Canonical primitive tests and retained C++ marshal/reactor smoke suites cover those components.",
+      "rust_cases": [
+        "tests/basetypes_rust.rs::values_counter_and_time_facades_preserve_behavior"
+      ],
+      "cpp_replacements": [
+        "test_marshal",
+        "test_reactor_minimal"
+      ]
+    },
+    {
+      "sources": [
+        "tests/rpc_deferred_handler_test.cc"
+      ],
+      "disposition": "rust",
+      "reason": "Deferred reply ownership and drop behavior are tested through the canonical Rust service path; the C++ benchmark fixture is retained as reference.",
+      "rust_cases": [
+        "tests/rpc_reliability_rust.rs::deferred_reply_is_once_only_and_drop_releases_request_and_cleanup"
+      ],
+      "cpp_replacements": [
+        "test_rpc_transport_matrix"
+      ]
+    }
+  ]
+}

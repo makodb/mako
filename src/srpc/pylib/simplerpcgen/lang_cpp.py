@@ -92,6 +92,18 @@ def typed_struct_fields(args, fallback_prefix):
         fields += (arg.type, field_name),
     return fields
 
+def emit_typed_request_decode(input_fields, f):
+    if len(input_fields) == 0:
+        return
+    f.writeln("srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));")
+    for _, field_name in input_fields:
+        f.writeln("srpc::Deserialize_::deserialize(__typed_req__.%s, __req_ar__);" % field_name)
+    f.writeln("if (__req_ar__.failed()) {")
+    with f.indent():
+        f.writeln("srpc::reject_malformed_request(*req, weak_sconn);")
+        f.writeln("return;")
+    f.writeln("}")
+
 def emit_marshaled_typed_struct(struct_name, fields, f, archive=False):
     f.writeln("struct %s {" % struct_name)
     with f.indent():
@@ -133,13 +145,13 @@ def emit_typed_service_signature(service, func, f):
     if func.attr == "defer":
         f.writeln("// @safe")
         if service.abstract or func.abstract:
-            f.writeln("virtual void %s(const %s& req, %s& resp, srpc::DeferredReply defer) = 0;" % (
+            f.writeln("virtual void %s(const %s& req, %s& resp, srpc::DeferredReply defer) const = 0;" % (
                 func.name,
                 request_struct_name,
                 response_struct_name,
             ))
         else:
-            f.writeln("virtual void %s(const %s& req, %s& resp, srpc::DeferredReply defer);" % (
+            f.writeln("virtual void %s(const %s& req, %s& resp, srpc::DeferredReply defer) const;" % (
                 func.name,
                 request_struct_name,
                 response_struct_name,
@@ -149,17 +161,17 @@ def emit_typed_service_signature(service, func, f):
     if func.attr == "async":
         f.writeln("// @safe")
         if service.abstract or func.abstract:
-            f.writeln("virtual %s %s(const %s& req) = 0;" % (async_result_type, func.name, request_struct_name))
+            f.writeln("virtual %s %s(const %s& req) const = 0;" % (async_result_type, func.name, request_struct_name))
             return
-        f.writeln("virtual %s %s(const %s& req);" % (async_result_type, func.name, request_struct_name))
+        f.writeln("virtual %s %s(const %s& req) const;" % (async_result_type, func.name, request_struct_name))
         return
 
     f.writeln("// @safe")
     if service.abstract or func.abstract:
-        f.writeln("virtual %s %s(const %s& req) = 0;" % (result_type, func.name, request_struct_name))
+        f.writeln("virtual %s %s(const %s& req) const = 0;" % (result_type, func.name, request_struct_name))
         return
 
-    f.writeln("virtual %s %s(const %s& req);" % (result_type, func.name, request_struct_name))
+    f.writeln("virtual %s %s(const %s& req) const;" % (result_type, func.name, request_struct_name))
 
 def emit_typed_proxy_sync_signature(func, f):
     request_struct_name = typed_request_struct_name(func)
@@ -315,7 +327,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
             f.writeln("return ret;")
         f.writeln("}")
         f.writeln("// @safe - Dispatch for RPC requests")
-        f.writeln("void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {")
+        f.writeln("void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {")
         with f.indent():
             f.writeln("switch (rpc_id) {")
             for func in service.functions:
@@ -340,14 +352,14 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                 postfix = ""
             if func.attr == "raw":
                 f.writeln("// @safe")
-                f.writeln("virtual void %s(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn)%s;" % (func.name, postfix))
+                f.writeln("virtual void %s(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const%s;" % (func.name, postfix))
     f.writeln("private:")
     with f.indent():
         for func in service.functions:
             if func.attr == "raw":
                 continue
             f.writeln("// @safe")
-            f.writeln("void __%s__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {" % func.name)
+            f.writeln("void __%s__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {" % func.name)
             with f.indent():
                 f.writeln("// @unsafe")
                 f.writeln("{")
@@ -363,10 +375,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         # write-side archive emission landed in Phase 3d-3).
                         # RefMut BufferSource proxy over the request body cursor
                         # to the archive's read API.
-                        if len(input_fields) > 0:
-                            f.writeln("srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));")
-                            for _, field_name in input_fields:
-                                f.writeln("srpc::Deserialize_::deserialize(__typed_req__.%s, __req_ar__);" % field_name)
+                        emit_typed_request_decode(input_fields, f)
                         f.writeln("auto __typed_resp__ = std::make_shared<%s>();" % response_struct_name)
                         f.writeln("auto __defer__ = srpc::DeferredReply::new_(")
                         with f.indent():
@@ -386,10 +395,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         f.writeln("%s __typed_req__;" % request_struct_name)
                         # see comment under
                         # `func.attr == "defer"`.
-                        if len(input_fields) > 0:
-                            f.writeln("srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));")
-                            for _, field_name in input_fields:
-                                f.writeln("srpc::Deserialize_::deserialize(__typed_req__.%s, __req_ar__);" % field_name)
+                        emit_typed_request_decode(input_fields, f)
                         f.writeln("auto __fiber_req__ = std::move(req);")
                         f.writeln("auto __fiber_weak_sconn__ = weak_sconn;")
                         f.writeln("auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {")
@@ -426,10 +432,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         f.writeln("%s __typed_req__;" % request_struct_name)
                         # see comment under
                         # `func.attr == "defer"`.
-                        if len(input_fields) > 0:
-                            f.writeln("srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));")
-                            for _, field_name in input_fields:
-                                f.writeln("srpc::Deserialize_::deserialize(__typed_req__.%s, __req_ar__);" % field_name)
+                        emit_typed_request_decode(input_fields, f)
                         f.writeln("auto __async_req__ = std::move(req);")
                         f.writeln("auto __async_weak_sconn__ = weak_sconn;")
                         f.writeln("auto __async_task__ = this->%s(__typed_req__);" % func.name)
@@ -465,10 +468,7 @@ def emit_service_and_proxy(service, f, rpc_table, archive=False):
                         f.writeln("%s __typed_req__;" % request_struct_name)
                         # see comment under
                         # `func.attr == "defer"`.
-                        if len(input_fields) > 0:
-                            f.writeln("srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));")
-                            for _, field_name in input_fields:
-                                f.writeln("srpc::Deserialize_::deserialize(__typed_req__.%s, __req_ar__);" % field_name)
+                        emit_typed_request_decode(input_fields, f)
                         f.writeln("auto __typed_result__ = this->%s(__typed_req__);" % func.name)
                         f.writeln("auto sconn_opt = weak_sconn.upgrade();")
                         f.writeln("if (sconn_opt.is_some()) {")

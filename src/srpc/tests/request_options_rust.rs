@@ -1,3 +1,6 @@
+// Policy-only fixture: override raw entropy in this executable to check exact
+// jitter bounds and draw counts. rand_native_rust and runtime integration tests
+// link the production entropy kernel instead.
 use std::mem::{align_of, offset_of, size_of};
 use std::sync::{
     atomic::{AtomicI32, AtomicUsize, Ordering},

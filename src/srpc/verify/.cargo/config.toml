@@ -1,0 +1,10 @@
+# Force `--cfg verus` for everything this harness compiles.
+#
+# The srpc leaf modules gate their Verus annotations behind `#[cfg(verus)]` --
+# the SAME cfg the rusty-cpp transpiler strips, so the production C++ build
+# never sees them. `cargo verus verify` itself only sets `verus_only`, not
+# `verus`, so we turn `verus` on here, local to the verify/ crate, to activate
+# those in-place annotations. (The extra cfg is inert for the vstd / verus_*
+# dependency crates, which are built with `--cap-lints allow`.)
+[build]
+rustflags = ["--cfg", "verus"]

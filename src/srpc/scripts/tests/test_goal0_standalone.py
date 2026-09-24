@@ -14,15 +14,12 @@ import unittest
 
 
 ROOT = Path(__file__).resolve().parents[2]
-RUSTY_CPP_PIN = "fa7dd9d9612c0bcec695c3e391ace96b56498e74"
+RUSTY_CPP_PIN = "1689f4380c25d13455cbe1f9eb8e5ff94e49861c"
 # Every production module is now a canonical Rust provider: the inline
 # carrier inventory is EMPTY, and the negative controls below are what
 # keep an empty inventory from becoming a vacuous check.
 EXPECTED_INLINE_SOURCES: dict[str, str] = {}
-EXPECTED_DSL_SOURCES = {
-    *EXPECTED_INLINE_SOURCES,
-    "reactor/epoll_platform_linux.cc",
-}
+EXPECTED_DSL_SOURCES: set[str] = set()
 
 
 def cmake_set(text: str, name: str) -> list[str]:
@@ -169,7 +166,7 @@ class StandaloneGoal0Tests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "inline module-name inventory"):
             validate_provider_inventory(mutated, manifest)
 
-    def test_dsl_census_fails_closed_on_removed_block_or_carrier(self) -> None:
+    def test_dsl_census_rejects_reintroduced_carriers(self) -> None:
         with tempfile.TemporaryDirectory(prefix="srpc-dsl-contract-") as raw:
             scratch = Path(raw)
             (scratch / "scripts").mkdir()
@@ -177,17 +174,12 @@ class StandaloneGoal0Tests(unittest.TestCase):
                 ROOT / "scripts/srpc_dsl_check.sh",
                 scratch / "scripts/srpc_dsl_check.sh",
             )
-            for relative in EXPECTED_DSL_SOURCES:
-                destination = scratch / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(ROOT / relative, destination)
-            transpiler = scratch / "fake-transpiler"
-            transpiler.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
-            transpiler.chmod(0o755)
+            for directory in ("base", "misc", "reactor", "rpc"):
+                (scratch / directory).mkdir()
 
             def check() -> subprocess.CompletedProcess[str]:
                 return subprocess.run(
-                    ["bash", "scripts/srpc_dsl_check.sh", str(transpiler)],
+                    ["bash", "scripts/srpc_dsl_check.sh"],
                     cwd=scratch,
                     text=True,
                     stdout=subprocess.PIPE,
@@ -196,20 +188,21 @@ class StandaloneGoal0Tests(unittest.TestCase):
                 )
 
             self.assertEqual(check().returncode, 0)
-            carrier = scratch / "reactor/epoll_platform_linux.cc"
-            original = carrier.read_text(encoding="utf-8")
-            carrier.write_text(
-                original.replace("\n#if RUSTYCPP_RUST", "\n#if 0", 1),
-                encoding="utf-8",
-            )
-            removed_block = check()
-            self.assertNotEqual(removed_block.returncode, 0)
-            self.assertIn("block census mismatch", removed_block.stderr)
-            carrier.write_text(original, encoding="utf-8")
-            os.unlink(scratch / "reactor/epoll_platform_linux.cc")
-            removed_carrier = check()
-            self.assertNotEqual(removed_carrier.returncode, 0)
-            self.assertIn("carrier census mismatch", removed_carrier.stderr)
+            for relative in ("reactor/extra.cc", "rpc/extra.rs", "misc/extra.hpp"):
+                carrier = scratch / relative
+                carrier.write_text("#if RUSTYCPP_RUST\nfn bypass() {}\n#endif\n")
+                result = check()
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("carrier census mismatch", result.stderr)
+                carrier.unlink()
+            orphan = scratch / "base/orphan.h"
+            orphan.write_text("// RUSTYCPP:GEN-BEGIN\n")
+            self.assertNotEqual(check().returncode, 0)
+            orphan.unlink()
+            (scratch / "rpc").rmdir()
+            result = check()
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("missing canonical source directory", result.stderr)
 
     def test_rusty_cpp_is_an_exact_gitlink_dependency(self) -> None:
         fields = subprocess.check_output(

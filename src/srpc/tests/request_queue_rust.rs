@@ -1,7 +1,7 @@
-use std::cell::Cell;
+use srpc::threading::SharedCell as Cell;
 use std::mem::{align_of, offset_of, size_of};
 use std::panic::{catch_unwind, AssertUnwindSafe};
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
@@ -14,9 +14,7 @@ use srpc::request_queue::{
 static NOW_US: AtomicU64 = AtomicU64::new(0);
 static CLOCK_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-#[allow(unsafe_code)]
-#[unsafe(no_mangle)]
-pub extern "C" fn srpc_clock_monotonic_us() -> u64 {
+fn test_now() -> u64 {
     NOW_US.load(Ordering::SeqCst)
 }
 
@@ -32,30 +30,31 @@ fn request_at(timestamp_us: u64) -> QueuedRequest {
 
 fn callback<F>(callback: F) -> QueuedRequestCallback
 where
-    F: FnMut(i32) + 'static,
+    F: FnMut(i32) + Send + 'static,
 {
-    QueuedRequestCallback::from_callable(callback)
+    Some(Box::new(callback))
 }
 
 #[test]
-fn public_layout_discriminants_and_traits_match_the_cpp_surface() {
+fn config_discriminants_and_native_request_layout_are_stable() {
     assert_eq!(size_of::<OverflowStrategy>(), 4);
     assert_eq!(align_of::<OverflowStrategy>(), 4);
     assert_eq!(OverflowStrategy::DROP_OLDEST as i32, 0);
     assert_eq!(OverflowStrategy::DROP_NEWEST as i32, 1);
     assert_eq!(OverflowStrategy::FAIL_FAST as i32, 2);
 
-    assert_eq!(size_of::<QueuedRequestCallback>(), 48);
-    assert_eq!(align_of::<QueuedRequestCallback>(), 16);
 
-    assert_eq!(size_of::<QueuedRequest>(), 96);
-    assert_eq!(align_of::<QueuedRequest>(), 16);
+    // Native Rust stores an Option<Box<dyn FnMut>> without C++ layout padding.
+    // Generated C++ retains its independently checked public layout.
+    assert_eq!(size_of::<QueuedRequest>(), 80);
+    assert_eq!(align_of::<QueuedRequest>(), 8);
     assert_eq!(offset_of!(QueuedRequest, xid), 0);
     assert_eq!(offset_of!(QueuedRequest, rpc_id), 8);
     assert_eq!(offset_of!(QueuedRequest, timestamp_us), 16);
     assert_eq!(offset_of!(QueuedRequest, retry_count), 24);
     assert_eq!(offset_of!(QueuedRequest, callback), 32);
-    assert_eq!(offset_of!(QueuedRequest, ttl_ms), 80);
+    assert_eq!(offset_of!(QueuedRequest, ttl_ms), 48);
+    assert_eq!(offset_of!(QueuedRequest, payload), 56);
 
     assert_eq!(size_of::<RequestQueueConfig>(), 24);
     assert_eq!(align_of::<RequestQueueConfig>(), 8);
@@ -80,12 +79,12 @@ fn public_layout_discriminants_and_traits_match_the_cpp_surface() {
             let _ = <$type as AmbiguousIfImplemented<_>>::marker;
         }};
     }
-    assert_not_auto_trait!(QueuedRequestCallback, Send);
+    fn assert_send<T: Send>() {}
+    assert_send::<QueuedRequestCallback>();
     assert_not_auto_trait!(QueuedRequestCallback, Sync);
-    assert_not_auto_trait!(QueuedRequest, Send);
+    assert_send::<QueuedRequest>();
     assert_not_auto_trait!(QueuedRequest, Sync);
-    assert_not_auto_trait!(RequestQueue, Send);
-    assert_not_auto_trait!(RequestQueue, Sync);
+    assert_send_sync::<RequestQueue>();
 }
 
 #[test]
@@ -131,29 +130,31 @@ fn constants_factories_and_names_preserve_legacy_values() {
 fn request_time_expiry_age_and_unsigned_wrap_are_exact() {
     let _clock_guard = CLOCK_TEST_LOCK.lock().unwrap();
     set_now(1_000_000);
-    assert_eq!(queued_request_time_us(), 1_000_000);
+    let before = queued_request_time_us();
 
     let mut request = QueuedRequest::new();
     assert_eq!(request.xid, 0);
     assert_eq!(request.rpc_id, 0);
-    assert_eq!(request.timestamp_us, 1_000_000);
+    assert!(request.timestamp_us >= before);
+    assert!(request.timestamp_us <= queued_request_time_us());
+    request.timestamp_us = test_now();
     assert_eq!(request.retry_count, 0);
-    assert!(request.callback.is_empty());
+    assert!(request.callback.is_none());
     assert_eq!(request.ttl_ms, 30_000);
 
     request.ttl_ms = 10;
     set_now(1_010_000);
-    assert!(!request.is_expired());
-    assert_eq!(request.age_ms(), 10);
+    assert!(!request.is_expired_at(test_now()));
+    assert_eq!(request.age_ms_at(test_now()), 10);
     set_now(1_011_000);
-    assert!(request.is_expired());
-    assert_eq!(request.age_ms(), 11);
+    assert!(request.is_expired_at(test_now()));
+    assert_eq!(request.age_ms_at(test_now()), 11);
 
     request.timestamp_us = u64::MAX - 499;
     request.ttl_ms = 0;
     set_now(500);
-    assert_eq!(request.age_ms(), 1);
-    assert!(request.is_expired());
+    assert_eq!(request.age_ms_at(test_now()), 1);
+    assert!(request.is_expired_at(test_now()));
 }
 
 #[test]
@@ -192,6 +193,43 @@ fn fifo_capacity_default_ttl_and_config_updates_are_preserved() {
 }
 
 #[test]
+fn enabled_zero_capacity_preserves_each_strategy_and_unlocked_callbacks() {
+    for strategy in [OverflowStrategy::DROP_OLDEST, OverflowStrategy::DROP_NEWEST,
+                     OverflowStrategy::FAIL_FAST] {
+        let queue = Rc::new(RequestQueue::with_config(RequestQueueConfig {
+            max_size: 0,
+            default_ttl_ms: 30_000,
+            overflow_strategy: strategy,
+            enabled: true,
+        }));
+        let observed = Rc::new(Mutex::new(Vec::new()));
+        for xid in [1i64, 2i64] {
+            let queue_weak = Rc::downgrade(&queue);
+            let observed = Rc::clone(&observed);
+            let mut request = request_at(1_000_000);
+            request.xid = xid;
+            request.callback = callback(move |error| {
+                let queue = queue_weak.upgrade().unwrap();
+                // The subsequent size() call reenters the same queue mutex.
+                assert!(queue.queue_.try_lock().is_ok());
+                observed.lock().unwrap().push((xid, error, queue.size()));
+            });
+            assert_eq!(queue.enqueue(request), strategy == OverflowStrategy::DROP_OLDEST);
+        }
+        if strategy == OverflowStrategy::DROP_OLDEST {
+            assert_eq!(*observed.lock().unwrap(), vec![(1, kRequestQueueRejectedError, 1)]);
+            assert_eq!(queue.size(), 1);
+            assert_eq!(queue.dequeue().unwrap().xid, 2);
+        } else {
+            assert_eq!(*observed.lock().unwrap(), vec![
+                (1, kRequestQueueRejectedError, 0), (2, kRequestQueueRejectedError, 0),
+            ]);
+        }
+        assert!(queue.empty());
+    }
+}
+
+#[test]
 fn overflow_disabled_expiry_and_clear_callbacks_are_isolated() {
     let _clock_guard = CLOCK_TEST_LOCK.lock().unwrap();
     set_now(1_000_000);
@@ -227,7 +265,7 @@ fn overflow_disabled_expiry_and_clear_callbacks_are_isolated() {
     assert!(queue.enqueue(request_at(1_000_000)));
     assert_eq!(dropped.get(), kRequestQueueRejectedError);
 
-    let mut panicking_oldest = RequestQueue::with_config(RequestQueueConfig {
+    let panicking_oldest = RequestQueue::with_config(RequestQueueConfig {
         max_size: 1,
         default_ttl_ms: 30_000,
         overflow_strategy: OverflowStrategy::DROP_OLDEST,
@@ -268,7 +306,7 @@ fn overflow_disabled_expiry_and_clear_callbacks_are_isolated() {
     assert!(queue.enqueue(first_expired));
     assert!(queue.enqueue(second_expired));
     assert!(queue.enqueue(live));
-    assert_eq!(queue.expire_stale(), 2);
+    assert_eq!(queue.expire_stale_at(test_now()), 2);
     assert_eq!(expired_count.get(), 1);
     assert_eq!(queue.size(), 1);
 
@@ -295,11 +333,11 @@ fn overflow_disabled_expiry_and_clear_callbacks_are_isolated() {
 }
 
 #[test]
-fn callbacks_observe_the_legacy_queue_lock_boundaries() {
+fn callbacks_run_after_unlock_and_can_reenter_the_queue() {
     let _clock_guard = CLOCK_TEST_LOCK.lock().unwrap();
     set_now(1_000_000);
 
-    let held_observed = Rc::new(Cell::new(false));
+    let reentered = Rc::new(Cell::new(false));
     let queue = Rc::new(RequestQueue::with_config(RequestQueueConfig {
         max_size: 1,
         default_ttl_ms: 30_000,
@@ -307,15 +345,21 @@ fn callbacks_observe_the_legacy_queue_lock_boundaries() {
         enabled: true,
     }));
     let queue_weak = Rc::downgrade(&queue);
-    let held_sink = Rc::clone(&held_observed);
+    let reentered_sink = Rc::clone(&reentered);
     let mut oldest = request_at(1_000_000);
     oldest.callback = callback(move |_| {
         let queue = queue_weak.upgrade().unwrap();
-        held_sink.set(queue.queue_.try_lock().is_err());
+        let unlocked = queue.queue_.try_lock().is_ok();
+        if unlocked {
+            let mut replacement = request_at(1_000_000);
+            replacement.xid = 99;
+            reentered_sink.set(queue.enqueue(replacement));
+        }
     });
     assert!(queue.enqueue(oldest));
     assert!(queue.enqueue(request_at(1_000_000)));
-    assert!(held_observed.get());
+    assert!(reentered.get());
+    assert_eq!(queue.dequeue().unwrap().xid, 99);
 
     let disabled_unlocked = Rc::new(Cell::new(false));
     let disabled = Rc::new(RequestQueue::with_config(RequestQueueConfig::disabled()));
@@ -340,7 +384,7 @@ fn callbacks_observe_the_legacy_queue_lock_boundaries() {
         expired_sink.set(queue.queue_.try_lock().is_ok());
     });
     assert!(expiring.enqueue(expired));
-    assert_eq!(expiring.expire_stale(), 1);
+    assert_eq!(expiring.expire_stale_at(test_now()), 1);
     assert!(expired_unlocked.get());
 
     let clear_unlocked = Rc::new(Cell::new(false));

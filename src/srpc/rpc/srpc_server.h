@@ -9,7 +9,6 @@
 extern "C" {
 #endif
 
-int32_t srpc_parse_port(const uint8_t* text, size_t len, int32_t* out);
 size_t srpc_cstr_len(const uint8_t* text);
 uint64_t srpc_random_u64(void);
 

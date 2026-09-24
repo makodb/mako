@@ -24,13 +24,19 @@ pub type RandWeightVec = Vec<f64>;
 
 pub struct RandomGenerator {}
 
+/// Draw through the shared native generator and apply the SRPC range contract.
+/// Both the public method and internal callers use this canonical operation.
+pub fn randgen_range(min: i32, max: i32) -> i32 {
+    assert!(max >= min);
+    let r = randgen_rand_raw();
+    let width = max.wrapping_sub(min).wrapping_add(1i32);
+    assert!(width != 0i32);
+    (r % width).wrapping_add(min)
+}
+
 impl RandomGenerator {
     pub fn rand(min: i32, max: i32) -> i32 {
-        assert!(max >= min);
-        let r = randgen_rand_raw();
-        let width = max.wrapping_sub(min).wrapping_add(1i32);
-        assert!(width != 0i32);
-        (r % width).wrapping_add(min)
+        randgen_range(min, max)
     }
 
     pub fn rand_double(min: f64, max: f64) -> f64 {

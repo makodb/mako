@@ -6,12 +6,9 @@ use srpc::channel::{
     OnErrorCallback, OnFrameCallback,
 };
 use srpc::fiber_channel::{FiberChannel, OwnedFrame};
-use rusty::CallbackWrapper;
 use std::marker::PhantomPinned;
 use std::mem::{align_of, offset_of, size_of};
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::Duration;
 
 struct StubState {
     closed: bool,
@@ -28,22 +25,15 @@ impl StubState {
             closed: false,
             sent: Vec::new(),
             send_result: ChannelError::None,
-            on_frame: CallbackWrapper::default(),
-            on_closed: CallbackWrapper::default(),
-            on_error: CallbackWrapper::default(),
+            on_frame: OnFrameCallback::default(),
+            on_closed: OnClosedCallback::default(),
+            on_error: OnErrorCallback::default(),
         }
     }
 }
 
 #[derive(Clone)]
 struct StubHandle(Arc<Mutex<StubState>>);
-
-// Production callbacks run on the reactor thread. The parked-wait test uses a
-// helper OS thread only because the Cargo-only Condvar event shim cannot pump
-// reactor fibers; this unsafe test handle keeps the wrapper pinned and joins
-// that helper before teardown.
-unsafe impl Send for StubHandle {}
-unsafe impl Sync for StubHandle {}
 
 impl StubHandle {
     fn new() -> StubHandle {
@@ -94,7 +84,7 @@ struct StubConnection {
 }
 
 impl ChannelConnectionBase for StubConnection {
-    unsafe fn send_frame(&mut self, frame: &ChannelFrame) -> ChannelError {
+    unsafe fn send_frame(&self, frame: &ChannelFrame) -> ChannelError {
         let mut state = self.state.0.lock().unwrap();
         let bytes = if frame.size == 0 || frame.payload.is_null() {
             Vec::new()
@@ -105,9 +95,9 @@ impl ChannelConnectionBase for StubConnection {
         state.send_result
     }
 
-    fn flush(&mut self) {}
+    fn flush(&self) {}
 
-    fn close(&mut self) {
+    fn close(&self) {
         self.state.deliver_closed(ChannelError::None);
     }
 
@@ -246,17 +236,71 @@ fn send_close_proxy_state_and_test_access_match_the_facade() {
 }
 
 #[test]
-fn parked_receive_wakes_after_cross_thread_delivery() {
+fn parked_receive_wakes_after_owner_thread_delivery() {
     let (channel, handle) = make_channel();
     let mut wrapper = bind(channel);
-    let delivery = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(20));
-        handle.deliver(&[0x11, 0x22, 0x33]);
+    let received = std::rc::Rc::new(std::cell::RefCell::new(None));
+    let result = received.clone();
+    srpc::reactor::Fiber::create_run(move || {
+        let frame = wrapper_mut(&mut wrapper).recv_frame().unwrap();
+        *result.borrow_mut() = Some(frame.bytes);
     });
+    assert!(received.borrow().is_none(), "receive must suspend its fiber");
+    handle.deliver(&[0x11, 0x22, 0x33]);
+    srpc::reactor::Reactor::get_reactor().run_loop(false, true);
+    assert_eq!(received.borrow().as_deref(), Some(&[0x11, 0x22, 0x33][..]));
+}
 
-    let frame = wrapper_mut(&mut wrapper).recv_frame().unwrap();
-    delivery.join().unwrap();
-    assert_eq!(frame.bytes, [0x11, 0x22, 0x33]);
+#[test]
+fn closing_channel_resumes_a_parked_receive() {
+    let (channel, handle) = make_channel();
+    let mut wrapper = bind(channel);
+    let done = std::rc::Rc::new(std::cell::Cell::new(false));
+    let completed = done.clone();
+    srpc::reactor::Fiber::create_run(move || {
+        assert!(wrapper_mut(&mut wrapper).recv_frame().is_none());
+        completed.set(true);
+    });
+    assert!(!done.get());
+    handle.deliver_closed(ChannelError::ConnectionReset);
+    srpc::reactor::Reactor::get_reactor().run_loop(false, true);
+    assert!(done.get());
+}
+
+#[test]
+fn foreign_delivery_is_consumed_by_the_original_fiber_owner() {
+    let (channel, handle) = make_channel();
+    let wrapper = bind(channel);
+    let owner = std::thread::current().id();
+    let received = std::rc::Rc::new(std::cell::Cell::new(false));
+    let result = received.clone();
+    srpc::reactor::Fiber::create_run(move || {
+        assert_eq!(wrapper.as_ref().get_ref().recv_frame().unwrap().bytes, [7, 8]);
+        assert_eq!(std::thread::current().id(), owner);
+        result.set(true);
+    });
+    assert!(!received.get());
+    std::thread::spawn(move || handle.deliver(&[7, 8])).join().unwrap();
+    assert!(!received.get());
+    srpc::reactor::Reactor::get_reactor().run_loop(false, true);
+    assert!(received.get());
+}
+
+#[test]
+fn retained_transport_callbacks_own_their_state_after_wrapper_drop() {
+    let (channel, handle) = make_channel();
+    let wrapper = bind(channel);
+    let (frame_callback, close_callback) = {
+        let state = handle.0.lock().unwrap();
+        (state.on_frame.clone(), state.on_closed.clone())
+    };
+    drop(wrapper);
+    assert_eq!(handle.callbacks_bound(), (false, false, false));
+    std::thread::spawn(move || {
+        let payload = [1, 2, 3];
+        (frame_callback.callable())(&ChannelFrame { payload: payload.as_ptr(), size: payload.len() });
+        (close_callback.callable())(ChannelError::None);
+    }).join().unwrap();
 }
 
 #[test]
@@ -268,15 +312,4 @@ fn drop_detaches_all_callbacks_before_proxy_teardown() {
         drop(wrapper);
     }
     assert_eq!(handle.callbacks_bound(), (false, false, false));
-}
-
-#[test]
-fn source_retains_the_load_bearing_lock_and_foreign_event_boundaries() {
-    let source = include_str!("../rpc/fiber_channel.rs");
-    assert!(source.contains("let held: Option<Arc<rusty::ReactorIntEvent>> = {"));
-    assert!(source.contains("cpp_reactor::IntEvent::set(&*event, 1_i32)"));
-    assert!(source.contains("cpp_reactor::IntEvent::wait(&*event)"));
-    assert!(source.contains("cpp_reactor::create_sp_int_event(1_i32)"));
-    assert!(source.contains("let ch: &Box<LegacyChannelConnectionBase>"));
-    assert!(source.contains("core::mem::take(&mut guard[0])"));
 }
