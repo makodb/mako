@@ -86,22 +86,20 @@ class GateStaticContractTests(unittest.TestCase):
         self.assertEqual(set(GATE.EXPECTED_GENERATED_MODULE_SHA256), manifest)
         self.assertEqual(set(GATE.IMPORTER_USE_MARKERS), manifest)
         self.assertEqual(
-            sum(len(spec.symbols) for spec in GATE.ABI_SPECS.values()), 1961
+            sum(len(spec.symbols) for spec in GATE.ABI_SPECS.values()), 2060
         )
-        self.assertEqual(GATE.EXPECTED_TOTAL_PROVIDER_SYMBOLS, 1961)
+        self.assertEqual(GATE.EXPECTED_TOTAL_PROVIDER_SYMBOLS, 2060)
         GATE.require_importer_coverage(self.modules)
 
     def test_platform_implementation_symbols_are_exhaustive(self) -> None:
-        """Only declared modules may gain symbols outside the crate.
+        """Every C++ module definition must come from canonical Rust.
 
-        A module implementation unit that CMake compiles but the crate does
-        not (srpc.epoll_wrapper's platform unit) is the sole reason production
-        may hold symbols the generated object lacks. Keep that allowlist
-        pinned so a new out-of-crate definition cannot slip in unreviewed.
+        Native kernels export C symbols. An extra module-owned definition
+        in the production library would bypass the translator.
         """
         manifest = {module.cpp_module for module in self.modules}
         self.assertLessEqual(set(GATE.PLATFORM_IMPL_SYMBOLS), manifest)
-        self.assertEqual(set(GATE.PLATFORM_IMPL_SYMBOLS), {"srpc.epoll_wrapper"})
+        self.assertEqual(GATE.PLATFORM_IMPL_SYMBOLS, {})
         self.assertEqual(
             sum(len(s) for s in GATE.PLATFORM_IMPL_SYMBOLS.values()),
             GATE.EXPECTED_TOTAL_PLATFORM_SYMBOLS,
@@ -112,21 +110,25 @@ class GateStaticContractTests(unittest.TestCase):
 
     def test_each_promoted_module_has_surface_and_raw_abi_ratchets(self) -> None:
         expected = {
-            "srpc.channel": (13, 20),
-            # Factory-only construction: Epoll's public ctor became the static
-            # `Epoll::new_()` factory. A ctor emits two raw ABI entries (C1/C2)
-            # that demangle to one name, a factory emits one, so the raw count
-            # drops by one while the unique count is unchanged: 26 -> 25.
-            "srpc.epoll_wrapper": (22, 25),
+            "srpc.load_balancer": (14, 19),
+            "srpc.serializable": (601, 738),
+            "srpc.reactor": (365, 386),
+            "srpc.server": (86, 98),
+            "srpc.client": (271, 284),
+            "srpc.request_queue": (33, 34),
+            "srpc.channel": (14, 21),
+            # Four epoll-control helpers now lower from canonical Rust.
+            # Two C++ ABI aliases and the initializer remain separately pinned.
+            "srpc.epoll_wrapper": (26, 29),
             "srpc.pollable_proxy": (4, 7),
             "srpc.callbacks": (27, 28),
-            "srpc.inmemory_channel": (77, 84),
-            # Factory-only construction: FiberChannel's explicit ctor became
-            # the static `FiberChannel::new_()` factory; one ctor, so one fewer
-            # raw entry (20 -> 19), unique count unchanged.
-            "srpc.fiber_channel": (17, 19),
+            "srpc.inmemory_channel": (78, 85),
+            # Owned callback state replaces four raw-receiver/wait helpers.
+            # One C++ ABI alias and the initializer remain separately pinned.
+            "srpc.fiber_channel": (13, 15),
             "srpc.threading": (17, 18),
             "srpc.debugging": (9, 10),
+            "srpc.heartbeat": (25, 26),
             "srpc.any_message": (10, 11),
         }
         for module, (unique_count, raw_count) in expected.items():
@@ -141,6 +143,38 @@ class GateStaticContractTests(unittest.TestCase):
                 GATE.require_all_module_raw_symbols(
                     module, "fixture", list(raw.elements())
                 )
+
+
+    def test_configured_maps_include_scanned_runtime_and_reject_stale_bmis(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="configured-runtime-map-") as raw:
+            build = Path(raw)
+            provider = build / "CMakeFiles/srpc.dir/goal0-crate-cpp/srpc.probe.cppm.o.modmap"
+            runtime = build / "CMakeFiles/srpc_runtime_imports.dir/tests/runtime_imports.cc.o.modmap"
+            retired = build / "CMakeFiles/srpc.dir/retired.cpp.o.modmap"
+            provider_bmi = build / "srpc.probe.pcm"
+            runtime_bmi = build / "rusty.pcm"
+            for path in (provider, runtime, retired):
+                path.parent.mkdir(parents=True, exist_ok=True)
+            provider_bmi.touch()
+            runtime_bmi.touch()
+            provider.write_text(f"-fmodule-output={provider_bmi}\n")
+            runtime.write_text(f"-fmodule-file=rusty={runtime_bmi}\n")
+            retired.write_text("-fmodule-file=rusty=retired-missing.pcm\n")
+            self.assertEqual(
+                GATE.resolve_configured_module_map(ROOT, [str(build)]),
+                {"srpc.probe": provider_bmi, "rusty": runtime_bmi},
+            )
+            alternate = build / "alternate-rusty.pcm"
+            alternate.touch()
+            provider.write_text(
+                f"-fmodule-output={provider_bmi}\n-fmodule-file=rusty={alternate}\n"
+            )
+            with self.assertRaisesRegex(GATE.GateError, "ambiguous"):
+                GATE.resolve_configured_module_map(ROOT, [str(build)])
+            provider.write_text(f"-fmodule-output={provider_bmi}\n")
+            runtime_bmi.unlink()
+            with self.assertRaisesRegex(GATE.GateError, "unavailable"):
+                GATE.resolve_configured_module_map(ROOT, [str(build)])
 
 
 class GateContractTests(unittest.TestCase):
@@ -200,7 +234,7 @@ class GateContractTests(unittest.TestCase):
         self.assertEqual(set(GATE.EXPECTED_IMPORTS), manifest)
         self.assertEqual(set(GATE.EXPECTED_GENERATED_MODULE_SHA256), manifest)
         self.assertEqual(set(GATE.IMPORTER_USE_MARKERS), manifest)
-        self.assertEqual(sum(len(spec.symbols) for spec in GATE.ABI_SPECS.values()), 1961)
+        self.assertEqual(sum(len(spec.symbols) for spec in GATE.ABI_SPECS.values()), 2060)
         GATE.require_importer_coverage(self.modules)
         GATE.require_cpp_surfaces(ROOT, self.generated, self.modules)
 
@@ -320,30 +354,34 @@ class GateContractTests(unittest.TestCase):
 
     def test_all_promoted_modules_pin_unique_and_raw_counts(self) -> None:
         expected = {
+            "srpc.load_balancer": (14, 19),
+            "srpc.serializable": (601, 738),
+            "srpc.reactor": (365, 386),
+            "srpc.server": (86, 98),
+            "srpc.client": (271, 284),
+            "srpc.request_queue": (33, 34),
             "srpc.serializable_envelope": (0, 1),
             "srpc.future": (0, 1),
-            "srpc.logging": (7, 8),
+            "srpc.logging": (9, 10),
             # Factory-only construction: IdempotencyCache's two public ctors
             # became `new_()` / `with_config()`; two ctors, so two fewer raw
             # entries (39 -> 37), unique count unchanged.
             "srpc.idempotency": (36, 37),
             "srpc.fiber": (8, 9),
-            "srpc.misc": (18, 23),
-            "srpc.channel": (13, 20),
-            # Factory-only construction: Epoll's public ctor became the static
-            # `Epoll::new_()` factory. A ctor emits two raw ABI entries (C1/C2)
-            # that demangle to one name, a factory emits one, so the raw count
-            # drops by one while the unique count is unchanged: 26 -> 25.
-            "srpc.epoll_wrapper": (22, 25),
+            "srpc.misc": (21, 26),
+            "srpc.channel": (14, 21),
+            # Four epoll-control helpers now lower from canonical Rust.
+            # Two C++ ABI aliases and the initializer remain separately pinned.
+            "srpc.epoll_wrapper": (26, 29),
             "srpc.pollable_proxy": (4, 7),
             "srpc.callbacks": (27, 28),
-            "srpc.inmemory_channel": (77, 84),
-            # Factory-only construction: FiberChannel's explicit ctor became
-            # the static `FiberChannel::new_()` factory; one ctor, so one fewer
-            # raw entry (20 -> 19), unique count unchanged.
-            "srpc.fiber_channel": (17, 19),
+            "srpc.inmemory_channel": (78, 85),
+            # Owned callback state replaces four raw-receiver/wait helpers.
+            # One C++ ABI alias and the initializer remain separately pinned.
+            "srpc.fiber_channel": (13, 15),
             "srpc.threading": (17, 18),
             "srpc.debugging": (9, 10),
+            "srpc.heartbeat": (25, 26),
             "srpc.any_message": (10, 11),
         }
         for module, (unique_count, raw_count) in expected.items():

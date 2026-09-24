@@ -33,6 +33,8 @@ namespace {
 
 using Bytes = std::vector<std::uint8_t>;
 
+static_assert(std::is_same_v<std::remove_cvref_t<decltype(make_frame_cursor().get_ref())>, Bytes>);
+
 // ---------------------------------------------------------------------------
 // Stateless header encode/decode
 // ---------------------------------------------------------------------------

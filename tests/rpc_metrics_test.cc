@@ -8,19 +8,22 @@
 
 #include <gtest/gtest.h>
 #include <rusty/arc.hpp>
+#include <rusty/box.hpp>
+#include <rusty/sync/weak.hpp>
 #include "../srpc.hpp"
 
 // Trimmed from the consumer umbrella (08b68144) — import directly.
 import srpc.circuit_breaker;
 import srpc.connection_metrics;
 import srpc.request_options;
-#include "benchmark_service.h"
+import srpc.request_queue;
+import srpc.serializable;
 #include "rpc_test_ports.h"
 
 import std;
+import srpc.reconnect_policy;
 
 using namespace srpc;
-using namespace benchmark;
 using namespace std::chrono;
 
 // Helper to get current time in milliseconds
@@ -328,46 +331,25 @@ TEST(ConnectionMetricsTest, InFlightNeverNegativeAndReturnsToZero) {
 // Integration Tests with Real Connection
 // ============================================================================
 
-class MetricsTestService : public benchmark::BenchmarkService {
+// The metrics suite needs one real empty-reply RPC, without linking the
+// benchmark executable's unrelated service implementations and globals.
+class MetricsTestService : public Service {
 public:
-    std::atomic<int> call_count{0};
-
-    rusty::Result<BenchmarkService::RpcFastNopResponse, i32>
-    fast_nop(const BenchmarkService::RpcFastNopRequest& req) override {
-        (void)req;
-        call_count++;
-        BenchmarkService::RpcFastNopResponse resp{};
-        return rusty::Result<BenchmarkService::RpcFastNopResponse, i32>::Ok(resp);
+    static constexpr i32 kRpcId = 0x00e00092;
+    int __reg_to__(Server& server, size_t index) override {
+        return server.reg_fast_rpc(kRpcId, index);
     }
-
-    rusty::Result<BenchmarkService::RpcNopResponse, i32>
-    nop(const BenchmarkService::RpcNopRequest& req) override {
-        (void)req;
-        call_count++;
-        BenchmarkService::RpcNopResponse resp{};
-        return rusty::Result<BenchmarkService::RpcNopResponse, i32>::Ok(resp);
-    }
-
-    rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>
-    fast_prime(const BenchmarkService::RpcFastPrimeRequest& req) override {
-        (void)req;
-        BenchmarkService::RpcFastPrimeResponse resp{};
-        resp.flag = 1;
-        return rusty::Result<BenchmarkService::RpcFastPrimeResponse, i32>::Ok(resp);
-    }
-
-    rusty::Result<BenchmarkService::RpcFastVecResponse, i32>
-    fast_vec(const BenchmarkService::RpcFastVecRequest& req) override {
-        BenchmarkService::RpcFastVecResponse resp{};
-        for (i32 i = 0; i < req.n; i++) resp.v.push_back(i);
-        return rusty::Result<BenchmarkService::RpcFastVecResponse, i32>::Ok(resp);
-    }
-
-    rusty::Result<BenchmarkService::RpcSleepResponse, i32>
-    sleep(const BenchmarkService::RpcSleepRequest& req) override {
-        std::this_thread::sleep_for(std::chrono::duration<double>(req.sec));
-        BenchmarkService::RpcSleepResponse resp{};
-        return rusty::Result<BenchmarkService::RpcSleepResponse, i32>::Ok(resp);
+    void __dispatch__(i32 rpc, rusty::Box<Request> request,
+                      WeakServerConnection connection) const override {
+        ASSERT_EQ(rpc, kRpcId);
+        std::string value;
+        {
+            BinaryReadArchive input{.source_ = make_source_proxy_buffer(&request->src)};
+            Deserialize_::deserialize(value, input);
+        }
+        auto owner = connection.upgrade();
+        ASSERT_TRUE(owner.is_some());
+        owner.unwrap()->reply(*request, 0, ServerReplyFn{[](BinaryWriteArchive&) {}});
     }
 };
 
@@ -378,13 +360,13 @@ public:
     explicit RetryMetricsRpcService(int drops_before_reply)
         : drops_before_reply_(drops_before_reply) {}
 
-    std::atomic<int> call_count{0};
+    mutable std::atomic<int> call_count{0};
 
     int __reg_to__(Server& svr, size_t svc_index) override {
         return svr.reg_rpc(kRpcId, svc_index);
     }
 
-    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override {
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) const override {
         if (rpc_id != kRpcId) {
             return;
         }
@@ -404,7 +386,7 @@ public:
         }
 
         auto sconn = sconn_opt.unwrap();
-        const_cast<ServerConnection&>(*sconn).reply(*req, 0, [payload](BinaryWriteArchive& m) {
+        sconn->reply(*req, 0, [payload](BinaryWriteArchive& m) {
             srpc::Serialize_::serialize(payload, m);
         });
     }
@@ -468,7 +450,7 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsUpdatedOnRealRequests) {
     for (int i = 0; i < 5; i++) {
         std::string input = "test_" + std::to_string(i);
         auto fu_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+            MetricsTestService::kRpcId, FutureAttr(),
             [&](BinaryWriteArchive& m) { srpc::Serialize_::serialize(input, m); }
         );
         ASSERT_TRUE(fu_result.is_ok());
@@ -495,6 +477,8 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsAfterReconnect) {
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
+    // This case controls the disconnect and explicit reconnect itself.
+    client->set_reconnect_policy(ReconnectPolicy::no_retry());
     ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
@@ -504,7 +488,7 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsAfterReconnect) {
     for (int i = 0; i < 3; i++) {
         std::string input = "before_" + std::to_string(i);
         auto fu_result = client->request(
-            benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+            MetricsTestService::kRpcId, FutureAttr(),
             [&](BinaryWriteArchive& m) { srpc::Serialize_::serialize(input, m); }
         );
         if (fu_result.is_ok()) {
@@ -515,37 +499,29 @@ TEST_F(ConnectionMetricsIntegrationTest, MetricsAfterReconnect) {
     EXPECT_EQ(metrics.requests_sent(), 3u);
     EXPECT_EQ(metrics.reconnect_count(), 0u);
 
-    // Disconnect and reconnect
-    client->close();
-    std::this_thread::sleep_for(milliseconds(50));
-
+    // Closing the transport retains the logical connection for reconnect.
+    client->connection().unwrap()->close();
+    ASSERT_FALSE(client->connected());
     std::atomic<bool> reconnect_done{false};
-    client->reconnect([&](bool success) {
-        reconnect_done = true;
-    });
+    ASSERT_EQ(client->reconnect([&](bool success) {
+        EXPECT_TRUE(success);
+        reconnect_done.store(true);
+    }), 0);
+    ASSERT_TRUE(reconnect_done.load());
+    ASSERT_TRUE(client->connected());
+    EXPECT_EQ(metrics.reconnect_count(), 1u);
 
-    for (int i = 0; i < 50 && !reconnect_done; i++) {
-        std::this_thread::sleep_for(milliseconds(20));
+    for (int i = 0; i < 2; i++) {
+        std::string input = "after_" + std::to_string(i);
+        auto result = client->request(MetricsTestService::kRpcId, FutureAttr{},
+            [&](BinaryWriteArchive& output) { Serialize_::serialize(input, output); });
+        ASSERT_TRUE(result.is_ok());
+        auto future = result.unwrap();
+        future->timed_wait(2.0);
+        ASSERT_TRUE(future->ready());
+        ASSERT_EQ(future->get_error_code(), 0);
     }
-
-    if (reconnect_done && client->connected()) {
-        // Reconnect count should have increased
-        EXPECT_EQ(metrics.reconnect_count(), 1u);
-
-        // Make more requests after reconnect
-        for (int i = 0; i < 2; i++) {
-            std::string input = "after_" + std::to_string(i);
-            auto fu_result = client->request(
-                benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
-                [&](BinaryWriteArchive& m) { srpc::Serialize_::serialize(input, m); }
-            );
-            if (fu_result.is_ok()) {
-                fu_result.unwrap()->wait();
-            }
-        }
-
-        EXPECT_EQ(metrics.requests_sent(), 5u);
-    }
+    EXPECT_EQ(metrics.requests_sent(), 5u);
 
     client->close();
     delete server;
@@ -567,7 +543,7 @@ TEST_F(ConnectionMetricsIntegrationTest, ByteCounterAccuracy) {
     // Make a request
     std::string input = "test_data";
     auto fu_result = client->request(
-        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        MetricsTestService::kRpcId, FutureAttr(),
         [&](BinaryWriteArchive& m) { srpc::Serialize_::serialize(input, m); }
     );
     ASSERT_TRUE(fu_result.is_ok());
@@ -612,23 +588,34 @@ TEST_F(ConnectionMetricsIntegrationTest, RequestWithOptionsTracksRetryAttempts) 
     opts.jitter_factor = 0.0f;
     opts.idempotent = true;
 
-    auto fu_result = client->request_with_options(
-        RetryMetricsRpcService::kRpcId, opts,
-        [](BinaryWriteArchive& m) { srpc::Serialize_::serialize(v32(11), m); });
-    ASSERT_TRUE(fu_result.is_ok());
-    auto fu = fu_result.unwrap();
+    rusty::sync::Weak<Future> coordinator_lifetime;
+    {
+        auto fu_result = client->request_with_options(
+            RetryMetricsRpcService::kRpcId, opts,
+            [](BinaryWriteArchive& m) { srpc::Serialize_::serialize(v32(11), m); });
+        ASSERT_TRUE(fu_result.is_ok());
+        auto fu = fu_result.unwrap();
+        coordinator_lifetime = rusty::sync::downgrade(fu);
 
-    ASSERT_TRUE(wait_for_condition([&]() { return fu->ready() || fu->timed_out(); }, milliseconds(2000)));
-    EXPECT_TRUE(fu->wait_with_options());
-    EXPECT_EQ(fu->get_error_code(), 0);
-    EXPECT_EQ(fu->get_retry_count(), 1);
+        ASSERT_TRUE(wait_for_condition([&]() { return fu->ready() || fu->timed_out(); }, milliseconds(2000)));
+        EXPECT_TRUE(fu->wait_with_options());
+        EXPECT_EQ(fu->get_error_code(), 0);
+        EXPECT_EQ(fu->get_retry_count(), 1);
 
-    EXPECT_EQ(service->call_count.load(), 2);
-    EXPECT_EQ(metrics.retry_attempts(), 1u);
-    EXPECT_EQ(metrics.requests_sent(), 2u);
-    EXPECT_EQ(metrics.requests_completed(), 1u);
-    EXPECT_EQ(metrics.requests_timed_out(), 0u);
-    EXPECT_EQ(metrics.in_flight_requests(), 0u);
+        EXPECT_EQ(service->call_count.load(), 2);
+        EXPECT_EQ(metrics.retry_attempts(), 1u);
+        EXPECT_EQ(metrics.requests_sent(), 2u);
+        EXPECT_EQ(metrics.requests_completed(), 1u);
+        EXPECT_EQ(metrics.requests_timed_out(), 0u);
+        EXPECT_EQ(metrics.in_flight_requests(), 0u);
+    }
+
+    // Readiness precedes the detached thread adapter's result publication.
+    // Releasing the caller's Future leaves the coordinator capture as its last
+    // owner. Observe that capture's destruction while this process stays alive.
+    ASSERT_TRUE(wait_for_condition([&]() {
+        return coordinator_lifetime.upgrade().is_none();
+    }, milliseconds(2000))) << "detached retry worker retained its completed Future";
 
     client->close();
     delete server;
@@ -676,6 +663,8 @@ TEST_F(ConnectionMetricsIntegrationTest, QueueDropCounterTracksRejectedAndExpire
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
+    // Keep requests queued until this test starts the explicit reconnect.
+    client->set_reconnect_policy(ReconnectPolicy::no_retry());
     ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
@@ -689,18 +678,18 @@ TEST_F(ConnectionMetricsIntegrationTest, QueueDropCounterTracksRejectedAndExpire
 
     const auto& metrics = client->metrics();
 
-    client->close();
+    client->connection().unwrap()->close();
     ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(2000)));
 
     auto queued_ok = client->request(
-        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        MetricsTestService::kRpcId, FutureAttr(),
         [](BinaryWriteArchive& m) { srpc::Serialize_::serialize(std::string("queued_ok"), m); }
     );
     ASSERT_TRUE(queued_ok.is_ok());
     auto queued_future = queued_ok.unwrap();
 
     auto queued_rejected = client->request(
-        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        MetricsTestService::kRpcId, FutureAttr(),
         [](BinaryWriteArchive& m) { srpc::Serialize_::serialize(std::string("queued_reject"), m); }
     );
     ASSERT_TRUE(queued_rejected.is_err());
@@ -715,7 +704,7 @@ TEST_F(ConnectionMetricsIntegrationTest, QueueDropCounterTracksRejectedAndExpire
     ASSERT_TRUE(wait_for_condition([&]() { return queued_future->ready(); }, milliseconds(2000)));
 
     int queued_err = queued_future->get_error_code();
-    EXPECT_TRUE(queued_err == kRequestQueueExpiredError || queued_err == ENOTCONN);
+    EXPECT_EQ(queued_err, kRequestQueueExpiredError);
     EXPECT_GE(metrics.queue_dropped_requests(), 2u);
 
     client->close();
@@ -727,6 +716,8 @@ TEST_F(ConnectionMetricsIntegrationTest, CircuitCountersTrackTransitionsAndRejec
     ASSERT_NE(server, nullptr);
 
     auto client = Client::create(poll_thread_.as_ref().unwrap());
+    // Keep the transport disconnected while exercising circuit transitions.
+    client->set_reconnect_policy(ReconnectPolicy::no_retry());
     ASSERT_EQ(client->connect(reinterpret_cast<const int8_t*>(server_addr().c_str()), true), 0);
     std::this_thread::sleep_for(milliseconds(50));
 
@@ -735,11 +726,11 @@ TEST_F(ConnectionMetricsIntegrationTest, CircuitCountersTrackTransitionsAndRejec
 
     const auto& metrics = client->metrics();
 
-    client->close();
+    client->connection().unwrap()->close();
     ASSERT_TRUE(wait_for_condition([&]() { return !client->connected(); }, milliseconds(2000)));
 
     auto first = client->request(
-        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        MetricsTestService::kRpcId, FutureAttr(),
         [](BinaryWriteArchive& m) { srpc::Serialize_::serialize(std::string("first"), m); }
     );
     ASSERT_TRUE(first.is_err());
@@ -747,7 +738,7 @@ TEST_F(ConnectionMetricsIntegrationTest, CircuitCountersTrackTransitionsAndRejec
     EXPECT_EQ(metrics.circuit_open_transitions(), 1u);
 
     auto second = client->request(
-        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        MetricsTestService::kRpcId, FutureAttr(),
         [](BinaryWriteArchive& m) { srpc::Serialize_::serialize(std::string("second"), m); }
     );
     ASSERT_TRUE(second.is_err());
@@ -757,7 +748,7 @@ TEST_F(ConnectionMetricsIntegrationTest, CircuitCountersTrackTransitionsAndRejec
     std::this_thread::sleep_for(milliseconds(20));
 
     auto third = client->request(
-        benchmark::BenchmarkService::FAST_NOP, FutureAttr(),
+        MetricsTestService::kRpcId, FutureAttr(),
         [](BinaryWriteArchive& m) { srpc::Serialize_::serialize(std::string("third"), m); }
     );
     ASSERT_TRUE(third.is_err());

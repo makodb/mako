@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "functions": {
+    "misc/rand.rs:srpc.rand::randgen_nu_constant_now::randgen_nu_constant_now": {
+      "sha256": "800d151891fff806ef4900a8d359c0236338fd3a26c7f04ec75e2fd65dfb2081",
+      "reason": "The historical non-uniform random formula uses a fixed zero C parameter; entropy comes from the separate native draw."
+    },
+    "reactor/future.rs:srpc.future::fiber_null_state::fiber_null_state": {
+      "sha256": "63378f83d9dd2cedef8d174b993a970238f15a548ee6d72f2ad3ec19f0af23e7",
+      "reason": "A default or moved-from future owns no event state."
+    },
+    "rpc/channel.rs:srpc.channel::ChannelConnectionBase::set_keepalive": {
+      "sha256": "cff08acad4567ddc421f1650ca319dbfebbf755d41ea368a5a351e403de18414",
+      "reason": "A transport without TCP socket options reports that keepalive configuration is unsupported."
+    },
+    "rpc/inmemory_channel.rs:srpc.inmemory_channel::InMemoryChannel as inherent ::flush": {
+      "sha256": "bedf6ce6b278e3826c6b846f0d9f463a0c398f944d3c2358d62226e38a47999b",
+      "reason": "In-memory sends deliver synchronously and retain no pending output buffer to flush."
+    },
+    "rpc/tcp_channel.rs:srpc.tcp_channel::TcpListener as inherent ::content_size": {
+      "sha256": "6375e67415cecb35654a1a915096b7c9c2606fba35e0cd7c3db836698e79c019",
+      "reason": "A listening socket accepts connections; it has no application output buffer or pending write interest."
+    },
+    "rpc/tcp_channel.rs:srpc.tcp_channel::TcpListener as inherent ::check_pending_write_update": {
+      "sha256": "5a470db6d4daf51fac7b45d88c47b8b6ce2a137e24361f5224dd6e8eaaa49ac1",
+      "reason": "A listening socket accepts connections; it has no application output buffer or pending write interest."
+    },
+    "reactor/reactor.rs:srpc.reactor::BoxEvent < Type > as inherent < Type : Clone + Default + 'static >::is_composite_event": {
+      "sha256": "62fc0a6362c491d2f37371c53175f79e560793a687b64b08af80fa23ef9dd09b",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "reactor/reactor.rs:srpc.reactor::BoxEvent < Type > as EventPollable < Type : Clone + Default + 'static >::log": {
+      "sha256": "f3fa9383ad6becf2fc33b83228dea30bf1c0769433ee5a2d19453f178e94b136",
+      "reason": "This concrete event has no additional optional debug-log output; readiness and wake behavior live in its other methods."
+    },
+    "reactor/reactor.rs:srpc.reactor::BoxEvent < Type > as EventCore < Type : Clone + Default + 'static >::core_is_composite": {
+      "sha256": "e70c451f158c33fb3cacca4b694d81426d622d45e9107a50cf0bc051efcfce7e",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "reactor/reactor.rs:srpc.reactor::IntEvent as inherent ::is_composite_event": {
+      "sha256": "62fc0a6362c491d2f37371c53175f79e560793a687b64b08af80fa23ef9dd09b",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "reactor/reactor.rs:srpc.reactor::IntEvent as EventPollable ::log": {
+      "sha256": "f3fa9383ad6becf2fc33b83228dea30bf1c0769433ee5a2d19453f178e94b136",
+      "reason": "This concrete event has no additional optional debug-log output; readiness and wake behavior live in its other methods."
+    },
+    "reactor/reactor.rs:srpc.reactor::IntEvent as EventCore ::core_is_composite": {
+      "sha256": "e70c451f158c33fb3cacca4b694d81426d622d45e9107a50cf0bc051efcfce7e",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "reactor/reactor.rs:srpc.reactor::NeverEvent as inherent ::is_composite_event": {
+      "sha256": "62fc0a6362c491d2f37371c53175f79e560793a687b64b08af80fa23ef9dd09b",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "reactor/reactor.rs:srpc.reactor::NeverEvent as EventPollable ::is_ready": {
+      "sha256": "0abba1943439bbf778a26d281579776df7cab8e3acc470e18d7c74574d1b8b87",
+      "reason": "NeverEvent is defined to remain unready until explicitly timed out or cancelled."
+    },
+    "reactor/reactor.rs:srpc.reactor::NeverEvent as EventPollable ::log": {
+      "sha256": "f3fa9383ad6becf2fc33b83228dea30bf1c0769433ee5a2d19453f178e94b136",
+      "reason": "This concrete event has no additional optional debug-log output; readiness and wake behavior live in its other methods."
+    },
+    "reactor/reactor.rs:srpc.reactor::NeverEvent as EventCore ::core_is_composite": {
+      "sha256": "e70c451f158c33fb3cacca4b694d81426d622d45e9107a50cf0bc051efcfce7e",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "reactor/reactor.rs:srpc.reactor::TimeoutEvent as inherent ::is_composite_event": {
+      "sha256": "62fc0a6362c491d2f37371c53175f79e560793a687b64b08af80fa23ef9dd09b",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "reactor/reactor.rs:srpc.reactor::TimeoutEvent as EventPollable ::log": {
+      "sha256": "f3fa9383ad6becf2fc33b83228dea30bf1c0769433ee5a2d19453f178e94b136",
+      "reason": "This concrete event has no additional optional debug-log output; readiness and wake behavior live in its other methods."
+    },
+    "reactor/reactor.rs:srpc.reactor::TimeoutEvent as EventCore ::core_is_composite": {
+      "sha256": "e70c451f158c33fb3cacca4b694d81426d622d45e9107a50cf0bc051efcfce7e",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "reactor/reactor.rs:srpc.reactor::WaitAny as inherent ::is_composite_event": {
+      "sha256": "22f091d762e3aa3d19f2cc36a0db82ea42dd3efd451f9ff35923e7ce29575cd2",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "reactor/reactor.rs:srpc.reactor::WaitAny as EventPollable ::log": {
+      "sha256": "f3fa9383ad6becf2fc33b83228dea30bf1c0769433ee5a2d19453f178e94b136",
+      "reason": "This concrete event has no additional optional debug-log output; readiness and wake behavior live in its other methods."
+    },
+    "reactor/reactor.rs:srpc.reactor::WaitAny as EventCore ::core_is_composite": {
+      "sha256": "f4b0cb67c3bfd815280b8b4edd47bdbc12ea83443bf4d8437875a43f007f37ab",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "reactor/reactor.rs:srpc.reactor::WaitAll as inherent ::is_composite_event": {
+      "sha256": "22f091d762e3aa3d19f2cc36a0db82ea42dd3efd451f9ff35923e7ce29575cd2",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "reactor/reactor.rs:srpc.reactor::WaitAll as EventCore ::core_is_composite": {
+      "sha256": "f4b0cb67c3bfd815280b8b4edd47bdbc12ea83443bf4d8437875a43f007f37ab",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "reactor/reactor.rs:srpc.reactor::QuorumEvent as inherent ::is_composite_event": {
+      "sha256": "22f091d762e3aa3d19f2cc36a0db82ea42dd3efd451f9ff35923e7ce29575cd2",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "reactor/reactor.rs:srpc.reactor::QuorumEvent as EventPollable ::log": {
+      "sha256": "f3fa9383ad6becf2fc33b83228dea30bf1c0769433ee5a2d19453f178e94b136",
+      "reason": "This concrete event has no additional optional debug-log output; readiness and wake behavior live in its other methods."
+    },
+    "reactor/reactor.rs:srpc.reactor::QuorumEvent as EventCore ::core_is_composite": {
+      "sha256": "f4b0cb67c3bfd815280b8b4edd47bdbc12ea83443bf4d8437875a43f007f37ab",
+      "reason": "The concrete event type fixes whether this event combines child events."
+    },
+    "rpc/client.rs:srpc.client::Future as inherent ::safe_release": {
+      "sha256": "fa659ee1f1cc2ee44ae316006d9dc2278d75e609dec8a14aaeb55350add9936d",
+      "reason": "The owned Arc parameter releases its reference when the function returns, through ordinary Rust/C++ destruction."
+    }
+  }
+}

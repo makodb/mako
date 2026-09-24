@@ -42,5 +42,20 @@ fn peek_and_reset_return_snapshots_without_layout_indirection() {
 
     stat.sample(-7);
     stat.sample(-2);
-    assert_stat(&stat, 2, -9, -4, 0, -7);
+    // max is the true maximum of the stream (-2), not the zero-seeded field.
+    // The former seed-at-0 body reported 0 here; see the srpc.stat Verus spec.
+    assert_stat(&stat, 2, -9, -4, -2, -7);
+}
+
+#[test]
+fn all_positive_stream_reports_the_true_min_not_zero() {
+    // Regression for the seed-at-0 bug: an all-positive stream must report its
+    // real minimum, not the zero the field was initialised to.
+    let mut stat = AvgStat::new();
+    stat.sample(12);
+    stat.sample(7);
+    stat.sample(33);
+    stat.sample(5);
+    stat.sample(91);
+    assert_stat(&stat, 5, 148, 29, 91, 5);
 }

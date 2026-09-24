@@ -1,5 +1,14 @@
 // Canonical Rust source for the srpc.errors module.
 // Compiled directly by rustc and translated by rusty-cpp crate mode.
+
+// Verus specs (behind #[cfg(verus)], invisible to rustc and rusty-cpp) pin the
+// error-classification predicates to their numeric ranges, and the theorems in
+// verify/src/errors_proofs.rs prove the predicates stay consistent with the
+// categorizer. These are free functions, so the verus_spec return-binding works
+// (unlike SparseInt's impl methods). See docs/verification.md.
+#[cfg(verus)]
+use vstd::prelude::*;
+
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[repr(i32)]
@@ -101,6 +110,16 @@ pub fn rpc_error_to_string(err: RpcError) -> &'static str {
 }
 
 #[allow(clippy::manual_range_contains)]
+#[cfg_attr(verus, verus_spec(r =>
+    ensures r == (
+        if err as i32 == 0i32 { RpcErrorCategory::NONE }
+        else if 100i32 <= err as i32 && (err as i32) < 200i32 { RpcErrorCategory::CONNECTION }
+        else if 200i32 <= err as i32 && (err as i32) < 300i32 { RpcErrorCategory::PROTOCOL }
+        else if 300i32 <= err as i32 && (err as i32) < 400i32 { RpcErrorCategory::APPLICATION }
+        else if 400i32 <= err as i32 && (err as i32) < 500i32 { RpcErrorCategory::TIMEOUT }
+        else { RpcErrorCategory::INTERNAL }
+    ),
+))]
 pub fn get_error_category(err: RpcError) -> RpcErrorCategory {
     let code: i32 = err as i32;
     if code == 0 { RpcErrorCategory::NONE }
@@ -111,12 +130,18 @@ pub fn get_error_category(err: RpcError) -> RpcErrorCategory {
     else { RpcErrorCategory::INTERNAL }
 }
 
+#[cfg_attr(verus, verus_spec(r =>
+    ensures r == (100i32 <= err as i32 && (err as i32) < 200i32),
+))]
 #[allow(clippy::manual_range_contains)]
 pub fn is_connection_error(err: RpcError) -> bool {
     let code: i32 = err as i32;
     code >= 100 && code < 200
 }
 
+#[cfg_attr(verus, verus_spec(r =>
+    ensures r == (400i32 <= err as i32 && (err as i32) < 500i32),
+))]
 #[allow(clippy::manual_range_contains)]
 pub fn is_timeout_error(err: RpcError) -> bool {
     let code: i32 = err as i32;

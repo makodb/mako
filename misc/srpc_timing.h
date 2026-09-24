@@ -14,7 +14,7 @@ uint64_t srpc_clock_monotonic_us(void);
 uint64_t srpc_clock_realtime_coarse_us(void);
 uint64_t srpc_gettimeofday_us(void);
 void srpc_sleep_us(uint64_t microseconds);
-void srpc_time_now_str(char* now);
+int32_t srpc_local_calendar_fields(int32_t* fields);
 void srpc_cpu_pause(void);
 
 #ifdef __cplusplus

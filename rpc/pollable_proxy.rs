@@ -1,8 +1,13 @@
 //! Canonical Rust owner for `srpc.pollable_proxy`.
 
-use rusty::cpp_inherit;
 use std::sync::Arc;
 
+/// A registration owns the descriptor returned by `fd` until it unregisters.
+///
+/// Implementations must retain that descriptor across logical close and every
+/// concurrent epoll operation. The worker calls `close` only after unregister;
+/// callers closing a transport independently need a separate registration
+/// lease, as the TCP pollable proxies provide.
 pub trait PollableBase: Send {
     fn fd(&self) -> i32;
     fn poll_mode(&self) -> i32;
@@ -15,6 +20,10 @@ pub trait PollableBase: Send {
     fn is_closed(&self) -> bool;
 }
 
+// The shared target must preserve the registered descriptor while its shim
+// exists, or close only after the worker has unregistered it. Arc ownership of
+// a target alone does not extend an interior descriptor that close replaces.
+// TCP uses its dedicated proxy factories to retain a descriptor lease.
 trait PollableSharedTarget: Send + Sync {
     fn fd(&self) -> i32;
     fn poll_mode(&self) -> i32;
@@ -34,7 +43,7 @@ pub struct PollableArcShim<T> {
     pub poll_: Arc<T>,
 }
 
-#[cpp_inherit]
+#[cfg_attr(any(), cpp_inherit)]
 impl<T: PollableSharedTarget> PollableBase for PollableArcShim<T> {
     fn fd(&self) -> i32 {
         self.poll_.fd()
@@ -73,10 +82,13 @@ impl<T: PollableSharedTarget> PollableBase for PollableArcShim<T> {
     }
 }
 
+/// Adapt a shared target whose descriptor outlives its registration.
+/// Transport types with independently closable descriptor slots must use
+/// their dedicated registration factories, which retain the socket owner.
 #[allow(private_bounds)]
 pub fn make_pollable_proxy_from_typed_arc<T>(poll: Arc<T>) -> PollableProxy
 where
     T: PollableSharedTarget + 'static,
 {
-    rusty::make_box::<PollableArcShim<T>>(PollableArcShim { poll_: poll })
+    Box::new(PollableArcShim { poll_: poll })
 }

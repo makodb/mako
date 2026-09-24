@@ -1,6 +1,7 @@
 // Canonical Rust source for the srpc.connection_state module.
 // Compiled directly by rustc and translated by rusty-cpp crate mode.
-use std::cell::Cell;
+use crate::threading::SharedCell;
+use std::sync::Mutex;
 
 #[allow(non_camel_case_types)]
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -28,11 +29,12 @@ pub fn connection_state_to_string(state: ConnectionState) -> &'static str {
     }
 }
 
-pub type StateChangeCallback = rusty::Function<dyn Fn(ConnectionState, ConnectionState)>;
+pub type StateChangeCallback = Option<Box<dyn Fn(ConnectionState, ConnectionState) + Send + Sync>>;
 
 #[repr(C)]
 pub struct ConnectionStateMachine {
-    pub state_field: Cell<ConnectionState>,
+    transition_lock_: Mutex<()>,
+    pub state_field: SharedCell<ConnectionState>,
     pub on_state_change: StateChangeCallback,
 }
 
@@ -40,7 +42,8 @@ impl ConnectionStateMachine {
     #[allow(clippy::new_without_default)]
     pub fn new() -> ConnectionStateMachine {
         ConnectionStateMachine {
-            state_field: Cell::<ConnectionState>::new(ConnectionState::NEW),
+            transition_lock_: Mutex::new(()),
+            state_field: SharedCell::<ConnectionState>::new(ConnectionState::NEW),
             on_state_change: Default::default(),
         }
     }
@@ -55,22 +58,26 @@ impl ConnectionStateMachine {
     }
 
     pub fn transition_to(&self, new_state: ConnectionState) -> bool {
+        let transition = self.transition_lock_.lock().unwrap();
         let current: ConnectionState = self.state_field.get();
         if !ConnectionStateMachine::is_valid_transition(current, new_state) {
             return false;
         }
         self.state_field.set(new_state);
-        if !self.on_state_change.is_empty() {
-            (self.on_state_change)(current, new_state);
+        drop(transition);
+        if let Some(callback) = self.on_state_change.as_ref() {
+            callback(current, new_state);
         }
         true
     }
 
     pub fn force_state(&self, new_state: ConnectionState) {
+        let transition = self.transition_lock_.lock().unwrap();
         let current: ConnectionState = self.state_field.get();
         self.state_field.set(new_state);
-        if !self.on_state_change.is_empty() {
-            (self.on_state_change)(current, new_state);
+        drop(transition);
+        if let Some(callback) = self.on_state_change.as_ref() {
+            callback(current, new_state);
         }
     }
 

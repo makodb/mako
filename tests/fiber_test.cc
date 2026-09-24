@@ -21,8 +21,8 @@ protected:
         // suspended in one test (e.g. after a yield/sleep) stay registered
         // in the next test's `reactor->run_loop(false, true)` call and block it forever.
         // The Rc<Reactor> goes out of scope on assignment, running ~Reactor.
-        *srpc::sp_running_fiber_th_.borrow_mut() = rusty::None;
-        srpc::sp_reactor_th_ = rusty::None;
+        srpc::sp_running_fiber_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
+        srpc::sp_reactor_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
     }
 
     // Drive the reactor until `done` holds, or give up after timeout_us.
