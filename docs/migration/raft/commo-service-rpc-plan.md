@@ -171,7 +171,30 @@ the same seam that works today, rather than inventing a new one.
       *Fix:* have the Rust emitter read the four ids and keep them in one
       checked-in place that BOTH generators consult, so the wire contract
       survives the split.
-- [ ] **2c. Decide the AppendEntries payload framing before generating it.**
+- [x] **2c. DONE, and it needs no wire change at all.** The framing below was
+      the plan's biggest risk -- a wire break with no mixed-version path -- and
+      it turned out to be unnecessary.
+
+      `cmd` sits at a FIXED byte offset 50, because every field before it is
+      fixed-width, and exactly one fixed-width field follows it
+      (`leaderNextLogTerm`, 8 bytes). Rust also holds the whole frame as
+      `Request::body`. So the payload's extent is arithmetic:
+
+          cmd               = body[50 .. len - 8]
+          leaderNextLogTerm = body[len - 8 ..]
+
+      Rust copies that range verbatim and hands it back to C++ untouched. C++
+      keeps writing and reading the envelope exactly as today, so the wire is
+      byte-identical. Raft reading INTO the payload -- the fact that refuted
+      plan v1 -- stops mattering at this boundary, because C++ still does the
+      reading.
+
+      A struct with an opaque field gets `from_body(&[u8])` instead of a
+      streaming `Deserialize`, since the end is only knowable from the whole
+      frame. The emitter still refuses when the extent genuinely is not
+      arithmetic (two opaque fields, or a variable-width field beside one).
+
+- [ ] ~~2c-old. Decide the AppendEntries payload framing before generating it.~~
       The generator can emit Vote, EmptyAppendEntries and InstallSnapshot from
       the parser alone; `AppendEntries` it cannot, because `Command cmd` is a
       `janus::Command` whose contents Raft reads and which carries no length
@@ -202,6 +225,24 @@ the same seam that works today, rather than inventing a new one.
       Everything else in commo.{h,cc} is C++ plumbing around those five. What
       the Rust side needs is a peer registry of `srpc::Client`s, those five
       operations, the network-enabled flag and the poll-thread handle.
+
+      **But only three of the five can move.** Measured:
+
+      | operation | state |
+      |---|---|
+      | `SetNetworkEnabled` | movable -- an atomic bool, no C++ object |
+      | `PollThread` | movable -- the Rust lane has `PollThread` |
+      | `SendAppendEntries` | movable as of the 2c work above |
+      | `BroadcastVote` | returns `RaftVoteQuorumPtr`, a 16-byte C++ carrier with its own destructor kernel (rusty-rustc/src/lib.rs:644, :753) |
+      | `SendInstallSnapshot` | takes `RaftSnapshotManagerPtr`; adversarial verification already found SnapshotManager's virtuals stay C++ under every variant (snapshot_manager.hpp:164-225) |
+
+      So "move commo to Rust" cannot complete as one step. The reachable shape
+      is a Rust `RaftCommo` that owns the peers, the clients, the flag and the
+      poll handle -- which is what makes `commo_` a Rust type and therefore
+      `RaftServerBase` `Send` -- while the quorum and snapshot handoffs stay
+      `extern "C"` kernels passing opaque handles, exactly as they do now.
+      That is enough for stage 1's blocker and does not require moving the
+      snapshot manager, which is out of scope under every variant considered.
 - [ ] **3b.** Redesign the wake so no `!Send` handle crosses a thread. srpc
       already solved this with `Future` (`client.rs:490-523`, Mutex-backed and
       `Send`); Mako's commo does not use it.
