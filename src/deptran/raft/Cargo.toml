@@ -48,7 +48,12 @@ crate-type = ["rlib", "staticlib"]
 raft_test = []
 
 [dependencies]
-rusty = { path = "../../srpc/rusty-rustc" }
+# The rustc-side facade. It lives in src/rusty-rustc, NOT inside src/srpc:
+# upstream retired its own facade once every srpc module became canonical
+# Rust on real std, so this crate is mako's alone -- it models the C++
+# types the Raft server holds opaquely. Keeping it inside the vendored
+# tree would put it in the path of every subtree pull.
+rusty = { path = "../../rusty-rustc" }
 srpc = { path = "../../srpc" }
 
 [lints.rust]

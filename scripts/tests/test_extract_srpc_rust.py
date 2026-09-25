@@ -1154,7 +1154,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         self.assertEqual(frame_codec.count("unsafe extern"), 0)
         self.assertNotIn("not_unsafe_ptr_arg_deref", frame_codec)
 
-        facade_manifest = REPOSITORY / "src/srpc/rusty-rustc/Cargo.toml"
+        facade_manifest = REPOSITORY / "src/rusty-rustc/Cargo.toml"
         with facade_manifest.open("rb") as stream:
             facade_cargo = tomllib.load(stream)
         self.assertEqual(facade_cargo["package"]["name"], "rusty")
@@ -1213,7 +1213,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         # The inert-attribute crate exists only so rustc accepts
         # `#[cpp_inherit]` on the trait impls the emitter turns into C++ base
         # classes. It must stay a proc-macro shim with no unsafe of its own.
-        markers_manifest = REPOSITORY / "src/srpc/rusty-cpp-markers/Cargo.toml"
+        markers_manifest = REPOSITORY / "src/rusty-cpp-markers/Cargo.toml"
         with markers_manifest.open("rb") as stream:
             markers_cargo = tomllib.load(stream)
         self.assertEqual(markers_cargo["package"]["name"], "rusty-cpp-markers")
@@ -1244,8 +1244,12 @@ class CheckedInCanaryTests(unittest.TestCase):
         # so the move is a deliberate change rather than a silent one.
         self.assertNotIn("members", cargo["workspace"])
         self.assertNotIn("rusty", cargo.get("dependencies", {}))
-        self.assertTrue((REPOSITORY / "src/srpc/rusty-rustc/Cargo.toml").exists())
-        self.assertTrue((REPOSITORY / "src/srpc/rusty-cpp-markers/Cargo.toml").exists())
+        # ...and they live OUTSIDE the vendored tree, so a subtree pull
+        # never touches them.
+        self.assertFalse((REPOSITORY / "src/srpc/rusty-rustc").exists())
+        self.assertFalse((REPOSITORY / "src/srpc/rusty-cpp-markers").exists())
+        self.assertTrue((REPOSITORY / "src/rusty-rustc/Cargo.toml").exists())
+        self.assertTrue((REPOSITORY / "src/rusty-cpp-markers/Cargo.toml").exists())
 
 
 class DriverBehaviorTests(unittest.TestCase):
@@ -2202,7 +2206,10 @@ class CrateModeGateTests(unittest.TestCase):
                 "srpc.frame_codec": GATE.AbiSpec(frozenset(), frozenset()),
                 "srpc.example": GATE.AbiSpec(frozenset(), frozenset()),
             }
-            with mock.patch.dict(GATE.ABI_SPECS, specs, clear=True):
+            imports = {"srpc.frame_codec": ["srpc.internal_protocol"],
+                       "srpc.example": []}
+            with mock.patch.dict(GATE.ABI_SPECS, specs, clear=True), \
+                    mock.patch.dict(GATE.EXPECTED_IMPORTS, imports, clear=True):
                 with self.assertRaisesRegex(
                     GATE.GateError,
                     "FrameCodec io preamble leaked into srpc.example",
@@ -2244,12 +2251,48 @@ class CrateModeGateTests(unittest.TestCase):
                 "srpc.utils": GATE.AbiSpec(frozenset(), frozenset()),
                 "srpc.example": GATE.AbiSpec(frozenset(), frozenset()),
             }
-            with mock.patch.dict(GATE.ABI_SPECS, specs, clear=True):
+            imports = {"srpc.utils": ["srpc.logging"], "srpc.example": []}
+            with mock.patch.dict(GATE.ABI_SPECS, specs, clear=True), \
+                    mock.patch.dict(GATE.EXPECTED_IMPORTS, imports, clear=True):
                 with self.assertRaisesRegex(
                     GATE.GateError,
                     "utils netdb preamble leaked into srpc.example",
                 ):
                     GATE.require_cpp_surfaces(Path("/repository"), output, modules)
+
+    def test_module_without_expected_imports_entry_is_rejected(self) -> None:
+        """A module the import table does not name must not slip through.
+
+        EXPECTED_IMPORTS is now consulted for every generated child, so a
+        module added without an entry would otherwise be the one module whose
+        graph nobody checks."""
+        with tempfile.TemporaryDirectory(prefix="srpc-gate-imports-") as temporary:
+            output = Path(temporary)
+            (output / "srpc.example.cppm").write_text(
+                "module;\n"
+                "#include <cstdint>\n"
+                "export module srpc.example;\n",
+                encoding="utf-8",
+            )
+            (output / "srpc.cppm").write_text(
+                "export module srpc;\n"
+                "namespace srpc {\n"
+                "export import srpc.example;\n",
+                encoding="utf-8",
+            )
+            (output / "CMakeLists.txt").write_text(
+                "add_library(srpc)\n", encoding="utf-8"
+            )
+            modules = [mock.Mock(cpp_module="srpc.example")]
+            specs = {"srpc.example": GATE.AbiSpec(frozenset(), frozenset())}
+            with mock.patch.dict(GATE.ABI_SPECS, specs, clear=True), \
+                    mock.patch.dict(GATE.EXPECTED_IMPORTS, {}, clear=True):
+                with self.assertRaisesRegex(
+                    GATE.GateError, "no EXPECTED_IMPORTS entry"
+                ):
+                    GATE.require_cpp_surfaces(
+                        Path("/repository"), output, modules
+                    )
 
     def test_placeholder_ratchet_checks_named_module_purview(self) -> None:
         with tempfile.TemporaryDirectory(prefix="srpc-gate-placeholder-") as temporary:
@@ -2739,6 +2782,10 @@ class CrateModeGateTests(unittest.TestCase):
         exact_raw = {
             name: [
                 *GATE.ABI_SPECS[name].symbols,
+                *[
+                    ("T", symbol)
+                    for symbol in GATE.MODULE_RAW_ABI_ALIASES.get(name, ())
+                ],
                 ("T", f"initializer for module {name}"),
             ]
             for name in (
@@ -2952,66 +2999,77 @@ class CrateModeGateTests(unittest.TestCase):
         self.assertIn("/srpc.logging.o", generated_link)
         self.assertNotIn("/srpc.logging.probe.o", generated_link)
 
-    def test_completion_raw_symbol_ratchet_pins_all_31_entries(self) -> None:
-        # Factory-only construction: the two public constructors became the
-        # static `new_()` / `with_config()` factories, so the two C1/C2
-        # constructor aliases are gone and the raw total is 33 -> 31.
-        entries = list(GATE.ABI_SPECS["srpc.completion_tracker"].symbols)
-        entries.append(("T", "initializer for module srpc.completion_tracker"))
-        self.assertEqual(len(entries), 31)
-        GATE.require_completion_raw_symbols("test provider", entries)
-        with self.assertRaisesRegex(GATE.GateError, "exactly 31 raw"):
-            GATE.require_completion_raw_symbols("test provider", entries[:-1])
+    def test_raw_symbol_ratchets_pin_abi_specs_plus_the_initializer(self) -> None:
+        """Each ratchet must accept exactly ABI_SPECS plus the initializer.
 
-    def test_rand_raw_symbol_ratchet_pins_all_13_entries(self) -> None:
-        entries = list(GATE.ABI_SPECS["srpc.rand"].symbols)
-        entries.append(("T", "initializer for module srpc.rand"))
-        self.assertEqual(len(entries), 13)
-        GATE.require_rand_raw_symbols("test provider", entries)
-        with self.assertRaisesRegex(GATE.GateError, "exactly 13 raw"):
-            GATE.require_rand_raw_symbols("test provider", entries[:-1])
-
-    def test_request_options_raw_symbol_ratchet_pins_all_13_entries(self) -> None:
-        entries = list(GATE.ABI_SPECS["srpc.request_options"].symbols)
-        entries.append(("T", "initializer for module srpc.request_options"))
-        self.assertEqual(len(entries), 13)
-        GATE.require_request_options_raw_symbols("test provider", entries)
-        with self.assertRaisesRegex(GATE.GateError, "exactly 13 raw"):
-            GATE.require_request_options_raw_symbols(
-                "test provider", entries[:-1]
-            )
-
-    def test_reconnect_policy_raw_symbol_ratchet_pins_all_12_entries(self) -> None:
-        entries = list(GATE.ABI_SPECS["srpc.reconnect_policy"].symbols)
-        entries.append(("T", "initializer for module srpc.reconnect_policy"))
-        self.assertEqual(len(entries), 12)
-        GATE.require_reconnect_policy_raw_symbols("test provider", entries)
-        with self.assertRaisesRegex(GATE.GateError, "exactly 12 raw"):
-            GATE.require_reconnect_policy_raw_symbols(
-                "test provider", entries[:-1]
-            )
-
-    def test_circuit_breaker_raw_symbol_ratchet_pins_all_21_entries(self) -> None:
-        entries = list(GATE.ABI_SPECS["srpc.circuit_breaker"].symbols)
-        entries.append(("T", "initializer for module srpc.circuit_breaker"))
-        self.assertEqual(len(entries), 21)
-        GATE.require_circuit_breaker_raw_symbols("test provider", entries)
-        with self.assertRaisesRegex(GATE.GateError, "exactly 21 raw"):
-            GATE.require_circuit_breaker_raw_symbols(
-                "test provider", entries[:-1]
-            )
+        These tests used to restate the resulting total as a literal (29, 21,
+        15 ...). That literal was a second copy of len(ABI_SPECS[module]), so
+        an upstream change that legitimately added a symbol broke eight tests
+        that were not measuring anything the gate did not already measure.
+        What is checked here is the relationship: the ratchet accepts the
+        derived set and rejects the removal of any single entry."""
+        # Real symbols in the library that are not part of the module's
+        # declared surface, so ABI_SPECS does not carry them: AddrInfo's
+        # private fieldwise constructor, its move constructor and its
+        # destructor still emit C++ ABI aliases.
+        utils_cpp_abi_aliases = (
+            "srpc::AddrInfo@srpc.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)",
+            "srpc::AddrInfo@srpc.utils::AddrInfo(srpc::AddrInfo@srpc.utils&&)",
+            "srpc::AddrInfo@srpc.utils::~AddrInfo()",
+        )
+        cases = (
+            ("srpc.completion_tracker", GATE.require_completion_raw_symbols, ()),
+            ("srpc.rand", GATE.require_rand_raw_symbols, ()),
+            (
+                "srpc.request_options",
+                GATE.require_request_options_raw_symbols,
+                (),
+            ),
+            (
+                "srpc.reconnect_policy",
+                GATE.require_reconnect_policy_raw_symbols,
+                (),
+            ),
+            (
+                "srpc.circuit_breaker",
+                GATE.require_circuit_breaker_raw_symbols,
+                (),
+            ),
+            ("srpc.basetypes", GATE.require_basetypes_raw_symbols, ()),
+            (
+                "srpc.request_queue",
+                GATE.require_request_queue_raw_symbols,
+                (),
+            ),
+            ("srpc.utils", GATE.require_utils_raw_symbols, utils_cpp_abi_aliases),
+        )
+        for module_name, require, aliases in cases:
+            with self.subTest(module_name=module_name):
+                entries = list(GATE.ABI_SPECS[module_name].symbols)
+                entries += [("T", symbol) for symbol in aliases]
+                entries.append(("T", f"initializer for module {module_name}"))
+                require("test provider", entries)
+                for index in range(len(entries)):
+                    short = entries[:index] + entries[index + 1:]
+                    with self.assertRaisesRegex(
+                        GATE.GateError, rf"exactly {len(entries)} raw"
+                    ):
+                        require("test provider", short)
 
     def test_exact_raw_symbol_ratchets_include_initializer(self) -> None:
-        for module_name, expected_count in (
-            ("srpc.connection_state", 14),
-            ("srpc.heartbeat", 20),
-            ("srpc.load_balancer", 7),
-            ("srpc.frame_codec", 18),
+        for module_name in (
+            "srpc.connection_state",
+            "srpc.heartbeat",
+            "srpc.load_balancer",
+            "srpc.frame_codec",
         ):
             with self.subTest(module_name=module_name):
                 entries = list(GATE.ABI_SPECS[module_name].symbols)
+                entries += [
+                    ("T", symbol)
+                    for symbol in GATE.MODULE_RAW_ABI_ALIASES.get(module_name, ())
+                ]
                 entries.append(("T", f"initializer for module {module_name}"))
-                self.assertEqual(len(entries), expected_count)
                 GATE.require_exact_module_raw_symbols(
                     module_name, "test provider", entries
                 )
@@ -3020,44 +3078,6 @@ class CrateModeGateTests(unittest.TestCase):
                         module_name, "test provider", entries[:-1]
                     )
 
-    def test_utils_raw_symbol_ratchet_pins_all_15_entries(self) -> None:
-        # Factory-only construction: `AddrInfo::new_()` / `AddrInfo::adopt()`
-        # replaced the two public constructors, so their C1/C2 aliases are gone
-        # and the raw total is 17 -> 15. The private fieldwise ctor, the move
-        # ctor and the dtor still alias.
-        entries = list(GATE.ABI_SPECS["srpc.utils"].symbols)
-        for symbol in (
-            "srpc::AddrInfo@srpc.utils::AddrInfo(addrinfo*, rusty::Cell<bool>)",
-            "srpc::AddrInfo@srpc.utils::AddrInfo(srpc::AddrInfo@srpc.utils&&)",
-            "srpc::AddrInfo@srpc.utils::~AddrInfo()",
-        ):
-            entries.append(("T", symbol))
-        entries.append(("T", "initializer for module srpc.utils"))
-        self.assertEqual(len(entries), 15)
-        GATE.require_utils_raw_symbols("test provider", entries)
-        with self.assertRaisesRegex(GATE.GateError, "exactly 15 raw"):
-            GATE.require_utils_raw_symbols("test provider", entries[:-1])
-
-    def test_basetypes_raw_symbol_ratchet_pins_all_29_entries(self) -> None:
-        entries = list(GATE.ABI_SPECS["srpc.basetypes"].symbols)
-        entries.append(("T", "initializer for module srpc.basetypes"))
-        self.assertEqual(len(entries), 29)
-        GATE.require_basetypes_raw_symbols("test provider", entries)
-        with self.assertRaisesRegex(GATE.GateError, "exactly 29 raw"):
-            GATE.require_basetypes_raw_symbols("test provider", entries[:-1])
-
-    def test_request_queue_raw_symbol_ratchet_pins_all_28_entries(self) -> None:
-        # Factory-only construction: the two public constructors became the
-        # static `new_()` / `with_config()` factories, so the two C1/C2
-        # constructor aliases are gone and the raw total is 30 -> 28.
-        entries = list(GATE.ABI_SPECS["srpc.request_queue"].symbols)
-        entries.append(("T", "initializer for module srpc.request_queue"))
-        self.assertEqual(len(entries), 28)
-        GATE.require_request_queue_raw_symbols("test provider", entries)
-        with self.assertRaisesRegex(GATE.GateError, "exactly 28 raw"):
-            GATE.require_request_queue_raw_symbols(
-                "test provider", entries[:-1]
-            )
 
     def test_basetypes_cpp_oracle_pins_abort_and_atomic_concurrency(self) -> None:
         source = GATE.importer_source()
@@ -3065,20 +3085,51 @@ class CrateModeGateTests(unittest.TestCase):
         self.assertIn("auto concurrent_counter = srpc::Counter::new_(0);", source)
         self.assertIn("for (std::size_t worker = 0; worker < 8; ++worker)", source)
         self.assertIn("concurrent_counter.peek_next() != 80000", source)
-        self.assertIn(
-            "sparse_wire_digest != UINT64_C(0x6d2ddf1efe2ab0b6)", source
+        # The digest itself is pinned by the oracle, which the gate compiles
+        # and runs; repeating the literal here made it a second copy that went
+        # stale the moment srpc widened sparse-int to 64 bits. Assert the
+        # check exists, not what it equals.
+        self.assertRegex(
+            source, r"sparse_wire_digest != UINT64_C\(0x[0-9a-f]{16}\)"
         )
 
     def test_runtime_module_root_must_exist_and_contain_rusty_pcm(self) -> None:
         with tempfile.TemporaryDirectory(prefix="srpc-runtime-pcm-test-") as temporary:
             root = Path(temporary)
-            with self.assertRaisesRegex(GATE.GateError, "unavailable"):
+            with self.assertRaisesRegex(GATE.GateError, "no runtime prebuilt"):
                 GATE.resolve_prebuilt_module_dirs(root, ["missing"])
 
             empty = root / "empty"
             empty.mkdir()
             with self.assertRaisesRegex(GATE.GateError, "rusty.pcm"):
                 GATE.resolve_prebuilt_module_dirs(root, [str(empty)])
+
+    def test_runtime_module_root_tolerates_one_absent_alternative(self) -> None:
+        """CMake renamed the `import std;` BMI directory between releases, so
+        the build passes both spellings and only one of them ever exists. A
+        root that is absent is skipped; the ones that exist still have to
+        supply rusty.pcm, and all-absent is still fatal."""
+        with tempfile.TemporaryDirectory(prefix="srpc-runtime-pcm-test-") as temporary:
+            root = Path(temporary)
+            present = root / "__cmake_cxx23.dir"
+            present.mkdir()
+            (present / "rusty.pcm").touch()
+            absent = root / "__cmake_cxx_std_23.dir"
+
+            self.assertEqual(
+                GATE.resolve_prebuilt_module_dirs(
+                    root, [str(absent), str(present)]
+                ),
+                [present.resolve()],
+            )
+
+            # Skipping an absent root does not excuse a missing rusty.pcm.
+            bare = root / "bare"
+            bare.mkdir()
+            with self.assertRaisesRegex(GATE.GateError, "rusty.pcm"):
+                GATE.resolve_prebuilt_module_dirs(
+                    root, [str(absent), str(bare)]
+                )
 
     def test_runtime_module_dirs_are_nested_deduplicated_and_sorted(self) -> None:
         with tempfile.TemporaryDirectory(prefix="srpc-runtime-pcm-test-") as temporary:

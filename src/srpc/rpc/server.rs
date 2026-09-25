@@ -1017,14 +1017,6 @@ impl Server {
         self.ctx_field.as_ref().unwrap().addr.clone()
     }
 
-    /// Freeze the pending registrations into an immutable
-    /// RpcServiceContext, auto-install a TcpFactory when none is bound,
-    /// make + wire the channel listener, and bind.
-    ///
-    /// # Safety
-    ///
-    /// `bind_addr` must be null or a NUL-terminated C string that stays
-    /// readable for the duration of the call.
     /// Close or open non-heartbeat RPC admission without disturbing the
     /// listener. Mako-local: Raft holds this shut while durable recovery and
     /// committed replay establish a safe service boundary, and closes it again
@@ -1037,6 +1029,14 @@ impl Server {
         self.admission_ready_field.load(Ordering::Acquire)
     }
 
+    /// Freeze the pending registrations into an immutable
+    /// RpcServiceContext, auto-install a TcpFactory when none is bound,
+    /// make + wire the channel listener, and bind.
+    ///
+    /// # Safety
+    ///
+    /// `bind_addr` must be null or a NUL-terminated C string that stays
+    /// readable for the duration of the call.
     pub unsafe fn start(&mut self, bind_addr: *const i8) -> i32 {
         if bind_addr.is_null() {
             let message: String = "srpc::Server::start: bind_addr is NULL!".to_string();
