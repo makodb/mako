@@ -1181,7 +1181,18 @@ if(RAFT_TEST)
 endif()
 add_custom_command(
     OUTPUT ${RAFT_RUST_LIB}
-    COMMAND cargo build --release --quiet
+    # CC and AR are not decoration. src/srpc/build.rs compiles the nine C
+    # kernels with $CC, falling back to `cc`, while src/srpc-cmake builds the
+    # same manifest with CMAKE_C_COMPILER -- and srpc_rand.c:17 branches on
+    # __clang__. Unset, `cc` here is gcc, so the binary carried TWO different
+    # srpc_rand implementations (clang: a pthread_key_t seed freed at thread
+    # exit; gcc: a _Thread_local seed with no teardown) and the linker picked
+    # one by archive order. Passing the compiler through makes the two copies
+    # the same code; stage 0b removes the second copy.
+    COMMAND ${CMAKE_COMMAND} -E env
+            "CC=${CMAKE_C_COMPILER}"
+            "AR=${CMAKE_AR}"
+            cargo build --release --quiet
             --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
             --target-dir ${RAFT_RUST_TARGET_DIR}
             ${RAFT_RUST_FEATURES}
