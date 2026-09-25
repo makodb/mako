@@ -532,6 +532,45 @@ the same seam that works today, rather than inventing a new one.
         more servers with that same one service, so they move too -- that is
         **4b**, and it is part of this change rather than after it.
 
+      **THE CUTOVER, SITE BY SITE.** Everything above is built and green; this
+      is the remaining change, and it is ONE change. Measured 2026-09-25.
+
+      *Rust — the sends stop being kernels and call the transport:*
+
+      | site | today | after |
+      |---|---|---|
+      | `server_cc.rs:18` | `PendingAppend.response_: rusty::RaftResponsePtr` | `Pending<AppendEntriesResponse>` |
+      | `server_cc.rs:490`, `:1539` | `raft_append_response_read` kernel | gone; read the Rust `Pending` |
+      | `server_cc.rs:1224-1237` | `sent_response` local, a C++ carrier | the `Pending` the transport returns |
+      | `server_cc.rs:1164` | `raft_phase1_load_and_send_snapshot` | `transport.send_install_snapshot` |
+      | `server_cc.rs:1226` | `raft_phase1_send_append` | `transport.send_append_entries` |
+      | `server_h.rs:2635` | `raft_bind_replication_poll` | `transport.poll_thread()` |
+      | `server_h.rs:3890` | `raft_commo_set_network_enabled` | `transport.set_network_enabled` |
+      | `server_h.rs:4141` | `raft_broadcast_vote_and_wait` + `raft_vote_quorum_snapshot` | `transport.broadcast_vote` then `tally.outcome()` |
+
+      The server cannot HOLD the transport: `RaftTransport` is `!Send`, and
+      `RaftServerBase` must stay `Send + Sync` or the service loses its trait
+      bound. So Rust resolves it by server identity, the same shape 3a gave
+      the C++ side -- a registry keyed by `*const RaftServerBase`.
+
+      *C++ — the five kernels go, and the worker builds a transport instead:*
+
+      `server.cc`: delete the five. `raft_worker.cc`: `SetupService`
+      (`:343-360`) and `SetupCommo` (`:378-384`) become
+      `raft_transport_new` + `serve` + `add_peer` per site; `ShutDown`
+      (`:521+`) calls `raft_transport_drain` instead of the C++ server's.
+      `frame.cc`: `CreateRpcServices` and `CreateCommo` lose their Raft arms.
+      `raft_main_helper.cc`: the `kSingleGroup` stub servers (`:370-395`) and
+      the two `GetPollThreadWorker` users (`:471`, `:540`) -- that is 4b.
+
+      **Why it cannot be split**, and this is the measurement rather than a
+      preference: all of it hangs off `svr_poll_thread_worker_`
+      (`raft_worker.cc:344`, `:350`, `:379`). Move the service alone and the
+      inbound path is on a Rust poll thread while the outbound path is still
+      on the C++ one -- two reactors, which is adding a thread. Move a single
+      send alone and there are two network-enabled flags, with the C++ sends
+      reading the one the lab suite is no longer setting.
+
       *Done when:* RaftLabTest 25/25 with Raft's RPC served entirely by the
       Rust lane, AND the before/after RPC benchmark in the verification rules
       shows no regression. Both, not either.
