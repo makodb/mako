@@ -1,7 +1,7 @@
 # Converting Raft's RPC path to Rust — the island plan
 
-Third revision, and no longer only a plan: stages 0 through 3 are built,
-verified and committed, so most of what follows is a record of what was done
+Third revision, and no longer only a plan: stages 0 through 3 are built and
+verified apart from 3e, which is half done, so most of what follows is a record of what was done
 and what it cost. The first two revisions were refuted by adversarial
 verification and this one is built on what those refutations established.
 Every claim is measured, with file:line. Where something is unverified it says
@@ -57,7 +57,7 @@ Nothing after step 2 should begin until step 2's number is known.
   sets, so `current_time_us()` reads 0. Give it a non-zero base that
   advances per call.
   *Done when:* the gate prints `checked whole srpc crate` and exits 0.
-- [x] **P2. Full build.** deptran_server, 41,573,032 bytes. `cmake --build build_raftlab -j32` with
+- [x] **P2. Full build.** `build_raftlab/deptran_server` builds. (It was 41,573,032 bytes at P2 and is larger at every commit since, so the number is not a check.) `cmake --build build_raftlab -j32` with
   `LIBRARY_PATH`/`LD_LIBRARY_PATH` set to the mako-deps lib dir.
   *Done when:* `build_raftlab/deptran_server` exists.
   *Expect:* more `Cell`→`SharedCell` and `std::string`→`rusty::String`
@@ -181,7 +181,7 @@ uses, because it is the right one:
 
 The generated half is 603 lines of C++ and is pure boilerplate: deserialize
 the request, switch on the rpc id, call a handler, serialize the reply. The
-hand-written half is the 12 call sites where `RaftServiceImpl` actually reaches
+hand-written half is the 4 call sites where `RaftServiceImpl` actually reaches
 into the Raft server. Generating the first and hand-writing the second keeps
 the same seam that works today, rather than inventing a new one.
 
@@ -458,9 +458,10 @@ the same seam that works today, rather than inventing a new one.
   interpreting it.
 
   **Not done:** nothing registers the service; `rpc_server_` is still the
-  C++ one. The remaining work is the clients and the three send paths,
-  which cannot be landed separately -- see the poll-thread measurement
-  below.
+  C++ one (`raft_worker.cc:350`, `:359`) and `transport_exports.h` is
+  included by no `.cc`. The remaining work is the FIBER RUNTIME, not the
+  send paths -- those are already Rust (`transport.rs`) and proven over TCP
+  by `tests/transport_roundtrip.rs`. See the three coupled sites below.
 
   The rest of this item is what that cut involves. This is what
   stages 1a and 1b were really about, restated where it belongs. It is the
@@ -493,9 +494,8 @@ the same seam that works today, rather than inventing a new one.
   `RaftVoteOutcome` Raft already consumes.
 
   **The Rust client is thread-bound, and the design has to accept that
-  rather than work around it.** Measured: `srpc::client::Client` holds
-  `RefCell<Option<Arc<ClientConnection>>>` and six `Cell` fields
-  (`rpc/client.rs:1550-1561`), so it is `Send` but `!Sync`, which makes
+  rather than work around it.** Measured: `srpc::client::Client` holds one
+  `RefCell` and EIGHT `Cell` fields (`rpc/client.rs:1550-1566`), so it is `Send` but `!Sync`, which makes
   `Arc<Client>` neither. And `Client::new` is private (`:1575`) -- only
   `Client::create` is public and it returns `Arc<Client>` -- so a
   `Mutex<Client>` cannot be built either.
@@ -561,9 +561,10 @@ the same seam that works today, rather than inventing a new one.
   - `server_h.rs:2635`
     - now: `raft_bind_replication_poll`
     - then: `transport.poll_thread()`
-  - `server_h.rs:3890`
-    - now: `raft_commo_set_network_enabled`
-    - then: `transport.set_network_enabled`
+  - `server_h.rs:3890` --- DONE already, as the worked example of the
+    fallback pattern
+    - now: `match transport_of(this) { Some(t) => .., None => kernel }`
+    - then: unchanged; the kernel arm dies with the last caller
   - `server_h.rs:4141`
     - now: `raft_broadcast_vote_and_wait` + `raft_vote_quorum_snapshot`
     - then: `transport.broadcast_vote`, then `tally.outcome()`
@@ -604,9 +605,15 @@ the same seam that works today, rather than inventing a new one.
 
   Each is coupled to the fiber runtime, not to the clients:
 
-  - `raft_broadcast_vote_and_wait` --- it does not only send, it WAITS, and
-    the wait is `raft_fiber_sleep_us`, a C++ fiber sleep. Rerouting it
-    requires the election fiber to be a Rust fiber.
+  - `raft_broadcast_vote_and_wait` --- it does not only send, it WAITS:
+    `(*out)->wait_timeout(1000000)` on a `RaftVoteQuorumEvent`, whose
+    `ready_` is a `rusty::Arc<::srpc::IntEvent>` (`quorum.hpp:103`, `:135`,
+    `:163`). An earlier revision of this line said the wait was
+    `raft_fiber_sleep_us`; it is not, and the kernel never calls that. The
+    conclusion survives the correction -- waiting on a C++ `IntEvent`
+    suspends a C++ fiber -- but the mechanism is the event, not a sleep,
+    which makes this the same coupling as the wake gate below rather than a
+    separate one.
   - `raft_bind_replication_poll` --- hands a C++ `Arc<PollThread>` to the
     wake gate, whose `owner_` is `rusty::RaftPollThreadPtr`. That is stage
     1a's field-type change.
@@ -675,21 +682,23 @@ the same seam that works today, rather than inventing a new one.
 ### Stage 4 — push the boundary outward
 
 - [ ] **4a. AS WRITTEN IT IS NOT ACHIEVABLE, and the reason is Paxos, not
-  3e.** Measured: four of the 31 exports -- `set_commo`,
-  `set_site_identity`, `reg_learner_action` and `IsLeader` -- are called
-  from `server_worker.cc`, `paxos_worker.cc` and `paxos/coordinator.cc`,
-  because they are on `TxLogServer`/`RaftSpecific`
-  (`scheduler.h:112`, `:113`, `:117`, `:142`), the interface Paxos also
-  implements. Collapsing those to two byte-shaped functions means
+  3e.** Measured: THREE of the 31 exports -- `set_commo`,
+  `set_site_identity` and `reg_learner_action` -- are what `TxLogServer`
+  declares (`scheduler.h:201-213`), and `PaxosServer : public TxLogServer`
+  (`paxos/server.h:26`) implements them, so `server_worker.cc` and
+  `paxos_worker.cc` call them on both engines. (An earlier revision said
+  four and named `IsLeader`; that one is on `RaftSpecific`, which only Raft
+  implements, so it is not shared.) Collapsing those to two byte-shaped functions means
   changing the shared interface, which is the one thing this branch is
   not allowed to do.
 
   What IS achievable, once 3e lands: the Raft-only exports. Of the 31,
-  the lifecycle and leadership ones (`EnsureSetup`, `WaitForStartup`,
-  `PrepareForShutdown`, `GetLeaderHint`, `SetPreferredLeader`,
-  `RegisterLeaderChangeCallback`, `CommitIndex`, `Start`) are reached
-  only from `raft_worker.cc` and `raft_main_helper.cc`, both of which
-  move with the fibers; the three `Serve*` go with `service.cc`. So this
+  most of the lifecycle and leadership ones are reached only
+  from `raft_worker.cc` and `raft_main_helper.cc`, both of which move with
+  the fibers -- but NOT `EnsureSetup` and `WaitForStartup`, which
+  `ServerWorker::SetupCommo` also calls (`server_worker.cc:123`, `:131`) on
+  a `RaftServer*`. So the achievable set is smaller than it looks and needs
+  counting before this item is rewritten; the three `Serve*` go with `service.cc`. So this
   item should be rewritten as "collapse the Raft-only exports and leave
   the four shared ones", with a measured count, rather than as "31 to 2".
 
@@ -832,10 +841,9 @@ from the checklist within two stages, so it is deliberately not that any more.
 |---|---|
 | Prerequisite P1-P4 | done -- gate, build, RaftLabTest 25/25, committed |
 | 0a, 0d | done |
-| 0b, 0c | open, small, no design needed; do them together |
+| 0b, 0c | done -- one copy of srpc's nine C kernels, built by one compiler |
 | 1 | done. The measurement answered the question and retired 1a/1b into 3e |
-| 2a, 2c, 2d | done. The RPC slice is generated from `rcc_rpc.rpc` and its ids checked against `rcc_rpc.h` on every build |
-| 2b | half done; the rest is gated on 5a |
+| 2a, 2b, 2c, 2d | done. The RPC slice is generated from `rcc_rpc.rpc` and its ids checked against `rcc_rpc.h` on every build |
 | 3a, 3b, 3c, 3d | done. `RaftServerBase` is `Send + Sync`, the gate is one ABI crossing, and `Communicator`'s data is Rust |
 | **3e** | **half built.** Service, transport, all three send paths, C ABI and registry are in and verified; what remains is coupled to the fiber runtime |
 | 4a | not achievable as written, and Paxos is the reason, not 3e — four of the 31 exports are on the interface Paxos implements |
@@ -845,9 +853,11 @@ from the checklist within two stages, so it is deliberately not that any more.
 Every open item above carries a measured reason rather than a dependency
 note. The one that decides the rest is 3e, and its remaining work is not
 "move the commo" — the commo's three send paths are already Rust and proven
-over TCP. It is "move Raft's fibers", because the vote broadcast waits on a
-C++ fiber sleep, the wake gate holds a C++ PollThread, and the heartbeat loop
-is a C++ fiber.
+over TCP. It is "move Raft's fibers": the vote broadcast waits on a C++
+`srpc::IntEvent` (`quorum.hpp:135`, `:163`), the wake gate holds C++
+`IntEvent` and `PollThread` handles, and the heartbeat loop is a C++ fiber.
+One coupling, three places — which is also why the old item 1a belongs in
+that change.
 
 Read 3e first. Everything left of it is done; everything right of it depends
 on it.
@@ -867,14 +877,16 @@ on it.
   5a's territory, so the analysis above is kept rather than deleted.
 - **Leader-side kernels untouched by the above**: `server.cc:1605`, `:1608`,
   `:1621` still inspect and manufacture payloads.
-- **`LearnerAction` sits on the shared `TxLogServer`** (`scheduler.h:62`, `:196`)
+- **`LearnerAction` sits on the shared `TxLogServer`** (`scheduler.h:62` for the alias, `:206` for `TxLogServer::reg_learner_action`; an earlier revision cited `:196`, which is a `RaftStartResult` enumerator)
   and Paxos re-forwards the Command (`paxos_worker.cc:82-88`).
 - **`panic="abort"`** (`raft/Cargo.toml:68,71`) becomes the whole RPC stack's
   failure mode once Raft owns the server.
 - **Stays C++ under every variant**, so not an argument against this design but
   a limit on "Rust owns everything": `SnapshotManager` virtuals
   (`snapshot_manager.hpp:164-225`), the four embedder `std::function`s, and the
-  8 `raft_catch` sites.
+  7 `raft_catch` sites (`server.cc:282`, `:981`, `:1068`, `:1138`, `:1209`,
+  `:1285`, `:1873`; a `grep -c` returns 8 because it counts the template
+  definition at `:254`).
 
 ## What is already proven to work
 
