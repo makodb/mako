@@ -187,13 +187,15 @@ the same seam that works today, rather than inventing a new one.
       order, the `RaftService` trait with its `__dispatch__`, the `RaftProxy`
       with one method per RPC, and the four rpc-id constants.
       *Does not emit:* handler bodies. Those are stage 3's hand-written impl.
-- [ ] **2b. PARTLY DONE, and the remaining half is gated on 5a.** What
-      exists: the Rust emitter does not restate the ids, it scrapes them from
-      `rcc_rpc.h` (`read_ids`), and the build re-runs the emitter whenever the
-      `.rpc`, that header or the generator changes -- so a drift between the
-      two lanes now fails the build instead of going unnoticed. What does not
-      exist: a place for the ids to live once `Raft` leaves `rcc_rpc.rpc`.
-      That is the hazard below, and it only bites at 5a.
+- [x] **2b. DONE.** `src/deptran/raft/rpc_ids.txt` is the source of truth and
+      `rcc_rpc.h` became a check. Two checks, both failing the build rather
+      than the wire, and both tested by deliberately breaking them: the header
+      disagreeing with the table, and any OTHER service having drawn one of
+      the reserved ids. The second is exactly the 5a hazard described below --
+      once RaftService leaves the `.rpc`, rpcgen stops reserving these four and
+      can redraw one -- caught before it ships instead of silently. After 5a
+      the table is simply the only record, and the emitter says so rather than
+      failing, because the header legitimately has no RaftService by then.
 
       Original text, unchanged:
 
@@ -424,7 +426,25 @@ the same seam that works today, rather than inventing a new one.
       is the lane move, 3e -- which starts from `PeerRegistry`'s shape rather
       than from a sketch, since the sketch (`commo.rs`) has been deleted.
 
-- [ ] **3e. The lane move: Raft's reactor becomes the Rust one.** This is what
+- [ ] **3e. HALF BUILT.** The service side is done and proven; the client
+      side is what remains.
+
+      **Done:** `src/deptran/raft/src/service.rs` --
+      `impl srpc::server::Service for RaftRpcService`, four handler bodies
+      over `ServeVote`/`ServeAppendEntries`/`ServeInstallSnapshot`, with
+      `register()` and `dispatch()` generated. It compiles against the real
+      srpc crate and `tests/service_is_a_service.rs` pins the `Send + Sync`
+      bound that stage 3a made satisfiable. Two kernels landed with it,
+      `raft_command_from_bytes` and `raft_byte_string_from_bytes`, which are
+      the price of 2c's decision that Rust carries the payload without
+      interpreting it.
+
+      **Not done:** nothing registers the service; `rpc_server_` is still the
+      C++ one. The remaining work is the clients and the three send paths,
+      which cannot be landed separately -- see the poll-thread measurement
+      below.
+
+      The rest of this item is what that cut involves. This is what
       stages 1a and 1b were really about, restated where it belongs. It is the
       last structural step before stage 4 and the first that can change
       performance.
@@ -438,6 +458,42 @@ the same seam that works today, rather than inventing a new one.
       consumer is a one-shot `EnsureSetup` job (`raft_main_helper.cc:471`,
       `:540`). Nothing of Mako's or Paxos's runs on it. So this SWAPS a
       reactor rather than adding one.
+
+      **Why it must be one change, measured rather than assumed.** A
+      half-move gives Raft TWO poll threads -- a Rust one serving inbound
+      while the C++ one still sends outbound -- and that is genuinely adding
+      a thread, which is the performance change the verification rules say
+      must be benchmarked. There is no smaller cut that avoids it, because
+      the inbound and outbound paths share `svr_poll_thread_worker_`
+      (`raft_worker.cc:344`, `:350`, `:379`).
+
+      **All five commo operations can move.** The table under 3a-old claimed
+      two could not; re-measured, both entries were wrong -- see the
+      correction there. `SendInstallSnapshot` takes bytes, not the snapshot
+      manager, and `BroadcastVote`'s quorum event never escapes its three
+      kernel calls, so a Rust broadcast can produce the six-scalar
+      `RaftVoteOutcome` Raft already consumes.
+
+      **The Rust client is thread-bound, and the design has to accept that
+      rather than work around it.** Measured: `srpc::client::Client` holds
+      `RefCell<Option<Arc<ClientConnection>>>` and six `Cell` fields
+      (`rpc/client.rs:1550-1561`), so it is `Send` but `!Sync`, which makes
+      `Arc<Client>` neither. And `Client::new` is private (`:1575`) -- only
+      `Client::create` is public and it returns `Arc<Client>` -- so a
+      `Mutex<Client>` cannot be built either.
+
+      The consequence is not a blocker but a constraint: the transport that
+      owns the clients is `!Send`, C++ holds it as an opaque pointer, and
+      every send happens on the poll thread. That is already true today --
+      the heartbeat fiber runs there -- so it changes nothing about the
+      runtime; it only rules out a transport type that could be handed
+      between threads. `Disconnect` is the one caller from elsewhere and it
+      touches only an atomic.
+
+      (This also settles, retroactively, that the deleted `commo.rs` could
+      never have worked: its `client: Mutex<srpc::client::Client>` field was
+      nameable but uninstantiable, because nothing can produce a `Client` by
+      value. It compiled only because no caller ever tried.)
 
       **What moves, in one change, because a half-move leaves handles
       straddling lanes:**
@@ -481,23 +537,31 @@ the same seam that works today, rather than inventing a new one.
       the Rust side needs is a peer registry of `srpc::Client`s, those five
       operations, the network-enabled flag and the poll-thread handle.
 
-      **But only three of the five can move.** Measured:
+      ~~**But only three of the five can move.**~~ **WRONG ON TWO OF THEM.
+      Re-measured while scoping 3e: all five can move.**
 
       | operation | state |
       |---|---|
       | `SetNetworkEnabled` | movable -- an atomic bool, no C++ object |
       | `PollThread` | movable -- the Rust lane has `PollThread` |
       | `SendAppendEntries` | movable as of the 2c work above |
-      | `BroadcastVote` | returns `RaftVoteQuorumPtr`, a 16-byte C++ carrier with its own destructor kernel (rusty-rustc/src/lib.rs:644, :753) |
-      | `SendInstallSnapshot` | takes `RaftSnapshotManagerPtr`; adversarial verification already found SnapshotManager's virtuals stay C++ under every variant (snapshot_manager.hpp:164-225) |
+      | `SendInstallSnapshot` | **movable.** It does NOT take a `RaftSnapshotManagerPtr` -- read the signature, `commo.h:168-175`: scalars, `const std::string& data`, and a `std::function<void(uint64_t)>`. The manager belongs to the KERNEL (`raft_phase1_load_and_send_snapshot`), which loads the bytes and then calls the send. SnapshotManager's virtuals staying C++ is true and irrelevant to this operation |
+      | `BroadcastVote` | **movable.** The C++ quorum event never escapes three kernel calls: construct (`server_h.rs:4139`), fill-and-wait (`:4144`), snapshot (`:4159`), drop. Everything Rust consumes is `RaftVoteOutcome` -- six scalars, `server.h:516-526`. A Rust broadcast can produce that POD directly and no C++ quorum event is needed on the path |
 
-      So "move commo to Rust" cannot complete as one step. The reachable shape
+      The original entries confused "this operation hands over a C++ object"
+      with "a C++ object appears anywhere near this operation". The first is a
+      blocker; the second is not, and both of these were the second.
+
+      ~~So "move commo to Rust" cannot complete as one step.~~ That conclusion
+      rested on the two table rows above that were wrong, so it does not
+      follow. It can complete as one step; it is simply a large one, which is
+      what 3e is. (The rest of this paragraph is kept as written: the shape it
+      describes -- a Rust commo owning peers, clients, flag and poll handle --
+      is still the destination, and `commo_` did become unnecessary, though by
+      deletion rather than by becoming a Rust type.) The reachable shape
       is a Rust `RaftCommo` that owns the peers, the clients, the flag and the
-      poll handle -- which is what makes `commo_` a Rust type and therefore
-      `RaftServerBase` `Send` -- while the quorum and snapshot handoffs stay
-      `extern "C"` kernels passing opaque handles, exactly as they do now.
-      That is enough for stage 1's blocker and does not require moving the
-      snapshot manager, which is out of scope under every variant considered.
+      poll handle, while the snapshot manager stays C++ -- which remains true
+      and remains no obstacle, because the SEND does not take the manager.
 ### Stage 4 — push the boundary outward
 
 - [ ] **4a.** Collapse the exports -- **31** of them as of stage 3c, not the
