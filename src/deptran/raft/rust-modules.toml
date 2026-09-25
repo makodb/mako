@@ -102,6 +102,13 @@ cpp_module = "raft.server_pods_h"
 source = "src/deptran/raft/server.h"
 output = "src/deptran/raft/src/server_pods_h.rs"
 
+# Raft's RPC service on the Rust srpc lane (stage 3e). Hand-authored: the
+# handler bodies are the part rpcgen deliberately does not emit, the same seam
+# C++ keeps between RaftService and RaftServiceImpl.
+[[module]]
+kind = "canonical"
+output = "src/deptran/raft/src/service.rs"
+
 [[module]]
 cpp_module = "raft.snapshot_format_hpp"
 source = "src/deptran/raft/snapshot_format.hpp"

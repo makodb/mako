@@ -26,5 +26,6 @@ pub mod scheduler_h;
 pub mod server_cc;
 pub mod server_h;
 pub mod server_pods_h;
+pub mod service;
 pub mod snapshot_format_hpp;
 pub mod snapshot_manager_hpp;

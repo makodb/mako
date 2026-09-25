@@ -540,6 +540,37 @@ void raft_queue_wake_job(const rusty::RaftPollThreadPtr* owner,
       OneTimeJob::new_([token]() { raft_wake_job_run(token); }));
   (*owner)->add(rusty::Arc<Job>(wake_job));
 }
+// (3e) The payload, rebuilt from the bytes the wire carried.
+//
+// The C++ service never needed this: rpcgen's generated Deserialize_ decoded
+// `Command cmd` inside the request struct before the handler ever ran. On the
+// Rust lane the request holds the bytes instead (stage 2c -- Rust computes the
+// payload's extent by arithmetic and does not interpret it), so the decode is
+// a kernel. Returns false on a malformed frame rather than constructing a
+// half-decoded Command; the caller rejects the request.
+bool raft_command_from_bytes(const uint8_t* bytes, size_t len,
+                             rusty::RaftCommand* out) {
+  srpc::BufferSource source = srpc::BufferSource::new_(bytes, len);
+  srpc::BinaryReadArchive ar =
+      srpc::BinaryReadArchive::new_(srpc::make_source_proxy_buffer(&source));
+  ::janus::Command cmd{};
+  srpc::Deserialize_::deserialize(cmd, ar);
+  if (ar.failed()) {
+    return false;
+  }
+  construct_into(out, std::move(cmd));
+  return true;
+}
+
+// The snapshot payload, likewise. rusty::RaftByteString is ::std::string
+// (scheduler.h:86) carried as 24 opaque bytes with its own destructor kernel,
+// so Rust can hold one and drop one but not build one.
+void raft_byte_string_from_bytes(const uint8_t* bytes, size_t len,
+                                 rusty::RaftByteString* out) {
+  construct_into(out,
+                 std::string(reinterpret_cast<const char*>(bytes), len));
+}
+
 // A copy of a janus::Command -- a shared_ptr refcount the opaque Rust carrier
 // cannot touch, so the bump has to happen on this side and the result is
 // constructed into a slot Rust owns.
