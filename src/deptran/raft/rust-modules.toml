@@ -79,6 +79,14 @@ output = "src/deptran/raft/src/lab_cases.rs"
 kind = "canonical"
 output = "src/deptran/raft/src/lab_snapshot_cases.rs"
 
+# The Raft slice of the RPC surface, hand-authored rather than generated:
+# rpcgen has cpp and python emitters only (src/srpc/pylib/simplerpcgen), and
+# adding a Rust one would put mako's code inside the vendored subtree, where
+# it would conflict on every pull. Four RPCs is cheaper to write than that.
+[[module]]
+kind = "canonical"
+output = "src/deptran/raft/src/rpc.rs"
+
 [[module]]
 kind = "canonical"
 output = "src/deptran/raft/src/server_cc.rs"

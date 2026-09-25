@@ -3687,7 +3687,13 @@ fn fiber_yield_invoke(y: &mut fiber_yield_t) {
 /// the C fiber engine for this fiber, and the pointee must still be alive --
 /// i.e. this may only be called by the engine, on that fiber's own stack,
 /// before `fiber_task_t` is destroyed.  It is never called from Rust or C++.
-#[no_mangle]
+///
+/// No `#[no_mangle]`: the engine receives this as a FUNCTION POINTER from
+/// `fiber_engine_start` below and no C or C++ translation unit names the
+/// symbol, so exporting it bought nothing -- and it made the symbol a hard
+/// multiple definition when both the transpiled lane (libsrpc.a) and the
+/// rustc lane (libsrpc.rlib) are linked into one process, which is exactly
+/// what mako's Raft work needs to do.
 pub unsafe extern "C" fn fiber_task_entry_thunk(arg: *mut core::ffi::c_void) {
     let task: *mut fiber_task_t = arg as *mut fiber_task_t;
     unsafe { fiber_task_body_invoke(&mut (*task).fn_, &mut (*task).yield_); }

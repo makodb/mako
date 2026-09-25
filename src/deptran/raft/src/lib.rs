@@ -20,6 +20,7 @@ pub mod quorum_hpp;
 pub mod raft_main_helper_cc;
 pub mod raft_worker_cc;
 pub mod rocksdb_log_storage_hpp;
+pub mod rpc;
 pub mod scheduler_h;
 pub mod server_cc;
 pub mod server_h;

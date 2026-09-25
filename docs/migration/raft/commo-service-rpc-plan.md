@@ -48,32 +48,35 @@ Nothing after step 2 should begin until step 2's number is known.
 
 ### Prerequisite — finish the srpc merge
 
-- [ ] **P1. Gate exit 118.** `scripts/check_srpc_crate_mode.py`: the oracle's
+- [x] **P1. Gate passes.** (was exit 118, then 190, 151, load_balancer symbols) `scripts/check_srpc_crate_mode.py`: the oracle's
       clock stubs return `monotonic_now_us`, which upstream's body no longer
       sets, so `current_time_us()` reads 0. Give it a non-zero base that
       advances per call.
       *Done when:* the gate prints `checked whole srpc crate` and exits 0.
-- [ ] **P2. Full build.** `cmake --build build_raftlab -j32` with
+- [x] **P2. Full build.** deptran_server, 41,573,032 bytes. `cmake --build build_raftlab -j32` with
       `LIBRARY_PATH`/`LD_LIBRARY_PATH` set to the mako-deps lib dir.
       *Done when:* `build_raftlab/deptran_server` exists.
       *Expect:* more `Cell`→`SharedCell` and `std::string`→`rusty::String`
       fallout in `src/deptran` and `src/mako`; no full build has reached those
       files yet.
-- [ ] **P3. RaftLabTest on the merged tree.** 25 cases.
+- [x] **P3. RaftLabTest on the merged tree.** 25/25, exit 0. The merged
+      srpc works with Raft; the earlier 25/25 was built pre-pull and proved
+      nothing about it.
       *Done when:* `ALL TESTS PASSED`, exit 0, 25 `Passed` markers.
       *This is the first evidence that the new srpc works with Raft at all* —
       the 25/25 on record was built 16 Sep against the pre-pull srpc.
-- [ ] **P4. Commit and push.** 46 paths uncommitted. Split at least: gate
+- [x] **P4. Committed and pushed** as six commits on srpc-subtree-forward. Split at least: gate
       reconciliation (whoever next pulls srpc on mako-dev needs it), the
       `cpp_value_init` retirement, the service-constness wave, the
       `rusty-rustc` move.
 
 ### Stage 0 — unwire what is already solved (no design needed)
 
-- [ ] **0a.** Delete `#[no_mangle]` on `fiber_task_entry_thunk`,
+- [x] **0a.** DONE. Deleted `#[no_mangle]` on `fiber_task_entry_thunk`,
       `src/srpc/reactor/reactor.rs:3690`.
-      *Done when:* `llvm-nm --defined-only` shows it in `libsrpc.a` **or** the
-      rustc rlib, not both.
+      Verified it is reached only as a function POINTER passed to
+      `srpc_fiber_init`, and no C or C++ file names the symbol, so the export
+      bought nothing. Now 0 in the rustc lane, 1 in the C++ lane; was 1 and 1.
 - [ ] **0b.** Stop double-compiling the C kernels: `src/srpc/build.rs:69-75`
       vs `src/srpc-cmake/CMakeLists.txt`. Use `static:-bundle=`. Both already
       read the same manifest, so only the link directive changes.
@@ -93,31 +96,112 @@ Nothing after step 2 should begin until step 2's number is known.
       `struct RaftServiceShim { svr: Arc<RaftServerBase> }` with
       `impl srpc::server::Service` (`__reg_to__`, `__dispatch__`), plus one
       `OneTimeJob` closure capturing `replication_wake_gate_`.
-- [ ] **1c.** `cargo build --release --manifest-path src/deptran/raft/Cargo.toml`
-      and **count the `unsafe impl Send`/`Sync` required, and on which types.**
-      *Done when:* that number is written down here.
-      *Decision:* 0 → continue. `unsafe impl … for RaftServerBase` → **stop and
-      re-approve**; the proposal has become "hand-assert thread-safety across
-      the whole Raft server", which is not what was agreed.
+- [x] **1c. MEASURED, and the answer is a third outcome the plan did not
+      anticipate.** Asking the compiler directly against the built rlib:
 
-### Stage 2 — the Raft RPC slice in Rust
+          assert_send::<raft::server_h::RaftServerBase>()
+           -> E0277: `*mut rusty::Communicator` cannot be sent between threads
 
-- [ ] **2a.** Hand-write the four RPCs' request/response types and
-      `Serialize`/`Deserialize` in a new `src/deptran/raft/src/rpc.rs`. Do
-      **not** add `lang_rust.py` to `src/srpc/pylib/simplerpcgen/` — that is
-      inside the subtree and conflicts on every pull.
-- [ ] **2b.** Carry the four ids verbatim: `0x2802b911`, `0x3935326f`,
-      `0x6e089268`, `0x5276442f`.
-- [ ] **2c.** Design the batch encoding as repeated
-      `(u32 len, bytes, i64 term)` — not three scalars beside one blob.
+      `RaftServerBase` has **48 fields, of which exactly one** is non-Send:
+      `commo_: *mut rusty::Communicator` (server_h.rs:1775). The other 47 are
+      already fine.
+
+      So the price is neither "0 unsafe impls" nor "unsafe impl for the whole
+      server". It is one raw pointer -- and it is the field this plan already
+      moves into Rust in stage 3, which turns the question from an assertion
+      into something the compiler checks.
+
+      Not asserted, deliberately: `Communicator` holds `peers_` and
+      `partition_peers_` as unguarded `std::map`s (communicator.h:92-94); only
+      `network_enabled_` is atomic and the per-peer `request_mutex_` guards a
+      peer's client, not the maps. They are populated at construction and read
+      after, which is probably why one poll thread is safe -- and "probably" is
+      exactly what an `unsafe impl Send` would convert into a guarantee.
+
+### Stage 2 — the Raft RPC slice in Rust, GENERATED
+
+Corrected after measurement. An earlier revision said to hand-write this
+because adding `lang_rust.py` to `src/srpc/pylib/simplerpcgen/` would put
+mako's code inside the vendored subtree and conflict on every pull. That
+objection is still right, and it does not apply to the option it obscured:
+an emitter that lives OUTSIDE the subtree and imports upstream's parser.
+
+`bin/rpcgen` is already mako's own file doing exactly that --
+`sys.path += src/srpc/pylib`, `from simplerpcgen import rpcgen`. And the
+parser hands over everything an emitter needs, with nothing to modify:
+
+    Vote  attr=fiber
+       in : [('uint64_t','lst_log_idx'), ('ballot_t','lst_log_term'),
+              ('siteid_t','site_id'), ('ballot_t','cur_term')]
+       out: [('ballot_t','max_ballot'), ('bool_t','vote_granted')]
+
+Field names, wire types, order. The hand-written `rpc.rs` from 2a is that
+same content typed out by hand -- and typed wrongly at first, as `bool`
+rather than the `bool_t`/`int8_t` the parser states plainly.
+
+**What is mechanical, and therefore generated.** Mirror the split C++ already
+uses, because it is the right one:
+
+| C++ today | lines | Rust counterpart | authored how |
+|---|---|---|---|
+| `rcc_rpc.h` `class RaftService` | 381 | `trait RaftService` + `__dispatch__` | generated |
+| `rcc_rpc.h` `class RaftProxy` | 222 | `struct RaftProxy`, one method per RPC | generated |
+| `service.{h,cc}` `RaftServiceImpl` | 201 | `impl RaftService for RaftServiceImpl` | hand-written |
+
+The generated half is 603 lines of C++ and is pure boilerplate: deserialize
+the request, switch on the rpc id, call a handler, serialize the reply. The
+hand-written half is the 12 call sites where `RaftServiceImpl` actually reaches
+into the Raft server. Generating the first and hand-writing the second keeps
+the same seam that works today, rather than inventing a new one.
+
+- [ ] **2a. Write `scripts/rpcgen_rust.py`** -- mako-local, imports the
+      subtree's parser the way `bin/rpcgen` does, emits Rust. Nothing under
+      `src/srpc/` changes, so nothing conflicts on a pull.
+      *Emits:* the wire structs with `Serialize`/`Deserialize` in declaration
+      order, the `RaftService` trait with its `__dispatch__`, the `RaftProxy`
+      with one method per RPC, and the four rpc-id constants.
+      *Does not emit:* handler bodies. Those are stage 3's hand-written impl.
+- [ ] **2b. Make the ids the generator's business, not a hand-pinned list.**
+      `rpcgen.py:326-338` preserves ids ONLY by scraping them back out of the
+      header it previously wrote; the `.rpc` file does not record them. So the
+      moment `Raft` leaves `rcc_rpc.rpc`, the scrape stops finding
+      `0x2802b911`, `0x3935326f`, `0x6e089268`, `0x5276442f`, `used_codes`
+      stops knowing they are taken, and a later service added to that file can
+      draw one of them at random.
+      *Fix:* have the Rust emitter read the four ids and keep them in one
+      checked-in place that BOTH generators consult, so the wire contract
+      survives the split.
+- [ ] **2c. Decide the AppendEntries payload framing before generating it.**
+      The generator can emit Vote, EmptyAppendEntries and InstallSnapshot from
+      the parser alone; `AppendEntries` it cannot, because `Command cmd` is a
+      `janus::Command` whose contents Raft reads and which carries no length
+      prefix. Repeated `(u32 len, bytes, i64 term)` -- not three scalars beside
+      one blob. Until this is settled the emitter should refuse that RPC
+      loudly rather than emit a field list that silently misparses.
       *Done when:* a `cargo test` round-trip decodes a three-element batch
-      captured from the C++ encoder, including element boundaries.
+      captured from the C++ encoder, element boundaries included.
+- [ ] **2d. `src/deptran/raft/src/rpc.rs` becomes generated output.** The
+      hand-written version from the first pass is a placeholder; delete it once
+      the emitter reproduces it. Keep it in `rust-modules.toml` as
+      `kind = "canonical"` -- rustc compiles it directly either way; what
+      changes is who writes it.
 
 ### Stage 3 — commo, service and the poll thread cross together
 
 - [ ] **3a.** Move `Communicator`/`RaftCommo` in the *same* change as the
       service (`communicator.h:92`, `:51`; `commo.h:112`) — they own the
       `Arc<Client>`s, so a half-move leaves handles straddling lanes.
+
+      **Measured: the boundary is five operations, not 546 lines.** Raft's Rust
+      reaches the communicator only through these kernels in server.cc:
+
+          :400   BroadcastVote          :1513  SendAppendEntries
+          :441   SetNetworkEnabled      :1635  SendInstallSnapshot
+          :1071  PollThread
+
+      Everything else in commo.{h,cc} is C++ plumbing around those five. What
+      the Rust side needs is a peer registry of `srpc::Client`s, those five
+      operations, the network-enabled flag and the poll-thread handle.
 - [ ] **3b.** Redesign the wake so no `!Send` handle crosses a thread. srpc
       already solved this with `Future` (`client.rs:490-523`, Mutex-backed and
       `Send`); Mako's commo does not use it.
@@ -202,12 +286,14 @@ needing design:
 
 **Stage 1 — the `Send` measurement above.** Gate on its result.
 
-**Stage 2 — the Raft RPC slice in Rust.** 602 lines (`rcc_rpc.h:495-1096`)
-have no Rust emitter; `rpcgen` dispatches only cpp/python (`rpcgen.py:369-375`,
-`CMakeLists.txt:991` passes `--cpp`). Hand-write it for four RPCs rather than
-adding `lang_rust.py` to the subtree, where it would conflict on every pull.
-Carry the four ids verbatim: `0x2802b911`, `0x3935326f`, `0x6e089268`,
-`0x5276442f`.
+**Stage 2 — the Raft RPC slice in Rust, generated.** 603 lines
+(`rcc_rpc.h:495-1096`) have no Rust emitter; `rpcgen` dispatches only
+cpp/python (`rpcgen.py:369-375`, `CMakeLists.txt:991` passes `--cpp`). Write a
+mako-local emitter that imports the subtree's parser the way `bin/rpcgen`
+already does, so nothing under `src/srpc/` changes. Generated: wire structs,
+the service trait and its dispatch, the proxy, the ids. Hand-written: the
+handler bodies, which is the same seam C++ uses between `RaftService` and
+`RaftServiceImpl`. See the Stage 2 checklist above for the detail.
 
 **Stage 3 — commo and service onto the Rust lane, with the poll thread.** This
 is the cut. `Communicator`/`RaftCommo` must move *in the same change*, not
