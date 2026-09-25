@@ -39,6 +39,22 @@ use srpc::serializable::{
     make_source_proxy_buffer, BinaryReadArchive, BufferSource, Deserialize,
 };
 
+/// How many replicas a campaign must win a majority of.
+///
+/// Its own function because the rule is subtle and got it wrong once: self
+/// may or may not appear in the recorded membership -- C++'s Communicator
+/// adds every site in the partition including this one, while a transport
+/// built peer-by-peer may not -- and it must be counted exactly once either
+/// way. Undercounting elects a partitioned candidate.
+pub const fn partition_member_count(recorded: usize,
+                                    recorded_includes_self: bool) -> usize {
+    if recorded_includes_self {
+        recorded
+    } else {
+        recorded + 1
+    }
+}
+
 /// One outstanding reply, as the sender reads it back.
 ///
 /// Arc<Mutex<..>> rather than a fiber event on purpose: the reply lands on
@@ -235,9 +251,24 @@ impl RaftTransport {
     /// quorum seeds itself: a candidate votes for itself.
     pub fn broadcast_vote(&self, par_id: u32, self_site_id: u16,
                           req: &VoteRequest) -> Option<VoteTally> {
+        // THE QUORUM COMES FROM THE CONFIGURED PARTITION, NOT FROM WHO CAN BE
+        // REACHED. Deriving it from the reachable peers is a split-brain bug,
+        // and a live one: with the network flag down, `peers` is empty, a
+        // majority of one is one, and the candidate's own vote elects it
+        // while it is partitioned away from a healthy cluster. Caught by
+        // tests/transport_roundtrip.rs.
+        //
+        // Self may or may not be in the recorded membership -- C++'s
+        // Communicator adds every site in the partition including this one,
+        // and RaftCommo skips itself by comparing site ids -- so count it
+        // exactly once either way.
+        let members = match self.partitions.get(&par_id) {
+            Some(sites) => partition_member_count(
+                sites.len(), sites.contains(&self_site_id)),
+            None => 1,
+        };
+        let quorum = raft_quorum_majority_count(members);
         let peers = self.peers_in_partition(par_id, self_site_id);
-        // The partition's size includes this replica, which is not in `peers`.
-        let quorum = raft_quorum_majority_count(peers.len() + 1);
         let tally = VoteTally::new(quorum, req.cur_term);
         for (_site, client) in peers {
             let sink = tally.state.clone();
@@ -355,6 +386,17 @@ mod tests {
 
     fn reply(granted: i8, max_ballot: i64) -> Option<VoteResponse> {
         Some(VoteResponse { max_ballot, vote_granted: granted })
+    }
+
+    #[test]
+    fn self_is_counted_exactly_once_however_membership_was_recorded() {
+        // Three replicas either way. Undercounting here is a split-brain
+        // bug: a majority of one is one, so a partitioned candidate would
+        // elect itself on its own vote.
+        assert_eq!(partition_member_count(2, false), 3, "peers only, self added");
+        assert_eq!(partition_member_count(3, true), 3, "self already recorded");
+        assert_eq!(raft_quorum_majority_count(partition_member_count(2, false)), 2);
+        assert_eq!(raft_quorum_majority_count(partition_member_count(3, true)), 2);
     }
 
     #[test]
