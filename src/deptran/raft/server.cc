@@ -382,7 +382,9 @@ static void construct_into(T* dst, V&& value) {
 // Sync`, which the Rust srpc lane requires of anything it dispatches to.
 // Keeping it and asserting `unsafe impl Send` would have converted "probably
 // fine on one poll thread" into a guarantee -- janus::Communicator holds
-// `peers_` and `partition_peers_` as UNGUARDED std::maps (communicator.h:92-94).
+// `peers_` and `partition_peers_` as UNGUARDED std::maps when this was written;
+// stage 3d has since replaced all five of its members with one Rust-authored
+// PeerRegistry, so that hazard is gone -- but it was real then.
 // So the pointer stays on this side, where it always belonged, and Rust asks
 // for it by server identity.
 //

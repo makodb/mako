@@ -4582,8 +4582,11 @@ impl TxLogServer for RaftServerBase {
     // is `Send` the Rust srpc lane demands of anything it dispatches to
     // (`trait Service: Send + Sync`, src/srpc/rpc/server.rs). Asserting
     // `unsafe impl Send` over it would have been false: janus::Communicator
-    // holds `peers_` and `partition_peers_` as unguarded std::maps
-    // (communicator.h:92-94). So the pointer stays on the C++ side, in a table
+    // then held `peers_` and `partition_peers_` as unguarded std::maps.
+    // (Stage 3d has since replaced all five of Communicator's members with
+    // one Rust-authored PeerRegistry, so that hazard is gone -- but it was
+    // real then, which is why the field went.) The pointer stays on the C++
+    // side, in a table
     // keyed by this server, and the kernels ask for it by identity.
     //
     // not_unsafe_ptr_arg_deref: the kernel's dynamic_cast does read through

@@ -143,8 +143,8 @@ they are restated there (3e) rather than left here looking outstanding.
   into something the compiler checks.
 
   Not asserted, deliberately: `Communicator` holds `peers_` and
-  `partition_peers_` as unguarded `std::map`s (communicator.h:92-94); only
-  `network_enabled_` is atomic and the per-peer `request_mutex_` guards a
+  `partition_peers_` as unguarded `std::map`s at the time; only
+  `network_enabled_` was atomic and the per-peer `request_mutex_` guards a
   peer's client, not the maps. They are populated at construction and read
   after, which is probably why one poll thread is safe -- and "probably" is
   exactly what an `unsafe impl Send` would convert into a guarantee.
@@ -288,8 +288,11 @@ the same seam that works today, rather than inventing a new one.
      walk per AppendEntries send. The cast now runs once per server, at
      bind time; sends do a flat hash lookup.
   3. **It is honest.** Asserting `unsafe impl Send` over the old field
-     would have been false: `janus::Communicator` holds `peers_` and
-     `partition_peers_` as unguarded `std::map`s (communicator.h:92-94).
+     would have been false: `janus::Communicator` then held `peers_` and
+     `partition_peers_` as unguarded `std::map`s. (Stage 3d has since
+     replaced all five of its members with one `PeerRegistry registry_`, so
+     the hazard is gone — but it was real when the field was removed, which
+     is why it was removed.)
 
   **What did NOT move, and the measurement that says it cannot yet.** The
   plan wanted a Rust `RaftCommo` owning the peers and their
@@ -793,43 +796,53 @@ cleared the first four; the fifth is owed at 3e.
 ## Why this shape and not the previous two
 
 The premise both earlier versions asserted — "no srpc object crosses lanes" —
-becomes **true by construction** instead of true by assertion. Today it is
-plainly false: `waiter_`/`election_waiter_` are C++ `IntEvent`s
-(`server_h.rs:1269-1270`, built at `server.cc:1340`), `commo_` is a C++
-`Communicator` (`server_h.rs:1775`), reply events are minted C++-side
-(`commo.cc:41`).
+becomes **true by construction** instead of true by assertion. It is now half
+true: stage 3a deleted `commo_`, so `RaftServerBase` is `Send + Sync` and
+`tests/server_is_send.rs` is the compiler saying so. What still crosses is the
+wake gate — `waiter_` and `election_waiter_` are C++ `IntEvent` carriers
+(`server_h.rs:1269-1270`, minted at `server.cc:1458-1459`) and reply events
+are minted C++-side (`commo.cc:41`). Those are 3e's remaining work.
 
-It also collapses **25 exports carrying 8 non-scalar C++ types** down to two
-byte-shaped functions, which removes the whole class of problem v2 died on.
+It does NOT collapse the exports to two. There are 31 (`server_exports.h`), of
+which 8 carry a non-scalar beyond `RaftServerBase*`, and 4a measures why three
+of them cannot go at all: they are `TxLogServer`'s, the interface Paxos also
+implements.
 
-And it fixes the `Send` problem at its root rather than papering over it.
-`RaftServerBase` is `!Send + !Sync` because of exactly one field,
-`commo_: *mut rusty::Communicator` (`server_h.rs:1775`). Under the island,
-`commo` is Rust-owned and that pointer becomes a sender the compiler can check.
+*(Written when `commo_` was still a field and the export count was 25. Both
+sentences above were present tense and wrong by the time the audit ran; they
+are corrected rather than deleted, because the reasoning they supported —
+fix `Send` at the root, do not paper over it — is what stage 3a then did.)*
 
-## The measurement that must come first
+## The measurement that gated this plan — taken
 
-Everything below is contingent on one number, and it is cheap to get.
+It was item **1c**, and the answer decided everything after it:
+`RaftServerBase` had 48 fields of which exactly one, `commo_: *mut
+rusty::Communicator`, was not `Send`.
 
-> Point `waiter_`/`election_waiter_` (`server_h.rs:1269-1270`) at the real
-> `std::sync::Arc<srpc::reactor::IntEvent>` — the `srpc` dependency is already
-> declared and unused (`raft/Cargo.toml:57`) — add a ~20-line
-> `impl srpc::server::Service` shim in `raft/src/lib.rs`, and
-> `cargo build --release`. **Count the `unsafe impl Send`/`Sync` required.**
+The outcome is the good one this section hoped for. Stage 3a deleted the field
+rather than asserting over it, so the count of `unsafe impl Send`/`Sync`
+required of `RaftServerBase` is **zero**, and `tests/server_is_send.rs` and
+`tests/service_is_a_service.rs` are the compiler saying so rather than this
+document claiming it. There is exactly one `unsafe impl` in the new code, on
+`transport.rs`'s `ServerHandle`, and it exists only because a raw pointer is
+unconditionally `!Send` whatever it points at — the pointee's `Send + Sync` is
+checked next door.
 
-Two Rust files, no C++, no CMake, no cluster, well under an hour.
+Two things this section asserted are no longer true and are worth correcting
+rather than deleting, because they show what the estimate missed:
 
-- **Zero** → the island is a lane swap and the plan proceeds.
-- **`unsafe impl Send + Sync for RaftServerBase`** → the proposal has silently
-  become "hand-assert thread-safety across the entire Raft server." That is a
-  different proposal and needs approving as one, because it re-asserts by hand
-  the property the conversion was supposed to make checkable.
+- *"the `srpc` dependency is already declared and unused (`raft/Cargo.toml:57`)"*
+  — it is declared and now **used**: `transport.rs` builds real
+  `srpc::client::Client`s and `srpc::reactor::PollThread`s against it, and
+  `service.rs` implements `srpc::server::Service`.
+- *"well under an hour"* — the experiment as scoped was never run. 1c got the
+  same answer more cheaply by asking the compiler directly, and 1a and 1b were
+  retired into 3e, where they belong.
 
-The stand-in version is already run and negative: against the real types,
-`Arc<srpc::reactor::IntEvent>` fails `Send` with five `E0277`s (`Cell<EventStatus>`,
-`Cell<bool>`, `Cell<i32>`, `Cell<u64>`, `RefCell<Function>`), while
-`Arc<srpc::PollThread>` passes. The eleven carriers Raft holds today all pass
-only because `rusty-rustc` models them as opaque scalars that check nothing.
+What the section got right, and what still stands: `Arc<srpc::reactor::IntEvent>`
+fails `Send`, and the carriers Raft holds pass only because `rusty-rustc`
+models them as opaque bytes that check nothing. That is recorded again in
+`tests/server_is_send.rs`, which says so in its own comment.
 
 ## Where it stands
 
