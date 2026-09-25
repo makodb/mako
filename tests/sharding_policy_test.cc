@@ -8,8 +8,9 @@ import cluster;   // config/sharding metadata module (was #include "cluster/..."
 #include "sharding_policy_test_util.h"  // make_table_policy / make_policy_set
 // The policy value types serialize via their srpc Serializable save()/load()
 // methods (BinaryWriteArchive), pulled in transitively by sharding_policy.h.
-// No operator<< / srpc::Marshal.
-#include "srpc/misc/serializable.hpp"
+// No operator<< / srpc::Marshal. Serializable is a transpiled Rust module now,
+// so it is imported rather than included.
+import srpc.serializable;
 
 namespace janus {
 

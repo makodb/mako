@@ -15,27 +15,27 @@ class MultiPaxosServiceImpl : public MultiPaxosService {
   void BulkDecide(const janus::Command& cmd,
                   i32* ballot,
                   i32* valid,
-                  srpc::DeferredReply defer);
+                  srpc::DeferredReply defer) const;
 
   void BulkAccept(const janus::Command& cmd,
                   i32* ballot,
                   i32* valid,
-                  srpc::DeferredReply defer);
+                  srpc::DeferredReply defer) const;
 
   void SyncLog(const janus::Command& md_cmd,
                      i32* ballot,
                      i32* valid,
                      janus::Command* ret,
-                     srpc::DeferredReply defer);
+                     srpc::DeferredReply defer) const;
 
-  void ForwardToLearnerServer(const srpc::i32& par_id, const uint64_t& slot, const ballot_t& ballot, const janus::Command& cmd, uint64_t* ret_slot, ballot_t* ret_ballot, srpc::DeferredReply defer);
+  void ForwardToLearnerServer(const srpc::i32& par_id, const uint64_t& slot, const ballot_t& ballot, const janus::Command& cmd, uint64_t* ret_slot, ballot_t* ret_ballot, srpc::DeferredReply defer) const;
 
 
   // BEGIN typed-rpc-decls (MultiPaxosServiceImpl)
-  void BulkAccept(const MultiPaxosService::RpcBulkAcceptRequest& req, MultiPaxosService::RpcBulkAcceptResponse& resp, srpc::DeferredReply defer) override;
-  void BulkDecide(const MultiPaxosService::RpcBulkDecideRequest& req, MultiPaxosService::RpcBulkDecideResponse& resp, srpc::DeferredReply defer) override;
-  void SyncLog(const MultiPaxosService::RpcSyncLogRequest& req, MultiPaxosService::RpcSyncLogResponse& resp, srpc::DeferredReply defer) override;
-  void ForwardToLearnerServer(const MultiPaxosService::RpcForwardToLearnerServerRequest& req, MultiPaxosService::RpcForwardToLearnerServerResponse& resp, srpc::DeferredReply defer) override;
+  void BulkAccept(const MultiPaxosService::RpcBulkAcceptRequest& req, MultiPaxosService::RpcBulkAcceptResponse& resp, srpc::DeferredReply defer) const override;
+  void BulkDecide(const MultiPaxosService::RpcBulkDecideRequest& req, MultiPaxosService::RpcBulkDecideResponse& resp, srpc::DeferredReply defer) const override;
+  void SyncLog(const MultiPaxosService::RpcSyncLogRequest& req, MultiPaxosService::RpcSyncLogResponse& resp, srpc::DeferredReply defer) const override;
+  void ForwardToLearnerServer(const MultiPaxosService::RpcForwardToLearnerServerRequest& req, MultiPaxosService::RpcForwardToLearnerServerResponse& resp, srpc::DeferredReply defer) const override;
   // END typed-rpc-decls (MultiPaxosServiceImpl)
 };
 

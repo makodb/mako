@@ -37,10 +37,10 @@ class RaftServiceImpl : public RaftService {
   // Generated fiber-RPC overrides. The srpc codegen wraps each one in a
   // Fiber::create_run; we return a packed response struct and the
   // framework sends the reply on fiber completion. No DeferredReply.
-  rusty::Result<RpcVoteResponse,                srpc::i32> Vote(const RpcVoteRequest& req) override;
-  rusty::Result<RpcAppendEntriesResponse,       srpc::i32> AppendEntries(const RpcAppendEntriesRequest& req) override;
-  rusty::Result<RpcEmptyAppendEntriesResponse,  srpc::i32> EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) override;
-  rusty::Result<RpcInstallSnapshotResponse,     srpc::i32> InstallSnapshot(const RpcInstallSnapshotRequest& req) override;
+  rusty::Result<RpcVoteResponse,                srpc::i32> Vote(const RpcVoteRequest& req) const override;
+  rusty::Result<RpcAppendEntriesResponse,       srpc::i32> AppendEntries(const RpcAppendEntriesRequest& req) const override;
+  rusty::Result<RpcEmptyAppendEntriesResponse,  srpc::i32> EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) const override;
+  rusty::Result<RpcInstallSnapshotResponse,     srpc::i32> InstallSnapshot(const RpcInstallSnapshotRequest& req) const override;
 };
 
 } // namespace janus

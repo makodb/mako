@@ -1,9 +1,9 @@
 // @safe - SRPC RPC service for Mako client API
 #pragma once
 
-#include <atomic>
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
+#include <rusty/sync/atomic.hpp>
 #include "srpc/srpc.hpp"
 #include "mako/lib/server.h"
 
@@ -61,7 +61,7 @@ public:
      */
     // @safe - Routes requests to handlers
     void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req,
-                      srpc::WeakServerConnection sconn);
+                      srpc::WeakServerConnection sconn) const;
 
     // ========================================================================
     // RPC Handlers
@@ -74,7 +74,7 @@ public:
      */
     // @safe - archive serde over the request body cursor
     void HandleBeginTxn(rusty::Box<srpc::Request> req,
-                        srpc::WeakServerConnection sconn);
+                        srpc::WeakServerConnection sconn) const;
 
     /**
      * Handle Commit RPC
@@ -83,7 +83,7 @@ public:
      */
     // @safe - archive serde over the request body cursor
     void HandleCommit(rusty::Box<srpc::Request> req,
-                      srpc::WeakServerConnection sconn);
+                      srpc::WeakServerConnection sconn) const;
 
     /**
      * Handle Rollback RPC
@@ -92,7 +92,7 @@ public:
      */
     // @safe - archive serde over the request body cursor
     void HandleRollback(rusty::Box<srpc::Request> req,
-                        srpc::WeakServerConnection sconn);
+                        srpc::WeakServerConnection sconn) const;
 
     /**
      * Handle Put RPC
@@ -101,7 +101,7 @@ public:
      */
     // @safe - archive serde over the request body cursor
     void HandlePut(rusty::Box<srpc::Request> req,
-                   srpc::WeakServerConnection sconn);
+                   srpc::WeakServerConnection sconn) const;
 
     /**
      * Handle Get RPC
@@ -110,7 +110,7 @@ public:
      */
     // @safe - archive serde over the request body cursor
     void HandleGet(rusty::Box<srpc::Request> req,
-                   srpc::WeakServerConnection sconn);
+                   srpc::WeakServerConnection sconn) const;
 
     /**
      * Handle Delete RPC
@@ -119,14 +119,19 @@ public:
      */
     // @safe - archive serde over the request body cursor
     void HandleDelete(rusty::Box<srpc::Request> req,
-                      srpc::WeakServerConnection sconn);
+                      srpc::WeakServerConnection sconn) const;
 
 private:
     ShardReceiver* receiver_;  // Not owned, must outlive this service
 
     // Atomic counter for generating unique transaction IDs
     // txn_id = (client_id << 32) | counter, ensuring uniqueness per BeginTxn call
-    std::atomic<uint32_t> next_txn_counter_;
+    //
+    // rusty::AtomicU32 rather than std::atomic: the generated service virtuals
+    // are const, because srpc shares one service context immutably across
+    // handler fibers. std::atomic's mutating operations are not const-
+    // qualified; rusty's take &self, the way Rust's atomics do.
+    rusty::sync::atomic::AtomicU32 next_txn_counter_;
 };
 
 } // namespace mako

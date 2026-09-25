@@ -32,7 +32,7 @@ int MakoClientService::__reg_to__(srpc::Server& server, size_t svc_index) {
 
 // @safe - Dispatch RPC request to appropriate handler
 void MakoClientService::__dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req,
-                                     srpc::WeakServerConnection sconn) {
+                                     srpc::WeakServerConnection sconn) const {
     switch (rpc_id) {
         case BEGIN_TXN:
             HandleBeginTxn(std::move(req), sconn);
@@ -65,7 +65,7 @@ void MakoClientService::__dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request>
 
 // @safe - Handle BeginTxn RPC
 void MakoClientService::HandleBeginTxn(rusty::Box<srpc::Request> req,
-                                       srpc::WeakServerConnection sconn) {
+                                       srpc::WeakServerConnection sconn) const {
     // Unmarshal request
     srpc::i64 client_id;
     srpc::BinaryReadArchive ar(srpc::make_source_proxy_buffer(&req->src));
@@ -73,7 +73,7 @@ void MakoClientService::HandleBeginTxn(rusty::Box<srpc::Request> req,
 
     // Generate unique transaction ID and register with ShardReceiver for tracking
     // Using atomic counter ensures uniqueness per BeginTxn call
-    uint32_t counter = next_txn_counter_.fetch_add(1, std::memory_order_relaxed);
+    uint32_t counter = next_txn_counter_.fetch_add(1, rusty::sync::atomic::Ordering::Relaxed);
     uint64_t txn_id = receiver_->BeginClientTransaction(
         static_cast<uint64_t>(client_id), counter);
 
@@ -94,7 +94,7 @@ void MakoClientService::HandleBeginTxn(rusty::Box<srpc::Request> req,
 
 // @safe - Handle Commit RPC
 void MakoClientService::HandleCommit(rusty::Box<srpc::Request> req,
-                                     srpc::WeakServerConnection sconn) {
+                                     srpc::WeakServerConnection sconn) const {
     // Unmarshal request
     srpc::i64 txn_id;
     srpc::BinaryReadArchive ar(srpc::make_source_proxy_buffer(&req->src));
@@ -116,7 +116,7 @@ void MakoClientService::HandleCommit(rusty::Box<srpc::Request> req,
 
 // @safe - Handle Rollback RPC
 void MakoClientService::HandleRollback(rusty::Box<srpc::Request> req,
-                                       srpc::WeakServerConnection sconn) {
+                                       srpc::WeakServerConnection sconn) const {
     // Unmarshal request
     srpc::i64 txn_id;
     srpc::BinaryReadArchive ar(srpc::make_source_proxy_buffer(&req->src));
@@ -138,7 +138,7 @@ void MakoClientService::HandleRollback(rusty::Box<srpc::Request> req,
 
 // @safe - Handle Put RPC
 void MakoClientService::HandlePut(rusty::Box<srpc::Request> req,
-                                  srpc::WeakServerConnection sconn) {
+                                  srpc::WeakServerConnection sconn) const {
     // Unmarshal request
     srpc::i64 txn_id;
     srpc::i32 table_id;
@@ -177,7 +177,7 @@ void MakoClientService::HandlePut(rusty::Box<srpc::Request> req,
 
 // @safe - Handle Get RPC
 void MakoClientService::HandleGet(rusty::Box<srpc::Request> req,
-                                  srpc::WeakServerConnection sconn) {
+                                  srpc::WeakServerConnection sconn) const {
     // Unmarshal request
     srpc::i64 txn_id;
     srpc::i32 table_id;
@@ -214,7 +214,7 @@ void MakoClientService::HandleGet(rusty::Box<srpc::Request> req,
 
 // @safe - Handle Delete RPC
 void MakoClientService::HandleDelete(rusty::Box<srpc::Request> req,
-                                     srpc::WeakServerConnection sconn) {
+                                     srpc::WeakServerConnection sconn) const {
     // Unmarshal request
     srpc::i64 txn_id;
     srpc::i32 table_id;

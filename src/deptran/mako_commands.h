@@ -27,8 +27,8 @@
 
 #include <rusty/arc.hpp>
 
-#include "srpc/misc/serializable.hpp"
-#include "srpc/misc/serializable_envelope.hpp"
+import srpc.serializable;
+import srpc.serializable_envelope;
 
 namespace janus {
 

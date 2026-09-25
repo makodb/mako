@@ -169,7 +169,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         switch (rpc_id) {
         case FORWARDTOLEARNERSERVER: __ForwardToLearnerServer__wrapper__(std::move(req), weak_sconn); break;
         case BULKACCEPT: __BulkAccept__wrapper__(std::move(req), weak_sconn); break;
@@ -180,18 +180,18 @@ public:
     }
     // typed service signatures
     // @safe
-    virtual void ForwardToLearnerServer(const RpcForwardToLearnerServerRequest& req, RpcForwardToLearnerServerResponse& resp, srpc::DeferredReply defer) = 0;
+    virtual void ForwardToLearnerServer(const RpcForwardToLearnerServerRequest& req, RpcForwardToLearnerServerResponse& resp, srpc::DeferredReply defer) const = 0;
     // @safe
-    virtual void BulkAccept(const RpcBulkAcceptRequest& req, RpcBulkAcceptResponse& resp, srpc::DeferredReply defer) = 0;
+    virtual void BulkAccept(const RpcBulkAcceptRequest& req, RpcBulkAcceptResponse& resp, srpc::DeferredReply defer) const = 0;
     // @safe
-    virtual void SyncLog(const RpcSyncLogRequest& req, RpcSyncLogResponse& resp, srpc::DeferredReply defer) = 0;
+    virtual void SyncLog(const RpcSyncLogRequest& req, RpcSyncLogResponse& resp, srpc::DeferredReply defer) const = 0;
     // @safe
-    virtual void BulkDecide(const RpcBulkDecideRequest& req, RpcBulkDecideResponse& resp, srpc::DeferredReply defer) = 0;
+    virtual void BulkDecide(const RpcBulkDecideRequest& req, RpcBulkDecideResponse& resp, srpc::DeferredReply defer) const = 0;
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
 private:
     // @safe
-    void __ForwardToLearnerServer__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __ForwardToLearnerServer__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcForwardToLearnerServerRequest __typed_req__;
@@ -200,6 +200,10 @@ private:
             srpc::Deserialize_::deserialize(__typed_req__.slot, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.ballot, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_resp__ = std::make_shared<RpcForwardToLearnerServerResponse>();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
@@ -213,12 +217,16 @@ private:
         }
     }
     // @safe
-    void __BulkAccept__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __BulkAccept__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcBulkAcceptRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_resp__ = std::make_shared<RpcBulkAcceptResponse>();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
@@ -232,12 +240,16 @@ private:
         }
     }
     // @safe
-    void __SyncLog__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __SyncLog__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcSyncLogRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_resp__ = std::make_shared<RpcSyncLogResponse>();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
@@ -252,12 +264,16 @@ private:
         }
     }
     // @safe
-    void __BulkDecide__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __BulkDecide__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcBulkDecideRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_resp__ = std::make_shared<RpcBulkDecideResponse>();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
@@ -684,7 +700,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         switch (rpc_id) {
         case VOTE: __Vote__wrapper__(std::move(req), weak_sconn); break;
         case APPENDENTRIES: __AppendEntries__wrapper__(std::move(req), weak_sconn); break;
@@ -695,18 +711,18 @@ public:
     }
     // typed service signatures
     // @safe
-    virtual rusty::Result<RpcVoteResponse, srpc::i32> Vote(const RpcVoteRequest& req) = 0;
+    virtual rusty::Result<RpcVoteResponse, srpc::i32> Vote(const RpcVoteRequest& req) const = 0;
     // @safe
-    virtual rusty::Result<RpcAppendEntriesResponse, srpc::i32> AppendEntries(const RpcAppendEntriesRequest& req) = 0;
+    virtual rusty::Result<RpcAppendEntriesResponse, srpc::i32> AppendEntries(const RpcAppendEntriesRequest& req) const = 0;
     // @safe
-    virtual rusty::Result<RpcEmptyAppendEntriesResponse, srpc::i32> EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) = 0;
+    virtual rusty::Result<RpcEmptyAppendEntriesResponse, srpc::i32> EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) const = 0;
     // @safe
-    virtual rusty::Result<RpcInstallSnapshotResponse, srpc::i32> InstallSnapshot(const RpcInstallSnapshotRequest& req) = 0;
+    virtual rusty::Result<RpcInstallSnapshotResponse, srpc::i32> InstallSnapshot(const RpcInstallSnapshotRequest& req) const = 0;
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
 private:
     // @safe
-    void __Vote__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __Vote__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcVoteRequest __typed_req__;
@@ -715,6 +731,10 @@ private:
             srpc::Deserialize_::deserialize(__typed_req__.lst_log_term, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.site_id, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.cur_term, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -737,7 +757,7 @@ private:
         }
     }
     // @safe
-    void __AppendEntries__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __AppendEntries__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcAppendEntriesRequest __typed_req__;
@@ -751,6 +771,10 @@ private:
             srpc::Deserialize_::deserialize(__typed_req__.leaderCommitIndex, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.cmd, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.leaderNextLogTerm, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -774,7 +798,7 @@ private:
         }
     }
     // @safe
-    void __EmptyAppendEntries__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __EmptyAppendEntries__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcEmptyAppendEntriesRequest __typed_req__;
@@ -786,6 +810,10 @@ private:
             srpc::Deserialize_::deserialize(__typed_req__.leaderPrevLogIndex, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.leaderPrevLogTerm, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.leaderCommitIndex, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -809,7 +837,7 @@ private:
         }
     }
     // @safe
-    void __InstallSnapshot__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __InstallSnapshot__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcInstallSnapshotRequest __typed_req__;
@@ -819,6 +847,10 @@ private:
             srpc::Deserialize_::deserialize(__typed_req__.last_included_index, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.last_included_term, __req_ar__);
             srpc::Deserialize_::deserialize(__typed_req__.data, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __fiber_req__ = std::move(req);
             auto __fiber_weak_sconn__ = weak_sconn;
             auto __fiber__ = Fiber::create_run([this, __typed_req__ = std::move(__typed_req__), __fiber_req__ = std::move(__fiber_req__), __fiber_weak_sconn__]() mutable {
@@ -1149,7 +1181,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         switch (rpc_id) {
         case SERVER_SHUTDOWN: __server_shutdown__wrapper__(std::move(req), weak_sconn); break;
         case SERVER_READY: __server_ready__wrapper__(std::move(req), weak_sconn); break;
@@ -1159,16 +1191,16 @@ public:
     }
     // typed service signatures
     // @safe
-    virtual void server_shutdown(const RpcServerShutdownRequest& req, RpcServerShutdownResponse& resp, srpc::DeferredReply defer) = 0;
+    virtual void server_shutdown(const RpcServerShutdownRequest& req, RpcServerShutdownResponse& resp, srpc::DeferredReply defer) const = 0;
     // @safe
-    virtual void server_ready(const RpcServerReadyRequest& req, RpcServerReadyResponse& resp, srpc::DeferredReply defer) = 0;
+    virtual void server_ready(const RpcServerReadyRequest& req, RpcServerReadyResponse& resp, srpc::DeferredReply defer) const = 0;
     // @safe
-    virtual void server_heart_beat(const RpcServerHeartBeatRequest& req, RpcServerHeartBeatResponse& resp, srpc::DeferredReply defer) = 0;
+    virtual void server_heart_beat(const RpcServerHeartBeatRequest& req, RpcServerHeartBeatResponse& resp, srpc::DeferredReply defer) const = 0;
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
 private:
     // @safe
-    void __server_shutdown__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __server_shutdown__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcServerShutdownRequest __typed_req__;
@@ -1183,7 +1215,7 @@ private:
         }
     }
     // @safe
-    void __server_ready__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __server_ready__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcServerReadyRequest __typed_req__;
@@ -1199,7 +1231,7 @@ private:
         }
     }
     // @safe
-    void __server_heart_beat__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __server_heart_beat__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcServerHeartBeatRequest __typed_req__;
@@ -1401,7 +1433,7 @@ public:
         return ret;
     }
     // @safe - Dispatch for RPC requests
-    void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         switch (rpc_id) {
         case READCONFIGKEY: __ReadConfigKey__wrapper__(std::move(req), weak_sconn); break;
         default: break;  // Unknown RPC ID, ignore
@@ -1409,17 +1441,21 @@ public:
     }
     // typed service signatures
     // @safe
-    virtual void ReadConfigKey(const RpcReadConfigKeyRequest& req, RpcReadConfigKeyResponse& resp, srpc::DeferredReply defer) = 0;
+    virtual void ReadConfigKey(const RpcReadConfigKeyRequest& req, RpcReadConfigKeyResponse& resp, srpc::DeferredReply defer) const = 0;
     // these RPC handler functions need to be implemented by user
     // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
 private:
     // @safe
-    void __ReadConfigKey__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) {
+    void __ReadConfigKey__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
         // @unsafe
         {
             RpcReadConfigKeyRequest __typed_req__;
             srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
             srpc::Deserialize_::deserialize(__typed_req__.key, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
             auto __typed_resp__ = std::make_shared<RpcReadConfigKeyResponse>();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),

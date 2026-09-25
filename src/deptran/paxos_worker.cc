@@ -5,7 +5,7 @@
 #include "paxos/server.h"
 #include "paxos/commo.h"
 #include "paxos/frame.h"
-#include "srpc/misc/serializable.hpp"
+import srpc.serializable;
 
 import std;
 

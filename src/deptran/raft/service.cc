@@ -57,7 +57,7 @@ static_assert(!raft_service_server_unavailable(true, false, true));
 // =====================================================================
 
 Result<RaftService::RpcVoteResponse, srpc::i32>
-RaftServiceImpl::Vote(const RpcVoteRequest& req) {
+RaftServiceImpl::Vote(const RpcVoteRequest& req) const {
   RpcVoteResponse resp{};
   RaftSpecific* svr = svr_;
   bool has_server = svr != nullptr;
@@ -76,7 +76,7 @@ RaftServiceImpl::Vote(const RpcVoteRequest& req) {
 }
 
 Result<RaftService::RpcAppendEntriesResponse, srpc::i32>
-RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
+RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) const {
   RpcAppendEntriesResponse resp{};
   RaftSpecific* svr = svr_;
   bool has_server = svr != nullptr;
@@ -99,7 +99,7 @@ RaftServiceImpl::AppendEntries(const RpcAppendEntriesRequest& req) {
 }
 
 Result<RaftService::RpcEmptyAppendEntriesResponse, srpc::i32>
-RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
+RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) const {
   Log_debug("RaftServiceImpl: EmptyAppendEntries answering leader {}", req.leaderSiteId);
   RpcEmptyAppendEntriesResponse resp{};
   RaftSpecific* svr = svr_;
@@ -127,7 +127,7 @@ RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) {
 }
 
 Result<RaftService::RpcInstallSnapshotResponse, srpc::i32>
-RaftServiceImpl::InstallSnapshot(const RpcInstallSnapshotRequest& req) {
+RaftServiceImpl::InstallSnapshot(const RpcInstallSnapshotRequest& req) const {
   RpcInstallSnapshotResponse resp{};
   RaftSpecific* svr = svr_;
   bool has_server = svr != nullptr;

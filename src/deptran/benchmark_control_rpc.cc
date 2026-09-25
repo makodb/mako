@@ -12,16 +12,16 @@ void ServerControlServiceImpl::shutdown_wrapper(int sig) {
   }
 }
 
-void ServerControlServiceImpl::set_sig_handler() {
+void ServerControlServiceImpl::set_sig_handler() const {
   struct sigaction sact;
   sigemptyset(&sact.sa_mask);
   sact.sa_flags = 0;
   sact.sa_handler = shutdown_wrapper;
   sigaction(SIGALRM, &sact, NULL);
-  sig_handler_set_ = true;
+  sig_handler_set_.store(true, rusty::sync::atomic::Ordering::Release);
 }
 
-void ServerControlServiceImpl::do_shutdown() {
+void ServerControlServiceImpl::do_shutdown() const {
   Log_info("Shutdown Server Control Service");
   status_->set_shutdown();
 }
@@ -29,7 +29,7 @@ void ServerControlServiceImpl::do_shutdown() {
 void ServerControlServiceImpl::server_shutdown(
     const ServerControlService::RpcServerShutdownRequest& rpc_req,
     ServerControlService::RpcServerShutdownResponse& rpc_resp,
-    srpc::DeferredReply defer) {
+    srpc::DeferredReply defer) const {
   (void)rpc_req;
   (void)rpc_resp;
   do_shutdown();
@@ -39,7 +39,7 @@ void ServerControlServiceImpl::server_shutdown(
 void ServerControlServiceImpl::server_ready(
     const ServerControlService::RpcServerReadyRequest& rpc_req,
     ServerControlService::RpcServerReadyResponse& rpc_resp,
-    srpc::DeferredReply defer) {
+    srpc::DeferredReply defer) const {
   (void)rpc_req;
   rpc_resp.res = status_->is_ready() ? 1 : 0;
   defer.reply();
@@ -48,10 +48,10 @@ void ServerControlServiceImpl::server_ready(
 void ServerControlServiceImpl::server_heart_beat(
     const ServerControlService::RpcServerHeartBeatRequest& rpc_req,
     ServerControlService::RpcServerHeartBeatResponse& rpc_resp,
-    srpc::DeferredReply defer) {
+    srpc::DeferredReply defer) const {
   (void)rpc_req;
   (void)rpc_resp;
-  if (!sig_handler_set_)
+  if (!sig_handler_set_.load(rusty::sync::atomic::Ordering::Acquire))
     set_sig_handler();
   alarm(timeout_);
   defer.reply();
