@@ -364,7 +364,7 @@ impl<'a> RaftProxy<'a> {
         req: &VoteRequest,
         on_reply: AsyncReplyCallback,
     ) -> Result<(), i32> {
-        let payload = req.clone();
+        let payload = *req;
         self.client.request_async(
             rpc_id::VOTE,
             move |ar: &mut BinaryWriteArchive| payload.serialize(ar),
@@ -390,7 +390,7 @@ impl<'a> RaftProxy<'a> {
         req: &EmptyAppendEntriesRequest,
         on_reply: AsyncReplyCallback,
     ) -> Result<(), i32> {
-        let payload = req.clone();
+        let payload = *req;
         self.client.request_async(
             rpc_id::EMPTYAPPENDENTRIES,
             move |ar: &mut BinaryWriteArchive| payload.serialize(ar),

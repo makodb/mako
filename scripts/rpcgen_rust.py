@@ -229,8 +229,11 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
             derive = "Clone, Debug, Default, PartialEq, Eq"
             # Copy only when every field is a scalar. String and Vec<u8> (an
             # opaque payload) both own heap storage.
-            if all(t not in ("String", "Vec<u8>") for _, t in fields):
+            is_copy = all(t not in ("String", "Vec<u8>") for _, t in fields)
+            if is_copy:
                 derive = "Clone, Copy, " + derive.split(", ", 1)[1]
+            if struct == req:
+                req_is_copy = is_copy
             w(f"#[derive({derive})]")
             w(f"pub struct {struct} {{")
             for fname, ftype in fields:
@@ -296,7 +299,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
             w("    }")
             w("}")
             w("")
-        emitted.append((func.name, req, resp, opaque_note))
+        emitted.append((func.name, req, resp, opaque_note, req_is_copy))
 
     # The handler trait. `Result<Resp, i32>` mirrors the C++ signature
     # `rusty::Result<RpcVoteResponse, srpc::i32>`: an Err is replied as a bare
@@ -304,7 +307,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w(f"/// The {service.name} service. Implement this; `dispatch` below routes")
     w("/// to it. An `Err(code)` is replied as that code with no body.")
     w(f"pub trait {service.name}Handler: Send + Sync {{")
-    for name, req, resp, _ in emitted:
+    for name, req, resp, _, _ in emitted:
         w(f"    fn {snake(name)}(&self, req: &{req}) -> Result<{resp}, i32>;")
     w("}")
     w("")
@@ -323,7 +326,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("    weak_sconn: &WeakServerConnection,")
     w(") {")
     w("    match rpc_id {")
-    for name, req_t, resp_t, opaque in emitted:
+    for name, req_t, resp_t, opaque, _ in emitted:
         w(f"        rpc_id::{name.upper()} => {{")
         if opaque is not None:
             # Decoded from the whole frame: the opaque field's end is only
@@ -378,13 +381,15 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("}")
     w("")
     w(f"impl<'a> {service.name}Proxy<'a> {{")
-    for name, req_t, resp_t, _ in emitted:
+    for name, req_t, resp_t, _, is_copy in emitted:
         w(f"    pub fn {snake(name)}_async(")
         w("        &self,")
         w(f"        req: &{req_t},")
         w("        on_reply: AsyncReplyCallback,")
         w("    ) -> Result<(), i32> {")
-        w(f"        let payload = req.clone();")
+        # `.clone()` on a Copy type is a clippy error, and the crate builds
+        # with -D warnings, so pick the right one per struct.
+        w("        let payload = *req;" if is_copy else "        let payload = req.clone();")
         w(f"        self.client.request_async(")
         w(f"            rpc_id::{name.upper()},")
         w("            move |ar: &mut BinaryWriteArchive| payload.serialize(ar),")
