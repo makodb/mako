@@ -92,9 +92,9 @@ pub mod lab_registry {
 #[cfg(feature = "raft_test")]
 pub mod lab_cluster {
     use super::{lab_registry, RaftServerBase};
-    // IsDisconnected is declared on RaftSpecific (scheduler_h.rs:39), not
-    // TxLogServer, so that is the trait the call needs in scope.
-    use crate::scheduler_h::RaftSpecific;
+    // No trait import: IsDisconnected became an inherent method when the RPC
+    // admission gate moved into ServeVote and its siblings, so it left
+    // RaftSpecific along with the three On* handlers.
 
     // testconf.h:22 -- `#define ELECTIONTIMEOUT 5000000` (microseconds).
     pub const ELECTION_TIMEOUT_US: u64 = 5_000_000;

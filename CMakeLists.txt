@@ -1133,6 +1133,27 @@ target_link_libraries(cluster PUBLIC srpc pthread btree_port vec_port rc_port st
 # shim `class RaftServer` and the hand-written kernels in server.cc call, and it
 # calls those kernels back. cargo builds it into this build tree; the pinned
 # rusty-rustc facade (src/rusty-rustc) is its only dependency.
+# The Rust side of the Raft RPC service, from the same .rpc file rcc_rpc.h
+# comes from. Without this the checked-in rpc.rs is a snapshot that can drift
+# from the wire the C++ peers speak, and nothing would say so: the ids are not
+# recorded in the .rpc at all (rpcgen assigns them randomly and preserves them
+# only by scraping the header it previously wrote), so this reads them out of
+# rcc_rpc.h -- which is why it depends on that header and not just the .rpc.
+set(RAFT_RPC_RUST "${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/src/rpc.rs")
+add_custom_command(
+    OUTPUT ${RAFT_RPC_RUST}
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/rpcgen_rust.py
+            --service Raft
+            --rpc src/deptran/rcc_rpc.rpc
+            --ids-from src/deptran/rcc_rpc.h
+            --out src/deptran/raft/src/rpc.rs
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.rpc
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/rpcgen_rust.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "rpcgen_rust: the Rust side of the Raft RPC service"
+    VERBATIM)
+
 set(RAFT_RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/raft-cargo")
 set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft.a")
 file(GLOB RAFT_RUST_SOURCES CONFIGURE_DEPENDS
@@ -1154,6 +1175,7 @@ add_custom_command(
             --target-dir ${RAFT_RUST_TARGET_DIR}
             ${RAFT_RUST_FEATURES}
     DEPENDS ${RAFT_RUST_SOURCES}
+            ${RAFT_RPC_RUST}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/Cargo.toml
     COMMENT "cargo build: the Raft server (src/deptran/raft) as libraft.a"
