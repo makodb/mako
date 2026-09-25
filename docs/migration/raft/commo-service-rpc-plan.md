@@ -69,7 +69,7 @@ Nothing after step 2 should begin until step 2's number is known.
   *Done when:* `ALL TESTS PASSED`, exit 0, 25 `Passed` markers.
   *This is the first evidence that the new srpc works with Raft at all* —
   the 25/25 on record was built 16 Sep against the pre-pull srpc.
-- [x] **P4. Committed and pushed** as six commits on srpc-subtree-forward. Split at least: gate
+- [x] **P4. Committed** on `srpc-subtree-forward` (`66776cfed` was the tip when this plan was written; 30 commits have landed since). Nothing is pushed. Split at least: gate
   reconciliation (whoever next pulls srpc on mako-dev needs it), the
   `cpp_value_init` retirement, the service-constness wave, the
   `rusty-rustc` move.
@@ -176,8 +176,8 @@ uses, because it is the right one:
 | C++ today | lines | Rust counterpart | authored how |
 |---|---|---|---|
 | `rcc_rpc.h` `class RaftService` | 381 | `trait RaftService` + `__dispatch__` | generated |
-| `rcc_rpc.h` `class RaftProxy` | 222 | `struct RaftProxy`, one method per RPC | generated |
-| `service.{h,cc}` `RaftServiceImpl` | 201 | `impl RaftService for RaftServiceImpl` | hand-written |
+| `rcc_rpc.h` `class RaftProxy` | 221 | `struct RaftProxy`, one method per RPC | generated |
+| `service.{h,cc}` `RaftServiceImpl` | 170 | `impl RaftService for RaftServiceImpl` | hand-written |
 
 The generated half is 603 lines of C++ and is pure boilerplate: deserialize
 the request, switch on the rpc id, call a handler, serialize the reply. The
@@ -185,7 +185,7 @@ hand-written half is the 4 call sites where `RaftServiceImpl` actually reaches
 into the Raft server. Generating the first and hand-writing the second keeps
 the same seam that works today, rather than inventing a new one.
 
-- [x] **2a. DONE.** `scripts/rpcgen_rust.py`, 451 lines, wired into the build
+- [x] **2a. DONE.** `scripts/rpcgen_rust.py`, wired into the build
   by the custom command beside `rcc_rpc_gen` in `CMakeLists.txt`, with the
   emitted `rpc.rs` as a dependency of the cargo edge so it is regenerated
   before the crate compiles. Golden wire vectors pin the bytes:
@@ -284,7 +284,7 @@ the same seam that works today, rather than inventing a new one.
   2. **It should be cheaper than what it replaces -- STRUCTURALLY
      argued, NOT TIMED.** No benchmark backs this; see the evidence map
      at the end of this TODO. The old `commo_of`
-     (`server.cc:373-377`) ran a `dynamic_cast` on EVERY call -- an RTTI
+     (then at `server.cc:373-377`, now `:446`) ran a `dynamic_cast` on EVERY call -- an RTTI
      walk per AppendEntries send. The cast now runs once per server, at
      bind time; sends do a flat hash lookup.
   3. **It is honest.** Asserting `unsafe impl Send` over the old field
@@ -564,7 +564,7 @@ the same seam that works today, rather than inventing a new one.
   - `server_h.rs:2635`
     - now: `raft_bind_replication_poll`
     - then: `transport.poll_thread()`
-  - `server_h.rs:3890` --- DONE already, as the worked example of the
+  - `server_h.rs:3895` --- DONE already, as the worked example of the
     fallback pattern
     - now: `match transport_of(this) { Some(t) => .., None => kernel }`
     - then: unchanged; the kernel arm dies with the last caller
@@ -599,7 +599,7 @@ the same seam that works today, rather than inventing a new one.
   `transport_of` returns None until `raft_transport_serve` binds one, so
   every rerouted site is inert until the worker builds a transport. The
   plumbing therefore lands verified, a site at a time, and the behavioural
-  switch stays a single call. `Disconnect` (`server_h.rs:3890`) is already
+  switch stays a single call. `Disconnect` (`server_h.rs:3895`) is already
   rerouted this way.
 
   **But three sites are coupled to the FIBER runtime, not to the
@@ -663,8 +663,8 @@ the same seam that works today, rather than inventing a new one.
     calls the send. SnapshotManager's virtuals staying C++ is true and
     irrelevant to this operation
   - `BroadcastVote` --- movable. The C++ quorum event never escapes three kernel calls:
-    construct (`server_h.rs:4139`), fill-and-wait (`:4144`), snapshot
-    (`:4159`), drop. Everything Rust consumes is `RaftVoteOutcome` -- six
+    construct (`server_h.rs:4147`), fill-and-wait (`:4144`), snapshot
+    (`:4167`), drop. Everything Rust consumes is `RaftVoteOutcome` -- six
     scalars, `server.h:516-526`. A Rust broadcast can produce that POD
     directly and no C++ quorum event is needed on the path
 
@@ -888,8 +888,9 @@ on it.
   mixed-version path -- is not required by anything currently planned. It
   comes back the moment Rust has to interpret a batch element itself, which is
   5a's territory, so the analysis above is kept rather than deleted.
-- **Leader-side kernels untouched by the above**: `server.cc:1605`, `:1608`,
-  `:1621` still inspect and manufacture payloads.
+- **Leader-side kernels untouched by the above**: `server.cc:1728`, `:1741`,
+  `:1823`, `:1831` still inspect and manufacture payloads
+  (`raft_wire_is_batch`, `raft_batch_finalize`, `raft_stamped_commit`).
 - **`LearnerAction` sits on the shared `TxLogServer`** (`scheduler.h:62` for the alias, `:206` for `TxLogServer::reg_learner_action`; an earlier revision cited `:196`, which is a `RaftStartResult` enumerator)
   and Paxos re-forwards the Command (`paxos_worker.cc:82-88`).
 - **`panic="abort"`** (`raft/Cargo.toml:68,71`) becomes the whole RPC stack's
@@ -904,7 +905,7 @@ on it.
 ## What is already proven to work
 
 - The Rust srpc runtime: `cargo test --offline --all-targets` in `src/srpc` →
-  **281 passed, 0 failed**, including a real `Server` dispatching to a
+  **281 passed, 0 failed** *(measured at the srpc merge; re-run rather than quote)*, including a real `Server` dispatching to a
   registered Rust `Service` and replying to a Rust `Client` over TCP.
 - Rust-side service registration, fiber-per-request dispatch and drain all
   exist (`server.rs:897`, `:1221`, `:1365`, `:1478-1500`). Only Raft's
