@@ -1156,10 +1156,21 @@ add_custom_command(
 
 set(RAFT_RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/raft-cargo")
 set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft.a")
+# The srpc crate is in here because the Raft crate depends on it -- commo.rs
+# names srpc::client::Client. Without these, editing a canonical srpc .rs
+# leaves libraft.a stale: ninja sees no changed dependency, never re-invokes
+# cargo, and cargo therefore never gets the chance to notice. The four module
+# directories are the ones src/srpc/rust-modules.toml names, plus the
+# generated lib.rs.
 file(GLOB RAFT_RUST_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/src/*.rs
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-cpp-markers/src/*.rs)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-cpp-markers/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/base/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/misc/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/reactor/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/rpc/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/src/*.rs)
 # The Rust half of the lab build. -DRAFT_TEST=ON defines RAFT_TEST_CORO for
 # the C++ side; the crate needs the matching cargo feature or the two halves
 # disagree about whether they are in lab mode (the leader no-op and the lab's
