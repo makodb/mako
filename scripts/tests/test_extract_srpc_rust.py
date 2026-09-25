@@ -879,7 +879,16 @@ class CheckedInCanaryTests(unittest.TestCase):
         # reactor/epoll_platform_linux.cc -- a C++ carrier whose symbols were
         # module-mangled and therefore unreachable from Rust -- with the
         # plain-C reactor/srpc_epoll.c.
-        self.assertEqual(canonical_lines, 14879)
+        # 14879 -> 14878: -1, the `#[no_mangle]` on fiber_task_entry_thunk
+        # (reactor/reactor.rs). It was a defined `T` symbol in BOTH libsrpc.a
+        # and the rustc-lane rlib -- a hard multiple definition for any process
+        # linking both, which mako's Raft work needs to do. The engine receives
+        # that function as a POINTER from fiber_engine_start and no C or C++
+        # translation unit names the symbol, so the export bought nothing; its
+        # own doc comment already said "It is never called from Rust or C++".
+        # Exactly one counted line, since the replacement explanation is a
+        # comment and this census skips those.
+        self.assertEqual(canonical_lines, 14878)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
