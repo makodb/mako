@@ -376,7 +376,7 @@ fn test_concurrent_starts(st: &mut LabState) -> i32 {
         // every value must be there
         for i in 0..nconcurrent {
             let val = (701 + i) as i64;
-            check_msg!(cmds.iter().any(|&c| c == val), "cmd {} missing", val);
+            check_msg!(cmds.contains(&val), "cmd {} missing", val);
         }
         success = true;
         break;

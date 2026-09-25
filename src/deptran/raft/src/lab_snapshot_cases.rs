@@ -689,8 +689,8 @@ fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
     check_msg!(set_env("MAKO_RAFT_SNAPSHOTS", "1"), "Could not enable Test60 snapshots");
 
     let mut managers = Vec::new();
-    let mut original_thresholds = vec![0u64; NSERVERS];
-    let mut seeded = vec![0u64; NSERVERS];
+    let mut original_thresholds = [0u64; NSERVERS];
+    let mut seeded = [0u64; NSERVERS];
     for i in 0..NSERVERS {
         let loc = lab::server_id_by_index(i);
         check_msg!(lab_registry::get(loc).is_some(), "Test60 server {} is null", i);
@@ -733,7 +733,7 @@ fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
         let mut connected_applied = 0;
         for _ in 0..100 {
             connected_applied = (0..NSERVERS)
-                .map(|s| lab::server_id_by_index(s))
+                .map(lab::server_id_by_index)
                 .filter(|&loc| loc != follower)
                 .filter(|&loc| with_server(loc, |s| s.GetAppliedIndex() >= idx)
                                    .unwrap_or(false))
@@ -867,11 +867,11 @@ fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
 
     // Restore the runtime thresholds, keeping each replica on the live manager
     // that backs its compacted prefix.
-    for i in 0..NSERVERS {
+    for (i, &threshold) in original_thresholds.iter().enumerate() {
         let loc = lab::server_id_by_index(i);
         with_server(loc, |svr| {
             let _lock = RaftLockGuard::new(svr.LabMutex());
-            svr.SetSnapshotThresholdLocked(original_thresholds[i]);
+            svr.SetSnapshotThresholdLocked(threshold);
         });
     }
     // The managers stay alive: `managers` is dropped here, but each replica
@@ -1004,9 +1004,9 @@ fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
                "Could not enable snapshots for long-partition fixture");
 
     let mut managers = Vec::new();
-    let mut seeded = vec![0u64; NSERVERS];
-    let mut original_thresholds = vec![0u64; NSERVERS];
-    let mut original_windows = vec![0u64; NSERVERS];
+    let mut seeded = [0u64; NSERVERS];
+    let mut original_thresholds = [0u64; NSERVERS];
+    let mut original_windows = [0u64; NSERVERS];
     for i in 0..NSERVERS {
         let loc = lab::server_id_by_index(i);
         let manager = new_manager();
@@ -1048,7 +1048,7 @@ fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
         let mut connected_applied = 0;
         for _ in 0..100 {
             connected_applied = (0..NSERVERS)
-                .map(|s| lab::server_id_by_index(s))
+                .map(lab::server_id_by_index)
                 .filter(|&loc| loc != follower)
                 .filter(|&loc| with_server(loc, |s| s.GetAppliedIndex() >= idx)
                                    .unwrap_or(false))
