@@ -33,8 +33,11 @@ use crate::rpc::{
     InstallSnapshotResponse, RaftProxy, VoteRequest, VoteResponse,
 };
 use crate::server_pods_h::RaftVoteOutcome;
+use crate::server_h::RaftServerBase;
+use crate::service::RaftRpcService;
 use srpc::client::Client;
 use srpc::reactor::PollThread;
+use srpc::server::Server;
 use srpc::serializable::{
     make_source_proxy_buffer, BinaryReadArchive, BufferSource, Deserialize,
 };
@@ -104,6 +107,9 @@ unsafe fn decode_reply<T: Deserialize + Default>(ptr: *const u8, len: usize)
 
 pub struct RaftTransport {
     poll: Arc<PollThread>,
+    // None until serve() binds. Both ends sit on `poll`, which is the whole
+    // reason this is one type -- see the note at the top of the file.
+    server: Option<Server>,
     peers: HashMap<u16, Arc<Client>>,
     partitions: HashMap<u32, Vec<u16>>,
     network_enabled: AtomicBool,
@@ -113,6 +119,7 @@ impl RaftTransport {
     pub fn new() -> RaftTransport {
         RaftTransport {
             poll: PollThread::create(),
+            server: None,
             peers: HashMap::new(),
             partitions: HashMap::new(),
             network_enabled: AtomicBool::new(true),
@@ -121,6 +128,47 @@ impl RaftTransport {
 
     pub fn poll_thread(&self) -> Arc<PollThread> {
         self.poll.clone()
+    }
+
+    /// Bind and start serving Raft's four RPCs for `server`.
+    ///
+    /// # Safety
+    /// `server` outlives this transport -- the worker drains before deleting
+    /// it -- and `bind_addr` is a live NUL-terminated string for the call.
+    pub unsafe fn serve(&mut self, server: *mut RaftServerBase,
+                        bind_addr: *const i8) -> i32 {
+        let mut rpc_server = Server::new(Some(self.poll.clone()));
+        // SAFETY: the caller's contract on `server`.
+        rpc_server.reg_service(Box::new(unsafe { RaftRpcService::new(server) }));
+        // SAFETY: the caller's contract on `bind_addr`.
+        let ret = unsafe { rpc_server.start(bind_addr) };
+        if ret != 0 {
+            return ret;
+        }
+        self.server = Some(rpc_server);
+        0
+    }
+
+    pub fn bound_port(&self) -> i32 {
+        self.server.as_ref().map(|s| s.get_bound_port()).unwrap_or(-1)
+    }
+
+    /// Close admission and let the handlers already inside finish. The
+    /// barrier RaftWorker::ShutDown needs before the server is destroyed.
+    pub fn drain(&self, timeout_ms: u64) -> bool {
+        match self.server.as_ref() {
+            Some(s) => {
+                s.set_admission_ready(false);
+                s.drain(timeout_ms)
+            }
+            None => true,
+        }
+    }
+
+    pub fn set_admission_ready(&self, ready: bool) {
+        if let Some(s) = self.server.as_ref() {
+            s.set_admission_ready(ready);
+        }
     }
 
     /// Connect to one peer and record it. `addr` is a NUL-terminated
@@ -374,6 +422,69 @@ impl Default for RaftTransport {
     fn default() -> Self {
         Self::new()
     }
+}
+
+// ===========================================================================
+// The C ABI, for the worker that owns a transport.
+//
+// Hand-written rather than emitted by scripts/raft_gen_exports.py: that
+// generator's table is methods of RaftServerBase, and these are methods of a
+// different type. The header beside them is transport_exports.h.
+//
+// The transport is deliberately NOT Send -- its clients belong to its poll
+// thread -- so C++ holding it as a pointer is the arrangement, not a
+// workaround. Every call below must come from the thread that created it,
+// which is the worker's, except set_network_enabled, which touches only an
+// atomic and is what the lab suite's Disconnect calls from elsewhere.
+// ===========================================================================
+
+/// # Safety
+/// The returned pointer is owned by the caller until raft_transport_delete.
+#[no_mangle]
+pub unsafe extern "C" fn raft_transport_new() -> *mut RaftTransport {
+    Box::into_raw(Box::new(RaftTransport::new()))
+}
+
+/// # Safety
+/// `t` came from raft_transport_new; `server` outlives it; `bind_addr` is a
+/// live NUL-terminated string for the call.
+#[no_mangle]
+pub unsafe extern "C" fn raft_transport_serve(t: *mut RaftTransport,
+                                              server: *mut RaftServerBase,
+                                              bind_addr: *const i8) -> i32 {
+    unsafe { (*t).serve(server, bind_addr) }
+}
+
+/// # Safety
+/// `t` came from raft_transport_new; `addr` is live for the call.
+#[no_mangle]
+pub unsafe extern "C" fn raft_transport_add_peer(t: *mut RaftTransport,
+                                                 par_id: u32, site_id: u16,
+                                                 addr: *const i8) -> bool {
+    unsafe { (*t).add_peer(par_id, site_id, addr) }
+}
+
+/// # Safety
+/// `t` came from raft_transport_new.
+#[no_mangle]
+pub unsafe extern "C" fn raft_transport_set_network_enabled(
+    t: *mut RaftTransport, enabled: bool) {
+    unsafe { (*t).set_network_enabled(enabled) }
+}
+
+/// # Safety
+/// `t` came from raft_transport_new.
+#[no_mangle]
+pub unsafe extern "C" fn raft_transport_drain(t: *mut RaftTransport,
+                                              timeout_ms: u64) -> bool {
+    unsafe { (*t).drain(timeout_ms) }
+}
+
+/// # Safety
+/// `t` came from raft_transport_new and is not used afterwards.
+#[no_mangle]
+pub unsafe extern "C" fn raft_transport_delete(t: *mut RaftTransport) {
+    drop(unsafe { Box::from_raw(t) });
 }
 
 #[cfg(test)]
