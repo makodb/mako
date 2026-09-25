@@ -62,7 +62,7 @@ The plan is to narrow the boundary until the struct is opaque, then cut over.
 
 ## Constraints that shape the steps
 
-Transpiler rules, verified against the pinned `77c3ad5a` source. They are
+Transpiler rules, verified against the pinned `1689f438` source. They are
 why the steps have the shape they do; fight them and the failure is silent.
 
 - **One base per struct.** `#[cpp_inherit] impl Trait for X` records the base

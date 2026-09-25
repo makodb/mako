@@ -43,7 +43,7 @@ third-party remotes:
 
 | submodule | url | pinned commit |
 |---|---|---|
-| `third-party/rusty-cpp` | `https://github.com/shuaimu/rusty-cpp` | `77c3ad5a9ab69190ee361986caf579afa2eae570` |
+| `third-party/rusty-cpp` | `https://github.com/shuaimu/rusty-cpp` | `1689f4380c25d13455cbe1f9eb8e5ff94e49861c` |
 | `third-party/yaml-cpp` | `https://github.com/jbeder/yaml-cpp/` | `89ff142b991af432b5d7a7cee55282f082a7e629` |
 | `third-party/googletest` | `https://github.com/google/googletest.git` | `94be250af7e14c58dcbf476972d2d7141551ff67` |
 | `third-party/mako-redis` | `https://github.com/makodb/mako-redis` | `365d9fe9a2a3b073fd64a9ebe83f20afd3a48761` |
@@ -62,8 +62,9 @@ git clone --mirror https://github.com/shuaimu/rusty-cpp /tmp/rusty-cpp.git
 # then push that mirror to a private backup repo of your own
 ```
 
-Note also that `CLAUDE.md` claims the pin is `fa7dd9d9…`; the actual submodule
-HEAD and `raft_dsl.sh` both say `77c3ad5a…`. The tree is the truth.
+The pin is `1689f438…`, the tip of rusty-cpp's `codex/canonical-rust-std-support`
+branch, which is what `src/srpc`'s own sources require. The submodule HEAD,
+the gitlink and all three gate scripts agree; the tree is the truth.
 
 ### 2. Build dependencies at `~/.local/mako-deps` (249 MB)
 

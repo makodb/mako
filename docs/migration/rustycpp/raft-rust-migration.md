@@ -161,7 +161,7 @@ The catalogue was applied by category:
   separately versioned format change. The argument case-fold helper keeps its
   narrow C `tolower` import and legacy unsigned-byte/process-locale domain.
 - The source gate pins emitter commit
-  `77c3ad5a9ab69190ee361986caf579afa2eae570`, ratchets the exact block
+  `1689f4380c25d13455cbe1f9eb8e5ff94e49861c`, ratchets the exact block
   inventory, rejects source or generated-output drift, performs a clean
   temporary rewrite, and compiles every extracted carrier with real `rustc`.
   CMake production/test targets and CI depend on this gate.

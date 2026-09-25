@@ -217,10 +217,14 @@
     incumbent C++ had `uint64_t x{};` on every field. Without the marker the
     emitter produces a bare `uint64_t x;`, and default construction silently
     stops zeroing -- a behaviour change, not a cosmetic one.
-  * That marker is the ONLY capability the pinned emitter
-    (77c3ad5a, "transpiler: support scalar value-init marker") has that a
-    main-reachable emitter does not. It lives solely on the unmerged branch
-    origin/codex/raft-value-init == refs/pull/48/head.
+  * RETIRED. `cpp_value_init` was the only capability the old side-branch
+    pin (77c3ad5a) had that a main-reachable emitter did not, and carrying a
+    fork of someone else's transpiler for one attribute blocked adopting the
+    srpc tree, whose own sources need `epilogue_includes` from 1689f438.
+    The marker is gone: every C++ site that makes one of these structs uses
+    the brace form, which value-initializes an aggregate's members whether or
+    not they carry their own `{}`. The guarantee now lives in
+    scripts/raft_field_census.py, which refuses a bare declaration.
   * `cpp_value_init` appears in exactly ONE file repo-wide: messages.hpp,
     38 field markers. So the entire reason this project cannot sit on
     rusty-cpp `main` is this one file's default initializers.
