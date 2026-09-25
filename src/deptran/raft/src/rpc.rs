@@ -12,7 +12,7 @@ use srpc::serializable::{
     BufferSource, Deserialize, Serialize,
 };
 use srpc::server::{
-    reject_malformed_request, Request, WeakServerConnection,
+    reject_malformed_request, Request, Server, WeakServerConnection,
 };
 
 /// Wire ids. Randomly assigned once by rpcgen and preserved only by
@@ -274,6 +274,28 @@ pub trait RaftHandler: Send + Sync {
     fn append_entries(&self, req: &AppendEntriesRequest) -> Result<AppendEntriesResponse, i32>;
     fn empty_append_entries(&self, req: &EmptyAppendEntriesRequest) -> Result<EmptyAppendEntriesResponse, i32>;
     fn install_snapshot(&self, req: &InstallSnapshotRequest) -> Result<InstallSnapshotResponse, i32>;
+}
+
+/// Register every rpc id this service answers. Call this from
+/// `Service::__reg_to__`; a nonzero return is srpc's error code.
+pub fn register(server: &mut Server, svc_index: usize) -> i32 {
+    let ret = server.reg_fast_rpc(rpc_id::VOTE, svc_index);
+    if ret != 0 {
+        return ret;
+    }
+    let ret = server.reg_fast_rpc(rpc_id::APPENDENTRIES, svc_index);
+    if ret != 0 {
+        return ret;
+    }
+    let ret = server.reg_fast_rpc(rpc_id::EMPTYAPPENDENTRIES, svc_index);
+    if ret != 0 {
+        return ret;
+    }
+    let ret = server.reg_fast_rpc(rpc_id::INSTALLSNAPSHOT, svc_index);
+    if ret != 0 {
+        return ret;
+    }
+    0
 }
 
 /// Route one request to `handler`. Call this from `Service::__dispatch__`.

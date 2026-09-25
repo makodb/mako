@@ -1145,10 +1145,12 @@ add_custom_command(
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/rpcgen_rust.py
             --service Raft
             --rpc src/deptran/rcc_rpc.rpc
+            --ids src/deptran/raft/rpc_ids.txt
             --ids-from src/deptran/rcc_rpc.h
             --out src/deptran/raft/src/rpc.rs
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.rpc
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rpc_ids.txt
             ${CMAKE_CURRENT_SOURCE_DIR}/scripts/rpcgen_rust.py
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
     COMMENT "rpcgen_rust: the Rust side of the Raft RPC service"

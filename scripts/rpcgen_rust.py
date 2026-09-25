@@ -129,28 +129,89 @@ class Unframed(Exception):
         self.type_name = type_name
 
 
-def read_ids(header: pathlib.Path, service: str) -> dict[str, int]:
-    """Scrape the rpc ids out of the generated C++ header.
+def read_frozen_ids(table: pathlib.Path, service: str) -> dict[str, int]:
+    """The wire ids, from the one place that outlives the generated header.
 
-    While the header still declares this service, it is the single source of
-    truth for the ids, so read them rather than restate them. When the service
-    is removed from the .rpc this must be replaced by a checked-in map -- see
-    stage 2b of the plan.
+    rpcgen assigns them at random and keeps them across regeneration ONLY by
+    scraping the header it previously wrote (rpcgen.py:322-338), seeding
+    `used_codes` from that same scrape. An id is therefore reserved only while
+    the header still declares its service -- so the table, not the header, is
+    where they live. See the file's own header comment.
+    """
+    ids: dict[str, int] = {}
+    for raw in table.read_text().splitlines():
+        line = raw.split("#", 1)[0].strip()
+        if not line:
+            continue
+        fields = line.split()
+        if len(fields) != 3:
+            raise SystemExit(f"rpcgen_rust: malformed id record: {raw!r}")
+        svc, name, code = fields
+        if svc == service:
+            ids[name] = int(code, 16)
+    if not ids:
+        raise SystemExit(
+            f"rpcgen_rust: no ids for service {service!r} in {table}"
+        )
+    return ids
+
+
+def _service_enums(text: str):
+    """(service_name, {RPC: id}) for every service enum in the header."""
+    for block in re.finditer(r"class (\w+)Service\b.*?enum\s*\{(.*?)\}", text, re.S):
+        yield block.group(1), {
+            m.group(1): int(m.group(2), 16)
+            for m in re.finditer(r"(\w+)\s*=\s*(0x[0-9a-fA-F]+)", block.group(2))
+        }
+
+
+def check_ids_against_header(header: pathlib.Path, service: str,
+                             frozen: dict[str, int]) -> str:
+    """Two checks, both of which fail the build rather than the wire.
+
+    1. While the header still declares this service, its ids must equal the
+       frozen table. A disagreement means someone regenerated the C++ without
+       the table, or edited the table without the C++.
+    2. No OTHER service may use one of the frozen ids. That is the collision
+       stage 5a opens up: once RaftService leaves the .rpc, rpcgen stops
+       reserving these four and can draw one at random for something else.
     """
     text = header.read_text(errors="replace")
-    block = re.search(
-        rf"class {service}Service\b.*?enum\s*\{{(.*?)\}}", text, re.S
-    )
-    if block is None:
-        raise SystemExit(
-            f"rpcgen_rust: no {service}Service rpc-id enum in {header}. If the "
-            f"service has left the .rpc file, the ids now live only here and "
-            f"need a checked-in map (plan stage 2b)."
+    enums = dict(_service_enums(text))
+    notes = []
+    if service in enums:
+        if enums[service] != frozen:
+            def hexed(d):
+                return "{" + ", ".join(f"{k}: {v:#010x}" for k, v in sorted(d.items())) + "}"
+            raise SystemExit(
+                f"rpcgen_rust: {header} and the frozen id table disagree for "
+                f"{service}Service.\n  header: {hexed(enums[service])}\n"
+                f"  table:  {hexed(frozen)}\n"
+                f"The ids are the wire contract; reconcile deliberately, do not "
+                f"regenerate over this."
+            )
+        notes.append(f"{service}Service ids match {header.name}")
+    else:
+        notes.append(
+            f"{service}Service is no longer in {header.name}; the table is the "
+            f"only record, which is what it is for"
         )
-    return {
-        m.group(1): int(m.group(2), 16)
-        for m in re.finditer(r"(\w+)\s*=\s*(0x[0-9a-fA-F]+)", block.group(1))
-    }
+    reserved = {code: name for name, code in frozen.items()}
+    for other, ids in enums.items():
+        if other == service:
+            continue
+        for name, code in ids.items():
+            if code in reserved:
+                raise SystemExit(
+                    f"rpcgen_rust: {other}Service.{name} has drawn {code:#x}, "
+                    f"which is {service}Service.{reserved[code]}'s wire id. "
+                    f"rpcgen assigns at random and only reserves what the "
+                    f"header still declares -- this is the collision the "
+                    f"frozen table exists to catch. Re-run rpcgen to draw "
+                    f"again, or reserve it explicitly."
+                )
+    notes.append(f"no other service uses the {len(frozen)} reserved ids")
+    return "; ".join(notes)
 
 
 def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
@@ -172,7 +233,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("    BufferSource, Deserialize, Serialize,")
     w("};")
     w("use srpc::server::{")
-    w("    reject_malformed_request, Request, WeakServerConnection,")
+    w("    reject_malformed_request, Request, Server, WeakServerConnection,")
     w("};")
     w("")
     w("/// Wire ids. Randomly assigned once by rpcgen and preserved only by")
@@ -312,6 +373,22 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("}")
     w("")
 
+    # Registration. One reg_fast_rpc per id -- the shape srpc's own services
+    # use (src/srpc/tests/client_reconnect_rust.rs:40-46). A nonzero return
+    # from any one aborts the rest: a half-registered service would answer
+    # some ids and silently drop the others, which is worse than not starting.
+    w("/// Register every rpc id this service answers. Call this from")
+    w("/// `Service::__reg_to__`; a nonzero return is srpc's error code.")
+    w(f"pub fn register(server: &mut Server, svc_index: usize) -> i32 {{")
+    for name, _req, _resp, _, _ in emitted:
+        w(f"    let ret = server.reg_fast_rpc(rpc_id::{name.upper()}, svc_index);")
+        w("    if ret != 0 {")
+        w("        return ret;")
+        w("    }")
+    w("    0")
+    w("}")
+    w("")
+
     # Dispatch. Deliberately does NOT spawn a fiber, unlike the generated C++
     # wrapper's `Fiber::create_run`: srpc's Rust server already chooses
     # between dispatching inline and spawning one before it calls
@@ -406,7 +483,10 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--service", required=True)
     ap.add_argument("--rpc", required=True)
-    ap.add_argument("--ids-from", required=True)
+    ap.add_argument("--ids-from", required=True,
+                    help="the generated C++ header, checked against --ids")
+    ap.add_argument("--ids", required=True,
+                    help="the frozen id table -- the source of truth")
     ap.add_argument("--out", required=True)
     ap.add_argument("--check", action="store_true",
                     help="fail if the output would change")
@@ -422,7 +502,9 @@ def main() -> int:
             f"found {sorted(services)}"
         )
 
-    ids = read_ids(pathlib.Path(args.ids_from), args.service)
+    ids = read_frozen_ids(pathlib.Path(args.ids), args.service)
+    note = check_ids_against_header(
+        pathlib.Path(args.ids_from), args.service, ids)
     text, skipped = emit(services[args.service], ids, args.rpc)
 
     out = pathlib.Path(args.out)
@@ -430,10 +512,10 @@ def main() -> int:
         current = out.read_text() if out.is_file() else ""
         if current != text:
             raise SystemExit(f"rpcgen_rust: {out} is stale; rerun without --check")
-        print(f"{out}: up to date")
+        print(f"{out}: up to date ({note})")
     else:
         out.write_text(text)
-        print(f"wrote {out}")
+        print(f"wrote {out} ({note})")
 
     for line in skipped:
         print(f"  SKIPPED {line}", file=sys.stderr)
