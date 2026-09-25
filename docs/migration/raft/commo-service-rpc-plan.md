@@ -281,7 +281,9 @@ the same seam that works today, rather than inventing a new one.
          `src/deptran/raft/tests/server_is_send.rs` asserts it; before this
          change the same assertion was `E0277`. Nothing was waved through
          with an `unsafe impl`.
-      2. **It is faster than what it replaces.** The old `commo_of`
+      2. **It should be cheaper than what it replaces -- STRUCTURALLY
+         argued, NOT TIMED.** No benchmark backs this; see the evidence map
+         at the end of this TODO. The old `commo_of`
          (`server.cc:373-377`) ran a `dynamic_cast` on EVERY call -- an RTTI
          walk per AppendEntries send. The cast now runs once per server, at
          bind time; sends do a flat hash lookup.
@@ -364,8 +366,10 @@ the same seam that works today, rather than inventing a new one.
       Its dead DSL predicate, the four `static_assert`s and
       `src/deptran/raft/src/service_cc.rs` went too.
 
-      AppendEntries is the hottest inbound path in the system, so this is a
-      throughput change, not tidiness.
+      AppendEntries is the hottest inbound path in the system, so this
+      *should* be a throughput change rather than tidiness -- but that is an
+      argument from call counts, NOT a measurement. Nothing here has been
+      timed; see the evidence map at the end of this TODO.
 
       **The drain stays.** `RaftWorker::ShutDown` calls
       `rpc_server_->set_admission_ready(false)` and `rpc_server_->drain(...)`
@@ -537,16 +541,18 @@ the same seam that works today, rather than inventing a new one.
 
       *Rust — the sends stop being kernels and call the transport:*
 
-      | site | today | after |
-      |---|---|---|
-      | `server_cc.rs:18` | `PendingAppend.response_: rusty::RaftResponsePtr` | `Pending<AppendEntriesResponse>` |
-      | `server_cc.rs:490`, `:1539` | `raft_append_response_read` kernel | gone; read the Rust `Pending` |
-      | `server_cc.rs:1224-1237` | `sent_response` local, a C++ carrier | the `Pending` the transport returns |
-      | `server_cc.rs:1164` | `raft_phase1_load_and_send_snapshot` | `transport.send_install_snapshot` |
-      | `server_cc.rs:1226` | `raft_phase1_send_append` | `transport.send_append_entries` |
-      | `server_h.rs:2635` | `raft_bind_replication_poll` | `transport.poll_thread()` |
-      | `server_h.rs:3890` | `raft_commo_set_network_enabled` | `transport.set_network_enabled` |
-      | `server_h.rs:4141` | `raft_broadcast_vote_and_wait` + `raft_vote_quorum_snapshot` | `transport.broadcast_vote` then `tally.outcome()` |
+      ```
+      site                         today                                                         after
+      ---------------------------  ------------------------------------------------------------  -------------------------------------------------
+      `server_cc.rs:18`            `PendingAppend.response_: rusty::RaftResponsePtr`             `Pending<AppendEntriesResponse>`
+      `server_cc.rs:490`, `:1539`  `raft_append_response_read` kernel                            gone; read the Rust `Pending`
+      `server_cc.rs:1224-1237`     `sent_response` local, a C++ carrier                          the `Pending` the transport returns
+      `server_cc.rs:1164`          `raft_phase1_load_and_send_snapshot`                          `transport.send_install_snapshot`
+      `server_cc.rs:1226`          `raft_phase1_send_append`                                     `transport.send_append_entries`
+      `server_h.rs:2635`           `raft_bind_replication_poll`                                  `transport.poll_thread()`
+      `server_h.rs:3890`           `raft_commo_set_network_enabled`                              `transport.set_network_enabled`
+      `server_h.rs:4141`           `raft_broadcast_vote_and_wait` + `raft_vote_quorum_snapshot`  `transport.broadcast_vote` then `tally.outcome()`
+      ```
 
       The server cannot HOLD the transport: `RaftTransport` is `!Send`, and
       `RaftServerBase` must stay `Send + Sync` or the service loses its trait
@@ -582,11 +588,13 @@ the same seam that works today, rather than inventing a new one.
       clients** -- which is a sharper constraint than "they share a poll
       thread", and it is what actually decides the unit of work:
 
-      | site | what couples it |
-      |---|---|
-      | `raft_broadcast_vote_and_wait` | it does not only send, it WAITS, and the wait is `raft_fiber_sleep_us` -- a C++ fiber sleep. Rerouting it requires the election fiber to be a Rust fiber |
-      | `raft_bind_replication_poll` | hands a C++ `Arc<PollThread>` to the wake gate, whose `owner_` is `rusty::RaftPollThreadPtr`. That is stage 1a's field-type change |
-      | the heartbeat loop | `raft_spawn_heartbeat_loop` creates a C++ fiber on the C++ reactor |
+      ```
+      site                            what couples it
+      ------------------------------  --------------------------------------------------------------------------------------------------------------------------------------------------------
+      `raft_broadcast_vote_and_wait`  it does not only send, it WAITS, and the wait is `raft_fiber_sleep_us` -- a C++ fiber sleep. Rerouting it requires the election fiber to be a Rust fiber
+      `raft_bind_replication_poll`    hands a C++ `Arc<PollThread>` to the wake gate, whose `owner_` is `rusty::RaftPollThreadPtr`. That is stage 1a's field-type change
+      the heartbeat loop              `raft_spawn_heartbeat_loop` creates a C++ fiber on the C++ reactor
+      ```
 
       So the real unit is **"Raft's fibers move lanes, and the sends follow"**,
       not "the commo moves". The three send paths are already Rust
@@ -616,13 +624,15 @@ the same seam that works today, rather than inventing a new one.
       ~~**But only three of the five can move.**~~ **WRONG ON TWO OF THEM.
       Re-measured while scoping 3e: all five can move.**
 
-      | operation | state |
-      |---|---|
-      | `SetNetworkEnabled` | movable -- an atomic bool, no C++ object |
-      | `PollThread` | movable -- the Rust lane has `PollThread` |
-      | `SendAppendEntries` | movable as of the 2c work above |
-      | `SendInstallSnapshot` | **movable.** It does NOT take a `RaftSnapshotManagerPtr` -- read the signature, `commo.h:168-175`: scalars, `const std::string& data`, and a `std::function<void(uint64_t)>`. The manager belongs to the KERNEL (`raft_phase1_load_and_send_snapshot`), which loads the bytes and then calls the send. SnapshotManager's virtuals staying C++ is true and irrelevant to this operation |
-      | `BroadcastVote` | **movable.** The C++ quorum event never escapes three kernel calls: construct (`server_h.rs:4139`), fill-and-wait (`:4144`), snapshot (`:4159`), drop. Everything Rust consumes is `RaftVoteOutcome` -- six scalars, `server.h:516-526`. A Rust broadcast can produce that POD directly and no C++ quorum event is needed on the path |
+      ```
+      operation              state
+      ---------------------  --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+      `SetNetworkEnabled`    movable -- an atomic bool, no C++ object
+      `PollThread`           movable -- the Rust lane has `PollThread`
+      `SendAppendEntries`    movable as of the 2c work above
+      `SendInstallSnapshot`  **movable.** It does NOT take a `RaftSnapshotManagerPtr` -- read the signature, `commo.h:168-175`: scalars, `const std::string& data`, and a `std::function<void(uint64_t)>`. The manager belongs to the KERNEL (`raft_phase1_load_and_send_snapshot`), which loads the bytes and then calls the send. SnapshotManager's virtuals staying C++ is true and irrelevant to this operation
+      `BroadcastVote`        **movable.** The C++ quorum event never escapes three kernel calls: construct (`server_h.rs:4139`), fill-and-wait (`:4144`), snapshot (`:4159`), drop. Everything Rust consumes is `RaftVoteOutcome` -- six scalars, `server.h:516-526`. A Rust broadcast can produce that POD directly and no C++ quorum event is needed on the path
+      ```
 
       The original entries confused "this operation hands over a C++ object"
       with "a C++ object appears anywhere near this operation". The first is a
@@ -693,6 +703,35 @@ the same seam that works today, rather than inventing a new one.
 
       *Done when:* the other three services are byte-identical and all
       twelve RPC ids are unchanged.
+
+### What "measured" means for each item
+
+Written down because the word was doing too much work. Every item below cites
+evidence, but of three different kinds, and only one of them is timing.
+
+```
+kind                      what it establishes                        items
+------------------------  -----------------------------------------  ----------------------------
+structural                counts and locations: symbols, fields,     0a 0b 0c 0d 1c 2b 2c 3a 3b
+                          call sites, signatures. Read off the       3c 3d 4a 5a
+                          source; refutable against it.
+behavioural               the system still does what it did:         P3 2a 2d 3a 3c 3d 3e
+                          RaftLabTest 25/25, cargo tests, the
+                          gates. Every commit carries one.
+timing                    ns/op or ops/s.                            NONE of the above
+```
+
+**No item in this TODO has timing evidence.** The three committed paired
+trials (`docs/migration/raft/paired-trial-19cfbb213-vs-*.csv`, 25 pairs each,
+ABBA) and `rust-vs-cpp-lane-benchmark.md` all predate this plan; they cover
+the earlier conversion stages, not 3a, 3c or 3d. So the two performance
+claims in 3a and 3c are arguments from call counts and have been relabelled
+as such.
+
+What would settle them is a paired trial of `66776cfed` (this plan's base)
+against HEAD, which measures 3a's removed `dynamic_cast` and 3c's two removed
+ABI crossings together. It needs a production `build/dbtest` in each tree;
+HEAD has only `build_raftlab`.
 
 ### Verification that must pass at every stage
 
