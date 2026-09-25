@@ -230,7 +230,7 @@ the same seam that works today, rather than inventing a new one.
       frame. The emitter still refuses when the extent genuinely is not
       arithmetic (two opaque fields, or a variable-width field beside one).
 
-- [ ] ~~2c-old. Decide the AppendEntries payload framing before generating it.~~
+- [x] ~~2c-old. Decide the AppendEntries payload framing before generating it.~~
       The generator can emit Vote, EmptyAppendEntries and InstallSnapshot from
       the parser alone; `AppendEntries` it cannot, because `Command cmd` is a
       `janus::Command` whose contents Raft reads and which carries no length
@@ -463,7 +463,7 @@ the same seam that works today, rather than inventing a new one.
       Rust lane, AND the before/after RPC benchmark in the verification rules
       shows no regression. Both, not either.
 
-- [ ] ~~3a-old. Move `Communicator`/`RaftCommo` in the *same* change as the~~
+- [x] ~~3a-old. Move `Communicator`/`RaftCommo` in the *same* change as the~~
       service (`communicator.h:92`, `:51`; `commo.h:112`) — they own the
       `Arc<Client>`s, so a half-move leaves handles straddling lanes.
 
