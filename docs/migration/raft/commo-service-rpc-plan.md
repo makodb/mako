@@ -211,7 +211,118 @@ the same seam that works today, rather than inventing a new one.
 
 ### Stage 3 — commo, service and the poll thread cross together
 
-- [ ] **3a.** Move `Communicator`/`RaftCommo` in the *same* change as the
+- [x] **3a. DONE, and the blocker it existed to remove is gone -- but by
+      deletion, not by a move.** The plan below said to make `commo_` a Rust
+      type. The better answer, found while doing it, is that
+      `RaftServerBase` should not hold a communicator at all.
+
+      `commo_` is removed from the struct. C++ keeps a
+      `server -> RaftCommo*` table (`server.cc`, `commo_of`) and the five
+      kernels resolve the communicator by server identity. The shim binds on
+      `TxLogServer::set_commo` and `raft_server_delete` unbinds.
+
+      Three things this buys, all measured rather than argued:
+
+      1. **`RaftServerBase` is now `Send + Sync`, and the compiler says so.**
+         `src/deptran/raft/tests/server_is_send.rs` asserts it; before this
+         change the same assertion was `E0277`. Nothing was waved through
+         with an `unsafe impl`.
+      2. **It is faster than what it replaces.** The old `commo_of`
+         (`server.cc:373-377`) ran a `dynamic_cast` on EVERY call -- an RTTI
+         walk per AppendEntries send. The cast now runs once per server, at
+         bind time; sends do a flat hash lookup.
+      3. **It is honest.** Asserting `unsafe impl Send` over the old field
+         would have been false: `janus::Communicator` holds `peers_` and
+         `partition_peers_` as unguarded `std::map`s (communicator.h:92-94).
+
+      **What did NOT move, and the measurement that says it cannot yet.** The
+      plan wanted a Rust `RaftCommo` owning the peers and their
+      `srpc::Client`s. `src/deptran/raft/src/commo.rs` is that type and its
+      tests pass, but it is **not wired into the send path**, because it
+      cannot be without Raft owning its own reactor:
+
+      - The live connections belong to the **C++ lane** (`libsrpc.a`,
+        transpiled). A Rust-lane `srpc::client::Client` cannot adopt them: the
+        two lanes do not share a layout (`srpc::CircuitBreaker` is 344 bytes
+        under clang and 96 under rustc), so a Rust `Client` would have to open
+        its own sockets and be polled by a Rust `PollThread`.
+      - That is a **second reactor in the same process**, which is a
+        performance change, not a refactor -- and performance is a hard
+        constraint here. It belongs with the stage 4 benchmark item below, not
+        smuggled in under a type move.
+
+      So `commo.rs` stays as the landing pad for that step, marked as such,
+      and the field removal is what stage 3 actually delivers. It is a
+      landing pad and not a port -- see 3d.
+
+- [ ] **3d. DEFERRED: `commo.rs` flattened an inheritance hierarchy, and the
+      flattening is not faithful.** Recorded rather than fixed, because it is
+      harder than the field move that exposed it.
+
+      **What is there now.** `src/deptran/raft/src/commo.rs` holds
+
+          pub struct RaftCommo { peers: HashMap<u16, Arc<Peer>>,
+                                 network_enabled: AtomicBool }
+
+      which is two of `janus::Communicator`'s five data members copied into
+      the one subclass, and three dropped: `rpc_poll_`, `owns_poll_thread_`
+      and -- the one that matters -- `partition_peers_`
+      (`src/deptran/communicator.h:96-99`).
+
+      **Why the missing index is a defect and not a simplification.** The
+      broadcast C++ runs is `PeersForPartition(par_id)`, and `par_id` is a
+      parameter all the way down: `raft_broadcast_vote_and_wait(self, par_id,
+      ...)`. The Rust type has no partition dimension at all, so
+      `peers_except(self_site_id)` would reach every peer in the process
+      regardless of shard. That is wrong under multi-shard single-process
+      mode. It is invisible today only because `commo.rs` is wired into
+      nothing and the lab suite runs one partition -- which is exactly the
+      condition under which a wrong port looks right.
+
+      **Why it is harder than it looks: this is implementation inheritance,
+      with two subclasses, and one of them is Paxos.**
+
+      | | |
+      |---|---|
+      | `janus::Communicator` | data-carrying base: five members, plus `ConnectToAddress` |
+      | `MultiPaxosCommo` | `src/deptran/paxos/commo.h:38` |
+      | `RaftCommo` | `src/deptran/raft/commo.h:112` |
+
+      Rust has no implementation inheritance, so the base's fields are either
+      duplicated into each subclass -- which is what the current file does,
+      for one subclass -- or composed into a shared struct whose shared
+      behaviour becomes a trait with default bodies over an accessor:
+
+          pub struct PeerRegistry { peers, partition_peers, network_enabled,
+                                    poll, owns_poll }
+          pub trait Commo {
+              fn registry(&self) -> &PeerRegistry;
+              fn peers_for_partition(&self, par_id: u32) -> Vec<Arc<Peer>> { ... }
+              fn peer_for_site(&self, par_id: u32, site_id: u16) -> Option<Arc<Peer>> { ... }
+          }
+          pub struct RaftCommo { base: PeerRegistry, ... }
+
+      Composition is the mechanical part. The two constraints that make this
+      a step of its own rather than a tidy-up are:
+
+      1. **The base is shared with Paxos**, and the standing rule on this
+         branch is that Paxos is not disturbed. A Rust `PeerRegistry` cannot
+         stand in for `janus::Communicator` until `MultiPaxosCommo` can sit
+         on it too; until then the process would hold two peer tables that
+         both claim to be authoritative.
+      2. **The base owns reactor-bound state** -- `rpc_poll_`,
+         `owns_poll_thread_`, and `ConnectToAddress`, which builds
+         `rusty::Arc<srpc::Client>`. Those cannot be populated on the Rust
+         side before the lane question in 3a is settled, so a faithful
+         `PeerRegistry` is gated on the same reactor decision.
+
+      **Done-test.** `peers_for_partition(par_id)` returns what
+      `Communicator::PeersForPartition(par_id)` returns for a two-shard
+      config; `MultiPaxosCommo` can be written as `{ base: PeerRegistry, ... }`
+      without restating a field; no `unsafe impl` is needed to keep it
+      `Send + Sync`.
+
+- [ ] ~~3a-old. Move `Communicator`/`RaftCommo` in the *same* change as the~~
       service (`communicator.h:92`, `:51`; `commo.h:112`) — they own the
       `Arc<Client>`s, so a half-move leaves handles straddling lanes.
 
@@ -243,11 +354,45 @@ the same seam that works today, rather than inventing a new one.
       `extern "C"` kernels passing opaque handles, exactly as they do now.
       That is enough for stage 1's blocker and does not require moving the
       snapshot manager, which is out of scope under every variant considered.
-- [ ] **3b.** Redesign the wake so no `!Send` handle crosses a thread. srpc
-      already solved this with `Future` (`client.rs:490-523`, Mutex-backed and
-      `Send`); Mako's commo does not use it.
-- [ ] **3c.** Move the admission gate and the `RaftWorker::ShutDown` drain with
-      the server.
+- [x] **3b. MEASURED: no redesign needed. The wake already satisfies this.**
+      Traced end to end:
+
+      1. `PublishReplicationWork` (any thread) takes `owner_` under a mutex and
+         clones the `Arc<PollThread>` -- an atomic refcount bump, nothing more.
+      2. `raft_queue_wake_job` calls `PollThread::add`, which is
+         `self.sender_.send(PollCommand::AddJob { job })`
+         (`src/srpc/reactor/reactor.rs:2204-2208`) -- an mpsc channel send, so
+         the cross-thread hop carries only an `Arc<dyn Job>`.
+      3. `pollworker_process_commands` (`:3416`) drains that channel **on the
+         poll thread** and `job_spawn_work` runs the job in a fiber there.
+      4. Only then does `GateWakeJob::run -> wake_on_owner -> IntEvent::set`
+         happen -- on the owner thread, which is the whole point of routing
+         through `add` instead of setting the event directly.
+
+      So the `!Send` handle (the `IntEvent`) is never *used* off its thread;
+      what crosses is an Arc and a channel message. The `Future` rewrite this
+      item proposed would be a second way to do what the job queue already
+      does correctly.
+- [x] **3c. DONE for the gate.** The drain stays; the reason is below.
+
+      **The gate: done.** `service.cc` used to run it in C++ at a cost of
+      three virtual-plus-FFI round trips per inbound RPC -- `IsDisconnected`,
+      `IsRpcReady`, then the handler. `RaftSpecific` now carries `ServeVote`,
+      `ServeAppendEntries` and `ServeInstallSnapshot`, which apply the gate and
+      write the unavailable reply themselves, so the cost is one crossing.
+      `IsDisconnected` and the three `On*` entries left the interface with it
+      (four exports, four shim forwarders and four virtuals deleted, three of
+      each added), and `service.cc` is now a null check plus one call per RPC.
+      Its dead DSL predicate, the four `static_assert`s and
+      `src/deptran/raft/src/service_cc.rs` went too.
+
+      AppendEntries is the hottest inbound path in the system, so this is a
+      throughput change, not tidiness.
+
+      **The drain stays.** `RaftWorker::ShutDown` calls
+      `rpc_server_->set_admission_ready(false)` and `rpc_server_->drain(...)`
+      on a **C++-lane** `srpc::Server`. It moves when the service moves lanes,
+      which is the same reactor question as 3a -- not before.
 
 ### Stage 4 — push the boundary outward
 
