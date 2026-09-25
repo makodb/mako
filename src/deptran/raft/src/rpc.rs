@@ -6,8 +6,13 @@
 
 #![allow(dead_code)]
 
+use srpc::client::{AsyncReplyCallback, Client};
 use srpc::serializable::{
-    BinaryReadArchive, BinaryWriteArchive, Deserialize, Serialize,
+    make_source_proxy_buffer, BinaryReadArchive, BinaryWriteArchive,
+    Deserialize, Serialize,
+};
+use srpc::server::{
+    reject_malformed_request, Request, WeakServerConnection,
 };
 
 /// Wire ids. Randomly assigned once by rpcgen and preserved only by
@@ -170,11 +175,128 @@ impl Deserialize for InstallSnapshotResponse {
     }
 }
 
-/// The Raft service. Implement this; the dispatch below
-/// routes to it.
-pub trait RaftService: Send + Sync {
-    fn vote(&self, req: &VoteRequest) -> VoteResponse;
-    fn empty_append_entries(&self, req: &EmptyAppendEntriesRequest) -> EmptyAppendEntriesResponse;
-    fn install_snapshot(&self, req: &InstallSnapshotRequest) -> InstallSnapshotResponse;
+/// The Raft service. Implement this; `dispatch` below routes
+/// to it. An `Err(code)` is replied as that code with no body.
+pub trait RaftHandler: Send + Sync {
+    fn vote(&self, req: &VoteRequest) -> Result<VoteResponse, i32>;
+    fn empty_append_entries(&self, req: &EmptyAppendEntriesRequest) -> Result<EmptyAppendEntriesResponse, i32>;
+    fn install_snapshot(&self, req: &InstallSnapshotRequest) -> Result<InstallSnapshotResponse, i32>;
+}
+
+/// Route one request to `handler`. Call this from `Service::__dispatch__`.
+pub fn dispatch<H: RaftHandler>(
+    handler: &H,
+    rpc_id: i32,
+    req: &Request,
+    weak_sconn: &WeakServerConnection,
+) {
+    match rpc_id {
+        rpc_id::VOTE => {
+            let mut typed = VoteRequest::default();
+            let mut ar = BinaryReadArchive::new(unsafe {
+                make_source_proxy_buffer(&req.src as *const _ as *mut _)
+            });
+            typed.deserialize(&mut ar);
+            if ar.failed() {
+                reject_malformed_request(req, weak_sconn);
+                return;
+            }
+            reply_with(weak_sconn, req, handler.vote(&typed));
+        }
+        rpc_id::EMPTYAPPENDENTRIES => {
+            let mut typed = EmptyAppendEntriesRequest::default();
+            let mut ar = BinaryReadArchive::new(unsafe {
+                make_source_proxy_buffer(&req.src as *const _ as *mut _)
+            });
+            typed.deserialize(&mut ar);
+            if ar.failed() {
+                reject_malformed_request(req, weak_sconn);
+                return;
+            }
+            reply_with(weak_sconn, req, handler.empty_append_entries(&typed));
+        }
+        rpc_id::INSTALLSNAPSHOT => {
+            let mut typed = InstallSnapshotRequest::default();
+            let mut ar = BinaryReadArchive::new(unsafe {
+                make_source_proxy_buffer(&req.src as *const _ as *mut _)
+            });
+            typed.deserialize(&mut ar);
+            if ar.failed() {
+                reject_malformed_request(req, weak_sconn);
+                return;
+            }
+            reply_with(weak_sconn, req, handler.install_snapshot(&typed));
+        }
+        // Unknown id: ignore, matching the generated C++ dispatch.
+        _ => {}
+    }
+}
+
+/// Serialize a handler result back to the caller. Err(code) replies
+/// that code with no body; Ok(resp) replies 0 with the fields.
+fn reply_with<R: Serialize + 'static>(
+    weak_sconn: &WeakServerConnection,
+    req: &Request,
+    result: Result<R, i32>,
+) {
+    let Some(sconn) = weak_sconn.upgrade() else { return };
+    match result {
+        Err(code) => sconn.reply(req, code, None),
+        Ok(resp) => sconn.reply(
+            req,
+            0,
+            Some(Box::new(move |ar: &mut BinaryWriteArchive| {
+                resp.serialize(ar);
+            })),
+        ),
+    }
+}
+
+/// Client side. One method per RPC, mirroring RaftProxy in
+/// the generated C++ header.
+pub struct RaftProxy<'a> {
+    pub client: &'a Client,
+}
+
+impl<'a> RaftProxy<'a> {
+    pub fn vote_async(
+        &self,
+        req: &VoteRequest,
+        on_reply: AsyncReplyCallback,
+    ) -> Result<(), i32> {
+        let payload = req.clone();
+        self.client.request_async(
+            rpc_id::VOTE,
+            move |ar: &mut BinaryWriteArchive| payload.serialize(ar),
+            on_reply,
+        )
+    }
+
+    pub fn empty_append_entries_async(
+        &self,
+        req: &EmptyAppendEntriesRequest,
+        on_reply: AsyncReplyCallback,
+    ) -> Result<(), i32> {
+        let payload = req.clone();
+        self.client.request_async(
+            rpc_id::EMPTYAPPENDENTRIES,
+            move |ar: &mut BinaryWriteArchive| payload.serialize(ar),
+            on_reply,
+        )
+    }
+
+    pub fn install_snapshot_async(
+        &self,
+        req: &InstallSnapshotRequest,
+        on_reply: AsyncReplyCallback,
+    ) -> Result<(), i32> {
+        let payload = req.clone();
+        self.client.request_async(
+            rpc_id::INSTALLSNAPSHOT,
+            move |ar: &mut BinaryWriteArchive| payload.serialize(ar),
+            on_reply,
+        )
+    }
+
 }
 
