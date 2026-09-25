@@ -1,8 +1,12 @@
 # Converting Raft's RPC path to Rust — the island plan
 
-Third revision. The first two were refuted by adversarial verification; this
-one is built on what those refutations established. Every claim below is
-measured, with file:line. Where something is unverified it says so.
+Third revision, and no longer only a plan: stages 0 through 3 are built,
+verified and committed, so most of what follows is a record of what was done
+and what it cost. The first two revisions were refuted by adversarial
+verification and this one is built on what those refutations established.
+Every claim is measured, with file:line. Where something is unverified it says
+so, and where a claim was later found wrong it is corrected in place with the
+measurement that overturned it rather than quietly edited out.
 
 ## History, so the reasoning is auditable
 
@@ -77,25 +81,38 @@ Nothing after step 2 should begin until step 2's number is known.
       Verified it is reached only as a function POINTER passed to
       `srpc_fiber_init`, and no C or C++ file names the symbol, so the export
       bought nothing. Now 0 in the rustc lane, 1 in the C++ lane; was 1 and 1.
-- [ ] **0b.** Stop double-compiling the C kernels: `src/srpc/build.rs:69-75`
-      vs `src/srpc-cmake/CMakeLists.txt`. Use `static:-bundle=`. Both already
-      read the same manifest, so only the link directive changes.
-- [ ] **0c.** Pass `CC` to cargo, `CMakeLists.txt:1150-1156`, so
-      `srpc_rand.c`'s `__clang__` branch is identical in both copies.
-- [ ] **0d.** Add `src/srpc/**/*.rs` to the libraft rebuild glob,
-      `CMakeLists.txt:1138-1142` (currently only `raft/src`, `rusty-rustc/src`,
-      `rusty-cpp-markers/src`).
+- [ ] **0b.** Stop double-compiling the C kernels: `src/srpc/build.rs` builds
+      them into `libsrpc_native.a` while `src/srpc-cmake/CMakeLists.txt` builds
+      the same sources again. Use `static:-bundle=`. Both already read the same
+      manifest, so only the link directive changes. Still open.
+- [ ] **0c.** Pass `CC` to cargo (the raft-crate custom command, currently
+      `CMakeLists.txt:1182-1189`) so `srpc_rand.c`'s `__clang__` branch is
+      identical in both copies. `build.rs` already declares
+      `cargo:rerun-if-env-changed=CC`, so it will honour one the moment CMake
+      sets it -- which is what makes this two lines rather than a design.
+      Worth doing WITH 0b: they are the same defect seen from two ends, one
+      source compiled twice with possibly different preprocessor branches.
+      Still open.
+- [x] **0d. DONE.** `src/srpc/{base,misc,reactor,rpc,src}/*.rs` are in the
+      libraft rebuild glob (`CMakeLists.txt`, `RAFT_RUST_SOURCES`). This
+      stopped being cosmetic when the Raft crate gained a dependency on the
+      srpc crate: without it, editing a canonical srpc `.rs` leaves
+      `libraft.a` stale, because ninja sees no changed dependency, never
+      re-invokes cargo, and cargo therefore never gets the chance to notice.
 
-### Stage 1 — the decisive measurement (gates everything after it)
+### Stage 1 — the decisive measurement (DONE; it gated everything after it)
 
-- [ ] **1a.** `src/deptran/raft/src/server_h.rs:1269-1270`: change `waiter_`
-      and `election_waiter_` from `rusty::RaftIntEventPtr` to
-      `std::sync::Arc<srpc::reactor::IntEvent>`. The dependency is already
-      declared and unused, `src/deptran/raft/Cargo.toml:57`.
-- [ ] **1b.** `src/deptran/raft/src/lib.rs`: add ~20 lines —
-      `struct RaftServiceShim { svr: Arc<RaftServerBase> }` with
-      `impl srpc::server::Service` (`__reg_to__`, `__dispatch__`), plus one
-      `OneTimeJob` closure capturing `replication_wake_gate_`.
+1a and 1b below were written as the *experiment* that would produce the
+measurement. 1c produced it by asking the compiler directly instead, which
+was cheaper and gave a different answer, so neither was ever run. They are not
+measurements and they are not stage 1: both are steps of the lane move, and
+they are restated there (3e) rather than left here looking outstanding.
+
+- [x] ~~**1a.** `server_h.rs`: change `waiter_` and `election_waiter_` from
+      `rusty::RaftIntEventPtr` to `std::sync::Arc<srpc::reactor::IntEvent>`.~~
+      Superseded -- moved to 3e, where it belongs.
+- [x] ~~**1b.** `lib.rs`: `struct RaftServiceShim` with
+      `impl srpc::server::Service`.~~ Superseded -- moved to 3e.
 - [x] **1c. MEASURED, and the answer is a third outcome the plan did not
       anticipate.** Asking the compiler directly against the built rlib:
 
@@ -154,14 +171,33 @@ hand-written half is the 12 call sites where `RaftServiceImpl` actually reaches
 into the Raft server. Generating the first and hand-writing the second keeps
 the same seam that works today, rather than inventing a new one.
 
-- [ ] **2a. Write `scripts/rpcgen_rust.py`** -- mako-local, imports the
+- [x] **2a. DONE.** `scripts/rpcgen_rust.py`, 451 lines, wired into the build
+      by the custom command beside `rcc_rpc_gen` in `CMakeLists.txt`, with the
+      emitted `rpc.rs` as a dependency of the cargo edge so it is regenerated
+      before the crate compiles. Golden wire vectors pin the bytes:
+      `src/deptran/raft/tests/rpc_wire_golden.rs`, four tests, derived from
+      the serialiser's rule rather than captured from a run.
+
+      Original text, unchanged:
+
+      **Write `scripts/rpcgen_rust.py`** -- mako-local, imports the
       subtree's parser the way `bin/rpcgen` does, emits Rust. Nothing under
       `src/srpc/` changes, so nothing conflicts on a pull.
       *Emits:* the wire structs with `Serialize`/`Deserialize` in declaration
       order, the `RaftService` trait with its `__dispatch__`, the `RaftProxy`
       with one method per RPC, and the four rpc-id constants.
       *Does not emit:* handler bodies. Those are stage 3's hand-written impl.
-- [ ] **2b. Make the ids the generator's business, not a hand-pinned list.**
+- [ ] **2b. PARTLY DONE, and the remaining half is gated on 5a.** What
+      exists: the Rust emitter does not restate the ids, it scrapes them from
+      `rcc_rpc.h` (`read_ids`), and the build re-runs the emitter whenever the
+      `.rpc`, that header or the generator changes -- so a drift between the
+      two lanes now fails the build instead of going unnoticed. What does not
+      exist: a place for the ids to live once `Raft` leaves `rcc_rpc.rpc`.
+      That is the hazard below, and it only bites at 5a.
+
+      Original text, unchanged:
+
+      **Make the ids the generator's business, not a hand-pinned list.**
       `rpcgen.py:326-338` preserves ids ONLY by scraping them back out of the
       header it previously wrote; the `.rpc` file does not record them. So the
       moment `Raft` leaves `rcc_rpc.rpc`, the scrape stops finding
@@ -203,11 +239,13 @@ the same seam that works today, rather than inventing a new one.
       loudly rather than emit a field list that silently misparses.
       *Done when:* a `cargo test` round-trip decodes a three-element batch
       captured from the C++ encoder, element boundaries included.
-- [ ] **2d. `src/deptran/raft/src/rpc.rs` becomes generated output.** The
-      hand-written version from the first pass is a placeholder; delete it once
-      the emitter reproduces it. Keep it in `rust-modules.toml` as
-      `kind = "canonical"` -- rustc compiles it directly either way; what
-      changes is who writes it.
+- [x] **2d. DONE.** `src/deptran/raft/src/rpc.rs` is a build artifact, not a
+      snapshot: the custom command in `CMakeLists.txt` regenerates it from
+      `rcc_rpc.rpc` and `rcc_rpc.h` and ninja orders it before cargo. It stays
+      `kind = "canonical"` in `rust-modules.toml`, as this item said it should
+      -- rustc compiles it directly either way; what changed is who writes it.
+      The emitted file was byte-identical to the hand-checked one, which is
+      the evidence that the emitter reproduces it rather than replaces it.
 
 ### Stage 3 — commo, service and the poll thread cross together
 
@@ -261,117 +299,21 @@ the same seam that works today, rather than inventing a new one.
         implementations of the same thread rather than a question about thread
         count. That is a much smaller decision than this item first recorded,
         and it is what makes stage 4 reachable at all.
-      - What it is genuinely gated on is **3d**: the Rust side needs a peer
-        registry that can connect, and `ConnectToAddress` -- which builds the
-        `rusty::Arc<srpc::Client>`s -- is a private member of
-        `janus::Communicator`, the base shared with Paxos. The stub-server
-        path in `raft_main_helper.cc` (kSingleGroup, the build default) stands
-        up N more servers with the same one service and moves with it, which
-        is stage 4b.
+      - What it was gated on was **3d**, which has since landed: the peer
+        table is Rust now. What remains for 3e is narrower than this bullet
+        first said -- not the table, only the CLIENTS. `ConnectToAddress`
+        still builds C++-lane `rusty::Arc<srpc::Client>`s, and it is a
+        private member of `janus::Communicator`, the base shared with Paxos.
+        The stub-server path in `raft_main_helper.cc` (kSingleGroup, the build
+        default) stands up N more servers with the same one service and moves
+        with it, which is stage 4b.
 
-      So `commo.rs` stays as the landing pad for that step, marked as such,
-      and the field removal is what stage 3 actually delivers. It is a
-      landing pad and not a port -- see 3d.
+      The field removal is what THIS item delivers. The peer table itself
+      moved in 3d, which landed later and by a different route than this
+      bullet expected; `src/deptran/raft/src/commo.rs` is not that table and
+      never became one -- it is the sketch of where Rust-lane clients will
+      live, which is 3e.
 
-- [ ] **3d. DEFERRED: `commo.rs` flattened an inheritance hierarchy, and the
-      flattening is not faithful.** Recorded rather than fixed, because it is
-      harder than the field move that exposed it.
-
-      **What is there now.** `src/deptran/raft/src/commo.rs` holds
-
-          pub struct RaftCommo { peers: HashMap<u16, Arc<Peer>>,
-                                 network_enabled: AtomicBool }
-
-      which is two of `janus::Communicator`'s five data members copied into
-      the one subclass, and three dropped: `rpc_poll_`, `owns_poll_thread_`
-      and -- the one that matters -- `partition_peers_`
-      (`src/deptran/communicator.h:96-99`).
-
-      **Why the missing index is a defect and not a simplification.** The
-      broadcast C++ runs is `PeersForPartition(par_id)`, and `par_id` is a
-      parameter all the way down: `raft_broadcast_vote_and_wait(self, par_id,
-      ...)`. The Rust type has no partition dimension at all, so
-      `peers_except(self_site_id)` would reach every peer in the process
-      regardless of shard. That is wrong under multi-shard single-process
-      mode. It is invisible today only because `commo.rs` is wired into
-      nothing and the lab suite runs one partition -- which is exactly the
-      condition under which a wrong port looks right.
-
-      **Why it is harder than it looks: this is implementation inheritance,
-      with two subclasses, and one of them is Paxos.**
-
-      | | |
-      |---|---|
-      | `janus::Communicator` | data-carrying base: five members, plus `ConnectToAddress` |
-      | `MultiPaxosCommo` | `src/deptran/paxos/commo.h:38` |
-      | `RaftCommo` | `src/deptran/raft/commo.h:112` |
-
-      Rust has no implementation inheritance, so the base's fields are either
-      duplicated into each subclass -- which is what the current file does,
-      for one subclass -- or composed into a shared struct whose shared
-      behaviour becomes a trait with default bodies over an accessor:
-
-          pub struct PeerRegistry { peers, partition_peers, network_enabled,
-                                    poll, owns_poll }
-          pub trait Commo {
-              fn registry(&self) -> &PeerRegistry;
-              fn peers_for_partition(&self, par_id: u32) -> Vec<Arc<Peer>> { ... }
-              fn peer_for_site(&self, par_id: u32, site_id: u16) -> Option<Arc<Peer>> { ... }
-          }
-          pub struct RaftCommo { base: PeerRegistry, ... }
-
-      Composition is the mechanical part. The two constraints that make this
-      a step of its own rather than a tidy-up are:
-
-      1. **The base is shared with Paxos**, and the standing rule on this
-         branch is that Paxos is not disturbed. A Rust `PeerRegistry` cannot
-         stand in for `janus::Communicator` until `MultiPaxosCommo` can sit
-         on it too; until then the process would hold two peer tables that
-         both claim to be authoritative.
-      2. **The base owns reactor-bound state** -- `rpc_poll_`,
-         `owns_poll_thread_`, and `ConnectToAddress`, which builds
-         `rusty::Arc<srpc::Client>`. Those cannot be populated on the Rust
-         side before the lane question in 3a is settled, so a faithful
-         `PeerRegistry` is gated on the same reactor decision.
-
-      **Done-test.** `peers_for_partition(par_id)` returns what
-      `Communicator::PeersForPartition(par_id)` returns for a two-shard
-      config; `MultiPaxosCommo` can be written as `{ base: PeerRegistry, ... }`
-      without restating a field; no `unsafe impl` is needed to keep it
-      `Send + Sync`.
-
-- [ ] ~~3a-old. Move `Communicator`/`RaftCommo` in the *same* change as the~~
-      service (`communicator.h:92`, `:51`; `commo.h:112`) — they own the
-      `Arc<Client>`s, so a half-move leaves handles straddling lanes.
-
-      **Measured: the boundary is five operations, not 546 lines.** Raft's Rust
-      reaches the communicator only through these kernels in server.cc:
-
-          :400   BroadcastVote          :1513  SendAppendEntries
-          :441   SetNetworkEnabled      :1635  SendInstallSnapshot
-          :1071  PollThread
-
-      Everything else in commo.{h,cc} is C++ plumbing around those five. What
-      the Rust side needs is a peer registry of `srpc::Client`s, those five
-      operations, the network-enabled flag and the poll-thread handle.
-
-      **But only three of the five can move.** Measured:
-
-      | operation | state |
-      |---|---|
-      | `SetNetworkEnabled` | movable -- an atomic bool, no C++ object |
-      | `PollThread` | movable -- the Rust lane has `PollThread` |
-      | `SendAppendEntries` | movable as of the 2c work above |
-      | `BroadcastVote` | returns `RaftVoteQuorumPtr`, a 16-byte C++ carrier with its own destructor kernel (rusty-rustc/src/lib.rs:644, :753) |
-      | `SendInstallSnapshot` | takes `RaftSnapshotManagerPtr`; adversarial verification already found SnapshotManager's virtuals stay C++ under every variant (snapshot_manager.hpp:164-225) |
-
-      So "move commo to Rust" cannot complete as one step. The reachable shape
-      is a Rust `RaftCommo` that owns the peers, the clients, the flag and the
-      poll handle -- which is what makes `commo_` a Rust type and therefore
-      `RaftServerBase` `Send` -- while the quorum and snapshot handoffs stay
-      `extern "C"` kernels passing opaque handles, exactly as they do now.
-      That is enough for stage 1's blocker and does not require moving the
-      snapshot manager, which is out of scope under every variant considered.
 - [x] **3b. MEASURED: no redesign needed. The wake already satisfies this.**
       Traced end to end:
 
@@ -412,13 +354,159 @@ the same seam that works today, rather than inventing a new one.
       on a **C++-lane** `srpc::Server`. It moves when the service moves lanes,
       which is the same reactor question as 3a -- not before.
 
+- [x] **3d. DONE. `Communicator`'s data is Rust now, written once and
+      compiled twice.** This item was opened as "commo.rs flattened an
+      inheritance hierarchy and the flattening is not faithful". Both halves
+      of that are addressed, and by a route the item did not anticipate.
+
+      **What shipped.** `src/deptran/communicator.h` carries a
+      `#if RUSTYCPP_RUST` block defining `PartitionSites`, `PeerEntry` and
+      `PeerRegistry`. rusty-cpp translates it into the C++ that BOTH engines
+      link, and the same block is extracted to
+      `src/deptran/raft/src/communicator_h.rs` for rustc. One definition, two
+      lanes, nothing duplicated -- the mechanism `scheduler.h` already uses
+      for `TxLogServer`.
+
+      **How the inheritance is answered.** Not by emulating it. `Communicator`
+      keeps its name, its base-class role and its entire public surface, so
+      `MultiPaxosCommo` and `RaftCommo` are untouched and Paxos is undisturbed.
+      What changed is that its FIVE data members -- `rpc_poll_`,
+      `owns_poll_thread_`, `peers_`, `partition_peers_`, `network_enabled_` --
+      became ONE `PeerRegistry registry_` held by composition. That is the
+      same move Tranche 6 made on `TxLogServer`: the interface stays C++, the
+      state goes somewhere Rust owns it.
+
+      **The defect that opened this item is fixed, not papered over.** The C++
+      stored each peer twice, once in `peers_` and again inside
+      `partition_peers_[par]`, and the `belongs_to_partition` scan existed to
+      check the two agreed. Now a partition owns site ids and the peer table
+      owns peers, so there is one place a peer can be and
+      `peers_for_partition(par_id)` is genuinely partition-aware -- which
+      `commo.rs`'s `peers_except(self_site_id)` never was.
+
+      **Four things measured on the way, worth knowing before the next one:**
+
+      1. **The transpiler handles a stateful struct.** Every other transpiled
+         DSL entity in deptran is a scalar `const fn`, a POD, an enum or a
+         trait; this is the first with containers and interior mutability.
+         `rusty::Vec`, `rusty::sync::atomic::AtomicBool`,
+         `rusty::Option<rusty::Arc<T>>`, `push`, `clone`, returning a `Vec` or
+         an `Option` by value, nested struct literals and field-init shorthand
+         all lower correctly. Probe first, in a scratch file, if the next type
+         needs something not on that list.
+      2. **`rusty::Vec` is a C++20 MODULE, not a header.** `<rusty/vec.hpp>`
+         is empty and says so. A header declaring a `rusty::Vec` member needs
+         `import rusty;` at global scope, before `namespace janus` -- inside
+         it, the import names `janus::rusty` and shadows `::rusty` for the
+         whole file. `src/deptran/raft/server.h:30` already does exactly this.
+      3. **A field and a method may not share a name.** The emitter renames
+         the field (`network_enabled` became `network_enabled_field`) without
+         telling anyone. Hence `net_enabled`.
+      4. **The gate runs clippy on the EXTRACTED crate**, so the DSL source
+         has to be clippy-clean Rust, not merely valid Rust. Three lints bit:
+         `redundant_field_names` (write `par_id`, not `par_id: par_id`),
+         `question_mark` (`if x.is_none() { return None }` -- invert it), and
+         `unnecessary_unwrap` (`is_some()` then `unwrap()` -- clone the Option
+         instead, which is the handle copy in both lanes anyway).
+
+      **What stayed C++, and why it is a kernel rather than a shortfall.**
+      `ConnectToAddress` (srpc `Client::create`/`connect`/`close`, chrono,
+      sleep), `RpcPeer::WithClient` (a template returning `decltype(auto)`),
+      `RpcPeer::ReplaceClient` and `Close`. These are the surgery the DSL
+      genuinely cannot express; the shape around them is Rust's.
+
+      **What this does NOT do.** The peers it holds are still C++-lane
+      `std::shared_ptr<RpcPeer>`, carried as opaque bytes
+      (`rusty::CommoPeerPtr`) and never followed. Rust owning the *clients*
+      is the lane move, 3e. `src/deptran/raft/src/commo.rs` remains the
+      landing pad for that and is not the same type as `PeerRegistry`.
+
+- [ ] **3e. The lane move: Raft's reactor becomes the Rust one.** This is what
+      stages 1a and 1b were really about, restated where it belongs. It is the
+      last structural step before stage 4 and the first that can change
+      performance.
+
+      **Why it is reachable at all.** The measurement in 3a: Raft already owns
+      a dedicated poll thread. `RaftWorker::SetupService` creates
+      `svr_poll_thread_worker_` (`raft_worker.cc:344`) and gives it to both
+      `rpc_server_` (`:350`) and `rep_commo_` (`:379`); the only service on
+      that server is `RaftServiceImpl`, because `RaftFrame::CreateRpcServices`
+      pushes exactly one proxy (`frame.cc:373-378`); and its only other
+      consumer is a one-shot `EnsureSetup` job (`raft_main_helper.cc:471`,
+      `:540`). Nothing of Mako's or Paxos's runs on it. So this SWAPS a
+      reactor rather than adding one.
+
+      **What moves, in one change, because a half-move leaves handles
+      straddling lanes:**
+
+      - `rpc_server_` becomes a Rust `srpc::Server`, and `RaftServiceImpl`
+        becomes an `impl srpc::server::Service` over `RaftServerBase` --
+        possible now that `RaftServerBase` is `Send + Sync` (3a) and the
+        dispatch half is already generated (`rpc.rs`, `trait RaftHandler` and
+        `dispatch`, 2a/2d). This absorbs **1b**.
+      - `waiter_` and `election_waiter_` stop being opaque carriers and become
+        real `std::sync::Arc<srpc::reactor::IntEvent>`. This absorbs **1a**.
+        No redesign of the wake is needed with them (3b).
+      - The commo's clients move with the server. 3d put the peer TABLE in
+        Rust but deliberately left the clients alone: they are carried as
+        opaque `rusty::CommoPeerPtr` and never followed, because
+        `ConnectToAddress` still builds C++-lane `rusty::Arc<srpc::Client>`s.
+        Replacing those is this step's real work, and it is why 3d could land
+        without touching Paxos while this cannot.
+      - `RaftWorker::ShutDown`'s `set_admission_ready(false)` + `drain()` moves
+        with the server it acts on (the deferral recorded in 3c).
+      - The `kSingleGroup` stub servers in `raft_main_helper.cc` stand up N
+        more servers with that same one service, so they move too -- that is
+        **4b**, and it is part of this change rather than after it.
+
+      *Done when:* RaftLabTest 25/25 with Raft's RPC served entirely by the
+      Rust lane, AND the before/after RPC benchmark in the verification rules
+      shows no regression. Both, not either.
+
+- [ ] ~~3a-old. Move `Communicator`/`RaftCommo` in the *same* change as the~~
+      service (`communicator.h:92`, `:51`; `commo.h:112`) — they own the
+      `Arc<Client>`s, so a half-move leaves handles straddling lanes.
+
+      **Measured: the boundary is five operations, not 546 lines.** Raft's Rust
+      reaches the communicator only through these kernels in server.cc:
+
+          :400   BroadcastVote          :1513  SendAppendEntries
+          :441   SetNetworkEnabled      :1635  SendInstallSnapshot
+          :1071  PollThread
+
+      Everything else in commo.{h,cc} is C++ plumbing around those five. What
+      the Rust side needs is a peer registry of `srpc::Client`s, those five
+      operations, the network-enabled flag and the poll-thread handle.
+
+      **But only three of the five can move.** Measured:
+
+      | operation | state |
+      |---|---|
+      | `SetNetworkEnabled` | movable -- an atomic bool, no C++ object |
+      | `PollThread` | movable -- the Rust lane has `PollThread` |
+      | `SendAppendEntries` | movable as of the 2c work above |
+      | `BroadcastVote` | returns `RaftVoteQuorumPtr`, a 16-byte C++ carrier with its own destructor kernel (rusty-rustc/src/lib.rs:644, :753) |
+      | `SendInstallSnapshot` | takes `RaftSnapshotManagerPtr`; adversarial verification already found SnapshotManager's virtuals stay C++ under every variant (snapshot_manager.hpp:164-225) |
+
+      So "move commo to Rust" cannot complete as one step. The reachable shape
+      is a Rust `RaftCommo` that owns the peers, the clients, the flag and the
+      poll handle -- which is what makes `commo_` a Rust type and therefore
+      `RaftServerBase` `Send` -- while the quorum and snapshot handoffs stay
+      `extern "C"` kernels passing opaque handles, exactly as they do now.
+      That is enough for stage 1's blocker and does not require moving the
+      snapshot manager, which is out of scope under every variant considered.
 ### Stage 4 — push the boundary outward
 
-- [ ] **4a.** Collapse the 25 exports to the two byte-shaped embedder
+- [ ] **4a.** Collapse the exports -- **31** of them as of stage 3c, not the
+      25 this item was written against; 3c removed four and added three, and
+      the count had drifted before that -- to the two byte-shaped embedder
       functions: `RaftWorker::Submit(const char*, int, uint32_t)` in
       (`raft_worker.cc:760`), `(log, len, par_id, slot_id, queue)` out
       (`:1071-1074`).
-- [ ] **4b.** Handle `raft_main_helper.cc:383`, which registers
+- [ ] **4b. Folded into 3e**, not sequenced after it: those stub servers host
+      the same one service the lane move is moving, so they cannot be left on
+      the other lane for a stage. Kept numbered here because the problem is
+      stage 4's shape, not stage 3's. Handle `raft_main_helper.cc:383`, which registers
       `RaftServiceImpl` directly, **bypassing** `CreateRpcServices`, under
       `kSingleGroup` — the build default (`CMakeLists.txt:429`).
 
@@ -430,10 +518,27 @@ the same seam that works today, rather than inventing a new one.
 
 ### Verification that must pass at every stage
 
-- [ ] RaftLabTest 25/25.
-- [ ] A before/after RPC benchmark once Raft owns its own reactor — performance
-      is a hard constraint on this project, and Raft's RPC would stop sharing
-      Mako's poll thread.
+Standing rules, not items to tick off once. Every commit on this branch has
+cleared the first four; the fifth is owed at 3e.
+
+1. **RaftLabTest 25/25.** On an IDLE machine: TEST 9 counts idle RPCs against
+   a ceiling of 60, and a concurrent build pushes it over. Measured: 62 with
+   this branch compiling alongside, 44-47 quiet. A failure there is the first
+   thing to re-run before believing it.
+2. **`scripts/raft_field_census.py` exits 0** -- no hand-written C++ names a
+   field of `RaftServerBase` or `RaftConsensusState`.
+3. **`bash scripts/raft_dsl.sh --check`** -- every carrier's generated C++ is a
+   fresh rendering of its Rust, and the crate has no drift.
+4. **`cargo clippy --all-targets -- -D warnings`, AND the same with
+   `--features raft_test`.** Both, always. The lab configuration is a
+   different compilation: an unused import once survived the first because the
+   module it was in sits behind `#[cfg(feature = "raft_test")]`.
+5. **A before/after RPC benchmark, owed at 3e.** Performance is a hard
+   constraint here. Note what this comparison is and is not: Raft already owns
+   a dedicated poll thread (the measurement in 3a), so the lane move swaps one
+   reactor implementation for another rather than adding a thread. The
+   benchmark is therefore a like-for-like comparison of two implementations,
+   not a question about thread count.
 
 ## Why this shape and not the previous two
 
@@ -476,54 +581,41 @@ The stand-in version is already run and negative: against the real types,
 `Arc<srpc::PollThread>` passes. The eleven carriers Raft holds today all pass
 only because `rusty-rustc` models them as opaque scalars that check nothing.
 
-## Sequence
+## Where it stands
 
-**Stage 0 — unwire what is already solved.** Four items, all small, none
-needing design:
+The TODO above is the source of truth; this is the one-screen version. An
+earlier revision restated the whole plan again here in prose, which drifted
+from the checklist within two stages, so it is deliberately not that any more.
 
-| item | fix | evidence |
-|---|---|---|
-| duplicate `fiber_task_entry_thunk` | delete one `#[no_mangle]` | `reactor.rs:3690`; its own doc says "never called from Rust or C++", and it is the only production `#[no_mangle]` in the crate |
-| duplicate C kernels in both lanes | `static:-bundle=` | `srpc/build.rs:69-75` vs `srpc-cmake/CMakeLists.txt`; both already read the same manifest |
-| `CC` not passed to cargo | pass it | `CMakeLists.txt:1150-1156`, so `srpc_rand.c`'s `__clang__` branch matches |
-| libraft rebuild glob misses srpc | add the path | `CMakeLists.txt:1138-1142` |
+| stage | state |
+|---|---|
+| Prerequisite P1-P4 | done -- gate, build, RaftLabTest 25/25, committed |
+| 0a, 0d | done |
+| 0b, 0c | open, small, no design needed; do them together |
+| 1 | done. The measurement answered the question and retired 1a/1b into 3e |
+| 2a, 2c, 2d | done. The RPC slice is generated from `rcc_rpc.rpc` and its ids checked against `rcc_rpc.h` on every build |
+| 2b | half done; the rest is gated on 5a |
+| 3a, 3b, 3c, 3d | done. `RaftServerBase` is `Send + Sync`, the gate is one ABI crossing, and `Communicator`'s data is Rust |
+| **3e** | **next, and the last structural step.** The lane move |
+| 4a, 4b | after 3e; 4b is folded into it |
+| 5 | after 4 |
 
-**Stage 1 — the `Send` measurement above.** Gate on its result.
-
-**Stage 2 — the Raft RPC slice in Rust, generated.** 603 lines
-(`rcc_rpc.h:495-1096`) have no Rust emitter; `rpcgen` dispatches only
-cpp/python (`rpcgen.py:369-375`, `CMakeLists.txt:991` passes `--cpp`). Write a
-mako-local emitter that imports the subtree's parser the way `bin/rpcgen`
-already does, so nothing under `src/srpc/` changes. Generated: wire structs,
-the service trait and its dispatch, the proxy, the ids. Hand-written: the
-handler bodies, which is the same seam C++ uses between `RaftService` and
-`RaftServiceImpl`. See the Stage 2 checklist above for the detail.
-
-**Stage 3 — commo and service onto the Rust lane, with the poll thread.** This
-is the cut. `Communicator`/`RaftCommo` must move *in the same change*, not
-after (`communicator.h:92`, `:51`; `commo.h:112`) — they own the `Arc<Client>`s.
-Redesign the wake so no `!Send` handle crosses a thread; srpc already solved
-this with `Future` (`client.rs:490-523`, Mutex-backed and `Send`) and Mako's
-commo simply does not use it.
-
-**Stage 4 — move the boundary outward.** Collapse the 25 exports to the two
-byte-shaped embedder functions. `apply-path` verification found this direction
-already clean: the Mako↔Raft boundary is *already* bytes plus metadata on both
-ends, and `janus::Command` is a wrapper Mako itself puts on at Submit and takes
-off at apply — Raft never reads through it on the apply path.
-
-**Stage 5 — retire the C++ Raft slice** from `rcc_rpc.rpc`, regenerate, confirm
-the other three services and all twelve RPC ids are byte-identical.
+Read 3e first. Everything left of it is done; everything right of it depends
+on it.
 
 ## Known hard parts, not yet solved
 
-- **The batch wire format.** `TpcBatchCommand::save` writes N back-to-back
+- ~~**The batch wire format.**~~ **DISSOLVED by 2c, not solved -- and the
+  distinction matters.** `TpcBatchCommand::save` still writes N back-to-back
   variable-length records with no offsets (`tpc_command.cc:85-91`), and
-  `AeApplyIncoming` needs element *i* as its own ownable value
-  (`server_h.rs:4394-4423`, `server.cc:1730`). So the replacement is repeated
-  `(u32 len, bytes, i64 term)` — **not** three scalars beside one blob, as an
-  earlier revision had it. This is a wire break with no mixed-version path
-  (`rcc_rpc.rpc:36`, `raft_worker.cc:987-999`).
+  `AeApplyIncoming` still needs element *i* as its own ownable value
+  (`server_h.rs:4394-4423`). What changed is that **Rust never reads inside
+  the batch**: 2c hands the payload across as a byte range computed by
+  arithmetic and C++ does all the reading, exactly as today. So the wire break
+  this item feared -- repeated `(u32 len, bytes, i64 term)`, with no
+  mixed-version path -- is not required by anything currently planned. It
+  comes back the moment Rust has to interpret a batch element itself, which is
+  5a's territory, so the analysis above is kept rather than deleted.
 - **Leader-side kernels untouched by the above**: `server.cc:1605`, `:1608`,
   `:1621` still inspect and manufacture payloads.
 - **`LearnerAction` sits on the shared `TxLogServer`** (`scheduler.h:62`, `:196`)
@@ -544,12 +636,14 @@ the other three services and all twelve RPC ids are byte-identical.
   exist (`server.rs:897`, `:1221`, `:1365`, `:1478-1500`). Only Raft's
   generated code is missing.
 
-## Prerequisite, unchanged
+## Prerequisite — met
 
-The merged tree must build and pass RaftLabTest before any of this starts.
-The srpc gate reconciliation is done; gate run 7 reached exit 118 — upstream's
-body sanity-checks `current_time_us() != 0` while Mako's preamble stubs the
-clocks and nothing sets `monotonic_now_us` any more.
+The merged tree must build and pass RaftLabTest before any of this starts, and
+it does. The srpc gate reconciliation is finished (P1-P4 above, and the
+appendix records the five layers of drift it took). The text that stood here
+described gate run 7 stopping at exit 118 on a clock stub; that was several
+fixes ago and is kept only in the appendix, where it belongs, so this section
+does not read as an open blocker.
 
 ## Appendix — the exact Mako/srpc gate delta, measured
 
