@@ -7,6 +7,7 @@
 // each block. See docs/stage2_current_progress.txt.
 
 pub mod channel_transport_hpp;
+pub mod commo;
 pub mod commo_h;
 pub mod frame_cc;
 pub mod lab;
