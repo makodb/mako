@@ -246,10 +246,28 @@ the same seam that works today, rather than inventing a new one.
         two lanes do not share a layout (`srpc::CircuitBreaker` is 344 bytes
         under clang and 96 under rustc), so a Rust `Client` would have to open
         its own sockets and be polled by a Rust `PollThread`.
-      - That is a **second reactor in the same process**, which is a
-        performance change, not a refactor -- and performance is a hard
-        constraint here. It belongs with the stage 4 benchmark item below, not
-        smuggled in under a type move.
+      - **That is NOT a second reactor, and an earlier revision of this item
+        was wrong to say it was.** Measured: Raft already owns a dedicated
+        poll thread. `RaftWorker::SetupService` creates
+        `svr_poll_thread_worker_` (`raft_worker.cc:344`) and hands it to both
+        `rpc_server_` (`:350`) and `rep_commo_` (`:379`); the only service
+        registered on that server is `RaftServiceImpl`, because
+        `RaftFrame::CreateRpcServices` pushes exactly one proxy
+        (`frame.cc:373-378`); and the only other consumer is a one-shot
+        `EnsureSetup` job (`raft_main_helper.cc:471`, `:540`). Nothing of
+        Mako's or Paxos's runs on it.
+      - So a lane move **replaces** Raft's reactor rather than adding one, and
+        the performance question becomes a like-for-like comparison of two
+        implementations of the same thread rather than a question about thread
+        count. That is a much smaller decision than this item first recorded,
+        and it is what makes stage 4 reachable at all.
+      - What it is genuinely gated on is **3d**: the Rust side needs a peer
+        registry that can connect, and `ConnectToAddress` -- which builds the
+        `rusty::Arc<srpc::Client>`s -- is a private member of
+        `janus::Communicator`, the base shared with Paxos. The stub-server
+        path in `raft_main_helper.cc` (kSingleGroup, the build default) stands
+        up N more servers with the same one service and moves with it, which
+        is stage 4b.
 
       So `commo.rs` stays as the landing pad for that step, marked as such,
       and the field removal is what stage 3 actually delivers. It is a
