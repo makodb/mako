@@ -31,14 +31,13 @@ uint16_t raft_server_get_leader_hint(RaftServerBase* s);
 void raft_server_set_preferred_leader(RaftServerBase* s, uint16_t site_id);
 void raft_server_register_leader_change_callback(RaftServerBase* s, const rusty::RaftLeaderChangeCb* cb);
 bool raft_server_is_rpc_ready(const RaftServerBase* s);
-bool raft_server_is_disconnected(const RaftServerBase* s);
 uint16_t raft_server_site_id(const RaftServerBase* s);
 uint32_t raft_server_partition_id(const RaftServerBase* s);
 uint64_t raft_server_commit_index(const RaftServerBase* s);
 RaftStartResult raft_server_start(RaftServerBase* s, const rusty::RaftCommand* cmd, uint64_t* index, uint64_t* term);
-void raft_server_on_request_vote(RaftServerBase* s, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted);
-void raft_server_on_append_entries(RaftServerBase* s, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand* cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index);
-void raft_server_on_install_snapshot(RaftServerBase* s, uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t* term_out);
+void raft_server_serve_vote(RaftServerBase* s, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted);
+void raft_server_serve_append_entries(RaftServerBase* s, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand* cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index);
+void raft_server_serve_install_snapshot(RaftServerBase* s, uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t* term_out);
 // --- What the kernels in server.cc call back into.
 void raft_server_apply_thread_loop(RaftServerBase* s);
 void raft_server_bind_replication_wake_owner(RaftServerBase* s, const rusty::RaftPollThreadPtr* owner);

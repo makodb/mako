@@ -34,9 +34,10 @@ pub trait RaftSpecific: TxLogServer {
     fn SetPreferredLeader(&mut self, site_id: u16);
     // By reference, for the reason given on reg_learner_action.
     fn RegisterLeaderChangeCallback(&mut self, cb: &rusty::RaftLeaderChangeCb);
-    // Admission, as the RPC service checks it before every handler.
+    // Admission. The service no longer asks: ServeVote and friends below
+    // apply the gate themselves, inside the one call. What is left here is
+    // the worker's readiness probe (raft_worker.cc, ServerStatus::set_ready).
     fn IsRpcReady(&self) -> bool;
-    fn IsDisconnected(&self) -> bool;
     // Identity and progress, read-only: the three facts the main helper used
     // to read as fields through the concrete type. CommitIndex is the
     // pre-existing unlocked cross-thread read behind get_outstanding_logs --
@@ -48,18 +49,27 @@ pub trait RaftSpecific: TxLogServer {
     // Replication entry: the worker's "replicate this command".
     fn Start(&mut self, cmd: &rusty::RaftCommand, index: *mut u64,
              term: *mut u64) -> RaftStartResult;
-    // Inbound RPC, as the service decodes it off the wire.
-    fn OnRequestVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
-                     can_id: u16, can_term: i64, reply_term: *mut i64,
-                     vote_granted: *mut i8);
-    fn OnAppendEntries(&mut self, leader_current_term: u64,
-                       leader_site_id: u16, leader_prev_log_index: u64,
-                       leader_prev_log_term: u64, leader_commit_index: u64,
-                       cmd: &rusty::RaftCommand, leader_next_log_term: u64,
-                       follower_append_ok: *mut u64,
-                       follower_current_term: *mut u64,
-                       follower_last_log_index: *mut u64);
-    fn OnInstallSnapshot(&mut self, term: u64, leader_id: u64,
-                         last_included_index: u64, last_included_term: u64,
-                         data: &rusty::RaftByteString, term_out: *mut u64);
+    // Inbound RPC, as the service hands it over: ONE call per request, gate
+    // included. The C++ service used to ask IsDisconnected and IsRpcReady
+    // across the ABI before every handler and fill the unavailable reply
+    // itself, so each inbound RPC cost three virtual-plus-FFI round trips
+    // where it now costs one; the unavailable replies are unchanged, they
+    // are just written on this side (RaftServerBase::ServeVote and friends).
+    //
+    // EmptyAppendEntries has no method of its own: the service calls
+    // ServeAppendEntries with an empty Command and leader_next_log_term 0,
+    // exactly as it called OnAppendEntries before.
+    fn ServeVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
+                 can_id: u16, can_term: i64, reply_term: *mut i64,
+                 vote_granted: *mut i8);
+    fn ServeAppendEntries(&mut self, leader_current_term: u64,
+                          leader_site_id: u16, leader_prev_log_index: u64,
+                          leader_prev_log_term: u64, leader_commit_index: u64,
+                          cmd: &rusty::RaftCommand, leader_next_log_term: u64,
+                          follower_append_ok: *mut u64,
+                          follower_current_term: *mut u64,
+                          follower_last_log_index: *mut u64);
+    fn ServeInstallSnapshot(&mut self, term: u64, leader_id: u64,
+                            last_included_index: u64, last_included_term: u64,
+                            data: &rusty::RaftByteString, term_out: *mut u64);
 }

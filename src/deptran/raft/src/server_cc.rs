@@ -491,10 +491,13 @@ unsafe extern "C" {
         -> AppendRespView;
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
     fn raft_verify(condition: bool);
+    // Drops this server's row from the C++ commo table; called from
+    // raft_server_delete. See RaftServerBase::set_commo.
+    fn raft_unbind_commo(server: *mut RaftServerBase);
     fn raft_snapshot_manager_is_set(
         manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
     fn raft_phase1_load_and_send_snapshot(
-        commo: *mut rusty::Communicator,
+        server: *mut RaftServerBase,
         snapshot_manager: *const rusty::RaftSnapshotManagerPtr,
         lifetime: *const rusty::RaftAsyncCallbackLifetimePtr,
         self_site_id: u16, partition_id: u32, send_term: u64,
@@ -515,7 +518,7 @@ unsafe extern "C" {
     // The command copy INTO Rust's slot; see server.h for why never by value.
     fn raft_command_clone_into(src: *const rusty::RaftCommand,
                                dst: *mut rusty::RaftCommand);
-    fn raft_phase1_send_append(commo: *mut rusty::Communicator,
+    fn raft_phase1_send_append(server: *mut RaftServerBase,
                                self_site_id: u16, site_id: u16,
                                partition_id: u32, is_leader: bool, term: u64,
                                prev_log_index: u64, prev_log_term: u64,
@@ -1159,7 +1162,7 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
                     server.state_.raft_log_.base());
                 let sent: bool = unsafe {
                     raft_phase1_load_and_send_snapshot(
-                        server.commo_,
+                        server as *mut RaftServerBase,
                         &server.snapshot_manager_
                             as *const rusty::RaftSnapshotManagerPtr,
                         &server.async_callback_lifetime_
@@ -1221,7 +1224,8 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
         let mut sent_response: rusty::RaftResponsePtr = Default::default();
         unsafe {
             raft_phase1_send_append(
-                server.commo_, server.site_id_, site_id, partition_id,
+                server as *mut RaftServerBase, server.site_id_, site_id,
+                partition_id,
                 is_leader, round.term(), prev_log_index, prev_log_term,
                 round.commit_index(),
                 &cmd as *const rusty::RaftCommand, cmd_log_term,
@@ -2500,6 +2504,12 @@ pub unsafe extern "C" fn raft_server_new() -> *mut RaftServerBase {
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_delete(s: *mut RaftServerBase) {
     (*s).Shutdown();
+    // Drops this server's row from the C++ commo table -- see set_commo, and
+    // commo_of in server.cc. Here rather than in the shim's destructor so the
+    // key is released in the same function that frees what it keys on, and
+    // while the pointer is still live: Shutdown reaches no kernel that
+    // resolves the communicator.
+    raft_unbind_commo(s);
     drop(rusty::Box::from_raw(s));
 }
 
@@ -2619,13 +2629,6 @@ pub unsafe extern "C" fn raft_server_is_rpc_ready(s: *const RaftServerBase) -> b
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_is_disconnected(s: *const RaftServerBase) -> bool {
-    (*s).IsDisconnected()
-}
-
-/// # Safety
-/// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
-#[no_mangle]
 pub unsafe extern "C" fn raft_server_site_id(s: *const RaftServerBase) -> u16 {
     (*s).SiteId()
 }
@@ -2657,44 +2660,44 @@ pub unsafe extern "C" fn raft_server_start(s: *mut RaftServerBase,
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_on_request_vote(s: *mut RaftServerBase,
-                                                     lst_log_idx: u64,
-                                                     lst_log_term: i64,
-                                                     can_id: u16,
-                                                     can_term: i64,
-                                                     reply_term: *mut i64,
-                                                     vote_granted: *mut i8) {
-    (*s).OnRequestVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted)
+pub unsafe extern "C" fn raft_server_serve_vote(s: *mut RaftServerBase,
+                                                lst_log_idx: u64,
+                                                lst_log_term: i64,
+                                                can_id: u16,
+                                                can_term: i64,
+                                                reply_term: *mut i64,
+                                                vote_granted: *mut i8) {
+    (*s).ServeVote(lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted)
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_on_append_entries(s: *mut RaftServerBase,
-                                                       leader_current_term: u64,
-                                                       leader_site_id: u16,
-                                                       leader_prev_log_index: u64,
-                                                       leader_prev_log_term: u64,
-                                                       leader_commit_index: u64,
-                                                       cmd: *const rusty::RaftCommand,
-                                                       leader_next_log_term: u64,
-                                                       follower_append_ok: *mut u64,
-                                                       follower_current_term: *mut u64,
-                                                       follower_last_log_index: *mut u64) {
-    (*s).OnAppendEntries(leader_current_term, leader_site_id, leader_prev_log_index, leader_prev_log_term, leader_commit_index, &*cmd, leader_next_log_term, follower_append_ok, follower_current_term, follower_last_log_index)
+pub unsafe extern "C" fn raft_server_serve_append_entries(s: *mut RaftServerBase,
+                                                          leader_current_term: u64,
+                                                          leader_site_id: u16,
+                                                          leader_prev_log_index: u64,
+                                                          leader_prev_log_term: u64,
+                                                          leader_commit_index: u64,
+                                                          cmd: *const rusty::RaftCommand,
+                                                          leader_next_log_term: u64,
+                                                          follower_append_ok: *mut u64,
+                                                          follower_current_term: *mut u64,
+                                                          follower_last_log_index: *mut u64) {
+    (*s).ServeAppendEntries(leader_current_term, leader_site_id, leader_prev_log_index, leader_prev_log_term, leader_commit_index, &*cmd, leader_next_log_term, follower_append_ok, follower_current_term, follower_last_log_index)
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_on_install_snapshot(s: *mut RaftServerBase,
-                                                         term: u64,
-                                                         leader_id: u64,
-                                                         last_included_index: u64,
-                                                         last_included_term: u64,
-                                                         data: *const rusty::RaftByteString,
-                                                         term_out: *mut u64) {
-    (*s).OnInstallSnapshot(term, leader_id, last_included_index, last_included_term, &*data, term_out)
+pub unsafe extern "C" fn raft_server_serve_install_snapshot(s: *mut RaftServerBase,
+                                                            term: u64,
+                                                            leader_id: u64,
+                                                            last_included_index: u64,
+                                                            last_included_term: u64,
+                                                            data: *const rusty::RaftByteString,
+                                                            term_out: *mut u64) {
+    (*s).ServeInstallSnapshot(term, leader_id, last_included_index, last_included_term, &*data, term_out)
 }
 
 // --- What the kernels in server.cc call back into.

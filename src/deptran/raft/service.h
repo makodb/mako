@@ -23,7 +23,8 @@ class RaftServiceImpl : public RaftService {
   // construction and never cleared. Destruction order gives the server a
   // longer life than the services registered on it, but that alone says
   // nothing about handlers still executing: a handler fiber that already
-  // passed the availability check below can be mid-call while another thread
+  // passed the availability check -- now inside RaftServerBase::ServeVote and
+  // its two siblings, not in service.cc -- can be mid-call while another thread
   // tears the server down. The owner of the srpc::Server must therefore drain
   // its in-flight requests (set_admission_ready(false) + drain()) before it
   // destroys either the server or this service -- see RaftWorker::ShutDown

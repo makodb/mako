@@ -1617,7 +1617,7 @@ unsafe extern "C" {
     fn raft_config_replica_site(partition_id: u32, i: u64) -> u16;
     fn raft_election_debug_enabled() -> bool;
     // The campaign broadcast, and the reply quorum read back under mtx_.
-    fn raft_broadcast_vote_and_wait(commo: *mut rusty::Communicator, par_id: u32,
+    fn raft_broadcast_vote_and_wait(server: *mut RaftServerBase, par_id: u32,
                                     last_log_index: u64, last_log_term: i64,
                                     self_site_id: u16, term: i64,
                                     out: *mut rusty::RaftVoteQuorumPtr);
@@ -1627,7 +1627,12 @@ unsafe extern "C" {
         manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
     fn raft_apply_thread_join(thread: *mut rusty::RaftStdThread);
-    fn raft_commo_set_network_enabled(commo: *mut rusty::Communicator, enabled: bool);
+    fn raft_commo_set_network_enabled(server: *mut RaftServerBase, enabled: bool);
+    // The communicator binding: a dynamic_cast, which Rust cannot spell, plus
+    // the insert into the server -> RaftCommo table the kernels resolve
+    // through. See set_commo below for why the pointer is not a field.
+    fn raft_bind_commo(server: *mut RaftServerBase,
+                       commo: *mut rusty::Communicator);
     // The reactor's PollThread::add, for the wake job: `owner` is the gate's
     // owner thread, `token` a Box<GateWakeJob> made raw (queue_wake_job),
     // which the queued OneTimeJob hands back to raft_wake_job_run once.
@@ -1652,7 +1657,7 @@ unsafe extern "C" {
     // the three try/catch blocks this used to need: std::stoull throws, and
     // a hand-written digit loop cannot.
     fn raft_env_lookup(which: i32) -> *const core::ffi::c_char;
-    fn raft_bind_replication_poll(server: *mut RaftServerBase, commo: *mut rusty::Communicator) -> bool;
+    fn raft_bind_replication_poll(server: *mut RaftServerBase) -> bool;
     fn raft_initialize_snapshot_manager(server: *mut RaftServerBase, site_id: u16) -> bool;
     // Only the std::thread construction. The flag and the loop are Rust.
     fn raft_spawn_apply_thread(server: *mut RaftServerBase, thread: *mut rusty::RaftStdThread);
@@ -1772,7 +1777,6 @@ pub struct RaftServerBase {
     pub loc_id_: u32,
     pub site_id_: u16,
     pub app_next_: rusty::LearnerAction,
-    pub commo_: *mut rusty::Communicator,
     pub partition_id_: u32,
     pub mtx_: rusty::RaftCheckedMutex,
     // The consensus cluster mtx_ guards, as one Rust-owned value.
@@ -1882,7 +1886,6 @@ impl RaftServerBase {
             loc_id_: 4294967295,
             site_id_: RAFT_SERVER_INVALID_SITE_ID,
             app_next_: Default::default(),
-            commo_: core::ptr::null_mut(),
             partition_id_: 0,
             mtx_: Default::default(),
             state_: RaftConsensusState::new(),
@@ -2629,7 +2632,7 @@ impl RaftServerBase {
         }
 
         if !unsafe {
-            raft_bind_replication_poll(self as *mut RaftServerBase, self.commo_)
+            raft_bind_replication_poll(self as *mut RaftServerBase)
         }
         {
             rusty::raft_log_error_1(
@@ -3874,12 +3877,17 @@ impl RaftServerBase {
 
     // @unsafe - gates inbound and outbound test traffic under mtx_.
     pub fn Disconnect(&mut self, disconnect: bool) {
+        // Taken before the guard, not inside it: RaftLockGuard borrows
+        // self.mtx_ mutably, so `self as *mut RaftServerBase` cannot be
+        // written in its scope. The kernel resolves the communicator from
+        // this identity -- see commo_of in server.cc.
+        let this = self as *mut RaftServerBase;
         let _lock = RaftLockGuard::new(&mut self.mtx_);
         unsafe {
             raft_verify(
                 self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
                     != disconnect);
-            raft_commo_set_network_enabled(self.commo_, !disconnect);
+            raft_commo_set_network_enabled(this, !disconnect);
         }
         self.disconnected_
             .store(disconnect, rusty::sync::atomic::Ordering::Release);
@@ -4131,7 +4139,7 @@ impl RaftServerBase {
         let mut quorum: rusty::RaftVoteQuorumPtr = Default::default();
         unsafe {
             raft_broadcast_vote_and_wait(
-                self.commo_, par_id, lst_idx, lst_term,
+                self as *mut RaftServerBase, par_id, lst_idx, lst_term,
                 self.site_id_, term as i64,
                 &mut quorum as *mut rusty::RaftVoteQuorumPtr);
         }
@@ -4561,6 +4569,25 @@ impl RaftServerBase {
 // the "last wins" order ever changes, the build fails instead of the vtable.
 #[cpp_inherit]
 impl TxLogServer for RaftServerBase {
+    // The communicator is NOT stored. `commo_: *mut rusty::Communicator` was
+    // the one field of RaftServerBase's forty-eight that is not `Send`, and it
+    // is `Send` the Rust srpc lane demands of anything it dispatches to
+    // (`trait Service: Send + Sync`, src/srpc/rpc/server.rs). Asserting
+    // `unsafe impl Send` over it would have been false: janus::Communicator
+    // holds `peers_` and `partition_peers_` as unguarded std::maps
+    // (communicator.h:92-94). So the pointer stays on the C++ side, in a table
+    // keyed by this server, and the kernels ask for it by identity.
+    //
+    // not_unsafe_ptr_arg_deref: the kernel's dynamic_cast does read through
+    // `commo`, and the method is not `unsafe fn` because it cannot be -- it
+    // implements TxLogServer, whose signature is shared with the Paxos server
+    // (src/deptran/scheduler.h). The contract is the one that method always
+    // had: the worker passes a live Communicator and outlives the server.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    fn set_commo(&mut self, commo: *mut rusty::Communicator) {
+        unsafe { raft_bind_commo(self as *mut RaftServerBase, commo) }
+    }
+
     fn set_site_identity(&mut self, loc_id: u32, site_id: u16, partition_id: u32) {
         // Publish this replica to the lab registry. See lab_registry's note:
         // this is the one point the server learns which replica it is, and it
@@ -4582,10 +4609,6 @@ impl TxLogServer for RaftServerBase {
                 && self.state_.partition_id_ == self.partition_id_
                 && self.state_.loc_id_ == self.loc_id_);
         }
-    }
-
-    fn set_commo(&mut self, commo: *mut rusty::Communicator) {
-        self.commo_ = commo;
     }
 
     // The callback is copied INTO its slot by the kernel, never moved: a
@@ -4724,10 +4747,6 @@ impl RaftSpecific for RaftServerBase {
     }
 
     // @unsafe - synchronizes with Disconnect() through the Raft state mutex.
-    fn IsDisconnected(&self) -> bool {
-        self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
-    }
-
     fn SiteId(&self) -> u16 {
         self.site_id_
     }
@@ -4777,11 +4796,86 @@ impl RaftSpecific for RaftServerBase {
         RaftStartResult::APPENDED
     }
 
-    // Inbound RPC. The bodies are Rust -- on_request_vote_body and
-    // on_append_entries_body in server.cc's block, OnInstallSnapshotLocked
-    // above -- reached through the three raft_rpc_* kernels for the reasons
-    // given at their declaration.
-    fn OnRequestVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
+    // Inbound RPC, gate included. THE GATE IS THE POINT: service.cc used to
+    // ask IsDisconnected and IsRpcReady across the ABI before every handler,
+    // so each request cost three virtual-plus-FFI round trips. The replies
+    // written on the unavailable path are byte-for-byte the ones service.cc
+    // wrote; only where they are written changed.
+    //
+    // The order of the two reads matches the predicate it replaces --
+    // `!has_server || disconnected || !rpc_ready` -- minus the null test,
+    // which stays in C++ because a null server has no method to call.
+    fn ServeVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
+                 can_id: u16, can_term: i64, reply_term: *mut i64,
+                 vote_granted: *mut i8) {
+        if self.IsDisconnected() || !self.IsRpcReady() {
+            unsafe {
+                *reply_term = can_term;
+                *vote_granted = 0;
+            }
+            return;
+        }
+        self.OnRequestVote(lst_log_idx, lst_log_term, can_id, can_term,
+                           reply_term, vote_granted);
+    }
+
+    fn ServeAppendEntries(&mut self, leader_current_term: u64,
+                          leader_site_id: u16, leader_prev_log_index: u64,
+                          leader_prev_log_term: u64, leader_commit_index: u64,
+                          cmd: &rusty::RaftCommand, leader_next_log_term: u64,
+                          follower_append_ok: *mut u64,
+                          follower_current_term: *mut u64,
+                          follower_last_log_index: *mut u64) {
+        if self.IsDisconnected() || !self.IsRpcReady() {
+            unsafe {
+                *follower_append_ok = 0;
+                *follower_current_term = 0;
+                *follower_last_log_index = 0;
+            }
+            return;
+        }
+        self.OnAppendEntries(leader_current_term, leader_site_id,
+                             leader_prev_log_index, leader_prev_log_term,
+                             leader_commit_index, cmd, leader_next_log_term,
+                             follower_append_ok, follower_current_term,
+                             follower_last_log_index);
+    }
+
+    fn ServeInstallSnapshot(&mut self, term: u64, leader_id: u64,
+                            last_included_index: u64, last_included_term: u64,
+                            data: &rusty::RaftByteString,
+                            term_out: *mut u64) {
+        if self.IsDisconnected() || !self.IsRpcReady() {
+            unsafe {
+                *term_out = 0;
+            }
+            return;
+        }
+        self.OnInstallSnapshot(term, leader_id, last_included_index,
+                               last_included_term, data, term_out);
+    }
+}
+
+// The handlers themselves. Inherent, not trait: no C++ caller is left -- the
+// service goes through Serve* above -- and the lab cases call
+// OnInstallSnapshot directly on the struct.
+#[allow(non_snake_case)]
+#[allow(clippy::too_many_arguments)]
+impl RaftServerBase {
+    // The bodies are Rust -- on_request_vote_body and on_append_entries_body
+    // in server_cc.rs, OnInstallSnapshotLocked above -- reached through the
+    // raft_rpc_* kernels for the reasons given at their declaration.
+    pub fn IsDisconnected(&self) -> bool {
+        self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
+    // not_unsafe_ptr_arg_deref: the out-parameters are fields of the reply
+    // struct the caller owns for the whole call -- RpcVoteResponse and its
+    // siblings in service.cc, or a stack slot in the lab cases. These were
+    // exempt from the lint as trait-impl methods; the contract did not change
+    // with the impl block.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn OnRequestVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
                      can_id: u16, can_term: i64, reply_term: *mut i64,
                      vote_granted: *mut i8) {
         // The body is in server_cc.rs, one module away.
@@ -4790,7 +4884,8 @@ impl RaftSpecific for RaftServerBase {
             unsafe { &mut *reply_term }, unsafe { &mut *vote_granted });
     }
 
-    fn OnAppendEntries(&mut self, leader_current_term: u64,
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn OnAppendEntries(&mut self, leader_current_term: u64,
                        leader_site_id: u16, leader_prev_log_index: u64,
                        leader_prev_log_term: u64, leader_commit_index: u64,
                        cmd: &rusty::RaftCommand, leader_next_log_term: u64,
@@ -4812,7 +4907,8 @@ impl RaftSpecific for RaftServerBase {
             unsafe { &mut *follower_last_log_index });
     }
 
-    fn OnInstallSnapshot(&mut self, term: u64, leader_id: u64,
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn OnInstallSnapshot(&mut self, term: u64, leader_id: u64,
                          last_included_index: u64, last_included_term: u64,
                          data: &rusty::RaftByteString, term_out: *mut u64) {
         // Lock order: the state-machine apply gate, then mtx_ -- the order

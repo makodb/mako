@@ -109,11 +109,6 @@ source = "src/deptran/raft/server.h"
 output = "src/deptran/raft/src/server_pods_h.rs"
 
 [[module]]
-cpp_module = "raft.service_cc"
-source = "src/deptran/raft/service.cc"
-output = "src/deptran/raft/src/service_cc.rs"
-
-[[module]]
 cpp_module = "raft.snapshot_format_hpp"
 source = "src/deptran/raft/snapshot_format.hpp"
 output = "src/deptran/raft/src/snapshot_format_hpp.rs"

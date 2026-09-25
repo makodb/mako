@@ -19,8 +19,8 @@ RS = str(pathlib.Path(__file__).resolve().parent.parent /
          'src' / 'deptran' / 'raft' / 'src' / 'server_h.rs')
 INTERFACE = ['set_site_identity', 'set_commo', 'reg_learner_action', 'EnsureSetup', 'WaitForStartup',
              'PrepareForShutdown', 'IsLeader', 'GetLeaderHint', 'SetPreferredLeader',
-             'RegisterLeaderChangeCallback', 'IsRpcReady', 'IsDisconnected', 'SiteId', 'PartitionId',
-             'CommitIndex', 'Start', 'OnRequestVote', 'OnAppendEntries', 'OnInstallSnapshot']
+             'RegisterLeaderChangeCallback', 'IsRpcReady', 'SiteId', 'PartitionId',
+             'CommitIndex', 'Start', 'ServeVote', 'ServeAppendEntries', 'ServeInstallSnapshot']
 KERNEL_CALLED = ['ApplyThreadLoop', 'BindReplicationWakeOwner', 'FailStop', 'InitializeSnapshotManagerLocked',
                  'InstallSnapshotReplyAccepted', 'OnInstallSnapshotLocked', 'SetupInternal', 'StartElectionTimer']
 
@@ -161,6 +161,12 @@ pub unsafe extern "C" fn raft_server_new() -> *mut RaftServerBase {
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_delete(s: *mut RaftServerBase) {
     (*s).Shutdown();
+    // Drops this server's row from the C++ commo table -- see set_commo, and
+    // commo_of in server.cc. Here rather than in the shim's destructor so the
+    // key is released in the same function that frees what it keys on, and
+    // while the pointer is still live: Shutdown reaches no kernel that
+    // resolves the communicator.
+    raft_unbind_commo(s);
     drop(rusty::Box::from_raw(s));
 }'''
 LOOPS_RS = '''// --- The two fiber loops, entered from the spawn kernels.
