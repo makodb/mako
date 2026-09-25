@@ -19,8 +19,24 @@ Measured 2026-09-25 on `srpc-subtree-forward`. Sizes are line counts.
 | C++ → Rust | `extern "C"` exports over `RaftServerBase`, in `server_exports.h` | 31 |
 | Rust → C++ | kernels declared `extern "C"` in the Rust, defined in `server.cc` | 78 |
 
-A kernel is C++ that has a reason to be: the reactor, threads, wire types,
-third-party APIs. An export is a method of the Rust server the C++ shim calls.
+An export is a method of the Rust server the C++ shim calls. A kernel is the
+other direction — and most of them are C++ because of where the boundary sits
+today, NOT because Rust cannot express them. Worth being exact, because an
+earlier revision of this file said "the reactor, threads" and both are wrong:
+
+| kernel group | why it is C++ | irreducible? |
+|---|---|---|
+| `raft_queue_wake_job`, `raft_spawn_heartbeat_loop`, `raft_fiber_sleep_us` | the Raft server runs on the C++ lane's reactor | **no** — the Rust lane has one, and `transport.rs` already uses it |
+| `raft_spawn_apply_thread`, `raft_apply_thread_join` | `using RaftStdThread = ::std::thread` (`server.h:336`) | **no** — `std::thread::spawn`; CLAUDE.md lists this migration |
+| `raft_monotonic_now_us` | it is `clock_gettime` | **no** — `std::time::Instant` |
+| `raft_command_*`, `raft_byte_string_*` | `janus::Command` is Mako's object, put on at Submit and taken off at apply | yes, while Mako owns it |
+| `raft_bind_commo` | `dynamic_cast` | yes — no Rust spelling |
+| the 8 `raft_catch` sites | catching a C++ throw | yes |
+| the four embedder `std::function`s | the embedder supplies them | yes |
+| rocksdb, yaml-cpp | third-party C++ | yes |
+
+So the boundary is where it is because the server has not moved lanes yet
+(stage 3e), not because of a language limit.
 
 ## How C++ idioms appear in Rust
 
