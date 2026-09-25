@@ -1132,13 +1132,13 @@ target_link_libraries(cluster PUBLIC srpc pthread btree_port vec_port rc_port st
 # cargo staticlib: its C ABI (src/deptran/raft/server_exports.h) is what the C++
 # shim `class RaftServer` and the hand-written kernels in server.cc call, and it
 # calls those kernels back. cargo builds it into this build tree; the pinned
-# rusty-rustc facade (src/srpc/rusty-rustc) is its only dependency.
+# rusty-rustc facade (src/rusty-rustc) is its only dependency.
 set(RAFT_RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/raft-cargo")
 set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft.a")
 file(GLOB RAFT_RUST_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/src/*.rs
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/rusty-rustc/src/*.rs
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/rusty-cpp-markers/src/*.rs)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-cpp-markers/src/*.rs)
 # The Rust half of the lab build. -DRAFT_TEST=ON defines RAFT_TEST_CORO for
 # the C++ side; the crate needs the matching cargo feature or the two halves
 # disagree about whether they are in lab mode (the leader no-op and the lab's
@@ -1155,7 +1155,7 @@ add_custom_command(
             ${RAFT_RUST_FEATURES}
     DEPENDS ${RAFT_RUST_SOURCES}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
-            ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/rusty-rustc/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/Cargo.toml
     COMMENT "cargo build: the Raft server (src/deptran/raft) as libraft.a"
     VERBATIM)
 add_custom_target(raft_rust_build DEPENDS ${RAFT_RUST_LIB})

@@ -77,7 +77,7 @@ jobs:
           # Canonical Rust lives at its layout-mirroring path (base/misc/reactor/
           # rpc), not a flat src/. Only lib.rs remains under src/.
           canonical_input="src/srpc/rpc/frame_codec.rs"
-          runtime_facade_input="src/srpc/rusty-rustc/src/lib.rs"
+          runtime_facade_input="src/rusty-rustc/src/lib.rs"
           type_map_input="src/srpc/rust-type-map.toml"
           module_index_input="src/srpc/cpp-module-index.toml"
 
