@@ -275,9 +275,11 @@ the same seam that works today, rather than inventing a new one.
 
       **What did NOT move, and the measurement that says it cannot yet.** The
       plan wanted a Rust `RaftCommo` owning the peers and their
-      `srpc::Client`s. `src/deptran/raft/src/commo.rs` is that type and its
-      tests pass, but it is **not wired into the send path**, because it
-      cannot be without Raft owning its own reactor:
+      `srpc::Client`s. A first pass wrote one (`src/deptran/raft/src/commo.rs`)
+      and it was **never wired into anything**; it has since been deleted,
+      because 3d superseded its stated purpose and a second unused peer table
+      in the tree was worse than no second peer table. The reason it could not
+      be wired up stands, and is what 3e is for:
 
       - The live connections belong to the **C++ lane** (`libsrpc.a`,
         transpiled). A Rust-lane `srpc::client::Client` cannot adopt them: the
@@ -310,9 +312,9 @@ the same seam that works today, rather than inventing a new one.
 
       The field removal is what THIS item delivers. The peer table itself
       moved in 3d, which landed later and by a different route than this
-      bullet expected; `src/deptran/raft/src/commo.rs` is not that table and
-      never became one -- it is the sketch of where Rust-lane clients will
-      live, which is 3e.
+      bullet expected. The `commo.rs` this bullet was written around is gone:
+      it was never that table, never became one, and once 3d landed it was
+      simply an unused second answer to a solved question.
 
 - [x] **3b. MEASURED: no redesign needed. The wake already satisfies this.**
       Traced end to end:
@@ -355,7 +357,8 @@ the same seam that works today, rather than inventing a new one.
       which is the same reactor question as 3a -- not before.
 
 - [x] **3d. DONE. `Communicator`'s data is Rust now, written once and
-      compiled twice.** This item was opened as "commo.rs flattened an
+      compiled twice.** This item was opened against a now-deleted file, as
+      "commo.rs flattened an
       inheritance hierarchy and the flattening is not faithful". Both halves
       of that are addressed, and by a route the item did not anticipate.
 
@@ -382,7 +385,7 @@ the same seam that works today, rather than inventing a new one.
       check the two agreed. Now a partition owns site ids and the peer table
       owns peers, so there is one place a peer can be and
       `peers_for_partition(par_id)` is genuinely partition-aware -- which
-      `commo.rs`'s `peers_except(self_site_id)` never was.
+      the deleted `commo.rs`'s `peers_except(self_site_id)` never was.
 
       **Four things measured on the way, worth knowing before the next one:**
 
@@ -418,8 +421,8 @@ the same seam that works today, rather than inventing a new one.
       **What this does NOT do.** The peers it holds are still C++-lane
       `std::shared_ptr<RpcPeer>`, carried as opaque bytes
       (`rusty::CommoPeerPtr`) and never followed. Rust owning the *clients*
-      is the lane move, 3e. `src/deptran/raft/src/commo.rs` remains the
-      landing pad for that and is not the same type as `PeerRegistry`.
+      is the lane move, 3e -- which starts from `PeerRegistry`'s shape rather
+      than from a sketch, since the sketch (`commo.rs`) has been deleted.
 
 - [ ] **3e. The lane move: Raft's reactor becomes the Rust one.** This is what
       stages 1a and 1b were really about, restated where it belongs. It is the

@@ -83,12 +83,6 @@ output = "src/deptran/raft/src/lab_snapshot_cases.rs"
 # rpcgen has cpp and python emitters only (src/srpc/pylib/simplerpcgen), and
 # adding a Rust one would put mako's code inside the vendored subtree, where
 # it would conflict on every pull. Four RPCs is cheaper to write than that.
-# Raft's communicator, the Rust half. Hand-authored: unlike rpc.rs there is no
-# .rpc file to generate it from.
-[[module]]
-kind = "canonical"
-output = "src/deptran/raft/src/commo.rs"
-
 [[module]]
 kind = "canonical"
 output = "src/deptran/raft/src/rpc.rs"
