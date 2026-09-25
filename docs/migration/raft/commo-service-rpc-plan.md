@@ -539,22 +539,34 @@ the same seam that works today, rather than inventing a new one.
   **THE CUTOVER, SITE BY SITE.** Everything above is built and green; this
   is the remaining change, and it is ONE change. Measured 2026-09-25.
 
-  *Rust — the sends stop being kernels and call the transport:*
+  *Rust — the sends stop being kernels and call the transport.*
 
-  Rust --- the sends stop being kernels and call the transport:
+  Each entry is **site**, then what is there today, then what replaces it.
 
-  - `server_cc.rs:18` --- `PendingAppend.response_: rusty::RaftResponsePtr`
-    `Pending<AppendEntriesResponse>`
-  - `server_cc.rs:490`, `:1539` --- `raft_append_response_read` kernel  gone; read the Rust `Pending`
-  - `server_cc.rs:1224-1237` --- `sent_response` local, a C++ carrier  the `Pending` the transport
-    returns
-  - `server_cc.rs:1164` --- `raft_phase1_load_and_send_snapshot`
-    `transport.send_install_snapshot`
-  - `server_cc.rs:1226` --- `raft_phase1_send_append`  `transport.send_append_entries`
-  - `server_h.rs:2635` --- `raft_bind_replication_poll`  `transport.poll_thread()`
-  - `server_h.rs:3890` --- `raft_commo_set_network_enabled`  `transport.set_network_enabled`
-  - `server_h.rs:4141` --- `raft_broadcast_vote_and_wait` + `raft_vote_quorum_snapshot`
-    `transport.broadcast_vote` then `tally.outcome()`
+  - `server_cc.rs:18`
+    - now: `PendingAppend.response_: rusty::RaftResponsePtr`
+    - then: `Pending<AppendEntriesResponse>`
+  - `server_cc.rs:490`, `:1539`
+    - now: the `raft_append_response_read` kernel
+    - then: gone; read the Rust `Pending`
+  - `server_cc.rs:1224-1237`
+    - now: a `sent_response` C++ carrier
+    - then: the `Pending` the transport returns
+  - `server_cc.rs:1164`
+    - now: `raft_phase1_load_and_send_snapshot`
+    - then: `transport.send_install_snapshot`
+  - `server_cc.rs:1226`
+    - now: `raft_phase1_send_append`
+    - then: `transport.send_append_entries`
+  - `server_h.rs:2635`
+    - now: `raft_bind_replication_poll`
+    - then: `transport.poll_thread()`
+  - `server_h.rs:3890`
+    - now: `raft_commo_set_network_enabled`
+    - then: `transport.set_network_enabled`
+  - `server_h.rs:4141`
+    - now: `raft_broadcast_vote_and_wait` + `raft_vote_quorum_snapshot`
+    - then: `transport.broadcast_vote`, then `tally.outcome()`
 
   The server cannot HOLD the transport: `RaftTransport` is `!Send`, and
   `RaftServerBase` must stay `Send + Sync` or the service loses its trait
@@ -592,12 +604,14 @@ the same seam that works today, rather than inventing a new one.
 
   Each is coupled to the fiber runtime, not to the clients:
 
-  - `raft_broadcast_vote_and_wait` --- it does not only send, it WAITS, and the wait is
-    `raft_fiber_sleep_us` -- a C++ fiber sleep. Rerouting it requires
-    the election fiber to be a Rust fiber
-  - `raft_bind_replication_poll` --- hands a C++ `Arc<PollThread>` to the wake gate, whose `owner_` is
-    `rusty::RaftPollThreadPtr`. That is stage 1a's field-type change
-  - the heartbeat loop --- `raft_spawn_heartbeat_loop` creates a C++ fiber on the C++ reactor
+  - `raft_broadcast_vote_and_wait` --- it does not only send, it WAITS, and
+    the wait is `raft_fiber_sleep_us`, a C++ fiber sleep. Rerouting it
+    requires the election fiber to be a Rust fiber.
+  - `raft_bind_replication_poll` --- hands a C++ `Arc<PollThread>` to the
+    wake gate, whose `owner_` is `rusty::RaftPollThreadPtr`. That is stage
+    1a's field-type change.
+  - the heartbeat loop --- `raft_spawn_heartbeat_loop` creates a C++ fiber
+    on the C++ reactor.
 
   So the real unit is **"Raft's fibers move lanes, and the sends follow"**,
   not "the commo moves". The three send paths are already Rust
