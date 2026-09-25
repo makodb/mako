@@ -81,18 +81,32 @@ Nothing after step 2 should begin until step 2's number is known.
       Verified it is reached only as a function POINTER passed to
       `srpc_fiber_init`, and no C or C++ file names the symbol, so the export
       bought nothing. Now 0 in the rustc lane, 1 in the C++ lane; was 1 and 1.
-- [ ] **0b.** Stop double-compiling the C kernels: `src/srpc/build.rs` builds
-      them into `libsrpc_native.a` while `src/srpc-cmake/CMakeLists.txt` builds
-      the same sources again. Use `static:-bundle=`. Both already read the same
-      manifest, so only the link directive changes. Still open.
-- [ ] **0c.** Pass `CC` to cargo (the raft-crate custom command, currently
-      `CMakeLists.txt:1182-1189`) so `srpc_rand.c`'s `__clang__` branch is
-      identical in both copies. `build.rs` already declares
-      `cargo:rerun-if-env-changed=CC`, so it will honour one the moment CMake
-      sets it -- which is what makes this two lines rather than a design.
-      Worth doing WITH 0b: they are the same defect seen from two ends, one
-      source compiled twice with possibly different preprocessor branches.
-      Still open.
+- [x] **0b, 0c. DONE, and they were a correctness defect rather than the
+      tidy-up this listed.** The nine kernels in
+      `src/srpc/scripts/native-kernel-sources.txt` were compiled TWICE and by
+      DIFFERENT compilers, and both copies reached the binary: `build.rs` with
+      `$CC` (falling back to `cc`, which is gcc-15 here) into a
+      `libsrpc_native.a` bundled through the rlib into `libraft.a`, and
+      `src/srpc-cmake` with `CMAKE_C_COMPILER` (clang) into `libsrpc.a`.
+
+      Measured before touching it: 10 of the 12 external symbols in just
+      `srpc_rand.o` and `srpc_timing.o` were defined in both archives. That
+      matters because `srpc_rand.c:17` branches on `__clang__`, so the binary
+      carried two DIFFERENT implementations of `srpc_rand_raw` -- clang's, a
+      `pthread_key_t` seed malloc'd per thread and freed by the key destructor
+      at thread exit; gcc's, a `_Thread_local` seed with no teardown -- and
+      archive order decided which shipped. (`srpc_timing.c:32`'s `__clang__`
+      arm is unreachable on x86_64, so that one was harmless.)
+
+      0c passes `CC` and `AR` through to cargo, so the two copies are the same
+      code. 0b emits `static:-bundle=` from `build.rs`, so cargo stops copying
+      the objects into the rlib: `libraft.a` now holds 0 of the 9, down from
+      9. The final link still resolves them, and srpc's own 281 tests pass in
+      the gate, which is where that would break first.
+
+      This is the second edit to the vendored subtree on this branch, after
+      0a's `#[no_mangle]` removal, and like that one it belongs upstream
+      rather than here.
 - [x] **0d. DONE.** `src/srpc/{base,misc,reactor,rpc,src}/*.rs` are in the
       libraft rebuild glob (`CMakeLists.txt`, `RAFT_RUST_SOURCES`). This
       stopped being cosmetic when the Raft crate gained a dependency on the
