@@ -34,17 +34,23 @@
 // The other three -- the network-enabled flag, the poll-thread handle and the
 // AppendEntries send -- are here.
 
-// NOT A FAITHFUL PORT YET -- see stage 3d of
-// docs/migration/raft/commo-service-rpc-plan.md. `janus::Communicator` is a
-// data-carrying base with two subclasses (MultiPaxosCommo, RaftCommo), and
-// Rust has no implementation inheritance. This file FLATTENED that base into
-// the one subclass it needed and dropped three of its five members, including
-// `partition_peers_`. So `peers_except` is NOT `PeersForPartition(par_id)`:
-// it has no partition dimension and would reach every peer in the process.
-// Harmless today -- nothing calls this file, and the lab suite runs one
-// partition -- and wrong the moment either changes. The replacement is a
-// composed `PeerRegistry` plus a trait, which is gated on Paxos and on the
-// reactor decision in 3a.
+// THIS IS NOT THE PEER TABLE. That is `PeerRegistry`, in
+// src/deptran/communicator.h, written once as Rust and compiled into both
+// lanes; it is partition-aware, it is what `Communicator` holds, and it is
+// what both engines run against today (stage 3d of
+// docs/migration/raft/commo-service-rpc-plan.md).
+//
+// What THIS file is for is the one thing PeerRegistry deliberately does not
+// do: hold RUST-LANE clients. PeerRegistry carries
+// `std::shared_ptr<RpcPeer>` as opaque bytes and never follows one, because
+// the connections belong to the C++ lane. Moving them is the lane swap, 3e.
+//
+// So treat the type below as a sketch of that destination and not as
+// anything to build on as it stands. In particular `peers_except` is NOT
+// `PeersForPartition(par_id)` -- it has no partition dimension at all -- and
+// when 3e lands this should be rebuilt on PeerRegistry's shape rather than
+// extended. Nothing calls it; the tests assert only that the shape is
+// `Send + Sync`, which is the property 3e needs from it.
 
 #![allow(dead_code)]
 

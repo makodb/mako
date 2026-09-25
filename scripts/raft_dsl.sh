@@ -58,6 +58,7 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft_main_helper.cc|raft_main.argument_casefold"
   "src/deptran/raft_main_helper.cc|raft_main.group_mode"
   "src/deptran/raft_main_helper.cc|raft_main.group_mode_argument_predicate"
+  "src/deptran/communicator.h|deptran_communicator.peer_registry"
   "src/deptran/scheduler.h|deptran_scheduler.tx_log_server"
 )
 # Distinct carrier paths named by EXPECTED_BLOCKS -- used to decide whether a
@@ -252,11 +253,14 @@ fi
 FULL_INVENTORY=0
 if ((${#FILES[@]} == 0)); then
   FULL_INVENTORY=1
-  # scheduler.h holds the TxLogServer interface both engines implement. It is
-  # named explicitly, like raft_main_helper.cc, because it is not under
-  # src/deptran/raft -- see the note in src/deptran/raft/rust-modules.toml.
+  # Two carriers here are deptran-level rather than Raft-level and are named
+  # explicitly, like raft_main_helper.cc, because they are not under
+  # src/deptran/raft: scheduler.h holds the TxLogServer interface both engines
+  # implement, and communicator.h holds the peer table both communicators are
+  # built on. See the note in src/deptran/raft/rust-modules.toml; when a third
+  # arrives, that is the point to give deptran a manifest of its own.
   SEARCH_ROOTS=(src/deptran/raft src/deptran/raft_main_helper.cc
-                src/deptran/scheduler.h)
+                src/deptran/scheduler.h src/deptran/communicator.h)
   if [[ -d src/deptran/fpga_raft ]]; then
     SEARCH_ROOTS=(src/deptran/fpga_raft "${SEARCH_ROOTS[@]}")
   fi
@@ -285,7 +289,7 @@ for index in "${!FILES[@]}"; do
   FILES[${index}]="${FILES[${index}]#./}"
   file="${FILES[${index}]}"
   case "${file}" in
-    src/deptran/fpga_raft/*|src/deptran/raft/*|src/deptran/raft_main_helper.cc|src/deptran/scheduler.h) ;;
+    src/deptran/fpga_raft/*|src/deptran/raft/*|src/deptran/raft_main_helper.cc|src/deptran/scheduler.h|src/deptran/communicator.h) ;;
     *)
       echo "refusing non-Raft carrier: ${file}" >&2
       exit 2

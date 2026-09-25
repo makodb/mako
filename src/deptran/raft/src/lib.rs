@@ -9,6 +9,7 @@
 pub mod channel_transport_hpp;
 pub mod commo;
 pub mod commo_h;
+pub mod communicator_h;
 pub mod frame_cc;
 pub mod lab;
 pub mod lab_cases;

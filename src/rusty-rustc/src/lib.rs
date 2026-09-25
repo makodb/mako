@@ -390,6 +390,33 @@ pub struct RaftCommand {
     _opaque: [u8; 24],
 }
 
+/// `std::shared_ptr<janus::RpcPeer>`: 16 bytes, align 8, pinned by the
+/// static_assert next to PeerRegistry in src/deptran/communicator.h.
+///
+/// This is deptran's, not Raft's: the peer table it belongs to
+/// (`PeerRegistry`) is written once as Rust and translated into the C++ that
+/// BOTH MultiPaxosCommo and RaftCommo use, so the carrier has to resolve for
+/// rustc even though only the C++ lane runs the code today.
+#[derive(Default)]
+#[repr(C)]
+pub struct CommoPeerPtr {
+    _align: [u64; 0],
+    _opaque: [u8; 16],
+}
+
+impl Clone for CommoPeerPtr {
+    /// PeerRegistry's lookups hand back copies, and in the C++ lane `.clone()`
+    /// lowers to `rusty::clone(x)` -- shared_ptr's copy constructor, a
+    /// refcount bump. There is no rustc-lane meaning: a bitwise copy of a
+    /// shared_ptr double-frees. Deriving Clone would make that silent, so this
+    /// panics instead. It is unreachable while the registry runs only in C++,
+    /// and it stays a loud failure rather than a quiet corruption if that
+    /// changes before the carrier becomes a real Rust type.
+    fn clone(&self) -> Self {
+        panic!("CommoPeerPtr::clone has no rustc-lane meaning -- see src/deptran/communicator.h")
+    }
+}
+
 /// Opaque rustc-only models of RaftServer's remaining C++-typed fields, so
 /// `RaftServerBase` (src/deptran/raft/server.h) can NAME every one of them as
 /// a DSL field. Same contract as `RaftCommand` above: a Rust body may hold,

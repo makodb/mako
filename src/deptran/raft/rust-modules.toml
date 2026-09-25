@@ -123,6 +123,14 @@ cpp_module = "raft.raft_main_helper_cc"
 source = "src/deptran/raft_main_helper.cc"
 output = "src/deptran/raft/src/raft_main_helper_cc.rs"
 
+# Deptran-level, not Raft-level: communicator.h holds the peer table BOTH
+# engines' communicators are built on. Carried here for the same reason
+# scheduler.h is -- deptran has no manifest of its own.
+[[module]]
+cpp_module = "raft.communicator_h"
+source = "src/deptran/communicator.h"
+output = "src/deptran/raft/src/communicator_h.rs"
+
 # Not under src/deptran/raft, like raft_main_helper.cc above. scheduler.h holds
 # the TxLogServer interface, which BOTH engines implement -- it is carried by
 # this manifest only because deptran has no manifest of its own. If Paxos ever
