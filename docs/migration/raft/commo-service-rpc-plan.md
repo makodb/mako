@@ -563,13 +563,36 @@ the same seam that works today, rather than inventing a new one.
       `raft_main_helper.cc`: the `kSingleGroup` stub servers (`:370-395`) and
       the two `GetPollThreadWorker` users (`:471`, `:540`) -- that is 4b.
 
-      **Why it cannot be split**, and this is the measurement rather than a
-      preference: all of it hangs off `svr_poll_thread_worker_`
-      (`raft_worker.cc:344`, `:350`, `:379`). Move the service alone and the
-      inbound path is on a Rust poll thread while the outbound path is still
-      on the C++ one -- two reactors, which is adding a thread. Move a single
-      send alone and there are two network-enabled flags, with the C++ sends
-      reading the one the lab suite is no longer setting.
+      **The CODE can land incrementally; the SWITCH cannot.** Found while
+      doing it, and it is better than this item first said. Each site can
+      prefer the transport and fall back to its kernel:
+
+          match crate::transport::transport_of(this) {
+              Some(t) => t.set_network_enabled(!disconnect),
+              None    => raft_commo_set_network_enabled(this, !disconnect),
+          }
+
+      `transport_of` returns None until `raft_transport_serve` binds one, so
+      every rerouted site is inert until the worker builds a transport. The
+      plumbing therefore lands verified, a site at a time, and the behavioural
+      switch stays a single call. `Disconnect` (`server_h.rs:3890`) is already
+      rerouted this way.
+
+      **But three sites are coupled to the FIBER runtime, not to the
+      clients** -- which is a sharper constraint than "they share a poll
+      thread", and it is what actually decides the unit of work:
+
+      | site | what couples it |
+      |---|---|
+      | `raft_broadcast_vote_and_wait` | it does not only send, it WAITS, and the wait is `raft_fiber_sleep_us` -- a C++ fiber sleep. Rerouting it requires the election fiber to be a Rust fiber |
+      | `raft_bind_replication_poll` | hands a C++ `Arc<PollThread>` to the wake gate, whose `owner_` is `rusty::RaftPollThreadPtr`. That is stage 1a's field-type change |
+      | the heartbeat loop | `raft_spawn_heartbeat_loop` creates a C++ fiber on the C++ reactor |
+
+      So the real unit is **"Raft's fibers move lanes, and the sends follow"**,
+      not "the commo moves". The three send paths are already Rust
+      (`transport.rs`) and proven over TCP; what is left is the runtime they
+      run on. That also explains why 1a belongs here: the wake gate's handles
+      have to become Rust types in the same change as the fibers.
 
       *Done when:* RaftLabTest 25/25 with Raft's RPC served entirely by the
       Rust lane, AND the before/after RPC benchmark in the verification rules

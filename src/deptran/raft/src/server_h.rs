@@ -3887,7 +3887,15 @@ impl RaftServerBase {
             raft_verify(
                 self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
                     != disconnect);
-            raft_commo_set_network_enabled(this, !disconnect);
+            // Whichever lane is doing the sending owns the flag. Until the
+            // worker binds a transport (stage 3e's switch), transport_of is
+            // None and this is the C++ kernel exactly as before; after it,
+            // the C++ commo is no longer the thing sending, so setting its
+            // flag would be setting a flag nobody reads.
+            match crate::transport::transport_of(this) {
+                Some(transport) => transport.set_network_enabled(!disconnect),
+                None => raft_commo_set_network_enabled(this, !disconnect),
+            }
         }
         self.disconnected_
             .store(disconnect, rusty::sync::atomic::Ordering::Release);

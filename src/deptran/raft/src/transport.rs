@@ -110,6 +110,8 @@ pub struct RaftTransport {
     // None until serve() binds. Both ends sit on `poll`, which is the whole
     // reason this is one type -- see the note at the top of the file.
     server: Option<Server>,
+    // Which server serve() bound to, so delete() can unbind it.
+    served: Option<*const RaftServerBase>,
     peers: HashMap<u16, Arc<Client>>,
     partitions: HashMap<u32, Vec<u16>>,
     network_enabled: AtomicBool,
@@ -120,6 +122,7 @@ impl RaftTransport {
         RaftTransport {
             poll: PollThread::create(),
             server: None,
+            served: None,
             peers: HashMap::new(),
             partitions: HashMap::new(),
             network_enabled: AtomicBool::new(true),
@@ -146,6 +149,7 @@ impl RaftTransport {
             return ret;
         }
         self.server = Some(rpc_server);
+        self.served = Some(server);
         0
     }
 
@@ -425,6 +429,67 @@ impl Default for RaftTransport {
 }
 
 // ===========================================================================
+// The transport, resolved from the server that owns it.
+//
+// WHY A REGISTRY AND NOT A FIELD. The server cannot hold this. RaftTransport
+// is !Send -- its clients belong to a poll thread -- while RaftServerBase must
+// stay Send + Sync or RaftRpcService loses srpc's trait bound and the Rust
+// lane cannot dispatch to Raft at all. A `*mut RaftTransport` field would drag
+// the server back to !Send, and wrapping it in a newtype that asserts Send
+// would smuggle the claim into the struct where nobody reads it.
+//
+// So it lives here, the same shape stage 3a gave the C++ side (commo_of in
+// server.cc) and for the same reason. The assertion below is the real one and
+// it is stated once, in the open.
+// ===========================================================================
+
+/// A transport pointer, as the registry holds it.
+struct TransportPtr(*mut RaftTransport);
+
+// SAFETY: this asserts that the POINTER may be handed between threads, not
+// that the transport may be USED from any thread. Every use goes through
+// transport_of on the poll thread that created it -- the heartbeat fiber and
+// the election fiber both run there -- except set_network_enabled, which
+// touches one atomic. That is the same contract the C++ commo table has had
+// since 3a; it is written here because this is where it can be read.
+unsafe impl Send for TransportPtr {}
+unsafe impl Sync for TransportPtr {}
+
+fn registry() -> &'static std::sync::RwLock<HashMap<usize, TransportPtr>> {
+    static TRANSPORTS: std::sync::OnceLock<
+        std::sync::RwLock<HashMap<usize, TransportPtr>>,
+    > = std::sync::OnceLock::new();
+    TRANSPORTS.get_or_init(|| std::sync::RwLock::new(HashMap::new()))
+}
+
+/// Bind `transport` to `server`. Called once, before any send.
+pub fn bind_transport(server: *const RaftServerBase, transport: *mut RaftTransport) {
+    if let Ok(mut table) = registry().write() {
+        table.insert(server as usize, TransportPtr(transport));
+    }
+}
+
+pub fn unbind_transport(server: *const RaftServerBase) {
+    if let Ok(mut table) = registry().write() {
+        table.remove(&(server as usize));
+    }
+}
+
+/// The transport bound to `server`, or None if the cutover has not reached
+/// this server -- which is how a mixed build stays runnable.
+///
+/// # Safety
+/// The returned reference is valid while the worker holds the transport, and
+/// must be used on the poll thread that created it.
+pub unsafe fn transport_of(server: *const RaftServerBase)
+    -> Option<&'static RaftTransport> {
+    let table = registry().read().ok()?;
+    let raw = table.get(&(server as usize))?.0;
+    // SAFETY: the caller's contract, and bind/unbind bracket the lifetime.
+    Some(unsafe { &*raw })
+}
+
+// ===========================================================================
 // The C ABI, for the worker that owns a transport.
 //
 // Hand-written rather than emitted by scripts/raft_gen_exports.py: that
@@ -452,7 +517,14 @@ pub unsafe extern "C" fn raft_transport_new() -> *mut RaftTransport {
 pub unsafe extern "C" fn raft_transport_serve(t: *mut RaftTransport,
                                               server: *mut RaftServerBase,
                                               bind_addr: *const i8) -> i32 {
-    unsafe { (*t).serve(server, bind_addr) }
+    let ret = unsafe { (*t).serve(server, bind_addr) };
+    if ret == 0 {
+        // Binding here and not earlier is what makes the switch atomic: until
+        // the server is actually being served, transport_of returns None and
+        // every send site falls back to its C++ kernel.
+        bind_transport(server, t);
+    }
+    ret
 }
 
 /// # Safety
@@ -484,7 +556,11 @@ pub unsafe extern "C" fn raft_transport_drain(t: *mut RaftTransport,
 /// `t` came from raft_transport_new and is not used afterwards.
 #[no_mangle]
 pub unsafe extern "C" fn raft_transport_delete(t: *mut RaftTransport) {
-    drop(unsafe { Box::from_raw(t) });
+    let owned = unsafe { Box::from_raw(t) };
+    if let Some(server) = owned.served {
+        unbind_transport(server);
+    }
+    drop(owned);
 }
 
 #[cfg(test)]
