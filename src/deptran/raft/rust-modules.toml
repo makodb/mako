@@ -102,6 +102,12 @@ cpp_module = "raft.server_pods_h"
 source = "src/deptran/raft/server.h"
 output = "src/deptran/raft/src/server_pods_h.rs"
 
+# Raft's RPC transport on the Rust srpc lane (stage 3e): the poll thread, the
+# server and the peer clients, as one object because the cut cannot be split.
+[[module]]
+kind = "canonical"
+output = "src/deptran/raft/src/transport.rs"
+
 # Raft's RPC service on the Rust srpc lane (stage 3e). Hand-authored: the
 # handler bodies are the part rpcgen deliberately does not emit, the same seam
 # C++ keeps between RaftService and RaftServiceImpl.
