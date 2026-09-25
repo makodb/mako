@@ -33,7 +33,7 @@ cd "${REPOSITORY_ROOT}" || exit 2
 MODE="check"
 TRANSPILER="${REPOSITORY_ROOT}/third-party/rusty-cpp/target/release/rusty-cpp-transpiler"
 RUSTC_BIN="${RUSTC:-rustc}"
-REQUIRED_RUSTY_CPP_COMMIT="77c3ad5a9ab69190ee361986caf579afa2eae570"
+REQUIRED_RUSTY_CPP_COMMIT="1689f4380c25d13455cbe1f9eb8e5ff94e49861c"
 FILES=()
 EXPECTED_BLOCKS=(
   "src/deptran/raft/channel_transport.hpp|raft_channel_transport.scalar_decisions"

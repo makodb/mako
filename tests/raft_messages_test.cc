@@ -2,6 +2,8 @@
 // self-contained and srpc-boundary types round-trip cleanly.
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
+#include <new>
 #include <memory>
 #include <type_traits>
 
@@ -60,11 +62,16 @@ struct LegacyInstallSnapshotReplyLayout {
   static_assert(sizeof(type) == sizeof(legacy));          \
   static_assert(alignof(type) == alignof(legacy))
 
-// The pinned inline emitter must preserve C++ default member initializers.
-// These assertions keep plain default initialization a hard Stage-1 contract.
+// These structs carry no default member initializers. The transpiler branch
+// srpc needs has no value-init mechanism, so the guarantee that their members
+// start at zero rests entirely on every C++ site spelling `T{}` rather than
+// `T x;`. scripts/raft_field_census.py enforces that spelling; the assertions
+// here pin what `T{}` is then obliged to do, which holds only for a trivial
+// aggregate.
 #define ASSERT_ZERO_DEFAULT_CONTRACT(type)                        \
   static_assert(std::is_default_constructible_v<type>);           \
-  static_assert(!std::is_trivially_default_constructible_v<type>)
+  static_assert(std::is_aggregate_v<type>);                       \
+  static_assert(std::is_trivially_default_constructible_v<type>)
 
 static_assert(std::is_aggregate_v<VoteReq>);
 static_assert(std::is_aggregate_v<VoteReply>);
@@ -170,6 +177,21 @@ ASSERT_FIELD_OFFSET(InstallSnapshotReply, LegacyInstallSnapshotReplyLayout,
 #undef ASSERT_POD_LAYOUT
 #undef ASSERT_ZERO_DEFAULT_CONTRACT
 
+// Value-initializing an aggregate zero-initializes the entire object, padding
+// included, whether or not its members have initializers of their own.
+// Constructing into 0xFF-filled storage proves that, rather than trusting a
+// stack frame that happened to arrive zeroed.
+template <typename T>
+void ExpectBraceInitZeroesEveryByte(const char* name) {
+  alignas(T) unsigned char storage[sizeof(T)];
+  std::memset(storage, 0xFF, sizeof(storage));
+  T* value = ::new (static_cast<void*>(storage)) T{};
+  for (size_t i = 0; i < sizeof(T); ++i) {
+    EXPECT_EQ(storage[i], 0u) << name << " byte " << i << " survived 0xFF fill";
+  }
+  value->~T();
+}
+
 }  // namespace
 
 TEST(RaftMessagesTest, DefaultConstructAllRequestReplyTypes) {
@@ -194,23 +216,33 @@ TEST(RaftMessagesTest, DefaultConstructAllRequestReplyTypes) {
   { InstallSnapshotReply r{};EXPECT_EQ(r.term_out, 0u); }
 }
 
-TEST(RaftMessagesTest, PlainDefaultInitializationPreservesZeroContract) {
-  VoteReq vote;
+TEST(RaftMessagesTest, BraceInitializationZeroesEveryByte) {
+  ExpectBraceInitZeroesEveryByte<VoteReq>("VoteReq");
+  ExpectBraceInitZeroesEveryByte<VoteReply>("VoteReply");
+  ExpectBraceInitZeroesEveryByte<AppendEntriesReply>("AppendEntriesReply");
+  ExpectBraceInitZeroesEveryByte<EmptyAppendEntriesReq>("EmptyAppendEntriesReq");
+  ExpectBraceInitZeroesEveryByte<EmptyAppendEntriesReply>(
+      "EmptyAppendEntriesReply");
+  ExpectBraceInitZeroesEveryByte<InstallSnapshotReply>("InstallSnapshotReply");
+}
+
+TEST(RaftMessagesTest, BraceInitializationPreservesZeroContract) {
+  VoteReq vote{};
   EXPECT_EQ(vote.last_log_idx, 0u);
   EXPECT_EQ(vote.last_log_term, 0);
   EXPECT_EQ(vote.candidate_site_id, 0u);
   EXPECT_EQ(vote.current_term, 0);
 
-  VoteReply vote_reply;
+  VoteReply vote_reply{};
   EXPECT_EQ(vote_reply.max_ballot, 0);
   EXPECT_FALSE(vote_reply.vote_granted);
 
-  AppendEntriesReply append;
+  AppendEntriesReply append{};
   EXPECT_EQ(append.follower_append_ok, 0u);
   EXPECT_EQ(append.follower_current_term, 0u);
   EXPECT_EQ(append.follower_last_log_index, 0u);
 
-  EmptyAppendEntriesReq heartbeat;
+  EmptyAppendEntriesReq heartbeat{};
   EXPECT_EQ(heartbeat.slot, 0u);
   EXPECT_EQ(heartbeat.ballot, 0);
   EXPECT_EQ(heartbeat.leader_current_term, 0u);
@@ -219,12 +251,12 @@ TEST(RaftMessagesTest, PlainDefaultInitializationPreservesZeroContract) {
   EXPECT_EQ(heartbeat.leader_prev_log_term, 0u);
   EXPECT_EQ(heartbeat.leader_commit_index, 0u);
 
-  EmptyAppendEntriesReply heartbeat_reply;
+  EmptyAppendEntriesReply heartbeat_reply{};
   EXPECT_EQ(heartbeat_reply.follower_append_ok, 0u);
   EXPECT_EQ(heartbeat_reply.follower_current_term, 0u);
   EXPECT_EQ(heartbeat_reply.follower_last_log_index, 0u);
 
-  InstallSnapshotReply snapshot_reply;
+  InstallSnapshotReply snapshot_reply{};
   EXPECT_EQ(snapshot_reply.term_out, 0u);
 }
 

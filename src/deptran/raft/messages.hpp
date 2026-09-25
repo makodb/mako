@@ -41,21 +41,25 @@ namespace raft {
 // ---------------------------------------------------------------------------
 // RequestVote
 // ---------------------------------------------------------------------------
-// Rust DSL owns scalar-only wire values. `cpp_value_init` preserves each
-// incumbent C++ default member initializer without adding constructors, and
-// `cpp_no_auto_traits` avoids introducing C++-only marker members.
+// Rust DSL owns scalar-only wire values. `cpp_no_auto_traits` avoids
+// introducing C++-only marker members.
+//
+// These fields carry NO per-member `{}` initializer. Every C++ site that makes
+// one of these uses the brace form -- `return VoteReply{}`,
+// `send_vote(2, VoteReq{})` -- which value-initializes every member of an
+// aggregate whether or not the members have their own initializers, so the
+// zeroing is already guaranteed at each site. A BARE declaration
+// (`VoteReply reply;`) would leave them indeterminate, so
+// scripts/raft_field_census.py refuses one; the error paths above are exactly
+// where a garbage reply would be read as a real vote or append result.
 #if RUSTYCPP_RUST
 #[cfg_attr(any(), cpp_no_auto_traits)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
 #[repr(C)]
 pub struct VoteReq {
-    #[cfg_attr(any(), cpp_value_init)]
     pub last_log_idx: u64,
-    #[cfg_attr(any(), cpp_value_init)]
     pub last_log_term: i64,
-    #[cfg_attr(any(), cpp_value_init)]
     pub candidate_site_id: u16,
-    #[cfg_attr(any(), cpp_value_init)]
     pub current_term: i64,
 }
 
@@ -63,26 +67,24 @@ pub struct VoteReq {
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
 #[repr(C)]
 pub struct VoteReply {
-    #[cfg_attr(any(), cpp_value_init)]
     pub max_ballot: i64,
-    #[cfg_attr(any(), cpp_value_init)]
     pub vote_granted: bool,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_messages.vote version=1 rust_sha256=7d1f301d8ea2cf70923ecb86ad6327b797440ce7b46c4210ff44acd6a90f5829*/
+/*RUSTYCPP:GEN-BEGIN id=raft_messages.vote version=1 rust_sha256=1d5e1587b33379a356bc4cab45155ef031e06ba8d443180b4a4777aa5a8fc9e3*/
 struct VoteReq;
 struct VoteReply;
 
 struct VoteReq {
-    uint64_t last_log_idx{};
-    int64_t last_log_term{};
-    uint16_t candidate_site_id{};
-    int64_t current_term{};
+    uint64_t last_log_idx;
+    int64_t last_log_term;
+    uint16_t candidate_site_id;
+    int64_t current_term;
 };
 
 struct VoteReply {
-    int64_t max_ballot{};
-    bool vote_granted{};
+    int64_t max_ballot;
+    bool vote_granted;
 };
 /*RUSTYCPP:GEN-END id=raft_messages.vote*/
 
@@ -110,21 +112,18 @@ struct AppendEntriesReq {
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
 #[repr(C)]
 pub struct AppendEntriesReply {
-    #[cfg_attr(any(), cpp_value_init)]
     pub follower_append_ok: u64,
-    #[cfg_attr(any(), cpp_value_init)]
     pub follower_current_term: u64,
-    #[cfg_attr(any(), cpp_value_init)]
     pub follower_last_log_index: u64,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_messages.append_entries_reply version=1 rust_sha256=69785cc8c2904284407fcb78ae4224ca0da4aab708889891f493f4409fbee1c8*/
+/*RUSTYCPP:GEN-BEGIN id=raft_messages.append_entries_reply version=1 rust_sha256=ffcbffce24b181685836aeccd2ebd421703ae5225e714f68c8f692509495b14c*/
 struct AppendEntriesReply;
 
 struct AppendEntriesReply {
-    uint64_t follower_append_ok{};
-    uint64_t follower_current_term{};
-    uint64_t follower_last_log_index{};
+    uint64_t follower_append_ok;
+    uint64_t follower_current_term;
+    uint64_t follower_last_log_index;
 };
 /*RUSTYCPP:GEN-END id=raft_messages.append_entries_reply*/
 
@@ -136,19 +135,12 @@ struct AppendEntriesReply {
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
 #[repr(C)]
 pub struct EmptyAppendEntriesReq {
-    #[cfg_attr(any(), cpp_value_init)]
     pub slot: u64,
-    #[cfg_attr(any(), cpp_value_init)]
     pub ballot: i64,
-    #[cfg_attr(any(), cpp_value_init)]
     pub leader_current_term: u64,
-    #[cfg_attr(any(), cpp_value_init)]
     pub leader_site_id: u16,
-    #[cfg_attr(any(), cpp_value_init)]
     pub leader_prev_log_index: u64,
-    #[cfg_attr(any(), cpp_value_init)]
     pub leader_prev_log_term: u64,
-    #[cfg_attr(any(), cpp_value_init)]
     pub leader_commit_index: u64,
 }
 
@@ -156,32 +148,29 @@ pub struct EmptyAppendEntriesReq {
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
 #[repr(C)]
 pub struct EmptyAppendEntriesReply {
-    #[cfg_attr(any(), cpp_value_init)]
     pub follower_append_ok: u64,
-    #[cfg_attr(any(), cpp_value_init)]
     pub follower_current_term: u64,
-    #[cfg_attr(any(), cpp_value_init)]
     pub follower_last_log_index: u64,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_messages.heartbeat version=1 rust_sha256=85079dd17ac6fad13990e43a763a50aa0c52d7c4823ff50a53eb889fc438f9df*/
+/*RUSTYCPP:GEN-BEGIN id=raft_messages.heartbeat version=1 rust_sha256=9486ebc57768ca09270b74276279c8ae8a16612c603da5eeb4055966cac005b1*/
 struct EmptyAppendEntriesReq;
 struct EmptyAppendEntriesReply;
 
 struct EmptyAppendEntriesReq {
-    uint64_t slot{};
-    int64_t ballot{};
-    uint64_t leader_current_term{};
-    uint16_t leader_site_id{};
-    uint64_t leader_prev_log_index{};
-    uint64_t leader_prev_log_term{};
-    uint64_t leader_commit_index{};
+    uint64_t slot;
+    int64_t ballot;
+    uint64_t leader_current_term;
+    uint16_t leader_site_id;
+    uint64_t leader_prev_log_index;
+    uint64_t leader_prev_log_term;
+    uint64_t leader_commit_index;
 };
 
 struct EmptyAppendEntriesReply {
-    uint64_t follower_append_ok{};
-    uint64_t follower_current_term{};
-    uint64_t follower_last_log_index{};
+    uint64_t follower_append_ok;
+    uint64_t follower_current_term;
+    uint64_t follower_last_log_index;
 };
 /*RUSTYCPP:GEN-END id=raft_messages.heartbeat*/
 
@@ -201,15 +190,14 @@ struct InstallSnapshotReq {
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Default, Eq, PartialEq))]
 #[repr(C)]
 pub struct InstallSnapshotReply {
-    #[cfg_attr(any(), cpp_value_init)]
     pub term_out: u64,
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_messages.install_snapshot_reply version=1 rust_sha256=1750f8f5cd49db43490faabae9daa7597a7e0a316882e89f9067415b70c18a39*/
+/*RUSTYCPP:GEN-BEGIN id=raft_messages.install_snapshot_reply version=1 rust_sha256=715ebd5405f75969c371f1dc5e546ae46035358190eeb8a7a2a785b60a287854*/
 struct InstallSnapshotReply;
 
 struct InstallSnapshotReply {
-    uint64_t term_out{};
+    uint64_t term_out;
 };
 /*RUSTYCPP:GEN-END id=raft_messages.install_snapshot_reply*/
 

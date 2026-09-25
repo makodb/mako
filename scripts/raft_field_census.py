@@ -79,7 +79,60 @@ def main():
         print('same-named fields of OTHER objects (not counted):')
         for (rel, recv, field), n in sorted(other.items()):
             print(f'  {rel}: {recv}->{field} x{n}')
-    return 1 if server_sites else 0
+    bare_wire = bare_wire_declarations()
+    if bare_wire:
+        print('BARE declarations of a scalar wire struct (indeterminate members):')
+        for rel, lineno, text in bare_wire:
+            print(f'  {rel}:{lineno}: {text}')
+    return 1 if (server_sites or bare_wire) else 0
+
+
+# The six scalar wire structs src/deptran/raft/messages.hpp generates. Their
+# fields carry no per-member `{}` initializer: the transpiler branch srpc
+# requires has no value-init mechanism at all, and carrying a fork of it for
+# this alone is not worth a transpiler pin nobody else shares.
+#
+# That is safe only while every C++ site uses the BRACE form. `VoteReply{}`
+# value-initializes every member of an aggregate whether or not the members
+# have initializers of their own; `VoteReply reply;` leaves them
+# indeterminate. The places that would bite are the error paths in
+# channel_transport.hpp -- `if (r.is_err()) return VoteReply{};` -- where a
+# garbage reply would be read as a real Raft vote or append result.
+#
+# So the guarantee moves here, from a transpiler attribute to a rule this
+# repository owns and can explain.
+WIRE_VALUE_STRUCTS = (
+    'VoteReq', 'VoteReply', 'AppendEntriesReply',
+    'EmptyAppendEntriesReq', 'EmptyAppendEntriesReply', 'InstallSnapshotReply',
+)
+
+
+def bare_wire_declarations():
+    """C++ sites default-initializing a wire struct instead of brace-init."""
+    names = '|'.join(WIRE_VALUE_STRUCTS)
+    # `VoteReply reply;` but not `VoteReply reply{};`, not a parameter
+    # (`, VoteReply reply)`), not a forward declaration (`struct VoteReply;`)
+    # and not a return type (`VoteReply handle_vote(...)`).
+    #
+    # The leading alternation is a statement boundary, not a line start, so
+    # `{ VoteReply reply; ... }` written on one line is caught too. `(` and
+    # `,` are deliberately absent from it: those introduce a parameter, which
+    # is initialized by its argument and is not the hazard.
+    pattern = re.compile(
+        r'(?:^|[{};])\s*(?:const\s+)?(' + names + r')\s+([A-Za-z_]\w*)\s*;')
+    found = []
+    for root, _, files in os.walk(os.path.join(ROOT, 'src/deptran')):
+        for fn in sorted(files):
+            if not fn.endswith(('.cc', '.h', '.hpp', '.cpp')):
+                continue
+            full = os.path.join(root, fn)
+            rel = os.path.relpath(full, ROOT)
+            with open(full, errors='replace') as source:
+                for lineno, line in enumerate(source, 1):
+                    stripped = line.split('//')[0]
+                    if pattern.search(stripped):
+                        found.append((rel, lineno, stripped.strip()))
+    return found
 
 
 if __name__ == '__main__':
