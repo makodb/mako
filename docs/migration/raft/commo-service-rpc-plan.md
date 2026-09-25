@@ -640,9 +640,26 @@ the same seam that works today, rather than inventing a new one.
       and remains no obstacle, because the SEND does not take the manager.
 ### Stage 4 — push the boundary outward
 
-- [ ] **4a.** Collapse the exports -- **31** of them as of stage 3c, not the
-      25 this item was written against; 3c removed four and added three, and
-      the count had drifted before that -- to the two byte-shaped embedder
+- [ ] **4a. AS WRITTEN IT IS NOT ACHIEVABLE, and the reason is Paxos, not
+      3e.** Measured: four of the 31 exports -- `set_commo`,
+      `set_site_identity`, `reg_learner_action` and `IsLeader` -- are called
+      from `server_worker.cc`, `paxos_worker.cc` and `paxos/coordinator.cc`,
+      because they are on `TxLogServer`/`RaftSpecific`
+      (`scheduler.h:112`, `:113`, `:117`, `:142`), the interface Paxos also
+      implements. Collapsing those to two byte-shaped functions means
+      changing the shared interface, which is the one thing this branch is
+      not allowed to do.
+
+      What IS achievable, once 3e lands: the Raft-only exports. Of the 31,
+      the lifecycle and leadership ones (`EnsureSetup`, `WaitForStartup`,
+      `PrepareForShutdown`, `GetLeaderHint`, `SetPreferredLeader`,
+      `RegisterLeaderChangeCallback`, `CommitIndex`, `Start`) are reached
+      only from `raft_worker.cc` and `raft_main_helper.cc`, both of which
+      move with the fibers; the three `Serve*` go with `service.cc`. So this
+      item should be rewritten as "collapse the Raft-only exports and leave
+      the four shared ones", with a measured count, rather than as "31 to 2".
+
+      Original text: collapse the exports to the two byte-shaped embedder
       functions: `RaftWorker::Submit(const char*, int, uint32_t)` in
       (`raft_worker.cc:760`), `(log, len, par_id, slot_id, queue)` out
       (`:1071-1074`).
@@ -655,8 +672,26 @@ the same seam that works today, rather than inventing a new one.
 
 ### Stage 5 — retire the C++ slice
 
-- [ ] **5a.** Remove `RaftService`/`RaftProxy` from `rcc_rpc.rpc`, regenerate.
-- [ ] **5b.** *Done when:* the other three services are byte-identical and all
+- [ ] **5a. Strictly after 3e's switch, and here is what holds it.**
+      Measured: removing `RaftService` from the `.rpc` deletes the class
+      `RaftServiceImpl` inherits from (`service.h:20`) and the four return
+      types its handlers name (`service.cc:43`, `:58`, `:77`, `:101`).
+      Removing `RaftProxy` deletes what `commo.cc` sends through -- 12 uses
+      across its four methods. So both files must already be gone, which is
+      3e's switch and nothing earlier. The Rust replacements exist and are
+      tested (`rpc.rs`'s proxy and dispatch, `transport.rs`'s three send
+      paths), so this is sequencing, not missing work.
+
+      Remove `RaftService`/`RaftProxy` from `rcc_rpc.rpc`, regenerate.
+- [ ] **5b. Half of this is already automated by 2b.** The "all twelve RPC
+      ids are unchanged" half no longer needs a human to check: the frozen
+      table (`src/deptran/raft/rpc_ids.txt`) pins Raft's four and the build
+      fails if any other service in `rcc_rpc.h` has drawn one of them -- which
+      is precisely the collision 5a opens up. What is left to check by hand is
+      the other half, that the three remaining services' generated C++ is
+      byte-identical, and that is a `git diff` on `rcc_rpc.h` after 5a.
+
+      *Done when:* the other three services are byte-identical and all
       twelve RPC ids are unchanged.
 
 ### Verification that must pass at every stage
@@ -739,9 +774,17 @@ from the checklist within two stages, so it is deliberately not that any more.
 | 2a, 2c, 2d | done. The RPC slice is generated from `rcc_rpc.rpc` and its ids checked against `rcc_rpc.h` on every build |
 | 2b | half done; the rest is gated on 5a |
 | 3a, 3b, 3c, 3d | done. `RaftServerBase` is `Send + Sync`, the gate is one ABI crossing, and `Communicator`'s data is Rust |
-| **3e** | **next, and the last structural step.** The lane move |
-| 4a, 4b | after 3e; 4b is folded into it |
-| 5 | after 4 |
+| **3e** | **half built.** Service, transport, all three send paths, C ABI and registry are in and verified; what remains is coupled to the fiber runtime |
+| 4a | not achievable as written, and Paxos is the reason, not 3e — four of the 31 exports are on the interface Paxos implements |
+| 4b | folded into 3e |
+| 5a, 5b | strictly after 3e's switch; 5b's id half is already automated by 2b |
+
+Every open item above carries a measured reason rather than a dependency
+note. The one that decides the rest is 3e, and its remaining work is not
+"move the commo" — the commo's three send paths are already Rust and proven
+over TCP. It is "move Raft's fibers", because the vote broadcast waits on a
+C++ fiber sleep, the wake gate holds a C++ PollThread, and the heartbeat loop
+is a C++ fiber.
 
 Read 3e first. Everything left of it is done; everything right of it depends
 on it.
