@@ -9,7 +9,7 @@
 use srpc::client::{AsyncReplyCallback, Client};
 use srpc::serializable::{
     make_source_proxy_buffer, BinaryReadArchive, BinaryWriteArchive,
-    Deserialize, Serialize,
+    BufferSource, Deserialize, Serialize,
 };
 use srpc::server::{
     reject_malformed_request, Request, WeakServerConnection,
@@ -68,6 +68,98 @@ impl Deserialize for VoteResponse {
     fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
         self.max_ballot.deserialize(ar);
         self.vote_granted.deserialize(ar);
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct AppendEntriesRequest {
+    pub slot: u64,
+    pub ballot: i64,
+    pub leader_current_term: u64,
+    pub leader_site_id: u16,
+    pub leader_prev_log_index: u64,
+    pub leader_prev_log_term: u64,
+    pub leader_commit_index: u64,
+    pub cmd: Vec<u8>,
+    pub leader_next_log_term: u64,
+}
+
+impl Serialize for AppendEntriesRequest {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        self.slot.serialize(ar);
+        self.ballot.serialize(ar);
+        self.leader_current_term.serialize(ar);
+        self.leader_site_id.serialize(ar);
+        self.leader_prev_log_index.serialize(ar);
+        self.leader_prev_log_term.serialize(ar);
+        self.leader_commit_index.serialize(ar);
+        self.cmd.serialize(ar);
+        self.leader_next_log_term.serialize(ar);
+    }
+}
+
+// AppendEntriesRequest has an opaque field (cmd), so it
+// decodes from the whole frame rather than a streaming archive.
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct AppendEntriesResponse {
+    pub follower_append_ok: u64,
+    pub follower_current_term: u64,
+    pub follower_last_log_index: u64,
+}
+
+impl Serialize for AppendEntriesResponse {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        self.follower_append_ok.serialize(ar);
+        self.follower_current_term.serialize(ar);
+        self.follower_last_log_index.serialize(ar);
+    }
+}
+
+impl Deserialize for AppendEntriesResponse {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        self.follower_append_ok.deserialize(ar);
+        self.follower_current_term.deserialize(ar);
+        self.follower_last_log_index.deserialize(ar);
+    }
+}
+
+impl AppendEntriesRequest {
+    /// Decode from the whole request frame.
+    ///
+    /// `cmd` is opaque to Rust -- C++ owns its
+    /// encoding and it carries no length -- but its extent is
+    /// arithmetic: it runs from byte 50 to `len - 8`,
+    /// because every field around it is fixed-width. The bytes
+    /// are copied verbatim and handed back to C++ untouched.
+    pub fn from_body(body: &[u8]) -> Option<Self> {
+        if body.len() < 50 + 8 {
+            return None;
+        }
+        let mut src = BufferSource::new(body.as_ptr(), body.len());
+        let mut ar = BinaryReadArchive::new(unsafe {
+            make_source_proxy_buffer(&raw mut src)
+        });
+        let mut out = Self::default();
+        out.slot.deserialize(&mut ar);
+        out.ballot.deserialize(&mut ar);
+        out.leader_current_term.deserialize(&mut ar);
+        out.leader_site_id.deserialize(&mut ar);
+        out.leader_prev_log_index.deserialize(&mut ar);
+        out.leader_prev_log_term.deserialize(&mut ar);
+        out.leader_commit_index.deserialize(&mut ar);
+        if ar.failed() {
+            return None;
+        }
+        out.cmd =
+            body[50..body.len() - 8].to_vec();
+        let mut tail = body.len() - 8;
+        out.leader_next_log_term = u64::from_le_bytes(
+            body[tail..tail + 8].try_into().ok()?,
+        );
+        tail += 8;
+        let _ = tail;
+        Some(out)
     }
 }
 
@@ -179,6 +271,7 @@ impl Deserialize for InstallSnapshotResponse {
 /// to it. An `Err(code)` is replied as that code with no body.
 pub trait RaftHandler: Send + Sync {
     fn vote(&self, req: &VoteRequest) -> Result<VoteResponse, i32>;
+    fn append_entries(&self, req: &AppendEntriesRequest) -> Result<AppendEntriesResponse, i32>;
     fn empty_append_entries(&self, req: &EmptyAppendEntriesRequest) -> Result<EmptyAppendEntriesResponse, i32>;
     fn install_snapshot(&self, req: &InstallSnapshotRequest) -> Result<InstallSnapshotResponse, i32>;
 }
@@ -202,6 +295,13 @@ pub fn dispatch<H: RaftHandler>(
                 return;
             }
             reply_with(weak_sconn, req, handler.vote(&typed));
+        }
+        rpc_id::APPENDENTRIES => {
+            let Some(typed) = AppendEntriesRequest::from_body(&req.body) else {
+                reject_malformed_request(req, weak_sconn);
+                return;
+            };
+            reply_with(weak_sconn, req, handler.append_entries(&typed));
         }
         rpc_id::EMPTYAPPENDENTRIES => {
             let mut typed = EmptyAppendEntriesRequest::default();
@@ -267,6 +367,19 @@ impl<'a> RaftProxy<'a> {
         let payload = req.clone();
         self.client.request_async(
             rpc_id::VOTE,
+            move |ar: &mut BinaryWriteArchive| payload.serialize(ar),
+            on_reply,
+        )
+    }
+
+    pub fn append_entries_async(
+        &self,
+        req: &AppendEntriesRequest,
+        on_reply: AsyncReplyCallback,
+    ) -> Result<(), i32> {
+        let payload = req.clone();
+        self.client.request_async(
+            rpc_id::APPENDENTRIES,
             move |ar: &mut BinaryWriteArchive| payload.serialize(ar),
             on_reply,
         )

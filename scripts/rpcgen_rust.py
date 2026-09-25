@@ -72,12 +72,33 @@ TYPE_MAP = {
 # (server.cc:1705-1726) and which writes [v32 kind][payload] with NO length
 # prefix (serializable_envelope.rs:111-120). A field list for it would compile
 # and silently misparse every replicating AppendEntries, so refuse instead.
-UNFRAMED = {
-    "Command": (
-        "janus::Command is an unframed SerializableEnvelope whose contents "
-        "Raft reads; it needs the repeated (u32 len, bytes, i64 term) framing "
-        "from stage 2c of docs/migration/raft/commo-service-rpc-plan.md"
-    ),
+# Types Rust must not parse, carried as opaque bytes instead.
+#
+# janus::Command is an srpc::SerializableEnvelope: it writes
+# [v32 kind][payload] with NO length prefix (serializable_envelope.rs:111-120)
+# and can only be delimited by dispatching through SerializableRegistry, which
+# is C++-owned. So Rust cannot decode it and cannot skip it either --
+# generically.
+#
+# It does not have to. When every field BEFORE an opaque one is fixed-width and
+# every field AFTER it is too, the opaque field's extent is arithmetic: it runs
+# from a constant offset to `len - (width of the trailing fields)`. Rust copies
+# that range verbatim, C++ keeps writing and reading the envelope exactly as it
+# does today, and the wire does not change at all.
+#
+# That is the case for AppendEntries: `cmd` sits at a fixed offset 50 with only
+# `leaderNextLogTerm` (8 bytes) after it. If a variable-length field is ever
+# added after an opaque one, this stops holding and the emitter says so.
+OPAQUE = {
+    "Command": "janus::Command, an unframed SerializableEnvelope owned by C++",
+}
+
+# Wire widths, for computing an opaque field's extent. Only fixed-width types
+# belong here; a type absent from this map cannot bound an opaque field.
+WIDTH = {
+    "uint64_t": 8, "uint32_t": 4, "uint16_t": 2,
+    "int64_t": 8, "int32_t": 4,
+    "ballot_t": 8, "parid_t": 4, "siteid_t": 2, "bool_t": 1,
 }
 
 
@@ -92,8 +113,8 @@ def pascal(name: str) -> str:
 
 
 def rust_type(cpp: str) -> str:
-    if cpp in UNFRAMED:
-        raise Unframed(cpp, UNFRAMED[cpp])
+    if cpp in OPAQUE:
+        return "Vec<u8>"
     if cpp not in TYPE_MAP:
         raise SystemExit(
             f"rpcgen_rust: no Rust mapping for wire type {cpp!r}. Add it to "
@@ -148,7 +169,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("use srpc::client::{AsyncReplyCallback, Client};")
     w("use srpc::serializable::{")
     w("    make_source_proxy_buffer, BinaryReadArchive, BinaryWriteArchive,")
-    w("    Deserialize, Serialize,")
+    w("    BufferSource, Deserialize, Serialize,")
     w("};")
     w("use srpc::server::{")
     w("    reject_malformed_request, Request, WeakServerConnection,")
@@ -165,19 +186,50 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
 
     emitted = []
     for func in service.functions:
+        raw_in = [(a.type, a.name) for a in func.input]
+        opaque_at = [i for i, (t, _) in enumerate(raw_in) if t in OPAQUE]
+        layout = None
+        if opaque_at:
+            if len(opaque_at) > 1:
+                skipped.append(
+                    f"{func.name}: {len(opaque_at)} opaque fields; only one "
+                    f"can be bounded by arithmetic"
+                )
+                continue
+            at = opaque_at[0]
+            before = [t for t, _ in raw_in[:at]]
+            after = [t for t, _ in raw_in[at + 1:]]
+            unbounded = [t for t in before + after if t not in WIDTH]
+            if unbounded:
+                skipped.append(
+                    f"{func.name}: opaque {raw_in[at][0]} is not bounded -- "
+                    f"variable-width field(s) {sorted(set(unbounded))} sit "
+                    f"beside it, so its extent is not arithmetic"
+                )
+                continue
+            layout = {
+                "index": at,
+                "name": snake(raw_in[at][1]),
+                "prefix": sum(WIDTH[t] for t in before),
+                "suffix": sum(WIDTH[t] for t in after),
+                "after": [(snake(n), rust_type(t), WIDTH[t])
+                          for t, n in raw_in[at + 1:]],
+            }
+
         try:
-            fields_in = [(snake(n), rust_type(t)) for t, n in
-                         ((a.type, a.name) for a in func.input)]
+            fields_in = [(snake(n), rust_type(t)) for t, n in raw_in]
             fields_out = [(snake(n), rust_type(t)) for t, n in
                           ((a.type, a.name) for a in func.output)]
-        except Unframed as exc:
-            skipped.append(f"{func.name}: {exc}")
-            continue
+        except SystemExit:
+            raise
 
         req, resp = f"{func.name}Request", f"{func.name}Response"
+        opaque_note = layout
         for struct, fields in ((req, fields_in), (resp, fields_out)):
             derive = "Clone, Debug, Default, PartialEq, Eq"
-            if all(t != "String" for _, t in fields):
+            # Copy only when every field is a scalar. String and Vec<u8> (an
+            # opaque payload) both own heap storage.
+            if all(t not in ("String", "Vec<u8>") for _, t in fields):
                 derive = "Clone, Copy, " + derive.split(", ", 1)[1]
             w(f"#[derive({derive})]")
             w(f"pub struct {struct} {{")
@@ -192,6 +244,13 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
             w("    }")
             w("}")
             w("")
+            if struct == req and opaque_note is not None:
+                # No streaming Deserialize: an opaque field's end is only
+                # knowable from the whole frame. See from_body below.
+                w(f"// {struct} has an opaque field ({opaque_note['name']}), so it")
+                w("// decodes from the whole frame rather than a streaming archive.")
+                w("")
+                continue
             w(f"impl Deserialize for {struct} {{")
             w("    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {")
             for fname, _ in fields:
@@ -199,7 +258,45 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
             w("    }")
             w("}")
             w("")
-        emitted.append((func.name, req, resp))
+
+        if opaque_note is not None:
+            pre, suf = opaque_note["prefix"], opaque_note["suffix"]
+            w(f"impl {req} {{")
+            w("    /// Decode from the whole request frame.")
+            w("    ///")
+            w(f"    /// `{opaque_note['name']}` is opaque to Rust -- C++ owns its")
+            w("    /// encoding and it carries no length -- but its extent is")
+            w(f"    /// arithmetic: it runs from byte {pre} to `len - {suf}`,")
+            w("    /// because every field around it is fixed-width. The bytes")
+            w("    /// are copied verbatim and handed back to C++ untouched.")
+            w("    pub fn from_body(body: &[u8]) -> Option<Self> {")
+            w(f"        if body.len() < {pre} + {suf} {{")
+            w("            return None;")
+            w("        }")
+            w("        let mut src = BufferSource::new(body.as_ptr(), body.len());")
+            w("        let mut ar = BinaryReadArchive::new(unsafe {")
+            w("            make_source_proxy_buffer(&raw mut src)")
+            w("        });")
+            w("        let mut out = Self::default();")
+            for fname, _ in fields_in[:opaque_note["index"]]:
+                w(f"        out.{fname}.deserialize(&mut ar);")
+            w("        if ar.failed() {")
+            w("            return None;")
+            w("        }")
+            w(f"        out.{opaque_note['name']} =")
+            w(f"            body[{pre}..body.len() - {suf}].to_vec();")
+            w(f"        let mut tail = body.len() - {suf};")
+            for fname, ftype, width in opaque_note["after"]:
+                w(f"        out.{fname} = {ftype}::from_le_bytes(")
+                w(f"            body[tail..tail + {width}].try_into().ok()?,")
+                w("        );")
+                w(f"        tail += {width};")
+            w("        let _ = tail;")
+            w("        Some(out)")
+            w("    }")
+            w("}")
+            w("")
+        emitted.append((func.name, req, resp, opaque_note))
 
     # The handler trait. `Result<Resp, i32>` mirrors the C++ signature
     # `rusty::Result<RpcVoteResponse, srpc::i32>`: an Err is replied as a bare
@@ -207,7 +304,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w(f"/// The {service.name} service. Implement this; `dispatch` below routes")
     w("/// to it. An `Err(code)` is replied as that code with no body.")
     w(f"pub trait {service.name}Handler: Send + Sync {{")
-    for name, req, resp in emitted:
+    for name, req, resp, _ in emitted:
         w(f"    fn {snake(name)}(&self, req: &{req}) -> Result<{resp}, i32>;")
     w("}")
     w("")
@@ -226,17 +323,25 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("    weak_sconn: &WeakServerConnection,")
     w(") {")
     w("    match rpc_id {")
-    for name, req_t, resp_t in emitted:
+    for name, req_t, resp_t, opaque in emitted:
         w(f"        rpc_id::{name.upper()} => {{")
-        w(f"            let mut typed = {req_t}::default();")
-        w("            let mut ar = BinaryReadArchive::new(unsafe {")
-        w("                make_source_proxy_buffer(&req.src as *const _ as *mut _)")
-        w("            });")
-        w("            typed.deserialize(&mut ar);")
-        w("            if ar.failed() {")
-        w("                reject_malformed_request(req, weak_sconn);")
-        w("                return;")
-        w("            }")
+        if opaque is not None:
+            # Decoded from the whole frame: the opaque field's end is only
+            # knowable there, not from a streaming archive.
+            w(f"            let Some(typed) = {req_t}::from_body(&req.body) else {{")
+            w("                reject_malformed_request(req, weak_sconn);")
+            w("                return;")
+            w("            };")
+        else:
+            w(f"            let mut typed = {req_t}::default();")
+            w("            let mut ar = BinaryReadArchive::new(unsafe {")
+            w("                make_source_proxy_buffer(&req.src as *const _ as *mut _)")
+            w("            });")
+            w("            typed.deserialize(&mut ar);")
+            w("            if ar.failed() {")
+            w("                reject_malformed_request(req, weak_sconn);")
+            w("                return;")
+            w("            }")
         w(f"            reply_with(weak_sconn, req, handler.{snake(name)}(&typed));")
         w("        }")
     w("        // Unknown id: ignore, matching the generated C++ dispatch.")
@@ -273,7 +378,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("}")
     w("")
     w(f"impl<'a> {service.name}Proxy<'a> {{")
-    for name, req_t, resp_t in emitted:
+    for name, req_t, resp_t, _ in emitted:
         w(f"    pub fn {snake(name)}_async(")
         w("        &self,")
         w(f"        req: &{req_t},")
