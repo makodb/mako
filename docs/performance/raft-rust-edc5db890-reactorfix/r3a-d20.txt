@@ -1,0 +1,3 @@
+build_arm_sep21    t1  applied/s   240.0  p50    2724  p90    3356  p99    3677  gaps 0 dup 0 ooo 0
+build_arm_head     t1  applied/s   239.9  p50    5096  p90    7543  p99   10160  gaps 0 dup 0 ooo 0
+build_arm_fixed    t1  applied/s   240.0  p50    2742  p90    3364  p99    3728  gaps 0 dup 0 ooo 0

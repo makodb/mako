@@ -1,0 +1,9 @@
+build_arm_sep21    t1  applied/s   240.0  p50    2696  p90    3281  p99    3680  gaps 0 dup 0 ooo 0
+build_arm_head     t1  applied/s   239.9  p50    3265  p90    5497  p99    7112  gaps 0 dup 0 ooo 0
+build_arm_fixed    t1  applied/s   240.0  p50    2745  p90    3355  p99    3715  gaps 0 dup 0 ooo 0
+build_arm_sep21    t2  applied/s   240.0  p50    2715  p90    3313  p99    3646  gaps 0 dup 0 ooo 0
+build_arm_head     t2  applied/s   239.9  p50    3300  p90    5117  p99    6938  gaps 0 dup 0 ooo 0
+build_arm_fixed    t2  applied/s   240.0  p50    2749  p90    3366  p99    3668  gaps 0 dup 0 ooo 0
+build_arm_sep21    t3  applied/s   240.0  p50    2720  p90    3392  p99    3766  gaps 0 dup 0 ooo 0
+build_arm_head     t3  applied/s   240.0  p50    3253  p90    5093  p99    7172  gaps 0 dup 0 ooo 0
+build_arm_fixed    t3  applied/s   240.0  p50    2703  p90    3339  p99    3640  gaps 0 dup 0 ooo 0
