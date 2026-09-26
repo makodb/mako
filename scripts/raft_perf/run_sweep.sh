@@ -17,6 +17,7 @@
 #   ./run_sweep.sh --phase summary     # (re)write SUMMARY.md for an existing dir
 #   ./run_sweep.sh --output <dir>      # override the output root
 #   ./run_sweep.sh --trials N          # repetitions per point (default 3)
+#   ./run_sweep.sh --only SUBSTR       # only points whose name contains SUBSTR
 #   ./run_sweep.sh --help
 #
 # Output: <root>/sweep_<timestamp>/{rate,payload,batch,groups}/*.json + SUMMARY.md
@@ -46,6 +47,10 @@ QUICK=false
 DRY_RUN=false
 TRIALS=3
 TRIALS_EXPLICIT=false
+# --only SUBSTR: run just the points whose name (minus commit and trial)
+# contains SUBSTR, e.g. "p1-single-pb4096". Same flags as the full sweep by
+# construction, so its records compare against a full sweep's.
+ONLY=""
 
 # This must come BEFORE the first `declare -A` below: on bash 3.2 (still
 # /bin/bash on macOS) the script would otherwise die at the declaration with
@@ -216,6 +221,7 @@ while [[ $# -gt 0 ]]; do
         --phase)    PHASE="$2"; shift 2 ;;
         --output)   OUTPUT_DIR="$2"; shift 2 ;;
         --trials)   TRIALS="$2"; TRIALS_EXPLICIT=true; shift 2 ;;
+        --only)     ONLY="$2"; shift 2 ;;
         --quick)    QUICK=true; shift ;;
         --dry-run)  DRY_RUN=true; shift ;;
         --help|-h)  usage 0 ;;
@@ -315,6 +321,9 @@ run_point() {
         # than overwriting some and leaving others stale — which would blend
         # two commits into one curve.
         local name="${COMMIT_HASH}-p${parts}-${group}-pb${payload}-b${batch}-r${rate}-t${trial}"
+        if [ -n "$ONLY" ] && [[ "p${parts}-${group}-pb${payload}-b${batch}-r${rate}" != *"$ONLY"* ]]; then
+            continue
+        fi
         RUNS_PLANNED=$((RUNS_PLANNED + 1))
         if $DRY_RUN; then
             echo "  [DRY-RUN] $phase $name"

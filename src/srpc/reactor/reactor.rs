@@ -1531,8 +1531,17 @@ impl Reactor {
                     if ready_events.len() > n_before {
                         found_ready_events = true;
                     }
+                    // A timeout wakes its waiter while deliberately preserving
+                    // EventStatus::TIMEOUT for the resumed fiber to inspect.
+                    // It is nevertheless terminal and must leave the polling
+                    // queue.  Retaining it here leaks one Arc per timed wait
+                    // and makes every subsequent reactor pass rescan all past
+                    // timeouts. Short waits under saturation can hit this path
+                    // when their deadline passes between the readiness scan
+                    // above and check_timeout below.
                     waiting_guard.retain(move |ev: &Arc<dyn EventPollable>| -> bool {
-                        (*ev).status() != EventStatus::DONE
+                        let status = (*ev).status();
+                        status != EventStatus::DONE && status != EventStatus::TIMEOUT
                     });
                 }
                 {
@@ -1550,8 +1559,10 @@ impl Reactor {
                     if ready_events.len() > n_before {
                         found_ready_events = true;
                     }
+                    // Same rule as waiting_events_ above: TIMEOUT is terminal.
                     composite_guard.retain(move |ev: &Arc<dyn EventPollable>| -> bool {
-                        (*ev).status() != EventStatus::DONE
+                        let status = (*ev).status();
+                        status != EventStatus::DONE && status != EventStatus::TIMEOUT
                     });
                 }
                 if do_check_timeout {

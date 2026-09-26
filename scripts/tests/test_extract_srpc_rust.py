@@ -890,7 +890,13 @@ class CheckedInCanaryTests(unittest.TestCase):
         # own doc comment already said "It is never called from Rust or C++".
         # Exactly one counted line, since the replacement explanation is a
         # comment and this census skips those.
-        self.assertEqual(canonical_lines, 14878)
+        # 14878 -> 14880: +2, reactor.rs run_loop's two retain predicates get
+        # back `status != EventStatus::TIMEOUT` (one `let status` line each),
+        # a Mako-local fix (7f52613fe) the subtree pull dropped. Without it
+        # every timed-out event stays in waiting_events_/composite_events_ and
+        # is rescanned on every reactor pass: the Raft latency regression in
+        # docs/performance/raft-latency-regression.md.
+        self.assertEqual(canonical_lines, 14880)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
