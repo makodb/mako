@@ -20,8 +20,14 @@ RaftWorker::Submit(const char* log, int len, uint32_t par_id)   C++ embedder
   ▼
 raft_server_start  (export)                      one C ABI call
   ▼
-RaftServerBase::Start                            Rust
-  │  appends to state_.raft_log_, then RequestReplication()
+RaftServerBase::Start                            Rust   server_h.rs:4779
+  │  under mtx_: IsLeaderLocked() or REJECTED with index=term=0; then
+  │  raft_command_clone_into (C++ KERNEL, server.cc:579) to copy the
+  │  Command; then AppendLocal (server_h.rs:4329), which is what actually
+  │  appends to state_.raft_log_
+  │  RequestReplication() runs AFTER the lock scope closes (:4806-4807),
+  │  not inside it — it wakes the gate, and waking it under mtx_ would
+  │  invert the order the heartbeat fiber takes them in
   ▼
 heartbeat_loop_body → heartbeat_phase1_body      Rust   server_cc.rs:1083
   │  per follower: decide entries, build the request
@@ -43,7 +49,13 @@ Client::request_async(rpc_id::APPENDENTRIES, …)  srpc Rust   client.rs:1515
                                                  bytes on the wire
 ```
 
-Nothing C++ is touched on this path. The `Pending<AppendEntriesResponse>` the
+One C++ kernel IS touched on this path, and an earlier revision of this file
+claimed none was: `raft_command_clone_into`. It is there for the same reason
+`raft_command_from_bytes` is on the responding path — `janus::Command` holds a
+refcount the opaque Rust carrier cannot bump, so the copy happens on the C++
+side and lands in a slot Rust owns. Everything else above is Rust.
+
+The `Pending<AppendEntriesResponse>` the
 call returns (`transport.rs:79`) is `Arc<Mutex<Option<Result<T, i32>>>>` — the
 Send, Mutex-backed shape, so the reply can land on the poll thread while the
 heartbeat fiber reads it later.
@@ -113,6 +125,7 @@ of time":
 
 | | why |
 |---|---|
+| `raft_command_clone_into` | copying a `janus::Command` is a refcount bump Rust cannot make |
 | `raft_command_from_bytes` | `janus::Command` is Mako's object, not Raft's |
 | `raft_byte_string_from_bytes` | same, for the snapshot payload's `std::string` |
 | `RaftWorker::Submit` / the apply callback | the embedder boundary, already bytes on both ends |
