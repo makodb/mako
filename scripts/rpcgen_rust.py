@@ -366,15 +366,28 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
 
         if opaque_note is not None:
             pre, suf = opaque_note["prefix"], opaque_note["suffix"]
-            w(f"impl {req} {{")
-            w("    /// Decode from the whole request frame.")
+            oname = opaque_note["name"]
+            ref = f"{req}Ref"
+            # The BORROWED view a handler receives. The opaque field is a slice
+            # of the frame, not a copy: the payload is handed straight to C++'s
+            # decoder. An owned Vec here cost one full copy (and one fresh
+            # allocation) of every AppendEntries batch on every follower.
+            w(f"/// {req}, borrowing its opaque `{oname}` from the request frame.")
+            w("#[derive(Clone, Copy, Debug, PartialEq, Eq)]")
+            w(f"pub struct {ref}<'a> {{")
+            for fname, ftype in fields_in:
+                w(f"    pub {fname}: {'&' + chr(39) + 'a [u8]' if fname == oname else ftype},")
+            w("}")
+            w("")
+            w(f"impl<'a> {ref}<'a> {{")
+            w("    /// Decode from the whole request frame's ARGUMENT bytes.")
             w("    ///")
-            w(f"    /// `{opaque_note['name']}` is opaque to Rust -- C++ owns its")
+            w(f"    /// `{oname}` is opaque to Rust -- C++ owns its")
             w("    /// encoding and it carries no length -- but its extent is")
             w(f"    /// arithmetic: it runs from byte {pre} to `len - {suf}`,")
-            w("    /// because every field around it is fixed-width. The bytes")
-            w("    /// are copied verbatim and handed back to C++ untouched.")
-            w("    pub fn from_body(body: &[u8]) -> Option<Self> {")
+            w("    /// because every field around it is fixed-width. It is")
+            w("    /// borrowed verbatim and handed back to C++ untouched.")
+            w("    pub fn from_body(body: &'a [u8]) -> Option<Self> {")
             w(f"        if body.len() < {pre} + {suf} {{")
             w("            return None;")
             w("        }")
@@ -382,22 +395,49 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
             w("        let mut ar = BinaryReadArchive::new(unsafe {")
             w("            make_source_proxy_buffer(&raw mut src)")
             w("        });")
-            w("        let mut out = Self::default();")
-            for fname, _ in fields_in[:opaque_note["index"]]:
-                w(f"        out.{fname}.deserialize(&mut ar);")
+            for fname, ftype in fields_in[:opaque_note["index"]]:
+                w(f"        let mut {fname}: {ftype} = Default::default();")
+                w(f"        {fname}.deserialize(&mut ar);")
             w("        if ar.failed() {")
             w("            return None;")
             w("        }")
-            w(f"        out.{opaque_note['name']} =")
-            w(f"            body[{pre}..body.len() - {suf}].to_vec();")
+            w(f"        let {oname}: &'a [u8] = &body[{pre}..body.len() - {suf}];")
             w(f"        let mut tail = body.len() - {suf};")
             for fname, ftype, width in opaque_note["after"]:
-                w(f"        out.{fname} = {ftype}::from_le_bytes(")
+                w(f"        let {fname} = {ftype}::from_le_bytes(")
                 w(f"            body[tail..tail + {width}].try_into().ok()?,")
                 w("        );")
                 w(f"        tail += {width};")
             w("        let _ = tail;")
-            w("        Some(out)")
+            w(f"        Some({ref} {{ " + ", ".join(f for f, _ in fields_in) + " })")
+            w("    }")
+            w("")
+            w(f"    /// An owned copy, for callers that must keep it.")
+            w(f"    pub fn to_owned_request(&self) -> {req} {{")
+            w(f"        {req} {{")
+            for fname, _ in fields_in:
+                w(f"            {fname}: self.{fname}{'.to_vec()' if fname == oname else ''},")
+            w("        }")
+            w("    }")
+            w("}")
+            w("")
+            w(f"impl {req} {{")
+            w("    /// Decode an owned copy from the whole request frame.")
+            w("    pub fn from_body(body: &[u8]) -> Option<Self> {")
+            w(f"        {ref}::from_body(body).map(|r| r.to_owned_request())")
+            w("    }")
+            w("")
+            w(f"    /// Serialize with `{oname}` written by `opaque` rather than from")
+            w(f"    /// `self.{oname}` (which is ignored): the sender writes the payload")
+            w("    /// straight into the request archive, with no intermediate buffer.")
+            w("    /// `opaque` must write the unframed bytes C++ writes.")
+            w("    pub fn serialize_with(&self, ar: &mut BinaryWriteArchive,")
+            w("                          opaque: &mut dyn FnMut(&mut BinaryWriteArchive)) {")
+            for fname, _ in fields_in:
+                if fname == oname:
+                    w("        opaque(ar);")
+                else:
+                    w(f"        self.{fname}.serialize(ar);")
             w("    }")
             w("}")
             w("")
@@ -409,8 +449,9 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w(f"/// The {service.name} service. Implement this; `dispatch` below routes")
     w("/// to it. An `Err(code)` is replied as that code with no body.")
     w(f"pub trait {service.name}Handler: Send + Sync {{")
-    for name, req, resp, _, _ in emitted:
-        w(f"    fn {snake(name)}(&self, req: &{req}) -> Result<{resp}, i32>;")
+    for name, req, resp, opaque, _ in emitted:
+        arg = f"{req}Ref<'_>" if opaque is not None else req
+        w(f"    fn {snake(name)}(&self, req: &{arg}) -> Result<{resp}, i32>;")
     w("}")
     w("")
 
@@ -461,7 +502,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
         if opaque is not None:
             # Decoded from the whole frame: the opaque field's end is only
             # knowable there, not from a streaming archive.
-            w(f"            let Some(typed) = {req_t}::from_body(args_of(req)) else {{")
+            w(f"            let Some(typed) = {req_t}Ref::from_body(args_of(req)) else {{")
             w("                reject_malformed_request(req, weak_sconn);")
             w("                return;")
             w("            };")
@@ -511,7 +552,27 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("}")
     w("")
     w(f"impl<'a> {service.name}Proxy<'a> {{")
-    for name, req_t, resp_t, _, is_copy in emitted:
+    for name, req_t, resp_t, opaque, is_copy in emitted:
+        if opaque is not None:
+            # The zero-copy send: the fixed fields from `req`, the opaque one
+            # written by `write_opaque` directly into the request archive.
+            # request_async runs the writer synchronously, so it may borrow.
+            w(f"    pub fn {snake(name)}_with_async<F>(")
+            w("        &self,")
+            w(f"        req: &{req_t},")
+            w("        mut write_opaque: F,")
+            w("        on_reply: AsyncReplyCallback,")
+            w("    ) -> Result<(), i32>")
+            w("    where")
+            w("        F: FnMut(&mut BinaryWriteArchive),")
+            w("    {")
+            w(f"        self.client.request_async(")
+            w(f"            rpc_id::{name.upper()},")
+            w("            |ar: &mut BinaryWriteArchive| req.serialize_with(ar, &mut write_opaque),")
+            w("            on_reply,")
+            w("        )")
+            w("    }")
+            w("")
         w(f"    pub fn {snake(name)}_async(")
         w("        &self,")
         # A Copy request is taken by reference and copied into the closure; a

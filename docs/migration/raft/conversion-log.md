@@ -241,6 +241,30 @@ The audit is the honest entry here. Of 113 claims across two documents I had
 written, 25 were correct. The generated correspondence file exists because a
 number a human maintains by hand is a number that is wrong by the next commit.
 
+## 12. Two lanes, and the two srpc regressions (09-26)
+
+The plan's revision 5 made Raft one Rust source with two runtimes, the model
+srpc itself uses. This phase built the Rust one and, measuring it, found and
+fixed two srpc regressions that had been hurting BOTH lanes.
+
+| commit | what it did |
+|---|---|
+| `65754b66f` | the two-lane plan and its validation (143 claims, 45 upheld findings) |
+| `70fc2c0da` | mako-dev merged: 22 conflicts, from two separate squashes of one srpc range |
+| `edc5db890` | **the reactor evicts timed-out events again** -- the latency regression. p50 back at the pre-regression binary (2.70-2.75 ms vs 3.25-3.30 ms), flat with run length |
+| `4149bf438` | R3's data: 62 of 63 rate points against the C++ baseline within noise or better |
+| `217cc26d4` | **`MAKO_RAFT_LANE=rust`**: the core crate names no srpc type; `raft-rt` holds the seam over the Rust srpc runtime, the transport, the service and the generated wire code; RaftLabTest 25/25 on both lanes. Three wire defects found on the way, each of which would have broken the Rust lane on real traffic |
+| `b6141e723` | **large payloads**: AppendEntries batches bounded by bytes (a 73 MB batch was past srpc's 64 MiB frame limit and re-sent forever), srpc's inbound compaction made linear, and its per-byte frame copy made a memcpy. 286 KB saturation 10/s -> 413/s (hybrid) and 312-319/s (rust), against the baseline's ~280 |
+
+The finding worth keeping is how the second regression surfaced. The Rust
+lane's first production suite run failed a throughput check, which looked like
+a Rust-lane slowdown -- and `raft_bench` said the Rust lane was FASTER. The
+difference was payload size. Following it down found a bug that had been
+capping every large-payload run on this branch since the subtree pull: Mako's
+own replication suite had been replaying 155-368 batches where it now replays
+~8,000, on both lanes. The hybrid lane had been failing that check 2 times in
+5 all along.
+
 
 ## What the numbers did
 

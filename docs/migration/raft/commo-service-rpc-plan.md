@@ -80,7 +80,11 @@ that assumed a single lane are superseded here and marked where they stand:
 | L1 crate split | done (raft + raft-rt, one workspace) | `217cc26d4` |
 | S1b seam split | done (server.cc host / server_seam_cpp.cc / rt seam.rs) | `217cc26d4` |
 | T1, T2, T4 Rust lane | done -- RaftLabTest 25/25 on both lanes | `217cc26d4` |
-| T3, T4 suites + benchmark, T5 | in progress | -- |
+| large payloads (both lanes) | done -- byte-bounded batches, two srpc hot paths | `b6141e723` |
+| Rust lane zero-copy payload | done -- see T4 below | pending commit |
+| T3 mixed-lane cluster | done -- 12/12 across three mixes (1 early failure unexplained) | pending commit |
+| T4 suites + paired trial | done -- see below | pending commit |
+| T5 default flip, full sweep | next | -- |
 | L2-L4 (transpiled C++ lane), M, S1/S2/S3, D | not started | -- |
 
 **Execution order changed, deliberately.** The plan ordered L (the C++ lane
@@ -118,7 +122,35 @@ needed only L1 (the crate split) and S1b (the file split).
   Rust lane still logs through the process's one C++ logger, so Raft's lines
   interleave with Mako's. Revisit in S1.
 
-**Found while building T, not anticipated by the plan** -- three wire
+**T4's numbers** (ABBA, 25 pairs each, B = rust against A = hybrid, one host,
+`scripts/raft_perf/paired_trial.sh`):
+
+| point | throughput | p50 | p99 |
+|---|---|---|---|
+| 4 KB @ 240/s | +0.00% | -1.57% (23 of 25, p < 0.001) | -0.73% (19 of 25, p = 0.015) |
+| 4 KB saturation | +40.85% (25 of 25) | -29.0% (25 of 25) | -26.8% (25 of 25) |
+
+and, after the Rust lane stopped copying payloads (the command is encoded
+straight into the request frame through a C++ `EmitSink`, and the handler
+decodes from a slice of the frame -- `AppendEntriesRequestRef`), large entries,
+2-3 trials each:
+
+| point | hybrid | rust | C++ baseline 412c225a |
+|---|---|---|---|
+| 286 KB saturation, entries/s | 380-413 | 682-696 | ~280 |
+| 1 MiB saturation, entries/s | 107-114 | 183-188 | ~66-71 |
+| 286 KB @ 45/s, p50 | 6.3 ms | 3.0-3.1 ms | 7.2 ms |
+
+**Found while measuring T: a second srpc regression, in both lanes.** At
+saturation with large entries both lanes collapsed (286 KB at ~10/s) with
+leadership flapping. The batch cap counted entries only, so a catch-up batch
+of 256 x 286 KB = 73 MB exceeded srpc's 64 MiB frame limit and was refused
+and re-sent forever; separately, srpc's inbound compaction was quadratic in
+the backlog and its frame copy was a per-byte loop. Mako's dbtest replication
+suite had been hitting the same bug on this branch since the subtree pull:
+followers replayed 155-368 batches where they now replay ~8,000.
+
+**Found while building T, not anticipated by the plan** -- three wire**Found while building T, not anticipated by the plan** -- three wire
 defects, each of which would have broken the Rust lane on real traffic:
 
 1. Stage 2c's claim that "Rust holds the whole frame as `Request::body`" was

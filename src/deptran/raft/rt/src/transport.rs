@@ -302,6 +302,25 @@ impl RaftTransport {
         Some(pending)
     }
 
+    /// AppendEntries with the payload written by `write_cmd` straight into
+    /// the request archive -- the fixed fields come from `req`, whose `cmd`
+    /// is ignored. The seam's send path: C++ serializes the Command directly
+    /// into the frame, with no intermediate buffer on either side.
+    pub fn send_append_entries_with<F>(&self, site_id: u16, req: &AppendEntriesRequest,
+                                       write_cmd: F) -> Option<AppendReply>
+    where
+        F: FnMut(&mut srpc::serializable::BinaryWriteArchive),
+    {
+        let client = self.peer(site_id)?;
+        let pending = AppendReply::new();
+        let on_reply = Self::append_sink(&pending);
+        let proxy = RaftProxy { client };
+        let sent = proxy.append_entries_with_async(req, write_cmd, on_reply);
+        self.count_rpc();
+        sent.ok()?;
+        Some(pending)
+    }
+
     /// EmptyAppendEntries replies with the same three fields as
     /// AppendEntries, so it lands in the same reply type.
     pub fn send_empty_append_entries(&self, site_id: u16,

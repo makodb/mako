@@ -1,0 +1,12 @@
+== 4KB @ 240/s
+25 complete pairs of 25: B=build_rust against A=build
+  applied_per_sec  median B/A-1 = +0.00%  (B>A in 0, B<A in 0; sign test p = 1.000; higher is better)
+  latency_p50_us   median B/A-1 = -1.57%  (B>A in 2, B<A in 23; sign test p = 0.000; lower is better)
+  latency_p99_us   median B/A-1 = -0.73%  (B>A in 6, B<A in 19; sign test p = 0.015; lower is better)
+== 4KB saturation
+25 complete pairs of 25: B=build_rust against A=build
+  applied_per_sec  median B/A-1 = +40.85%  (B>A in 25, B<A in 0; sign test p = 0.000; higher is better)
+  latency_p50_us   median B/A-1 = -29.02%  (B>A in 0, B<A in 25; sign test p = 0.000; lower is better)
+  latency_p99_us   median B/A-1 = -26.76%  (B>A in 0, B<A in 25; sign test p = 0.000; lower is better)
+
+[exited with code 0]

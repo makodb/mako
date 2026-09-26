@@ -18,7 +18,7 @@
 // and `RaftServiceImpl`.
 
 use crate::rpc::{
-    self, AppendEntriesRequest, AppendEntriesResponse, EmptyAppendEntriesRequest,
+    self, AppendEntriesRequestRef, AppendEntriesResponse, EmptyAppendEntriesRequest,
     EmptyAppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse, RaftHandler,
     VoteRequest, VoteResponse,
 };
@@ -110,7 +110,9 @@ impl RaftHandler for RaftRpcService {
         Ok(resp)
     }
 
-    fn append_entries(&self, req: &AppendEntriesRequest)
+    // The payload arrives as a slice of the request frame and goes straight
+    // to C++'s decoder: no copy on the Rust side.
+    fn append_entries(&self, req: &AppendEntriesRequestRef<'_>)
         -> Result<AppendEntriesResponse, i32> {
         let mut resp = AppendEntriesResponse::default();
         let mut cmd: rusty::RaftCommand = Default::default();

@@ -1466,15 +1466,40 @@ void raft_snapshot_reply_free(void* raw) {
   delete static_cast<SnapshotReplyCtx*>(raw);
 }
 
+}  // extern "C"
+
+// A serialization sink that forwards every write to a C callback -- the Rust
+// lane's archive -- so the Command is encoded directly into the request frame.
+class EmitSink final : public srpc::SinkBase {
+ public:
+  EmitSink(void* ctx, void (*emit)(void*, const uint8_t*, size_t))
+      : ctx_(ctx), emit_(emit) {}
+  void write_bytes(const uint8_t* p, size_t n) override {
+    if (n != 0) {
+      emit_(ctx_, p, n);
+    }
+  }
+
+ private:
+  void* ctx_;
+  void (*emit_)(void*, const uint8_t*, size_t);
+};
+
+extern "C" {
+
 // The payload's wire bytes: exactly what rcc_rpc.h's AppendEntries writes for
 // `Command cmd` -- the envelope, unframed. The Rust lane's send path carries
 // these bytes; the C++ lane never calls this, it hands the Command to rpcgen.
 void raft_command_encode(const rusty::RaftCommand* cmd, void* ctx,
                          void (*emit)(void*, const uint8_t*, size_t)) {
-  srpc::BufferSink sink;
-  srpc::BinaryWriteArchive writer(srpc::make_sink_proxy_buffer(&sink));
+  // Every write goes straight to `emit`, which is the Rust lane's request
+  // archive: no buffer here, so the payload is copied once, into the frame.
+  srpc::BinaryWriteArchive writer(
+      // Box's explicit pointer constructor, not new_: new_ takes its value by
+      // copy, and a SinkBase is non-copyable. The Box<EmitSink> converts to
+      // SinkProxy (Box<SinkBase>) by the converting move.
+      srpc::SinkProxy(rusty::Box<EmitSink>(new EmitSink(ctx, emit))));
   srpc::Serialize_::serialize(*cmd, writer);
-  emit(ctx, sink.bytes.data(), sink.bytes.len());
 }
 
 // Loads the latest snapshot and sends it. Returns false when there is no

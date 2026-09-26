@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use raft_rt::rpc::{
-    self, AppendEntriesRequest, AppendEntriesResponse, EmptyAppendEntriesRequest,
+    self, AppendEntriesRequest, AppendEntriesRequestRef, AppendEntriesResponse, EmptyAppendEntriesRequest,
     EmptyAppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse, RaftHandler,
     VoteRequest, VoteResponse,
 };
@@ -19,7 +19,7 @@ use srpc::server::{Request, Server, Service, WeakServerConnection};
 struct Sink(Arc<Mutex<usize>>);
 impl RaftHandler for Sink {
     fn vote(&self, _: &VoteRequest) -> Result<VoteResponse, i32> { Ok(VoteResponse::default()) }
-    fn append_entries(&self, req: &AppendEntriesRequest) -> Result<AppendEntriesResponse, i32> {
+    fn append_entries(&self, req: &AppendEntriesRequestRef<'_>) -> Result<AppendEntriesResponse, i32> {
         *self.0.lock().unwrap() += req.cmd.len();
         Ok(AppendEntriesResponse { follower_append_ok: 1, follower_current_term: 1,
                                    follower_last_log_index: 0 })

@@ -1,0 +1,16 @@
+build              t1  applied/s   413.2  p50  610596  p90  697784  p99  757240  gaps 0 dup 0 ooo 0
+build_rust         t1  applied/s   696.0  p50  350534  p90  424064  p99  465634  gaps 0 dup 0 ooo 0
+build              t2  applied/s   413.2  p50  618191  p90  670360  p99  738468  gaps 0 dup 0 ooo 0
+build_rust         t2  applied/s   683.5  p50  368185  p90  412180  p99  452944  gaps 0 dup 0 ooo 0
+build              t3  applied/s   380.1  p50  694672  p90  864614  p99 1065201  gaps 0 dup 0 ooo 0
+build_rust         t3  applied/s   681.5  p50  374025  p90  404176  p99  415247  gaps 0 dup 0 ooo 0
+build              t1  applied/s   114.4  p50  570948  p90  601335  p99  622305  gaps 0 dup 0 ooo 0
+build_rust         t1  applied/s   182.6  p50  348827  p90  386460  p99  407025  gaps 0 dup 0 ooo 0
+build              t2  applied/s   106.9  p50  587808  p90  729882  p99  779358  gaps 0 dup 0 ooo 0
+build_rust         t2  applied/s   187.8  p50  327508  p90  389074  p99  419720  gaps 0 dup 0 ooo 0
+build              t1  applied/s    45.0  p50    6291  p90    6979  p99    7380  gaps 0 dup 0 ooo 0
+build_rust         t1  applied/s    45.0  p50    3121  p90    3729  p99    4359  gaps 0 dup 0 ooo 0
+build              t2  applied/s    45.0  p50    6326  p90    6989  p99    7693  gaps 0 dup 0 ooo 0
+build_rust         t2  applied/s    45.0  p50    3007  p90    3677  p99    4227  gaps 0 dup 0 ooo 0
+
+[exited with code 0]

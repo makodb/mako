@@ -150,15 +150,29 @@ impl Deserialize for AppendEntriesResponse {
     }
 }
 
-impl AppendEntriesRequest {
-    /// Decode from the whole request frame.
+/// AppendEntriesRequest, borrowing its opaque `cmd` from the request frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AppendEntriesRequestRef<'a> {
+    pub slot: u64,
+    pub ballot: i64,
+    pub leader_current_term: u64,
+    pub leader_site_id: u16,
+    pub leader_prev_log_index: u64,
+    pub leader_prev_log_term: u64,
+    pub leader_commit_index: u64,
+    pub cmd: &'a [u8],
+    pub leader_next_log_term: u64,
+}
+
+impl<'a> AppendEntriesRequestRef<'a> {
+    /// Decode from the whole request frame's ARGUMENT bytes.
     ///
     /// `cmd` is opaque to Rust -- C++ owns its
     /// encoding and it carries no length -- but its extent is
     /// arithmetic: it runs from byte 50 to `len - 8`,
-    /// because every field around it is fixed-width. The bytes
-    /// are copied verbatim and handed back to C++ untouched.
-    pub fn from_body(body: &[u8]) -> Option<Self> {
+    /// because every field around it is fixed-width. It is
+    /// borrowed verbatim and handed back to C++ untouched.
+    pub fn from_body(body: &'a [u8]) -> Option<Self> {
         if body.len() < 50 + 8 {
             return None;
         }
@@ -166,26 +180,70 @@ impl AppendEntriesRequest {
         let mut ar = BinaryReadArchive::new(unsafe {
             make_source_proxy_buffer(&raw mut src)
         });
-        let mut out = Self::default();
-        out.slot.deserialize(&mut ar);
-        out.ballot.deserialize(&mut ar);
-        out.leader_current_term.deserialize(&mut ar);
-        out.leader_site_id.deserialize(&mut ar);
-        out.leader_prev_log_index.deserialize(&mut ar);
-        out.leader_prev_log_term.deserialize(&mut ar);
-        out.leader_commit_index.deserialize(&mut ar);
+        let mut slot: u64 = Default::default();
+        slot.deserialize(&mut ar);
+        let mut ballot: i64 = Default::default();
+        ballot.deserialize(&mut ar);
+        let mut leader_current_term: u64 = Default::default();
+        leader_current_term.deserialize(&mut ar);
+        let mut leader_site_id: u16 = Default::default();
+        leader_site_id.deserialize(&mut ar);
+        let mut leader_prev_log_index: u64 = Default::default();
+        leader_prev_log_index.deserialize(&mut ar);
+        let mut leader_prev_log_term: u64 = Default::default();
+        leader_prev_log_term.deserialize(&mut ar);
+        let mut leader_commit_index: u64 = Default::default();
+        leader_commit_index.deserialize(&mut ar);
         if ar.failed() {
             return None;
         }
-        out.cmd =
-            body[50..body.len() - 8].to_vec();
+        let cmd: &'a [u8] = &body[50..body.len() - 8];
         let mut tail = body.len() - 8;
-        out.leader_next_log_term = u64::from_le_bytes(
+        let leader_next_log_term = u64::from_le_bytes(
             body[tail..tail + 8].try_into().ok()?,
         );
         tail += 8;
         let _ = tail;
-        Some(out)
+        Some(AppendEntriesRequestRef { slot, ballot, leader_current_term, leader_site_id, leader_prev_log_index, leader_prev_log_term, leader_commit_index, cmd, leader_next_log_term })
+    }
+
+    /// An owned copy, for callers that must keep it.
+    pub fn to_owned_request(&self) -> AppendEntriesRequest {
+        AppendEntriesRequest {
+            slot: self.slot,
+            ballot: self.ballot,
+            leader_current_term: self.leader_current_term,
+            leader_site_id: self.leader_site_id,
+            leader_prev_log_index: self.leader_prev_log_index,
+            leader_prev_log_term: self.leader_prev_log_term,
+            leader_commit_index: self.leader_commit_index,
+            cmd: self.cmd.to_vec(),
+            leader_next_log_term: self.leader_next_log_term,
+        }
+    }
+}
+
+impl AppendEntriesRequest {
+    /// Decode an owned copy from the whole request frame.
+    pub fn from_body(body: &[u8]) -> Option<Self> {
+        AppendEntriesRequestRef::from_body(body).map(|r| r.to_owned_request())
+    }
+
+    /// Serialize with `cmd` written by `opaque` rather than from
+    /// `self.cmd` (which is ignored): the sender writes the payload
+    /// straight into the request archive, with no intermediate buffer.
+    /// `opaque` must write the unframed bytes C++ writes.
+    pub fn serialize_with(&self, ar: &mut BinaryWriteArchive,
+                          opaque: &mut dyn FnMut(&mut BinaryWriteArchive)) {
+        self.slot.serialize(ar);
+        self.ballot.serialize(ar);
+        self.leader_current_term.serialize(ar);
+        self.leader_site_id.serialize(ar);
+        self.leader_prev_log_index.serialize(ar);
+        self.leader_prev_log_term.serialize(ar);
+        self.leader_commit_index.serialize(ar);
+        opaque(ar);
+        self.leader_next_log_term.serialize(ar);
     }
 }
 
@@ -297,7 +355,7 @@ impl Deserialize for InstallSnapshotResponse {
 /// to it. An `Err(code)` is replied as that code with no body.
 pub trait RaftHandler: Send + Sync {
     fn vote(&self, req: &VoteRequest) -> Result<VoteResponse, i32>;
-    fn append_entries(&self, req: &AppendEntriesRequest) -> Result<AppendEntriesResponse, i32>;
+    fn append_entries(&self, req: &AppendEntriesRequestRef<'_>) -> Result<AppendEntriesResponse, i32>;
     fn empty_append_entries(&self, req: &EmptyAppendEntriesRequest) -> Result<EmptyAppendEntriesResponse, i32>;
     fn install_snapshot(&self, req: &InstallSnapshotRequest) -> Result<InstallSnapshotResponse, i32>;
 }
@@ -357,7 +415,7 @@ pub fn dispatch<H: RaftHandler>(
             reply_with(weak_sconn, req, handler.vote(&typed));
         }
         rpc_id::APPENDENTRIES => {
-            let Some(typed) = AppendEntriesRequest::from_body(args_of(req)) else {
+            let Some(typed) = AppendEntriesRequestRef::from_body(args_of(req)) else {
                 reject_malformed_request(req, weak_sconn);
                 return;
             };
@@ -428,6 +486,22 @@ impl<'a> RaftProxy<'a> {
         self.client.request_async(
             rpc_id::VOTE,
             move |ar: &mut BinaryWriteArchive| payload.serialize(ar),
+            on_reply,
+        )
+    }
+
+    pub fn append_entries_with_async<F>(
+        &self,
+        req: &AppendEntriesRequest,
+        mut write_opaque: F,
+        on_reply: AsyncReplyCallback,
+    ) -> Result<(), i32>
+    where
+        F: FnMut(&mut BinaryWriteArchive),
+    {
+        self.client.request_async(
+            rpc_id::APPENDENTRIES,
+            |ar: &mut BinaryWriteArchive| req.serialize_with(ar, &mut write_opaque),
             on_reply,
         )
     }

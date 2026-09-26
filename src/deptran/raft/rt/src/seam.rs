@@ -322,9 +322,11 @@ unsafe extern "C" {
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
 }
 
-unsafe extern "C" fn emit_into_vec(ctx: *mut c_void, bytes: *const u8, len: usize) {
-    let out = unsafe { &mut *(ctx as *mut Vec<u8>) };
-    out.extend_from_slice(unsafe { core::slice::from_raw_parts(bytes, len) });
+/// C++'s serializer writes the Command through this, straight into the
+/// request archive the client is building.
+unsafe extern "C" fn emit_into_archive(ctx: *mut c_void, bytes: *const u8, len: usize) {
+    let ar = unsafe { &mut *(ctx as *mut srpc::serializable::BinaryWriteArchive) };
+    unsafe { ar.write_bytes(bytes, len) };
 }
 
 /// The send. Non-blocking: it only initiates the call. The reply lands in the
@@ -343,10 +345,6 @@ pub unsafe extern "C" fn raft_phase1_send_append(
         None => None,
         Some(t) => {
             if unsafe { raft_command_has_value(cmd) } {
-                let mut bytes: Vec<u8> = Vec::new();
-                unsafe {
-                    raft_command_encode(cmd, &raw mut bytes as *mut c_void, emit_into_vec);
-                }
                 let req = AppendEntriesRequest {
                     // slotid_t -1, as the C++ lane sends it, wrapped to u64.
                     slot: u64::MAX,
@@ -356,10 +354,14 @@ pub unsafe extern "C" fn raft_phase1_send_append(
                     leader_prev_log_index: prev_log_index,
                     leader_prev_log_term: prev_log_term,
                     leader_commit_index: commit_index,
-                    cmd: bytes,
+                    // Unused: send_append_entries_with writes the payload
+                    // from `cmd` directly into the frame below.
+                    cmd: Vec::new(),
                     leader_next_log_term: cmd_log_term,
                 };
-                t.send_append_entries(site_id, req)
+                t.send_append_entries_with(site_id, &req, |ar| unsafe {
+                    raft_command_encode(cmd, ar as *mut _ as *mut c_void, emit_into_archive);
+                })
             } else {
                 let req = EmptyAppendEntriesRequest {
                     // slotid_t -1, as the C++ lane sends it, wrapped to u64.

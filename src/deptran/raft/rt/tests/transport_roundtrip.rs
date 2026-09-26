@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use raft_rt::rpc::{
-    self, AppendEntriesRequest, AppendEntriesResponse, EmptyAppendEntriesRequest,
+    self, AppendEntriesRequest, AppendEntriesRequestRef, AppendEntriesResponse, EmptyAppendEntriesRequest,
     EmptyAppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse, RaftHandler,
     VoteRequest, VoteResponse, WireBytes,
 };
@@ -43,8 +43,8 @@ impl RaftHandler for Grants {
     fn vote(&self, req: &VoteRequest) -> Result<VoteResponse, i32> {
         Ok(VoteResponse { max_ballot: req.cur_term, vote_granted: self.granted })
     }
-    fn append_entries(&self, req: &AppendEntriesRequest) -> Result<AppendEntriesResponse, i32> {
-        self.seen.lock().unwrap().append_cmd = Some(req.cmd.clone());
+    fn append_entries(&self, req: &AppendEntriesRequestRef<'_>) -> Result<AppendEntriesResponse, i32> {
+        self.seen.lock().unwrap().append_cmd = Some(req.cmd.to_vec());
         Ok(AppendEntriesResponse {
             follower_append_ok: 1,
             follower_current_term: req.leader_current_term,
