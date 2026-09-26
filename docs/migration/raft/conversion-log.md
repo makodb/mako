@@ -1,8 +1,14 @@
 # The Raft C++-to-Rust conversion, commit by commit
 
-88 commits, `65205328c`..`37d308ed4`, 2026-09-12 to 2026-09-19. Every one of
-them built, passed RaftLabTest 25/25, and passed `scripts/raft_dsl.sh
---check` before it was pushed.
+184 commits, `65205328c`..`087df006d`, 2026-09-12 to 2026-09-26 (excluding
+merges and the srpc subtree squashes; 121 of them touch `src/deptran/raft`).
+Every one built, passed RaftLabTest 25/25, and passed `scripts/raft_dsl.sh
+--check` before it was pushed. From phase 8 on, the gate also runs the
+canonical-source census, `rpcgen_rust.py --check`, clippy over both cargo
+features, and the crate's own tests. (One caveat on "passed": RaftLabTest's
+TEST 9 counts idle RPCs against a ceiling of 60, and fails spuriously when the
+machine is loaded -- 46 of 48 lab runs in phase 9 passed, and both failures
+followed a heavy build. The gate now waits for load < 1 and settles 60 s.)
 
 Read the phases in order; within a phase the commits are chronological.
 
@@ -140,6 +146,102 @@ time) and the four production Raft suites, and committed on its own.
 | docs | -- | perf verdict on the cutover: 25 paired trials, `19cfbb213` vs `1de45affa`, median +0.32%, p = 1.000 -- no detectable cost of the whole conversion |
 | `9f3f350ae` | -- | Rust calls Rust: the two RPC forwarder kernels and their exports are deleted; OnRequestVote / OnAppendEntries call the bodies in server_cc.rs directly |
 
+## 7. The lab harness becomes Rust (09-23)
+
+The C++ lab suite had been the oracle for every commit above. Once the Rust
+harness could reproduce its verdict, the oracle itself could go.
+
+| commit | what it did |
+|---|---|
+| `b0f692e64` | the lab predicate becomes a cargo feature, not a C++ kernel |
+| `4d74f8bcb` | the lab cluster registers itself, adding no ABI |
+| `0250cabb4` | the fixture's invariant readers, in Rust and checked against the C++ |
+| `5df4650ae` | Phase 3a -- eleven replication cases are Rust (54-60, 67-69, 72) |
+| `b179c5f92` | Phase 3b -- **all 25 cases pass under the Rust harness**; `ci.sh` runs the binary once each way and requires 25 from both, so a half-ported harness cannot pass by skipping |
+| `80f715dad` | Phase 4 -- `test.cc` (2,529 lines), `test.h`, `testconf.cc`, `testconf.h` deleted, and with them **41 of the 73 exports** that existed only so those files could reach the server |
+| `9ad3870a0` `6f367f0bb` | followed the deletion through the comments and the borrow filter |
+
+`80f715dad` is the largest single deletion in the conversion: 3,604 lines of
+C++ and 41 ABI entry points, none of which had any production caller.
+
+## 8. Adopting the srpc subtree (09-24 .. 09-25)
+
+`src/rrr` -- the vendored RPC library the whole conversion sits on -- became
+`src/srpc`, a git subtree of `stonysystems/srpc`, and was then pulled 141
+commits forward. This was not Raft work, but nothing further could be done
+without it: the Rust lane needs srpc's own Rust modules, and the two lanes
+could not be linked into one binary while both defined the same C symbols.
+
+| commit | what it did |
+|---|---|
+| `7ace54e1f` | merge mako-dev's restructuring: 501 files auto-merged, 28 conflicted, each resolution recorded |
+| `cb8e4e6b3` | two executable defects the C++ lane never exercised |
+| `bbbd51d89` | the Raft crate takes `srpc` as a dependency, to find out what linking both lanes costs |
+| `9dd6ff492` | **the subtree pulled forward 141 commits** (2026-08-26 -> 09-23; 244 files, +25,902 / -4,501), for the plain-C epoll kernel that both lanes can name |
+| `b21c36431` `bd42028ab` `4a8e233eb` | the kernel list, the canaries and the C boundary are taken from srpc's own manifest instead of repeated |
+| `157bc8837` | one upstream refactor (`rusty::Cell` -> `srpc::SharedCell`) invalidated pinned values in **seven** layers of the gate, each only visible after the previous passed |
+| `179182a10` | `rusty-rustc` and `rusty-cpp-markers` move out of the subtree -- they are Mako's, and living inside `src/srpc/` would fight every future pull |
+| `95d085999` | `cpp_value_init` retired; the zero-init guarantee moves to the field census |
+| `66d1a96c7` | deptran and mako follow srpc's API forward |
+| `49defdf5e` `b0ee6d2e1` | the adoption recorded, with two refuted plan revisions kept |
+
+The two refuted revisions are the useful part of `49defdf5e`: v1 assumed Raft
+carries its AppendEntries payload as opaque bytes, which it does not.
+
+## 9. The wire, and the server's last C++ field (09-25)
+
+The plan from here is `commo-service-rpc-plan.md`. Stages 0 through 3 ran
+in this phase.
+
+| commit | stage | what it did |
+|---|---|---|
+| `561670f76` | 0a, 2a | the lanes can link -- `fiber_task_entry_thunk` was a defined `T` symbol in both archives; and the Rust wire structs are generated |
+| `493881a8e` `c0706bc73` | 2a | service dispatch, the client proxy, and AppendEntries -- with no wire change |
+| `b86f2dc81` | -- | the proxy copies `Copy` requests into its closure instead of cloning |
+| `41bc18569` | -- | `rpc.rs` is **generated from `rcc_rpc.rpc`** instead of being a checked-in snapshot free to drift from the header the C++ lane uses |
+| `458d75b5b` | 2b | the four wire ids get a file of their own, because rpcgen only reserves an id while the header still declares its service |
+| `ad19d6cc7` | 0b, 0c | srpc's nine C kernels were built **twice, by different compilers**, and both copies reached the binary; 10 of 12 external symbols in two objects were defined in both archives, and `srpc_rand.c` branches on `__clang__` |
+| `08d619f66` | 0d | the libraft rebuild watches srpc's Rust sources |
+| `5d3591c95` | 3a | `Communicator`'s data becomes **one** Rust value type, `PeerRegistry`, written once for both lanes -- neither flattened into each subclass nor left in C++ with a second copy on the Rust side |
+| `fa5a2b33a` `18012740c` | 3a | the Rust `RaftCommo` landing pad, then its deletion: `PeerRegistry` superseded it, and it had already dropped `partition_peers_` |
+| `284860c8f` | 3a | **`commo_` leaves the server.** It was the one field of forty-eight that is not `Send`, and `trait Service: Send + Sync` is what the Rust srpc lane demands. The RPC gate moves into the server with it: three ABI crossings become one |
+| `a353e30b4` | -- | the lab build is clippy-clean, so the gate can cover it |
+
+`284860c8f` is the pivot of this phase. `RaftServerBase` is `Send + Sync`
+because the non-`Send` field was **deleted**, not because anything asserted it
+-- proven by `tests/server_is_send.rs`.
+
+## 10. Stage 3e: Raft's own RPC lane, in Rust (09-25 .. 09-26)
+
+| commit | what it did |
+|---|---|
+| `6fd0da9cc` | the service: `impl srpc::server::Service for RaftRpcService`, four handlers calling `ServeVote` / `ServeAppendEntries` / `ServeInstallSnapshot`, registered and routed by the generated `rpc.rs` |
+| `6e76caec9` | the transport and **all three send paths**: one poll thread, the peer clients, and the three operations Raft sends. One type, because inbound and outbound share `svr_poll_thread_worker_` -- moving the server without the clients would ADD a poll thread rather than swap one. `BroadcastVote` moved, which stage 3a's table had said it could not |
+| `2a0deb21f` | `tests/transport_roundtrip.rs` over real loopback TCP, built from the same generated code production uses -- and it **immediately caught a split-brain bug**: `broadcast_vote` derived the quorum from the *reachable* peers, so a partitioned candidate would elect itself on its own vote |
+| `d93451ecd` | the transport owns its server and gets a C ABI |
+| `93f818a53` | resolved **by server identity**, not by a field: `RaftTransport` is `!Send` (its clients belong to a poll thread) while `RaftServerBase` must stay `Send + Sync`, so the assertion lives once, in the open, beside the registry |
+| `551ee1a49` | 3e's cutover enumerated site by site, so it is executable |
+
+Stage 3e is built, tested and verified but **not yet wired in**: nothing calls
+`raft_transport_serve`. The cutover is the open item.
+
+## 11. Making the documents true (09-25 .. 09-26)
+
+| commit | what it did |
+|---|---|
+| `ea455e961` | a one-page C++/Rust correspondence table |
+| `6de31e23a` | corrected the kernel justification -- most kernels are positional, not required |
+| `a8691d647` | every open plan item gets a measured reason, not a dependency note |
+| `ee9747171` `59b4708f1` `2087d841b` | the plan was rendering as **indented code blocks**: 412 continuation lines indented six spaces under list items, producing 257 code blocks and 90 literal `**` in a 900-line file. Reindented, tables rewritten, and "measured" removed from untimed claims |
+| `edd49ff35` | a six-agent audit of both documents against the tree: **138 findings on 113 claims -- 71 stale, 37 wrong, 25 correct**. The correspondence file's numbers were wrong in four different ways, so it is now COMPUTED by `scripts/gen_correspondence.py` with the counting rule printed beside each |
+| `b1ccc9104` `49341b986` `538df5f8c` | the audit applied: 15 corrections to the plan, then the last ten, and the generator stopped self-staling |
+| `558374062` `087df006d` | the Rust-lane RPC call and response path -- then its correction, because `Start` does more than the first version said and does touch C++ (`raft_command_clone_into`) |
+
+The audit is the honest entry here. Of 113 claims across two documents I had
+written, 25 were correct. The generated correspondence file exists because a
+number a human maintains by hand is a number that is wrong by the next commit.
+
+
 ## What the numbers did
 
 | | before | after |
@@ -150,20 +252,66 @@ time) and the four production Raft suites, and committed on its own.
 | out-of-line `RaftServer` methods | 67 (2,527 lines) | **6** |
 | Rust share of `server.{h,cc}` authored lines | 33% | **71.6%** |
 
-Counts as of 09-19. `plan.md` carries the current measured values and the
-method behind each.
+Counts as of 09-19, on the counting rule in use then.
+
+Do not extend that table forward by hand. The current values -- and the exact
+counting rule behind each, which is the part that kept going wrong -- are
+GENERATED into `cpp-rust-correspondence.md` by `scripts/gen_correspondence.py`,
+and `--check` fails the build when they drift. As of 09-26 it reports:
+
+| | C++ | Rust |
+|---|---|---|
+| `raft/server.h` | 606 lines | `server_h.rs` 5,020 |
+| `raft/server.cc` | 1,882 | `server_cc.rs` 2,774 |
+| `raft/service.cc` | 123 | `service.rs` 150 (both exist; the C++ is what srpc dispatches to) |
+| `raft/commo.cc` | 325 | `transport.rs` 647 (both exist; the C++ is what runs, bar one rerouted site) |
+
+with 31 exports in `server_exports.h`, 6 more in `transport_exports.h` (included
+by no `.cc` yet), and 91 distinct `raft_*` kernels. `class RaftServer` is an
+eight-line shim holding a pointer: zero data members, zero out-of-line methods.
 
 ## What it cost
 
-A ~1.5% throughput regression against the pre-conversion baseline, measured
-over 22 paired saturation trials: median -1.71%, 5/22 favour the converted
-tree, exact sign test p = 0.017.
+**Throughput: nothing.** The full sweep on 09-25/26 -- 624 paired runs, three
+trials per point, `412c225a` (C++ Raft) against `538df5f8c` (Rust Raft) -- put
+129 of 146 throughput points within noise and none outside the regression
+threshold. At every offered rate up to saturation the two arms deliver the same
+entries per second.
 
-It is not localised. Three independent runs disagree on its size by an order
-of magnitude (-0.22%, -0.69%, -2.32%), a bisect put the midpoint of the
-conversion window at -1.20% -- so the cost accumulates across tranches
-rather than arriving in one -- and one specific hypothesis (the lock guards'
-`noexcept(false)` destructors) was tested and refuted at p = 0.688.
+This supersedes the earlier reading of a ~1.5% throughput regression (22 paired
+saturation trials, median -1.71%, sign test p = 0.017, never localised: three
+runs disagreed by an order of magnitude and the `noexcept(false)` destructor
+hypothesis was refuted at p = 0.688). With 624 runs instead of 22 the effect is
+not there.
+
+**Latency: 330 regressions, 0 improvements -- and it is not this conversion.**
+The same sweep found p50 up ~45% and p99 up ~110% at typical points, widening
+with load. Three binaries measured interleaved on an idle host (4 KB entries,
+240/s, three trials each) locate it:
+
+| build | what it is | applied/s | p50 us | p99 us |
+|---|---|---|---|---|
+| Rust Raft + **old** srpc | Sep 21 tree | 240.0 | 2,711 | 3,659 |
+| **new** srpc, before stage 0-3 (`49defdf5e`) | phase 8 only | 239.9 | 3,218 | 6,939 |
+| new srpc + stage 0-3 (`538df5f8c`) | phases 9-10 | 239.9 | 3,231 | 6,858 |
+
+The last two agree to +0.4%: phases 9 and 10 cost nothing measurable. The whole
+gap sits in phase 8, the subtree pull.
+
+The cause is in `src/srpc/reactor/reactor.rs`. `Reactor::run_loop`'s retain
+predicate lost a clause in the merge -- `status != DONE && status != TIMEOUT`
+became `status != DONE` -- and with it the comment explaining that retaining a
+timed-out event "leaks one Arc per timed wait and makes every subsequent
+reactor pass rescan all past timeouts". Three observations match: latency grows
+with run length (head p50 3,059 us at 4 s -> 3,231 at 8 s -> 4,818 at 20 s,
+while the old runtime is flat at 2,711 -> 2,717), the poll loop body is 2.3x
+slower (349 vs 154 us p50 under strace) while the socket path is not, and
+throughput is untouched. Raft performs one timed wait per heartbeat round per
+replica, so the leaked set grows at the round rate.
+
+Written up with the evidence in `docs/performance/raft-latency-regression.md`.
+The fix is two lines, but it is a subtree file shared with Paxos and Mako and
+it regenerates srpc's C++ lane, so it is not yet claimed.
 
 Correctness held throughout: every commit passed RaftLabTest 25/25, and
 every performance run reported zero gaps, zero duplicates and zero
@@ -180,3 +328,13 @@ forces a question C++ does not ask:
 - `3774ba937` the locale id sent where the global site id was meant
 - `be3e24a4b` three DSL functions taking one `&mut` overlapping two `&` of the same object -- which compiled only because the caller was C++
 - `bfb141422` a performance regression that only a measured conversion would have caught
+- `2a0deb21f` a split-brain in my own `broadcast_vote` -- quorum derived from
+  the reachable peers, so a partitioned candidate would elect itself. Caught by
+  the round-trip test written in the same commit, not by review
+- `5d3591c95` the Rust `RaftCommo` had silently dropped `partition_peers_`, so
+  its `peers_except()` had no partition dimension at all
+- `ad19d6cc7` srpc's nine C kernels compiled twice by two different compilers,
+  both copies in one binary, over a source that branches on `__clang__`
+
+And one found by auditing the prose rather than the code: of 113 claims across
+the two migration documents, 25 were correct (`edd49ff35`).

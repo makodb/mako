@@ -1,0 +1,35 @@
+=== head.strace: 61576 syscalls ===
+  threads: 2757481:read=27,write=20,clock_nanosleep=9 | 2757482:epoll_wait=18232,recvfrom=8749,sendto=8748 | 2757483:clock_nanosleep=11672 | 2757485:epoll_wait=11709 | 2757495:clock_nanosleep=2400 | 2757534:connect=1
+  client (outbound) fds: [5, 7, 8, 9]   accepted fds: [6, 11, 12]
+  poll thread 2757482: 10268 epoll_wait in 8 s (1284/s), 1953 (19%) returned by timeout
+  epoll_wait duration                            n= 10268  p50    213  p90   1106  p99   1185  max   1616 us
+  work between epoll_waits (loop body)           n= 10267  p50    349  p90    464  p99    587  max   2754 us
+  writes on client fds: 5562 (695/s) by tids [2757482]; bytes p50 4217
+  reads  on client fds: 5562 (695/s) by tids [2757482]
+  RPC round trip on a follower fd (write->reply read) n=  5562  p50   1122  p90   1739  p99   2058  max   3212 us
+  interval between rounds on a follower fd       n=  5560  p50   2577  p90   4995  p99   9770  max  12330 us
+  sleeps: tid 2757483: 6627 (828/s, mean 1130 us), tid 2757495: 1729 (216/s, mean 4028 us), tid 2757481: 1 (0/s, mean 2000143 us)
+  epoll_wait return -> AppendEntries write       n=  5562  p50     97  p90    199  p99    273  max    726 us
+  epoll_wait return -> reply read                n=  5562  p50     61  p90     95  p99    175  max    534 us
+
+=== sep21.strace: 70692 syscalls ===
+  threads: 2757849:read=27,write=21,clock_nanosleep=10 | 2757850:epoll_wait=23530,recvfrom=10472,sendto=10471 | 2757851:clock_nanosleep=11865 | 2757853:epoll_wait=11884 | 2757865:clock_nanosleep=2400 | 2757905:connect=1,write=1
+  client (outbound) fds: [3, 5, 7, 8]   accepted fds: [6, 11, 12]
+  poll thread 2757850: 14878 epoll_wait in 8 s (1860/s), 4484 (30%) returned by timeout
+  epoll_wait duration                            n= 14878  p50     29  p90   1089  p99   1188  max   1658 us
+  work between epoll_waits (loop body)           n= 14877  p50    154  p90    312  p99    386  max   2618 us
+  writes on client fds: 7280 (910/s) by tids [2757850]; bytes p50 60
+  reads  on client fds: 7278 (910/s) by tids [2757850]
+  RPC round trip on a follower fd (write->reply read) n=  7278  p50    384  p90    463  p99    531  max   2866 us
+  interval between rounds on a follower fd       n=  7278  p50   1905  p90   3143  p99   7201  max   8385 us
+  sleeps: tid 2757851: 6651 (831/s, mean 1130 us), tid 2757865: 1777 (222/s, mean 4067 us), tid 2757849: 1 (0/s, mean 2000153 us)
+  epoll_wait return -> AppendEntries write       n=  7280  p50    140  p90    202  p99    250  max    338 us
+  epoll_wait return -> reply read                n=  7278  p50     52  p90     92  p99    192  max    603 us
+
+
+--- provenance ---
+leader traced with: strace -f --seccomp-bpf -tt -T -qq -s 0 -e trace=epoll_wait,read,write,recvfrom,sendto,sendmsg,recvmsg,writev,readv,connect,accept4,accept,nanosleep,clock_nanosleep
+point: p1/single, 4096-byte entries, 240/s, 8 s window, loopback, zoo-003
+head  = 538df5f8c (Rust Raft + synced srpc)
+sep21 = /home/users/zyang2/mako build of 2026-09-21 (Rust Raft + old srpc)
+raw traces (18 MB) not kept; regenerate with scripts/raft_perf/strace_poll_timeline.py

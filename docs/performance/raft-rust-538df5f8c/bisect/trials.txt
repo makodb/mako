@@ -1,0 +1,16 @@
+control binary present at Sat Sep 26 05:24:35 UTC 2026
+idle at Sat Sep 26 05:25:35 UTC 2026: 1.55 5.11 3.64 1/1124 2758132
+control    t1 applied/s  239.9  p50  3330  p90  5405  p99  7169
+head       t1 applied/s  239.9  p50  3325  p90  5386  p99  7159
+sep21      t1 applied/s  240.0  p50  2736  p90  3333  p99  3693
+control    t2 applied/s  239.9  p50  3237  p90  5202  p99  6926
+head       t2 applied/s  239.9  p50  3151  p90  4856  p99  6618
+sep21      t2 applied/s  240.0  p50  2686  p90  3310  p99  3644
+control    t3 applied/s  239.9  p50  3088  p90  4572  p99  6721
+head       t3 applied/s  239.9  p50  3217  p90  4855  p99  6797
+sep21      t3 applied/s  240.0  p50  2710  p90  3341  p99  3641
+=== run-length test (does latency grow with duration?) ===
+head-d4    t1 applied/s  240.0  p50  3059  p90  3924  p99  4760
+head-d20   t1 applied/s  239.9  p50  4818  p90  7079  p99  8918
+sep21-d20  t1 applied/s  240.0  p50  2717  p90  3350  p99  3725
+=== done Sat Sep 26 05:30:51 UTC 2026 ===
