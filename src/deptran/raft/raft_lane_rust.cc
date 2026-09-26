@@ -82,7 +82,16 @@ void StubDestroy(void* stub) {
   raft_stub_server_delete(static_cast<RaftStubServer*>(stub));
 }
 
+#ifdef RAFT_TEST_CORO
+// raft_rt_run_lab exists only when raft-rt is built with raft_test, which
+// CMake turns on exactly when RAFT_TEST_CORO is defined.
 int RunLab() { return raft_rt_run_lab(); }
+#else
+int RunLab() {
+  Log_fatal("raft_lane::RunLab: not a RAFT_TEST build");
+  return -1;
+}
+#endif
 
 }  // namespace raft_lane
 }  // namespace janus

@@ -889,22 +889,7 @@ unsafe fn tcpconn_send_frame(conn: &TcpConnection, frame: &ChannelFrame) -> Chan
         } else {
             frame.size as i32
         };
-        let header = encoded_size.to_ne_bytes();
-        let start = guard.len();
-        guard.resize(start + 4usize + frame.size, 0u8);
-        guard[start] = header[0];
-        guard[start + 1usize] = header[1];
-        guard[start + 2usize] = header[2];
-        guard[start + 3usize] = header[3];
-        if frame.size > 0usize {
-            // SAFETY: ChannelFrame promises a readable range of `size` bytes.
-            let payload = unsafe { core::slice::from_raw_parts(frame.payload, frame.size) };
-            let mut i: usize = 0;
-            while i < frame.size {
-                guard[start + 4usize + i] = payload[i];
-                i += 1usize;
-            }
-        }
+        tcpconn_append_frame(&mut *guard, encoded_size, frame.payload, frame.size);
     }
 
     // Publish against the connection itself. The worker reads this flag
@@ -1205,6 +1190,28 @@ fn tcpconn_send_bytes(conn: &TcpConnection, buf: &mut TcpOutBuf, offset: usize) 
 }
 
 // Drop the prefix that send(2) actually accepted.
+/// Append one frame -- its 4-byte header, then the payload -- to the outbound
+/// buffer with ONE resize and ONE memcpy. The previous shape zero-filled the
+/// frame by resize and then stored the payload through a bounds-checked
+/// indexed loop, one byte at a time; for Raft's multi-megabyte AppendEntries
+/// batches that kept the poll thread busy long enough to starve heartbeats.
+/// Same `&mut TcpOutBuf` + raw-copy shape as tcpconn_trim_sent below, which
+/// both lanes lower correctly.
+fn tcpconn_append_frame(buf: &mut TcpOutBuf, encoded_size: i32, payload: *const u8,
+                        size: usize) {
+    let header = encoded_size.to_ne_bytes();
+    let start = buf.len();
+    buf.resize(start + 4usize + size, 0u8);
+    unsafe {
+        core::ptr::copy_nonoverlapping(header.as_ptr(), buf.as_mut_ptr().add(start), 4usize);
+        if size > 0usize {
+            // SAFETY: the caller's ChannelFrame promises `size` readable bytes,
+            // and the resize above made room for them.
+            core::ptr::copy_nonoverlapping(payload, buf.as_mut_ptr().add(start + 4usize), size);
+        }
+    }
+}
+
 fn tcpconn_trim_sent(buf: &mut TcpOutBuf, offset: usize) {
     if offset == 0 {
         return;

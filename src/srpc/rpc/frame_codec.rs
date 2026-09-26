@@ -424,6 +424,17 @@ pub fn fsr_consume_frame(reader: &mut FrameStreamReader) {
     if read_position == 0 || read_position < compact_threshold_bytes {
         return;
     }
+    // Compact only once the consumed prefix is at least as large as what is
+    // left, so each byte is moved O(1) times however many frames are queued.
+    // Compacting after EVERY consumed frame past the threshold moved the whole
+    // remainder once per frame -- quadratic in the backlog: 1024 queued 64 KB
+    // frames cost ~32 GB of memmove, and pipelining ran slower than sending
+    // one frame at a time (Raft's leader pipelines one AppendEntries per
+    // follower per round, and starved heartbeats under large payloads).
+    let buffered_total = reader.cursor_.get_ref().len();
+    if read_position < buffered_total - read_position {
+        return;
+    }
     let buffer = reader.cursor_.get_mut();
     let remaining = buffer.len() - read_position;
     unsafe {

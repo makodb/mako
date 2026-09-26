@@ -13,6 +13,8 @@ OUT="$1"; TRIALS="$2"; DUR="$3"; shift 3
 ARMS=("$@")
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PAYLOAD="${PAYLOAD:-4096}"; RATE="${RATE:-240}"; PARTS="${PARTS:-1}"
+# In-flight bound; run_sweep.sh uses 4096 / 256 / 64 for 4 KB / 286208 B / 1 MiB.
+MAXOUT="${MAXOUT:-4096}"
 mkdir -p "$OUT"
 summ() {
   python3 - "$1" <<'PY'
@@ -27,7 +29,7 @@ for t in $(seq 1 "$TRIALS"); do
     f="$OUT/$arm.t$t.json"
     (cd "$REPO_ROOT" && examples/raft_bench.sh --build-dir "$arm" --out "$f" \
        --partitions "$PARTS" --payload-bytes "$PAYLOAD" --rate "$RATE" \
-       --duration-sec "$DUR" >"$OUT/$arm.t$t.log" 2>&1) || { echo "$arm t$t FAILED"; continue; }
+       --duration-sec "$DUR" --max-outstanding "$MAXOUT" >"$OUT/$arm.t$t.log" 2>&1) || { echo "$arm t$t FAILED"; continue; }
     printf '%-18s t%-2s %s\n' "$arm" "$t" "$(summ "$f")"
   done
 done

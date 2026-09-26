@@ -20,9 +20,11 @@
 #include "frame.h"
 #include "../legacy_raft_log_payload.h"
 #include "../tpc_command.h"
+// LogEntry, which mako_commands.h only forward-declares: the batch byte
+// bound (raft_command_payload_bytes) reads its length in every build.
+#include "../replication_log_entry.h"
 #ifdef RAFT_TEST_CORO
 #include "application_log.h"       // EncodeApplicationLog, for the lab Start payload
-#include "../replication_log_entry.h"  // LogEntry, which mako_commands.h only forward-declares
 #endif
 #include "rust_facade_types.h"
 #include "lane_kernels.h"
@@ -209,6 +211,20 @@ uint64_t GetNonPreferredGraceElectionTimeoutUs() {
 uint64_t GetNonPreferredSteadyElectionTimeoutUs() {
   return RandomInRangeUs(kNonPreferredSteadyElectionMinUs,
                          kNonPreferredSteadyElectionMaxUs);
+}
+
+// The byte half of the batch bound. An entry count alone does not bound a
+// frame: 256 x 286 KB entries is a 73 MB AppendEntries, past srpc's 64 MiB
+// frame limit (kMaxFramePayloadSize, rpc/frame_codec.rs), which send_frame
+// refuses -- so a lagging follower was re-sent the same unsendable batch every
+// round, never caught up, and forced elections. 16 MiB is a quarter of the
+// frame limit, so a batch plus its envelope always fits, and short enough
+// (~30 ms on loopback) that it never approaches an election timeout.
+uint64_t GetAppendEntriesBatchMaxBytes() {
+  constexpr uint64_t kDefaultMaxBytes = 16ULL * 1024ULL * 1024ULL;
+  static uint64_t max_bytes = ParseEnvUint64OrDefault(
+      "MAKO_RAFT_APPEND_BATCH_MAX_BYTES", kDefaultMaxBytes);
+  return max_bytes;
 }
 
 uint64_t GetAppendEntriesBatchMaxEntries() {
@@ -1504,6 +1520,27 @@ bool raft_batch_optimization_enabled() {
 
 uint64_t raft_append_entries_batch_max() {
   return GetAppendEntriesBatchMaxEntries();
+}
+
+uint64_t raft_append_entries_batch_max_bytes() {
+  return GetAppendEntriesBatchMaxBytes();
+}
+
+// An entry's contribution to an AppendEntries frame, for the byte bound: the
+// application bytes of a TpcCommitCommand's LogEntry plus a fixed allowance
+// for the envelopes around them. Anything else is small and counts as the
+// allowance. Read, not serialized: the length is a field.
+uint64_t raft_command_payload_bytes(const rusty::RaftCommand* cmd) {
+  constexpr uint64_t kEnvelopeAllowance = 64;
+  const auto commit = marshallable_cast<TpcCommitCommand>(*cmd);
+  if (commit.is_none()) {
+    return kEnvelopeAllowance;
+  }
+  const auto entry = marshallable_cast<LogEntry>(commit.as_ref().unwrap()->cmd_);
+  if (entry.is_none()) {
+    return kEnvelopeAllowance;
+  }
+  return kEnvelopeAllowance + entry.as_ref().unwrap()->log_entry.size();
 }
 
 // The wire kind of a command. The lookup that produced it is Rust; this only

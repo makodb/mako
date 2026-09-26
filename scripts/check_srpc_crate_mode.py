@@ -5876,6 +5876,10 @@ ABI_SPECS = {
                         ),
                         (
                             "T",
+                            "srpc::tcpconn_append_frame@srpc.tcp_channel(std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, int, unsigned char const*, unsigned long)",
+                        ),
+                        (
+                            "T",
                             "srpc::tcplistener_accept_step@srpc.tcp_channel(srpc::TcpListener@srpc.tcp_channel const&, srpc::AcceptStep@srpc.tcp_channel*)",
                         ),
                         (

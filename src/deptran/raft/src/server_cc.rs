@@ -504,6 +504,8 @@ unsafe extern "C" {
         site_id: u16, ord: usize) -> bool;
     fn raft_batch_optimization_enabled() -> bool;
     fn raft_append_entries_batch_max() -> u64;
+    fn raft_append_entries_batch_max_bytes() -> u64;
+    fn raft_command_payload_bytes(cmd: *const rusty::RaftCommand) -> u64;
     // The wire kind of a command, for the diagnostics that report why an
     // entry could not be batched. It takes the COMMAND, not (server, index):
     // the lookup is Rust, and only reading inside the opaque payload is not.
@@ -940,6 +942,10 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
     // A fresh buffer per follower, as the C++ local was.
     server.batch_buffer_.clear();
     let max_batch_entries: u64 = unsafe { raft_append_entries_batch_max() };
+    // A batch is bounded by BYTES too: the transport refuses a frame past its
+    // 64 MiB limit, and an entry count alone lets large entries exceed it.
+    let max_batch_bytes: u64 = unsafe { raft_append_entries_batch_max_bytes() };
+    let mut batch_bytes: u64 = 0;
     let batch_start_idx: u64 = server.state_.peers_.next_index(ord);
     rusty::raft_log_debug_5(
         "[BATCH_CHECK] site={} follower={} next_index={} state_.raft_log_.base()={} state_.raft_log_.last_index()={}",
@@ -986,6 +992,15 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
             let entry_term: i64 = entry.unwrap().term();
             let entry_cmd: *const rusty::RaftCommand =
                 entry.unwrap().cmd() as *const rusty::RaftCommand;
+            // Stop before this entry would push the batch past the byte bound
+            // -- but always carry at least one, so progress never stalls.
+            let entry_bytes: u64 = unsafe { raft_command_payload_bytes(entry_cmd) };
+            if !server.batch_buffer_.is_empty()
+                && batch_bytes.saturating_add(entry_bytes) > max_batch_bytes
+            {
+                break;
+            }
+            batch_bytes = batch_bytes.saturating_add(entry_bytes);
             let is_commit: bool =
                 unsafe { raft_command_is_tpc_commit(entry_cmd) };
             if is_commit {

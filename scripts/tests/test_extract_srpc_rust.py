@@ -896,7 +896,14 @@ class CheckedInCanaryTests(unittest.TestCase):
         # every timed-out event stays in waiting_events_/composite_events_ and
         # is rescanned on every reactor pass: the Raft latency regression in
         # docs/performance/raft-latency-regression.md.
-        self.assertEqual(canonical_lines, 14880)
+        # 14880 -> 14882: +2, two large-frame fixes in the Rust lane's and the
+        # C++ lane's shared transport. tcp_channel.rs: send_frame appends
+        # through tcpconn_append_frame (one resize, one memcpy) instead of a
+        # bounds-checked per-byte store loop. frame_codec.rs: fsr_consume_frame
+        # compacts only once the consumed prefix is at least half the buffer,
+        # instead of after every frame -- quadratic in the backlog, which
+        # starved Raft heartbeats under large payloads.
+        self.assertEqual(canonical_lines, 14882)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"

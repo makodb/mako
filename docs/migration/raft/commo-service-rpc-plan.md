@@ -69,6 +69,69 @@ The TODO below is still the record of what stages 0–3 did and why. The parts
 that assumed a single lane are superseded here and marked where they stand:
 3e's C++ deletions, 4a, 4b and 5a.
 
+### Status (kept current as steps land)
+
+| step | state | where |
+|---|---|---|
+| H1 docs committed | done | `65754b66f` |
+| H2 mako-dev merged | done -- 22 conflicts resolved, each recorded | `70fc2c0da` |
+| R1-R3 reactor fix | done -- latency back to the pre-regression binary | `edc5db890`, data `4149bf438` |
+| R4 mako-dev | applied in the mako-dev worktree, awaiting its build | -- |
+| L1 crate split | done (raft + raft-rt, one workspace) | `217cc26d4` |
+| S1b seam split | done (server.cc host / server_seam_cpp.cc / rt seam.rs) | `217cc26d4` |
+| T1, T2, T4 Rust lane | done -- RaftLabTest 25/25 on both lanes | `217cc26d4` |
+| T3, T4 suites + benchmark, T5 | in progress | -- |
+| L2-L4 (transpiled C++ lane), M, S1/S2/S3, D | not started | -- |
+
+**Execution order changed, deliberately.** The plan ordered L (the C++ lane
+from the core) before T (the Rust lane). T ran first, on the user's explicit
+priority of a Rust runtime benchmarked against the base. Nothing in T depended
+on L: the seam kernels are the existing extern "C" ones, so the Rust lane
+needed only L1 (the crate split) and S1b (the file split).
+
+**Decisions recorded as they were taken:**
+
+- **T1, the four vote differences: match C++ on all four.** Correctness is a
+  hard constraint and the lab's timing cases were tuned against the C++
+  lane. So the Rust tally counts peer votes against `n/2`, loses only past
+  `n - n/2` rejections, takes the term only from non-negative replies
+  (seeded 0), and reads membership from the whole recorded partition, self
+  included -- the worker records every site of every partition, as
+  Communicator does.
+- **T1, the vote's wake: poll, not park.** The campaigning fiber polls the
+  tally every 200 us for at most 1 s. A reply callback must be `Send` and an
+  `IntEvent` is neither `Send` nor `Sync`, and elections are not a hot path.
+- **T2, what replaces ReconnectToSite: nothing, yet.** Nothing on this
+  branch calls it (the C++ caller was mako-dev's NotifyRestart RPC, which
+  this branch's reduced RaftService does not have). `add_peer` retries for
+  Communicator's 120 s at 1 s intervals.
+- **Wiring shape.** The Rust-lane worker code is its own files
+  (`raft/raft_lane.h`, `raft_lane_rust.cc`), reached by one-line
+  `#if MAKO_RAFT_LANE_RUST` hooks in the existing workers rather than by
+  moving the C++ lane's code into per-lane files -- which would have turned
+  every future mako-dev merge of those files into a conflict.
+- **Build layout.** One build tree per lane (`build`/`build_raftlab` hybrid,
+  `build_rust`/`build_rust_lab` rust) rather than L4's suffixed binaries from
+  one tree. T3's mixed cluster takes a binary per replica instead
+  (`examples/test_1shard_replication_simple_raft.sh`, `BIN_*`).
+- **Logging and the clock stay HOST for now** (S1 classified them SEAM). The
+  Rust lane still logs through the process's one C++ logger, so Raft's lines
+  interleave with Mako's. Revisit in S1.
+
+**Found while building T, not anticipated by the plan** -- three wire
+defects, each of which would have broken the Rust lane on real traffic:
+
+1. Stage 2c's claim that "Rust holds the whole frame as `Request::body`" was
+   wrong. `body` also holds the frame header, so `from_body` measured `cmd`
+   from the wrong origin and read every field five bytes off. It now
+   measures from the argument bytes `req.src` points at. Found by the first
+   AppendEntries sent over real TCP.
+2. `cmd` was serialized as a `Vec<u8>`, which prefixes a v64 length the
+   decoder does not expect (W1). It is now written raw.
+3. C++ `std::string` mapped to Rust `String`, whose decoder rejects
+   non-UTF-8, so every binary snapshot would have been refused. It is now
+   `WireBytes`.
+
 *Validated the same day.* A ten-agent pass checked 143 claims in this section
 against the tree: 48 problems were reported and 45 survived an adversarial
 re-check. They are folded in below. Where a finding changed the design rather
