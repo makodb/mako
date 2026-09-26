@@ -8,7 +8,14 @@ cmake_minimum_required(VERSION 3.30)
 # into no-ops via the header guard. The UUID gates CMake's
 # experimental `import std;` materialization and must be set BEFORE
 # `project()`.
-set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+# The token rotates between CMake generations: 451f2fe2... is the CMake
+# 3.30/3.31 token; CMake 4.0, 4.1 and 4.2 all use d0edc3af.... Select by
+# version so the build configures on both generations.
+if(CMAKE_VERSION VERSION_LESS "4.0")
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
+else()
+    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
+endif()
 
 # Suppress CMake policy warnings for deprecated modules
 # CMP0167: FindBoost module is removed in CMake 3.30+, but we still support older CMake
@@ -1950,6 +1957,21 @@ if(BUILD_TESTS)
     target_compile_options(test_txn_timeout PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_txn_timeout ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_txn_timeout COMMAND test_txn_timeout)
+
+    # Reactor timeout events remain observable as TIMEOUT to the resumed
+    # fiber, but must leave the polling queues once terminal. Without this
+    # target the assertions in test_timeout_race.cc ran only in srpc's
+    # standalone battery, never in Mako's ctest.
+    add_executable(test_srpc_timeout_race
+        src/srpc/tests/test_timeout_race.cc)
+    target_include_directories(test_srpc_timeout_race PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_srpc_timeout_race PRIVATE
+        ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_srpc_timeout_race
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
+    add_test(NAME test_srpc_timeout_race COMMAND test_srpc_timeout_race)
 
     # Stress Crash Recovery Tests (Phase 7.3.1)
     # NOTE: Stress tests take too long for regular CI (10+ minutes each).
