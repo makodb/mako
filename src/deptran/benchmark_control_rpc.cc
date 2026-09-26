@@ -18,7 +18,6 @@ void ServerControlServiceImpl::set_sig_handler() const {
   sact.sa_flags = 0;
   sact.sa_handler = shutdown_wrapper;
   sigaction(SIGALRM, &sact, NULL);
-  sig_handler_set_.store(true, rusty::sync::atomic::Ordering::Release);
 }
 
 void ServerControlServiceImpl::do_shutdown() const {
@@ -51,8 +50,7 @@ void ServerControlServiceImpl::server_heart_beat(
     srpc::DeferredReply defer) const {
   (void)rpc_req;
   (void)rpc_resp;
-  if (!sig_handler_set_.load(rusty::sync::atomic::Ordering::Acquire))
-    set_sig_handler();
+  std::call_once(sig_handler_once_, [this] { set_sig_handler(); });
   alarm(timeout_);
   defer.reply();
 }
@@ -63,8 +61,7 @@ void ServerControlServiceImpl::server_heart_beat(
 ServerControlServiceImpl::ServerControlServiceImpl(rusty::Arc<ServerStatus> status,
                                                    unsigned int timeout) :
         status_(std::move(status)),
-        timeout_(timeout),
-        sig_handler_set_(false) {
+        timeout_(timeout) {
   scsi_s.push_back(this);
 }
 

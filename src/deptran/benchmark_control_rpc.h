@@ -6,9 +6,9 @@
 #include <rusty/function.hpp>
 #include <rusty/box.hpp>
 #include <rusty/arc.hpp>
-#include <rusty/sync/atomic.hpp>
 
 #include <time.h>
+#include <mutex>
 #include <vector>
 #include <sys/time.h>
 #ifdef __APPLE__ // for OS X
@@ -28,11 +28,7 @@ class ServerControlServiceImpl: public ServerControlService {
   rusty::Arc<ServerStatus> status_;
 
   unsigned int timeout_;
-  // Set once, from a const RPC handler. The generated service virtuals are
-  // const because srpc shares one service context immutably across handler
-  // fibers, so this flag carries its own interior mutability -- and being
-  // reachable from several fibers, it is atomic rather than a Cell.
-  rusty::sync::atomic::AtomicBool sig_handler_set_;
+  mutable std::once_flag sig_handler_once_;
 
   static std::vector<ServerControlServiceImpl*> scsi_s;
 
@@ -52,9 +48,9 @@ class ServerControlServiceImpl: public ServerControlService {
                            unsigned int timeout = 5);
   ~ServerControlServiceImpl();
 
-  // Movable but not copyable (Arc is movable and clonable)
-  ServerControlServiceImpl(ServerControlServiceImpl&&) = default;
-  ServerControlServiceImpl& operator=(ServerControlServiceImpl&&) = default;
+  // Registered service addresses must remain stable.
+  ServerControlServiceImpl(ServerControlServiceImpl&&) = delete;
+  ServerControlServiceImpl& operator=(ServerControlServiceImpl&&) = delete;
   ServerControlServiceImpl(const ServerControlServiceImpl&) = delete;
   ServerControlServiceImpl& operator=(const ServerControlServiceImpl&) = delete;
 

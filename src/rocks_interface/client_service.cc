@@ -73,7 +73,7 @@ void MakoClientService::HandleBeginTxn(rusty::Box<srpc::Request> req,
 
     // Generate unique transaction ID and register with ShardReceiver for tracking
     // Using atomic counter ensures uniqueness per BeginTxn call
-    uint32_t counter = next_txn_counter_.fetch_add(1, rusty::sync::atomic::Ordering::Relaxed);
+    uint32_t counter = next_txn_counter_.fetch_add(1, std::memory_order_relaxed);
     uint64_t txn_id = receiver_->BeginClientTransaction(
         static_cast<uint64_t>(client_id), counter);
 

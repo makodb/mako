@@ -188,8 +188,10 @@ class CheckedInCanaryTests(unittest.TestCase):
         self.assertIn(
             # 8 -> 9 kernels, 531 -> 499 lines: reactor/srpc_epoll.c joined the
             # set when epoll_platform_linux.cc (a C++ carrier) was retired, and
-            # the others shrank.
-            "terminal C:      3 ABI headers/89 lines; 9 kernels/499 lines",
+            # the others shrank. 3 -> 6 ABI headers, 89 -> 150 lines: not new
+            # headers but a census that now counts srpc_epoll.h, srpc_connect.h
+            # and srpc_server.h, which existed and were missed (from mako-dev).
+            "terminal C:      6 ABI headers/150 lines; 9 kernels/499 lines",
             output,
         )
 

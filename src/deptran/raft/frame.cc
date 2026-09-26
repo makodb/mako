@@ -263,14 +263,11 @@ Communicator *RaftFrame::CreateCommo(
   // GetFrame method. RaftCommo currently seems ok to share among the
   // clients of this method.
   Log_info("CreateCommo: Thread ID = {}", std::this_thread::get_id());
-  // LocalKey is closure-only now: `.with()` hands the value to a callable
-  // rather than returning a guard, so the thread-local is never aliased
-  // outside the call.
-  srpc::sp_running_fiber_th_.with([](auto& cell) {
-    auto guard = cell.borrow();
-    Log_info("CreateCommo: sp_running_fiber_th_ = {}",
-             (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
-  });
+  {
+    auto fiber = Fiber::current_fiber();
+    Log_info("CreateCommo: current fiber = {}",
+             fiber.is_some() ? static_cast<const void*>(fiber.as_ref().unwrap().get()) : nullptr);
+  }
   if (commo_ == nullptr) {
     Log_info("CreateCommo: Creating new RaftCommo");
     commo_ = std::make_unique<RaftCommo>(std::move(poll_thread_worker));
@@ -311,11 +308,11 @@ Communicator *RaftFrame::CreateCommo(
       raft_test_fiber_ = rusty::Some(Fiber::create_run([this] () {
         Log_info("Test fiber: Starting execution");
         Log_info("Test fiber: Thread ID = {}", std::this_thread::get_id());
-        srpc::sp_running_fiber_th_.with([](auto& cell) {
-          auto guard = cell.borrow();
-          Log_info("Test fiber: sp_running_fiber_th_ = {}",
-                   (*guard).is_some() ? (void*)(*guard).as_ref().unwrap().get() : nullptr);
-        });
+        {
+          auto fiber = Fiber::current_fiber();
+          Log_info("Test fiber: current fiber = {}",
+                   fiber.is_some() ? static_cast<const void*>(fiber.as_ref().unwrap().get()) : nullptr);
+        }
 
         // Yield until all 5 communicators are initialized
         Log_info("Test fiber: About to yield");

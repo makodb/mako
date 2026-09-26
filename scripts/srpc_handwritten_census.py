@@ -41,8 +41,11 @@ COMPATIBILITY_HEADERS = (
 )
 C_ABI_HEADERS = (
     "src/srpc/reactor/srpc_fiber.h",
+    "src/srpc/reactor/srpc_epoll.h",
     "src/srpc/misc/srpc_rand.h",
     "src/srpc/misc/srpc_timing.h",
+    "src/srpc/rpc/srpc_connect.h",
+    "src/srpc/rpc/srpc_server.h",
 )
 
 # The legacy body-burndown classifier separated a narrow set of fixed module

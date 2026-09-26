@@ -1,9 +1,9 @@
 // @safe - SRPC RPC service for Mako client API
 #pragma once
 
+#include <atomic>
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
-#include <rusty/sync/atomic.hpp>
 #include "srpc/srpc.hpp"
 #include "mako/lib/server.h"
 
@@ -126,12 +126,7 @@ private:
 
     // Atomic counter for generating unique transaction IDs
     // txn_id = (client_id << 32) | counter, ensuring uniqueness per BeginTxn call
-    //
-    // rusty::AtomicU32 rather than std::atomic: the generated service virtuals
-    // are const, because srpc shares one service context immutably across
-    // handler fibers. std::atomic's mutating operations are not const-
-    // qualified; rusty's take &self, the way Rust's atomics do.
-    rusty::sync::atomic::AtomicU32 next_txn_counter_;
+    mutable std::atomic<uint32_t> next_txn_counter_;
 };
 
 } // namespace mako
