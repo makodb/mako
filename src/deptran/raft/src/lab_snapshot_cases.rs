@@ -16,7 +16,7 @@
 #![allow(non_snake_case)]
 
 use crate::lab::{self, ELECTION_TIMEOUT_US, NSERVERS};
-use crate::lab_cases::{failed, init, passed, LabState};
+use crate::lab_cases::{check_msg, failed, init2, passed, LabState};
 use crate::scheduler_h::RaftSpecific;
 use crate::server_h::{lab_registry, RaftLockGuard, RaftServerBase, RaftStdLockGuard};
 
@@ -81,21 +81,6 @@ const PROBE_ABORTED_BEFORE_COMMIT: u32 = 16;
 // ---------------------------------------------------------------------------
 // Helpers
 
-macro_rules! check {
-    ($cond:expr) => { if !($cond) { return 1; } };
-}
-macro_rules! check_msg {
-    ($cond:expr, $($arg:tt)*) => {
-        if !($cond) { failed(&format!($($arg)*)); return 1; }
-    };
-}
-macro_rules! init2 {
-    ($id:expr, $desc:expr) => {
-        init($id, $desc);
-        assert!(lab::n_disconnected() == 0 && !lab::is_unreliable(),
-                "case {} started on a network a previous case left broken", $id);
-    };
-}
 
 /// Borrow one replica, as the fixture does. `None` means the locale is not
 /// registered, which the cases treat the way the C++ treats a null
@@ -201,11 +186,11 @@ fn log_fingerprint(svr: &RaftServerBase) -> Vec<u64> {
 // Test 54 -- SnapshotManager wiring
 
 fn test_snapshot_manager_wiring(_st: &mut LabState) -> i32 {
-    init2!(54, "SnapshotManager wiring in RaftServer");
+    init2(54, "SnapshotManager wiring in RaftServer");
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
     let leader = lab::one_leader(-1);
-    check!(leader >= 0);
+    if !(leader >= 0) { return 1; }
 
     let test_mgr = new_manager();
     let restored = with_server(leader as u32, |svr| {
@@ -227,10 +212,10 @@ fn test_snapshot_manager_wiring(_st: &mut LabState) -> i32 {
 
     // The manager we installed is empty, so it reports no snapshot -- which
     // is exactly what the C++ asserts about the same object.
-    check_msg!(!installed.present, "a freshly created manager should hold no snapshot");
-    check_msg!(!has, "HasSnapshot should be false with empty manager");
-    check_msg!(index == 0, "GetSnapshotIndex should be 0 by default, got {}", index);
-    check_msg!(term == 0, "GetSnapshotTerm should be 0 by default, got {}", term);
+    if !check_msg(!installed.present, "a freshly created manager should hold no snapshot") { return 1; }
+    if !check_msg(!has, "HasSnapshot should be false with empty manager") { return 1; }
+    if !check_msg(index == 0, &format!("GetSnapshotIndex should be 0 by default, got {}", index)) { return 1; }
+    if !check_msg(term == 0, &format!("GetSnapshotTerm should be 0 by default, got {}", term)) { return 1; }
 
     // SAFETY: the manager is still ours; nothing else holds a reference.
     unsafe { raft_lab_snapshot_delete_all(&test_mgr as *const _) };
@@ -243,11 +228,11 @@ fn test_snapshot_manager_wiring(_st: &mut LabState) -> i32 {
 // Test 55 -- CreateSnapshot basic
 
 fn test_create_snapshot_basic(_st: &mut LabState) -> i32 {
-    init2!(55, "CreateSnapshot basic");
+    init2(55, "CreateSnapshot basic");
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
     let leader = lab::one_leader(-1);
-    check!(leader >= 0);
+    if !(leader >= 0) { return 1; }
 
     let test_mgr = new_manager();
     let Some(original_threshold) = with_server(leader as u32, |s| s.GetSnapshotThreshold())
@@ -261,12 +246,12 @@ fn test_create_snapshot_basic(_st: &mut LabState) -> i32 {
     });
 
     let before = with_server(leader as u32, |s| (s.HasSnapshot(), s.GetSnapshotIndex()));
-    check_msg!(before == Some((false, 0)), "No snapshot should exist initially");
+    if !check_msg(before == Some((false, 0)), "No snapshot should exist initially") { return 1; }
 
     // More than the threshold's worth of committed-and-applied entries
     for i in 1..=10 {
         let idx = lab::do_agreement(100 + i, NSERVERS as i32, true);
-        check_msg!(idx > 0, "DoAgreement failed for cmd {}", 100 + i);
+        if !check_msg(idx > 0, &format!("DoAgreement failed for cmd {}", 100 + i)) { return 1; }
     }
     // time for applyLogs to run and trigger CreateSnapshot
     lab::fiber_sleep_us(2_000_000);
@@ -276,15 +261,13 @@ fn test_create_snapshot_basic(_st: &mut LabState) -> i32 {
     let Some((has, snap_index, snap_term)) = after else {
         failed("Server should not be null"); return 1;
     };
-    check_msg!(has, "Snapshot should exist after exceeding threshold");
-    check_msg!(snap_index > 0, "Snapshot index should be > 0, got {}", snap_index);
-    check_msg!(snap_term > 0, "Snapshot term should be > 0, got {}", snap_term);
+    if !check_msg(has, "Snapshot should exist after exceeding threshold") { return 1; }
+    if !check_msg(snap_index > 0, &format!("Snapshot index should be > 0, got {}", snap_index)) { return 1; }
+    if !check_msg(snap_term > 0, &format!("Snapshot term should be > 0, got {}", snap_term)) { return 1; }
 
     let latest = probe(&test_mgr);
-    check_msg!(latest.present, "Snapshot manager should have a snapshot");
-    check_msg!(latest.last_included_index == snap_index,
-               "Manager index ({}) should match server index ({})",
-               latest.last_included_index, snap_index);
+    if !check_msg(latest.present, "Snapshot manager should have a snapshot") { return 1; }
+    if !check_msg(latest.last_included_index == snap_index, &format!("Manager index ({}) should match server index ({})", latest.last_included_index, snap_index)) { return 1; }
 
     // The snapshot now backs a compacted live prefix: restore only the
     // runtime threshold and keep the manager for future catch-up.
@@ -302,11 +285,11 @@ fn test_create_snapshot_basic(_st: &mut LabState) -> i32 {
 // Test 56 -- CreateSnapshot and compaction
 
 fn test_create_snapshot_and_compaction(_st: &mut LabState) -> i32 {
-    init2!(56, "CreateSnapshot and compaction");
+    init2(56, "CreateSnapshot and compaction");
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
     let leader = lab::one_leader(-1);
-    check!(leader >= 0);
+    if !(leader >= 0) { return 1; }
 
     let test_mgr = new_manager();
     let Some(original_threshold) = with_server(leader as u32, |s| s.GetSnapshotThreshold())
@@ -320,7 +303,7 @@ fn test_create_snapshot_and_compaction(_st: &mut LabState) -> i32 {
     let mut first_new_index = 0u64;
     for i in 1..=10 {
         let idx = lab::do_agreement(200 + i, NSERVERS as i32, true);
-        check_msg!(idx > 0, "DoAgreement failed for cmd {}", 200 + i);
+        if !check_msg(idx > 0, &format!("DoAgreement failed for cmd {}", 200 + i)) { return 1; }
         if first_new_index == 0 {
             first_new_index = idx;
         }
@@ -346,22 +329,16 @@ fn test_create_snapshot_and_compaction(_st: &mut LabState) -> i32 {
     }
 
     let latest = probe(&test_mgr);
-    check_msg!(snapshot_ready && latest.present,
-               "Replacement snapshot manager did not advance for this workload");
-    check_msg!(snap_idx == latest.last_included_index,
-               "Server snapshot index {} does not match manager index {}",
-               snap_idx, latest.last_included_index);
-    check_msg!(snap_idx > snapshot_baseline && snap_idx >= first_new_index,
-               "Snapshot did not advance for this workload: baseline={}, first={}, got={}",
-               snapshot_baseline, first_new_index, snap_idx);
+    if !check_msg(snapshot_ready && latest.present, "Replacement snapshot manager did not advance for this workload") { return 1; }
+    if !check_msg(snap_idx == latest.last_included_index, &format!("Server snapshot index {} does not match manager index {}", snap_idx, latest.last_included_index)) { return 1; }
+    if !check_msg(snap_idx > snapshot_baseline && snap_idx >= first_new_index, &format!("Snapshot did not advance for this workload: baseline={}, first={}, got={}", snapshot_baseline, first_new_index, snap_idx)) { return 1; }
 
     // Entries submitted AFTER the snapshot must still commit
     for i in 1..=5 {
         let idx = lab::do_agreement(300 + i, NSERVERS as i32, true);
-        check_msg!(idx > 0, "DoAgreement after snapshot failed for cmd {}", 300 + i);
+        if !check_msg(idx > 0, &format!("DoAgreement after snapshot failed for cmd {}", 300 + i)) { return 1; }
     }
-    check_msg!(lab::one_leader(-1) >= 0,
-               "Should still have a leader after snapshot+compaction");
+    if !check_msg(lab::one_leader(-1) >= 0, "Should still have a leader after snapshot+compaction") { return 1; }
 
     with_server(leader as u32, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
@@ -377,11 +354,11 @@ fn test_create_snapshot_and_compaction(_st: &mut LabState) -> i32 {
 // Test 57 -- snapshot threshold configurable
 
 fn test_snapshot_threshold_configurable(_st: &mut LabState) -> i32 {
-    init2!(57, "Snapshot threshold configurable");
+    init2(57, "Snapshot threshold configurable");
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
     let leader = lab::one_leader(-1);
-    check!(leader >= 0);
+    if !(leader >= 0) { return 1; }
 
     let observed = with_server(leader as u32, |svr| {
         let default_threshold = svr.GetSnapshotThreshold();
@@ -395,13 +372,9 @@ fn test_snapshot_threshold_configurable(_st: &mut LabState) -> i32 {
     let Some((default_threshold, forty_two, hundred_thousand)) = observed else {
         failed("Server should not be null"); return 1;
     };
-    check_msg!(default_threshold == DEFAULT_SNAPSHOT_THRESHOLD,
-               "Default threshold should be {}, got {}",
-               DEFAULT_SNAPSHOT_THRESHOLD, default_threshold);
-    check_msg!(forty_two == 42,
-               "Threshold should be 42 after SetSnapshotThreshold, got {}", forty_two);
-    check_msg!(hundred_thousand == 100_000,
-               "Threshold should be 100000, got {}", hundred_thousand);
+    if !check_msg(default_threshold == DEFAULT_SNAPSHOT_THRESHOLD, &format!("Default threshold should be {}, got {}", DEFAULT_SNAPSHOT_THRESHOLD, default_threshold)) { return 1; }
+    if !check_msg(forty_two == 42, &format!("Threshold should be 42 after SetSnapshotThreshold, got {}", forty_two)) { return 1; }
+    if !check_msg(hundred_thousand == 100_000, &format!("Threshold should be 100000, got {}", hundred_thousand)) { return 1; }
 
     eprintln!("[SNAPSHOT-THRESHOLD-CONFIG-TEST] PASSED");
     passed();
@@ -413,21 +386,21 @@ fn test_snapshot_threshold_configurable(_st: &mut LabState) -> i32 {
 // changes nothing
 
 fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
-    init2!(58, "InstallSnapshot stale index is a no-op");
+    init2(58, "InstallSnapshot stale index is a no-op");
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
     let leader = lab::one_leader(-1);
-    check!(leader >= 0);
+    if !(leader >= 0) { return 1; }
 
     for i in 1..=5 {
         let idx = lab::do_agreement(200 + i, NSERVERS as i32, true);
-        check_msg!(idx > 0, "DoAgreement failed for cmd {}", 200 + i);
+        if !check_msg(idx > 0, &format!("DoAgreement failed for cmd {}", 200 + i)) { return 1; }
     }
 
     let follower = first_non_leader_index(leader);
-    check_msg!(follower >= 0, "No follower found");
+    if !check_msg(follower >= 0, "No follower found") { return 1; }
     let follower = follower as u32;
-    check_msg!(lab_registry::get(follower).is_some(), "Follower server should not be null");
+    if !check_msg(lab_registry::get(follower).is_some(), "Follower server should not be null") { return 1; }
 
     // A prior case may already have compacted this replica, so an EMPTY
     // replacement would violate the snapshot/log invariant before the RPC is
@@ -436,8 +409,7 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
     let Some(threshold) = with_server(follower, |s| s.GetSnapshotThreshold()) else {
         failed("Follower server should not be null"); return 1;
     };
-    check_msg!(install_and_seed(follower, &test_mgr, threshold).is_some(),
-               "Could not atomically seed Test58 replacement snapshot manager");
+    if !check_msg(install_and_seed(follower, &test_mgr, threshold).is_some(), "Could not atomically seed Test58 replacement snapshot manager") { return 1; }
 
     let Some(before) = with_server(follower, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
@@ -449,14 +421,13 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
          old_last_log_index, old_min_active_slot, follower_term) = before;
 
     let before_probe = probe(&test_mgr);
-    check_msg!(before_probe.present,
-               "Seeded Test58 snapshot manager has no readable snapshot");
+    if !check_msg(before_probe.present, "Seeded Test58 snapshot manager has no readable snapshot") { return 1; }
 
     // A snapshot at commit_index_ is stale by definition. It is still valid
     // leader contact at the same term, but its payload must not rewrite
     // snapshot, log or apply state.
     let stale_snapshot_index = old_commit_index;
-    check_msg!(stale_snapshot_index > 0, "Test58 needs a non-zero committed prefix");
+    if !check_msg(stale_snapshot_index > 0, "Test58 needs a non-zero committed prefix") { return 1; }
 
     let Some(leader_site) = with_server(lab::server_id_by_index(leader as usize),
                                         |s| s.SiteId()) else {
@@ -469,9 +440,7 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
         svr.OnInstallSnapshot(follower_term, leader_site as u64, stale_snapshot_index,
                               follower_term, &data, &raw mut reply_term);
     });
-    check_msg!(reply_term == follower_term,
-               "Same-term stale snapshot reply should be {}, got {}",
-               follower_term, reply_term);
+    if !check_msg(reply_term == follower_term, &format!("Same-term stale snapshot reply should be {}, got {}", follower_term, reply_term)) { return 1; }
 
     let Some(after) = with_server(follower, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
@@ -479,18 +448,13 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
          svr.LabCommitIndex(), svr.LabExecuteIndex(),
          svr.LabLastLogIndex(), svr.LabLogBase(), svr.IsLeaderLocked())
     }) else { failed("Follower server should not be null"); return 1; };
-    check_msg!(after.0 == old_snapidx,
-               "Stale snapshot changed snapidx from {} to {}", old_snapidx, after.0);
-    check_msg!(after.1 == old_snapterm,
-               "Stale snapshot changed snapterm from {} to {}", old_snapterm, after.1);
-    check_msg!(after.2 == old_commit_index && after.3 == old_execute_index
-                   && after.4 == old_last_log_index && after.5 == old_min_active_slot,
-               "Stale snapshot mutated log/apply indices");
-    check_msg!(!after.6,
-               "Accepted same-term leader contact must leave receiver a follower");
+    if !check_msg(after.0 == old_snapidx, &format!("Stale snapshot changed snapidx from {} to {}", old_snapidx, after.0)) { return 1; }
+    if !check_msg(after.1 == old_snapterm, &format!("Stale snapshot changed snapterm from {} to {}", old_snapterm, after.1)) { return 1; }
+    if !check_msg(after.2 == old_commit_index && after.3 == old_execute_index
+                   && after.4 == old_last_log_index && after.5 == old_min_active_slot, "Stale snapshot mutated log/apply indices") { return 1; }
+    if !check_msg(!after.6, "Accepted same-term leader contact must leave receiver a follower") { return 1; }
 
-    check_msg!(probe(&test_mgr) == before_probe,
-               "Stale snapshot changed snapshot manager state");
+    if !check_msg(probe(&test_mgr) == before_probe, "Stale snapshot changed snapshot manager state") { return 1; }
 
     // Now the fallible Prepare boundary itself, not the stale fast path. A
     // validation rejection must not publish bytes, compact the log, or
@@ -506,8 +470,7 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
          svr.LabLogBase(), local_progress)
     }) else { failed("Follower server should not be null"); return 1; };
     let rejected_local_progress = rejected_before.7;
-    check_msg!(rejected_local_progress < u64::MAX,
-               "Test58 cannot construct a successor snapshot boundary");
+    if !check_msg(rejected_local_progress < u64::MAX, "Test58 cannot construct a successor snapshot boundary") { return 1; }
 
     let mut create_cb: rusty::RaftCreateSnapshotCb = Default::default();
     let mut prepare_cb: rusty::RaftPrepareSnapshotCb = Default::default();
@@ -517,7 +480,7 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
     let Some(token) = with_server(follower,
         |svr| svr.SetStateMachineSnapshotCallbacks(&create_cb, &prepare_cb))
     else { failed("Follower server should not be null"); return 1; };
-    check_msg!(token != 0, "Could not install Test58 rejecting prepare callback");
+    if !check_msg(token != 0, "Could not install Test58 rejecting prepare callback") { return 1; }
 
     let mut rejected_reply_term: u64 = follower_term;
     with_server(follower, |svr| {
@@ -534,13 +497,9 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
         |svr| svr.ClearStateMachineSnapshotCallbacks(token)).unwrap_or(false);
 
     // SAFETY: a plain atomic read of the kernel's flag.
-    check_msg!(unsafe { raft_lab_reject_prepare_called() },
-               "InstallSnapshot did not invoke the rejecting Prepare callback");
-    check_msg!(rejected_reply_term == 0,
-               "Rejected Prepare must return unavailable term 0, got {}",
-               rejected_reply_term);
-    check_msg!(!with_server(follower, |s| s.LabStopped()).unwrap_or(true),
-               "Clean Prepare rejection incorrectly fail-stopped the follower");
+    if !check_msg(unsafe { raft_lab_reject_prepare_called() }, "InstallSnapshot did not invoke the rejecting Prepare callback") { return 1; }
+    if !check_msg(rejected_reply_term == 0, &format!("Rejected Prepare must return unavailable term 0, got {}", rejected_reply_term)) { return 1; }
+    if !check_msg(!with_server(follower, |s| s.LabStopped()).unwrap_or(true), "Clean Prepare rejection incorrectly fail-stopped the follower") { return 1; }
 
     let Some(rejected_after) = with_server(follower, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
@@ -548,17 +507,15 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
          svr.LabCommitIndex(), svr.LabExecuteIndex(), svr.LabLastLogIndex(),
          svr.LabLogBase())
     }) else { failed("Follower server should not be null"); return 1; };
-    check_msg!(rejected_after.0 == rejected_before.0
+    if !check_msg(rejected_after.0 == rejected_before.0
                    && rejected_after.1 == rejected_before.1
                    && rejected_after.2 == rejected_before.2
                    && rejected_after.3 == rejected_before.3
                    && rejected_after.4 == rejected_before.4
                    && rejected_after.5 == rejected_before.5
-                   && rejected_after.6 == rejected_before.6,
-               "Rejected Prepare mutated the in-memory snapshot/log boundary");
-    check_msg!(probe(&test_mgr) == before_probe,
-               "Rejected Prepare changed the snapshot manager");
-    check_msg!(cleared, "Could not clear Test58 rejecting prepare callback");
+                   && rejected_after.6 == rejected_before.6, "Rejected Prepare mutated the in-memory snapshot/log boundary") { return 1; }
+    if !check_msg(probe(&test_mgr) == before_probe, "Rejected Prepare changed the snapshot manager") { return 1; }
+    if !check_msg(cleared, "Could not clear Test58 rejecting prepare callback") { return 1; }
 
     eprintln!("[INSTALL-SNAPSHOT-STALE-INDEX-TEST] Retaining live in-memory snapshot manager");
     eprintln!("[INSTALL-SNAPSHOT-STALE-INDEX-TEST] PASSED");
@@ -582,19 +539,19 @@ fn test59_state(svr: &mut RaftServerBase) -> Test59State {
 }
 
 fn test_install_snapshot_rejects_stale_term(_st: &mut LabState) -> i32 {
-    init2!(59, "InstallSnapshot rejects stale term");
+    init2(59, "InstallSnapshot rejects stale term");
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
     let leader = lab::one_leader(-1);
-    check!(leader >= 0);
+    if !(leader >= 0) { return 1; }
 
     for i in 1..=3 {
         let idx = lab::do_agreement(300 + i, NSERVERS as i32, true);
-        check_msg!(idx > 0, "DoAgreement failed for cmd {}", 300 + i);
+        if !check_msg(idx > 0, &format!("DoAgreement failed for cmd {}", 300 + i)) { return 1; }
     }
 
     let follower = first_non_leader_index(leader);
-    check_msg!(follower >= 0, "No follower found");
+    if !check_msg(follower >= 0, "No follower found") { return 1; }
     let follower = follower as u32;
 
     // One coherent observation, with the live Raft and apply threads excluded:
@@ -607,19 +564,15 @@ fn test_install_snapshot_rejects_stale_term(_st: &mut LabState) -> i32 {
 
     // Term 0 is less than any active term.
     let stale_term: u64 = 0;
-    check_msg!(stale_term < follower_term,
-               "Stale term {} should be < follower term {}", stale_term, follower_term);
+    if !check_msg(stale_term < follower_term, &format!("Stale term {} should be < follower term {}", stale_term, follower_term)) { return 1; }
 
     let mut reply_term: u64 = 0;
     with_server(follower, |svr| {
         let data = lab::byte_string("stale_snapshot_data");
         svr.OnInstallSnapshot(stale_term, 999, 100, 1, &data, &raw mut reply_term);
     });
-    check_msg!(reply_term == follower_term,
-               "Reply term should be follower's current term {}, got {}",
-               follower_term, reply_term);
-    check_msg!(with_server(follower, test59_state) == Some(before),
-               "Stale-term snapshot mutated Raft role/election state");
+    if !check_msg(reply_term == follower_term, &format!("Reply term should be follower's current term {}, got {}", follower_term, reply_term)) { return 1; }
+    if !check_msg(with_server(follower, test59_state) == Some(before), "Stale-term snapshot mutated Raft role/election state") { return 1; }
 
     // A same-term sender cannot advertise a boundary from a future term
     // either. That must be refused before leader contact or payload
@@ -635,11 +588,8 @@ fn test_install_snapshot_rejects_stale_term(_st: &mut LabState) -> i32 {
         svr.OnInstallSnapshot(follower_term, leader as u64, future_boundary_index,
                               follower_term + 1, &data, &raw mut future_reply_term);
     });
-    check_msg!(future_reply_term == 0,
-               "Same-term future-boundary rejection must report unavailable (0), got {}",
-               future_reply_term);
-    check_msg!(with_server(follower, test59_state) == Some(before),
-               "Future-boundary snapshot mutated receiver state");
+    if !check_msg(future_reply_term == 0, &format!("Same-term future-boundary rejection must report unavailable (0), got {}", future_reply_term)) { return 1; }
+    if !check_msg(with_server(follower, test59_state) == Some(before), "Future-boundary snapshot mutated receiver state") { return 1; }
 
     // A rejected but well-formed request must not look successful to the
     // sender: InstallSnapshot's leader callback treats any non-zero reply at
@@ -650,9 +600,7 @@ fn test_install_snapshot_rejects_stale_term(_st: &mut LabState) -> i32 {
         svr.OnInstallSnapshot(follower_term, 998, future_boundary_index,
                               follower_term, &data, &raw mut unauthorized_reply_term);
     });
-    check_msg!(unauthorized_reply_term == 0,
-               "Unauthorized snapshot rejection must report unavailable (0), got {}",
-               unauthorized_reply_term);
+    if !check_msg(unauthorized_reply_term == 0, &format!("Unauthorized snapshot rejection must report unavailable (0), got {}", unauthorized_reply_term)) { return 1; }
 
     let mut unrepresentable_reply_term: u64 = u64::MAX;
     with_server(follower, |svr| {
@@ -660,11 +608,8 @@ fn test_install_snapshot_rejects_stale_term(_st: &mut LabState) -> i32 {
         svr.OnInstallSnapshot(follower_term, u64::MAX, future_boundary_index,
                               follower_term, &data, &raw mut unrepresentable_reply_term);
     });
-    check_msg!(unrepresentable_reply_term == 0,
-               "Unrepresentable snapshot leader must report unavailable (0), got {}",
-               unrepresentable_reply_term);
-    check_msg!(with_server(follower, test59_state) == Some(before),
-               "Unauthorized snapshot rejection mutated receiver state");
+    if !check_msg(unrepresentable_reply_term == 0, &format!("Unrepresentable snapshot leader must report unavailable (0), got {}", unrepresentable_reply_term)) { return 1; }
+    if !check_msg(with_server(follower, test59_state) == Some(before), "Unauthorized snapshot rejection mutated receiver state") { return 1; }
 
     eprintln!("[INSTALL-SNAPSHOT-REJECTS-STALE-TEST] PASSED");
     passed();
@@ -675,25 +620,25 @@ fn test_install_snapshot_rejects_stale_term(_st: &mut LabState) -> i32 {
 // Test 60 -- the heartbeat loop installs a snapshot after a real partition
 
 fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
-    init2!(60, "HeartbeatLoop installs snapshot after a real partition");
+    init2(60, "HeartbeatLoop installs snapshot after a real partition");
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
     let mut leader = lab::one_leader(-1);
-    check!(leader >= 0);
+    if !(leader >= 0) { return 1; }
 
     // Every possible leader gets a unique live manager BEFORE the partition,
     // so the case stays valid across an ordinary re-election. These become the
     // backing store for compacted prefixes, so the process-wide snapshot knob
     // must stay in step with them for the rest of the suite -- as test 69 also
     // does after its rotation.
-    check_msg!(set_env("MAKO_RAFT_SNAPSHOTS", "1"), "Could not enable Test60 snapshots");
+    if !check_msg(set_env("MAKO_RAFT_SNAPSHOTS", "1"), "Could not enable Test60 snapshots") { return 1; }
 
     let mut managers = Vec::new();
     let mut original_thresholds = [0u64; NSERVERS];
     let mut seeded = [0u64; NSERVERS];
     for i in 0..NSERVERS {
         let loc = lab::server_id_by_index(i);
-        check_msg!(lab_registry::get(loc).is_some(), "Test60 server {} is null", i);
+        if !check_msg(lab_registry::get(loc).is_some(), &format!("Test60 server {} is null", i)) { return 1; }
         let manager = new_manager();
         original_thresholds[i] = with_server(loc, |s| s.GetSnapshotThreshold()).unwrap_or(0);
         let Some(index) = install_and_seed(loc, &manager, 3) else {
@@ -705,7 +650,7 @@ fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
     }
 
     let follower_index = first_non_leader_index(leader);
-    check_msg!(follower_index >= 0, "No Test60 follower found");
+    if !check_msg(follower_index >= 0, "No Test60 follower found") { return 1; }
     let follower = lab::server_id_by_index(follower_index as usize);
 
     let Some((follower_snap_before, follower_last_before)) = with_server(follower, |svr| {
@@ -843,27 +788,19 @@ fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
     // SAFETY: drops the kernel's reference to the manager.
     let flags = unsafe { let f = raft_lab_probe_flags(); raft_lab_probe_release(); f };
 
-    check_msg!(follower_snap_after >= required_snapshot_floor
-                   && follower_snap_after > follower_snap_before,
-               "Follower snapshot did not bridge its old log from {} through required floor {} \
-                (pre-reconnect leader snapshot was {}); got {}",
-               follower_snap_before, required_snapshot_floor, leader_snap_idx,
-               follower_snap_after);
+    if !check_msg(follower_snap_after >= required_snapshot_floor
+                   && follower_snap_after > follower_snap_before, &format!("Follower snapshot did not bridge its old log from {} through required floor {} \
+                (pre-reconnect leader snapshot was {}); got {}", follower_snap_before, required_snapshot_floor, leader_snap_idx, follower_snap_after)) { return 1; }
     let follower_probe = probe(&managers[follower_index as usize]);
-    check_msg!(follower_probe.present
-                   && follower_probe.last_included_index == follower_snap_after,
-               "Follower manager does not contain the installed snapshot {}",
-               follower_snap_after);
-    check_msg!(flags & PROBE_PREPARE_CALLED != 0 && flags & PROBE_PREPARE_SAW_OLD != 0,
-               "InstallSnapshot Prepare did not run against the old manager image");
-    check_msg!(flags & PROBE_COMMIT_CALLED != 0
+    if !check_msg(follower_probe.present
+                   && follower_probe.last_included_index == follower_snap_after, &format!("Follower manager does not contain the installed snapshot {}", follower_snap_after)) { return 1; }
+    if !check_msg(flags & PROBE_PREPARE_CALLED != 0 && flags & PROBE_PREPARE_SAW_OLD != 0, "InstallSnapshot Prepare did not run against the old manager image") { return 1; }
+    if !check_msg(flags & PROBE_COMMIT_CALLED != 0
                    && flags & PROBE_COMMIT_SAW_PUBLISHED != 0
-                   && flags & PROBE_ABORTED_BEFORE_COMMIT == 0,
-               "InstallSnapshot Commit ran before exact Raft snapshot publication");
-    check_msg!(cleared, "Could not clear Test60 snapshot publication probe");
+                   && flags & PROBE_ABORTED_BEFORE_COMMIT == 0, "InstallSnapshot Commit ran before exact Raft snapshot publication") { return 1; }
+    if !check_msg(cleared, "Could not clear Test60 snapshot publication probe") { return 1; }
 
-    check_msg!(lab::do_agreement(700, NSERVERS as i32, true) > 0,
-               "Cluster did not make progress after Test60 snapshot recovery");
+    if !check_msg(lab::do_agreement(700, NSERVERS as i32, true) > 0, "Cluster did not make progress after Test60 snapshot recovery") { return 1; }
 
     // Restore the runtime thresholds, keeping each replica on the live manager
     // that backs its compacted prefix.
@@ -886,27 +823,24 @@ fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
 // Test 67 -- heartbeat interval configurable
 
 fn test_heartbeat_interval_configurable(_st: &mut LabState) -> i32 {
-    init2!(67, "Heartbeat interval runtime-configurable");
+    init2(67, "Heartbeat interval runtime-configurable");
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
     let leader = lab::one_leader(-1);
-    check!(leader >= 0);
+    if !(leader >= 0) { return 1; }
 
     let Some(default_interval) = with_server(lab::server_id_by_index(leader as usize),
                                               |s| s.GetHeartbeatInterval()) else {
         failed("Server should not be null"); return 1;
     };
-    check_msg!(default_interval == HEARTBEAT_INTERVAL_US,
-               "Default heartbeat interval should be {}, got {}",
-               HEARTBEAT_INTERVAL_US, default_interval);
+    if !check_msg(default_interval == HEARTBEAT_INTERVAL_US, &format!("Default heartbeat interval should be {}, got {}", HEARTBEAT_INTERVAL_US, default_interval)) { return 1; }
 
     let leader_loc = lab::server_id_by_index(leader as usize);
     let retrieved = with_server(leader_loc, |svr| {
         svr.SetHeartbeatInterval(200_000);
         svr.GetHeartbeatInterval()
     }).unwrap_or(0);
-    check_msg!(retrieved == 200_000,
-               "Heartbeat interval should be {} after set, got {}", 200_000, retrieved);
+    if !check_msg(retrieved == 200_000, &format!("Heartbeat interval should be {} after set, got {}", 200_000, retrieved)) { return 1; }
 
     for i in 0..NSERVERS {
         let loc = lab::server_id_by_index(i);
@@ -915,13 +849,11 @@ fn test_heartbeat_interval_configurable(_st: &mut LabState) -> i32 {
             svr.GetHeartbeatInterval()
         });
         if let Some(got) = got {
-            check_msg!(got == 150_000,
-                       "Server {} heartbeat interval should be 150000, got {}", i, got);
+            if !check_msg(got == 150_000, &format!("Server {} heartbeat interval should be 150000, got {}", i, got)) { return 1; }
         }
     }
 
-    check_msg!(lab::do_agreement(6700, NSERVERS as i32, true) > 0,
-               "DoAgreement should succeed after changing heartbeat interval");
+    if !check_msg(lab::do_agreement(6700, NSERVERS as i32, true) > 0, "DoAgreement should succeed after changing heartbeat interval") { return 1; }
 
     for i in 0..NSERVERS {
         with_server(lab::server_id_by_index(i),
@@ -936,27 +868,24 @@ fn test_heartbeat_interval_configurable(_st: &mut LabState) -> i32 {
 // Test 68 -- log retention window configurable
 
 fn test_log_retention_window_configurable(_st: &mut LabState) -> i32 {
-    init2!(68, "Log retention window runtime-configurable");
+    init2(68, "Log retention window runtime-configurable");
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
     let leader = lab::one_leader(-1);
-    check!(leader >= 0);
+    if !(leader >= 0) { return 1; }
 
     let leader_loc = lab::server_id_by_index(leader as usize);
     let Some(default_window) = with_server(leader_loc, |s| s.GetLogRetentionWindow()) else {
         failed("Server should not be null"); return 1;
     };
-    check_msg!(default_window == DEFAULT_RETENTION_WINDOW,
-               "Default log retention window should be {}, got {}",
-               DEFAULT_RETENTION_WINDOW, default_window);
+    if !check_msg(default_window == DEFAULT_RETENTION_WINDOW, &format!("Default log retention window should be {}, got {}", DEFAULT_RETENTION_WINDOW, default_window)) { return 1; }
 
     let new_window: u64 = 20;
     let retrieved = with_server(leader_loc, |svr| {
         svr.SetLogRetentionWindow(new_window);
         svr.GetLogRetentionWindow()
     }).unwrap_or(0);
-    check_msg!(retrieved == new_window,
-               "Log retention window should be {} after set, got {}", new_window, retrieved);
+    if !check_msg(retrieved == new_window, &format!("Log retention window should be {} after set, got {}", new_window, retrieved)) { return 1; }
 
     for i in 0..NSERVERS {
         let got = with_server(lab::server_id_by_index(i), |svr| {
@@ -964,19 +893,15 @@ fn test_log_retention_window_configurable(_st: &mut LabState) -> i32 {
             svr.GetLogRetentionWindow()
         });
         if let Some(got) = got {
-            check_msg!(got == new_window,
-                       "Server {} log retention window should be {}, got {}",
-                       i, new_window, got);
+            if !check_msg(got == new_window, &format!("Server {} log retention window should be {}, got {}", i, new_window, got)) { return 1; }
         }
     }
 
     // With window=20, forty entries is enough to trigger cleanup
     for i in 0..40 {
-        check_msg!(lab::do_agreement(6800 + i, NSERVERS as i32, true) > 0,
-                   "DoAgreement should succeed (entry {})", i);
+        if !check_msg(lab::do_agreement(6800 + i, NSERVERS as i32, true) > 0, &format!("DoAgreement should succeed (entry {})", i)) { return 1; }
     }
-    check_msg!(lab::do_agreement(6899, NSERVERS as i32, true) > 0,
-               "DoAgreement should succeed after log cleanup");
+    if !check_msg(lab::do_agreement(6899, NSERVERS as i32, true) > 0, "DoAgreement should succeed after log cleanup") { return 1; }
 
     for i in 0..NSERVERS {
         with_server(lab::server_id_by_index(i),
@@ -991,17 +916,16 @@ fn test_log_retention_window_configurable(_st: &mut LabState) -> i32 {
 // Test 69 -- long partition recovery via InstallSnapshot
 
 fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
-    init2!(69, "Long partition recovery via InstallSnapshot");
+    init2(69, "Long partition recovery via InstallSnapshot");
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
     let mut leader = lab::one_leader(-1);
-    check!(leader >= 0);
+    if !(leader >= 0) { return 1; }
 
     // Managers on ALL replicas with a low threshold. MAKO_RAFT_SNAPSHOTS stays
     // enabled for the rest of the process to match them: a compacted log is
     // not self-contained without the snapshot bytes covering its prefix.
-    check_msg!(set_env("MAKO_RAFT_SNAPSHOTS", "1"),
-               "Could not enable snapshots for long-partition fixture");
+    if !check_msg(set_env("MAKO_RAFT_SNAPSHOTS", "1"), "Could not enable snapshots for long-partition fixture") { return 1; }
 
     let mut managers = Vec::new();
     let mut seeded = [0u64; NSERVERS];
@@ -1030,7 +954,7 @@ fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
     }
 
     let follower_index = first_non_leader_index(leader);
-    check_msg!(follower_index >= 0, "No follower found");
+    if !check_msg(follower_index >= 0, "No follower found") { return 1; }
     let follower = lab::server_id_by_index(follower_index as usize);
 
     lab::disconnect(follower);
@@ -1156,22 +1080,15 @@ fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
             svr.GetSnapshotIndexLocked()
         }).unwrap_or(follower_snap_idx);
     }
-    check_msg!(follower_snap_idx >= required_snapshot_floor
-                   && follower_snap_idx > follower_snap_before,
-               "Follower snapshot should advance beyond {} through required floor {} \
-                (pre-reconnect leader snapshot was {}), got {}",
-               follower_snap_before, required_snapshot_floor, leader_snap_idx,
-               follower_snap_idx);
+    if !check_msg(follower_snap_idx >= required_snapshot_floor
+                   && follower_snap_idx > follower_snap_before, &format!("Follower snapshot should advance beyond {} through required floor {} \
+                (pre-reconnect leader snapshot was {}), got {}", follower_snap_before, required_snapshot_floor, leader_snap_idx, follower_snap_idx)) { return 1; }
 
     let follower_probe = probe(&managers[follower_index as usize]);
-    check_msg!(follower_probe.present,
-               "Test69 follower's unique manager has no installed snapshot");
-    check_msg!(follower_probe.last_included_index == follower_snap_idx,
-               "Follower snapshot index {} does not match manager index {}",
-               follower_snap_idx, follower_probe.last_included_index);
+    if !check_msg(follower_probe.present, "Test69 follower's unique manager has no installed snapshot") { return 1; }
+    if !check_msg(follower_probe.last_included_index == follower_snap_idx, &format!("Follower snapshot index {} does not match manager index {}", follower_snap_idx, follower_probe.last_included_index)) { return 1; }
 
-    check_msg!(lab::do_agreement(6999, NSERVERS as i32, true) > 0,
-               "DoAgreement should succeed with all 5 nodes after partition recovery");
+    if !check_msg(lab::do_agreement(6999, NSERVERS as i32, true) > 0, "DoAgreement should succeed with all 5 nodes after partition recovery") { return 1; }
 
     for i in 0..NSERVERS {
         with_server(lab::server_id_by_index(i), |svr| {
@@ -1194,17 +1111,16 @@ fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
 // Test 72 -- high-frequency apply
 
 fn test_high_frequency_apply(_st: &mut LabState) -> i32 {
-    init2!(72, "High frequency apply: rapid submissions, no dropped entries");
+    init2(72, "High frequency apply: rapid submissions, no dropped entries");
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
     let mut leader = lab::one_leader(-1);
-    check_msg!(leader >= 0, "No leader elected");
+    if !check_msg(leader >= 0, "No leader elected") { return 1; }
 
-    check_msg!(lab::do_agreement(7200, NSERVERS as i32, true) > 0,
-               "Failed to establish baseline agreement");
+    if !check_msg(lab::do_agreement(7200, NSERVERS as i32, true) > 0, "Failed to establish baseline agreement") { return 1; }
 
     leader = lab::one_leader(-1);
-    check_msg!(leader >= 0, "No leader after baseline");
+    if !check_msg(leader >= 0, "No leader after baseline") { return 1; }
     let leader_id = lab::server_id_by_index(leader as usize);
 
     // 100 entries without waiting for agreement between them, to stress the
@@ -1214,14 +1130,11 @@ fn test_high_frequency_apply(_st: &mut LabState) -> i32 {
     let mut last_index = 0u64;
     for i in 0..NUM_ENTRIES {
         let (ok, index, _term) = lab::start(leader_id, 7201 + i);
-        check_msg!(ok, "Failed to submit command {} (entry {}/{})",
-                   7201 + i, i + 1, NUM_ENTRIES);
+        if !check_msg(ok, &format!("Failed to submit command {} (entry {}/{})", 7201 + i, i + 1, NUM_ENTRIES)) { return 1; }
         if i == 0 { first_index = index; }
         last_index = index;
     }
-    check_msg!(last_index - first_index + 1 == NUM_ENTRIES as u64,
-               "Expected {} consecutive indices, got range {}-{}",
-               NUM_ENTRIES, first_index, last_index);
+    if !check_msg(last_index - first_index + 1 == NUM_ENTRIES as u64, &format!("Expected {} consecutive indices, got range {}-{}", NUM_ENTRIES, first_index, last_index)) { return 1; }
 
     let Some(current_term) = with_server(leader_id, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
@@ -1229,26 +1142,21 @@ fn test_high_frequency_apply(_st: &mut LabState) -> i32 {
     }) else { failed("Leader server is null"); return 1; };
 
     let result = lab::wait(last_index, NSERVERS as i32, current_term);
-    check_msg!(result >= 0,
-               "Failed waiting for last index {} to commit (result={})", last_index, result);
+    if !check_msg(result >= 0, &format!("Failed waiting for last index {} to commit (result={})", last_index, result)) { return 1; }
 
     let check_points = [0, NUM_ENTRIES / 4, NUM_ENTRIES / 2,
                         3 * NUM_ENTRIES / 4, NUM_ENTRIES - 1];
     for cp in check_points {
         let check_idx = first_index + cp as u64;
         let nc = lab::n_committed(check_idx);
-        check_msg!(nc == NSERVERS as i32,
-                   "Entry at index {} (cmd {}) committed by {} servers, expected {}",
-                   check_idx, 7201 + cp, nc, NSERVERS);
+        if !check_msg(nc == NSERVERS as i32, &format!("Entry at index {} (cmd {}) committed by {} servers, expected {}", check_idx, 7201 + cp, nc, NSERVERS)) { return 1; }
     }
     for cp in check_points {
         let check_idx = first_index + cp as u64;
         let expected_cmd = 7201 + cp;
         for s in 0..NSERVERS {
             let svr_id = lab::server_id_by_index(s);
-            check_msg!(lab::server_committed(svr_id, check_idx, expected_cmd),
-                       "Server {} missing committed entry at index {} (cmd {})",
-                       s, check_idx, expected_cmd);
+            if !check_msg(lab::server_committed(svr_id, check_idx, expected_cmd), &format!("Server {} missing committed entry at index {} (cmd {})", s, check_idx, expected_cmd)) { return 1; }
         }
     }
 

@@ -245,6 +245,20 @@ add_custom_target(raft_goal0_source_gate
 )
 add_dependencies(raft_goal0_source_gate build_rusty_cpp_transpiler)
 
+# The generated C++/Rust correspondence (docs/migration/raft/
+# cpp-rust-correspondence.md) and its kernel classification. --check fails
+# when the document is stale, when a SEAM kernel is defined by one lane's
+# runtime but not the other's, or when a kernel is defined twice -- the
+# source-level half of "exactly one runtime is linked". Before this target
+# nothing ran it, so the document could go stale unnoticed.
+add_custom_target(raft_correspondence_check
+    COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_correspondence.py" --check
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Checking the Raft C++/Rust correspondence and kernel lanes"
+    VERBATIM
+)
+add_dependencies(raft_goal0_source_gate raft_correspondence_check)
+
 # NOTE: RustyCppSubmodule.cmake already computes CPP_BORROW_CHECKER and creates
 # build targets. Do not override checker paths here or Docker CARGO_TARGET_DIR
 # support is bypassed.
@@ -430,15 +444,16 @@ option(SINGLE_RAFT_INSTANCE "Default runtime Raft group mode (ON=single group, O
 # Which runtime the Raft core runs on. One Rust source (src/deptran/raft/src),
 # two runtimes, the model srpc itself uses (docs/migration/raft/
 # commo-service-rpc-plan.md, revision 5):
+#   rust    (default) the core plus raft-rt (src/deptran/raft/rt) compiled by
+#           rustc into libraft_rt.a: the seam kernels, the RPC transport, the
+#           poll thread and the message types are the Rust srpc crate's. The
+#           default since plan step T5, after T4 showed no regression against
+#           hybrid or the C++ baseline (docs/performance/raft-rust-9a361eccd).
 #   hybrid  the core compiled by rustc into libraft.a, over the C++ seam
 #           kernels (raft/server_seam_cpp.cc) and the C++ srpc runtime.
-#           Today's production, and the default until the Rust lane wins.
-#   rust    the core plus raft-rt (src/deptran/raft/rt) compiled by rustc into
-#           libraft_rt.a: the seam kernels, the RPC transport, the poll thread
-#           and the message types are the Rust srpc crate's.
 #   cpp     the core transpiled by rusty-cpp over the C++ seam (plan phase L;
 #           not built yet -- selecting it fails at configure time).
-set(MAKO_RAFT_LANE "hybrid" CACHE STRING "Raft runtime lane: hybrid | rust | cpp")
+set(MAKO_RAFT_LANE "rust" CACHE STRING "Raft runtime lane: rust | hybrid | cpp")
 set_property(CACHE MAKO_RAFT_LANE PROPERTY STRINGS hybrid rust cpp)
 if(MAKO_RAFT_LANE STREQUAL "rust")
   add_compile_definitions(MAKO_RAFT_LANE_RUST=1)

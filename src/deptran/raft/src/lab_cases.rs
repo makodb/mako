@@ -35,92 +35,88 @@ pub fn passed() {
     eprintln!("TEST {} Passed", TEST_ID.load(Ordering::Relaxed));
 }
 
+// ---------------------------------------------------------------------------
+// The assertion helpers. Each was a macro_rules! macro; they are functions
+// because the C++ lane transpiles this harness, and the transpiler lowers a
+// custom macro invocation to a `// TODO` comment -- 189 of them, which made
+// the transpiled lab report 25/25 while checking nothing (plan L2). Each
+// returns false when the check fails, and the caller returns 1, exactly the
+// early exit the macro performed.
+
 /// `Init2`: every case starts with the network whole.
-macro_rules! init2 {
-    ($id:expr, $desc:expr) => {
-        init($id, $desc);
-        assert!(lab::n_disconnected() == 0 && !lab::is_unreliable(),
-                "case {} started on a network a previous case left broken", $id);
-    };
+pub fn init2(id: i32, desc: &str) {
+    init(id, desc);
+    assert!(lab::n_disconnected() == 0 && !lab::is_unreliable(),
+            "case {} started on a network a previous case left broken", id);
 }
 
-/// `Assert`: bail with no message, as the C++ macro does.
-macro_rules! check {
-    ($cond:expr) => { if !($cond) { return 1; } };
-}
-
-/// `Assert2`: bail with a message.
-macro_rules! check_msg {
-    ($cond:expr, $($arg:tt)*) => {
-        if !($cond) { failed(&format!($($arg)*)); return 1; }
-    };
-}
-
-/// `AssertOneLeader`.
-macro_rules! check_one_leader {
-    ($ldr:expr) => { check!($ldr >= 0) };
+/// `Assert2`: report `msg` when `cond` fails.
+pub fn check_msg(cond: bool, msg: &str) -> bool {
+    if !cond {
+        failed(msg);
+    }
+    cond
 }
 
 /// `AssertNoneCommitted`.
-macro_rules! check_none_committed {
-    ($index:expr) => {{
-        let nc = lab::n_committed($index);
-        check_msg!(nc == 0, "{} servers unexpectedly committed index {}", nc, $index);
-    }};
+pub fn check_none_committed(index: u64) -> bool {
+    let nc = lab::n_committed(index);
+    check_msg(nc == 0, &format!("{} servers unexpectedly committed index {}", nc, index))
 }
 
 /// `AssertNCommitted`.
-macro_rules! check_n_committed {
-    ($index:expr, $expected:expr) => {{
-        let nc = lab::n_committed($index);
-        check_msg!(nc == $expected as i32,
-                   "{} servers committed index {} ({} expected)", nc, $index, $expected);
-    }};
-}
-
-/// `AssertStartOk`.
-macro_rules! check_start_ok {
-    ($ok:expr) => { check_msg!($ok, "unexpected leader change during Start()") };
+pub fn check_n_committed(index: u64, expected: i32) -> bool {
+    let nc = lab::n_committed(index);
+    check_msg(nc == expected,
+              &format!("{} servers committed index {} ({} expected)", nc, index, expected))
 }
 
 /// `AssertWaitNoError`.
-macro_rules! check_wait_no_error {
-    ($ret:expr, $index:expr) => {
-        check_msg!($ret != lab::WAIT_VALUES_DIFFER,
-                   "committed values differ for index {}", $index)
-    };
+pub fn check_wait_no_error(ret: i64, index: u64) -> bool {
+    check_msg(ret != lab::WAIT_VALUES_DIFFER,
+              &format!("committed values differ for index {}", index))
 }
 
 /// `AssertWaitNoTimeout`.
-macro_rules! check_wait_no_timeout {
-    ($ret:expr, $index:expr, $n:expr) => {
-        check_msg!($ret != lab::WAIT_TIMEOUT,
-                   "waited too long for {} server(s) to commit index {}", $n, $index);
-        check_msg!($ret != lab::WAIT_TERM_MOVED,
-                   "term moved on before index {} committed by {} server(s)", $index, $n);
-    };
+pub fn check_wait_no_timeout(ret: i64, index: u64, n: i32) -> bool {
+    check_msg(ret != lab::WAIT_TIMEOUT,
+              &format!("waited too long for {} server(s) to commit index {}", n, index))
+        && check_msg(ret != lab::WAIT_TERM_MOVED,
+                     &format!("term moved on before index {} committed by {} server(s)",
+                              index, n))
 }
 
 /// `DoAgreeAndAssertIndex`.
-macro_rules! agree_at {
-    ($cmd:expr, $n:expr, $index:expr) => {{
-        let r = lab::do_agreement($cmd, $n as i32, false);
-        let ind: u64 = $index;
-        check_msg!(r > 0,
-            "failed to reach agreement for command {} among {} servers, expected commit index>0, got {}",
-            $cmd, $n, r);
-        check_msg!(r == ind, "agreement index incorrect. got {}, expected {}", r, ind);
-    }};
+pub fn agree_at(cmd: i32, n: i32, index: u64) -> bool {
+    let r = lab::do_agreement(cmd, n, false);
+    check_msg(r > 0, &format!(
+        "failed to reach agreement for command {} among {} servers, expected commit index>0, got {}",
+        cmd, n, r))
+        && check_msg(r == index,
+                     &format!("agreement index incorrect. got {}, expected {}", r, index))
 }
 
 /// `DoAgreeAndAssertWaitSuccess`.
-macro_rules! agree_wait {
-    ($st:expr, $cmd:expr, $n:expr) => {{
-        let r = lab::do_agreement($cmd, $n as i32, true);
-        check_msg!(r > 0, "failed to reach agreement for command {} among {} servers", $cmd, $n);
-        $st.index = r + 1;
-    }};
+pub fn agree_wait(st: &mut LabState, cmd: i32, n: i32) -> bool {
+    let r = lab::do_agreement(cmd, n, true);
+    if !check_msg(r > 0,
+                  &format!("failed to reach agreement for command {} among {} servers", cmd, n)) {
+        return false;
+    }
+    st.index = r + 1;
+    true
 }
+
+
+
+
+
+
+
+
+
+
+
 
 /// `RaftLabTest::wait` -- a timeout event the C++ waits on. On this side the
 /// fiber sleep is the same wait.
@@ -138,13 +134,13 @@ pub struct LabState {
 // Elections
 
 fn test_initial_election(st: &mut LabState) -> i32 {
-    init2!(1, "Initial election");
+    init2(1, "Initial election");
 
     // Wait for election timers to start and elections to begin
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US / 10);
 
     let leader = lab::one_leader(-1);
-    check_one_leader!(leader);
+    if (leader) < 0 { return 1; }
 
     // The RPC count the initial election cost, for testCount below
     st.init_rpcs = 0;
@@ -153,23 +149,23 @@ fn test_initial_election(st: &mut LabState) -> i32 {
     }
 
     let term = lab::one_term();
-    check_msg!(term != lab::TERM_DISAGREE, "servers disagree on term number");
-    check_msg!(lab::one_term() == term, "unexpected term change");
-    check_one_leader!(lab::one_leader(leader));
+    if !check_msg(term != lab::TERM_DISAGREE, "servers disagree on term number") { return 1; }
+    if !check_msg(lab::one_term() == term, "unexpected term change") { return 1; }
+    if (lab::one_leader(leader)) < 0 { return 1; }
 
     passed();
     0
 }
 
 fn test_re_election(_st: &mut LabState) -> i32 {
-    init2!(2, "Re-election after network failure");
+    init2(2, "Re-election after network failure");
 
     let mut leader = lab::one_leader(-1);
     if leader == -1 {
         failed("No leader found in initial election");
         return -1;
     }
-    check_one_leader!(leader);
+    if (leader) < 0 { return 1; }
 
     // disconnect leader -- make sure a new one is elected
     lab::disconnect(leader as u32);
@@ -181,30 +177,30 @@ fn test_re_election(_st: &mut LabState) -> i32 {
         failed("No new leader elected after disconnecting old leader");
         return -1;
     }
-    check_one_leader!(leader);
-    check_msg!(leader != old_leader, "no reelection despite leader being disconnected");
+    if (leader) < 0 { return 1; }
+    if !check_msg(leader != old_leader, "no reelection despite leader being disconnected") { return 1; }
 
     // reconnect old leader -- should not disturb new leader
     lab::reconnect(old_leader as u32);
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
-    check_one_leader!(lab::one_leader(leader));
+    if (lab::one_leader(leader)) < 0 { return 1; }
 
     // no quorum -> no leader
     lab::disconnect(lab::next_server_id(leader as u32, 1));
     lab::disconnect(lab::next_server_id(leader as u32, 2));
     lab::disconnect(leader as u32);
-    check!(lab::no_leader());
+    if !(lab::no_leader()) { return 1; }
 
     // quorum restored
     lab::reconnect(lab::next_server_id(leader as u32, 2));
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
-    check_one_leader!(lab::one_leader(-1));
+    if (lab::one_leader(-1)) < 0 { return 1; }
 
     // rejoin all servers
     lab::reconnect(lab::next_server_id(leader as u32, 1));
     lab::reconnect(leader as u32);
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
-    check_one_leader!(lab::one_leader(-1));
+    if (lab::one_leader(-1)) < 0 { return 1; }
 
     passed();
     0
@@ -214,13 +210,13 @@ fn test_re_election(_st: &mut LabState) -> i32 {
 // Agreement
 
 fn test_basic_agree(st: &mut LabState) -> i32 {
-    init2!(3, "Basic agreement");
+    init2(3, "Basic agreement");
 
     for _ in 1..=3 {
         // no commits before any agreement is started
-        check_none_committed!(st.index);
+        if !check_none_committed(st.index) { return 1; }
         let command_value = (st.index + 300) as i32;
-        agree_at!(command_value, NSERVERS, st.index);
+        if !agree_at(command_value, NSERVERS as i32, st.index) { return 1; }
         st.index += 1;
     }
 
@@ -229,105 +225,103 @@ fn test_basic_agree(st: &mut LabState) -> i32 {
 }
 
 fn test_fail_agree(st: &mut LabState) -> i32 {
-    init2!(4, "Agreement despite follower disconnection");
+    init2(4, "Agreement despite follower disconnection");
 
     let leader = lab::one_leader(-1);
-    check_one_leader!(leader);
+    if (leader) < 0 { return 1; }
 
     lab::disconnect(lab::next_server_id(leader as u32, 1));
     lab::disconnect(lab::next_server_id(leader as u32, 2));
 
     // agreement despite 2 disconnected servers
-    agree_at!(401, NSERVERS - 2, st.index); st.index += 1;
-    agree_at!(402, NSERVERS - 2, st.index); st.index += 1;
+    if !agree_at(401, (NSERVERS - 2) as i32, st.index) { return 1; } st.index += 1;
+    if !agree_at(402, (NSERVERS - 2) as i32, st.index) { return 1; } st.index += 1;
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
-    agree_at!(403, NSERVERS - 2, st.index); st.index += 1;
-    agree_at!(404, NSERVERS - 2, st.index); st.index += 1;
+    if !agree_at(403, (NSERVERS - 2) as i32, st.index) { return 1; } st.index += 1;
+    if !agree_at(404, (NSERVERS - 2) as i32, st.index) { return 1; } st.index += 1;
 
     lab::reconnect(lab::next_server_id(leader as u32, 1));
     lab::reconnect(lab::next_server_id(leader as u32, 2));
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
 
-    agree_wait!(st, 405, NSERVERS);
-    agree_wait!(st, 406, NSERVERS);
+    if !agree_wait(st, 405, NSERVERS as i32) { return 1; }
+    if !agree_wait(st, 406, NSERVERS as i32) { return 1; }
 
     passed();
     0
 }
 
 fn test_fail_no_agree(st: &mut LabState) -> i32 {
-    init2!(5, "No agreement if too many followers disconnect");
+    init2(5, "No agreement if too many followers disconnect");
 
     let leader = lab::one_leader(-1);
-    check_one_leader!(leader);
+    if (leader) < 0 { return 1; }
 
     lab::disconnect(lab::next_server_id(leader as u32, 1));
     lab::disconnect(lab::next_server_id(leader as u32, 2));
     lab::disconnect(lab::next_server_id(leader as u32, 3));
 
     let (ok, index, term) = lab::start(leader as u32, 501);
-    check_start_ok!(ok);
+    if !check_msg(ok, "unexpected leader change during Start()") { return 1; }
     let expected = st.index;
     st.index += 1;
-    check_msg!(index == expected && term > 0,
-        "Start() returned unexpected index ({}, expected {}) and/or term ({}, expected >0)",
-        index, expected, term);
+    if !check_msg(index == expected && term > 0, &format!("Start() returned unexpected index ({}, expected {}) and/or term ({}, expected >0)", index, expected, term)) { return 1; }
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
-    check_none_committed!(index);
+    if !check_none_committed(index) { return 1; }
 
     lab::reconnect(lab::next_server_id(leader as u32, 1));
     lab::reconnect(lab::next_server_id(leader as u32, 2));
     lab::reconnect(lab::next_server_id(leader as u32, 3));
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
-    agree_wait!(st, 502, NSERVERS);
+    if !agree_wait(st, 502, NSERVERS as i32) { return 1; }
 
     passed();
     0
 }
 
 fn test_rejoin(st: &mut LabState) -> i32 {
-    init2!(6, "Rejoin of disconnected leader");
+    init2(6, "Rejoin of disconnected leader");
 
-    agree_at!(601, NSERVERS, st.index); st.index += 1;
+    if !agree_at(601, NSERVERS as i32, st.index) { return 1; } st.index += 1;
 
     let leader1 = lab::one_leader(-1);
-    check_one_leader!(leader1);
+    if (leader1) < 0 { return 1; }
     lab::disconnect(leader1 as u32);
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
 
     // the old leader's entries must not commit
-    check_start_ok!(lab::start(leader1 as u32, 602).0);
-    check_start_ok!(lab::start(leader1 as u32, 603).0);
-    check_start_ok!(lab::start(leader1 as u32, 604).0);
+    if !check_msg(lab::start(leader1 as u32, 602).0, "unexpected leader change during Start()") { return 1; }
+    if !check_msg(lab::start(leader1 as u32, 603).0, "unexpected leader change during Start()") { return 1; }
+    if !check_msg(lab::start(leader1 as u32, 604).0, "unexpected leader change during Start()") { return 1; }
 
-    agree_wait!(st, 605, NSERVERS - 1);
-    agree_wait!(st, 606, NSERVERS - 1);
+    if !agree_wait(st, 605, (NSERVERS - 1) as i32) { return 1; }
+    if !agree_wait(st, 606, (NSERVERS - 1) as i32) { return 1; }
 
     let leader2 = lab::one_leader(-1);
-    check_one_leader!(leader2);
-    check_msg!(leader2 != leader1, "no reelection despite leader being disconnected");
+    if (leader2) < 0 { return 1; }
+    if !check_msg(leader2 != leader1, "no reelection despite leader being disconnected") { return 1; }
     lab::disconnect(leader2 as u32);
 
     lab::reconnect(leader1 as u32);
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
     let leader3 = lab::one_leader(-1);
-    check_one_leader!(leader3);
-    check_msg!(leader3 != leader2, "no reelection despite leader being disconnected");
+    if (leader3) < 0 { return 1; }
+    if !check_msg(leader3 != leader2, "no reelection despite leader being disconnected") { return 1; }
 
-    agree_wait!(st, 607, NSERVERS - 1);
-    agree_wait!(st, 608, NSERVERS - 1);
+    if !agree_wait(st, 607, (NSERVERS - 1) as i32) { return 1; }
+    if !agree_wait(st, 608, (NSERVERS - 1) as i32) { return 1; }
 
     lab::reconnect(leader2 as u32);
-    agree_wait!(st, 609, NSERVERS);
+    if !agree_wait(st, 609, NSERVERS as i32) { return 1; }
 
     passed();
     0
 }
 
 fn test_concurrent_starts(st: &mut LabState) -> i32 {
-    init2!(7, "Concurrently started agreements");
+    init2(7, "Concurrently started agreements");
 
     let nconcurrent = 5;
     let mut success = false;
@@ -337,7 +331,7 @@ fn test_concurrent_starts(st: &mut LabState) -> i32 {
             wait_us(3_000_000);
         }
         let leader = lab::one_leader(-1);
-        check_one_leader!(leader);
+        if (leader) < 0 { return 1; }
 
         let (ok, _index, term) = lab::start(leader as u32, 701);
         if !ok {
@@ -367,7 +361,7 @@ fn test_concurrent_starts(st: &mut LabState) -> i32 {
         for index in indices {
             let cmd = lab::wait(index, NSERVERS as i32, term);
             if cmd < 0 {
-                check_wait_no_error!(cmd, index);
+                if !check_wait_no_error(cmd, index) { return 1; }
                 continue 'again; // timeout or term change -- try again
             }
             cmds.push(cmd);
@@ -376,13 +370,13 @@ fn test_concurrent_starts(st: &mut LabState) -> i32 {
         // every value must be there
         for i in 0..nconcurrent {
             let val = (701 + i) as i64;
-            check_msg!(cmds.contains(&val), "cmd {} missing", val);
+            if !check_msg(cmds.contains(&val), &format!("cmd {} missing", val)) { return 1; }
         }
         success = true;
         break;
     }
 
-    check_msg!(success, "too many term changes and/or delayed responses");
+    if !check_msg(success, "too many term changes and/or delayed responses") { return 1; }
     st.index += nconcurrent as u64 + 1;
 
     passed();
@@ -390,10 +384,10 @@ fn test_concurrent_starts(st: &mut LabState) -> i32 {
 }
 
 fn test_backup(st: &mut LabState) -> i32 {
-    init2!(8, "Leader backs up quickly over incorrect follower logs");
+    init2(8, "Leader backs up quickly over incorrect follower logs");
 
     let leader1 = lab::one_leader(-1);
-    check_one_leader!(leader1);
+    if (leader1) < 0 { return 1; }
 
     lab::disconnect(lab::next_server_id(leader1 as u32, 2));
     lab::disconnect(lab::next_server_id(leader1 as u32, 3));
@@ -401,7 +395,7 @@ fn test_backup(st: &mut LabState) -> i32 {
 
     // 50 commands that will not commit
     for i in 0..50 {
-        check_start_ok!(lab::start(leader1 as u32, 800 + i).0);
+        if !check_msg(lab::start(leader1 as u32, 800 + i).0, "unexpected leader change during Start()") { return 1; }
     }
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
 
@@ -413,7 +407,7 @@ fn test_backup(st: &mut LabState) -> i32 {
 
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
     for i in 1..=50 {
-        agree_at!(800 + i, NSERVERS - 2, st.index);
+        if !agree_at(800 + i, (NSERVERS - 2) as i32, st.index) { return 1; }
         st.index += 1;
     }
 
@@ -422,21 +416,21 @@ fn test_backup(st: &mut LabState) -> i32 {
     lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
 
     let leader2 = lab::one_leader(-1);
-    check_one_leader!(leader2);
+    if (leader2) < 0 { return 1; }
     let (ok, index, _term) = lab::start(leader2 as u32, 851);
-    check_start_ok!(ok);
+    if !check_msg(ok, "unexpected leader change during Start()") { return 1; }
     st.index += 1;
 
     // 10 seconds is enough to back up 50 incorrect logs
     lab::fiber_sleep_us(2 * ELECTION_TIMEOUT_US);
-    check_n_committed!(index, NSERVERS);
+    if !check_n_committed(index, NSERVERS as i32) { return 1; }
 
     passed();
     0
 }
 
 fn test_count(st: &mut LabState) -> i32 {
-    init2!(9, "RPC counts aren't too high");
+    init2(9, "RPC counts aren't too high");
 
     for i in 0..NSERVERS {
         lab::rpc_count(lab::server_id_by_index(i), true);
@@ -447,8 +441,7 @@ fn test_count(st: &mut LabState) -> i32 {
 
     // Ceiling raised from 40 to 70 for Mako-specific traffic the upstream
     // MIT 6.824 reference implementation did not emit.
-    check_msg!(st.init_rpcs > 1 && st.init_rpcs <= 70,
-               "too many or too few RPCs ({}) to elect initial leader", st.init_rpcs);
+    if !check_msg(st.init_rpcs > 1 && st.init_rpcs <= 70, &format!("too many or too few RPCs ({}) to elect initial leader", st.init_rpcs)) { return 1; }
 
     let iters: u64 = 10;
     let mut total;
@@ -459,7 +452,7 @@ fn test_count(st: &mut LabState) -> i32 {
             wait_us(3_000_000);
         }
         let leader = lab::one_leader(-1);
-        check_one_leader!(leader);
+        if (leader) < 0 { return 1; }
         rpcs();
 
         let (ok, startindex, startterm) = lab::start(leader as u32, 900);
@@ -471,41 +464,38 @@ fn test_count(st: &mut LabState) -> i32 {
             if !ok || term != startterm {
                 continue 'again;
             }
-            check_msg!(index == startindex + i, "Start() failed");
+            if !check_msg(index == startindex + i, "Start() failed") { return 1; }
         }
         for i in 1..=iters {
             let r = lab::wait(startindex + i, NSERVERS as i32, startterm);
-            check_wait_no_error!(r, startindex + i);
+            if !check_wait_no_error(r, startindex + i) { return 1; }
             if r < 0 {
                 continue 'again;
             }
-            check_msg!(r == (900 + i) as i64,
-                       "wrong value {} committed for index {}: expected {}",
-                       r, startindex + i, 900 + i);
+            if !check_msg(r == (900 + i) as i64, &format!("wrong value {} committed for index {}: expected {}", r, startindex + i, 900 + i)) { return 1; }
         }
         if lab::term_moved_on(startterm) {
             continue; // term changed -- can't expect low RPC counts
         }
         total = rpcs();
         // COMMITRPCS(n) == (n + 1) * NSERVERS  (testconf.h:27)
-        check_msg!(total <= (iters + 1) * NSERVERS as u64,
-                   "too many RPCs ({}) for {} entries", total, iters);
+        if !check_msg(total <= (iters + 1) * NSERVERS as u64, &format!("too many RPCs ({}) for {} entries", total, iters)) { return 1; }
         success = true;
         break;
     }
-    check_msg!(success, "term changed too often");
+    if !check_msg(success, "term changed too often") { return 1; }
 
     // idle RPC count
     wait_us(1_000_000);
     total = rpcs();
-    check_msg!(total <= 60, "too many RPCs ({}) for 1 second of idleness", total);
+    if !check_msg(total <= 60, &format!("too many RPCs ({}) for 1 second of idleness", total)) { return 1; }
 
     passed();
     0
 }
 
 fn test_unreliable_agree(st: &mut LabState) -> i32 {
-    init2!(10, "Unreliable agreement (takes a few minutes)");
+    init2(10, "Unreliable agreement (takes a few minutes)");
 
     lab::set_unreliable(true);
     let mut handles = Vec::new();
@@ -535,31 +525,31 @@ fn test_unreliable_agree(st: &mut LabState) -> i32 {
         }
     }
 
-    check_msg!(failures.is_empty(), "Failed to reach agreement");
+    if !check_msg(failures.is_empty(), "Failed to reach agreement") { return 1; }
     st.index += 50 * 5;
-    agree_wait!(st, 1060, NSERVERS);
+    if !agree_wait(st, 1060, NSERVERS as i32) { return 1; }
 
     passed();
     0
 }
 
 fn test_figure8(st: &mut LabState) -> i32 {
-    init2!(11, "Figure 8");
+    init2(11, "Figure 8");
 
     let mut success = false;
 
     // A leader must not determine commitment using entries from earlier terms
     for _again in 0..10 {
         let leader1 = lab::one_leader(-1);
-        check_one_leader!(leader1);
+        if (leader1) < 0 { return 1; }
 
         let (ok, mut index1, mut term1) = lab::start(leader1 as u32, 1100);
         if !ok {
             continue; // term moved on too quickly: start over
         }
         let r = lab::wait(index1, NSERVERS as i32, term1);
-        check_wait_no_error!(r, index1);
-        check_wait_no_timeout!(r, index1, NSERVERS);
+        if !check_wait_no_error(r, index1) { return 1; }
+        if !check_wait_no_timeout(r, index1, NSERVERS as i32) { return 1; }
         st.index = index1;
 
         // C1 replicates to one follower only
@@ -576,7 +566,7 @@ fn test_figure8(st: &mut LabState) -> i32 {
         index1 = started.1;
         term1 = started.2;
         lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
-        check_none_committed!(index1);
+        if !check_none_committed(index1) { return 1; }
 
         // elect a new leader among the other three
         lab::disconnect(lab::next_server_id(leader1 as u32, 4));
@@ -585,13 +575,13 @@ fn test_figure8(st: &mut LabState) -> i32 {
         lab::reconnect(lab::next_server_id(leader1 as u32, 2));
         lab::reconnect(lab::next_server_id(leader1 as u32, 3));
         let leader2 = lab::one_leader(-1);
-        check_one_leader!(leader2);
+        if (leader2) < 0 { return 1; }
 
         // the old leader and its follower become followers in the new term
         lab::reconnect(lab::next_server_id(leader1 as u32, 4));
         lab::reconnect(leader1 as u32);
         lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
-        check_one_leader!(lab::one_leader(leader2));
+        if (lab::one_leader(leader2)) < 0 { return 1; }
 
         // isolate the new leader and Start() C2 on it
         for i in 0..NSERVERS {
@@ -607,10 +597,10 @@ fn test_figure8(st: &mut LabState) -> i32 {
             }
             continue;
         }
-        check_msg!(index2 == index1, "Start() returned index {} ({} expected)", index2, index1);
-        check_msg!(term2 > term1, "Start() returned term {} ({} expected)", term2, term1);
+        if !check_msg(index2 == index1, &format!("Start() returned index {} ({} expected)", index2, index1)) { return 1; }
+        if !check_msg(term2 > term1, &format!("Start() returned term {} ({} expected)", term2, term1)) { return 1; }
         lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
-        check_none_committed!(index1);
+        if !check_none_committed(index1) { return 1; }
 
         // let the first leader or its follower become the next leader
         lab::disconnect(leader2 as u32);
@@ -623,7 +613,7 @@ fn test_figure8(st: &mut LabState) -> i32 {
             lab::reconnect(lab::next_server_id(leader1 as u32, 1));
         }
         let leader3 = lab::one_leader(-1);
-        check_one_leader!(leader3);
+        if (leader3) < 0 { return 1; }
         if leader3 as u32 != leader1 as u32
             && leader3 as u32 != lab::next_server_id(leader1 as u32, 4)
         {
@@ -632,14 +622,12 @@ fn test_figure8(st: &mut LabState) -> i32 {
 
         // enough time to replicate index1 to a third server
         lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
-        check_none_committed!(index1);
+        if !check_none_committed(index1) { return 1; }
 
         // commit a new index in the current term
-        check_msg!(lab::do_agreement(1103, (NSERVERS - 2) as i32, false) > index1,
-                   "failed to reach agreement");
-        check_n_committed!(index1, NSERVERS - 2);
-        check_msg!(lab::server_committed(leader3 as u32, index1, 1101),
-                   "value 1101 is not committed at index {} when it should be", index1);
+        if !check_msg(lab::do_agreement(1103, (NSERVERS - 2) as i32, false) > index1, "failed to reach agreement") { return 1; }
+        if !check_n_committed(index1, (NSERVERS - 2) as i32) { return 1; }
+        if !check_msg(lab::server_committed(leader3 as u32, index1, 1101), &format!("value 1101 is not committed at index {} when it should be", index1)) { return 1; }
         success = true;
 
         lab::reconnect(lab::next_server_id(leader1 as u32, 3));
@@ -651,7 +639,7 @@ fn test_figure8(st: &mut LabState) -> i32 {
         break;
     }
 
-    check_msg!(success, "Failed to test figure 8");
+    if !check_msg(success, "Failed to test figure 8") { return 1; }
     passed();
     0
 }

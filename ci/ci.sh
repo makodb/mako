@@ -453,19 +453,26 @@ run_2shard_replication_simple() {
 # It needs its OWN build directory. -DRAFT_TEST=ON defines RAFT_TEST_CORO,
 # which changes RaftServer's behaviour, so the flags must not be folded into
 # the build every other suite measures and tests.
+# $1: the Raft runtime lane (MAKO_RAFT_LANE): rust (the default) or hybrid.
+# Each lane gets its own build tree, so both stay built and tested.
 run_raft_lab_test() {
+    local lane="${1:-rust}"
     echo "========================================="
-    echo "Running: ./ci/ci.sh raftLabTest"
+    echo "Running: ./ci/ci.sh raftLabTest (lane ${lane})"
     echo "========================================="
     local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-32}}"
     local generator="${CMAKE_GENERATOR:-Ninja}"
     local build_type="${CMAKE_BUILD_TYPE:-Release}"
-    local lab_build_dir="${RAFT_LAB_BUILD_DIR:-${BUILD_DIR}_raftlab}"
+    local suffix="_raftlab"
+    if [ "${lane}" != "rust" ]; then
+        suffix="_raftlab_${lane}"
+    fi
+    local lab_build_dir="${RAFT_LAB_BUILD_DIR:-${BUILD_DIR}${suffix}}"
 
-    echo "Configuring ${lab_build_dir} with MAKO_USE_RAFT=ON RAFT_TEST=ON"
+    echo "Configuring ${lab_build_dir} with MAKO_USE_RAFT=ON RAFT_TEST=ON MAKO_RAFT_LANE=${lane}"
     cmake -S . -B "${lab_build_dir}" -G "${generator}" \
         -DCMAKE_BUILD_TYPE="${build_type}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-        -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON
+        -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON -DMAKO_RAFT_LANE="${lane}"
     cmake --build "${lab_build_dir}" --parallel "${jobs}" --target deptran_server
 
     local log
@@ -793,7 +800,10 @@ case "${1:-}" in
         run_2shard_replication_simple_raft
         ;;
     raftLabTest)
-        run_raft_lab_test
+        run_raft_lab_test rust
+        ;;
+    raftLabTestHybrid)
+        run_raft_lab_test hybrid
         ;;
     rocksdbTests)
         run_rocksdb_tests
@@ -837,7 +847,8 @@ case "${1:-}" in
         run_2shard_replication_raft
         run_1shard_replication_simple_raft
         run_2shard_replication_simple_raft
-        run_raft_lab_test
+        run_raft_lab_test rust
+        run_raft_lab_test hybrid
         run_rocksdb_tests
         # run_shard_fault_tolerance  # DISABLED: test script not implemented
         run_multi_shard_single_process
@@ -855,7 +866,7 @@ case "${1:-}" in
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
         echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
-        echo "  raftLabTest,"
+        echo "  raftLabTest, raftLabTestHybrid,"
         echo "  rocksdbTests, multiShardSingleProcess,"
         echo "  shard2SingleProcess, shard2SingleProcessReplication,"
         echo "  srpcTests, cpuThrottlingScaling, clientServer, all"

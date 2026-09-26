@@ -35,6 +35,92 @@ def kernels():
     return len(names)
 
 
+RT_SEAM = ROOT / "src/deptran/raft/rt/src/seam.rs"
+CPP_SEAM = ROOT / "src/deptran/raft/server_seam_cpp.cc"
+FACADE = ROOT / "src/rusty-rustc/src/lib.rs"
+CPP_HOST = [p for p in (ROOT / "src/deptran").rglob("*.cc")
+            if p != CPP_SEAM and "/raft/rt/" not in str(p)]
+
+# Kernels that are C++ only because of where the boundary sits: std time,
+# env, a mutex, a thread sleep. Each could become plain Rust in the core (plan
+# S1's CORE class); they are listed, not inferred, because "could be Rust" is
+# a judgement, and it is the one column here that is.
+CORE_CANDIDATES = {
+    "raft_mutex_lock", "raft_mutex_unlock", "raft_std_mutex_lock",
+    "raft_std_mutex_unlock", "raft_verify", "raft_thread_sleep_ms",
+    "raft_monotonic_now_us", "raft_monotonic_now_secs", "raft_time_now_us",
+    "raft_random_range_us", "raft_env_lookup", "raft_env_snapshots_enabled",
+    "raft_election_timeouts", "raft_heartbeat_interval_default",
+    "raft_spawn_apply_thread", "raft_apply_thread_join",
+}
+
+
+def declared_kernels():
+    """raft_* names the core crate and the rustc facade declare as imports."""
+    names = set()
+    for f in RS + [FACADE]:
+        text = f.read_text()
+        for block in re.finditer(r'(?:unsafe )?extern "C" \{(.*?)\n\s*\}', text, re.S):
+            names |= set(re.findall(r"\bfn (raft_\w+)", block.group(1)))
+        # the facade's macro-generated destroy / clone kernels
+        names |= set(re.findall(r"=> (raft_\w+)", text))
+    return names
+
+
+def rust_defined(path):
+    return set(re.findall(r'extern "C" fn (raft_\w+)', path.read_text()))
+
+
+def cpp_defined(path):
+    """raft_* functions DEFINED (not declared) in a C++ file: a name followed by
+    a parameter list and then an opening brace before any ';'."""
+    text = path.read_text(errors="replace")
+    out = set()
+    for m in re.finditer(r"\b(raft_\w+)\s*\(", text):
+        head = text[max(0, m.start() - 160):m.start()]
+        line_start = head.rfind("\n") + 1
+        prefix = head[line_start:]
+        if not re.match(r"^\s*(extern \"C\" )?(static )?[\w:<>*&, ]+[\s*&]$", prefix):
+            continue
+        depth, i = 0, m.end() - 1
+        while i < len(text):
+            c = text[i]
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if depth == 0:
+                    break
+            i += 1
+        tail = text[i + 1:i + 200]
+        if re.match(r"\s*(const\s*)?(noexcept\s*)?(override\s*)?\{", tail):
+            out.add(m.group(1))
+    return out
+
+
+def classify():
+    """Every declared kernel, by where it is defined. The check half: a SEAM
+    kernel must be defined by BOTH lanes, and nothing may be defined twice."""
+    declared = declared_kernels()
+    rt, cseam = rust_defined(RT_SEAM), cpp_defined(CPP_SEAM)
+    host = {}
+    for f in CPP_HOST:
+        for n in cpp_defined(f):
+            host.setdefault(n, []).append(f.relative_to(ROOT / "src/deptran").as_posix())
+    rows, problems = [], []
+    for n in sorted(declared):
+        in_rt, in_c, in_h = n in rt, n in cseam, n in host
+        if in_rt and in_c and not in_h:
+            cls = "SEAM"
+        elif in_h and not in_rt and not in_c:
+            cls = "HOST" + (" (CORE candidate)" if n in CORE_CANDIDATES else "")
+        else:
+            cls = "?"
+            problems.append(f"{n}: rt={in_rt} cpp_seam={in_c} host={host.get(n)}")
+        rows.append((n, cls))
+    return rows, problems
+
+
 def exports(header):
     """Prototypes in a C ABI header -- one per non-comment line ending in ');'."""
     text = (ROOT / header).read_text()
@@ -129,22 +215,35 @@ def body():
     w("today, not because Rust cannot express them. An earlier revision of this")
     w("file said kernels exist for \"the reactor, threads\"; both were wrong.")
     w("")
-    w("| kernel group | why it is C++ | irreducible? |")
-    w("|---|---|---|")
-    w("| `raft_queue_wake_job`, `raft_spawn_heartbeat_loop`, `raft_fiber_sleep_us` "
-      "| the Raft server runs on the C++ lane's reactor | **no** -- the Rust lane "
-      "has one and `transport.rs` already uses it |")
-    w("| `raft_spawn_apply_thread`, `raft_apply_thread_join` | "
-      "`using RaftStdThread = ::std::thread` (`raft/server.h:336`) | "
-      "**no** -- `std::thread::spawn` |")
-    w("| `raft_monotonic_now_us` | it is `std::chrono::steady_clock` "
-      "(`raft/server.cc:1325`) | **no** -- `std::time::Instant` |")
-    w("| `raft_command_*`, `raft_byte_string_*` | `janus::Command` is Mako's "
-      "object, put on at Submit and taken off at apply | yes, while Mako owns it |")
-    w("| `raft_bind_commo` | `dynamic_cast` | yes -- no Rust spelling |")
-    w("| the `raft_catch` sites | catching a C++ throw | yes |")
-    w("| the four embedder `std::function`s | the embedder supplies them | yes |")
+    rows, problems = classify()
+    counts = {}
+    for _, cls in rows:
+        counts[cls.split(" ")[0]] = counts.get(cls.split(" ")[0], 0) + 1
+    w("Every kernel the core or the rustc facade imports, CLASSIFIED BY WHERE IT")
+    w("IS DEFINED (plan S1): **SEAM** -- defined by both lanes' runtime seams,")
+    w("`raft/server_seam_cpp.cc` and `raft/rt/src/seam.rs`, exactly one of which")
+    w("is linked; **HOST** -- defined once in host C++ that every lane links")
+    w("(Mako's objects: the Command payload, the snapshot manager, embedder")
+    w("callbacks). A HOST kernel marked *CORE candidate* is C++ only by position")
+    w("and could become plain Rust in the core. `--check` fails if a kernel is")
+    w("defined by one lane but not the other, or in two places.")
     w("")
+    w("| class | count |")
+    w("|---|---|")
+    for k in sorted(counts):
+        w(f"| {k} | {counts[k]} |")
+    w("")
+    w("| kernel | class |")
+    w("|---|---|")
+    for n, cls in rows:
+        w(f"| `{n}` | {cls} |")
+    w("")
+    if problems:
+        w("**Unclassifiable (fix the definitions):**")
+        w("")
+        for pr in problems:
+            w(f"- `{pr}`")
+        w("")
     w("Not kernels at all, despite an earlier revision listing them: rocksdb and")
     w("yaml-cpp. No kernel includes either -- `raft/rocksdb_log_storage.hpp` is a")
     w("plain C++ storage backend the Rust never calls.")
@@ -163,7 +262,11 @@ def rest():
 
 
 def main():
+    _, problems = classify()
     out = "\n".join(body() + [""] + rest()).rstrip() + "\n"
+    if problems and "--check" in sys.argv:
+        sys.exit("kernel classification has unclassifiable kernels:\n  "
+                 + "\n  ".join(problems))
     if "--check" in sys.argv:
         if DOC.read_text() != out:
             sys.exit("cpp-rust-correspondence.md is stale; re-run "

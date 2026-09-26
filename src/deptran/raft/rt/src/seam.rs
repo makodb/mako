@@ -96,15 +96,36 @@ pub unsafe extern "C" fn raft_destroy_int_event_ptr(p: *mut rusty::RaftIntEventP
     unsafe { arc_drop::<IntEvent>(p as *mut u8) }
 }
 
+/// The thread binding, CHECKED. An IntEvent is neither Send nor Sync -- its
+/// `Cell`s and its fiber back-pointer belong to the poll thread that created
+/// it -- yet the carrier holding it sits inside RaftServerBase, which is Send +
+/// Sync. That is sound only because every set and wait happens on the owner
+/// thread (the heartbeat and election fibers, and the wake job, all run
+/// there), so it is asserted here rather than trusted: a violation aborts
+/// with a message instead of racing silently. (Plan S2: this replaces moving
+/// the handles out of the core, which would have duplicated the wake gate in
+/// both lanes' seams.)
+fn owner_thread_check(ev: &IntEvent, op: &str) {
+    if ev.owner_thread_ != std::thread::current().id() {
+        eprintln!("raft-rt: IntEvent {op} off its owner poll thread ({:?} vs {:?})",
+                  std::thread::current().id(), ev.owner_thread_);
+        std::process::abort();
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn raft_int_event_set(event: *const rusty::RaftIntEventPtr, value: i32) {
-    unsafe { arc_ref::<IntEvent>(event as *const u8) }.set(value);
+    let ev = unsafe { arc_ref::<IntEvent>(event as *const u8) };
+    owner_thread_check(ev, "set");
+    ev.set(value);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn raft_int_event_wait_timeout(event: *const rusty::RaftIntEventPtr,
                                                      timeout_us: u64) {
-    unsafe { arc_ref::<IntEvent>(event as *const u8) }.wait_timeout(timeout_us);
+    let ev = unsafe { arc_ref::<IntEvent>(event as *const u8) };
+    owner_thread_check(ev, "wait");
+    ev.wait_timeout(timeout_us);
 }
 
 // ---------------------------------------------------------------------------

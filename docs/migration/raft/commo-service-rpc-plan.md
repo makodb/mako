@@ -81,11 +81,40 @@ that assumed a single lane are superseded here and marked where they stand:
 | S1b seam split | done (server.cc host / server_seam_cpp.cc / rt seam.rs) | `217cc26d4` |
 | T1, T2, T4 Rust lane | done -- RaftLabTest 25/25 on both lanes | `217cc26d4` |
 | large payloads (both lanes) | done -- byte-bounded batches, two srpc hot paths | `b6141e723` |
-| Rust lane zero-copy payload | done -- see T4 below | pending commit |
-| T3 mixed-lane cluster | done -- 12/12 across three mixes (1 early failure unexplained) | pending commit |
-| T4 suites + paired trial | done -- see below | pending commit |
-| T5 default flip, full sweep | next | -- |
-| L2-L4 (transpiled C++ lane), M, S1/S2/S3, D | not started | -- |
+| Rust lane zero-copy payload | done | `9a361eccd` |
+| T3 mixed-lane cluster | done -- 12/12 across three mixes (1 early failure unexplained) | `9a361eccd` |
+| T4 suites + paired trial | done -- see below | `9a361eccd` |
+| **full sweep vs the C++ baseline** | **done -- 624/624 runs; see below** | `docs/performance/raft-rust-9a361eccd` |
+| T5 default lane = rust | done; hybrid stays built and lab-tested (`ci.sh raftLabTestHybrid`) | this commit |
+| S1 kernel classification | done -- computed by gen_correspondence.py, checked by the build | this commit |
+| S2 runtime handles | done differently -- the thread binding is checked, not moved; see below | this commit |
+| S3 lane-neutral replies | done by construction -- see below | `217cc26d4` |
+| M payload types | **not done, deliberately** -- see below | -- |
+| L2 lab without custom macros | done (the transpiled lab can no longer be hollow) | this commit |
+| L2 (rest)-L4 transpiled C++ lane | next | -- |
+| D1-D4 | D1 nothing left to delete (dead snapshot send removed), D2 by design, D3 nothing to collapse (all 31 exports used), D4 done | this commit |
+
+**The full sweep** (`docs/performance/raft-rust-9a361eccd`, 3 trials per
+point, against the C++ baseline 412c225a): 624 of 624 runs succeeded, and of
+624 metric points per metric --
+
+| metric | better | within noise | worse, < 5% | flagged |
+|---|---|---|---|---|
+| throughput | 34 | 167 | 6 | 1 |
+| p50 latency | 203 | 5 | 0 | 0 |
+| p99 latency | 196 | 12 | 0 | 0 |
+
+The one flag is the baseline over-delivering (69.4/s applied at 65/s offered,
+draining backlog); the Rust lane applied exactly 65.0/s there, and from 72/s
+up it keeps the offered rate where the baseline falls behind.
+
+**S2, done differently.** Moving the wake gate's handles out of the core, as
+S2 said, would have duplicated the gate's wait/wake logic in both lanes'
+seams. The handles stay opaque carriers the core never reads; what S2 was
+protecting against -- a thread-bound Rust `IntEvent` inside a `Send + Sync`
+server -- is now CHECKED: the Rust seam aborts with a message if an event is
+set or waited on off its owner thread (`rt/src/seam.rs`, owner_thread_check).
+RaftLabTest runs with the check on.
 
 **Execution order changed, deliberately.** The plan ordered L (the C++ lane
 from the core) before T (the Rust lane). T ran first, on the user's explicit
@@ -121,6 +150,33 @@ needed only L1 (the crate split) and S1b (the file split).
 - **Logging and the clock stay HOST for now** (S1 classified them SEAM). The
   Rust lane still logs through the process's one C++ logger, so Raft's lines
   interleave with Mako's. Revisit in S1.
+
+**M is withdrawn, and this is the reason.** M1 asked for a Rust payload type
+byte-identical to today's envelopes. Reading the encodings shows what that
+means: a `janus::Command` is `[v32 kind][payload]` with NO length, a
+`TpcCommitCommand` nests a second `Command` (a `LogEntry`, or a legacy
+`VecPieceData` still accepted on apply) followed by an optional third
+(`ViewData`), and fourteen kinds are registered in `mako_commands.h`. An
+unframed polymorphic envelope can only be delimited by decoding it, so Rust
+could not even find where a commit ends without re-implementing every kind
+that can appear -- a second implementation of Mako's registry-dispatched
+serialization, which would then have to track Mako's C++ types on every
+mako-dev merge. That is a second authority over Mako's wire format, against
+the two constraints this branch keeps (Mako and Paxos undisturbed; mergeable
+with mako-dev). And M's performance motive is gone: the Rust lane no longer
+copies payloads (the command is encoded straight into the frame and decoded
+from a slice of it), and it now beats the C++ lane at large payloads. So the
+payload stays a HOST object -- one of the "low-level things" the goal allows
+to stay C++ -- and M3's generator change is unnecessary: the opaque field's
+arithmetic framing is correct once `from_body` measures from the argument
+bytes.
+
+**S3 is satisfied by construction.** The core already sees only lane-neutral
+values: PHASE 2 polls a plain `AppendRespView` through
+`raft_append_response_read`, "no peer" is completed-and-failed on both lanes,
+and the InstallSnapshot reply is delivered to a host-owned context
+(`raft_snapshot_reply_deliver`, `lane_kernels.h`) with 0 inline and no lock
+when there is no peer. Each lane fills the reply carrier its own way.
 
 **T4's numbers** (ABBA, 25 pairs each, B = rust against A = hybrid, one host,
 `scripts/raft_perf/paired_trial.sh`):

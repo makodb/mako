@@ -355,31 +355,6 @@ impl RaftTransport {
         Some(pending)
     }
 
-    pub fn send_install_snapshot(&self, site_id: u16, req: InstallSnapshotRequest)
-        -> Option<Pending<InstallSnapshotResponse>> {
-        let client = self.peer(site_id)?;
-        let pending: Pending<InstallSnapshotResponse> = Pending::new();
-        let sink = pending.slot.clone();
-        let proxy = RaftProxy { client };
-        let sent = proxy.install_snapshot_async(
-            req,
-            Some(Box::new(move |code, ptr, len| {
-                let value = if code != 0 {
-                    Err(code)
-                } else {
-                    // SAFETY: srpc owns the buffer for this call.
-                    unsafe { decode_reply(ptr, len) }.ok_or(-1)
-                };
-                if let Ok(mut guard) = sink.lock() {
-                    *guard = Some(value);
-                }
-            })),
-        );
-        self.count_rpc();
-        sent.ok()?;
-        Some(pending)
-    }
-
     /// InstallSnapshot with a completion callback, the shape the C++ lane's
     /// SendInstallSnapshot has: `done` runs exactly once, on the poll thread,
     /// with the follower's term or 0 on any failure. Returns false when the

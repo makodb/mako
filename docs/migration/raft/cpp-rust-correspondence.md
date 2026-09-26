@@ -12,12 +12,13 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 606 | `raft/src/server_h.rs` | 5020 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1882 | `raft/src/server_cc.rs` | 2774 |  |
-| `raft/service.cc` | 123 | `raft/src/service.rs` | 150 | both exist; the C++ is what srpc dispatches to |
-| `raft/commo.cc` | 325 | `raft/src/transport.rs` | 647 | both exist; the C++ is what runs, bar one rerouted site |
+| `raft/server.h` | 611 | `raft/src/server_h.rs` | 5014 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1710 | `raft/src/server_cc.rs` | 2789 |  |
+| `raft/service.cc` | 123 | `raft/rt/src/service.rs` | 161 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
+| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 830 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
+| `raft/server_seam_cpp.cc` | 353 | `raft/rt/src/seam.rs` | 505 | the runtime seam, one per lane; exactly one is linked |
 | `communicator.h` | 567 | `raft/src/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
-| `rcc_rpc.h` (Raft slice) | — | `raft/src/rpc.rs` | 437 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
+| `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 549 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
 
 `communicator_h.rs` is extracted from the HEADER, not the `.cc` --
 `raft/rust-modules.toml` names `src/deptran/communicator.h` as its source.
@@ -27,7 +28,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 | direction | mechanism | count |
 |---|---|---|
 | C++ → Rust | prototypes in `raft/server_exports.h` | 31 |
-| C++ → Rust | prototypes in `raft/transport_exports.h` — included by no `.cc` yet | 6 |
+| C++ → Rust | prototypes in `raft/transport_exports.h` — the Rust lane only (raft_lane_rust.cc) | 16 |
 | Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 91 |
 
 ## Counted facts the prose below leans on
@@ -42,15 +43,135 @@ the other direction -- and most are C++ because of WHERE THE BOUNDARY SITS
 today, not because Rust cannot express them. An earlier revision of this
 file said kernels exist for "the reactor, threads"; both were wrong.
 
-| kernel group | why it is C++ | irreducible? |
-|---|---|---|
-| `raft_queue_wake_job`, `raft_spawn_heartbeat_loop`, `raft_fiber_sleep_us` | the Raft server runs on the C++ lane's reactor | **no** -- the Rust lane has one and `transport.rs` already uses it |
-| `raft_spawn_apply_thread`, `raft_apply_thread_join` | `using RaftStdThread = ::std::thread` (`raft/server.h:336`) | **no** -- `std::thread::spawn` |
-| `raft_monotonic_now_us` | it is `std::chrono::steady_clock` (`raft/server.cc:1325`) | **no** -- `std::time::Instant` |
-| `raft_command_*`, `raft_byte_string_*` | `janus::Command` is Mako's object, put on at Submit and taken off at apply | yes, while Mako owns it |
-| `raft_bind_commo` | `dynamic_cast` | yes -- no Rust spelling |
-| the `raft_catch` sites | catching a C++ throw | yes |
-| the four embedder `std::function`s | the embedder supplies them | yes |
+Every kernel the core or the rustc facade imports, CLASSIFIED BY WHERE IT
+IS DEFINED (plan S1): **SEAM** -- defined by both lanes' runtime seams,
+`raft/server_seam_cpp.cc` and `raft/rt/src/seam.rs`, exactly one of which
+is linked; **HOST** -- defined once in host C++ that every lane links
+(Mako's objects: the Command payload, the snapshot manager, embedder
+callbacks). A HOST kernel marked *CORE candidate* is C++ only by position
+and could become plain Rust in the core. `--check` fails if a kernel is
+defined by one lane but not the other, or in two places.
+
+| class | count |
+|---|---|
+| HOST | 90 |
+| SEAM | 23 |
+
+| kernel | class |
+|---|---|
+| `raft_append_entries_batch_max` | HOST |
+| `raft_append_entries_batch_max_bytes` | HOST |
+| `raft_append_response_read` | SEAM |
+| `raft_apply_invoke` | HOST |
+| `raft_apply_thread_join` | HOST (CORE candidate) |
+| `raft_batch_command_into` | HOST |
+| `raft_batch_finalize` | HOST |
+| `raft_batch_len` | HOST |
+| `raft_batch_optimization_enabled` | HOST |
+| `raft_batch_term_at` | HOST |
+| `raft_bind_commo` | SEAM |
+| `raft_bind_replication_poll` | SEAM |
+| `raft_broadcast_vote_and_wait` | SEAM |
+| `raft_clear_async_callback_owner` | HOST |
+| `raft_command_clone_into` | HOST |
+| `raft_command_has_value` | HOST |
+| `raft_command_is_tpc_commit` | HOST |
+| `raft_command_kind` | HOST |
+| `raft_command_payload_bytes` | HOST |
+| `raft_commo_set_network_enabled` | SEAM |
+| `raft_config_replica_count` | HOST |
+| `raft_config_replica_site` | HOST |
+| `raft_create_int_event_into` | SEAM |
+| `raft_create_snapshot_cb_clone_into` | HOST |
+| `raft_destroy_async_callback_lifetime_ptr` | HOST |
+| `raft_destroy_byte_string` | HOST |
+| `raft_destroy_checked_mutex` | HOST |
+| `raft_destroy_command` | HOST |
+| `raft_destroy_create_snapshot_cb` | HOST |
+| `raft_destroy_int_event_ptr` | SEAM |
+| `raft_destroy_leader_change_cb` | HOST |
+| `raft_destroy_learner_action` | HOST |
+| `raft_destroy_poll_thread_ptr` | SEAM |
+| `raft_destroy_prepare_snapshot_cb` | HOST |
+| `raft_destroy_response_ptr` | SEAM |
+| `raft_destroy_snapshot_manager_ptr` | HOST |
+| `raft_destroy_std_mutex` | HOST |
+| `raft_destroy_std_thread` | HOST |
+| `raft_destroy_tpc_commit_ptr` | HOST |
+| `raft_destroy_vote_quorum_ptr` | SEAM |
+| `raft_election_debug_enabled` | HOST |
+| `raft_election_timeouts` | HOST (CORE candidate) |
+| `raft_ensure_legacy_payload_registered` | HOST |
+| `raft_env_lookup` | HOST (CORE candidate) |
+| `raft_env_snapshots_enabled` | HOST (CORE candidate) |
+| `raft_fiber_sleep_us` | SEAM |
+| `raft_fire_leader_change` | HOST |
+| `raft_heartbeat_interval_default` | HOST (CORE candidate) |
+| `raft_initialize_snapshot_manager` | HOST |
+| `raft_install_snapshot_guarded` | HOST |
+| `raft_install_snapshot_payload` | HOST |
+| `raft_int_event_clone_into` | SEAM |
+| `raft_int_event_set` | SEAM |
+| `raft_int_event_wait_timeout` | SEAM |
+| `raft_lab_byte_string_from` | HOST |
+| `raft_lab_commit_tx_id` | HOST |
+| `raft_lab_cpp_unit_tests` | HOST |
+| `raft_lab_frame_rpc_count` | HOST |
+| `raft_lab_make_commit_command` | HOST |
+| `raft_lab_make_learner_action` | HOST |
+| `raft_lab_make_probe_cbs` | HOST |
+| `raft_lab_make_reject_prepare_cbs` | HOST |
+| `raft_lab_new_snapshot_manager` | HOST |
+| `raft_lab_probe_flags` | HOST |
+| `raft_lab_probe_release` | HOST |
+| `raft_lab_reject_prepare_called` | HOST |
+| `raft_lab_snapshot_copy_latest` | HOST |
+| `raft_lab_snapshot_delete_all` | HOST |
+| `raft_lab_snapshot_probe` | HOST |
+| `raft_leader_change_cb_clone_into` | HOST |
+| `raft_leader_change_cb_is_set` | HOST |
+| `raft_learner_action_clone_into` | HOST |
+| `raft_load_state_machine_snapshot` | HOST |
+| `raft_log_enabled` | HOST |
+| `raft_log_line` | HOST |
+| `raft_log_set_is_leader_entry` | HOST |
+| `raft_monotonic_now_secs` | HOST (CORE candidate) |
+| `raft_monotonic_now_us` | HOST (CORE candidate) |
+| `raft_mutex_lock` | HOST (CORE candidate) |
+| `raft_mutex_unlock` | HOST (CORE candidate) |
+| `raft_new_callback_lifetime` | HOST |
+| `raft_noop_command_into` | HOST |
+| `raft_phase1_load_and_send_snapshot` | HOST |
+| `raft_phase1_send_append` | SEAM |
+| `raft_poll_thread_clone_into` | SEAM |
+| `raft_prepare_snapshot_cb_clone_into` | HOST |
+| `raft_prepare_snapshot_cb_is_set` | HOST |
+| `raft_queue_wake_job` | SEAM |
+| `raft_random_range_us` | HOST (CORE candidate) |
+| `raft_setup_internal_guarded` | HOST |
+| `raft_shutdown_barrier_yield` | SEAM |
+| `raft_snapshot_manager_has_latest` | HOST |
+| `raft_snapshot_manager_is_set` | HOST |
+| `raft_snapshot_manager_latest` | HOST |
+| `raft_snapshot_manager_load` | HOST |
+| `raft_snapshot_manager_ptr_clone_into` | HOST |
+| `raft_snapshot_recovery_pick_manager` | HOST |
+| `raft_snapshot_serialize_and_save` | HOST |
+| `raft_spawn_apply_thread` | HOST (CORE candidate) |
+| `raft_spawn_election_timer` | SEAM |
+| `raft_spawn_election_timer_fiber` | SEAM |
+| `raft_spawn_heartbeat_loop` | SEAM |
+| `raft_stamped_commit_into` | HOST |
+| `raft_std_mutex_lock` | HOST (CORE candidate) |
+| `raft_std_mutex_unlock` | HOST (CORE candidate) |
+| `raft_thread_sleep_ms` | HOST (CORE candidate) |
+| `raft_time_now_us` | HOST (CORE candidate) |
+| `raft_unbind_commo` | SEAM |
+| `raft_verify` | HOST (CORE candidate) |
+| `raft_vote_quorum_snapshot` | SEAM |
+| `raft_wire_batch` | HOST |
+| `raft_wire_command_clone_into` | HOST |
+| `raft_wire_is_batch` | HOST |
 
 Not kernels at all, despite an earlier revision listing them: rocksdb and
 yaml-cpp. No kernel includes either -- `raft/rocksdb_log_storage.hpp` is a
@@ -78,49 +199,55 @@ behaviour. Everything else is shape, and shape is free.
 ## How to read this code quickly
 
 Paths below are relative to `src/deptran/` unless they start with `scripts/`.
+Counts live in the generated tables above; this part is prose on purpose and
+names no number that can rot.
 
-**"I want to change Raft's behaviour."** Two Rust files: `raft/src/server_h.rs`
-(the state — `RaftServerBase:1774`, `RaftConsensusState:1033` — and most methods)
-and `raft/src/server_cc.rs` (inbound RPC bodies, heartbeat phases, the C ABI).
-No C++ holds that state — `python3 scripts/raft_field_census.py` reports 0
-hand-written sites and exits 0. `raft/server.cc` is 1880 lines of kernels and
-defines no `RaftServer::` method; `class RaftServer` (`raft/server.h:576`) is a
-ctor, a dtor and 18 one-line forwards.
+**"I want to change Raft's behaviour."** The core crate: `raft/src/server_h.rs`
+(the state -- `RaftServerBase`, `RaftConsensusState` -- and most methods) and
+`raft/src/server_cc.rs` (inbound RPC bodies, heartbeat phases, the C ABI). It
+is ONE source for both lanes: it names no srpc type and reaches the runtime
+only through the SEAM kernels in the table above. No C++ holds its state --
+`python3 scripts/raft_field_census.py` exits 0. `class RaftServer`
+(`raft/server.h`) is a pointer-holding shim of one-line forwards.
 
-**"Which lane is this file in?"** `raft/rust-modules.toml` is the index — 24
-entries, three kinds:
-- **Canonical Rust** (8) — `kind = "canonical"`, an `output` and no `source`:
-  `server_h.rs`, `server_cc.rs`, `transport.rs`, `service.rs`, `rpc.rs`,
-  `lab*.rs`. cargo builds them into `libraft.a` (`CMakeLists.txt:1197`). Edit
-  directly. Note `server_h.rs`/`server_cc.rs` are canonical *despite* the
-  `_h`/`_cc` names — trust the toml, not the filename.
-- **Carrier** (16 files, 24 blocks) — has `source =`. On disk: an
-  `#if RUSTYCPP_RUST … #endif` Rust block followed immediately by
-  `/*RUSTYCPP:GEN-BEGIN id=… rust_sha256=…*/ … /*RUSTYCPP:GEN-END*/` C++ (see
-  `raft/quorum.hpp:48-82`). The Rust is the source; the C++ is what compiles.
-  The extracted twin is named for the carrier: `quorum.hpp` → `raft/src/quorum_hpp.rs`.
-- **Plain C++** — neither marker: `raft/commo.cc`, `raft/service.cc`,
-  `raft/raft_worker.cc`, `raft/frame.cc`.
+**"Which runtime am I on?"** `-DMAKO_RAFT_LANE`:
+- `hybrid` (default) -- the core as `libraft.a`, over `raft/server_seam_cpp.cc`
+  and the C++ srpc runtime (`raft/commo.cc`, `raft/service.cc`, `rcc_rpc.h`).
+- `rust` -- the core plus `raft/rt` (crate `raft-rt`) as `libraft_rt.a`, over
+  the Rust srpc crate: `rt/src/seam.rs` (the SEAM kernels), `rt/src/transport.rs`
+  (poll thread, server, peer clients), `rt/src/service.rs`, the generated
+  `rt/src/rpc.rs`. The workers reach it through `raft/raft_lane.h`, defined in
+  `raft/raft_lane_rust.cc`, via one-line `#if MAKO_RAFT_LANE_RUST` hooks.
+- `raft/server.cc` is HOST: Mako's objects, linked in every lane.
+
+**"Which kind of file is this?"** `raft/rust-modules.toml` indexes the core crate:
+- **Canonical Rust** -- `kind = "canonical"`: `server_h.rs`, `server_cc.rs`,
+  `lab*.rs`. Edit directly; `_h`/`_cc` in the names are historical.
+- **Carrier** -- has `source =`: an `#if RUSTYCPP_RUST ... #endif` Rust block
+  followed by its `/*RUSTYCPP:GEN-BEGIN ...*/ ... /*RUSTYCPP:GEN-END*/` C++. The
+  Rust is the source; the extracted twin is `raft/src/<carrier>_hpp.rs` etc.
+- `raft/rt/` is its own crate in the same cargo workspace, not in the toml.
+- **Plain C++** -- the workers, the frame, the C++ lane's commo and service.
 
 **"What must I not hand-edit?"**
 
 | generated | regenerate with |
 |---|---|
 | GEN regions in carriers; extracted `raft/src/*_hpp.rs`; `raft/src/lib.rs` | `bash scripts/raft_dsl.sh --rewrite` |
-| `raft/server_exports.h`; `server_cc.rs:2490-2774`; the `RaftServer` shim | `python3 scripts/raft_regen_exports.py` |
-| `raft/src/rpc.rs` | `scripts/rpcgen_rust.py`, run by `CMakeLists.txt:1143` |
+| `raft/server_exports.h`; the exports block in `server_cc.rs`; the `RaftServer` shim | `python3 scripts/raft_regen_exports.py` |
+| `raft/rt/src/rpc.rs` | `scripts/rpcgen_rust.py`, run by the build |
 | `rcc_rpc.h` | `bin/rpcgen --cpp src/deptran/rcc_rpc.rpc` |
+| this file | `python3 scripts/gen_correspondence.py`, checked by the build |
 
-**"Where do the languages meet?"** C++→Rust: `raft/server_exports.h`, 31
-generated prototypes, included once at `raft/server.h:564`.
-`raft/transport_exports.h` hand-declares 6 more, but no `.cc` includes it — the
-Rust transport is not wired in yet. Rust→C++: the `unsafe extern "C"` blocks in
-`server_h.rs` (63 kernels) and `server_cc.rs:487` (15), all defined in
-`raft/server.cc`'s `extern "C"` block, `:452-1447`.
+**"Where do the languages meet?"** C++ -> Rust: `raft/server_exports.h` (the
+server, both lanes) and `raft/transport_exports.h` (the Rust lane's transport,
+included only by `raft_lane_rust.cc`). Rust -> C++: the core's `extern "C"`
+blocks, resolved by HOST C++ or by the linked lane's seam -- the table above.
+Between host and seam: `raft/lane_kernels.h`.
 
 **Commands that answer most questions.**
 
-    python3 scripts/raft_field_census.py    # any C++ still touching server state?
-    bash scripts/raft_dsl.sh --check        # carriers fresh; crate builds; clippy
-    python3 scripts/raft_regen_exports.py   # after changing an exported signature
-    python3 scripts/raft_lock_census.py     # C++ lock acquisitions (now 0)
+    python3 scripts/gen_correspondence.py --check   # this file; kernel lanes
+    python3 scripts/raft_field_census.py             # any C++ touching server state?
+    bash scripts/raft_dsl.sh --check                 # carriers fresh; workspace builds; clippy
+    python3 scripts/raft_regen_exports.py            # after changing an exported signature
