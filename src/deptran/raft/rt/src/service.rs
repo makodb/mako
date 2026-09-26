@@ -22,9 +22,14 @@ use crate::rpc::{
     EmptyAppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse, RaftHandler,
     VoteRequest, VoteResponse,
 };
-use crate::scheduler_h::RaftSpecific;
-use crate::server_h::RaftServerBase;
+use raft::scheduler_h::RaftSpecific;
+use raft::server_h::RaftServerBase;
 use srpc::server::{Request, Server, Service, WeakServerConnection};
+
+/// srpc's reply code for a request that fails to decode -- the value
+/// `reject_malformed_request` sends (src/srpc/rpc/server.rs), which is private
+/// there. EINVAL, so it matches the C++ lane's generated decoder byte for byte.
+const SERVER_ERR_INVALID_ARGUMENT: i32 = 22;
 
 unsafe extern "C" {
     // Rebuilds a janus::Command from the bytes the wire carried. The C++
@@ -32,8 +37,10 @@ unsafe extern "C" {
     // it inside the request struct; on this lane the request holds the bytes
     // (stage 2c) and the envelope is C++'s to interpret, so the reconstruction
     // is a kernel. Writes into a default-constructed slot the caller owns.
+    // False on a malformed frame (server.cc), which the handler rejects the
+    // way the C++ lane's generated decoder does: SERVER_ERR_INVALID_ARGUMENT.
     fn raft_command_from_bytes(bytes: *const u8, len: usize,
-                               out: *mut rusty::RaftCommand);
+                               out: *mut rusty::RaftCommand) -> bool;
     // Same shape, for the snapshot payload: ServeInstallSnapshot takes a
     // rusty::RaftByteString, which is a std::string carried as 24 opaque
     // bytes with its own destructor kernel. Rust cannot build one.
@@ -107,9 +114,11 @@ impl RaftHandler for RaftRpcService {
         -> Result<AppendEntriesResponse, i32> {
         let mut resp = AppendEntriesResponse::default();
         let mut cmd: rusty::RaftCommand = Default::default();
-        unsafe {
-            raft_command_from_bytes(req.cmd.as_ptr(), req.cmd.len(),
-                                    &raw mut cmd);
+        let decoded = unsafe {
+            raft_command_from_bytes(req.cmd.as_ptr(), req.cmd.len(), &raw mut cmd)
+        };
+        if !decoded {
+            return Err(SERVER_ERR_INVALID_ARGUMENT);
         }
         self.server().ServeAppendEntries(
             req.leader_current_term, req.leader_site_id, req.leader_prev_log_index,
@@ -138,7 +147,7 @@ impl RaftHandler for RaftRpcService {
         let mut resp = InstallSnapshotResponse::default();
         let mut data: rusty::RaftByteString = Default::default();
         unsafe {
-            raft_byte_string_from_bytes(req.data.as_ptr(), req.data.len(),
+            raft_byte_string_from_bytes(req.data.0.as_ptr(), req.data.0.len(),
                                         &raw mut data);
         }
         self.server().ServeInstallSnapshot(req.term, req.leader_id,

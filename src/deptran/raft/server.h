@@ -599,6 +599,11 @@ class RaftServer : public RaftSpecific {
   void ServeAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index) override { raft_server_serve_append_entries(impl_, leader_current_term, leader_site_id, leader_prev_log_index, leader_prev_log_term, leader_commit_index, &cmd, leader_next_log_term, follower_append_ok, follower_current_term, follower_last_log_index); }
   void ServeInstallSnapshot(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString& data, uint64_t* term_out) override { raft_server_serve_install_snapshot(impl_, term, leader_id, last_included_index, last_included_term, &data, term_out); }
 
+  // The Rust object itself, for the one caller that must hand it to
+  // Rust rather than forward a method: the Rust lane's transport binds
+  // to it (raft_lane_rust.cc). Not part of RaftSpecific.
+  RaftServerBase* impl() const { return impl_; }
+
  private:
   RaftServerBase* impl_;
 };

@@ -13,6 +13,9 @@
 
 namespace janus {
 
+struct RaftTransport;  // raft-rt, MAKO_RAFT_LANE=rust
+
+
 // @unsafe - inherits from non-@interface Frame (individual methods are @safe)
 class RaftFrame : public Frame {
  private:
@@ -44,7 +47,18 @@ class RaftFrame : public Frame {
   // the extern "C" kernel that calls this cannot be one.
   // @unsafe - dynamic_cast plus the communicator's own recursive mutex.
   static uint64_t LabFrameRpcCount(uint32_t loc_id);
+  // MAKO_RAFT_LANE=rust: the lab bookkeeping CreateCommo does on the C++ lane,
+  // which the Rust lane never calls (it has no RaftCommo). Commo-created
+  // counts one replica's transport as connected; RunIfSite0 waits for all
+  // five, runs the harness on this thread's Rust reactor (raft_lane::RunLab)
+  // and records its verdict where RaftLabTestResult reads it.
+  static void RustLaneLabCommoCreated();
+  static void RustLaneLabRunIfSite0(uint32_t locale_id);
 #endif
+  // MAKO_RAFT_LANE=rust only: this replica's raft-rt transport, which is
+  // where the Rust lane's RPC count lives (LabFrameRpcCount). Borrowed; the
+  // worker owns it. Null on the C++ lanes.
+  RaftTransport* rust_transport_ = nullptr;
   RaftFrame() = default;
   ~RaftFrame();  // Destructor to clean up owned resources
   std::unique_ptr<RaftCommo> commo_;  // @unsafe - unique_ptr kept for test file compatibility

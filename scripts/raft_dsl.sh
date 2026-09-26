@@ -664,7 +664,7 @@ if [[ -f "${RAFT_CRATE_MANIFEST}" && ${#FILES[@]} -eq ${#EXPECTED_INVENTORY_FILE
     # See the facade-crate constraint in docs/migration/raft/plan.md.
     if ! output=$(cd "${RAFT_CRATE_DIR}" && \
         RUSTFLAGS="-D warnings" CARGO_TARGET_DIR="${RAFT_CRATE_DIR}/target" \
-        cargo build --quiet --lib 2>&1); then
+        cargo build --quiet --workspace --lib 2>&1); then
       echo "FAILED Raft crate does not compile" >&2
       sed 's/^/    /' <<<"${output}" | head -30 >&2
       failures=$((failures + 1))
@@ -674,7 +674,7 @@ if [[ -f "${RAFT_CRATE_MANIFEST}" && ${#FILES[@]} -eq ${#EXPECTED_INVENTORY_FILE
     if ! command -v cargo-clippy >/dev/null 2>&1 && ! cargo clippy --version >/dev/null 2>&1; then
       echo "FAILED clippy unavailable (required for crate-level verification)" >&2
       failures=$((failures + 1))
-    elif ! output=$(cd "${RAFT_CRATE_DIR}" && cargo clippy --quiet -- -D warnings 2>&1); then
+    elif ! output=$(cd "${RAFT_CRATE_DIR}" && cargo clippy --quiet --workspace -- -D warnings 2>&1); then
       echo "FAILED Raft crate clippy" >&2
       sed 's/^/    /' <<<"${output}" | head -30 >&2
       failures=$((failures + 1))

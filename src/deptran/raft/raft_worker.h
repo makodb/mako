@@ -37,6 +37,9 @@
 
 namespace janus {
 
+struct RaftTransport;  // raft-rt, MAKO_RAFT_LANE=rust (raft_lane.h)
+
+
 // Runtime replication switching - always declare raft functions
 extern std::function<void(int)> leader_callback_;
 // @unsafe - uses raw global std::function, unbounded callback invocation
@@ -265,6 +268,17 @@ public:
   // @safe - the typed pointer the worker took at creation; null before
   // SetupBase and after ShutDown.
   RaftSpecific* GetRaftServer() { return raft_sched_; }
+
+  // Run `job` once on the thread that owns Raft's fibers -- the C++ poll
+  // thread on the C++ lanes, the transport's Rust poll thread on the Rust
+  // lane -- which is where EnsureSetup must run so the fibers it spawns land
+  // on the right reactor. False if there is no such thread yet.
+  bool PostToRaftPoll(std::function<void()> job);
+
+  // MAKO_RAFT_LANE=rust only: raft-rt's transport, which owns this worker's
+  // Raft poll thread, RPC server and peer clients (raft_lane.h). Null on the
+  // C++ lanes, where svr_poll_thread_worker_ / rpc_server_ / rep_commo_ are.
+  RaftTransport* rust_transport_ = nullptr;
 
   // @unsafe - uses std::make_shared, raw pointers
   rusty::Arc<TpcCommitCommand> CreateRaftLogCommand(

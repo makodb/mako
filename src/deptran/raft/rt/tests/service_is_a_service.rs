@@ -12,5 +12,5 @@ fn assert_service<T: srpc::server::Service>() {}
 
 #[test]
 fn raft_rpc_service_satisfies_srpcs_service_bound() {
-    assert_service::<raft::service::RaftRpcService>();
+    assert_service::<raft_rt::service::RaftRpcService>();
 }

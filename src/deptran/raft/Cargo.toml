@@ -20,7 +20,14 @@ version = "0.0.0"
 edition = "2021"
 publish = false
 
+# The core and its Rust-lane runtime (rt/, raft-rt) share one workspace, so
+# one profile block -- panic = "abort" below -- governs both artifacts:
+# libraft.a (the hybrid lane: this crate over the C++ kernels) and
+# libraft_rt.a (the Rust lane: raft-rt, which links this crate as an rlib).
+# A package under this root that was NOT a member would be rejected by cargo,
+# and one with its own [workspace] would silently lose panic = "abort".
 [workspace]
+members = [".", "rt"]
 
 [lib]
 path = "src/lib.rs"
@@ -54,7 +61,10 @@ raft_test = []
 # types the Raft server holds opaquely. Keeping it inside the vendored
 # tree would put it in the path of every subtree pull.
 rusty = { path = "../../rusty-rustc" }
-srpc = { path = "../../srpc" }
+# NO srpc dependency, on purpose. The core is the source BOTH lanes build:
+# rustc for the Rust lane, rusty-cpp for the C++ lane, and the transpiler
+# refuses a crate whose local dependency carries source-owned C++ contracts
+# (measured, plan revision 5). Everything srpc-facing lives in rt/.
 
 [lints.rust]
 unsafe_code = "allow"   # the CRC32 kernel is deliberately unsafe; see its # Safety doc

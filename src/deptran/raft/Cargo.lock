@@ -7,6 +7,14 @@ name = "raft"
 version = "0.0.0"
 dependencies = [
  "rusty",
+]
+
+[[package]]
+name = "raft-rt"
+version = "0.0.0"
+dependencies = [
+ "raft",
+ "rusty",
  "srpc",
 ]
 

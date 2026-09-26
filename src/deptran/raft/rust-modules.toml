@@ -79,14 +79,6 @@ output = "src/deptran/raft/src/lab_cases.rs"
 kind = "canonical"
 output = "src/deptran/raft/src/lab_snapshot_cases.rs"
 
-# The Raft slice of the RPC surface, hand-authored rather than generated:
-# rpcgen has cpp and python emitters only (src/srpc/pylib/simplerpcgen), and
-# adding a Rust one would put mako's code inside the vendored subtree, where
-# it would conflict on every pull. Four RPCs is cheaper to write than that.
-[[module]]
-kind = "canonical"
-output = "src/deptran/raft/src/rpc.rs"
-
 [[module]]
 kind = "canonical"
 output = "src/deptran/raft/src/server_cc.rs"
@@ -101,19 +93,6 @@ output = "src/deptran/raft/src/server_h.rs"
 cpp_module = "raft.server_pods_h"
 source = "src/deptran/raft/server.h"
 output = "src/deptran/raft/src/server_pods_h.rs"
-
-# Raft's RPC transport on the Rust srpc lane (stage 3e): the poll thread, the
-# server and the peer clients, as one object because the cut cannot be split.
-[[module]]
-kind = "canonical"
-output = "src/deptran/raft/src/transport.rs"
-
-# Raft's RPC service on the Rust srpc lane (stage 3e). Hand-authored: the
-# handler bodies are the part rpcgen deliberately does not emit, the same seam
-# C++ keeps between RaftService and RaftServiceImpl.
-[[module]]
-kind = "canonical"
-output = "src/deptran/raft/src/service.rs"
 
 [[module]]
 cpp_module = "raft.snapshot_format_hpp"

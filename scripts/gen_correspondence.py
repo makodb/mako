@@ -65,10 +65,12 @@ PAIRS = [
     ("raft/server.h", "raft/src/server_h.rs",
      "Rust owns it; the C++ left is kernels and a pointer-holding shim"),
     ("raft/server.cc", "raft/src/server_cc.rs", ""),
-    ("raft/service.cc", "raft/src/service.rs",
-     "both exist; the C++ is what srpc dispatches to"),
-    ("raft/commo.cc", "raft/src/transport.rs",
-     "both exist; the C++ is what runs, bar one rerouted site"),
+    ("raft/service.cc", "raft/rt/src/service.rs",
+     "one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust"),
+    ("raft/commo.cc", "raft/rt/src/transport.rs",
+     "one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust"),
+    ("raft/server_seam_cpp.cc", "raft/rt/src/seam.rs",
+     "the runtime seam, one per lane; exactly one is linked"),
     ("communicator.h", "raft/src/communicator_h.rs",
      "ONE source: the Rust is transpiled into the C++ both engines link"),
 ]
@@ -94,8 +96,8 @@ def body():
     for cpp, rs, note in PAIRS:
         w(f"| `{cpp}` | {lines('src/deptran/' + cpp)} | `{rs}` | "
           f"{lines('src/deptran/' + rs)} | {note} |")
-    w(f"| `rcc_rpc.h` (Raft slice) | — | `raft/src/rpc.rs` | "
-      f"{lines('src/deptran/raft/src/rpc.rs')} | generated from `rcc_rpc.rpc`; "
+    w(f"| `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | "
+      f"{lines('src/deptran/raft/rt/src/rpc.rs')} | generated from `rcc_rpc.rpc`; "
       f"ids frozen in `raft/rpc_ids.txt` |")
     w("")
     w("`communicator_h.rs` is extracted from the HEADER, not the `.cc` --")
@@ -107,7 +109,7 @@ def body():
     w("|---|---|---|")
     w(f"| C++ → Rust | prototypes in `raft/server_exports.h` | "
       f"{exports('src/deptran/raft/server_exports.h')} |")
-    w(f"| C++ → Rust | prototypes in `raft/transport_exports.h` — included by no `.cc` yet |"
+    w(f"| C++ → Rust | prototypes in `raft/transport_exports.h` — the Rust lane only (raft_lane_rust.cc) |"
       f" {exports('src/deptran/raft/transport_exports.h')} |")
     w(f"| Rust → C++ | distinct `raft_*` kernels declared in `extern \"C\"` blocks under "
       f"`raft/src/` | {kernels()} |")

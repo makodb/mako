@@ -8,12 +8,37 @@
 
 use srpc::client::{AsyncReplyCallback, Client};
 use srpc::serializable::{
-    make_source_proxy_buffer, BinaryReadArchive, BinaryWriteArchive,
-    BufferSource, Deserialize, Serialize,
+    deserialize_bytes_with, make_source_proxy_buffer, serialize_bytes,
+    BinaryReadArchive, BinaryWriteArchive, BufferSource, Deserialize,
+    Serialize,
 };
 use srpc::server::{
     reject_malformed_request, Request, Server, WeakServerConnection,
 };
+
+/// A C++ `std::string` as this wire carries it: a v64 length, then the
+/// raw bytes. Deliberately not `String`, whose decoder rejects non-UTF-8
+/// input -- and a snapshot is binary.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct WireBytes(pub Vec<u8>);
+
+impl Serialize for WireBytes {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        // SAFETY: the Vec is live for the call; serialize_bytes reads len bytes.
+        unsafe { serialize_bytes(self.0.as_ptr(), self.0.len(), ar) }
+    }
+}
+
+impl Deserialize for WireBytes {
+    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
+        // SAFETY: resize and data describe this Vec's own storage.
+        unsafe {
+            deserialize_bytes_with(&mut self.0, ar,
+                |v: &mut Vec<u8>, n: usize| v.resize(n, 0u8),
+                |v: &mut Vec<u8>| v.as_mut_ptr());
+        }
+    }
+}
 
 /// Wire ids. Randomly assigned once by rpcgen and preserved only by
 /// scraping the previously generated header, so they are the wire
@@ -93,7 +118,8 @@ impl Serialize for AppendEntriesRequest {
         self.leader_prev_log_index.serialize(ar);
         self.leader_prev_log_term.serialize(ar);
         self.leader_commit_index.serialize(ar);
-        self.cmd.serialize(ar);
+        // SAFETY: `cmd` is a live Vec; write_bytes reads len bytes of it.
+        unsafe { ar.write_bytes(self.cmd.as_ptr(), self.cmd.len()) };
         self.leader_next_log_term.serialize(ar);
     }
 }
@@ -227,7 +253,7 @@ pub struct InstallSnapshotRequest {
     pub leader_id: u64,
     pub last_included_index: u64,
     pub last_included_term: u64,
-    pub data: String,
+    pub data: WireBytes,
 }
 
 impl Serialize for InstallSnapshotRequest {
@@ -299,6 +325,18 @@ pub fn register(server: &mut Server, svc_index: usize) -> i32 {
 }
 
 /// Route one request to `handler`. Call this from `Service::__dispatch__`.
+/// A request's ARGUMENT bytes: what the streaming decoders read through
+/// `req.src`, which starts after the frame header. `req.body` holds that
+/// header too, so an opaque field bounded by arithmetic must be measured
+/// from here, not from `body[0]` -- measuring from the body put every
+/// field five bytes off and misparsed every AppendEntries over TCP.
+fn args_of(req: &Request) -> &[u8] {
+    let src = &req.src;
+    // SAFETY: src describes a live buffer (req.body) of len_ bytes, and
+    // pos_ <= len_; the slice borrows it for req's lifetime.
+    unsafe { core::slice::from_raw_parts(src.data_.add(src.pos_), src.len_ - src.pos_) }
+}
+
 pub fn dispatch<H: RaftHandler>(
     handler: &H,
     rpc_id: i32,
@@ -319,7 +357,7 @@ pub fn dispatch<H: RaftHandler>(
             reply_with(weak_sconn, req, handler.vote(&typed));
         }
         rpc_id::APPENDENTRIES => {
-            let Some(typed) = AppendEntriesRequest::from_body(&req.body) else {
+            let Some(typed) = AppendEntriesRequest::from_body(args_of(req)) else {
                 reject_malformed_request(req, weak_sconn);
                 return;
             };
@@ -396,10 +434,10 @@ impl<'a> RaftProxy<'a> {
 
     pub fn append_entries_async(
         &self,
-        req: &AppendEntriesRequest,
+        req: AppendEntriesRequest,
         on_reply: AsyncReplyCallback,
     ) -> Result<(), i32> {
-        let payload = req.clone();
+        let payload = req;
         self.client.request_async(
             rpc_id::APPENDENTRIES,
             move |ar: &mut BinaryWriteArchive| payload.serialize(ar),
@@ -422,10 +460,10 @@ impl<'a> RaftProxy<'a> {
 
     pub fn install_snapshot_async(
         &self,
-        req: &InstallSnapshotRequest,
+        req: InstallSnapshotRequest,
         on_reply: AsyncReplyCallback,
     ) -> Result<(), i32> {
-        let payload = req.clone();
+        let payload = req;
         self.client.request_async(
             rpc_id::INSTALLSNAPSHOT,
             move |ar: &mut BinaryWriteArchive| payload.serialize(ar),

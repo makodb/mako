@@ -427,6 +427,27 @@ option(COCO "Enable COCO" OFF)
 option(MAKO_USE_RAFT "Build Mako with the Raft replication helper" OFF)
 option(RAFT_TEST "Enable Raft lab testing fiber" OFF)
 option(SINGLE_RAFT_INSTANCE "Default runtime Raft group mode (ON=single group, OFF=one group per partition)" ON)
+# Which runtime the Raft core runs on. One Rust source (src/deptran/raft/src),
+# two runtimes, the model srpc itself uses (docs/migration/raft/
+# commo-service-rpc-plan.md, revision 5):
+#   hybrid  the core compiled by rustc into libraft.a, over the C++ seam
+#           kernels (raft/server_seam_cpp.cc) and the C++ srpc runtime.
+#           Today's production, and the default until the Rust lane wins.
+#   rust    the core plus raft-rt (src/deptran/raft/rt) compiled by rustc into
+#           libraft_rt.a: the seam kernels, the RPC transport, the poll thread
+#           and the message types are the Rust srpc crate's.
+#   cpp     the core transpiled by rusty-cpp over the C++ seam (plan phase L;
+#           not built yet -- selecting it fails at configure time).
+set(MAKO_RAFT_LANE "hybrid" CACHE STRING "Raft runtime lane: hybrid | rust | cpp")
+set_property(CACHE MAKO_RAFT_LANE PROPERTY STRINGS hybrid rust cpp)
+if(MAKO_RAFT_LANE STREQUAL "rust")
+  add_compile_definitions(MAKO_RAFT_LANE_RUST=1)
+  message(STATUS "Raft lane: rust (raft-rt over the Rust srpc runtime)")
+elseif(MAKO_RAFT_LANE STREQUAL "hybrid")
+  message(STATUS "Raft lane: hybrid (rustc core over the C++ srpc runtime)")
+else()
+  message(FATAL_ERROR "MAKO_RAFT_LANE=${MAKO_RAFT_LANE}: expected hybrid or rust (cpp is plan phase L)")
+endif()
 
 if(MAKO_USE_RAFT)
   add_compile_definitions(MAKO_USE_RAFT=1)
@@ -1061,6 +1082,13 @@ set(DEPTRAN_CORE_SRC
     src/deptran/tpcc_sharding.cc
     src/deptran/view_data.cc
 )
+# The runtime seam, per lane: exactly one set of the kernels the Raft core
+# calls for fibers, events, the poll thread and the wire is linked.
+if(MAKO_RAFT_LANE STREQUAL "rust")
+  list(APPEND DEPTRAN_CORE_SRC src/deptran/raft/raft_lane_rust.cc)
+else()
+  list(APPEND DEPTRAN_CORE_SRC src/deptran/raft/server_seam_cpp.cc)
+endif()
 
 if(RAFT_TEST)
     list(APPEND DEPTRAN_CORE_SRC
@@ -1142,7 +1170,7 @@ target_link_libraries(cluster PUBLIC srpc pthread btree_port vec_port rc_port st
 # recorded in the .rpc at all (rpcgen assigns them randomly and preserves them
 # only by scraping the header it previously wrote), so this reads them out of
 # rcc_rpc.h -- which is why it depends on that header and not just the .rpc.
-set(RAFT_RPC_RUST "${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/src/rpc.rs")
+set(RAFT_RPC_RUST "${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/src/rpc.rs")
 add_custom_command(
     OUTPUT ${RAFT_RPC_RUST}
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/rpcgen_rust.py
@@ -1150,7 +1178,7 @@ add_custom_command(
             --rpc src/deptran/rcc_rpc.rpc
             --ids src/deptran/raft/rpc_ids.txt
             --ids-from src/deptran/rcc_rpc.h
-            --out src/deptran/raft/src/rpc.rs
+            --out src/deptran/raft/rt/src/rpc.rs
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.rpc
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rpc_ids.txt
@@ -1160,7 +1188,17 @@ add_custom_command(
     VERBATIM)
 
 set(RAFT_RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/raft-cargo")
-set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft.a")
+# One cargo workspace (src/deptran/raft), two artifacts: the hybrid lane links
+# the core alone (libraft.a); the Rust lane links raft-rt (libraft_rt.a),
+# which contains the core as an rlib. Never both: raft-rt defines the seam
+# kernels server_seam_cpp.cc also defines.
+if(MAKO_RAFT_LANE STREQUAL "rust")
+  set(RAFT_RUST_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml")
+  set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft_rt.a")
+else()
+  set(RAFT_RUST_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml")
+  set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft.a")
+endif()
 # The srpc crate is in here because the Raft crate depends on it -- commo.rs
 # names srpc::client::Client. Without these, editing a canonical srpc .rs
 # leaves libraft.a stale: ninja sees no changed dependency, never re-invokes
@@ -1169,6 +1207,7 @@ set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft.a")
 # generated lib.rs.
 file(GLOB RAFT_RUST_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-cpp-markers/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/base/*.rs
@@ -1198,14 +1237,15 @@ add_custom_command(
             "CC=${CMAKE_C_COMPILER}"
             "AR=${CMAKE_AR}"
             cargo build --release --quiet
-            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
+            --manifest-path ${RAFT_RUST_MANIFEST}
             --target-dir ${RAFT_RUST_TARGET_DIR}
             ${RAFT_RUST_FEATURES}
     DEPENDS ${RAFT_RUST_SOURCES}
             ${RAFT_RPC_RUST}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/Cargo.toml
-    COMMENT "cargo build: the Raft server (src/deptran/raft) as libraft.a"
+    COMMENT "cargo build: the Raft ${MAKO_RAFT_LANE} lane as ${RAFT_RUST_LIB}"
     VERBATIM)
 add_custom_target(raft_rust_build DEPENDS ${RAFT_RUST_LIB})
 add_library(raft_rust STATIC IMPORTED GLOBAL)

@@ -24,8 +24,9 @@
 // not portable across endianness), so these assert on little-endian targets,
 // which is what mako runs on.
 
-use raft::rpc::{
-    EmptyAppendEntriesRequest, InstallSnapshotRequest, VoteRequest, VoteResponse,
+use raft_rt::rpc::{
+    AppendEntriesRequest, EmptyAppendEntriesRequest, InstallSnapshotRequest, VoteRequest,
+    VoteResponse, WireBytes,
 };
 use srpc::serializable::{
     make_sink_proxy_buffer, BinaryWriteArchive, BufferSink, Serialize,
@@ -119,9 +120,9 @@ fn install_snapshot_request_length_prefixes_its_string() {
         leader_id: 2,
         last_included_index: 3,
         last_included_term: 4,
-        data: String::new(),
+        data: WireBytes::default(),
     };
-    let long = InstallSnapshotRequest { data: "abcd".to_string(), ..short.clone() };
+    let long = InstallSnapshotRequest { data: WireBytes(b"abcd".to_vec()), ..short.clone() };
     let empty_len = encode(&short).len();
     let four_len = encode(&long).len();
     assert_eq!(
@@ -130,4 +131,57 @@ fn install_snapshot_request_length_prefixes_its_string() {
         "a four-byte payload must add exactly four bytes; the length prefix \
          itself must not change width"
     );
+}
+
+#[cfg(target_endian = "little")]
+#[test]
+fn append_entries_writes_its_payload_raw_between_the_fixed_fields() {
+    // `cmd` is the janus::Command envelope, opaque to Rust and UNFRAMED on the
+    // wire: the C++ lane writes the envelope's own bytes with no length
+    // prefix, and from_body bounds it by arithmetic -- offset 50 to len - 8.
+    // A v64 length prefix here (what serializing the Vec<u8> would add)
+    // shifted every byte after it and misparsed on both lanes.
+    let cmd: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0x00, 0x7f, 0x80];
+    let req = AppendEntriesRequest {
+        slot: u64::MAX,
+        ballot: -1,
+        leader_current_term: 5,
+        leader_site_id: 2,
+        leader_prev_log_index: 9,
+        leader_prev_log_term: 4,
+        leader_commit_index: 8,
+        cmd: cmd.clone(),
+        leader_next_log_term: 5,
+    };
+    let bytes = encode(&req);
+    assert_eq!(bytes.len(), 50 + cmd.len() + 8, "no framing around cmd");
+    assert_eq!(&bytes[0..8], &u64::MAX.to_le_bytes());
+    assert_eq!(&bytes[8..16], &(-1i64).to_le_bytes());
+    assert_eq!(&bytes[24..26], &2u16.to_le_bytes());
+    assert_eq!(&bytes[50..50 + cmd.len()], cmd.as_slice(), "cmd verbatim at 50");
+    assert_eq!(&bytes[50 + cmd.len()..], &5u64.to_le_bytes());
+    // And the decoder reads back exactly what went out.
+    assert_eq!(AppendEntriesRequest::from_body(&bytes), Some(req));
+}
+
+#[test]
+fn a_snapshot_payload_need_not_be_utf8() {
+    // InstallSnapshot's `data` is a C++ std::string -- bytes. Decoding it as a
+    // Rust String would reject this as InvalidUtf8.
+    use srpc::serializable::{make_source_proxy_buffer, BinaryReadArchive, BufferSource,
+                             Deserialize};
+    let req = InstallSnapshotRequest {
+        term: 1,
+        leader_id: 2,
+        last_included_index: 3,
+        last_included_term: 4,
+        data: WireBytes(vec![0xff, 0xfe, 0x00, 0xc3]),
+    };
+    let bytes = encode(&req);
+    let mut src = BufferSource::new(bytes.as_ptr(), bytes.len());
+    let mut ar = BinaryReadArchive::new(unsafe { make_source_proxy_buffer(&raw mut src) });
+    let mut back = InstallSnapshotRequest::default();
+    back.deserialize(&mut ar);
+    assert!(!ar.failed());
+    assert_eq!(back, req);
 }

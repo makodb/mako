@@ -274,7 +274,12 @@ def shim(rs):
     for n in INTERFACE:
         ret, params, const = iface[n]
         out.append(forwarder(n, ret, params, const, signature(rs, n)[1]).replace(f'{const} {{', f'{const} override {{', 1))
-    out += ['', ' private:', '  RaftServerBase* impl_;', '};']
+    out += ['',
+            '  // The Rust object itself, for the one caller that must hand it to',
+            '  // Rust rather than forward a method: the Rust lane\'s transport binds',
+            '  // to it (raft_lane_rust.cc). Not part of RaftSpecific.',
+            '  RaftServerBase* impl() const { return impl_; }',
+            '', ' private:', '  RaftServerBase* impl_;', '};']
     return '\n'.join(out)
 
 

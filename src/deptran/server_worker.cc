@@ -3,6 +3,7 @@
 #include "frame.h"
 #include "communicator.h"
 #include "raft/frame.h"
+#include "raft/raft_lane.h"
 
 namespace janus {
 
@@ -60,6 +61,15 @@ void ServerWorker::SetupService() {
 
   int ret;
   std::string bind_addr = site_info_->GetBindAddress();
+#if MAKO_RAFT_LANE_RUST
+  // The Rust lane: raft-rt's transport serves Raft on its own poll thread,
+  // admission closed until startup, exactly as the C++ server below.
+  rust_transport_ = raft_lane::Serve(rep_sched_, bind_addr);
+  rep_frame_->rust_transport_ = rust_transport_;
+  Log_info("Server {} ready at {} (Rust lane)", site_info_->name.c_str(),
+           bind_addr.c_str());
+  return;
+#endif
 
   // init srpc::PollThread
   svr_poll_thread_worker_ = rusty::Some(PollThread::create());
@@ -108,6 +118,28 @@ void ServerWorker::WaitForShutdown() {
 }
 
 void ServerWorker::SetupCommo() {
+#if MAKO_RAFT_LANE_RUST
+  {
+    raft_lane::ConnectPeers(rust_transport_);
+#ifdef RAFT_TEST_CORO
+    RaftFrame::RustLaneLabCommoCreated();
+#endif
+    auto* sched = rep_sched_;
+    raft_lane::Post(rust_transport_, [sched]() { sched->EnsureSetup(); });
+    if (!rep_sched_->WaitForStartup()) {
+      Log_error("[RAFT-STARTUP] Site {} failed startup; RPC admission remains closed",
+                site_info_->id);
+      return;
+    }
+    raft_lane::SetAdmissionReady(rust_transport_, true);
+#ifdef RAFT_TEST_CORO
+    // Site 0 runs the lab harness on this thread's Rust reactor, where the
+    // C++ lane's site 0 runs the C++ reactor that hosts the harness fiber.
+    RaftFrame::RustLaneLabRunIfSite0(site_info_->locale_id);
+#endif
+    return;
+  }
+#endif
   verify(svr_poll_thread_worker_.is_some());
   if (rep_frame_) {
     rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
@@ -143,6 +175,20 @@ void ServerWorker::SetupCommo() {
 
 void ServerWorker::ShutDown() {
   Log_debug("deleting rpc_server_ (services owned by server)");
+#if MAKO_RAFT_LANE_RUST
+  // Close admission and drain, then drop the server, before the scheduler
+  // goes -- the same order as the C++ server below, which this replaces.
+  if (rust_transport_ != nullptr) {
+    raft_lane::Drain(rust_transport_, 5000);
+    if (rep_sched_ != nullptr) {
+      rep_sched_->PrepareForShutdown();
+    }
+    raft_lane::CloseServer(rust_transport_);
+    if (rep_frame_ != nullptr) {
+      rep_frame_->rust_transport_ = nullptr;
+    }
+  }
+#endif
 
   // Services are now owned by rpc_server_ and will be deleted with it
   delete rpc_server_;
@@ -176,6 +222,13 @@ void ServerWorker::ShutDown() {
     delete rep_sched_;
     rep_sched_ = nullptr;
   }
+#if MAKO_RAFT_LANE_RUST
+  // The poll thread and clients last, after the scheduler is gone.
+  if (rust_transport_ != nullptr) {
+    raft_lane::Destroy(rust_transport_);
+    rust_transport_ = nullptr;
+  }
+#endif
   Log_info("ServerWorker shutdown complete.");
 }
 

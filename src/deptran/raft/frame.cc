@@ -1,6 +1,7 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "frame.h"
+#include "raft_lane.h"
 #include "server.h"
 #include "service.h"
 #include "commo.h"
@@ -169,6 +170,12 @@ uint64_t RaftFrame::LabFrameRpcCount(uint32_t loc_id) {
   if (it == RaftFrame::frames_.end() || it->second == nullptr) {
     return 0;
   }
+#if MAKO_RAFT_LANE_RUST
+  // Every RPC the transport sent: RaftCommo::rpc_count_'s counterpart.
+  return it->second->rust_transport_ == nullptr
+             ? 0
+             : raft_lane::RpcCount(it->second->rust_transport_);
+#endif
   auto* raft_commo = dynamic_cast<RaftCommo*>(it->second->commo_.get());
   if (raft_commo == nullptr) {
     return 0;
@@ -180,6 +187,35 @@ uint64_t RaftFrame::LabFrameRpcCount(uint32_t loc_id) {
 extern "C" uint64_t raft_lab_frame_rpc_count(uint32_t loc_id) {
   return RaftFrame::LabFrameRpcCount(loc_id);
 }
+
+#if MAKO_RAFT_LANE_RUST
+void RaftFrame::RustLaneLabCommoCreated() {
+  if (!IsRaftLabTestConfig()) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(raft_test_mutex_);
+  verify(raft_frame_all_schedulers_created(n_replicas_, 5));
+  n_commo_created_++;
+}
+
+void RaftFrame::RustLaneLabRunIfSite0(uint32_t locale_id) {
+  if (!IsRaftLabTestConfig() || !raft_frame_should_create_test_fiber(locale_id)) {
+    return;
+  }
+  // Wait until all five replicas are connected and started, as the C++ lane's
+  // harness fiber does before it is resumed.
+  raft_test_mutex_.lock();
+  while (raft_frame_more_commos_needed(n_commo_created_, 5)) {
+    raft_test_mutex_.unlock();
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    raft_test_mutex_.lock();
+  }
+  raft_test_mutex_.unlock();
+  const int test_result = raft_lane::RunLab();
+  lab_test_result_.store(test_result, rusty::sync::atomic::Ordering::Release);
+  Log_info("Rust-lane lab harness finished with {}", test_result);
+}
+#endif
 
 // The lab harness: src/deptran/raft/src/lab.rs, lab_cases.rs and
 // lab_snapshot_cases.rs. Runs the 25 cases and returns the verdict shape the

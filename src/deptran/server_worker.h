@@ -8,6 +8,9 @@
 
 namespace janus {
 
+struct RaftTransport;  // raft-rt, MAKO_RAFT_LANE=rust
+
+
 class Communicator;
 class RaftFrame;
 class RaftServer;
@@ -29,6 +32,10 @@ class ServerWorker {
   RaftServer *rep_sched_ = nullptr;
 
   Communicator *rep_commo_ = nullptr;
+
+  // MAKO_RAFT_LANE=rust only: raft-rt's transport (raft/raft_lane.h), which
+  // stands in for svr_poll_thread_worker_, rpc_server_ and rep_commo_.
+  RaftTransport *rust_transport_ = nullptr;
 
   bool launched_{false};
 

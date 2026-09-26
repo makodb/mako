@@ -30,7 +30,7 @@ Usage:
     python3 scripts/rpcgen_rust.py --service Raft \\
         --rpc src/deptran/rcc_rpc.rpc \\
         --ids-from src/deptran/rcc_rpc.h \\
-        --out src/deptran/raft/src/rpc.rs
+        --out src/deptran/raft/rt/src/rpc.rs
 """
 
 from __future__ import annotations
@@ -63,8 +63,14 @@ TYPE_MAP = {
     "parid_t": "u32",
     "siteid_t": "u16",
     "bool_t": "i8",
-    "std::string": "String",
-    "string": "String",
+    # NOT Rust's String. srpc's `Deserialize for String` validates UTF-8 and
+    # records DecodeError::InvalidUtf8 otherwise (misc/serializable.rs), while
+    # a C++ std::string on this wire is BYTES -- InstallSnapshot's `data` is a
+    # binary snapshot. As a String, every snapshot a Rust-lane follower got
+    # would have been rejected as malformed. WireBytes is emitted below: the
+    # same v64 length + raw bytes std::string writes, with no validation.
+    "std::string": "WireBytes",
+    "string": "WireBytes",
 }
 
 # Types that need a framing decision before they can be emitted. `Command` is
@@ -229,12 +235,37 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("")
     w("use srpc::client::{AsyncReplyCallback, Client};")
     w("use srpc::serializable::{")
-    w("    make_source_proxy_buffer, BinaryReadArchive, BinaryWriteArchive,")
-    w("    BufferSource, Deserialize, Serialize,")
+    w("    deserialize_bytes_with, make_source_proxy_buffer, serialize_bytes,")
+    w("    BinaryReadArchive, BinaryWriteArchive, BufferSource, Deserialize,")
+    w("    Serialize,")
     w("};")
     w("use srpc::server::{")
     w("    reject_malformed_request, Request, Server, WeakServerConnection,")
     w("};")
+    w("")
+    w("/// A C++ `std::string` as this wire carries it: a v64 length, then the")
+    w("/// raw bytes. Deliberately not `String`, whose decoder rejects non-UTF-8")
+    w("/// input -- and a snapshot is binary.")
+    w("#[derive(Clone, Debug, Default, PartialEq, Eq)]")
+    w("pub struct WireBytes(pub Vec<u8>);")
+    w("")
+    w("impl Serialize for WireBytes {")
+    w("    fn serialize(&self, ar: &mut BinaryWriteArchive) {")
+    w("        // SAFETY: the Vec is live for the call; serialize_bytes reads len bytes.")
+    w("        unsafe { serialize_bytes(self.0.as_ptr(), self.0.len(), ar) }")
+    w("    }")
+    w("}")
+    w("")
+    w("impl Deserialize for WireBytes {")
+    w("    fn deserialize(&mut self, ar: &mut BinaryReadArchive) {")
+    w("        // SAFETY: resize and data describe this Vec's own storage.")
+    w("        unsafe {")
+    w("            deserialize_bytes_with(&mut self.0, ar,")
+    w("                |v: &mut Vec<u8>, n: usize| v.resize(n, 0u8),")
+    w("                |v: &mut Vec<u8>| v.as_mut_ptr());")
+    w("        }")
+    w("    }")
+    w("}")
     w("")
     w("/// Wire ids. Randomly assigned once by rpcgen and preserved only by")
     w("/// scraping the previously generated header, so they are the wire")
@@ -290,7 +321,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
             derive = "Clone, Debug, Default, PartialEq, Eq"
             # Copy only when every field is a scalar. String and Vec<u8> (an
             # opaque payload) both own heap storage.
-            is_copy = all(t not in ("String", "Vec<u8>") for _, t in fields)
+            is_copy = all(t not in ("String", "Vec<u8>", "WireBytes") for _, t in fields)
             if is_copy:
                 derive = "Clone, Copy, " + derive.split(", ", 1)[1]
             if struct == req:
@@ -304,6 +335,16 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
             w(f"impl Serialize for {struct} {{")
             w("    fn serialize(&self, ar: &mut BinaryWriteArchive) {")
             for fname, _ in fields:
+                if (struct == req and opaque_note is not None
+                        and fname == opaque_note["name"]):
+                    # The opaque field is written RAW: exactly the bytes C++
+                    # wrote for it, with no length prefix, because from_body
+                    # (and the C++ lane) bound it by arithmetic. Serializing
+                    # the Vec<u8> would prefix a v64 length and every
+                    # AppendEntries this lane sent would misparse on both lanes.
+                    w(f"        // SAFETY: `{fname}` is a live Vec; write_bytes reads len bytes of it.")
+                    w(f"        unsafe {{ ar.write_bytes(self.{fname}.as_ptr(), self.{fname}.len()) }};")
+                    continue
                 w(f"        self.{fname}.serialize(ar);")
             w("    }")
             w("}")
@@ -396,6 +437,18 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     # second fiber per request and put an Rc<Fiber> -- thread-bound -- in code
     # that must stay Send.
     w(f"/// Route one request to `handler`. Call this from `Service::__dispatch__`.")
+    w("/// A request's ARGUMENT bytes: what the streaming decoders read through")
+    w("/// `req.src`, which starts after the frame header. `req.body` holds that")
+    w("/// header too, so an opaque field bounded by arithmetic must be measured")
+    w("/// from here, not from `body[0]` -- measuring from the body put every")
+    w("/// field five bytes off and misparsed every AppendEntries over TCP.")
+    w("fn args_of(req: &Request) -> &[u8] {")
+    w("    let src = &req.src;")
+    w("    // SAFETY: src describes a live buffer (req.body) of len_ bytes, and")
+    w("    // pos_ <= len_; the slice borrows it for req's lifetime.")
+    w("    unsafe { core::slice::from_raw_parts(src.data_.add(src.pos_), src.len_ - src.pos_) }")
+    w("}")
+    w("")
     w(f"pub fn dispatch<H: {service.name}Handler>(")
     w("    handler: &H,")
     w("    rpc_id: i32,")
@@ -408,7 +461,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
         if opaque is not None:
             # Decoded from the whole frame: the opaque field's end is only
             # knowable there, not from a streaming archive.
-            w(f"            let Some(typed) = {req_t}::from_body(&req.body) else {{")
+            w(f"            let Some(typed) = {req_t}::from_body(args_of(req)) else {{")
             w("                reject_malformed_request(req, weak_sconn);")
             w("                return;")
             w("            };")
@@ -461,12 +514,14 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     for name, req_t, resp_t, _, is_copy in emitted:
         w(f"    pub fn {snake(name)}_async(")
         w("        &self,")
-        w(f"        req: &{req_t},")
+        # A Copy request is taken by reference and copied into the closure; a
+        # request that owns heap storage (a payload, a snapshot) is taken BY
+        # VALUE and moved in, so a send costs no payload copy. The previous
+        # `req.clone()` copied every AppendEntries batch once per peer.
+        w(f"        req: &{req_t}," if is_copy else f"        req: {req_t},")
         w("        on_reply: AsyncReplyCallback,")
         w("    ) -> Result<(), i32> {")
-        # `.clone()` on a Copy type is a clippy error, and the crate builds
-        # with -D warnings, so pick the right one per struct.
-        w("        let payload = *req;" if is_copy else "        let payload = req.clone();")
+        w("        let payload = *req;" if is_copy else "        let payload = req;")
         w(f"        self.client.request_async(")
         w(f"            rpc_id::{name.upper()},")
         w("            move |ar: &mut BinaryWriteArchive| payload.serialize(ar),")

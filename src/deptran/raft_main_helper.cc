@@ -9,6 +9,7 @@
 #include "config.h"
 #include "frame.h"
 #include "raft/raft_worker.h"
+#include "raft/raft_lane.h"
 #include "raft/service.h"
 #include "paxos_worker.h"  // ElectionState definition lives here
 #include <rusty/rusty.hpp>
@@ -73,6 +74,9 @@ static RaftGroupMode raft_group_mode_g = kDefaultRaftGroupMode;
 static std::vector<Config::SiteInfo*> all_site_infos_g;
 static std::vector<srpc::Server*> stub_rpc_servers_g;
 static std::vector<rusty::Arc<PollThread>> stub_poll_threads_g;
+// MAKO_RAFT_LANE=rust: the stubs are extra listeners on the one worker's
+// transport poll thread (raft_lane::ServeStub), not servers with threads.
+static std::vector<void*> rust_stub_servers_g;
 static std::unordered_map<uint32_t, std::shared_ptr<RaftWorker>> workers_by_partition_g;
 
 // leader_replay_cb / follower_replay_cb cache watermark callbacks across role changes.
@@ -370,6 +374,20 @@ void create_stub_servers() {
   for (size_t i = 1; i < all_site_infos_g.size(); i++) {
     auto* site_info = all_site_infos_g[i];
     std::string bind_addr = site_info->GetBindAddress();
+#if MAKO_RAFT_LANE_RUST
+    // The same one service over the same one server, as below, but on the
+    // worker's transport poll thread: a listener, not a thread.
+    void* stub = raft_lane::ServeStub(worker->rust_transport_,
+                                      static_cast<RaftServer*>(rep_sched),
+                                      bind_addr);
+    if (stub == nullptr) {
+      Log_fatal("[SINGLE-RAFT] Stub server failed to bind at {}", bind_addr.c_str());
+    }
+    rust_stub_servers_g.push_back(stub);
+    Log_info("[SINGLE-RAFT] Created stub server on {} for site {} (partition {})",
+             bind_addr.c_str(), site_info->id, site_info->partition_id_);
+    continue;
+#endif
 
     // Create a PollThread for this stub
     auto poll_thread = srpc::PollThread::create();
@@ -398,6 +416,19 @@ void create_stub_servers() {
 
 // SINGLE-RAFT: Shutdown and clean up stub servers
 void destroy_stub_servers() {
+#if MAKO_RAFT_LANE_RUST
+  // Same order as below: close and drain every stub, then drop them, while
+  // the worker's transport poll thread is still alive to run their jobs.
+  for (void* stub : rust_stub_servers_g) {
+    if (!raft_lane::StubDrain(stub, kStubRpcDrainTimeoutMs)) {
+      Log_warn("[SINGLE-RAFT] Stub server drain timed out");
+    }
+  }
+  for (void* stub : rust_stub_servers_g) {
+    raft_lane::StubDestroy(stub);
+  }
+  rust_stub_servers_g.clear();
+#endif
   // Each stub registers a RaftServiceImpl over the single RaftServer, whose
   // handlers dereference a bare pointer with no lifetime lease. Close
   // admission and drain the already-admitted requests before the service is
@@ -468,16 +499,14 @@ bool server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
     worker->SetupCommo();
 
     if (auto raft_server = worker->GetRaftServer()) {
-      auto poll_worker_opt = worker->GetPollThreadWorker();
-      if (poll_worker_opt.is_some()) {
-        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([raft_server]() {
-          Log_info("[RAFTPOLL] EnsureSetup executing (site={} par={})",
-                   raft_server->SiteId(), raft_server->PartitionId());
-          raft_server->EnsureSetup();
-        }));
-        Log_info("[RAFTPOLL] Queueing EnsureSetup job for single worker");
-        poll_worker_opt.unwrap()->add(rusty::Arc<Job>(arc_job));
-      } else {
+      // On the thread that owns Raft's fibers: the C++ poll thread, or the
+      // Rust lane's transport poll thread (RaftWorker::PostToRaftPoll).
+      Log_info("[RAFTPOLL] Queueing EnsureSetup job for single worker");
+      if (!worker->PostToRaftPoll([raft_server]() {
+            Log_info("[RAFTPOLL] EnsureSetup executing (site={} par={})",
+                     raft_server->SiteId(), raft_server->PartitionId());
+            raft_server->EnsureSetup();
+          })) {
         raft_server->EnsureSetup();
       }
     }
@@ -493,6 +522,11 @@ bool server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
         stub_server->set_admission_ready(true);
       }
     }
+#if MAKO_RAFT_LANE_RUST
+    for (void* stub : rust_stub_servers_g) {
+      raft_lane::StubSetAdmissionReady(stub, true);
+    }
+#endif
 
     worker->StartSubmitThread();
     worker->SetupHeartbeat();
@@ -537,15 +571,11 @@ bool server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
     worker->SetupCommo();
 
     if (auto raft_server = worker->GetRaftServer()) {
-      auto poll_worker_opt = worker->GetPollThreadWorker();
-      if (poll_worker_opt.is_some()) {
-        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([raft_server]() {
-          Log_info("[RAFTPOLL] EnsureSetup executing (site={} par={})",
-                   raft_server->SiteId(), raft_server->PartitionId());
-          raft_server->EnsureSetup();
-        }));
-        poll_worker_opt.unwrap()->add(rusty::Arc<Job>(arc_job));
-      } else {
+      if (!worker->PostToRaftPoll([raft_server]() {
+            Log_info("[RAFTPOLL] EnsureSetup executing (site={} par={})",
+                     raft_server->SiteId(), raft_server->PartitionId());
+            raft_server->EnsureSetup();
+          })) {
         raft_server->EnsureSetup();
       }
     }
