@@ -37,7 +37,11 @@ pub open spec fn submit(s: State, c: Constants, id: int, body: Txn, coord: int, 
 }
 
 // ---------------------------------------------------------------------------
-// Read: an optimistic read of the latest certified version at the owner leader.
+// Read: an optimistic read of the latest installed version at the owner leader
+// (Appendix D `Read`). Its writer may still be installing at other shards, so a
+// reader can depend on a transaction that is later terminated; this is what
+// makes rollback safety (Theorem 2) non-trivial. The prose of Section 4.1 says
+// reads never see uncertified writes; the pseudocode and implementation do.
 // Cross-epoch rule (Section 5.2, Lemma 8): a newer-epoch reader may only see an
 // older-epoch version once that epoch's FVW exists and the version is below it.
 // ---------------------------------------------------------------------------
@@ -83,6 +87,10 @@ pub open spec fn merge_lower_bound(c: Constants, r: TxnRec, vc: Seq<int>) -> boo
     forall|k: int| #[trigger] r.reads.dom().contains(k)
         && r.reads[k].writer != -1 && r.reads[k].epoch == r.epoch ==> vc_le(r.reads[k].vc, vc, c.comp)
 }
+/// GetClock returns the post-increment clock ("increase and return its latest
+/// logical clock", Section 4.2; Appendix D's Install comment "ensure subsequent
+/// transactions observe a larger value" requires it). Strict per-stream order
+/// (Fact 3), and hence the meaning of the watermark, depends on this.
 pub open spec fn fetch_lower_bound(s: State, c: Constants, r: TxnRec, vc: Seq<int>) -> bool {
     forall|i: int| is_shard(c, i) && #[trigger] clock_shard(c, r, i) ==> vc[group(c, i)] >= s.shards[i].counter + 1
 }
@@ -181,6 +189,9 @@ pub open spec fn install(s: State, c: Constants, id: int, i: int) -> State {
 // ---------------------------------------------------------------------------
 // Certify: all installs done; the coordinator logs the transaction to its own
 // worker stream (the implementation's `serialize_util` after `remoteInstall`).
+// Raising the coordinator's counter to the logged clock has no counterpart in
+// Appendix D; it keeps the coordinator stream strictly increasing (Fact 3) when
+// the coordinator's component came from a ReadSet clock or a compressed group.
 // ---------------------------------------------------------------------------
 
 pub open spec fn all_installed(c: Constants, r: TxnRec) -> bool {

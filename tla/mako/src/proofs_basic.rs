@@ -202,10 +202,7 @@ pub proof fn lemma_abort_inv(s: State, c: Constants, id: int)
             } else {
                 let ro = txn(s.txns, o);
                 assert(txn(s2.txns, o) == ro);
-                assert forall|k: int| #[trigger] write_set(ro.body).contains(k) && ro.installed.contains(owner(c, k))
-                    && !has_version(s2.versions, k, o) implies
-                    (doomed(s2.final_wm, c, ro) && s2.rolled_back.contains((owner(c, k), ro.epoch))) || lost(s2.streams, c, ro, o) by {
-                }
+                assert(inv_present(s2, c, ro, o));
             }
         }
     }
@@ -296,9 +293,11 @@ pub proof fn lemma_commit_inv(s: State, c: Constants, id: int)
                 || (shard_epoch(s2.shards, i) > ro2.epoch && stream_below(stream_at(s2.streams, ro2, i), ro2.epoch, ro2.vc[group(c, i)])) by {
                 assert(logged_at(c, ro, i));
             }
-            assert forall|k: int| #[trigger] write_set(ro2.body).contains(k) && ro2.installed.contains(owner(c, k))
+            assert forall|k: int| (ro2.status is Prepared || certified_or_committed(ro2))
+                && #[trigger] write_set(ro2.body).contains(k) && ro2.installed.contains(owner(c, k))
                 && !has_version(s2.versions, k, o) implies
                 (doomed(s2.final_wm, c, ro2) && s2.rolled_back.contains((owner(c, k), ro2.epoch))) || lost(s2.streams, c, ro2, o) by {
+                assert(ro.status is Prepared || certified_or_committed(ro));
                 if lost(s.streams, c, ro, o) {
                     let i = choose|i: int| is_shard(c, i) && #[trigger] logged_at(c, ro, i) && !has_log(stream_at(s.streams, ro, i), o);
                     assert(logged_at(c, ro2, i));

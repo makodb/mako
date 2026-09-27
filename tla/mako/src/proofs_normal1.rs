@@ -327,7 +327,7 @@ pub proof fn lemma_replicate_inv(s: State, c: Constants, sid: Sid)
     let x = st.pending[0];
     assert(st2.durable == st.durable.push(x));
     assert(all_entries(st2) =~= all_entries(st));
-    assert forall|sid2: Sid| #[trigger] all_entries(s2.streams[sid2]) == all_entries(s.streams[sid2]) by {
+    assert forall|sid2: Sid| valid_sid(c, sid2) implies #[trigger] all_entries(s2.streams[sid2]) == all_entries(s.streams[sid2]) by {
         if sid2 != sid { assert(s2.streams[sid2] == s.streams[sid2]); }
     }
     assert(inv_stream(s, c, sid));
@@ -364,7 +364,8 @@ pub proof fn lemma_replicate_inv(s: State, c: Constants, sid: Sid)
             assert(inv_logs(s, c, o));
             let ro = txn(s.txns, o);
             assert forall|i: int| #[trigger] stream_at(s2.streams, ro, i) == stream_at(s.streams, ro, i) by {}
-            assert forall|k: int| #[trigger] write_set(ro.body).contains(k) && ro.installed.contains(owner(c, k))
+            assert forall|k: int| (ro.status is Prepared || certified_or_committed(ro))
+                && #[trigger] write_set(ro.body).contains(k) && ro.installed.contains(owner(c, k))
                 && !has_version(s2.versions, k, o) implies
                 (doomed(s2.final_wm, c, ro) && s2.rolled_back.contains((owner(c, k), ro.epoch))) || lost(s2.streams, c, ro, o) by {
                 if lost(s.streams, c, ro, o) {

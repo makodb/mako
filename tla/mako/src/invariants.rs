@@ -65,7 +65,8 @@ pub open spec fn inv_shapes(s: State, c: Constants) -> bool {
     &&& valid_constants(c)
     &&& s.shards.len() == c.shards
     &&& forall|sid: Sid| #[trigger] s.streams.dom().contains(sid) <==> valid_sid(c, sid)
-    &&& forall|i: int| is_shard(c, i) ==> #[trigger] shard_epoch(s.shards, i) <= s.epoch && counter(s.shards, i) >= 0
+    &&& forall|i: int| #![trigger shard_epoch(s.shards, i)] #![trigger counter(s.shards, i)]
+        is_shard(c, i) ==> shard_epoch(s.shards, i) <= s.epoch && counter(s.shards, i) >= 0
     &&& forall|k: int| #[trigger] s.versions.dom().contains(k) ==> valid_key(k)
 }
 
@@ -84,6 +85,8 @@ pub open spec fn inv_txn(s: State, c: Constants, id: int) -> bool {
     &&& r.vc.len() == c.comp
     &&& forall|x: int| is_comp(c, x) ==> #[trigger] r.vc[x] >= 0
     &&& is_prepared_or_later(r) ==> forall|i: int| is_shard(c, i) && #[trigger] clock_shard(c, r, i) ==> r.vc[group(c, i)] >= 1
+    &&& is_prepared_or_later(r) ==> forall|k: int| #[trigger] write_set(r.body).contains(k) ==>
+        shard_epoch(s.shards, owner(c, k)) >= r.epoch
     &&& forall|i: int| #[trigger] r.installed.contains(i) ==> is_shard(c, i) && writes_at(c, r.body, i)
     &&& forall|k: int| #[trigger] r.reads.dom().contains(k) ==> read_set(r.body).contains(k)
     &&& r.invoked < s.tick
@@ -188,7 +191,7 @@ pub open spec fn inv_read_order(s: State, c: Constants, id: int, k: int, o: int)
     let rd = r.reads[k];
     let ro = txn(s.txns, o);
     &&& ro.installed.contains(owner(c, k)) && has_version(s.versions, k, o) ==> pidx_of(s.txns, o) <= pidx_of(s.txns, rd.writer)
-    &&& !ro.installed.contains(owner(c, k)) ==> ro.status is Aborted || shard_epoch(s.shards, owner(c, k)) != ro.epoch
+    &&& !ro.installed.contains(owner(c, k)) ==> ro.status is Aborted || shard_epoch(s.shards, owner(c, k)) > ro.epoch
 }
 pub open spec fn inv_read(s: State, c: Constants, id: int, k: int) -> bool {
     let r = txn(s.txns, id);
@@ -249,22 +252,38 @@ pub open spec fn inv_streams(s: State, c: Constants) -> bool {
 // W12, W13, W21: where a transaction's log entries are
 // ---------------------------------------------------------------------------
 
-pub open spec fn inv_logs(s: State, c: Constants, id: int) -> bool {
-    let r = txn(s.txns, id);
-    // W12: a prepared (or terminated) transaction is not yet on its
-    // coordinator's stream, which can never reach its clock.
-    &&& (r.status is Prepared || aborted_prepared(r)) ==>
+/// W12a: a prepared (or terminated-while-prepared) transaction is not on its
+/// coordinator's stream, and that stream can never reach its clock.
+pub open spec fn inv_coord_below(s: State, c: Constants, r: TxnRec) -> bool {
+    (r.status is Prepared || aborted_prepared(r)) ==>
         stream_below(stream_at(s.streams, r, r.coord), r.epoch, r.vc[group(c, r.coord)])
-    &&& r.status is Prepared ==> forall|i: int| is_shard(c, i) && #[trigger] clock_shard(c, r, i)
+}
+/// W12b: at a clock shard it has not installed at yet, every same-epoch entry
+/// of a prepared transaction's dedicated stream is below its clock.
+pub open spec fn inv_uninstalled_below(s: State, c: Constants, r: TxnRec) -> bool {
+    r.status is Prepared ==> forall|i: int| is_shard(c, i) && #[trigger] clock_shard(c, r, i)
         && !r.installed.contains(i) ==> logs_below(stream_at(s.streams, r, i), r.epoch, r.vc[group(c, i)])
-    // W13: where it should be logged, it is, or the entry was lost to a crash.
-    &&& forall|i: int| is_shard(c, i) && #[trigger] logged_at(c, r, i) ==>
+}
+/// W13: where it should be logged, it is, or the entry was lost to a crash.
+pub open spec fn inv_logged(s: State, c: Constants, r: TxnRec, id: int) -> bool {
+    forall|i: int| is_shard(c, i) && #[trigger] logged_at(c, r, i) ==>
         has_log(stream_at(s.streams, r, i), id)
         || (shard_epoch(s.shards, i) > r.epoch && stream_below(stream_at(s.streams, r, i), r.epoch, r.vc[group(c, i)]))
-    // W21: an installed version is present unless rolled back or lost.
-    &&& forall|k: int| #[trigger] write_set(r.body).contains(k) && r.installed.contains(owner(c, k))
-        && !has_version(s.versions, k, id) ==>
-            (doomed(s.final_wm, c, r) && s.rolled_back.contains((owner(c, k), r.epoch))) || lost(s.streams, c, r, id)
+}
+/// W21: an installed version of a live transaction is present unless rolled
+/// back or lost.
+pub open spec fn inv_present(s: State, c: Constants, r: TxnRec, id: int) -> bool {
+    (r.status is Prepared || certified_or_committed(r)) ==>
+        forall|k: int| #[trigger] write_set(r.body).contains(k) && r.installed.contains(owner(c, k))
+            && !has_version(s.versions, k, id) ==>
+                (doomed(s.final_wm, c, r) && s.rolled_back.contains((owner(c, k), r.epoch))) || lost(s.streams, c, r, id)
+}
+pub open spec fn inv_logs(s: State, c: Constants, id: int) -> bool {
+    let r = txn(s.txns, id);
+    &&& inv_coord_below(s, c, r)
+    &&& inv_uninstalled_below(s, c, r)
+    &&& inv_logged(s, c, r, id)
+    &&& inv_present(s, c, r, id)
 }
 pub open spec fn inv_all_logs(s: State, c: Constants) -> bool {
     forall|id: int| #[trigger] s.txns.dom().contains(id) ==> inv_logs(s, c, id)

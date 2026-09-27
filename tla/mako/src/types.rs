@@ -4,8 +4,10 @@
 //! key that was never written holds 0. Keys are non-negative integers owned by
 //! shard `key % shards`. Vector clocks are sequences of `comp` components; shard
 //! `i` contributes to component `cidx[i]` (the paper's K:M compression, Section
-//! 6.1; the identity map is the paper's full vector clock, a constant map is the
-//! scalar timestamp of the implementation).
+//! 6.1; the identity map is the paper's full vector clock, a constant map is its
+//! K:1 compression, a single timestamp whose watermark is the minimum over all
+//! shards. The C++ single-timestamp path is not this instantiation: it merges
+//! shard watermarks with max and skips idle streams; see README.md).
 use vstd::prelude::*;
 
 verus! {
@@ -162,8 +164,11 @@ pub open spec fn is_prepared_or_later(r: TxnRec) -> bool {
         || (r.status is Aborted && r.status->prepared)
 }
 pub open spec fn read_only(r: TxnRec) -> bool { write_set(r.body).is_empty() }
-/// Shards whose logical clock the transaction fetches (paper GetClock plus the
-/// coordinator, as in the implementation's `updateSingleTimestamp`).
+/// Shards whose logical clock the transaction fetches: the paper's GetClock
+/// (WriteSet shards) plus the coordinator, as in the implementation's
+/// `updateSingleTimestamp`. Appendix D omits the coordinator; including it is
+/// load-bearing: it makes every coordinator stream strictly increasing, which
+/// is what dooms a transaction that hangs in Install (Lemma 6).
 pub open spec fn clock_shard(c: Constants, r: TxnRec, i: int) -> bool {
     !read_only(r) && (writes_at(c, r.body, i) || i == r.coord)
 }
@@ -230,6 +235,10 @@ pub open spec fn has_txn(txns: Map<int, TxnRec>, id: int) -> bool { txns.dom().c
 
 /// The watermark a stream's durable prefix contributes for epoch `e`: the clock
 /// of its last durable epoch-`e` entry (INF for the closing marker), 0 if none.
+/// An idle stream therefore holds the watermark at 0. That is required for
+/// safety: an idle dedicated stream may still receive an entry for a clock the
+/// transaction already fetched. It also makes commits need every stream of the
+/// shard to progress (there are shards * threads dedicated streams per shard).
 pub open spec fn stream_wm(es: Seq<Entry>, e: nat) -> Wm
     decreases es.len()
 {

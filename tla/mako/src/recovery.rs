@@ -22,9 +22,9 @@ pub open spec fn abort_coordinated(txns: Map<int, TxnRec>, i: int) -> Map<int, T
 // its store from the durable streams and starts the new epoch with clock 0.
 // ---------------------------------------------------------------------------
 
+/// Any shard leader may fail, including one still closing an older epoch.
 pub open spec fn can_crash(s: State, c: Constants, i: int, survive: Map<Sid, nat>) -> bool {
     &&& is_shard(c, i)
-    &&& s.shards[i].epoch == s.epoch
     &&& forall|sid: Sid| valid_sid(c, sid) && sid.shard == i ==>
         #[trigger] survive.dom().contains(sid) && survive[sid] <= s.streams[sid].pending.len()
 }
@@ -65,26 +65,32 @@ pub open spec fn crash(s: State, c: Constants, i: int, survive: Map<Sid, nat>) -
 
 // ---------------------------------------------------------------------------
 // AdvanceEpoch: a healthy shard that lags the configuration manager closes its
-// epoch. Its in-flight transactions are certified or terminated first; if none
-// was terminated after preparing it ends every stream with INF.
+// epoch (Section 5.2, Lemma 4). Interleavings before this step let in-flight
+// transactions finish; whatever is still in flight is terminated. Every
+// stream of the shard ends with INF except the coordinator stream of a worker
+// whose prepared transaction hangs (Lemma 4, case 2).
 // ---------------------------------------------------------------------------
 
 pub open spec fn can_advance(s: State, c: Constants, i: int) -> bool {
     is_shard(c, i) && s.shards[i].epoch < s.epoch
 }
-pub open spec fn hung(s: State, i: int) -> bool {
+/// Worker thread `t` of shard `i` is blocked on a prepared transaction.
+pub open spec fn hung_thread(s: State, i: int, t: int) -> bool {
     exists|id: int| #[trigger] s.txns.dom().contains(id)
-        && s.txns[id].coord == i && s.txns[id].status is Prepared
+        && s.txns[id].coord == i && s.txns[id].thread == t && s.txns[id].status is Prepared
 }
-pub open spec fn append_inf(streams: Map<Sid, Stream>, i: int, e: nat) -> Map<Sid, Stream> {
-    streams.map_entries(|sid: Sid, st: Stream|
-        if sid.shard == i { Stream { pending: st.pending.push(Entry::Inf { epoch: e }), ..st } } else { st })
+pub open spec fn gets_inf(s: State, i: int, sid: Sid) -> bool {
+    sid.shard == i && !(sid.coord == i && hung_thread(s, i, sid.thread))
+}
+pub open spec fn append_inf(s: State, i: int, e: nat) -> Map<Sid, Stream> {
+    s.streams.map_entries(|sid: Sid, st: Stream|
+        if gets_inf(s, i, sid) { Stream { pending: st.pending.push(Entry::Inf { epoch: e }), ..st } } else { st })
 }
 pub open spec fn advance(s: State, c: Constants, i: int) -> State {
     let e = s.shards[i].epoch;
     State {
         shards: s.shards.update(i, ShardState { epoch: e + 1, counter: 0 }),
-        streams: if hung(s, i) { s.streams } else { append_inf(s.streams, i, e) },
+        streams: append_inf(s, i, e),
         locks: s.locks.filter_keys(|k: int| s.txns[s.locks[k]].coord != i),
         txns: abort_coordinated(s.txns, i),
         ..s
