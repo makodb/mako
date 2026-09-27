@@ -216,17 +216,17 @@ pub open spec fn init(s: State, c: Constants) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Store and watermark helpers
+// Store and watermark helpers (defined on state components so that unchanged
+// components carry facts across transitions by congruence)
 // ---------------------------------------------------------------------------
 
-pub open spec fn vers(s: State, k: int) -> Seq<Version> {
-    if s.versions.dom().contains(k) { s.versions[k] } else { Seq::empty() }
+pub open spec fn vers(versions: Map<int, Seq<Version>>, k: int) -> Seq<Version> {
+    if versions.dom().contains(k) { versions[k] } else { Seq::empty() }
 }
-pub open spec fn top_writer(s: State, k: int) -> int {
-    if vers(s, k).len() == 0 { -1 } else { vers(s, k).last().txn }
+pub open spec fn top_writer(versions: Map<int, Seq<Version>>, k: int) -> int {
+    if vers(versions, k).len() == 0 { -1 } else { vers(versions, k).last().txn }
 }
-pub open spec fn has_txn(s: State, id: int) -> bool { s.txns.dom().contains(id) }
-pub open spec fn shard_of_sid(s: State, sid: Sid) -> ShardState { s.shards[sid.shard] }
+pub open spec fn has_txn(txns: Map<int, TxnRec>, id: int) -> bool { txns.dom().contains(id) }
 
 /// The watermark a stream's durable prefix contributes for epoch `e`: the clock
 /// of its last durable epoch-`e` entry (INF for the closing marker), 0 if none.
@@ -240,24 +240,23 @@ pub open spec fn stream_wm(es: Seq<Entry>, e: nat) -> Wm
 
 /// Paper Section 4.4: a clock vector is below the (compressed) vector watermark
 /// of epoch `e` when every shard's streams have replicated past its component.
-pub open spec fn below_wm(s: State, c: Constants, vc: Seq<int>, e: nat) -> bool {
+pub open spec fn below_wm(streams: Map<Sid, Stream>, c: Constants, vc: Seq<int>, e: nat) -> bool {
     forall|sid: Sid| valid_sid(c, sid) ==>
-        wm_le(vc[group(c, sid.shard)], stream_wm(#[trigger] s.streams[sid].durable, e))
+        wm_le(vc[group(c, sid.shard)], stream_wm(#[trigger] streams[sid].durable, e))
 }
-pub open spec fn fvw_ready(s: State, c: Constants, e: nat) -> bool {
-    forall|i: int| is_shard(c, i) ==> #[trigger] s.final_wm.dom().contains((i, e))
+pub open spec fn fvw_ready(fw: Map<(int, nat), Wm>, c: Constants, e: nat) -> bool {
+    forall|i: int| is_shard(c, i) ==> #[trigger] fw.dom().contains((i, e))
 }
 /// Below the finalized vector watermark of epoch `e` (Section 5.2).
-pub open spec fn below_fvw(s: State, c: Constants, vc: Seq<int>, e: nat) -> bool {
-    forall|i: int| is_shard(c, i) ==> wm_le(vc[group(c, i)], #[trigger] s.final_wm[(i, e)])
+pub open spec fn below_fvw(fw: Map<(int, nat), Wm>, c: Constants, vc: Seq<int>, e: nat) -> bool {
+    forall|i: int| is_shard(c, i) ==> wm_le(vc[group(c, i)], #[trigger] fw[(i, e)])
 }
 /// A transaction that the epoch's FVW has condemned: its writes are rolled back.
-pub open spec fn doomed(s: State, c: Constants, id: int) -> bool {
-    let r = s.txns[id];
-    fvw_ready(s, c, r.epoch) && !below_fvw(s, c, r.vc, r.epoch)
+pub open spec fn doomed(fw: Map<(int, nat), Wm>, c: Constants, r: TxnRec) -> bool {
+    fvw_ready(fw, c, r.epoch) && !below_fvw(fw, c, r.vc, r.epoch)
 }
-pub open spec fn doomed_version(s: State, c: Constants, v: Version) -> bool {
-    fvw_ready(s, c, v.epoch) && !below_fvw(s, c, v.vc, v.epoch)
+pub open spec fn doomed_version(fw: Map<(int, nat), Wm>, c: Constants, v: Version) -> bool {
+    fvw_ready(fw, c, v.epoch) && !below_fvw(fw, c, v.vc, v.epoch)
 }
 
 pub open spec fn no_pending_epoch(st: Stream, e: nat) -> bool {

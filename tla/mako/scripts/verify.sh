@@ -10,4 +10,4 @@ for f in src/*.rs; do
     m="${f##*/}"; m="${m%.rs}"
     if [[ "$m" != lib ]]; then mods+=(--verify-only-module "$m"); fi
 done
-exec "$verus" --crate-type=lib src/lib.rs "${mods[@]}" --num-threads 8 --triggers-mode selective "$@"
+exec "$verus" --crate-type=lib src/lib.rs "${mods[@]}" --num-threads 8 "$@"

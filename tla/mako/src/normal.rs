@@ -12,7 +12,8 @@ verus! {
 // ---------------------------------------------------------------------------
 
 pub open spec fn can_submit(s: State, c: Constants, id: int, body: Txn, coord: int, thread: int) -> bool {
-    &&& !has_txn(s, id)
+    &&& id >= 0
+    &&& !has_txn(s.txns, id)
     &&& valid_txn(body)
     &&& is_shard(c, coord)
     &&& is_thread(c, thread)
@@ -42,23 +43,23 @@ pub open spec fn submit(s: State, c: Constants, id: int, body: Txn, coord: int, 
 // ---------------------------------------------------------------------------
 
 pub open spec fn readable_top(s: State, c: Constants, r: TxnRec, k: int) -> bool {
-    let vs = vers(s, k);
+    let vs = vers(s.versions, k);
     vs.len() == 0 || {
         let v = vs.last();
         v.epoch == r.epoch
-            || (v.epoch < r.epoch && fvw_ready(s, c, v.epoch) && below_fvw(s, c, v.vc, v.epoch))
+            || (v.epoch < r.epoch && fvw_ready(s.final_wm, c, v.epoch) && below_fvw(s.final_wm, c, v.vc, v.epoch))
     }
 }
 pub open spec fn can_read(s: State, c: Constants, id: int, k: int) -> bool {
-    &&& has_txn(s, id)
+    &&& has_txn(s.txns, id)
     &&& s.txns[id].status is Running
     &&& read_set(s.txns[id].body).contains(k)
     &&& !s.txns[id].reads.dom().contains(k)
     &&& s.shards[owner(c, k)].epoch == s.txns[id].epoch
     &&& readable_top(s, c, s.txns[id], k)
 }
-pub open spec fn read_rec(s: State, k: int) -> ReadRec {
-    let vs = vers(s, k);
+pub open spec fn read_rec(versions: Map<int, Seq<Version>>, k: int) -> ReadRec {
+    let vs = vers(versions, k);
     if vs.len() == 0 {
         ReadRec { writer: -1, epoch: 0, vc: Seq::empty(), value: 0 }
     } else {
@@ -68,7 +69,7 @@ pub open spec fn read_rec(s: State, k: int) -> ReadRec {
 }
 pub open spec fn read(s: State, c: Constants, id: int, k: int) -> State {
     let r = s.txns[id];
-    State { txns: s.txns.insert(id, TxnRec { reads: r.reads.insert(k, read_rec(s, k)), ..r }), ..s }
+    State { txns: s.txns.insert(id, TxnRec { reads: r.reads.insert(k, read_rec(s.versions, k)), ..r }), ..s }
 }
 
 // ---------------------------------------------------------------------------
@@ -106,10 +107,10 @@ pub open spec fn validated(s: State, c: Constants, r: TxnRec) -> bool {
         s.shards[owner(c, k)].epoch == r.epoch && !s.locks.dom().contains(k)
     &&& forall|k: int| #[trigger] read_set(r.body).contains(k) ==>
         s.shards[owner(c, k)].epoch == r.epoch && !s.locks.dom().contains(k)
-        && top_writer(s, k) == r.reads[k].writer
+        && top_writer(s.versions, k) == r.reads[k].writer
 }
 pub open spec fn can_prepare(s: State, c: Constants, id: int, vc: Seq<int>) -> bool {
-    &&& has_txn(s, id)
+    &&& has_txn(s.txns, id)
     &&& s.txns[id].status is Running
     &&& validated(s, c, s.txns[id])
     &&& clock_assignment(s, c, s.txns[id], vc)
@@ -144,7 +145,7 @@ pub open spec fn keys_at(c: Constants, t: Txn, i: int) -> Set<int> {
     write_set(t).filter(|k: int| owner(c, k) == i)
 }
 pub open spec fn can_install(s: State, c: Constants, id: int, i: int) -> bool {
-    &&& has_txn(s, id)
+    &&& has_txn(s.txns, id)
     &&& s.txns[id].status is Prepared
     &&& is_shard(c, i)
     &&& writes_at(c, s.txns[id].body, i)
@@ -167,7 +168,7 @@ pub open spec fn install(s: State, c: Constants, id: int, i: int) -> State {
     let sid = sid_of(i, r.coord, r.thread);
     State {
         versions: Map::new(s.versions.dom().union(keys), |k: int|
-            if keys.contains(k) { vers(s, k).push(new_version(r, id, k)) } else { s.versions[k] }),
+            if keys.contains(k) { vers(s.versions, k).push(new_version(r, id, k)) } else { s.versions[k] }),
         locks: s.locks.remove_keys(keys),
         shards: s.shards.update(i, ShardState {
             counter: imax(s.shards[i].counter, r.vc[group(c, i)]), ..s.shards[i] }),
@@ -186,7 +187,7 @@ pub open spec fn all_installed(c: Constants, r: TxnRec) -> bool {
     forall|i: int| is_shard(c, i) && writes_at(c, r.body, i) ==> #[trigger] r.installed.contains(i)
 }
 pub open spec fn can_certify(s: State, c: Constants, id: int) -> bool {
-    &&& has_txn(s, id)
+    &&& has_txn(s.txns, id)
     &&& s.txns[id].status is Prepared
     &&& all_installed(c, s.txns[id])
 }
@@ -208,9 +209,9 @@ pub open spec fn certify(s: State, c: Constants, id: int) -> State {
 // ---------------------------------------------------------------------------
 
 pub open spec fn can_commit(s: State, c: Constants, id: int) -> bool {
-    &&& has_txn(s, id)
+    &&& has_txn(s.txns, id)
     &&& s.txns[id].status is Certified
-    &&& below_wm(s, c, s.txns[id].vc, s.txns[id].epoch)
+    &&& below_wm(s.streams, c, s.txns[id].vc, s.txns[id].epoch)
 }
 pub open spec fn commit(s: State, c: Constants, id: int) -> State {
     let r = s.txns[id];
@@ -222,7 +223,7 @@ pub open spec fn commit(s: State, c: Constants, id: int) -> State {
 // ---------------------------------------------------------------------------
 
 pub open spec fn can_abort(s: State, id: int) -> bool {
-    has_txn(s, id) && s.txns[id].status is Running
+    has_txn(s.txns, id) && s.txns[id].status is Running
 }
 pub open spec fn abort(s: State, id: int) -> State {
     let r = s.txns[id];

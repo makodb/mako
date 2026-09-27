@@ -114,10 +114,10 @@ pub open spec fn close(s: State, i: int, e: nat, w: Wm) -> State {
 // ---------------------------------------------------------------------------
 
 pub open spec fn can_rollback(s: State, c: Constants, i: int, e: nat) -> bool {
-    is_shard(c, i) && fvw_ready(s, c, e) && !s.rolled_back.contains((i, e))
+    is_shard(c, i) && fvw_ready(s.final_wm, c, e) && !s.rolled_back.contains((i, e))
 }
 pub open spec fn keep_after_rollback(s: State, c: Constants, e: nat, v: Version) -> bool {
-    !(v.epoch == e && !below_fvw(s, c, v.vc, e))
+    !(v.epoch == e && !below_fvw(s.final_wm, c, v.vc, e))
 }
 pub open spec fn rollback(s: State, c: Constants, i: int, e: nat) -> State {
     State {
