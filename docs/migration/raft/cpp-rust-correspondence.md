@@ -12,8 +12,8 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 611 | `raft/src/server_h.rs` | 5014 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1710 | `raft/src/server_cc.rs` | 2789 |  |
+| `raft/server.h` | 541 | `raft/src/server_h.rs` | 5518 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1710 | `raft/src/server_cc.rs` | 2181 |  |
 | `raft/service.cc` | 123 | `raft/rt/src/service.rs` | 161 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
 | `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 830 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
 | `raft/server_seam_cpp.cc` | 353 | `raft/rt/src/seam.rs` | 505 | the runtime seam, one per lane; exactly one is linked |

@@ -76,7 +76,7 @@ that assumed a single lane are superseded here and marked where they stand:
 | H1 docs committed | done | `65754b66f` |
 | H2 mako-dev merged | done -- 22 conflicts resolved, each recorded | `70fc2c0da` |
 | R1-R3 reactor fix | done -- latency back to the pre-regression binary | `edc5db890`, data `4149bf438` |
-| R4 mako-dev | applied in the mako-dev worktree, awaiting its build | -- |
+| R4 mako-dev | done -- committed on mako-dev (local; `shard1ReplicationRaft` fails `replay_batch > 200` there with or without it, 89-169, pre-existing) | `b73936735` (mako-dev) |
 | L1 crate split | done (raft + raft-rt, one workspace) | `217cc26d4` |
 | S1b seam split | done (server.cc host / server_seam_cpp.cc / rt seam.rs) | `217cc26d4` |
 | T1, T2, T4 Rust lane | done -- RaftLabTest 25/25 on both lanes | `217cc26d4` |
@@ -91,7 +91,9 @@ that assumed a single lane are superseded here and marked where they stand:
 | S3 lane-neutral replies | done by construction -- see below | `217cc26d4` |
 | M payload types | **not done, deliberately** -- see below | -- |
 | L2 lab without custom macros | done (the transpiled lab can no longer be hollow) | this commit |
-| L2 (rest)-L4 transpiled C++ lane | next | -- |
+| L2 transpile + compile | done -- 22 modules, 0 errors, gate clean; see "Outcome of L2-L4" | this commit |
+| L3 cpp lane linked and run | done -- RaftLabTest 25/25, 4 Raft + 3 Paxos suites pass, paired trial shows no difference | this commit |
+| L4 lane honesty | done -- exactly-once on every lane, core parity on hybrid, both in the build | this commit |
 | D1-D4 | D1 nothing left to delete (dead snapshot send removed), D2 by design, D3 nothing to collapse (all 31 exports used), D4 done | this commit |
 
 **The full sweep** (`docs/performance/raft-rust-9a361eccd`, 3 trials per
@@ -349,7 +351,7 @@ rules to every lane.
 
 #### Phase H — housekeeping, then the mako-dev merge
 
-- [ ] **H1. Commit the pending docs and data.**
+- [x] **H1. Commit the pending docs and data.**
   - What to commit: the conversion-log extension,
     `docs/performance/raft-latency-regression.md`,
     `docs/performance/raft-rust-538df5f8c/` (with the `.gitignore`
@@ -360,7 +362,7 @@ rules to every lane.
   - Fix CLAUDE.md's stale pin text: on this branch it still says
     `a1f8fef8` and cites `REQUIRED_RUSTY_CPP_COMMIT (:36)`. The gitlink is
     `1689f438`, and the constant lives in four places (L2).
-- [ ] **H2. Merge mako-dev (`3e102604d`). This is real work, not
+- [x] **H2. Merge mako-dev (`3e102604d`). This is real work, not
   housekeeping.**
   - `git merge-tree --write-tree HEAD 3e102604d` reports **22 conflicts**.
     The cause: both branches squashed the same srpc range
@@ -399,7 +401,7 @@ rules to every lane.
   Nothing relies on a TIMEOUT event staying queued. It is also a local edit
   to the vendored subtree, carried until upstreamed.
 
-- [ ] **R1. See it fail, in the right place.**
+- [x] **R1. See it fail, in the right place.**
   - `build/` has never built the test, so running ctest there reports Not
     Run, which proves nothing. Build and run it in `build_raftlab/`:
 
@@ -411,7 +413,7 @@ rules to every lane.
     `:234` and `:240`. A missing executable does not count.
   - Measured during validation: it fails exactly there, and the other five
     tests pass.
-- [ ] **R2. The fix.** Restore the two-term predicate at both sites, with
+- [x] **R2. The fix.** Restore the two-term predicate at both sites, with
   `7f52613fe`'s comment. It is written ONCE, and R4 carries the same bytes.
   *Done when:* all of these pass:
   - that test and srpc's `cargo test`;
@@ -419,7 +421,7 @@ rules to every lane.
   - the four production Raft suites;
   - because this changes Paxos's and Mako's reactor too: `simplePaxos`,
     `shard1Replication` and `shardNoReplication`.
-- [ ] **R3. Measure; print the comparison first.**
+- [x] **R3. Measure; print the comparison first.**
   - **First, preserve the `sep21` arm.** It is the binary in
     `/home/users/zyang2/mako/build`, dated Sep 21
     (`raft-latency-regression.md:57`). mako-dev HEAD has moved on, so any
@@ -436,7 +438,7 @@ rules to every lane.
     point outside its minimum-detectable-effect threshold, the rule that
     judged the original sweep. If (a) recovers and (b) does not, there is a
     second cause; find it before L.
-- [ ] **R4. mako-dev.**
+- [x] **R4. mako-dev.**
   - It has the same DONE-only predicate
     (`/home/users/zyang2/mako/src/srpc/reactor/reactor.rs:1524`, `:1543`).
     There it is upstream's latent leak, not a merge loss: `7f52613fe` is not
@@ -456,7 +458,7 @@ The first step toward two lanes, and the one that decides whether the rest is
 cheap: prove the core lowers to working C++. The runtime seam here is still
 today's C++ kernels; only how the core is compiled changes.
 
-- [ ] **L1. Split the crate.**
+- [x] **L1. Split the crate.**
   - `src/deptran/raft/` keeps the core crate `raft`, with **no** `srpc`
     dependency. It keeps `crate-type = ["rlib", "staticlib"]`, because
     `libraft.a` is still the `hybrid` lane.
@@ -482,7 +484,7 @@ today's C++ kernels; only how the core is compiled changes.
   - *Done when:* `cargo test` and clippy pass in both crates with both
     feature sets, `hybrid` passes RaftLabTest 25/25 unchanged, and both
     artifacts are built with `panic = "abort"`.
-- [ ] **L2. Transpile the core in crate mode, and make it compile.**
+- [x] **L2. Transpile the core in crate mode, and make it compile.**
   - **The command.** Add the crate-mode command beside srpc's, modelled on
     `src/srpc-cmake/CMakeLists.txt:547-557`. The output directory is keyed on
     `RAFT_TEST`: pass `--features raft_test` exactly when cargo gets it
@@ -552,7 +554,7 @@ today's C++ kernels; only how the core is compiled changes.
       gates and the Paxos/Mako suites.
   - *Done when:* every generated module compiles, and the crate-mode gate
     reports zero hand-attention slots.
-- [ ] **L3. Link and run the C++ lane.**
+- [x] **L3. Link and run the C++ lane.**
   - The transpiled core becomes a named static library (`libraft_cpp.a`),
     so `nm` has something to read.
   - Every hard-wired `raft_rust` link site moves to one lane-selected
@@ -573,7 +575,7 @@ today's C++ kernels; only how the core is compiled changes.
     trial isolates transpiled code from rustc code. (`raft_field_census.py`
     is a lane-independent source scan, so it stays a standing rule and is
     not a lane criterion.)
-- [ ] **L4. Keep the lanes honest.**
+- [x] **L4. Keep the lanes honest.**
   - **Core parity.** The exported `raft_server_*` sets of `libraft.a` and
     `libraft_cpp.a` must be identical. Their `raft_`-prefixed *imports* must
     also be identical, except for an explicit, reviewed per-lane
@@ -586,6 +588,140 @@ today's C++ kernels; only how the core is compiled changes.
     in both C++ and Rust.
   - *Done when:* both checks run on every build, and one build tree
     produces all lanes' suffixed binaries.
+
+**Outcome of L2-L4 (revision 6).** The `cpp` lane is built, linked and run:
+`MAKO_RAFT_LANE=cpp` transpiles the core at build time and links it over the
+C++ seam and the C++ srpc runtime, with no rustc anywhere in the lane (the
+tree has no `raft-cargo` directory). Where the work departed from the bullets
+above, it is recorded here with the reason.
+
+- *Mechanism* (`cmake/raft_cpp_lane.cmake`, `scripts/raft_cpp_stage.py`).
+  Nothing generated is checked in. Each build:
+  1. **stages** the crate into the build tree, resolving the `raft_test`
+     gates there;
+  2. **transpiles** it with `--auto-namespace`, so `raft.server_h` becomes
+     `raft::server_h`, with a generated module preamble and
+     `cpp-lane-type-map.toml`;
+  3. **derives the kernels header**, the global declaration of every kernel
+     the core imports;
+  4. **gates** the output;
+  5. **compiles** 22 modules into `libraft_cpp_core.a`.
+- *Twin mechanism: none of (a)-(c).* `--crate-namespace-wrap` emits
+  `namespace raft.x` (invalid C++). `--flat-import-namespace` rejects
+  `#[cfg]` on modules and any supertrait other than `Send`/`Sync`.
+  `--auto-namespace` puts every twin in its own `raft::<module>` namespace,
+  which cannot collide with `janus::`, so the twins can simply be compiled.
+- *cfg.* Crate mode rejects a whole-file `#![cfg]` and a `#[cfg]` on a `mod`
+  line, and ignores `#[cfg]` elsewhere. The stage step therefore resolves
+  every `#[cfg(feature = ...)]` item and `cfg!()` to the build's feature
+  set, and fails on any other `cfg` form. The lab modules' gates moved from
+  `#![cfg]` into the `cfg_feature` field of `rust-modules.toml`, which
+  `raft_crate_extract.py` writes onto the `mod` lines of `lib.rs`.
+- *Carriers: opaque on BOTH lanes, not the real types.* This reverses the
+  bullet above. The real types (`janus::Command` and the others) sit behind
+  `import srpc.*`, and a module's global fragment may not import. So
+  `raft_cpp_lane_facade.h` gives the transpiled core the same size-pinned
+  opaque carriers the rustc facade has. Their destructors and copies call
+  the same `raft_destroy_*` / `*_clone_into` kernels, a move is bitwise and
+  zeroes the source, and the log shims are ported line for line.
+  Consequence: the two cores import identical kernel sets, and L4 needs no
+  allow-delta.
+- *Kernel declarations.* By the transpiler's contract, a call to an
+  `extern "C"` function is spelled `::name` and must resolve to a global
+  declaration (srpc's preamble headers). The core's kernels therefore now
+  name only global types:
+  - the three by-value result PODs are canonical `src/server_pods_h.rs`,
+    bound with `cpp_native_type` to the new `raft_kernel_pods.h`, which the
+    host includes too. That deleted server.h's last inline Rust block.
+  - the server is passed as an opaque `RaftServerHandle`, via
+    `RaftServerBase::handle()`.
+- *Module graph.* C++20 modules may not be cyclic, so:
+  - the inbound vote and append bodies moved from `server_cc.rs` to
+    `server_h.rs`;
+  - `lab_registry` and `lab_cluster` were flattened out of nested modules;
+  - the lab driver moved to a new `lab_main.rs`.
+- *Transpiler gaps.* Each was reshaped in the Rust, with a comment at the
+  site:
+  - an `Option<R>`-returning generic whose `R` C++ cannot deduce;
+  - deferred `let` initialisation;
+  - a `goto` past an initialised local;
+  - a const binding that is later moved;
+  - a digit-separated literal inside `format!` arguments;
+  - a guard `push`;
+  - cross-module `&mut` arguments.
+- *Two silent miscompiles, now guarded.* Both compiled without a warning,
+  and both are transpiler findings to report upstream.
+  - **Lab case 7.** `let mut cmds = Vec::new()` (a `Vec<i64>`) was lowered
+    to `Vec<bool>`, so every value compared equal to `true`.
+  - **Lab case 58.** `[..].into_iter().max()` lowers to `rusty::iter_max`,
+    which copies an owning iterator into a local and returns a reference
+    into it: a read of dead storage. The computed index came out as 2
+    instead of about 370.
+
+  The stage step now rejects both shapes: an untyped empty collection, and a
+  `max`/`min` over an owned temporary. Every site is rewritten or annotated.
+- *A latent bug found on the way.* The election loop's vote wait called
+  `rusty::ReactorFiber::sleep`, which under rustc is the facade's recording
+  model: it neither sleeps nor yields. It now calls the seam's
+  `raft_fiber_sleep_us`. It was unreachable in practice, because the
+  synchronous vote clears `req_voting_` first.
+- *Gate (L2's done-when).* `raft_cpp_stage.py --gate` fails on any `TODO`
+  other than `// TODO: derive(Copy)`, which an aggregate of scalars needs
+  no code for, and on any macro lowered to a comment. Current output: 0
+  slots in the production variant, 3 `derive(Copy)` notes in the lab
+  variant.
+- *L4.* `scripts/raft_lane_parity.py`, run by the `raft_lane_check` build
+  target:
+  - **exactly-once**, on every build of every lane: each core import is
+    defined once, and nothing the core defines is defined by the host. It
+    passes on all three lanes:
+
+    | lane | imports defined once | exports defined nowhere else |
+    |---|---|---|
+    | cpp | 112 | 32 |
+    | rust | 94 | 72 |
+    | hybrid | 112 | 32 |
+
+  - **core parity**, on the hybrid lane (the tree that already builds the
+    rustc core compiles the transpiled one beside it): 32 exports and 112
+    imports, identical, with no allow-delta.
+
+  One build tree does not produce every lane's binaries. Each lane needs its
+  whole deptran build, so that would roughly triple build time, and parity
+  compares cores, which are lane-independent.
+- *Results (L3's done-when).* RaftLabTest on `cpp`: **25/25**, after the two miscompile fixes below. The four
+  production Raft suites pass on `cpp` (`shard1ReplicationRaft` reached
+  `replay_batch` 8005, against 8077 on rust and 7391 on hybrid), and so do
+  simplePaxos, shard1Replication and shardNoReplication. The rust and hybrid
+  lanes were re-run on the same source: RaftLabTest 25/25 on both, and all
+  four suites pass (hybrid's `shard2ReplicationRaft` on its retry).
+- *Performance (L3).* ABBA paired trial, 25 pairs per point, cpp lane (B)
+  against hybrid (A), 4 KB payloads
+  (records in `docs/performance/raft-cpp-lane-paired`, kept out of git for
+  now, pending a decision on how experiment data is stored):
+
+  | point | throughput | p50 | p99 |
+  |---|---|---|---|
+  | 240/s | +0.00% (all equal) | +0.41% (p = 0.108) | −0.25% (p = 0.230) |
+  | saturation | +0.06% (p = 1.000) | −0.09% (p = 0.690) | −0.12% (p = 1.000) |
+
+  No difference at either point: transpiled code costs nothing against
+  rustc-compiled code on the same runtime.
+- *`panic = "abort"` risk: open, narrowed.* A Rust `panic!` in the
+  transpiled core becomes `rusty::do_panic`, which throws
+  `std::runtime_error` unless `RUSTY_PANIC_ABORT` is defined
+  (`third-party/rusty-cpp/include/rusty/panic_handler.hpp`).
+  - **On a fiber** nothing catches it: srpc's fiber path has no `catch`,
+    and unwinding cannot cross the C and assembly fiber trampoline, so the
+    process ends in `std::terminate`. That is the rustc lane's outcome,
+    reached less directly.
+  - **In a call from host C++** that has its own `try` (the core's exports
+    are called from C++), a panic could be caught instead of aborting.
+  - **The exact fix** is to define `RUSTY_PANIC_ABORT`. It has to be defined
+    for every translation unit that includes the rusty headers, because
+    `do_panic` is inline and a per-target define would be an ODR violation,
+    so it is left as a follow-up rather than done for `raft_cpp_core`
+    alone.
 
 Risks:
 - rustc-only constructs in 2,700+ lines written since 09-21;
@@ -607,7 +743,7 @@ filters `TpcNoopCommand` in C++), and from there to `RaftWorker::Next`
 `ServerWorker` stub (`server_worker.cc:49-53`), and the lab learner, which
 reads `tx_id` (`server.cc:624-634`).
 
-- [ ] **M1. A Rust payload type and its codec, in the core.** It must be
+- [ ] *(withdrawn: see "M is withdrawn" in the status section)* **M1. A Rust payload type and its codec, in the core.** It must be
   byte-identical to today's envelopes:
   - `Commit`, a `TpcCommitCommand`: `[tx_id][ret][term][inner envelope]`
     followed by `[bool has_view_data][opt ViewData]` (`tpc_command.cc:40-54`).
@@ -636,7 +772,7 @@ reads `tx_id` (`server.cc:624-634`).
     encoder produced. That includes a three-element batch with its
     boundaries, a `Commit` with a restamped `term`, and a legacy-inner frame
     if that kind is kept.
-- [ ] **M2. The core holds the payload instead of the carrier.**
+- [ ] *(withdrawn: see "M is withdrawn" in the status section)* **M2. The core holds the payload instead of the carrier.**
   - **Chosen shape, which leaves `scheduler.h` untouched.** `RaftSpecific`'s
     `Start`/`ServeAppendEntries`/`ServeInstallSnapshot` keep their Command
     signatures (`scheduler.h:160-184`). The C++ shim converts before
@@ -667,7 +803,7 @@ reads `tx_id` (`server.cc:624-634`).
   - *Done when:* the Raft lab and suites pass on `hybrid` and `cpp`. Also, a
     paired trial of `hybrid` before against after shows no regression, which
     catches the conversion's cost in the commit that adds it.
-- [ ] **M3. The generator types the payload.**
+- [ ] *(withdrawn: see "M is withdrawn" in the status section)* **M3. The generator types the payload.**
   - `rpcgen_rust.py` stops treating `cmd` as opaque bytes at offset 50
     (`:92-94`, `:116-117`). The offset arithmetic and `from_body` go.
   - The latent AppendEntries bug goes with them: `rpc.rs:96` writes a
@@ -678,7 +814,7 @@ reads `tx_id` (`server.cc:624-634`).
 
 #### Phase S — the runtime seam, made explicit
 
-- [ ] **S1. Classify every kernel** as SEAM (lane-specific), HOST (C++ in
+- [x] **S1. Classify every kernel** as SEAM (lane-specific), HOST (C++ in
   both lanes), or CORE (becomes plain Rust in the core, because it is C++
   only by position). `gen_correspondence.py` emits the table from the extern
   blocks, so it is complete by construction. It is wired into a build target
@@ -691,13 +827,13 @@ reads `tx_id` (`server.cc:624-634`).
   | CORE | the locks (`raft_mutex_*`, `raft_std_mutex_*`, which become Rust mutexes); `raft_verify`; `raft_thread_sleep_ms`; `raft_monotonic_now_*`, random, env, config values; the apply thread (std::thread); the libc imports (`usleep`, `rand`, `setenv`, `tolower`). Each moves only if the transpiler lowers it and L4 stays green |
   | gone | the Command group (M2); `raft_command_from_bytes`/`raft_byte_string_from_bytes` (T2); the `raft_destroy_*`/clone kernels stay rustc-lane-only (L2) |
 
-- [ ] **S1b. Split `server.cc` along that table.** Today SEAM and HOST
+- [x] **S1b. Split `server.cc` along that table.** Today SEAM and HOST
   kernels sit in the same `extern "C"` block (`server.cc:454-1449`).
   `server_host.cc` holds HOST and builds in every lane; `server_seam_cpp.cc`
   holds SEAM and builds only for `hybrid`/`cpp`. Without this split, the Rust
   lane's link defines the seam twice. L4's exactly-once check is what
   catches that.
-- [ ] **S2. The core stops holding runtime handles.**
+- [x] **S2. The core stops holding runtime handles.**
   - `waiter_`, `election_waiter_` and the wake gate's `owner_`
     (`server_h.rs:1268-1270`) are C++-lane objects stored in the core. On
     the Rust lane they cannot be stored there at all:
@@ -716,7 +852,7 @@ reads `tx_id` (`server.cc:624-634`).
   - Cross-thread wakes go through the lane's `PollThread::add`, which is
     `Send + Sync`: an mpsc `Sender`, a `Mutex<Option<JoinHandle>>` and
     atomics (`reactor.rs:2109-2118`). A cargo probe confirmed this.
-- [ ] **S3. Replies are lane-neutral.** `PendingAppend.response_`
+- [x] **S3. Replies are lane-neutral.** `PendingAppend.response_`
   (`server_cc.rs:18`) and the InstallSnapshot callback
   (`server.cc:1654-1700`) become one seam contract. The core asks for a send
   and later polls for a plain reply record (or "failed"). Today's rules
@@ -732,7 +868,7 @@ reads `tx_id` (`server.cc:624-634`).
 
 #### Phase T — the Rust lane's runtime (`raft-rt`)
 
-- [ ] **T1. The seam, in Rust.**
+- [x] **T1. The seam, in Rust.**
   - Implement every SEAM function over the Rust srpc crate: fibers
     (`Fiber::create_run`, `reactor.rs:928`), `IntEvent` (`:411`, `:431`),
     `PollThread::add` (`:2204`), sleep, the Rust srpc logger and clock, and
@@ -757,7 +893,7 @@ reads `tx_id` (`server.cc:624-634`).
     4. Membership comes from `Config::GetPartitionSize` in C++
        (`commo.cc:118`) but from the recorded partitions in Rust
        (`transport.rs:317-322`).
-- [ ] **T2. The transport's gaps, found on 09-26.**
+- [x] **T2. The transport's gaps, found on 09-26.**
   - Add an EmptyAppendEntries send path, chosen when there is no payload,
     as `commo.cc:69` does.
   - Reject malformed frames. The service now decodes through the core's
@@ -769,7 +905,7 @@ reads `tx_id` (`server.cc:624-634`).
     `set_admission_ready` and `bound_port`.
   - `add_peer` retries like `ConnectToAddress` (`communicator.cc:90-117`).
     Decide what replaces `ReconnectToSite` (`:131-173`).
-- [ ] **T3. Tests for what will run.**
+- [x] **T3. Tests for what will run.**
   - Over loopback TCP: every RPC, `serve()` with the real `RaftRpcService`,
     and the ABI plus registry lifecycle.
   - **The mixed-lane cluster, and how it runs.** RaftLabTest cannot host
@@ -784,7 +920,7 @@ reads `tx_id` (`server.cc:624-634`).
       as leader and as follower.
     - Pass criteria: an election and replication in the logs, and the
       client's `ALL VERIFICATIONS PASSED`.
-- [ ] **T4. Rust-lane wiring, in per-lane files that CMake selects.** Two
+- [x] **T4. Rust-lane wiring, in per-lane files that CMake selects.** Two
   embedders need it, and both are Raft-only:
   - **`RaftWorker`** (production):
     - `SetupService`/`SetupCommo` become transport `new`, then `serve`,
@@ -819,21 +955,21 @@ reads `tx_id` (`server.cc:624-634`).
     suites and T3 all pass. In addition, an ABBA paired trial (≥25 pairs) of
     `cpp` against `rust`, plus the sweep's rate phase against R3, shows no
     regression in throughput, p50 or p99. All of these are required.
-- [ ] **T5.** Make `rust` the default. `cpp` and `hybrid` keep being built
+- [x] **T5.** Make `rust` the default. `cpp` and `hybrid` keep being built
   and tested; retiring `hybrid` is a separate decision, taken on T4's
   numbers.
 
 #### Phase D — cleanup (the old stages 4 and 5, restated for two lanes)
 
-- [ ] **D1.** Delete what the two-lane design orphans: the offset-50 opaque
+- [x] **D1.** Delete what the two-lane design orphans: the offset-50 opaque
   path, the `transport_of` fallbacks, `transport_exports.h` (replaced by the
   seam), and the Rust lane's last dependence on C++-lane kernels. The C++
   lane's `commo.cc`, `service.cc`, `server_seam_cpp.cc` and `rcc_rpc.h`'s
   `RaftService` **stay**: together they are the C++ lane's runtime.
-- [ ] **D2. Old 5a is withdrawn; old 5b becomes permanent.** `RaftService`
+- [x] **D2. Old 5a is withdrawn; old 5b becomes permanent.** `RaftService`
   stays in `rcc_rpc.rpc`, because both generators read it. The id table
   plus T3's mixed-lane cluster keep the two lanes' wire identical.
-- [ ] **D3. (old 4a, rewritten)** After M2 and T4, count the exports again
+- [x] **D3. (old 4a, rewritten)** After M2 and T4, count the exports again
   and collapse the ones reached only from per-lane code.
   - The three `TxLogServer` exports stay, because Paxos implements that
     interface.
@@ -841,7 +977,7 @@ reads `tx_id` (`server.cc:624-634`).
     and called only from Raft code (`raft_worker.cc`, `raft_main_helper.cc`
     and the Raft-only `ServerWorker`, `server_worker.cc:123`, `:131`). They
     are Raft-only exports, not shared ones.
-- [ ] **D4.** Regenerate `cpp-rust-correspondence.md` with a per-lane view.
+- [x] **D4.** Regenerate `cpp-rust-correspondence.md` with a per-lane view.
 
 ## TODO
 
@@ -1245,7 +1381,7 @@ the same seam that works today, rather than inventing a new one.
   is the lane move, 3e -- which starts from `PeerRegistry`'s shape rather
   than from a sketch, since the sketch (`commo.rs`) has been deleted.
 
-- [ ] **3e. HALF BUILT.** The service side is done and proven; the client
+- [x] *(superseded by revision 5: finished as T1-T4; the client side runs on the Rust lane)* **3e. HALF BUILT.** The service side is done and proven; the client
   side is what remains.
 
   **Done:** `src/deptran/raft/src/service.rs` --
@@ -1496,7 +1632,7 @@ the same seam that works today, rather than inventing a new one.
 that D3 counts three shared `TxLogServer` exports; `EnsureSetup` and
 `WaitForStartup` are Raft-only `RaftSpecific` methods, not shared.)*
 
-- [ ] **4a. AS WRITTEN IT IS NOT ACHIEVABLE, and the reason is Paxos, not
+- [x] *(superseded by revision 5: rewritten as D3)* **4a. AS WRITTEN IT IS NOT ACHIEVABLE, and the reason is Paxos, not
   3e.** Measured: THREE of the 31 exports -- `set_commo`,
   `set_site_identity` and `reg_learner_action` -- are what `TxLogServer`
   declares (`scheduler.h:201-213`), and `PaxosServer : public TxLogServer`
@@ -1521,7 +1657,7 @@ that D3 counts three shared `TxLogServer` exports; `EnsureSetup` and
   functions: `RaftWorker::Submit(const char*, int, uint32_t)` in
   (`raft_worker.cc:760`), `(log, len, par_id, slot_id, queue)` out
   (`:1071-1074`).
-- [ ] **4b. Folded into 3e**, not sequenced after it: those stub servers host
+- [x] *(superseded by revision 5: done with T4)* **4b. Folded into 3e**, not sequenced after it: those stub servers host
   the same one service the lane move is moving, so they cannot be left on
   the other lane for a stage. Kept numbered here because the problem is
   stage 4's shape, not stage 3's. Handle `raft_main_helper.cc:383`, which registers
@@ -1534,7 +1670,7 @@ that D3 counts three shared `TxLogServer` exports; `EnsureSetup` and
 `rcc_rpc.rpc` and 5a is withdrawn; 5b's check becomes permanent. See phase D
 of the two-lane plan.)*
 
-- [ ] **5a. Strictly after 3e's switch, and here is what holds it.**
+- [ ] *(withdrawn by D2)* **5a. Strictly after 3e's switch, and here is what holds it.**
   Measured: removing `RaftService` from the `.rpc` deletes the class
   `RaftServiceImpl` inherits from (`service.h:20`) and the four return
   types its handlers name (`service.cc:43`, `:58`, `:77`, `:101`).
@@ -1545,7 +1681,7 @@ of the two-lane plan.)*
   paths), so this is sequencing, not missing work.
 
   Remove `RaftService`/`RaftProxy` from `rcc_rpc.rpc`, regenerate.
-- [ ] **5b. Half of this is already automated by 2b.** The "all twelve RPC
+- [x] *(made permanent by D2)* **5b. Half of this is already automated by 2b.** The "all twelve RPC
   ids are unchanged" half no longer needs a human to check: the frozen
   table (`src/deptran/raft/rpc_ids.txt`) pins Raft's four and the build
   fails if any other service in `rcc_rpc.h` has drawn one of them -- which

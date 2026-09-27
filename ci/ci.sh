@@ -805,6 +805,9 @@ case "${1:-}" in
     raftLabTestHybrid)
         run_raft_lab_test hybrid
         ;;
+    raftLabTestCpp)
+        run_raft_lab_test cpp
+        ;;
     rocksdbTests)
         run_rocksdb_tests
         ;;
@@ -849,6 +852,7 @@ case "${1:-}" in
         run_2shard_replication_simple_raft
         run_raft_lab_test rust
         run_raft_lab_test hybrid
+        run_raft_lab_test cpp
         run_rocksdb_tests
         # run_shard_fault_tolerance  # DISABLED: test script not implemented
         run_multi_shard_single_process
@@ -866,7 +870,7 @@ case "${1:-}" in
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
         echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
-        echo "  raftLabTest, raftLabTestHybrid,"
+        echo "  raftLabTest, raftLabTestHybrid, raftLabTestCpp,"
         echo "  rocksdbTests, multiShardSingleProcess,"
         echo "  shard2SingleProcess, shard2SingleProcessReplication,"
         echo "  srpcTests, cpuThrottlingScaling, clientServer, all"

@@ -138,7 +138,7 @@ impl HeartbeatAuthority {
     // A generation begins with this site already counted as a voter: a leader
     // is evidence for its own authority.
     pub fn new(term: u64, config_size: usize, self_site: u16) -> HeartbeatAuthority {
-        let mut voters = rusty::BTreeSet::new();
+        let mut voters: rusty::BTreeSet<u16> = rusty::BTreeSet::new();
         voters.insert(self_site);
         HeartbeatAuthority {
             term_: term,
@@ -191,19 +191,9 @@ use crate::server_h::raft_server_observed_higher_term;
 use crate::server_h::raft_server_append_acknowledged_through;
 use crate::server_h::raft_server_log_index_has_successor;
 use crate::server_h::raft_server_follower_next_index;
-use crate::server_h::raft_server_leader_hint_after_transition;
-use crate::server_h::raft_server_vote_term_is_stale;
-use crate::server_h::raft_server_leader_rpc_sender_is_authoritative;
-use crate::server_h::raft_server_append_term_is_acceptable;
-use crate::server_h::raft_server_append_is_acceptable;
 use crate::server_h::raft_server_append_sent_end;
 use crate::server_h::raft_server_append_entry_count_fits;
 use crate::server_h::raft_server_append_batch_count_is_valid;
-use crate::server_h::raft_server_append_entry_conflicts;
-use crate::server_h::raft_server_append_result_last_index;
-use crate::server_h::raft_server_commit_index_clamp;
-use crate::server_h::raft_server_candidate_log_is_at_least;
-use crate::server_h::raft_server_vote_is_idempotent;
 use crate::server_h::BackoffKind;
 use crate::server_h::RAFT_SERVER_INVALID_SITE_ID;
 use crate::server_h::RaftConsensusState;
@@ -343,7 +333,7 @@ impl AuthorityLedger {
         if self.index_of(round_id) < self.generations_.len() {
             return false;
         }
-        let mut snapshot = rusty::BTreeSet::new();
+        let mut snapshot: rusty::BTreeSet<u16> = rusty::BTreeSet::new();
         let mut i: usize = 0;
         while i < config.len() {
             snapshot.insert(config[i]);
@@ -476,6 +466,7 @@ impl AuthorityLedger {
 
 use crate::server_h::RaftServerBase;
 use crate::server_pods_h::AppendRespView;
+use crate::server_pods_h::RaftServerHandle;
 use crate::scheduler_h::RaftSpecific;
 use crate::server_h::RaftEntry;
 use crate::server_h::RaftLockGuard;
@@ -493,11 +484,11 @@ unsafe extern "C" {
     fn raft_verify(condition: bool);
     // Drops this server's row from the C++ commo table; called from
     // raft_server_delete. See RaftServerBase::set_commo.
-    fn raft_unbind_commo(server: *mut RaftServerBase);
+    fn raft_unbind_commo(server: *mut RaftServerHandle);
     fn raft_snapshot_manager_is_set(
         manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
     fn raft_phase1_load_and_send_snapshot(
-        server: *mut RaftServerBase,
+        server: *mut RaftServerHandle,
         snapshot_manager: *const rusty::RaftSnapshotManagerPtr,
         lifetime: *const rusty::RaftAsyncCallbackLifetimePtr,
         self_site_id: u16, partition_id: u32, send_term: u64,
@@ -520,7 +511,7 @@ unsafe extern "C" {
     // The command copy INTO Rust's slot; see server.h for why never by value.
     fn raft_command_clone_into(src: *const rusty::RaftCommand,
                                dst: *mut rusty::RaftCommand);
-    fn raft_phase1_send_append(server: *mut RaftServerBase,
+    fn raft_phase1_send_append(server: *mut RaftServerHandle,
                                self_site_id: u16, site_id: u16,
                                partition_id: u32, is_leader: bool, term: u64,
                                prev_log_index: u64, prev_log_term: u64,
@@ -1177,7 +1168,7 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
                     server.state_.raft_log_.base());
                 let sent: bool = unsafe {
                     raft_phase1_load_and_send_snapshot(
-                        server as *mut RaftServerBase,
+                        server.handle(),
                         &server.snapshot_manager_
                             as *const rusty::RaftSnapshotManagerPtr,
                         &server.async_callback_lifetime_
@@ -1239,7 +1230,7 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
         let mut sent_response: rusty::RaftResponsePtr = Default::default();
         unsafe {
             raft_phase1_send_append(
-                server as *mut RaftServerBase, server.site_id_, site_id,
+                server.handle(), server.site_id_, site_id,
                 partition_id,
                 is_leader, round.term(), prev_log_index, prev_log_term,
                 round.commit_index(),
@@ -1891,605 +1882,6 @@ pub fn heartbeat_loop_body(server: *mut RaftServerBase) {
 }
 
 // ==========================================================================
-// INBOUND RequestVote
-// ==========================================================================
-
-// OnRequestVote's whole body, as Rust. The caller holds mtx_ for the
-// duration, exactly as the C++ did -- the lock stays in C++ because
-// RaftCheckedMutex is a C++ type and because moving lock/unlock into a Rust
-// body would lose RAII across this function's many early returns.
-//
-// Two things reach back into unconverted C++ through trampolines, which is
-// the same mechanism HeartbeatDriver has used since it landed: doVote, which
-// writes the reply and can step the term forward, and
-// ElectionLastLogTermLocked, which consults the snapshot boundary. Neither
-// is a blocker -- each becomes an ordinary call once its own body converts,
-// and the trampoline is deleted then.
-//
-// The caller also passes `candidate_is_current_voter` rather than this
-// reading current_config_: that member is a std::set that has not moved into
-// the state struct, and computing the predicate on the C++ side keeps the
-// rejection log line's level short-circuit where it belongs.
-/// # Safety
-///
-/// `server` must be a live `RaftServer*`, and the caller must hold that
-/// server's `mtx_` for the whole call. Both hold at the only call site,
-/// `RaftServer::OnRequestVote`, which takes the lock and passes `this`.
-///
-/// The handle is not dereferenced here. It is forwarded to the two
-/// trampolines below, which cast it back exactly once each.
-#[allow(clippy::too_many_arguments)]
-// TODO(raft-server-struct): the argument list collapses into &mut self when
-// RaftServer is itself a DSL struct; these are its fields, passed separately
-// only because the orphan-impl rule forbids `impl RaftServer` today.
-pub unsafe fn raft_on_request_vote(
-    server: &mut RaftServerBase,
-    stopped: bool,
-    candidate_is_current_voter: bool,
-    lst_log_idx: u64,
-    lst_log_term: i64,
-    can_id: u16,
-    can_term: i64,
-    reply_term: &mut i64,
-    vote_granted: &mut i8,
-) {
-    if stopped {
-        *reply_term = server.state_.current_term_ as i64;
-        *vote_granted = 0;
-        return;
-    }
-
-    if can_term < 0 || lst_log_term < 0 || !candidate_is_current_voter {
-        *reply_term = server.state_.current_term_ as i64;
-        *vote_granted = 0;
-        return;
-    }
-
-    let cur_term = server.state_.current_term_;
-    // UNSIGNED, deliberately. The C++ this replaces was
-    // `if (can_term < cur_term)` with can_term an int64_t and cur_term a
-    // uint64_t, and C++'s usual arithmetic conversions make that an UNSIGNED
-    // comparison. Writing it as `can_term < cur_term as i64` instead -- the
-    // obvious-looking translation -- is a different function: once
-    // current_term_ passes INT64_MAX the cast goes negative, a non-negative
-    // can_term is never below it, this rejection is skipped, and the
-    // fall-through can GRANT a vote to a candidate whose term is far below
-    // ours. current_term_ is a u64 taken straight off the wire with no
-    // clamp, so that state is reachable from a peer.
-    //
-    // can_term >= 0 is already guaranteed above, so the cast to u64 is the
-    // faithful spelling.
-    if (can_term as u64) < cur_term {
-        server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
-                      reply_term, vote_granted, false);
-        return;
-    }
-
-    // Already voted for someone ELSE this term. Raft allows re-granting to
-    // the same candidate, which is why the identity is compared and not just
-    // the presence of a vote.
-    // u64 here too, for the same reason and so the two comparisons cannot
-    // drift apart. Equality happens to be unaffected by the signedness, but
-    // relying on that is how the bug above got written.
-    if (can_term as u64) == cur_term
-        && server.state_.vote_for_ != RAFT_SERVER_INVALID_SITE_ID
-        && server.state_.vote_for_ != can_id
-    {
-        server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
-                      reply_term, vote_granted, false);
-        return;
-    }
-
-    // Every grant, including an idempotent retry, must still carry an
-    // up-to-date candidate log. Defensive against damaged or legacy
-    // persistent state, and the RequestVote rule in its direct form.
-    if server.state_.raft_log_.last_index() < server.state_.snapidx_ {
-        panic!("last log index is below the snapshot boundary");
-    }
-    let lstoff = server.state_.raft_log_.last_index() - server.state_.snapidx_;
-    let curlstterm = server.ElectionLastLogTermLocked();
-    let curlstidx = server.state_.raft_log_.last_index();
-    let candidate_log_is_current = raft_server_candidate_log_is_at_least(
-        lst_log_term, curlstterm, lst_log_idx, curlstidx);
-
-    if raft_server_vote_is_idempotent(can_term as u64, cur_term,
-                                      server.state_.vote_for_, can_id)
-        && candidate_log_is_current
-    {
-        server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
-                      reply_term, vote_granted, true);
-        return;
-    }
-
-    // Snapshot-aware offset invariant.
-    if lstoff + server.state_.snapidx_ != server.state_.raft_log_.last_index() {
-        panic!("snapshot offset invariant violated");
-    }
-
-    let grant = candidate_log_is_current;
-    server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
-                  reply_term, vote_granted, grant);
-}
-
-// ==========================================================================
-// The two inbound RPC bodies. Both keep a one-line C++ entry point, because
-// the srpc service layer calls them by name on RaftServer.
-// ==========================================================================
-#[allow(clippy::too_many_arguments)]
-// Called directly by RaftServerBase::OnRequestVote (server_h.rs).
-pub fn on_request_vote_body(
-    server: &mut RaftServerBase, lst_log_idx: u64,
-    lst_log_term: i64, can_id: u16, can_term: i64,
-    reply_term: &mut i64, vote_granted: &mut i8) {
-    let _lock = RaftLockGuard::new(&mut server.mtx_);
-    rusty::raft_log_debug_1("raft receives vote from candidate: {:x}", can_id);
-
-    let stopped: bool =
-        server.stop_.load(rusty::sync::atomic::Ordering::Acquire);
-    if stopped {
-        rusty::raft_log_debug_2(
-            "[RAFT-SHUTDOWN] Site {} rejecting RequestVote from {}",
-            server.site_id_, can_id);
-    }
-
-    let candidate_is_current_voter: bool =
-        can_id != RAFT_SERVER_INVALID_SITE_ID && can_id != server.site_id_
-            && server.IsConfigMember(can_id);
-    if !stopped
-        && (can_term < 0 || lst_log_term < 0 || !candidate_is_current_voter)
-    {
-        rusty::raft_log_warn_5(
-            "[RAFT_VOTE] Site {} rejected malformed/non-voter candidate {} term {} last_log_term {} (voter={})",
-            server.site_id_, can_id, can_term, lst_log_term,
-            candidate_is_current_voter);
-    }
-
-    unsafe {
-        raft_on_request_vote(server, stopped, candidate_is_current_voter,
-                             lst_log_idx, lst_log_term, can_id, can_term,
-                             reply_term, vote_granted);
-    }
-}
-
-// ==========================================================================
-// INBOUND AppendEntries
-// ==========================================================================
-
-// PHASE 0 of the heartbeat round, which is the whole locked section of
-// RaftServer::HeartbeatPhase0.
-//
-// Everything it decides is now Rust: whether the round runs at all, whether
-// the leader epoch changed under the fiber, whether the read-index round may
-// advance, which members the round admits, and whether the majority-matched
-// index may be committed. Every piece of state it touches was already a DSL
-// type -- RaftConsensusState, PeerTable, RaftLog, HeartbeatRoundScope,
-// PendingTable, AuthorityLedger -- which is what made the phase convertible
-// at all; this is the first body to be assembled out of them rather than
-// alongside them.
-//
-// Three things stay in C++ on purpose, and they are the only three:
-//   - taking mtx_, because a std::mutex has no Rust spelling here;
-//   - EnqueueCommittedEntries, which is the apply queue, i.e. I/O. It is
-//     driven by the range this returns, so the DECISION to commit is Rust
-//     and only the hand-off is not;
-//   - the Log_debug calls, which must keep their level short-circuit. A DSL
-//     body logs through log_line, which evaluates unconditionally, and this
-//     runs once per follower per round.
-//
-// Cross-carrier note: RaftConsensusState, PeerTable and RaftLog live in
-// server.h. Referencing a TYPE across carriers works exactly as referencing
-// a free function does -- `use crate::server_h::X` on the Rust side, and the
-// emitter writes the name unqualified, which resolves because both blocks
-// sit in namespace janus. No shim namespace is needed for types.
-// OnAppendEntries' body, as Rust. The caller holds mtx_ throughout.
-//
-// The wire payload never crosses. C++ decodes it once -- it is the only side
-// that can, since janus::Command is opaque here -- and hands over three
-// scalars plus the incoming entries' TERMS. Rust makes every protocol
-// decision from those, and when it decides to append it calls back through
-// raft_ae_apply_incoming, which builds the entries C++-side. That ordering
-// keeps the original's laziness: entries are constructed only for a payload
-// that is actually being written, not for one about to be rejected, which
-// matters because backtracking rejects are common during log repair.
-//
-// AppendReport is diagnostics only. The caller acts on nothing in it; it
-// exists so the two rejection log lines can keep their level short-circuit
-// and still name which check failed.
-#[repr(C)]
-pub struct AppendReport {
-    accepted_: bool,
-    term_ok_: bool,
-    index_ok_: bool,
-    prev_term_ok_: bool,
-    refused_committed_conflict_: bool,
-    unauthoritative_: bool,
-    conflict_index_: u64,
-    local_prev_term_: u64,
-}
-
-impl AppendReport {
-    pub fn accepted(&self) -> bool {
-        self.accepted_
-    }
-
-    pub fn term_ok(&self) -> bool {
-        self.term_ok_
-    }
-
-    pub fn index_ok(&self) -> bool {
-        self.index_ok_
-    }
-
-    pub fn prev_term_ok(&self) -> bool {
-        self.prev_term_ok_
-    }
-
-    // The append was refused because it would rewrite an entry at or below
-    // commit_index_/execute_index_. A legitimate leader never does this.
-    pub fn refused_committed_conflict(&self) -> bool {
-        self.refused_committed_conflict_
-    }
-
-    // Rejected at the authoritative-sender gate, before term_ok, index_ok or
-    // prev_term_ok were ever evaluated. The caller needs this to pick the
-    // right log line: reporting those three as "failed" when they were never
-    // computed is a lie, and it hides a distinct failure mode behind the
-    // generic one.
-    pub fn unauthoritative(&self) -> bool {
-        self.unauthoritative_
-    }
-
-    pub fn conflict_index(&self) -> u64 {
-        self.conflict_index_
-    }
-
-    pub fn local_prev_term(&self) -> u64 {
-        self.local_prev_term_
-    }
-}
-
-/// # Safety
-///
-/// `server` must be a live `RaftServer*` and `cmd` a live `janus::Command*`
-/// that outlives the call, and the caller must hold that server's `mtx_`
-/// throughout. All three hold at the only call site,
-/// `RaftServer::OnAppendEntries`. Neither handle is dereferenced here; both
-/// are forwarded to trampolines that cast back exactly once.
-// unnecessary_unwrap: the per-slot lookup below uses is_some()/unwrap() with
-// an explicit `&RaftEntry` binding rather than `if let`. `if let` is the
-// better Rust and it transpiles, but the emitter renders the binding with a
-// dot where the C++ needs an arrow, and an inferred binding COPIES the entry.
-#[allow(clippy::too_many_arguments, clippy::unnecessary_unwrap)]
-// TODO(raft-server-struct): collapses into &mut self once RaftServer is a
-// DSL struct; these are its fields and its RPC arguments.
-pub unsafe fn raft_on_append_entries(
-    server: &mut RaftServerBase,
-    cmd: *const core::ffi::c_void,
-    stopped: bool,
-    sender_is_current_voter: bool,
-    has_cmd: bool,
-    leader_current_term: u64,
-    leader_site_id: u16,
-    leader_prev_log_index: u64,
-    leader_prev_log_term: u64,
-    leader_commit_index: u64,
-    leader_next_log_term: u64,
-    follower_append_ok: &mut u64,
-    follower_current_term: &mut u64,
-    follower_last_log_index: &mut u64,
-) -> AppendReport {
-    let mut report = AppendReport {
-        accepted_: false,
-        term_ok_: false,
-        index_ok_: false,
-        prev_term_ok_: false,
-        refused_committed_conflict_: false,
-        unauthoritative_: false,
-        conflict_index_: 0,
-        local_prev_term_: 0,
-    };
-
-    if stopped {
-        *follower_append_ok = 0;
-        *follower_current_term = server.state_.current_term_;
-        *follower_last_log_index = server.state_.raft_log_.last_index();
-        return report;
-    }
-
-    let leader_has_higher_term =
-        raft_server_observed_higher_term(leader_current_term, server.state_.current_term_);
-    let leader_term_is_stale =
-        raft_server_vote_term_is_stale(leader_current_term, server.state_.current_term_);
-    let sender_is_self = leader_site_id == server.state_.site_id_;
-    let has_known_leader = server.state_.current_leader_id_ != RAFT_SERVER_INVALID_SITE_ID;
-    let known_leader_matches_sender = server.state_.current_leader_id_ == leader_site_id;
-    if !sender_is_current_voter
-        || leader_term_is_stale
-        || !raft_server_leader_rpc_sender_is_authoritative(
-            leader_has_higher_term,
-            server.state_.is_leader_,
-            sender_is_self,
-            has_known_leader,
-            known_leader_matches_sender,
-        )
-    {
-        report.unauthoritative_ = true;
-        *follower_append_ok = 0;
-        *follower_current_term = server.state_.current_term_;
-        *follower_last_log_index = server.state_.raft_log_.last_index();
-        return report;
-    }
-
-    // Decode the wire payload HERE, not before the gates. The original did
-    // the marshallable_cast and the count validation at exactly this point,
-    // after a stopped server and an unauthoritative sender had already
-    // returned. Hoisting it above them would make every rejected
-    // AppendEntries pay a dynamic cast and N refcount bumps, on a path a
-    // remote peer drives -- and backtracking rejects are common during log
-    // repair.
-    // AeDecodePayload fills server.decoded_terms_, one term per encoded
-    // entry, so its length IS the decoded count.
-    let append_payload_valid = server.AeDecodePayload(
-        cmd, has_cmd, leader_prev_log_index, leader_next_log_term);
-    let decoded_count: u64 = server.decoded_terms_.len() as u64;
-
-    let term_ok =
-        raft_server_append_term_is_acceptable(leader_current_term, server.state_.current_term_);
-    let compacted_prefix_miss = leader_prev_log_index != 0
-        && leader_prev_log_index < server.state_.raft_log_.base()
-        && leader_prev_log_index != server.state_.snapidx_;
-    let index_ok =
-        leader_prev_log_index <= server.state_.raft_log_.last_index() && !compacted_prefix_miss;
-
-    // THE LOG-MATCHING CHECK. A follower legitimately may not hold
-    // leaderPrevLogIndex -- discovering that is the point, and what drives
-    // the leader's backtracking. An absent entry falls through to term 0 and
-    // the mismatch is reported rather than manufactured.
-    let mut local_prev_term: u64 = 0;
-    if leader_prev_log_index == 0 {
-        local_prev_term = 0;
-    } else if leader_prev_log_index == server.state_.snapidx_ {
-        // The snapshot boundary is still valid when entries are compacted.
-        local_prev_term = server.state_.snapterm_ as u64;
-    } else if leader_prev_log_index <= server.state_.raft_log_.last_index()
-        && !compacted_prefix_miss
-        && server.state_.raft_log_.holds(leader_prev_log_index)
-    {
-        local_prev_term =
-            server.state_.raft_log_.get(leader_prev_log_index).unwrap().term() as u64;
-    }
-    let prev_term_ok = leader_prev_log_index == 0 || local_prev_term == leader_prev_log_term;
-
-    report.term_ok_ = term_ok;
-    report.index_ok_ = index_ok;
-    report.prev_term_ok_ = prev_term_ok;
-    report.local_prev_term_ = local_prev_term;
-
-    // Reset the timer for any current-term leader, even when the log
-    // conflicts, so a follower being repaired by backtracking does not keep
-    // starting elections.
-    if term_ok {
-        if raft_server_observed_higher_term(leader_current_term, server.state_.current_term_) {
-            let prev_term = server.state_.current_term_;
-            server.state_.current_term_ = leader_current_term;
-            server.state_.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
-            // Publish the accepted leader before any leader-change callback
-            // can observe the follower transition.
-            server.state_.current_leader_id_ = raft_server_leader_hint_after_transition(
-                false, true, server.state_.site_id_, leader_site_id);
-            let now_term: u64 = server.state_.current_term_;
-            server.LogTermChange("AppendEntries leader term is newer",
-                                 prev_term, now_term, leader_site_id);
-            if server.state_.is_leader_ {
-                // The central transition, so no leadership state survives an
-                // accepted competing leader epoch.
-                server.stepDown();
-            } else {
-                server.setIsLeader(false);
-            }
-            server.state_.req_voting_ = false;
-            server.state_.election_in_progress_ = false;
-        }
-        // Refresh the hint for current-term contact too; a higher-term sender
-        // was already published above, before its role transition.
-        server.state_.current_leader_id_ = raft_server_leader_hint_after_transition(
-            false, true, server.state_.site_id_, leader_site_id);
-        server.resetTimerLocked("AppendEntries from current-term leader");
-    }
-
-    if !(raft_server_append_is_acceptable(term_ok, index_ok, prev_term_ok)
-         && append_payload_valid)
-    {
-        *follower_append_ok = 0;
-        *follower_current_term = server.state_.current_term_;
-        *follower_last_log_index = server.state_.raft_log_.last_index();
-        return report;
-    }
-
-    // Any accepted leader RPC establishes follower state even in our current
-    // term. Cancel an outstanding election before its delayed result can
-    // promote this server after the accepted AppendEntries.
-    if server.state_.is_leader_ {
-        server.stepDown();
-    } else {
-        server.setIsLeader(false);
-    }
-    server.state_.req_voting_ = false;
-    server.state_.election_in_progress_ = false;
-
-    let old_last_log_index = server.state_.raft_log_.last_index();
-    let count = if has_cmd { decoded_count } else { 0 };
-    let accepted_through = raft_server_append_sent_end(leader_prev_log_index, count);
-
-    // Raft's conflict rule is deliberately narrower than "replace through the
-    // RPC end". Concurrent RPCs can complete out of order: if an older
-    // payload is already identical through its end, the follower must keep
-    // any newer suffix it has since accepted. Only the first missing or
-    // term-conflicting slot starts an overwrite.
-    let mut have_first_write = false;
-    let mut truncate_suffix = false;
-    let mut first_write_index: u64 = 0;
-    let mut i: u64 = 0;
-    while i < decoded_count {
-        let index = leader_prev_log_index + i + 1;
-        // ONE lookup per entry, as the original had. The lookup itself is
-        // Rust -- the log is a Rust type -- and only "does this slot hold a
-        // payload" crosses, because janus::Command is opaque here.
-        let mut local_exists: bool = false;
-        let mut local_term: i64 = 0;
-        let slot = server.state_.raft_log_.get(index);
-        if slot.is_some() {
-            let entry: &RaftEntry = slot.unwrap();
-            local_exists = unsafe {
-                raft_command_has_value(entry.cmd() as *const rusty::RaftCommand)
-            };
-            if local_exists {
-                local_term = entry.term();
-            }
-        }
-        // In bounds by construction: decoded_count IS decoded_terms_.len(),
-        // the loop condition is i < decoded_count, and nothing in the body
-        // touches the vector. The kernel this replaces needed a verify only
-        // because i arrived across the language boundary.
-        let incoming_term: i64 = server.decoded_terms_[i as usize];
-        if raft_server_append_entry_conflicts(local_exists, local_term as u64,
-                                              incoming_term as u64) {
-            have_first_write = true;
-            first_write_index = index;
-            truncate_suffix = index <= old_last_log_index;
-            break;
-        }
-        i += 1;
-    }
-
-    if truncate_suffix
-        && first_write_index <= (if server.state_.commit_index_ > server.state_.execute_index_ {
-               server.state_.commit_index_
-           } else {
-               server.state_.execute_index_
-           })
-    {
-        // A legitimate leader never conflicts with a committed entry. Do not
-        // let malformed or internally inconsistent input rewrite applied
-        // state; reject before memory changes.
-        report.refused_committed_conflict_ = true;
-        report.conflict_index_ = first_write_index;
-        *follower_append_ok = 0;
-        *follower_current_term = server.state_.current_term_;
-        *follower_last_log_index = server.state_.raft_log_.last_index();
-        return report;
-    }
-
-    if have_first_write {
-        // Two operations that cannot leave a hole: drop the divergent suffix,
-        // then re-append in index order. truncate_from is a no-op when
-        // first_write_index is already past the tail, the ordinary extend
-        // case. The append is Rust; only the per-entry reads of the wire
-        // payload are kernels.
-        server.state_.raft_log_.truncate_from(first_write_index);
-        server.AeApplyIncoming(cmd, leader_prev_log_index, leader_next_log_term,
-                               first_write_index);
-    }
-    if server.state_.raft_log_.last_index()
-        != raft_server_append_result_last_index(old_last_log_index, accepted_through,
-                                                truncate_suffix)
-    {
-        panic!("append left the log tail somewhere the result rule did not predict");
-    }
-
-    let follower_commit_candidate =
-        raft_server_commit_index_clamp(leader_commit_index, accepted_through);
-    if raft_server_log_index_above(follower_commit_candidate, server.state_.commit_index_) {
-        let old_commit = server.state_.commit_index_;
-        server.state_.commit_index_ = follower_commit_candidate;
-        if server.state_.raft_log_.last_index() < server.state_.commit_index_ {
-            panic!("commit index advanced past the log tail");
-        }
-        let new_commit: u64 = server.state_.commit_index_;
-        server.EnqueueCommittedEntries(old_commit, new_commit);
-    }
-
-    *follower_append_ok = 1;
-    *follower_current_term = server.state_.current_term_;
-    // The inclusive end PROVED by this call, not the follower's possibly
-    // longer and divergent local suffix. Rejections above report the local
-    // tail instead, as a backoff hint.
-    *follower_last_log_index = accepted_through;
-    report.accepted_ = true;
-    report
-}
-
-// `cmd` is an opaque handle to the caller's janus::Command; it is passed
-// straight through to raft_on_append_entries, never dereferenced here.
-#[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
-// Called by RaftServerBase::OnAppendEntries (server_h.rs), likewise.
-pub fn on_append_entries_body(
-    server: &mut RaftServerBase,
-                              leader_current_term: u64, leader_site_id: u16,
-                              leader_prev_log_index: u64,
-                              leader_prev_log_term: u64,
-                              leader_commit_index: u64,
-                              cmd: *const core::ffi::c_void,
-                              cmd_has_value: bool,
-                              leader_next_log_term: u64,
-                              follower_append_ok: &mut u64,
-                              follower_current_term: &mut u64,
-                              follower_last_log_index: &mut u64) {
-    let _lock = RaftLockGuard::new(&mut server.mtx_);
-
-    let stopped: bool =
-        server.stop_.load(rusty::sync::atomic::Ordering::Acquire);
-    let sender_is_current_voter: bool =
-        leader_site_id != RAFT_SERVER_INVALID_SITE_ID
-            && leader_site_id != server.site_id_
-            && server.IsConfigMember(leader_site_id);
-
-    // NO DECODE HERE. raft_on_append_entries calls raft_ae_decode_payload
-    // itself, after the stopped check and the authoritative gate -- which is
-    // where the original did this work. Decoding up front would make every
-    // rejected AppendEntries pay a dynamic cast and N refcount bumps on a
-    // path a remote peer drives.
-    let report: AppendReport = unsafe {
-        raft_on_append_entries(
-            server, cmd, stopped, sender_is_current_voter,
-            cmd_has_value, leader_current_term, leader_site_id,
-            leader_prev_log_index, leader_prev_log_term, leader_commit_index,
-            leader_next_log_term, follower_append_ok, follower_current_term,
-            follower_last_log_index)
-    };
-
-    if !stopped && !report.accepted() {
-        if report.refused_committed_conflict() {
-            // A legitimate leader can never conflict with a committed entry.
-            rusty::raft_log_error_4(
-                "[APPEND_REJECT] Site {} refusing conflict at committed index {} (commit_index={}, execute_index={})",
-                server.site_id_, report.conflict_index(),
-                server.state_.commit_index_, server.state_.execute_index_);
-        } else if report.unauthoritative() {
-            // Dispatch on WHICH gate rejected, not on
-            // sender_is_current_voter. A stale-term or non-authoritative
-            // sender that IS a current voter would otherwise land in the
-            // branch below and be reported with term_ok/index_ok/
-            // prev_term_ok all "failed" -- three checks never evaluated on
-            // that path.
-            rusty::raft_log_warn_6(
-                "[APPEND_REJECT] Site {} rejecting unauthoritative AppendEntries sender {} term {} (local_term={} leader={} voter={})",
-                server.site_id_, leader_site_id, leader_current_term,
-                server.state_.current_term_,
-                server.state_.current_leader_id_, sender_is_current_voter);
-        } else {
-            rusty::raft_log_info_10(
-                "[APPEND_REJECT] Site {} rejecting AppendEntries from leader {} - term_ok={} index_ok={} prev_term_ok={} (leaderTerm={} myTerm={} prevIdx={} myLastIdx={} local_prev_term={})",
-                server.site_id_, leader_site_id, report.term_ok(),
-                report.index_ok(), report.prev_term_ok(), leader_current_term,
-                server.state_.current_term_, leader_prev_log_index,
-                server.state_.raft_log_.last_index(),
-                report.local_prev_term());
-        }
-    }
-}
-
-// ==========================================================================
 // THE C ABI OVER RaftServerBase
 //
 // One extern "C" function per behaviour the hand-written C++ reaches -- the
@@ -2509,7 +1901,7 @@ use crate::server_h::ElectionTimerLoop;
 /// The returned pointer is owned by the caller until raft_server_delete.
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_new() -> *mut RaftServerBase {
-    let s: *mut RaftServerBase = rusty::Box::into_raw(rusty::Box::new(RaftServerBase::new()));
+    let s: *mut RaftServerBase = Box::into_raw(Box::new(RaftServerBase::new()));
     (*s).ConstructRuntime();
     s
 }
@@ -2524,7 +1916,7 @@ pub unsafe extern "C" fn raft_server_delete(s: *mut RaftServerBase) {
     // key is released in the same function that frees what it keys on, and
     // while the pointer is still live: Shutdown reaches no kernel that
     // resolves the communicator.
-    raft_unbind_commo(s);
+    raft_unbind_commo(s as *mut RaftServerHandle);
     drop(rusty::Box::from_raw(s));
 }
 

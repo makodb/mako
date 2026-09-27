@@ -1,0 +1,6 @@
+# C++ spellings for the Raft core's native C types (cpp_native_type), used by
+# the transpiled C++ lane only. Each is declared in raft_kernel_pods.h.
+RaftElectionTimeouts = "::RaftElectionTimeouts"
+RaftVoteOutcome = "::RaftVoteOutcome"
+AppendRespView = "::AppendRespView"
+RaftServerHandle = "::raft_server_handle"

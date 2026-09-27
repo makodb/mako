@@ -49,7 +49,6 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/quorum.hpp|raft_quorum.scalar_decisions"
   "src/deptran/raft/raft_worker.cc|raft_worker.scalar_decisions"
   "src/deptran/raft/rocksdb_log_storage.hpp|raft_rocksdb_log.scalar_decisions"
-  "src/deptran/raft/server.h|raft_server.kernel_result_pods"
   "src/deptran/raft/snapshot_manager.hpp|raft_snapshot.metadata_decisions"
   "src/deptran/raft/snapshot_format.hpp|raft_snapshot.crc32_scalar_step"
   "src/deptran/raft/snapshot_format.hpp|raft_snapshot.crc32_update_loop"

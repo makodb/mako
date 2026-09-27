@@ -70,14 +70,29 @@ output = "src/deptran/raft/src/rocksdb_log_storage_hpp.rs"
 [[module]]
 kind = "canonical"
 output = "src/deptran/raft/src/lab.rs"
+# Present only under the lab feature; the gate is on the `mod` line in lib.rs
+# because crate-mode transpilation rejects a whole-file `#![cfg]`.
+cfg_feature = "raft_test"
+
+[[module]]
+kind = "canonical"
+output = "src/deptran/raft/src/lab_main.rs"
+# Present only under the lab feature; see lab.rs below.
+cfg_feature = "raft_test"
 
 [[module]]
 kind = "canonical"
 output = "src/deptran/raft/src/lab_cases.rs"
+# Present only under the lab feature; the gate is on the `mod` line in lib.rs
+# because crate-mode transpilation rejects a whole-file `#![cfg]`.
+cfg_feature = "raft_test"
 
 [[module]]
 kind = "canonical"
 output = "src/deptran/raft/src/lab_snapshot_cases.rs"
+# Present only under the lab feature; the gate is on the `mod` line in lib.rs
+# because crate-mode transpilation rejects a whole-file `#![cfg]`.
+cfg_feature = "raft_test"
 
 [[module]]
 kind = "canonical"
@@ -87,11 +102,9 @@ output = "src/deptran/raft/src/server_cc.rs"
 kind = "canonical"
 output = "src/deptran/raft/src/server_h.rs"
 
-# server.h's one remaining inline block: the #[repr(C)] values kernels return
-# by value, which both worlds must see.
+# The kernel boundary's C types: canonical Rust bound to raft_kernel_pods.h.
 [[module]]
-cpp_module = "raft.server_pods_h"
-source = "src/deptran/raft/server.h"
+kind = "canonical"
 output = "src/deptran/raft/src/server_pods_h.rs"
 
 [[module]]

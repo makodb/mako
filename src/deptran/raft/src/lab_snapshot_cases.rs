@@ -12,13 +12,13 @@
 // touch no RaftServer, so they live in lab_unit_tests.cc and this suite calls
 // them through one kernel.
 
-#![cfg(feature = "raft_test")]
 #![allow(non_snake_case)]
 
-use crate::lab::{self, ELECTION_TIMEOUT_US, NSERVERS};
+use crate::lab;
+use crate::lab::{ELECTION_TIMEOUT_US, NSERVERS};
 use crate::lab_cases::{check_msg, failed, init2, passed, LabState};
 use crate::scheduler_h::RaftSpecific;
-use crate::server_h::{lab_registry, RaftLockGuard, RaftServerBase, RaftStdLockGuard};
+use crate::server_h::{lab_get, RaftLockGuard, RaftServerBase, RaftStdLockGuard};
 
 // server.h:186 -- `#define HEARTBEAT_INTERVAL 100000`, the non-debug value the
 // lab builds with.
@@ -47,8 +47,11 @@ unsafe extern "C" {
     fn raft_lab_new_snapshot_manager(out: *mut rusty::RaftSnapshotManagerPtr);
     fn raft_lab_snapshot_delete_all(
         manager: *const rusty::RaftSnapshotManagerPtr) -> u64;
+    // `out` is a SnapshotProbe; typed as c_void so the kernel's C
+    // declaration names no Rust type (SnapshotProbe derives, so it cannot be
+    // a cpp_native_type binding).
     fn raft_lab_snapshot_probe(manager: *const rusty::RaftSnapshotManagerPtr,
-                               out: *mut SnapshotProbe);
+                               out: *mut core::ffi::c_void);
     fn raft_lab_make_reject_prepare_cbs(
         create_out: *mut rusty::RaftCreateSnapshotCb,
         prepare_out: *mut rusty::RaftPrepareSnapshotCb);
@@ -68,7 +71,8 @@ unsafe extern "C" {
     fn raft_snapshot_manager_ptr_clone_into(
         src: *const rusty::RaftSnapshotManagerPtr,
         dst: *mut rusty::RaftSnapshotManagerPtr);
-    fn setenv(name: *const u8, value: *const u8, overwrite: i32) -> i32;
+    fn setenv(name: *const core::ffi::c_char, value: *const core::ffi::c_char,
+              overwrite: i32) -> i32;
 }
 
 // raft_lab_probe_flags' bits, named.
@@ -82,15 +86,12 @@ const PROBE_ABORTED_BEFORE_COMMIT: u32 = 16;
 // Helpers
 
 
-/// Borrow one replica, as the fixture does. `None` means the locale is not
-/// registered, which the cases treat the way the C++ treats a null
-/// `GetServer`.
-fn with_server<R>(loc_id: u32, f: impl FnOnce(&mut RaftServerBase) -> R) -> Option<R> {
-    let entry = lab_registry::get(loc_id)?;
-    // SAFETY: see lab_registry's module note -- the worker owns every
-    // registered server for the life of the suite.
-    Some(unsafe { f(&mut *entry.server()) })
-}
+// Borrowing one replica is `lab_get(loc).map(|e| lab::with_entry_server(&e, f))`
+// at each call site rather than a local `with_server` returning Option<R>:
+// that signature lowers to a C++ template whose R appears only in the
+// return type, which C++ cannot deduce. `None` still means the locale is not
+// registered, which the cases treat the way the C++ treats a null GetServer.
+
 
 fn new_manager() -> rusty::RaftSnapshotManagerPtr {
     let mut manager: rusty::RaftSnapshotManagerPtr = Default::default();
@@ -110,7 +111,10 @@ fn clone_manager(src: &rusty::RaftSnapshotManagerPtr) -> rusty::RaftSnapshotMana
 fn probe(manager: &rusty::RaftSnapshotManagerPtr) -> SnapshotProbe {
     let mut out = SnapshotProbe::default();
     // SAFETY: the kernel fills the POD or leaves it zeroed.
-    unsafe { raft_lab_snapshot_probe(manager as *const _, &raw mut out) };
+    unsafe {
+        raft_lab_snapshot_probe(manager as *const _,
+                                &raw mut out as *mut core::ffi::c_void)
+    };
     out
 }
 
@@ -122,7 +126,9 @@ fn probe(manager: &rusty::RaftSnapshotManagerPtr) -> SnapshotProbe {
 /// Returns the seeded snapshot index, or None if the rotation failed.
 fn install_and_seed(loc_id: u32, manager: &rusty::RaftSnapshotManagerPtr,
                     snapshot_threshold: u64) -> Option<u64> {
-    with_server(loc_id, |svr| {
+    // The closure's return type is spelled out: it returns both None and
+    // Some, which C++ return-type deduction cannot unify.
+    lab_get(loc_id).map(|e| lab::with_entry_server(&e, |svr| -> Option<u64> {
         let _apply_lock = RaftStdLockGuard::new(svr.LabApplyMutex());
         let _lock = RaftLockGuard::new(svr.LabMutex());
 
@@ -148,14 +154,16 @@ fn install_and_seed(loc_id: u32, manager: &rusty::RaftSnapshotManagerPtr,
             let old = clone_manager(svr.LabSnapshotManager());
             svr.SetSnapshotManagerLocked(clone_manager(manager));
             if !svr.CreateSnapshotLocked() {
-                svr.SetSnapshotManagerLocked(old);
+                // A clone, not a move of `old`: an immutable binding lowers
+                // to a const C++ local, and the carrier cannot be copied.
+                svr.SetSnapshotManagerLocked(clone_manager(&old));
                 return None;
             }
         }
 
         svr.SetSnapshotThresholdLocked(snapshot_threshold);
         Some(svr.LabSnapIdx())
-    })?
+    }))?
 }
 
 /// `setenv(name, value, 1)`, for the two cases that enable snapshots
@@ -164,7 +172,8 @@ fn set_env(name: &str, value: &str) -> bool {
     let name = std::ffi::CString::new(name).unwrap();
     let value = std::ffi::CString::new(value).unwrap();
     // SAFETY: both strings are NUL-terminated and live across the call.
-    unsafe { setenv(name.as_ptr() as *const u8, value.as_ptr() as *const u8, 1) == 0 }
+    unsafe { setenv(name.as_ptr() as *const core::ffi::c_char,
+                    value.as_ptr() as *const core::ffi::c_char, 1) == 0 }
 }
 
 /// The C++ picks a follower by INDEX (`for i in 0..NSERVERS if i != leader`),
@@ -193,7 +202,7 @@ fn test_snapshot_manager_wiring(_st: &mut LabState) -> i32 {
     if !(leader >= 0) { return 1; }
 
     let test_mgr = new_manager();
-    let restored = with_server(leader as u32, |svr| {
+    let restored = lab_get(leader as u32).map(|e| lab::with_entry_server(&e, |svr| {
         // Might be unset if MAKO_RAFT_SNAPSHOTS is off -- that is fine; the
         // Set/Get API is what this case pins.
         let existing = clone_manager(svr.LabSnapshotManager());
@@ -202,9 +211,10 @@ fn test_snapshot_manager_wiring(_st: &mut LabState) -> i32 {
         let has = svr.HasSnapshot();
         let index = svr.GetSnapshotIndex();
         let term = svr.GetSnapshotTerm();
-        svr.SetSnapshotManager(existing);
+        // A clone for the reason given in install_and_seed.
+        svr.SetSnapshotManager(clone_manager(&existing));
         (installed, has, index, term)
-    });
+    }));
     let Some((installed, has, index, term)) = restored else {
         failed("Server should not be null");
         return 1;
@@ -235,17 +245,17 @@ fn test_create_snapshot_basic(_st: &mut LabState) -> i32 {
     if !(leader >= 0) { return 1; }
 
     let test_mgr = new_manager();
-    let Some(original_threshold) = with_server(leader as u32, |s| s.GetSnapshotThreshold())
+    let Some(original_threshold) = lab_get(leader as u32).map(|e| lab::with_entry_server(&e, |s| s.GetSnapshotThreshold()))
     else { failed("Server should not be null"); return 1; };
 
-    with_server(leader as u32, |svr| {
+    if let Some(e) = lab_get(leader as u32) { lab::with_entry_server(&e, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
         svr.SetSnapshotManagerLocked(clone_manager(&test_mgr));
         // A low threshold so a snapshot triggers easily.
         svr.SetSnapshotThresholdLocked(5);
-    });
+    }) }
 
-    let before = with_server(leader as u32, |s| (s.HasSnapshot(), s.GetSnapshotIndex()));
+    let before = lab_get(leader as u32).map(|e| lab::with_entry_server(&e, |s| (s.HasSnapshot(), s.GetSnapshotIndex())));
     if !check_msg(before == Some((false, 0)), "No snapshot should exist initially") { return 1; }
 
     // More than the threshold's worth of committed-and-applied entries
@@ -256,8 +266,8 @@ fn test_create_snapshot_basic(_st: &mut LabState) -> i32 {
     // time for applyLogs to run and trigger CreateSnapshot
     lab::fiber_sleep_us(2_000_000);
 
-    let after = with_server(leader as u32,
-        |s| (s.HasSnapshot(), s.GetSnapshotIndex(), s.GetSnapshotTerm()));
+    let after = lab_get(leader as u32).map(|e| lab::with_entry_server(&e,
+        |s| (s.HasSnapshot(), s.GetSnapshotIndex(), s.GetSnapshotTerm())));
     let Some((has, snap_index, snap_term)) = after else {
         failed("Server should not be null"); return 1;
     };
@@ -271,10 +281,10 @@ fn test_create_snapshot_basic(_st: &mut LabState) -> i32 {
 
     // The snapshot now backs a compacted live prefix: restore only the
     // runtime threshold and keep the manager for future catch-up.
-    with_server(leader as u32, |svr| {
+    if let Some(e) = lab_get(leader as u32) { lab::with_entry_server(&e, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
         svr.SetSnapshotThresholdLocked(original_threshold);
-    });
+    }) }
     eprintln!("[CREATE-SNAPSHOT-BASIC-TEST] Retaining live in-memory snapshot manager");
     eprintln!("[CREATE-SNAPSHOT-BASIC-TEST] PASSED");
     passed();
@@ -292,7 +302,7 @@ fn test_create_snapshot_and_compaction(_st: &mut LabState) -> i32 {
     if !(leader >= 0) { return 1; }
 
     let test_mgr = new_manager();
-    let Some(original_threshold) = with_server(leader as u32, |s| s.GetSnapshotThreshold())
+    let Some(original_threshold) = lab_get(leader as u32).map(|e| lab::with_entry_server(&e, |s| s.GetSnapshotThreshold()))
     else { failed("Server should not be null"); return 1; };
 
     let Some(snapshot_baseline) = install_and_seed(leader as u32, &test_mgr, 5) else {
@@ -313,10 +323,10 @@ fn test_create_snapshot_and_compaction(_st: &mut LabState) -> i32 {
     let mut snapshot_ready = false;
     for _ in 0..200 {
         if snapshot_ready { break; }
-        snap_idx = with_server(leader as u32, |svr| {
+        snap_idx = lab_get(leader as u32).map(|e| lab::with_entry_server(&e, |svr| {
             let _lock = RaftLockGuard::new(svr.LabMutex());
             svr.GetSnapshotIndexLocked()
-        }).unwrap_or(0);
+        })).unwrap_or(0);
         let candidate = probe(&test_mgr);
         if candidate.present {
             snapshot_ready = candidate.last_included_index == snap_idx
@@ -340,10 +350,10 @@ fn test_create_snapshot_and_compaction(_st: &mut LabState) -> i32 {
     }
     if !check_msg(lab::one_leader(-1) >= 0, "Should still have a leader after snapshot+compaction") { return 1; }
 
-    with_server(leader as u32, |svr| {
+    if let Some(e) = lab_get(leader as u32) { lab::with_entry_server(&e, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
         svr.SetSnapshotThresholdLocked(original_threshold);
-    });
+    }) }
     eprintln!("[CREATE-SNAPSHOT-COMPACTION-TEST] Retaining live in-memory snapshot manager");
     eprintln!("[CREATE-SNAPSHOT-COMPACTION-TEST] PASSED");
     passed();
@@ -360,7 +370,7 @@ fn test_snapshot_threshold_configurable(_st: &mut LabState) -> i32 {
     let leader = lab::one_leader(-1);
     if !(leader >= 0) { return 1; }
 
-    let observed = with_server(leader as u32, |svr| {
+    let observed = lab_get(leader as u32).map(|e| lab::with_entry_server(&e, |svr| {
         let default_threshold = svr.GetSnapshotThreshold();
         svr.SetSnapshotThreshold(42);
         let forty_two = svr.GetSnapshotThreshold();
@@ -368,7 +378,7 @@ fn test_snapshot_threshold_configurable(_st: &mut LabState) -> i32 {
         let hundred_thousand = svr.GetSnapshotThreshold();
         svr.SetSnapshotThreshold(DEFAULT_SNAPSHOT_THRESHOLD);
         (default_threshold, forty_two, hundred_thousand)
-    });
+    }));
     let Some((default_threshold, forty_two, hundred_thousand)) = observed else {
         failed("Server should not be null"); return 1;
     };
@@ -400,23 +410,23 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
     let follower = first_non_leader_index(leader);
     if !check_msg(follower >= 0, "No follower found") { return 1; }
     let follower = follower as u32;
-    if !check_msg(lab_registry::get(follower).is_some(), "Follower server should not be null") { return 1; }
+    if !check_msg(lab_get(follower).is_some(), "Follower server should not be null") { return 1; }
 
     // A prior case may already have compacted this replica, so an EMPTY
     // replacement would violate the snapshot/log invariant before the RPC is
     // even exercised. Seed it.
     let test_mgr = new_manager();
-    let Some(threshold) = with_server(follower, |s| s.GetSnapshotThreshold()) else {
+    let Some(threshold) = lab_get(follower).map(|e| lab::with_entry_server(&e, |s| s.GetSnapshotThreshold())) else {
         failed("Follower server should not be null"); return 1;
     };
     if !check_msg(install_and_seed(follower, &test_mgr, threshold).is_some(), "Could not atomically seed Test58 replacement snapshot manager") { return 1; }
 
-    let Some(before) = with_server(follower, |svr| {
+    let Some(before) = lab_get(follower).map(|e| lab::with_entry_server(&e, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
         (svr.GetSnapshotIndexLocked(), svr.GetSnapshotTermLocked(),
          svr.LabCommitIndex(), svr.LabExecuteIndex(),
          svr.LabLastLogIndex(), svr.LabLogBase(), svr.LabCurrentTerm())
-    }) else { failed("Follower server should not be null"); return 1; };
+    })) else { failed("Follower server should not be null"); return 1; };
     let (old_snapidx, old_snapterm, old_commit_index, old_execute_index,
          old_last_log_index, old_min_active_slot, follower_term) = before;
 
@@ -429,25 +439,25 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
     let stale_snapshot_index = old_commit_index;
     if !check_msg(stale_snapshot_index > 0, "Test58 needs a non-zero committed prefix") { return 1; }
 
-    let Some(leader_site) = with_server(lab::server_id_by_index(leader as usize),
-                                        |s| s.SiteId()) else {
+    let Some(leader_site) = lab_get(lab::server_id_by_index(leader as usize)).map(|e| lab::with_entry_server(&e,
+                                        |s| s.SiteId())) else {
         failed("Leader server should not be null"); return 1;
     };
 
     let mut reply_term: u64 = 0;
-    with_server(follower, |svr| {
+    if let Some(e) = lab_get(follower) { lab::with_entry_server(&e, |svr| {
         let data = lab::byte_string("stale_same_term_snapshot_must_not_be_persisted");
         svr.OnInstallSnapshot(follower_term, leader_site as u64, stale_snapshot_index,
                               follower_term, &data, &raw mut reply_term);
-    });
+    }) }
     if !check_msg(reply_term == follower_term, &format!("Same-term stale snapshot reply should be {}, got {}", follower_term, reply_term)) { return 1; }
 
-    let Some(after) = with_server(follower, |svr| {
+    let Some(after) = lab_get(follower).map(|e| lab::with_entry_server(&e, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
         (svr.GetSnapshotIndexLocked(), svr.GetSnapshotTermLocked(),
          svr.LabCommitIndex(), svr.LabExecuteIndex(),
          svr.LabLastLogIndex(), svr.LabLogBase(), svr.IsLeaderLocked())
-    }) else { failed("Follower server should not be null"); return 1; };
+    })) else { failed("Follower server should not be null"); return 1; };
     if !check_msg(after.0 == old_snapidx, &format!("Stale snapshot changed snapidx from {} to {}", old_snapidx, after.0)) { return 1; }
     if !check_msg(after.1 == old_snapterm, &format!("Stale snapshot changed snapterm from {} to {}", old_snapterm, after.1)) { return 1; }
     if !check_msg(after.2 == old_commit_index && after.3 == old_execute_index
@@ -460,15 +470,20 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
     // validation rejection must not publish bytes, compact the log, or
     // fail-stop a healthy follower: the prepare contract forbids live
     // state-machine mutation.
-    let Some(rejected_before) = with_server(follower, |svr| {
+    let Some(rejected_before) = lab_get(follower).map(|e| lab::with_entry_server(&e, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
-        let local_progress = [svr.LabCommitIndex(), svr.LabExecuteIndex(),
-                              svr.GetAppliedIndex(), svr.LabSnapIdx(),
-                              svr.LabLastLogIndex()].into_iter().max().unwrap();
+        // Plain u64::max, not `[..].into_iter().max()`: rusty::iter_max copies
+        // an owning iterator into a local and returns a reference into it,
+        // so under the C++ lane that read a dead temporary.
+        let local_progress = svr.LabCommitIndex()
+            .max(svr.LabExecuteIndex())
+            .max(svr.GetAppliedIndex())
+            .max(svr.LabSnapIdx())
+            .max(svr.LabLastLogIndex());
         (log_fingerprint(svr), svr.LabSnapIdx(), svr.LabSnapTerm(),
          svr.LabCommitIndex(), svr.LabExecuteIndex(), svr.LabLastLogIndex(),
          svr.LabLogBase(), local_progress)
-    }) else { failed("Follower server should not be null"); return 1; };
+    })) else { failed("Follower server should not be null"); return 1; };
     let rejected_local_progress = rejected_before.7;
     if !check_msg(rejected_local_progress < u64::MAX, "Test58 cannot construct a successor snapshot boundary") { return 1; }
 
@@ -477,36 +492,36 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
     // SAFETY: the kernel constructs both std::functions into the slots; the
     // server copies them in place (see reg_learner_action's note).
     unsafe { raft_lab_make_reject_prepare_cbs(&raw mut create_cb, &raw mut prepare_cb) };
-    let Some(token) = with_server(follower,
-        |svr| svr.SetStateMachineSnapshotCallbacks(&create_cb, &prepare_cb))
+    let Some(token) = lab_get(follower).map(|e| lab::with_entry_server(&e,
+        |svr| svr.SetStateMachineSnapshotCallbacks(&create_cb, &prepare_cb)))
     else { failed("Follower server should not be null"); return 1; };
     if !check_msg(token != 0, "Could not install Test58 rejecting prepare callback") { return 1; }
 
     let mut rejected_reply_term: u64 = follower_term;
-    with_server(follower, |svr| {
+    if let Some(e) = lab_get(follower) { lab::with_entry_server(&e, |svr| {
         let data = lab::byte_string("archive_rejected_during_prepare");
         svr.OnInstallSnapshot(follower_term, leader_site as u64,
                               rejected_local_progress + 1, follower_term,
                               &data, &raw mut rejected_reply_term);
-    });
+    }) }
 
     // Clear before asserting, so an assertion that bails does not leave the
     // rejecting callback installed for the rest of the suite. The C++ uses an
     // RAII scope guard for the same reason.
-    let cleared = with_server(follower,
-        |svr| svr.ClearStateMachineSnapshotCallbacks(token)).unwrap_or(false);
+    let cleared = lab_get(follower).map(|e| lab::with_entry_server(&e,
+        |svr| svr.ClearStateMachineSnapshotCallbacks(token))).unwrap_or(false);
 
     // SAFETY: a plain atomic read of the kernel's flag.
     if !check_msg(unsafe { raft_lab_reject_prepare_called() }, "InstallSnapshot did not invoke the rejecting Prepare callback") { return 1; }
     if !check_msg(rejected_reply_term == 0, &format!("Rejected Prepare must return unavailable term 0, got {}", rejected_reply_term)) { return 1; }
-    if !check_msg(!with_server(follower, |s| s.LabStopped()).unwrap_or(true), "Clean Prepare rejection incorrectly fail-stopped the follower") { return 1; }
+    if !check_msg(!lab_get(follower).map(|e| lab::with_entry_server(&e, |s| s.LabStopped())).unwrap_or(true), "Clean Prepare rejection incorrectly fail-stopped the follower") { return 1; }
 
-    let Some(rejected_after) = with_server(follower, |svr| {
+    let Some(rejected_after) = lab_get(follower).map(|e| lab::with_entry_server(&e, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
         (log_fingerprint(svr), svr.LabSnapIdx(), svr.LabSnapTerm(),
          svr.LabCommitIndex(), svr.LabExecuteIndex(), svr.LabLastLogIndex(),
          svr.LabLogBase())
-    }) else { failed("Follower server should not be null"); return 1; };
+    })) else { failed("Follower server should not be null"); return 1; };
     if !check_msg(rejected_after.0 == rejected_before.0
                    && rejected_after.1 == rejected_before.1
                    && rejected_after.2 == rejected_before.2
@@ -556,7 +571,7 @@ fn test_install_snapshot_rejects_stale_term(_st: &mut LabState) -> i32 {
 
     // One coherent observation, with the live Raft and apply threads excluded:
     // the raw fields are not atomic.
-    let Some(before) = with_server(follower, test59_state) else {
+    let Some(before) = lab_get(follower).map(|e| lab::with_entry_server(&e, test59_state)) else {
         failed("Follower server should not be null"); return 1;
     };
     let follower_term = before.5;
@@ -567,12 +582,12 @@ fn test_install_snapshot_rejects_stale_term(_st: &mut LabState) -> i32 {
     if !check_msg(stale_term < follower_term, &format!("Stale term {} should be < follower term {}", stale_term, follower_term)) { return 1; }
 
     let mut reply_term: u64 = 0;
-    with_server(follower, |svr| {
+    if let Some(e) = lab_get(follower) { lab::with_entry_server(&e, |svr| {
         let data = lab::byte_string("stale_snapshot_data");
         svr.OnInstallSnapshot(stale_term, 999, 100, 1, &data, &raw mut reply_term);
-    });
+    }) }
     if !check_msg(reply_term == follower_term, &format!("Reply term should be follower's current term {}, got {}", follower_term, reply_term)) { return 1; }
-    if !check_msg(with_server(follower, test59_state) == Some(before), "Stale-term snapshot mutated Raft role/election state") { return 1; }
+    if !check_msg(lab_get(follower).map(|e| lab::with_entry_server(&e, test59_state)) == Some(before), "Stale-term snapshot mutated Raft role/election state") { return 1; }
 
     // A same-term sender cannot advertise a boundary from a future term
     // either. That must be refused before leader contact or payload
@@ -583,33 +598,33 @@ fn test_install_snapshot_rejects_stale_term(_st: &mut LabState) -> i32 {
         before_last_log_index + 1
     };
     let mut future_reply_term: u64 = 0;
-    with_server(follower, |svr| {
+    if let Some(e) = lab_get(follower) { lab::with_entry_server(&e, |svr| {
         let data = lab::byte_string("future_term_snapshot_must_not_be_loaded");
         svr.OnInstallSnapshot(follower_term, leader as u64, future_boundary_index,
                               follower_term + 1, &data, &raw mut future_reply_term);
-    });
+    }) }
     if !check_msg(future_reply_term == 0, &format!("Same-term future-boundary rejection must report unavailable (0), got {}", future_reply_term)) { return 1; }
-    if !check_msg(with_server(follower, test59_state) == Some(before), "Future-boundary snapshot mutated receiver state") { return 1; }
+    if !check_msg(lab_get(follower).map(|e| lab::with_entry_server(&e, test59_state)) == Some(before), "Future-boundary snapshot mutated receiver state") { return 1; }
 
     // A rejected but well-formed request must not look successful to the
     // sender: InstallSnapshot's leader callback treats any non-zero reply at
     // its send term as proof the boundary was installed.
     let mut unauthorized_reply_term: u64 = u64::MAX;
-    with_server(follower, |svr| {
+    if let Some(e) = lab_get(follower) { lab::with_entry_server(&e, |svr| {
         let data = lab::byte_string("unauthorized_snapshot_must_not_be_acknowledged");
         svr.OnInstallSnapshot(follower_term, 998, future_boundary_index,
                               follower_term, &data, &raw mut unauthorized_reply_term);
-    });
+    }) }
     if !check_msg(unauthorized_reply_term == 0, &format!("Unauthorized snapshot rejection must report unavailable (0), got {}", unauthorized_reply_term)) { return 1; }
 
     let mut unrepresentable_reply_term: u64 = u64::MAX;
-    with_server(follower, |svr| {
+    if let Some(e) = lab_get(follower) { lab::with_entry_server(&e, |svr| {
         let data = lab::byte_string("unrepresentable_leader_must_not_be_acknowledged");
         svr.OnInstallSnapshot(follower_term, u64::MAX, future_boundary_index,
                               follower_term, &data, &raw mut unrepresentable_reply_term);
-    });
+    }) }
     if !check_msg(unrepresentable_reply_term == 0, &format!("Unrepresentable snapshot leader must report unavailable (0), got {}", unrepresentable_reply_term)) { return 1; }
-    if !check_msg(with_server(follower, test59_state) == Some(before), "Unauthorized snapshot rejection mutated receiver state") { return 1; }
+    if !check_msg(lab_get(follower).map(|e| lab::with_entry_server(&e, test59_state)) == Some(before), "Unauthorized snapshot rejection mutated receiver state") { return 1; }
 
     eprintln!("[INSTALL-SNAPSHOT-REJECTS-STALE-TEST] PASSED");
     passed();
@@ -633,14 +648,14 @@ fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
     // does after its rotation.
     if !check_msg(set_env("MAKO_RAFT_SNAPSHOTS", "1"), "Could not enable Test60 snapshots") { return 1; }
 
-    let mut managers = Vec::new();
+    let mut managers: Vec<rusty::RaftSnapshotManagerPtr> = Vec::new();
     let mut original_thresholds = [0u64; NSERVERS];
     let mut seeded = [0u64; NSERVERS];
     for i in 0..NSERVERS {
         let loc = lab::server_id_by_index(i);
-        if !check_msg(lab_registry::get(loc).is_some(), &format!("Test60 server {} is null", i)) { return 1; }
+        if !check_msg(lab_get(loc).is_some(), &format!("Test60 server {} is null", i)) { return 1; }
         let manager = new_manager();
-        original_thresholds[i] = with_server(loc, |s| s.GetSnapshotThreshold()).unwrap_or(0);
+        original_thresholds[i] = lab_get(loc).map(|e| lab::with_entry_server(&e, |s| s.GetSnapshotThreshold())).unwrap_or(0);
         let Some(index) = install_and_seed(loc, &manager, 3) else {
             failed(&format!("Could not atomically seed Test60 server {} snapshot manager", i));
             return 1;
@@ -653,10 +668,10 @@ fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
     if !check_msg(follower_index >= 0, "No Test60 follower found") { return 1; }
     let follower = lab::server_id_by_index(follower_index as usize);
 
-    let Some((follower_snap_before, follower_last_before)) = with_server(follower, |svr| {
+    let Some((follower_snap_before, follower_last_before)) = lab_get(follower).map(|e| lab::with_entry_server(&e, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
         (svr.GetSnapshotIndexLocked(), svr.LabLastLogIndex())
-    }) else { failed("Test60 follower is null"); return 1; };
+    })) else { failed("Test60 follower is null"); return 1; };
 
     lab::disconnect(follower);
 
@@ -680,7 +695,7 @@ fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
             connected_applied = (0..NSERVERS)
                 .map(lab::server_id_by_index)
                 .filter(|&loc| loc != follower)
-                .filter(|&loc| with_server(loc, |s| s.GetAppliedIndex() >= idx)
+                .filter(|&loc| lab_get(loc).map(|e| lab::with_entry_server(&e, |s| s.GetAppliedIndex() >= idx))
                                    .unwrap_or(false))
                 .count();
             if connected_applied >= NSERVERS - 1 { break; }
@@ -709,10 +724,10 @@ fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
     let mut leader_snapshot_ready = false;
     for _ in 0..300 {
         if leader_snapshot_ready { break; }
-        let Some((execute_index, snap_idx, min_active)) = with_server(leader_loc, |svr| {
+        let Some((execute_index, snap_idx, min_active)) = lab_get(leader_loc).map(|e| lab::with_entry_server(&e, |svr| {
             let _lock = RaftLockGuard::new(svr.LabMutex());
             (svr.LabExecuteIndex(), svr.GetSnapshotIndexLocked(), svr.LabLogBase())
-        }) else { break };
+        })) else { break };
         leader_snap_idx = snap_idx;
         leader_min_active = min_active;
         let candidate = probe(&managers[leader as usize]);
@@ -753,8 +768,8 @@ fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
         raft_lab_make_probe_cbs(&managers[follower_index as usize] as *const _,
                                 &raw mut create_cb, &raw mut prepare_cb);
     }
-    let token = with_server(follower,
-        |svr| svr.SetStateMachineSnapshotCallbacks(&create_cb, &prepare_cb))
+    let token = lab_get(follower).map(|e| lab::with_entry_server(&e,
+        |svr| svr.SetStateMachineSnapshotCallbacks(&create_cb, &prepare_cb)))
         .unwrap_or(0);
     if token == 0 {
         lab::reconnect(follower);
@@ -777,14 +792,14 @@ fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
     for _ in 0..100 {
         if follower_snap_after >= required_snapshot_floor { break; }
         lab::fiber_sleep_us(HEARTBEAT_INTERVAL_US);
-        follower_snap_after = with_server(follower, |svr| {
+        follower_snap_after = lab_get(follower).map(|e| lab::with_entry_server(&e, |svr| {
             let _lock = RaftLockGuard::new(svr.LabMutex());
             svr.GetSnapshotIndexLocked()
-        }).unwrap_or(follower_snap_after);
+        })).unwrap_or(follower_snap_after);
     }
 
-    let cleared = with_server(follower,
-        |svr| svr.ClearStateMachineSnapshotCallbacks(token)).unwrap_or(false);
+    let cleared = lab_get(follower).map(|e| lab::with_entry_server(&e,
+        |svr| svr.ClearStateMachineSnapshotCallbacks(token))).unwrap_or(false);
     // SAFETY: drops the kernel's reference to the manager.
     let flags = unsafe { let f = raft_lab_probe_flags(); raft_lab_probe_release(); f };
 
@@ -806,10 +821,10 @@ fn test_heartbeat_triggers_install_snapshot(_st: &mut LabState) -> i32 {
     // that backs its compacted prefix.
     for (i, &threshold) in original_thresholds.iter().enumerate() {
         let loc = lab::server_id_by_index(i);
-        with_server(loc, |svr| {
+        if let Some(e) = lab_get(loc) { lab::with_entry_server(&e, |svr| {
             let _lock = RaftLockGuard::new(svr.LabMutex());
             svr.SetSnapshotThresholdLocked(threshold);
-        });
+        }) }
     }
     // The managers stay alive: `managers` is dropped here, but each replica
     // holds its own shared_ptr through SetSnapshotManagerLocked.
@@ -829,25 +844,28 @@ fn test_heartbeat_interval_configurable(_st: &mut LabState) -> i32 {
     let leader = lab::one_leader(-1);
     if !(leader >= 0) { return 1; }
 
-    let Some(default_interval) = with_server(lab::server_id_by_index(leader as usize),
-                                              |s| s.GetHeartbeatInterval()) else {
+    let Some(default_interval) = lab_get(lab::server_id_by_index(leader as usize)).map(|e| lab::with_entry_server(&e,
+                                              |s| s.GetHeartbeatInterval())) else {
         failed("Server should not be null"); return 1;
     };
     if !check_msg(default_interval == HEARTBEAT_INTERVAL_US, &format!("Default heartbeat interval should be {}, got {}", HEARTBEAT_INTERVAL_US, default_interval)) { return 1; }
 
+    // A named constant: the transpiler keeps a `200_000` literal verbatim
+    // inside format arguments, which C++ cannot parse.
+    const SET_INTERVAL_US: u64 = 200_000;
     let leader_loc = lab::server_id_by_index(leader as usize);
-    let retrieved = with_server(leader_loc, |svr| {
-        svr.SetHeartbeatInterval(200_000);
+    let retrieved = lab_get(leader_loc).map(|e| lab::with_entry_server(&e, |svr| {
+        svr.SetHeartbeatInterval(SET_INTERVAL_US);
         svr.GetHeartbeatInterval()
-    }).unwrap_or(0);
-    if !check_msg(retrieved == 200_000, &format!("Heartbeat interval should be {} after set, got {}", 200_000, retrieved)) { return 1; }
+    })).unwrap_or(0);
+    if !check_msg(retrieved == SET_INTERVAL_US, &format!("Heartbeat interval should be {} after set, got {}", SET_INTERVAL_US, retrieved)) { return 1; }
 
     for i in 0..NSERVERS {
         let loc = lab::server_id_by_index(i);
-        let got = with_server(loc, |svr| {
+        let got = lab_get(loc).map(|e| lab::with_entry_server(&e, |svr| {
             svr.SetHeartbeatInterval(150_000);
             svr.GetHeartbeatInterval()
-        });
+        }));
         if let Some(got) = got {
             if !check_msg(got == 150_000, &format!("Server {} heartbeat interval should be 150000, got {}", i, got)) { return 1; }
         }
@@ -856,8 +874,8 @@ fn test_heartbeat_interval_configurable(_st: &mut LabState) -> i32 {
     if !check_msg(lab::do_agreement(6700, NSERVERS as i32, true) > 0, "DoAgreement should succeed after changing heartbeat interval") { return 1; }
 
     for i in 0..NSERVERS {
-        with_server(lab::server_id_by_index(i),
-                    |svr| svr.SetHeartbeatInterval(HEARTBEAT_INTERVAL_US));
+        if let Some(e) = lab_get(lab::server_id_by_index(i)) { lab::with_entry_server(&e,
+                    |svr| svr.SetHeartbeatInterval(HEARTBEAT_INTERVAL_US)) }
     }
     eprintln!("TEST 67: Heartbeat interval configurable PASSED!");
     passed();
@@ -875,23 +893,23 @@ fn test_log_retention_window_configurable(_st: &mut LabState) -> i32 {
     if !(leader >= 0) { return 1; }
 
     let leader_loc = lab::server_id_by_index(leader as usize);
-    let Some(default_window) = with_server(leader_loc, |s| s.GetLogRetentionWindow()) else {
+    let Some(default_window) = lab_get(leader_loc).map(|e| lab::with_entry_server(&e, |s| s.GetLogRetentionWindow())) else {
         failed("Server should not be null"); return 1;
     };
     if !check_msg(default_window == DEFAULT_RETENTION_WINDOW, &format!("Default log retention window should be {}, got {}", DEFAULT_RETENTION_WINDOW, default_window)) { return 1; }
 
     let new_window: u64 = 20;
-    let retrieved = with_server(leader_loc, |svr| {
+    let retrieved = lab_get(leader_loc).map(|e| lab::with_entry_server(&e, |svr| {
         svr.SetLogRetentionWindow(new_window);
         svr.GetLogRetentionWindow()
-    }).unwrap_or(0);
+    })).unwrap_or(0);
     if !check_msg(retrieved == new_window, &format!("Log retention window should be {} after set, got {}", new_window, retrieved)) { return 1; }
 
     for i in 0..NSERVERS {
-        let got = with_server(lab::server_id_by_index(i), |svr| {
+        let got = lab_get(lab::server_id_by_index(i)).map(|e| lab::with_entry_server(&e, |svr| {
             svr.SetLogRetentionWindow(new_window);
             svr.GetLogRetentionWindow()
-        });
+        }));
         if let Some(got) = got {
             if !check_msg(got == new_window, &format!("Server {} log retention window should be {}, got {}", i, new_window, got)) { return 1; }
         }
@@ -904,8 +922,8 @@ fn test_log_retention_window_configurable(_st: &mut LabState) -> i32 {
     if !check_msg(lab::do_agreement(6899, NSERVERS as i32, true) > 0, "DoAgreement should succeed after log cleanup") { return 1; }
 
     for i in 0..NSERVERS {
-        with_server(lab::server_id_by_index(i),
-                    |svr| svr.SetLogRetentionWindow(DEFAULT_RETENTION_WINDOW));
+        if let Some(e) = lab_get(lab::server_id_by_index(i)) { lab::with_entry_server(&e,
+                    |svr| svr.SetLogRetentionWindow(DEFAULT_RETENTION_WINDOW)) }
     }
     eprintln!("TEST 68: Log retention window configurable PASSED!");
     passed();
@@ -927,17 +945,17 @@ fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
     // not self-contained without the snapshot bytes covering its prefix.
     if !check_msg(set_env("MAKO_RAFT_SNAPSHOTS", "1"), "Could not enable snapshots for long-partition fixture") { return 1; }
 
-    let mut managers = Vec::new();
+    let mut managers: Vec<rusty::RaftSnapshotManagerPtr> = Vec::new();
     let mut seeded = [0u64; NSERVERS];
     let mut original_thresholds = [0u64; NSERVERS];
     let mut original_windows = [0u64; NSERVERS];
     for i in 0..NSERVERS {
         let loc = lab::server_id_by_index(i);
         let manager = new_manager();
-        if let Some((threshold, window)) = with_server(loc, |svr| {
+        if let Some((threshold, window)) = lab_get(loc).map(|e| lab::with_entry_server(&e, |svr| {
             let _lock = RaftLockGuard::new(svr.LabMutex());
             (svr.GetSnapshotThreshold(), svr.GetLogRetentionWindow())
-        }) {
+        })) {
             original_thresholds[i] = threshold;
             original_windows[i] = window;
         }
@@ -946,10 +964,10 @@ fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
             return 1;
         };
         seeded[i] = index;
-        with_server(loc, |svr| {
+        if let Some(e) = lab_get(loc) { lab::with_entry_server(&e, |svr| {
             let _lock = RaftLockGuard::new(svr.LabMutex());
             svr.SetLogRetentionWindow(10);
-        });
+        }) }
         managers.push(manager);
     }
 
@@ -974,7 +992,7 @@ fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
             connected_applied = (0..NSERVERS)
                 .map(lab::server_id_by_index)
                 .filter(|&loc| loc != follower)
-                .filter(|&loc| with_server(loc, |s| s.GetAppliedIndex() >= idx)
+                .filter(|&loc| lab_get(loc).map(|e| lab::with_entry_server(&e, |s| s.GetAppliedIndex() >= idx))
                                    .unwrap_or(false))
                 .count();
             if connected_applied >= NSERVERS - 1 { break; }
@@ -1004,10 +1022,10 @@ fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
     let mut leader_snapshot_ready = false;
     for _ in 0..300 {
         if leader_snapshot_ready { break; }
-        let Some((execute_index, snap_idx, min_active)) = with_server(leader_loc, |svr| {
+        let Some((execute_index, snap_idx, min_active)) = lab_get(leader_loc).map(|e| lab::with_entry_server(&e, |svr| {
             let _lock = RaftLockGuard::new(svr.LabMutex());
             (svr.LabExecuteIndex(), svr.GetSnapshotIndexLocked(), svr.LabLogBase())
-        }) else { break };
+        })) else { break };
         leader_execute_index = execute_index;
         leader_snap_idx = snap_idx;
         leader_min_active = min_active;
@@ -1031,16 +1049,16 @@ fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
     }
 
     let leader_probe = probe(&managers[leader as usize]);
-    let Some((follower_snap_before, follower_last_before)) = with_server(follower, |svr| {
+    let Some((follower_snap_before, follower_last_before)) = lab_get(follower).map(|e| lab::with_entry_server(&e, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
         (svr.GetSnapshotIndexLocked(), svr.LabLastLogIndex())
-    }) else {
+    })) else {
         lab::reconnect(follower);
         failed("Disconnected follower server should not be null");
         return 1;
     };
 
-    let precondition_failure = if leader_execute_index < last_partition_index {
+    let precondition_failure: Option<String> = if leader_execute_index < last_partition_index {
         Some(format!("Leader execute_index {} did not reach partition workload end {}",
                      leader_execute_index, last_partition_index))
     } else if !leader_probe.present {
@@ -1075,10 +1093,10 @@ fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
     for _ in 0..100 {
         if follower_snap_idx >= required_snapshot_floor { break; }
         lab::fiber_sleep_us(HEARTBEAT_INTERVAL_US);
-        follower_snap_idx = with_server(follower, |svr| {
+        follower_snap_idx = lab_get(follower).map(|e| lab::with_entry_server(&e, |svr| {
             let _lock = RaftLockGuard::new(svr.LabMutex());
             svr.GetSnapshotIndexLocked()
-        }).unwrap_or(follower_snap_idx);
+        })).unwrap_or(follower_snap_idx);
     }
     if !check_msg(follower_snap_idx >= required_snapshot_floor
                    && follower_snap_idx > follower_snap_before, &format!("Follower snapshot should advance beyond {} through required floor {} \
@@ -1091,7 +1109,7 @@ fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
     if !check_msg(lab::do_agreement(6999, NSERVERS as i32, true) > 0, "DoAgreement should succeed with all 5 nodes after partition recovery") { return 1; }
 
     for i in 0..NSERVERS {
-        with_server(lab::server_id_by_index(i), |svr| {
+        if let Some(e) = lab_get(lab::server_id_by_index(i)) { lab::with_entry_server(&e, |svr| {
             let _lock = RaftLockGuard::new(svr.LabMutex());
             if original_thresholds[i] != 0 {
                 svr.SetSnapshotThresholdLocked(original_thresholds[i]);
@@ -1099,7 +1117,7 @@ fn test_long_partition_recovery(_st: &mut LabState) -> i32 {
             if original_windows[i] != 0 {
                 svr.SetLogRetentionWindow(original_windows[i]);
             }
-        });
+        }) }
     }
     eprintln!("TEST 69: Retaining live in-memory snapshot managers through suite shutdown");
     eprintln!("TEST 69: Long partition recovery via InstallSnapshot PASSED!");
@@ -1136,10 +1154,10 @@ fn test_high_frequency_apply(_st: &mut LabState) -> i32 {
     }
     if !check_msg(last_index - first_index + 1 == NUM_ENTRIES as u64, &format!("Expected {} consecutive indices, got range {}-{}", NUM_ENTRIES, first_index, last_index)) { return 1; }
 
-    let Some(current_term) = with_server(leader_id, |svr| {
+    let Some(current_term) = lab_get(leader_id).map(|e| lab::with_entry_server(&e, |svr| {
         let _lock = RaftLockGuard::new(svr.LabMutex());
         svr.LabCurrentTerm()
-    }) else { failed("Leader server is null"); return 1; };
+    })) else { failed("Leader server is null"); return 1; };
 
     let result = lab::wait(last_index, NSERVERS as i32, current_term);
     if !check_msg(result >= 0, &format!("Failed waiting for last index {} to commit (result={})", last_index, result)) { return 1; }
@@ -1169,7 +1187,7 @@ fn test_high_frequency_apply(_st: &mut LabState) -> i32 {
 // The driver. Same order and the same short-circuit structure as the second
 // half of RaftLabTest::Run.
 
-pub fn run(st: &mut LabState) -> i32 {
+fn run_snapshot_cases(st: &mut LabState) -> i32 {
     // Tests 50, 51 and 52 -- unit tests of SnapshotMetadata, SnapshotFormat
     // and MemorySnapshotManager, which are C++ classes and touch no
     // RaftServer. See the note at the top of this file.
@@ -1199,3 +1217,11 @@ pub fn run(st: &mut LabState) -> i32 {
     }
     0
 }
+
+pub fn run_snapshot(st: LabState) -> i32 {
+    let mut st = st;
+    // A named function taking `&mut LabState`, for the reason given at
+    // lab_cases::run_basic.
+    run_snapshot_cases(&mut st)
+}
+

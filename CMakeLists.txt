@@ -451,8 +451,9 @@ option(SINGLE_RAFT_INSTANCE "Default runtime Raft group mode (ON=single group, O
 #           hybrid or the C++ baseline (docs/performance/raft-rust-9a361eccd).
 #   hybrid  the core compiled by rustc into libraft.a, over the C++ seam
 #           kernels (raft/server_seam_cpp.cc) and the C++ srpc runtime.
-#   cpp     the core transpiled by rusty-cpp over the C++ seam (plan phase L;
-#           not built yet -- selecting it fails at configure time).
+#   cpp     the core transpiled by rusty-cpp into C++20 modules
+#           (cmake/raft_cpp_lane.cmake, libraft_cpp_core.a) over the C++ seam
+#           kernels and the C++ srpc runtime. No rustc in the lane at all.
 set(MAKO_RAFT_LANE "rust" CACHE STRING "Raft runtime lane: rust | hybrid | cpp")
 set_property(CACHE MAKO_RAFT_LANE PROPERTY STRINGS hybrid rust cpp)
 if(MAKO_RAFT_LANE STREQUAL "rust")
@@ -460,8 +461,10 @@ if(MAKO_RAFT_LANE STREQUAL "rust")
   message(STATUS "Raft lane: rust (raft-rt over the Rust srpc runtime)")
 elseif(MAKO_RAFT_LANE STREQUAL "hybrid")
   message(STATUS "Raft lane: hybrid (rustc core over the C++ srpc runtime)")
+elseif(MAKO_RAFT_LANE STREQUAL "cpp")
+  message(STATUS "Raft lane: cpp (transpiled core over the C++ srpc runtime)")
 else()
-  message(FATAL_ERROR "MAKO_RAFT_LANE=${MAKO_RAFT_LANE}: expected hybrid or rust (cpp is plan phase L)")
+  message(FATAL_ERROR "MAKO_RAFT_LANE=${MAKO_RAFT_LANE}: expected rust, hybrid or cpp")
 endif()
 
 if(MAKO_USE_RAFT)
@@ -1058,6 +1061,7 @@ endif()
 add_subdirectory(src/srpc-cmake src/srpc)
 # Build and export masstree-specific test wiring from a dedicated CMakeLists.
 add_subdirectory(src/masstree)
+include(cmake/raft_cpp_lane.cmake)
 
 # Build libtxlog.so natively with CMake instead of WAF
 # Collect SRPC source files (de-modularized: plain .cpp/.cc impl units).
@@ -1269,6 +1273,19 @@ set_target_properties(raft_rust PROPERTIES
     # what Rust's std needs from the platform
     INTERFACE_LINK_LIBRARIES "pthread;dl;m;rt;util;gcc_s")
 
+# The Raft core every link site below uses, chosen by lane: the rustc
+# artifact (raft_rust) for rust and hybrid, the transpiled C++ modules
+# (raft_cpp_core, cmake/raft_cpp_lane.cmake) for cpp. RAFT_CORE_DEPS is what
+# must be built before anything that links it.
+if(MAKO_RAFT_LANE STREQUAL "cpp")
+  set(RAFT_CORE_TARGET raft_cpp_core)
+  set(RAFT_CORE_DEPS raft_cpp_core)
+  set_target_properties(raft_cpp_core PROPERTIES EXCLUDE_FROM_ALL OFF)
+else()
+  set(RAFT_CORE_TARGET raft_rust)
+  set(RAFT_CORE_DEPS raft_rust_build)
+endif()
+
 # Build the replication core from the explicit manifest above.
 add_library(txlog_core_obj OBJECT
     ${TXLOG_HELPER_SRC}
@@ -1280,11 +1297,11 @@ add_library(txlog_core_obj OBJECT
     # `txlog_core`'s PUBLIC link to the `srpc` target.
 )
 add_dependencies(txlog_core_obj rcc_rpc_gen)
-add_dependencies(txlog_core_obj raft_goal0_source_gate raft_rust_build)
+add_dependencies(txlog_core_obj raft_goal0_source_gate ${RAFT_CORE_DEPS})
 # Pull in srpc's PUBLIC include dirs + module BMI paths so deptran .cc files
 # that `#include "srpc/srpc.hpp"` find both the
 # umbrella header and the imports it references.
-target_link_libraries(txlog_core_obj PUBLIC srpc cluster raft_rust)
+target_link_libraries(txlog_core_obj PUBLIC srpc cluster ${RAFT_CORE_TARGET})
 set_target_properties(txlog_core_obj PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
@@ -1308,10 +1325,10 @@ endforeach()
 target_compile_definitions(txlog_core_obj PRIVATE CONFIG_H=\"${CONFIG_H}\")
 
 add_library(txlog_core STATIC $<TARGET_OBJECTS:txlog_core_obj>)
-add_dependencies(txlog_core raft_rust_build)
+add_dependencies(txlog_core ${RAFT_CORE_DEPS})
 target_link_libraries(txlog_core
     PUBLIC
-    raft_rust
+    ${RAFT_CORE_TARGET}
     srpc
     cluster
     yaml-cpp
@@ -1330,11 +1347,42 @@ target_include_directories(txlog_core PUBLIC
 # The archive and the Rust library need each other (kernels one way, exports the
 # other), so anything that links the archive links both in a rescan group.
 set(TXLOG_LINK_LIBS
-    "$<LINK_GROUP:RESCAN,txlog_core,raft_rust>"
+    "$<LINK_GROUP:RESCAN,txlog_core,${RAFT_CORE_TARGET}>"
 )
 set(TXLOG_BUILD_DEPS
-    txlog_core raft_rust_build
+    txlog_core ${RAFT_CORE_DEPS}
 )
+
+# Plan phase L4, keeping the lanes honest (scripts/raft_lane_parity.py), on
+# every build:
+#  * exactly-once -- each raft_* symbol the lane's core imports is defined
+#    exactly once by the host archive, and nothing the core defines (raft-rt's
+#    seam, on the Rust lane) is defined by the host as well;
+#  * core parity, on the hybrid lane -- the rustc core and the transpiled
+#    core export and import the same raft_* C symbols. Both cores come from
+#    one source whatever the lane, so the tree that already builds the rustc
+#    core also builds the transpiled one and compares them.
+if(MAKO_RAFT_LANE STREQUAL "cpp")
+  set(RAFT_CORE_ARCHIVE "$<TARGET_FILE:raft_cpp_core>")
+else()
+  set(RAFT_CORE_ARCHIVE "${RAFT_RUST_LIB}")
+endif()
+set(RAFT_LANE_CHECK_COMMANDS
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_lane_parity.py
+            --once "${RAFT_CORE_ARCHIVE}" "$<TARGET_FILE:txlog_core>")
+set(RAFT_LANE_CHECK_DEPS txlog_core ${RAFT_CORE_DEPS})
+if(MAKO_RAFT_LANE STREQUAL "hybrid")
+  list(APPEND RAFT_LANE_CHECK_COMMANDS
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_lane_parity.py
+            --cores "${RAFT_RUST_LIB}" "$<TARGET_FILE:raft_cpp_core>")
+  list(APPEND RAFT_LANE_CHECK_DEPS raft_cpp_core)
+endif()
+add_custom_target(raft_lane_check ALL
+    ${RAFT_LANE_CHECK_COMMANDS}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_lane_parity.py
+    COMMENT "Checking the Raft lane's kernel ABI (exactly-once, core parity)"
+    VERBATIM)
+add_dependencies(raft_lane_check ${RAFT_LANE_CHECK_DEPS})
 
 # Temporary Raft-only target for borrow checking
 file(GLOB RAFT_BORROW_SRC
@@ -1522,7 +1570,7 @@ target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 # A static library gets no objects from txlog_core_obj, only usage requirements;
 # executables that link mako alone (the gtest binaries) therefore need the
 # kernels' archive next to libraft.a, in the same rescan group.
-target_link_libraries(mako PUBLIC txlog_core_obj masstree "$<LINK_GROUP:RESCAN,txlog_core,raft_rust>")
+target_link_libraries(mako PUBLIC txlog_core_obj masstree "$<LINK_GROUP:RESCAN,txlog_core,${RAFT_CORE_TARGET}>")
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
 
@@ -1642,8 +1690,8 @@ endfunction()
 
 add_apps(dbtest src/mako/benchmarks/dbtest.cc)
 add_apps(simpleTransaction examples/simpleTransaction.cc
-    TXLOG_LIBS "$<LINK_GROUP:RESCAN,txlog_core,raft_rust>"
-    TXLOG_DEPS txlog_core raft_rust_build
+    TXLOG_LIBS "$<LINK_GROUP:RESCAN,txlog_core,${RAFT_CORE_TARGET}>"
+    TXLOG_DEPS txlog_core ${RAFT_CORE_DEPS}
 )
 add_apps(simpleTransactionRep examples/simpleTransactionRep.cc)
 add_apps(continuousTransactions examples/continuousTransactions.cc)

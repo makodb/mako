@@ -10,8 +10,13 @@ pub mod channel_transport_hpp;
 pub mod commo_h;
 pub mod communicator_h;
 pub mod frame_cc;
+#[cfg(feature = "raft_test")]
 pub mod lab;
+#[cfg(feature = "raft_test")]
 pub mod lab_cases;
+#[cfg(feature = "raft_test")]
+pub mod lab_main;
+#[cfg(feature = "raft_test")]
 pub mod lab_snapshot_cases;
 pub mod log_storage_hpp;
 pub mod memory_log_storage_hpp;

@@ -11,9 +11,9 @@
 // fixture in lab.rs. The snapshot, configuration and load families are in
 // lab_snapshot_cases.rs.
 
-#![cfg(feature = "raft_test")]
 
-use crate::lab::{self, NSERVERS, ELECTION_TIMEOUT_US};
+use crate::lab;
+use crate::lab::{ELECTION_TIMEOUT_US, NSERVERS};
 use std::sync::atomic::{AtomicI32, Ordering};
 
 // ---------------------------------------------------------------------------
@@ -125,6 +125,9 @@ fn wait_us(micros: u64) {
 }
 
 /// The two numbers RaftLabTest carries between cases (test.h:13-14).
+/// Copy, and handed between the lab modules by value: the transpiled C++
+/// lane lowers a cross-module `&mut` argument as a pointer.
+#[derive(Clone, Copy)]
 pub struct LabState {
     pub index: u64,
     pub init_rpcs: u64,
@@ -341,7 +344,9 @@ fn test_concurrent_starts(st: &mut LabState) -> i32 {
         // five threads, each Start()ing a command on the leader. The C++ uses
         // pthreads for the same reason and reaches the server the same way:
         // Start takes the server's own mutex.
-        let mut handles = Vec::new();
+        // Element type spelled out: the transpiler cannot infer it from the
+        // later push.
+        let mut handles: Vec<std::thread::JoinHandle<Option<u64>>> = Vec::new();
         for i in 0..nconcurrent {
             let ldr = leader as u32;
             handles.push(std::thread::spawn(move || {
@@ -357,7 +362,9 @@ fn test_concurrent_starts(st: &mut LabState) -> i32 {
             continue 'again; // leader's term is expiring -- start over
         }
 
-        let mut cmds = Vec::new();
+        // Typed explicitly: left to inference, the transpiler lowered this to
+        // Vec<bool>, and every committed value compared equal to `true`.
+        let mut cmds: Vec<i64> = Vec::new();
         for index in indices {
             let cmd = lab::wait(index, NSERVERS as i32, term);
             if cmd < 0 {
@@ -444,7 +451,6 @@ fn test_count(st: &mut LabState) -> i32 {
     if !check_msg(st.init_rpcs > 1 && st.init_rpcs <= 70, &format!("too many or too few RPCs ({}) to elect initial leader", st.init_rpcs)) { return 1; }
 
     let iters: u64 = 10;
-    let mut total;
     let mut success = false;
 
     'again: for again in 0..5 {
@@ -477,9 +483,13 @@ fn test_count(st: &mut LabState) -> i32 {
         if lab::term_moved_on(startterm) {
             continue; // term changed -- can't expect low RPC counts
         }
-        total = rpcs();
-        // COMMITRPCS(n) == (n + 1) * NSERVERS  (testconf.h:27)
-        if !check_msg(total <= (iters + 1) * NSERVERS as u64, &format!("too many RPCs ({}) for {} entries", total, iters)) { return 1; }
+        // A block of its own: `continue 'again` lowers to a goto past the end
+        // of this body, which C++ forbids across an initialised local.
+        {
+            let total = rpcs();
+            // COMMITRPCS(n) == (n + 1) * NSERVERS  (testconf.h:27)
+            if !check_msg(total <= (iters + 1) * NSERVERS as u64, &format!("too many RPCs ({}) for {} entries", total, iters)) { return 1; }
+        }
         success = true;
         break;
     }
@@ -487,7 +497,7 @@ fn test_count(st: &mut LabState) -> i32 {
 
     // idle RPC count
     wait_us(1_000_000);
-    total = rpcs();
+    let total = rpcs();
     if !check_msg(total <= 60, &format!("too many RPCs ({}) for 1 second of idleness", total)) { return 1; }
 
     passed();
@@ -498,7 +508,7 @@ fn test_unreliable_agree(st: &mut LabState) -> i32 {
     init2(10, "Unreliable agreement (takes a few minutes)");
 
     lab::set_unreliable(true);
-    let mut handles = Vec::new();
+    let mut handles: Vec<std::thread::JoinHandle<u64>> = Vec::new();
     let mut failures: Vec<u64> = Vec::new();
 
     for iter in 1..50 {
@@ -644,18 +654,10 @@ fn test_figure8(st: &mut LabState) -> i32 {
     0
 }
 
-// ---------------------------------------------------------------------------
-// The driver. Same order and same short-circuit structure as
-// RaftLabTest::Run, so a failure stops at the same place.
-
-pub fn run() -> i32 {
-    eprintln!("Starting Raft lab tests (Rust harness)");
-    let mut st = LabState { index: 1, init_rpcs: 0 };
-    let start_rpc = lab::rpc_total();
-
-    assert_eq!(crate::server_h::lab_registry::count(), NSERVERS,
-               "the Rust harness needs all five replicas registered");
-
+// The eleven basic cases, in RaftLabTest::Run's order. lab_main.rs drives
+// them, then the snapshot cases, and threads the state between the two by
+// value: None is a failure.
+fn run_basic_cases(st: &mut LabState) -> i32 {
     type Case = fn(&mut LabState) -> i32;
     let basic: &[Case] = &[
         test_initial_election,
@@ -672,18 +674,21 @@ pub fn run() -> i32 {
     ];
 
     for case in basic {
-        if case(&mut st) != 0 {
-            eprintln!("TESTS FAILED");
+        if case(st) != 0 {
             return 1;
         }
     }
-
-    if crate::lab_snapshot_cases::run(&mut st) != 0 {
-        eprintln!("TESTS FAILED");
-        return 1;
-    }
-
-    eprintln!("ALL TESTS PASSED");
-    eprintln!("Total RPC count: {}", lab::rpc_total() - start_rpc);
     0
 }
+
+pub fn run_basic(st: LabState) -> Option<LabState> {
+    let mut st = st;
+    // The loop is a function of its own, taking `&mut LabState`: a call
+    // through the fn-pointer table has no parameter-style information for
+    // the transpiler, a call to a named function does.
+    if run_basic_cases(&mut st) != 0 {
+        return None;
+    }
+    Some(st)
+}
+

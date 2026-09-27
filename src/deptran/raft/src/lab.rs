@@ -19,11 +19,10 @@
 // SerializableRegistry::reg<T> -- so Rust can hold a janus::Command but cannot
 // be a member of the set. The fourth is the communicator, which is C++.
 
-#![cfg(feature = "raft_test")]
 #![allow(non_snake_case)]
 
 use crate::scheduler_h::{RaftSpecific, RaftStartResult, TxLogServer};
-use crate::server_h::{lab_cluster, lab_registry, RaftServerBase, RaftStdLockGuard};
+use crate::server_h::{lab_entries, lab_get, LabEntry, RaftServerBase, RaftStdLockGuard};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -34,7 +33,8 @@ use std::sync::Mutex;
 /// The lab cluster is five replicas.
 pub const NSERVERS: usize = 5;
 /// How long a case waits for an election to settle, in microseconds.
-pub const ELECTION_TIMEOUT_US: u64 = lab_cluster::ELECTION_TIMEOUT_US;
+// testconf.h:22 -- `#define ELECTIONTIMEOUT 5000000` (microseconds).
+pub const ELECTION_TIMEOUT_US: u64 = 5_000_000;
 /// Lab commands are non-negative, so -1 marks an unfilled slot. A
 /// snapshot-restored replica must not be credited for log history its new
 /// apply callback never replayed.
@@ -116,6 +116,117 @@ const DOWNRATE_D: i32 = 10;
 /// The slow timeout's upper bound, in milliseconds.
 const MAXSLOW: i32 = 27;
 
+// ---------------------------------------------------------------------------
+// The lab cluster fixture, query half.
+//
+// waitOneLeader, OneLeader, NoLeader, OneTerm and TermMovedOn, over
+// the lab registry (server_h.rs). These are what the 25 cases lean on to decide whether the
+// cluster is in a legal state.
+//
+// The constants, the retry counts and the sleep grain below are what the 25
+// cases were tuned against, not free parameters: shortening the election
+// timeout or the retry count makes cases flaky without anything being
+// wrong.
+// No trait import: IsDisconnected became an inherent method when the RPC
+// admission gate moved into ServeVote and its siblings, so it left
+// RaftSpecific along with the three On* handlers.
+
+// waitOneLeader's loop: ten passes, each preceded by ELECTIONTIMEOUT/10.
+const WAIT_RETRIES: i32 = 10;
+
+// The sentinels waitOneLeader returns. -1 "no leader", -2 "two leaders in
+// one term", -3 "leader is not the expected one". The 25 cases branch on
+// these exact values.
+pub const NO_LEADER: i32 = -1;
+pub const MULTIPLE_LEADERS: i32 = -2;
+pub const UNEXPECTED_LEADER: i32 = -3;
+
+/// Borrow one replica. See the lab registry's note (server_h.rs) on why this is sound in a
+/// lab build and nowhere else.
+pub fn with_entry_server<R>(entry: &LabEntry, f: impl FnOnce(&mut RaftServerBase) -> R) -> R {
+    // SAFETY: the worker owns every registered server for the life of the
+    // suite, and the harness runs on a fiber in that same process.
+    unsafe { f(&mut *entry.server()) }
+}
+
+fn state_of(entry: &LabEntry) -> (bool, u64, bool) {
+    with_entry_server(entry, |svr| {
+        let mut is_leader = false;
+        let mut term: u64 = 0;
+        svr.GetState(&raw mut is_leader, &raw mut term);
+        (is_leader, term, svr.IsDisconnected())
+    })
+}
+
+/// Port of RaftTestConfig::waitOneLeader. Disconnected replicas are
+/// ignored; two leaders sharing a term is a hard failure; otherwise the
+/// leader with the highest term wins.
+pub fn wait_one_leader(want_leader: bool, expected: i32) -> i32 {
+    for _ in 0..WAIT_RETRIES {
+        // SAFETY: called from a lab fiber, which is what the C++ fixture
+        // does too (Fiber::sleep(ELECTIONTIMEOUT/10)).
+        unsafe { raft_fiber_sleep_us(ELECTION_TIMEOUT_US / 10) };
+        let mut leader: i32 = NO_LEADER;
+        let mut most_recent_term: u64 = 0;
+        for entry in lab_entries() {
+            let (is_leader, term, disconnected) = state_of(&entry);
+            if disconnected {
+                continue;
+            }
+            if is_leader {
+                if term == most_recent_term {
+                    return MULTIPLE_LEADERS;
+                } else if term > most_recent_term {
+                    leader = entry.loc_id as i32;
+                    most_recent_term = term;
+                }
+            }
+        }
+        if leader != NO_LEADER {
+            if want_leader && expected >= 0 && leader != expected {
+                return UNEXPECTED_LEADER;
+            }
+            return leader;
+        }
+    }
+    NO_LEADER
+}
+
+pub fn one_leader(expected: i32) -> i32 {
+    wait_one_leader(true, expected)
+}
+
+pub fn no_leader() -> bool {
+    wait_one_leader(false, NO_LEADER) == NO_LEADER
+}
+
+/// Port of RaftTestConfig::OneTerm: the shared term, or -1 as u64 when the
+/// replicas disagree. Note it reads EVERY replica, disconnected included --
+/// that is what the C++ does, and the cases depend on it.
+pub fn one_term() -> u64 {
+    let entries = lab_entries();
+    let Some(first) = entries.first() else {
+        return u64::MAX;
+    };
+    let (_, term, _) = state_of(first);
+    for entry in entries.iter().skip(1) {
+        let (_, cur, _) = state_of(entry);
+        if cur != term {
+            return u64::MAX;
+        }
+    }
+    term
+}
+
+/// Port of RaftTestConfig::TermMovedOn, over the same predicate the C++
+/// uses (`!disconnected && current_term > observed_term`).
+pub fn term_moved_on(term: u64) -> bool {
+    lab_entries().iter().any(|entry| {
+        let (_, cur, disconnected) = state_of(entry);
+        !disconnected && cur > term
+    })
+}
+
 /// Port of the RaftTestConfig constructor: every replica starts with one
 /// unfilled slot, a zero rpc baseline, and connected.
 pub fn reset() {
@@ -125,7 +236,7 @@ pub fn reset() {
     committed.clear();
     last.clear();
     net.explicit.clear();
-    for entry in lab_registry::entries() {
+    for entry in lab_entries() {
         committed.insert(entry.loc_id, vec![MISSING]);
         last.insert(entry.loc_id, 0);
         net.explicit.insert(entry.loc_id, false);
@@ -133,14 +244,6 @@ pub fn reset() {
     net.unreliable = false;
 }
 
-/// Borrow one replica. See lab_registry's module note on why this is sound in
-/// a lab build and nowhere else.
-fn with_server<R>(loc_id: u32, f: impl FnOnce(&mut RaftServerBase) -> R) -> Option<R> {
-    let entry = lab_registry::get(loc_id)?;
-    // SAFETY: the worker owns every registered server for the life of the
-    // suite, and the harness runs on a fiber in that same process.
-    Some(unsafe { f(&mut *entry.server()) })
-}
 
 // ---------------------------------------------------------------------------
 // The apply path.
@@ -180,8 +283,9 @@ fn record_committed(svr: u32, slot: u64, cmd: i32) {
 /// copying app_next_, so replacing the startup placeholder without it is a
 /// data race.
 pub fn set_learner_action() {
-    for entry in lab_registry::entries() {
-        with_server(entry.loc_id, |svr| {
+    for entry in lab_entries() {
+        let Some(e) = lab_get(entry.loc_id) else { continue };
+        with_entry_server(&e, |svr| {
             let mut action: rusty::LearnerAction = Default::default();
             // SAFETY: the kernel copies the callable into the slot; `action`
             // is then handed to reg_learner_action, which copies it again
@@ -205,7 +309,7 @@ pub fn n_committed(index: u64) -> i32 {
     let committed = COMMITTED.lock().unwrap();
     let mut cmd = 0i32;
     let mut n = 0i32;
-    for entry in lab_registry::entries() {
+    for entry in lab_entries() {
         let Some(commands) = committed.get(&entry.loc_id) else { continue };
         let Some(&cur) = commands.get(index as usize) else { continue };
         if cur == MISSING {
@@ -224,15 +328,17 @@ pub fn n_committed(index: u64) -> i32 {
 /// Port of RaftTestConfig::ServerCommitted.
 pub fn server_committed(svr: u32, index: u64, cmd: i32) -> bool {
     let committed = COMMITTED.lock().unwrap();
-    committed.get(&svr)
-        .and_then(|commands| commands.get(index as usize))
-        .is_some_and(|&value| value == cmd)
+    // A match rather than `is_some_and`, which rusty::Option does not have.
+    match committed.get(&svr).and_then(|commands| commands.get(index as usize)) {
+        Some(&value) => value == cmd,
+        None => false,
+    }
 }
 
 /// The value any replica has at `index`, which is what Wait returns.
 fn any_committed_value(index: u64) -> Option<i32> {
     let committed = COMMITTED.lock().unwrap();
-    for entry in lab_registry::entries() {
+    for entry in lab_entries() {
         if let Some(&value) = committed.get(&entry.loc_id)
             .and_then(|commands| commands.get(index as usize))
         {
@@ -251,13 +357,13 @@ fn any_committed_value(index: u64) -> Option<i32> {
 pub fn start(svr: u32, cmd: i32) -> (bool, u64, u64) {
     let mut index: u64 = 0;
     let mut term: u64 = 0;
-    let appended = with_server(svr, |server| {
+    let appended = lab_get(svr).map(|e| with_entry_server(&e, |server| {
         let mut command: rusty::RaftCommand = Default::default();
         // SAFETY: the kernel constructs a janus::Command into the slot; the
         // Drop impl registered for RaftCommand frees it at end of scope.
         unsafe { raft_lab_make_commit_command(cmd as i64, &raw mut command) };
         server.Start(&command, &raw mut index, &raw mut term) == RaftStartResult::APPENDED
-    });
+    }));
     (appended.unwrap_or(false), index, term)
 }
 
@@ -281,7 +387,7 @@ pub fn wait(index: u64, n: i32, term: u64) -> i64 {
         if to < 1_000_000 {
             to *= 2;
         }
-        if lab_cluster::term_moved_on(term) {
+        if term_moved_on(term) {
             return WAIT_TERM_MOVED;
         }
         i += 1;
@@ -303,8 +409,8 @@ pub fn do_agreement(cmd: i32, n: i32, retry: bool) -> u64 {
         let mut ldr = NO_SERVER;
         let mut index: u64 = 0;
         let mut term: u64 = 0;
-        for entry in lab_registry::entries() {
-            if with_server(entry.loc_id, |s| s.IsDisconnected()).unwrap_or(true) {
+        for entry in lab_entries() {
+            if lab_get(entry.loc_id).map(|e| with_entry_server(&e, |s| s.IsDisconnected())).unwrap_or(true) {
                 continue;
             }
             let (ok, i, t) = start(entry.loc_id, cmd);
@@ -322,15 +428,15 @@ pub fn do_agreement(cmd: i32, n: i32, retry: bool) -> u64 {
             std::time::Instant::now() + std::time::Duration::from_secs(10);
         while std::time::Instant::now() < inner_deadline {
             if retry {
-                if lab_cluster::term_moved_on(term) {
+                if term_moved_on(term) {
                     break;
                 }
-                let state = with_server(ldr, |s| {
+                let state = lab_get(ldr).map(|e| with_entry_server(&e, |s| {
                     let mut is_leader = false;
                     let mut cur_term: u64 = 0;
                     s.GetState(&raw mut is_leader, &raw mut cur_term);
                     (s.IsDisconnected(), is_leader, cur_term)
-                });
+                }));
                 let Some((disconnected, is_leader, cur_term)) = state else { break };
                 if wait_leader_is_invalid(disconnected, is_leader, cur_term, term) {
                     break;
@@ -388,7 +494,7 @@ pub fn n_disconnected() -> i32 {
 /// links that Disconnect() did not own. `ignore` means "it is not an error if
 /// the link is already in this state", which is every call the loop makes.
 fn set_link(svr: u32, up: bool, ignore: bool) {
-    let applied = with_server(svr, |s| {
+    let applied = lab_get(svr).map(|e| with_entry_server(&e, |s| {
         if up && s.IsDisconnected() {
             s.Reconnect();
             true
@@ -400,9 +506,10 @@ fn set_link(svr: u32, up: bool, ignore: bool) {
         } else {
             false
         }
-    });
+    }));
     if !ignore && applied == Some(false) {
-        panic!("link for replica {svr} was already {}", if up { "up" } else { "down" });
+        let state = if up { "up" } else { "down" };
+        panic!("link for replica {} was already {}", svr, state);
     }
 }
 
@@ -449,7 +556,7 @@ fn netctl_loop() {
             continue;
         }
         net.unreliable_active = true;
-        for entry in lab_registry::entries() {
+        for entry in lab_entries() {
             let svr = entry.loc_id;
             // skip a replica the case itself disconnected
             if net.explicit.get(&svr).copied().unwrap_or(false) {
@@ -481,7 +588,7 @@ fn netctl_loop() {
 }
 
 fn restore_links(net: &NetCtl) {
-    for entry in lab_registry::entries() {
+    for entry in lab_entries() {
         if !net.explicit.get(&entry.loc_id).copied().unwrap_or(false) {
             set_link(entry.loc_id, true, true);
         }
@@ -517,8 +624,10 @@ pub fn shutdown() {
     for svr in still_down {
         reconnect(svr);
     }
-    for entry in lab_registry::entries() {
-        with_server(entry.loc_id, |s| s.PrepareForShutdown());
+    for entry in lab_entries() {
+        if let Some(e) = lab_get(entry.loc_id) {
+            with_entry_server(&e, |s| s.PrepareForShutdown());
+        }
     }
 }
 
@@ -541,7 +650,7 @@ pub fn rpc_count(svr: u32, reset: bool) -> u64 {
 
 pub fn rpc_total() -> u64 {
     // SAFETY: as in rpc_count above.
-    lab_registry::entries().iter()
+    lab_entries().iter()
         .map(|e| unsafe { raft_lab_frame_rpc_count(e.loc_id) })
         .sum()
 }
@@ -570,17 +679,17 @@ pub fn byte_string(text: &str) -> rusty::RaftByteString {
 // two along from the leader" without ambiguity.
 
 pub fn server_id_by_index(index: usize) -> u32 {
-    lab_registry::entries().get(index).map_or(NO_SERVER, |e| e.loc_id)
+    lab_entries().get(index).map_or(NO_SERVER, |e| e.loc_id)
 }
 
 pub fn map_server_id(server_id: u32) -> usize {
-    lab_registry::entries().iter()
+    lab_entries().iter()
         .position(|e| e.loc_id == server_id)
         .unwrap_or(0)
 }
 
 pub fn next_server_id(current: u32, offset: i32) -> u32 {
-    let entries = lab_registry::entries();
+    let entries = lab_entries();
     let Some(current_index) = entries.iter().position(|e| e.loc_id == current) else {
         return current;
     };
@@ -589,29 +698,6 @@ pub fn next_server_id(current: u32, offset: i32) -> u32 {
     entries[new_index as usize].loc_id
 }
 
-// ---------------------------------------------------------------------------
-// Invariant readers, forwarded to lab_cluster so there is one implementation
-// of each.
-
-pub fn one_leader(expected: i32) -> i32 { lab_cluster::one_leader(expected) }
-pub fn no_leader() -> bool { lab_cluster::no_leader() }
-pub fn one_term() -> u64 { lab_cluster::one_term() }
-pub fn term_moved_on(term: u64) -> bool { lab_cluster::term_moved_on(term) }
 
 /// The C++ spells "servers disagree" as `term != -1` on a uint64_t.
 pub const TERM_DISAGREE: u64 = u64::MAX;
-
-// ---------------------------------------------------------------------------
-// The entry point the C++ lab fiber calls after its own suite has finished.
-
-/// Runs the Rust suite. 0 on success, 1 on failure -- the same verdict shape
-/// RaftLabTest::Run returns, so frame.cc can require both.
-#[unsafe(no_mangle)]
-pub extern "C" fn raft_lab_rust_run() -> i32 {
-    reset();
-    set_learner_action();
-    start_netctl();
-    let verdict = crate::lab_cases::run();
-    shutdown();
-    verdict
-}

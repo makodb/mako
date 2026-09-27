@@ -6,6 +6,7 @@
 #include "../tpc_command.h"
 #include "../view.h"
 #include "commo.h"
+#include "raft_kernel_pods.h"   // kernel result PODs, global C declarations
 #include <deque>
 #include <exception>
 #include <condition_variable>
@@ -460,81 +461,10 @@ extern "C" bool raft_election_debug_enabled();
 //     -- ReplicationWakeGate holds AtomicBools and so has no move constructor.
 
 // ============================================================================
-// KERNEL RESULT PODS. The three values kernels return BY VALUE -- the
-// election-timeout knobs, one campaign's quorum snapshot, one AppendEntries
-// reply's fields -- #[repr(C)] and scalar, so both worlds agree on the layout.
-// They are in a block of their own because both worlds must see them: the
-// kernels define and return them, and Rust names them as return types.
+// KERNEL RESULT PODS -- the three values kernels return by value -- are C
+// declarations now, in raft_kernel_pods.h (included at the top of this file),
+// owned by the canonical src/server_pods_h.rs.
 // ============================================================================
-#if RUSTYCPP_RUST
-// The election-timeout configuration, as one value. Every field is an
-// environment override with a compiled-in default, read afresh on each call
-// exactly as the four separate getters were.
-#[repr(C)]
-pub struct RaftElectionTimeouts {
-    pub grace_period_us_: u64,
-    pub preferred_us_: u64,
-    pub non_preferred_grace_us_: u64,
-    pub non_preferred_steady_us_: u64,
-}
-
-#[repr(C)]
-pub struct RaftVoteOutcome {
-    pub term_: i64,
-    pub yes_: bool,
-    pub no_: bool,
-    pub n_voted_yes_: i32,
-    pub n_voted_no_: i32,
-    pub timeouted_: bool,
-}
-
-// One AppendEntries reply, read out of the wire response by
-// raft_append_response_read for heartbeat phase 2 (server.cc).
-#[repr(C)]
-pub struct AppendRespView {
-    pub completed_: bool,
-    pub status_: bool,
-    pub term_: u64,
-    pub last_log_index_: u64,
-}
-#endif
-/*RUSTYCPP:GEN-BEGIN id=raft_server.kernel_result_pods version=1 rust_sha256=728e459353345b29d96ebb9440a0d358f6478a753a0efdf2b6064db53f1300ff*/
-struct RaftElectionTimeouts;
-struct RaftVoteOutcome;
-struct AppendRespView;
-
-struct RaftElectionTimeouts {
-    uint64_t grace_period_us_;
-    uint64_t preferred_us_;
-    uint64_t non_preferred_grace_us_;
-    uint64_t non_preferred_steady_us_;
-    // Rust derives Send/Sync from the field types; C++ cannot see them.
-    static constexpr bool is_send = true;
-    static constexpr bool is_sync = true;
-};
-
-struct RaftVoteOutcome {
-    int64_t term_;
-    bool yes_;
-    bool no_;
-    int32_t n_voted_yes_;
-    int32_t n_voted_no_;
-    bool timeouted_;
-    // Rust derives Send/Sync from the field types; C++ cannot see them.
-    static constexpr bool is_send = true;
-    static constexpr bool is_sync = true;
-};
-
-struct AppendRespView {
-    bool completed_;
-    bool status_;
-    uint64_t term_;
-    uint64_t last_log_index_;
-    // Rust derives Send/Sync from the field types; C++ cannot see them.
-    static constexpr bool is_send = true;
-    static constexpr bool is_sync = true;
-};
-/*RUSTYCPP:GEN-END id=raft_server.kernel_result_pods*/
 
 
 
