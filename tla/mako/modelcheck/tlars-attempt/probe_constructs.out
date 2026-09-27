@@ -1,0 +1,27 @@
+forall|i: int| 0 <= i < 3 ==> #[trigger] (i + 0) >= 0                       => Error: × Parse error: Expected identifier, found '#' 
+forall|i: int| #![trigger (i + 0)] 0 <= i < 3 ==> (i + 0) >= 0              => result: ok
+let q = seq![7int]; q.len() == 1                                            => result: invariant_violated
+let q = Seq::<int>::empty(); q.len() == 0                                   => result: invariant_violated
+let q = seq![7int]; q.len() as int == 1                                     => result: ok
+let q = seq![1int, 2int]; q.last() == 2                                     => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Unsupported pattern: Model-check evaluator does not support `method call │ `.last(...)``. 
+let q = seq![1int, 2int]; q.drop_last() == seq![1int]                       => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Unsupported pattern: Model-check evaluator does not support `method call │ `.drop_last(...)``. 
+let q = seq![1int, 2int]; q.drop_first() == seq![2int]                      => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Unsupported pattern: Model-check evaluator does not support `method call │ `.drop_first(...)``. 
+let q = seq![1int, 2int]; q.take(1) == seq![1int]                           => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Unsupported pattern: Model-check evaluator does not support `method call │ `.take(...)``. 
+let q = seq![1int, 2int]; q.update(0, 5) == seq![5int, 2int]                => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Unsupported pattern: Model-check evaluator does not support `method call │ `.update(...)``. 
+let q = seq![1int, 2int]; q.no_duplicates()                                 => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Unsupported pattern: Model-check evaluator does not support `method call │ `.no_duplicates(...)``. 
+seq![1int] + seq![2int] == seq![1int, 2int]                                 => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Configuration error: Model-check evaluator error: Evaluator addition lhs │ expects numeric value, got `seq:[in
+Seq::new(2, |i: int| 0int) == seq![0int, 0int]                              => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Configuration error: Model-check evaluator error: Closure expressions │ (|...| ...) are not directly evaluable
+let q = seq![1int, 2int]; q.filter(|v: int| v > 1) == seq![2int]            => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Configuration error: Model-check evaluator error: Closure expressions │ (|...| ...) are not directly evaluable
+let t = set![1int, 2int]; t.filter(|v: int| v > 1) == set![2int]            => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Configuration error: Model-check evaluator error: Closure expressions │ (|...| ...) are not directly evaluable
+Set::<int>::empty().is_empty()                                              => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Unsupported pattern: Model-check evaluator does not support `method call │ `.is_empty(...)``. 
+let m = map![1int => 2int]; m.map_entries(|k: int, v: int| v + 1) == map![1int => 3int] => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Configuration error: Model-check evaluator error: Closure expressions │ (|...| ...) are not directly evaluable
+let m = map![1int => 2int]; m.filter_keys(|k: int| k > 0) == m              => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Configuration error: Model-check evaluator error: Closure expressions │ (|...| ...) are not directly evaluable
+let m = map![1int => 2int]; m.union_prefer_right(map![1int => 3int]) == map![1int => 3int] => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Unsupported pattern: Model-check evaluator does not support `method call │ `.union_prefer_right(...)``. 
+let m = map![1int => 2int]; m.remove_keys(set![1int]) == Map::<int, int>::empty() => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Unsupported pattern: Model-check evaluator does not support `method call │ `.remove_keys(...)``. 
+Map::new(set![1int], |k: int| k + 1) == map![1int => 2int]                  => result: ok
+(Entry::Log { txn: 1, epoch: 0, clock: 2 })->Log_clock == 2                 => Error: × Configuration error: Failed to evaluate invariant `Inv` on reached state: │ Configuration error: Model-check evaluator error: Field access │ `.Log_clock` is not valid for │ `enum:Entry
+(Entry::Log { txn: 1, epoch: 0, clock: 2 })->clock == 2                     => result: ok
+(Wm::Fin(3))->0 == 3                                                        => Error: × Parse error: Expected identifier, found '0' 
+(Entry::Inf { epoch: 1 }) is Inf                                            => result: ok
+rec(3) == 3                                                                 => result: ok
+(choose|i: int| 0 <= i && i < 2 && i == 1) == 1                             => result: ok
