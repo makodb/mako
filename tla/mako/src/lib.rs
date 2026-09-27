@@ -13,4 +13,6 @@ pub mod stream_lemmas;
 pub mod proofs_basic;
 pub mod proofs_normal1;
 pub mod proofs_prepare;
+pub mod history;
+pub mod proofs_stable;
 
