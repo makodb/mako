@@ -6,7 +6,8 @@
 #include "../tpc_command.h"
 #include "../view.h"
 #include "commo.h"
-#include "raft_kernel_pods.h"   // kernel result PODs, global C declarations
+#include "raft_kernel_pods.h"
+#include "snapshot_callbacks.h"   // PreparedStateMachineSnapshotInstall   // kernel result PODs, global C declarations
 #include <deque>
 #include <exception>
 #include <condition_variable>
@@ -68,19 +69,7 @@ import rusty;   // rusty::Vec is a vec_port C++20 module, not a header
 
 namespace janus {
 
-// PreparedStateMachineSnapshotInstall is an owned, abort-on-destruction
-// transaction. Prepare callbacks must fully validate and durably stage an
-// incoming state-machine image without changing the live state machine.
-// Commit() may publish the staged image only after Raft has durably published
-// the matching snapshot bytes.
-// @unsafe - Abstract C++ ownership boundary for filesystem-backed state machines.
-class PreparedStateMachineSnapshotInstall {
- public:
-  virtual ~PreparedStateMachineSnapshotInstall() = default;
-
-  // @unsafe - Atomically publishes the already-validated staged image.
-  virtual bool Commit() = 0;
-};
+// PreparedStateMachineSnapshotInstall: raft/snapshot_callbacks.h.
 
 #define INVALID_SITEID  ((siteid_t)-1)
 
@@ -329,10 +318,8 @@ using RaftAsyncCallbackLifetimePtr =
     ::std::shared_ptr<::janus::AsyncCallbackLifetime>;
 using RaftSnapshotManagerPtr =
     ::std::shared_ptr<::janus::raft::SnapshotManager>;
-using RaftCreateSnapshotCb = ::std::function<::std::string(uint64_t)>;
-using RaftPrepareSnapshotCb = ::std::function<
-    ::std::unique_ptr<::janus::PreparedStateMachineSnapshotInstall>(
-        const ::std::string&, uint64_t)>;
+// RaftCreateSnapshotCb and RaftPrepareSnapshotCb are aliased in scheduler.h,
+// where RaftSpecific names them; their layout pins stay below.
 using RaftStdMutex = ::std::mutex;
 using RaftStdThread = ::std::thread;
 using RaftVoteQuorumPtr = ::std::shared_ptr<::janus::RaftVoteQuorumEvent>;
@@ -528,6 +515,7 @@ class RaftServer : public RaftSpecific {
   void ServeVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted) override { raft_server_serve_vote(impl_, lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted); }
   void ServeAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index) override { raft_server_serve_append_entries(impl_, leader_current_term, leader_site_id, leader_prev_log_index, leader_prev_log_term, leader_commit_index, &cmd, leader_next_log_term, follower_append_ok, follower_current_term, follower_last_log_index); }
   void ServeInstallSnapshot(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString& data, uint64_t* term_out) override { raft_server_serve_install_snapshot(impl_, term, leader_id, last_included_index, last_included_term, &data, term_out); }
+  uint64_t SetStateMachineSnapshotCallbacks(const rusty::RaftCreateSnapshotCb& create_cb, const rusty::RaftPrepareSnapshotCb& prepare_cb) override { return raft_server_set_state_machine_snapshot_callbacks(impl_, &create_cb, &prepare_cb); }
 
   // The Rust object itself, for the one caller that must hand it to
   // Rust rather than forward a method: the Rust lane's transport binds

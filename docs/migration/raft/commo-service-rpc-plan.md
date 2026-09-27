@@ -98,8 +98,8 @@ that assumed a single lane are superseded here and marked where they stand:
 | L3 cpp lane linked and run | done -- RaftLabTest 25/25, 4 Raft + 3 Paxos suites pass, paired trial shows no difference | this commit |
 | L4 lane honesty | done -- exactly-once on every lane, core parity on hybrid, both in the build | this commit |
 | D1-D4 | D1 nothing left to delete (dead snapshot send removed), D2 by design, D3 nothing to collapse (all 31 exports used), D4 done | this commit |
-| N0 snapshot-capable raft_bench (arm A; follower records, wire counters, stall mode) | next | -- |
-| N1 target design: Rust store behind the opaque carrier | next | -- |
+| N0 snapshot-capable raft_bench (arm A; follower records, wire counters, stall mode) | done -- snapshots on: 15 per 30 s run on rust and hybrid, clean logs; stall: 1 install from 3-6 RPCs, catch-up 23-24 ms, no leadership change; snapshots off: 25 pairs vs pre-N0, p50 -0.19% (p=0.42), p99 +0.14% (p=1.0) | this commit |
+| N1 target design: Rust store behind the opaque carrier | done -- recorded in "Target architecture" | this commit |
 | N2 format: raw bytes, no SnapshotFormat port | next | -- |
 | N3 SnapshotStore in rt/src/snapshot.rs (buffer reuse) | next | -- |
 | N4 kernels: store accessors to SEAM, order stays HOST, probe fixed, guard last | next | -- |
@@ -265,8 +265,9 @@ than a citation, the text says so.
                    server_exports.h + the RaftServer shim (server.h)
 
    HOST, C++ in BOTH lanes (server_host.cc; the permitted "low-level things"):
-     the embedder edge (RaftWorker / ServerWorker), snapshot storage backends
-     (SnapshotManager, rocksdb), YAML config and site lookup, raft_catch
+     the embedder edge (RaftWorker / ServerWorker), snapshot storage on the
+     C++ lanes (SnapshotManager; the Rust lane's store is raft-rt, Phase N),
+     rocksdb, YAML config and site lookup, raft_catch
      around Mako's callbacks, the one payload <-> janus::Command conversion
      at the apply edge (see M2).
 ```
@@ -312,6 +313,39 @@ rustc code to transpiled code.
   crates, `raft-rt` itself could be transpiled and `commo.cc`/`service.cc`
   would become the same source too. That is upstream transpiler work, and
   nothing here depends on it.
+- **The snapshot store (Phase N, revision 7).** On the Rust lane the store
+  is Rust: `SnapshotStore` in `raft-rt` (`rt/src/snapshot.rs`), one slot
+  holding the latest `(index, term, bytes)` image. The hybrid and cpp lanes
+  keep the C++ `MemorySnapshotManager` (`snapshot_manager.hpp`,
+  `memory_snapshot_manager.hpp`) unchanged, by the user's decision, and the
+  cpp lane needs no transpiled snapshot code.
+  - *How the core holds it.* Through the existing opaque 16-byte
+    `rusty::RaftSnapshotManagerPtr` field (`snapshot_manager_`). On hybrid
+    and cpp the carrier is a `shared_ptr<SnapshotManager>`. On the Rust lane
+    word 0 is a raw `Arc<SnapshotStore>` and word 1 is 0; all-zero is "no
+    store", like a null `shared_ptr`. This is the device `RaftVoteQuorumPtr`
+    already uses. The store's accessors are SEAM kernels: C++ bodies in
+    `snapshot_seam_cpp.cc` for hybrid/cpp, Rust bodies in `rt/src/snapshot.rs`
+    for the Rust lane, with the same names, so the core's externs do not
+    change.
+  - *What stays C++ at Mako's edge.* The embedder's create/prepare callbacks
+    (`std::function`), `PreparedStateMachineSnapshotInstall`, the
+    `raft_catch` wrappers, and the Prepare → save → Commit order in the two
+    HOST kernels. They belong to the embedder, not the store; only the "save"
+    line in each becomes a SEAM call.
+  - *The format is the state machine's bytes, verbatim, on every lane*
+    (N2). A mixed-lane cluster ships raw `data` in InstallSnapshot, so a Rust
+    store that framed it would break a C++ follower's `prepare_cb`.
+  - *The guard.* Under `MAKO_RAFT_LANE_RUST`, `server.h` aliases the carrier
+    to an opaque, copy-deleted struct instead of `shared_ptr<SnapshotManager>`,
+    so HOST C++ that dereferenced it on the Rust lane fails to compile rather
+    than treating an `Arc` as a `shared_ptr`.
+  - *Rejected:* a `dyn` store trait in the core (raft-rt depends on the
+    core, not the reverse; the transpiler walks every core file, so the cpp
+    lane would need a C++ implementation; and core parity allows no per-lane
+    import delta), and an `Arc<dyn Trait>` in the carrier (rebuilding a fat
+    pointer from two words depends on unstable metadata layout; a second
+    backend, if ever needed, is an `enum` inside the one `Arc`).
 
 ### What was measured before writing this (pinned rusty-cpp `1689f438`)
 
@@ -811,7 +845,7 @@ put the data in raft-rt, fold what can be folded (`has_latest` into `latest`,
 N4), and make every access that remains a SEAM call from Rust into Rust on the
 Rust lane.
 
-- [ ] **N0. A snapshot-capable `raft_bench`, landed before any conversion
+- [x] **N0. A snapshot-capable `raft_bench`, landed before any conversion
   (prerequisite for N12).**
   - **Why it comes first.**
     - Production never registers snapshot callbacks. Every caller of
@@ -945,7 +979,7 @@ Rust lane.
       `PAYLOAD=4096 RATE=240 MAXOUT=4096 DUR=8 scripts/raft_perf/paired_trial.sh raft_perf_output/n0 25 build_rust_pre build_rust_n0`
     - The N0 commit hash is recorded in the status table. It is arm A for N12.
 
-- [ ] **N1. Target design: a Rust `SnapshotStore` in raft-rt, held by the
+- [x] **N1. Target design: a Rust `SnapshotStore` in raft-rt, held by the
   shared core through the existing opaque carrier.** *(Design record only.
   The compile-time guard it describes lands as the last commit of N4; it
   cannot build until every HOST dereference has moved.)*

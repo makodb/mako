@@ -20,7 +20,8 @@ RS = str(pathlib.Path(__file__).resolve().parent.parent /
 INTERFACE = ['set_site_identity', 'set_commo', 'reg_learner_action', 'EnsureSetup', 'WaitForStartup',
              'PrepareForShutdown', 'IsLeader', 'GetLeaderHint', 'SetPreferredLeader',
              'RegisterLeaderChangeCallback', 'IsRpcReady', 'SiteId', 'PartitionId',
-             'CommitIndex', 'Start', 'ServeVote', 'ServeAppendEntries', 'ServeInstallSnapshot']
+             'CommitIndex', 'Start', 'ServeVote', 'ServeAppendEntries', 'ServeInstallSnapshot',
+             'SetStateMachineSnapshotCallbacks']
 KERNEL_CALLED = ['ApplyThreadLoop', 'BindReplicationWakeOwner', 'FailStop', 'InitializeSnapshotManagerLocked',
                  'InstallSnapshotReplyAccepted', 'OnInstallSnapshotLocked', 'SetupInternal', 'StartElectionTimer']
 
@@ -151,7 +152,7 @@ LIFECYCLE_RS = '''// --- Lifetime. Rust allocates and frees: the struct is a Box
 /// The returned pointer is owned by the caller until raft_server_delete.
 #[no_mangle]
 pub unsafe extern "C" fn raft_server_new() -> *mut RaftServerBase {
-    let s: *mut RaftServerBase = rusty::Box::into_raw(rusty::Box::new(RaftServerBase::new()));
+    let s: *mut RaftServerBase = Box::into_raw(Box::new(RaftServerBase::new()));
     (*s).ConstructRuntime();
     s
 }
@@ -166,7 +167,7 @@ pub unsafe extern "C" fn raft_server_delete(s: *mut RaftServerBase) {
     // key is released in the same function that frees what it keys on, and
     // while the pointer is still live: Shutdown reaches no kernel that
     // resolves the communicator.
-    raft_unbind_commo(s);
+    raft_unbind_commo(s as *mut RaftServerHandle);
     drop(rusty::Box::from_raw(s));
 }'''
 LOOPS_RS = '''// --- The two fiber loops, entered from the spawn kernels.

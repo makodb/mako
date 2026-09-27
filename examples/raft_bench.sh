@@ -44,6 +44,11 @@ OUT_PATH=""
 LOG_DIR=""
 KEEP_LOGS=0
 KILL_LEADER_AT_SEC=0
+SNAPSHOT_BYTES=0
+STALL_AT_SEC=0
+STALL_FOR_SEC=0
+BUILD_DIR_P1=""
+BUILD_DIR_P2=""
 
 usage() {
     cat <<'EOF'
@@ -74,7 +79,18 @@ Usage: examples/raft_bench.sh --out <record.json> [options]
                           surviving replica still reports a clean log. This
                           produces NO measurement record — it is a correctness
                           test, not a performance point.
+  --snapshot-bytes B      register raft_bench's snapshot state machine with
+                          B-byte images (0 = none). Snapshots then run when
+                          MAKO_RAFT_SNAPSHOTS=1; the run fails unless every
+                          partition took at least 10.
+  --stall-follower-at-sec S  SIGSTOP one follower S seconds into the load...
+  --stall-for-sec D       ...for D seconds (at most 4: longer lets it campaign
+                          on SIGCONT), then SIGCONT it, and require that it
+                          received an InstallSnapshot RPC, caught up, and that
+                          leadership never moved.
   --build-dir DIR         default: $BUILD_DIR or "build"
+  --build-dir-p1 DIR      build tree for replica p1 (mixed-lane runs)
+  --build-dir-p2 DIR      build tree for replica p2 (mixed-lane runs)
   --help
 EOF
 }
@@ -98,6 +114,11 @@ while [[ $# -gt 0 ]]; do
         --keep-logs)       KEEP_LOGS=1; shift ;;
         --kill-leader-at-sec) KILL_LEADER_AT_SEC="$2"; shift 2 ;;
         --build-dir)       BUILD_DIR="$2"; shift 2 ;;
+        --build-dir-p1)    BUILD_DIR_P1="$2"; shift 2 ;;
+        --build-dir-p2)    BUILD_DIR_P2="$2"; shift 2 ;;
+        --snapshot-bytes)  SNAPSHOT_BYTES="$2"; shift 2 ;;
+        --stall-follower-at-sec) STALL_AT_SEC="$2"; shift 2 ;;
+        --stall-for-sec)   STALL_FOR_SEC="$2"; shift 2 ;;
         --help|-h)         usage; exit 0 ;;
         *) echo "raft_bench.sh: unknown argument '$1'" >&2; usage >&2; exit 2 ;;
     esac
@@ -130,17 +151,45 @@ check_number --max-outstanding "$MAX_OUTSTANDING"
 check_number --leader-wait-sec "$LEADER_WAIT_SEC"
 check_number --log-level "$LOG_LEVEL"
 check_number --kill-leader-at-sec "$KILL_LEADER_AT_SEC"
+check_number --snapshot-bytes "$SNAPSHOT_BYTES"
+check_number --stall-follower-at-sec "$STALL_AT_SEC"
+check_number --stall-for-sec "$STALL_FOR_SEC"
+STALL_MODE=0
+if awk -v s="$STALL_AT_SEC" 'BEGIN { exit !(s > 0) }'; then
+    STALL_MODE=1
+    if ! awk -v d="$STALL_FOR_SEC" 'BEGIN { exit !(d > 0 && d <= 4) }'; then
+        echo "raft_bench.sh: --stall-for-sec must be in (0, 4] with --stall-follower-at-sec" >&2
+        exit 2
+    fi
+fi
+SNAPSHOTS_ON=0
+if [ "${MAKO_RAFT_SNAPSHOTS:-}" = "1" ] && awk -v b="$SNAPSHOT_BYTES" 'BEGIN { exit !(b > 0) }'; then
+    SNAPSHOTS_ON=1
+fi
 case "$GROUP_MODE" in
     single|multi) ;;
     *) echo "raft_bench.sh: --group-mode must be single or multi (got '$GROUP_MODE')" >&2; exit 2 ;;
 esac
 
 BENCH_BIN="${REPO_ROOT}/${BUILD_DIR}/raft_bench"
-if [ ! -x "$BENCH_BIN" ]; then
-    echo "raft_bench.sh: $BENCH_BIN not found. Build it with:" >&2
-    echo "    ninja -C ${BUILD_DIR} raft_bench" >&2
-    exit 2
-fi
+# Per-replica binaries: the leader (localhost) always uses BUILD_DIR; p1 and
+# p2 may come from other trees, for mixed-lane clusters.
+bin_for() {
+    local dir="$BUILD_DIR"
+    case "$1" in
+        p1) [ -n "$BUILD_DIR_P1" ] && dir="$BUILD_DIR_P1" ;;
+        p2) [ -n "$BUILD_DIR_P2" ] && dir="$BUILD_DIR_P2" ;;
+    esac
+    echo "${REPO_ROOT}/${dir}/raft_bench"
+}
+for _proc in localhost p1 p2; do
+    _bin="$(bin_for "$_proc")"
+    if [ ! -x "$_bin" ]; then
+        echo "raft_bench.sh: $_bin not found. Build it with:" >&2
+        echo "    ninja -C $(dirname "$_bin") raft_bench" >&2
+        exit 2
+    fi
+done
 
 SRC_CONFIG="${REPO_ROOT}/config/1leader_2followers/raft${PARTITIONS}_shardidx0.yml"
 if [ ! -f "$SRC_CONFIG" ]; then
@@ -162,6 +211,9 @@ fi
 # path on every host. Derive it rather than hardcoding a home directory.
 # ---------------------------------------------------------------------------
 export LD_LIBRARY_PATH="${REPO_ROOT}/${BUILD_DIR}:${REPO_ROOT}/${BUILD_DIR}/third-party/yaml-cpp${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+for _d in "$BUILD_DIR_P1" "$BUILD_DIR_P2"; do
+    [ -n "$_d" ] && export LD_LIBRARY_PATH="${LD_LIBRARY_PATH}:${REPO_ROOT}/${_d}:${REPO_ROOT}/${_d}/third-party/yaml-cpp"
+done
 # CMAKE_PREFIX_PATH is a CMake LIST: it may hold several prefixes separated by
 # ';'. Splitting matters — an unsplit "/opt/a;/opt/b" makes every candidate a
 # nonexistent directory, nothing is added to the loader path, and the three
@@ -237,6 +289,9 @@ cleanup() {
     # The flap watcher sleeps; leaving it alive would let it SIGKILL a pid this
     # run no longer owns after the pid has been recycled.
     [ -n "${WATCHER_PID:-}" ] && kill -9 "$WATCHER_PID" 2>/dev/null
+    # The stall watcher too: an orphaned one would SIGSTOP whatever process
+    # later reuses the pid it recorded.
+    [ -n "${STALL_WATCHER_PID:-}" ] && kill -9 "$STALL_WATCHER_PID" 2>/dev/null
     for pid in "${PIDS[@]:-}"; do
         [ -n "$pid" ] && kill -TERM "$pid" 2>/dev/null
     done
@@ -265,8 +320,27 @@ run_one() {
     # the caller records is the driver's own pid. Without it $! names a shell
     # that merely waits, and the timeout path's kill would leave the real
     # process running while the script believed it had cleaned up.
-    exec "$BENCH_BIN" \
+    local bin extra=()
+    bin="$(bin_for "$proc")"
+    # The phase-N0 flags go only to a binary that knows them, so a pre-N0
+    # build still runs under this launcher (the N0 disabled-path comparison).
+    local help_text
+    help_text="$("$bin" --help 2>&1 || true)"   # --help may exit non-zero
+    if grep -q -- '--side-out' <<< "$help_text"; then
+        extra+=(--side-out "${RECORD_DIR}/${proc}.side.json")
+        if awk -v b="$SNAPSHOT_BYTES" 'BEGIN { exit !(b > 0) }'; then
+            extra+=(--snapshot-bytes "$SNAPSHOT_BYTES")
+        fi
+        if [ "$STALL_MODE" -eq 1 ]; then
+            extra+=(--catchup-dir "$RECORD_DIR")
+        fi
+    elif awk -v b="$SNAPSHOT_BYTES" 'BEGIN { exit !(b > 0) }' || [ "$STALL_MODE" -eq 1 ]; then
+        echo "raft_bench.sh: $bin predates --snapshot-bytes/--stall; cannot run this mode" >&2
+        exit 2
+    fi
+    exec "$bin" \
         --proc "$proc" \
+        "${extra[@]}" \
         --config "$TOPOLOGY_CONFIG" \
         --config "$MODE_CONFIG" \
         --partitions "$PARTITIONS" \
@@ -346,6 +420,52 @@ if awk -v s="$KILL_LEADER_AT_SEC" 'BEGIN { exit !(s > 0) }'; then
         exit 1
     ) &
     WATCHER_PID=$!
+fi
+
+# ---------------------------------------------------------------------------
+# Follower stall (--stall-follower-at-sec S --stall-for-sec D), phase N0.
+#
+# Once the leader announces it is offering load, wait S seconds, SIGSTOP one
+# follower for D seconds, then SIGCONT it. With snapshots on and the interval
+# sized below the entries applied during D, the leader compacts past the
+# stalled follower, which can then only catch up through InstallSnapshot.
+# After SIGCONT the watcher writes "<proc> <ms>" to stall.txt and sends the
+# leader SIGUSR1; the leader writes its last_seq values and the follower
+# reports catchup_ms (raft_bench.cc, follower_catchup_watcher).
+# ---------------------------------------------------------------------------
+STALLED_MARKER="${RECORD_DIR}/stalled_follower"
+STALL_WATCHER_PID=""
+if [ "$STALL_MODE" -eq 1 ]; then
+    (
+        watch_deadline=$((SECONDS + BUDGET))
+        while [ "$SECONDS" -lt "$watch_deadline" ]; do
+            for idx in "${!PROCS[@]}"; do
+                if grep -q 'leader; offering load' "${LOG_DIR}/${PROCS[$idx]}.log" 2>/dev/null; then
+                    leader_pid="${PIDS[$idx]}"
+                    victim_idx=""
+                    for j in "${!PROCS[@]}"; do
+                        [ "$j" = "$idx" ] && continue
+                        victim_idx="$j"
+                        break
+                    done
+                    sleep "$STALL_AT_SEC"
+                    victim="${PROCS[$victim_idx]}"
+                    echo "$victim ${PIDS[$victim_idx]}" > "$STALLED_MARKER"
+                    echo "raft_bench: stalling follower $victim (pid ${PIDS[$victim_idx]}) for ${STALL_FOR_SEC}s"
+                    kill -STOP "${PIDS[$victim_idx]}" 2>/dev/null
+                    sleep "$STALL_FOR_SEC"
+                    kill -CONT "${PIDS[$victim_idx]}" 2>/dev/null
+                    echo "$victim $(( $(date +%s%N) / 1000000 ))" > "${RECORD_DIR}/stall.txt"
+                    kill -USR1 "$leader_pid" 2>/dev/null
+                    exit 0
+                fi
+            done
+            sleep 0.2
+        done
+        echo "raft_bench: stall watcher timed out; nobody announced leadership" >&2
+        exit 1
+    ) &
+    STALL_WATCHER_PID=$!
 fi
 
 echo "raft_bench: waiting up to ${BUDGET}s"
@@ -488,6 +608,26 @@ fi
 
 mkdir -p "$(dirname "$OUT_PATH")"
 cp "$RECORD" "$OUT_PATH"
+# Merge every other replica's side record into the leader's, as flat
+# "<proc>_<field>" keys ("Flat, no nesting", see raft_bench.cc's Record).
+LEADER_PROC="$(basename "$RECORD" .json)"
+python3 - "$OUT_PATH" "$RECORD_DIR" "$LEADER_PROC" "$STALL_MODE" <<'PYMERGE' || { echo "raft_bench: side-record merge failed" >&2; exit 1; }
+import json, os, sys
+out, rdir, leader, stall = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4] == "1"
+rec = json.load(open(out))
+for proc in ("localhost", "p1", "p2"):
+    if proc == leader:
+        continue
+    side = os.path.join(rdir, proc + ".side.json")
+    if os.path.exists(side):
+        for k, v in json.load(open(side)).items():
+            if k != "proc":
+                rec[f"{proc}_{k}"] = v
+stalled = os.path.join(rdir, "stalled_follower")
+if stall and os.path.exists(stalled):
+    rec["stalled_follower"] = open(stalled).read().split()[0]
+json.dump(rec, open(out, "w"), indent=2)
+PYMERGE
 echo "raft_bench: record -> $OUT_PATH"
 grep -E '"(applied_per_sec|latency_p50_us|latency_p99_us|offered_in_window|applied_in_window|offer_rejected|peak_outstanding|out_of_order|gaps|duplicates|foreign_applied)"' "$OUT_PATH"
 
@@ -521,6 +661,58 @@ if [ -z "$applied" ] || [ "$applied" -eq 0 ]; then
     echo "raft_bench: FAILED — nothing was applied inside the measured window" >&2
     KEEP_LOGS=1
     exit 6
+fi
+
+# ---------------------------------------------------------------------------
+# Phase N0 validity checks.
+# ---------------------------------------------------------------------------
+json_field() {
+    python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else v)' "$OUT_PATH" "$1"
+}
+if [ "$SNAPSHOTS_ON" -eq 1 ]; then
+    created="$(json_field snapshots_created)"
+    if [ -z "$created" ] || [ "$created" -lt 10 ]; then
+        echo "raft_bench: FAILED — snapshots are on but only '${created}' were taken per" >&2
+        echo "raft_bench: partition (need >= 10). Lengthen the run or lower MAKO_RAFT_SNAPSHOT_INTERVAL." >&2
+        KEEP_LOGS=1
+        exit 9
+    fi
+fi
+if [ "$STALL_MODE" -eq 1 ]; then
+    [ -n "$STALL_WATCHER_PID" ] && wait "$STALL_WATCHER_PID" 2>/dev/null
+    victim="$(json_field stalled_follower)"
+    if [ -z "$victim" ]; then
+        echo "raft_bench: FAILED — the stall watcher stalled nobody" >&2
+        KEEP_LOGS=1
+        exit 10
+    fi
+    # The initial election is one notification; anything more is a flap.
+    changes="$(json_field leadership_changes)"
+    if [ -n "$changes" ] && [ "$changes" -gt 1 ]; then
+        echo "raft_bench: FAILED — leadership moved during the stall run ($changes notifications)" >&2
+        KEEP_LOGS=1
+        exit 10
+    fi
+    if [ "$SNAPSHOTS_ON" -eq 1 ]; then
+        received="$(json_field "${victim}_install_rpcs_received")"
+        if [ -z "$received" ] || [ "$received" -lt 1 ]; then
+            echo "raft_bench: FAILED — stalled follower $victim received no InstallSnapshot RPC" >&2
+            echo "raft_bench: (size MAKO_RAFT_SNAPSHOT_INTERVAL below the entries applied during the stall)" >&2
+            KEEP_LOGS=1
+            exit 10
+        fi
+    fi
+    # The survivor check the flap mode runs, for the two followers.
+    for proc in localhost p1 p2; do
+        [ "$proc" = "$LEADER_PROC" ] && continue
+        if ! grep -q 'log integrity: OK' "${LOG_DIR}/${proc}.log" 2>/dev/null; then
+            echo "raft_bench: FAILED — follower '$proc' did not report a clean log after the stall" >&2
+            tail -n 20 "${LOG_DIR}/${proc}.log" >&2 2>/dev/null
+            KEEP_LOGS=1
+            exit 8
+        fi
+    done
+    echo "raft_bench: stall of $victim: install_rpcs_received=$(json_field "${victim}_install_rpcs_received") catchup_ms=$(json_field "${victim}_catchup_ms")"
 fi
 
 # Finally, honour the driver's own verdict. Without this a driver that exited

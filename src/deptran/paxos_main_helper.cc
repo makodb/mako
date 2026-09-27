@@ -319,6 +319,13 @@ void register_for_leader_par_id(std::function<void(const char*&, int, int)> cb, 
     }
 }
 
+// Paxos has no state-machine snapshots; the callbacks are Raft's.
+void register_snapshot_callbacks_for_partition(uint32_t par_id,
+                                               janus::RaftCreateSnapshotFn,
+                                               janus::RaftPrepareSnapshotFn) {
+  Log_warn("register_snapshot_callbacks_for_partition({}): ignored under Paxos", par_id);
+}
+
 void register_for_leader_par_id_return(std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char *>> &)> cb, 
                                        uint32_t par_id) {
     leader_replay_cb[par_id] = cb;

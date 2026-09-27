@@ -455,6 +455,8 @@ unsafe extern "C" {
     // also what happens, with no delivery, when the send never left: the C++
     // lane's commo drops its std::function uncalled in that case too.
     fn raft_snapshot_reply_deliver(ctx: *mut c_void, follower_term: u64);
+    // HOST InstallSnapshot counters (server.cc, phase N0).
+    fn raft_install_rpc_note_sent(bytes: u64);
     fn raft_snapshot_reply_free(ctx: *mut c_void);
 }
 
@@ -490,6 +492,7 @@ pub unsafe extern "C" fn raft_lane_send_install_snapshot(
         return; // `owned` frees the context.
     }
     let t = unsafe { transport_of(s) }.expect("checked above");
+    unsafe { raft_install_rpc_note_sent(len as u64) };
     let req = InstallSnapshotRequest {
         term,
         leader_id,

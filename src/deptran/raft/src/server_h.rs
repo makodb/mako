@@ -1963,31 +1963,6 @@ impl RaftServerBase {
         last_log.unwrap().term()
     }
 
-    // @unsafe - takes mtx_; the returned token is how a state machine proves
-    // ownership when it later clears the callbacks.
-    pub fn SetStateMachineSnapshotCallbacks(
-        &mut self,
-        create_cb: &rusty::RaftCreateSnapshotCb,
-        prepare_cb: &rusty::RaftPrepareSnapshotCb,
-    ) -> u64 {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
-        if self.state_.next_snapshot_callback_owner_token_ == 0 {
-            self.state_.next_snapshot_callback_owner_token_ = 1;
-        }
-        let owner_token: u64 = self.state_.next_snapshot_callback_owner_token_;
-        self.state_.next_snapshot_callback_owner_token_ += 1;
-        // In place, for the reason given on reg_learner_action.
-        unsafe {
-            raft_create_snapshot_cb_clone_into(
-                create_cb as *const rusty::RaftCreateSnapshotCb,
-                &mut self.create_sm_snapshot_cb_ as *mut rusty::RaftCreateSnapshotCb);
-            raft_prepare_snapshot_cb_clone_into(
-                prepare_cb as *const rusty::RaftPrepareSnapshotCb,
-                &mut self.prepare_sm_snapshot_cb_ as *mut rusty::RaftPrepareSnapshotCb);
-        }
-        self.state_.snapshot_callback_owner_token_ = owner_token;
-        owner_token
-    }
 
     // @unsafe - takes mtx_; a non-owning token is refused.
     pub fn ClearStateMachineSnapshotCallbacks(
@@ -4755,6 +4730,34 @@ impl RaftSpecific for RaftServerBase {
         }
         self.OnInstallSnapshot(term, leader_id, last_included_index,
                                last_included_term, data, term_out);
+    }
+
+    // @unsafe - takes mtx_; the returned token is how a state machine proves
+    // ownership when it later clears the callbacks. A RaftSpecific method so
+    // an embedder (raft_bench, through the replication helper) can register
+    // them; before, only the lab reached it, as an inherent method.
+    fn SetStateMachineSnapshotCallbacks(
+        &mut self,
+        create_cb: &rusty::RaftCreateSnapshotCb,
+        prepare_cb: &rusty::RaftPrepareSnapshotCb,
+    ) -> u64 {
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        if self.state_.next_snapshot_callback_owner_token_ == 0 {
+            self.state_.next_snapshot_callback_owner_token_ = 1;
+        }
+        let owner_token: u64 = self.state_.next_snapshot_callback_owner_token_;
+        self.state_.next_snapshot_callback_owner_token_ += 1;
+        // In place, for the reason given on reg_learner_action.
+        unsafe {
+            raft_create_snapshot_cb_clone_into(
+                create_cb as *const rusty::RaftCreateSnapshotCb,
+                &mut self.create_sm_snapshot_cb_ as *mut rusty::RaftCreateSnapshotCb);
+            raft_prepare_snapshot_cb_clone_into(
+                prepare_cb as *const rusty::RaftPrepareSnapshotCb,
+                &mut self.prepare_sm_snapshot_cb_ as *mut rusty::RaftPrepareSnapshotCb);
+        }
+        self.state_.snapshot_callback_owner_token_ = owner_token;
+        owner_token
     }
 }
 

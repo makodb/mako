@@ -72,4 +72,10 @@ pub trait RaftSpecific: TxLogServer {
     fn ServeInstallSnapshot(&mut self, term: u64, leader_id: u64,
                             last_included_index: u64, last_included_term: u64,
                             data: &rusty::RaftByteString, term_out: *mut u64);
+    // The embedder's state-machine snapshot callbacks. By reference, as
+    // RegisterLeaderChangeCallback: std::function is not bitwise-relocatable.
+    // Returns the owner token ClearStateMachineSnapshotCallbacks takes.
+    fn SetStateMachineSnapshotCallbacks(&mut self,
+                                        create_cb: &rusty::RaftCreateSnapshotCb,
+                                        prepare_cb: &rusty::RaftPrepareSnapshotCb) -> u64;
 }

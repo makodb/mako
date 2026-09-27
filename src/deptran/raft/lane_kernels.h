@@ -5,7 +5,7 @@
 // lane) and a lane's runtime seam (server_seam_cpp.cc on the C++ lanes,
 // raft-rt's src/seam.rs on the Rust lane). Every other kernel goes from the
 // Rust core to one side or the other and is declared in the core's extern
-// blocks; these three are called by C++ on both sides, so they need a header.
+// blocks; these are called by C++ on both sides, so they need a header.
 
 #include <cstddef>
 #include <cstdint>
@@ -28,6 +28,12 @@ void raft_lane_send_install_snapshot(
 // HOST: the reply side of the above.
 void raft_snapshot_reply_deliver(void* ctx, uint64_t follower_term);
 void raft_snapshot_reply_free(void* ctx);
+
+// HOST: InstallSnapshot RPC counters, bumped by every lane's send path and
+// receive handler and read by raft_bench (phase N0).
+void raft_install_rpc_note_sent(uint64_t bytes);
+void raft_install_rpc_note_received();
+void raft_install_rpc_stats(uint64_t* sent, uint64_t* bytes_sent, uint64_t* received);
 
 }  // extern "C"
 }  // namespace janus

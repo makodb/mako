@@ -1,11 +1,14 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
+#include <memory>
 #include <string>
 #include <utility>
 
 #include "constants.h"
 #include "mako_commands.h"
+#include "raft/snapshot_callbacks.h"
 
 namespace janus {
 
@@ -84,6 +87,10 @@ using LearnerAction = ::janus::LearnerAction;
 using RaftCommand = ::janus::Command;
 using RaftLeaderChangeCb = ::std::function<void(bool)>;
 using RaftByteString = ::std::string;
+// The snapshot callbacks RaftSpecific::SetStateMachineSnapshotCallbacks takes
+// (raft/snapshot_callbacks.h); raft/server.h pins these carriers' layout.
+using RaftCreateSnapshotCb = ::janus::RaftCreateSnapshotFn;
+using RaftPrepareSnapshotCb = ::janus::RaftPrepareSnapshotFn;
 }  // namespace rusty
 
 namespace janus {
@@ -182,9 +189,15 @@ pub trait RaftSpecific: TxLogServer {
     fn ServeInstallSnapshot(&mut self, term: u64, leader_id: u64,
                             last_included_index: u64, last_included_term: u64,
                             data: &rusty::RaftByteString, term_out: *mut u64);
+    // The embedder's state-machine snapshot callbacks. By reference, as
+    // RegisterLeaderChangeCallback: std::function is not bitwise-relocatable.
+    // Returns the owner token ClearStateMachineSnapshotCallbacks takes.
+    fn SetStateMachineSnapshotCallbacks(&mut self,
+                                        create_cb: &rusty::RaftCreateSnapshotCb,
+                                        prepare_cb: &rusty::RaftPrepareSnapshotCb) -> u64;
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=c8245da68f18b96dd8d55757c50c92d07da915186730f13f591154a4b97e3208*/
+/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=8de2da57fd3a59eb45d4ea3f531b82e8fe6b3cc009ebbf0f8fe66769f799e79a*/
 enum class RaftStartResult : int32_t;
 constexpr RaftStartResult RaftStartResult_REJECTED();
 constexpr RaftStartResult RaftStartResult_APPENDED();
@@ -234,6 +247,7 @@ public:
     virtual void ServeVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted) = 0;
     virtual void ServeAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index) = 0;
     virtual void ServeInstallSnapshot(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString& data, uint64_t* term_out) = 0;
+    virtual uint64_t SetStateMachineSnapshotCallbacks(const rusty::RaftCreateSnapshotCb& create_cb, const rusty::RaftPrepareSnapshotCb& prepare_cb) = 0;
     RaftSpecific(const RaftSpecific&) = delete;
     RaftSpecific& operator=(const RaftSpecific&) = delete;
     RaftSpecific(RaftSpecific&&) = delete;

@@ -44,6 +44,8 @@ unsafe extern "C" {
     // Same shape, for the snapshot payload: ServeInstallSnapshot takes a
     // rusty::RaftByteString, which is a std::string carried as 24 opaque
     // bytes with its own destructor kernel. Rust cannot build one.
+    // HOST InstallSnapshot counter (server.cc, phase N0).
+    fn raft_install_rpc_note_received();
     fn raft_byte_string_from_bytes(bytes: *const u8, len: usize,
                                    out: *mut rusty::RaftByteString);
 }
@@ -147,6 +149,7 @@ impl RaftHandler for RaftRpcService {
     fn install_snapshot(&self, req: &InstallSnapshotRequest)
         -> Result<InstallSnapshotResponse, i32> {
         let mut resp = InstallSnapshotResponse::default();
+        unsafe { raft_install_rpc_note_received() };
         let mut data: rusty::RaftByteString = Default::default();
         unsafe {
             raft_byte_string_from_bytes(req.data.0.as_ptr(), req.data.0.len(),

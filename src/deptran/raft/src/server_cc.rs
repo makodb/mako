@@ -2107,6 +2107,15 @@ pub unsafe extern "C" fn raft_server_serve_install_snapshot(s: *mut RaftServerBa
     (*s).ServeInstallSnapshot(term, leader_id, last_included_index, last_included_term, &*data, term_out)
 }
 
+/// # Safety
+/// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
+#[no_mangle]
+pub unsafe extern "C" fn raft_server_set_state_machine_snapshot_callbacks(s: *mut RaftServerBase,
+                                                                          create_cb: *const rusty::RaftCreateSnapshotCb,
+                                                                          prepare_cb: *const rusty::RaftPrepareSnapshotCb) -> u64 {
+    (*s).SetStateMachineSnapshotCallbacks(&*create_cb, &*prepare_cb)
+}
+
 // --- What the kernels in server.cc call back into.
 
 /// # Safety
@@ -2177,5 +2186,4 @@ pub unsafe extern "C" fn raft_server_setup_internal(s: *mut RaftServerBase) -> b
 pub unsafe extern "C" fn raft_server_start_election_timer(s: *mut RaftServerBase) {
     (*s).StartElectionTimer()
 }
-
 // --- GENERATED EXPORTS END ---

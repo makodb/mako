@@ -57,11 +57,17 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <signal.h>
 
 #include "deptran/replication_helper.h"
+#include "deptran/raft/snapshot_callbacks.h"
 #include "srpc_log.h"
 
 import std;
+
+// InstallSnapshot RPC counters, defined in src/deptran/raft/server.cc (HOST,
+// every lane). Outside the anonymous namespace so it keeps C linkage.
+extern "C" void raft_install_rpc_stats(uint64_t* sent, uint64_t* bytes_sent, uint64_t* received);
 
 namespace {
 
@@ -146,6 +152,14 @@ struct Options {
   // Seconds a follower keeps serving after the leader's end markers, or after
   // the wall-clock budget expires if no end marker ever arrives.
   double follower_linger_sec = 5.0;
+  // Phase N0: snapshot support. 0 registers no snapshot callbacks, which is
+  // the unchanged pre-N0 behaviour. B > 0 registers a state machine whose
+  // image is each covered partition's last applied sequence padded to B bytes.
+  long long snapshot_bytes = 0;
+  // Where every replica, leader or follower, writes its side record.
+  std::string side_out{};
+  // Directory shared with the launcher for the stall catch-up handshake.
+  std::string catchup_dir{};
 };
 
 // @safe - pure text
@@ -186,6 +200,12 @@ void usage(const char* argv0) {
       "                         line per applied entry, which would dominate\n"
       "                         any measurement taken at INFO.\n"
       "  --follower-linger-sec S how long a follower serves past the end\n"
+      "  --snapshot-bytes B     register a snapshot state machine whose image is\n"
+      "                         the covered partitions' applied sequence, padded\n"
+      "                         to B bytes (0 = register none, the default).\n"
+      "                         Snapshots then run when MAKO_RAFT_SNAPSHOTS=1.\n"
+      "  --side-out PATH        write this replica's side record (every role)\n"
+      "  --catchup-dir DIR      stall catch-up handshake directory (launcher)\n"
       "  --help\n",
       argv0, kHeaderBytes);
 }
@@ -208,6 +228,9 @@ enum LongOpt {
   kOptGroupMode,
   kOptLabel,
   kOptFollowerLinger,
+  kOptSnapshotBytes,
+  kOptSideOut,
+  kOptCatchupDir,
   kOptHelp,
 };
 
@@ -231,6 +254,9 @@ bool parse_options(int argc, char** argv, Options* opt) {
       {"group-mode", required_argument, nullptr, kOptGroupMode},
       {"label", required_argument, nullptr, kOptLabel},
       {"follower-linger-sec", required_argument, nullptr, kOptFollowerLinger},
+      {"snapshot-bytes", required_argument, nullptr, kOptSnapshotBytes},
+      {"side-out", required_argument, nullptr, kOptSideOut},
+      {"catchup-dir", required_argument, nullptr, kOptCatchupDir},
       {"help", no_argument, nullptr, kOptHelp},
       {nullptr, 0, nullptr, 0},
   };
@@ -256,6 +282,9 @@ bool parse_options(int argc, char** argv, Options* opt) {
       case kOptOut: opt->out_path = optarg; break;
       case kOptProc: opt->proc_name = optarg; break;
       case kOptConfig: opt->configs.emplace_back(optarg); break;
+      case kOptSnapshotBytes: opt->snapshot_bytes = std::atoll(optarg); break;
+      case kOptSideOut: opt->side_out = optarg; break;
+      case kOptCatchupDir: opt->catchup_dir = optarg; break;
       case kOptGroupMode: opt->group_mode = optarg; break;
       case kOptLabel: opt->label = optarg; break;
       case kOptFollowerLinger: opt->follower_linger_sec = std::atof(optarg); break;
@@ -300,6 +329,10 @@ bool parse_options(int argc, char** argv, Options* opt) {
     // The pacer works in nanoseconds, so it can express up to 1e9/s per
     // partition; beyond that the only honest answer is --rate 0.
     std::fprintf(stderr, "raft_bench: --rate above 100000000 is not pace-able; use --rate 0\n");
+    return false;
+  }
+  if (opt->snapshot_bytes < 0 || opt->snapshot_bytes > (1LL << 30)) {
+    std::fprintf(stderr, "raft_bench: --snapshot-bytes must be in [0, 1 GiB]\n");
     return false;
   }
   if (opt->max_outstanding < 0) {
@@ -388,6 +421,12 @@ struct PartitionState {
   std::atomic<long long> peak_raft_outstanding{0};
 
   std::atomic<int> end_markers{0};
+
+  // Phase N0: the largest gap between consecutive apply callbacks inside the
+  // measured window, which is where a snapshot's create (apply gate held
+  // through the save) or an install (apply gate held) shows up.
+  std::atomic<uint64_t> last_apply_us{0};
+  std::atomic<uint64_t> max_apply_gap_us{0};
 };
 
 // Fold one applied entry's sequence number into this partition's integrity
@@ -453,6 +492,336 @@ void close_window_at(uint64_t when) {
          !g_window_end_us.compare_exchange_weak(current, when,
                                                 std::memory_order_relaxed)) {
   }
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot state machine (phase N0)
+//
+// One SnapshotInstance per registered callback pair. In single-group mode one
+// Raft server carries every partition, so one instance covers them all; in
+// multi-group mode each partition's server has its own.
+//
+// Image: kSnapMagic, a u32 count, then count x (u32 partition, u64 last_seq),
+// zero-padded to --snapshot-bytes. create() reads each covered partition's
+// last_seq; prepare() validates the image and stages the values; Commit()
+// stores them, so the sequence check stays meaningful across an install: the
+// next entry the follower applies must be exactly last_seq + 1.
+//
+// Single-writer rule. check_sequence assumes one writer per PartitionState.
+// Commit runs on the install thread (the poll thread), not the apply thread.
+// That is safe because Raft runs prepare and Commit under
+// state_machine_apply_mtx_, the gate the apply callback also runs under, so
+// the two never overlap and the mutex orders them. The store below is
+// release anyway, so the claim does not rest on relaxed ordering alone.
+// ---------------------------------------------------------------------------
+
+std::string json_escape(const std::string& in);
+
+constexpr char kSnapMagic[8] = {'R', 'B', 'S', 'N', 'A', 'P', '0', '1'};
+
+struct SnapshotInstance {
+  std::vector<int> partitions{};
+  std::atomic<long long> created{0};
+  std::atomic<long long> installs{0};
+  // create_cb entry time, consumed by the next apply callback on a covered
+  // partition: the apply thread holds the gate through the save and the
+  // compaction, so that callback marks the end of the whole create.
+  std::atomic<uint64_t> create_start_us{0};
+  std::mutex mu{};
+  std::vector<uint32_t> create_us{};
+  std::vector<uint32_t> install_us{};
+};
+
+std::vector<std::unique_ptr<SnapshotInstance>> g_snap_instances;
+// Partition -> the instance covering it (nullptr when snapshots are off).
+std::vector<SnapshotInstance*> g_snap_of_partition;
+
+// @unsafe { raw byte packing of the image }
+void put_u32(std::string* out, uint32_t v) {
+  for (int i = 0; i < 4; ++i) out->push_back(static_cast<char>((v >> (8 * i)) & 0xff));
+}
+// @unsafe { raw byte packing of the image }
+void put_u64(std::string* out, uint64_t v) {
+  for (int i = 0; i < 8; ++i) out->push_back(static_cast<char>((v >> (8 * i)) & 0xff));
+}
+// @unsafe { raw byte unpacking of the image }
+uint64_t get_le(const std::string& in, size_t at, int bytes) {
+  uint64_t v = 0;
+  for (int i = 0; i < bytes; ++i) {
+    v |= static_cast<uint64_t>(static_cast<unsigned char>(in[at + i])) << (8 * i);
+  }
+  return v;
+}
+
+class BenchPreparedInstall final : public janus::PreparedStateMachineSnapshotInstall {
+ public:
+  BenchPreparedInstall(SnapshotInstance* inst, std::vector<PartitionState>* states,
+                       std::vector<std::pair<int, uint64_t>> staged, uint64_t t0)
+      : inst_(inst), states_(states), staged_(std::move(staged)), t0_(t0) {}
+  bool Commit() override {
+    for (const auto& [p, seq] : staged_) {
+      (*states_)[static_cast<size_t>(p)].last_seq.store(seq, std::memory_order_release);
+    }
+    const uint64_t elapsed = now_us() - t0_;
+    inst_->installs.fetch_add(1, std::memory_order_relaxed);
+    std::lock_guard<std::mutex> g(inst_->mu);
+    inst_->install_us.push_back(static_cast<uint32_t>(std::min<uint64_t>(elapsed, UINT32_MAX)));
+    return true;
+  }
+
+ private:
+  SnapshotInstance* inst_;
+  std::vector<PartitionState>* states_;
+  std::vector<std::pair<int, uint64_t>> staged_;
+  uint64_t t0_;
+};
+
+// @unsafe { std::function construction over raw pointers owned by main }
+janus::RaftCreateSnapshotFn make_create_cb(SnapshotInstance* inst,
+                                           std::vector<PartitionState>* states,
+                                           long long image_bytes) {
+  return [inst, states, image_bytes](uint64_t /*applied_index*/) -> std::string {
+    inst->create_start_us.store(now_us(), std::memory_order_relaxed);
+    std::string image(kSnapMagic, sizeof(kSnapMagic));
+    put_u32(&image, static_cast<uint32_t>(inst->partitions.size()));
+    for (int p : inst->partitions) {
+      put_u32(&image, static_cast<uint32_t>(p));
+      put_u64(&image, (*states)[static_cast<size_t>(p)].last_seq.load(std::memory_order_acquire));
+    }
+    if (static_cast<long long>(image.size()) < image_bytes) {
+      image.resize(static_cast<size_t>(image_bytes), '\0');
+    }
+    inst->created.fetch_add(1, std::memory_order_relaxed);
+    return image;
+  };
+}
+
+// @unsafe { std::function construction over raw pointers owned by main }
+janus::RaftPrepareSnapshotFn make_prepare_cb(SnapshotInstance* inst,
+                                             std::vector<PartitionState>* states) {
+  return [inst, states](const std::string& image, uint64_t /*index*/)
+             -> std::unique_ptr<janus::PreparedStateMachineSnapshotInstall> {
+    const uint64_t t0 = now_us();
+    const size_t head = sizeof(kSnapMagic) + 4;
+    if (image.size() < head || std::memcmp(image.data(), kSnapMagic, sizeof(kSnapMagic)) != 0) {
+      return nullptr;
+    }
+    const uint64_t count = get_le(image, sizeof(kSnapMagic), 4);
+    if (count != inst->partitions.size() || image.size() < head + count * 12) {
+      return nullptr;
+    }
+    std::vector<std::pair<int, uint64_t>> staged;
+    for (uint64_t i = 0; i < count; ++i) {
+      const int p = static_cast<int>(get_le(image, head + i * 12, 4));
+      if (p < 0 || p >= static_cast<int>(states->size())) {
+        return nullptr;
+      }
+      staged.emplace_back(p, get_le(image, head + i * 12 + 4, 8));
+    }
+    return std::make_unique<BenchPreparedInstall>(inst, states, std::move(staged), t0);
+  };
+}
+
+// Called from the apply callback: closes a pending create, and tracks the
+// largest in-window gap between consecutive applies on this partition.
+// @safe - relaxed bookkeeping, one apply thread per partition
+void note_apply(PartitionState* st, SnapshotInstance* inst, uint64_t apply_us) {
+  if (inst != nullptr) {
+    const uint64_t started = inst->create_start_us.exchange(0, std::memory_order_relaxed);
+    if (started != 0 && apply_us > started) {
+      std::lock_guard<std::mutex> g(inst->mu);
+      inst->create_us.push_back(static_cast<uint32_t>(std::min<uint64_t>(apply_us - started, UINT32_MAX)));
+    }
+  }
+  const uint64_t last = st->last_apply_us.exchange(apply_us, std::memory_order_relaxed);
+  if (last != 0 && apply_us > last && in_window(apply_us)) {
+    const uint64_t gap = apply_us - last;
+    uint64_t cur = st->max_apply_gap_us.load(std::memory_order_relaxed);
+    while (gap > cur &&
+           !st->max_apply_gap_us.compare_exchange_weak(cur, gap, std::memory_order_relaxed)) {
+    }
+  }
+}
+
+// @safe - pure arithmetic over a copy
+uint32_t percentile_of(std::vector<uint32_t> v, double p) {
+  if (v.empty()) return 0;
+  std::sort(v.begin(), v.end());
+  size_t idx = static_cast<size_t>(p * static_cast<double>(v.size()));
+  if (idx >= v.size()) idx = v.size() - 1;
+  return v[idx];
+}
+
+// VmHWM (peak resident set) from /proc/self/status, in KiB; 0 if unreadable.
+// @unsafe { C stdio is not borrow-checked }
+long long rss_peak_kb() {
+  std::FILE* f = std::fopen("/proc/self/status", "r");
+  if (f == nullptr) return 0;
+  char line[256];
+  long long kb = 0;
+  while (std::fgets(line, sizeof line, f) != nullptr) {
+    if (std::strncmp(line, "VmHWM:", 6) == 0) {
+      kb = std::atoll(line + 6);
+      break;
+    }
+  }
+  std::fclose(f);
+  return kb;
+}
+
+// Wall-clock milliseconds, shared with the launcher (which stamps SIGCONT).
+// @safe - clock read
+long long realtime_ms() {
+  timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  return static_cast<long long>(ts.tv_sec) * 1000 + ts.tv_nsec / 1000000;
+}
+
+// Stall catch-up handshake. The launcher SIGSTOPs a follower, SIGCONTs it,
+// writes "<proc> <sigcont_ms>" to <dir>/stall.txt and sends SIGUSR1 to the
+// leader. The leader answers by writing each partition's last_seq to
+// <dir>/leader_seq.txt; the stalled follower reports the time from SIGCONT
+// until its own last_seq reaches those values.
+std::atomic<bool> g_usr1{false};
+std::atomic<long long> g_catchup_ms{-1};
+
+void raft_bench_on_usr1(int) { g_usr1.store(true, std::memory_order_relaxed); }
+
+// @unsafe { file I/O and a polling thread }
+void leader_catchup_responder(const std::string& dir, std::vector<PartitionState>* states,
+                              std::atomic<bool>* stop) {
+  while (!stop->load(std::memory_order_relaxed)) {
+    if (g_usr1.exchange(false, std::memory_order_relaxed)) {
+      const std::string tmp = dir + "/leader_seq.txt.tmp";
+      if (std::FILE* f = std::fopen(tmp.c_str(), "w")) {
+        for (size_t p = 0; p < states->size(); ++p) {
+          std::fprintf(f, "%zu %llu\n", p,
+                       static_cast<unsigned long long>((*states)[p].last_seq.load(std::memory_order_acquire)));
+        }
+        std::fclose(f);
+        std::rename(tmp.c_str(), (dir + "/leader_seq.txt").c_str());
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+}
+
+// @unsafe { file I/O and a polling thread }
+void follower_catchup_watcher(const std::string& dir, const std::string& proc,
+                              std::vector<PartitionState>* states, std::atomic<bool>* stop) {
+  long long sigcont_ms = -1;
+  std::vector<uint64_t> target;
+  while (!stop->load(std::memory_order_relaxed)) {
+    if (sigcont_ms < 0) {
+      if (std::FILE* f = std::fopen((dir + "/stall.txt").c_str(), "r")) {
+        char who[64] = {0};
+        long long ms = -1;
+        if (std::fscanf(f, "%63s %lld", who, &ms) == 2 && proc == who) {
+          sigcont_ms = ms;
+        }
+        std::fclose(f);
+        if (sigcont_ms < 0 && who[0] != '\0' && proc != who) {
+          return;  // another replica was stalled
+        }
+      }
+    } else if (target.empty()) {
+      if (std::FILE* f = std::fopen((dir + "/leader_seq.txt").c_str(), "r")) {
+        std::vector<uint64_t> t(states->size(), 0);
+        size_t p = 0;
+        unsigned long long seq = 0;
+        while (std::fscanf(f, "%zu %llu", &p, &seq) == 2) {
+          if (p < t.size()) t[p] = seq;
+        }
+        std::fclose(f);
+        target = std::move(t);
+      }
+    } else {
+      bool caught_up = true;
+      for (size_t p = 0; p < target.size(); ++p) {
+        if ((*states)[p].last_seq.load(std::memory_order_acquire) < target[p]) {
+          caught_up = false;
+          break;
+        }
+      }
+      if (caught_up) {
+        g_catchup_ms.store(realtime_ms() - sigcont_ms, std::memory_order_relaxed);
+        return;
+      }
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+  }
+}
+
+// Snapshot fields, collected once for the side record and the leader record.
+struct SnapshotReport {
+  long long snapshots_created = 0;   // min over instances
+  uint32_t create_us_p50 = 0, create_us_max = 0;
+  uint32_t install_us_p50 = 0, install_us_max = 0;
+  long long installs_received = 0;
+  uint64_t install_rpcs_sent = 0, install_bytes_sent = 0, install_rpcs_received = 0;
+  uint64_t max_apply_gap_us = 0;
+  long long catchup_ms = -1;
+  long long rss_peak_kb = 0;
+};
+
+// @unsafe { reads shared counters after the run }
+SnapshotReport collect_snapshot_report(const std::vector<PartitionState>& states) {
+  SnapshotReport r;
+  std::vector<uint32_t> create_all, install_all;
+  bool first = true;
+  for (auto& inst : g_snap_instances) {
+    const long long c = inst->created.load(std::memory_order_relaxed);
+    r.snapshots_created = first ? c : std::min(r.snapshots_created, c);
+    first = false;
+    r.installs_received += inst->installs.load(std::memory_order_relaxed);
+    std::lock_guard<std::mutex> g(inst->mu);
+    create_all.insert(create_all.end(), inst->create_us.begin(), inst->create_us.end());
+    install_all.insert(install_all.end(), inst->install_us.begin(), inst->install_us.end());
+  }
+  r.create_us_p50 = percentile_of(create_all, 0.5);
+  r.create_us_max = create_all.empty() ? 0 : *std::max_element(create_all.begin(), create_all.end());
+  r.install_us_p50 = percentile_of(install_all, 0.5);
+  r.install_us_max = install_all.empty() ? 0 : *std::max_element(install_all.begin(), install_all.end());
+  raft_install_rpc_stats(&r.install_rpcs_sent, &r.install_bytes_sent, &r.install_rpcs_received);
+  for (const auto& st : states) {
+    r.max_apply_gap_us = std::max(r.max_apply_gap_us, st.max_apply_gap_us.load(std::memory_order_relaxed));
+  }
+  r.catchup_ms = g_catchup_ms.load(std::memory_order_relaxed);
+  r.rss_peak_kb = rss_peak_kb();
+  return r;
+}
+
+// @unsafe { C stdio is not borrow-checked }
+void print_snapshot_fields(std::FILE* f, const SnapshotReport& r) {
+  std::fprintf(f, "  \"snapshots_created\": %lld,\n", r.snapshots_created);
+  std::fprintf(f, "  \"snapshot_create_us_p50\": %u,\n", r.create_us_p50);
+  std::fprintf(f, "  \"snapshot_create_us_max\": %u,\n", r.create_us_max);
+  std::fprintf(f, "  \"snapshot_install_us_p50\": %u,\n", r.install_us_p50);
+  std::fprintf(f, "  \"snapshot_install_us_max\": %u,\n", r.install_us_max);
+  std::fprintf(f, "  \"installs_received\": %lld,\n", r.installs_received);
+  std::fprintf(f, "  \"install_rpcs_sent\": %llu,\n", static_cast<unsigned long long>(r.install_rpcs_sent));
+  std::fprintf(f, "  \"install_bytes_sent\": %llu,\n", static_cast<unsigned long long>(r.install_bytes_sent));
+  std::fprintf(f, "  \"install_rpcs_received\": %llu,\n", static_cast<unsigned long long>(r.install_rpcs_received));
+  std::fprintf(f, "  \"max_apply_gap_us\": %llu,\n", static_cast<unsigned long long>(r.max_apply_gap_us));
+  std::fprintf(f, "  \"catchup_ms\": %lld,\n", r.catchup_ms);
+  std::fprintf(f, "  \"rss_peak_kb\": %lld,\n", r.rss_peak_kb);
+}
+
+// The side record every replica writes, flat. The launcher merges the
+// followers' into the leader's record with a "<proc>_" prefix.
+// @unsafe { C stdio is not borrow-checked }
+bool write_side_record(const std::string& path, const std::string& proc, const std::string& role,
+                       const SnapshotReport& r, long long applied_total, bool integrity_ok) {
+  std::FILE* f = std::fopen(path.c_str(), "w");
+  if (f == nullptr) return false;
+  std::fprintf(f, "{\n");
+  std::fprintf(f, "  \"proc\": \"%s\",\n", json_escape(proc).c_str());
+  std::fprintf(f, "  \"role\": \"%s\",\n", json_escape(role).c_str());
+  print_snapshot_fields(f, r);
+  std::fprintf(f, "  \"applied_total\": %lld,\n", applied_total);
+  std::fprintf(f, "  \"log_integrity_ok\": %s\n", integrity_ok ? "true" : "false");
+  std::fprintf(f, "}\n");
+  return std::fclose(f) == 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -622,6 +991,12 @@ struct Record {
   // Latency CDF as percentile -> microseconds, 1..99 plus the tail. The CDF
   // plot consumes this directly; the raw samples are not retained on disk.
   std::vector<std::pair<std::string, double>> latency_cdf_us{};
+  // Phase N0: snapshots.
+  bool snapshots_enabled = false;
+  std::string snapshots_env{};
+  std::string snapshot_interval_env{};
+  long long snapshot_bytes = 0;
+  SnapshotReport snap{};
 };
 
 // @unsafe { C stdio is not borrow-checked }
@@ -681,6 +1056,11 @@ bool write_record(const std::string& path, const Record& r) {
   std::fprintf(f, "  \"latency_max_us\": %.3f,\n", r.latency_max_us);
   std::fprintf(f, "  \"peak_outstanding\": %lld,\n", r.peak_outstanding);
   std::fprintf(f, "  \"leadership_changes\": %lld,\n", r.leadership_changes);
+  std::fprintf(f, "  \"snapshots_enabled\": %s,\n", r.snapshots_enabled ? "true" : "false");
+  std::fprintf(f, "  \"mako_raft_snapshots\": \"%s\",\n", json_escape(r.snapshots_env).c_str());
+  std::fprintf(f, "  \"snapshot_interval\": \"%s\",\n", json_escape(r.snapshot_interval_env).c_str());
+  std::fprintf(f, "  \"snapshot_bytes\": %lld,\n", r.snapshot_bytes);
+  print_snapshot_fields(f, r.snap);
   std::fprintf(f, "  \"applied_per_sec_per_partition\": %.3f,\n",
                r.applied_per_sec_per_partition);
   std::fprintf(f, "  \"min_partition_applied_in_window\": %lld,\n",
@@ -951,6 +1331,29 @@ int main(int argc, char** argv) {
     st.samples.resize(static_cast<size_t>(opt.max_samples));
   }
 
+  // Phase N0: one snapshot instance per Raft server the callbacks go to --
+  // one for every partition in single-group mode, one per partition in
+  // multi-group mode. Built before the apply callbacks, which consult it.
+  g_snap_of_partition.assign(static_cast<size_t>(partitions), nullptr);
+  if (opt.snapshot_bytes > 0) {
+    if (opt.group_mode == "multi") {
+      for (int i = 0; i < partitions; ++i) {
+        g_snap_instances.push_back(std::make_unique<SnapshotInstance>());
+        g_snap_instances.back()->partitions.push_back(i);
+        g_snap_of_partition[static_cast<size_t>(i)] = g_snap_instances.back().get();
+      }
+    } else {
+      g_snap_instances.push_back(std::make_unique<SnapshotInstance>());
+      for (int i = 0; i < partitions; ++i) {
+        g_snap_instances.back()->partitions.push_back(i);
+        g_snap_of_partition[static_cast<size_t>(i)] = g_snap_instances.back().get();
+      }
+    }
+  }
+  if (!opt.catchup_dir.empty()) {
+    std::signal(SIGUSR1, raft_bench_on_usr1);
+  }
+
   std::atomic<int> leadership_notifications{0};
   // @unsafe
   register_leader_election_callback([&opt, &leadership_notifications](int control) {
@@ -973,10 +1376,12 @@ int main(int argc, char** argv) {
   for (int i = 0; i < partitions; ++i) {
     const uint32_t par_id = static_cast<uint32_t>(i);
     PartitionState* st = &state[static_cast<size_t>(i)];
+    SnapshotInstance* snap_inst = g_snap_of_partition[static_cast<size_t>(i)];
 
-    auto apply_cb = [st, &opt](const char*& log, int len, int /*par_id*/, int /*slot_id*/,
+    auto apply_cb = [st, snap_inst, &opt](const char*& log, int len, int /*par_id*/, int /*slot_id*/,
                                std::queue<std::tuple<int, int, int, int, const char*>>&) -> int {
       const uint64_t apply_us = now_us();
+      note_apply(st, snap_inst, apply_us);
       constexpr int kStatusNormal = 0;
       if (len == 0) {
         st->end_markers.fetch_add(1, std::memory_order_relaxed);
@@ -1010,6 +1415,16 @@ int main(int argc, char** argv) {
     register_for_leader_par_id_return(apply_cb, par_id);
     // @unsafe
     register_for_follower_par_id_return(apply_cb, par_id);
+  }
+
+  // Phase N0: hand each instance's callbacks to the Raft server that covers
+  // its partitions (the first partition names the server).
+  for (auto& inst : g_snap_instances) {
+    // @unsafe
+    register_snapshot_callbacks_for_partition(
+        static_cast<uint32_t>(inst->partitions.front()),
+        make_create_cb(inst.get(), &state, opt.snapshot_bytes),
+        make_prepare_cb(inst.get(), &state));
   }
 
   // @unsafe
@@ -1091,6 +1506,10 @@ int main(int argc, char** argv) {
   }
 
   int exit_code = 0;
+  // Phase N0: the stall catch-up handshake thread, started once the role is
+  // known and stopped before shutdown.
+  std::atomic<bool> catchup_stop{false};
+  std::thread catchup_thread;
   if (!is_leader && partial_leadership) {
     // Leading a subset would produce a number for a cluster shape nobody
     // asked for. Say so, and exit non-zero, instead of quietly serving on as
@@ -1131,6 +1550,10 @@ int main(int argc, char** argv) {
       return exit_code;
     }
 
+    if (!opt.catchup_dir.empty()) {
+      catchup_thread = std::thread(follower_catchup_watcher, opt.catchup_dir, opt.proc_name,
+                                   &state, &catchup_stop);
+    }
     // Follower: serve, then leave. Wait for the leader's end markers, with a
     // wall-clock budget so a lost leader cannot wedge the launch script.
     const double budget_sec =
@@ -1163,6 +1586,10 @@ int main(int argc, char** argv) {
                 opt.proc_name.c_str(), applied);
     std::fflush(stdout);
   } else {
+    if (!opt.catchup_dir.empty()) {
+      catchup_thread = std::thread(leader_catchup_responder, opt.catchup_dir, &state,
+                                   &catchup_stop);
+    }
     std::printf("[raft_bench:%s] leader; offering load\n", opt.proc_name.c_str());
     std::fflush(stdout);
 
@@ -1262,6 +1689,11 @@ int main(int argc, char** argv) {
     rec.proc = opt.proc_name;
     rec.role = "leader";
     rec.label = opt.label;
+    rec.snapshot_bytes = opt.snapshot_bytes;
+    rec.snapshots_env = env_or("MAKO_RAFT_SNAPSHOTS", "");
+    rec.snapshot_interval_env = env_or("MAKO_RAFT_SNAPSHOT_INTERVAL", "");
+    rec.snapshots_enabled = opt.snapshot_bytes > 0 && rec.snapshots_env == "1";
+    rec.snap = collect_snapshot_report(state);
 
     // The window the run actually achieved: it closes early if the offer loop
     // stopped early (leadership loss).
@@ -1424,7 +1856,23 @@ int main(int argc, char** argv) {
       duplicates += st.duplicates.load(std::memory_order_relaxed);
       foreign += st.foreign_applied.load(std::memory_order_relaxed);
     }
-    if (out_of_order > 0 || gaps > 0 || duplicates > 0 || foreign > 0) {
+    const bool integrity_ok = !(out_of_order > 0 || gaps > 0 || duplicates > 0 || foreign > 0);
+    catchup_stop.store(true, std::memory_order_relaxed);
+    if (catchup_thread.joinable()) {
+      catchup_thread.join();
+    }
+    if (!opt.side_out.empty()) {
+      long long applied = 0;
+      for (auto& st : state) {
+        applied += st.applied_total.load(std::memory_order_relaxed);
+      }
+      if (!write_side_record(opt.side_out, opt.proc_name, is_leader ? "leader" : "follower",
+                             collect_snapshot_report(state), applied, integrity_ok)) {
+        std::fprintf(stderr, "[raft_bench:%s] cannot write --side-out '%s'\n",
+                     opt.proc_name.c_str(), opt.side_out.c_str());
+      }
+    }
+    if (!integrity_ok) {
       std::fprintf(stderr,
                    "[raft_bench:%s] LOG INTEGRITY VIOLATION: out_of_order=%lld "
                    "gaps=%lld duplicates=%lld foreign_applied=%lld\n",

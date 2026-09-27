@@ -1,5 +1,6 @@
 #include "service.h"
 #include "server.h"
+#include "lane_kernels.h"   // raft_install_rpc_note_received
 
 #include "srpc/srpc.hpp"
 #include <rusty/slice.hpp>
@@ -101,6 +102,7 @@ RaftServiceImpl::EmptyAppendEntries(const RpcEmptyAppendEntriesRequest& req) con
 Result<RaftService::RpcInstallSnapshotResponse, srpc::i32>
 RaftServiceImpl::InstallSnapshot(const RpcInstallSnapshotRequest& req) const {
   RpcInstallSnapshotResponse resp{};
+  raft_install_rpc_note_received();
   RaftSpecific* svr = svr_;
   if (svr == nullptr) {
     resp.term_out = 0;

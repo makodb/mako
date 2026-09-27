@@ -339,6 +339,7 @@ void raft_lane_send_install_snapshot(
     uint64_t term, uint64_t leader_id, uint64_t last_included_index,
     uint64_t last_included_term, const uint8_t* data, size_t len, void* ctx) {
   auto owned = std::shared_ptr<void>(ctx, [](void* c) { raft_snapshot_reply_free(c); });
+  raft_install_rpc_note_sent(len);
   commo_of(self)->SendInstallSnapshot(
       site_id, partition_id, term, leader_id, last_included_index,
       last_included_term,

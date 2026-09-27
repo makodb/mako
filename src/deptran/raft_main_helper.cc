@@ -1107,6 +1107,22 @@ void register_for_leader_par_id_return(
   apply_callbacks_for_partition(par_id);
 }
 
+// register_snapshot_callbacks_for_partition hands the embedder's snapshot
+// callbacks to the Raft server that owns par_id. In single-group mode one
+// server carries every partition, so registering for each partition replaces
+// the same pair; the embedder builds its images accordingly.
+void register_snapshot_callbacks_for_partition(uint32_t par_id,
+                                               janus::RaftCreateSnapshotFn create,
+                                               janus::RaftPrepareSnapshotFn prepare) {
+  auto worker = find_worker(par_id);
+  RaftSpecific* server = worker ? worker->GetRaftServer() : nullptr;
+  if (server == nullptr) {
+    Log_error("register_snapshot_callbacks_for_partition: no Raft server for partition {}", par_id);
+    return;
+  }
+  server->SetStateMachineSnapshotCallbacks(create, prepare);
+}
+
 // Note: raft_handle_leader_change is moved to the end of this file,
 // outside the raft_impl namespace, so it's in janus:: namespace.
 

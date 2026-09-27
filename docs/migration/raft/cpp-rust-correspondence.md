@@ -12,11 +12,11 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 541 | `raft/src/server_h.rs` | 5518 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1710 | `raft/src/server_cc.rs` | 2181 |  |
-| `raft/service.cc` | 123 | `raft/rt/src/service.rs` | 161 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
+| `raft/server.h` | 529 | `raft/src/server_h.rs` | 5521 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1737 | `raft/src/server_cc.rs` | 2189 |  |
+| `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 164 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
 | `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 830 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
-| `raft/server_seam_cpp.cc` | 353 | `raft/rt/src/seam.rs` | 505 | the runtime seam, one per lane; exactly one is linked |
+| `raft/server_seam_cpp.cc` | 354 | `raft/rt/src/seam.rs` | 508 | the runtime seam, one per lane; exactly one is linked |
 | `communicator.h` | 567 | `raft/src/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
 | `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 549 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
 
@@ -27,7 +27,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | direction | mechanism | count |
 |---|---|---|
-| C++ → Rust | prototypes in `raft/server_exports.h` | 31 |
+| C++ → Rust | prototypes in `raft/server_exports.h` | 32 |
 | C++ → Rust | prototypes in `raft/transport_exports.h` — the Rust lane only (raft_lane_rust.cc) | 16 |
 | Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 91 |
 

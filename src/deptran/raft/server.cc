@@ -1708,3 +1708,30 @@ extern "C" bool raft_install_snapshot_guarded(RaftServerBase* self, uint16_t sit
 }
 
 } // namespace janus
+
+// ---------------------------------------------------------------------------
+// InstallSnapshot RPC counters (phase N0). HOST, one definition for every
+// lane: each lane's send path and receive handler bumps them, and raft_bench
+// reads them into its record. They count RPCs on the wire, which a resend
+// storm shows and the prepare/commit callbacks do not (a repeated install at
+// the same index is acknowledged before prepare).
+// ---------------------------------------------------------------------------
+namespace {
+std::atomic<uint64_t> g_install_rpcs_sent{0};
+std::atomic<uint64_t> g_install_bytes_sent{0};
+std::atomic<uint64_t> g_install_rpcs_received{0};
+}  // namespace
+
+extern "C" void raft_install_rpc_note_sent(uint64_t bytes) {
+  g_install_rpcs_sent.fetch_add(1, std::memory_order_relaxed);
+  g_install_bytes_sent.fetch_add(bytes, std::memory_order_relaxed);
+}
+extern "C" void raft_install_rpc_note_received() {
+  g_install_rpcs_received.fetch_add(1, std::memory_order_relaxed);
+}
+extern "C" void raft_install_rpc_stats(uint64_t* sent, uint64_t* bytes_sent,
+                                       uint64_t* received) {
+  *sent = g_install_rpcs_sent.load(std::memory_order_relaxed);
+  *bytes_sent = g_install_bytes_sent.load(std::memory_order_relaxed);
+  *received = g_install_rpcs_received.load(std::memory_order_relaxed);
+}
