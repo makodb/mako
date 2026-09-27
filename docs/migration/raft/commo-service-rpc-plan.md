@@ -5,6 +5,9 @@ like srpc -- one Rust source, a C++ runtime and a Rust runtime. Read "The
 two-lane plan" right before the TODO first; it supersedes the single-lane
 destination the rest of this file was written toward.**
 
+**Revision 7 (2026-09-27) adds Phase N: the snapshot on the Rust lane (user
+decision: Rust lane only; hybrid and cpp keep the C++ `SnapshotManager`).**
+
 Third revision underneath. No longer only a plan: stages 0 through 3 are built and
 verified apart from 3e, which is half done, so most of what follows is a record of what was done
 and what it cost. The first two revisions were refuted by adversarial
@@ -95,6 +98,20 @@ that assumed a single lane are superseded here and marked where they stand:
 | L3 cpp lane linked and run | done -- RaftLabTest 25/25, 4 Raft + 3 Paxos suites pass, paired trial shows no difference | this commit |
 | L4 lane honesty | done -- exactly-once on every lane, core parity on hybrid, both in the build | this commit |
 | D1-D4 | D1 nothing left to delete (dead snapshot send removed), D2 by design, D3 nothing to collapse (all 31 exports used), D4 done | this commit |
+| N0 snapshot-capable raft_bench (arm A; follower records, wire counters, stall mode) | next | -- |
+| N1 target design: Rust store behind the opaque carrier | next | -- |
+| N2 format: raw bytes, no SnapshotFormat port | next | -- |
+| N3 SnapshotStore in rt/src/snapshot.rs (buffer reuse) | next | -- |
+| N4 kernels: store accessors to SEAM, order stays HOST, probe fixed, guard last | next | -- |
+| N5 InstallSnapshot on the Rust transport (borrowed send via rpcgen, follower handoff) | next | -- |
+| N6 resend suppression, Rust lane only (own step, deadline) | next | -- |
+| N7 startup recovery on the Rust lane (new recovery lab cases) | next | -- |
+| N8 lane gates, CMake, cargo test gate | next | -- |
+| N9 deletions (C++ manager kept for hybrid/cpp by decision) | next | -- |
+| N10 correctness: lab 25/25 x10 per lane, rt tests, suites | next | -- |
+| N11 mixed-lane snapshot install | next | -- |
+| N12 snapshot-enabled performance (pre / store / post arms) | next | -- |
+| N13 docs | next | -- |
 
 **The full sweep** (`docs/performance/raft-rust-9a361eccd`, 3 trials per
 point, against the C++ baseline 412c225a): 624 of 624 runs succeeded, and of
@@ -729,6 +746,906 @@ Risks:
 - `panic = "abort"` has no C++-lane equivalent, so decide what a panic
   path lowers to there;
 - transpiled-code performance (L3's trial).
+
+#### Phase N — the snapshot on the Rust lane
+
+**User decision (binding, 2026-09-27).** Only the Rust lane converts the
+snapshot to Rust. It runs in raft-rt and may use Rust std and the Rust srpc
+runtime. The hybrid and cpp lanes keep today's C++ `SnapshotManager` /
+`MemorySnapshotManager` (`snapshot_manager.hpp`, `memory_snapshot_manager.hpp`)
+and their behaviour. The cpp lane needs no transpiled snapshot code. The goals
+are the same as in every other phase: correctness and performance.
+
+Paths are relative to `src/deptran/raft/` unless they start with `src/`,
+`scripts/`, `ci/`, `examples/`, `tests/`, `docs/` or `CMakeLists.txt`. Line
+numbers are at `c23e397e4`. This phase was reviewed three times (references,
+feasibility, gates) before it was written in; the findings are folded in, and
+where a finding changed the design rather than a citation, the step says so.
+
+**What exists today, and why the scope is small.**
+- Production uses exactly one store: an in-memory, single-slot
+  `MemorySnapshotManager` (`server.cc:862-873`, "Memory-only Raft has no
+  on-disk snapshot store").
+- Raft calls three of its methods: `TakeSnapshot` (`server.cc:952`, `:1132`),
+  `LoadLatestSnapshot` (`:892`, `:1516`) and `GetLatestSnapshot` (`:415`,
+  `:878`). The lab also calls `DeleteAllSnapshots` and `ListSnapshots().size()`
+  (`:586`, `:612`).
+- These parts have no production caller: the streaming
+  `SnapshotReader`/`SnapshotWriter` (`snapshot_manager.hpp:79-153`),
+  `BeginSnapshot`/`BeginLoad`/`PruneSnapshots`/`HasSnapshotAtOrAfter`
+  (`:179-255`), and all of `snapshot_format.hpp`. Their only users are
+  `lab_unit_tests.cc` (tests 50-52; `HasSnapshotAtOrAfter` at `:132`,
+  `:139-141`) and `tests/raft_memory_snapshot_manager_test.cc`.
+- InstallSnapshot sends the raw state-machine bytes, with no header and no
+  checksum (`server.cc:1508-1532`, `rt/src/seam.rs:478-505`).
+- The inline-Rust twins are 144 lines of enums and `const fn`
+  (`src/snapshot_format_hpp.rs` 121, `src/snapshot_manager_hpp.rs` 3,
+  `src/memory_snapshot_manager_hpp.rs` 20; two `#[repr(u8)]` enums), and no
+  Rust code calls them.
+
+So the job is not to port 1,300 lines of C++. It is to give the Rust lane a
+Rust-owned store that holds the bytes, with the Rust lane's C++ no longer able
+to reach into it.
+
+**Where the store is reached from today.**
+- 7 store accessors declared in `src/server_h.rs`: `is_set` `:1446`,
+  `has_latest` `:1513`, `serialize_and_save` `:1557`,
+  `install_snapshot_payload` `:1561`, `pick_manager` `:1573`, `latest`
+  `:1576`, `load` `:1579`.
+- 2 in `src/server_cc.rs`: `is_set` `:488` and
+  `raft_phase1_load_and_send_snapshot` `:490-495`.
+- The lab's: `raft_lab_new_snapshot_manager`, `_delete_all`, `_probe`
+  (`src/lab_snapshot_cases.rs:47-53`), `raft_snapshot_manager_ptr_clone_into`
+  (`:71-73`), `raft_lab_snapshot_copy_latest` (`src/lab.rs:54-55`).
+- The facade's `Drop`, which calls `raft_destroy_snapshot_manager_ptr`
+  (`src/rusty-rustc/src/lib.rs:774`).
+- HOST C++ that dereferences the carrier directly: the test-60 probe
+  (`server.cc:636`, `:678`, `:689`, `:725`, `:749-750`, `:778`).
+
+Most of these are getters on an opaque `shared_ptr` (`is_set` `server.cc:1210`,
+`has_latest` `:413`, `latest` `:875`, `load` `:888`, `ptr_clone_into` `:813`).
+That is the "many tiny accessor kernels" symptom. Here the data cannot move
+into the core itself: raft-rt depends on the core, not the other way round, and
+the core is shared with two lanes that keep the C++ store (N1). So the fix is to
+put the data in raft-rt, fold what can be folded (`has_latest` into `latest`,
+N4), and make every access that remains a SEAM call from Rust into Rust on the
+Rust lane.
+
+- [ ] **N0. A snapshot-capable `raft_bench`, landed before any conversion
+  (prerequisite for N12).**
+  - **Why it comes first.**
+    - Production never registers snapshot callbacks. Every caller of
+      `SetStateMachineSnapshotCallbacks` (`src/server_h.rs:1968`) is in
+      `src/lab_snapshot_cases.rs`, and the generated shim `RaftServer`
+      (`server.h:504-539`) does not forward it.
+    - Without a `create_cb`, a non-lab build refuses to compact: "production
+      compaction is disabled" (`server.cc:1124-1128`).
+    - `CreateSnapshotLocked` then returns false without advancing
+      `snapshot_trigger_index_` (`src/server_h.rs:3570-3583`), so
+      `MaybeCreateSnapshot` (`:3742-3757`) takes the apply gate and `mtx_`
+      and logs an error on every applied entry.
+    - So today `MAKO_RAFT_SNAPSHOTS=1 raft_bench` would measure an error
+      loop, not snapshots. Arm A of N12 must be the unconverted Rust lane, on
+      the same bench code as arm B.
+  - **Helper hook** (a core change on all three lanes, landed with N0, so
+    both arms carry it).
+    - `RaftWorker::GetRaftServer()` returns `RaftSpecific*`
+      (`raft_worker.h:270`), and `RaftSpecific` is a core trait
+      (`src/scheduler_h.rs:26`). Add the method to that trait, and a
+      `#[no_mangle] raft_server_set_state_machine_snapshot_callbacks` export
+      in `src/server_cc.rs` beside the other exports (`:2100-2171`).
+    - Regenerate `server.h`'s shim and `server_exports.h` with
+      `scripts/raft_gen_exports.py --shim` (`server.h:504-505`,
+      `server_exports.h:2`); do not hand-edit them. Hybrid's `--cores`
+      parity then covers the new export.
+    - The export returns the owner token `u64` that
+      `SetStateMachineSnapshotCallbacks` returns (`src/server_h.rs:1968-1972`).
+    - Add `register_snapshot_callbacks_for_partition(par_id, create, prepare)`
+      in three places, as `register_for_leader_par_id_return` is: the Raft
+      implementation (`replication_helper.h:98`, namespace `raft_impl`
+      `:83`; defined `raft_main_helper.cc:1099`), a Paxos stub
+      (`paxos_impl`, `replication_helper.h:46-61`; `paxos_main_helper.cc:322`),
+      and the dispatcher (`replication_helper.h:135`,
+      `replication_helper.cc:233-237`, `DISPATCH_VOID_RAFT_OR_PAXOS`).
+    - The callbacks stay the existing C++ `std::function` types
+      (`server.h:331-334`), so one `raft_bench.cc` drives rust, hybrid and cpp.
+  - **`raft_bench.cc`.**
+    - Add `--snapshot-bytes B`. Each partition's payload is its own
+      `last_seq` followed by padding to B (each `RaftServer` has its own
+      callbacks).
+    - `prepare` validates the payload and stages the sequence state;
+      `Commit` restores it, so the sequence check (`raft_bench.cc:405-425`)
+      stays meaningful across an install.
+    - **Single-writer rule.** `check_sequence` assumes one writer per
+      `PartitionState` with relaxed atomics (`:371-373`, `:394`, `:406`).
+      `Commit` runs on the install thread (the poll thread, via
+      `rt/src/service.rs:147-159`), not the apply thread. It is safe only
+      because install holds `state_machine_apply_mtx_` (`server.cc:936-938`,
+      `:1693-1695`) and the apply callback runs under the same gate. State
+      that dependency in the code, and assert it in debug builds, or store
+      `last_seq` with release/acquire.
+    - **What to time.** A timer inside `create_cb` misses the store's copy
+      and save, which run after the callback returns (`server.cc:1131-1133`),
+      and timing `prepare` and `commit` separately misses the save between
+      them (`:951-963`). Both would be blind to this phase. So:
+      - `snapshot_install_us` is prepare-entry to commit-exit;
+      - `snapshot_create_us` is `create_cb` entry to the next apply callback
+        on that partition (the apply thread holds the gate through save and
+        compaction, `src/server_h.rs:3742-3757`);
+      - `max_apply_gap_us` is the largest gap between consecutive apply
+        callbacks.
+    - **Wire counters.** `installs_received` cannot see a resend storm: a
+      repeated install at the same index hits the stale branch
+      (`src/server_h.rs:3081-3089`) and acknowledges before prepare
+      (`:3132-3138`), so `prepare_cb` runs at most once per index on either
+      arm. Count RPCs instead: `install_rpcs_sent` and `install_bytes_sent`
+      on the leader (split the transport's `count_rpc`,
+      `rt/src/transport.rs:267`, by RPC type; C++ lane: in
+      `raft_lane_send_install_snapshot`), and `install_rpcs_received` on the
+      follower.
+    - **Follower records.** Only the leader writes a record (`--out` help,
+      `raft_bench.cc:182`); a follower prints only `log integrity: OK`
+      (`:1435-1447`). Followers write `${RECORD_DIR}/${proc}.follower.json`
+      and `raft_bench.sh` merges it into the leader record as flat prefixed
+      fields (`p1_installs_received`, ...), keeping "Flat, no nesting"
+      (`:555`).
+    - **Catch-up time.** The stall watcher writes the SIGCONT time to a file
+      and sends SIGUSR1 to the leader, which writes each partition's
+      `last_seq` to a file; the follower reports the time from SIGCONT until
+      its `last_seq` reaches that value.
+    - New record fields (next to `:555-620`): `snapshots_enabled`,
+      `snapshot_interval`, `snapshot_bytes`, `snapshots_created`,
+      `snapshot_create_us_{p50,max}`, `snapshot_install_us_{p50,max}`,
+      `installs_received`, `install_rpcs_{sent,received}`,
+      `install_bytes_sent`, `max_apply_gap_us`, `catchup_ms`,
+      `leadership_changes`, `rss_peak_kb` (`VmHWM` from `/proc/self/status`
+      at exit), and the values of `MAKO_RAFT_SNAPSHOTS` and
+      `MAKO_RAFT_SNAPSHOT_INTERVAL`.
+  - **`examples/raft_bench.sh`.**
+    - Add `--stall-follower-at-sec S --stall-for-sec D` (SIGSTOP, then
+      SIGCONT), modelled on the `--kill-leader-at-sec` watcher (`:310-350`).
+    - Run the per-survivor integrity check (`:413-445`, today only in
+      kill-leader mode) in stall mode too; `:494-507` checks only the
+      leader's record.
+    - `--kill-leader-at-sec` writes no leader record (`:70-74`, `:420-455`);
+      in that mode the survivors' side records carry the verdict.
+    - Add per-replica `--build-dir-p1` / `--build-dir-p2` overrides for
+      mixed-lane runs, like the `BIN_*` variables in
+      `examples/test_1shard_replication_simple_raft.sh:22-31`.
+    - **Validity checks that fail the run**, as the script already does for
+      `applied_in_window == 0` (`:519`): `snapshots_created >= 10` per
+      partition when snapshots are on, `install_rpcs_received >= 1` on the
+      stalled follower in stall runs, and `leadership_changes <= 1` (the counter includes the initial election) in stall
+      runs.
+  - **Stall sizing.** Raft here has no pre-vote (no `prevote` in `src/`), and
+    the launcher gives non-preferred replicas 5-10 s election timeouts
+    (`raft_bench.sh:198-200`). A follower stopped longer than that can
+    campaign on SIGCONT with a higher term, the leader steps down, and the
+    run exits 3 on `offer_rejected > 0` (`:510-514`). So stall for at most
+    4 s, and choose the interval so the log still moves past the follower:
+    `interval < rate_per_partition × stall_sec / 2`. `--rate` is the total
+    across partitions (`raft_bench.cc:173`), and a snapshot is due every
+    `interval` applied entries per partition (`src/server_h.rs:3480-3486`).
+  - **The launcher is frozen after N0.** `paired_trial.sh` runs the current
+    checkout's `examples/raft_bench.sh` for both arms and needs build trees
+    under the repo root (`scripts/raft_perf/paired_trial.sh:8-9`). Build the
+    N0 arms in `git worktree add ../n0 <N0>` and symlink them to
+    `build_rust_pre` and `build_hybrid_pre`; these do not exist today
+    (`build`, `build_rust`, `build_cpp` and the three lab trees do).
+  - *Done when:*
+    - On `build_rust` and `build` (hybrid), this run reports
+      `snapshots_created >= 10` per partition, gaps, duplicates and
+      out-of-order all 0, and no "compaction is disabled" log line:
+      `MAKO_RAFT_SNAPSHOTS=1 MAKO_RAFT_SNAPSHOT_INTERVAL=500 examples/raft_bench.sh --build-dir build_rust --out /tmp/s.json --payload-bytes 4096 --rate 240 --partitions 1 --duration-sec 30 --snapshot-bytes 1048576`
+    - A stall run (`--stall-follower-at-sec 5 --stall-for-sec 4`, interval
+      sized as above) shows `p?_install_rpcs_received >= 1` for the stalled
+      follower, `leadership_changes <= 1` (the counter includes the initial election), and a clean survivor check.
+    - With the variables unset, no significant change in `applied_per_sec`,
+      p50 or p99 (sign test p > 0.05):
+      `PAYLOAD=4096 RATE=240 MAXOUT=4096 DUR=8 scripts/raft_perf/paired_trial.sh raft_perf_output/n0 25 build_rust_pre build_rust_n0`
+    - The N0 commit hash is recorded in the status table. It is arm A for N12.
+
+- [ ] **N1. Target design: a Rust `SnapshotStore` in raft-rt, held by the
+  shared core through the existing opaque carrier.** *(Design record only.
+  The compile-time guard it describes lands as the last commit of N4; it
+  cannot build until every HOST dereference has moved.)*
+  - **What becomes Rust.** A new `rt/src/snapshot.rs` holds `SnapshotStore`,
+    which owns the latest snapshot's metadata and bytes (N3). Nothing in the
+    core (`src/`) changes type.
+  - **How the core holds it.** It keeps
+    `snapshot_manager_: rusty::RaftSnapshotManagerPtr`
+    (`src/server_h.rs:1677`), the 16-byte, 8-aligned carrier
+    (`src/rusty-rustc/src/lib.rs:657`, `:724`; `server.h:330-331`,
+    `:371-372`; `raft_cpp_lane_facade.h:128-129`).
+    - Hybrid/cpp: the carrier holds today's `shared_ptr<SnapshotManager>`.
+    - Rust lane: word 0 is a raw `Arc<SnapshotStore>` and word 1 is 0.
+    - All-zero means "no store", matching a null `shared_ptr`, so the
+      `Default` at `src/server_h.rs:1790` and the null-safe destroy still
+      hold.
+    - This is the device `RaftVoteQuorumPtr` → `VoteWait` already uses
+      (`rt/src/seam.rs:283-305`, with `arc_into`/`arc_ref`/`arc_clone`/
+      `arc_drop` at `:58-76`).
+    - **Word 1 must be written explicitly.** `arc_into` writes only word 0
+      (`seam.rs:58-60`), and a clone kernel constructs into storage that has
+      not been constructed (the clone-carrier comment in
+      `src/rusty-rustc/src/lib.rs`). The Rust-lane
+      `raft_snapshot_manager_ptr_clone_into`, `raft_snapshot_recovery_pick_manager`
+      and `raft_lab_new_snapshot_manager` zero word 1, as
+      `vote_quorum_release` does (`seam.rs:299-305`).
+  - **Why not a trait object in the core.**
+    - raft-rt depends on the core, so the core cannot name a raft-rt type.
+    - The transpiler walks every core file whatever its `#[cfg]`
+      (`rt/Cargo.toml:11-14`), so a `dyn SnapshotStore` field would reach the
+      cpp lane and need a C++ implementation, breaking "no transpiled
+      snapshot code".
+    - Hybrid also compiles the core with rustc (`CMakeLists.txt:452-453`)
+      and would have no implementation.
+    - `raft_lane_parity.py --cores` (`scripts/raft_lane_parity.py:6-11`)
+      allows no per-lane import delta.
+  - **Why not an `Arc<dyn Trait>` in the carrier.** Rebuilding a fat pointer
+    from two words depends on unstable pointer-metadata layout. If a second
+    backend is ever needed, it is an `enum` inside the one `Arc`.
+  - **What stays C++ at the edge, by decision.**
+    - The application callbacks `RaftCreateSnapshotCb` and
+      `RaftPrepareSnapshotCb` (`src/rusty-rustc/src/lib.rs:659-661`,
+      `server.h:331-334`) and `PreparedStateMachineSnapshotInstall`
+      (`server.h:77`).
+    - Their kernels: clone (`server.cc:817-824`), destroy (`:1237-1238`), and
+      `raft_prepare_snapshot_cb_is_set` (`:849-851`; the create callback has
+      no `is_set` kernel).
+    - The `raft_catch` wrappers: `raft_initialize_snapshot_manager`
+      (`:1036-1045`), `raft_install_snapshot_guarded` (`:1697-1708`),
+      `raft_load_state_machine_snapshot` (`:904-923`).
+    - The Prepare → save → Commit sequence itself (N4).
+
+    These belong to Mako's embedder, not to the store. Converting them would
+    be a new embedder API, not part of this phase.
+  - **The guard.** `server.h:330-331` aliases the carrier to
+    `shared_ptr<SnapshotManager>` in every C++ build, the Rust lane included.
+    HOST C++ that dereferenced it on the Rust lane would treat an
+    `Arc<SnapshotStore>` as a `shared_ptr`: undefined behaviour. Under
+    `MAKO_RAFT_LANE_RUST` (a global definition, `CMakeLists.txt:459-460`),
+    alias it instead to an opaque 16/8 struct shaped like
+    `RAFT_CPP_LANE_CARRIER` (`raft_cpp_lane_facade.h:92-100`, copy deleted,
+    destructor calls the destroy kernel). A stray dereference or copy then
+    fails to compile, and the `static_assert` at `server.h:371-372` still
+    holds.
+  - *Done when:* this design is recorded in "Target architecture" with the
+    reasons above. The guard's own criteria are in N4.
+
+- [ ] **N2. Format: raw bytes, byte-identical across lanes; do not port
+  `SnapshotFormat`.**
+  - **Decision.** The Rust store keeps the state machine's bytes verbatim.
+    No header, no CRC, no framing, and no port of `snapshot_format.hpp`.
+  - **Reasons.**
+    - Wire compatibility is the only real constraint. A mixed-lane cluster
+      exchanges only `InstallSnapshotRequest{term, leader_id,
+      last_included_index, last_included_term, data}`
+      (`rt/src/rpc.rs:309-335`; C++ `commo.cc:191-196`), and `data` is the
+      raw payload. A Rust store that wrapped it would hand a hybrid
+      follower's `prepare_cb` a header it cannot parse.
+    - There is no on-disk format to stay compatible with on any lane
+      (`server.cc:862-864`). `MAKO_RAFT_SNAPSHOT_PATH` in `docs/raft-book.md`
+      is read by no code (`docs/raft-memory-only.txt:249`: "is gone").
+    - `SnapshotFormat` carries two frozen defects that a clean Rust CRC
+      would silently "fix", and so break:
+      - its CRC table differs from IEEE 802.3 in 27 of 256 entries
+        (`snapshot_format.hpp:419-462`; pinned by
+        `tests/raft_memory_snapshot_manager_test.cc:98-104`);
+      - its header CRC covers bytes `[0,44)` while `header_crc` sits at
+        offset 46 (`:567-569`, `:657`, `:759`).
+
+      Porting it for no production user would copy two bugs.
+    - A persistent or checksummed store, if wanted later, is a new feature
+      with its own `VERSION` bump, as the test comment asks. Not this phase.
+  - **The lab marker is part of the byte contract.** On every lane the lab
+    payload is the 16-byte `(index u64, term)` marker (`server.cc:1117-1123`,
+    validated `:315-339`). It stays produced and checked by HOST C++ on all
+    lanes, so it cannot diverge.
+  - *Done when:*
+    - `rt/tests/rpc_wire_golden.rs:114-135` passes unchanged;
+    - N11's mixed-lane runs install in both directions;
+    - `grep -rn 'SnapshotFormat\|CRC32' src/deptran/raft/rt/src` is empty.
+
+- [ ] **N3. The store in Rust (`rt/src/snapshot.rs`): one idiomatic type,
+  not a reader/writer/manager transliteration.**
+  - **Shape.**
+    ```rust
+    pub struct Snapshot { pub index: u64, pub term: u64, pub bytes: Vec<u8> }
+    pub struct SnapshotStore { latest: Mutex<Option<Arc<Snapshot>>> }
+    impl SnapshotStore {
+        pub fn new() -> Arc<Self>;
+        pub fn latest(&self) -> Option<Arc<Snapshot>>;          // O(1) Arc clone
+        pub fn save(&self, index: u64, term: u64, bytes: &[u8]) -> bool;
+        pub fn save_owned(&self, index: u64, term: u64, bytes: Vec<u8>) -> bool;
+        pub fn clear(&self) -> usize;                             // lab delete_all
+        pub fn count(&self) -> usize;                             // 0 or 1, lab probe
+    }
+    ```
+  - **Decisions and reasons.**
+    - **No streaming `Reader`/`Writer`.** Production calls neither. The C++
+      versions hold four raw pointers into the manager
+      (`memory_snapshot_manager.hpp:126-129`) and dangle if the manager dies
+      first; the Rust API has no lifetime to get wrong.
+    - **No `PruneSnapshots`/`HasSnapshotAtOrAfter`.** No production caller;
+      only lab test 52 (`lab_unit_tests.cc:132`, `:139-141`) and the gtest
+      use them, and both stay on hybrid/cpp. With one slot, pruning is
+      `clear()` behind an index test.
+    - **Readers take an `Arc<Snapshot>`, not a copy.** The C++
+      `LoadLatestSnapshot` copies the whole payload under the manager's
+      mutex (`memory_snapshot_manager.hpp:205-211`), and the leader does it
+      while holding `mtx_` (`server.cc:1516`). An `Arc` clone is O(1), and a
+      reader keeps a stable image while a later `save` replaces the slot.
+    - **`save` reuses the buffer, so steady-state memory matches C++.** The
+      C++ `TakeSnapshot` does `payload_.assign(data, size)`
+      (`memory_snapshot_manager.hpp:184-193`), which reuses capacity: no
+      allocation in steady state, and at most two live copies (the
+      `create_cb` string and `payload_`). A `save` that always allocated a
+      new buffer would hold string + new + old at once and page-fault a
+      fresh mapping per snapshot. So: under the lock, if `Arc::get_mut`
+      succeeds on the current snapshot (no reader holds it), overwrite its
+      `Vec` in place (`clear` + `extend_from_slice`); otherwise build a new
+      `Snapshot` outside the lock, swap it in, and drop the replaced `Arc`
+      after releasing the lock. The copy-under-lock case is today's C++
+      behaviour exactly. `save_owned` (N5's follower handoff) swaps a
+      ready `Vec` in with no copy. **Expected RSS delta: 0 in steady state;
+      one extra payload only while an in-flight send holds the old `Arc`.**
+      N12 checks this.
+    - **The lock is a leaf** and never calls back into the server, which the
+      lock order `state_machine_apply_mtx_` → `mtx_` → store requires
+      (`server.cc:936-938`, `src/server_h.rs:2667-2668`).
+    - **`Send + Sync` store, with no `owner_thread_check`.** It is reached
+      from setup (`src/server_h.rs:2666-2673`), the apply thread
+      (`:3742-3757`), the poll thread (install) and the heartbeat send, so
+      the `IntEvent` thread binding (`rt/src/seam.rs:108-114`) does not
+      apply.
+    - **Index 0 is refused.** The core never snapshots at index 0
+      (`src/server_h.rs:3531-3536`); the C++ `TakeSnapshot` accepts it
+      (`memory_snapshot_manager.hpp:184-193`). Refusing it gives the Rust
+      store one rule to test (N10, test 50). It is unreachable from Raft, so
+      it changes no behaviour.
+    - **Metadata is `index`, `term` and `bytes.len()` only.** The C++ store
+      never writes `checksum`, and writes `timestamp_ms` only in a test
+      (`lab_unit_tests.cc:62`). Dead fields are not carried over.
+  - *Done when:*
+    - `rt/src/snapshot.rs` exists, keeps `unsafe` to the carrier conversions
+      of N4, and passes `cargo clippy -p raft-rt -- -D warnings`;
+    - N10's store tests pass.
+
+- [ ] **N4. The kernels: move the store accessors to SEAM, keep the
+  Prepare → save → Commit order in HOST C++, and fix the probe.**
+  *(Design changed by review. The draft split install and create into HOST
+  prepare / SEAM save / HOST commit driven from the core, with a new
+  `RaftPreparedInstall` carrier. That changed hybrid and cpp, added a
+  move-only carrier to the transpiler, and duplicated nothing it saved.
+  HOST calling a SEAM kernel is already the pattern:
+  `raft_phase1_load_and_send_snapshot` (HOST) calls
+  `raft_lane_send_install_snapshot` (SEAM). So the order stays where it is.)*
+  - **SEAM kernels.** Each is defined in `rt/src/snapshot.rs` (Rust store)
+    and in a new `snapshot_seam_cpp.cc` (today's `server.cc` body, moved
+    verbatim, so hybrid/cpp behaviour is unchanged). Names are kept, so the
+    core's externs do not change.
+
+    | kernel | today (`server.cc`) | Rust-lane body |
+    |---|---|---|
+    | `raft_snapshot_manager_is_set` | `:1210` | word 0 != 0 |
+    | `raft_snapshot_manager_ptr_clone_into` | `:813` | `arc_clone`, zero word 1 |
+    | `raft_destroy_snapshot_manager_ptr` | `:1236` | `arc_drop`, zero both words |
+    | `raft_snapshot_recovery_pick_manager` | `:865` | keep an injected store, else `SnapshotStore::new()` |
+    | `raft_snapshot_manager_latest` | `:875` | `latest().map(..)` |
+    | `raft_snapshot_manager_load` | `:888` | fills the `std::string` through HOST `raft_byte_string_from_bytes` (`:456`): one copy, as today, because `prepare_cb` takes `const std::string&` |
+    | `raft_snapshot_store_save(m*, idx, term, data*, len) -> bool` (new) | the `TakeSnapshot` lines `:952`, `:1132` | `save`, or `save_owned` from N5's handoff |
+    | `raft_phase1_load_and_send_snapshot` | `:1508-1532` (extern `src/server_cc.rs:490-495`) | N5 |
+
+  - **`has_latest` is folded into `latest`.** Its one caller is `HasSnapshot`
+    (`src/server_h.rs:3769`), which has a race of its own: it checks
+    `is_set` under `mtx_` (`:3761-3764`) but calls `has_latest` on
+    `snapshot_manager_` after releasing it, although its comment (`:3758`)
+    says it copies the manager first. A concurrent `SetSnapshotManagerLocked`
+    (lab `install_and_seed`, `src/lab_snapshot_cases.rs:150-159`) replaces
+    the carrier mid-read; with a Rust `Arc` that is a use-after-free, and
+    with the C++ `shared_ptr` it is a data race too. Fix it for all lanes as
+    the comment says: clone the carrier under `mtx_`
+    (`raft_snapshot_manager_ptr_clone_into`), then call `latest` on the
+    clone. `raft_snapshot_manager_has_latest` is then deleted
+    (`server.cc:413`, `src/server_h.rs:1513`). Its callers are lab-only
+    (`src/lab_snapshot_cases.rs:211`, `:258`, `:270`).
+  - **The two mixed kernels stay HOST**, and each replaces only its store
+    line with the SEAM save:
+    - `raft_install_snapshot_payload` (`server.cc:939-974`): `:952-953`
+      becomes `raft_snapshot_store_save(snapshot_manager, idx, term,
+      data->data(), data->size())`. Prepare (`:946-947`), the 0/1/2/3
+      outcomes and Commit (`:964`) are unchanged.
+    - `raft_snapshot_serialize_and_save` (`:1094-1140`): `:1132-1133`
+      becomes the same call. The `create_cb` call and empty-result rejection
+      (`:1100-1115`), the marker (`:1117-1123`) and the disabled branch
+      (`:1124-1128`) are unchanged.
+    - Hybrid/cpp's change is one indirect call to a body moved verbatim.
+      Moving the order into the core, if still wanted, is a separate
+      all-lane step with its own measurement.
+  - **The lab kernels.**
+    - `raft_lab_new_snapshot_manager` (`server.cc:577`),
+      `raft_lab_snapshot_delete_all` (`:581`), `raft_lab_snapshot_probe`
+      (`:594`) and `raft_lab_snapshot_copy_latest` (`:785`) become SEAM.
+      Their Rust bodies go in `rt/src/lab_runtime.rs` (feature `raft_test`,
+      `rt/src/lib.rs:8-9`); their declarations stay in
+      `src/lab_snapshot_cases.rs:47-53` and `src/lab.rs:54-55`.
+    - The probe hashes `(index, term, size, bytes)` plus `count()`. It does
+      not reproduce the C++ digest of the dead `timestamp_ms` /
+      `checksum` fields (`server.cc:608`, `:610`); test 58 compares digests
+      only within one process.
+  - **The test-60 probe stops touching the manager directly.**
+    `raft_lab_make_probe_cbs` and `raft_lab_make_reject_prepare_cbs` stay
+    HOST (they build C++ callbacks), but today the probe:
+    - copies the carrier into a C++ static (`lab_probe_state.manager =
+      *manager`, `server.cc:725`; field `:689`);
+    - calls `manager->GetLatestSnapshot()` inside `prepare` (`:749-750`) to
+      set `prepare_saw_old_manager` (`:753-754`), bit 1 of the flags that
+      test 60 asserts (`src/lab_snapshot_cases.rs:812`);
+    - holds a `shared_ptr` member in `LabPublicationProbe` (`:636`, `:678`)
+      and reads it in `Commit` (`:656-675`);
+    - releases it with `.reset()` (`:778`).
+
+    Under the guard the copy fails to compile (the carrier deletes copy,
+    `raft_cpp_lane_facade.h:96-98`); without it, it is undefined behaviour
+    on the Rust lane. So both the probe state and `LabPublicationProbe` hold
+    the carrier itself, filled by `raft_snapshot_manager_ptr_clone_into` and
+    released by `raft_destroy_snapshot_manager_ptr`. `prepare` calls
+    `raft_snapshot_manager_latest`, and `Commit` calls
+    `raft_snapshot_manager_load` and compares. Both are SEAM kernels already
+    in the table, so the probe needs no new lane kernel, and it runs
+    unchanged against either store.
+  - **Declarations.** Every SEAM kernel that HOST C++ calls
+    (`raft_snapshot_store_save`, `_latest`, `_load`, `_ptr_clone_into`,
+    `raft_destroy_snapshot_manager_ptr`) is declared `// LANE:` in
+    `lane_kernels.h` (beside `:19-26`). `raft_snapshot_manager_is_set`'s C++
+    declaration (`server.h:421`) moves there too.
+  - **Stay HOST (all lanes), and why.**
+    - `raft_env_snapshots_enabled` (`server.cc:853`) reads the environment,
+      not snapshot data. It is already a `CORE_CANDIDATES` entry
+      (`scripts/gen_correspondence.py:47-55`) and can fold into
+      `raft_env_lookup` (`server.cc:1017-1029`) separately.
+    - The callback kernels and `raft_catch` wrappers listed in N1.
+    - `raft_byte_string_from_bytes` (`:456`) and `raft_destroy_byte_string`
+      (`:1247`).
+    - `raft_snapshot_reply_deliver` / `raft_snapshot_reply_free`
+      (`:1416-1467`). They lock the `AsyncCallbackLifetime` gate, a
+      hand-written C++ struct holding a `std::mutex` (`:1079-1087`).
+  - **Last commit of N4: the guard from N1.** It can only build once every
+    HOST dereference has moved: today they are `server.cc:413`, `:583-586`,
+    `:597-612`, `:689`, `:725`, `:750`, `:778`, `:787-797`, `:813-815`,
+    `:867-872`, `:878`, `:892`, `:952`, `:1132`, `:1211`, `:1236`, `:1516`,
+    all in `server.cc`, which the Rust lane compiles.
+  - *Done when:*
+    - `server.cc` defines none of the SEAM kernels in the table or the lab
+      list, and no `shared_ptr<SnapshotManager>` or `SnapshotManager`
+      member call remains in it;
+    - on `build_rust`, `grep -n 'shared_ptr<::janus::raft::SnapshotManager>' src/deptran/raft/server.h`
+      is inside the `!MAKO_RAFT_LANE_RUST` branch, and a deliberately inserted
+      `(*mgr)->GetLatestSnapshot()` in `server.cc` fails to compile (revert
+      it afterwards);
+    - `python3 scripts/gen_correspondence.py --check` passes (N8);
+    - N10's lab runs are 25/25 on all three lanes.
+
+- [ ] **N5. InstallSnapshot on the Rust transport: one leader copy, and a
+  follower handoff.**
+  - **Leader, today: three copies of the payload.**
+    1. `LoadLatestSnapshot` into a `std::string`, under `mtx_`
+       (`server.cc:1516`).
+    2. `.to_vec()` into `WireBytes` (`rt/src/seam.rs:498-499`).
+    3. The frame encode.
+  - **Rust-lane `raft_phase1_load_and_send_snapshot`.**
+    - Under `mtx_` (the caller holds it), clone the `Arc<Snapshot>` (O(1)).
+    - Build the reply context through a new HOST
+      `raft_snapshot_reply_ctx_new(lifetime*, site, self, ord, idx, term) -> *mut c_void`
+      in `lane_kernels.h`: today's `new SnapshotReplyCtx{...}`
+      (`server.cc:1525-1526`) moved into a function, which the C++ body in
+      `snapshot_seam_cpp.cc` calls too.
+    - Send through a borrowed variant of the existing
+      `RaftTransport::send_install_snapshot_with(site, req, done)`
+      (`rt/src/transport.rs:363`), which today takes the request by value.
+      It encodes from the `Arc`'s slice straight into the frame, so
+      `WireBytes` is never built. One copy (the encode) instead of three.
+    - **This needs a generator change.** `rt/src/rpc.rs` is generated
+      (`rpc.rs:1`, `CMakeLists.txt:1192-1207`), and `*_with_async`
+      (`rpc.rs:493`) is emitted only for `OPAQUE` fields, which contain only
+      `Command` (`scripts/rpcgen_rust.py:98-100`). InstallSnapshot's `data`
+      is `WireBytes` (`rpc.rs:22`, `:309-335`). Extend `rpcgen_rust.py` to
+      emit a borrowed-bytes writer for `std::string` fields, regenerate, and
+      pin the output with `rt/tests/rpc_wire_golden.rs`. A hand edit to
+      `rpc.rs` would be lost on the next regeneration.
+    - If N12 still shows the encode under `mtx_` in the apply-gap or p99
+      numbers, hand the `Arc` to the poll thread and encode there. That adds
+      a hop to every send, so measure before choosing it.
+  - **Keep the existing behaviour:**
+    - no peer → deliver 0 inline, on the caller's stack
+      (`rt/src/seam.rs:485-491`, relied on by `server.cc:1427-1453`);
+    - `done` runs at most once, and the context is freed exactly once
+      (`SnapshotCtx` `Drop`, `seam.rs:462-471`);
+    - a `false` return (the request never left, `transport.rs:369-371`) is
+      ignored today (`let _ =`, `seam.rs:502`): the context is freed without
+      a deliver. Keep that.
+  - **Frame cap.** One InstallSnapshot is one frame, and both lanes cap a
+    frame at 64 MiB: `kMaxFramePayloadSize` (`src/srpc/rpc/frame_codec.rs:86`),
+    from which the TCP channel derives its limit (`tcp_channel.rs:59-61`,
+    refused at `:872-874`); both modules are transpiled for the C++ runtime
+    too (`src/srpc/rust-modules.toml:76-77`, `:144-145`). The Rust kernel
+    refuses a snapshot whose frame would exceed the cap: it logs once per
+    `(term, ord, index)` and returns `false`, and the core already logs and
+    skips (`src/server_cc.rs:1177-1186`). Chunking would change the wire and
+    break mixed-lane clusters, so it is not done here.
+  - **Follower, today: three copies.**
+    1. The frame into a `Vec`, zero-filled first (`WireBytes::deserialize`,
+       `rpc.rs:34-40`, `resize(n, 0)`).
+    2. The `Vec` into a `std::string` (`rt/src/service.rs:150-153`).
+    3. The string into the store (`payload_.assign`).
+  - **Follower, planned: two.** The second copy is forced while `prepare_cb`
+    takes `const std::string&` (`server.h:332-334`). The third can go.
+    `ServeInstallSnapshot` runs synchronously on the poll thread
+    (`service.rs:147-159`), so a scoped thread-local `Option<Vec<u8>>` set
+    around that call, tagged with `(index, term, len)`, hands the decoded
+    `Vec` to the Rust-lane `raft_snapshot_store_save`, which takes it with
+    `save_owned` when the tag matches and copies from the pointer otherwise.
+    The slot is cleared when the call returns, whatever happened.
+  - *Done when:*
+    - `rt/tests/transport_roundtrip.rs:212-236` passes with the borrowed send;
+    - a payload whose frame exceeds 64 MiB is refused without a crash, and a
+      64 MiB - 1 KiB payload is sent and received byte-exact;
+    - a new `rt/tests/large_frame_bench.rs` case (InstallSnapshot at 1, 16
+      and 60 MiB) reports send-side time per MiB no worse than the `to_vec`
+      path measured at N0.
+
+- [ ] **N6. Resend suppression on the Rust lane (its own step, after the
+  store, measured on its own).** *(Split out by review: bundled into N5 it
+  could wedge a follower, and N12's store comparison would have measured
+  suppression instead of the store.)*
+  - **The problem.** The core's snapshot branch occupies no `pending_rpcs`
+    slot and sets `skip_follower` (`src/server_cc.rs:1157-1186`), so the
+    full snapshot is resent every heartbeat round until a reply advances
+    `next_index` (`src/server_h.rs:2896-2903`). The outbound queue refuses
+    sends once it holds 4 MiB (`src/srpc/rpc/tcp_channel.rs:36`,
+    `:883-885`), so a queued 16 or 60 MiB snapshot also makes that
+    follower's heartbeats return `WouldBlock`.
+  - **The kernel.** The Rust-lane `raft_phase1_load_and_send_snapshot`
+    keeps an in-flight set keyed by `(term, ord, index)`, and returns `true`
+    without sending while that key is outstanding. It is lane-local, so
+    hybrid and cpp are untouched, and correct because install is idempotent
+    (the stale-index acknowledgement, `src/server_h.rs:3081-3089`).
+  - **It must not wedge.** `send_install_snapshot_with` sets no per-call
+    deadline (`rt/src/transport.rs:363-393`), and whether the srpc client's
+    timeouts (`src/srpc/rpc/client.rs:397-451`, `:507-522`) fail an
+    outstanding async call is unverified. If `done` never ran, the key
+    would stick and, because the snapshot branch skips AppendEntries, the
+    follower would get nothing at all: a permanent liveness loss that
+    today's resend hides. So:
+    - clear the key in `done` (reply, failure or drop);
+    - clear it on the send-failed path (`transport.rs:369-371`), where
+      `done` is not called;
+    - give each entry a deadline (a few heartbeat intervals, scaled by
+      payload size) after which it is cleared even without `done`;
+    - drop all keys on a term change or loss of leadership.
+  - Changing the core to occupy a `pending_rpcs` slot would change all
+    three lanes, so it is out of scope (Risks, item 4).
+  - *Done when:*
+    - new `rt/tests/transport_roundtrip.rs` cases, with the server holding
+      its reply: exactly one InstallSnapshot per `(term, ord, index)` while a
+      reply is outstanding; a resend after a failed reply; a resend after
+      the deadline when the peer never replies; a resend after a term
+      change;
+    - N12's suppression arm (store + suppression against store only) meets
+      its thresholds, including head-of-line blocking: heartbeat
+      `WouldBlock` counts and leader p99 during catch-up at 16 and 60 MiB.
+
+- [ ] **N7. Startup recovery on the Rust lane.**
+  - `InitializeSnapshotManagerLocked` (`src/server_h.rs:2632-2854`) keeps
+    every Raft check: the env gate, the interval override, gate-then-`mtx_`
+    locking, the metadata cross-check, boundary and suffix retention,
+    state-machine load, boundary publication, compaction, the commit clamp
+    and the term raise. Its store calls (`pick_manager` `:2672`, `latest`
+    `:2680`, `load` `:2704`) keep their names and reach N4's SEAM bodies.
+  - The state machine is loaded through the unchanged HOST
+    `raft_load_state_machine_snapshot` (`server.cc:904-923`), inside the
+    unchanged `raft_initialize_snapshot_manager` catch wrapper
+    (`:1036-1045`), so a C++ throw still fail-stops.
+  - The store is memory-only on every lane. After a process restart it is
+    empty unless one was injected, which matches today (`server.cc:862-873`).
+    The fail-stops for recovered progress with no covering snapshot
+    (`src/server_h.rs:2633-2645`, `:2686-2689`) are unchanged.
+  - **No existing test covers this path.** Recovery runs only in Setup
+    (`src/server_cc.rs:2139`). The lab starts with `MAKO_RAFT_SNAPSHOTS`
+    unset (`ci/ci.sh` sets no `MAKO_RAFT_SNAPSHOT*`), so the switch check
+    returns early (`src/server_h.rs:2633-2651`); tests 60 and 69 set it only
+    after Setup (`src/lab_snapshot_cases.rs:649`, `:946`); tests 54 and 55
+    inject a manager after Setup (`:209`, `:215`, `:253`); no lab case
+    restarts a server. In `raft_bench` the store starts empty, so only the
+    empty branch (`src/server_h.rs:2686-2697`) runs. The `load` path, the
+    metadata cross-check (`:2704-2720`), the state-machine load and the term
+    raise run on no lane today.
+  - Add a `raft_test` case that builds a server with a seeded store injected
+    before Setup and `MAKO_RAFT_SNAPSHOTS=1`, and checks that the boundary,
+    commit clamp and term match the seed; and a second that starts with an
+    empty store over uncovered progress and checks the fail-stop. Run both on
+    all three lanes: they are the evidence that the SEAM bodies agree.
+  - *Done when:* both cases pass on all three lanes, and a new rt test opens
+    a store, saves, re-opens through `pick_manager` with the same carrier,
+    and gets the same `Arc` (pointer-equal).
+
+- [ ] **N8. Lane gates and CMake.**
+  - **`scripts/gen_correspondence.py`.**
+    - `RT_SEAM` (`:36`) becomes a list: `rt/src/seam.rs`,
+      `rt/src/snapshot.rs`, `rt/src/lab_runtime.rs`.
+    - `CPP_SEAM` (`:37`) becomes a list: `server_seam_cpp.cc`,
+      `snapshot_seam_cpp.cc`, `lab_unit_tests.cc` (N10).
+    - `CPP_HOST` (`:39-40`) excludes every `CPP_SEAM` file.
+    - `cpp_defined` (`:74`) is textual and ignores `#if`, so the bodies must
+      physically leave `server.cc`. An `#if !MAKO_RAFT_LANE_RUST` wrapper
+      would read as HOST and rt at once, which classifies as "?" (`:118`) and
+      fails `--check` (`:267-270`).
+    - Extend `declared_kernels()` (`:57-67`) to parse `lane_kernels.h`: a
+      `// LANE:` entry must classify SEAM and a `// HOST:` entry HOST. Today
+      that header's kernels are never classified.
+    - Regenerate `docs/migration/raft/cpp-rust-correspondence.md`. Record
+      the HOST/SEAM counts it computes (today HOST 90 / SEAM 23, 0
+      unclassified) rather than predicting them.
+  - **`scripts/raft_lane_parity.py`.**
+    - `--once` needs no change. On the Rust lane a kernel raft-rt now
+      defines is an export of `libraft_rt.a`, and the `clash` check (`:84`)
+      fails the build if `server.cc` still defines it: "move, don't
+      duplicate".
+    - `--cores` (hybrid, `CMakeLists.txt:1374-1378`) sees N0's new export and
+      N4's `HasSnapshot` change in both cores, because both come from one
+      source.
+  - **CMake.**
+    - In the non-rust branch (`CMakeLists.txt:1106-1110`), append
+      `src/deptran/raft/snapshot_seam_cpp.cc` next to `server_seam_cpp.cc`.
+    - In the `RAFT_TEST` block (`:1112-1122`), compile `lab_unit_tests.cc`
+      only when `MAKO_RAFT_LANE` is not `rust`.
+    - `RAFT_RUST_SOURCES` already globs `rt/src/*.rs` (`:1226-1236`), so
+      `snapshot.rs` needs no list change.
+  - **A `cargo test` gate.** No CMake or `ci.sh` step runs raft-rt's tests
+    today: the only raft-rt cargo call is `cargo build` at
+    `CMakeLists.txt:1258` (`:346` builds `rust-lib`). When
+    `MAKO_RAFT_LANE=rust`, add a target `raft_rt_test` that runs
+    `cargo test --release --manifest-path src/deptran/raft/rt/Cargo.toml --features raft_test`
+    and make `raft_lane_check` (`:1380-1385`) depend on it.
+  - *Done when:*
+    - `gen_correspondence.py --check` is clean;
+    - `cmake --build build_rust --target raft_lane_check`, and the same on
+      `build` and `build_cpp`, pass;
+    - breaking one assertion in `rt/src/snapshot.rs`'s tests fails
+      `raft_lane_check`.
+
+- [ ] **N9. Delete what the Rust lane no longer needs; keep the C++ manager
+  for hybrid/cpp.**
+  - **Delete:**
+    - from `server.cc`: every SEAM body moved in N4 (now in
+      `snapshot_seam_cpp.cc`), and `raft_snapshot_manager_has_latest`;
+    - from `src/server_h.rs`: the `has_latest` extern (`:1513`);
+    - `raft_lane_send_install_snapshot` in `rt/src/seam.rs:473-505`
+      (replaced by N5's kernel). Its C++ definition
+      (`server_seam_cpp.cc`) becomes a static helper of
+      `snapshot_seam_cpp.cc`, and its declaration leaves
+      `lane_kernels.h:19-26`;
+    - `raft_byte_string_from_bytes`'s use in `rt/src/service.rs:150-153`
+      stays (copy 2 is forced), but the store's own copy goes (N5).
+  - **Keep, by the user's decision:**
+    - `snapshot_manager.hpp`, `memory_snapshot_manager.hpp` and
+      `snapshot_format.hpp`, unchanged, for hybrid and cpp;
+    - their inline-Rust twins and `scripts/raft_dsl.sh` blocks (`:44`,
+      `:52-56`);
+    - `tests/raft_memory_snapshot_manager_test.cc` and
+      `test_raft_memory_snapshot_manager` (`CMakeLists.txt:2148-2152`).
+  - **These headers stay compiled on every lane regardless:**
+    - `PaxosServer` holds an unused `shared_ptr<SnapshotManager>`
+      (`src/deptran/paxos/server.h:85-94`);
+    - `raft_node.hpp` uses the `SnapshotManager*` interface (`:89`, `:127`,
+      `:132`), and `test_cluster.hpp` instantiates `MemorySnapshotManager`
+      (`:119`, `:151`) for `raft_lab_standalone`.
+
+    Removing the dead Paxos field is a separate Paxos change.
+  - *Done when:*
+    - `nm -C build_rust/dbtest build_rust/raft_bench | grep -E 'MemorySnapshotManager|SnapshotFormat|MemorySnapshotWriter'`
+      is empty;
+    - the same on `build/dbtest` (hybrid) still finds `MemorySnapshotManager`;
+    - `git diff --stat <N0>..` shows no change to the three snapshot headers.
+
+- [ ] **N10. Correctness.**
+  - **Keep the Rust lane's 25/25 honest.**
+    - `raft_lab_cpp_unit_tests` (`lab_unit_tests.cc:168-174`, declared
+      `src/lab_snapshot_cases.rs:65`, called `:1195`) becomes the SEAM
+      `raft_lab_snapshot_unit_tests`. On hybrid/cpp, `lab_unit_tests.cc`
+      keeps tests 50-52 unchanged.
+    - On the Rust lane, `rt/src/lab_runtime.rs` runs tests 50-52 over
+      `SnapshotStore`, printing the same `TEST N: ...` / `TEST N Passed`
+      lines (`lab_unit_tests.cc:32-44`), so `ci/ci.sh` still counts 25.
+      **These are new tests under the old numbers,** not ports: the Rust
+      store has no metadata type and no format.
+      - **50:** `save` at index 0 is refused and leaves the slot as it was;
+        index 1 is accepted.
+      - **51:** a byte-exact round trip for empty, non-UTF-8 and
+        all-high-byte (`{00,7f,80,fe,ff}`) payloads.
+      - **52:** save, load, overwrite (in place and with a reader holding the
+        old `Arc`), and `clear`; `count()` is 0 or 1.
+  - **rt unit tests** (`rt/src/snapshot.rs` `#[cfg(test)]`, run by N8's gate):
+    - a reader holding an `Arc` sees a stable image while a writer replaces
+      the slot;
+    - with no reader, `save` reuses the buffer (capacity pointer unchanged);
+    - the replaced buffer is freed after the lock is released (`Drop` probe);
+    - carrier clone/drop round trips leave `Arc::strong_count` balanced, and
+      a destroyed carrier is all-zero;
+    - a 4-thread × 10⁵-operation `save`/`latest` stress shows no torn
+      `(index, term, len)`.
+  - **Lab, looped** (60 and 69 are timing-dependent):
+    - `for i in $(seq 10); do RAFT_LAB_BUILD_DIR=build_rust_lab ./ci/ci.sh raftLabTest; done`
+    - the same with `RAFT_LAB_BUILD_DIR=build_raftlab ... raftLabTestHybrid`
+      and `RAFT_LAB_BUILD_DIR=build_cpp_lab ... raftLabTestCpp`.
+    - Always pass `RAFT_LAB_BUILD_DIR`: `ci/ci.sh:466-470` otherwise defaults
+      the tree to `${BUILD_DIR}_raftlab`, which is a hybrid tree in this
+      worktree.
+  - **What the lab and the suites do not cover.** Every lab payload is the
+    16-byte marker (`server.cc:1117-1123`), and a disconnected lab follower
+    still answers InstallSnapshot at once (only its outbound `peer()` is
+    gated, `rt/src/transport.rs:219-224`). So the lab never has an
+    outstanding install, a large frame, a refused frame or a borrowed encode
+    at real size. The four Raft suites never enable snapshots (no
+    `MAKO_RAFT_SNAPSHOT` in `ci/ci.sh` or `examples/*.sh`). They are a check
+    that nothing else regressed; the evidence for N5 and N6 is their rt
+    tests and N11's stall runs.
+  - **Suites:** `BUILD_DIR=build_rust ./ci/ci.sh shard1ReplicationRaft`,
+    `shard2ReplicationRaft`, `shard1ReplicationSimpleRaft` and
+    `shard2ReplicationSimpleRaft`, and the same four on `build` (hybrid).
+  - **gtests on hybrid:**
+    `ctest --test-dir build -R 'raft_memory_snapshot|raft_lab_standalone' --output-on-failure`.
+  - *Done when:*
+    - 25/25 on every lane in all 10 runs;
+    - the snapshot tests all pass in every run. Derive the expected set from
+      the source rather than a literal: the `UnitInit(` ids in
+      `lab_unit_tests.cc` (50-52) and the `init2(` ids in
+      `src/lab_snapshot_cases.rs` (54-60, 67-69, 72), 14 today, and check
+      that each has a `^TEST N Passed` line;
+    - test 60's flags still show prepare against the old image, then publish,
+      then commit (`src/lab_snapshot_cases.rs:812-815`) on the Rust lane;
+    - N7's recovery cases, the 8 suite runs and the gtests pass.
+
+- [ ] **N11. Mixed-lane snapshot install.**
+  - Use N0's per-replica overrides with `MAKO_RAFT_SNAPSHOTS=1`, an interval
+    sized for the stall (N0), `--snapshot-bytes` 1 MiB and 16 MiB, and
+    `--stall-follower-at-sec 5 --stall-for-sec 4`.
+  - Run the mixes the way T3 did: a rust leader with a stalled hybrid
+    follower, and a hybrid leader with a stalled rust follower. Also one cpp
+    follower under a rust leader.
+  - In each mix, add one run with `--kill-leader-at-sec` after the first
+    compaction, to move leadership onto a replica that holds a snapshot.
+  - *Done when:* in every run (3 per mix per size)
+    - the stalled follower's side record shows `install_rpcs_received >= 1`
+      and `installs_received >= 1`;
+    - its `catchup_ms` is recorded (its `last_seq` reached the leader's);
+    - every survivor's integrity check is clean (`examples/raft_bench.sh:413-445`,
+      wired into stall mode by N0) and `leadership_changes <= 1` (the counter includes the initial election) in stall runs.
+
+    That is the proof that the Rust store ships raw bytes a C++ `prepare_cb`
+    accepts, and the reverse.
+
+- [ ] **N12. Performance with snapshots on (measured, not assumed).**
+  - **Arms**, each built in its own worktree and symlinked under the root
+    (N0):
+    - **pre:** rust at N0 (`build_rust_pre`, C++ manager);
+    - **store:** rust after N5, before N6 (`build_rust_store`);
+    - **post:** rust after N9 (`build_rust_post`, store + suppression);
+    - **hybrid pre / post:** hybrid at N0 (`build_hybrid_pre`) and after N9
+      (`build`).
+  - **Gates, and what each isolates.**
+    - **store vs pre** judges the store: the same runtime and resend
+      behaviour, only the store differs.
+    - **post vs store** judges N6's suppression.
+    - **hybrid post vs hybrid pre** checks that hybrid really is unchanged;
+      N4's design makes this nearly a formality (one indirect call, plus
+      N0's and N4's small core changes, which both arms of every other
+      comparison share).
+    - Rust against hybrid is context only, with its confound stated: the two
+      lanes' RPC runtimes differ (286 KB saturation: hybrid 380-413/s, rust
+      682-696/s; "T4's numbers" above), and at throttled points both apply
+      the offered rate, so a per-point "≥ hybrid" gate would pass or fail on
+      noise.
+  - **Steady state, 25 ABBA pairs per point.** `paired_trial.sh` gains a
+    `SNAPSHOT_BYTES` pass-through next to `PAYLOAD`
+    (`scripts/raft_perf/paired_trial.sh:18-24`). Every point satisfies
+    `DUR ≥ 10 × interval × PARTS / RATE`, so each partition takes at least
+    ten snapshots (N0's validity check enforces it):
+    - `PAYLOAD=4096 RATE=240 PARTS=1`, interval 100 and 500,
+      `SNAPSHOT_BYTES` {64 KiB, 1 MiB, 16 MiB, 60 MiB};
+    - `PAYLOAD=286208 RATE=190 PARTS=6`, interval 100, 1 MiB (about 32
+      entries/s per partition, so `DUR ≥ 190`; use `DUR=200`);
+    - 286 KB saturation (`RATE=0`), interval 1000, 1 MiB;
+    - 60 MiB is kept only if N5's 64 MiB - 1 KiB test passes with the
+      header.
+  - **Catch-up:** 10 stall runs per arm (N0's sizing) at 1 MiB and 16 MiB.
+  - **Metrics** (`paired_trial.sh` computes only `applied_per_sec`, p50 and
+    p99 today, `:56-57`; extend it): `applied_per_sec`; p50, p99, p99.9 and
+    max; `max_apply_gap_us`; `snapshot_create_us` and `snapshot_install_us`
+    as N0 defines them; `install_rpcs_sent` and `install_bytes_sent`;
+    `catchup_ms`; leader p99 during catch-up; `rss_peak_kb` per process.
+    `paired_trial.sh` also drops failed runs silently (`:30`, `|| echo`):
+    fail if fewer than 23 of 25 pairs complete.
+  - **Pass/fail.**
+    - store vs pre, at every point: equivalence, not only non-significance:
+      median B/A - 1 within ±2% for throughput and p50 and within ±5% for
+      p99, with the sign test (p > 0.05) showing no regression; median
+      `max_apply_gap_us`, `snapshot_install_us_p50` and `catchup_ms` not
+      worse by more than 5%.
+    - **RSS**, judged at `PAYLOAD=4096` with 16 and 60 MiB, where snapshot
+      bytes dominate (at 286 KB the retained log dwarfs a 1 MiB copy):
+      `rss_peak_kb` minus the same arm's peak with snapshots off, not more
+      than one payload above pre's (N3 predicts 0 in steady state).
+    - post vs store: `install_rpcs_sent` per catch-up at most 2, and no
+      regression in the store-vs-pre metrics.
+    - hybrid post vs pre: equivalent under the same ±2% / ±5% bounds.
+  - **Disabled path.** With the snapshot variables unset, 25 pairs of
+    `build_rust_pre` against `build_rust_post` at the four standard points,
+    under the same equivalence bounds. `run_sweep.sh --phase rate` plus
+    `compare.py` against `docs/performance/raft-rust-9a361eccd/` is context
+    only: `compare.py` takes directories (`:164-165`), so
+    `raft-baseline-412c225a/records.tar.gz` must be extracted first, and at
+    3 trials per point the older baseline's ±50-170% moves drown a 5% change.
+  - *Done when:*
+    - all thresholds hold;
+    - the records and a `SUMMARY.md` are committed under
+      `docs/performance/raft-rust-snapshot-<commit>/`, like
+      `raft-rust-9a361eccd/`;
+    - any threshold missed is fixed, or recorded here with its evidence,
+      before the phase is marked done.
+
+- [ ] **N13. Docs.**
+  - Update:
+    - the status table;
+    - "Target architecture", with N1's shape;
+    - `docs/raft-book.md`: delete the stale `MAKO_RAFT_SNAPSHOT_PATH`
+      (`:578`, `:786`, `:1004`) and the nonexistent `FileSnapshotManager` /
+      `file_snapshot_manager.hpp` and `.snap` naming (`:588-603`); state that
+      the store is memory-only on every lane, that the Rust lane's store is
+      `rt/src/snapshot.rs`, and that one InstallSnapshot frame is capped at
+      64 MiB on every lane (`src/srpc/rpc/frame_codec.rs:86`);
+    - `docs/dev/raft_snapshot_design.md` (`:54`, `:72`), the same stale store;
+    - `docs/performance/raft-harness.md:136`, with the new flags and record
+      fields;
+    - the regenerated `cpp-rust-correspondence.md`.
+  - Record in CLAUDE.md's Raft notes that the snapshot store is Rust on the
+    Rust lane and C++ on hybrid/cpp by decision.
+  - *Done when:*
+    - `grep -n 'MAKO_RAFT_SNAPSHOT_PATH\|FileSnapshotManager' docs/raft-book.md docs/dev/raft_snapshot_design.md`
+      is empty (`docs/raft-memory-only.txt:249` correctly says the variable
+      "is gone" and stays);
+    - a sweep of relative markdown links under `docs/` finds none dead. No
+      checker script is committed; `63d120fbe` describes the sweep it ran.
+
+**Risks and open questions**
+1. **Production still never snapshots.** N0 adds a bench-only path. Mako's
+   Masstree state machine has no create/prepare callbacks, so "no
+   regression" here covers the Raft mechanics with a synthetic state
+   machine, not a real Mako checkpoint. A Mako checkpoint is a new feature.
+2. **The create path holds the apply gate and `mtx_` across `create_cb`**
+   (`src/server_h.rs:3742-3747`). This is core behaviour shared by all lanes
+   and is not changed here. If N12's `max_apply_gap_us` is dominated by it,
+   the fix is a separate all-lane step.
+3. **Retry storm when create fails.** A failed create does not advance
+   `snapshot_trigger_index_` (`src/server_h.rs:3570-3583`), so
+   `MaybeCreateSnapshot` retries on every applied entry (`:3742-3757`). Left
+   alone because the fix touches hybrid/cpp; N0 keeps benchmarks out of it.
+4. **The core does not occupy `pending_rpcs` for snapshot sends**
+   (`src/server_cc.rs:1157-1186`). N6 mitigates this on the Rust lane only.
+   Whether to fix it in the core for all lanes is open.
+5. **The follower's second copy stays** while the embedder API takes
+   `const std::string&` (`server.h:332-334`). Removing it means a slice- or
+   `Arc`-taking `prepare_cb`, which is an embedder API change.
+6. **`log_retention_window_` is ignored by compaction.** Compaction goes
+   through `snap_index` (`src/server_h.rs:3589`); the window is stored
+   (`:2077-2085`) but unused, so a follower one entry behind at snapshot
+   time needs a full install. N12's catch-up numbers reflect that on both
+   arms.
+7. **Whether the srpc client times out an outstanding async call is
+   unverified** (`src/srpc/rpc/client.rs:397-451`, `:507-522`). N6's deadline
+   does not depend on it, but if it does not, the C++-lane and pre-N6
+   behaviour (resend every round) is what bounds a lost reply today.
 
 #### Phase M — the payload and message types move into the core
 
