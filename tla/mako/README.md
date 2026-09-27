@@ -112,6 +112,13 @@ clocks are below the vector watermark.
 | `theorem_rollback_safety` | `proofs_history.rs` | Paper Theorem 2 with Lemmas 1, 7 and 8: a reader's writer is in the same or an older epoch, same-epoch clocks are ordered, a rolled-back writer drags its readers down, and an acknowledged reader's writer is durable and never rolled back |
 | `witness_single_shard_commit`, `witness_two_shard_commit`, `witness_crash_rollback` | `proofs_witness.rs` | Verified traces from the initial state: a commit, a cross-shard read-write commit, and a crash that dooms and rolls back a certified transaction |
 
+The specification lets the serial order include certified transactions that
+are not yet acknowledged, the usual convention for pending operations. Such a
+transaction may later be rolled back, since rollback does not change its
+status. The proof's witness never includes one, and `theorem_durability` and
+`theorem_rollback_safety` separately rule out an acknowledged transaction
+depending on a rolled-back write.
+
 The per-state theorems in `proofs_history.rs` require `inv`, which
 `theorem_invariant` supplies for every reachable state.
 
@@ -123,8 +130,10 @@ The per-state theorems in `proofs_history.rs` require `inv`, which
 - **Bounded model checking.** `modelcheck/mako_mc.py` mirrors the Verus model
   function by function and explores it exhaustively for small instances,
   checking the invariant, the strict-serializability specification by brute
-  force, and the other theorems in every state. Fifteen configurations up to
-  6.8 million states found no violation, and commits, commits after a crash,
+  force, and the other theorems in every state. Fifteen configurations, each
+  explored exhaustively and up to 6.8 million states, found no violation.
+  Three cross-checks of the checker's own state abstractions also found none;
+  one of them stopped at its 5-million-state cap. Commits, commits after a crash,
   dependent commits and cross-epoch reads are all reachable. Of twelve
   deliberate mutations, eleven were caught in at least one configuration. The
   one not caught keeps unreplicated versions at a crash; it is harmless,
