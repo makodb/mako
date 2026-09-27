@@ -575,32 +575,41 @@ Raft logs grow unboundedly without compaction. Snapshotting captures the state m
 
 ```bash
 MAKO_RAFT_SNAPSHOTS=1                # Enable snapshot support
-MAKO_RAFT_SNAPSHOT_PATH=/var/raft    # Custom snapshot storage path
 MAKO_RAFT_SNAPSHOT_INTERVAL=10000    # Entries between snapshots (default: 10000)
 ```
 
-### Storage Architecture
+### Storage
 
-Three layers in `src/srpc/rpc/`:
+The snapshot store is **memory-only on every lane**: it holds the latest
+snapshot's `(index, term, bytes)` and nothing is written to disk, so after a
+process restart it is empty unless an embedder injected one before `Setup()`.
 
-| Layer | File | Purpose |
-|-------|------|---------|
-| `SnapshotManager` | `snapshot_manager.hpp` | Abstract interface for snapshot CRUD |
-| `FileSnapshotManager` | `file_snapshot_manager.hpp` | File-based implementation with retention policy |
-| `SnapshotFormat` | `snapshot_format.hpp` | Binary serialization with CRC32 checksums |
+| Lane | Store | File |
+|------|-------|------|
+| rust (`MAKO_RAFT_LANE=rust`) | `SnapshotStore`, one `Arc<Snapshot>` slot | `src/deptran/raft/rt/src/snapshot.rs` |
+| hybrid, cpp | `MemorySnapshotManager` behind the `SnapshotManager` interface | `src/deptran/raft/memory_snapshot_manager.hpp`, `snapshot_manager.hpp` |
 
-### Binary Wire Format
+The core reaches either one only through the SEAM kernels
+(`raft_snapshot_manager_latest`, `_load`, `raft_snapshot_store_save`, ...;
+`src/deptran/raft/snapshot_seam_cpp.cc` on the C++ lanes), holding it in the
+opaque 16-byte `RaftSnapshotManagerPtr`. Keeping the C++ manager on
+hybrid/cpp is a decision, not a gap (plan phase N,
+`docs/migration/raft/commo-service-rpc-plan.md`).
 
-```
-Magic (4B) | Version (4B) | Header Size (4B) | Data Size (8B) |
-Compression (1B) | Checksum Type (1B) | Last Index (8B) | Last Term (8B) |
-Timestamp (8B) | Header CRC (4B) | Padding (2B) | Data... | Data CRC (4B)
-```
+### Snapshot bytes on the wire
 
-- **Magic**: `0x504E4153` ("SNAP" in little-endian)
-- **CRC32 checksums** on both header and data for corruption detection
-- **52-byte fixed header** (8-byte aligned)
-- File naming: `snapshot_<index>_<term>.snap` with `.tmp` suffix during writes (atomic rename on finalize)
+The store keeps the state machine's bytes verbatim and InstallSnapshot ships
+them verbatim, on every lane: no header, no checksum, no framing. That is
+what keeps a mixed-lane cluster wire-compatible. `snapshot_format.hpp`
+(`SnapshotFormat`, a CRC-framed format) is still compiled for the C++ unit
+tests but is used by no production path.
+
+One InstallSnapshot is one frame, and every lane caps a frame at 64 MiB
+(`kMaxFramePayloadSize`, `src/srpc/rpc/frame_codec.rs:86`). The Rust lane
+refuses, and logs once, a snapshot whose frame would exceed it. On the Rust
+lane an InstallSnapshot to a follower is also not resent while the same
+`(term, follower, index)` is outstanding, up to a deadline
+(`RaftTransport::send_install_snapshot_once`).
 
 ### RaftServer Integration
 
@@ -615,7 +624,7 @@ uint64_t GetSnapshotTerm() const;  // Term of last snapshotted entry (snapterm_)
 size_t CompactLog(uint64_t up_to_index); // Discard entries before index
 ```
 
-On initialization, if a prior snapshot exists on disk, `snapidx_` and `snapterm_` are loaded from it. These fields are used by `RequestVote` and `AppendEntries` for log consistency checks.
+On initialization, if the store holds a snapshot (one injected before `Setup()`; the store is memory-only), `snapidx_` and `snapterm_` are restored from it. These fields are used by `RequestVote` and `AppendEntries` for log consistency checks.
 
 ### Snapshot Recovery on Startup
 
@@ -783,7 +792,7 @@ For multi-shard deployments:
 | `MAKO_RAFT_ASYNC_PERSISTENCE` | (unset) | Set to `1` or `true` for async disk persistence |
 | `MAKO_RAFT_PERSISTENCE_PATH` | `/tmp` | Base directory for persistence files |
 | `MAKO_RAFT_SNAPSHOTS` | (unset) | Set to `1` to enable snapshot manager |
-| `MAKO_RAFT_SNAPSHOT_PATH` | `/tmp` | Base directory for snapshot files |
+| `MAKO_RAFT_SNAPSHOT_INTERVAL` | `10000` | Entries between snapshots |
 | `MAKO_RAFT_LOG_RETENTION_WINDOW` | `5000` | Number of log entries to retain after compaction. Compaction is also coordinated with snapshots: entries beyond the latest snapshot index are never removed. |
 
 The heartbeat interval and log retention window can also be changed at runtime via the C++ API:
@@ -1001,7 +1010,6 @@ MAKO_RAFT_PERSISTENCE=1          # Enable persistence
 MAKO_RAFT_ASYNC_PERSISTENCE=1    # Async persistence
 MAKO_RAFT_PERSISTENCE_PATH=/tmp  # Storage path
 MAKO_RAFT_SNAPSHOTS=1            # Enable snapshots
-MAKO_RAFT_SNAPSHOT_PATH=/tmp     # Snapshot storage path
 MAKO_RAFT_SNAPSHOT_INTERVAL=10000 # Entries between snapshots
 MAKO_DISABLE_JETPACK=1           # Keep legacy Jetpack recovery disabled
 ```

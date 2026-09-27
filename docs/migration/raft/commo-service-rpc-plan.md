@@ -100,18 +100,18 @@ that assumed a single lane are superseded here and marked where they stand:
 | D1-D4 | D1 nothing left to delete (dead snapshot send removed), D2 by design, D3 nothing to collapse (all 31 exports used), D4 done | this commit |
 | N0 snapshot-capable raft_bench (arm A; follower records, wire counters, stall mode) | done -- snapshots on: 15 per 30 s run on rust and hybrid, clean logs; stall: 1 install from 3-6 RPCs, catch-up 23-24 ms, no leadership change; snapshots off: 25 pairs vs pre-N0, p50 -0.19% (p=0.42), p99 +0.14% (p=1.0) | this commit |
 | N1 target design: Rust store behind the opaque carrier | done -- recorded in "Target architecture" | this commit |
-| N2 format: raw bytes, no SnapshotFormat port | next | -- |
-| N3 SnapshotStore in rt/src/snapshot.rs (buffer reuse) | next | -- |
-| N4 kernels: store accessors to SEAM, order stays HOST, probe fixed, guard last | next | -- |
-| N5 InstallSnapshot on the Rust transport (borrowed send via rpcgen, follower handoff) | next | -- |
-| N6 resend suppression, Rust lane only (own step, deadline) | next | -- |
-| N7 startup recovery on the Rust lane (new recovery lab cases) | next | -- |
-| N8 lane gates, CMake, cargo test gate | next | -- |
-| N9 deletions (C++ manager kept for hybrid/cpp by decision) | next | -- |
+| N2 format: raw bytes, no SnapshotFormat port | done -- the Rust store keeps and ships the state machine's bytes verbatim; `rpc_wire_golden.rs` unchanged and passing; no `SnapshotFormat`/`CRC32` in `rt/src`; N11 installs in both directions | `a6ba19ee9` |
+| N3 SnapshotStore in rt/src/snapshot.rs (buffer reuse) | done -- one `Arc<Snapshot>` slot, in-place reuse with no reader, index 0 refused; 16 rt unit tests incl. a 4-thread no-torn-image stress | `a6ba19ee9` |
+| N4 kernels: store accessors to SEAM, order stays HOST, probe fixed, guard last | done -- 83 HOST / 36 SEAM / 0 unclassified; `HasSnapshot` asks a clone taken under `mtx_`; on the Rust lane `(*mgr)->GetLatestSnapshot()` in `server.cc` fails to compile (checked, reverted) | `a6ba19ee9` |
+| N5 InstallSnapshot on the Rust transport (borrowed send via rpcgen, follower handoff) | done -- leader 1 copy (was 3), follower 2 (was 3); frame cap: 64 MiB - 128 B crosses byte-exact, larger refused; send call 1 / 16 / 60 MiB: 0.28 / 8.70 / 116 ms borrowed vs 0.40 / 8.79 / 202 ms `to_vec` | `a6ba19ee9` |
+| N6 resend suppression, Rust lane only (own step, deadline) | done -- once per (term, follower, index) while outstanding; cleared by reply, drop, failed send, deadline (4 heartbeats, >= 200 ms, + 20 ns/B) and term change; 6 held-reply transport tests | `39950ea3e` |
+| N7 startup recovery on the Rust lane (new recovery lab cases) | done -- lab cases 73 (restore 40/3, commit clamped, term raised, store kept) and 74 (two fail-stops) pass on rust, hybrid and cpp; rt test: `pick_manager` keeps the pointer-equal `Arc` | `a22d391cc` |
+| N8 lane gates, CMake, cargo test gate | done -- `raft_rt_test` gates `raft_lane_check` on the Rust lane; a broken store assertion fails the build (checked, reverted); `ci.sh` derives the lab count (27) from the source | `a22d391cc` |
+| N9 deletions (C++ manager kept for hybrid/cpp by decision) | done -- `nm` finds no `MemorySnapshotManager`/`SnapshotFormat`/`MemorySnapshotWriter` in `build_rust/{dbtest,raft_bench}`, 30 symbols in hybrid's; the three snapshot headers are unchanged since N0 | `a22d391cc` |
 | N10 correctness: lab 25/25 x10 per lane, rt tests, suites | next | -- |
 | N11 mixed-lane snapshot install | next | -- |
 | N12 snapshot-enabled performance (pre / store / post arms) | next | -- |
-| N13 docs | next | -- |
+| N13 docs | done -- `raft-book.md`, `raft_snapshot_design.md` (no `MAKO_RAFT_SNAPSHOT_PATH`/`FileSnapshotManager` left), `raft-harness.md` (flags, record fields), CLAUDE.md note; no dead relative link under `docs/` | this commit |
 
 **The full sweep** (`docs/performance/raft-rust-9a361eccd`, 3 trials per
 point, against the C++ baseline 412c225a): 624 of 624 runs succeeded, and of
@@ -1047,7 +1047,7 @@ Rust lane.
   - *Done when:* this design is recorded in "Target architecture" with the
     reasons above. The guard's own criteria are in N4.
 
-- [ ] **N2. Format: raw bytes, byte-identical across lanes; do not port
+- [x] **N2. Format: raw bytes, byte-identical across lanes; do not port
   `SnapshotFormat`.**
   - **Decision.** The Rust store keeps the state machine's bytes verbatim.
     No header, no CRC, no framing, and no port of `snapshot_format.hpp`.
@@ -1081,7 +1081,7 @@ Rust lane.
     - N11's mixed-lane runs install in both directions;
     - `grep -rn 'SnapshotFormat\|CRC32' src/deptran/raft/rt/src` is empty.
 
-- [ ] **N3. The store in Rust (`rt/src/snapshot.rs`): one idiomatic type,
+- [x] **N3. The store in Rust (`rt/src/snapshot.rs`): one idiomatic type,
   not a reader/writer/manager transliteration.**
   - **Shape.**
     ```rust
@@ -1146,7 +1146,7 @@ Rust lane.
       of N4, and passes `cargo clippy -p raft-rt -- -D warnings`;
     - N10's store tests pass.
 
-- [ ] **N4. The kernels: move the store accessors to SEAM, keep the
+- [x] **N4. The kernels: move the store accessors to SEAM, keep the
   Prepare → save → Commit order in HOST C++, and fix the probe.**
   *(Design changed by review. The draft split install and create into HOST
   prepare / SEAM save / HOST commit driven from the core, with a new
@@ -1261,7 +1261,7 @@ Rust lane.
     - `python3 scripts/gen_correspondence.py --check` passes (N8);
     - N10's lab runs are 25/25 on all three lanes.
 
-- [ ] **N5. InstallSnapshot on the Rust transport: one leader copy, and a
+- [x] **N5. InstallSnapshot on the Rust transport: one leader copy, and a
   follower handoff.**
   - **Leader, today: three copies of the payload.**
     1. `LoadLatestSnapshot` into a `std::string`, under `mtx_`
@@ -1329,7 +1329,7 @@ Rust lane.
       and 60 MiB) reports send-side time per MiB no worse than the `to_vec`
       path measured at N0.
 
-- [ ] **N6. Resend suppression on the Rust lane (its own step, after the
+- [x] **N6. Resend suppression on the Rust lane (its own step, after the
   store, measured on its own).** *(Split out by review: bundled into N5 it
   could wedge a follower, and N12's store comparison would have measured
   suppression instead of the store.)*
@@ -1370,7 +1370,7 @@ Rust lane.
       its thresholds, including head-of-line blocking: heartbeat
       `WouldBlock` counts and leader p99 during catch-up at 16 and 60 MiB.
 
-- [ ] **N7. Startup recovery on the Rust lane.**
+- [x] **N7. Startup recovery on the Rust lane.**
   - `InitializeSnapshotManagerLocked` (`src/server_h.rs:2632-2854`) keeps
     every Raft check: the env gate, the interval override, gate-then-`mtx_`
     locking, the metadata cross-check, boundary and suffix retention,
@@ -1404,7 +1404,7 @@ Rust lane.
     a store, saves, re-opens through `pick_manager` with the same carrier,
     and gets the same `Arc` (pointer-equal).
 
-- [ ] **N8. Lane gates and CMake.**
+- [x] **N8. Lane gates and CMake.**
   - **`scripts/gen_correspondence.py`.**
     - `RT_SEAM` (`:36`) becomes a list: `rt/src/seam.rs`,
       `rt/src/snapshot.rs`, `rt/src/lab_runtime.rs`.
@@ -1449,7 +1449,7 @@ Rust lane.
     - breaking one assertion in `rt/src/snapshot.rs`'s tests fails
       `raft_lane_check`.
 
-- [ ] **N9. Delete what the Rust lane no longer needs; keep the C++ manager
+- [x] **N9. Delete what the Rust lane no longer needs; keep the C++ manager
   for hybrid/cpp.**
   - **Delete:**
     - from `server.cc`: every SEAM body moved in N4 (now in
@@ -1629,7 +1629,7 @@ Rust lane.
     - any threshold missed is fixed, or recorded here with its evidence,
       before the phase is marked done.
 
-- [ ] **N13. Docs.**
+- [x] **N13. Docs.**
   - Update:
     - the status table;
     - "Target architecture", with N1's shape;

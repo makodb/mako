@@ -68,7 +68,8 @@ make -j32
 ./docker_build.sh ci shard1ReplicationSimpleRaft
 ./docker_build.sh ci shard2ReplicationSimpleRaft
 
-# RaftLabTest: the 25-case Raft cluster correctness suite (Docker)
+# RaftLabTest: the Raft cluster correctness suite (Docker; ci.sh derives the
+# expected case count from the init2/UnitInit ids in the source)
 # Configures its OWN build directory with -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON,
 # because RAFT_TEST defines RAFT_TEST_CORO and changes RaftServer's behaviour;
 # it must not be folded into the build the other suites use.
@@ -265,6 +266,16 @@ in `server.cc`; a kernel is C++ that has a reason to be (reactor, threads,
 wire types, third-party APIs). The one inline block left in `server.h`, the
 kernel-result PODs, is still transpiled and extracted (`server_pods_h.rs`).
 The plan and its progress are `docs/migration/raft/plan.md`.
+
+**The snapshot store differs by lane, by decision.** On the Rust lane
+(`MAKO_RAFT_LANE=rust`) it is Rust: `SnapshotStore` in
+`src/deptran/raft/rt/src/snapshot.rs`, reached through the SEAM kernels, and
+`server.h` gives `RaftSnapshotManagerPtr` no `shared_ptr<SnapshotManager>` on
+that lane, so a `SnapshotManager` call in `server.cc` does not compile there.
+hybrid and cpp keep the C++ `MemorySnapshotManager`, whose kernels live in
+`snapshot_seam_cpp.cc`. The store is memory-only on every lane and the bytes
+are the state machine's, verbatim (plan phase N,
+`docs/migration/raft/commo-service-rpc-plan.md`).
 
 **`#[cpp_inherit]` requires `use rusty::cpp_inherit;` in the same DSL
 block, and fails SILENTLY without it.** The attribute is authenticated

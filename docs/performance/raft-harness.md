@@ -132,8 +132,30 @@ the callback.
 - **Network latency.** See the caveats.
 - **Failure or partition behaviour.** This is a performance harness. It has no
   fault injection and makes no correctness claim.
-- **Durability.** The branch this was built on is memory-only Raft;
-  `MAKO_RAFT_SNAPSHOTS` is unset by default, so no snapshotting is in the path.
+- **Durability.** Raft is memory-only, and `MAKO_RAFT_SNAPSHOTS` is unset by
+  default, so by default no snapshotting is in the path. The snapshot mode
+  below turns it on with a synthetic state machine; it is not a Mako
+  checkpoint.
+
+## Snapshot and stall mode (plan phase N0)
+
+Off unless asked for; with none of these flags a run is the plain harness.
+
+| flag (`examples/raft_bench.sh`) | meaning |
+|---|---|
+| `--snapshot-bytes N` | every snapshot image is N bytes (the `RBSNAP01` image: magic, per-partition last sequence, padding). Also needs `MAKO_RAFT_SNAPSHOTS=1` and `MAKO_RAFT_SNAPSHOT_INTERVAL` in the environment, which the launcher passes through. The run fails (exit 9) if a partition takes fewer than 10 snapshots. |
+| `--stall-follower-at-sec S --stall-for-sec D` | S seconds into the load, SIGSTOP one follower for D seconds (at most 4), then SIGCONT it. Size the interval below `rate x D / 2` so the leader compacts past it and it can only catch up by InstallSnapshot. A stall run fails (exit 10 or 8) if there was no install, no catch-up or a leadership change. |
+| `--build-dir-p1 DIR`, `--build-dir-p2 DIR` | run follower p1 / p2 from another build (a mixed-lane cluster); the stalled follower is p1. |
+
+Record fields added (the leader's record; followers' side records are merged
+in as `<proc>_<field>`, and `stalled_follower` names the stalled one):
+`snapshots_created`, `snapshot_create_us_p50`/`_max`, `max_apply_gap_us`,
+`install_rpcs_sent`, `install_bytes_sent`, `install_rpcs_received`,
+`installs_received`, `snapshot_install_us_p50`/`_max`, `catchup_ms` (from
+SIGCONT until the follower's last sequence reaches the leader's) and
+`rss_peak_kb`. `scripts/raft_perf/paired_trial.sh` passes `SNAPSHOT_BYTES`,
+`STALL_AT` and `STALL_FOR` through and reports these metrics, prefixing the
+stalled follower's with `stalled_`.
 
 ## Stating whether a change moved the number
 
