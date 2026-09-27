@@ -39,7 +39,7 @@ use srpc::misc::{Job, OneTimeJob};
 use srpc::reactor::{create_sp_int_event, Fiber, IntEvent, PollThread};
 
 use crate::rpc::{AppendEntriesRequest, EmptyAppendEntriesRequest,
-                 InstallSnapshotRequest, VoteRequest, WireBytes};
+                 VoteRequest};
 use crate::transport::{transport_of, AppendReply, VoteTally};
 
 // ---------------------------------------------------------------------------
@@ -47,28 +47,28 @@ use crate::transport::{transport_of, AppendReply, VoteTally};
 // ---------------------------------------------------------------------------
 
 #[inline]
-unsafe fn word(p: *const u8, i: usize) -> usize {
+pub(crate) unsafe fn word(p: *const u8, i: usize) -> usize {
     unsafe { (p as *const usize).add(i).read() }
 }
 #[inline]
-unsafe fn set_word(p: *mut u8, i: usize, v: usize) {
+pub(crate) unsafe fn set_word(p: *mut u8, i: usize, v: usize) {
     unsafe { (p as *mut usize).add(i).write(v) }
 }
 
-unsafe fn arc_into<T>(dst: *mut u8, value: Arc<T>) {
+pub(crate) unsafe fn arc_into<T>(dst: *mut u8, value: Arc<T>) {
     unsafe { set_word(dst, 0, Arc::into_raw(value) as usize) }
 }
-unsafe fn arc_ref<'a, T>(src: *const u8) -> &'a T {
+pub(crate) unsafe fn arc_ref<'a, T>(src: *const u8) -> &'a T {
     unsafe { &*(word(src, 0) as *const T) }
 }
-unsafe fn arc_clone<T>(src: *const u8) -> Arc<T> {
+pub(crate) unsafe fn arc_clone<T>(src: *const u8) -> Arc<T> {
     let raw = unsafe { word(src, 0) } as *const T;
     unsafe {
         Arc::increment_strong_count(raw);
         Arc::from_raw(raw)
     }
 }
-unsafe fn arc_drop<T>(p: *mut u8) {
+pub(crate) unsafe fn arc_drop<T>(p: *mut u8) {
     let raw = unsafe { word(p, 0) } as *const T;
     if !raw.is_null() {
         drop(unsafe { Arc::from_raw(raw) });
@@ -444,65 +444,5 @@ pub unsafe extern "C" fn raft_destroy_response_ptr(p: *mut rusty::RaftResponsePt
 }
 
 // ---------------------------------------------------------------------------
-// InstallSnapshot
+// InstallSnapshot: rt/src/snapshot.rs (plan N4/N5), with the Rust-lane store.
 // ---------------------------------------------------------------------------
-
-unsafe extern "C" {
-    // HOST kernels (server.cc). `deliver` hands the follower's term to the
-    // reply handler the host prepared; `free` releases its context. The host
-    // context outlives any number of deliveries (at most one happens) and is
-    // freed exactly once, when the send's callback is dropped -- which is
-    // also what happens, with no delivery, when the send never left: the C++
-    // lane's commo drops its std::function uncalled in that case too.
-    fn raft_snapshot_reply_deliver(ctx: *mut c_void, follower_term: u64);
-    // HOST InstallSnapshot counters (server.cc, phase N0).
-    fn raft_install_rpc_note_sent(bytes: u64);
-    fn raft_snapshot_reply_free(ctx: *mut c_void);
-}
-
-/// The host's reply context, owned by the send's completion callback.
-struct SnapshotCtx(usize);
-// SAFETY: the context is only touched on the poll thread, where the callback
-// runs, and by its single Drop.
-unsafe impl Send for SnapshotCtx {}
-
-impl Drop for SnapshotCtx {
-    fn drop(&mut self) {
-        unsafe { raft_snapshot_reply_free(self.0 as *mut c_void) };
-    }
-}
-
-/// The lane half of raft_phase1_load_and_send_snapshot: the host has loaded
-/// the snapshot; this sends it. With no peer the reply is delivered inline
-/// with 0, on the caller's stack, as commo.cc does -- which the host's reply
-/// handler relies on to take no lock on that path.
-#[no_mangle]
-#[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn raft_lane_send_install_snapshot(
-    s: *mut RaftServerBase, site_id: u16, partition_id: u32, term: u64,
-    leader_id: u64, last_included_index: u64, last_included_term: u64,
-    data: *const u8, len: usize, ctx: *mut c_void) {
-    let _ = partition_id;
-    let owned = SnapshotCtx(ctx as usize);
-    let peer_known = unsafe { transport_of(s) }
-        .map(|t| t.peer(site_id).is_some())
-        .unwrap_or(false);
-    if !peer_known {
-        unsafe { raft_snapshot_reply_deliver(owned.0 as *mut c_void, 0) };
-        return; // `owned` frees the context.
-    }
-    let t = unsafe { transport_of(s) }.expect("checked above");
-    unsafe { raft_install_rpc_note_sent(len as u64) };
-    let req = InstallSnapshotRequest {
-        term,
-        leader_id,
-        last_included_index,
-        last_included_term,
-        data: WireBytes(unsafe { core::slice::from_raw_parts(data, len) }.to_vec()),
-    };
-    // The callback owns the context: it delivers at most once and frees on
-    // drop, whether or not it ever ran.
-    let _ = t.send_install_snapshot_with(site_id, req, move |follower_term| {
-        unsafe { raft_snapshot_reply_deliver(owned.0 as *mut c_void, follower_term) };
-    });
-}

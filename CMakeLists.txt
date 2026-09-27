@@ -1103,13 +1103,18 @@ set(DEPTRAN_CORE_SRC
 )
 # The runtime seam, per lane: exactly one set of the kernels the Raft core
 # calls for fibers, events, the poll thread and the wire is linked.
+# The snapshot store is part of the seam (plan N4): the C++ manager's kernels
+# on hybrid/cpp (snapshot_seam_cpp.cc), the Rust store's in raft-rt.
 if(MAKO_RAFT_LANE STREQUAL "rust")
   list(APPEND DEPTRAN_CORE_SRC src/deptran/raft/raft_lane_rust.cc)
 else()
-  list(APPEND DEPTRAN_CORE_SRC src/deptran/raft/server_seam_cpp.cc)
+  list(APPEND DEPTRAN_CORE_SRC src/deptran/raft/server_seam_cpp.cc
+                               src/deptran/raft/snapshot_seam_cpp.cc)
 endif()
 
-if(RAFT_TEST)
+# Tests 50-52 are C++ unit tests of the C++ snapshot classes on hybrid/cpp;
+# on the Rust lane raft-rt runs its own over the Rust store (plan N10).
+if(RAFT_TEST AND NOT MAKO_RAFT_LANE STREQUAL "rust")
     list(APPEND DEPTRAN_CORE_SRC
         # All that is left of the C++ lab harness: the three cases that are
         # unit tests of C++ classes (SnapshotMetadata, SnapshotFormat,

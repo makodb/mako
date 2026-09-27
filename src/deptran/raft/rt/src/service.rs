@@ -17,6 +17,7 @@
 // four handler bodies, which is the same seam C++ uses between `RaftService`
 // and `RaftServiceImpl`.
 
+use crate::snapshot::{clear_handoff, park_handoff};
 use crate::rpc::{
     self, AppendEntriesRequestRef, AppendEntriesResponse, EmptyAppendEntriesRequest,
     EmptyAppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse, RaftHandler,
@@ -146,19 +147,26 @@ impl RaftHandler for RaftRpcService {
         Ok(resp)
     }
 
-    fn install_snapshot(&self, req: &InstallSnapshotRequest)
+    fn install_snapshot(&self, req: InstallSnapshotRequest)
         -> Result<InstallSnapshotResponse, i32> {
         let mut resp = InstallSnapshotResponse::default();
         unsafe { raft_install_rpc_note_received() };
+        // Copy 2 of 2: prepare_cb takes `const std::string&`, so the image
+        // must exist as a std::string (plan N5, Risks 5).
         let mut data: rusty::RaftByteString = Default::default();
         unsafe {
             raft_byte_string_from_bytes(req.data.0.as_ptr(), req.data.0.len(),
                                         &raw mut data);
         }
-        self.server().ServeInstallSnapshot(req.term, req.leader_id,
-                                           req.last_included_index,
-                                           req.last_included_term, &data,
-                                           &raw mut resp.term_out);
+        // The decoded buffer itself goes to the store, uncopied: parked for
+        // exactly this synchronous call, taken by raft_snapshot_store_save when
+        // its (index, term, len) tag matches, and cleared afterwards whatever
+        // happened.
+        let (index, term) = (req.last_included_index, req.last_included_term);
+        park_handoff(index, term, req.data.0);
+        self.server().ServeInstallSnapshot(req.term, req.leader_id, index, term,
+                                           &data, &raw mut resp.term_out);
+        clear_handoff();
         Ok(resp)
     }
 }

@@ -8,7 +8,7 @@
 // They test C++ classes, so they are C++.
 //
 // The rest of the suite is Rust (src/deptran/raft/src/lab*.rs) and calls these
-// through raft_lab_cpp_unit_tests.
+// through raft_lab_snapshot_unit_tests.
 
 #include <stdint.h>
 #include <stddef.h>
@@ -165,7 +165,7 @@ int TestSnapshotManagerSaveLoad() {
 }  // namespace
 
 // The three, in the order RaftLabTest::Run runs them. 0 on success.
-extern "C" int raft_lab_cpp_unit_tests() {
+extern "C" int raft_lab_snapshot_unit_tests() {
   int result = TestSnapshotMetadataCreation();
   if (result != 0) return result;
   result = TestSnapshotFormatRoundTrip();

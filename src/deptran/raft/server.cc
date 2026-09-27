@@ -410,10 +410,6 @@ void raft_fire_leader_change(const rusty::RaftLeaderChangeCb* cb,
 
 // (1) more opaque-field access
 
-bool raft_snapshot_manager_has_latest(
-    const rusty::RaftSnapshotManagerPtr* manager) {
-  return (*manager)->GetLatestSnapshot().is_some();
-}
 
 bool raft_command_has_value(const rusty::RaftCommand* cmd) {
   return cmd->has_value();
@@ -538,35 +534,6 @@ void raft_lab_make_commit_command(int64_t tx_id, rusty::RaftCommand* out) {
       janus::Command::pack_aliased<TpcCommitCommand>(rusty::move(cmdptr)));
 }
 
-// --- The snapshot manager, for the Rust lab harness ------------------------
-//
-// Everything a case compares across a snapshot operation, in one struct so a
-// before/after comparison is one call. Declared here rather than in server.h's
-// inline block because it is lab-only: no production build sees it.
-struct RaftLabSnapshotProbe {
-  bool present;
-  uint64_t last_included_index;
-  uint64_t last_included_term;
-  uint64_t timestamp_ms;
-  uint64_t size_bytes;
-  // FNV-1a over the checksum STRING (SnapshotMetadata::checksum is a
-  // std::string) and over the payload. A digest compares as well as a copy
-  // for a before/after assertion and marshals nothing into Rust.
-  uint64_t checksum_digest;
-  uint64_t data_digest;
-  uint64_t count;
-};
-
-namespace {
-uint64_t lab_fnv1a(const std::string& bytes) {
-  uint64_t digest = 0xcbf29ce484222325ull;
-  for (const char byte : bytes) {
-    digest ^= static_cast<unsigned char>(byte);
-    digest *= 0x100000001b3ull;
-  }
-  return digest;
-}
-}  // namespace
 //
 // janus::raft::SnapshotManager is a C++ interface held as a shared_ptr, and
 // the cases that rotate one (54-60, 69) need to create, seed and inspect it.
@@ -574,43 +541,8 @@ uint64_t lab_fnv1a(const std::string& bytes) {
 // already uses for the server's own field, so these are the verbs it cannot
 // spell -- the same reason the production snapshot kernels next to them exist.
 
-void raft_lab_new_snapshot_manager(rusty::RaftSnapshotManagerPtr* out) {
-  construct_into(out, std::make_shared<janus::raft::MemorySnapshotManager>());
-}
 
-uint64_t raft_lab_snapshot_delete_all(
-    const rusty::RaftSnapshotManagerPtr* manager) {
-  if (!*manager) {
-    return 0;
-  }
-  return static_cast<uint64_t>((*manager)->DeleteAllSnapshots());
-}
 
-// One call for everything a case compares across an operation: the metadata,
-// a digest of the payload, and how many snapshots the manager holds. Test 58
-// asserts five metadata fields, the bytes and the count are all unchanged; a
-// digest says that as well as a copy would and does not marshal a std::string
-// into Rust.
-void raft_lab_snapshot_probe(const rusty::RaftSnapshotManagerPtr* manager,
-                             RaftLabSnapshotProbe* out) {
-  *out = RaftLabSnapshotProbe{};
-  if (!*manager) {
-    return;
-  }
-  janus::raft::SnapshotMetadata metadata;
-  std::string data;
-  if (!(*manager)->LoadLatestSnapshot(&metadata, &data)) {
-    return;
-  }
-  out->present = true;
-  out->last_included_index = metadata.last_included_index;
-  out->last_included_term = metadata.last_included_term;
-  out->timestamp_ms = metadata.timestamp_ms;
-  out->size_bytes = static_cast<uint64_t>(metadata.size_bytes);
-  out->checksum_digest = lab_fnv1a(metadata.checksum);
-  out->data_digest = lab_fnv1a(data);
-  out->count = static_cast<uint64_t>((*manager)->ListSnapshots().size());
-}
 
 // --- The state-machine snapshot callbacks, for the Rust lab harness --------
 //
@@ -633,19 +565,23 @@ std::atomic<bool> lab_reject_prepare_called{false};
 // copy while both harnesses exist.
 class LabPublicationProbe final : public PreparedStateMachineSnapshotInstall {
  public:
-  LabPublicationProbe(std::shared_ptr<janus::raft::SnapshotManager> manager,
+  // `manager` is copied through the carrier's clone kernel: the probe runs
+  // unchanged against the C++ manager (hybrid, cpp) and the Rust store (Rust
+  // lane), reaching either only through the SEAM kernels (plan N4).
+  LabPublicationProbe(const rusty::RaftSnapshotManagerPtr* manager,
                       uint64_t expected_index, uint64_t expected_term,
                       std::string expected_data,
                       std::atomic<bool>* commit_called,
                       std::atomic<bool>* commit_saw_published,
                       std::atomic<bool>* aborted_before_commit)
-      : manager_(std::move(manager)),
-        expected_index_(expected_index),
+      : expected_index_(expected_index),
         expected_term_(expected_term),
         expected_data_(std::move(expected_data)),
         commit_called_(commit_called),
         commit_saw_published_(commit_saw_published),
-        aborted_before_commit_(aborted_before_commit) {}
+        aborted_before_commit_(aborted_before_commit) {
+    raft_snapshot_manager_ptr_clone_into(manager, &manager_);
+  }
 
   ~LabPublicationProbe() override {
     if (!commit_attempted_ && aborted_before_commit_ != nullptr) {
@@ -658,12 +594,13 @@ class LabPublicationProbe final : public PreparedStateMachineSnapshotInstall {
       return false;
     }
     commit_attempted_ = true;
-    janus::raft::SnapshotMetadata metadata;
     std::string data;
-    const bool published = manager_ != nullptr &&
-        manager_->LoadLatestSnapshot(&metadata, &data) &&
-        metadata.last_included_index == expected_index_ &&
-        metadata.last_included_term == expected_term_ &&
+    uint64_t index = 0;
+    uint64_t term = 0;
+    uint64_t size = 0;
+    const bool published = raft_snapshot_manager_is_set(&manager_) &&
+        raft_snapshot_manager_load(&manager_, &data, &index, &term, &size) &&
+        index == expected_index_ && term == expected_term_ &&
         data == expected_data_;
     if (commit_saw_published_ != nullptr) {
       commit_saw_published_->store(published, std::memory_order_release);
@@ -675,7 +612,7 @@ class LabPublicationProbe final : public PreparedStateMachineSnapshotInstall {
   }
 
  private:
-  std::shared_ptr<janus::raft::SnapshotManager> manager_;
+  rusty::RaftSnapshotManagerPtr manager_{};
   uint64_t expected_index_ = 0;
   uint64_t expected_term_ = 0;
   std::string expected_data_;
@@ -686,7 +623,7 @@ class LabPublicationProbe final : public PreparedStateMachineSnapshotInstall {
 };
 
 struct LabProbeState {
-  std::shared_ptr<janus::raft::SnapshotManager> manager;
+  rusty::RaftSnapshotManagerPtr manager{};
   std::atomic<bool> prepare_called{false};
   std::atomic<bool> prepare_saw_old_manager{false};
   std::atomic<bool> commit_called{false};
@@ -722,7 +659,7 @@ bool raft_lab_reject_prepare_called() {
 void raft_lab_make_probe_cbs(const rusty::RaftSnapshotManagerPtr* manager,
                              rusty::RaftCreateSnapshotCb* create_out,
                              rusty::RaftPrepareSnapshotCb* prepare_out) {
-  lab_probe_state.manager = *manager;
+  raft_snapshot_manager_ptr_clone_into(manager, &lab_probe_state.manager);
   lab_probe_state.prepare_called.store(false, std::memory_order_release);
   lab_probe_state.prepare_saw_old_manager.store(false, std::memory_order_release);
   lab_probe_state.commit_called.store(false, std::memory_order_release);
@@ -746,16 +683,19 @@ void raft_lab_make_probe_cbs(const rusty::RaftSnapshotManagerPtr* manager,
         if (marker_index != incoming_index) {
           return nullptr;
         }
-        auto manager = lab_probe_state.manager;
-        auto previous = manager->GetLatestSnapshot();
-        const bool still_old = previous.is_none() ||
-            previous.unwrap().last_included_index < incoming_index;
+        uint64_t previous_index = 0;
+        uint64_t previous_term = 0;
+        const bool has_previous =
+            raft_snapshot_manager_is_set(&lab_probe_state.manager) &&
+            raft_snapshot_manager_latest(&lab_probe_state.manager, &previous_index,
+                                         &previous_term);
+        const bool still_old = !has_previous || previous_index < incoming_index;
         lab_probe_state.prepare_saw_old_manager.store(
             still_old, std::memory_order_release);
         lab_probe_state.prepare_called.store(
             true, std::memory_order_release);
         return std::make_unique<LabPublicationProbe>(
-            manager, incoming_index, marker_term, incoming_data,
+            &lab_probe_state.manager, incoming_index, marker_term, incoming_data,
             &lab_probe_state.commit_called,
             &lab_probe_state.commit_saw_published,
             &lab_probe_state.aborted_before_commit);
@@ -775,27 +715,12 @@ uint32_t raft_lab_probe_flags() {
 }
 
 void raft_lab_probe_release() {
-  lab_probe_state.manager.reset();
+  // Reset through the clone kernel: an empty carrier copied in releases the
+  // held store on every lane without destroying the static itself.
+  rusty::RaftSnapshotManagerPtr empty{};
+  raft_snapshot_manager_ptr_clone_into(&empty, &lab_probe_state.manager);
 }
 
-// Copy one manager's latest checkpoint into another. What
-// InstallAndSeedSnapshotManager does when rotating a manager on a replica
-// that has ALREADY compacted: a boundary means nothing without its exact
-// bytes, so the checkpoint is copied rather than regenerated.
-bool raft_lab_snapshot_copy_latest(const rusty::RaftSnapshotManagerPtr* src,
-                                   const rusty::RaftSnapshotManagerPtr* dst) {
-  if (!*src || !*dst) {
-    return false;
-  }
-  janus::raft::SnapshotMetadata metadata;
-  std::string data;
-  if (!(*src)->LoadLatestSnapshot(&metadata, &data)) {
-    return false;
-  }
-  return (*dst)->TakeSnapshot(metadata.last_included_index,
-                              metadata.last_included_term,
-                              data.data(), data.size());
-}
 
 // A std::string from Rust bytes, for the snapshot payloads test 58 and 59
 // hand to OnInstallSnapshot. The carrier is opaque on the Rust side, so this
@@ -808,10 +733,6 @@ void raft_lab_byte_string_from(rusty::RaftByteString* out,
 #endif
 void raft_leader_change_cb_clone_into(const rusty::RaftLeaderChangeCb* src,
                                       rusty::RaftLeaderChangeCb* dst) {
-  construct_into(dst, *src);
-}
-void raft_snapshot_manager_ptr_clone_into(const rusty::RaftSnapshotManagerPtr* src,
-                                          rusty::RaftSnapshotManagerPtr* dst) {
   construct_into(dst, *src);
 }
 void raft_create_snapshot_cb_clone_into(const rusty::RaftCreateSnapshotCb* src,
@@ -859,44 +780,8 @@ bool raft_env_snapshots_enabled() {
 // 0 unset, 1 parsed into *out, 2 present but unparseable (logged here,
 // where the raw string is).
 
-// Memory-only Raft has no on-disk snapshot store. A manager injected through
-// SetSnapshotManager() before Setup keeps the latest snapshot it holds;
-// otherwise start from an empty in-memory manager.
-void raft_snapshot_recovery_pick_manager(
-    const rusty::RaftSnapshotManagerPtr* current,
-    rusty::RaftSnapshotManagerPtr* out) {
-  if (*current) {
-    construct_into(out, *current);
-    return;
-  }
-  construct_into(out, std::make_shared<janus::raft::MemorySnapshotManager>());
-}
 
-bool raft_snapshot_manager_latest(
-    const rusty::RaftSnapshotManagerPtr* manager, uint64_t* index,
-    uint64_t* term) {
-  const auto latest = (*manager)->GetLatestSnapshot();
-  if (latest.is_none()) {
-    return false;
-  }
-  const auto discovered = latest.unwrap();
-  *index = discovered.last_included_index;
-  *term = discovered.last_included_term;
-  return true;
-}
 
-bool raft_snapshot_manager_load(const rusty::RaftSnapshotManagerPtr* manager,
-                                rusty::RaftByteString* data, uint64_t* index,
-                                uint64_t* term, uint64_t* size_bytes) {
-  janus::raft::SnapshotMetadata metadata;
-  if (!(*manager)->LoadLatestSnapshot(&metadata, data)) {
-    return false;
-  }
-  *index = metadata.last_included_index;
-  *term = metadata.last_included_term;
-  *size_bytes = metadata.size_bytes;
-  return true;
-}
 
 // Startup helper for a snapshot already held by the manager: prepares and
 // immediately commits its state-machine image before publishing recovery.
@@ -949,8 +834,11 @@ int raft_install_snapshot_payload(
     return 0;
   }
 
-  const bool saved = (*snapshot_manager)->TakeSnapshot(
-      last_included_index, last_included_term, data->data(), data->size());
+  // The store line, SEAM: the C++ manager on hybrid/cpp, the Rust store on
+  // the Rust lane (plan N4). Prepare above and Commit below stay here.
+  const bool saved = raft_snapshot_store_save(
+      snapshot_manager, last_included_index, last_included_term,
+      reinterpret_cast<const uint8_t*>(data->data()), data->size());
   if (!saved) {
     Log_error("[INSTALL-SNAPSHOT] Site {}: Failed to save snapshot at index={} term={}",
               site_id, last_included_index, last_included_term);
@@ -1129,8 +1017,10 @@ bool raft_snapshot_serialize_and_save(
 #endif
   }
 
-  const bool saved = (*snapshot_manager)->TakeSnapshot(
-      snap_index, snap_term, state_data.data(), state_data.size());
+  // The store line, SEAM (plan N4).
+  const bool saved = raft_snapshot_store_save(
+      snapshot_manager, snap_index, static_cast<uint64_t>(snap_term),
+      reinterpret_cast<const uint8_t*>(state_data.data()), state_data.size());
   if (!saved) {
     Log_error("[RAFT-SNAPSHOT] Site {}: Failed to save snapshot at index={} term={}",
               site_id, snap_index, snap_term);
@@ -1207,9 +1097,6 @@ void raft_std_mutex_unlock(std::mutex* mutex) {
   mutex->unlock();
 }
 uint64_t raft_time_now_us() { return Time::now(true); }
-bool raft_snapshot_manager_is_set( const rusty::RaftSnapshotManagerPtr* manager) {
-  return *manager != nullptr;
-}
 uint64_t raft_random_range_us(uint64_t low, uint64_t high) {
   return RandomGenerator::rand(low, high);
 }
@@ -1233,7 +1120,6 @@ void raft_destroy_checked_mutex(rusty::RaftCheckedMutex* p) { std::destroy_at(p)
 void raft_destroy_async_callback_lifetime_ptr(rusty::RaftAsyncCallbackLifetimePtr* p) {
   std::destroy_at(p);
 }
-void raft_destroy_snapshot_manager_ptr(rusty::RaftSnapshotManagerPtr* p) { std::destroy_at(p); }
 void raft_destroy_create_snapshot_cb(rusty::RaftCreateSnapshotCb* p) { std::destroy_at(p); }
 void raft_destroy_prepare_snapshot_cb(rusty::RaftPrepareSnapshotCb* p) { std::destroy_at(p); }
 void raft_destroy_std_mutex(rusty::RaftStdMutex* p) { std::destroy_at(p); }
@@ -1422,6 +1308,16 @@ struct SnapshotReplyCtx {
   uint64_t send_term;
 };
 
+// The reply context both lanes' raft_phase1_load_and_send_snapshot hand to
+// their send: everything the completion needs, freed exactly once by
+// raft_snapshot_reply_free.
+void* raft_snapshot_reply_ctx_new(const rusty::RaftAsyncCallbackLifetimePtr* lifetime,
+                                  uint16_t site_id, uint16_t self_site_id, size_t ord,
+                                  uint64_t snap_last_idx, uint64_t send_term) {
+  return new SnapshotReplyCtx{*lifetime, site_id, self_site_id, ord, snap_last_idx,
+                              send_term};
+}
+
 void raft_snapshot_reply_deliver(void* raw, uint64_t follower_term) {
   const auto* ctx = static_cast<const SnapshotReplyCtx*>(raw);
   // NEITHER LOCK IS TAKEN ABOVE THIS CHECK, and that is load-bearing for two
@@ -1502,34 +1398,6 @@ void raft_command_encode(const rusty::RaftCommand* cmd, void* ctx,
   srpc::Serialize_::serialize(*cmd, writer);
 }
 
-// Loads the latest snapshot and sends it. Returns false when there is no
-// snapshot to load; the caller logs that and skips the follower either way.
-// CALLER MUST HOLD mtx_.
-bool raft_phase1_load_and_send_snapshot(
-    RaftServerBase* self,
-    const rusty::RaftSnapshotManagerPtr* snapshot_manager,
-    const rusty::RaftAsyncCallbackLifetimePtr* lifetime,
-    uint16_t self_site_id, uint32_t partition_id, uint64_t send_term,
-    uint16_t site_id, size_t ord) {
-  janus::raft::SnapshotMetadata snap_meta;
-  std::string snap_data;
-  if (!(*snapshot_manager)->LoadLatestSnapshot(&snap_meta, &snap_data)) {
-    return false;
-  }
-  const uint64_t snap_last_idx = snap_meta.last_included_index;
-  const uint64_t snap_last_term = snap_meta.last_included_term;
-  // The reply handler's context: everything the completion needs, captured
-  // by value, freed exactly once by raft_snapshot_reply_free. The send itself
-  // is the lane's (raft_lane_send_install_snapshot): RaftCommo on the C++
-  // lane, RaftTransport on the Rust lane.
-  auto* ctx = new SnapshotReplyCtx{*lifetime, site_id, self_site_id, ord,
-                                   snap_last_idx, send_term};
-  raft_lane_send_install_snapshot(
-      self, site_id, partition_id, send_term, self_site_id, snap_last_idx,
-      snap_last_term, reinterpret_cast<const uint8_t*>(snap_data.data()),
-      snap_data.size(), ctx);
-  return true;
-}
 
 // RAFT_BATCH_OPTIMIZATION, as a value a DSL body can branch on. Same device
 // as raft_election_debug_enabled: the two payload-selection arms were an

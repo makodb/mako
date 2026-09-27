@@ -1444,6 +1444,8 @@ unsafe extern "C" {
     fn raft_fiber_sleep_us(micros: u64);
     fn raft_time_now_us() -> u64;
     fn raft_snapshot_manager_is_set(manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
+    fn raft_snapshot_manager_ptr_clone_into(src: *const rusty::RaftSnapshotManagerPtr,
+                                            dst: *mut rusty::RaftSnapshotManagerPtr);
     fn raft_random_range_us(low: u64, high: u64) -> u64;
     // The kernel bridge (server.cc). Each takes the base and, where it has
     // to reach a method that has not converted, casts down to RaftServer.
@@ -1510,8 +1512,6 @@ unsafe extern "C" {
                                     out: *mut rusty::RaftVoteQuorumPtr);
     fn raft_vote_quorum_snapshot(quorum: *const rusty::RaftVoteQuorumPtr)
         -> RaftVoteOutcome;
-    fn raft_snapshot_manager_has_latest(
-        manager: *const rusty::RaftSnapshotManagerPtr) -> bool;
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
     fn raft_apply_thread_join(thread: *mut rusty::RaftStdThread);
     fn raft_commo_set_network_enabled(server: *mut RaftServerHandle, enabled: bool);
@@ -3733,15 +3733,34 @@ impl RaftServerBase {
 
     // @unsafe - copies the manager under mtx_ before querying it, so the
     // query itself never runs with Raft state locked.
+    //
+    // The copy is real (plan N4): before, only the is_set test ran under the
+    // lock and the query read snapshot_manager_ after releasing it, so a
+    // concurrent SetSnapshotManagerLocked could replace the carrier mid-read.
     pub fn HasSnapshot(&mut self) -> bool {
+        let mut manager: rusty::RaftSnapshotManagerPtr = Default::default();
         let configured: bool = {
             let _lock = RaftLockGuard::new(&mut self.mtx_);
-            unsafe { raft_snapshot_manager_is_set(&self.snapshot_manager_) }
+            let set: bool =
+                unsafe { raft_snapshot_manager_is_set(&self.snapshot_manager_) };
+            if set {
+                unsafe {
+                    raft_snapshot_manager_ptr_clone_into(&self.snapshot_manager_,
+                                                         &raw mut manager);
+                }
+            }
+            set
         };
         if !configured {
             return false;
         }
-        unsafe { raft_snapshot_manager_has_latest(&self.snapshot_manager_) }
+        let mut index: u64 = 0;
+        let mut term: u64 = 0;
+        unsafe {
+            raft_snapshot_manager_latest(
+                &manager as *const rusty::RaftSnapshotManagerPtr,
+                &raw mut index, &raw mut term)
+        }
     }
 
     // @unsafe - gates inbound and outbound test traffic under mtx_.

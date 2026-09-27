@@ -35,7 +35,7 @@ use srpc::server::Server;
 
 use crate::rpc::{
     AppendEntriesRequest, AppendEntriesResponse, EmptyAppendEntriesRequest,
-    EmptyAppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse,
+    EmptyAppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotRequestBytesRef, InstallSnapshotResponse,
     RaftProxy, VoteRequest, VoteResponse,
 };
 use crate::service::RaftRpcService;
@@ -124,6 +124,7 @@ impl RaftTransport {
             rpc_count: AtomicU64::new(0),
         }
     }
+
 
     pub fn poll_thread(&self) -> Arc<PollThread> {
         self.poll.clone()
@@ -371,6 +372,42 @@ impl RaftTransport {
         let proxy = RaftProxy { client };
         let mut done = Some(done);
         let sent = proxy.install_snapshot_async(
+            req,
+            Some(Box::new(move |code, ptr, len| {
+                let term = if code != 0 {
+                    0
+                } else {
+                    // SAFETY: srpc owns the buffer for this call.
+                    unsafe { decode_reply::<InstallSnapshotResponse>(ptr, len) }
+                        .map(|r| r.term_out)
+                        .unwrap_or(0)
+                };
+                if let Some(f) = done.take() {
+                    f(term);
+                }
+            })),
+        );
+        self.count_rpc();
+        sent.is_ok()
+    }
+
+    /// InstallSnapshot encoded straight from a borrowed image (plan N5): the
+    /// fixed fields and the snapshot bytes go into the frame in one copy, with
+    /// no `WireBytes` built first. `done` is as for `send_install_snapshot_with`:
+    /// at most once, with the follower's term or 0 on failure; a `false`
+    /// return means the request never left and `done` is dropped uncalled.
+    pub fn send_install_snapshot_ref<F>(&self, site_id: u16,
+                                        req: &InstallSnapshotRequestBytesRef<'_>,
+                                        done: F) -> bool
+    where
+        F: FnOnce(u64) + Send + 'static,
+    {
+        let Some(client) = self.peer(site_id) else {
+            return false;
+        };
+        let proxy = RaftProxy { client };
+        let mut done = Some(done);
+        let sent = proxy.install_snapshot_ref_async(
             req,
             Some(Box::new(move |code, ptr, len| {
                 let term = if code != 0 {

@@ -18,9 +18,11 @@ use std::time::{Duration, Instant};
 
 use raft_rt::rpc::{
     self, AppendEntriesRequest, AppendEntriesRequestRef, AppendEntriesResponse, EmptyAppendEntriesRequest,
-    EmptyAppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotResponse, RaftHandler,
+    EmptyAppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotRequestBytesRef,
+    InstallSnapshotResponse, RaftHandler,
     VoteRequest, VoteResponse, WireBytes,
 };
+use raft_rt::snapshot::{install_fits_one_frame, INSTALL_FRAME_OVERHEAD};
 use raft_rt::transport::RaftTransport;
 use srpc::reactor::PollThread;
 use srpc::server::{Request, Server, Service, WeakServerConnection};
@@ -62,8 +64,8 @@ impl RaftHandler for Grants {
             follower_last_log_index: req.leader_prev_log_index,
         })
     }
-    fn install_snapshot(&self, req: &InstallSnapshotRequest) -> Result<InstallSnapshotResponse, i32> {
-        self.seen.lock().unwrap().snapshot = Some(req.data.0.clone());
+    fn install_snapshot(&self, req: InstallSnapshotRequest) -> Result<InstallSnapshotResponse, i32> {
+        self.seen.lock().unwrap().snapshot = Some(req.data.0);
         Ok(InstallSnapshotResponse { term_out: req.term })
     }
 }
@@ -229,3 +231,55 @@ fn install_snapshot_delivers_binary_data_and_calls_back_once() {
     assert_eq!(*calls.lock().unwrap(), vec![6], "exactly one callback, with the term");
     assert_eq!(servers[1].2.lock().unwrap().snapshot.as_deref(), Some(data.as_slice()));
 }
+
+/// The leader's path (N4): the image is borrowed from the store, not copied
+/// into an owned request, and the follower decodes exactly those bytes.
+fn send_borrowed(transport: &RaftTransport, servers: &[Responder], data: &[u8]) {
+    let req = InstallSnapshotRequestBytesRef {
+        term: 7,
+        leader_id: 1,
+        last_included_index: 90,
+        last_included_term: 6,
+        data,
+    };
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let sink = calls.clone();
+    assert!(transport.send_install_snapshot_ref(2, &req, move |term| {
+        sink.lock().unwrap().push(term);
+    }));
+    assert!(wait_until(Duration::from_secs(60), || !calls.lock().unwrap().is_empty()),
+            "no reply for a {}-byte image", data.len());
+    std::thread::sleep(Duration::from_millis(50));
+    assert_eq!(*calls.lock().unwrap(), vec![7], "exactly one callback, with the term");
+    let seen = servers[1].2.lock().unwrap().snapshot.take().expect("the follower saw it");
+    assert_eq!(seen.len(), data.len());
+    assert!(seen == data, "byte-exact");
+}
+
+#[test]
+fn a_borrowed_install_snapshot_is_byte_exact() {
+    let (transport, servers) = cluster([1, 1, 1]);
+    let data: Vec<u8> = (0..300_000u32).map(|i| (i.wrapping_mul(2654435761) >> 24) as u8).collect();
+    send_borrowed(&transport, &servers, &data);
+}
+
+#[test]
+fn the_frame_cap_admits_its_largest_image_byte_exact() {
+    // The largest image the leader will send: the cap minus the overhead it
+    // reserves. That it crosses intact proves the reserve is enough.
+    let max = srpc::frame_codec::kMaxFramePayloadSize as usize - INSTALL_FRAME_OVERHEAD;
+    assert!(install_fits_one_frame(max));
+    assert!(install_fits_one_frame((64 << 20) - 1024));
+    let (transport, servers) = cluster([1, 1, 1]);
+    let data: Vec<u8> = (0..max as u32).map(|i| (i ^ (i >> 11)) as u8).collect();
+    send_borrowed(&transport, &servers, &data);
+}
+
+#[test]
+fn the_frame_cap_refuses_larger_images() {
+    let cap = srpc::frame_codec::kMaxFramePayloadSize as usize;
+    assert!(!install_fits_one_frame(cap - INSTALL_FRAME_OVERHEAD + 1));
+    assert!(!install_fits_one_frame(cap));
+    assert!(!install_fits_one_frame((64 << 20) + 1));
+}
+

@@ -12,13 +12,13 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 529 | `raft/src/server_h.rs` | 5521 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1737 | `raft/src/server_cc.rs` | 2189 |  |
-| `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 164 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
-| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 830 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
-| `raft/server_seam_cpp.cc` | 354 | `raft/rt/src/seam.rs` | 508 | the runtime seam, one per lane; exactly one is linked |
+| `raft/server.h` | 548 | `raft/src/server_h.rs` | 5540 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1605 | `raft/src/server_cc.rs` | 2189 |  |
+| `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 172 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
+| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 867 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
+| `raft/server_seam_cpp.cc` | 354 | `raft/rt/src/seam.rs` | 448 | the runtime seam, one per lane; exactly one is linked |
 | `communicator.h` | 567 | `raft/src/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
-| `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 549 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
+| `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 582 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
 
 `communicator_h.rs` is extracted from the HEADER, not the `.cc` --
 `raft/rust-modules.toml` names `src/deptran/communicator.h` as its source.
@@ -29,7 +29,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 |---|---|---|
 | C++ → Rust | prototypes in `raft/server_exports.h` | 32 |
 | C++ → Rust | prototypes in `raft/transport_exports.h` — the Rust lane only (raft_lane_rust.cc) | 16 |
-| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 91 |
+| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 90 |
 
 ## Counted facts the prose below leans on
 
@@ -54,8 +54,8 @@ defined by one lane but not the other, or in two places.
 
 | class | count |
 |---|---|
-| HOST | 90 |
-| SEAM | 23 |
+| HOST | 83 |
+| SEAM | 36 |
 
 | kernel | class |
 |---|---|
@@ -94,7 +94,7 @@ defined by one lane but not the other, or in two places.
 | `raft_destroy_poll_thread_ptr` | SEAM |
 | `raft_destroy_prepare_snapshot_cb` | HOST |
 | `raft_destroy_response_ptr` | SEAM |
-| `raft_destroy_snapshot_manager_ptr` | HOST |
+| `raft_destroy_snapshot_manager_ptr` | SEAM |
 | `raft_destroy_std_mutex` | HOST |
 | `raft_destroy_std_thread` | HOST |
 | `raft_destroy_tpc_commit_ptr` | HOST |
@@ -108,6 +108,9 @@ defined by one lane but not the other, or in two places.
 | `raft_fire_leader_change` | HOST |
 | `raft_heartbeat_interval_default` | HOST (CORE candidate) |
 | `raft_initialize_snapshot_manager` | HOST |
+| `raft_install_rpc_note_received` | HOST |
+| `raft_install_rpc_note_sent` | HOST |
+| `raft_install_rpc_stats` | HOST |
 | `raft_install_snapshot_guarded` | HOST |
 | `raft_install_snapshot_payload` | HOST |
 | `raft_int_event_clone_into` | SEAM |
@@ -115,19 +118,19 @@ defined by one lane but not the other, or in two places.
 | `raft_int_event_wait_timeout` | SEAM |
 | `raft_lab_byte_string_from` | HOST |
 | `raft_lab_commit_tx_id` | HOST |
-| `raft_lab_cpp_unit_tests` | HOST |
 | `raft_lab_frame_rpc_count` | HOST |
 | `raft_lab_make_commit_command` | HOST |
 | `raft_lab_make_learner_action` | HOST |
 | `raft_lab_make_probe_cbs` | HOST |
 | `raft_lab_make_reject_prepare_cbs` | HOST |
-| `raft_lab_new_snapshot_manager` | HOST |
+| `raft_lab_new_snapshot_manager` | SEAM |
 | `raft_lab_probe_flags` | HOST |
 | `raft_lab_probe_release` | HOST |
 | `raft_lab_reject_prepare_called` | HOST |
-| `raft_lab_snapshot_copy_latest` | HOST |
-| `raft_lab_snapshot_delete_all` | HOST |
-| `raft_lab_snapshot_probe` | HOST |
+| `raft_lab_snapshot_copy_latest` | SEAM |
+| `raft_lab_snapshot_delete_all` | SEAM |
+| `raft_lab_snapshot_probe` | SEAM |
+| `raft_lab_snapshot_unit_tests` | SEAM |
 | `raft_leader_change_cb_clone_into` | HOST |
 | `raft_leader_change_cb_is_set` | HOST |
 | `raft_learner_action_clone_into` | HOST |
@@ -141,7 +144,7 @@ defined by one lane but not the other, or in two places.
 | `raft_mutex_unlock` | HOST (CORE candidate) |
 | `raft_new_callback_lifetime` | HOST |
 | `raft_noop_command_into` | HOST |
-| `raft_phase1_load_and_send_snapshot` | HOST |
+| `raft_phase1_load_and_send_snapshot` | SEAM |
 | `raft_phase1_send_append` | SEAM |
 | `raft_poll_thread_clone_into` | SEAM |
 | `raft_prepare_snapshot_cb_clone_into` | HOST |
@@ -150,13 +153,16 @@ defined by one lane but not the other, or in two places.
 | `raft_random_range_us` | HOST (CORE candidate) |
 | `raft_setup_internal_guarded` | HOST |
 | `raft_shutdown_barrier_yield` | SEAM |
-| `raft_snapshot_manager_has_latest` | HOST |
-| `raft_snapshot_manager_is_set` | HOST |
-| `raft_snapshot_manager_latest` | HOST |
-| `raft_snapshot_manager_load` | HOST |
-| `raft_snapshot_manager_ptr_clone_into` | HOST |
-| `raft_snapshot_recovery_pick_manager` | HOST |
+| `raft_snapshot_manager_is_set` | SEAM |
+| `raft_snapshot_manager_latest` | SEAM |
+| `raft_snapshot_manager_load` | SEAM |
+| `raft_snapshot_manager_ptr_clone_into` | SEAM |
+| `raft_snapshot_recovery_pick_manager` | SEAM |
+| `raft_snapshot_reply_ctx_new` | HOST |
+| `raft_snapshot_reply_deliver` | HOST |
+| `raft_snapshot_reply_free` | HOST |
 | `raft_snapshot_serialize_and_save` | HOST |
+| `raft_snapshot_store_save` | SEAM |
 | `raft_spawn_apply_thread` | HOST (CORE candidate) |
 | `raft_spawn_election_timer` | SEAM |
 | `raft_spawn_election_timer_fiber` | SEAM |

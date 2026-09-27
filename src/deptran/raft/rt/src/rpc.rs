@@ -351,13 +351,34 @@ impl Deserialize for InstallSnapshotResponse {
     }
 }
 
+/// `InstallSnapshotRequest` with its byte fields borrowed: encodes the same wire bytes
+/// without first copying a payload into a `WireBytes`.
+pub struct InstallSnapshotRequestBytesRef<'a> {
+    pub term: u64,
+    pub leader_id: u64,
+    pub last_included_index: u64,
+    pub last_included_term: u64,
+    pub data: &'a [u8],
+}
+
+impl Serialize for InstallSnapshotRequestBytesRef<'_> {
+    fn serialize(&self, ar: &mut BinaryWriteArchive) {
+        self.term.serialize(ar);
+        self.leader_id.serialize(ar);
+        self.last_included_index.serialize(ar);
+        self.last_included_term.serialize(ar);
+        // SAFETY: the slice is live for the call; serialize_bytes reads len bytes.
+        unsafe { serialize_bytes(self.data.as_ptr(), self.data.len(), ar) }
+    }
+}
+
 /// The Raft service. Implement this; `dispatch` below routes
 /// to it. An `Err(code)` is replied as that code with no body.
 pub trait RaftHandler: Send + Sync {
     fn vote(&self, req: &VoteRequest) -> Result<VoteResponse, i32>;
     fn append_entries(&self, req: &AppendEntriesRequestRef<'_>) -> Result<AppendEntriesResponse, i32>;
     fn empty_append_entries(&self, req: &EmptyAppendEntriesRequest) -> Result<EmptyAppendEntriesResponse, i32>;
-    fn install_snapshot(&self, req: &InstallSnapshotRequest) -> Result<InstallSnapshotResponse, i32>;
+    fn install_snapshot(&self, req: InstallSnapshotRequest) -> Result<InstallSnapshotResponse, i32>;
 }
 
 /// Register every rpc id this service answers. Call this from
@@ -443,7 +464,7 @@ pub fn dispatch<H: RaftHandler>(
                 reject_malformed_request(req, weak_sconn);
                 return;
             }
-            reply_with(weak_sconn, req, handler.install_snapshot(&typed));
+            reply_with(weak_sconn, req, handler.install_snapshot(typed));
         }
         // Unknown id: ignore, matching the generated C++ dispatch.
         _ => {}
@@ -528,6 +549,18 @@ impl<'a> RaftProxy<'a> {
         self.client.request_async(
             rpc_id::EMPTYAPPENDENTRIES,
             move |ar: &mut BinaryWriteArchive| payload.serialize(ar),
+            on_reply,
+        )
+    }
+
+    pub fn install_snapshot_ref_async(
+        &self,
+        req: &InstallSnapshotRequestBytesRef<'_>,
+        on_reply: AsyncReplyCallback,
+    ) -> Result<(), i32> {
+        self.client.request_async(
+            rpc_id::INSTALLSNAPSHOT,
+            |ar: &mut BinaryWriteArchive| req.serialize(ar),
             on_reply,
         )
     }

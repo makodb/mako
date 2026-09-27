@@ -316,8 +316,29 @@ namespace rusty {
 using RaftCheckedMutex = ::janus::RaftCheckedMutex;
 using RaftAsyncCallbackLifetimePtr =
     ::std::shared_ptr<::janus::AsyncCallbackLifetime>;
+#if MAKO_RAFT_LANE_RUST
+// The guard (plan N1/N4). On the Rust lane the carrier holds an
+// Arc<SnapshotStore> (raft-rt, rt/src/snapshot.rs), not a shared_ptr, so it is
+// an opaque, copy-deleted 16-byte struct here: HOST C++ that dereferenced or
+// copied it as a shared_ptr fails to compile instead of misreading an Arc.
+// Every access goes through the SEAM kernels in lane_kernels.h; destruction
+// through raft_destroy_snapshot_manager_ptr, which leaves it all-zero.
+struct RaftRustSnapshotStorePtr;
+}  // namespace rusty
+extern "C" void raft_destroy_snapshot_manager_ptr(rusty::RaftRustSnapshotStorePtr* p);
+namespace rusty {
+struct alignas(8) RaftRustSnapshotStorePtr {
+  unsigned char bytes_[16] = {};
+  RaftRustSnapshotStorePtr() = default;
+  RaftRustSnapshotStorePtr(const RaftRustSnapshotStorePtr&) = delete;
+  RaftRustSnapshotStorePtr& operator=(const RaftRustSnapshotStorePtr&) = delete;
+  ~RaftRustSnapshotStorePtr() { raft_destroy_snapshot_manager_ptr(this); }
+};
+using RaftSnapshotManagerPtr = RaftRustSnapshotStorePtr;
+#else
 using RaftSnapshotManagerPtr =
     ::std::shared_ptr<::janus::raft::SnapshotManager>;
+#endif
 // RaftCreateSnapshotCb and RaftPrepareSnapshotCb are aliased in scheduler.h,
 // where RaftSpecific names them; their layout pins stay below.
 using RaftStdMutex = ::std::mutex;
@@ -403,9 +424,7 @@ extern "C" void raft_std_mutex_unlock(std::mutex* mutex);
 // microsecond-resolution flag every Raft call site already passes.
 extern "C" uint64_t raft_time_now_us();
 
-// @unsafe - shared_ptr null test. The pointer itself is opaque to Rust, so
-// "is a snapshot manager configured" has to be asked here.
-extern "C" bool raft_snapshot_manager_is_set( const rusty::RaftSnapshotManagerPtr* manager);
+// raft_snapshot_manager_is_set: lane_kernels.h (a SEAM kernel since plan N4).
 
 // @unsafe - RandomGenerator is external.
 extern "C" uint64_t raft_random_range_us(uint64_t low, uint64_t high);

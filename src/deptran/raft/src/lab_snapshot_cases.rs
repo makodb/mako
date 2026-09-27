@@ -61,8 +61,9 @@ unsafe extern "C" {
                                prepare_out: *mut rusty::RaftPrepareSnapshotCb);
     fn raft_lab_probe_flags() -> u32;
     fn raft_lab_probe_release();
-    /// The three C++ unit tests. 0 on success, as RaftLabTest's cases return.
-    fn raft_lab_cpp_unit_tests() -> i32;
+    /// Tests 50-52: the C++ unit tests on hybrid/cpp (lab_unit_tests.cc),
+    /// the Rust store's on the Rust lane (rt/src/lab_runtime.rs). 0 on success.
+    fn raft_lab_snapshot_unit_tests() -> i32;
     /// The snapshot manager's shared_ptr, copied into a default-constructed
     /// slot. A shared_ptr relocates bitwise; the std::function carriers do
     /// not, which is why those are copied in place by the setters themselves
@@ -1192,7 +1193,7 @@ fn run_snapshot_cases(st: &mut LabState) -> i32 {
     // and MemorySnapshotManager, which are C++ classes and touch no
     // RaftServer. See the note at the top of this file.
     // SAFETY: the kernel runs them and returns their combined verdict.
-    if unsafe { raft_lab_cpp_unit_tests() } != 0 {
+    if unsafe { raft_lab_snapshot_unit_tests() } != 0 {
         return 1;
     }
 

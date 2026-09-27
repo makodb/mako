@@ -16,16 +16,30 @@ struct RaftServerBase;
 
 extern "C" {
 
-// LANE: send an InstallSnapshot the host has loaded. Delivers the reply to
-// `ctx` through raft_snapshot_reply_deliver at most once (0 on any failure,
-// inline when there is no peer) and frees it through raft_snapshot_reply_free
-// exactly once.
-void raft_lane_send_install_snapshot(
-    RaftServerBase* self, uint16_t site_id, uint32_t partition_id,
-    uint64_t term, uint64_t leader_id, uint64_t last_included_index,
-    uint64_t last_included_term, const uint8_t* data, size_t len, void* ctx);
+// LANE: the snapshot store's accessors that HOST C++ calls (plan N4). The
+// C++ lanes define them in snapshot_seam_cpp.cc over the C++ manager, the Rust
+// lane in raft-rt's rt/src/snapshot.rs over the Rust store. The carrier types
+// are server.h's, so include this after it.
+bool raft_snapshot_manager_is_set(const rusty::RaftSnapshotManagerPtr* manager);
+void raft_snapshot_manager_ptr_clone_into(const rusty::RaftSnapshotManagerPtr* src,
+                                          rusty::RaftSnapshotManagerPtr* dst);
+void raft_destroy_snapshot_manager_ptr(rusty::RaftSnapshotManagerPtr* p);
+bool raft_snapshot_manager_latest(const rusty::RaftSnapshotManagerPtr* manager,
+                                  uint64_t* index, uint64_t* term);
+bool raft_snapshot_manager_load(const rusty::RaftSnapshotManagerPtr* manager,
+                                rusty::RaftByteString* data, uint64_t* index,
+                                uint64_t* term, uint64_t* size_bytes);
+bool raft_snapshot_store_save(const rusty::RaftSnapshotManagerPtr* manager,
+                              uint64_t index, uint64_t term,
+                              const uint8_t* data, size_t len);
 
-// HOST: the reply side of the above.
+// HOST: the reply context each lane's raft_phase1_load_and_send_snapshot
+// hands its send, and the reply side. The context is delivered to at most
+// once (0 on any failure, inline when there is no peer) and freed through
+// raft_snapshot_reply_free exactly once.
+void* raft_snapshot_reply_ctx_new(const rusty::RaftAsyncCallbackLifetimePtr* lifetime,
+                                  uint16_t site_id, uint16_t self_site_id, size_t ord,
+                                  uint64_t snap_last_idx, uint64_t send_term);
 void raft_snapshot_reply_deliver(void* ctx, uint64_t follower_term);
 void raft_snapshot_reply_free(void* ctx);
 

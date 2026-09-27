@@ -35,11 +35,16 @@ def kernels():
     return len(names)
 
 
-RT_SEAM = ROOT / "src/deptran/raft/rt/src/seam.rs"
-CPP_SEAM = ROOT / "src/deptran/raft/server_seam_cpp.cc"
+# Each lane's seam, one file list per lane. The Rust lane's snapshot store
+# (plan N4) and its lab kernels are seam too, as are their C++ counterparts.
+RT_SEAM = [ROOT / "src/deptran/raft/rt/src" / f
+           for f in ("seam.rs", "snapshot.rs", "lab_runtime.rs")]
+CPP_SEAM = [ROOT / "src/deptran/raft" / f
+            for f in ("server_seam_cpp.cc", "snapshot_seam_cpp.cc", "lab_unit_tests.cc")]
 FACADE = ROOT / "src/rusty-rustc/src/lib.rs"
+LANE_KERNELS = ROOT / "src/deptran/raft/lane_kernels.h"
 CPP_HOST = [p for p in (ROOT / "src/deptran").rglob("*.cc")
-            if p != CPP_SEAM and "/raft/rt/" not in str(p)]
+            if p not in CPP_SEAM and "/raft/rt/" not in str(p)]
 
 # Kernels that are C++ only because of where the boundary sits: std time,
 # env, a mutex, a thread sleep. Each could become plain Rust in the core (plan
@@ -55,9 +60,25 @@ CORE_CANDIDATES = {
 }
 
 
+def lane_kernel_entries():
+    """The kernels lane_kernels.h declares, with the class its comment gives:
+    each declaration takes the most recent `// LANE:` or `// HOST:` marker."""
+    entries, current = {}, None
+    for line in LANE_KERNELS.read_text().split("\n"):
+        m = re.match(r"\s*//\s*(LANE|HOST):", line)
+        if m:
+            current = m.group(1)
+            continue
+        for name in re.findall(r"\b(raft_\w+)\s*\(", line):
+            if current and not line.lstrip().startswith("//"):
+                entries[name] = current
+    return entries
+
+
 def declared_kernels():
-    """raft_* names the core crate and the rustc facade declare as imports."""
-    names = set()
+    """raft_* names the core crate and the rustc facade declare as imports,
+    and those lane_kernels.h declares for HOST <-> seam calls."""
+    names = set(lane_kernel_entries())
     for f in RS + [FACADE]:
         text = f.read_text()
         for block in re.finditer(r'(?:unsafe )?extern "C" \{(.*?)\n\s*\}', text, re.S):
@@ -102,7 +123,9 @@ def classify():
     """Every declared kernel, by where it is defined. The check half: a SEAM
     kernel must be defined by BOTH lanes, and nothing may be defined twice."""
     declared = declared_kernels()
-    rt, cseam = rust_defined(RT_SEAM), cpp_defined(CPP_SEAM)
+    rt = set().union(*(rust_defined(p) for p in RT_SEAM))
+    cseam = set().union(*(cpp_defined(p) for p in CPP_SEAM))
+    marked = lane_kernel_entries()
     host = {}
     for f in CPP_HOST:
         for n in cpp_defined(f):
@@ -117,6 +140,9 @@ def classify():
         else:
             cls = "?"
             problems.append(f"{n}: rt={in_rt} cpp_seam={in_c} host={host.get(n)}")
+        want = {"LANE": "SEAM", "HOST": "HOST"}.get(marked.get(n))
+        if want and not cls.startswith(want):
+            problems.append(f"{n}: lane_kernels.h marks it {marked[n]} but it classifies {cls}")
         rows.append((n, cls))
     return rows, problems
 

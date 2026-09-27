@@ -277,6 +277,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("")
 
     emitted = []
+    bytes_refs = set()
     for func in service.functions:
         raw_in = [(a.type, a.name) for a in func.input]
         opaque_at = [i for i, (t, _) in enumerate(raw_in) if t in OPAQUE]
@@ -441,6 +442,30 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
             w("    }")
             w("}")
             w("")
+        # A request with a byte-string field (and no opaque one) also gets a
+        # borrowed twin, `<Req>BytesRef<'a>`, whose byte fields are slices:
+        # the zero-copy send for InstallSnapshot (plan N5). Same wire bytes.
+        if opaque_note is None and any(t == "WireBytes" for _, t in fields_in):
+            ref = f"{req}BytesRef"
+            w(f"/// `{req}` with its byte fields borrowed: encodes the same wire bytes")
+            w("/// without first copying a payload into a `WireBytes`.")
+            w(f"pub struct {ref}<'a> {{")
+            for fname, ftype in fields_in:
+                w(f"    pub {fname}: &'a [u8]," if ftype == "WireBytes" else f"    pub {fname}: {ftype},")
+            w("}")
+            w("")
+            w(f"impl Serialize for {ref}<'_> {{")
+            w("    fn serialize(&self, ar: &mut BinaryWriteArchive) {")
+            for fname, ftype in fields_in:
+                if ftype == "WireBytes":
+                    w("        // SAFETY: the slice is live for the call; serialize_bytes reads len bytes.")
+                    w(f"        unsafe {{ serialize_bytes(self.{fname}.as_ptr(), self.{fname}.len(), ar) }}")
+                else:
+                    w(f"        self.{fname}.serialize(ar);")
+            w("    }")
+            w("}")
+            w("")
+            bytes_refs.add(func.name)
         emitted.append((func.name, req, resp, opaque_note, req_is_copy))
 
     # The handler trait. `Result<Resp, i32>` mirrors the C++ signature
@@ -449,9 +474,17 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w(f"/// The {service.name} service. Implement this; `dispatch` below routes")
     w("/// to it. An `Err(code)` is replied as that code with no body.")
     w(f"pub trait {service.name}Handler: Send + Sync {{")
-    for name, req, resp, opaque, _ in emitted:
-        arg = f"{req}Ref<'_>" if opaque is not None else req
-        w(f"    fn {snake(name)}(&self, req: &{arg}) -> Result<{resp}, i32>;")
+    for name, req, resp, opaque, is_copy in emitted:
+        if opaque is not None:
+            param = f"&{req}Ref<'_>"
+        elif is_copy:
+            param = f"&{req}"
+        else:
+            # A request that owns heap storage is handed over BY VALUE, so a
+            # handler can keep its bytes instead of copying them (plan N5:
+            # the follower's InstallSnapshot handoff to the store).
+            param = req
+        w(f"    fn {snake(name)}(&self, req: {param}) -> Result<{resp}, i32>;")
     w("}")
     w("")
 
@@ -497,7 +530,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("    weak_sconn: &WeakServerConnection,")
     w(") {")
     w("    match rpc_id {")
-    for name, req_t, resp_t, opaque, _ in emitted:
+    for name, req_t, resp_t, opaque, is_copy in emitted:
         w(f"        rpc_id::{name.upper()} => {{")
         if opaque is not None:
             # Decoded from the whole frame: the opaque field's end is only
@@ -516,7 +549,8 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
             w("                reject_malformed_request(req, weak_sconn);")
             w("                return;")
             w("            }")
-        w(f"            reply_with(weak_sconn, req, handler.{snake(name)}(&typed));")
+        arg = "typed" if (opaque is None and not is_copy) else "&typed"
+        w(f"            reply_with(weak_sconn, req, handler.{snake(name)}({arg}));")
         w("        }")
     w("        // Unknown id: ignore, matching the generated C++ dispatch.")
     w("        _ => {}")
@@ -569,6 +603,21 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
             w(f"        self.client.request_async(")
             w(f"            rpc_id::{name.upper()},")
             w("            |ar: &mut BinaryWriteArchive| req.serialize_with(ar, &mut write_opaque),")
+            w("            on_reply,")
+            w("        )")
+            w("    }")
+            w("")
+        if name in bytes_refs:
+            # The borrowed send: request_async runs the writer synchronously,
+            # so the slices may borrow for just the call.
+            w(f"    pub fn {snake(name)}_ref_async(")
+            w("        &self,")
+            w(f"        req: &{req_t}BytesRef<'_>,")
+            w("        on_reply: AsyncReplyCallback,")
+            w("    ) -> Result<(), i32> {")
+            w(f"        self.client.request_async(")
+            w(f"            rpc_id::{name.upper()},")
+            w("            |ar: &mut BinaryWriteArchive| req.serialize(ar),")
             w("            on_reply,")
             w("        )")
             w("    }")
