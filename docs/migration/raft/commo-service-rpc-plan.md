@@ -108,8 +108,8 @@ that assumed a single lane are superseded here and marked where they stand:
 | N7 startup recovery on the Rust lane (new recovery lab cases) | done -- lab cases 73 (restore 40/3, commit clamped, term raised, store kept) and 74 (two fail-stops) pass on rust, hybrid and cpp; rt test: `pick_manager` keeps the pointer-equal `Arc` | `a22d391cc` |
 | N8 lane gates, CMake, cargo test gate | done -- `raft_rt_test` gates `raft_lane_check` on the Rust lane; a broken store assertion fails the build (checked, reverted); `ci.sh` derives the lab count (27) from the source | `a22d391cc` |
 | N9 deletions (C++ manager kept for hybrid/cpp by decision) | done -- `nm` finds no `MemorySnapshotManager`/`SnapshotFormat`/`MemorySnapshotWriter` in `build_rust/{dbtest,raft_bench}`, 30 symbols in hybrid's; the three snapshot headers are unchanged since N0 | `a22d391cc` |
-| N10 correctness: lab 25/25 x10 per lane, rt tests, suites | next | -- |
-| N11 mixed-lane snapshot install | next | -- |
+| N10 correctness: lab x10 per lane, rt tests, suites | done -- RaftLab 27/27 in all 30 runs (10 per lane), every snapshot case (50-52, 54-60, 67-69, 72-74) passing in each; 4 Raft suites on rust and 4 on hybrid pass; hybrid gtests `raft_memory_snapshot`/`raft_lab_standalone` pass; rt: 16 unit + 15 transport tests | this commit |
+| N11 mixed-lane snapshot install | done -- 18 stall runs (rust leader/hybrid follower, hybrid leader/rust follower, rust leader/cpp follower; 1 and 16 MiB; 3 each): every stalled follower received >= 1 install and caught up (1 MiB 13-23 ms, 16 MiB 216-1678 ms), leadership_changes 1, clean logs; 6 kill-leader runs: every survivor's log clean | this commit |
 | N12 snapshot-enabled performance (pre / store / post arms) | next | -- |
 | N13 docs | done -- `raft-book.md`, `raft_snapshot_design.md` (no `MAKO_RAFT_SNAPSHOT_PATH`/`FileSnapshotManager` left), `raft-harness.md` (flags, record fields), CLAUDE.md note; no dead relative link under `docs/` | this commit |
 
@@ -1483,7 +1483,7 @@ Rust lane.
     - the same on `build/dbtest` (hybrid) still finds `MemorySnapshotManager`;
     - `git diff --stat <N0>..` shows no change to the three snapshot headers.
 
-- [ ] **N10. Correctness.**
+- [x] **N10. Correctness.**
   - **Keep the Rust lane's 25/25 honest.**
     - `raft_lab_cpp_unit_tests` (`lab_unit_tests.cc:168-174`, declared
       `src/lab_snapshot_cases.rs:65`, called `:1195`) becomes the SEAM
@@ -1541,7 +1541,7 @@ Rust lane.
       then commit (`src/lab_snapshot_cases.rs:812-815`) on the Rust lane;
     - N7's recovery cases, the 8 suite runs and the gtests pass.
 
-- [ ] **N11. Mixed-lane snapshot install.**
+- [x] **N11. Mixed-lane snapshot install.**
   - Use N0's per-replica overrides with `MAKO_RAFT_SNAPSHOTS=1`, an interval
     sized for the stall (N0), `--snapshot-bytes` 1 MiB and 16 MiB, and
     `--stall-follower-at-sec 5 --stall-for-sec 4`.
