@@ -15,7 +15,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 | `raft/server.h` | 548 | `raft/src/server_h.rs` | 5540 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
 | `raft/server.cc` | 1605 | `raft/src/server_cc.rs` | 2189 |  |
 | `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 172 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
-| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 867 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
+| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 983 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
 | `raft/server_seam_cpp.cc` | 354 | `raft/rt/src/seam.rs` | 448 | the runtime seam, one per lane; exactly one is linked |
 | `communicator.h` | 567 | `raft/src/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
 | `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 582 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
@@ -29,7 +29,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 |---|---|---|
 | C++ → Rust | prototypes in `raft/server_exports.h` | 32 |
 | C++ → Rust | prototypes in `raft/transport_exports.h` — the Rust lane only (raft_lane_rust.cc) | 16 |
-| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 90 |
+| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 91 |
 
 ## Counted facts the prose below leans on
 

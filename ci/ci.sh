@@ -484,9 +484,15 @@ run_raft_lab_test() {
     local status=$?
     set -e
 
-    local passed
+    local passed expected
     passed=$(grep -c '^TEST [0-9]* Passed' "${log}" || true)
-    echo "raftLabTest: ${passed} case(s) passed, deptran_server exited ${status}"
+    # The case count, derived from the source rather than written down: the
+    # init2(N ids of the Rust harness plus the UnitInit(N ids of tests 50-52
+    # (lab_unit_tests.cc on hybrid/cpp; lab_runtime.rs runs the same ids on
+    # the Rust lane).
+    expected=$(( $(grep -ohE 'init2\([0-9]+' src/deptran/raft/src/*.rs | sort -u | wc -l) + \
+                 $(grep -ohE 'UnitInit\([0-9]+' src/deptran/raft/lab_unit_tests.cc | sort -u | wc -l) ))
+    echo "raftLabTest: ${passed}/${expected} case(s) passed, deptran_server exited ${status}"
 
     # Three conditions, deliberately. The exit status is the verdict
     # (src/deptran/s_main.cc returns RaftFrame::RaftLabProcessExitCode()), the
@@ -494,8 +500,8 @@ run_raft_lab_test() {
     # exiting 0 having run nothing, and the count proves no case was silently
     # skipped -- which a half-ported harness would do.
     if [ "$status" -ne 0 ] || ! grep -q 'ALL TESTS PASSED' "${log}" || \
-       [ "${passed}" -ne 25 ]; then
-        echo "ERROR: RaftLabTest failed (exit ${status}, ${passed}/25)"
+       [ "${passed}" -ne "${expected}" ]; then
+        echo "ERROR: RaftLabTest failed (exit ${status}, ${passed}/${expected})"
         echo "--- last 60 lines of ${log} ---"
         tail -n 60 "${log}"
         return 1

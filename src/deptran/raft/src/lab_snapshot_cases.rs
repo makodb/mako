@@ -19,6 +19,7 @@ use crate::lab::{ELECTION_TIMEOUT_US, NSERVERS};
 use crate::lab_cases::{check_msg, failed, init2, passed, LabState};
 use crate::scheduler_h::RaftSpecific;
 use crate::server_h::{lab_get, RaftLockGuard, RaftServerBase, RaftStdLockGuard};
+use crate::server_pods_h::RaftServerHandle;
 
 // server.h:186 -- `#define HEARTBEAT_INTERVAL 100000`, the non-debug value the
 // lab builds with.
@@ -74,6 +75,12 @@ unsafe extern "C" {
         dst: *mut rusty::RaftSnapshotManagerPtr);
     fn setenv(name: *const core::ffi::c_char, value: *const core::ffi::c_char,
               overwrite: i32) -> i32;
+    // Tests 73-74 (plan N7): the store's save (SEAM: the Rust store or the
+    // C++ manager), and the recovery step of Setup with its HOST catch
+    // wrapper -- the exact path Setup takes.
+    fn raft_snapshot_store_save(manager: *const rusty::RaftSnapshotManagerPtr,
+                                index: u64, term: u64, data: *const u8, len: usize) -> bool;
+    fn raft_initialize_snapshot_manager(server: *mut RaftServerHandle, site_id: u16) -> bool;
 }
 
 // raft_lab_probe_flags' bits, named.
@@ -1185,6 +1192,166 @@ fn test_high_frequency_apply(_st: &mut LabState) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
+// Tests 73-74 -- startup recovery (plan N7)
+//
+// Recovery runs only in Setup, and no other case reaches it with snapshots
+// on: the lab starts with MAKO_RAFT_SNAPSHOTS unset, and 60 and 69 set it
+// after Setup. These build a server outside the cluster, inject a store
+// before Setup would, and run Setup's recovery step through its HOST catch
+// wrapper -- the store's latest/load, the metadata cross-check, the
+// state-machine load, the boundary, the commit clamp and the term raise --
+// on whichever store the lane links.
+
+/// The lab state machine's image: the 16-byte (index, term) marker the lab
+/// prepare path checks (server.cc, RAFT_TEST_CORO), little-endian.
+fn lab_marker(index: u64, term: u64) -> Vec<u8> {
+    let mut marker: Vec<u8> = Vec::new();
+    for i in 0..8u64 {
+        marker.push(((index >> (8 * i)) & 0xff) as u8);
+    }
+    for i in 0..8u64 {
+        marker.push(((term >> (8 * i)) & 0xff) as u8);
+    }
+    marker
+}
+
+/// A store holding one snapshot at (`index`, `term`) whose bytes are the
+/// marker for (`index`, `marker_term`).
+fn seeded_manager(index: u64, term: u64, marker_term: u64) -> Option<rusty::RaftSnapshotManagerPtr> {
+    let manager = new_manager();
+    let marker = lab_marker(index, marker_term);
+    // SAFETY: the carrier and the bytes are live for the call.
+    let saved = unsafe {
+        raft_snapshot_store_save(&manager as *const _, index, term, marker.as_ptr(), marker.len())
+    };
+    if saved { Some(manager) } else { None }
+}
+
+/// What a recovery left behind.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Recovered {
+    ok: bool,
+    stopped: bool,
+    snap_index: u64,
+    snap_term: u64,
+    commit: u64,
+    current_term: u64,
+    log_base: u64,
+    applied: u64,
+    has_snapshot: bool,
+}
+
+/// Build a server, give it `commit`/`term` as recovered progress and the
+/// store (if any), run recovery, read the outcome, delete the server.
+fn recover_fresh(store: &rusty::RaftSnapshotManagerPtr, inject: bool, commit: u64,
+                 term: u64) -> Recovered {
+    // What raft_server_new does, spelled out: the server lives in a Box so
+    // the address its runtime registers stays put.
+    let s: *mut RaftServerBase = Box::into_raw(Box::new(RaftServerBase::new()));
+    // SAFETY: `s` is the live allocation above until the from_raw below.
+    let svr: &mut RaftServerBase = unsafe { &mut *s };
+    svr.ConstructRuntime();
+    if inject {
+        svr.SetSnapshotManager(clone_manager(store));
+    }
+    {
+        let _lock = RaftLockGuard::new(svr.LabMutex());
+        svr.state_.commit_index_ = commit;
+        svr.state_.current_term_ = term;
+    }
+    // SAFETY: the server is live; recovery takes its own locks.
+    let ok = unsafe { raft_initialize_snapshot_manager(svr.handle(), 0) };
+    let stopped = svr.stop_.load(rusty::sync::atomic::Ordering::Acquire);
+    let applied = svr.GetAppliedIndex();
+    let has_snapshot = svr.HasSnapshot();
+    let mut out = {
+        let _lock = RaftLockGuard::new(svr.LabMutex());
+        Recovered {
+            ok,
+            stopped,
+            snap_index: svr.LabSnapIdx(),
+            snap_term: svr.LabSnapTerm() as u64,
+            commit: svr.LabCommitIndex(),
+            current_term: svr.LabCurrentTerm(),
+            log_base: svr.LabLogBase(),
+            applied: 0,
+            has_snapshot: false,
+        }
+    };
+    out.applied = applied;
+    out.has_snapshot = has_snapshot;
+    // What raft_server_delete does; this server was never bound to a
+    // communicator, so there is nothing to unbind.
+    svr.Shutdown();
+    // SAFETY: from into_raw above; `svr` is not used after this.
+    drop(unsafe { rusty::Box::from_raw(s) });
+    out
+}
+
+fn test_recovery_restores_injected_snapshot(_st: &mut LabState) -> i32 {
+    init2(73, "Startup recovery restores an injected snapshot");
+    if !check_msg(set_env("MAKO_RAFT_SNAPSHOTS", "1"), "setenv MAKO_RAFT_SNAPSHOTS") { return 1; }
+
+    // No store injected: recovery starts from an empty one.
+    let none = new_manager();
+    let empty = recover_fresh(&none, false, 0, 1);
+    if !check_msg(empty.ok && !empty.stopped, &format!("empty recovery failed: {:?}", empty)) { return 1; }
+    if !check_msg(!empty.has_snapshot && empty.snap_index == 0,
+                  &format!("empty recovery reports a snapshot: {:?}", empty)) { return 1; }
+
+    // A seeded store at (40, 3), recovered progress commit 50 at term 1 with
+    // an empty log: the boundary becomes 40/3, the commit is clamped to the
+    // log's end (40), the term is raised to 3 and the state machine is
+    // published as applied through 40.
+    let Some(seed) = seeded_manager(40, 3, 3) else {
+        failed("could not seed the store");
+        return 1;
+    };
+    let got = recover_fresh(&seed, true, 50, 1);
+    if !check_msg(got.ok && !got.stopped, &format!("recovery failed: {:?}", got)) { return 1; }
+    if !check_msg(got.snap_index == 40 && got.snap_term == 3,
+                  &format!("boundary should be 40/3: {:?}", got)) { return 1; }
+    if !check_msg(got.log_base == 41, &format!("log should restart at 41: {:?}", got)) { return 1; }
+    if !check_msg(got.commit == 40, &format!("commit should clamp to 40: {:?}", got)) { return 1; }
+    if !check_msg(got.current_term == 3, &format!("term should rise to 3: {:?}", got)) { return 1; }
+    if !check_msg(got.applied == 40, &format!("applied should publish 40: {:?}", got)) { return 1; }
+    if !check_msg(got.has_snapshot, "the recovered server should report its snapshot") { return 1; }
+    // The injected store was kept, not replaced: it still holds the seed.
+    let after = probe(&seed);
+    if !check_msg(after.present && after.last_included_index == 40 && after.count == 1,
+                  &format!("the injected store changed: {:?}", after)) { return 1; }
+    passed();
+    0
+}
+
+fn test_recovery_fail_stops(_st: &mut LabState) -> i32 {
+    init2(74, "Startup recovery fail-stops without a covering snapshot");
+    if !check_msg(set_env("MAKO_RAFT_SNAPSHOTS", "1"), "setenv MAKO_RAFT_SNAPSHOTS") { return 1; }
+
+    // Recovered progress (commit 5, empty log) with an empty store.
+    let empty = new_manager();
+    let got = recover_fresh(&empty, true, 5, 1);
+    if !check_msg(!got.ok && got.stopped,
+                  &format!("uncovered progress must fail-stop: {:?}", got)) { return 1; }
+    if !check_msg(got.snap_index == 0 && got.commit == 5,
+                  &format!("a failed recovery must publish nothing: {:?}", got)) { return 1; }
+
+    // A store whose bytes do not match its metadata: the state machine
+    // rejects the image, and the server fail-stops before any boundary.
+    let Some(bad) = seeded_manager(40, 3, 2) else {
+        failed("could not seed the store");
+        return 1;
+    };
+    let got = recover_fresh(&bad, true, 0, 1);
+    if !check_msg(!got.ok && got.stopped,
+                  &format!("a rejected image must fail-stop: {:?}", got)) { return 1; }
+    if !check_msg(got.snap_index == 0 && got.current_term == 1 && got.applied == 0,
+                  &format!("a failed recovery must publish nothing: {:?}", got)) { return 1; }
+    passed();
+    0
+}
+
+// ---------------------------------------------------------------------------
 // The driver. Same order and the same short-circuit structure as the second
 // half of RaftLabTest::Run.
 
@@ -1210,6 +1377,8 @@ fn run_snapshot_cases(st: &mut LabState) -> i32 {
         test_log_retention_window_configurable,
         test_long_partition_recovery,
         test_high_frequency_apply,
+        test_recovery_restores_injected_snapshot,
+        test_recovery_fail_stops,
     ];
     for case in cases {
         if case(st) != 0 {

@@ -1382,6 +1382,31 @@ if(MAKO_RAFT_LANE STREQUAL "hybrid")
             --cores "${RAFT_RUST_LIB}" "$<TARGET_FILE:raft_cpp_core>")
   list(APPEND RAFT_LANE_CHECK_DEPS raft_cpp_core)
 endif()
+# Plan N8: on the Rust lane raft-rt's own tests (the snapshot store's unit
+# tests, the transport round trips, resend suppression, the frame cap) gate
+# the build too. A stamp keeps them from rerunning when nothing they cover
+# changed; the lane's feature set is passed so the tests see the lab or
+# production crate this tree links.
+if(MAKO_RAFT_LANE STREQUAL "rust")
+  file(GLOB RAFT_RT_TEST_SOURCES CONFIGURE_DEPENDS
+      ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/tests/*.rs)
+  set(RAFT_RT_TEST_STAMP "${CMAKE_BINARY_DIR}/raft_rt_test.stamp")
+  add_custom_command(
+      OUTPUT ${RAFT_RT_TEST_STAMP}
+      COMMAND ${CMAKE_COMMAND} -E env
+              "CC=${CMAKE_C_COMPILER}"
+              "AR=${CMAKE_AR}"
+              cargo test --release --quiet
+              --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml
+              --target-dir ${RAFT_RUST_TARGET_DIR}
+              ${RAFT_RUST_FEATURES}
+      COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_RT_TEST_STAMP}
+      DEPENDS ${RAFT_RUST_SOURCES} ${RAFT_RT_TEST_SOURCES} ${RAFT_RUST_LIB}
+      COMMENT "cargo test: raft-rt"
+      VERBATIM)
+  add_custom_target(raft_rt_test DEPENDS ${RAFT_RT_TEST_STAMP})
+  list(APPEND RAFT_LANE_CHECK_DEPS raft_rt_test)
+endif()
 add_custom_target(raft_lane_check ALL
     ${RAFT_LANE_CHECK_COMMANDS}
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_lane_parity.py
