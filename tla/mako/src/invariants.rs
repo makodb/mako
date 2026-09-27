@@ -94,7 +94,7 @@ pub open spec fn inv_txn(s: State, c: Constants, id: int) -> bool {
     &&& is_prepared_or_later(r) ==> r.pidx < s.prepared.len() && s.prepared[r.pidx as int] == id
         && r.invoked < r.prepared_at < s.tick
         && forall|k: int| #[trigger] read_set(r.body).contains(k) ==> r.reads.dom().contains(k)
-    &&& r.status is Prepared ==> !read_only(r)
+    &&& (r.status is Prepared || aborted_prepared(r)) ==> !read_only(r)
     &&& certified_or_committed(r) ==> all_installed(c, r)
     &&& committed(r) ==> r.prepared_at < r.acked < s.tick
 }

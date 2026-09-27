@@ -15,4 +15,11 @@ pub mod proofs_normal1;
 pub mod proofs_prepare;
 pub mod history;
 pub mod proofs_stable;
-
+pub mod proofs_install;
+pub mod proofs_certify;
+pub mod proofs_crash;
+pub mod proofs_advance;
+pub mod proofs_closeroll;
+pub mod proofs_history;
+pub mod proofs_witness;
+pub mod proofs_main;
