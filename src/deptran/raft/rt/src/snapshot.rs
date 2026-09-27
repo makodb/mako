@@ -18,12 +18,13 @@
 use core::ffi::c_void;
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use raft::server_h::RaftServerBase;
 use srpc::frame_codec::kMaxFramePayloadSize;
 
 use crate::rpc::InstallSnapshotRequestBytesRef;
-use crate::transport::transport_of;
+use crate::transport::{transport_of, InstallSend};
 
 /// One snapshot. `bytes` is the state machine's image, verbatim.
 pub struct Snapshot {
@@ -400,7 +401,6 @@ pub unsafe extern "C" fn raft_phase1_load_and_send_snapshot(
         return true; // `ctx` frees the context.
     }
     let t = transport.expect("checked above");
-    unsafe { raft_install_rpc_note_sent(image.bytes.len() as u64) };
     // Encoded straight from the stored image: one copy, into the frame. The
     // Arc keeps the image alive for the encode even if a save replaces it.
     let req = InstallSnapshotRequestBytesRef {
@@ -410,13 +410,27 @@ pub unsafe extern "C" fn raft_phase1_load_and_send_snapshot(
         last_included_term: image.term,
         data: &image.bytes,
     };
+    let heartbeat_us = unsafe { (*s).heartbeat_interval_us_ };
+    let deadline = install_deadline(heartbeat_us, image.bytes.len());
     // The callback owns the context: it delivers at most once and frees on
-    // drop, whether or not it ever ran. A send that never left (false) frees
-    // it without a delivery, as the C++ lane's commo does.
-    let _ = t.send_install_snapshot_ref(site_id, &req, move |follower_term| {
+    // drop, whether or not it ever ran. A send that never left, or one
+    // suppressed because the same install is outstanding (N6), frees it
+    // without a delivery, as the C++ lane's commo does for a failed send.
+    let sent = t.send_install_snapshot_once(site_id, &req, deadline, move |follower_term| {
         ctx.deliver(follower_term);
     });
+    if sent == InstallSend::Sent {
+        unsafe { raft_install_rpc_note_sent(image.bytes.len() as u64) };
+    }
     true
+}
+
+/// How long an outstanding install suppresses resends (N6): four heartbeat
+/// intervals, at least 200 ms, plus 20 ns per byte (50 MB/s, several times
+/// slower than the loopback figure in rt/tests/large_frame_bench.rs).
+pub fn install_deadline(heartbeat_us: u64, len: usize) -> Duration {
+    let base = Duration::from_micros(heartbeat_us.saturating_mul(4)).max(Duration::from_millis(200));
+    base + Duration::from_nanos(len as u64 * 20)
 }
 
 #[cfg(test)]

@@ -110,6 +110,86 @@ pub struct RaftTransport {
     // Every RPC this transport sent: RaftCommo::rpc_count_'s counterpart,
     // which the lab's idle-RPC ceiling (TEST 9) reads.
     rpc_count: AtomicU64,
+    // InstallSnapshots outstanding per follower (N6). Shared with the reply
+    // callbacks, which may outlive a send call.
+    installs: Arc<Mutex<InstallsInFlight>>,
+}
+
+/// What `send_install_snapshot_once` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstallSend {
+    /// Sent; `done` will run at most once.
+    Sent,
+    /// The same `(term, follower, index)` is still outstanding and inside its
+    /// deadline: nothing sent, `done` dropped uncalled.
+    Suppressed,
+    /// The request never left (no peer, or the send failed): `done` dropped
+    /// uncalled, and nothing is recorded.
+    NotSent,
+}
+
+/// The resend-suppression set (N6): one entry per follower, for the snapshot
+/// last sent to it. Cleared by the entry's reply (success or failure), by the
+/// callback being dropped uncalled, by a failed send, by its deadline, and --
+/// all of them -- by a term change.
+#[derive(Default)]
+pub struct InstallsInFlight {
+    term: u64,
+    next_gen: u64,
+    by_site: HashMap<u16, InstallEntry>,
+}
+
+struct InstallEntry {
+    index: u64,
+    generation: u64,
+    deadline: Instant,
+}
+
+impl InstallsInFlight {
+    /// Record a send of `(term, site, index)` unless the same one is
+    /// outstanding; the entry's generation, or None to suppress.
+    fn begin(&mut self, term: u64, site: u16, index: u64, now: Instant,
+             deadline: Duration) -> Option<u64> {
+        if term != self.term {
+            self.by_site.clear();
+            self.term = term;
+        }
+        if let Some(e) = self.by_site.get(&site) {
+            if e.index == index && now < e.deadline {
+                return None;
+            }
+        }
+        self.next_gen += 1;
+        let generation = self.next_gen;
+        self.by_site.insert(site, InstallEntry { index, generation, deadline: now + deadline });
+        Some(generation)
+    }
+
+    /// Clear `site`'s entry if it is still the one `generation` recorded.
+    fn finish(&mut self, site: u16, generation: u64) {
+        if self.by_site.get(&site).is_some_and(|e| e.generation == generation) {
+            self.by_site.remove(&site);
+        }
+    }
+
+    /// How many followers have an install outstanding (tests).
+    pub fn outstanding(&self) -> usize {
+        self.by_site.len()
+    }
+}
+
+/// Clears its entry when dropped: after the reply callback ran, or when srpc
+/// drops the callback uncalled.
+struct InstallKey {
+    installs: Arc<Mutex<InstallsInFlight>>,
+    site: u16,
+    generation: u64,
+}
+
+impl Drop for InstallKey {
+    fn drop(&mut self) {
+        self.installs.lock().unwrap_or_else(|e| e.into_inner()).finish(self.site, self.generation);
+    }
 }
 
 impl RaftTransport {
@@ -122,9 +202,14 @@ impl RaftTransport {
             partitions: HashMap::new(),
             network_enabled: AtomicBool::new(true),
             rpc_count: AtomicU64::new(0),
+            installs: Arc::new(Mutex::new(InstallsInFlight::default())),
         }
     }
 
+    /// Followers with an InstallSnapshot outstanding (tests).
+    pub fn installs_outstanding(&self) -> usize {
+        self.installs.lock().unwrap_or_else(|e| e.into_inner()).outstanding()
+    }
 
     pub fn poll_thread(&self) -> Arc<PollThread> {
         self.poll.clone()
@@ -389,6 +474,37 @@ impl RaftTransport {
         );
         self.count_rpc();
         sent.is_ok()
+    }
+
+    /// `send_install_snapshot_ref`, sent at most once per `(term, follower,
+    /// index)` while a reply is outstanding (N6). Without this the core
+    /// resends the whole image every heartbeat round until a reply advances
+    /// the follower. The entry is cleared before `done` runs, so a reply that
+    /// did not advance the follower lets the next round resend; and it lapses
+    /// after `deadline` even if no reply or drop ever comes, so a lost
+    /// callback cannot starve the follower. Install is idempotent, so a
+    /// resend after the deadline is harmless.
+    pub fn send_install_snapshot_once<F>(&self, site_id: u16,
+                                         req: &InstallSnapshotRequestBytesRef<'_>,
+                                         deadline: Duration, done: F) -> InstallSend
+    where
+        F: FnOnce(u64) + Send + 'static,
+    {
+        if self.peer(site_id).is_none() {
+            return InstallSend::NotSent;
+        }
+        let begun = self.installs.lock().unwrap_or_else(|e| e.into_inner())
+            .begin(req.term, site_id, req.last_included_index, Instant::now(), deadline);
+        let Some(generation) = begun else {
+            return InstallSend::Suppressed;
+        };
+        let key = InstallKey { installs: self.installs.clone(), site: site_id, generation };
+        let sent = self.send_install_snapshot_ref(site_id, req, move |term| {
+            drop(key); // clear first: `done` may start the next round
+            done(term);
+        });
+        // A send that never left dropped the callback, and `key` with it.
+        if sent { InstallSend::Sent } else { InstallSend::NotSent }
     }
 
     /// InstallSnapshot encoded straight from a borrowed image (plan N5): the

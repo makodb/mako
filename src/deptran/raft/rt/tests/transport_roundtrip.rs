@@ -23,7 +23,7 @@ use raft_rt::rpc::{
     VoteRequest, VoteResponse, WireBytes,
 };
 use raft_rt::snapshot::{install_fits_one_frame, INSTALL_FRAME_OVERHEAD};
-use raft_rt::transport::RaftTransport;
+use raft_rt::transport::{InstallSend, RaftTransport};
 use srpc::reactor::PollThread;
 use srpc::server::{Request, Server, Service, WeakServerConnection};
 
@@ -283,3 +283,187 @@ fn the_frame_cap_refuses_larger_images() {
     assert!(!install_fits_one_frame((64 << 20) + 1));
 }
 
+// ---------------------------------------------------------------------------
+// N6: resend suppression. A follower that holds its InstallSnapshot reply
+// until the test releases it, so an install is outstanding for as long as
+// the test needs.
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+struct Gate {
+    arrived: usize,
+    open: bool,
+    fail: bool,
+}
+
+struct Holder(Arc<(Mutex<Gate>, std::sync::Condvar)>);
+
+impl RaftHandler for Holder {
+    fn vote(&self, _: &VoteRequest) -> Result<VoteResponse, i32> { Ok(VoteResponse::default()) }
+    fn append_entries(&self, _: &AppendEntriesRequestRef<'_>) -> Result<AppendEntriesResponse, i32> {
+        Ok(AppendEntriesResponse::default())
+    }
+    fn empty_append_entries(&self, _: &EmptyAppendEntriesRequest)
+        -> Result<EmptyAppendEntriesResponse, i32> { Ok(EmptyAppendEntriesResponse::default()) }
+    fn install_snapshot(&self, req: InstallSnapshotRequest) -> Result<InstallSnapshotResponse, i32> {
+        let (lock, cv) = &*self.0;
+        let mut g = lock.lock().unwrap();
+        g.arrived += 1;
+        cv.notify_all();
+        while !g.open {
+            g = cv.wait(g).unwrap();
+        }
+        if g.fail { Err(-1) } else { Ok(InstallSnapshotResponse { term_out: req.term }) }
+    }
+}
+
+impl Service for Holder {
+    fn __reg_to__(&mut self, server: &mut Server, i: usize) -> i32 { rpc::register(server, i) }
+    fn __dispatch__(&self, id: i32, req: Box<Request>, s: WeakServerConnection) {
+        rpc::dispatch(self, id, &req, &s);
+    }
+}
+
+type GateRef = Arc<(Mutex<Gate>, std::sync::Condvar)>;
+
+/// A transport with one holding follower at site 2. The gate is opened when
+/// the returned guard drops, so a failing test does not hang its server.
+struct Held {
+    transport: RaftTransport,
+    gate: GateRef,
+    _server: Server,
+}
+
+impl Held {
+    fn new(fail: bool) -> Held {
+        let gate: GateRef = Arc::new((Mutex::new(Gate { fail, ..Gate::default() }),
+                                      std::sync::Condvar::new()));
+        let mut server = Server::new(Some(PollThread::create()));
+        server.reg_service(Box::new(Holder(gate.clone())));
+        // SAFETY: the literal is NUL-terminated.
+        assert_eq!(unsafe { server.start(c"127.0.0.1:0".as_ptr()) }, 0);
+        let addr = CString::new(format!("127.0.0.1:{}", server.get_bound_port())).unwrap();
+        let mut transport = RaftTransport::new();
+        // SAFETY: the CString outlives the call.
+        assert!(unsafe { transport.add_peer_with_timeout(7, 2, addr.as_ptr(),
+                                                         Duration::from_secs(5)) });
+        Held { transport, gate, _server: server }
+    }
+
+    fn open(&self) {
+        let (lock, cv) = &*self.gate;
+        lock.lock().unwrap().open = true;
+        cv.notify_all();
+    }
+
+    fn arrived(&self) -> usize { self.gate.0.lock().unwrap().arrived }
+
+    fn wait_arrived(&self, n: usize) {
+        assert!(wait_until(Duration::from_secs(10), || self.arrived() >= n),
+                "only {} of {n} installs arrived", self.arrived());
+    }
+
+    /// Send the install for `(term, index)`; the replies land in `calls`.
+    fn send(&self, term: u64, index: u64, deadline: Duration,
+            calls: &Arc<Mutex<Vec<u64>>>) -> InstallSend {
+        let data = [5u8; 1000];
+        let req = InstallSnapshotRequestBytesRef {
+            term, leader_id: 1, last_included_index: index, last_included_term: term, data: &data,
+        };
+        let sink = calls.clone();
+        self.transport.send_install_snapshot_once(2, &req, deadline, move |t| {
+            sink.lock().unwrap().push(t);
+        })
+    }
+}
+
+impl Drop for Held {
+    fn drop(&mut self) { self.open(); }
+}
+
+const LONG: Duration = Duration::from_secs(30);
+
+#[test]
+fn an_outstanding_install_is_sent_once() {
+    let h = Held::new(false);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    assert_eq!(h.send(7, 40, LONG, &calls), InstallSend::Sent);
+    h.wait_arrived(1);
+    for _ in 0..20 {
+        assert_eq!(h.send(7, 40, LONG, &calls), InstallSend::Suppressed);
+    }
+    assert_eq!(h.transport.installs_outstanding(), 1);
+    h.open();
+    assert!(wait_until(Duration::from_secs(10), || !calls.lock().unwrap().is_empty()));
+    std::thread::sleep(Duration::from_millis(100));
+    assert_eq!(h.arrived(), 1, "exactly one InstallSnapshot crossed");
+    assert_eq!(*calls.lock().unwrap(), vec![7], "and exactly one reply was delivered");
+    assert_eq!(h.transport.installs_outstanding(), 0, "the reply cleared the key");
+    // With the reply in, the next round may resend (the core decides).
+    assert_eq!(h.send(7, 40, LONG, &calls), InstallSend::Sent);
+    h.wait_arrived(2);
+}
+
+#[test]
+fn a_newer_snapshot_is_not_suppressed_by_an_older_one() {
+    let h = Held::new(false);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    assert_eq!(h.send(7, 40, LONG, &calls), InstallSend::Sent);
+    assert_eq!(h.send(7, 50, LONG, &calls), InstallSend::Sent, "a different index is a new key");
+    h.open();
+    h.wait_arrived(2);
+}
+
+#[test]
+fn a_failed_reply_allows_a_resend() {
+    let h = Held::new(true);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    assert_eq!(h.send(7, 40, LONG, &calls), InstallSend::Sent);
+    h.open();
+    assert!(wait_until(Duration::from_secs(10), || !calls.lock().unwrap().is_empty()));
+    assert_eq!(*calls.lock().unwrap(), vec![0], "a failed reply delivers 0");
+    assert_eq!(h.transport.installs_outstanding(), 0);
+    assert_eq!(h.send(7, 40, LONG, &calls), InstallSend::Sent);
+    h.wait_arrived(2);
+}
+
+#[test]
+fn a_reply_that_never_comes_lapses_at_the_deadline() {
+    let h = Held::new(false);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let short = Duration::from_millis(150);
+    assert_eq!(h.send(7, 40, short, &calls), InstallSend::Sent);
+    h.wait_arrived(1);
+    assert_eq!(h.send(7, 40, short, &calls), InstallSend::Suppressed);
+    std::thread::sleep(Duration::from_millis(250));
+    assert_eq!(h.send(7, 40, short, &calls), InstallSend::Sent, "resent after the deadline");
+    // The first reply, arriving late, must not clear the second's entry.
+    h.open();
+    assert!(wait_until(Duration::from_secs(10), || calls.lock().unwrap().len() == 2));
+    assert_eq!(h.arrived(), 2);
+    assert_eq!(h.transport.installs_outstanding(), 0);
+}
+
+#[test]
+fn a_term_change_drops_every_key() {
+    let h = Held::new(false);
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    assert_eq!(h.send(7, 40, LONG, &calls), InstallSend::Sent);
+    h.wait_arrived(1);
+    assert_eq!(h.send(8, 40, LONG, &calls), InstallSend::Sent, "a new term resends");
+    assert_eq!(h.send(8, 40, LONG, &calls), InstallSend::Suppressed);
+    h.open();
+    h.wait_arrived(2);
+}
+
+#[test]
+fn no_peer_is_not_sent_and_records_nothing() {
+    let h = Held::new(false);
+    let data = [0u8; 4];
+    let req = InstallSnapshotRequestBytesRef {
+        term: 1, leader_id: 1, last_included_index: 1, last_included_term: 1, data: &data,
+    };
+    assert_eq!(h.transport.send_install_snapshot_once(9, &req, LONG, |_| panic!("no call")),
+               InstallSend::NotSent);
+    assert_eq!(h.transport.installs_outstanding(), 0);
+}
