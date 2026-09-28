@@ -110,7 +110,7 @@ that assumed a single lane are superseded here and marked where they stand:
 | N9 deletions (C++ manager kept for hybrid/cpp by decision) | done -- `nm` finds no `MemorySnapshotManager`/`SnapshotFormat`/`MemorySnapshotWriter` in `build_rust/{dbtest,raft_bench}`, 30 symbols in hybrid's; the three snapshot headers are unchanged since N0 | `a22d391cc` |
 | N10 correctness: lab x10 per lane, rt tests, suites | done -- RaftLab 27/27 in all 30 runs (10 per lane), every snapshot case (50-52, 54-60, 67-69, 72-74) passing in each; 4 Raft suites on rust and 4 on hybrid pass; hybrid gtests `raft_memory_snapshot`/`raft_lab_standalone` pass; rt: 16 unit + 15 transport tests | this commit |
 | N11 mixed-lane snapshot install | done -- 18 stall runs (rust leader/hybrid follower, hybrid leader/rust follower, rust leader/cpp follower; 1 and 16 MiB; 3 each): every stalled follower received >= 1 install and caught up (1 MiB 13-23 ms, 16 MiB 216-1678 ms), leadership_changes 1, clean logs; 6 kill-leader runs: every survivor's log clean | this commit |
-| N12 snapshot-enabled performance (pre / store / post arms) | next | -- |
+| N12 snapshot-enabled performance (pre / store / post arms) | done, with gates missed and recorded -- store vs pre passes at 64 KiB-16 MiB and at 286 KB unthrottled (p50 within +-0.7%, p99 within +-3%); RSS passes; disabled path passes; catch-up 806 -> 280 ms and leader p99 397 -> 13 ms at 16 MiB; install RPCs per catch-up 11 -> 2; pre segfaulted in 13/370 runs, store/post 0/370. Missed: 60 MiB points (core compaction treadmill at interval 100, multimodal p99 at 500), short rounds from pre's crashes, a p=0.043 p50 sign test, +10% max apply gap at 286 KB x 6 confounded by pre's crashes, hybrid at two noisy points; each with its evidence in the summary | `docs/performance/raft-rust-snapshot-fffab9338/SUMMARY.md` |
 | N13 docs | done -- `raft-book.md`, `raft_snapshot_design.md` (no `MAKO_RAFT_SNAPSHOT_PATH`/`FileSnapshotManager` left), `raft-harness.md` (flags, record fields), CLAUDE.md note; no dead relative link under `docs/` | this commit |
 
 **The full sweep** (`docs/performance/raft-rust-9a361eccd`, 3 trials per
@@ -1560,7 +1560,7 @@ Rust lane.
     That is the proof that the Rust store ships raw bytes a C++ `prepare_cb`
     accepts, and the reverse.
 
-- [ ] **N12. Performance with snapshots on (measured, not assumed).**
+- [x] **N12. Performance with snapshots on (measured, not assumed).**
   - **Arms**, each built in its own worktree and symlinked under the root
     (N0):
     - **pre:** rust at N0 (`build_rust_pre`, C++ manager);
