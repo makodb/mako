@@ -33,7 +33,8 @@ per round in every position in turn and host drift lands on all arms evenly.
   The plan's limit is 2.
 - **The old path crashes; the new one did not.**
   - The pre arm segfaulted in 13 of 370 runs, all at points where
-    InstallSnapshot happens.
+    InstallSnapshot happens. The cause is a use-after-free in N0's Rust-lane
+    install send (see "The pre arm's crash"); N5 removed that code.
   - The store and post arms had 0 failures in 370 runs each.
 - **Snapshots off: no change.** post vs pre at the four standard points is
   within +-0.5% on p50 and p99.
@@ -250,8 +251,54 @@ segfault run was rerun.
   borrowed send.
 - The segfaulting process is the leader.
 
-A backtrace was attempted by rerunning the stall point with the leader under
-`gdb`; its outcome is recorded in the plan's N12 row.
+**Cause: a use-after-free in N0's Rust-lane InstallSnapshot send**, the code
+N5 deleted. It was captured with a SIGSEGV handler preloaded into the leader,
+on the second 1 MiB stall run; `addr2line` resolved the frames against the
+pre binary:
+
+```
+SIGSEGV addr=0x0
+  std::lock_guard<std::mutex>::lock_guard            (locking ctx->lifetime->mutex)
+  raft_snapshot_reply_deliver                        server.cc:1455 @ b7ac74a0b
+  RaftTransport::send_install_snapshot_with::{closure}   (the reply callback)
+  srpc::client::clientconn_decode_response_for_binding
+  srpc::tcp_channel::TcpConnection::handle_read
+  srpc::reactor::PollThreadWorker::poll_loop
+```
+
+At `b7ac74a0b` the callback in `rt/src/seam.rs:505` was
+
+```rust
+let owned = SnapshotCtx(ctx as usize);            // Drop frees the host context
+...
+t.send_install_snapshot_with(site_id, req, move |follower_term| {
+    raft_snapshot_reply_deliver(owned.0 as *mut c_void, follower_term)
+});
+```
+
+Under Rust 2021's disjoint closure capture, the `move` closure captures only
+`owned.0`, a `usize`, by copy, not `owned`. So `owned` was dropped when
+`raft_lane_send_install_snapshot` returned, which freed the context
+immediately after the send. When the reply arrived, `raft_snapshot_reply_deliver`
+read freed memory. Usually it still held the old values; when it had been
+reused, `lifetime` read as null and the leader died.
+
+Every Rust-lane InstallSnapshot at N0 had this bug. The crash rate was just
+how often the freed block got reused before the reply arrived.
+
+A minimal program confirms the capture rule. The N0 shape drops the context
+before the callback runs. N5's shape, `move |t| ctx.deliver(t)`, moves the
+whole `ReplyCtx` into the callback, which frees it only when the callback is
+dropped.
+
+The hybrid and cpp lanes send through `commo.cc`, which owns the context in a
+C++ lambda, and were never affected. In the current Rust sources, the
+closures that hold a `Drop` wrapper (`ReplyCtx`, `InstallKey`) use the whole
+value (`ctx.deliver(...)`, `drop(key)`).
+
+An earlier attempt with the leader under `gdb` produced nothing. The launcher
+signals the leader's PID with SIGUSR1, and under the wrapper that PID was
+`gdb`, which died of the signal.
 
 ## Records
 
