@@ -69,9 +69,9 @@ replication papers of the four people asked about:
 | **Jetpack: Consensus Made Generally Fast**, OSDI '26 | Ze Tang, Zihao Zhang, Weihai Shen, Shuai Mu | The methodology in question (§2). Raft is "built on DepFast". |
 | **DepFast: Orchestrating Code of Quorum Systems**, ATC '22 | Weihai Shen, Shuai Mu | DepFast-Raft vs etcd. Its protocol is in the rows below. |
 | **Mako: Speculative Distributed Transactions with Geo-Replication**, OSDI '25 | Weihai Shen, Shuai Mu | Replication is not benchmarked on its own. It is measured through TPC-C transaction throughput and latency (§4). |
-| **Rolis**, EuroSys '22 | Weihai Shen, Shuai Mu | replicating multi-core transactions; *not read for this report* |
-| **Fault-Tolerant Replication with Pull-Based Consensus in MongoDB**, NSDI '21 | Shuai Mu | *not read for this report* |
-| **On the Parallels between Paxos and Raft**, PODC '19 | Shuai Mu | *not read for this report* |
+| **Rolis**, EuroSys '22 | Weihai Shen, Shuai Mu | Mako's predecessor: per-thread Paxos streams replicating Silo transaction logs. Measured through committed-transaction throughput and latency. |
+| **Fault-Tolerant Replication with Pull-Based Consensus in MongoDB**, NSDI '21 | Shuai Mu | MongoDB's Raft variant; closed-loop 1000-byte updates, latency vs throughput, and cross-datacenter bytes |
+| **On the Parallels between Paxos and Raft**, PODC '19 | Shuai Mu | Raft*-PQL and Raft*-Mencius on etcd; closed-loop YCSB-like, median of 5 trials |
 | **AutoMan**, SOSP '25 | Zihao Zhang, Shuai Mu | verified distributed systems; not a performance evaluation of consensus |
 
 DepFast's own protocol (ATC '22, §6.1) differs from Jetpack's in ways that
@@ -85,6 +85,53 @@ matter here:
 
 So DepFast repeated trials and showed error bars; Jetpack's pipeline does
 not (§2.4).
+
+The other three evaluations, from their §5-6:
+
+- **MongoDB (NSDI '21, §5.1).**
+  - AWS m5d.2xlarge; 5-way replication, 3 servers in US East and 2 in US
+    West, and 2 client VMs.
+  - "Each client thread continuously and randomly updates an entire
+    document out of 1 million documents containing one random string field
+    of 1000 bytes in a closed loop. These updates will not return until
+    they are committed."
+  - "We vary the number of client threads to control the offered load."
+  - Reported: p50 and p90 latency vs throughput, plus **cross-datacenter
+    traffic and its dollar cost** (chaining "halved" it, saving about
+    $300-$5,000 per month), a failure-recovery test, and TPC-C in an
+    appendix.
+- **Rolis (EuroSys '22, §5-6).**
+  - Azure, 32-core VMs in one datacenter, 3 replicas, 30 s trials ("the
+    same as Silo's original test configuration").
+  - The "clients" are a workload generator bound inside the servers.
+  - TPC-C and YCSB++ (50% reads, 50% read-modify-write).
+  - "Throughput and latency are calculated based on the release committed
+    transactions", i.e. after the watermark lets them go.
+  - Per-thread Paxos streams, a batch size of 1000 on TPC-C, and the
+    watermark advanced every 0.5 ms.
+  - It reports "an average log size per transaction of 875.6 bytes", so a
+    TPC-C stream entry is about 0.9 MB.
+- **PODC '19 (§6).**
+  - Raft* built on etcd; EC2 in 5 regions (25-292 ms apart).
+  - "closed-loop clients with a YCSB alike workload", 100K records, and
+    contention set by a configured rate of accesses to one popular record.
+  - "Each trial is run for 50 seconds with 10 seconds for both warm-up and
+    cool-down. Each number reported is the median in 5 trials."
+
+**So there is no single group methodology.** The papers differ on every
+axis this report cares about:
+
+| | client loop | value size | bytes reported | repetitions |
+|---|---|---|---|---|
+| PODC '19 | closed | small (YCSB-like) | no | median of 5 trials |
+| MongoDB '21 | closed, threads vary load | 1000 B | yes: cross-DC traffic and $ | not stated in §5.1 |
+| DepFast '22 | not stated | single K-V, 100% write | no | 3 trials, median, error bars |
+| Rolis '22 | in-process generator | TPC-C, ~876 B per transaction | log size per transaction | not stated |
+| Mako '25 | TPC-C clients | TPC-C write-sets | no | not stated |
+| Jetpack '26 | **open**, 60 × N req/s | ~8 B | no | **1 run** |
+
+"The Jetpack methodology" therefore refers to the newest and least
+repeated of these.
 
 ---
 
@@ -259,7 +306,10 @@ then "are executed and applied to the state machine".
   - it reaches 90% of `MAX_ARRAY_SIZE_IN_BYTES`, about 50 MB
     (`Transaction.hh:87`).
 - So an entry carries up to 400 transactions' write-sets. Its size depends
-  on the workload's write-sets; it was not measured for this report.
+  on the workload and was not measured here. For scale: Rolis, Mako's
+  predecessor on the same Silo engine, reports 875.6 bytes of log per TPC-C
+  transaction. At that rate 400 transactions make an entry of about
+  350 KB, not the ~8 bytes of a Jetpack command.
 - **Control entries** go through the same streams:
   - a no-op per partition at an epoch change;
   - an "advancer" marker (`len == ADVANCER_MARKER_NUM`);
@@ -385,8 +435,6 @@ integrity checks. What it lacks from Jetpack's method:
 
 ## 6. Limits of this report
 
-- Rolis, the MongoDB NSDI paper and the PODC paper were listed but not
-  read.
 - The camera-ready AWS results cited by `scripts/camera-ready/plot_*.py`
   live in another user's home
   (`/home/users/ztang/janus/results/2026-05-13-camera-ready-exp0-fixes-v3/`)
@@ -398,6 +446,9 @@ integrity checks. What it lacks from Jetpack's method:
 
 References:
 - Jetpack, OSDI '26: https://www.usenix.org/conference/osdi26/presentation/tang
+- MongoDB, NSDI '21: http://mpaxos.com/pub/mongodb-nsdi21.pdf
+- Rolis, EuroSys '22: https://www.cis.upenn.edu/~sga001/papers/rolis-eurosys22.pdf
+- PODC '19: http://mpaxos.com/pub/raft-paxos.pdf
 - DepFast, ATC '22: https://www.usenix.org/conference/atc22/presentation/luo
 - Mako, OSDI '25: https://www.usenix.org/conference/osdi25/presentation/shen-weihai
 - Publication list: http://mpaxos.com/pubs.html
