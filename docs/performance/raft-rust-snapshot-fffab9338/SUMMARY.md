@@ -302,9 +302,9 @@ signals the leader's PID with SIGUSR1, and under the wrapper that PID was
 
 ## Records
 
-The raw records (one JSON per run and the launcher logs) are in
-`raft_perf_output/n12/` in the worktree. That directory is ignored by git.
-They are not committed: how experiment data is kept in the repository is
+The raw records (one JSON per run and the launcher logs) are outside the
+repository, on zoo-003 in `~/raft-test-results/perf/n12/`; its
+`README.txt` indexes the rest of the test results. They are not committed: how experiment data is kept in the repository is
 still to be decided. To reproduce a point, use the parameters above with
 `scripts/raft_perf/rotation_trial.sh OUT 25 build_rust_pre build_rust_store build_rust build_hybrid_pre build`,
 then `scripts/raft_perf/n12_summary.py OUT_PARENT`.
