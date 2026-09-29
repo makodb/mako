@@ -165,145 +165,101 @@ wire. On this lane those are all rustc-compiled Rust: the srpc crate from
 `src/srpc/`, and Raft's own transport, service and generated messages from
 `rt/src/`.
 
-## Files that make up the complete runtime (Raft + srpc)
+## Raft project structure
+
+Four parts, as built for `MAKO_RAFT_LANE=rust`. Paths are under
+`src/deptran/raft/` unless shown otherwise.
 
 ```
-src/
-├── deptran/
-│   ├── rcc_rpc.rpc
-│   ├── raft_main_helper.cc
-│   ├── server_worker.cc
-│   ├── server_worker.h
-│   └── raft/
-│       ├── Cargo.toml
-│       ├── Cargo.lock
-│       ├── src/                          raft core crate
-│       │   ├── lib.rs
-│       │   ├── server_h.rs
-│       │   ├── server_cc.rs
-│       │   ├── server_pods_h.rs
-│       │   ├── scheduler_h.rs
-│       │   ├── quorum_hpp.rs
-│       │   ├── messages_hpp.rs
-│       │   ├── log_storage_hpp.rs
-│       │   ├── memory_log_storage_hpp.rs
-│       │   ├── rocksdb_log_storage_hpp.rs
-│       │   ├── snapshot_manager_hpp.rs
-│       │   ├── memory_snapshot_manager_hpp.rs
-│       │   ├── snapshot_format_hpp.rs
-│       │   ├── channel_transport_hpp.rs
-│       │   ├── commo_h.rs
-│       │   ├── communicator_h.rs
-│       │   ├── frame_cc.rs
-│       │   ├── raft_worker_cc.rs
-│       │   ├── raft_main_helper_cc.rs
-│       │   ├── lab.rs
-│       │   ├── lab_cases.rs
-│       │   ├── lab_snapshot_cases.rs
-│       │   └── lab_main.rs
-│       ├── rt/                           raft-rt crate
-│       │   ├── Cargo.toml
-│       │   ├── src/
-│       │   │   ├── lib.rs
-│       │   │   ├── seam.rs
-│       │   │   ├── transport.rs
-│       │   │   ├── service.rs
-│       │   │   ├── rpc.rs
-│       │   │   └── lab_runtime.rs
-│       │   └── tests/
-│       │       ├── transport_roundtrip.rs
-│       │       ├── rpc_wire_golden.rs
-│       │       ├── service_is_a_service.rs
-│       │       └── large_frame_bench.rs
-│       ├── server.cc                     C++ host kernels
-│       ├── server.h
-│       ├── server_exports.h
-│       ├── transport_exports.h
-│       ├── lane_kernels.h
-│       ├── raft_kernel_pods.h
-│       ├── rust_facade_types.h
-│       ├── raft_lane.h
-│       ├── raft_lane_rust.cc
-│       ├── raft_worker.cc
-│       ├── raft_worker.h
-│       ├── frame.cc
-│       ├── frame.h
-│       ├── log_storage.hpp
-│       ├── memory_log_storage.hpp
-│       ├── rocksdb_log_storage.hpp
-│       ├── snapshot_manager.hpp
-│       ├── memory_snapshot_manager.hpp
-│       └── snapshot_format.hpp
-├── srpc/                                 srpc crate
-│   ├── Cargo.toml
-│   ├── build.rs
-│   ├── rust-modules.toml
-│   ├── src/
-│   │   └── lib.rs
-│   ├── base/
-│   │   ├── basetypes.rs
-│   │   ├── callback_wrapper.rs
-│   │   ├── debugging.rs
-│   │   ├── logging.rs
-│   │   ├── misc.rs
-│   │   ├── threading.rs
-│   │   └── srpc_base.c
-│   ├── misc/
-│   │   ├── any_message.rs
-│   │   ├── rand.rs
-│   │   ├── serializable.rs
-│   │   ├── serializable_envelope.rs
-│   │   ├── stat.rs
-│   │   ├── srpc_io.c
-│   │   ├── srpc_rand.c
-│   │   └── srpc_timing.c
-│   ├── reactor/
-│   │   ├── epoll_wrapper.rs
-│   │   ├── fiber.rs
-│   │   ├── future.rs
-│   │   ├── reactor.rs
-│   │   ├── srpc_epoll.c
-│   │   ├── srpc_fiber.c
-│   │   ├── fiber_context_x86_64.S
-│   │   └── fiber_context_aarch64.S
-│   └── rpc/
-│       ├── callbacks.rs
-│       ├── channel.rs
-│       ├── circuit_breaker.rs
-│       ├── client.rs
-│       ├── completion_tracker.rs
-│       ├── connection_metrics.rs
-│       ├── connection_state.rs
-│       ├── errors.rs
-│       ├── fiber_channel.rs
-│       ├── frame_codec.rs
-│       ├── heartbeat.rs
-│       ├── idempotency.rs
-│       ├── inmemory_channel.rs
-│       ├── internal_protocol.rs
-│       ├── load_balancer.rs
-│       ├── pollable_proxy.rs
-│       ├── reconnect_policy.rs
-│       ├── request_options.rs
-│       ├── request_queue.rs
-│       ├── server.rs
-│       ├── tcp_channel.rs
-│       ├── utils.rs
-│       ├── srpc_connect.c
-│       ├── srpc_net.c
-│       └── srpc_server.c
-├── rusty-rustc/                          rusty facade crate
-│   ├── Cargo.toml
-│   └── src/
-│       └── lib.rs
-└── rusty-cpp-markers/
-    ├── Cargo.toml
-    └── src/
-        └── lib.rs
-scripts/
-└── rpcgen_rust.py
-CMakeLists.txt
+1. Rust Raft logic                        rustc; one crate for the core, one for its runtime
+   src/                                   core crate (raft): the same source on every lane
+   ├── server_h.rs                          RaftServerBase: state, election, replication, commit,
+   │                                        apply thread, snapshot create/install/recovery
+   ├── server_cc.rs                         heartbeat and election loops; the C exports (generated block)
+   ├── scheduler_h.rs                       RaftSpecific trait, submission types
+   ├── quorum_hpp.rs                        vote and commit quorums
+   ├── communicator_h.rs                    partition membership
+   ├── frame_cc.rs, raft_worker_cc.rs,      worker-side logic
+   │   raft_main_helper_cc.rs
+   ├── log_storage_hpp.rs,                  log storage interface and implementations
+   │   memory_log_storage_hpp.rs,
+   │   rocksdb_log_storage_hpp.rs
+   ├── snapshot_manager_hpp.rs,             the C++ snapshot manager's Rust twins
+   │   memory_snapshot_manager_hpp.rs,      (hybrid/cpp use the manager; not linked into
+   │   snapshot_format_hpp.rs               this lane's snapshot path)
+   ├── channel_transport_hpp.rs, commo_h.rs
+   ├── lab.rs, lab_cases.rs,                RaftLab suite (RAFT_TEST builds)
+   │   lab_snapshot_cases.rs, lab_main.rs
+   └── lib.rs                               generated module list
+   rt/src/                                  runtime crate (raft-rt): this lane only
+   ├── snapshot.rs                          snapshot store (SnapshotStore), InstallSnapshot send
+   │                                        and the follower's hand-off
+   ├── transport.rs                         RaftTransport: peers, sends, vote tally, resend suppression
+   ├── service.rs                           RPC handlers: the follower side of every Raft RPC
+   ├── seam.rs                              runtime kernels: fibers, events, poll thread, wire
+   ├── rpc.rs                               generated: see part 4
+   ├── lab_runtime.rs                       lab kernels and tests 50-52
+   └── lib.rs
+   rt/tests/                                transport_roundtrip.rs, rpc_wire_golden.rs,
+                                            service_is_a_service.rs, large_frame_bench.rs
+   src/srpc/                                the Rust srpc crate underneath (reactor, fibers,
+                                            client, server, TCP, serialisation)
+
+2. C Raft kernel                          the C ABI between the Rust logic and Mako's C++ objects
+   server.cc                                HOST kernels: janus::Command encode/decode/clone,
+                                            embedder snapshot callbacks, log storage, counters
+   lane_kernels.h                           kernels called from C++ on both sides, marked LANE or HOST
+   raft_kernel_pods.h                       the C structs kernels return by value
+                                            (defined in Rust: src/server_pods_h.rs)
+   server_seam_cpp.cc,                      the same runtime and snapshot kernels in C++,
+   snapshot_seam_cpp.cc                     for hybrid/cpp; not linked on this lane
+
+3. C++ Raft shim                          what the rest of Mako includes and calls
+   server.h                                 class RaftServer: a pointer to RaftServerBase,
+                                            every method forwarded to the C exports
+   server_exports.h                         generated: the C exports RaftServer forwards to
+   transport_exports.h                      the C exports of RaftTransport (rt/src/transport.rs)
+   raft_lane.h, raft_lane_rust.cc           the workers' RPC endpoint on this lane
+   raft_worker.h, raft_worker.cc            RaftWorker: submit, apply callback, setup
+   frame.h, frame.cc                        RaftFrame: creates servers and workers
+   snapshot_callbacks.h                     the state-machine snapshot callback types an embedder registers
+   src/deptran/raft_main_helper.cc,         Mako's entry points into Raft
+   src/deptran/server_worker.cc
+
+4. Message types                          one definition, generated per runtime
+   src/deptran/rcc_rpc.rpc                  service Raft: Vote, AppendEntries, EmptyAppendEntries,
+                                            InstallSnapshot
+   rpc_ids.txt                              the frozen wire ids
+   rt/src/rpc.rs                            generated by scripts/rpcgen_rust.py: request/response
+                                            structs, borrowed writers, proxies, dispatch
+   src/deptran/rcc_rpc.h                    generated by bin/rpcgen: the C++ side, for hybrid/cpp
+   messages.hpp, src/messages_hpp.rs        transport-neutral payload structs
 ```
+
+Built by `CMakeLists.txt`: cargo builds `rt/` into `libraft_rt.a` (which
+contains the core crate), and the C++ in parts 2 and 3 links against it.
+`commo.cc`, `service.cc`, and the C++ snapshot manager headers
+(`snapshot_manager.hpp`, `memory_snapshot_manager.hpp`, `snapshot_format.hpp`)
+are the hybrid/cpp lanes' RPC and snapshot path. They are still compiled
+on every lane, but this lane's Raft does not call them.
+
+### Paxos and Raft inheritance
+
+```
+TxLogServer             3 pure virtuals, no state (src/deptran/scheduler.h)
+├── PaxosServer         C++, src/deptran/paxos/server.h
+└── RaftSpecific        Raft-only interface, same header
+    └── RaftServerBase  Rust, src/server_h.rs (#[cpp_inherit])
+```
+
+- `TxLogServer` is what a worker calls through a pointer to either engine:
+  `set_site_identity`, `set_commo`, `reg_learner_action`. It is written as a
+  Rust trait, and the C++ class is generated from it, identical on every
+  lane.
+- `RaftSpecific` holds everything else the Raft workers and service call.
+  Raft changes go here, so Paxos does not see them.
+- A change to `TxLogServer` itself is the only thing that reaches both
+  servers.
 
 ## How the other two lanes differ
 
