@@ -65,6 +65,9 @@
 
 import std;
 
+// Jetpack's client, workload and report (JETPACK_N=<n> enables it).
+#include "raft_bench_jetpack.h"
+
 // InstallSnapshot RPC counters, defined in src/deptran/raft/server.cc (HOST,
 // every lane). Outside the anonymous namespace so it keeps C linkage.
 extern "C" void raft_install_rpc_stats(uint64_t* sent, uint64_t* bytes_sent, uint64_t* received);
@@ -1381,6 +1384,8 @@ int main(int argc, char** argv) {
     auto apply_cb = [st, snap_inst, &opt](const char*& log, int len, int /*par_id*/, int /*slot_id*/,
                                std::queue<std::tuple<int, int, int, int, const char*>>&) -> int {
       const uint64_t apply_us = now_us();
+      // @unsafe - Jetpack mode's state machine and latency record
+      jetpack::on_apply(log, len, apply_us);
       note_apply(st, snap_inst, apply_us);
       constexpr int kStatusNormal = 0;
       if (len == 0) {
@@ -1621,17 +1626,36 @@ int main(int argc, char** argv) {
       }
     }
 
-    std::vector<std::thread> offer_threads;
-    offer_threads.reserve(static_cast<size_t>(partitions));
-    for (int i = 0; i < partitions; ++i) {
-      offer_threads.emplace_back(offer_loop, std::cref(opt), static_cast<uint32_t>(i),
-                                 opt.rate <= 0,
-                                 per_partition_rate[static_cast<size_t>(i)],
-                                 offer_begin_us, window_end_us,
-                                 &state[static_cast<size_t>(i)]);
-    }
-    for (auto& th : offer_threads) {
-      th.join();
+    if (jetpack::enabled()) {
+      // Jetpack's open-loop clients drive partition 0 (see raft_bench_jetpack.h).
+      PartitionState* st0 = &state[0];
+      // @unsafe - add_log_to_nc is the replication helper's C API
+      jetpack::run_leader(
+          opt.duration_sec,
+          [&opt](const char* buf, int len) { return add_log_to_nc(buf, len, 0, opt.batch); },
+          [](char* buf, uint64_t seq, uint64_t stamp) {
+            std::memcpy(buf, kMagic, static_cast<size_t>(kMagicBytes));
+            write_fixed_decimal(buf + kMagicBytes, kSeqBytes, seq);
+            write_fixed_decimal(buf + kMagicBytes + kSeqBytes, kStampBytes, stamp);
+          },
+          [] { return now_us(); },
+          [st0](uint64_t) {
+            st0->in_flight.fetch_add(1, std::memory_order_relaxed);
+            st0->offered_total.fetch_add(1, std::memory_order_relaxed);
+          });
+    } else {
+      std::vector<std::thread> offer_threads;
+      offer_threads.reserve(static_cast<size_t>(partitions));
+      for (int i = 0; i < partitions; ++i) {
+        offer_threads.emplace_back(offer_loop, std::cref(opt), static_cast<uint32_t>(i),
+                                   opt.rate <= 0,
+                                   per_partition_rate[static_cast<size_t>(i)],
+                                   offer_begin_us, window_end_us,
+                                   &state[static_cast<size_t>(i)]);
+      }
+      for (auto& th : offer_threads) {
+        th.join();
+      }
     }
     const uint64_t offer_stop_us = now_us();
 
@@ -1649,6 +1673,9 @@ int main(int argc, char** argv) {
       add_log_to_nc("", 0, static_cast<uint32_t>(i), 1);
     }
     std::this_thread::sleep_for(std::chrono::seconds(1));
+    if (jetpack::enabled()) {
+      jetpack::report();
+    }
 
     // ----- aggregate -----
     Record rec;
