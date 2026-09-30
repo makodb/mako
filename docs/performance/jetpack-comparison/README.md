@@ -63,7 +63,11 @@ ran with 3 replicas on one host, 1 partition, and 64-byte entries.
   - The clients run inside the leader process and submit with
     `add_log_to_nc`, so there is no client-to-leader RPC and no Jetpack
     scheduler layer.
-  - A request's reply is the leader's own apply of it.
+  - A request is timed until the leader applies it. In Raft the leader
+    applies an entry only once it is committed (stored on a majority), and
+    that is the point where Raft answers the client (Raft paper §5.3). Only
+    the reply's trip back to a separate client is missing, since the
+    clients live in the leader process.
   - Absolute numbers are therefore not comparable with Jetpack's published
     ones. The comparison between arms is the result.
 
