@@ -2662,7 +2662,7 @@ timing                    ns/op or ops/s.                            NONE of the
 
 **No item in this TODO has timing evidence.** The three committed paired
 trials (`docs/migration/raft/paired-trial-19cfbb213-vs-*.csv`, 25 pairs each,
-ABBA) and `rust-vs-cpp-lane-benchmark.md` all predate this plan; they cover
+ABBA) and the early lane benchmark (since deleted; in git history) all predate this plan; they cover
 the earlier conversion stages, not 3a, 3c or 3d. So the two performance
 claims in 3a and 3c are arguments from call counts and have been relabelled
 as such.

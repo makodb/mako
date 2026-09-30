@@ -1120,8 +1120,8 @@ if(RAFT_TEST AND NOT MAKO_RAFT_LANE STREQUAL "rust")
         # unit tests of C++ classes (SnapshotMetadata, SnapshotFormat,
         # MemorySnapshotManager) and touch no RaftServer. The suite itself is
         # Rust -- src/deptran/raft/src/lab*.rs -- which is what let test.cc and
-        # testconf.cc be deleted along with 41 of the 73 exports. See
-        # docs/migration/raft/lab-harness-to-rust-plan.md, Phase 4.
+        # testconf.cc be deleted along with 41 of the 73 exports (the lab
+        # harness plan, Phase 4; the plan doc is in git history).
         src/deptran/raft/lab_unit_tests.cc
     )
 endif()
