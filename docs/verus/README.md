@@ -163,15 +163,44 @@ How far the current code is from it:
   types; it does not compile the production function itself. Closing that
   gap is what §4 is for.
 
-## 6. Open questions for the verification group
+## 6. What the verification group's method needs (answered from their repo)
 
-- What input does their tool take? Verus code directly, a Verus state
-  machine (the `state_machine!` macro), or a model extracted from code?
-- Which properties do they want: safety only, or also liveness?
-- How do they model the network (loss, reordering, duplication) and the
-  interleaving of fibers?
-- Do they need the executable code verified, or is a verified model with a
-  refinement argument acceptable?
+Source: `git@github.com:ZhangZihao270/ghost-log-refinement.git` at `d7e04ed7`,
+mainly `docs/ghost-log/README.md`, `docs/ghost-log/method/design.md` §3-4 and
+`docs/ghost-log/raftrs/coupling.md` §7.
 
-The answers decide whether §4's refactor is required, or whether models like
-`commit_rule.rs` are enough.
+The method is *ghost-log refinement*, in Verus. It proves that an existing
+implementation refines their hand-written atomic Raft spec without
+rewriting the code. Ghost instrumentation records what the code does
+(`Recv`, `Tick`, `Set(field, value)`, `Send`, `Close(action)`), and
+refinement is proved over that log.
+
+| question | their answer |
+|---|---|
+| input | the implementation itself, ported into `verus!` with only registered, semantics-preserving transformations (raft-rs: 98% of lines verbatim), plus added ghost lines. Their spec (2,323 lines), safety proof (12,582) and method layer (2,801) are reused; a new implementation supplies a coupling layer (raft-rs: 3,357 lines) |
+| properties | safety only: at most one leader per term, log matching, committed entries never lost or changed, linearizable reads; plus panic-freedom. Liveness is not proved |
+| network | N nodes under any causal message schedule (`theorem_compose_safety`); a refused message counts as a dropped packet |
+| code or model | the executable code (the port) is verified; differential testing against the unmodified original shows fidelity |
+| threads | the raft-rs mainline is "single-threaded and processes one message at a time" (`method/design.md` §4); multi-threaded interleaving is explicitly deferred |
+| Verus limits | unsafe, async, trait objects and third-party crates are handled by porting |
+| not covered yet | snapshots and log compaction (their A10), restarting from existing storage; storage is trusted |
+
+**What this means for our Raft.**
+- **The target shape is a library like raft-rs's `RawNode`.** It has entry
+  points (`step` a message, `tick`, `propose`, take `ready`, `advance`) that
+  one host thread calls one at a time. It owns protocol state and does no
+  I/O itself.
+- **Our core is not that shape yet**, in three ways:
+  - Protocol steps live inside fibers that sleep mid-action: heartbeat
+    phase 2, and the election's vote wait. That is the same problem as
+    async.
+  - It reaches the runtime through `extern "C"` kernels and raw-pointer
+    carriers.
+  - Four threads touch it under `mtx_` (§2).
+- **The ghost log does tolerate our call structure.** An action may be split
+  across helpers, or a helper may close several actions. So the handlers do
+  not have to line up one-to-one with spec actions; they only need to run
+  to completion without suspending.
+- **The fit is therefore: §3 (single owner thread) + §4 (`RawNode`-style
+  core).** The core then moves into `verus!` and is instrumented against
+  their spec, with snapshots gated out at first, as in their raft-rs port.
