@@ -694,7 +694,7 @@ of 2.6–3.4 ms (`:106-112`) is the same ~2.3–2.6 ms timer floor seen at
 
 ## 6. Mako's real entry sizes
 
-From `docs/plans/raft-perf-profile.txt:36-104` (TPC-C via dbtest, 6
+From the Mako Raft entry-size profile notes (removed; see git history) (TPC-C via dbtest, 6
 workers, one run, Release `MODE=perf` build logging at DEBUG level,
 profile `:15-18`):
 

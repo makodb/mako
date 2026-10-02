@@ -7,7 +7,7 @@ on x, cumulative fraction on y pinned to [0, 1], linewidth 3, the 0.6 box
 aspect, and the TrueType-embedding rcParams. Dropped: the seven-way
 "slowness" experiment matrix and the four-panel figure it belonged to; this
 harness injects no faults (that is out of scope per
-docs/plans/raft-perf-harness.txt section 12).
+the raft_bench harness plan (removed; see git history) section 12).
 
 A CDF describes ONE run, not a whole curve, so the script has to choose which
 point of each configuration to show. By default it takes the

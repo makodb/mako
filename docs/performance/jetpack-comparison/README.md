@@ -1,6 +1,6 @@
 # Rust Raft vs the C++ baseline Raft, under Jetpack's test suite
 
-Date: 2026-09-29/30, host zoo-003. Plan: [../jetpack-comparison-plan.md](../jetpack-comparison-plan.md).
+Date: 2026-09-29/30, host zoo-003. The plan document was removed; it is in git history.
 
 ## Conclusion
 

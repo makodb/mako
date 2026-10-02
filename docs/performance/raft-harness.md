@@ -7,7 +7,7 @@ own: a real three-process cluster on the production build, offered a controlled
 rate of controlled-size log entries, reporting enqueue-to-apply latency and
 applied entries per second, one structured record per run.
 
-Built to `docs/plans/raft-perf-harness.txt`. That plan is the work order; this
+Built to the raft_bench harness plan (removed; see git history). That plan is the work order; this
 document is the manual.
 
 ## The pieces
@@ -21,7 +21,7 @@ document is the manual.
 | `scripts/raft_perf/compare.py` | the criterion — two record sets in, regression verdict out |
 | `scripts/raft_perf/lattput.py` | the saturation curve: median latency against throughput |
 | `scripts/raft_perf/plot_latency_cdf.py` | the latency CDF |
-| `docs/plans/raft-perf-profile.txt` | what Mako actually submits to Raft, measured |
+| the Mako Raft entry-size profile notes (removed; see git history) | what Mako actually submits to Raft, measured |
 
 ## Quick start
 
@@ -534,7 +534,7 @@ them there, nowhere else.
 
 ## Where the numbers came from
 
-`docs/plans/raft-perf-profile.txt` records what Mako actually submits: entries
+the Mako Raft entry-size profile notes (removed; see git history) records what Mako actually submits: entries
 of about 286 KB at the median with a long rare tail into the tens of megabytes,
 roughly 50 per second per partition, and a `SubmitLoop` batch of 1.04. Those
 measurements set the payload and rate axes above. That file also documents the

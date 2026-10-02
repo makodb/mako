@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Step C's done-test (docs/migration/raft/plan.md): does any hand-written C++
+"""Step C's done-test (the Raft migration plan (removed; see git history)): does any hand-written C++
 under src/deptran name a field of RaftServerBase or RaftConsensusState?
 
 Hand-written means outside the RUSTYCPP GEN regions and the `#if RUSTYCPP_RUST`

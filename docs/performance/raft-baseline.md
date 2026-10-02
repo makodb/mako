@@ -93,7 +93,7 @@ where the offered rate stops being the limit.
 
 ### Why 286 KB and 190 entries/s
 
-`docs/plans/raft-perf-profile.txt` measured what Mako actually submits to Raft
+the Mako Raft entry-size profile notes (removed; see git history) measured what Mako actually submits to Raft
 under TPC-C: entries with a median of 286 208 B, a long thin tail into the tens
 of megabytes, and roughly 50 entries/s per partition (about 303 aggregate).
 286 208 B is the measured p50, not the mean — the mean (~310 KB) is dragged up

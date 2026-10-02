@@ -1212,7 +1212,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         # The 59th allowance and the 30th block are one site: the opaque
         # carriers' Drop layer (rusty_opaque_cpp_carrier_drop!), which calls
         # the raft_destroy_* kernels so the Raft crate owns the C++ objects it
-        # holds by value -- F2 slice 1 of docs/migration/raft/plan.md. The
+        # holds by value -- F2 slice 1 of the Raft migration plan (removed; see git history). The
         # 60th..62nd allowances, the 31st/32nd blocks and the 54th unsafe fn
         # (with its Safety section, the 39th) are the Arc carriers' Clone
         # layer (rusty_opaque_cpp_arc_carrier_clone!) and the two factories

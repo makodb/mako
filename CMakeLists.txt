@@ -464,7 +464,7 @@ option(RAFT_TEST "Enable Raft lab testing fiber" OFF)
 option(SINGLE_RAFT_INSTANCE "Default runtime Raft group mode (ON=single group, OFF=one group per partition)" ON)
 # Which runtime the Raft core runs on. One Rust source (src/deptran/raft/src),
 # two runtimes, the model srpc itself uses (docs/migration/raft/
-# commo-service-rpc-plan.md, revision 5):
+# the two-lane RPC plan (removed; see git history), revision 5):
 #   rust    (default) the core plus raft-rt (src/deptran/raft/rt) compiled by
 #           rustc into libraft_rt.a: the seam kernels, the RPC transport, the
 #           poll thread and the message types are the Rust srpc crate's. The
@@ -1204,7 +1204,7 @@ target_compile_options(cluster PUBLIC ${BENCH_CXXFLAGS})
 # std_port_hashbrown, so naming std_port pulls in both archives/BMIs.
 target_link_libraries(cluster PUBLIC srpc pthread btree_port vec_port rc_port std_port)
 
-# The Raft server is Rust (docs/migration/raft/plan.md, F2.6). src/deptran/raft is a
+# The Raft server is Rust (the Raft migration plan (removed; see git history), F2.6). src/deptran/raft is a
 # cargo staticlib: its C ABI (src/deptran/raft/server_exports.h) is what the C++
 # shim `class RaftServer` and the hand-written kernels in server.cc call, and it
 # calls those kernels back. cargo builds it into this build tree; the pinned

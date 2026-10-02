@@ -9,7 +9,7 @@ runner name them (s4k_i<interval>_b<bytes>, s286k_..., stall_b<bytes>,
 off_...). Arms: build_rust_pre (pre), build_rust_store (store), build_rust
 (post), build_hybrid_pre and build (hybrid pre / post).
 
-Gates (docs/migration/raft/commo-service-rpc-plan.md, N12 "Pass/fail"):
+Gates (the two-lane RPC plan (removed; see git history), N12 "Pass/fail"):
   * store vs pre at every point: median B/A-1 within +-2% for throughput and
     p50, +-5% for p99, and no significant regression (sign test p <= 0.05
     in the worse direction); max_apply_gap_us, the stalled follower's

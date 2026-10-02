@@ -10,7 +10,7 @@ signature table in scripts/raft_gen_exports.py:
 
 Run after changing a method's signature in server_h.rs or the generator's
 lists; then `bash scripts/raft_dsl.sh --check` and `cargo clippy` in
-src/deptran/raft. See docs/migration/raft/plan.md, F1 and F2.6.
+src/deptran/raft. See the Raft migration plan (removed; see git history), F1 and F2.6.
 """
 import re
 import subprocess

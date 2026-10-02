@@ -10,7 +10,7 @@ scripts port with almost no change:
 
 What was replaced is the input side. Jetpack regex-parsed and YAML-scraped
 experiment logs; raft_bench writes one flat JSON object per run carrying every
-parameter and every metric (decision D3 in docs/plans/raft-perf-harness.txt).
+parameter and every metric (decision D3 in the raft_bench harness plan (removed; see git history)).
 A missing key here is an error, not a zero: a silently-zeroed row produces a
 plot that looks fine and is wrong.
 
