@@ -216,7 +216,20 @@ if [[ ! -x "${TRANSPILER}" ]]; then
 fi
 
 RUSTYCPP_DIR="${REPOSITORY_ROOT}/third-party/rusty-cpp"
-if ! GITLINK_ENTRY=$(git -C "${REPOSITORY_ROOT}" ls-files --stage -- \
+# git for the pin attestation, vouching for exactly the directory it reads.
+# In a CI container the checkout belongs to another uid, and bare git then
+# refuses it ("detected dubious ownership"); actions/checkout's own
+# safe.directory entry lives under a temporary HOME and never names the
+# submodule. Same approach as ownership_exception() in
+# scripts/extract_srpc_rust.py: only git's ownership heuristic is suppressed,
+# and every pin comparison below still reads real git output.
+owned_git() {
+  local dir="$1"
+  shift
+  git -c "safe.directory=${dir}" -c "safe.directory=$(cd "${dir}" && pwd -P)" \
+    -C "${dir}" "$@"
+}
+if ! GITLINK_ENTRY=$(owned_git "${REPOSITORY_ROOT}" ls-files --stage -- \
     third-party/rusty-cpp 2>/dev/null) ||
     ! read -r GITLINK_MODE GITLINK_HASH _ <<<"${GITLINK_ENTRY}"; then
   echo "cannot inspect the rusty-cpp gitlink" >&2
@@ -227,7 +240,7 @@ if [[ "${GITLINK_MODE}" != "160000" ||
   echo "rusty-cpp gitlink mismatch: expected ${REQUIRED_RUSTY_CPP_COMMIT}, got ${GITLINK_HASH:-missing}" >&2
   exit 2
 fi
-if ! CHECKED_OUT_EMITTER_HASH=$(git -C "${RUSTYCPP_DIR}" rev-parse HEAD 2>/dev/null); then
+if ! CHECKED_OUT_EMITTER_HASH=$(owned_git "${RUSTYCPP_DIR}" rev-parse HEAD 2>/dev/null); then
   echo "cannot inspect the rusty-cpp checkout" >&2
   exit 2
 fi
@@ -235,7 +248,7 @@ if [[ "${CHECKED_OUT_EMITTER_HASH}" != "${REQUIRED_RUSTY_CPP_COMMIT}" ]]; then
   echo "rusty-cpp checkout mismatch: expected ${REQUIRED_RUSTY_CPP_COMMIT}, got ${CHECKED_OUT_EMITTER_HASH}" >&2
   exit 2
 fi
-if [[ -n "$(git -C "${RUSTYCPP_DIR}" status --porcelain --untracked-files=no)" ]]; then
+if [[ -n "$(owned_git "${RUSTYCPP_DIR}" status --porcelain --untracked-files=no)" ]]; then
   echo "rusty-cpp has tracked local changes; refusing an unpinned emitter" >&2
   exit 2
 fi

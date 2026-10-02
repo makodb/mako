@@ -36,16 +36,16 @@ jobs:
         with:
           submodules: recursive
 
-      # actions/checkout marks the workspace safe only in a temporary git
-      # config, so later steps' git calls in the container (the source gates
-      # read the rusty-cpp gitlink and submodule HEAD) are refused as
-      # "dubious ownership". The source gates also run ripgrep, which the
-      # image does not ship.
+      # The source gates run ripgrep (src/srpc/scripts/srpc_dsl_check.sh),
+      # which the image does not ship. Do NOT mark the checkout safe for git
+      # globally here: the gates vouch for exactly the directories they read
+      # (ownership_exception() in scripts/extract_srpc_rust.py, owned_git in
+      # scripts/raft_dsl.sh), and test_bare_git_really_is_refused asserts
+      # that bare git still refuses a foreign-owned checkout.
       - name: Container prerequisites
         shell: bash
         run: |
           set -euo pipefail
-          git config --global --add safe.directory '*'
           if ! command -v rg >/dev/null 2>&1; then
             SUDO=""
             if [ "$(id -u)" -ne 0 ]; then
@@ -56,7 +56,6 @@ jobs:
             DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq ripgrep
           fi
           rg --version | head -1
-          git -C "${GITHUB_WORKSPACE}" ls-files --stage -- third-party/rusty-cpp
 
       - name: Configure canonical Rust providers
         run: >-
@@ -231,16 +230,16 @@ jobs:
         with:
           submodules: recursive  # if you use submodules (e.g., third-party libs)
 
-      # actions/checkout marks the workspace safe only in a temporary git
-      # config, so later steps' git calls in the container (the source gates
-      # read the rusty-cpp gitlink and submodule HEAD) are refused as
-      # "dubious ownership". The source gates also run ripgrep, which the
-      # image does not ship.
+      # The source gates run ripgrep (src/srpc/scripts/srpc_dsl_check.sh),
+      # which the image does not ship. Do NOT mark the checkout safe for git
+      # globally here: the gates vouch for exactly the directories they read
+      # (ownership_exception() in scripts/extract_srpc_rust.py, owned_git in
+      # scripts/raft_dsl.sh), and test_bare_git_really_is_refused asserts
+      # that bare git still refuses a foreign-owned checkout.
       - name: Container prerequisites
         shell: bash
         run: |
           set -euo pipefail
-          git config --global --add safe.directory '*'
           if ! command -v rg >/dev/null 2>&1; then
             SUDO=""
             if [ "$(id -u)" -ne 0 ]; then
@@ -251,7 +250,6 @@ jobs:
             DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq ripgrep
           fi
           rg --version | head -1
-          git -C "${GITHUB_WORKSPACE}" ls-files --stage -- third-party/rusty-cpp
 
       - name: Environments
         run: |
