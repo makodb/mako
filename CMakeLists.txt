@@ -8,16 +8,37 @@ cmake_minimum_required(VERSION 3.30)
 # into no-ops via the header guard. The UUID gates CMake's
 # experimental `import std;` materialization and must be set BEFORE
 # `project()`.
-# The token that unlocks CMake's experimental `import std;` rotates between
-# CMake generations, so a single hardcoded value only configures on one of
-# them. 451f2fe2... is the CMake 3.30/3.31 token; CMake 4.0, 4.1 and 4.2 all
-# use d0edc3af... (verified by inspecting each release binary). Select by
-# version so the build configures on both generations.
-if(CMAKE_VERSION VERSION_LESS "4.0")
-    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
-else()
-    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
+# The token that unlocks CMake's experimental `import std;` changes between
+# CMake releases, even between patch releases of one line (Help/dev/
+# experimental.rst per tag: 3.30.0-3.31.6 0e5b6991, 4.0.0 a9e1cf81, 3.31.8 and
+# 4.0.3-4.2.x d0edc3af, 4.3.x 451f2fe2), so no version table stays right.
+# The running cmake carries its own token as a string in its executable
+# (Source/cmExperimental.cxx), so take whichever known token it contains.
+# An explicit -DCMAKE_EXPERIMENTAL_CXX_IMPORT_STD=... still wins.
+if(NOT DEFINED CMAKE_EXPERIMENTAL_CXX_IMPORT_STD)
+    set(_mako_import_std_tokens
+        "451f2fe2-a8a2-47c3-bc32-94786d8fc91b"
+        "d0edc3af-4c50-42ea-a356-e2862fe7a444"
+        "a9e1cf81-9932-4810-974b-6eccaf14e457"
+        "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
+    list(JOIN _mako_import_std_tokens "|" _mako_import_std_regex)
+    file(STRINGS "${CMAKE_COMMAND}" _mako_import_std_hits
+         REGEX "${_mako_import_std_regex}")
+    foreach(_mako_token IN LISTS _mako_import_std_tokens)
+        if(_mako_import_std_hits MATCHES "${_mako_token}")
+            set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "${_mako_token}")
+            break()
+        endif()
+    endforeach()
+    if(NOT DEFINED CMAKE_EXPERIMENTAL_CXX_IMPORT_STD)
+        message(FATAL_ERROR
+            "CMake ${CMAKE_VERSION} (${CMAKE_COMMAND}) carries none of the known "
+            "`import std` experimental tokens. Find this release's token in its "
+            "Help/dev/experimental.rst and pass "
+            "-DCMAKE_EXPERIMENTAL_CXX_IMPORT_STD=<token>, or add it above.")
+    endif()
 endif()
+message(STATUS "import std token: ${CMAKE_EXPERIMENTAL_CXX_IMPORT_STD} (CMake ${CMAKE_VERSION})")
 
 # Suppress CMake policy warnings for deprecated modules
 # CMP0167: FindBoost module is removed in CMake 3.30+, but we still support older CMake
