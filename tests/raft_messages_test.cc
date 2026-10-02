@@ -177,15 +177,20 @@ ASSERT_FIELD_OFFSET(InstallSnapshotReply, LegacyInstallSnapshotReplyLayout,
 #undef ASSERT_POD_LAYOUT
 #undef ASSERT_ZERO_DEFAULT_CONTRACT
 
-// Value-initializing an aggregate zero-initializes the entire object, padding
-// included, whether or not its members have initializers of their own.
-// Constructing into 0xFF-filled storage proves that, rather than trusting a
-// stack frame that happened to arrive zeroed.
+// Value-initialization, `T()`, zero-initializes the whole object, padding
+// included ([dcl.init]: a class with no user-provided constructor is
+// zero-initialized first). Brace initialization of an aggregate, `T{}`, is
+// aggregate initialization instead: it zeroes every member but leaves padding
+// unspecified, and clang 22 at -O2 does leave it untouched. The member
+// guarantee for `T{}` is BraceInitializationPreservesZeroContract below; no
+// wire path depends on padding (the Rust lane encodes field by field,
+// rt/src/rpc.rs). Constructing into 0xFF-filled storage proves the byte
+// guarantee rather than trusting a stack frame that happened to arrive zeroed.
 template <typename T>
-void ExpectBraceInitZeroesEveryByte(const char* name) {
+void ExpectValueInitZeroesEveryByte(const char* name) {
   alignas(T) unsigned char storage[sizeof(T)];
   std::memset(storage, 0xFF, sizeof(storage));
-  T* value = ::new (static_cast<void*>(storage)) T{};
+  T* value = ::new (static_cast<void*>(storage)) T();
   for (size_t i = 0; i < sizeof(T); ++i) {
     EXPECT_EQ(storage[i], 0u) << name << " byte " << i << " survived 0xFF fill";
   }
@@ -216,14 +221,14 @@ TEST(RaftMessagesTest, DefaultConstructAllRequestReplyTypes) {
   { InstallSnapshotReply r{};EXPECT_EQ(r.term_out, 0u); }
 }
 
-TEST(RaftMessagesTest, BraceInitializationZeroesEveryByte) {
-  ExpectBraceInitZeroesEveryByte<VoteReq>("VoteReq");
-  ExpectBraceInitZeroesEveryByte<VoteReply>("VoteReply");
-  ExpectBraceInitZeroesEveryByte<AppendEntriesReply>("AppendEntriesReply");
-  ExpectBraceInitZeroesEveryByte<EmptyAppendEntriesReq>("EmptyAppendEntriesReq");
-  ExpectBraceInitZeroesEveryByte<EmptyAppendEntriesReply>(
+TEST(RaftMessagesTest, ValueInitializationZeroesEveryByte) {
+  ExpectValueInitZeroesEveryByte<VoteReq>("VoteReq");
+  ExpectValueInitZeroesEveryByte<VoteReply>("VoteReply");
+  ExpectValueInitZeroesEveryByte<AppendEntriesReply>("AppendEntriesReply");
+  ExpectValueInitZeroesEveryByte<EmptyAppendEntriesReq>("EmptyAppendEntriesReq");
+  ExpectValueInitZeroesEveryByte<EmptyAppendEntriesReply>(
       "EmptyAppendEntriesReply");
-  ExpectBraceInitZeroesEveryByte<InstallSnapshotReply>("InstallSnapshotReply");
+  ExpectValueInitZeroesEveryByte<InstallSnapshotReply>("InstallSnapshotReply");
 }
 
 TEST(RaftMessagesTest, BraceInitializationPreservesZeroContract) {
