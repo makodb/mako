@@ -7,11 +7,12 @@
 //
 // The cases themselves are in lab_cases.rs and lab_snapshot_cases.rs.
 //
-// Four C++ kernels back it, all `#ifdef RAFT_TEST_CORO` in server.cc:
+// Five C++ kernels back it, all `#ifdef RAFT_TEST_CORO` in server.cc:
 //
 //   raft_lab_make_commit_command   build a TpcCommitCommand carrying a tx_id
 //   raft_lab_commit_tx_id          read that tx_id back out
 //   raft_lab_make_learner_action   wrap a Rust fn as the std::function apply
+//   raft_lab_make_leader_change_cb wrap a Rust fn as the leader-change callback
 //   raft_lab_frame_rpc_count       RaftCommo::rpc_count_ under its own mutex
 //
 // The first three exist for one reason: a payload's identity lives in the C++
@@ -53,6 +54,11 @@ unsafe extern "C" {
         apply: extern "C" fn(u64, u64, *const rusty::RaftCommand) -> i32,
         out: *mut rusty::LearnerAction);
     fn raft_lab_frame_rpc_count(loc_id: u32) -> u64;
+    /// [fix, F6] Wrap a Rust fn as a replica's leader-change callback.
+    fn raft_lab_make_leader_change_cb(
+        ctx: u64,
+        notify: extern "C" fn(u64, bool),
+        out: *mut rusty::RaftLeaderChangeCb);
     fn raft_lab_snapshot_copy_latest(src: *const rusty::RaftSnapshotManagerPtr,
                                      dst: *const rusty::RaftSnapshotManagerPtr) -> bool;
     fn raft_lab_byte_string_from(out: *mut rusty::RaftByteString,
@@ -158,6 +164,59 @@ fn state_of(entry: &LabEntry) -> (bool, u64, bool) {
         svr.GetState(&raw mut is_leader, &raw mut term);
         (is_leader, term, svr.IsDisconnected())
     })
+}
+
+// ---------------------------------------------------------------------------
+// [fix, F6] Leader-change notices: every replica's, in the order it fired
+// them (true = became leader).
+
+static NOTICES: Mutex<BTreeMap<u32, Vec<bool>>> = Mutex::new(BTreeMap::new());
+
+extern "C" fn lab_leader_notice(ctx: u64, is_leader: bool) {
+    NOTICES.lock().unwrap().entry(ctx as u32).or_default().push(is_leader);
+}
+
+/// Registers a recorder as every replica's leader-change callback, after
+/// forgetting what any earlier recorder saw.
+pub fn record_leader_notices() {
+    NOTICES.lock().unwrap().clear();
+    for entry in lab_entries() {
+        let Some(e) = lab_get(entry.loc_id) else { continue };
+        with_entry_server(&e, |svr| {
+            let mut cb: rusty::RaftLeaderChangeCb = Default::default();
+            // SAFETY: the kernel constructs the callable into the slot, and
+            // registration copies it.
+            unsafe {
+                raft_lab_make_leader_change_cb(
+                    entry.loc_id as u64, lab_leader_notice, &raw mut cb);
+            }
+            svr.RegisterLeaderChangeCallback(&cb);
+        });
+    }
+}
+
+/// What replica `svr` has fired since record_leader_notices: (how many, the
+/// last one, whether two equal notices ever came in a row).
+pub fn leader_notices(svr: u32) -> (usize, bool, bool) {
+    let notices = NOTICES.lock().unwrap();
+    let Some(seen) = notices.get(&svr) else {
+        return (0, false, false);
+    };
+    let mut repeated = false;
+    let mut i: usize = 1;
+    while i < seen.len() {
+        if seen[i] == seen[i - 1] {
+            repeated = true;
+        }
+        i += 1;
+    }
+    let last = if seen.is_empty() { false } else { seen[seen.len() - 1] };
+    (seen.len(), last, repeated)
+}
+
+/// Whether replica `svr` leads right now, or None if no such replica.
+pub fn leads(svr: u32) -> Option<bool> {
+    lab_get(svr).map(|e| state_of(&e).0)
 }
 
 /// Port of RaftTestConfig::waitOneLeader. Disconnected replicas are

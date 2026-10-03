@@ -1561,7 +1561,9 @@ impl HeartbeatRoundScope {
 // A core function makes no FFI call, takes no lock, reads no clock and fires
 // no callback. Where it used to, it pushes an action here, at the same
 // point, and the shell carries the actions out in push order: under mtx_,
-// before the guard is released (RaftServerBase::run_locked_actions).
+// before the guard is released (RaftServerBase::run_locked_actions), except
+// the role change's log entry and leader-change callback, which run once
+// it is released ([fix, F6], run_unlocked_actions).
 // ==========================================================================
 #[allow(non_camel_case_types)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
@@ -1926,8 +1928,8 @@ impl RaftCore {
     // server's role changes. Its effects are actions, pushed where they used
     // to run: the new leader's no-op (APPEND_NOOP), the new follower's timer
     // reset (RESET_ELECTION), and the role's log entry and leader-change
-    // callback (ROLE_SET). `stopped` is the shell's stop_ and `failover` its
-    // failover_; the caller holds mtx_.
+    // callback (ROLE_SET, after mtx_ is released, [fix, F6]). `stopped` is
+    // the shell's stop_ and `failover` its failover_; the caller holds mtx_.
     pub fn set_is_leader(&mut self, is_leader: bool, stopped: bool,
                          failover: bool, out: &mut CoreOutput) {
         let prev_is_leader: bool = self.is_leader_;
@@ -2675,6 +2677,22 @@ impl ApplyQueue {
     }
 }
 
+// [fix, F6] Leader-change notices waiting to be fired, in transition order:
+// a transition queues its notice under mtx_ (run_locked_actions), and
+// whichever thread then finds the queue idle fires them all with no lock
+// held (fire_leader_notices). true = became leader.
+pub struct LeaderNotices {
+    pub pending_: rusty::VecDeque<bool>,
+    pub draining_: bool,
+}
+
+#[allow(clippy::new_without_default)]
+impl LeaderNotices {
+    pub fn new() -> LeaderNotices {
+        LeaderNotices { pending_: rusty::VecDeque::new(), draining_: false }
+    }
+}
+
 // Why an environment value was rejected. An error type rather than `()`
 // because the distinction is worth logging: a typo and a number too large
 // for u64 are different operator mistakes, and std::stoull reported the
@@ -2758,6 +2776,13 @@ pub struct RaftServerBase {
     pub apply_thread_running_: rusty::sync::atomic::AtomicBool,
     pub state_machine_apply_mtx_: rusty::RaftStdMutex,
     pub apply_queue_: rusty::Mutex<ApplyQueue>,
+    // [fix, F6] Fired after mtx_ is released, in transition order.
+    pub leader_notices_: rusty::Mutex<LeaderNotices>,
+    // [move, M3] OnInstallSnapshotLocked's actions, which reach it through a
+    // C++ kernel (raft_install_snapshot_guarded) rather than a parameter;
+    // OnInstallSnapshot runs their unlocked half. Touched only under mtx_
+    // and by that one caller.
+    pub install_out_: CoreOutput,
     // The command the apply thread popped and is about to hand to the
     // learner. A staging field rather than a local because Command is opaque
     // to Rust: the pop kernel moves it here and the invoke kernel reads it,
@@ -2862,6 +2887,8 @@ impl RaftServerBase {
             apply_thread_running_: rusty::sync::atomic::AtomicBool::new(false),
             state_machine_apply_mtx_: Default::default(),
             apply_queue_: rusty::Mutex::new(ApplyQueue::new()),
+            leader_notices_: rusty::Mutex::new(LeaderNotices::new()),  // [fix, F6]
+            install_out_: CoreOutput::new(),  // [move, M3]
             pending_apply_command_: Default::default(),
             batch_buffer_: rusty::Vec::new(),
             appliedIndexForWait_: rusty::sync::atomic::AtomicU64::new(0),
@@ -3280,8 +3307,10 @@ impl RaftServerBase {
     // [move, M3] setIsLeader's decisions are RaftCore::set_is_leader; what
     // they ask for is carried out here.
     //
-    // The actions of one critical section, in push order. CALLER MUST HOLD
-    // mtx_.
+    // The actions of one critical section that run under mtx_, in push
+    // order. CALLER MUST HOLD mtx_. A ROLE_SET that is a transition queues
+    // its leader-change notice here, under mtx_, so notices are queued in
+    // transition order ([fix, F6]); run_unlocked_actions fires them.
     pub fn run_locked_actions(&mut self, out: &CoreOutput) {
         let mut i: usize = 0;
         while i < out.len() {
@@ -3305,38 +3334,102 @@ impl RaftServerBase {
                 }
             } else if kind == CoreActionKind::APPEND_NOOP {
                 self.AppendLeaderNoop();
-            } else if kind == CoreActionKind::ROLE_SET {
+            } else if kind == CoreActionKind::ROLE_SET
+                && (action.became_leader() || action.became_follower())
+            {
+                // The slot is asked under the queue's lock, which
+                // RegisterLeaderChangeCallback takes to write it.
+                let mut notices = self.leader_notices_.lock().unwrap();
+                if unsafe {
+                    raft_leader_change_cb_is_set(
+                        &self.leader_change_cb_ as *const rusty::RaftLeaderChangeCb)
+                } {
+                    notices.pending_.push_back(action.became_leader());
+                }
+            }
+            i += 1;
+        }
+    }
+
+    // [fix, F6] What a critical section leaves for after mtx_ is released:
+    // each role setting's log entry, in push order, then the queued
+    // leader-change notices. CALLER MUST NOT HOLD mtx_.
+    pub fn run_unlocked_actions(&mut self, out: &CoreOutput) {
+        let mut transitioned: bool = false;
+        let mut i: usize = 0;
+        while i < out.len() {
+            let action: &CoreAction = out.at(i);
+            if action.kind() == CoreActionKind::ROLE_SET {
                 unsafe {
                     raft_log_set_is_leader_entry(self.site_id_, self.loc_id_,
                                                  action.term(),
                                                  action.prev_is_leader(),
                                                  action.is_leader());
                 }
-                // Fire the leadership-change callback so RaftWorker can
-                // retarget clients to the new leader after an election.
-                if (action.became_leader() || action.became_follower())
-                    && unsafe {
-                        raft_leader_change_cb_is_set(
-                            &self.leader_change_cb_ as *const rusty::RaftLeaderChangeCb)
-                    }
-                {
-                    if action.became_leader() {
-                        rusty::raft_log_info_1(
-                            "[LEADER_CALLBACK] Site {}: Firing leader_change_cb_(true) - became leader",
-                            self.site_id_);
-                    } else {
-                        rusty::raft_log_info_1(
-                            "[LEADER_CALLBACK] Site {}: Firing leader_change_cb_(false) - became follower",
-                            self.site_id_);
-                    }
-                    unsafe {
-                        raft_fire_leader_change(
-                            &self.leader_change_cb_ as *const rusty::RaftLeaderChangeCb,
-                            action.became_leader())
-                    };
-                }
+                transitioned = transitioned || action.became_leader()
+                    || action.became_follower();
             }
             i += 1;
+        }
+        // Only a section that queued a notice drains: a notice is fired by
+        // the thread that queued it or by the drainer already running, so a
+        // section with no transition (most AppendEntries) skips the lock.
+        if transitioned {
+            self.fire_leader_notices();
+        }
+    }
+
+    // [fix, F6] Fires the queued leader-change notices in transition order,
+    // each once, with no lock held while a callback runs: whichever thread
+    // finds the queue idle drains it, taking the queue's lock only to pop.
+    // A callback may take mtx_; one that causes another transition only
+    // queues its notice, and this loop fires it next.
+    fn fire_leader_notices(&mut self) {
+        {
+            let mut notices = self.leader_notices_.lock().unwrap();
+            if notices.draining_ || notices.pending_.is_empty() {
+                return;
+            }
+            notices.draining_ = true;
+        }
+        let mut more: bool = true;
+        while more {
+            let mut have: bool = false;
+            let mut became_leader: bool = false;
+            // A copy of the callback, made under the queue's lock (which
+            // registration takes) and called with no lock held.
+            let mut cb: rusty::RaftLeaderChangeCb = Default::default();
+            {
+                let mut notices = self.leader_notices_.lock().unwrap();
+                if notices.pending_.is_empty() {
+                    notices.draining_ = false;
+                } else {
+                    became_leader = notices.pending_.pop_front().unwrap();
+                    unsafe {
+                        raft_leader_change_cb_clone_into(
+                            &self.leader_change_cb_ as *const rusty::RaftLeaderChangeCb,
+                            &mut cb as *mut rusty::RaftLeaderChangeCb);
+                    }
+                    have = true;
+                }
+            }
+            if !have {
+                more = false;
+            } else {
+                if became_leader {
+                    rusty::raft_log_info_1(
+                        "[LEADER_CALLBACK] Site {}: Firing leader_change_cb_(true) - became leader",
+                        self.site_id_);
+                } else {
+                    rusty::raft_log_info_1(
+                        "[LEADER_CALLBACK] Site {}: Firing leader_change_cb_(false) - became follower",
+                        self.site_id_);
+                }
+                unsafe {
+                    raft_fire_leader_change(
+                        &cb as *const rusty::RaftLeaderChangeCb, became_leader)
+                };
+            }
         }
     }
 
@@ -3799,8 +3892,8 @@ impl RaftServerBase {
     pub fn InstallSnapshotReplyAccepted(&mut self, site_id: u16, ord: usize,
                                         snap_last_idx: u64, send_term: u64,
                                         follower_term: u64) {
-        // [move, M3] The decision under mtx_ and its actions, all before the
-        // guard drops.
+        // [move, M3] The decision under mtx_, its locked actions before the
+        // guard drops, the leader-change callback after ([fix, F6]).
         let mut out: CoreOutput = CoreOutput::new();
         {
             let _lock = RaftLockGuard::new(&mut self.mtx_);
@@ -3809,6 +3902,7 @@ impl RaftServerBase {
                                                     &mut out);
             self.run_locked_actions(&out);
         }
+        self.run_unlocked_actions(&out);
     }
 
     // [move, M3] InstallSnapshotReplyAccepted's body. CALLER MUST HOLD mtx_.
@@ -3985,9 +4079,10 @@ impl RaftServerBase {
         // establishes follower state. Cancel the outstanding election as
         // well as leadership; RequestVote's delayed-success path
         // revalidates this ownership before it can promote again.
-        // [move, M3] The actions run here, where stepDown and setIsLeader ran
-        // them, so the timer resets keep their place ahead of the install
-        // below.
+        // [move, M3] The locked actions run here, where stepDown and
+        // setIsLeader ran them, so the timer resets keep their place ahead of
+        // the install below; the leader-change callback waits in install_out_
+        // until OnInstallSnapshot has released mtx_ ([fix, F6]).
         let mut out: CoreOutput = CoreOutput::new();
         let stopped: bool = self.stopped_now();
         if self.core.is_leader_ {
@@ -3996,6 +4091,7 @@ impl RaftServerBase {
             self.core.set_is_leader(false, stopped, self.failover_, &mut out);
         }
         self.run_locked_actions(&out);
+        self.install_out_ = out;
         self.core.req_voting_ = false;
         self.core.election_in_progress_ = false;
 
@@ -4997,8 +5093,8 @@ impl RaftServerBase {
                 &mut quorum as *mut rusty::RaftVoteQuorumPtr);
         }
 
-        // [move, M3] The settlement under mtx_ and its actions, all before
-        // the guard drops.
+        // [move, M3] The settlement under mtx_ and its locked actions before
+        // the guard drops; the leader-change callback after it ([fix, F6]).
         let mut out: CoreOutput = CoreOutput::new();
         let mut won: bool = false;
         {
@@ -5006,6 +5102,7 @@ impl RaftServerBase {
             won = self.RequestVoteSettleLocked(term, loc_id, &quorum, &mut out);
             self.run_locked_actions(&out);
         }
+        self.run_unlocked_actions(&out);
         won
     }
 
@@ -5368,6 +5465,7 @@ impl RaftServerBase {
             let stopped: bool = self.stopped_now();
             self.core.set_is_leader(false, stopped, self.failover_, &mut out);
             self.run_locked_actions(&out);
+            self.run_unlocked_actions(&out);
         }
         self.stop_.store(false, rusty::sync::atomic::Ordering::Release);
     }
@@ -5633,10 +5731,14 @@ impl RaftSpecific for RaftServerBase {
         }
     }
 
-    // @safe - a plain move into the notification slot; no lock, exactly as
-    // the C++ had it.
+    // @safe - a plain move into the notification slot.
     // In place, for the reason given on reg_learner_action.
+    // [fix, F6] Under leader_notices_'s lock: with the callback fired after
+    // mtx_ is released, the slot is read under that lock instead
+    // (run_locked_actions, fire_leader_notices), so writing it there keeps
+    // registration from racing a firing.
     fn RegisterLeaderChangeCallback(&mut self, cb: &rusty::RaftLeaderChangeCb) {
+        let _notices = self.leader_notices_.lock().unwrap();
         unsafe {
             raft_leader_change_cb_clone_into(
                 cb as *const rusty::RaftLeaderChangeCb,
@@ -5845,21 +5947,28 @@ impl RaftServerBase {
         // Lock order: the state-machine apply gate, then mtx_ -- the order
         // the C++ handler took. Only the catch around the locked body is
         // still C++ (raft_install_snapshot_guarded); false is the throw.
-        let _apply_lock =
-            RaftStdLockGuard::new(&mut self.state_machine_apply_mtx_);
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
-        let installed: bool = unsafe {
-            raft_install_snapshot_guarded(
-                self.handle(), self.site_id_, term, leader_id,
-                last_included_index, last_included_term,
-                data as *const rusty::RaftByteString, term_out)
-        };
-        if !installed {
-            self.FailStop();
-            unsafe {
-                *term_out = 0;
+        {
+            let _apply_lock =
+                RaftStdLockGuard::new(&mut self.state_machine_apply_mtx_);
+            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            self.install_out_ = CoreOutput::new();  // [move, M3]
+            let installed: bool = unsafe {
+                raft_install_snapshot_guarded(
+                    self.handle(), self.site_id_, term, leader_id,
+                    last_included_index, last_included_term,
+                    data as *const rusty::RaftByteString, term_out)
+            };
+            if !installed {
+                self.FailStop();
+                unsafe {
+                    *term_out = 0;
+                }
             }
         }
+        // [fix, F6] The role change's log entry and callback, both locks
+        // released.
+        let out: CoreOutput = core::mem::take(&mut self.install_out_);
+        self.run_unlocked_actions(&out);
     }
 }
 
@@ -6075,8 +6184,8 @@ pub fn on_request_vote_body(
     server: &mut RaftServerBase, lst_log_idx: u64,
     lst_log_term: i64, can_id: u16, can_term: i64,
     reply_term: &mut i64, vote_granted: &mut i8) {
-    // [move, M3] The decision under mtx_ and its actions, all before the
-    // guard drops.
+    // [move, M3] The decision under mtx_ and its locked actions before the
+    // guard drops; the leader-change callback after it ([fix, F6]).
     let mut out: CoreOutput = CoreOutput::new();
     {
         let _lock = RaftLockGuard::new(&mut server.mtx_);
@@ -6084,6 +6193,7 @@ pub fn on_request_vote_body(
                                can_term, reply_term, vote_granted, &mut out);
         server.run_locked_actions(&out);
     }
+    server.run_unlocked_actions(&out);
 }
 
 // [move, M3] on_request_vote_body's critical section. CALLER MUST HOLD mtx_.
@@ -6502,8 +6612,8 @@ pub fn on_append_entries_body(
                               follower_append_ok: &mut u64,
                               follower_current_term: &mut u64,
                               follower_last_log_index: &mut u64) {
-    // [move, M3] The decision under mtx_ and its actions, all before the
-    // guard drops.
+    // [move, M3] The decision under mtx_ and its locked actions before the
+    // guard drops; the leader-change callback after it ([fix, F6]).
     let mut out: CoreOutput = CoreOutput::new();
     {
         let _lock = RaftLockGuard::new(&mut server.mtx_);
@@ -6514,6 +6624,7 @@ pub fn on_append_entries_body(
                                  follower_current_term,
                                  follower_last_log_index, &mut out);
     }
+    server.run_unlocked_actions(&out);
 }
 
 // [move, M3] on_append_entries_body's critical section. CALLER MUST HOLD

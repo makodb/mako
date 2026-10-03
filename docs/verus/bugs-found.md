@@ -27,6 +27,7 @@ it), **metric** (wrong number in a measurement, no protocol effect).
 | B8 | dead code | `setIsLeader`'s "stale leadership publication" check compares `current_term_` with a copy of itself, so its term half never fires | read in code | report only (behaviour freeze) |
 | B9 | test infra | `ci.sh`'s `cleanup_processes` kill -9s every same-user process named `dbtest`, `simpleTransactionRep`, ... and deletes the shared `/tmp/$USER_mako_rocksdb_shard*`, so a suite in one worktree kills tests running in another | read in code | worked around: `scripts/verus/tier1.sh` waits until no such process runs outside this worktree |
 | B10 | toolchain | rusty-cpp's transpiled `BTreeMap` port cannot compile `clone()` of a `BTreeMap<u32, Vec<i32>>` (no matching `push` in the internal-node clone path) | reproduced (cpp-lane lab build) | worked around in `src/lab.rs`; third-party, report only |
+| B11 | race (latent) | `RegisterLeaderChangeCallback` writes `leader_change_cb_` with no lock while a role change reads and calls it under `mtx_` | read in code | fixed with F6 (Phase 2): registration and every read of the slot take `leader_notices_`'s lock; the callback runs from a copy |
 | B12 | dead code | `heartbeat_phase0_body` returns `true` when phase 0 declines the round (not leader), so the driver's `continue` never fires and phases 1-3 run, each exiting at its first leadership check | read in code | Phase 3: the cut heartbeat ends the round when `tick_heartbeat` declines it (no protocol-visible difference) |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
@@ -251,6 +252,30 @@ the `build_cpp_raftlab_cpp` build, log `$RESULTS/p0/build/build_cpp_raftlab_cpp.
 A transpiler limitation, not Mako's; the same restriction applies to any
 code the C++ lanes transpile (relevant to Phase 6's crate if those lanes are
 kept).
+
+## B11. The leader-change callback slot is written with no lock
+
+**Where.** `src/server_h.rs`, `RegisterLeaderChangeCallback` (copies the
+callback into `leader_change_cb_`, no lock: "a plain move into the
+notification slot; no lock, exactly as the C++ had it") against
+`setIsLeader`, which tests and calls `leader_change_cb_` with `mtx_` held,
+at Phase 1 tip `22d63ca1e`.
+
+**What is wrong.** The two never share a lock, so a registration that
+overlaps a role change is a data race on a `std::function`: a torn copy can
+be called.
+
+**Effect.** Latent. The one caller, `RaftWorker::SetupBase`
+(`raft_worker.cc:315`), registers during setup, before the server's
+election and heartbeat loops run, so no overlap has been observed.
+
+**How found.** Read in code while implementing F6, which moves the
+callback out from under `mtx_` and so would have widened the window.
+
+**Fate.** Fixed in the F6 commit (Phase 2): registration takes
+`leader_notices_`'s lock, the queue that F6 fires notices from; the
+callback slot is read only under that lock and called from a copy taken
+there.
 
 ## B12. A declined heartbeat round still runs phases 1-3
 

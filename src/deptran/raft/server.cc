@@ -511,6 +511,16 @@ bool raft_lab_commit_log_enabled() {
   return on;
 }
 
+// [fix, F6] Wrap a Rust function as a replica's leader-change callback, so a
+// lab case can record every notice it fires. `ctx` is the replica's locale
+// id, as for the learner action below.
+void raft_lab_make_leader_change_cb(uint64_t ctx,
+                                    void (*notify)(uint64_t ctx, bool is_leader),
+                                    rusty::RaftLeaderChangeCb* out) {
+  construct_into(out, rusty::RaftLeaderChangeCb(
+      [ctx, notify](bool is_leader) { notify(ctx, is_leader); }));
+}
+
 // Wrap a Rust function as a LearnerAction. The std::function owns only the
 // raw fn pointer, so there is nothing to keep alive on the Rust side and no
 // lifetime to get wrong; the command is handed over as a borrowed pointer for

@@ -1026,7 +1026,8 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase) {
             }
 
             let mut stepped_down: bool = false;
-            // [move, M3] The step-down's actions, before the guard drops.
+            // [move, M3] The step-down's actions: the locked ones before the
+            // guard drops, the leader-change callback after it ([fix, F6]).
             let mut out: CoreOutput = CoreOutput::new();
             {
                 let _lock = RaftLockGuard::new(&mut server.mtx_);
@@ -1118,6 +1119,7 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase) {
                 // AppendReplyAction::IGNORED does nothing, as before.
                 server.run_locked_actions(&out);  // [move, M3]
             }
+            server.run_unlocked_actions(&out);  // [fix, F6]
 
             let completed_previous_round: bool =
                 sent_round != server.core.round_.round_id();

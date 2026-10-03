@@ -757,8 +757,73 @@ fn test_unavailable_voter_reply(_st: &mut LabState) -> i32 {
     0
 }
 
+// ---------------------------------------------------------------------------
+// [fix, F6] The leader-change callback
+
+// The callback fires after mtx_ is released now, from a queue that keeps the
+// transitions' order. Every replica records the notices it fires across a
+// forced re-election. They must alternate (became leader, became follower,
+// ...): a notice fired twice or lost would put two equal ones side by side.
+// Once the cluster has one leader again, each replica's last notice must
+// agree with its role.
+fn test_leader_change_notices(_st: &mut LabState) -> i32 {
+    init2(14, "Leader-change callback fires once per transition");
+
+    lab::record_leader_notices();
+    let leader = lab::one_leader(-1);
+    if !check_msg(leader >= 0, "no leader") { return 1; }
+
+    // The leader is cut off and replaced, then rejoins and steps down.
+    lab::disconnect(leader as u32);
+    lab::fiber_sleep_us(ELECTION_TIMEOUT_US);
+    let new_leader = lab::one_leader(-1);
+    if !check_msg(new_leader >= 0 && new_leader != leader,
+                  "no new leader after disconnecting the old one") { return 1; }
+    lab::reconnect(leader as u32);
+    if !check_msg(lab::one_leader(new_leader) >= 0,
+                  "the rejoined leader disturbed the new one") { return 1; }
+
+    // A notice fires just after its transition's lock is released, so give
+    // the last ones a moment before comparing them with the roles.
+    let mut attempt: i32 = 0;
+    loop {
+        let mut settled = true;
+        let mut svr: u32 = 0;
+        while svr < NSERVERS as u32 {
+            let (count, last, repeated) = lab::leader_notices(svr);
+            if !check_msg(!repeated, "a replica fired the same leader-change notice twice in a row") {
+                return 1;
+            }
+            let Some(leads) = lab::leads(svr) else {
+                failed("replica not registered"); return 1;
+            };
+            // A replica that never changed role fired nothing; one that did
+            // ends on its current role.
+            if (count == 0 && leads) || (count > 0 && last != leads) {
+                settled = false;
+            }
+            svr += 1;
+        }
+        if settled {
+            break;
+        }
+        attempt += 1;
+        if !check_msg(attempt < 20, "leader-change notices disagree with the roles") {
+            return 1;
+        }
+        lab::fiber_sleep_us(50_000);
+    }
+    let (count_old, _, _) = lab::leader_notices(leader as u32);
+    let (count_new, _, _) = lab::leader_notices(new_leader as u32);
+    if !check_msg(count_old >= 1 && count_new >= 1,
+                  "a role change fired no leader-change notice") { return 1; }
+
+    passed();
+    0
+}
+
 // The basic cases: the eleven ported ones in RaftLabTest::Run's order, then
-// cases 12 and 13 above. lab_main.rs drives them, then the snapshot cases,
+// cases 12 to 14 above. lab_main.rs drives them, then the snapshot cases,
 // and threads the state between the two by value: None is a failure.
 fn run_basic_cases(st: &mut LabState) -> i32 {
     type Case = fn(&mut LabState) -> i32;
@@ -776,6 +841,7 @@ fn run_basic_cases(st: &mut LabState) -> i32 {
         test_figure8,
         test_entry_term_zero_refused,  // [fix, F4]
         test_unavailable_voter_reply,
+        test_leader_change_notices,  // [fix, F6]
     ];
 
     for case in basic {
