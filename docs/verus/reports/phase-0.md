@@ -1,4 +1,4 @@
-# Phase 0 report (in progress)
+# Phase 0 report
 
 Plan: [../modification-plan.md](../modification-plan.md), Phase 0 and the
 stopping point 0.7 point 1. Raw results: `$RESULTS = ~/raft-test-results/verus`
@@ -26,7 +26,10 @@ stopping point 0.7 point 1. Raw results: `$RESULTS = ~/raft-test-results/verus`
   `raft-spec-v0`. Full crate under `$VERUS_PIN`: **2129 verified, 0 errors**,
   5 min 26 s, 6.7 GB peak (`$RESULTS/spec/v0-pin.log`). This is the v0
   reference count.
-- **S1**: see §2.1 (in progress).
+- **v1** (v0 + S1, tag `raft-spec-v1` = `a19122cf`): **2129 verified,
+  0 errors**, 5 min 24 s, 6.7 GB (`$RESULTS/spec/v1-pin.log`). S1 needed one
+  proof hint, `assert(s_ != s)`, rather than the rlimit bump the plan
+  proposed; details in [../spec-changes.md](../spec-changes.md).
 
 ## 3. Spikes (plan Phase 0)
 
@@ -139,6 +142,36 @@ raft-rt test, but it contradicts a planned lab case), B7
 stale-publication term check is a tautology), B9 (`ci.sh` cleanup kills
 other worktrees' tests), B10 (the cpp lane's btree port cannot clone a map of
 vectors).
+
+## 5a. A/A baselines (plan §6, "Deriving rounds and bounds")
+
+Two builds of the same code (`build_rust` at `verus-p0` against
+`build_rust_base`, the same commit built in `../mako-verus-base`), alternated
+round by round, 25 rounds per point (G7: 20 leader kills per build). Every
+gap below is noise; it sets each point's bound and round count in
+[../gate-params.md](../gate-params.md). CV_paired is the round-to-round spread
+of the paired ratio; MDE is the smallest shift 25 rounds can detect.
+
+| Point | What | Median gap (B/A − 1) | CV_paired | MDE@25 | Rounds | Bound |
+|---|---|---|---|---|---|---|
+| G1 | 4 KB at 240/s, latency | p50 +0.04%, p99 +0.23% | 0.97%, 1.44% | 0.54%, 0.81% | 10 | p50 +2%, p99 +5% |
+| G2 | 4 KB unthrottled, throughput | −1.10% | 9.56% | 5.36% | 25 | −5.4% (widened) |
+| G3 | 286 KB × 6 partitions at 190/s, latency | p50 −0.45%, p99 −1.21% | 4.27%, 10.70% | 2.39%, 5.99% | 25 | p50 +2.4%, p99 +6% (widened) |
+| G4 | 286 KB × 6 partitions unthrottled, throughput | −1.04% | 2.31% | 1.29% | 11 | −2% |
+| G5 | 1 MiB at 55/s, latency | p50 +0.02%, p99 +1.51% | 3.13%, 4.70% | 1.76%, 2.63% | 20 | p50 +2%, p99 +5% |
+| G6 | 1 MiB unthrottled, throughput | −0.72% | 2.37% | 1.33% | 12 | −2% |
+
+G7 (leader killed 6 s into a 15 s run, 4 KB at 240/s): 20 kills per build,
+0 failed. Leader loss → new leader: median 625.5 vs 651.6 ms, p90 835.9 vs
+750.8 ms; leader loss → first commit: median 629.8 vs 655.5 ms, p90 840.5 vs
+755.5 ms; Mann-Whitney p ≈ 0.7 for both. Bounds: 10% on each median, 10.2%
+on each p90 (the A/A spread).
+
+Not run, by the user's decision of 2026-10-03 (plan 0.10): the concurrency
+check, the full sweep and the Jetpack baselines.
+
+G4's first attempt died at round 7 when the session that ran it stopped; it
+was re-run whole (the partial data is kept as `$RESULTS/p0/G4.aborted-0740`).
 
 ## 6. Plan corrections found while executing
 
