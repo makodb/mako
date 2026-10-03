@@ -22,7 +22,7 @@
 #![allow(non_snake_case)]
 
 use crate::scheduler_h::{RaftSpecific, RaftStartResult, TxLogServer};
-use crate::server_h::{lab_entries, lab_get, LabEntry, RaftServerBase, RaftStdLockGuard};
+use crate::server_h::{lab_entries, lab_get, LabEntry, RaftLockGuard, RaftServerBase, RaftStdLockGuard};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
 
@@ -46,6 +46,8 @@ pub const NO_SERVER: u32 = u32::MAX;
 unsafe extern "C" {
     fn raft_lab_make_commit_command(tx_id: i64, out: *mut rusty::RaftCommand);
     fn raft_lab_commit_tx_id(cmd: *const rusty::RaftCommand) -> i64;
+    /// [M0] MAKO_RAFT_LAB_COMMIT_LOG=1, read once (server.cc).
+    fn raft_lab_commit_log_enabled() -> bool;
     fn raft_lab_make_learner_action(
         ctx: u64,
         apply: extern "C" fn(u64, u64, *const rusty::RaftCommand) -> i32,
@@ -175,6 +177,7 @@ pub fn wait_one_leader(want_leader: bool, expected: i32) -> i32 {
             }
             if is_leader {
                 if term == most_recent_term {
+                    note_leader(term, MULTIPLE_LEADERS);  // [M0]
                     return MULTIPLE_LEADERS;
                 } else if term > most_recent_term {
                     leader = entry.loc_id as i32;
@@ -183,13 +186,84 @@ pub fn wait_one_leader(want_leader: bool, expected: i32) -> i32 {
             }
         }
         if leader != NO_LEADER {
+            note_leader(most_recent_term, leader);  // [M0]
             if want_leader && expected >= 0 && leader != expected {
                 return UNEXPECTED_LEADER;
             }
             return leader;
         }
     }
+    note_leader(0, NO_LEADER);  // [M0]
     NO_LEADER
+}
+
+// ---------------------------------------------------------------------------
+// [M0] The equivalence comparator's view of a case (docs/verus/
+// modification-plan.md A.4 item 1; scripts/verus/lab_trace_compare.py).
+// Printed only when MAKO_RAFT_LAB_COMMIT_LOG=1; no case reads any of it.
+// Lines belong to the case whose "TEST <n>:" line precedes them on stderr.
+
+/// `LABLEADER <term> <leader>`: what one waitOneLeader pass settled on (a
+/// loc id, or the -1/-2 sentinels; term 0 when no leader was seen).
+fn note_leader(term: u64, leader: i32) {
+    if unsafe { raft_lab_commit_log_enabled() } {
+        eprintln!("LABLEADER {} {}", term, leader);
+    }
+}
+
+/// `LABCOMMIT <node> <index> <term> <payload>`, one line per slot a replica's
+/// apply callback filled, in node then index order, printed when a case ends.
+/// The payload is the command's tx_id, which determines a lab command
+/// completely. The term is read from the replica's log under its mutex now:
+/// a committed entry never changes, so it is the term the entry was applied
+/// with. It prints as `-` once compaction has removed the entry.
+pub fn dump_commit_log() {
+    if !unsafe { raft_lab_commit_log_enabled() } {
+        return;
+    }
+    for entry in lab_entries() {
+        // This replica's row, copied element by element under the table's
+        // lock (not BTreeMap::clone, which the C++ lane's btree port cannot
+        // compile for a Vec value), so the lock is not held while the
+        // replica's own mutex is taken below.
+        let mut commands: Vec<i32> = Vec::new();
+        {
+            let committed = COMMITTED.lock().unwrap();
+            let Some(row) = committed.get(&entry.loc_id) else { continue };
+            let mut k: usize = 0;
+            while k < row.len() {
+                commands.push(row[k]);
+                k += 1;
+            }
+        }
+        let Some(e) = lab_get(entry.loc_id) else { continue };
+        let (base, terms): (u64, Vec<u64>) = with_entry_server(&e, |svr| {
+            let _lock = RaftLockGuard::new(svr.LabMutex());
+            let n = svr.LabLogFingerprintLen();
+            let base = svr.LabLogFingerprintAt(0);
+            let mut terms: Vec<u64> = Vec::new();
+            let mut i: u64 = 2;
+            while i < n {
+                terms.push(svr.LabLogFingerprintAt(i));
+                i += 1;
+            }
+            (base, terms)
+        });
+        let mut index: usize = 1;
+        while index < commands.len() {
+            let cmd = commands[index];
+            if cmd != MISSING {
+                let at = index as u64;
+                if at >= base && ((at - base) as usize) < terms.len() {
+                    eprintln!("LABCOMMIT {} {} {} {}", entry.loc_id, at,
+                              terms[(at - base) as usize], cmd);
+                } else {
+                    eprintln!("LABCOMMIT {} {} - {}", entry.loc_id, at, cmd);
+                }
+            }
+            index += 1;
+        }
+    }
 }
 
 pub fn one_leader(expected: i32) -> i32 {

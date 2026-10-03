@@ -12,10 +12,10 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 548 | `raft/src/server_h.rs` | 5540 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1605 | `raft/src/server_cc.rs` | 2189 |  |
-| `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 172 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
-| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 983 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
+| `raft/server.h` | 548 | `raft/src/server_h.rs` | 5543 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1722 | `raft/src/server_cc.rs` | 2193 |  |
+| `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 177 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
+| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 988 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
 | `raft/server_seam_cpp.cc` | 354 | `raft/rt/src/seam.rs` | 448 | the runtime seam, one per lane; exactly one is linked |
 | `communicator.h` | 567 | `raft/src/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
 | `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 582 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
@@ -28,8 +28,8 @@ wolf gets switched off. `--check` is the freshness guarantee.
 | direction | mechanism | count |
 |---|---|---|
 | C++ → Rust | prototypes in `raft/server_exports.h` | 32 |
-| C++ → Rust | prototypes in `raft/transport_exports.h` — the Rust lane only (raft_lane_rust.cc) | 16 |
-| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 91 |
+| C++ → Rust | prototypes in `raft/transport_exports.h` — the Rust lane only (raft_lane_rust.cc) | 17 |
+| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 94 |
 
 ## Counted facts the prose below leans on
 
@@ -54,7 +54,7 @@ defined by one lane but not the other, or in two places.
 
 | class | count |
 |---|---|
-| HOST | 83 |
+| HOST | 86 |
 | SEAM | 36 |
 
 | kernel | class |
@@ -117,6 +117,7 @@ defined by one lane but not the other, or in two places.
 | `raft_int_event_set` | SEAM |
 | `raft_int_event_wait_timeout` | SEAM |
 | `raft_lab_byte_string_from` | HOST |
+| `raft_lab_commit_log_enabled` | HOST |
 | `raft_lab_commit_tx_id` | HOST |
 | `raft_lab_frame_rpc_count` | HOST |
 | `raft_lab_make_commit_command` | HOST |
@@ -172,6 +173,8 @@ defined by one lane but not the other, or in two places.
 | `raft_std_mutex_unlock` | HOST (CORE candidate) |
 | `raft_thread_sleep_ms` | HOST (CORE candidate) |
 | `raft_time_now_us` | HOST (CORE candidate) |
+| `raft_trace_at` | HOST |
+| `raft_trace_through` | HOST |
 | `raft_unbind_commo` | SEAM |
 | `raft_verify` | HOST (CORE candidate) |
 | `raft_vote_quorum_snapshot` | SEAM |

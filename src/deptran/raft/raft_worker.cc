@@ -47,6 +47,10 @@ import std;
 //   std::bind: [safe, (...) -> owned]
 // }
 
+// [M0] trace kit (server.cc): inert unless MAKO_RAFT_TRACE_FILE is set.
+extern "C" void raft_trace_at(int32_t stage, uint64_t idx, uint64_t t_us);
+extern "C" uint64_t raft_trace_now_us();
+namespace { thread_local uint64_t t_trace_enq_us = 0; }
 namespace janus {
 
 // Pure worker decisions over copied scalar values. Thread lifecycle,
@@ -790,6 +794,7 @@ void RaftWorker::EnqueueLog(const char* log, int len, uint32_t par_id, int batch
     entry.payload.assign(log, len);
   }
   entry.par_id = par_id;
+  entry.enq_us = raft_trace_now_us();  // [M0] trace kit
 
   {
     std::lock_guard<std::mutex> lock(submit_mutex_);
@@ -842,6 +847,7 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   }
 
   // Use a simple incrementing tx_id (in production this would be a global txn ID)
+  const uint64_t trace_submit_us = raft_trace_now_us();  // [M0] trace kit
   static std::atomic<txnid_t> next_tx_id{1};
   txnid_t tx_id = next_tx_id.fetch_add(1);
 
@@ -855,6 +861,10 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   if (start_result == RaftStartResult::REJECTED) {
     return;
   }
+  // [M0] trace kit: stages 0-2
+  raft_trace_at(0, index, t_trace_enq_us);
+  raft_trace_at(1, index, trace_submit_us);
+  raft_trace_at(2, index, 0);
   }
 
   n_tot++;
@@ -999,6 +1009,7 @@ void RaftWorker::register_apply_callback_par_id_return(
 // @unsafe - external calls marked @external [safe], malloc/memcpy in @unsafe blocks
 int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
   int status = -1;
+  raft_trace_at(11, static_cast<uint64_t>(slot_id), 0);  // [M0] trace kit
 
   // The legacy Mako watermark callback still accepts a signed int. Refuse a
   // lossy conversion instead of corrupting its replay queue after INT_MAX.
@@ -1230,6 +1241,7 @@ void RaftWorker::SubmitLoop() {
     lock.unlock();
 
     for (auto& entry : batch) {
+      t_trace_enq_us = entry.enq_us;  // [M0] trace kit
       Submit(entry.payload.data(), static_cast<int>(entry.payload.size()), entry.par_id);
     }
 

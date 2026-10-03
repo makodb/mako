@@ -1440,6 +1440,7 @@ use crate::scheduler_h::RaftStartResult;
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     fn raft_verify(condition: bool);
+    fn raft_trace_at(stage: i32, idx: u64, t_us: u64);  // [M0] trace kit
     // Suspends the calling fiber (server_seam_cpp.cc / rt/src/seam.rs).
     fn raft_fiber_sleep_us(micros: u64);
     fn raft_time_now_us() -> u64;
@@ -3341,6 +3342,7 @@ impl RaftServerBase {
                     let mut entry = queue.entries_.pop_front().unwrap();
                     id = entry.index_;
                     entry_epoch = entry.epoch_;
+                    unsafe { raft_trace_at(10, id, 0) };  // [M0] trace kit
                     // mem::take rather than the plainer partial move
                     // `= entry.command_`: the emitter renders a binding it
                     // sees no whole-value move out of as `const auto`, and a
@@ -3889,6 +3891,7 @@ impl RaftServerBase {
             while !batch.is_empty() {
                 let mut queued = batch.pop_front().unwrap();
                 queued.epoch_ = epoch;
+                unsafe { raft_trace_at(9, queued.index_, 0) };  // [M0] trace kit
                 queue.entries_.push_back(queued);
             }
             qsize = queue.entries_.len() as u64;

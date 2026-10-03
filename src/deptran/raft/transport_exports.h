@@ -28,6 +28,10 @@ extern "C" {
 
 RaftTransport* raft_transport_new();
 
+// [M0] trace kit: fill raft-rt's hook slots (rt/src/trace.rs).
+void raft_rt_install_trace(void (*through)(int32_t, uint64_t, uint64_t),
+                           uint64_t (*now_us)());
+
 // Bind and start serving Raft's RPCs for `server`, admission CLOSED, and bind
 // the transport to `server` for the seam kernels. 0 on success.
 int32_t raft_transport_serve(RaftTransport* t, RaftServerBase* server,

@@ -154,6 +154,10 @@ check_number --kill-leader-at-sec "$KILL_LEADER_AT_SEC"
 check_number --snapshot-bytes "$SNAPSHOT_BYTES"
 check_number --stall-follower-at-sec "$STALL_AT_SEC"
 check_number --stall-for-sec "$STALL_FOR_SEC"
+KILL_MODE=0
+if awk -v s="$KILL_LEADER_AT_SEC" 'BEGIN { exit !(s > 0) }'; then
+    KILL_MODE=1
+fi
 STALL_MODE=0
 if awk -v s="$STALL_AT_SEC" 'BEGIN { exit !(s > 0) }'; then
     STALL_MODE=1
@@ -338,6 +342,10 @@ run_one() {
         echo "raft_bench.sh: $bin predates --snapshot-bytes/--stall; cannot run this mode" >&2
         exit 2
     fi
+    # [M0] G7 failover timing: a survivor that becomes leader times it.
+    if [ "$KILL_MODE" -eq 1 ] && grep -q -- '--failover-out' <<< "$help_text"; then
+        extra+=(--failover-out "${RECORD_DIR}/${proc}.failover.json")
+    fi
     exec "$bin" \
         --proc "$proc" \
         "${extra[@]}" \
@@ -408,7 +416,11 @@ if awk -v s="$KILL_LEADER_AT_SEC" 'BEGIN { exit !(s > 0) }'; then
             for idx in "${!PROCS[@]}"; do
                 if grep -q 'leader; offering load' "${LOG_DIR}/${PROCS[$idx]}.log" 2>/dev/null; then
                     sleep "$KILL_LEADER_AT_SEC"
-                    echo "${PROCS[$idx]} ${PIDS[$idx]}" > "$KILLED_MARKER"
+                    # [M0] G7: CLOCK_REALTIME microseconds, the clock
+                    # raft_bench's --failover-out stamps read. %N then /1000,
+                    # not %6N: this host's date ignores the %N width.
+                    loss_us=$(( $(date +%s%N) / 1000 ))
+                    echo "${PROCS[$idx]} ${PIDS[$idx]} ${loss_us}" > "$KILLED_MARKER"
                     echo "raft_bench: killing leader ${PROCS[$idx]} (pid ${PIDS[$idx]}) after ${KILL_LEADER_AT_SEC}s of load"
                     kill -9 "${PIDS[$idx]}" 2>/dev/null
                     exit 0
@@ -509,7 +521,7 @@ fi
 KILLED_PID=""
 KILLED_PROC=""
 if [ -s "$KILLED_MARKER" ]; then
-    read -r KILLED_PROC KILLED_PID < "$KILLED_MARKER"
+    read -r KILLED_PROC KILLED_PID KILLED_AT_US < "$KILLED_MARKER"
 fi
 
 WORST_CHILD_STATUS=0
@@ -564,6 +576,35 @@ if awk -v s="$KILL_LEADER_AT_SEC" 'BEGIN { exit !(s > 0) }'; then
     fi
     echo "raft_bench: flap test PASSED — $survivors survivors applied a gap-free," \
          "duplicate-free prefix after the leader was SIGKILLed"
+    # [M0] G7: the run's record. new_leader_us / first_commit_us are the
+    # earliest over the survivors that became leader; a record without them
+    # is a kill whose failover was not timed (scripts/verus/election_times.py
+    # counts it as failed).
+    mkdir -p "$(dirname "$OUT_PATH")"
+    python3 - "$OUT_PATH" "$RECORD_DIR" "$KILLED_PROC" "${KILLED_AT_US:-}" <<'PYKILL' || { echo "raft_bench: failover record failed" >&2; exit 1; }
+import glob, json, os, sys
+out, rdir, killed, loss = sys.argv[1:5]
+rec = {"mode": "kill_leader", "killed_proc": killed}
+if loss:
+    rec["leader_loss_us"] = int(loss)
+recs = []
+for p in glob.glob(os.path.join(rdir, "*.failover.json")):
+    try:
+        recs.append(json.load(open(p)))
+    except ValueError:
+        pass
+nl = [r for r in recs if r.get("new_leader_us")]
+fc = [r for r in recs if r.get("first_commit_us")]
+if nl:
+    first = min(nl, key=lambda r: r["new_leader_us"])
+    rec["new_leader_us"] = first["new_leader_us"]
+    rec["new_leader_proc"] = first["proc"]
+if fc:
+    rec["first_commit_us"] = min(r["first_commit_us"] for r in fc)
+json.dump(rec, open(out, "w"), indent=2)
+PYKILL
+    echo "raft_bench: record -> $OUT_PATH"
+    cat "$OUT_PATH"
     RUN_OK=1
     exit 0
 fi

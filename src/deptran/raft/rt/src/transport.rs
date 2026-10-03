@@ -370,6 +370,11 @@ impl RaftTransport {
                 // SAFETY: srpc owns the buffer for this call.
                 unsafe { decode_reply::<AppendEntriesResponse>(ptr, len) }.ok_or(-1)
             };
+            if let Ok(r) = &value {  // [M0] trace kit
+                if r.follower_append_ok != 0 {
+                    crate::trace::through(7, r.follower_last_log_index, 0);
+                }
+            }
             if let Ok(mut guard) = sink.lock() {
                 *guard = Some(value);
             }

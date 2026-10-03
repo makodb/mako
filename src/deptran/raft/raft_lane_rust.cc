@@ -22,7 +22,15 @@ void RunBoxedJob(void* ctx) {
 
 }  // namespace
 
+// [M0] trace kit kernels (server.cc).
+extern "C" void raft_trace_through(int32_t stage, uint64_t through, uint64_t t_us);
+extern "C" uint64_t raft_trace_now_us();
+extern "C" bool raft_trace_enabled();
+
 RaftTransport* Serve(RaftServer* server, const std::string& bind_addr) {
+  if (raft_trace_enabled()) {  // [M0] trace kit: hooks only when tracing
+    raft_rt_install_trace(&raft_trace_through, &raft_trace_now_us);
+  }
   RaftTransport* t = raft_transport_new();
   const int32_t ret =
       raft_transport_serve(t, server->impl(), bind_addr.c_str());

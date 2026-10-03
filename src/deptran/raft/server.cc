@@ -3,6 +3,9 @@
 #include <string.h>
 #include <stdlib.h>
 #include <math.h>
+#include <signal.h>   // [M0] trace kit: dump on SIGTERM
+#include <time.h>     // [M0] trace kit: CLOCK_MONOTONIC
+#include <unistd.h>   // [M0] trace kit: getpid for the dump file name
 #include <atomic>
 #include <mutex>
 #include <unordered_map>
@@ -495,6 +498,17 @@ int64_t raft_lab_commit_tx_id(const rusty::RaftCommand* cmd) {
     return -1;
   }
   return static_cast<int64_t>(commit_cmd.unwrap()->tx_id_);
+}
+
+// [M0] Whether the lab prints the lines the equivalence comparator reads
+// (LABCOMMIT, LABLEADER; scripts/verus/lab_trace_compare.py). Read once.
+// Inert unless MAKO_RAFT_LAB_COMMIT_LOG=1.
+bool raft_lab_commit_log_enabled() {
+  static const bool on = [] {
+    const char* v = std::getenv("MAKO_RAFT_LAB_COMMIT_LOG");
+    return v != nullptr && v[0] == '1' && v[1] == '\0';
+  }();
+  return on;
 }
 
 // Wrap a Rust function as a LearnerAction. The std::function owns only the
@@ -1603,3 +1617,106 @@ extern "C" void raft_install_rpc_stats(uint64_t* sent, uint64_t* bytes_sent,
   *bytes_sent = g_install_bytes_sent.load(std::memory_order_relaxed);
   *received = g_install_rpcs_received.load(std::memory_order_relaxed);
 }
+
+// ---------------------------------------------------------------------------
+// [M0] Per-entry stage trace (the 12-stage latency breakdown kit,
+// docs/performance/raft-latency-breakdown/README.md). Inert unless
+// MAKO_RAFT_TRACE_FILE is set: every entry point first reads one cached flag,
+// and raft_trace_now_us returns 0 without reading the clock, so an unset run
+// pays a relaxed load per call and nothing else. When set, one CSV row per log
+// index is dumped at exit to <MAKO_RAFT_TRACE_FILE>.<pid>. CLOCK_MONOTONIC is
+// machine-wide, so leader and follower processes on one host share a
+// timeline. No Raft decision reads anything here.
+//
+// Stages: 0 enqueued to the submit queue, 1 Submit began, 2 Start returned,
+// 3 leader about to send the append covering the index, 4 sent, 5 follower
+// handler began, 6 follower accepted, 7 leader got the success reply,
+// 8 commit advanced past it, 9 queued for apply, 10 popped by the apply
+// thread, 11 RaftWorker::Next (the application callback).
+// ---------------------------------------------------------------------------
+namespace {
+constexpr int kTraceStages = 12;
+constexpr uint64_t kTraceSlots = 1u << 19;
+struct TraceRow { std::atomic<uint64_t> t[kTraceStages]; std::atomic<uint64_t> idx; };
+TraceRow* g_trace = nullptr;
+std::atomic<uint64_t> g_trace_hw[kTraceStages];
+// -1 not yet read, 0 off, 1 on.
+std::atomic<int> g_trace_state{-1};
+std::once_flag g_trace_once;
+std::string g_trace_path;
+
+uint64_t trace_clock_us() {
+  timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return static_cast<uint64_t>(ts.tv_sec) * 1000000ull + static_cast<uint64_t>(ts.tv_nsec) / 1000;
+}
+void trace_dump() {
+  if (!g_trace) return;
+  std::string path = g_trace_path + "." + std::to_string(getpid());
+  FILE* f = std::fopen(path.c_str(), "w");
+  if (!f) return;
+  std::fprintf(f, "idx");
+  for (int s = 0; s < kTraceStages; ++s) std::fprintf(f, ",s%d", s);
+  std::fprintf(f, "\n");
+  for (uint64_t i = 0; i < kTraceSlots; ++i) {
+    uint64_t idx = g_trace[i].idx.load();
+    if (idx == 0) continue;
+    std::fprintf(f, "%llu", static_cast<unsigned long long>(idx));
+    for (int s = 0; s < kTraceStages; ++s)
+      std::fprintf(f, ",%llu", static_cast<unsigned long long>(g_trace[i].t[s].load()));
+    std::fprintf(f, "\n");
+  }
+  std::fclose(f);
+}
+bool trace_on() {
+  const int state = g_trace_state.load(std::memory_order_acquire);
+  if (state >= 0) return state == 1;
+  std::call_once(g_trace_once, [] {
+    const char* p = std::getenv("MAKO_RAFT_TRACE_FILE");
+    if (p && *p) {
+      g_trace_path = p;
+      g_trace = new TraceRow[kTraceSlots]();
+      std::atexit(trace_dump);
+      // The launcher stops followers with SIGTERM, which skips atexit.
+      signal(SIGTERM, [](int) { trace_dump(); std::_Exit(0); });
+      g_trace_state.store(1, std::memory_order_release);
+    } else {
+      g_trace_state.store(0, std::memory_order_release);
+    }
+  });
+  return g_trace_state.load(std::memory_order_acquire) == 1;
+}
+void trace_set(int stage, uint64_t idx, uint64_t t) {
+  TraceRow& r = g_trace[idx & (kTraceSlots - 1)];
+  if (r.idx.load(std::memory_order_relaxed) != idx) {
+    for (int s = 0; s < kTraceStages; ++s) r.t[s].store(0, std::memory_order_relaxed);
+    r.idx.store(idx, std::memory_order_relaxed);
+  }
+  uint64_t zero = 0;
+  r.t[stage].compare_exchange_strong(zero, t, std::memory_order_relaxed);
+}
+}  // namespace
+
+// Stamp `stage` for one index (first write wins); t_us 0 means now.
+extern "C" void raft_trace_at(int32_t stage, uint64_t idx, uint64_t t_us) {
+  if (!trace_on() || idx == 0 || stage < 0 || stage >= kTraceStages) return;
+  trace_set(stage, idx, t_us ? t_us : trace_clock_us());
+}
+// Stamp `stage` for every index in (high-water, through], now or at t_us.
+extern "C" void raft_trace_through(int32_t stage, uint64_t through, uint64_t t_us) {
+  if (!trace_on() || stage < 0 || stage >= kTraceStages) return;
+  uint64_t t = t_us ? t_us : trace_clock_us();
+  uint64_t hw = g_trace_hw[stage].load(std::memory_order_relaxed);
+  while (through > hw &&
+         !g_trace_hw[stage].compare_exchange_weak(hw, through, std::memory_order_relaxed)) {}
+  if (through <= hw) return;
+  uint64_t from = hw + 1;
+  if (through - from > 4096) from = through - 4096;
+  for (uint64_t i = from; i <= through; ++i) trace_set(stage, i, t);
+}
+// The clock for a stamp taken before its index is known; 0 (no clock read)
+// when tracing is off.
+extern "C" uint64_t raft_trace_now_us() { return trace_on() ? trace_clock_us() : 0; }
+// Whether MAKO_RAFT_TRACE_FILE is set; raft_lane_rust.cc installs the Rust
+// lane's hooks (rt/src/trace.rs) only then.
+extern "C" bool raft_trace_enabled() { return trace_on(); }

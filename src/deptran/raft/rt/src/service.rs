@@ -117,6 +117,7 @@ impl RaftHandler for RaftRpcService {
     // to C++'s decoder: no copy on the Rust side.
     fn append_entries(&self, req: &AppendEntriesRequestRef<'_>)
         -> Result<AppendEntriesResponse, i32> {
+        let trace_t0 = crate::trace::now_us();  // [M0] trace kit
         let mut resp = AppendEntriesResponse::default();
         let mut cmd: rusty::RaftCommand = Default::default();
         let decoded = unsafe {
@@ -130,6 +131,10 @@ impl RaftHandler for RaftRpcService {
             req.leader_prev_log_term, req.leader_commit_index, &cmd,
             req.leader_next_log_term, &raw mut resp.follower_append_ok,
             &raw mut resp.follower_current_term, &raw mut resp.follower_last_log_index);
+        if resp.follower_append_ok != 0 {  // [M0] trace kit
+            crate::trace::through(5, resp.follower_last_log_index, trace_t0);
+            crate::trace::through(6, resp.follower_last_log_index, 0);
+        }
         Ok(resp)
     }
 

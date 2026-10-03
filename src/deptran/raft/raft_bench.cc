@@ -124,6 +124,53 @@ uint64_t now_us() {
 }
 
 // ---------------------------------------------------------------------------
+// [M0] Failover timing (--failover-out; point G7 of
+// docs/verus/modification-plan.md §6). Inert unless the flag is given: the
+// apply callback then pays one relaxed load per stamped seq-0 entry.
+//
+// Stamps are CLOCK_REALTIME microseconds, the clock the launcher's
+// `date +%s%N` reads (divided by 1000) when it kills the leader, so all three compare across
+// the processes of one host. A survivor arms itself when it settles as a
+// follower. If it later becomes leader it stamps new_leader_us in the
+// leadership callback, proposes probes tagged with kFailoverTag after the
+// header, and stamps first_commit_us when one is applied. Probes carry
+// sequence 0, which the integrity check already counts apart.
+// ---------------------------------------------------------------------------
+constexpr char kFailoverTag[8] = {'F', 'A', 'I', 'L', 'O', 'V', 'E', 'R'};
+constexpr int kFailoverTagBytes = static_cast<int>(sizeof(kFailoverTag));
+std::atomic<bool> g_failover_armed{false};
+std::atomic<uint64_t> g_failover_new_leader_us{0};
+std::atomic<uint64_t> g_failover_first_commit_us{0};
+
+// @safe - wall-clock read
+uint64_t realtime_us() {
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::microseconds>(
+          std::chrono::system_clock::now().time_since_epoch())
+          .count());
+}
+
+// @safe - first stamp wins
+void stamp_once(std::atomic<uint64_t>* slot) {
+  uint64_t zero = 0;
+  slot->compare_exchange_strong(zero, realtime_us());
+}
+
+// @unsafe { stdio }
+void write_failover_record(const std::string& path, const std::string& proc) {
+  FILE* f = std::fopen(path.c_str(), "w");
+  if (f == nullptr) {
+    std::fprintf(stderr, "raft_bench: cannot write %s\n", path.c_str());
+    return;
+  }
+  std::fprintf(f, "{\"proc\": \"%s\", \"new_leader_us\": %llu, \"first_commit_us\": %llu}\n",
+               proc.c_str(),
+               static_cast<unsigned long long>(g_failover_new_leader_us.load()),
+               static_cast<unsigned long long>(g_failover_first_commit_us.load()));
+  std::fclose(f);
+}
+
+// ---------------------------------------------------------------------------
 // Options
 // ---------------------------------------------------------------------------
 
@@ -163,6 +210,9 @@ struct Options {
   std::string side_out{};
   // Directory shared with the launcher for the stall catch-up handshake.
   std::string catchup_dir{};
+  // [M0] Failover timing record (G7): where a survivor that becomes leader
+  // after the launcher kills the old one writes its two stamps. Empty = off.
+  std::string failover_out{};
 };
 
 // @safe - pure text
@@ -209,6 +259,8 @@ void usage(const char* argv0) {
       "                         Snapshots then run when MAKO_RAFT_SNAPSHOTS=1.\n"
       "  --side-out PATH        write this replica's side record (every role)\n"
       "  --catchup-dir DIR      stall catch-up handshake directory (launcher)\n"
+      "  --failover-out PATH    leader-kill runs: if this follower becomes leader,\n"
+      "                         time it and its first commit (launcher)\n"
       "  --help\n",
       argv0, kHeaderBytes);
 }
@@ -234,6 +286,7 @@ enum LongOpt {
   kOptSnapshotBytes,
   kOptSideOut,
   kOptCatchupDir,
+  kOptFailoverOut,
   kOptHelp,
 };
 
@@ -260,6 +313,7 @@ bool parse_options(int argc, char** argv, Options* opt) {
       {"snapshot-bytes", required_argument, nullptr, kOptSnapshotBytes},
       {"side-out", required_argument, nullptr, kOptSideOut},
       {"catchup-dir", required_argument, nullptr, kOptCatchupDir},
+      {"failover-out", required_argument, nullptr, kOptFailoverOut},
       {"help", no_argument, nullptr, kOptHelp},
       {nullptr, 0, nullptr, 0},
   };
@@ -288,6 +342,7 @@ bool parse_options(int argc, char** argv, Options* opt) {
       case kOptSnapshotBytes: opt->snapshot_bytes = std::atoll(optarg); break;
       case kOptSideOut: opt->side_out = optarg; break;
       case kOptCatchupDir: opt->catchup_dir = optarg; break;
+      case kOptFailoverOut: opt->failover_out = optarg; break;
       case kOptGroupMode: opt->group_mode = optarg; break;
       case kOptLabel: opt->label = optarg; break;
       case kOptFollowerLinger: opt->follower_linger_sec = std::atof(optarg); break;
@@ -310,6 +365,11 @@ bool parse_options(int argc, char** argv, Options* opt) {
   }
   if (opt->batch < 1) {
     std::fprintf(stderr, "raft_bench: --batch must be >= 1\n");
+    return false;
+  }
+  if (!opt->failover_out.empty() && opt->payload_bytes < kHeaderBytes + kFailoverTagBytes) {
+    std::fprintf(stderr, "raft_bench: --failover-out needs --payload-bytes >= %d\n",
+                 kHeaderBytes + kFailoverTagBytes);
     return false;
   }
   if (opt->duration_sec <= 0.0) {
@@ -1360,6 +1420,9 @@ int main(int argc, char** argv) {
   std::atomic<int> leadership_notifications{0};
   // @unsafe
   register_leader_election_callback([&opt, &leadership_notifications](int control) {
+    if (control == 1 && g_failover_armed.load(std::memory_order_acquire)) {
+      stamp_once(&g_failover_new_leader_us);  // [M0] G7
+    }
     leadership_notifications.fetch_add(1, std::memory_order_relaxed);
     std::printf("[raft_bench:%s] leadership notification: %s\n", opt.proc_name.c_str(),
                 control == 1 ? "became leader" : "lost leadership");
@@ -1392,7 +1455,13 @@ int main(int argc, char** argv) {
         st->end_markers.fetch_add(1, std::memory_order_relaxed);
       } else if (len >= kHeaderBytes && log != nullptr &&
                  std::memcmp(log, kMagic, static_cast<size_t>(kMagicBytes)) == 0) {
-        check_sequence(st, read_fixed_decimal(log + kMagicBytes, kSeqBytes));
+        const uint64_t seq = read_fixed_decimal(log + kMagicBytes, kSeqBytes);
+        check_sequence(st, seq);
+        if (seq == 0 && g_failover_armed.load(std::memory_order_relaxed) &&
+            len >= kHeaderBytes + kFailoverTagBytes &&
+            std::memcmp(log + kHeaderBytes, kFailoverTag, sizeof(kFailoverTag)) == 0) {
+          stamp_once(&g_failover_first_commit_us);  // [M0] G7
+        }
         const uint64_t stamp =
             read_fixed_decimal(log + kMagicBytes + kSeqBytes, kStampBytes);
         const uint64_t latency_us = apply_us > stamp ? apply_us - stamp : 0;
@@ -1567,6 +1636,17 @@ int main(int argc, char** argv) {
     std::printf("[raft_bench:%s] serving as follower for up to %.0fs\n",
                 opt.proc_name.c_str(), budget_sec);
     std::fflush(stdout);
+    // [M0] G7: arm the failover stamps now that this process is a follower,
+    // so only a leadership won after this point counts.
+    const bool failover = !opt.failover_out.empty();
+    bool failover_done = false;
+    uint64_t failover_next_probe_us = 0;
+    std::vector<char> failover_probe;
+    if (failover) {
+      failover_probe = probe;
+      std::memcpy(failover_probe.data() + kHeaderBytes, kFailoverTag, sizeof(kFailoverTag));
+      g_failover_armed.store(true, std::memory_order_release);
+    }
     while (now_us() < deadline_us) {
       int seen = 0;
       for (auto& st : state) {
@@ -1577,7 +1657,37 @@ int main(int argc, char** argv) {
       if (seen >= partitions) {
         break;
       }
-      std::this_thread::sleep_for(std::chrono::milliseconds(250));
+      if (failover && !failover_done &&
+          g_failover_new_leader_us.load(std::memory_order_acquire) != 0) {
+        if (g_failover_first_commit_us.load(std::memory_order_acquire) != 0) {
+          // Record, then end the run for every survivor: the old leader's end
+          // markers will never come.
+          write_failover_record(opt.failover_out, opt.proc_name);
+          for (int i = 0; i < partitions; ++i) {
+            // @unsafe
+            add_log_to_nc("", 0, static_cast<uint32_t>(i), 1);
+          }
+          failover_done = true;
+        } else if (now_us() >= failover_next_probe_us) {
+          // A tagged probe per partition, accounted like the leadership
+          // probes above; resent every 20 ms until one is applied.
+          for (int i = 0; i < partitions; ++i) {
+            write_fixed_decimal(failover_probe.data() + kMagicBytes, kSeqBytes, 0);
+            write_fixed_decimal(failover_probe.data() + kMagicBytes + kSeqBytes, kStampBytes,
+                                now_us());
+            state[static_cast<size_t>(i)].in_flight.fetch_add(1, std::memory_order_relaxed);
+            // @unsafe
+            if (add_log_to_nc(failover_probe.data(), opt.payload_bytes,
+                              static_cast<uint32_t>(i), 1)) {
+              state[static_cast<size_t>(i)].offered_total.fetch_add(1, std::memory_order_relaxed);
+            } else {
+              state[static_cast<size_t>(i)].in_flight.fetch_sub(1, std::memory_order_relaxed);
+            }
+          }
+          failover_next_probe_us = now_us() + 20000;
+        }
+      }
+      std::this_thread::sleep_for(std::chrono::milliseconds(failover ? 1 : 250));
     }
     // Let any straggling apply work land before tearing the transport down.
     std::this_thread::sleep_for(

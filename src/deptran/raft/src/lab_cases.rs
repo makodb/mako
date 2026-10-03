@@ -28,10 +28,12 @@ pub fn init(test_id: i32, description: &str) {
 }
 
 pub fn failed(msg: &str) {
+    lab::dump_commit_log();  // [M0] inert unless MAKO_RAFT_LAB_COMMIT_LOG=1
     eprintln!("TEST {} Failed: {}", TEST_ID.load(Ordering::Relaxed), msg);
 }
 
 pub fn passed() {
+    lab::dump_commit_log();  // [M0] inert unless MAKO_RAFT_LAB_COMMIT_LOG=1
     eprintln!("TEST {} Passed", TEST_ID.load(Ordering::Relaxed));
 }
 

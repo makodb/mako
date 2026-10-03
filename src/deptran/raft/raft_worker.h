@@ -95,6 +95,7 @@ private:
   struct PendingLog {
     std::string payload;
     uint32_t par_id;
+    uint64_t enq_us = 0;  // [M0] trace kit: enqueue stamp, 0 when off
   };
   std::deque<PendingLog> submit_queue_;
   std::mutex submit_mutex_;

@@ -478,6 +478,7 @@ use crate::server_h::RaftLockGuard;
 unsafe extern "C" {
     fn raft_monotonic_now_us() -> u64;
     fn raft_fiber_sleep_us(micros: u64);
+    fn raft_trace_through(stage: i32, through: u64, t_us: u64);  // [M0] trace kit
     fn raft_append_response_read(response: *const rusty::RaftResponsePtr)
         -> AppendRespView;
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
@@ -662,6 +663,7 @@ pub fn raft_commit_advance(
     }
     let from = consensus.commit_index_;
     consensus.commit_index_ = candidate_index;
+    unsafe { raft_trace_through(8, candidate_index, 0) };  // [M0] trace kit
     CommitAdvance { advanced_: true, from_: from, to_: candidate_index }
 }
 
@@ -1228,6 +1230,7 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
 
         let is_leader: bool = server.IsLeader();
         let mut sent_response: rusty::RaftResponsePtr = Default::default();
+        unsafe { raft_trace_through(3, sent_end_index, 0) };  // [M0] trace kit
         unsafe {
             raft_phase1_send_append(
                 server.handle(), server.site_id_, site_id,
@@ -1237,6 +1240,7 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
                 &cmd as *const rusty::RaftCommand, cmd_log_term,
                 &mut sent_response as *mut rusty::RaftResponsePtr);
         }
+        unsafe { raft_trace_through(4, sent_end_index, 0) };  // [M0] trace kit
 
         pending_rpcs.place(ord, PendingAppend::new(
             site_id, round.term(), round.round_id(), sent_end_index,
