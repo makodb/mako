@@ -561,7 +561,7 @@ impl RaftTransport {
                           req: &VoteRequest) -> VoteTally {
         let n = self.partition_size(par_id);
         let tally = VoteTally::new(n);
-        for (_site, client) in self.peers_in_partition(par_id, self_site_id) {
+        for (site, client) in self.peers_in_partition(par_id, self_site_id) {
             let sink = tally.state.clone();
             let proxy = RaftProxy { client: &client };
             let sent = proxy.vote_async(
@@ -578,7 +578,9 @@ impl RaftTransport {
                         return;
                     };
                     if let Ok(mut guard) = sink.lock() {
-                        guard.feed(reply.vote_granted != 0, reply.max_ballot);
+                        // [fix, F1] attributed to the peer this callback was
+                        // created for, so a reply delivered twice counts once.
+                        guard.feed(site, reply.vote_granted != 0, reply.max_ballot);
                     }
                 })),
             );
@@ -602,12 +604,23 @@ struct TallyState {
     yes: usize,
     no: usize,
     highest_term: i64,
+    // [fix, F1] The voters already counted in this campaign: each counts at
+    // most once, however many times its reply is delivered. A campaign is
+    // one broadcast at one term, so per-campaign is per-campaign-term.
+    voters: Vec<u16>,
 }
 
 impl TallyState {
     /// RaftVoteQuorumEvent::FeedResponse: a non-negative reply term that is
-    /// higher than any seen advances the term, then the vote counts.
-    fn feed(&mut self, granted: bool, term: i64) {
+    /// higher than any seen advances the term, then the vote counts -- once
+    /// per voter ([fix, F1]: the C++ event, and this tally before it, counted
+    /// replies, so one reply delivered twice would have counted twice).
+    fn feed(&mut self, voter: u16, granted: bool, term: i64) {
+        // [fix, F1] a repeated reply carries nothing new
+        if self.voters.contains(&voter) {
+            return;
+        }
+        self.voters.push(voter);
         if term >= 0 && term > self.highest_term {
             self.highest_term = term;
         }
@@ -643,6 +656,7 @@ impl VoteTally {
                 yes: 0,
                 no: 0,
                 highest_term: 0,
+                voters: Vec::new(),  // [fix, F1]
             })),
         }
     }
@@ -932,12 +946,42 @@ pub unsafe extern "C" fn raft_transport_delete(t: *mut RaftTransport) {
 mod tests {
     use super::*;
 
+    // Each listed reply comes from a different peer (sites 1, 2, ...).
     fn fed(n: usize, votes: &[(bool, i64)]) -> VoteTally {
         let tally = VoteTally::new(n);
-        for (granted, term) in votes {
-            tally.state.lock().unwrap().feed(*granted, *term);
+        for (i, (granted, term)) in votes.iter().enumerate() {
+            tally.state.lock().unwrap().feed(i as u16 + 1, *granted, *term);
         }
         tally
+    }
+
+    #[test]
+    fn a_stale_term_reply_is_counted_as_cast() {
+        // Pinned, not endorsed: the tally does not compare a reply's term
+        // with the campaign's, so a grant below the campaign term counts.
+        // A correct voter cannot send one -- it adopts the candidate's term
+        // before granting, and refuses at its own higher term otherwise --
+        // and each campaign has its own tally, so an earlier campaign's late
+        // reply never reaches this one.
+        let tally = VoteTally::new(3);
+        tally.state.lock().unwrap().feed(2, true, 1);
+        assert!(tally.decided());
+        assert!(tally.outcome(false).yes_);
+        assert_eq!(tally.outcome(false).term_, 1);
+    }
+
+    #[test]
+    fn a_repeated_reply_counts_once() {
+        // [fix, F1] Five replicas need two granted peer votes. One peer's
+        // grant delivered twice is still one vote.
+        let tally = VoteTally::new(5);
+        tally.state.lock().unwrap().feed(2, true, 4);
+        tally.state.lock().unwrap().feed(2, true, 4);
+        assert!(!tally.decided(), "one voter, counted twice, must not make a quorum");
+        assert_eq!(tally.outcome(false).n_voted_yes_, 1);
+        tally.state.lock().unwrap().feed(3, true, 4);
+        assert!(tally.decided());
+        assert!(tally.outcome(false).yes_);
     }
 
     #[test]
