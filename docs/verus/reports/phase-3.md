@@ -34,7 +34,26 @@ Three lanes (`$RESULTS/p3/tier1/`), first attempt, no retries:
 
 ## 3. Performance checkpoint (plan 0.10)
 
-(filled in when the run ends)
+`build_rust_base` (`verus-p0`) against `build_rust` (`25aacb728`), alternated
+round by round on a quiet machine (load 0.5 at the start), rounds and bounds
+from [../gate-params.md](../gate-params.md) (`$RESULTS/p3/`):
+
+| Point | What | Median (Phase 3 vs Phase 0) | Bound | Sign test p | Verdict |
+|---|---|---|---|---|---|
+| G1 | 4 KB at 240/s, latency (10 rounds) | p50 +0.15%, p99 +0.74% | +2%, +5% | 0.754, 0.344 | pass |
+| G2 | 4 KB unthrottled, throughput (25) | **−5.46%** (Phase 3 lower in 18 of 25) | −5.4% | **0.043** | **FAIL** |
+| G3 | 286 KB × 6 partitions at 190/s, latency (25) | p50 +0.36%, p99 +0.88% | +2.4%, +6% | 0.690, 0.108 | pass |
+| G4 | 286 KB × 6 partitions unthrottled, throughput (11) | −0.61% | −2% | 0.549 | pass |
+| G5 | 1 MiB at 55/s, latency (20) | p50 −0.30%, p99 +0.09% | +2%, +5% | 0.824, 1.000 | pass |
+| G6 | 1 MiB unthrottled, throughput (12) | −0.46% | −2% | 1.000 | pass |
+| G7 | leader killed, 20 per build | new leader median +3.5%, p90 +4.1%; first commit the same | 10%, 10.2% | MWU 0.308, 0.299 | pass |
+
+**G2 fails**: small-entry maximum throughput is 5.46% lower, just past the
+widened bound and significant at p = 0.043. Nothing else moved: the
+production shape (G3, G4) and large entries (G5, G6) are within noise. Per
+plan 0.7 point 2 forward progress stops here (Phase 4 waits); the
+investigation follows, measurement only (0.6), starting with G2 on the
+phase-end commits since the last checkpoint (0.10). Section 3.1 records it.
 
 ## 4. Equivalence
 
