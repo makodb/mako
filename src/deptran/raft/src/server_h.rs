@@ -1,7 +1,7 @@
 // The Raft server. rustc compiles this into libraft.a; nothing here is
 // transpiled, so edit it directly.
 
-use crate::server_pods_h::{RaftElectionTimeouts, RaftServerHandle, RaftVoteOutcome};
+use crate::server_pods_h::{RaftElectionTimeouts, RaftServerHandle};
 // [move, M1] for the authority ledger, which moved here from server_cc.rs
 use crate::quorum_hpp::raft_quorum_count_reached;
 use crate::quorum_hpp::raft_quorum_majority_count;
@@ -1588,6 +1588,7 @@ pub enum TimerResetReason {
     STEP_DOWN = 1,
     GRANTED_VOTE = 2,
     APPEND_ENTRIES = 3,
+    STARTING_CAMPAIGN = 4,  // [move, M5]
 }
 
 pub struct CoreAction {
@@ -1685,6 +1686,90 @@ impl CoreOutput {
 
     pub fn at(&self, i: usize) -> &CoreAction {
         &self.actions_[i]
+    }
+}
+
+// [move, M5] One campaign's outcome as the core counted it: the fields
+// raft_vote_quorum_snapshot used to read out of the lane's quorum object,
+// field for field.
+pub struct VoteOutcome {
+    pub term_: i64,
+    pub yes_: bool,
+    pub no_: bool,
+    pub n_voted_yes_: i32,
+    pub n_voted_no_: i32,
+    pub timeouted_: bool,
+}
+
+// [move, M5] One campaign's votes, counted by the core with the rule both
+// lanes' tallies use (RaftVoteQuorumEvent, raft-rt's TallyState): yes once
+// the peer yes votes reach n/2, no once the peer no votes exceed n - n/2
+// (the off-by-one bugs-found B1 records, kept for lane parity). Each voter
+// counts once ([fix, F1], now on every lane), and a reply term that is
+// non-negative and higher than any seen is kept, as FeedResponse did.
+pub struct VoteSet {
+    voters_: SiteSet,
+    yes_: u64,
+    no_: u64,
+    highest_term_: i64,
+}
+
+#[allow(clippy::new_without_default)]
+impl VoteSet {
+    pub fn new() -> VoteSet {
+        VoteSet { voters_: SiteSet::new(), yes_: 0, no_: 0, highest_term_: 0 }
+    }
+
+    pub fn feed(&mut self, voter: u16, granted: bool, term: i64) {
+        if !self.voters_.insert(voter) {
+            return;
+        }
+        if term >= 0 && term > self.highest_term_ {
+            self.highest_term_ = term;
+        }
+        if granted {
+            self.yes_ += 1;
+        } else {
+            self.no_ += 1;
+        }
+    }
+
+    // `n_total` is the configured partition size, self included, as the
+    // lane counted it.
+    pub fn outcome(&self, n_total: u64, timed_out: bool) -> VoteOutcome {
+        let quorum: u64 = n_total / 2;
+        VoteOutcome {
+            term_: self.highest_term_,
+            yes_: self.yes_ >= quorum,
+            no_: self.no_ > n_total - quorum,
+            n_voted_yes_: self.yes_ as i32,
+            n_voted_no_: self.no_ as i32,
+            timeouted_: timed_out,
+        }
+    }
+}
+
+// [move, M5] What start_election decided: whether the campaign starts, and
+// the values the broadcast and its log line need.
+pub struct CampaignStart {
+    pub started_: bool,
+    pub term_: u64,
+    pub prev_term_: u64,
+    pub prev_vote_for_: u16,
+    pub lst_idx_: u64,
+    pub lst_term_: i64,
+}
+
+impl CampaignStart {
+    pub fn not_started() -> CampaignStart {
+        CampaignStart {
+            started_: false,
+            term_: 0,
+            prev_term_: 0,
+            prev_vote_for_: RAFT_SERVER_INVALID_SITE_ID,
+            lst_idx_: 0,
+            lst_term_: 0,
+        }
     }
 }
 
@@ -2008,6 +2093,220 @@ impl RaftCore {
             }
             // doVote runs only from OnRequestVote, which holds mtx_.
             out.push(CoreAction::reset_election(TimerResetReason::GRANTED_VOTE));  // [move, M3]
+        }
+    }
+
+    // [move, M5] RequestVoteImpl's first critical section as a core call: the
+    // campaign's admission and its start. The caller holds mtx_ and passes
+    // stop_ and the clock (`now`, read where the timer check read it).
+    // `started_` is false when the campaign does not start.
+    pub fn start_election(&mut self, timer_guarded: bool,
+                          expected_generation: u64, now: u64, stopped: bool,
+                          out: &mut CoreOutput) -> CampaignStart {
+        let mut campaign: CampaignStart = CampaignStart::not_started();
+        if stopped {
+            self.req_voting_ = false;
+            return campaign;
+        }
+        // This is the sole campaign admission point. Entrants can overlap
+        // while one of them is yielding, so a caller must NOT reserve
+        // req_voting_ before entering this critical section.
+        if !raft_server_campaign_can_start(self.is_leader_,
+                                           self.election_in_progress_)
+        {
+            return campaign;
+        }
+        if timer_guarded {
+            let elapsed: u64 = now - self.last_heartbeat_time_;
+            if !raft_server_timer_campaign_is_current(
+                self.is_leader_, expected_generation,
+                self.election_timer_generation_, elapsed,
+                self.election_timeout_us_)
+            {
+                return campaign;
+            }
+        }
+
+        // A campaign owns a fresh, latched timeout. If it loses without
+        // hearing from a leader, the next campaign waits out this whole
+        // interval instead of reusing the already-expired deadline.
+        out.push(CoreAction::reset_election(TimerResetReason::STARTING_CAMPAIGN));
+        campaign.prev_term_ = self.current_term_;
+        campaign.prev_vote_for_ = self.vote_for_;
+        let prev_local_term: u64 = self.current_term_;
+        self.current_term_ += 1;
+        // Vote for ourselves.
+        self.vote_for_ = self.site_id_;
+        // A candidate has no elected-leader evidence in its new term; in
+        // particular it must not redirect clients to the leader of the term
+        // it just left.
+        self.current_leader_id_ = raft_server_leader_hint_after_transition(
+            false, false, self.site_id_, self.current_leader_id_);
+
+        // Publish ownership of req_voting_ and the election term before
+        // broadcasting, so no second caller can campaign concurrently.
+        self.election_in_progress_ = true;
+        // election_term_ is ballot_t (int64_t) and current_term_ is
+        // uint64_t; the C++ assigned across that implicitly.
+        self.election_term_ = self.current_term_ as i64;
+        self.req_voting_ = true;
+        campaign.term_ = self.current_term_;
+
+        let now_term: u64 = self.current_term_;
+        self.log_term_change("starting election", prev_local_term, now_term,
+                             RAFT_SERVER_INVALID_SITE_ID);
+        campaign.lst_idx_ = self.raft_log_.last_index();
+        campaign.lst_term_ = self.election_last_log_term();
+        campaign.started_ = true;
+        campaign
+    }
+
+    // [move, M5] RequestVoteImpl's second critical section as a core call:
+    // the campaign settled from the replies its wait gathered, counted here
+    // (VoteSet). The caller holds mtx_ and passes what the shell holds:
+    // stop_, looping_, failover_, raft_election_debug_enabled(), and the
+    // lane's quorum size and timeout.
+    #[allow(clippy::too_many_arguments)]
+    pub fn election_settle(&mut self, term: u64, loc_id: u32, voters: &[u16],
+                           granted: &[bool], reply_terms: &[i64],
+                           n_total: u64, timed_out: bool, stopped: bool,
+                           looping: bool, failover: bool,
+                           election_debug: bool,
+                           out: &mut CoreOutput) -> bool {
+        if stopped {
+            self.election_in_progress_ = false;
+            self.req_voting_ = false;
+            return false;
+        }
+        // A higher term dominates every outcome, TIMEOUT and a concurrently
+        // completed YES quorum included. FeedResponse publishes that maximum
+        // before its wakeup, so it is snapshotted only now, after Raft state
+        // has been reacquired.
+        // [move, M5] The tally, counted here from the campaign's replies
+        // rather than read out of the lane's quorum object.
+        let mut votes: VoteSet = VoteSet::new();
+        let mut r: usize = 0;
+        while r < voters.len() {
+            votes.feed(voters[r], granted[r], reply_terms[r]);
+            r += 1;
+        }
+        let outcome: VoteOutcome = votes.outcome(n_total, timed_out);
+        let observed_response_term: i64 = outcome.term_;
+        let completion_action: i32 = raft_server_election_completion_action(
+            self.election_in_progress_,
+            self.election_term_ as u64, term, self.current_term_,
+            observed_response_term);
+
+        if completion_action == ElectionCompletionAction::ADVANCE_HIGHER_TERM as i32 {
+            let previous_term: u64 = self.current_term_;
+            self.current_term_ = observed_response_term as u64;
+            self.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+            self.current_leader_id_ =
+                raft_server_leader_hint_after_transition(
+                    false, false, self.site_id_, self.current_leader_id_);
+
+            if self.is_leader_ {
+                self.step_down(stopped, failover, out);  // [move, M3]
+            } else {
+                self.set_is_leader(false, stopped, failover, out);  // [move, M3]
+            }
+            self.election_in_progress_ = false;
+            self.req_voting_ = false;
+
+            self.log_term_change("observed higher term from RequestVote replies",
+                               previous_term, self.current_term_,
+                               RAFT_SERVER_INVALID_SITE_ID);
+            return false;
+        }
+
+        // An accepted leader RPC can cancel this campaign while the broadcast
+        // is yielding, and another campaign can begin before this result
+        // arrives. Only the exact active term owns role changes and election
+        // bookkeeping. A strictly higher response term was handled above,
+        // because that evidence supersedes even a newer local campaign.
+        if completion_action == ElectionCompletionAction::IGNORE_STALE as i32 {
+            if election_debug {
+                rusty::raft_log_info_5(
+                    "[RAFT_ELECTION] server {} ignoring stale election result: result_term={} local_term={} election_term={} active={}",
+                    self.site_id_, term, self.current_term_,
+                    self.election_term_,
+                    self.election_in_progress_);
+            }
+            return false;
+        }
+        assert!(completion_action
+            == ElectionCompletionAction::APPLY_CURRENT as i32);  // [move, M10]
+        if election_debug {
+            rusty::raft_log_info_6(
+                "[RAFT_ELECTION] server {} term {} vote outcome yes={} no={} highest_term_seen={} timeout={}",
+                self.site_id_, term, outcome.n_voted_yes_, outcome.n_voted_no_,
+                outcome.term_, outcome.timeouted_);
+        }
+
+        if outcome.yes_ {
+            assert!(self.current_term_ >= term);  // [move, M10]
+            self.election_in_progress_ = false;
+            self.req_voting_ = false;
+
+            if stopped
+                || self.current_term_ != term
+            {
+                self.req_voting_ = false;
+                return false;
+            }
+
+            self.set_is_leader(true, stopped, failover, out);  // [move, M3]
+            rusty::raft_log_debug_2("site {} became leader for term {}",
+                                    self.site_id_, term);
+            if election_debug {
+                rusty::raft_log_info_4(
+                    "[RAFT_ELECTION] server {} won election term {} (votes yes={} no={})",
+                    self.site_id_, term, outcome.n_voted_yes_,
+                    outcome.n_voted_no_);
+            }
+
+            if looping && self.is_leader_ {  // IsLeaderLocked
+                rusty::raft_log_debug_2("vote accepted {} curterm {}",
+                                        loc_id, self.current_term_);
+                self.req_voting_ = false;
+                true
+            } else {
+                rusty::raft_log_debug_2("vote rejected {} curterm {}, do rollback",
+                                        loc_id, self.current_term_);
+                    self.set_is_leader(false, stopped, failover, out);  // [move, M3]
+                false
+            }
+        } else if outcome.no_ {
+            rusty::raft_log_debug_1("site {} requestvote rejected", self.site_id_);
+            self.set_is_leader(false, stopped, failover, out);  // [move, M3]
+            if election_debug {
+                rusty::raft_log_info_5(
+                    "[RAFT_ELECTION] server {} lost election term {} (yes={} no={}) highest_term={}",
+                    self.site_id_, term, outcome.n_voted_yes_,
+                    outcome.n_voted_no_, outcome.term_);
+            }
+            if self.election_in_progress_
+                && self.election_term_ == term as i64
+            {
+                self.election_in_progress_ = false;
+            }
+            self.req_voting_ = false;
+            false
+        } else {
+            rusty::raft_log_debug_1("vote timeout {}", loc_id);
+            if election_debug {
+                rusty::raft_log_info_4(
+                    "[RAFT_ELECTION] server {} election timed out term {} (yes={} no={})",
+                    self.site_id_, term, outcome.n_voted_yes_,
+                    outcome.n_voted_no_);
+            }
+            if self.election_in_progress_
+                && self.election_term_ == term as i64
+            {
+                self.election_in_progress_ = false;
+            }
+            self.req_voting_ = false;
+            false
         }
     }
 
@@ -2653,8 +2952,15 @@ unsafe extern "C" {
                                     last_log_index: u64, last_log_term: i64,
                                     self_site_id: u16, term: i64,
                                     out: *mut rusty::RaftVoteQuorumPtr);
-    fn raft_vote_quorum_snapshot(quorum: *const rusty::RaftVoteQuorumPtr)
-        -> RaftVoteOutcome;
+    // [move, M5] A finished campaign's replies, as the lane's wait gathered
+    // them, for the core's own count; with the quorum size and timeout the
+    // lane used.
+    fn raft_vote_quorum_size(quorum: *const rusty::RaftVoteQuorumPtr) -> u64;
+    fn raft_vote_quorum_timed_out(quorum: *const rusty::RaftVoteQuorumPtr) -> bool;
+    fn raft_vote_quorum_reply_count(quorum: *const rusty::RaftVoteQuorumPtr) -> u64;
+    fn raft_vote_quorum_reply_at(quorum: *const rusty::RaftVoteQuorumPtr, i: u64,
+                                 voter: *mut u16, granted: *mut bool,
+                                 term: *mut i64) -> bool;
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
     // [move, M6] has_value, is_tpc_commit, kind and payload_bytes in one call
     fn raft_command_meta(cmd: *const rusty::RaftCommand, has_value: *mut bool,
@@ -3166,20 +3472,9 @@ impl RaftServerBase {
     // so the Rust loop can branch on copies after the lock is released.
     pub fn ElectionLoopGather(&mut self) -> ElectionTick {
         let _lock = RaftLockGuard::new(&mut self.mtx_);
+        // [move, M4] the clock read, then the core's gather ([move, M5])
         let time_now: u64 = unsafe { raft_time_now_us() };
-        let heartbeat_time: u64 = self.core.last_heartbeat_time_;
-        let time_elapsed: u64 = time_now - heartbeat_time;
-        let election_timeout: u64 = self.core.election_timeout_us_;
-        ElectionTick::new(
-            time_elapsed,
-            election_timeout,
-            heartbeat_time,
-            self.core.election_timer_generation_,
-            self.core.current_term_,
-            self.core.vote_for_,
-            raft_server_election_timeout_has_fired(
-                self.core.is_leader_, time_elapsed, election_timeout),
-        )
+        raft_election_tick(&self.core, time_now)
     }
 
     // CALLER MUST HOLD mtx_. [move, M1] RaftCore::election_last_log_term.
@@ -3486,6 +3781,8 @@ impl RaftServerBase {
                     self.resetTimerLocked("stepDown");
                 } else if reason == TimerResetReason::GRANTED_VOTE {
                     self.resetTimerLocked("granted vote");
+                } else if reason == TimerResetReason::STARTING_CAMPAIGN {
+                    self.resetTimerLocked("starting election campaign");
                 } else {
                     self.resetTimerLocked("AppendEntries from current-term leader");
                 }
@@ -5057,15 +5354,12 @@ impl RaftServerBase {
     // @unsafe - the campaign. Two critical sections with one fiber
     // suspension between them: the broadcast must not hold mtx_, and every
     // decision after it must be re-derived from state read under the
-    // reacquired lock.
+    // reacquired lock. [move, M5] Each section is a core call
+    // (RaftCore::start_election, RaftCore::election_settle); the broadcast
+    // and its wait are the lane's.
     //
     // Returns true only when this server both won the election and still
     // held leadership when the result was applied.
-    // The zero-initialisation of lst_idx/lst_term/prev_term is the C++
-    // original's and is kept deliberately: dropping it to satisfy the lint
-    // would emit uninitialised C++ locals, which is a worse trade than an
-    // assignment rustc can see is redundant.
-    #[allow(unused_assignments)]
     pub fn RequestVoteImpl(&mut self, timer_guarded: bool,
                            expected_generation: u64) -> bool {
         // The election timer fiber can fire after ~RaftServer has run, which
@@ -5081,70 +5375,28 @@ impl RaftServerBase {
         let par_id: u32 = self.partition_id_;
         let loc_id: u32 = self.loc_id_;
 
-        let mut lst_idx: u64 = 0;
-        let mut lst_term: i64 = 0;
-        let mut prev_term: u64 = 0;
-        let mut term: u64 = 0;
-        let mut prev_vote_for: u16 = RAFT_SERVER_INVALID_SITE_ID;
-
-        {
+        // [move, M5] The campaign's start, a core call under mtx_; its timer
+        // reset is an action that runs before the guard drops.
+        let mut out1: CoreOutput = CoreOutput::new();
+        let campaign: CampaignStart = {
             let _lock = RaftLockGuard::new(&mut self.mtx_);
-            if self.stop_.load(rusty::sync::atomic::Ordering::Acquire) {
-                self.core.req_voting_ = false;
-                return false;
-            }
-            // This is the sole campaign admission point. Entrants can overlap
-            // while one of them is yielding, so a caller must NOT reserve
-            // req_voting_ before entering this critical section.
-            if !raft_server_campaign_can_start(
-                self.core.is_leader_, self.core.election_in_progress_)
-            {
-                return false;
-            }
-            if timer_guarded {
-                let now: u64 = unsafe { raft_time_now_us() };
-                let elapsed: u64 = now - self.core.last_heartbeat_time_;
-                if !raft_server_timer_campaign_is_current(
-                    self.core.is_leader_, expected_generation,
-                    self.core.election_timer_generation_, elapsed,
-                    self.core.election_timeout_us_)
-                {
-                    return false;
-                }
-            }
-
-            // A campaign owns a fresh, latched timeout. If it loses without
-            // hearing from a leader, the next campaign waits out this whole
-            // interval instead of reusing the already-expired deadline.
-            self.resetTimerLocked("starting election campaign");
-            prev_term = self.core.current_term_;
-            prev_vote_for = self.core.vote_for_;
-            let prev_local_term: u64 = self.core.current_term_;
-            self.core.current_term_ += 1;
-            // Vote for ourselves.
-            self.core.vote_for_ = self.site_id_;
-            // A candidate has no elected-leader evidence in its new term; in
-            // particular it must not redirect clients to the leader of the
-            // term it just left.
-            self.core.current_leader_id_ =
-                raft_server_leader_hint_after_transition(
-                    false, false, self.site_id_, self.core.current_leader_id_);
-
-            // Publish ownership of req_voting_ and the election term before
-            // broadcasting, so no second caller can campaign concurrently.
-            self.core.election_in_progress_ = true;
-            // election_term_ is ballot_t (int64_t) and current_term_ is
-            // uint64_t; the C++ assigned across that implicitly.
-            self.core.election_term_ = self.core.current_term_ as i64;
-            self.core.req_voting_ = true;
-            term = self.core.current_term_;
-
-            self.LogTermChange("starting election", prev_local_term,
-                               self.core.current_term_,
-                               RAFT_SERVER_INVALID_SITE_ID);
-            lst_idx = self.core.raft_log_.last_index();
-            lst_term = self.ElectionLastLogTermLocked();
+            let stopped: bool = self.stopped_now();
+            // [move, M4] the clock read, as the timer check made it
+            let now: u64 = unsafe { raft_time_now_us() };
+            let decided: CampaignStart = self.core.start_election(
+                timer_guarded, expected_generation, now, stopped, &mut out1);
+            self.run_locked_actions(&out1);
+            decided
+        };
+        self.run_unlocked_actions(&out1);
+        if !campaign.started_ {
+            return false;
         }
+        let prev_term: u64 = campaign.prev_term_;
+        let prev_vote_for: u16 = campaign.prev_vote_for_;
+        let term: u64 = campaign.term_;
+        let lst_idx: u64 = campaign.lst_idx_;
+        let lst_term: i64 = campaign.lst_term_;
 
         if unsafe { raft_election_debug_enabled() } {
             rusty::raft_log_info_7(
@@ -5179,160 +5431,52 @@ impl RaftServerBase {
                 &mut quorum as *mut rusty::RaftVoteQuorumPtr);
         }
 
-        // [move, M3] The settlement under mtx_ and its locked actions before
-        // the guard drops; the leader-change callback after it ([fix, F6]).
+        // [move, M5] The settlement, a core call under mtx_: the replies the
+        // lane's wait gathered are handed to the core, which counts them
+        // itself. Its locked actions run before the guard drops; the
+        // leader-change callback after it ([fix, F6]).
         let mut out: CoreOutput = CoreOutput::new();
-        let mut won: bool = false;
-        {
+        let won: bool = {
             let _lock1 = RaftLockGuard::new(&mut self.mtx_);
-            won = self.RequestVoteSettleLocked(term, loc_id, &quorum, &mut out);
+            let q: *const rusty::RaftVoteQuorumPtr =
+                &quorum as *const rusty::RaftVoteQuorumPtr;
+            let n_total: u64 = unsafe { raft_vote_quorum_size(q) };
+            let timed_out: bool = unsafe { raft_vote_quorum_timed_out(q) };
+            let replies: u64 = unsafe { raft_vote_quorum_reply_count(q) };
+            let mut voters: rusty::Vec<u16> = rusty::Vec::new();
+            let mut granted: rusty::Vec<bool> = rusty::Vec::new();
+            let mut reply_terms: rusty::Vec<i64> = rusty::Vec::new();
+            let mut r: u64 = 0;
+            while r < replies {
+                let mut voter: u16 = 0;
+                let mut vote: bool = false;
+                let mut reply_term: i64 = 0;
+                if unsafe {
+                    raft_vote_quorum_reply_at(q, r, &mut voter as *mut u16,
+                                              &mut vote as *mut bool,
+                                              &mut reply_term as *mut i64)
+                } {
+                    voters.push(voter);
+                    granted.push(vote);
+                    reply_terms.push(reply_term);
+                }
+                r += 1;
+            }
+            let stopped: bool = self.stopped_now();
+            let looping: bool =
+                self.looping_.load(rusty::sync::atomic::Ordering::Acquire);
+            let election_debug: bool = unsafe { raft_election_debug_enabled() };
+            let decided: bool = self.core.election_settle(
+                term, loc_id, &voters, &granted, &reply_terms, n_total,
+                timed_out, stopped, looping, self.failover_, election_debug,
+                &mut out);
             self.run_locked_actions(&out);
-        }
+            decided
+        };
         self.run_unlocked_actions(&out);
         won
     }
 
-    // [move, M3] RequestVoteImpl's second critical section, after the
-    // broadcast. CALLER MUST HOLD mtx_.
-    pub fn RequestVoteSettleLocked(&mut self, term: u64, loc_id: u32,
-                                   quorum: &rusty::RaftVoteQuorumPtr,
-                                   out: &mut CoreOutput) -> bool {
-        if self.stop_.load(rusty::sync::atomic::Ordering::Acquire) {
-            self.core.election_in_progress_ = false;
-            self.core.req_voting_ = false;
-            return false;
-        }
-        // A higher term dominates every outcome, TIMEOUT and a concurrently
-        // completed YES quorum included. FeedResponse publishes that maximum
-        // before its wakeup, so it is snapshotted only now, after Raft state
-        // has been reacquired.
-        let outcome: RaftVoteOutcome =
-            unsafe {
-                raft_vote_quorum_snapshot(
-                    quorum as *const rusty::RaftVoteQuorumPtr)
-            };
-        let observed_response_term: i64 = outcome.term_;
-        let completion_action: i32 = raft_server_election_completion_action(
-            self.core.election_in_progress_,
-            self.core.election_term_ as u64, term, self.core.current_term_,
-            observed_response_term);
-
-        if completion_action == ElectionCompletionAction::ADVANCE_HIGHER_TERM as i32 {
-            let previous_term: u64 = self.core.current_term_;
-            self.core.current_term_ = observed_response_term as u64;
-            self.core.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
-            self.core.current_leader_id_ =
-                raft_server_leader_hint_after_transition(
-                    false, false, self.site_id_, self.core.current_leader_id_);
-
-            let stopped: bool = self.stopped_now();
-            if self.core.is_leader_ {
-                self.core.step_down(stopped, self.failover_, out);  // [move, M3]
-            } else {
-                self.core.set_is_leader(false, stopped, self.failover_, out);  // [move, M3]
-            }
-            self.core.election_in_progress_ = false;
-            self.core.req_voting_ = false;
-
-            self.LogTermChange("observed higher term from RequestVote replies",
-                               previous_term, self.core.current_term_,
-                               RAFT_SERVER_INVALID_SITE_ID);
-            return false;
-        }
-
-        // An accepted leader RPC can cancel this campaign while the broadcast
-        // is yielding, and another campaign can begin before this result
-        // arrives. Only the exact active term owns role changes and election
-        // bookkeeping. A strictly higher response term was handled above,
-        // because that evidence supersedes even a newer local campaign.
-        if completion_action == ElectionCompletionAction::IGNORE_STALE as i32 {
-            if unsafe { raft_election_debug_enabled() } {
-                rusty::raft_log_info_5(
-                    "[RAFT_ELECTION] server {} ignoring stale election result: result_term={} local_term={} election_term={} active={}",
-                    self.site_id_, term, self.core.current_term_,
-                    self.core.election_term_,
-                    self.core.election_in_progress_);
-            }
-            return false;
-        }
-        assert!(completion_action
-            == ElectionCompletionAction::APPLY_CURRENT as i32);  // [move, M10]
-        if unsafe { raft_election_debug_enabled() } {
-            rusty::raft_log_info_6(
-                "[RAFT_ELECTION] server {} term {} vote outcome yes={} no={} highest_term_seen={} timeout={}",
-                self.site_id_, term, outcome.n_voted_yes_, outcome.n_voted_no_,
-                outcome.term_, outcome.timeouted_);
-        }
-
-        if outcome.yes_ {
-            assert!(self.core.current_term_ >= term);  // [move, M10]
-            self.core.election_in_progress_ = false;
-            self.core.req_voting_ = false;
-
-            if self.stop_.load(rusty::sync::atomic::Ordering::Acquire)
-                || self.core.current_term_ != term
-            {
-                self.core.req_voting_ = false;
-                return false;
-            }
-
-            let stopped: bool = self.stopped_now();
-            self.core.set_is_leader(true, stopped, self.failover_, out);  // [move, M3]
-            rusty::raft_log_debug_2("site {} became leader for term {}",
-                                    self.site_id_, term);
-            if unsafe { raft_election_debug_enabled() } {
-                rusty::raft_log_info_4(
-                    "[RAFT_ELECTION] server {} won election term {} (votes yes={} no={})",
-                    self.site_id_, term, outcome.n_voted_yes_,
-                    outcome.n_voted_no_);
-            }
-
-            if self.IsLeaderLocked() {
-                rusty::raft_log_debug_2("vote accepted {} curterm {}",
-                                        loc_id, self.core.current_term_);
-                self.core.req_voting_ = false;
-                true
-            } else {
-                rusty::raft_log_debug_2("vote rejected {} curterm {}, do rollback",
-                                        loc_id, self.core.current_term_);
-                let stopped: bool = self.stopped_now();
-                self.core.set_is_leader(false, stopped, self.failover_, out);  // [move, M3]
-                false
-            }
-        } else if outcome.no_ {
-            rusty::raft_log_debug_1("site {} requestvote rejected", self.site_id_);
-            let stopped: bool = self.stopped_now();
-            self.core.set_is_leader(false, stopped, self.failover_, out);  // [move, M3]
-            if unsafe { raft_election_debug_enabled() } {
-                rusty::raft_log_info_5(
-                    "[RAFT_ELECTION] server {} lost election term {} (yes={} no={}) highest_term={}",
-                    self.site_id_, term, outcome.n_voted_yes_,
-                    outcome.n_voted_no_, outcome.term_);
-            }
-            if self.core.election_in_progress_
-                && self.core.election_term_ == term as i64
-            {
-                self.core.election_in_progress_ = false;
-            }
-            self.core.req_voting_ = false;
-            false
-        } else {
-            rusty::raft_log_debug_1("vote timeout {}", loc_id);
-            if unsafe { raft_election_debug_enabled() } {
-                rusty::raft_log_info_4(
-                    "[RAFT_ELECTION] server {} election timed out term {} (yes={} no={})",
-                    self.site_id_, term, outcome.n_voted_yes_,
-                    outcome.n_voted_no_);
-            }
-            if self.core.election_in_progress_
-                && self.core.election_term_ == term as i64
-            {
-                self.core.election_in_progress_ = false;
-            }
-            self.core.req_voting_ = false;
-            false
-        }
-    }
 
 }
 
@@ -6075,6 +6219,26 @@ impl RaftServerBase {
         let out: CoreOutput = core::mem::take(&mut self.install_out_);
         self.run_unlocked_actions(&out);
     }
+}
+
+// [move, M5] The election timer's gather as a core call: the timer state read
+// in one scope at `now` (the shell's clock read), and whether the timeout
+// fired. The caller holds mtx_. A free function after ElectionTick rather
+// than a RaftCore method, so the transpiled C++ declares the type first.
+pub fn raft_election_tick(core: &RaftCore, now: u64) -> ElectionTick {
+    let heartbeat_time: u64 = core.last_heartbeat_time_;
+    let time_elapsed: u64 = now - heartbeat_time;
+    let election_timeout: u64 = core.election_timeout_us_;
+    ElectionTick::new(
+        time_elapsed,
+        election_timeout,
+        heartbeat_time,
+        core.election_timer_generation_,
+        core.current_term_,
+        core.vote_for_,
+        raft_server_election_timeout_has_fired(
+            core.is_leader_, time_elapsed, election_timeout),
+    )
 }
 
 // The election-timer fiber, owned by Rust.

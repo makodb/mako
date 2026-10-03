@@ -608,6 +608,10 @@ struct TallyState {
     // most once, however many times its reply is delivered. A campaign is
     // one broadcast at one term, so per-campaign is per-campaign-term.
     voters: Vec<u16>,
+    // [move, M5] Every delivered reply, in order -- (voter, granted, term) --
+    // for the core, which counts the campaign itself (RaftCore::
+    // election_settle). This tally still decides when the wait ends.
+    replies: Vec<(u16, bool, i64)>,
 }
 
 impl TallyState {
@@ -616,6 +620,7 @@ impl TallyState {
     /// per voter ([fix, F1]: the C++ event, and this tally before it, counted
     /// replies, so one reply delivered twice would have counted twice).
     fn feed(&mut self, voter: u16, granted: bool, term: i64) {
+        self.replies.push((voter, granted, term));  // [move, M5]
         // [fix, F1] a repeated reply carries nothing new
         if self.voters.contains(&voter) {
             return;
@@ -657,6 +662,7 @@ impl VoteTally {
                 no: 0,
                 highest_term: 0,
                 voters: Vec::new(),  // [fix, F1]
+                replies: Vec::new(),  // [move, M5]
             })),
         }
     }
@@ -668,12 +674,27 @@ impl VoteTally {
         VoteTally::new(usize::MAX / 2)
     }
 
+    /// [move, M5] The quorum size this tally counts against.
+    pub fn n_total(&self) -> usize {
+        self.state.lock().map(|s| s.n_total).unwrap_or(0)
+    }
+
+    /// [move, M5] How many replies were delivered, and each in turn.
+    pub fn reply_count(&self) -> usize {
+        self.state.lock().map(|s| s.replies.len()).unwrap_or(0)
+    }
+
+    pub fn reply_at(&self, i: usize) -> Option<(u16, bool, i64)> {
+        self.state.lock().ok().and_then(|s| s.replies.get(i).copied())
+    }
+
     pub fn decided(&self) -> bool {
         self.state.lock().map(|s| s.yes() || s.no()).unwrap_or(false)
     }
 
-    /// The six scalars raft_vote_quorum_snapshot reads out of the C++ event,
-    /// field for field, so the core cannot tell which lane produced them.
+    /// The six scalars the C++ event reports, field for field. The core
+    /// counts a campaign itself now (RaftCore::election_settle); this stays
+    /// for the tally's own tests, which pin lane parity.
     pub fn outcome(&self, timed_out: bool) -> RaftVoteOutcome {
         let Ok(s) = self.state.lock() else {
             return RaftVoteOutcome {

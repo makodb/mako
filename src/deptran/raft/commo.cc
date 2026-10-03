@@ -135,7 +135,7 @@ shared_ptr<RaftVoteQuorumEvent> RaftCommo::BroadcastVote(
           bool_t vote = false;
           srpc::deserialize_from(future->get_reply(), term);
           srpc::deserialize_from(future->get_reply(), vote);
-          event->FeedResponse(vote, term);
+          event->FeedResponse(vote, term, site_id);  // [move, M5]
         });
     RaftProxy::RpcVoteRequest req{};
     req.lst_log_idx = lst_log_idx;

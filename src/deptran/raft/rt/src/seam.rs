@@ -34,7 +34,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use raft::server_h::RaftServerBase;
-use raft::server_pods_h::{AppendRespView, RaftVoteOutcome};
+use raft::server_pods_h::AppendRespView;
 use srpc::misc::{Job, OneTimeJob};
 use srpc::reactor::{create_sp_int_event, Fiber, IntEvent, PollThread};
 
@@ -290,7 +290,7 @@ pub unsafe extern "C" fn raft_broadcast_vote_and_wait(
     }
 }
 
-/// A finished campaign, as the core carries it to raft_vote_quorum_snapshot.
+/// A finished campaign, as the core reads it through the raft_vote_quorum_* kernels.
 pub struct VoteWait {
     tally: VoteTally,
     timed_out: bool,
@@ -304,11 +304,42 @@ unsafe fn vote_quorum_release(p: *mut rusty::RaftVoteQuorumPtr) {
     }
 }
 
+/// [move, M5] The finished campaign's quorum size, as the tally counted it.
 #[no_mangle]
-pub unsafe extern "C" fn raft_vote_quorum_snapshot(q: *const rusty::RaftVoteQuorumPtr)
-    -> RaftVoteOutcome {
+pub unsafe extern "C" fn raft_vote_quorum_size(q: *const rusty::RaftVoteQuorumPtr) -> u64 {
     let wait = unsafe { arc_ref::<VoteWait>(q as *const u8) };
-    wait.tally.outcome(wait.timed_out)
+    wait.tally.n_total() as u64
+}
+
+/// [move, M5] Whether the wait ended at its deadline.
+#[no_mangle]
+pub unsafe extern "C" fn raft_vote_quorum_timed_out(q: *const rusty::RaftVoteQuorumPtr) -> bool {
+    let wait = unsafe { arc_ref::<VoteWait>(q as *const u8) };
+    wait.timed_out
+}
+
+/// [move, M5] How many replies the campaign received.
+#[no_mangle]
+pub unsafe extern "C" fn raft_vote_quorum_reply_count(q: *const rusty::RaftVoteQuorumPtr) -> u64 {
+    let wait = unsafe { arc_ref::<VoteWait>(q as *const u8) };
+    wait.tally.reply_count() as u64
+}
+
+/// [move, M5] Reply `i`: its voter, its vote and its term.
+#[no_mangle]
+pub unsafe extern "C" fn raft_vote_quorum_reply_at(q: *const rusty::RaftVoteQuorumPtr, i: u64,
+                                                   voter: *mut u16, granted: *mut bool,
+                                                   term: *mut i64) -> bool {
+    let wait = unsafe { arc_ref::<VoteWait>(q as *const u8) };
+    let Some((v, g, t)) = wait.tally.reply_at(i as usize) else {
+        return false;
+    };
+    unsafe {
+        *voter = v;
+        *granted = g;
+        *term = t;
+    }
+    true
 }
 
 #[no_mangle]

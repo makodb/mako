@@ -61,9 +61,52 @@ static_assert(commo_quorum_should_advance_term(-1, -2));
 static_assert(!commo_quorum_should_advance_term(-2, -1));
 
 // @unsafe - inherits from non-@interface base QuorumEvent
+// [move, M5] One RequestVote reply as delivered: who sent it, its vote and
+// its term, kept for the core's own count (RaftCore::election_settle).
+struct VoteReplyRecord {
+  siteid_t voter;
+  bool granted;
+  ballot_t term;
+};
+
 class RaftVoteQuorumEvent: public QuorumEventBase {
  public:
-  using QuorumEventBase::QuorumEventBase;
+  // @safe - n_total is kept for the core, which counts the campaign itself.
+  RaftVoteQuorumEvent(int n_total, int quorum)
+      : QuorumEventBase(n_total, quorum), n_total_(n_total) {}
+
+  // @safe - [move, M5] one reply from `voter`: recorded for the core, then
+  // counted here as before (this event still ends the lane's wait).
+  void FeedResponse(bool y, ballot_t term, siteid_t voter) {
+    {
+      auto guard = replies_.lock().unwrap();
+      // @unsafe { std::vector::push_back is not borrow-checked }
+      guard->push_back(VoteReplyRecord{voter, y, term});
+    }
+    FeedResponse(y, term);
+  }
+
+  // @safe
+  uint64_t ReplyCount() {
+    auto guard = replies_.lock().unwrap();
+    return static_cast<uint64_t>(guard->size());
+  }
+
+  // @safe - reply `i`, or false past the end.
+  bool ReplyAt(uint64_t i, siteid_t* voter, bool* granted, int64_t* term) {
+    auto guard = replies_.lock().unwrap();
+    if (i >= guard->size()) {
+      return false;
+    }
+    const VoteReplyRecord& record = (*guard)[i];
+    *voter = record.voter;
+    *granted = record.granted;
+    *term = record.term;
+    return true;
+  }
+
+  // @safe
+  int NTotal() const { return n_total_; }
   // @safe
   bool HasAcceptedValue() {
     return false;
@@ -90,6 +133,11 @@ class RaftVoteQuorumEvent: public QuorumEventBase {
   int64_t Term() {
     return q().highest_term_.get();
   }
+
+ private:
+  const int n_total_;
+  mutable rusty::Mutex<std::vector<VoteReplyRecord>> replies_{
+      std::vector<VoteReplyRecord>{}};
 };
 
 // Response data for async AppendEntries RPC

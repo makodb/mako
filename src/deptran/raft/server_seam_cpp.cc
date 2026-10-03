@@ -154,17 +154,24 @@ void raft_broadcast_vote_and_wait(
   (*out)->wait_timeout(1000000);
 }
 
-RaftVoteOutcome raft_vote_quorum_snapshot(
-    const rusty::RaftVoteQuorumPtr* quorum) {
-  RaftVoteQuorumEvent& event = **quorum;
-  RaftVoteOutcome outcome{};
-  outcome.term_ = event.Term();
-  outcome.yes_ = event.yes();
-  outcome.no_ = event.no();
-  outcome.n_voted_yes_ = event.q().n_voted_yes_.get();
-  outcome.n_voted_no_ = event.q().n_voted_no_.get();
-  outcome.timeouted_ = event.q().timeouted_.get();
-  return outcome;
+// [move, M5] A finished campaign's replies and the quorum it counted
+// against, for the core's own count (RaftCore::election_settle).
+uint64_t raft_vote_quorum_size(const rusty::RaftVoteQuorumPtr* quorum) {
+  return static_cast<uint64_t>((**quorum).NTotal());
+}
+
+bool raft_vote_quorum_timed_out(const rusty::RaftVoteQuorumPtr* quorum) {
+  return (**quorum).q().timeouted_.get();
+}
+
+uint64_t raft_vote_quorum_reply_count(const rusty::RaftVoteQuorumPtr* quorum) {
+  return (**quorum).ReplyCount();
+}
+
+bool raft_vote_quorum_reply_at(const rusty::RaftVoteQuorumPtr* quorum,
+                               uint64_t i, uint16_t* voter, bool* granted,
+                               int64_t* term) {
+  return (**quorum).ReplyAt(i, voter, granted, term);
 }
 
 void raft_commo_set_network_enabled(RaftServerBase* self, bool enabled) {
