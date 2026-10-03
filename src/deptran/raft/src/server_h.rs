@@ -971,22 +971,22 @@ pub struct PendingAppend {
     // heartbeat proves only prevLogIndex; raw and batched payloads extend it
     // by their encoded entry count.
     sent_end_index_: u64,
-    response_: rusty::RaftResponsePtr,
-    // Empty Command (has_value() == false) signals a heartbeat.
-    cmd_: rusty::RaftCommand,
+    // [move, M5] Whether the RPC carried entries, which is all the reply's
+    // log line asked of its command. The command and the response handle
+    // stay with the shell (RaftServerBase::append_responses_), which sends
+    // the RPC after the core has decided it.
+    has_entries_: bool,
 }
 
 impl PendingAppend {
     pub fn new(follower: u16, sent_term: u64, sent_round: u64,
-               sent_end_index: u64, response: rusty::RaftResponsePtr,
-               cmd: rusty::RaftCommand) -> PendingAppend {
+               sent_end_index: u64, has_entries: bool) -> PendingAppend {
         PendingAppend {
             follower_: follower,
             sent_term_: sent_term,
             sent_round_: sent_round,
             sent_end_index_: sent_end_index,
-            response_: response,
-            cmd_: cmd,
+            has_entries_: has_entries,  // [move, M5]
         }
     }
 }
@@ -1067,18 +1067,12 @@ impl PendingTable {
         self.slots_[ordinal].as_ref().unwrap().sent_end_index_
     }
 
-    // Both of these hand a carried C++ value back to C++. The reference is
-    // safe because the method is &self: the emitter binds the const unwrap
-    // overload, which returns a reference into the live Option rather than a
-    // moved-out temporary.
-    // Callers check occupied() first; unwrap is the assertion of that.
-    pub fn response(&self, ordinal: usize) -> &rusty::RaftResponsePtr {
-        &self.slots_[ordinal].as_ref().unwrap().response_
-    }
-
-    // Callers check occupied() first; unwrap is the assertion of that.
-    pub fn cmd(&self, ordinal: usize) -> &rusty::RaftCommand {
-        &self.slots_[ordinal].as_ref().unwrap().cmd_
+    // [move, M5] Whether the in-flight RPC carried entries.
+    pub fn has_entries(&self, ordinal: usize) -> bool {
+        if self.slots_[ordinal].is_none() {
+            return false;
+        }
+        self.slots_[ordinal].as_ref().unwrap().has_entries_
     }
 }
 
@@ -1907,6 +1901,24 @@ impl RaftCore {
         previous_index
     }
 
+    // [move, M1] RaftServerBase::LogTermChange's body (a log line), so a core
+    // event can report its term changes itself.
+    pub fn log_term_change(&self, reason: &str, old_term: u64, new_term: u64,
+                           source: u16) {
+        if old_term == new_term {
+            return;
+        }
+        if source != RAFT_SERVER_INVALID_SITE_ID {
+            rusty::raft_log_info_5(
+                "[RAFT-TERM] server {} term {} -> {} ({}, source_site={})",
+                self.site_id_, old_term, new_term, reason, source);
+        } else {
+            rusty::raft_log_info_4(
+                "[RAFT-TERM] server {} term {} -> {} ({})",
+                self.site_id_, old_term, new_term, reason);
+        }
+    }
+
     // [move, M4] resetTimerLocked's state change. The clock read and the
     // timeout sample are parameters: the shell samples both where
     // resetTimerLocked did. Returns the previous heartbeat time, for the
@@ -2677,6 +2689,79 @@ impl ApplyQueue {
     }
 }
 
+// [move, M5] The heartbeat's response handles, by peer ordinal: the shell's
+// half of the in-flight slots, beside RaftCore::pending_rpcs_'s protocol
+// half. Each AppendEntries reply lands in its handle; the collection loop
+// polls the handles and hands each completed reply to the core. Touched only
+// by the heartbeat fiber.
+pub struct AppendResponseSlot {
+    response_: rusty::RaftResponsePtr,
+    // The round the RPC went out in, so the loop knows whether it is still
+    // waiting for this round without asking the core.
+    sent_round_: u64,
+}
+
+pub struct AppendResponses {
+    slots_: rusty::Vec<rusty::Option<AppendResponseSlot>>,
+}
+
+#[allow(clippy::new_without_default)]
+impl AppendResponses {
+    pub fn new() -> AppendResponses {
+        AppendResponses { slots_: rusty::Vec::new() }
+    }
+
+    // `peers` empty slots: what the core's table holds after it resizes or
+    // abandons its own.
+    pub fn reset(&mut self, peers: usize) {
+        self.slots_.clear();
+        let mut i: usize = 0;
+        while i < peers {
+            self.slots_.push(rusty::None);
+            i += 1;
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.slots_.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.slots_.is_empty()
+    }
+
+    pub fn occupied(&self, ordinal: usize) -> bool {
+        self.slots_[ordinal].is_some()
+    }
+
+    pub fn place(&mut self, ordinal: usize, response: rusty::RaftResponsePtr,
+                 sent_round: u64) {
+        self.slots_[ordinal] = rusty::Some(AppendResponseSlot {
+            response_: response,
+            sent_round_: sent_round,
+        });
+    }
+
+    pub fn release(&mut self, ordinal: usize) {
+        self.slots_[ordinal] = rusty::None;
+    }
+
+    pub fn sent_round(&self, ordinal: usize) -> u64 {
+        if self.slots_[ordinal].is_none() {
+            return 0;
+        }
+        self.slots_[ordinal].as_ref().unwrap().sent_round_
+    }
+
+    // The reference is safe because the method is &self: the emitter binds
+    // the const unwrap overload, which returns a reference into the live
+    // Option rather than a moved-out temporary. Callers check occupied()
+    // first; unwrap is the assertion of that.
+    pub fn response(&self, ordinal: usize) -> &rusty::RaftResponsePtr {
+        &self.slots_[ordinal].as_ref().unwrap().response_
+    }
+}
+
 // [fix, F6] Leader-change notices waiting to be fired, in transition order:
 // a transition queues its notice under mtx_ (run_locked_actions), and
 // whichever thread then finds the queue idle fires them all with no lock
@@ -2778,6 +2863,9 @@ pub struct RaftServerBase {
     pub apply_queue_: rusty::Mutex<ApplyQueue>,
     // [fix, F6] Fired after mtx_ is released, in transition order.
     pub leader_notices_: rusty::Mutex<LeaderNotices>,
+    // [move, M5] The heartbeat's response handles (the core holds the
+    // protocol half of each in-flight slot). Heartbeat fiber only.
+    pub append_responses_: AppendResponses,
     // [move, M3] OnInstallSnapshotLocked's actions, which reach it through a
     // C++ kernel (raft_install_snapshot_guarded) rather than a parameter;
     // OnInstallSnapshot runs their unlocked half. Touched only under mtx_
@@ -2888,6 +2976,7 @@ impl RaftServerBase {
             state_machine_apply_mtx_: Default::default(),
             apply_queue_: rusty::Mutex::new(ApplyQueue::new()),
             leader_notices_: rusty::Mutex::new(LeaderNotices::new()),  // [fix, F6]
+            append_responses_: AppendResponses::new(),  // [move, M5]
             install_out_: CoreOutput::new(),  // [move, M3]
             pending_apply_command_: Default::default(),
             batch_buffer_: rusty::Vec::new(),
@@ -3190,18 +3279,7 @@ impl RaftServerBase {
     // and cannot be null. Every C++ caller still compiles unchanged.
     pub fn LogTermChange(&self, reason: &str, old_term: u64, new_term: u64,
                          source: u16) {
-        if old_term == new_term {
-            return;
-        }
-        if source != RAFT_SERVER_INVALID_SITE_ID {
-            rusty::raft_log_info_5(
-                "[RAFT-TERM] server {} term {} -> {} ({}, source_site={})",
-                self.site_id_, old_term, new_term, reason, source);
-        } else {
-            rusty::raft_log_info_4(
-                "[RAFT-TERM] server {} term {} -> {} ({})",
-                self.site_id_, old_term, new_term, reason);
-        }
+        self.core.log_term_change(reason, old_term, new_term, source);  // [move, M1]
     }
 
     // ------------------------------------------------------------------
