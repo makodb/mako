@@ -404,9 +404,6 @@ namespace janus {
 // The small kernels below are DECLARED here and defined in server.cc. They
 // cannot be `extern "C" inline` bodies in the header: such a body is emitted
 // only in a translation unit that uses it, and the only caller is Rust.
-// @unsafe - wraps the srpc `verify` macro so a DSL body can assert.
-extern "C" void raft_verify(bool condition);
-
 // @unsafe - the two halves of std::lock_guard<RaftCheckedMutex>, so a DSL
 // body can hold mtx_ across a scope. mtx_ is opaque to Rust; these are the
 // only operations on it a converted body performs.

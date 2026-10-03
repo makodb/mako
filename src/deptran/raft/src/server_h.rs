@@ -2066,7 +2066,6 @@ use crate::scheduler_h::RaftStartResult;
 // void*, which hides the type rather than describing it.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
-    fn raft_verify(condition: bool);
     fn raft_trace_at(stage: i32, idx: u64, t_us: u64);  // [M0] trace kit
     // Suspends the calling fiber (server_seam_cpp.cc / rt/src/seam.rs).
     fn raft_fiber_sleep_us(micros: u64);
@@ -2575,9 +2574,7 @@ impl RaftServerBase {
     // boundary term when the log has been compacted past it.
     pub fn ElectionLastLogTermLocked(&self) -> i64 {
         let last_index: u64 = self.core.raft_log_.last_index();
-        unsafe {
-            raft_verify(last_index >= self.core.snapidx_);
-        }
+        assert!(last_index >= self.core.snapidx_);  // [move, M10]
         if raft_server_election_last_log_uses_snapshot(
             last_index, self.core.snapidx_)
         {
@@ -2587,9 +2584,7 @@ impl RaftServerBase {
         // to a raw pointer and then verified it non-null. Asking the log
         // directly is the same lookup with the check kept.
         let last_log = self.core.raft_log_.get(last_index);
-        unsafe {
-            raft_verify(last_log.is_some());
-        }
+        assert!(last_log.is_some());  // [move, M10]
         last_log.unwrap().term()
     }
 
@@ -2837,9 +2832,7 @@ impl RaftServerBase {
         } else {
             self.config_members_.len()
         };
-        unsafe {
-            raft_verify(self.core.peers_.len() == expected);
-        }
+        assert!(self.core.peers_.len() == expected);  // [move, M10]
     }
 
     // CALLER MUST HOLD mtx_ -- the one caller repo-wide is resetTimerLocked,
@@ -3455,11 +3448,9 @@ impl RaftServerBase {
             self.core.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
         }
 
-        unsafe {
-            raft_verify(
-                self.core.commit_index_
-                    <= self.core.raft_log_.last_index());
-        }
+        assert!(
+            self.core.commit_index_
+                <= self.core.raft_log_.last_index());  // [move, M10]
 
         self.snapshot_manager_ = manager;
         self.snapshot_manager_configured_
@@ -3826,11 +3817,9 @@ impl RaftServerBase {
         }
 
         self.core.commit_index_ = last_included_index;
-        unsafe {
-            raft_verify(
-                self.core.commit_index_
-                    <= self.core.raft_log_.last_index());
-        }
+        assert!(
+            self.core.commit_index_
+                <= self.core.raft_log_.last_index());  // [move, M10]
 
         // Publish application only after the state machine has finished
         // loading. Acquire waiters must never observe the covered indices
@@ -3939,13 +3928,13 @@ impl RaftServerBase {
         self.looping_
             .store(false, rusty::sync::atomic::Ordering::Release);
         self.CloseReplicationWakeGate();
+        assert!(!self
+            .heartbeat_loop_running_
+            .load(rusty::sync::atomic::Ordering::Acquire));  // [move, M10]
+        assert!(!self
+            .election_loop_running_
+            .load(rusty::sync::atomic::Ordering::Acquire));  // [move, M10]
         unsafe {
-            raft_verify(!self
-                .heartbeat_loop_running_
-                .load(rusty::sync::atomic::Ordering::Acquire));
-            raft_verify(!self
-                .election_loop_running_
-                .load(rusty::sync::atomic::Ordering::Acquire));
             raft_clear_async_callback_owner(
                 &self.async_callback_lifetime_
                     as *const rusty::RaftAsyncCallbackLifetimePtr);
@@ -4428,10 +4417,10 @@ impl RaftServerBase {
         // this identity -- see commo_of in server.cc.
         let this = self as *mut RaftServerBase;
         let _lock = RaftLockGuard::new(&mut self.mtx_);
+        assert!(
+            self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
+                != disconnect);  // [move, M10]
         unsafe {
-            raft_verify(
-                self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
-                    != disconnect);
             // A seam kernel: each lane's runtime owns its own network flag
             // (the C++ lane's RaftCommo, the Rust lane's RaftTransport).
             raft_commo_set_network_enabled(this as *mut RaftServerHandle, !disconnect);
@@ -4750,10 +4739,8 @@ impl RaftServerBase {
             }
             return false;
         }
-        unsafe {
-            raft_verify(completion_action
-                == ElectionCompletionAction::APPLY_CURRENT as i32);
-        }
+        assert!(completion_action
+            == ElectionCompletionAction::APPLY_CURRENT as i32);  // [move, M10]
         if unsafe { raft_election_debug_enabled() } {
             rusty::raft_log_info_6(
                 "[RAFT_ELECTION] server {} term {} vote outcome yes={} no={} highest_term_seen={} timeout={}",
@@ -4762,9 +4749,7 @@ impl RaftServerBase {
         }
 
         if outcome.yes_ {
-            unsafe {
-                raft_verify(self.core.current_term_ >= term);
-            }
+            assert!(self.core.current_term_ >= term);  // [move, M10]
             self.core.election_in_progress_ = false;
             self.core.req_voting_ = false;
 
@@ -4870,9 +4855,7 @@ impl RaftServerBase {
         let previous_index: u64 = self.core.raft_log_.last_index();
         let appended: u64 = self.core.raft_log_.append(
             RaftEntry::new(self.core.current_term_ as i64, cmd));
-        unsafe {
-            raft_verify(appended == previous_index + 1);
-        }
+        assert!(appended == previous_index + 1);  // [move, M10]
         previous_index
     }
 
@@ -4888,10 +4871,8 @@ impl RaftServerBase {
             raft_noop_command_into(&mut noop as *mut rusty::RaftCommand);
         }
         let previous_index: u64 = self.AppendLocal(noop);
-        unsafe {
-            raft_verify(
-                self.core.raft_log_.last_index() == previous_index + 1);
-        }
+        assert!(
+            self.core.raft_log_.last_index() == previous_index + 1);  // [move, M10]
         rusty::raft_log_info_3(
             "[RAFT-NOOP] Site {} appended leader no-op at index {} term {}",
             self.site_id_, self.core.raft_log_.last_index(),
@@ -4981,9 +4962,7 @@ impl RaftServerBase {
                            leader_next_log_term: u64, first_write_index: u64) {
         if unsafe { raft_wire_is_batch(cmd) } {
             let batch: *const core::ffi::c_void = unsafe { raft_wire_batch(cmd) };
-            unsafe {
-                raft_verify(!batch.is_null());
-            }
+            assert!(!batch.is_null());  // [move, M10]
             let count: u64 = unsafe { raft_batch_len(batch) };
             let mut i: u64 = 0;
             while i < count {
@@ -5000,9 +4979,7 @@ impl RaftServerBase {
                         .core
                         .raft_log_
                         .append(RaftEntry::new(term, entry_cmd));
-                    unsafe {
-                        raft_verify(appended == index);
-                    }
+                    assert!(appended == index);  // [move, M10]
                 }
                 i += 1;
             }
@@ -5017,9 +4994,7 @@ impl RaftServerBase {
             }
             let appended: u64 = self.core.raft_log_.append(
                 RaftEntry::new(leader_next_log_term as i64, copy));
-            unsafe {
-                raft_verify(appended == index);
-            }
+            assert!(appended == index);  // [move, M10]
         }
     }
 }
@@ -5187,11 +5162,9 @@ impl TxLogServer for RaftServerBase {
         self.core.loc_id_ = loc_id;
         self.core.site_id_ = site_id;
         self.core.partition_id_ = partition_id;
-        unsafe {
-            raft_verify(self.core.site_id_ == self.site_id_
-                && self.core.partition_id_ == self.partition_id_
-                && self.core.loc_id_ == self.loc_id_);
-        }
+        assert!(self.core.site_id_ == self.site_id_
+            && self.core.partition_id_ == self.partition_id_
+            && self.core.loc_id_ == self.loc_id_);  // [move, M10]
     }
 
     // The callback is copied INTO its slot by the kernel, never moved: a
@@ -5364,11 +5337,11 @@ impl RaftSpecific for RaftServerBase {
                                         &mut copy as *mut rusty::RaftCommand);
             }
             let previous_index: u64 = self.AppendLocal(copy);
+            // AppendLocal reports the OLD last index; Start reports the
+            // index of the entry it just appended.
+            assert!(
+                self.core.raft_log_.last_index() == previous_index + 1);  // [move, M10]
             unsafe {
-                // AppendLocal reports the OLD last index; Start reports the
-                // index of the entry it just appended.
-                raft_verify(
-                    self.core.raft_log_.last_index() == previous_index + 1);
                 *index = self.core.raft_log_.last_index();
                 *term = self.core.current_term_;
                 rusty::raft_log_debug_3("Start(): ldr={} index={} term={}",
@@ -5719,9 +5692,8 @@ pub unsafe fn raft_on_request_vote(
     // Every grant, including an idempotent retry, must still carry an
     // up-to-date candidate log. Defensive against damaged or legacy
     // persistent state, and the RequestVote rule in its direct form.
-    if server.core.raft_log_.last_index() < server.core.snapidx_ {
-        panic!("last log index is below the snapshot boundary");
-    }
+    // The last log index is not below the snapshot boundary.
+    assert!(server.core.raft_log_.last_index() >= server.core.snapidx_);  // [move, M10]
     let lstoff = server.core.raft_log_.last_index() - server.core.snapidx_;
     let curlstterm = server.ElectionLastLogTermLocked();
     let curlstidx = server.core.raft_log_.last_index();
@@ -5738,9 +5710,7 @@ pub unsafe fn raft_on_request_vote(
     }
 
     // Snapshot-aware offset invariant.
-    if lstoff + server.core.snapidx_ != server.core.raft_log_.last_index() {
-        panic!("snapshot offset invariant violated");
-    }
+    assert!(lstoff + server.core.snapidx_ == server.core.raft_log_.last_index());  // [move, M10]
 
     let grant = candidate_log_is_current;
     server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
@@ -6126,21 +6096,18 @@ pub unsafe fn raft_on_append_entries(
         server.AeApplyIncoming(cmd, leader_prev_log_index, leader_next_log_term,
                                first_write_index);
     }
-    if server.core.raft_log_.last_index()
-        != raft_server_append_result_last_index(old_last_log_index, accepted_through,
-                                                truncate_suffix)
-    {
-        panic!("append left the log tail somewhere the result rule did not predict");
-    }
+    // The append left the log tail where the result rule predicts.
+    assert!(server.core.raft_log_.last_index()
+        == raft_server_append_result_last_index(old_last_log_index, accepted_through,
+                                                truncate_suffix));  // [move, M10]
 
     let follower_commit_candidate =
         raft_server_commit_index_clamp(leader_commit_index, accepted_through);
     if raft_server_log_index_above(follower_commit_candidate, server.core.commit_index_) {
         let old_commit = server.core.commit_index_;
         server.core.commit_index_ = follower_commit_candidate;
-        if server.core.raft_log_.last_index() < server.core.commit_index_ {
-            panic!("commit index advanced past the log tail");
-        }
+        // The commit index did not advance past the log tail.
+        assert!(server.core.raft_log_.last_index() >= server.core.commit_index_);  // [move, M10]
         let new_commit: u64 = server.core.commit_index_;
         server.EnqueueCommittedEntries(old_commit, new_commit);
     }

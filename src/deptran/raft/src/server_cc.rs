@@ -43,7 +43,6 @@ unsafe extern "C" {
     fn raft_append_response_read(response: *const rusty::RaftResponsePtr)
         -> AppendRespView;
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
-    fn raft_verify(condition: bool);
     // Drops this server's row from the C++ commo table; called from
     // raft_server_delete. See RaftServerBase::set_commo.
     fn raft_unbind_commo(server: *mut RaftServerHandle);
@@ -125,9 +124,8 @@ pub fn raft_commit_advance(
     // sound only because current_config_ has exactly one write, during
     // Setup, and progress_ is never erased, so the size is invariant across
     // the round. Assert it rather than trusting the phases to stay in step.
-    if consensus.peers_.len() != nservers - 1 {
-        panic!("peer table and round membership disagree");
-    }
+    // Peer table and round membership agree.
+    assert!(consensus.peers_.len() == nservers - 1);  // [move, M10]
     let candidate_index = consensus.peers_
         .majority_match_index(nservers, consensus.raft_log_.last_index());
     if !raft_server_log_index_above(candidate_index, consensus.commit_index_) {
@@ -137,9 +135,8 @@ pub fn raft_commit_advance(
     // provably exists. This says so rather than leaving a null dereference
     // to express it.
     let candidate = consensus.raft_log_.get(candidate_index);
-    if candidate.is_none() {
-        panic!("committable index is absent from the log");
-    }
+    // The committable index is present in the log.
+    assert!(candidate.is_some());  // [move, M10]
     if !raft_server_log_entry_is_current_term(
         candidate.unwrap().term(),
         consensus.current_term_,
@@ -245,9 +242,8 @@ pub fn heartbeat_phase0_locked(
         core.round_.admit(members[i]);
         i += 1;
     }
-    if core.round_.nservers() == 0 || !core.round_.is_member(site_id) {
-        panic!("heartbeat round admitted no quorum containing this site");
-    }
+    // The heartbeat round admitted a quorum containing this site.
+    assert!(core.round_.nservers() != 0 && core.round_.is_member(site_id));  // [move, M10]
     // [move, M2] read before core is lent whole
     let nservers: usize = core.round_.nservers();
     let advance = raft_commit_advance(core, nservers);
@@ -329,9 +325,7 @@ pub fn heartbeat_phase0_body(server: &mut RaftServerBase) -> bool {
     // deliberately fail-closed UINT64_MAX saturation generation, which
     // open() declines rather than overwriting.
     if !server.core.round_.authority_inserted() {
-        unsafe {
-            raft_verify(server.core.round_.round_id() == u64::MAX);
-        }
+        assert!(server.core.round_.round_id() == u64::MAX);  // [move, M10]
     }
     true
 }
@@ -673,11 +667,9 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase) {
                 // follower: sent, or failed to load.
                 skip_follower = true;
             } else {
-                unsafe {
-                    raft_verify(
-                        prev_log_index
-                            <= server.core.raft_log_.last_index());
-                }
+                assert!(
+                    prev_log_index
+                        <= server.core.raft_log_.last_index());  // [move, M10]
                 if prev_log_index == 0 {
                     prev_log_term = 0;
                 } else if prev_log_index == server.core.snapidx_
@@ -738,10 +730,11 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase) {
             // across a phase boundary and across a synchronous completion
             // callback is the hazard class this file removed for next_index,
             // so look it up by key.
-            unsafe {
-                raft_verify(
-                    server.core.authority_rounds_.launch(server.core.round_.round_id(), site_id));
-            }
+            // [move, M10] The launch is a write, so it is not made inside the
+            // assert's condition.
+            let launched: bool =
+                server.core.authority_rounds_.launch(server.core.round_.round_id(), site_id);
+            assert!(launched);
         }
         ord += 1;
     }

@@ -1098,7 +1098,6 @@ void raft_log_line(int32_t level, const uint8_t* text, size_t len) {
 }
 
 // The small kernels declared in server.h.
-void raft_verify(bool condition) { verify(condition); }
 void raft_mutex_lock(RaftCheckedMutex* mutex) {
   mutex->lock();
 }

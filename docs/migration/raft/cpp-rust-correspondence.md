@@ -12,8 +12,8 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 548 | `raft/src/server_h.rs` | 6227 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1724 | `raft/src/server_cc.rs` | 1636 |  |
+| `raft/server.h` | 545 | `raft/src/server_h.rs` | 6194 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1723 | `raft/src/server_cc.rs` | 1629 |  |
 | `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 177 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
 | `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1032 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
 | `raft/server_seam_cpp.cc` | 354 | `raft/rt/src/seam.rs` | 448 | the runtime seam, one per lane; exactly one is linked |
@@ -29,7 +29,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 |---|---|---|
 | C++ → Rust | prototypes in `raft/server_exports.h` | 32 |
 | C++ → Rust | prototypes in `raft/transport_exports.h` — the Rust lane only (raft_lane_rust.cc) | 17 |
-| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 94 |
+| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 93 |
 
 ## Counted facts the prose below leans on
 
@@ -54,7 +54,7 @@ defined by one lane but not the other, or in two places.
 
 | class | count |
 |---|---|
-| HOST | 86 |
+| HOST | 85 |
 | SEAM | 36 |
 
 | kernel | class |
@@ -176,7 +176,6 @@ defined by one lane but not the other, or in two places.
 | `raft_trace_at` | HOST |
 | `raft_trace_through` | HOST |
 | `raft_unbind_commo` | SEAM |
-| `raft_verify` | HOST (CORE candidate) |
 | `raft_vote_quorum_snapshot` | SEAM |
 | `raft_wire_batch` | HOST |
 | `raft_wire_command_clone_into` | HOST |

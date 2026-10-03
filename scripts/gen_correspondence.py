@@ -52,7 +52,7 @@ CPP_HOST = [p for p in (ROOT / "src/deptran").rglob("*.cc")
 # a judgement, and it is the one column here that is.
 CORE_CANDIDATES = {
     "raft_mutex_lock", "raft_mutex_unlock", "raft_std_mutex_lock",
-    "raft_std_mutex_unlock", "raft_verify", "raft_thread_sleep_ms",
+    "raft_std_mutex_unlock", "raft_thread_sleep_ms",
     "raft_monotonic_now_us", "raft_monotonic_now_secs", "raft_time_now_us",
     "raft_random_range_us", "raft_env_lookup", "raft_env_snapshots_enabled",
     "raft_election_timeouts", "raft_heartbeat_interval_default",
