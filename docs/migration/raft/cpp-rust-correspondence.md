@@ -12,10 +12,10 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 548 | `raft/src/server_h.rs` | 5543 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1722 | `raft/src/server_cc.rs` | 2193 |  |
+| `raft/server.h` | 548 | `raft/src/server_h.rs` | 6227 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1724 | `raft/src/server_cc.rs` | 1636 |  |
 | `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 177 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
-| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 988 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
+| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1032 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
 | `raft/server_seam_cpp.cc` | 354 | `raft/rt/src/seam.rs` | 448 | the runtime seam, one per lane; exactly one is linked |
 | `communicator.h` | 567 | `raft/src/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
 | `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 582 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
