@@ -20,6 +20,7 @@ use crate::server_h::raft_server_append_batch_count_is_valid;
 use crate::server_h::BackoffKind;
 use crate::server_h::RAFT_SERVER_INVALID_SITE_ID;
 use crate::server_h::RaftCore;
+use crate::server_h::CoreOutput;  // [move, M3]
 // [move, M1] the heartbeat round's state, moved into server_h.rs with RaftCore
 use crate::server_h::AuthorityReply;
 use crate::server_h::HeartbeatAuthority;
@@ -269,7 +270,7 @@ pub fn heartbeat_round_saturated(round_counter: u64) -> bool {
 // body can now express, so the C++ halves are gone.
 //
 // The round members no longer come from a std::vector rebuilt out of
-// current_config_ every round; they are server.config_members_, filled once
+// current_config_ every round; they are server.core.config_members_, filled once
 // during Setup. Same contents, sorted and duplicate-free, which is what both
 // the round's membership and the ledger's set-equality check expect.
 // ==========================================================================
@@ -294,7 +295,7 @@ pub fn heartbeat_phase0_body(server: &mut RaftServerBase) -> bool {
         }
 
         let site_id: u16 = server.site_id_;
-        let members: rusty::Vec<u16> = server.config_members_.clone();
+        let members: rusty::Vec<u16> = server.core.config_members_.clone();
         let outcome: Phase0Outcome = heartbeat_phase0_locked(
             &mut server.core, &members, site_id, leader);  // [move, M2]
 
@@ -311,7 +312,7 @@ pub fn heartbeat_phase0_body(server: &mut RaftServerBase) -> bool {
         }
     }
 
-    let members: rusty::Vec<u16> = server.config_members_.clone();
+    let members: rusty::Vec<u16> = server.core.config_members_.clone();
     let opened: bool = server.core.authority_rounds_.open(
         server.core.round_.round_id(), &members,
         HeartbeatAuthority::new(server.core.round_.term(), server.core.round_.nservers(),
@@ -950,6 +951,15 @@ pub fn heartbeat_apply_append_reply(
     out
 }
 
+// [move, M3] PHASE 2's step-down, as a function of this module: the
+// transpiled C++ lane passes a local CoreOutput by reference to a
+// same-module call, but not to a method of a type another module defines
+// (bugs-found B13's class).
+fn heartbeat_step_down(core: &mut RaftCore, stopped: bool, failover: bool,
+                       out: &mut CoreOutput) {
+    core.step_down(stopped, failover, out);
+}
+
 // ==========================================================================
 // PHASE 2: poll responses through one SHORT round deadline and process them.
 //
@@ -1016,6 +1026,8 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase) {
             }
 
             let mut stepped_down: bool = false;
+            // [move, M3] The step-down's actions, before the guard drops.
+            let mut out: CoreOutput = CoreOutput::new();
             {
                 let _lock = RaftLockGuard::new(&mut server.mtx_);
                 // What the reply MEANS is heartbeat_apply_append_reply. It
@@ -1046,9 +1058,12 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase) {
                         "AppendEntries response carried newer term",
                         outcome.previous_term(), server.core.current_term_,
                         follower_id);
-                    // stepDown reaches setIsLeader and the election timer, so
-                    // it stays here; the decision to take it was made above.
-                    server.stepDown();
+                    // The step-down's effects are actions now ([move, M3]);
+                    // the decision to take it was made above.
+                    let stopped: bool = server.stopped_now();
+                    let failover: bool = server.failover_;
+                    heartbeat_step_down(&mut server.core, stopped, failover,
+                                        &mut out);
                     server.core.req_voting_ = false;
                     server.core.election_in_progress_ = false;
                     stepped_down = true;
@@ -1101,6 +1116,7 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase) {
                         follower_id);
                 }
                 // AppendReplyAction::IGNORED does nothing, as before.
+                server.run_locked_actions(&out);  // [move, M3]
             }
 
             let completed_previous_round: bool =
@@ -1212,7 +1228,7 @@ pub fn heartbeat_phase3_body(server: &mut RaftServerBase) {
     let mut commit_advanced_after_send: bool = false;
     {
         let _lock = RaftLockGuard::new(&mut server.mtx_);
-        let members: rusty::Vec<u16> = server.config_members_.clone();
+        let members: rusty::Vec<u16> = server.core.config_members_.clone();
         let nservers: usize = server.core.round_.nservers();
         let is_leader: bool = server.IsLeaderLocked();
         let outcome: Phase3Outcome = heartbeat_phase3_locked(

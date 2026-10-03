@@ -1555,6 +1555,143 @@ impl HeartbeatRoundScope {
     }
 }
 
+// ==========================================================================
+// WHAT A CORE DECISION ASKS THE SHELL TO DO ([move, M3], Phase 2)
+//
+// A core function makes no FFI call, takes no lock, reads no clock and fires
+// no callback. Where it used to, it pushes an action here, at the same
+// point, and the shell carries the actions out in push order: under mtx_,
+// before the guard is released (RaftServerBase::run_locked_actions).
+// ==========================================================================
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum CoreActionKind {
+    // Hand the committed entries (from_, to_] to the apply queue
+    // (EnqueueCommittedEntries).
+    APPLY_RANGE = 0,
+    // Restart the election timer (resetTimerLocked): the shell samples the
+    // clock and a timeout, and RaftCore::reset_election_timer records them
+    // (M4).
+    RESET_ELECTION = 1,
+    // The new leader's no-op: the shell builds the command and appends it,
+    // then wakes replication (AppendLeaderNoop).
+    APPEND_NOOP = 2,
+    // A role was set (raft_log_set_is_leader_entry), and on a transition
+    // the leader-change callback is due.
+    ROLE_SET = 3,
+}
+
+// Which resetTimerLocked call an action stands for. The shell turns it back
+// into the reason string the timer reset logs.
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum TimerResetReason {
+    BECAME_FOLLOWER = 0,
+    STEP_DOWN = 1,
+    GRANTED_VOTE = 2,
+    APPEND_ENTRIES = 3,
+}
+
+pub struct CoreAction {
+    kind_: CoreActionKind,
+    // APPLY_RANGE
+    from_: u64,
+    to_: u64,
+    // RESET_ELECTION
+    reason_: TimerResetReason,
+    // ROLE_SET: the term and the role before and after the call, and whether
+    // it was a transition, and which.
+    term_: u64,
+    prev_is_leader_: bool,
+    is_leader_: bool,
+    became_leader_: bool,
+    became_follower_: bool,
+}
+
+impl CoreAction {
+    fn of_kind(kind: CoreActionKind) -> CoreAction {
+        CoreAction {
+            kind_: kind,
+            from_: 0,
+            to_: 0,
+            reason_: TimerResetReason::BECAME_FOLLOWER,
+            term_: 0,
+            prev_is_leader_: false,
+            is_leader_: false,
+            became_leader_: false,
+            became_follower_: false,
+        }
+    }
+
+    pub fn apply_range(from: u64, to: u64) -> CoreAction {
+        let mut action = CoreAction::of_kind(CoreActionKind::APPLY_RANGE);
+        action.from_ = from;
+        action.to_ = to;
+        action
+    }
+
+    pub fn reset_election(reason: TimerResetReason) -> CoreAction {
+        let mut action = CoreAction::of_kind(CoreActionKind::RESET_ELECTION);
+        action.reason_ = reason;
+        action
+    }
+
+    pub fn append_noop() -> CoreAction {
+        CoreAction::of_kind(CoreActionKind::APPEND_NOOP)
+    }
+
+    pub fn role_set(term: u64, prev_is_leader: bool, is_leader: bool,
+                    became_leader: bool, became_follower: bool) -> CoreAction {
+        let mut action = CoreAction::of_kind(CoreActionKind::ROLE_SET);
+        action.term_ = term;
+        action.prev_is_leader_ = prev_is_leader;
+        action.is_leader_ = is_leader;
+        action.became_leader_ = became_leader;
+        action.became_follower_ = became_follower;
+        action
+    }
+
+    pub fn kind(&self) -> CoreActionKind { self.kind_ }
+    pub fn from(&self) -> u64 { self.from_ }
+    pub fn to(&self) -> u64 { self.to_ }
+    pub fn reason(&self) -> TimerResetReason { self.reason_ }
+    pub fn term(&self) -> u64 { self.term_ }
+    pub fn prev_is_leader(&self) -> bool { self.prev_is_leader_ }
+    pub fn is_leader(&self) -> bool { self.is_leader_ }
+    pub fn became_leader(&self) -> bool { self.became_leader_ }
+    pub fn became_follower(&self) -> bool { self.became_follower_ }
+}
+
+// The actions of one critical section, in push order.
+#[cfg_attr(not(any()), derive(Default))]
+pub struct CoreOutput {
+    actions_: rusty::Vec<CoreAction>,
+}
+
+impl CoreOutput {
+    pub fn new() -> CoreOutput {
+        CoreOutput { actions_: rusty::Vec::new() }
+    }
+
+    pub fn push(&mut self, action: CoreAction) {
+        self.actions_.push(action);
+    }
+
+    pub fn len(&self) -> usize {
+        self.actions_.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.actions_.is_empty()
+    }
+
+    pub fn at(&self, i: usize) -> &CoreAction {
+        &self.actions_[i]
+    }
+}
+
 #[repr(C)]
 pub struct RaftCore {
     // THIS SERVER'S IDENTITY, MIRRORED.
@@ -1628,6 +1765,17 @@ pub struct RaftCore {
     // PHASE 0 establishes every field of this each round, so it needs no
     // reset; when PHASE 0 declines the round, phases 1-3 never read it.
     pub round_: HeartbeatRoundScope,
+    // [move, M1] The configuration and the ordinal peer table, from
+    // RaftServerBase, so a role change can rebuild the peers in the core.
+    //
+    // a std::set (current_config_) mirrored into this vector, because a
+    // std::set is opaque to Rust; the set is gone and this is the only copy.
+    // Sorted and duplicate-free is not cosmetic -- the round membership and
+    // the authority ledger's set-equality check both rely on it -- so the
+    // one writer (Setup) sorts and dedups before filling it.
+    pub config_members_: rusty::Vec<u16>,
+    // Ordinal peer table, rebuilt whenever the configuration changes.
+    pub peer_sites_: rusty::Vec<u16>,
 }
 
 #[allow(clippy::new_without_default)]
@@ -1666,6 +1814,8 @@ impl RaftCore {
             authority_rounds_: AuthorityLedger::new(),  // [move, M1]
             pending_leader_term_: rusty::None,  // [move, M1]
             round_: HeartbeatRoundScope::new(),  // [move, M1]
+            config_members_: rusty::Vec::new(),  // [move, M1]
+            peer_sites_: rusty::Vec::new(),  // [move, M1]
         }
     }
 
@@ -1676,6 +1826,229 @@ impl RaftCore {
         self.authority_rounds_ = AuthorityLedger::new();
         self.pending_leader_term_ = rusty::None;
         self.round_ = HeartbeatRoundScope::new();
+    }
+
+    // [move, M1] RaftServerBase::RebuildPeerTables. Rebuilds the ordinal
+    // peer table from the configuration.
+    pub fn rebuild_peer_tables(&mut self, next_index: u64) {
+        self.peer_sites_.clear();
+        let mut self_is_a_member: bool = false;
+        let mut i: usize = 0;
+        while i < self.config_members_.len() {
+            let peer_id: u16 = self.config_members_[i];
+            if peer_id == self.site_id_ {
+                self_is_a_member = true;
+            } else {
+                self.peer_sites_.push(peer_id);
+            }
+            i += 1;
+        }
+        let followers: usize = self.peer_sites_.len();
+        self.peers_.reset(followers, next_index);
+        // The C++ computed this as set.size() minus set.count(self); the
+        // membership flag above is the same statement over a sorted vector.
+        let expected: usize = if self_is_a_member {
+            self.config_members_.len() - 1
+        } else {
+            self.config_members_.len()
+        };
+        assert!(self.peers_.len() == expected);  // [move, M10]
+    }
+
+    // [move, M1] The site id at an ordinal of the peer table.
+    pub fn peer_site_at(&self, ordinal: usize) -> u16 {
+        self.peer_sites_[ordinal]
+    }
+
+    // [move, M1] `current_config_.count(site) != 0`, over the cached vector.
+    // A linear scan of three to five sorted u16s, which is what the std::set
+    // lookup it replaces cost anyway.
+    pub fn is_config_member(&self, site: u16) -> bool {
+        let mut i: usize = 0;
+        while i < self.config_members_.len() {
+            if self.config_members_[i] == site {
+                return true;
+            }
+            i += 1;
+        }
+        false
+    }
+
+    // [move, M1] Linear scan of a fixed, tiny table (replica counts are 3
+    // or 5). Returns peers_.len() when the site is not a follower of this
+    // leader, which is the "removed follower" case PHASE 2 guards against.
+    // Deliberately an ordinal rather than a reference: an ordinal cannot
+    // dangle across an RPC send or a re-entrant completion callback.
+    pub fn peer_ordinal(&self, site: u16) -> usize {
+        let mut ord: usize = 0;
+        while ord < self.peer_sites_.len() {
+            if self.peer_sites_[ord] == site {
+                return ord;
+            }
+            ord += 1;
+        }
+        self.peers_.len()
+    }
+
+    // [move, M3] RaftServerBase::AppendLocal's append: one entry at the
+    // current term, with its command's metadata as the shell asked it
+    // (raft_command_meta). Reports the PRE-append tail: the new entry lands
+    // at prev + 1. The caller holds mtx_.
+    pub fn append_local(&mut self, cmd: rusty::RaftCommand, has_value: bool,
+                        is_tpc_commit: bool, kind: i32,
+                        payload_bytes: u64) -> u64 {
+        let previous_index: u64 = self.raft_log_.last_index();
+        let appended: u64 = self.raft_log_.append(RaftEntry::new(
+            self.current_term_ as i64, cmd, has_value, is_tpc_commit, kind,
+            payload_bytes));
+        assert!(appended == previous_index + 1);  // [move, M10]
+        previous_index
+    }
+
+    // [move, M4] resetTimerLocked's state change. The clock read and the
+    // timeout sample are parameters: the shell samples both where
+    // resetTimerLocked did. Returns the previous heartbeat time, for the
+    // shell's log line. Advances the generation, so a concurrent heartbeat
+    // reset cannot leave a campaign running off an expired snapshot.
+    pub fn reset_election_timer(&mut self, now: u64, timeout_us: u64) -> u64 {
+        let prev_time: u64 = self.last_heartbeat_time_;
+        self.last_heartbeat_time_ = now;
+        self.election_timeout_us_ = timeout_us;
+        if self.election_timer_generation_ == u64::MAX {
+            self.election_timer_generation_ = 1;
+        } else {
+            self.election_timer_generation_ += 1;
+        }
+        prev_time
+    }
+
+    // [move, M3] RaftServerBase::setIsLeader's decisions: the one place this
+    // server's role changes. Its effects are actions, pushed where they used
+    // to run: the new leader's no-op (APPEND_NOOP), the new follower's timer
+    // reset (RESET_ELECTION), and the role's log entry and leader-change
+    // callback (ROLE_SET). `stopped` is the shell's stop_ and `failover` its
+    // failover_; the caller holds mtx_.
+    pub fn set_is_leader(&mut self, is_leader: bool, stopped: bool,
+                         failover: bool, out: &mut CoreOutput) {
+        let prev_is_leader: bool = self.is_leader_;
+        // raft_log_set_is_leader_entry's term, which it read first.
+        let entry_term: u64 = self.current_term_;
+
+        if is_leader && !prev_is_leader {
+            // Leadership publication must not proceed once shutdown began.
+            let publication_term: u64 = self.current_term_;
+            if stopped || self.current_term_ != publication_term {
+                rusty::raft_log_warn_4(
+                    "[RAFT_STATE] Site {} suppressing stale leadership publication for term {} (current={}, stopping={})",
+                    self.site_id_, publication_term, self.current_term_,
+                    stopped);
+                out.push(CoreAction::role_set(entry_term, prev_is_leader,
+                                              is_leader, false, false));
+                return;
+            }
+        }
+
+        if is_leader {
+            // A heartbeat proof belongs to exactly one leadership term. Reset
+            // the local generation BEFORE publishing this server as leader,
+            // so delayed or historical acknowledgements cannot prove a quorum
+            // in the new term.
+            self.heartbeat_round_ = 0;
+            self.read_quorum_confirmed_term_ = 0;
+            self.read_quorum_confirmed_round_ = 0;
+        }
+
+        if is_leader && failover {
+            let next_index: u64 = self.raft_log_.last_index() + 1;
+            self.rebuild_peer_tables(next_index);
+            let peers: usize = self.peers_.len();
+            let mut ord: usize = 0;
+            while ord < peers {
+                let site: u16 = self.peer_site_at(ord);
+                rusty::raft_log_debug_5(
+                    "loc_id_={} match_index_[{}]={}, next_index_[{}]={}",
+                    self.loc_id_, site, self.peers_.match_index(ord),
+                    site, self.peers_.next_index(ord));
+                ord += 1;
+            }
+        }
+
+        // These two MUST be computed before is_leader_ is assigned, or they
+        // both become false.
+        let become_new_leader: bool = is_leader && !self.is_leader_;
+        let become_new_follower: bool = !is_leader && self.is_leader_;
+
+        self.is_leader_ = is_leader;
+
+        // Becoming leader establishes self as the known leader. Becoming a
+        // follower deliberately PRESERVES a hint learned from AppendEntries
+        // or InstallSnapshot; transitions with no known leader clear it at
+        // their own call sites.
+        self.current_leader_id_ = raft_server_leader_hint_after_transition(
+            is_leader,
+            !is_leader && self.current_leader_id_ != RAFT_SERVER_INVALID_SITE_ID,
+            self.site_id_,
+            self.current_leader_id_);
+
+        // Only on an actual transition, not on a no-op call.
+        if become_new_leader || become_new_follower {
+            rusty::raft_log_info_4(
+                "RaftServer::setIsLeader site_id_ {} become_new_leader {} become_new_follower {} isLeader {}",
+                self.site_id_, become_new_leader, become_new_follower, is_leader);
+        }
+
+        if become_new_leader {
+            rusty::raft_log_info_4(
+                "[RAFT_STATE] setIsLeader transition LEADER: site {} term {} prev_is_leader={} become_new_leader={}",
+                self.site_id_, self.current_term_, prev_is_leader,
+                become_new_leader);
+            out.push(CoreAction::append_noop());
+        } else if become_new_follower {
+            rusty::raft_log_info_4(
+                "[RAFT_STATE] setIsLeader transition FOLLOWER: site {} term {} prev_is_leader={} become_new_follower={}",
+                self.site_id_, self.current_term_, prev_is_leader,
+                become_new_follower);
+
+            // Resetting the timer here is what prevents an instant election
+            // after a resume: last_heartbeat_time_ is stale from before the
+            // pause, so counting from NOW gives the current leader time to
+            // send a heartbeat first. Standard Raft: a server stepping down
+            // resets its timer.
+            out.push(CoreAction::reset_election(TimerResetReason::BECAME_FOLLOWER));
+            rusty::raft_log_info_2(
+                "[RAFT_VIEW] Server {} stepping down as leader for partition {}",
+                self.site_id_, self.partition_id_);
+        }
+
+        // The leader-change callback, so RaftWorker can retarget clients to
+        // the new leader after an election.
+        out.push(CoreAction::role_set(entry_term, prev_is_leader, is_leader,
+                                      become_new_leader, become_new_follower));
+    }
+
+    // [move, M3] RaftServerBase::stepDown. CALLER MUST HOLD mtx_. Demotion
+    // is terminal for the election in progress as well as for the leadership
+    // epoch that is ending.
+    pub fn step_down(&mut self, stopped: bool, failover: bool,
+                     out: &mut CoreOutput) {
+        rusty::raft_log_info_2(
+            "[SPEC-RAFT] Site {}: Stepping down as leader (term={})",
+            self.site_id_, self.current_term_);
+
+        // Handles the leadership-change callback, the timer reset, and the
+        // rest of the follower transition.
+        self.set_is_leader(false, stopped, failover, out);
+
+        // A late higher-term response can arrive after this server has
+        // already entered a new candidacy.
+        self.req_voting_ = false;
+        self.election_in_progress_ = false;
+
+        out.push(CoreAction::reset_election(TimerResetReason::STEP_DOWN));
+
+        rusty::raft_log_info_1(
+            "[SPEC-RAFT] Site {}: Step-down complete, now follower",
+            self.site_id_);
     }
 }
 
@@ -2350,8 +2723,6 @@ pub struct RaftServerBase {
     pub snapshot_trigger_threshold_: rusty::sync::atomic::AtomicU64,
     pub create_sm_snapshot_cb_: rusty::RaftCreateSnapshotCb,
     pub prepare_sm_snapshot_cb_: rusty::RaftPrepareSnapshotCb,
-    // Ordinal peer table, rebuilt whenever the configuration changes.
-    pub peer_sites_: rusty::Vec<u16>,
     pub stop_: rusty::sync::atomic::AtomicBool,
     pub rpc_ready_: rusty::sync::atomic::AtomicBool,
     // The heartbeat/election wake gate, shared with whatever owner-thread job
@@ -2383,12 +2754,6 @@ pub struct RaftServerBase {
     pub preferred_leader_site_id_: u16,
     pub startup_timestamp_: u64,
     // The replica set for this partition, sorted and duplicate-free. It was
-    // a std::set (current_config_) mirrored into this vector, because a
-    // std::set is opaque to Rust; the set is gone and this is the only copy.
-    // Sorted and duplicate-free is not cosmetic -- the round membership and
-    // the authority ledger's set-equality check both rely on it -- so the
-    // one writer (Setup) sorts and dedups before filling it.
-    pub config_members_: rusty::Vec<u16>,
     pub apply_thread_: rusty::RaftStdThread,
     pub apply_thread_running_: rusty::sync::atomic::AtomicBool,
     pub state_machine_apply_mtx_: rusty::RaftStdMutex,
@@ -2463,7 +2828,6 @@ impl RaftServerBase {
             snapshot_trigger_threshold_: rusty::sync::atomic::AtomicU64::new(10000),
             create_sm_snapshot_cb_: Default::default(),
             prepare_sm_snapshot_cb_: Default::default(),
-            peer_sites_: rusty::Vec::new(),
             stop_: rusty::sync::atomic::AtomicBool::new(false),
             rpc_ready_: rusty::sync::atomic::AtomicBool::new(false),
             // new_cyclic, not new: the emitter lowers `Arc::new(T::new())` to
@@ -2494,7 +2858,6 @@ impl RaftServerBase {
             leader_change_cb_: Default::default(),
             preferred_leader_site_id_: RAFT_SERVER_INVALID_SITE_ID,
             startup_timestamp_: 0,
-            config_members_: rusty::Vec::new(),
             apply_thread_: Default::default(),
             apply_thread_running_: rusty::sync::atomic::AtomicBool::new(false),
             state_machine_apply_mtx_: Default::default(),
@@ -2847,33 +3210,10 @@ impl RaftServerBase {
     // The role transition, the election timer, and stepping down.
     // ------------------------------------------------------------------
 
-    // @unsafe - CALLER MUST HOLD mtx_. Rebuilds the ordinal peer table from
-    // the configuration. The body is a kernel because current_config_ is a
-    // std::set and peer_sites_ a std::vector: Rust holds them but cannot
-    // iterate them.
+    // @unsafe - CALLER MUST HOLD mtx_. [move, M1] The body is
+    // RaftCore::rebuild_peer_tables.
     pub fn RebuildPeerTables(&mut self, next_index: u64) {
-        self.peer_sites_.clear();
-        let mut self_is_a_member: bool = false;
-        let mut i: usize = 0;
-        while i < self.config_members_.len() {
-            let peer_id: u16 = self.config_members_[i];
-            if peer_id == self.site_id_ {
-                self_is_a_member = true;
-            } else {
-                self.peer_sites_.push(peer_id);
-            }
-            i += 1;
-        }
-        let followers: usize = self.peer_sites_.len();
-        self.core.peers_.reset(followers, next_index);
-        // The C++ computed this as set.size() minus set.count(self); the
-        // membership flag above is the same statement over a sorted vector.
-        let expected: usize = if self_is_a_member {
-            self.config_members_.len() - 1
-        } else {
-            self.config_members_.len()
-        };
-        assert!(self.core.peers_.len() == expected);  // [move, M10]
+        self.core.rebuild_peer_tables(next_index);
     }
 
     // CALLER MUST HOLD mtx_ -- the one caller repo-wide is resetTimerLocked,
@@ -2913,14 +3253,11 @@ impl RaftServerBase {
     // generation, so a concurrent heartbeat reset cannot leave a campaign
     // running off an expired snapshot.
     pub fn resetTimerLocked(&mut self, reason: &str) {
-        let prev_time: u64 = self.core.last_heartbeat_time_;
-        self.core.last_heartbeat_time_ = unsafe { raft_time_now_us() };
-        self.core.election_timeout_us_ = self.GetElectionTimeout();
-        if self.core.election_timer_generation_ == u64::MAX {
-            self.core.election_timer_generation_ = 1;
-        } else {
-            self.core.election_timer_generation_ += 1;
-        }
+        // [move, M4] The clock read and the timeout sample, in the order the
+        // body made them, then the core records them.
+        let now: u64 = unsafe { raft_time_now_us() };
+        let timeout: u64 = self.GetElectionTimeout();
+        let prev_time: u64 = self.core.reset_election_timer(now, timeout);
         // Log only the resets that matter (elections, votes), never the
         // routine heartbeat ones.
         if reason == "granted vote" || reason == "start election timer" {
@@ -2940,131 +3277,72 @@ impl RaftServerBase {
         self.resetTimerLocked(reason);
     }
 
-    // @unsafe - CALLER MUST HOLD mtx_. The one place this server's role
-    // changes.
-    pub fn setIsLeader(&mut self, is_leader: bool) {
-        let prev_is_leader: bool = self.core.is_leader_;
-        unsafe {
-            raft_log_set_is_leader_entry(self.site_id_, self.loc_id_,
-                                         self.core.current_term_,
-                                         prev_is_leader, is_leader);
-        }
-
-        if is_leader && !prev_is_leader {
-            // Leadership publication must not proceed once shutdown began.
-            let publication_term: u64 = self.core.current_term_;
-            if self.stop_.load(rusty::sync::atomic::Ordering::Acquire)
-                || self.core.current_term_ != publication_term
-            {
-                rusty::raft_log_warn_4(
-                    "[RAFT_STATE] Site {} suppressing stale leadership publication for term {} (current={}, stopping={})",
-                    self.site_id_, publication_term, self.core.current_term_,
-                    self.stop_.load(rusty::sync::atomic::Ordering::Acquire));
-                return;
-            }
-        }
-
-        if is_leader {
-            // A heartbeat proof belongs to exactly one leadership term. Reset
-            // the local generation BEFORE publishing this server as leader,
-            // so delayed or historical acknowledgements cannot prove a quorum
-            // in the new term.
-            self.core.heartbeat_round_ = 0;
-            self.core.read_quorum_confirmed_term_ = 0;
-            self.core.read_quorum_confirmed_round_ = 0;
-        }
-
-        if is_leader && self.failover_ {
-            let next_index: u64 = self.core.raft_log_.last_index() + 1;
-            self.RebuildPeerTables(next_index);
-            let peers: usize = self.core.peers_.len();
-            let mut ord: usize = 0;
-            while ord < peers {
-                let site: u16 = self.peer_site_at(ord);
-                rusty::raft_log_debug_5(
-                    "loc_id_={} match_index_[{}]={}, next_index_[{}]={}",
-                    self.loc_id_, site, self.core.peers_.match_index(ord),
-                    site, self.core.peers_.next_index(ord));
-                ord += 1;
-            }
-        }
-
-        // These two MUST be computed before core.is_leader_ is assigned,
-        // or they both become false.
-        let become_new_leader: bool = is_leader && !self.core.is_leader_;
-        let become_new_follower: bool = !is_leader && self.core.is_leader_;
-
-        self.core.is_leader_ = is_leader;
-
-        // Becoming leader establishes self as the known leader. Becoming a
-        // follower deliberately PRESERVES a hint learned from AppendEntries
-        // or InstallSnapshot; transitions with no known leader clear it at
-        // their own call sites.
-        self.core.current_leader_id_ = raft_server_leader_hint_after_transition(
-            is_leader,
-            !is_leader && self.core.current_leader_id_ != RAFT_SERVER_INVALID_SITE_ID,
-            self.site_id_,
-            self.core.current_leader_id_);
-
-        // Only on an actual transition, not on a no-op call.
-        if become_new_leader || become_new_follower {
-            rusty::raft_log_info_4(
-                "RaftServer::setIsLeader site_id_ {} become_new_leader {} become_new_follower {} isLeader {}",
-                self.site_id_, become_new_leader, become_new_follower, is_leader);
-        }
-
-        if become_new_leader {
-            rusty::raft_log_info_4(
-                "[RAFT_STATE] setIsLeader transition LEADER: site {} term {} prev_is_leader={} become_new_leader={}",
-                self.site_id_, self.core.current_term_, prev_is_leader,
-                become_new_leader);
-            self.AppendLeaderNoop();
-        } else if become_new_follower {
-            rusty::raft_log_info_4(
-                "[RAFT_STATE] setIsLeader transition FOLLOWER: site {} term {} prev_is_leader={} become_new_follower={}",
-                self.site_id_, self.core.current_term_, prev_is_leader,
-                become_new_follower);
-
-            // Resetting the timer here is what prevents an instant election
-            // after a resume: last_heartbeat_time_ is stale from before the
-            // pause, so counting from NOW gives the current leader time to
-            // send a heartbeat first. Standard Raft: a server stepping down
-            // resets its timer. setIsLeader is caller-holds.
-            self.resetTimerLocked("became follower");
-            rusty::raft_log_info_2(
-                "[RAFT_TIMER] Site {} reset election timer when becoming follower (last_hb now={})",
-                self.site_id_, self.core.last_heartbeat_time_);
-            rusty::raft_log_info_2(
-                "[RAFT_VIEW] Server {} stepping down as leader for partition {}",
-                self.site_id_, self.partition_id_);
-        }
-
-        // Fire the leadership-change callback so RaftWorker can retarget
-        // clients to the new leader after an election.
-        if unsafe {
-            raft_leader_change_cb_is_set(
-                &self.leader_change_cb_ as *const rusty::RaftLeaderChangeCb)
-        } {
-            if become_new_leader {
-                rusty::raft_log_info_1(
-                    "[LEADER_CALLBACK] Site {}: Firing leader_change_cb_(true) - became leader",
-                    self.site_id_);
+    // [move, M3] setIsLeader's decisions are RaftCore::set_is_leader; what
+    // they ask for is carried out here.
+    //
+    // The actions of one critical section, in push order. CALLER MUST HOLD
+    // mtx_.
+    pub fn run_locked_actions(&mut self, out: &CoreOutput) {
+        let mut i: usize = 0;
+        while i < out.len() {
+            let action: &CoreAction = out.at(i);
+            let kind: CoreActionKind = action.kind();
+            if kind == CoreActionKind::APPLY_RANGE {
+                self.EnqueueCommittedEntries(action.from(), action.to());
+            } else if kind == CoreActionKind::RESET_ELECTION {
+                let reason: TimerResetReason = action.reason();
+                if reason == TimerResetReason::BECAME_FOLLOWER {
+                    self.resetTimerLocked("became follower");
+                    rusty::raft_log_info_2(
+                        "[RAFT_TIMER] Site {} reset election timer when becoming follower (last_hb now={})",
+                        self.site_id_, self.core.last_heartbeat_time_);
+                } else if reason == TimerResetReason::STEP_DOWN {
+                    self.resetTimerLocked("stepDown");
+                } else if reason == TimerResetReason::GRANTED_VOTE {
+                    self.resetTimerLocked("granted vote");
+                } else {
+                    self.resetTimerLocked("AppendEntries from current-term leader");
+                }
+            } else if kind == CoreActionKind::APPEND_NOOP {
+                self.AppendLeaderNoop();
+            } else if kind == CoreActionKind::ROLE_SET {
                 unsafe {
-                    raft_fire_leader_change(
-                        &self.leader_change_cb_ as *const rusty::RaftLeaderChangeCb,
-                        true)
-                };
-            } else if become_new_follower {
-                rusty::raft_log_info_1(
-                    "[LEADER_CALLBACK] Site {}: Firing leader_change_cb_(false) - became follower",
-                    self.site_id_);
-                unsafe {
-                    raft_fire_leader_change(
-                        &self.leader_change_cb_ as *const rusty::RaftLeaderChangeCb,
-                        false)
-                };
+                    raft_log_set_is_leader_entry(self.site_id_, self.loc_id_,
+                                                 action.term(),
+                                                 action.prev_is_leader(),
+                                                 action.is_leader());
+                }
+                // Fire the leadership-change callback so RaftWorker can
+                // retarget clients to the new leader after an election.
+                if (action.became_leader() || action.became_follower())
+                    && unsafe {
+                        raft_leader_change_cb_is_set(
+                            &self.leader_change_cb_ as *const rusty::RaftLeaderChangeCb)
+                    }
+                {
+                    if action.became_leader() {
+                        rusty::raft_log_info_1(
+                            "[LEADER_CALLBACK] Site {}: Firing leader_change_cb_(true) - became leader",
+                            self.site_id_);
+                    } else {
+                        rusty::raft_log_info_1(
+                            "[LEADER_CALLBACK] Site {}: Firing leader_change_cb_(false) - became follower",
+                            self.site_id_);
+                    }
+                    unsafe {
+                        raft_fire_leader_change(
+                            &self.leader_change_cb_ as *const rusty::RaftLeaderChangeCb,
+                            action.became_leader())
+                    };
+                }
             }
+            i += 1;
         }
+    }
+
+    // @safe - stop_ as setIsLeader read it, for the core's `stopped`.
+    pub fn stopped_now(&self) -> bool {
+        self.stop_.load(rusty::sync::atomic::Ordering::Acquire)
     }
 
     // ------------------------------------------------------------------
@@ -3073,7 +3351,7 @@ impl RaftServerBase {
 
     // @safe - the site id at an ordinal of the peer table.
     pub fn peer_site_at(&self, ordinal: usize) -> u16 {
-        self.peer_sites_[ordinal]
+        self.core.peer_site_at(ordinal)  // [move, M1]
     }
 
     // A whole non-negative decimal that fits in u64, parsed in Rust.
@@ -3521,7 +3799,25 @@ impl RaftServerBase {
     pub fn InstallSnapshotReplyAccepted(&mut self, site_id: u16, ord: usize,
                                         snap_last_idx: u64, send_term: u64,
                                         follower_term: u64) {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        // [move, M3] The decision under mtx_ and its actions, all before the
+        // guard drops.
+        let mut out: CoreOutput = CoreOutput::new();
+        {
+            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            self.InstallSnapshotReplyAcceptedLocked(site_id, ord, snap_last_idx,
+                                                    send_term, follower_term,
+                                                    &mut out);
+            self.run_locked_actions(&out);
+        }
+    }
+
+    // [move, M3] InstallSnapshotReplyAccepted's body. CALLER MUST HOLD mtx_.
+    #[allow(clippy::too_many_arguments)]
+    pub fn InstallSnapshotReplyAcceptedLocked(&mut self, site_id: u16,
+                                              ord: usize, snap_last_idx: u64,
+                                              send_term: u64,
+                                              follower_term: u64,
+                                              out: &mut CoreOutput) {
         if raft_server_observed_higher_term(follower_term,
                                             self.core.current_term_) {
             rusty::raft_log_info_4(
@@ -3540,7 +3836,8 @@ impl RaftServerBase {
             self.core.current_leader_id_ =
                 raft_server_leader_hint_after_transition(
                     false, false, self.site_id_, site_id);
-            self.stepDown();
+            let stopped: bool = self.stopped_now();
+            self.core.step_down(stopped, self.failover_, out);  // [move, M3]
             self.core.req_voting_ = false;
             self.core.election_in_progress_ = false;
             return;
@@ -3688,11 +3985,17 @@ impl RaftServerBase {
         // establishes follower state. Cancel the outstanding election as
         // well as leadership; RequestVote's delayed-success path
         // revalidates this ownership before it can promote again.
+        // [move, M3] The actions run here, where stepDown and setIsLeader ran
+        // them, so the timer resets keep their place ahead of the install
+        // below.
+        let mut out: CoreOutput = CoreOutput::new();
+        let stopped: bool = self.stopped_now();
         if self.core.is_leader_ {
-            self.stepDown();
+            self.core.step_down(stopped, self.failover_, &mut out);
         } else {
-            self.setIsLeader(false);
+            self.core.set_is_leader(false, stopped, self.failover_, &mut out);
         }
+        self.run_locked_actions(&out);
         self.core.req_voting_ = false;
         self.core.election_in_progress_ = false;
 
@@ -3878,7 +4181,8 @@ impl RaftServerBase {
     #[allow(clippy::too_many_arguments)]
     pub fn doVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
                   can_id: u16, can_term: i64, reply_term: &mut i64,
-                  vote_granted: &mut i8, vote: bool) {
+                  vote_granted: &mut i8, vote: bool,
+                  out: &mut CoreOutput) {
         *vote_granted = vote as i8;
         *reply_term = self.core.current_term_ as i64;
 
@@ -3910,10 +4214,11 @@ impl RaftServerBase {
 
             // A higher term is stable state even when this RequestVote is
             // denied.
+            let stopped: bool = self.stopped_now();
             if was_leader {
-                self.stepDown();
+                self.core.step_down(stopped, self.failover_, out);  // [move, M3]
             } else {
-                self.setIsLeader(false);
+                self.core.set_is_leader(false, stopped, self.failover_, out);  // [move, M3]
             }
             self.core.req_voting_ = false;
             self.core.election_in_progress_ = false;
@@ -3925,7 +4230,8 @@ impl RaftServerBase {
         }
 
         if vote {
-            self.setIsLeader(false);
+            let stopped: bool = self.stopped_now();
+            self.core.set_is_leader(false, stopped, self.failover_, out);  // [move, M3]
             self.core.vote_for_ = can_id;
             if unsafe { raft_election_debug_enabled() } {
                 rusty::raft_log_info_3(
@@ -3934,7 +4240,7 @@ impl RaftServerBase {
                     self.core.current_term_);
             }
             // doVote runs only from OnRequestVote, which holds mtx_.
-            self.resetTimerLocked("granted vote");
+            out.push(CoreAction::reset_election(TimerResetReason::GRANTED_VOTE));  // [move, M3]
         }
     }
 
@@ -4249,34 +4555,14 @@ impl RaftServerBase {
         true
     }
 
-    // @safe - `current_config_.count(site) != 0`, over the cached vector.
-    // A linear scan of three to five sorted u16s, which is what the std::set
-    // lookup it replaces cost anyway.
+    // @safe - [move, M1] RaftCore::is_config_member.
     pub fn IsConfigMember(&self, site: u16) -> bool {
-        let mut i: usize = 0;
-        while i < self.config_members_.len() {
-            if self.config_members_[i] == site {
-                return true;
-            }
-            i += 1;
-        }
-        false
+        self.core.is_config_member(site)
     }
 
-    // @safe - linear scan of a fixed, tiny table (replica counts are 3 or 5).
-    // Returns core.peers_.len() when the site is not a follower of this
-    // leader, which is the "removed follower" case PHASE 2 guards against.
-    // Deliberately an ordinal rather than a reference: an ordinal cannot
-    // dangle across an RPC send or a re-entrant completion callback.
+    // @safe - [move, M1] RaftCore::peer_ordinal.
     pub fn PeerOrdinal(&self, site: u16) -> usize {
-        let mut ord: usize = 0;
-        while ord < self.peer_sites_.len() {
-            if self.peer_sites_[ord] == site {
-                return ord;
-            }
-            ord += 1;
-        }
-        self.core.peers_.len()
+        self.core.peer_ordinal(site)
     }
 
     // @unsafe - publishes the cross-thread replication wake.
@@ -4586,8 +4872,6 @@ impl RaftServerBase {
         }
     }
 
-    // @unsafe - CALLER MUST HOLD mtx_. Demotion is terminal for the election
-    // in progress as well as for the leadership epoch that is ending.
     // @unsafe - the campaign. Two critical sections with one fiber
     // suspension between them: the broadcast must not hold mtx_, and every
     // decision after it must be re-derived from state read under the
@@ -4713,7 +4997,23 @@ impl RaftServerBase {
                 &mut quorum as *mut rusty::RaftVoteQuorumPtr);
         }
 
-        let _lock1 = RaftLockGuard::new(&mut self.mtx_);
+        // [move, M3] The settlement under mtx_ and its actions, all before
+        // the guard drops.
+        let mut out: CoreOutput = CoreOutput::new();
+        let mut won: bool = false;
+        {
+            let _lock1 = RaftLockGuard::new(&mut self.mtx_);
+            won = self.RequestVoteSettleLocked(term, loc_id, &quorum, &mut out);
+            self.run_locked_actions(&out);
+        }
+        won
+    }
+
+    // [move, M3] RequestVoteImpl's second critical section, after the
+    // broadcast. CALLER MUST HOLD mtx_.
+    pub fn RequestVoteSettleLocked(&mut self, term: u64, loc_id: u32,
+                                   quorum: &rusty::RaftVoteQuorumPtr,
+                                   out: &mut CoreOutput) -> bool {
         if self.stop_.load(rusty::sync::atomic::Ordering::Acquire) {
             self.core.election_in_progress_ = false;
             self.core.req_voting_ = false;
@@ -4726,7 +5026,7 @@ impl RaftServerBase {
         let outcome: RaftVoteOutcome =
             unsafe {
                 raft_vote_quorum_snapshot(
-                    &quorum as *const rusty::RaftVoteQuorumPtr)
+                    quorum as *const rusty::RaftVoteQuorumPtr)
             };
         let observed_response_term: i64 = outcome.term_;
         let completion_action: i32 = raft_server_election_completion_action(
@@ -4742,10 +5042,11 @@ impl RaftServerBase {
                 raft_server_leader_hint_after_transition(
                     false, false, self.site_id_, self.core.current_leader_id_);
 
+            let stopped: bool = self.stopped_now();
             if self.core.is_leader_ {
-                self.stepDown();
+                self.core.step_down(stopped, self.failover_, out);  // [move, M3]
             } else {
-                self.setIsLeader(false);
+                self.core.set_is_leader(false, stopped, self.failover_, out);  // [move, M3]
             }
             self.core.election_in_progress_ = false;
             self.core.req_voting_ = false;
@@ -4792,7 +5093,8 @@ impl RaftServerBase {
                 return false;
             }
 
-            self.setIsLeader(true);
+            let stopped: bool = self.stopped_now();
+            self.core.set_is_leader(true, stopped, self.failover_, out);  // [move, M3]
             rusty::raft_log_debug_2("site {} became leader for term {}",
                                     self.site_id_, term);
             if unsafe { raft_election_debug_enabled() } {
@@ -4810,12 +5112,14 @@ impl RaftServerBase {
             } else {
                 rusty::raft_log_debug_2("vote rejected {} curterm {}, do rollback",
                                         loc_id, self.core.current_term_);
-                self.setIsLeader(false);
+                let stopped: bool = self.stopped_now();
+                self.core.set_is_leader(false, stopped, self.failover_, out);  // [move, M3]
                 false
             }
         } else if outcome.no_ {
             rusty::raft_log_debug_1("site {} requestvote rejected", self.site_id_);
-            self.setIsLeader(false);
+            let stopped: bool = self.stopped_now();
+            self.core.set_is_leader(false, stopped, self.failover_, out);  // [move, M3]
             if unsafe { raft_election_debug_enabled() } {
                 rusty::raft_log_info_5(
                     "[RAFT_ELECTION] server {} lost election term {} (yes={} no={}) highest_term={}",
@@ -4847,26 +5151,6 @@ impl RaftServerBase {
         }
     }
 
-    pub fn stepDown(&mut self) {
-        rusty::raft_log_info_2(
-            "[SPEC-RAFT] Site {}: Stepping down as leader (term={})",
-            self.site_id_, self.core.current_term_);
-
-        // Handles the leadership-change callback, the timer reset, and the
-        // rest of the follower transition.
-        self.setIsLeader(false);
-
-        // A late higher-term response can arrive after this server has
-        // already entered a new candidacy.
-        self.core.req_voting_ = false;
-        self.core.election_in_progress_ = false;
-
-        self.resetTimerLocked("stepDown");
-
-        rusty::raft_log_info_1(
-            "[SPEC-RAFT] Site {}: Step-down complete, now follower",
-            self.site_id_);
-    }
 }
 
 // [move, M6] An entry for the log, with the facts the core reads about its
@@ -4901,11 +5185,21 @@ impl RaftServerBase {
     // Appends one entry at the current term -- mtx_ held by the caller -- and
     // reports the PRE-append tail: the new entry lands at prev + 1.
     pub fn AppendLocal(&mut self, cmd: rusty::RaftCommand) -> u64 {
-        let previous_index: u64 = self.core.raft_log_.last_index();
-        let appended: u64 = self.core.raft_log_.append(
-            raft_entry_from_command(self.core.current_term_ as i64, cmd));  // [move, M6]
-        assert!(appended == previous_index + 1);  // [move, M10]
-        previous_index
+        // [move, M3] The shell asks the command's metadata (a kernel); the
+        // core appends it at its current term.
+        let mut has_value: bool = false;
+        let mut is_tpc_commit: bool = false;
+        let mut kind: i32 = 0;
+        let mut payload_bytes: u64 = 0;
+        unsafe {
+            raft_command_meta(&cmd as *const rusty::RaftCommand,
+                              &mut has_value as *mut bool,
+                              &mut is_tpc_commit as *mut bool,
+                              &mut kind as *mut i32,
+                              &mut payload_bytes as *mut u64);
+        }
+        self.core.append_local(cmd, has_value, is_tpc_commit, kind,
+                               payload_bytes)
     }
 
     // The new leader's no-op entry, so the term commits something without
@@ -4939,8 +5233,8 @@ impl RaftServerBase {
             self.core.snapidx_ == 0 && self.core.raft_log_.base() == 1;
         let mut contains_self: bool = false;
         let mut i: usize = 0;
-        while i < self.config_members_.len() {
-            if self.config_members_[i] == self.site_id_ {
+        while i < self.core.config_members_.len() {
+            if self.core.config_members_[i] == self.site_id_ {
                 contains_self = true;
             }
             i += 1;
@@ -4953,12 +5247,12 @@ impl RaftServerBase {
     pub fn LoadCurrentConfig(&mut self) -> u64 {
         let replicas: u64 =
             unsafe { raft_config_replica_count(self.partition_id_) };
-        self.config_members_.clear();
+        self.core.config_members_.clear();
         let mut i: u64 = 0;
         while i < replicas {
             let site: u16 =
                 unsafe { raft_config_replica_site(self.partition_id_, i) };
-            self.config_members_.push(site);
+            self.core.config_members_.push(site);
             i += 1;
         }
         replicas
@@ -5069,7 +5363,11 @@ impl RaftServerBase {
             raft_ensure_legacy_payload_registered();
         }
         if cfg!(feature = "raft_test") {
-            self.setIsLeader(false);
+            // [move, M3] No lock: nothing else can see the server yet.
+            let mut out: CoreOutput = CoreOutput::new();
+            let stopped: bool = self.stopped_now();
+            self.core.set_is_leader(false, stopped, self.failover_, &mut out);
+            self.run_locked_actions(&out);
         }
         self.stop_.store(false, rusty::sync::atomic::Ordering::Release);
     }
@@ -5690,6 +5988,7 @@ pub unsafe fn raft_on_request_vote(
     can_term: i64,
     reply_term: &mut i64,
     vote_granted: &mut i8,
+    out: &mut CoreOutput,  // [move, M3]
 ) {
     if stopped {
         *reply_term = server.core.current_term_ as i64;
@@ -5719,7 +6018,7 @@ pub unsafe fn raft_on_request_vote(
     // faithful spelling.
     if (can_term as u64) < cur_term {
         server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
-                      reply_term, vote_granted, false);
+                      reply_term, vote_granted, false, out);
         return;
     }
 
@@ -5734,7 +6033,7 @@ pub unsafe fn raft_on_request_vote(
         && server.core.vote_for_ != can_id
     {
         server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
-                      reply_term, vote_granted, false);
+                      reply_term, vote_granted, false, out);
         return;
     }
 
@@ -5754,7 +6053,7 @@ pub unsafe fn raft_on_request_vote(
         && candidate_log_is_current
     {
         server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
-                      reply_term, vote_granted, true);
+                      reply_term, vote_granted, true, out);
         return;
     }
 
@@ -5763,7 +6062,7 @@ pub unsafe fn raft_on_request_vote(
 
     let grant = candidate_log_is_current;
     server.doVote(lst_log_idx, lst_log_term, can_id, can_term,
-                  reply_term, vote_granted, grant);
+                  reply_term, vote_granted, grant, out);
 }
 
 // ==========================================================================
@@ -5776,7 +6075,23 @@ pub fn on_request_vote_body(
     server: &mut RaftServerBase, lst_log_idx: u64,
     lst_log_term: i64, can_id: u16, can_term: i64,
     reply_term: &mut i64, vote_granted: &mut i8) {
-    let _lock = RaftLockGuard::new(&mut server.mtx_);
+    // [move, M3] The decision under mtx_ and its actions, all before the
+    // guard drops.
+    let mut out: CoreOutput = CoreOutput::new();
+    {
+        let _lock = RaftLockGuard::new(&mut server.mtx_);
+        on_request_vote_locked(server, lst_log_idx, lst_log_term, can_id,
+                               can_term, reply_term, vote_granted, &mut out);
+        server.run_locked_actions(&out);
+    }
+}
+
+// [move, M3] on_request_vote_body's critical section. CALLER MUST HOLD mtx_.
+#[allow(clippy::too_many_arguments)]
+fn on_request_vote_locked(
+    server: &mut RaftServerBase, lst_log_idx: u64,
+    lst_log_term: i64, can_id: u16, can_term: i64,
+    reply_term: &mut i64, vote_granted: &mut i8, out: &mut CoreOutput) {
     rusty::raft_log_debug_1("raft receives vote from candidate: {:x}", can_id);
 
     let stopped: bool =
@@ -5802,7 +6117,7 @@ pub fn on_request_vote_body(
     unsafe {
         raft_on_request_vote(server, stopped, candidate_is_current_voter,
                              lst_log_idx, lst_log_term, can_id, can_term,
-                             reply_term, vote_granted);
+                             reply_term, vote_granted, out);
     }
 }
 
@@ -5932,6 +6247,7 @@ pub unsafe fn raft_on_append_entries(
     follower_append_ok: &mut u64,
     follower_current_term: &mut u64,
     follower_last_log_index: &mut u64,
+    out: &mut CoreOutput,  // [move, M3]
 ) -> AppendReport {
     let mut report = AppendReport {
         accepted_: false,
@@ -6035,12 +6351,13 @@ pub unsafe fn raft_on_append_entries(
             let now_term: u64 = server.core.current_term_;
             server.LogTermChange("AppendEntries leader term is newer",
                                  prev_term, now_term, leader_site_id);
+            // `stopped` is the caller's read of stop_, under this same lock.
             if server.core.is_leader_ {
                 // The central transition, so no leadership state survives an
                 // accepted competing leader epoch.
-                server.stepDown();
+                server.core.step_down(stopped, server.failover_, out);  // [move, M3]
             } else {
-                server.setIsLeader(false);
+                server.core.set_is_leader(false, stopped, server.failover_, out);  // [move, M3]
             }
             server.core.req_voting_ = false;
             server.core.election_in_progress_ = false;
@@ -6049,7 +6366,7 @@ pub unsafe fn raft_on_append_entries(
         // was already published above, before its role transition.
         server.core.current_leader_id_ = raft_server_leader_hint_after_transition(
             false, true, server.core.site_id_, leader_site_id);
-        server.resetTimerLocked("AppendEntries from current-term leader");
+        out.push(CoreAction::reset_election(TimerResetReason::APPEND_ENTRIES));  // [move, M3]
     }
 
     if !(raft_server_append_is_acceptable(term_ok, index_ok, prev_term_ok)
@@ -6065,9 +6382,9 @@ pub unsafe fn raft_on_append_entries(
     // term. Cancel an outstanding election before its delayed result can
     // promote this server after the accepted AppendEntries.
     if server.core.is_leader_ {
-        server.stepDown();
+        server.core.step_down(stopped, server.failover_, out);  // [move, M3]
     } else {
-        server.setIsLeader(false);
+        server.core.set_is_leader(false, stopped, server.failover_, out);  // [move, M3]
     }
     server.core.req_voting_ = false;
     server.core.election_in_progress_ = false;
@@ -6156,7 +6473,7 @@ pub unsafe fn raft_on_append_entries(
         // The commit index did not advance past the log tail.
         assert!(server.core.raft_log_.last_index() >= server.core.commit_index_);  // [move, M10]
         let new_commit: u64 = server.core.commit_index_;
-        server.EnqueueCommittedEntries(old_commit, new_commit);
+        out.push(CoreAction::apply_range(old_commit, new_commit));  // [move, M3]
     }
 
     *follower_append_ok = 1;
@@ -6185,8 +6502,32 @@ pub fn on_append_entries_body(
                               follower_append_ok: &mut u64,
                               follower_current_term: &mut u64,
                               follower_last_log_index: &mut u64) {
-    let _lock = RaftLockGuard::new(&mut server.mtx_);
+    // [move, M3] The decision under mtx_ and its actions, all before the
+    // guard drops.
+    let mut out: CoreOutput = CoreOutput::new();
+    {
+        let _lock = RaftLockGuard::new(&mut server.mtx_);
+        on_append_entries_locked(server, leader_current_term, leader_site_id,
+                                 leader_prev_log_index, leader_prev_log_term,
+                                 leader_commit_index, cmd, cmd_has_value,
+                                 leader_next_log_term, follower_append_ok,
+                                 follower_current_term,
+                                 follower_last_log_index, &mut out);
+    }
+}
 
+// [move, M3] on_append_entries_body's critical section. CALLER MUST HOLD
+// mtx_. The locked actions run right after the decision, before the
+// rejection log lines, where the effects used to sit.
+#[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
+fn on_append_entries_locked(
+    server: &mut RaftServerBase,
+    leader_current_term: u64, leader_site_id: u16,
+    leader_prev_log_index: u64, leader_prev_log_term: u64,
+    leader_commit_index: u64, cmd: *const core::ffi::c_void,
+    cmd_has_value: bool, leader_next_log_term: u64,
+    follower_append_ok: &mut u64, follower_current_term: &mut u64,
+    follower_last_log_index: &mut u64, out: &mut CoreOutput) {
     let stopped: bool =
         server.stop_.load(rusty::sync::atomic::Ordering::Acquire);
     let sender_is_current_voter: bool =
@@ -6205,8 +6546,9 @@ pub fn on_append_entries_body(
             cmd_has_value, leader_current_term, leader_site_id,
             leader_prev_log_index, leader_prev_log_term, leader_commit_index,
             leader_next_log_term, follower_append_ok, follower_current_term,
-            follower_last_log_index)
+            follower_last_log_index, out)
     };
+    server.run_locked_actions(out);  // [move, M3]
 
     if !stopped && !report.accepted() {
         if report.refused_committed_conflict() {
