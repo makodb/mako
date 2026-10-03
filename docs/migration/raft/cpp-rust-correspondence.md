@@ -12,7 +12,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 545 | `raft/src/server_h.rs` | 6772 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.h` | 545 | `raft/src/server_h.rs` | 6784 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
 | `raft/server.cc` | 1751 | `raft/src/server_cc.rs` | 1817 |  |
 | `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 177 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
 | `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1032 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
