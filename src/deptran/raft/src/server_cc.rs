@@ -7,183 +7,6 @@ fn IsPreferredLeaderConfigured(preferred_leader_site_id: u16) -> bool {
     preferred_leader_site_id != u16::MAX
 }
 
-pub struct PendingAppend {
-    follower_: u16,
-    sent_term_: u64,
-    sent_round_: u64,
-    // Inclusive end of the exact prefix proved by this RPC's wire payload. A
-    // heartbeat proves only prevLogIndex; raw and batched payloads extend it
-    // by their encoded entry count.
-    sent_end_index_: u64,
-    response_: rusty::RaftResponsePtr,
-    // Empty Command (has_value() == false) signals a heartbeat.
-    cmd_: rusty::RaftCommand,
-}
-
-impl PendingAppend {
-    pub fn new(follower: u16, sent_term: u64, sent_round: u64,
-               sent_end_index: u64, response: rusty::RaftResponsePtr,
-               cmd: rusty::RaftCommand) -> PendingAppend {
-        PendingAppend {
-            follower_: follower,
-            sent_term_: sent_term,
-            sent_round_: sent_round,
-            sent_end_index_: sent_end_index,
-            response_: response,
-            cmd_: cmd,
-        }
-    }
-}
-
-pub struct PendingTable {
-    slots_: rusty::Vec<rusty::Option<PendingAppend>>,
-}
-
-#[allow(clippy::new_without_default)]
-impl PendingTable {
-    pub fn new() -> PendingTable {
-        PendingTable { slots_: rusty::Vec::new() }
-    }
-
-    // One slot per follower, all empty. Called wherever the peer table is
-    // sized, so the two always agree on what an ordinal means.
-    pub fn resize(&mut self, peers: usize) {
-        self.slots_.clear();
-        let mut i: usize = 0;
-        while i < peers {
-            self.slots_.push(rusty::None);
-            i += 1;
-        }
-    }
-
-    // Drops every in-flight context. Used on leadership loss and on a term
-    // change, so a prior epoch's RPC can never occupy a slot.
-    pub fn abandon(&mut self) {
-        let peers = self.slots_.len();
-        self.resize(peers);
-    }
-
-    pub fn len(&self) -> usize {
-        self.slots_.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.slots_.is_empty()
-    }
-
-    pub fn occupied(&self, ordinal: usize) -> bool {
-        self.slots_[ordinal].is_some()
-    }
-
-    pub fn place(&mut self, ordinal: usize, pending: PendingAppend) {
-        self.slots_[ordinal] = rusty::Some(pending);
-    }
-
-    pub fn release(&mut self, ordinal: usize) {
-        self.slots_[ordinal] = rusty::None;
-    }
-
-    pub fn follower(&self, ordinal: usize) -> u16 {
-        if self.slots_[ordinal].is_none() {
-            return 0;
-        }
-        self.slots_[ordinal].as_ref().unwrap().follower_
-    }
-
-    pub fn sent_term(&self, ordinal: usize) -> u64 {
-        if self.slots_[ordinal].is_none() {
-            return 0;
-        }
-        self.slots_[ordinal].as_ref().unwrap().sent_term_
-    }
-
-    pub fn sent_round(&self, ordinal: usize) -> u64 {
-        if self.slots_[ordinal].is_none() {
-            return 0;
-        }
-        self.slots_[ordinal].as_ref().unwrap().sent_round_
-    }
-
-    pub fn sent_end_index(&self, ordinal: usize) -> u64 {
-        if self.slots_[ordinal].is_none() {
-            return 0;
-        }
-        self.slots_[ordinal].as_ref().unwrap().sent_end_index_
-    }
-
-    // Both of these hand a carried C++ value back to C++. The reference is
-    // safe because the method is &self: the emitter binds the const unwrap
-    // overload, which returns a reference into the live Option rather than a
-    // moved-out temporary.
-    // Callers check occupied() first; unwrap is the assertion of that.
-    pub fn response(&self, ordinal: usize) -> &rusty::RaftResponsePtr {
-        &self.slots_[ordinal].as_ref().unwrap().response_
-    }
-
-    // Callers check occupied() first; unwrap is the assertion of that.
-    pub fn cmd(&self, ordinal: usize) -> &rusty::RaftCommand {
-        &self.slots_[ordinal].as_ref().unwrap().cmd_
-    }
-}
-
-pub struct HeartbeatAuthority {
-    term_: u64,
-    config_size_: usize,
-    voters_: rusty::BTreeSet<u16>,
-    outstanding_: rusty::BTreeSet<u16>,
-}
-
-#[allow(clippy::new_without_default)]
-impl HeartbeatAuthority {
-    // A generation begins with this site already counted as a voter: a leader
-    // is evidence for its own authority.
-    pub fn new(term: u64, config_size: usize, self_site: u16) -> HeartbeatAuthority {
-        let mut voters: rusty::BTreeSet<u16> = rusty::BTreeSet::new();
-        voters.insert(self_site);
-        HeartbeatAuthority {
-            term_: term,
-            config_size_: config_size,
-            voters_: voters,
-            outstanding_: rusty::BTreeSet::new(),
-        }
-    }
-
-    pub fn term(&self) -> u64 {
-        self.term_
-    }
-
-    pub fn config_size(&self) -> usize {
-        self.config_size_
-    }
-
-    pub fn voter_count(&self) -> usize {
-        self.voters_.len()
-    }
-
-    // One physical RPC exists per follower per generation, but these stay sets
-    // so a future transport cannot double-count a voter.
-    pub fn launch(&mut self, site: u16) {
-        self.outstanding_.insert(site);
-    }
-
-    pub fn retire(&mut self, site: u16) {
-        self.outstanding_.remove(&site);
-    }
-
-    pub fn record_vote(&mut self, site: u16) {
-        self.voters_.insert(site);
-    }
-
-    // Every RPC launched in this generation has completed. No later event can
-    // add evidence to it.
-    pub fn all_completed(&self) -> bool {
-        self.outstanding_.is_empty()
-    }
-}
-
-use crate::quorum_hpp::raft_quorum_majority_count;
-use crate::quorum_hpp::raft_quorum_count_reached;
-use crate::server_h::raft_server_read_index_reply_confirms_authority;
 use crate::server_h::raft_server_read_index_round_can_advance;
 use crate::server_h::raft_server_log_index_above;
 use crate::server_h::raft_server_log_entry_is_current_term;
@@ -196,273 +19,11 @@ use crate::server_h::raft_server_append_entry_count_fits;
 use crate::server_h::raft_server_append_batch_count_is_valid;
 use crate::server_h::BackoffKind;
 use crate::server_h::RAFT_SERVER_INVALID_SITE_ID;
-use crate::server_h::RaftConsensusState;
-
-pub struct AuthorityGeneration {
-    round_id_: u64,
-    config_: rusty::BTreeSet<u16>,
-    evidence_: HeartbeatAuthority,
-}
-
-impl AuthorityGeneration {
-    pub fn round_id(&self) -> u64 {
-        self.round_id_
-    }
-
-    pub fn term(&self) -> u64 {
-        self.evidence_.term()
-    }
-
-    pub fn voter_count(&self) -> usize {
-        self.evidence_.voter_count()
-    }
-
-    pub fn config_size(&self) -> usize {
-        self.evidence_.config_size()
-    }
-
-    // Quorum is asked of the generation's OWN config size, not the current
-    // one: a delayed reply is evidence against the membership that launched
-    // it.
-    pub fn has_quorum(&self) -> bool {
-        let quorum = raft_quorum_majority_count(self.evidence_.config_size());
-        raft_quorum_count_reached(self.evidence_.voter_count(), quorum)
-    }
-
-    pub fn all_completed(&self) -> bool {
-        self.evidence_.all_completed()
-    }
-
-    // Set equality against the launching membership, spelled with len() and
-    // contains() so it means the same thing under the Vec-backed rustc model
-    // as under the real C++ btree. `sites` is the current config, sorted and
-    // duplicate-free, which is what a std::set iteration yields.
-    pub fn config_matches(&self, sites: &[u16]) -> bool {
-        if self.config_.len() != sites.len() {
-            return false;
-        }
-        let mut i: usize = 0;
-        while i < sites.len() {
-            if !self.config_.contains(&sites[i]) {
-                return false;
-            }
-            i += 1;
-        }
-        true
-    }
-}
-
-// The context one reply carries. Grouped into a value rather than passed as
-// seven parameters, which clippy rejects and which reads worse at the call
-// site: PHASE 2 is describing one event, not supplying seven unrelated
-// arguments.
-#[repr(C)]
-pub struct AuthorityReply {
-    sent_round_: u64,
-    follower_: u16,
-    sent_term_: u64,
-    response_term_: u64,
-    current_term_: u64,
-    is_leader_: bool,
-    response_available_: bool,
-}
-
-impl AuthorityReply {
-    pub fn new(sent_round: u64, follower: u16, sent_term: u64,
-               response_term: u64, current_term: u64, is_leader: bool,
-               response_available: bool) -> AuthorityReply {
-        AuthorityReply {
-            sent_round_: sent_round,
-            follower_: follower,
-            sent_term_: sent_term,
-            response_term_: response_term,
-            current_term_: current_term,
-            is_leader_: is_leader,
-            response_available_: response_available,
-        }
-    }
-
-    pub fn sent_round(&self) -> u64 { self.sent_round_ }
-    pub fn follower(&self) -> u16 { self.follower_ }
-    pub fn sent_term(&self) -> u64 { self.sent_term_ }
-    pub fn response_term(&self) -> u64 { self.response_term_ }
-    pub fn current_term(&self) -> u64 { self.current_term_ }
-    pub fn is_leader(&self) -> bool { self.is_leader_ }
-    pub fn response_available(&self) -> bool { self.response_available_ }
-}
-
-// The outcome of one settlement pass: at most one generation is published.
-#[repr(C)]
-pub struct AuthorityOutcome {
-    confirmed_: bool,
-    term_: u64,
-    round_id_: u64,
-    voter_count_: usize,
-    config_size_: usize,
-}
-
-impl AuthorityOutcome {
-    pub fn confirmed(&self) -> bool { self.confirmed_ }
-    pub fn term(&self) -> u64 { self.term_ }
-    pub fn round_id(&self) -> u64 { self.round_id_ }
-    pub fn voter_count(&self) -> usize { self.voter_count_ }
-    pub fn config_size(&self) -> usize { self.config_size_ }
-}
-
-pub struct AuthorityLedger {
-    generations_: rusty::Vec<AuthorityGeneration>,
-}
-
-#[allow(clippy::new_without_default)]
-impl AuthorityLedger {
-    pub fn new() -> AuthorityLedger {
-        AuthorityLedger { generations_: rusty::Vec::new() }
-    }
-
-    // Dropped wholesale on leadership loss or a term change, so a prior
-    // epoch's evidence can never be counted against the new one.
-    pub fn abandon(&mut self) {
-        self.generations_.clear();
-    }
-
-    // Opens a generation over the membership that launched it. Returns false
-    // if this round id is already present, which can only be the deliberately
-    // fail-closed UINT64_MAX saturation generation; the caller asserts that.
-    pub fn open(&mut self, round_id: u64, config: &[u16],
-                evidence: HeartbeatAuthority) -> bool {
-        if self.index_of(round_id) < self.generations_.len() {
-            return false;
-        }
-        let mut snapshot: rusty::BTreeSet<u16> = rusty::BTreeSet::new();
-        let mut i: usize = 0;
-        while i < config.len() {
-            snapshot.insert(config[i]);
-            i += 1;
-        }
-        self.generations_.push(AuthorityGeneration {
-            round_id_: round_id,
-            config_: snapshot,
-            evidence_: evidence,
-        });
-        true
-    }
-
-    // Returns generations_.len() when absent. An index, never a reference, so
-    // nothing can dangle across an RPC send or a re-entrant callback.
-    pub fn index_of(&self, round_id: u64) -> usize {
-        let n = self.generations_.len();
-        let mut i: usize = 0;
-        while i < n {
-            if self.generations_[i].round_id_ == round_id {
-                return i;
-            }
-            i += 1;
-        }
-        n
-    }
-
-    pub fn len(&self) -> usize {
-        self.generations_.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.generations_.is_empty()
-    }
-
-    pub fn launch(&mut self, round_id: u64, site: u16) -> bool {
-        let index = self.index_of(round_id);
-        if index >= self.generations_.len() {
-            return false;
-        }
-        self.generations_[index].evidence_.launch(site);
-        true
-    }
-
-    pub fn has_quorum(&self, round_id: u64) -> bool {
-        let index = self.index_of(round_id);
-        if index >= self.generations_.len() {
-            return false;
-        }
-        self.generations_[index].has_quorum()
-    }
-
-    // One reply arrives. The RPC is retired unconditionally, and counted as a
-    // vote only if it proves this exact generation: same term, a follower that
-    // was in the launching membership, and the reply predicate agreeing.
-    pub fn record_reply(&mut self, reply: &AuthorityReply) {
-        let index = self.index_of(reply.sent_round());
-        if index >= self.generations_.len() {
-            return;
-        }
-        self.generations_[index].evidence_.retire(reply.follower());
-        let matches_term =
-            self.generations_[index].evidence_.term() == reply.sent_term();
-        let was_member =
-            self.generations_[index].config_.contains(&reply.follower());
-        if matches_term && was_member &&
-            raft_server_read_index_reply_confirms_authority(
-                reply.response_available(), reply.is_leader(),
-                reply.sent_term(), reply.response_term(),
-                reply.current_term(), reply.sent_round(),
-                self.generations_[index].round_id_) {
-            self.generations_[index].evidence_.record_vote(reply.follower());
-        }
-    }
-
-    // Publishes at most one generation and retires every generation that can
-    // no longer contribute. Generations are held in ascending round order, and
-    // the running confirmation is consulted as it advances, so the highest
-    // round reaching quorum wins -- the same outcome the ascending std::map
-    // scan produced.
-    pub fn settle(&mut self, is_leader: bool, current_term: u64,
-                  current_config: &[u16],
-                  confirmed_term: u64, confirmed_round: u64)
-                  -> AuthorityOutcome {
-        let mut outcome = AuthorityOutcome {
-            confirmed_: false,
-            term_: 0,
-            round_id_: 0,
-            voter_count_: 0,
-            config_size_: 0,
-        };
-        let mut running_term = confirmed_term;
-        let mut running_round = confirmed_round;
-        let mut i: usize = 0;
-        while i < self.generations_.len() {
-            let context_is_current = is_leader &&
-                current_term == self.generations_[i].evidence_.term() &&
-                self.generations_[i].config_matches(current_config);
-            let already_published = running_term ==
-                self.generations_[i].evidence_.term() &&
-                self.generations_[i].round_id_ <= running_round;
-            if !context_is_current || already_published {
-                self.generations_.remove(i);
-                continue;
-            }
-            if self.generations_[i].has_quorum() {
-                running_term = self.generations_[i].evidence_.term();
-                running_round = self.generations_[i].round_id_;
-                outcome = AuthorityOutcome {
-                    confirmed_: true,
-                    term_: running_term,
-                    round_id_: running_round,
-                    voter_count_: self.generations_[i].evidence_.voter_count(),
-                    config_size_: self.generations_[i].evidence_.config_size(),
-                };
-                self.generations_.remove(i);
-                continue;
-            }
-            if self.generations_[i].all_completed() {
-                // Every RPC launched in this generation completed without a
-                // quorum. No later event can add evidence to it.
-                self.generations_.remove(i);
-                continue;
-            }
-            i += 1;
-        }
-        outcome
-    }
-}
+use crate::server_h::RaftCore;
+// [move, M1] the heartbeat round's state, moved into server_h.rs with RaftCore
+use crate::server_h::AuthorityReply;
+use crate::server_h::HeartbeatAuthority;
+use crate::server_h::PendingAppend;
 
 use crate::server_h::RaftServerBase;
 use crate::server_pods_h::AppendRespView;
@@ -526,81 +87,6 @@ unsafe extern "C" {
 // THE ROUND SCOPE, AND THE COMMIT RULE BOTH PHASE 0 AND PHASE 3 APPLY
 // ==========================================================================
 
-pub struct HeartbeatRoundScope {
-    term_: u64,
-    round_id_: u64,
-    config_: rusty::BTreeSet<u16>,
-    current_commit_index_: u64,
-    authority_inserted_: bool,
-}
-
-#[allow(clippy::new_without_default)]
-impl HeartbeatRoundScope {
-    pub fn new() -> HeartbeatRoundScope {
-        HeartbeatRoundScope {
-            term_: 0,
-            round_id_: 0,
-            config_: rusty::BTreeSet::new(),
-            current_commit_index_: 0,
-            authority_inserted_: false,
-        }
-    }
-
-    // Opens a round. Term, generation and membership are latched together so
-    // no later phase can observe a half-established scope, and the previous
-    // round's membership is dropped rather than accumulated.
-    pub fn begin(&mut self, term: u64, round_id: u64) {
-        self.term_ = term;
-        self.round_id_ = round_id;
-        self.config_.clear();
-        self.current_commit_index_ = 0;
-        self.authority_inserted_ = false;
-    }
-
-    pub fn admit(&mut self, site: u16) {
-        self.config_.insert(site);
-    }
-
-    pub fn term(&self) -> u64 {
-        self.term_
-    }
-
-    pub fn round_id(&self) -> u64 {
-        self.round_id_
-    }
-
-    // The replica count this round was launched against, membership snapshot
-    // included, which is what every quorum decision divides by.
-    pub fn nservers(&self) -> usize {
-        self.config_.len()
-    }
-
-    pub fn is_member(&self, site: u16) -> bool {
-        self.config_.contains(&site)
-    }
-
-    // The commit index the round puts on the wire. Published by PHASE 0 after
-    // it recalculates, read by PHASE 1 when it builds each AppendEntries.
-    pub fn publish_commit_index(&mut self, index: u64) {
-        self.current_commit_index_ = index;
-    }
-
-    pub fn commit_index(&self) -> u64 {
-        self.current_commit_index_
-    }
-
-    // Whether this round owns a fresh authority generation. False only in the
-    // deliberately fail-closed UINT64_MAX saturation case, where PHASE 1 must
-    // not record evidence against a reused generation.
-    pub fn set_authority_inserted(&mut self, inserted: bool) {
-        self.authority_inserted_ = inserted;
-    }
-
-    pub fn authority_inserted(&self) -> bool {
-        self.authority_inserted_
-    }
-}
-
 // The commit-index advance, which PHASE 0 and PHASE 3 perform identically:
 // PHASE 0 before the round's RPCs go out, PHASE 3 after their replies have
 // been processed. It was the same fifteen lines twice.
@@ -632,7 +118,7 @@ impl CommitAdvance {
 // Same aliasing note as heartbeat_phase3_locked: peers and log are reached
 // through `consensus` because both are its fields.
 pub fn raft_commit_advance(
-    consensus: &mut RaftConsensusState,
+    consensus: &mut RaftCore,
     nservers: usize,
 ) -> CommitAdvance {
     // nservers is the value latched in PHASE 0. Reusing it in PHASE 3 is
@@ -710,19 +196,15 @@ impl Phase0Outcome {
 #[allow(clippy::too_many_arguments)]
 // Same aliasing note as heartbeat_phase3_locked.
 pub fn heartbeat_phase0_locked(
-    consensus: &mut RaftConsensusState,
-    round: &mut HeartbeatRoundScope,
-    pending: &mut PendingTable,
-    ledger: &mut AuthorityLedger,
-    pending_leader_term: &mut rusty::Option<u64>,
+    core: &mut RaftCore,  // [move, M2] the round state is core's now
     members: &[u16],
     site_id: u16,
     is_leader: bool,
 ) -> Phase0Outcome {
     if !is_leader {
-        pending.abandon();
-        ledger.abandon();
-        *pending_leader_term = rusty::None;
+        core.pending_rpcs_.abandon();
+        core.authority_rounds_.abandon();
+        core.pending_leader_term_ = rusty::None;
         return Phase0Outcome {
             restart_: true,
             commit_advanced_: false,
@@ -731,28 +213,28 @@ pub fn heartbeat_phase0_locked(
         };
     }
 
-    round.begin(consensus.current_term_, consensus.heartbeat_round_);
+    core.round_.begin(core.current_term_, core.heartbeat_round_);
 
     // Sized here rather than in the prologue because the round state is the
     // loop's, not the server's. Idempotent: resize only runs when the two
     // tables disagree, so in-flight slots survive every later round.
-    if pending.len() != consensus.peers_.len() {
-        pending.resize(consensus.peers_.len());
+    if core.pending_rpcs_.len() != core.peers_.len() {
+        core.pending_rpcs_.resize(core.peers_.len());
     }
 
     // Leadership may be lost and regained between two observations by this
     // fiber. Never let a prior term's physical RPC occupy a slot or collide
     // with the new leader epoch's round counter reset.
-    let epoch_changed = pending_leader_term.is_none()
-        || *pending_leader_term.as_ref().unwrap() != round.term();
+    let epoch_changed = core.pending_leader_term_.is_none()
+        || *core.pending_leader_term_.as_ref().unwrap() != core.round_.term();
     if epoch_changed {
-        pending.abandon();
-        ledger.abandon();
-        *pending_leader_term = rusty::Some(round.term());
+        core.pending_rpcs_.abandon();
+        core.authority_rounds_.abandon();
+        core.pending_leader_term_ = rusty::Some(core.round_.term());
     }
 
-    if raft_server_read_index_round_can_advance(consensus.heartbeat_round_) {
-        consensus.heartbeat_round_ += 1;
+    if raft_server_read_index_round_can_advance(core.heartbeat_round_) {
+        core.heartbeat_round_ += 1;
     }
     // Saturation is fail-closed for new reads: the round never wraps, so no
     // post-baseline proof can be forged from an old generation. The caller
@@ -760,14 +242,16 @@ pub fn heartbeat_phase0_locked(
 
     let mut i = 0;
     while i < members.len() {
-        round.admit(members[i]);
+        core.round_.admit(members[i]);
         i += 1;
     }
-    if round.nservers() == 0 || !round.is_member(site_id) {
+    if core.round_.nservers() == 0 || !core.round_.is_member(site_id) {
         panic!("heartbeat round admitted no quorum containing this site");
     }
-    let advance = raft_commit_advance(consensus, round.nservers());
-    round.publish_commit_index(consensus.commit_index_);
+    // [move, M2] read before core is lent whole
+    let nservers: usize = core.round_.nservers();
+    let advance = raft_commit_advance(core, nservers);
+    core.round_.publish_commit_index(core.commit_index_);
 
     Phase0Outcome {
         restart_: false,
@@ -797,26 +281,22 @@ pub fn heartbeat_round_saturated(round_counter: u64) -> bool {
 // during Setup. Same contents, sorted and duplicate-free, which is what both
 // the round's membership and the ledger's set-equality check expect.
 // ==========================================================================
-pub fn heartbeat_phase0_body(server: &mut RaftServerBase,
-                             pending_rpcs: &mut PendingTable,
-                             authority_rounds: &mut AuthorityLedger,
-                             pending_leader_term: &mut rusty::Option<u64>,
-                             round: &mut HeartbeatRoundScope) -> bool {
+pub fn heartbeat_phase0_body(server: &mut RaftServerBase) -> bool {
     {
         let _lock = RaftLockGuard::new(&mut server.mtx_);
         let leader: bool = server.IsLeaderLocked();
-        if leader && heartbeat_round_saturated(server.state_.heartbeat_round_) {
+        if leader && heartbeat_round_saturated(server.core.heartbeat_round_) {
             rusty::raft_log_error_2(
                 "[READ-INDEX] site={} heartbeat round saturated in term {}",
-                server.site_id_, server.state_.current_term_);
+                server.site_id_, server.core.current_term_);
         }
         if leader {
             let mut ord: usize = 0;
-            while ord < server.state_.peers_.len() {
+            while ord < server.core.peers_.len() {
                 rusty::raft_log_debug_2(
                     "[COMMIT-CALC] match_index_[{}] = {}",
                     server.peer_site_at(ord),
-                    server.state_.peers_.match_index(ord));
+                    server.core.peers_.match_index(ord));
                 ord += 1;
             }
         }
@@ -824,8 +304,7 @@ pub fn heartbeat_phase0_body(server: &mut RaftServerBase,
         let site_id: u16 = server.site_id_;
         let members: rusty::Vec<u16> = server.config_members_.clone();
         let outcome: Phase0Outcome = heartbeat_phase0_locked(
-            &mut server.state_, round, pending_rpcs, authority_rounds,
-            pending_leader_term, &members, site_id, leader);
+            &mut server.core, &members, site_id, leader);  // [move, M2]
 
         if outcome.restart() {
             // Was `continue`; the Rust driver starts the next round when
@@ -841,17 +320,17 @@ pub fn heartbeat_phase0_body(server: &mut RaftServerBase,
     }
 
     let members: rusty::Vec<u16> = server.config_members_.clone();
-    let opened: bool = authority_rounds.open(
-        round.round_id(), &members,
-        HeartbeatAuthority::new(round.term(), round.nservers(),
+    let opened: bool = server.core.authority_rounds_.open(
+        server.core.round_.round_id(), &members,
+        HeartbeatAuthority::new(server.core.round_.term(), server.core.round_.nservers(),
                                 server.site_id_));
-    round.set_authority_inserted(opened);
+    server.core.round_.set_authority_inserted(opened);
     // heartbeat_round_ never wraps. The only possible duplicate is the
     // deliberately fail-closed UINT64_MAX saturation generation, which
     // open() declines rather than overwriting.
-    if !round.authority_inserted() {
+    if !server.core.round_.authority_inserted() {
         unsafe {
-            raft_verify(round.round_id() == u64::MAX);
+            raft_verify(server.core.round_.round_id() == u64::MAX);
         }
     }
     true
@@ -880,12 +359,12 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
 
     if !unsafe { raft_batch_optimization_enabled() } {
         rusty::raft_log_debug_5(
-            "[BATCH_CHECK] site={} follower={} next_index={} state_.raft_log_.base()={} state_.raft_log_.last_index()={}",
-            server.site_id_, site_id, server.state_.peers_.next_index(ord),
-            server.state_.raft_log_.base(),
-            server.state_.raft_log_.last_index());
-        if server.state_.peers_.next_index(ord)
-            <= server.state_.raft_log_.last_index()
+            "[BATCH_CHECK] site={} follower={} next_index={} core.raft_log_.base()={} core.raft_log_.last_index()={}",
+            server.site_id_, site_id, server.core.peers_.next_index(ord),
+            server.core.raft_log_.base(),
+            server.core.raft_log_.last_index());
+        if server.core.peers_.next_index(ord)
+            <= server.core.raft_log_.last_index()
         {
             if !raft_server_append_entry_count_fits(prev_log_index, 1) {
                 rusty::raft_log_error_2(
@@ -893,8 +372,8 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                     prev_log_index, site_id);
                 skip_follower = true;
             } else {
-                let next: u64 = server.state_.peers_.next_index(ord);
-                let slot = server.state_.raft_log_.get(next);
+                let next: u64 = server.core.peers_.next_index(ord);
+                let slot = server.core.raft_log_.get(next);
                 let usable: bool = slot.is_some()
                     && unsafe {
                         raft_command_has_value(
@@ -939,11 +418,11 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
     // 64 MiB limit, and an entry count alone lets large entries exceed it.
     let max_batch_bytes: u64 = unsafe { raft_append_entries_batch_max_bytes() };
     let mut batch_bytes: u64 = 0;
-    let batch_start_idx: u64 = server.state_.peers_.next_index(ord);
+    let batch_start_idx: u64 = server.core.peers_.next_index(ord);
     rusty::raft_log_debug_5(
-        "[BATCH_CHECK] site={} follower={} next_index={} state_.raft_log_.base()={} state_.raft_log_.last_index()={}",
-        server.site_id_, site_id, server.state_.peers_.next_index(ord),
-        server.state_.raft_log_.base(), server.state_.raft_log_.last_index());
+        "[BATCH_CHECK] site={} follower={} next_index={} core.raft_log_.base()={} core.raft_log_.last_index()={}",
+        server.site_id_, site_id, server.core.peers_.next_index(ord),
+        server.core.raft_log_.base(), server.core.raft_log_.last_index());
     if !raft_server_append_entry_count_fits(prev_log_index, 1) {
         rusty::raft_log_error_2(
             "[HEARTBEAT-BATCH] Log index exhausted after {}, skipping follower {}",
@@ -957,19 +436,19 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
     };
     if !skip_follower
         && (batch_start_idx != first_encoded_index
-            || batch_start_idx < server.state_.raft_log_.base())
+            || batch_start_idx < server.core.raft_log_.base())
     {
         rusty::raft_log_error_4(
             "[HEARTBEAT-BATCH] Non-contiguous source for follower {}: prev={} start={} min_active={}; refusing to compress a hole",
             site_id, prev_log_index, batch_start_idx,
-            server.state_.raft_log_.base());
+            server.core.raft_log_.base());
         skip_follower = true;
     } else if !skip_follower {
         let mut idx: u64 = batch_start_idx;
-        while idx <= server.state_.raft_log_.last_index()
+        while idx <= server.core.raft_log_.last_index()
             && (server.batch_buffer_.len() as u64) < max_batch_entries
         {
-            let entry = server.state_.raft_log_.get(idx);
+            let entry = server.core.raft_log_.get(idx);
             let usable: bool = entry.is_some()
                 && unsafe {
                     raft_command_has_value(
@@ -1007,7 +486,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                 // server ends that borrow. This branch is the rare one -- an
                 // entry that is not a TpcCommitCommand -- so the second
                 // lookup costs nothing on the batching path.
-                let slot = server.state_.raft_log_.get(idx);
+                let slot = server.core.raft_log_.get(idx);
                 let kind: i32 = unsafe {
                     raft_command_kind(
                         slot.unwrap().cmd() as *const rusty::RaftCommand)
@@ -1059,7 +538,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                                                       encoded_entry_count);
         let batch_end_idx: u64 = *sent_end_index;
         let truncated: bool =
-            batch_end_idx < server.state_.raft_log_.last_index();
+            batch_end_idx < server.core.raft_log_.last_index();
         rusty::raft_log_info_6(
             "[BATCH_SEND] site={} sending batch of {} entries to follower {} (from={} to={}{})",
             server.site_id_, encoded_entry_count, site_id, batch_start_idx,
@@ -1073,7 +552,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
 //
 // Formerly RaftServer::HeartbeatPhase1. The ordinal is used for ITERATION
 // ONLY; every read and write of a follower's next index goes through
-// state_.peers_.next_index(ord).
+// core.peers_.next_index(ord).
 //
 // That is not style. The body reaches commo()->SendInstallSnapshot inside
 // the lock scope, and that call's completion callback takes the SAME mutex
@@ -1088,13 +567,10 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
 // than uninitialised ones. `is_none` then `unwrap` is likewise the shape the
 // original had; rewriting it as a match would obscure the correspondence.
 #[allow(unused_assignments, clippy::unnecessary_unwrap)]
-pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
-                             pending_rpcs: &mut PendingTable,
-                             authority_rounds: &mut AuthorityLedger,
-                             round: &HeartbeatRoundScope) {
+pub fn heartbeat_phase1_body(server: &mut RaftServerBase) {
     let partition_id: u32 = server.partition_id_;
     let mut ord: usize = 0;
-    while ord < server.state_.peers_.len() {
+    while ord < server.core.peers_.len() {
         let site_id: u16 = server.peer_site_at(ord);
         if site_id == server.site_id_ {
             ord += 1;
@@ -1103,7 +579,7 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
         if !server.IsLeader() {
             break;  // Stop sending if we lost leadership.
         }
-        if pending_rpcs.occupied(ord) {
+        if server.core.pending_rpcs_.occupied(ord) {
             ord += 1;
             continue;
         }
@@ -1117,31 +593,31 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
         let mut skip_follower: bool = false;
         {
             let _lock = RaftLockGuard::new(&mut server.mtx_);
-            if server.state_.peers_.next_index(ord) == 0 {
+            if server.core.peers_.next_index(ord) == 0 {
                 rusty::raft_log_warn_2(
                     "[APPEND_ENTRIES] Repairing wrapped next_index for follower {} at leader last index {}",
-                    site_id, server.state_.raft_log_.last_index());
-                let last: u64 = server.state_.raft_log_.last_index();
+                    site_id, server.core.raft_log_.last_index());
+                let last: u64 = server.core.raft_log_.last_index();
                 let repaired: u64 = if raft_server_log_index_has_successor(last) {
                     raft_server_follower_next_index(last)
                 } else {
                     last
                 };
-                server.state_.peers_.set_next_index(ord, repaired);
+                server.core.peers_.set_next_index(ord, repaired);
             }
-            prev_log_index = server.state_.peers_.next_index(ord) - 1;
-            if prev_log_index > server.state_.raft_log_.last_index() {
+            prev_log_index = server.core.peers_.next_index(ord) - 1;
+            if prev_log_index > server.core.raft_log_.last_index() {
                 rusty::raft_log_info_2(
-                    "[APPEND_ENTRIES] ERROR: prevLogIndex ({}) > state_.raft_log_.last_index() ({}), fixing next_index",
-                    prev_log_index, server.state_.raft_log_.last_index());
-                let last: u64 = server.state_.raft_log_.last_index();
+                    "[APPEND_ENTRIES] ERROR: prevLogIndex ({}) > core.raft_log_.last_index() ({}), fixing next_index",
+                    prev_log_index, server.core.raft_log_.last_index());
+                let last: u64 = server.core.raft_log_.last_index();
                 let repaired: u64 = if raft_server_log_index_has_successor(last) {
                     raft_server_follower_next_index(last)
                 } else {
                     last
                 };
-                server.state_.peers_.set_next_index(ord, repaired);
-                prev_log_index = server.state_.peers_.next_index(ord) - 1;
+                server.core.peers_.set_next_index(ord, repaired);
+                prev_log_index = server.core.peers_.next_index(ord) - 1;
             }
             // Until a payload is selected this is a heartbeat, and proves
             // only the prefix named by prev_log_index.
@@ -1150,24 +626,24 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
             let snapshot_configured: bool = unsafe {
                 raft_snapshot_manager_is_set(&server.snapshot_manager_)
             };
-            if prev_log_index > server.state_.raft_log_.last_index() {
+            if prev_log_index > server.core.raft_log_.last_index() {
                 rusty::raft_log_info_3(
-                    "[APPEND_ENTRIES] WARNING: Cannot send AppendEntries to follower {}: prevLogIndex ({}) > state_.raft_log_.last_index() ({}), skipping",
+                    "[APPEND_ENTRIES] WARNING: Cannot send AppendEntries to follower {}: prevLogIndex ({}) > core.raft_log_.last_index() ({}), skipping",
                     site_id, prev_log_index,
-                    server.state_.raft_log_.last_index());
-                server.state_.peers_.set_next_index(ord, 1);
+                    server.core.raft_log_.last_index());
+                server.core.peers_.set_next_index(ord, 1);
                 skip_follower = true;
-            } else if server.state_.peers_.next_index(ord)
-                < server.state_.raft_log_.base()
+            } else if server.core.peers_.next_index(ord)
+                < server.core.raft_log_.base()
                 && snapshot_configured
             {
                 // The follower is behind the log's base, so send it a
                 // snapshot instead of entries it can no longer be given.
                 rusty::raft_log_info_4(
-                    "[HEARTBEAT-SNAPSHOT] Site {}: Follower {} next_index={} < state_.raft_log_.base()={}, sending InstallSnapshot",
+                    "[HEARTBEAT-SNAPSHOT] Site {}: Follower {} next_index={} < core.raft_log_.base()={}, sending InstallSnapshot",
                     server.site_id_, site_id,
-                    server.state_.peers_.next_index(ord),
-                    server.state_.raft_log_.base());
+                    server.core.peers_.next_index(ord),
+                    server.core.raft_log_.base());
                 let sent: bool = unsafe {
                     raft_phase1_load_and_send_snapshot(
                         server.handle(),
@@ -1176,7 +652,7 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
                         &server.async_callback_lifetime_
                             as *const rusty::RaftAsyncCallbackLifetimePtr,
                         server.site_id_, server.partition_id_,
-                        server.state_.current_term_, site_id, ord)
+                        server.core.current_term_, site_id, ord)
                 };
                 if !sent {
                     rusty::raft_log_warn_2(
@@ -1190,22 +666,22 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
                 unsafe {
                     raft_verify(
                         prev_log_index
-                            <= server.state_.raft_log_.last_index());
+                            <= server.core.raft_log_.last_index());
                 }
                 if prev_log_index == 0 {
                     prev_log_term = 0;
-                } else if prev_log_index == server.state_.snapidx_
-                    && server.state_.snapidx_ > 0
+                } else if prev_log_index == server.core.snapidx_
+                    && server.core.snapidx_ > 0
                 {
                     // Keep using snapshot boundary metadata after compaction.
-                    prev_log_term = server.state_.snapterm_ as u64;
+                    prev_log_term = server.core.snapterm_ as u64;
                 } else {
                     // Was GetRaftInstance, which default-inserted and so
                     // could never return null -- the check below was dead,
                     // and a genuinely missing prevLogIndex silently
                     // fabricated an empty entry with term 0 and sent
                     // prevLogTerm = 0 rather than skipping the follower.
-                    let instance = server.state_.raft_log_.get(prev_log_index);
+                    let instance = server.core.raft_log_.get(prev_log_index);
                     if instance.is_none() {
                         rusty::raft_log_error_2(
                             "[HEARTBEAT-SEND] [CRITICAL] log entry {} is absent! Skipping follower {}",
@@ -1235,17 +711,17 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
             raft_phase1_send_append(
                 server.handle(), server.site_id_, site_id,
                 partition_id,
-                is_leader, round.term(), prev_log_index, prev_log_term,
-                round.commit_index(),
+                is_leader, server.core.round_.term(), prev_log_index, prev_log_term,
+                server.core.round_.commit_index(),
                 &cmd as *const rusty::RaftCommand, cmd_log_term,
                 &mut sent_response as *mut rusty::RaftResponsePtr);
         }
         unsafe { raft_trace_through(4, sent_end_index, 0) };  // [M0] trace kit
 
-        pending_rpcs.place(ord, PendingAppend::new(
-            site_id, round.term(), round.round_id(), sent_end_index,
+        server.core.pending_rpcs_.place(ord, PendingAppend::new(
+            site_id, server.core.round_.term(), server.core.round_.round_id(), sent_end_index,
             sent_response, cmd));
-        if round.authority_inserted() && round.is_member(site_id) {
+        if server.core.round_.authority_inserted() && server.core.round_.is_member(site_id) {
             // Was a std::map iterator created in PHASE 0 and dereferenced
             // here, after the RPC sends. Nothing between the two points
             // mutates authority_rounds, so it was valid -- but a cursor held
@@ -1254,7 +730,7 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase,
             // so look it up by key.
             unsafe {
                 raft_verify(
-                    authority_rounds.launch(round.round_id(), site_id));
+                    server.core.authority_rounds_.launch(server.core.round_.round_id(), site_id));
             }
         }
         ord += 1;
@@ -1394,13 +870,12 @@ fn append_reply_nothing(action: AppendReplyAction) -> AppendReplyOutcome {
 // Narrowing the parameter is also what keeps the argument list inside
 // clippy's limit without an allow.
 // `peers` is reached through `consensus` rather than passed alongside it.
-// The C++ call site passed `state_` and `state_.peers_` as two arguments --
+// The C++ call site passed `core` and `core.peers_` as two arguments --
 // two mutable borrows of overlapping state, which only compiled because the
 // caller was C++. A Rust caller cannot spell that, and PHASE 2 is a Rust
 // caller now.
 pub fn heartbeat_apply_append_reply(
-    consensus: &mut RaftConsensusState,
-    ledger: &mut AuthorityLedger,
+    core: &mut RaftCore,  // [move, M2] the ledger is core's now
     sent: &SentAppend,
     reply: &AppendReply,
     log_last_index: u64,
@@ -1414,11 +889,11 @@ pub fn heartbeat_apply_append_reply(
         sent.follower_,
         sent.term_,
         reply.term_,
-        consensus.current_term_,
+        core.current_term_,
         is_leader,
         reply.available_,
     );
-    ledger.record_reply(&evidence);
+    core.authority_rounds_.record_reply(&evidence);
 
     if !reply.available_ {
         return append_reply_nothing(AppendReplyAction::IGNORED);
@@ -1426,23 +901,23 @@ pub fn heartbeat_apply_append_reply(
 
     // A higher term is authoritative regardless of the accompanying status
     // bit. The responding follower proves a newer term, not its leader.
-    if raft_server_observed_higher_term(reply.term_, consensus.current_term_) {
-        let previous_term = consensus.current_term_;
-        consensus.current_term_ = reply.term_;
-        consensus.vote_for_ = u16::MAX;
+    if raft_server_observed_higher_term(reply.term_, core.current_term_) {
+        let previous_term = core.current_term_;
+        core.current_term_ = reply.term_;
+        core.vote_for_ = u16::MAX;
         // Neither leading nor knowing a leader, so the hint is cleared. The
         // responding follower proved a newer term, not that it is the leader
         // of that term. (With both flags false the shared predicate returns
         // the invalid id whatever ids it is handed, so it is spelled out
         // here rather than called with two arguments that do not matter.)
-        consensus.current_leader_id_ = RAFT_SERVER_INVALID_SITE_ID;
+        core.current_leader_id_ = RAFT_SERVER_INVALID_SITE_ID;
         let mut out = append_reply_nothing(AppendReplyAction::STEP_DOWN);
         out.previous_term_ = previous_term;
         return out;
     }
 
     // A reply from a send term this server has left proves nothing about now.
-    if consensus.current_term_ != sent.term_ {
+    if core.current_term_ != sent.term_ {
         return append_reply_nothing(AppendReplyAction::IGNORED);
     }
     // A valid follower processes AppendEntries in the leader's term before
@@ -1453,15 +928,15 @@ pub fn heartbeat_apply_append_reply(
     if !is_leader {
         return append_reply_nothing(AppendReplyAction::IGNORED);
     }
-    if sent.ordinal_ == consensus.peers_.len() {
+    if sent.ordinal_ == core.peers_.len() {
         return append_reply_nothing(AppendReplyAction::UNKNOWN_FOLLOWER);
     }
 
     if !reply.status_ {
-        let old_next = consensus.peers_.next_index(sent.ordinal_);
-        let rung = consensus.peers_
+        let old_next = core.peers_.next_index(sent.ordinal_);
+        let rung = core.peers_
             .back_off_after_reject(sent.ordinal_, reply.last_log_index_);
-        let new_next = consensus.peers_.next_index(sent.ordinal_);
+        let new_next = core.peers_.next_index(sent.ordinal_);
         let mut out = append_reply_nothing(AppendReplyAction::BACKED_OFF);
         out.rung_ = rung;
         out.old_next_ = old_next;
@@ -1478,7 +953,7 @@ pub fn heartbeat_apply_append_reply(
     // follower suffix.
     let acknowledged = raft_server_append_acknowledged_through(
         reply.last_log_index_, sent.end_index_, log_last_index);
-    consensus.peers_.accept_through(
+    core.peers_.accept_through(
         sent.ordinal_,
         acknowledged,
         raft_server_log_index_has_successor(acknowledged),
@@ -1497,15 +972,11 @@ pub fn heartbeat_apply_append_reply(
 // legitimate late persistence reply. Polling also gives every parallel RPC
 // the same bounded round budget.
 //
-// The pieces of HeartbeatRoundState are passed separately rather than the
-// struct itself, because that struct is hand-written C++ declared after this
-// block; its three members are all DSL types declared in it.
+// The round's pending slots and authority ledger are fields of the core
+// ([move, M1]), reached through `server`.
 // ==========================================================================
-#[allow(clippy::too_many_arguments, clippy::manual_clamp)]
-pub fn heartbeat_phase2_body(server: &mut RaftServerBase,
-                             pending_rpcs: &mut PendingTable,
-                             authority_rounds: &mut AuthorityLedger,
-                             round: &HeartbeatRoundScope) {
+#[allow(clippy::manual_clamp)]
+pub fn heartbeat_phase2_body(server: &mut RaftServerBase) {
     const RESPONSE_POLL_STEP_US: u64 = 1000;
     // max(1, min(100000, heartbeat_interval_us_)). Spelled out rather than
     // with clamp: this lowers to C++, where uint64_t has no such member.
@@ -1525,33 +996,33 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase,
     while !stop_response_processing {
         let mut waiting_for_current_round: bool = false;
         let mut pending_ord: usize = 0;
-        while pending_ord < pending_rpcs.len() {
+        while pending_ord < server.core.pending_rpcs_.len() {
             if !server.IsLeader() {
                 stop_response_processing = true;
                 break;
             }
-            if !pending_rpcs.occupied(pending_ord) {
+            if !server.core.pending_rpcs_.occupied(pending_ord) {
                 pending_ord += 1;
                 continue;
             }
 
             // Bound once per slot per poll pass, not per use: every read
             // below is the same shape it was when this was a map value.
-            let follower_id: u16 = pending_rpcs.follower(pending_ord);
-            let sent_term: u64 = pending_rpcs.sent_term(pending_ord);
-            let sent_round: u64 = pending_rpcs.sent_round(pending_ord);
-            let sent_end_index: u64 = pending_rpcs.sent_end_index(pending_ord);
+            let follower_id: u16 = server.core.pending_rpcs_.follower(pending_ord);
+            let sent_term: u64 = server.core.pending_rpcs_.sent_term(pending_ord);
+            let sent_round: u64 = server.core.pending_rpcs_.sent_round(pending_ord);
+            let sent_end_index: u64 = server.core.pending_rpcs_.sent_end_index(pending_ord);
             let cmd_has_value: bool = unsafe {
                 raft_command_has_value(
-                    pending_rpcs.cmd(pending_ord) as *const rusty::RaftCommand)
+                    server.core.pending_rpcs_.cmd(pending_ord) as *const rusty::RaftCommand)
             };
             let resp: AppendRespView = unsafe {
                 raft_append_response_read(
-                    pending_rpcs.response(pending_ord)
+                    server.core.pending_rpcs_.response(pending_ord)
                         as *const rusty::RaftResponsePtr)
             };
             if !resp.completed_ {
-                if sent_round == round.round_id() {
+                if sent_round == server.core.round_.round_id() {
                     waiting_for_current_round = true;
                 }
                 pending_ord += 1;
@@ -1568,11 +1039,10 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase,
                     !(!resp.status_ && resp.term_ == 0
                       && resp.last_log_index_ == 0);
                 let resp_ord: usize = server.PeerOrdinal(follower_id);
-                let log_last_index: u64 = server.state_.raft_log_.last_index();
+                let log_last_index: u64 = server.core.raft_log_.last_index();
                 let is_leader: bool = server.IsLeaderLocked();
                 let outcome: AppendReplyOutcome = heartbeat_apply_append_reply(
-                    &mut server.state_,
-                    authority_rounds,
+                    &mut server.core,  // [move, M2] carries the ledger
                     &SentAppend::new(follower_id, sent_term, sent_round,
                                      sent_end_index, resp_ord),
                     &AppendReply::new(response_available, resp.status_,
@@ -1588,13 +1058,13 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase,
                         outcome.previous_term());
                     server.LogTermChange(
                         "AppendEntries response carried newer term",
-                        outcome.previous_term(), server.state_.current_term_,
+                        outcome.previous_term(), server.core.current_term_,
                         follower_id);
                     // stepDown reaches setIsLeader and the election timer, so
                     // it stays here; the decision to take it was made above.
                     server.stepDown();
-                    server.state_.req_voting_ = false;
-                    server.state_.election_in_progress_ = false;
+                    server.core.req_voting_ = false;
+                    server.core.election_in_progress_ = false;
                     stepped_down = true;
                 } else if action == AppendReplyAction::BACKED_OFF {
                     // The five-rung ladder is
@@ -1633,8 +1103,8 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase,
                         if cmd_has_value { "entries" } else { "heartbeat" },
                         resp.last_log_index_, sent_end_index,
                         outcome.acknowledged(),
-                        server.state_.peers_.next_index(resp_ord),
-                        server.state_.peers_.match_index(resp_ord));
+                        server.core.peers_.next_index(resp_ord),
+                        server.core.peers_.match_index(resp_ord));
                 } else if action == AppendReplyAction::CONTRADICTORY {
                     rusty::raft_log_warn_3(
                         "[APPEND_RPC] Ignoring contradictory success from follower {}: reported_end={} sent_end={}",
@@ -1648,8 +1118,8 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase,
             }
 
             let completed_previous_round: bool =
-                sent_round != round.round_id();
-            pending_rpcs.release(pending_ord);
+                sent_round != server.core.round_.round_id();
+            server.core.pending_rpcs_.release(pending_ord);
             retry_released_follower =
                 retry_released_follower || completed_previous_round;
             if stepped_down {
@@ -1660,7 +1130,7 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase,
         }
 
         let current_round_has_authority: bool =
-            authority_rounds.has_quorum(round.round_id());
+            server.core.authority_rounds_.has_quorum(server.core.round_.round_id());
         if stop_response_processing || !waiting_for_current_round
             || current_round_has_authority
         {
@@ -1682,8 +1152,8 @@ pub fn heartbeat_phase2_body(server: &mut RaftServerBase,
     }
 
     if stop_response_processing {
-        pending_rpcs.abandon();
-        authority_rounds.abandon();
+        server.core.pending_rpcs_.abandon();
+        server.core.authority_rounds_.abandon();
     } else if retry_released_follower {
         // A completion from an older round opened a per-follower slot after
         // PHASE 1. Prompt another round instead of waiting a full interval.
@@ -1723,36 +1193,33 @@ impl Phase3Outcome {
 }
 
 // peers and log are reached through `consensus`, for the same reason
-// heartbeat_apply_append_reply's are: the C++ call site passed `state_`,
-// `state_.peers_` and `state_.raft_log_` as three arguments, which is one
+// heartbeat_apply_append_reply's are: the C++ call site passed `core`,
+// `core.peers_` and `core.raft_log_` as three arguments, which is one
 // mutable borrow overlapping two shared ones. A Rust caller cannot spell it.
 pub fn heartbeat_phase3_locked(
-    consensus: &mut RaftConsensusState,
-    ledger: &mut AuthorityLedger,
+    core: &mut RaftCore,  // [move, M2] the ledger is core's now
     nservers: usize,
     members: &[u16],
     is_leader: bool,
 ) -> Phase3Outcome {
-    let commit = raft_commit_advance(consensus, nservers);
-    let outcome = ledger.settle(
+    let commit = raft_commit_advance(core, nservers);
+    let outcome = core.authority_rounds_.settle(
         is_leader,
-        consensus.current_term_,
+        core.current_term_,
         members,
-        consensus.read_quorum_confirmed_term_,
-        consensus.read_quorum_confirmed_round_,
+        core.read_quorum_confirmed_term_,
+        core.read_quorum_confirmed_round_,
     );
     let mut confirmed = false;
     if outcome.confirmed() {
-        consensus.read_quorum_confirmed_term_ = outcome.term();
-        consensus.read_quorum_confirmed_round_ = outcome.round_id();
+        core.read_quorum_confirmed_term_ = outcome.term();
+        core.read_quorum_confirmed_round_ = outcome.round_id();
         confirmed = true;
     }
     Phase3Outcome { commit_: commit, confirmed_: confirmed }
 }
 
-pub fn heartbeat_phase3_body(server: &mut RaftServerBase,
-                             authority_rounds: &mut AuthorityLedger,
-                             round: &HeartbeatRoundScope) {
+pub fn heartbeat_phase3_body(server: &mut RaftServerBase) {
     if !server.IsLeader() {
         return;
     }
@@ -1760,15 +1227,14 @@ pub fn heartbeat_phase3_body(server: &mut RaftServerBase,
     {
         let _lock = RaftLockGuard::new(&mut server.mtx_);
         let members: rusty::Vec<u16> = server.config_members_.clone();
-        let nservers: usize = round.nservers();
+        let nservers: usize = server.core.round_.nservers();
         let is_leader: bool = server.IsLeaderLocked();
         let outcome: Phase3Outcome = heartbeat_phase3_locked(
-            &mut server.state_, authority_rounds, nservers, &members,
-            is_leader);
+            &mut server.core, nservers, &members, is_leader);  // [move, M2]
 
         if outcome.commit().advanced() {
             rusty::raft_log_debug_2(
-                "[PHASE3-COMMIT] Advancing state_.commit_index_ {} -> {}",
+                "[PHASE3-COMMIT] Advancing core.commit_index_ {} -> {}",
                 outcome.commit().from_index(), outcome.commit().to_index());
             server.EnqueueCommittedEntries(outcome.commit().from_index(),
                                            outcome.commit().to_index());
@@ -1777,8 +1243,8 @@ pub fn heartbeat_phase3_body(server: &mut RaftServerBase,
         if outcome.confirmed() {
             rusty::raft_log_debug_3(
                 "[READ-INDEX] site={} confirmed round={} term={}",
-                server.site_id_, server.state_.read_quorum_confirmed_round_,
-                server.state_.read_quorum_confirmed_term_);
+                server.site_id_, server.core.read_quorum_confirmed_round_,
+                server.core.read_quorum_confirmed_term_);
         }
     }
 
@@ -1800,49 +1266,18 @@ pub fn heartbeat_phase3_body(server: &mut RaftServerBase,
 // passed through four trampolines.
 // ==========================================================================
 
-// Everything one round carries between its phases. This was a hand-written
-// C++ struct whose four members were already DSL types -- it existed only
-// because the DSL has no default member initialisers, which `fn new` solves.
-// Being C++ was not free: the phases could not be called with it, so the
-// driver passed it as `*mut c_void` and four kernels cast it back and split
-// it into members.
-pub struct HeartbeatRoundState {
-    // At most one AppendEntries in flight per follower. A synchronous
-    // follower may legitimately take longer than one heartbeat interval to
-    // persist an entry; retaining its context lets a later round consume that
-    // acknowledgement instead of queueing duplicate writes and discarding
-    // every late success.
-    pending_rpcs_: PendingTable,
-    authority_rounds_: AuthorityLedger,
-    pending_leader_term_: rusty::Option<u64>,
-    // PHASE 0 establishes every field of this each round, so it needs no
-    // reset; when PHASE 0 declines the round, phases 1-3 never read it.
-    scope_: HeartbeatRoundScope,
-}
-
-#[allow(clippy::new_without_default)]
-impl HeartbeatRoundState {
-    pub fn new() -> HeartbeatRoundState {
-        HeartbeatRoundState {
-            pending_rpcs_: PendingTable::new(),
-            authority_rounds_: AuthorityLedger::new(),
-            pending_leader_term_: rusty::None,
-            scope_: HeartbeatRoundScope::new(),
-        }
-    }
-}
-
-// The driver OWNS its round state rather than pointing at one the caller
-// stack-allocated, so no handle outlives the round it describes.
+// The driver holds only the server. The round state it used to own
+// ([move, M1]) is the core's: RaftCore::pending_rpcs_, authority_rounds_,
+// pending_leader_term_ and round_, reset when a run of the loop begins and
+// again when it ends.
 pub struct HeartbeatDriver {
     server_: *mut RaftServerBase,
-    round_: HeartbeatRoundState,
 }
 
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl HeartbeatDriver {
     pub fn new(server: *mut RaftServerBase) -> HeartbeatDriver {
-        HeartbeatDriver { server_: server, round_: HeartbeatRoundState::new() }
+        HeartbeatDriver { server_: server }
     }
 
     // decide -> emit -> collect -> decide, which is the shape the C++ already
@@ -1850,6 +1285,8 @@ impl HeartbeatDriver {
     // that sequences them, and the phases are called directly.
     pub fn run(&mut self) {
         let server: &mut RaftServerBase = unsafe { &mut *self.server_ };
+        // [move, M1] a fresh round state per run, as the driver's own was
+        server.core.reset_round_state();
         server.HeartbeatPrologue();
         while server.HeartbeatLooping() {
             // The wake gate returns false on shutdown rather than on timeout.
@@ -1858,22 +1295,18 @@ impl HeartbeatDriver {
             }
             // PHASE 0 declines the round when leadership is not held. The C++
             // spelled that `continue`.
-            if !heartbeat_phase0_body(server,
-                                      &mut self.round_.pending_rpcs_,
-                                      &mut self.round_.authority_rounds_,
-                                      &mut self.round_.pending_leader_term_,
-                                      &mut self.round_.scope_) {
+            if !heartbeat_phase0_body(server) {
                 continue;
             }
-            heartbeat_phase1_body(server, &mut self.round_.pending_rpcs_,
-                                  &mut self.round_.authority_rounds_,
-                                  &self.round_.scope_);
-            heartbeat_phase2_body(server, &mut self.round_.pending_rpcs_,
-                                  &mut self.round_.authority_rounds_,
-                                  &self.round_.scope_);
-            heartbeat_phase3_body(server, &mut self.round_.authority_rounds_,
-                                  &self.round_.scope_);
+            heartbeat_phase1_body(server);
+            heartbeat_phase2_body(server);
+            heartbeat_phase3_body(server);
         }
+        // [move, M1] The in-flight handles are released when the loop ends, as
+        // they were when the driver's own round state went out of scope.
+        // Before the epilogue, not after: once it reports the loop stopped,
+        // shutdown may free the server.
+        server.core.reset_round_state();
         server.HeartbeatEpilogue();
     }
 }

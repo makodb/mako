@@ -1282,8 +1282,9 @@ struct PendingView {
 //
 // Every read and write goes through a method, so the C++ phases cannot poke a
 // field. The `&mut self` on those methods is a true exclusivity claim rather
-// than a formality, because HeartbeatRoundState is reachable only
-// from the heartbeat fiber -- SendAppendEntries2's completion callback
+// than a formality, because the round state (RaftCore::round_ and its
+// siblings, formerly the driver's HeartbeatRoundState) is touched only by
+// the heartbeat fiber -- SendAppendEntries2's completion callback
 // captures [response, site_id] and nothing else (commo.cc:50), the
 // InstallSnapshot callback aliases RaftServer rather than the round, and
 // PHASE 2's pending_rpcs iterator closes before the only suspension point --

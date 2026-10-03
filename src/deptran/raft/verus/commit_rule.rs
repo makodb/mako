@@ -136,7 +136,7 @@ pub struct CommitAdvance {
 }
 
 // server_cc.rs:633-666. `terms` is the leader's log (entry k at terms[k-1]);
-// `commit_index` is RaftConsensusState::commit_index_, updated in place.
+// `commit_index` is RaftCore::commit_index_, updated in place.
 pub fn commit_advance(
     progress: &Vec<u64>,
     terms: &Vec<u64>,

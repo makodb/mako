@@ -195,11 +195,11 @@ static_assert(static_cast<uint16_t>(INVALID_SITEID) == 65535);
 // fields gathered into one type first. This is that type, starting with the
 // members measured to be touched ONLY under the lock.
 //
-// A plain member behind mtx_, not a rusty::Mutex<RaftConsensusState>: that
+// A plain member behind mtx_, not a rusty::Mutex<RaftCore>: that
 // would require mtx_ to be non-recursive, since rusty::Mutex::lock() hands
 // out a reference to the guarded data.
 //
-// Fields are public because the kernels reach them as state_.field.
+// Fields are public because the kernels reach them as core.field.
 
 // The election timer loop, owned by Rust.
 //

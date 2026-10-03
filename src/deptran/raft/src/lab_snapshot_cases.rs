@@ -1256,8 +1256,8 @@ fn recover_fresh(store: &rusty::RaftSnapshotManagerPtr, inject: bool, commit: u6
     }
     {
         let _lock = RaftLockGuard::new(svr.LabMutex());
-        svr.state_.commit_index_ = commit;
-        svr.state_.current_term_ = term;
+        svr.core.commit_index_ = commit;
+        svr.core.current_term_ = term;
     }
     // SAFETY: the server is live; recovery takes its own locks.
     let ok = unsafe { raft_initialize_snapshot_manager(svr.handle(), 0) };

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Step C's done-test (the Raft migration plan (removed; see git history)): does any hand-written C++
-under src/deptran name a field of RaftServerBase or RaftConsensusState?
+under src/deptran name a field of RaftServerBase or RaftCore?
 
 Hand-written means outside the RUSTYCPP GEN regions and the `#if RUSTYCPP_RUST`
 source blocks, with comments and string literals stripped. A field is "named"
@@ -38,7 +38,7 @@ def strip(src):
 
 def main():
     rs = open(RS).read()
-    names = set(fields('RaftServerBase', rs)) | set(fields('RaftConsensusState', rs))
+    names = set(fields('RaftServerBase', rs)) | set(fields('RaftCore', rs))
     alt = '|'.join(sorted(names, key=len, reverse=True))
     via_receiver = re.compile(r'([A-Za-z_][A-Za-z0-9_]*(?:\([^()]*\))?(?:\.[A-Za-z_][A-Za-z0-9_]*|->[A-Za-z_][A-Za-z0-9_]*)*)\s*(?:->|\.)\s*(' + alt + r')\b')
     bare = re.compile(r'(?<![\w>.])(' + alt + r')\b')
@@ -71,7 +71,7 @@ def main():
                 if in_shim:
                     for m in bare.finditer(line):
                         server_sites.append((rel, lineno, '(implicit this)', m.group(1)))
-    print(f'fields: RaftServerBase {len(fields("RaftServerBase", rs))}, RaftConsensusState {len(fields("RaftConsensusState", rs))}')
+    print(f'fields: RaftServerBase {len(fields("RaftServerBase", rs))}, RaftCore {len(fields("RaftCore", rs))}')
     print(f'hand-written C++ sites naming one through the Raft server: {len(server_sites)}')
     for rel, lineno, recv, field in server_sites:
         print(f'  {rel}:{lineno}: {recv} . {field}')
