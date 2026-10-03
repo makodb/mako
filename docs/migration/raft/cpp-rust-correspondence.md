@@ -12,8 +12,8 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 545 | `raft/src/server_h.rs` | 6194 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1723 | `raft/src/server_cc.rs` | 1629 |  |
+| `raft/server.h` | 545 | `raft/src/server_h.rs` | 6241 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1741 | `raft/src/server_cc.rs` | 1612 |  |
 | `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 177 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
 | `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1032 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
 | `raft/server_seam_cpp.cc` | 354 | `raft/rt/src/seam.rs` | 448 | the runtime seam, one per lane; exactly one is linked |
@@ -29,7 +29,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 |---|---|---|
 | C++ → Rust | prototypes in `raft/server_exports.h` | 32 |
 | C++ → Rust | prototypes in `raft/transport_exports.h` — the Rust lane only (raft_lane_rust.cc) | 17 |
-| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 93 |
+| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 91 |
 
 ## Counted facts the prose below leans on
 
@@ -54,7 +54,7 @@ defined by one lane but not the other, or in two places.
 
 | class | count |
 |---|---|
-| HOST | 85 |
+| HOST | 83 |
 | SEAM | 36 |
 
 | kernel | class |
@@ -75,9 +75,7 @@ defined by one lane but not the other, or in two places.
 | `raft_clear_async_callback_owner` | HOST |
 | `raft_command_clone_into` | HOST |
 | `raft_command_has_value` | HOST |
-| `raft_command_is_tpc_commit` | HOST |
-| `raft_command_kind` | HOST |
-| `raft_command_payload_bytes` | HOST |
+| `raft_command_meta` | HOST |
 | `raft_commo_set_network_enabled` | SEAM |
 | `raft_config_replica_count` | HOST |
 | `raft_config_replica_site` | HOST |

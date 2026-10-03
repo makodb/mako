@@ -57,16 +57,12 @@ unsafe extern "C" {
     fn raft_batch_optimization_enabled() -> bool;
     fn raft_append_entries_batch_max() -> u64;
     fn raft_append_entries_batch_max_bytes() -> u64;
-    fn raft_command_payload_bytes(cmd: *const rusty::RaftCommand) -> u64;
-    // The wire kind of a command, for the diagnostics that report why an
-    // entry could not be batched. It takes the COMMAND, not (server, index):
-    // the lookup is Rust, and only reading inside the opaque payload is not.
-    fn raft_command_kind(cmd: *const rusty::RaftCommand) -> i32;
-    // The leader's batch: a TpcCommitCommand is copied and stamped with its
-    // log term in C++ (a Marshallable) by the facade's `raft_stamped_commit`,
-    // pushed into batch_buffer_ in Rust, and the buffer's Arcs are moved into
-    // one TpcBatchCommand at the end.
-    fn raft_command_is_tpc_commit(cmd: *const rusty::RaftCommand) -> bool;
+    // [move, M6] raft_command_payload_bytes, raft_command_kind and
+    // raft_command_is_tpc_commit are read once per entry into RaftEntry now
+    // (raft_command_meta). The leader's batch: a TpcCommitCommand is copied
+    // and stamped with its log term in C++ (a Marshallable) by the facade's
+    // `raft_stamped_commit`, pushed into batch_buffer_ in Rust, and the
+    // buffer's Arcs are moved into one TpcBatchCommand at the end.
     fn raft_batch_finalize(entries: *mut rusty::RaftTpcCommitPtr,
                            count: usize, cmd_out: *mut rusty::RaftCommand);
     // The command copy INTO Rust's slot; see server.h for why never by value.
@@ -369,10 +365,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                 let next: u64 = server.core.peers_.next_index(ord);
                 let slot = server.core.raft_log_.get(next);
                 let usable: bool = slot.is_some()
-                    && unsafe {
-                        raft_command_has_value(
-                            slot.unwrap().cmd() as *const rusty::RaftCommand)
-                    };
+                    && slot.unwrap().has_value();  // [move, M6]
                 if !usable {
                     rusty::raft_log_error_2(
                         "[HEARTBEAT-SEND] Missing log entry {}, skipping follower {}",
@@ -392,10 +385,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                         raft_server_append_sent_end(prev_log_index, 1);
                     // The kind tag identifies the payload better than the
                     // inner shared_ptr's raw address ever did.
-                    let kind: i32 = unsafe {
-                        raft_command_kind(
-                            entry.cmd() as *const rusty::RaftCommand)
-                    };
+                    let kind: i32 = entry.kind();  // [move, M6]
                     rusty::raft_log_debug_4(
                         "[APPEND_SEND] site={} sending entry {} to follower {} cmd_kind={}",
                         server.site_id_, next, site_id, kind);
@@ -444,10 +434,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
         {
             let entry = server.core.raft_log_.get(idx);
             let usable: bool = entry.is_some()
-                && unsafe {
-                    raft_command_has_value(
-                        entry.unwrap().cmd() as *const rusty::RaftCommand)
-                };
+                && entry.unwrap().has_value();  // [move, M6]
             if !usable {
                 rusty::raft_log_error_2(
                     "[HEARTBEAT-BATCH] Missing log entry {} for follower {}; refusing to compress a hole",
@@ -460,15 +447,14 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                 entry.unwrap().cmd() as *const rusty::RaftCommand;
             // Stop before this entry would push the batch past the byte bound
             // -- but always carry at least one, so progress never stalls.
-            let entry_bytes: u64 = unsafe { raft_command_payload_bytes(entry_cmd) };
+            let entry_bytes: u64 = entry.unwrap().payload_bytes();  // [move, M6]
             if !server.batch_buffer_.is_empty()
                 && batch_bytes.saturating_add(entry_bytes) > max_batch_bytes
             {
                 break;
             }
             batch_bytes = batch_bytes.saturating_add(entry_bytes);
-            let is_commit: bool =
-                unsafe { raft_command_is_tpc_commit(entry_cmd) };
+            let is_commit: bool = entry.unwrap().is_tpc_commit();  // [move, M6]
             if is_commit {
                 let stamped: rusty::RaftTpcCommitPtr = unsafe {
                     rusty::raft_stamped_commit(entry_cmd, entry_term)
@@ -481,10 +467,7 @@ pub fn heartbeat_phase1_select_payload(server: &mut RaftServerBase,
                 // entry that is not a TpcCommitCommand -- so the second
                 // lookup costs nothing on the batching path.
                 let slot = server.core.raft_log_.get(idx);
-                let kind: i32 = unsafe {
-                    raft_command_kind(
-                        slot.unwrap().cmd() as *const rusty::RaftCommand)
-                };
+                let kind: i32 = slot.unwrap().kind();  // [move, M6]
                 let batched: u64 = server.batch_buffer_.len() as u64;
                 if batched == 0 {
                     rusty::raft_log_info_3(

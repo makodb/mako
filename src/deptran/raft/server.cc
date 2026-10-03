@@ -1462,6 +1462,24 @@ int32_t raft_command_kind(const rusty::RaftCommand* cmd) {
 bool raft_command_is_tpc_commit(const rusty::RaftCommand* cmd) {
   return marshallable_cast<TpcCommitCommand>(*cmd).is_some();
 }
+// [move, M6] The four facts RaftEntry caches, read once when an entry is
+// made. The last three are asked only of a command that has a value, as
+// their callers only ever asked them then; for an empty one they are
+// false, 0 and 0 and are never read.
+void raft_command_meta(const rusty::RaftCommand* cmd, bool* has_value,
+                       bool* is_tpc_commit, int32_t* kind,
+                       uint64_t* payload_bytes) {
+  *has_value = raft_command_has_value(cmd);
+  *is_tpc_commit = false;
+  *kind = 0;
+  *payload_bytes = 0;
+  if (!*has_value) {
+    return;
+  }
+  *is_tpc_commit = raft_command_is_tpc_commit(cmd);
+  *kind = raft_command_kind(cmd);
+  *payload_bytes = raft_command_payload_bytes(cmd);
+}
 void raft_stamped_commit_into(const rusty::RaftCommand* cmd, int64_t term,
                               rusty::RaftTpcCommitPtr* out) {
   auto cur_cmd = marshallable_cast<TpcCommitCommand>(*cmd);

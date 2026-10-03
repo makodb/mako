@@ -563,11 +563,28 @@ const _: () = assert!(raft_server_log_entry_is_current_term(-1, u64::MAX));
 pub struct RaftEntry {
     term_: i64,
     cmd_: rusty::RaftCommand,
+    // [move, M6] What the per-entry kernels report about cmd_, asked once
+    // when the entry is made (raft_entry_from_command) instead of at every
+    // use. The command is never modified once logged: a send stamps a copy
+    // (server.cc raft_stamped_commit_into). The last three are read only
+    // when has_value_ holds, as the kernels were only called then.
+    has_value_: bool,
+    is_tpc_commit_: bool,
+    kind_: i32,
+    payload_bytes_: u64,
 }
 
 impl RaftEntry {
-    pub fn new(term: i64, cmd: rusty::RaftCommand) -> RaftEntry {
-        RaftEntry { term_: term, cmd_: cmd }
+    pub fn new(term: i64, cmd: rusty::RaftCommand, has_value: bool,
+               is_tpc_commit: bool, kind: i32, payload_bytes: u64) -> RaftEntry {
+        RaftEntry {
+            term_: term,
+            cmd_: cmd,
+            has_value_: has_value,  // [move, M6]
+            is_tpc_commit_: is_tpc_commit,  // [move, M6]
+            kind_: kind,  // [move, M6]
+            payload_bytes_: payload_bytes,  // [move, M6]
+        }
     }
 
     pub fn term(&self) -> i64 {
@@ -577,6 +594,26 @@ impl RaftEntry {
     // Handed back to C++, never followed from Rust.
     pub fn cmd(&self) -> &rusty::RaftCommand {
         &self.cmd_
+    }
+
+    // [move, M6] raft_command_has_value(cmd)
+    pub fn has_value(&self) -> bool {
+        self.has_value_
+    }
+
+    // [move, M6] raft_command_is_tpc_commit(cmd)
+    pub fn is_tpc_commit(&self) -> bool {
+        self.is_tpc_commit_
+    }
+
+    // [move, M6] raft_command_kind(cmd)
+    pub fn kind(&self) -> i32 {
+        self.kind_
+    }
+
+    // [move, M6] raft_command_payload_bytes(cmd)
+    pub fn payload_bytes(&self) -> u64 {
+        self.payload_bytes_
     }
 }
 
@@ -2140,6 +2177,10 @@ unsafe extern "C" {
     fn raft_vote_quorum_snapshot(quorum: *const rusty::RaftVoteQuorumPtr)
         -> RaftVoteOutcome;
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
+    // [move, M6] has_value, is_tpc_commit, kind and payload_bytes in one call
+    fn raft_command_meta(cmd: *const rusty::RaftCommand, has_value: *mut bool,
+                         is_tpc_commit: *mut bool, kind: *mut i32,
+                         payload_bytes: *mut u64);
     fn raft_apply_thread_join(thread: *mut rusty::RaftStdThread);
     fn raft_commo_set_network_enabled(server: *mut RaftServerHandle, enabled: bool);
     // The communicator binding: a dynamic_cast, which Rust cannot spell, plus
@@ -3381,10 +3422,7 @@ impl RaftServerBase {
         let boundary = self.core.raft_log_.get(recovered_snapshot_index);
         #[allow(clippy::unnecessary_unwrap)]
         let has_boundary: bool = boundary.is_some()
-            && unsafe {
-                raft_command_has_value(
-                    boundary.unwrap().cmd() as *const rusty::RaftCommand)
-            };
+            && boundary.unwrap().has_value();  // [move, M6]
         let local_boundary_term: u64 = if has_boundary {
             boundary.unwrap().term() as u64
         } else {
@@ -3740,10 +3778,7 @@ impl RaftServerBase {
         let boundary = self.core.raft_log_.get(last_included_index);
         #[allow(clippy::unnecessary_unwrap)]
         let has_boundary: bool = boundary.is_some()
-            && unsafe {
-                raft_command_has_value(
-                    boundary.unwrap().cmd() as *const rusty::RaftCommand)
-            };
+            && boundary.unwrap().has_value();  // [move, M6]
         // The entry's term is ballot_t (int64_t) and the predicate takes
         // u64; the C++ converted implicitly at the call.
         let local_boundary_term: u64 = if has_boundary {
@@ -4493,10 +4528,7 @@ impl RaftServerBase {
                 break;
             }
             let entry: &RaftEntry = found.unwrap();
-            let usable: bool = unsafe {
-                raft_command_has_value(
-                    entry.cmd() as *const rusty::RaftCommand)
-            };
+            let usable: bool = entry.has_value();  // [move, M6]
             if !usable {
                 first_missing = id;
                 break;
@@ -4837,6 +4869,23 @@ impl RaftServerBase {
     }
 }
 
+// [move, M6] An entry for the log, with the facts the core reads about its
+// command asked once, here. Shell code: it calls a kernel.
+pub fn raft_entry_from_command(term: i64, cmd: rusty::RaftCommand) -> RaftEntry {
+    let mut has_value: bool = false;
+    let mut is_tpc_commit: bool = false;
+    let mut kind: i32 = 0;
+    let mut payload_bytes: u64 = 0;
+    unsafe {
+        raft_command_meta(&cmd as *const rusty::RaftCommand,
+                          &mut has_value as *mut bool,
+                          &mut is_tpc_commit as *mut bool,
+                          &mut kind as *mut i32,
+                          &mut payload_bytes as *mut u64);
+    }
+    RaftEntry::new(term, cmd, has_value, is_tpc_commit, kind, payload_bytes)
+}
+
 // The log's writers and the membership loader, in Rust. Until step C1b these
 // were kernels reaching into core.raft_log_, decoded_terms_,
 // config_members_ and batch_buffer_ from C++. What those kernels could not
@@ -4854,7 +4903,7 @@ impl RaftServerBase {
     pub fn AppendLocal(&mut self, cmd: rusty::RaftCommand) -> u64 {
         let previous_index: u64 = self.core.raft_log_.last_index();
         let appended: u64 = self.core.raft_log_.append(
-            RaftEntry::new(self.core.current_term_ as i64, cmd));
+            raft_entry_from_command(self.core.current_term_ as i64, cmd));  // [move, M6]
         assert!(appended == previous_index + 1);  // [move, M10]
         previous_index
     }
@@ -4978,7 +5027,7 @@ impl RaftServerBase {
                     let appended: u64 = self
                         .core
                         .raft_log_
-                        .append(RaftEntry::new(term, entry_cmd));
+                        .append(raft_entry_from_command(term, entry_cmd));  // [move, M6]
                     assert!(appended == index);  // [move, M10]
                 }
                 i += 1;
@@ -4993,7 +5042,7 @@ impl RaftServerBase {
                     cmd, &mut copy as *mut rusty::RaftCommand);
             }
             let appended: u64 = self.core.raft_log_.append(
-                RaftEntry::new(leader_next_log_term as i64, copy));
+                raft_entry_from_command(leader_next_log_term as i64, copy));  // [move, M6]
             assert!(appended == index);  // [move, M10]
         }
     }
@@ -6046,9 +6095,7 @@ pub unsafe fn raft_on_append_entries(
         let slot = server.core.raft_log_.get(index);
         if slot.is_some() {
             let entry: &RaftEntry = slot.unwrap();
-            local_exists = unsafe {
-                raft_command_has_value(entry.cmd() as *const rusty::RaftCommand)
-            };
+            local_exists = entry.has_value();  // [move, M6]
             if local_exists {
                 local_term = entry.term();
             }
