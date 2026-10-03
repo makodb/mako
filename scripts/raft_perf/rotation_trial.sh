@@ -14,20 +14,21 @@
 # (4096), RATE (240, 0 = unlimited), MAXOUT (4096), DUR (8 s), PARTS (1),
 # SNAPSHOT_BYTES (0 = none; snapshots then also need MAKO_RAFT_SNAPSHOTS=1
 # and MAKO_RAFT_SNAPSHOT_INTERVAL in the environment, which the launcher
-# passes through), STALL_AT / STALL_FOR (0 = no stall).
+# passes through), STALL_AT / STALL_FOR (0 = no stall), GROUP (single|multi,
+# raft_bench.sh --group-mode).
 set -euo pipefail
 OUT="$1"; ROUNDS="$2"; shift 2
 ARMS=("$@")
 K=${#ARMS[@]}
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PAYLOAD="${PAYLOAD:-4096}"; RATE="${RATE:-240}"; MAXOUT="${MAXOUT:-4096}"
-DUR="${DUR:-8}"; PARTS="${PARTS:-1}"
+DUR="${DUR:-8}"; PARTS="${PARTS:-1}"; GROUP="${GROUP:-single}"
 SNAPSHOT_BYTES="${SNAPSHOT_BYTES:-0}"; STALL_AT="${STALL_AT:-0}"; STALL_FOR="${STALL_FOR:-0}"
 mkdir -p "$OUT"
 run() {
   local arm="$1" f="$2"
   (cd "$REPO_ROOT" && examples/raft_bench.sh --build-dir "$arm" --out "$f" \
-     --partitions "$PARTS" --payload-bytes "$PAYLOAD" --rate "$RATE" \
+     --partitions "$PARTS" --group-mode "$GROUP" --payload-bytes "$PAYLOAD" --rate "$RATE" \
      --max-outstanding "$MAXOUT" --duration-sec "$DUR" \
      --snapshot-bytes "$SNAPSHOT_BYTES" --stall-follower-at-sec "$STALL_AT" \
      --stall-for-sec "$STALL_FOR" >"$f.log" 2>&1)
