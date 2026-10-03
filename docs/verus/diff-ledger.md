@@ -60,3 +60,22 @@ Plan deviation: the plan's Phase 1 asks for lab cases for a duplicated and a
 stale-term vote reply. The lab cannot inject a reply into a live campaign, so
 both are raft-rt unit tests on the tally itself (`b75f285e2`).
 
+## Phase 2 (side effects become returned actions; F6)
+
+Line numbers are the start of each item after its commit (`src/server_h.rs`
+unless stated).
+
+| Commit | File:line (after) | Kind | What | Evidence |
+|---|---|---|---|---|
+| `3ab039029` | 22 `raft_verify` sites and 7 `if !cond { panic!(..) }` checks in `src/server_h.rs` and `src/server_cc.rs` | M10 | `assert!(cond)`, same condition, the message kept as a comment; `AuthorityLedger::launch`'s result bound to a local before the assert (a write never sits inside an assert) | clippy, Tier 1 |
+| | `server.cc`, `server.h`, both extern blocks, repo `scripts/gen_correspondence.py` | M10 | the now-unused `raft_verify` kernel deleted | builds |
+| `4a8d2dc81` | `:563` (`RaftEntry`), `:4874` (`raft_entry_from_command`); `server.cc:1469` (`raft_command_meta`) | M6 | `RaftEntry` caches `has_value`, `is_tpc_commit`, `kind`, `payload_bytes`, asked once through one kernel when the entry is made; the three construction sites use it | Tier 1 |
+| | `src/server_cc.rs` batch selection; `EnqueueCommittedEntries`; the follower's conflict search; the two snapshot-boundary checks | M6 | every per-entry metadata query reads the cached field | Tier 1 |
+| `2d657ae4c` | `:1559` (`CoreActionKind`, `TimerResetReason`, `CoreAction`, `CoreOutput`) | M3 | the actions a core call pushes, carried out in push order by the shell | Tier 1 |
+| | `:1833` (`rebuild_peer_tables`, `peer_site_at`, `is_config_member`, `peer_ordinal`), `RaftCore` fields `config_members_`, `peer_sites_` | M1 | moved from `RaftServerBase`, which keeps delegates | Tier 1 |
+| | `:1897` (`append_local`), `:1913` (`reset_election_timer`), `:1931` (`set_is_leader`), `:2032` (`step_down`) | M3, M4 | `setIsLeader`/`stepDown` as core methods pushing APPEND_NOOP, RESET_ELECTION and ROLE_SET; the timer reset's clock and sample are parameters; `AppendLocal`'s append | Tier 1; lab case 14 |
+| | `:3285` (`run_locked_actions`), `resetTimerLocked` | M3, M4 | the shell's executor; `resetTimerLocked` samples, then calls the core | Tier 1 |
+| | `:5014` (`RequestVoteSettleLocked`), `:6091` (`on_request_vote_locked`), `:6523` (`on_append_entries_locked`), `InstallSnapshotReplyAccepted(Locked)`, `OnInstallSnapshotLocked`, `ConstructRuntime`, `src/server_cc.rs` phase 2's step-down | M3 | each critical section that can change the role runs its actions before releasing `mtx_`; the follower's InstallSnapshot runs them where `stepDown` ran them, ahead of the install | Tier 1 |
+| `a85a19993` | `:2684` (`LeaderNotices`), `:3357` (`run_unlocked_actions`), `:3387` (`fire_leader_notices`), `:5740` (`RegisterLeaderChangeCallback`), `install_out_`, every role-changing caller | F6 | the role's log entry and the leader-change callback run after `mtx_` is released, in transition order, each once, from a copy taken under the notice queue's lock; registration takes that lock (bugs-found B11) | lab case 14 |
+| | `src/lab_cases.rs:769`, `src/lab.rs:173`, `server.cc:517` | F6 | lab case 14 and its recorder kernel | lab |
+

@@ -19,7 +19,7 @@ it), **metric** (wrong number in a measurement, no protocol effect).
 |---|---|---|---|---|
 | B1 | liveness | Candidate's "no" quorum is off by one: a lost election is never decided early | read in code; already known and pinned for lane parity by `rt/tests/transport_roundtrip.rs:142-155` | not in the plan; changing it would be a new F-item (needs approval) |
 | B2 | race | `CommitIndex()` reads `state_.commit_index_` without `mtx_` | read in code | F8 (Phase 4) |
-| B3 | robustness | Vote replies are counted by number, so a duplicated reply counts twice | read in code; whether srpc can duplicate is open | fixed by F1 in `b75f285e2` (Phase 1) |
+| B3 | robustness | Vote replies are counted by number, so a duplicated reply counts twice | read in code; whether srpc can duplicate is open | Rust lane: fixed by F1 in `b75f285e2` (Phase 1); C++ lanes: by the core's own count (Phase 3) |
 | B4 | robustness | Decoded AppendEntries entry terms are never checked (0, negative, above the leader's term) | read in code | 0 and negative: fixed by F4 in `a38c5012e` (Phase 1); above the leader's term: F9 (Phase 6) |
 | B5 | latent | Phase 1 sends with the round's term and never re-checks leadership under the lock that builds the message; the Rust send kernel ignores its `is_leader` argument | read in code; not reachable today | fixed by F3 in `372b73e6f` (Phase 1) |
 | B6 | safety (assumed away) | Raft state is memory-only: a replica restarted under its old id can vote twice in a term, and a majority restart loses committed entries | read in code (plan §4.4.2) | v1 trusted assumption; spec v3 later |
@@ -29,6 +29,7 @@ it), **metric** (wrong number in a measurement, no protocol effect).
 | B10 | toolchain | rusty-cpp's transpiled `BTreeMap` port cannot compile `clone()` of a `BTreeMap<u32, Vec<i32>>` (no matching `push` in the internal-node clone path) | reproduced (cpp-lane lab build) | worked around in `src/lab.rs`; third-party, report only |
 | B11 | race (latent) | `RegisterLeaderChangeCallback` writes `leader_change_cb_` with no lock while a role change reads and calls it under `mtx_` | read in code | fixed with F6 (Phase 2): registration and every read of the slot take `leader_notices_`'s lock; the callback runs from a copy |
 | B12 | dead code | `heartbeat_phase0_body` returns `true` when phase 0 declines the round (not leader), so the driver's `continue` never fires and phases 1-3 run, each exiting at its first leadership check | read in code | Phase 3: the cut heartbeat ends the round when `tick_heartbeat` declines it (no protocol-visible difference) |
+| B13 | toolchain | The transpiled C++ cannot redeclare a name in one scope: a Rust `let` that shadows a binding, or a function parameter, at the same block level is a C++ redefinition | reproduced (cpp-lane lab build, Phase 1) | worked around by renaming; a constraint on every transpiled file |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
 
@@ -298,4 +299,25 @@ costs a few extra `mtx_` acquisitions on every follower.
 **Fate.** Recorded at Phase 1. Phase 3's cut heartbeat ends the round when
 `tick_heartbeat` declines it, as the C++ did; nothing a follower could
 observe changes.
+
+## B13. A shadowing `let` is a C++ redefinition
+
+**Where.** rusty-cpp `1689f438`'s emitter, for any crate the cpp or hybrid
+lane transpiles (`src/*.rs`, the lab included).
+
+**What is wrong.** Rust lets a `let` shadow an earlier binding in the same
+block, or a parameter at the top of a function body; the emitter writes
+both as C++ declarations in one scope, which clang rejects
+("redefinition of 'ok'"). It surfaces only in the cpp lane's build, which
+transpiles the lab; rustc and clippy accept the code.
+
+**How found.** Phase 1's lab case 12 bound `ok` twice
+(`let Some((ok, _, _)) = ...`); the cpp-lane lab build failed
+(`$RESULTS/p1/tier1/cpp.log`). Phase 2 had the same shape, a `let stopped`
+redeclaring `raft_on_append_entries`' `stopped` parameter, found by
+reading before any cpp build.
+
+**Fate.** Worked around by renaming (case 12's bindings) and by using the
+parameter (Phase 2). A transpiler limitation, not Mako's; new code for the
+transpiled crate avoids shadowing.
 
