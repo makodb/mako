@@ -17,7 +17,7 @@ it), **metric** (wrong number in a measurement, no protocol effect).
 
 | # | Severity | Summary | Status | Fate |
 |---|---|---|---|---|
-| B1 | liveness | Candidate's "no" quorum is off by one: a lost election is never decided early | read in code | new; not in the plan; candidate for an F-item (needs approval) |
+| B1 | liveness | Candidate's "no" quorum is off by one: a lost election is never decided early | read in code; already known and pinned for lane parity by `rt/tests/transport_roundtrip.rs:142-155` | not in the plan; changing it would be a new F-item (needs approval) |
 | B2 | race | `CommitIndex()` reads `state_.commit_index_` without `mtx_` | read in code | F8 (Phase 4) |
 | B3 | robustness | Vote replies are counted by number, so a duplicated reply counts twice | read in code; whether srpc can duplicate is open | F1 (Phase 1) |
 | B4 | robustness | Decoded AppendEntries entry terms are never checked (0, negative, above the leader's term) | read in code | F4 (Phase 1) |
@@ -61,6 +61,16 @@ term, A also keeps campaigning at the stale term for that second.
 **Effect.** Liveness/latency only: a candidate that has already lost waits up
 to 1 s before giving up. No safety impact (a yes quorum is computed
 correctly).
+
+**Known, deliberately.** The raft-rt test
+`a_rejected_three_replica_campaign_waits_out_its_timeout`
+(`rt/tests/transport_roundtrip.rs:142-155`) pins exactly this, with the same
+arithmetic in its comment ("no() is n_voted_no > n - n/2 = 2, which two peers
+cannot reach -- so, exactly as on the C++ lane, the campaign does not lose
+early"). So it is a conscious parity choice with the C++ lane, whose generic
+`QuorumEvent::no` was written for events where every participant votes. It
+is recorded here because it is still a liveness cost against standard Raft,
+and because it contradicts one of the plan's lab-case descriptions (below).
 
 **Fate.** Not in the plan's F-list; the behaviour freeze (plan §A) keeps it.
 Plan correction: the Phase 1 lab case "vote request to a server whose

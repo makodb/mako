@@ -101,12 +101,41 @@ held, so any future application callback that calls `IsLeader`,
 `GetLeaderHint` or `add_log_to_nc` on the same thread would self-deadlock on
 the non-recursive `mtx_`.
 
+## 4a. Open question 4 (V3), preliminary reading
+
+Does the vote "no" count reach a field the proof tracks? Read in code, not
+yet in the Phase 3 coupling table: no. After the wait, `RequestVoteImpl`'s
+settlement (`src/server_h.rs`, the `outcome.yes_ / outcome.no_ / else`
+branches) uses the count only through `outcome.no_`, whose branch ends the
+candidacy (`election_in_progress_ = false`, plus the unmarked `req_voting_`).
+Under the plan's role view (Candidate = not leader, election in progress,
+election term = current term) that is Candidate → Follower in the same term,
+i.e. `LStepAside`, which has no guard; the timeout branch does exactly the
+same whatever the count. The other way a reply reaches marked state is
+`ADVANCE_HIGHER_TERM`, driven by the highest reply term, and a forged
+unavailable reply carries the candidate's own term, which is never higher.
+So V3 holds on this reading; the coupling table is still the formal check.
+
+## 4b. Lab comparator calibration: stop point 8 reached
+
+Five same-build lab runs, all 27 cases passing and replicas agreeing in every
+run. But 16 of 27 cases vary their (term, leader) sequence between runs of the
+same binary, above the plan's one-half threshold (0.7 point 8). Cause: lab
+elections are randomized (case 1 alone elected replicas 3, 2, 2, 3 and 1), so
+exact leaders and terms cannot be compared across builds. The per-case
+committed-payload fields are stable in 25 of 27 cases. Details and the
+proposed comparison: [../lab-compare-exemptions.md](../lab-compare-exemptions.md).
+
 ## 5. Bugs found
 
-See [../bugs-found.md](../bugs-found.md): B1-B8. New ones not in the plan:
-B1 (vote "no" quorum off by one: a 3-node candidate that lost can never be
-decided early and waits its full 1 s), B7 (`get_outstanding_logs` mixes two
-counters), B8 (`setIsLeader`'s stale-publication term check is a tautology).
+See [../bugs-found.md](../bugs-found.md): B1-B10. Not in the plan: B1 (the
+vote "no" quorum is off by one, so a 3-node candidate that lost is never
+decided early and waits its full 1 s; known and pinned for lane parity by a
+raft-rt test, but it contradicts a planned lab case), B7
+(`get_outstanding_logs` mixes two counters), B8 (`setIsLeader`'s
+stale-publication term check is a tautology), B9 (`ci.sh` cleanup kills
+other worktrees' tests), B10 (the cpp lane's btree port cannot clone a map of
+vectors).
 
 ## 6. Plan corrections found while executing
 
