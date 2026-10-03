@@ -712,9 +712,54 @@ fn test_entry_term_zero_refused(_st: &mut LabState) -> i32 {
     0
 }
 
+// ---------------------------------------------------------------------------
+// Pinned behaviour (no change): the unavailable voter's reply
+
+// A replica that cannot serve (disconnected, or not yet RPC-ready: the same
+// branch of ServeVote) answers a vote request with "no" at the candidate's
+// own term -- a reply no voter decided, which the verification reads as
+// unmodelled input (docs/verus/modification-plan.md §4.3, V3). Pinned here,
+// including that the replica's own term does not move.
+fn test_unavailable_voter_reply(_st: &mut LabState) -> i32 {
+    init2(13, "An unavailable replica refuses a vote at the candidate's term");
+
+    let leader = lab::one_leader(-1);
+    if !check_msg(leader >= 0, "no leader") { return 1; }
+    let voter = lab::next_server_id(leader as u32, 1);
+    let Some(candidate_site) = lab::site_id_of(lab::next_server_id(leader as u32, 2)) else {
+        failed("candidate not registered"); return 1;
+    };
+    let Some((term_before, last, last_term, _, _)) = lab::log_tail(voter) else {
+        failed("voter not registered"); return 1;
+    };
+
+    lab::disconnect(voter);
+    let can_term = term_before as i64 + 5;
+    let reply = lab::serve_vote(voter, last, last_term as i64, candidate_site, can_term);
+    let after = lab::log_tail(voter);
+    lab::reconnect(voter);
+
+    let Some((reply_term, granted)) = reply else {
+        failed("voter not registered"); return 1;
+    };
+    if !check_msg(granted == 0, "an unavailable replica granted a vote") { return 1; }
+    if !check_msg(reply_term == can_term,
+                  "the unavailable reply should carry the candidate's own term") { return 1; }
+    let Some((term_after, _, _, _, _)) = after else {
+        failed("voter not registered"); return 1;
+    };
+    if !check_msg(term_after == term_before,
+                  "an unavailable replica adopted the candidate's term") { return 1; }
+
+    // Let the cluster settle before the next case.
+    if !check_msg(lab::one_leader(-1) >= 0, "no leader after reconnecting") { return 1; }
+    passed();
+    0
+}
+
 // The basic cases: the eleven ported ones in RaftLabTest::Run's order, then
-// case 12 above. lab_main.rs drives them, then the snapshot cases, and
-// threads the state between the two by value: None is a failure.
+// cases 12 and 13 above. lab_main.rs drives them, then the snapshot cases,
+// and threads the state between the two by value: None is a failure.
 fn run_basic_cases(st: &mut LabState) -> i32 {
     type Case = fn(&mut LabState) -> i32;
     let basic: &[Case] = &[
@@ -730,6 +775,7 @@ fn run_basic_cases(st: &mut LabState) -> i32 {
         test_unreliable_agree,
         test_figure8,
         test_entry_term_zero_refused,  // [fix, F4]
+        test_unavailable_voter_reply,
     ];
 
     for case in basic {

@@ -465,6 +465,19 @@ pub fn serve_append(svr: u32, leader_term: u64, leader: u16, prev_index: u64,
     }))
 }
 
+/// A RequestVote handed to replica `svr` as if it had arrived. Returns
+/// (reply term, granted), or None if no such replica.
+pub fn serve_vote(svr: u32, last_log_index: u64, last_log_term: i64,
+                  candidate: u16, candidate_term: i64) -> Option<(i64, i8)> {
+    lab_get(svr).map(|e| with_entry_server(&e, |server| {
+        let mut reply_term: i64 = 0;
+        let mut granted: i8 = 0;
+        server.ServeVote(last_log_index, last_log_term, candidate, candidate_term,
+                         &raw mut reply_term, &raw mut granted);
+        (reply_term, granted)
+    }))
+}
+
 /// A replica's site id: what it names itself in RPCs (a lab index is not one).
 pub fn site_id_of(svr: u32) -> Option<u16> {
     lab_get(svr).map(|e| with_entry_server(&e, |server| server.SiteId()))
