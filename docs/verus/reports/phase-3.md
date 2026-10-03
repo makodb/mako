@@ -55,6 +55,92 @@ plan 0.7 point 2 forward progress stops here (Phase 4 waits); the
 investigation follows, measurement only (0.6), starting with G2 on the
 phase-end commits since the last checkpoint (0.10). Section 3.1 records it.
 
+### 3.1 The G2 investigation (measurement only)
+
+No source changed. The tools were the Phase 0 trace kit
+(`MAKO_RAFT_TRACE_FILE`, M0), the per-follower applied counts already in
+every bench record, a `/proc` sampler of which NUMA node each process's
+threads ran on, and G2 re-run on each phase's end commit (Phase 1
+`590370719` and Phase 2 `a85a19993`, built in their own worktrees). Raw data:
+`$RESULTS/p3/g2-trace/`, `g2-bisect-trace/`, `g2-bisect/`.
+
+**Result: the loss is a change in how often the leader skips a follower, it
+arrives with Phase 2, and the cost of a round did not grow.**
+
+**How a G2 round works.** At 4 KB with no rate limit, every heartbeat round
+sends each follower up to 256 entries. The leader stops collecting replies
+after the first pass over its in-flight slots that leaves it with a
+majority (the early-quorum exit in `heartbeat_collect_body`). A follower
+whose reply has not arrived by then still has its request outstanding when
+the next round starts, and a follower with a request outstanding is skipped
+in that round (per-follower stop-and-wait). Its reply is processed in the
+next round's collection, and the round after that sends to it again. Both
+rules are Phase 0's, unchanged by Phases 1-3.
+
+So a reply that comes in a little after the other follower's costs that
+follower a round. A round that sends to one follower is much shorter than one
+that sends to two. In the traced runs (`round_kinds.txt`) a one-follower round
+took 4.8-6.5 ms and a two-follower round 7.2-7.4 ms. So **the more often a
+follower is skipped, the higher G2's throughput, and the further behind that
+follower falls**. A saturated run never lets it catch up: each round sends
+it at most 256 entries, and the leader appends about that many per round.
+At the end of the checkpoint's fastest runs one follower was up to 108,000
+entries (about 3 s) behind the leader.
+
+**Two operating modes.** Each run ends with both followers caught up, or one
+behind (below the leader's applied count when the run ends). At the
+checkpoint, Phase 0 ended 10 of 25 runs with a follower behind and Phase 3
+ended 1 of 25 (Fisher's exact test, p = 0.005); the runs that end behind are
+the fast ones (median 39,624/s against 34,918/s). The A/A run's 9.56% paired
+CV, which widened G2's bound from −2% to −5.4%, is this bimodality: which
+mode a run lands in is decided by a timing race, run by run.
+
+**Bisection** (`g2-bisect/`; 25 rounds, the four phase-end builds rotated
+round by round on a quiet machine; rounds 1-2 were re-run because analysis
+scripts overlapped them the first time):
+
+| Build | Runs ending with a follower behind | Median, all runs | Median, runs ending caught up (vs Phase 0, Mann-Whitney p) |
+|---|---|---|---|
+| Phase 0 | 13 of 25 | 37,289/s | 34,768/s |
+| Phase 1 | 10 of 25 | 36,782/s | 35,046/s (+0.8%, p = 0.68) |
+| Phase 2 | 3 of 25 (Fisher p = 0.005 vs Phase 0) | 35,200/s | 34,914/s (+0.4%, p = 0.96) |
+| Phase 3 | 3 of 25 (p = 0.005) | 34,739/s | 34,406/s (−1.0%, p = 0.46) |
+
+Paired throughput, each build against the one before (median ratio, sign
+test): Phase 1 vs 0 −0.5% (p = 1.0); **Phase 2 vs 1 −4.7% (p = 0.043)**;
+Phase 3 vs 2 −2.3% (p = 0.69); Phase 3 vs 0 −5.1% (p = 0.015, the
+checkpoint's result again).
+
+**The cost of a round did not grow.** Traced runs (3 per build, rotated) give
+the time of rounds that sent to both followers, the one comparison the skip
+rate cannot bias. Medians: Phase 0 7,346 µs, Phase 1 7,317, Phase 2 7,266,
+Phase 3 7,228. The follower's handler per 256-entry batch moved by +20 to
++65 µs (Phase 0 2,562 µs; Phase 1 2,581; Phase 2 2,629; Phase 3 2,604),
+under 1% of a round. Tracing slows every build alike and shifts the race, so
+the traced runs skip at their own rates. The comparison above uses
+two-follower rounds only.
+
+**Placement modulates the race but is not the difference.** Runs whose three
+processes ran mostly on one NUMA node rarely ended behind (1 of 11); runs
+split across both nodes did more often. Among split runs alone: Phase 0
+12 of 21, Phase 1 9 of 22, Phase 2 3 of 18, Phase 3 3 of 20.
+
+**Why Phase 2.** Not pinned. Phase 2's runtime changes are M6 (the leader
+reads each entry's cached metadata when it builds a follower's batch, instead
+of three casts per entry per follower; a follower pays those casts once per
+entry when it appends), M10 (22 fewer kernel calls), and M3's action
+executor at the end of each critical section. Any of them moves the
+leader's timing relative to the second follower's reply. The traced gap
+between the two followers' replies did not change measurably (p50
+470-700 µs in every build), so the shift sits in the tail of that race, not
+in a mean the traces can resolve.
+
+**Reading.** G2 was meant to measure per-message CPU (plan §6, "default G2").
+At this point it measures mostly how often the stop-and-wait race starves a
+follower, and Phase 2 starves it less. Per-message cost, measured on rounds
+that send to both followers and on runs that end caught up, did not get
+worse in any phase.
+
 ## 4. Equivalence
 
 Plan A.4 item 3 asks for a replay recorder at `step()` and a byte-for-byte
