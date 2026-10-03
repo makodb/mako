@@ -591,8 +591,18 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase) {
         let mut cmd_log_term: u64 = 0;
         let mut sent_end_index: u64 = 0;
         let mut skip_follower: bool = false;
+        // [fix, F3] The commit index this append carries, read in the same
+        // locked section that picks prev and the entries.
+        let mut send_commit_index: u64 = 0;
         {
             let _lock = RaftLockGuard::new(&mut server.mtx_);
+            // [fix, F3] The IsLeader() check above released the lock. Only a
+            // server still leading in the round's term may send that term's
+            // append, built from the log it holds now.
+            if !server.core.is_leader_ || server.core.current_term_ != server.core.round_.term() {
+                break;
+            }
+            send_commit_index = server.core.commit_index_;
             if server.core.peers_.next_index(ord) == 0 {
                 rusty::raft_log_warn_2(
                     "[APPEND_ENTRIES] Repairing wrapped next_index for follower {} at leader last index {}",
@@ -712,7 +722,7 @@ pub fn heartbeat_phase1_body(server: &mut RaftServerBase) {
                 server.handle(), server.site_id_, site_id,
                 partition_id,
                 is_leader, server.core.round_.term(), prev_log_index, prev_log_term,
-                server.core.round_.commit_index(),
+                send_commit_index,  // [fix, F3] was server.core.round_.commit_index()
                 &cmd as *const rusty::RaftCommand, cmd_log_term,
                 &mut sent_response as *mut rusty::RaftResponsePtr);
         }
