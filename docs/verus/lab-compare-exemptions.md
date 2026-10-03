@@ -9,9 +9,11 @@ Verdicts and cross-replica agreement (no two replicas commit different
 entries at one index) are never exempt; in all five runs every case passed and
 agreement held.
 
-**Status: stop point 0.7 point 8 was reached** (16 of 27 cases exempt the
-(term, leader) sequence). Waiting for the user's decision on the projection
-below.
+**Status: closed.** Stop point 0.7 point 8 was reached (16 of 27 cases exempt
+the (term, leader) sequence). The user then cut the testing between phases
+(plan 0.10, 2026-10-03): the comparator is no longer a gate, so the projection
+proposed below was never adopted. Until Phase 3 the lab passing is the check;
+`lab_trace_compare.py` stays as a diagnostic.
 
 ## What varies, and why
 

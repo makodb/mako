@@ -44,6 +44,7 @@ The user has answered them; nothing in this plan waits on the group.
 | Q4 | Spec version freezing | Ours: we freeze versions ourselves (§4.5). |
 | Q5 | Snapshots (their A10) and restart | Ours: both gated for certificate v1; designs for later in §4.4. |
 | Q6 | Refused committed-conflict path | Ours: a view choice, V2, no spec change (§4.3). |
+| Q7 | How much testing between phases? | **Less**: correctness at every phase end, performance at three checkpoints only (0.10). Decided by the user after Phase 0's A/A runs had started. |
 
 **We may change the spec ourselves**, under two rules that apply to every
 change:
@@ -197,7 +198,8 @@ the path and the 3-5 conclusions that matter. Stop and report:
 4. **After each spec change**: its abstract statement and the verification
    count. (No approval needed to make it; approval needed to push it anywhere.)
 5. **At each phase end**: Tier 1 (with first-attempt failures), equivalence
-   check (A.4), diff-ledger summary, commit SHA pushed to `backup`.
+   check (A.4), diff-ledger summary, new bug-log entries (0.9), commit SHA
+   pushed to `backup`.
 6. **Real blockers only** (toolchain cannot be repaired; Verus cannot express a
    construct, with the attempt shown; the cpp lane cannot transpile `verus!`
    code). Do not stop at self-chosen checkpoints inside a phase.
@@ -208,6 +210,8 @@ the path and the 3-5 conclusions that matter. Stop and report:
    V3 to F2 (§4.3).
 8. **Comparator exemptions out of hand**: if more than half the lab cases
    exempt the (term, leader) sequence (A.4 item 1), stop and report.
+   **Closed** (0.10): it was reached in Phase 0 (16 of 27 cases), and the
+   comparator is no longer a gate.
 
 ### 0.8 Git rules
 
@@ -230,6 +234,47 @@ the path and the 3-5 conclusions that matter. Stop and report:
 - A deferring `#[allow(...)]` carries a `TODO` saying what must be verified
   before removal. Checks derive constants from source (e.g. the lab case count
   from `init2(` greps, as `ci/ci.sh:491-494` does), never literals.
+
+### 0.9 Bug log (user, 2026-10-03)
+
+Record every bug found while executing this plan in
+[bugs-found.md](bugs-found.md), whether or not it gets fixed: defects in the
+existing Raft code, the harness, the scripts or the toolchain, and bugs this
+plan's own changes introduced once a build, test or review caught them (say
+what caught them). Each entry gives: where (file:line at a named commit), a
+concrete failing scenario, how it was confirmed (read in code or reproduced;
+an unconfirmed suspicion is marked as one), severity, and its fate (fixed in
+commit X, became an F-item, deferred, report only). Write the entry when the
+bug is found, commit it with the step that found it, and name new entries
+in the next report. Recording a bug does not license fixing it: the
+behaviour freeze (§A) still applies, so a fix needs an A.2 F-item or the
+user's yes (0.7 point 3).
+
+### 0.10 Testing between phases (user, 2026-10-03)
+
+The user cut the testing between phases. Where they disagree, this section
+overrides §6, the **Gate** line of every phase in §5, A.4 and the Schedule's
+quiet-machine hours (about 86 h on the critical path become about 10 h).
+
+- **Correctness, every phase:** Tier 1 (§6's command block) once at the phase
+  end, not after every commit. First-attempt failures are still reported.
+- **Equivalence:** the lab comparator (A.4 items 1 and 2, and item 3(a)) is not
+  a gate. Until Phase 3 the lab passing (every verdict, and replicas agreeing)
+  is the check. From Phase 3 the replay checks apply as written: A.4 item 3(b)
+  and (c), items 4 and 5. `lab_trace_compare.py` stays as a diagnostic.
+- **Performance, three checkpoints only:** after Phases 3, 6 and 8, run G1-G6
+  with two arms, `build_rust_base` (`verus-p0`, merged with mako-dev as 0.8
+  says) against the child. Rounds and bounds come from
+  [gate-params.md](gate-params.md), and the pass rule is §6's. Also run G7
+  after Phases 3 and 8, with the same arms. Phases 1, 2 and 4 get no
+  performance run, and no checkpoint uses a parent arm.
+- **Dropped:** all of Tier 3 (full sweeps, Jetpack, snapshot points), and
+  Phase 0's concurrency check, sweep and Jetpack baselines. Phase 0 ends with
+  the A/A runs of G1-G7.
+- **A failed checkpoint:** stop and report it (0.7 point 2). Investigate
+  afterwards (0.6), first by running the failing point on the phase-end
+  commits since the last checkpoint.
+- Optional Phases 5 and 7 get their checks when the user schedules them.
 
 ---
 
@@ -1310,6 +1355,9 @@ G1-G6 (+G7 for F11a); Tier 3 milestone after the last. Expected: G1 improves
   inside the method's gate, glr/`docs/ghost-log/raftrs/port-audit.md:134`).
 
 ### Schedule
+
+**Superseded in part by 0.10** (less testing): the quiet-machine hours
+below assume the original gates.
 
 An AI agent executes this plan. Its time goes mostly to waiting on this machine
 (zoo-003, 64 cores): builds, suites, benchmarks, Verus. **Unit: 1 d = 24 h of

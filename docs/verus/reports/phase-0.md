@@ -126,6 +126,9 @@ exact leaders and terms cannot be compared across builds. The per-case
 committed-payload fields are stable in 25 of 27 cases. Details and the
 proposed comparison: [../lab-compare-exemptions.md](../lab-compare-exemptions.md).
 
+**Resolved (user, 2026-10-03):** the testing between phases was cut (plan
+0.10). The comparator is not a gate, and stop point 8 is closed.
+
 ## 5. Bugs found
 
 See [../bugs-found.md](../bugs-found.md): B1-B10. Not in the plan: B1 (the
