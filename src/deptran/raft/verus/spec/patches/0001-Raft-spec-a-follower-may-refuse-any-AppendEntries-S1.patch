@@ -1,0 +1,130 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: zyang2 <zyang2@zoo-003.maas>
+Date: Sat, 3 Oct 2026 04:04:36 +0000
+Subject: [PATCH] Raft spec: a follower may refuse any AppendEntries (S1)
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+LRejectAppendEntries loses its guard. Any server, in any state, may
+decline an AppendEntries: its state is unchanged and it sends one
+AppendResponse{term: its current term, success: false, match_index: 0,
+read_ctx: 0}. raft.tla's reasons (stale term, prev-log mismatch, wrong
+append position) and A7's entry-less append at prev 0 remain admitted;
+so are reasons the abstract state cannot see, such as a stopped or fenced
+server, an unrecognised sender or an undecodable payload.
+
+Why this is still Raft: a refusal is observationally a lost message plus
+an unsuccessful reply, which the network can already produce, and a
+leader can do nothing with an unsuccessful reply but move next_index,
+which LHandleAppendReject treats as unconstrained bookkeeping. The same
+argument leaves LRejectVote and LStepAside unguarded.
+
+Proof maintenance: one hint in lemma_follower_commit_prefix_advanced_common,
+assert(s_ != s) (the commit index moved, so the step is no refusal).
+Without it the lemma exceeds its rlimit in the full crate even at 1000;
+with it the original rlimit 150 holds. Full crate under Verus
+0.2026.08.02.b677dd5: 2129 verified, 0 errors (as before the change).
+
+Plan item: S1 (docs/verus/modification-plan.md §4.2, Mako repo).
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ docs/ghost-log/spec/raft-spec.md              | 14 ++++++++-
+ src/protocol/Raft/raft.rs                     | 29 +++++++++----------
+ .../refinement_proof/log_induction_commit.rs  |  3 ++
+ 3 files changed, 29 insertions(+), 17 deletions(-)
+
+diff --git a/docs/ghost-log/spec/raft-spec.md b/docs/ghost-log/spec/raft-spec.md
+index 826a7b93..b5f81de9 100644
+--- a/docs/ghost-log/spec/raft-spec.md
++++ b/docs/ghost-log/spec/raft-spec.md
+@@ -19,7 +19,7 @@
+ | BecomeLeader | `LBecomeLeader` | raft.tla initializes nextIndex = Len+1 and matchIndex = 0; we set empty maps (in A3, next_index is an unmarked shadow field) |
+ | ClientRequest | `LClientRequest` | Same; the empty entry raft-rs appends on election also closes here (value_view reads the empty payload) |
+ | AppendEntries (send) | `LSendAppendEntries` | raft.tla also sends at most one entry per message. For the commit upper bound, raft.tla uses min(commit, lastEntry); we use the leader's commit plus the acked bound on heartbeats (`heartbeat_commit_ok`), and the follower then caps it at the end of the payload, with the same effect. The message may also carry the context of one pending read (`read_ctx`, A8; raft.tla has no ReadIndex) |
+-| HandleAppendEntriesRequest | `LRejectAppendEntries` / `LFollowerAppendEntries` / `LFollowerHeartbeat` | On a conflict raft.tla truncates one entry per step; we truncate to prev and append in a single step (`ae_log_after`, as raft-rs does; truncation happens only above the commit: `truncate_ok`). In raft.tla a candidate that receives a same-term AE first reverts to follower in a separate step; we fold that into the action |
++| HandleAppendEntriesRequest | `LRejectAppendEntries` / `LFollowerAppendEntries` / `LFollowerHeartbeat` | `LRejectAppendEntries` is unguarded (S1): any server may refuse any AppendEntries, state unchanged, as `LRejectVote` may refuse any vote; raft.tla's reject reasons are a subset. On a conflict raft.tla truncates one entry per step; we truncate to prev and append in a single step (`ae_log_after`, as raft-rs does; truncation happens only above the commit: `truncate_ok`). In raft.tla a candidate that receives a same-term AE first reverts to follower in a separate step; we fold that into the action |
+ | HandleAppendEntriesResponse | `LHandleAppendResponse` / `LHandleAppendReject` | The success path matches (and counts only in the leader's current term, H8). On failure raft.tla uses max(next−1, 1), while we allow any target in [1, len+1] (raft-rs's hint), a superset |
+ | AdvanceCommitIndex | `LAdvanceCommitIndex` | Same, including the quorum-replication guard and committing only current-term entries |
+ | UpdateTerm | `LStepDown` | Same; each handler also folds in its own copy, `step_down_if_needed` |
+@@ -138,6 +138,18 @@ and every push onto `msgs` must be attributed to an action, and anything unattri
+ Over the three rounds we added 9 actions and changed 4 message types, and the last round rebuilt the
+ safety proof.
+ 
++**S1 (unguarded refusal).** `LRejectAppendEntries` loses its guard (the three raft.tla reasons
++plus A7's prev-0 entry-less case). A refusal changes no state and sends only an unsuccessful
++response at the sender's own term; a leader can do nothing with it but move `next_index`, which
++`LHandleAppendReject` treats as unconstrained bookkeeping. So declining an append is
++observationally a loss plus an unsuccessful reply, which the network can already produce, and the
++same argument that leaves `LRejectVote` unguarded applies. It admits refusals whose reasons the
++abstract state cannot see: a stopped or fenced server, an unrecognised sender, an undecodable
++payload. Proof maintenance: one hint in `lemma_follower_commit_prefix_advanced_common`,
++`assert(s_ != s)` (the commit index moved, so the step is no refusal); without it the lemma
++exceeds its rlimit in the full crate even at 1000, since the old guard no longer prunes the
++reject case.
++
+ **Round 1 (filling holes against raft.tla)**: the up-to-date check for RequestVote
+ (`candidate_log_ok`), prev-log consistency for AppendEntries (`prev_log_ok` + `append_pos_ok`), and
+ AppendEntriesResponse with success=FALSE (new action `LRejectAppendEntries`; the impl used to drop it
+diff --git a/src/protocol/Raft/raft.rs b/src/protocol/Raft/raft.rs
+index d79a099b..c730b07f 100644
+--- a/src/protocol/Raft/raft.rs
++++ b/src/protocol/Raft/raft.rs
+@@ -590,12 +590,16 @@ verus! {
+         }]
+     }
+ 
+-    /// Reject an AppendEntries: stale term, prev-log mismatch, or wrong append
+-    /// position. State unchanged; sends AppendResponse{success: false},
+-    /// mirroring raft.tla's AppendEntriesResponse with success=FALSE and the
+-    /// composite handler's three reject branches. New atomic action
+-    /// (stage-2 Phase 0 hardening): previously these sends existed only in the
+-    /// composite layer.
++    /// Refuse an AppendEntries: state unchanged; sends AppendResponse{success: false}.
++    /// Unguarded, the append analogue of LRejectVote (B1): a refusal withholds an
++    /// acknowledgement and changes no state; the leader may only use it to move
++    /// next_index, which LHandleAppendReject treats as unconstrained bookkeeping.
++    /// raft.tla's reasons (stale term, prev-log mismatch, wrong append position)
++    /// and reasons the abstract state cannot see (a stopped or fenced server, an
++    /// unrecognised sender, an undecodable payload) all read as this action.
++    /// Mirrors raft.tla's AppendEntriesResponse with success=FALSE. New atomic
++    /// action (stage-2 Phase 0 hardening): previously these sends existed only
++    /// in the composite layer.
+     // Refinement-target only (not transpiled): this action exists for the
+     // ghost-log refinement and the atomic safety proof; no host code is
+     // generated from it, so it carries no @automan directive.
+@@ -604,16 +608,9 @@ verus! {
+         ae_term: int, ae_prev_index: int, ae_prev_term: int, ae_has_entry: bool,
+         sent_packets: Seq<LRaftMessage>,
+     ) -> bool {
+-        &&& ({
+-            ||| ae_term < s.current_term
+-            ||| !prev_log_ok(s, ae_prev_index, ae_prev_term)
+-            ||| !append_pos_ok(s, ae_prev_index, ae_has_entry)
+-            // [A7] an entry-less append at prev 0 changes nothing either way; the
+-            // follower may answer it with a refusal at 0 (claiming no match). raft-rs's
+-            // success answer to it carries index 0, the same wire shape as its answer
+-            // to a stale leader under pre_vote / check_quorum; both read as this.
+-            ||| (ae_prev_index == 0 && !ae_has_entry)
+-        })
++        // [S1] no guard: any server may decline any AppendEntries. The former
++        // guard (stale term, !prev_log_ok, !append_pos_ok, and [A7]'s entry-less
++        // append at prev 0) lists reasons, all still admitted.
+         &&& s_ == s
+         &&& sent_packets == seq![LRaftMessage::AppendResponse {
+             term: s.current_term,
+diff --git a/src/protocol/Raft/refinement_proof/log_induction_commit.rs b/src/protocol/Raft/refinement_proof/log_induction_commit.rs
+index 1f56d68b..f0c4301e 100644
+--- a/src/protocol/Raft/refinement_proof/log_induction_commit.rs
++++ b/src/protocol/Raft/refinement_proof/log_induction_commit.rs
+@@ -1099,6 +1099,9 @@ verus! {
+         let pkt = kind_pkt(st.kind).unwrap();
+         let m = pkt.msg;
+         let heartbeat = st.kind is FollowerHeartbeat;
++        // [S1] the commit moved, so this step is no refusal: the unguarded
++        // LRejectAppendEntries requires s_ == s.
++        assert(s_ != s);
+         assert(accept_post(ds, s, s_, c, m, st.sent, heartbeat));
+         lemma_ae_packet_facts(ds, pkt);
+         let t = m->AppendEntries_term;
