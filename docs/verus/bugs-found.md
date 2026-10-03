@@ -19,14 +19,15 @@ it), **metric** (wrong number in a measurement, no protocol effect).
 |---|---|---|---|---|
 | B1 | liveness | Candidate's "no" quorum is off by one: a lost election is never decided early | read in code; already known and pinned for lane parity by `rt/tests/transport_roundtrip.rs:142-155` | not in the plan; changing it would be a new F-item (needs approval) |
 | B2 | race | `CommitIndex()` reads `state_.commit_index_` without `mtx_` | read in code | F8 (Phase 4) |
-| B3 | robustness | Vote replies are counted by number, so a duplicated reply counts twice | read in code; whether srpc can duplicate is open | F1 (Phase 1) |
-| B4 | robustness | Decoded AppendEntries entry terms are never checked (0, negative, above the leader's term) | read in code | F4 (Phase 1) |
-| B5 | latent | Phase 1 sends with the round's term and never re-checks leadership under the lock that builds the message; the Rust send kernel ignores its `is_leader` argument | read in code; not reachable today | F3 (Phase 1) |
+| B3 | robustness | Vote replies are counted by number, so a duplicated reply counts twice | read in code; whether srpc can duplicate is open | fixed by F1 in `b75f285e2` (Phase 1) |
+| B4 | robustness | Decoded AppendEntries entry terms are never checked (0, negative, above the leader's term) | read in code | 0 and negative: fixed by F4 in `a38c5012e` (Phase 1); above the leader's term: F9 (Phase 6) |
+| B5 | latent | Phase 1 sends with the round's term and never re-checks leadership under the lock that builds the message; the Rust send kernel ignores its `is_leader` argument | read in code; not reachable today | fixed by F3 in `372b73e6f` (Phase 1) |
 | B6 | safety (assumed away) | Raft state is memory-only: a replica restarted under its old id can vote twice in a term, and a majority restart loses committed entries | read in code (plan §4.4.2) | v1 trusted assumption; spec v3 later |
 | B7 | metric | `get_outstanding_logs` subtracts the global commit index from a per-node submission count | read in code | report only |
 | B8 | dead code | `setIsLeader`'s "stale leadership publication" check compares `current_term_` with a copy of itself, so its term half never fires | read in code | report only (behaviour freeze) |
 | B9 | test infra | `ci.sh`'s `cleanup_processes` kill -9s every same-user process named `dbtest`, `simpleTransactionRep`, ... and deletes the shared `/tmp/$USER_mako_rocksdb_shard*`, so a suite in one worktree kills tests running in another | read in code | worked around: `scripts/verus/tier1.sh` waits until no such process runs outside this worktree |
 | B10 | toolchain | rusty-cpp's transpiled `BTreeMap` port cannot compile `clone()` of a `BTreeMap<u32, Vec<i32>>` (no matching `push` in the internal-node clone path) | reproduced (cpp-lane lab build) | worked around in `src/lab.rs`; third-party, report only |
+| B12 | dead code | `heartbeat_phase0_body` returns `true` when phase 0 declines the round (not leader), so the driver's `continue` never fires and phases 1-3 run, each exiting at its first leadership check | read in code | Phase 3: the cut heartbeat ends the round when `tick_heartbeat` declines it (no protocol-visible difference) |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
 
@@ -250,4 +251,26 @@ the `build_cpp_raftlab_cpp` build, log `$RESULTS/p0/build/build_cpp_raftlab_cpp.
 A transpiler limitation, not Mako's; the same restriction applies to any
 code the C++ lanes transpile (relevant to Phase 6's crate if those lanes are
 kept).
+
+## B12. A declined heartbeat round still runs phases 1-3
+
+**Where.** `src/server_cc.rs`, `heartbeat_phase0_body` and
+`HeartbeatDriver::run`, at Phase 0 tip `c0197443f` (`:830-834`, `:1859-1861`).
+
+**What is wrong.** When phase 0 declines the round because this server is
+not the leader, `heartbeat_phase0_body` returns `true` ("Was `continue`;
+the Rust driver starts the next round when this returns true"), but the
+driver skips phases 1-3 only on `false` ("PHASE 0 declines the round when
+leadership is not held. The C++ spelled that `continue`."). The two comments
+contradict each other, and the function returns `true` on every path, so
+the `continue` is dead.
+
+**Effect.** None on the protocol: on a non-leader, phase 1 breaks at its
+first `IsLeader()` check, phase 2 finds every slot empty (phase 0 abandoned
+them) and stops, and phase 3 returns at its `IsLeader()` check. Each round
+costs a few extra `mtx_` acquisitions on every follower.
+
+**Fate.** Recorded at Phase 1. Phase 3's cut heartbeat ends the round when
+`tick_heartbeat` declines it, as the C++ did; nothing a follower could
+observe changes.
 
