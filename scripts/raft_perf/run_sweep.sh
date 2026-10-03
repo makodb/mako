@@ -64,7 +64,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # The axes. Every number below is data, not logic — change it here, nowhere
-# else. The derivations are in docs/plans/raft-perf-profile.txt (what Mako
+# else. The derivations are in the Mako Raft entry-size profile notes (removed; see git history) (what Mako
 # actually submits) and in the knee measurements quoted beside each array.
 # ---------------------------------------------------------------------------
 
@@ -83,7 +83,7 @@ CONFIGS=(
 # Entry sizes, bracketing the profile. The middle value is the measured p50 of
 # a real TPC-C Raft entry, 286208 bytes, NOT the arithmetic mean (~310 KB):
 # the mean is dragged upward by the 13 MB and 25 MB single entries that
-# docs/plans/raft-perf-profile.txt records as rare events rather than workload,
+# the Mako Raft entry-size profile notes (removed; see git history) records as rare events rather than workload,
 # so the p50 is the honest "typical entry". 4096 is "much smaller" and 1048576
 # is "much larger" while still inside the observed tail.
 PAYLOAD_SMALL=4096
@@ -134,7 +134,7 @@ declare -A MAX_OUTSTANDING=(
 # the sweep produces, so it is deliberately NOT folded in here without a
 # re-run. See docs/performance/raft-baseline.md, "Known gaps".
 # For calibration, the real TPC-C workload profiled in
-# docs/plans/raft-perf-profile.txt submits ~303 entries/s of ~290 KB, i.e. Mako
+# the Mako Raft entry-size profile notes (removed; see git history) submits ~303 entries/s of ~290 KB, i.e. Mako
 # in production sits right at this ceiling.
 # Re-measure on a new machine with:  ./run_sweep.sh --phase knee
 declare -A RATES=(

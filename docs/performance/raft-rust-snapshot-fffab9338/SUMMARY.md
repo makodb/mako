@@ -1,6 +1,6 @@
 # Raft with snapshots on: the Rust-lane snapshot store (plan phase N12)
 
-Plan: `docs/migration/raft/commo-service-rpc-plan.md`, phase N. Five builds
+Plan: the two-lane RPC plan (removed; see git history), phase N. Five builds
 ("arms"), one host, every point run as rotated rounds, so each arm runs once
 per round in every position in turn and host drift lands on all arms evenly.
 

@@ -265,7 +265,7 @@ only through the kernels declared `extern "C"` in `server_h.rs` and defined
 in `server.cc`; a kernel is C++ that has a reason to be (reactor, threads,
 wire types, third-party APIs). The one inline block left in `server.h`, the
 kernel-result PODs, is still transpiled and extracted (`server_pods_h.rs`).
-The plan and its progress are `docs/migration/raft/plan.md`.
+The migration plan has been removed (see git history); what was done is recorded in `docs/migration/raft/conversion-log.md`.
 
 **The snapshot store differs by lane, by decision.** On the Rust lane
 (`MAKO_RAFT_LANE=rust`) it is Rust: `SnapshotStore` in
@@ -275,7 +275,7 @@ that lane, so a `SnapshotManager` call in `server.cc` does not compile there.
 hybrid and cpp keep the C++ `MemorySnapshotManager`, whose kernels live in
 `snapshot_seam_cpp.cc`. The store is memory-only on every lane and the bytes
 are the state machine's, verbatim (plan phase N,
-`docs/migration/raft/commo-service-rpc-plan.md`).
+the two-lane RPC plan (removed; see git history)).
 
 **`#[cpp_inherit]` requires `use rusty::cpp_inherit;` in the same DSL
 block, and fails SILENTLY without it.** The attribute is authenticated

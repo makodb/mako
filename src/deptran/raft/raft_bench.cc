@@ -42,7 +42,7 @@
  * so --payload-bytes must be at least 40.
  *
  * SAFETY. This is a benchmark driver: a new .cc file that adds no inline-Rust
- * DSL items (see docs/plans/raft-perf-harness.txt trap T2). It is a bridge to
+ * DSL items (see the raft_bench harness plan (removed; see git history) trap T2). It is a bridge to
  * the not-yet-converted replication helper, so the calls into that API and the
  * C-library I/O it needs are annotated @unsafe at the boundary; the arithmetic
  * and the sample bookkeeping are @safe.

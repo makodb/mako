@@ -11,7 +11,7 @@
 # It is a separate crate, not a feature of the core, because the transpiler
 # walks every file under a crate's src/ regardless of #[cfg], and refuses a
 # crate whose local dependency (srpc) carries source-owned C++ contracts --
-# both measured, docs/migration/raft/commo-service-rpc-plan.md revision 5.
+# both measured, the two-lane RPC plan (removed; see git history) revision 5.
 #
 # Built only for -DMAKO_RAFT_LANE=rust, into libraft_rt.a, which then links in
 # place of libraft.a (it contains the core as an rlib).

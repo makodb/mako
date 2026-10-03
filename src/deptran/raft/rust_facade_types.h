@@ -16,7 +16,7 @@
 // rustc facade crate (src/srpc/rusty-rustc/src/lib.rs:337-338) publishes these
 // reactor types as `rusty::ReactorPollThread` and `rusty::ReactorIntEvent`,
 // and a DSL block must use those names or rustc cannot resolve them at all
-// (the facade-crate constraint in docs/migration/raft/plan.md). This header supplies
+// (the facade-crate constraint in the Raft migration plan (removed; see git history)). This header supplies
 // the other side: the same two names, in C++, aliased to the real types.
 //
 // The pairs below are the same pairs src/srpc/rust-type-map.toml already

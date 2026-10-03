@@ -441,7 +441,7 @@ impl Clone for CommoPeerPtr {
 ///
 /// Arities 0..10 cover every Raft call site; keep this in step with the
 /// RAFT_DSL_LOG_LEVEL list in that header.
-/// The Raft crate's logging, as a runtime (docs/migration/raft/plan.md, F2
+/// The Raft crate's logging, as a runtime (the Raft migration plan (removed; see git history), F2
 /// slice 1c). Under the transpiler each `raft_log_<level>_<n>` call is a
 /// C++ `Log_<level>` with fmtlib formatting; under rustc these functions ARE
 /// the logger: they ask the C++ logger whether the level is enabled -- so a
@@ -735,7 +735,7 @@ const _: () = {
     assert!(align_of::<RaftPollThreadPtr>() == 8);
 };
 
-/// The runtime half of the opaque carriers (docs/migration/raft/plan.md,
+/// The runtime half of the opaque carriers (the Raft migration plan (removed; see git history),
 /// F2 slice 1). Each carrier is a C++ object Rust holds by value; its
 /// destructor is a kernel, `raft_destroy_<name>`, that runs `std::destroy_at`
 /// in place. A default-constructed carrier is all zero bytes, which every C++

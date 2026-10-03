@@ -131,7 +131,7 @@ of data on the wrong side.
 
 ## 6. The plan's steps: interface, opacity, ABI (09-20 .. 09-21)
 
-`docs/migration/raft/plan.md` was written, and its steps A through F1
+the Raft migration plan (removed; see git history) was written, and its steps A through F1
 executed, each gated, built in both trees, run through RaftLabTest (25/25 every
 time) and the four production Raft suites, and committed on its own.
 
@@ -198,7 +198,7 @@ carries its AppendEntries payload as opaque bytes, which it does not.
 
 ## 9. The wire, and the server's last C++ field (09-25)
 
-The plan from here is `commo-service-rpc-plan.md`. Stages 0 through 3 ran
+The plan from here is the two-lane RPC plan (removed; see git history). Stages 0 through 3 ran
 in this phase.
 
 | commit | stage | what it did |
@@ -292,7 +292,7 @@ srpc), hybrid (rustc + C++ srpc), and cpp (transpiled + C++ srpc).
 
 ## 15. The snapshot store on the Rust lane (09-27 .. 09-29)
 
-Plan phase N (`commo-service-rpc-plan.md`, revision 7). The Rust lane's
+Plan phase N (the two-lane RPC plan (removed; see git history), revision 7). The Rust lane's
 snapshot store is converted to Rust. hybrid and cpp keep the C++
 `MemorySnapshotManager` by decision.
 

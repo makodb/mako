@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Jetpack-format sweep of raft_bench arms (docs/performance/jetpack-comparison-plan.md).
+# Jetpack-format sweep of raft_bench arms (the Jetpack comparison plan (removed; see git history)).
 #
 #   scripts/raft_perf/jetpack/run_jetpack_sweep.sh OUT_ROOT ROUNDS POINTS arm=builddir...
 #
