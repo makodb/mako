@@ -79,3 +79,15 @@ unless stated).
 | `a85a19993` | `:2684` (`LeaderNotices`), `:3357` (`run_unlocked_actions`), `:3387` (`fire_leader_notices`), `:5740` (`RegisterLeaderChangeCallback`), `install_out_`, every role-changing caller | F6 | the role's log entry and the leader-change callback run after `mtx_` is released, in transition order, each once, from a copy taken under the notice queue's lock; registration takes that lock (bugs-found B11) | lab case 14 |
 | | `src/lab_cases.rs:769`, `src/lab.rs:173`, `server.cc:517` | F6 | lab case 14 and its recorder kernel | lab |
 
+## Phase 3 (cut the fibers; F7)
+
+| Commit | File:line (after) | Kind | What | Evidence |
+|---|---|---|---|---|
+| `937a34cd8` | `src/server_cc.rs:303` (`AppendPayload`, `AppendSend`, `SnapshotSend`, `HeartbeatTick`), `:419` (`heartbeat_select_payload`), `:584` (`heartbeat_tick`) | M5, M11 | PHASE 0 and PHASE 1's decisions as one core call: every follower's AppendEntries chosen, the entries' handles copied out under the guard (`raft_command_handle_clone`, M11), the in-flight slot's protocol half placed | Tier 1 |
+| | `src/server_cc.rs:772` (`heartbeat_tick_body`) | M5, F7 | the shell: actions and InstallSnapshot kernels under the guard, then each payload built (a batch stamped and finalized) and sent in follower order after it | Tier 1 |
+| | `src/server_cc.rs:1109` (`heartbeat_on_reply`), `:1232` (`heartbeat_collect_body`), `:1401` (`heartbeat_round_end` and its body), `:1467` (the driver) | M5 | PHASE 2's per-reply body and PHASE 3 as core calls; the poll loop, deadline and early-quorum exit stay the shell's; a declined round ends at the tick (B12) | Tier 1 |
+| | `src/server_h.rs:966` (`PendingAppend`), `:2697` (`AppendResponses`), `:1906` (`log_term_change`) | M5, M1 | the in-flight slot's protocol half in the core, the response handles in the shell; LogTermChange's body in the core | Tier 1 |
+| `496db6cd2` | `src/server_h.rs:1925` (`election_last_log_term`), `:1950` (`do_vote`), `:5344` (`WireBatch`), `:6180` (`raft_on_request_vote`), `:6434` (`raft_on_append_entries`) | M5, M11 | the inbound handlers take the core; the payload is a `WireBatch` over the wire kernels (AeDecodePayload's and AeApplyIncoming's bodies) | Tier 1 |
+| `25aacb728` | `src/server_h.rs:1695` (`VoteOutcome`, `VoteSet`, `CampaignStart`), `:2103` (`start_election`), `:2170` (`election_settle`), `:5363` (`RequestVoteImpl`), `:6228` (`raft_election_tick`) | M5, M4, F1 | the campaign as two core calls; the tally counted by the core from the replies each lane's wait gathered (F1 now on every lane); the election gather a core function | Tier 1 |
+| | `rt/src/transport.rs:614`, `rt/src/seam.rs:309`; `commo.h:66`, `commo.cc` (BroadcastVote), `server_seam_cpp.cc:159` | M5 | each lane records every vote reply (voter, vote, term) and exposes it through four seam kernels replacing `raft_vote_quorum_snapshot` | Tier 1, raft-rt tests |
+
