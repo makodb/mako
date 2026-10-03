@@ -2279,6 +2279,8 @@ pub enum RaftEnvError {
 pub const RAFT_ENV_HEARTBEAT_INTERVAL_US: i32 = 0;
 pub const RAFT_ENV_LOG_RETENTION_WINDOW: i32 = 1;
 pub const RAFT_ENV_SNAPSHOT_INTERVAL: i32 = 2;
+// [fix, F5] 1: fail closed outside the verified configuration (SetupInternal).
+pub const RAFT_ENV_VERIFIED_GATES: i32 = 3;
 
 
 // appliedIndexForWait_ keeps its C++ spelling: it is read by name from
@@ -3170,6 +3172,32 @@ impl RaftServerBase {
         rusty::raft_log_info_3(
             "[RAFT-CONFIG] Initialized current_config_ for site {} partition {} with {} replicas",
             self.site_id_, self.partition_id_, replicas);
+
+        // [fix, F5] The configuration the verification covers
+        // (docs/verus/modification-plan.md §4.1). Outside it a normal run
+        // logs once and carries on; MAKO_RAFT_VERIFIED_GATES=1 fails closed.
+        // The knob is parsed whatever the configuration, as the others are,
+        // so a malformed value never goes unnoticed.
+        let gates_env = self.raft_env_u64(RAFT_ENV_VERIFIED_GATES);
+        if gates_env.is_err() {
+            rusty::raft_log_error_0(
+                "[RAFT] MAKO_RAFT_VERIFIED_GATES is not a whole u64");
+            self.FailClosed();
+            return false;
+        }
+        let gates = gates_env.unwrap();
+        if !self.verified_config_ok() {
+            if gates.is_some() && gates.unwrap() == 1 {
+                rusty::raft_log_error_1(
+                    "[RAFT-VERIFY] Site {} is outside the verified configuration; failing closed (MAKO_RAFT_VERIFIED_GATES=1)",
+                    self.site_id_);
+                self.FailClosed();
+                return false;
+            }
+            rusty::raft_log_warn_1(
+                "[RAFT-VERIFY] Site {} is outside the verified configuration (snapshots, failover or membership)",
+                self.site_id_);
+        }
 
         self.StartApplyThread();
         self.rpc_ready_
@@ -4869,6 +4897,25 @@ impl RaftServerBase {
             self.site_id_, self.core.raft_log_.last_index(),
             self.core.current_term_);
         self.RequestReplication();
+    }
+
+    // [fix, F5] The gates of the verified configuration: snapshots off, so
+    // the log is whole (no snapshot boundary, base 1); failover on; a static
+    // configuration that contains this server. CALLER MUST NOT HOLD mtx_.
+    pub fn verified_config_ok(&mut self) -> bool {
+        let snapshots_off: bool = !unsafe { raft_env_snapshots_enabled() };
+        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        let whole_log: bool =
+            self.core.snapidx_ == 0 && self.core.raft_log_.base() == 1;
+        let mut contains_self: bool = false;
+        let mut i: usize = 0;
+        while i < self.config_members_.len() {
+            if self.config_members_[i] == self.site_id_ {
+                contains_self = true;
+            }
+            i += 1;
+        }
+        snapshots_off && whole_log && self.failover_ && contains_self
     }
 
     // config_members_ from the static config: the partition's sorted,

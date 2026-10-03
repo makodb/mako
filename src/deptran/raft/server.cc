@@ -922,6 +922,7 @@ const char* raft_env_lookup(int32_t which) {
     case 0: raw = std::getenv("MAKO_RAFT_HEARTBEAT_INTERVAL_US"); break;
     case 1: raw = std::getenv("MAKO_RAFT_LOG_RETENTION_WINDOW"); break;
     case 2: raw = std::getenv("MAKO_RAFT_SNAPSHOT_INTERVAL"); break;
+    case 3: raw = std::getenv("MAKO_RAFT_VERIFIED_GATES"); break;  // [fix, F5]
     default: verify(false); break;
   }
   if (raw == nullptr || raw[0] == '\0') {
