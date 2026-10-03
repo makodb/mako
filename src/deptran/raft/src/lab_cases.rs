@@ -656,9 +656,65 @@ fn test_figure8(st: &mut LabState) -> i32 {
     0
 }
 
-// The eleven basic cases, in RaftLabTest::Run's order. lab_main.rs drives
-// them, then the snapshot cases, and threads the state between the two by
-// value: None is a failure.
+// ---------------------------------------------------------------------------
+// [fix, F4] Entry terms
+
+// An AppendEntries whose entry carries term 0 -- no Raft term; the spec's
+// B16 -- is refused and leaves the follower's log alone. The same append
+// without its entry is accepted first, so the refusal can only be the
+// entry's term.
+fn test_entry_term_zero_refused(_st: &mut LabState) -> i32 {
+    init2(12, "AppendEntries carrying an entry of term 0 is refused");
+
+    let leader = lab::one_leader(-1);
+    if !check_msg(leader >= 0, "no leader") { return 1; }
+    let mut follower: i32 = -1;
+    let mut i: i32 = 0;
+    while i < NSERVERS as i32 {
+        if i != leader {
+            follower = i;
+            break;
+        }
+        i += 1;
+    }
+    if !check_msg(follower >= 0, "no follower") { return 1; }
+    let follower = follower as u32;
+    let Some(leader_site) = lab::site_id_of(leader as u32) else {
+        failed("leader not registered"); return 1;
+    };
+
+    let Some((term, last, last_term, commit, zero_before)) = lab::log_tail(follower) else {
+        failed("follower not registered"); return 1;
+    };
+    if !check_msg(!zero_before, "the follower's log already holds a term-0 slot") { return 1; }
+
+    // Control: the same prev, term and leader with no entry is accepted.
+    // (Each reply gets its own name: the transpiled C++ cannot redeclare one
+    // in the same scope, as a Rust `let` can.)
+    let Some((control_ok, _, _)) = lab::serve_append(follower, term, leader_site, last,
+                                                     last_term, commit, 0, -1) else {
+        failed("follower not registered"); return 1;
+    };
+    if !check_msg(control_ok == 1, "the entry-less control append was refused") { return 1; }
+
+    // The probe: one entry, term 0, right after the follower's last entry.
+    let Some((probe_ok, _, _)) = lab::serve_append(follower, term, leader_site, last,
+                                                   last_term, commit, 0, 1200) else {
+        failed("follower not registered"); return 1;
+    };
+    if !check_msg(probe_ok == 0, "an entry of term 0 was accepted") { return 1; }
+    let Some((_, _, _, _, zero_after)) = lab::log_tail(follower) else {
+        failed("follower not registered"); return 1;
+    };
+    if !check_msg(!zero_after, "a term-0 entry reached the follower's log") { return 1; }
+
+    passed();
+    0
+}
+
+// The basic cases: the eleven ported ones in RaftLabTest::Run's order, then
+// case 12 above. lab_main.rs drives them, then the snapshot cases, and
+// threads the state between the two by value: None is a failure.
 fn run_basic_cases(st: &mut LabState) -> i32 {
     type Case = fn(&mut LabState) -> i32;
     let basic: &[Case] = &[
@@ -673,6 +729,7 @@ fn run_basic_cases(st: &mut LabState) -> i32 {
         test_count,
         test_unreliable_agree,
         test_figure8,
+        test_entry_term_zero_refused,  // [fix, F4]
     ];
 
     for case in basic {

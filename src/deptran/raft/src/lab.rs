@@ -441,6 +441,58 @@ pub fn start(svr: u32, cmd: i32) -> (bool, u64, u64) {
     (appended.unwrap_or(false), index, term)
 }
 
+/// [fix, F4] One AppendEntries handed to replica `svr` as if it had arrived:
+/// a single entry (a lab command carrying `tx_id`) whose entry term is
+/// `entry_term`, or no entry at all when `tx_id` is negative. Returns the
+/// reply (ok, follower term, follower last index), or None if no such replica.
+#[allow(clippy::too_many_arguments)]
+pub fn serve_append(svr: u32, leader_term: u64, leader: u16, prev_index: u64,
+                    prev_term: u64, commit: u64, entry_term: u64,
+                    tx_id: i32) -> Option<(u64, u64, u64)> {
+    lab_get(svr).map(|e| with_entry_server(&e, |server| {
+        let mut command: rusty::RaftCommand = Default::default();
+        if tx_id >= 0 {
+            // SAFETY: as in start(): the kernel constructs into the slot.
+            unsafe { raft_lab_make_commit_command(tx_id as i64, &raw mut command) };
+        }
+        let mut ok: u64 = 0;
+        let mut term: u64 = 0;
+        let mut last: u64 = 0;
+        server.ServeAppendEntries(leader_term, leader, prev_index, prev_term, commit,
+                                  &command, entry_term, &raw mut ok, &raw mut term,
+                                  &raw mut last);
+        (ok, term, last)
+    }))
+}
+
+/// A replica's site id: what it names itself in RPCs (a lab index is not one).
+pub fn site_id_of(svr: u32) -> Option<u16> {
+    lab_get(svr).map(|e| with_entry_server(&e, |server| server.SiteId()))
+}
+
+/// [fix, F4] One coherent look at a replica's log tail, under its mutex:
+/// (current term, last index, the last entry's term or 0, commit index,
+/// whether any entry in the log has term 0).
+pub fn log_tail(svr: u32) -> Option<(u64, u64, u64, u64, bool)> {
+    lab_get(svr).map(|e| with_entry_server(&e, |server| {
+        let _lock = RaftLockGuard::new(server.LabMutex());
+        let n = server.LabLogFingerprintLen();
+        let mut last_term: u64 = 0;
+        let mut any_term_zero = false;
+        let mut i: u64 = 2;
+        while i < n {
+            let t = server.LabLogFingerprintAt(i);
+            if t == 0 {
+                any_term_zero = true;
+            }
+            last_term = t;
+            i += 1;
+        }
+        (server.LabCurrentTerm(), server.LabLastLogIndex(), last_term,
+         server.LabCommitIndex(), any_term_zero)
+    }))
+}
+
 /// Port of RaftTestConfig::Wait. The sentinels are what the cases branch on:
 /// -1 timeout, -2 term moved on, -3 values differ.
 pub const WAIT_TIMEOUT: i64 = -1;

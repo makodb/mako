@@ -4904,17 +4904,27 @@ impl RaftServerBase {
                 return false;
             }
             let count: u64 = unsafe { raft_batch_len(batch) };
+            // [fix, F4] Every entry term must be a Raft term, i.e. at least 1
+            // (the spec's B16). A payload carrying any other is refused like
+            // any undecodable one.
+            let mut terms_valid: bool = true;
             let mut i: u64 = 0;
             while i < count {
-                self.decoded_terms_
-                    .push(unsafe { raft_batch_term_at(batch, i) });
+                let term: i64 = unsafe { raft_batch_term_at(batch, i) };
+                if term < 1 {
+                    terms_valid = false;  // [fix, F4]
+                }
+                self.decoded_terms_.push(term);
                 i += 1;
             }
-            return raft_server_append_batch_count_is_valid(
-                leader_prev_log_index, count);
+            return terms_valid  // [fix, F4]
+                && raft_server_append_batch_count_is_valid(
+                    leader_prev_log_index, count);
         }
         self.decoded_terms_.push(leader_next_log_term as i64);
-        raft_server_append_entry_count_fits(leader_prev_log_index, 1)
+        // [fix, F4] the single entry's term, checked as decoded
+        (leader_next_log_term as i64) >= 1
+            && raft_server_append_entry_count_fits(leader_prev_log_index, 1)
     }
 
     // Appends the payload's entries from first_write_index on, in index
