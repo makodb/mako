@@ -93,17 +93,35 @@ pub struct RaftCore<C> {
     pub config_members_: Vec<u16>,
     // Ordinal peer table, rebuilt whenever the configuration changes.
     pub peer_sites_: Vec<u16>,
+    // [fix, F5] Whether Setup found the verified configuration
+    // (enter_gates): snapshots off and a whole log, failover on, and a
+    // configuration that contains this server. Set once, never cleared.
+    pub gated_: bool,
 }
 
 impl<C> RaftCore<C> {
-    // What every core call keeps (ghost): the log's layout, the peer table
-    // and its site list of one length, the term below the index ceiling,
-    // snapidx_ <= commit_index_ <= the last index with the log starting at
-    // or below the snapshot boundary's successor, and a sorted
-    // configuration.
+    // What every core call keeps (ghost): the configuration's facts below,
+    // and a peer table that is the configuration without this server.
     pub open spec fn inv(&self) -> bool {
-        &&& self.raft_log_.wf()
+        &&& self.inv_config()
+        &&& self.inv_peers()
+    }
+
+    // The peer table and its site list, of one length, are the
+    // configuration without this server.
+    pub open spec fn inv_peers(&self) -> bool {
         &&& self.peers_.spec_len() == self.peer_sites_@.len()
+        &&& self.peer_sites_@.len()
+                + (if self.config_members_@.contains(self.site_id_) { 1int } else { 0int })
+                == self.config_members_@.len()
+    }
+
+    // Everything else (ghost): the log's layout, the term below the index
+    // ceiling, snapidx_ <= commit_index_ <= the last index with the log
+    // starting at or below the snapshot boundary's successor, a sorted
+    // configuration, the round state, and the gate's facts.
+    pub open spec fn inv_config(&self) -> bool {
+        &&& self.raft_log_.wf()
         &&& (self.current_term_ as int) < raft_index_limit()
         &&& self.snapidx_ <= self.commit_index_
         &&& (self.commit_index_ as int) <= self.raft_log_.spec_last_index()
@@ -111,10 +129,6 @@ impl<C> RaftCore<C> {
         &&& sites_sorted(self.config_members_@)
         &&& self.authority_rounds_.wf()
         &&& self.round_.wf()
-        // the peer table is the configuration without this server
-        &&& self.peer_sites_@.len()
-                + (if self.config_members_@.contains(self.site_id_) { 1int } else { 0int })
-                == self.config_members_@.len()
         // an opened round admitted exactly the configuration
         &&& (self.round_.spec_nservers() == 0 || {
             &&& self.round_.spec_nservers() == self.config_members_@.len()
@@ -129,6 +143,13 @@ impl<C> RaftCore<C> {
         &&& (self.is_leader_ ==> !self.election_in_progress_)
         &&& (self.pending_leader_term_ matches Some(t) ==> t <= self.current_term_)
         &&& (self.election_in_progress_ ==> (self.pending_leader_term_ matches Some(t) ==> t < self.current_term_))
+        // the gate (F5): inside the verified configuration the log is whole
+        // and the configuration contains this server
+        &&& (self.gated_ ==> {
+            &&& self.config_members_@.contains(self.site_id_)
+            &&& self.snapidx_ == 0
+            &&& self.raft_log_.spec_base() == 1
+        })
     }
 }
 
@@ -168,7 +189,80 @@ impl<C: Clone> RaftCore<C> {
             round_: HeartbeatRoundScope::new(),  // [move, M1]
             config_members_: Vec::new(),  // [move, M1]
             peer_sites_: Vec::new(),  // [move, M1]
+            gated_: false,  // [fix, F5]
         }
+    }
+
+    // [move, M1] set_site_identity's core half: the three ids, written once
+    // by the worker before Setup, while the configuration is still empty.
+    pub fn set_identity(&mut self, loc_id: u32, site_id: u16, partition_id: u32)
+        requires
+            old(self).inv(),
+            // the host contract: the identity comes before the configuration
+            old(self).config_members_@.len() == 0,
+        ensures
+            final(self).inv(),
+            final(self).site_id_ == site_id,
+    {
+        self.loc_id_ = loc_id;
+        self.site_id_ = site_id;
+        self.partition_id_ = partition_id;
+    }
+
+    // [move, M1] LoadCurrentConfig's write: the partition's members, as the
+    // config kernel lists them. [fix, F5] The peer table is built in the
+    // same call (next index 1, as HeartbeatPrologue builds it), so the core
+    // is consistent from Setup on rather than from the heartbeat loop's
+    // first round; HeartbeatPrologue's rebuild still runs and finds the
+    // same table.
+    pub fn configure(&mut self, members: &[u16])
+        requires
+            old(self).inv(),
+            !old(self).gated_,
+            // the host contract: once, at Setup, before any round opened
+            old(self).round_.spec_nservers() == 0,
+            // the config kernel's contract: sorted and duplicate-free
+            sites_sorted(members@),
+        ensures
+            final(self).inv(),
+            final(self).config_members_@ == members@,
+            final(self).site_id_ == old(self).site_id_,
+    {
+        self.config_members_.clear();
+        let mut i: usize = 0;
+        while i < members.len()
+            invariant
+                i <= members@.len(),
+                self.config_members_@ == members@.subrange(0, i as int),
+                *self == (RaftCore { config_members_: self.config_members_, ..*old(self) }),
+            decreases members@.len() - i,
+        {
+            self.config_members_.push(members[i]);
+            i += 1;
+        }
+        proof {
+            assert(members@.subrange(0, members@.len() as int) == members@);
+        }
+        self.rebuild_peer_tables(1);
+    }
+
+    // [fix, F5] verified_config_ok's decision, made by the core (the plan's
+    // new_gated): snapshots off, a whole log (no snapshot boundary, base
+    // 1), failover on, and a configuration containing this server. When it
+    // holds the core remembers it, and its invariant carries the facts.
+    pub fn enter_gates(&mut self, snapshots_enabled: bool, failover: bool) -> (r: bool)
+        requires old(self).inv(),
+        ensures
+            final(self).inv(),
+            r ==> final(self).gated_,
+    {
+        let whole_log: bool = self.snapidx_ == 0 && self.raft_log_.base() == 1;
+        let contains_self: bool = self.is_config_member(self.site_id_);
+        let ok: bool = !snapshots_enabled && whole_log && failover && contains_self;
+        if ok {
+            self.gated_ = true;
+        }
+        ok
     }
 
     // [move, M1] What a fresh HeartbeatDriver used to start with: each run of
@@ -186,7 +280,7 @@ impl<C: Clone> RaftCore<C> {
     // [move, M1] RaftServerBase::RebuildPeerTables. Rebuilds the ordinal
     // peer table from the configuration.
     pub fn rebuild_peer_tables(&mut self, next_index: u64)
-        requires old(self).inv(),
+        requires old(self).inv_config(),
         ensures
             final(self).inv(),
             final(self).raft_log_ == old(self).raft_log_,
@@ -247,14 +341,18 @@ impl<C: Clone> RaftCore<C> {
     // [move, M1] `current_config_.count(site) != 0`, over the cached vector.
     // A linear scan of three to five sorted u16s, which is what the std::set
     // lookup it replaces cost anyway.
-    pub fn is_config_member(&self, site: u16) -> bool {
+    pub fn is_config_member(&self, site: u16) -> (r: bool)
+        ensures r == self.config_members_@.contains(site),
+    {
         let mut i: usize = 0;
         while i < self.config_members_.len()
             invariant
                 i <= self.config_members_@.len(),
+                forall|k: int| 0 <= k < i ==> self.config_members_@[k] != site,
             decreases self.config_members_@.len() - i,
         {
             if self.config_members_[i] == site {
+                proof { assert(self.config_members_@[i as int] == site); }
                 return true;
             }
             i += 1;

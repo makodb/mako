@@ -3373,19 +3373,11 @@ impl RaftServerBase {
     // the log is whole (no snapshot boundary, base 1); failover on; a static
     // configuration that contains this server. CALLER MUST NOT HOLD mtx_.
     pub fn verified_config_ok(&mut self) -> bool {
-        let snapshots_off: bool = !unsafe { raft_env_snapshots_enabled() };
+        let snapshots_enabled: bool = unsafe { raft_env_snapshots_enabled() };
         let _lock = RaftLockGuard::new(&mut self.mtx_);
-        let whole_log: bool =
-            self.core.snapidx_ == 0 && self.core.raft_log_.base() == 1;
-        let mut contains_self: bool = false;
-        let mut i: usize = 0;
-        while i < self.core.config_members_.len() {
-            if self.core.config_members_[i] == self.site_id_ {
-                contains_self = true;
-            }
-            i += 1;
-        }
-        snapshots_off && whole_log && self.failover_ && contains_self
+        // [fix, F5] The decision is the core's, which remembers a pass.
+        let failover: bool = self.failover_;
+        self.core.enter_gates(snapshots_enabled, failover)
     }
 
     // config_members_ from the static config: the partition's sorted,
@@ -3393,14 +3385,17 @@ impl RaftServerBase {
     pub fn LoadCurrentConfig(&mut self) -> u64 {
         let replicas: u64 =
             unsafe { raft_config_replica_count(self.partition_id_) };
-        self.core.config_members_.clear();
+        let mut members: rusty::Vec<u16> = rusty::Vec::new();
         let mut i: u64 = 0;
         while i < replicas {
             let site: u16 =
                 unsafe { raft_config_replica_site(self.partition_id_, i) };
-            self.core.config_members_.push(site);
+            members.push(site);
             i += 1;
         }
+        // [move, M1] The core keeps the membership, and [fix, F5] builds its
+        // peer table from it in the same call.
+        self.core.configure(&members);
         replicas
     }
 
@@ -3572,9 +3567,7 @@ impl TxLogServer for RaftServerBase {
         self.loc_id_ = loc_id;
         self.site_id_ = site_id;
         self.partition_id_ = partition_id;
-        self.core.loc_id_ = loc_id;
-        self.core.site_id_ = site_id;
-        self.core.partition_id_ = partition_id;
+        self.core.set_identity(loc_id, site_id, partition_id);  // [move, M1]
         assert!(self.core.site_id_ == self.site_id_
             && self.core.partition_id_ == self.partition_id_
             && self.core.loc_id_ == self.loc_id_);  // [move, M10]
