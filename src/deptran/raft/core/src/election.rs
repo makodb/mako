@@ -40,19 +40,29 @@ impl VoteSet {
     pub closed spec fn wf(&self) -> bool {
         self.yes_ as int + self.no_ as int == self.voters_.spec_len()
     }
+
+    // The highest reply term seen so far (ghost).
+    pub closed spec fn spec_highest_term(&self) -> i64 {
+        self.highest_term_
+    }
 }
 
 #[allow(clippy::new_without_default)]
 impl VoteSet {
     pub fn new() -> (r: VoteSet)
-        ensures r.wf(),
+        ensures
+            r.wf(),
+            r.spec_highest_term() == 0,
     {
         VoteSet { voters_: SiteSet::new(), yes_: 0, no_: 0, highest_term_: 0 }
     }
 
     pub fn feed(&mut self, voter: u16, granted: bool, term: i64)
         requires old(self).wf(),
-        ensures final(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).spec_highest_term() == old(self).spec_highest_term()
+                || final(self).spec_highest_term() == term,
     {
         if !self.voters_.insert(voter) {
             return;
@@ -69,7 +79,9 @@ impl VoteSet {
 
     // `n_total` is the configured partition size, self included, as the
     // lane counted it.
-    pub fn outcome(&self, n_total: u64, timed_out: bool) -> VoteOutcome {
+    pub fn outcome(&self, n_total: u64, timed_out: bool) -> (r: VoteOutcome)
+        ensures r.term_ == self.spec_highest_term(),
+    {
         let quorum: u64 = n_total / 2;
         VoteOutcome {
             term_: self.highest_term_,

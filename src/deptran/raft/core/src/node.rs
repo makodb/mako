@@ -7,6 +7,11 @@
 
 #[allow(unused_imports)]
 use crate::*;
+#[allow(unused_imports)]
+use vstd::pervasive::runtime_assert;
+use vstd::prelude::*;
+
+verus! {
 
 #[repr(C)]
 pub struct RaftCore<C> {
@@ -94,9 +99,33 @@ pub struct RaftCore<C> {
     pub peer_sites_: Vec<u16>,
 }
 
+// A strictly increasing site list: the configuration's shape (ghost).
+pub open spec fn sites_sorted(s: Seq<u16>) -> bool {
+    forall|i: int, j: int| 0 <= i < j < s.len() ==> s[i] < s[j]
+}
+
+impl<C> RaftCore<C> {
+    // What every core call keeps (ghost): the log's layout, the peer table
+    // and its site list of one length, the term below the index ceiling,
+    // snapidx_ <= commit_index_ <= the last index with the log starting at
+    // or below the snapshot boundary's successor, and a sorted
+    // configuration.
+    pub open spec fn inv(&self) -> bool {
+        &&& self.raft_log_.wf()
+        &&& self.peers_.spec_len() == self.peer_sites_@.len()
+        &&& (self.current_term_ as int) < raft_index_limit()
+        &&& self.snapidx_ <= self.commit_index_
+        &&& (self.commit_index_ as int) <= self.raft_log_.spec_last_index()
+        &&& self.raft_log_.spec_base() <= self.snapidx_ as int + 1
+        &&& sites_sorted(self.config_members_@)
+    }
+}
+
 #[allow(clippy::new_without_default)]
 impl<C: Clone> RaftCore<C> {
-    pub fn new() -> RaftCore<C> {
+    pub fn new() -> (r: RaftCore<C>)
+        ensures r.inv(),
+    {
         RaftCore {
             // Overwritten by set_site_identity before anything reads them.
             site_id_: u16::MAX,
@@ -137,7 +166,10 @@ impl<C: Clone> RaftCore<C> {
 
     // [move, M1] What a fresh HeartbeatDriver used to start with: each run of
     // the heartbeat loop begins with an empty round state, as before.
-    pub fn reset_round_state(&mut self) {
+    pub fn reset_round_state(&mut self)
+        requires old(self).inv(),
+        ensures final(self).inv(),
+    {
         self.pending_rpcs_ = PendingTable::new();
         self.authority_rounds_ = AuthorityLedger::new();
         self.pending_leader_term_ = None;
@@ -146,11 +178,29 @@ impl<C: Clone> RaftCore<C> {
 
     // [move, M1] RaftServerBase::RebuildPeerTables. Rebuilds the ordinal
     // peer table from the configuration.
-    pub fn rebuild_peer_tables(&mut self, next_index: u64) {
+    pub fn rebuild_peer_tables(&mut self, next_index: u64)
+        requires old(self).inv(),
+        ensures
+            final(self).inv(),
+            final(self).raft_log_ == old(self).raft_log_,
+            final(self).current_term_ == old(self).current_term_,
+            final(self).commit_index_ == old(self).commit_index_,
+            final(self).snapidx_ == old(self).snapidx_,
+    {
         self.peer_sites_.clear();
         let mut self_is_a_member: bool = false;
         let mut i: usize = 0;
-        while i < self.config_members_.len() {
+        while i < self.config_members_.len()
+            invariant
+                i <= self.config_members_@.len(),
+                self.config_members_@ == old(self).config_members_@,
+                sites_sorted(self.config_members_@),
+                // the sites copied so far: config[0..i] without this site
+                self.peer_sites_@.len() + (if self_is_a_member { 1int } else { 0int }) == i,
+                self_is_a_member <==> exists|k: int| 0 <= k < i && self.config_members_@[k] == self.site_id_,
+                self.site_id_ == old(self).site_id_,
+            decreases self.config_members_@.len() - i,
+        {
             let peer_id: u16 = self.config_members_[i];
             if peer_id == self.site_id_ {
                 self_is_a_member = true;
@@ -168,11 +218,13 @@ impl<C: Clone> RaftCore<C> {
         } else {
             self.config_members_.len()
         };
-        assert!(self.peers_.len() == expected);  // [move, M10]
+        runtime_assert(self.peers_.len() == expected);  // [move, M10]
     }
 
     // [move, M1] The site id at an ordinal of the peer table.
-    pub fn peer_site_at(&self, ordinal: usize) -> u16 {
+    pub fn peer_site_at(&self, ordinal: usize) -> u16
+        requires ordinal < self.peer_sites_@.len(),
+    {
         self.peer_sites_[ordinal]
     }
 
@@ -181,7 +233,11 @@ impl<C: Clone> RaftCore<C> {
     // lookup it replaces cost anyway.
     pub fn is_config_member(&self, site: u16) -> bool {
         let mut i: usize = 0;
-        while i < self.config_members_.len() {
+        while i < self.config_members_.len()
+            invariant
+                i <= self.config_members_@.len(),
+            decreases self.config_members_@.len() - i,
+        {
             if self.config_members_[i] == site {
                 return true;
             }
@@ -195,9 +251,17 @@ impl<C: Clone> RaftCore<C> {
     // leader, which is the "removed follower" case PHASE 2 guards against.
     // Deliberately an ordinal rather than a reference: an ordinal cannot
     // dangle across an RPC send or a re-entrant completion callback.
-    pub fn peer_ordinal(&self, site: u16) -> usize {
+    pub fn peer_ordinal(&self, site: u16) -> (r: usize)
+        requires self.inv(),
+        ensures r <= self.peers_.spec_len(),
+    {
         let mut ord: usize = 0;
-        while ord < self.peer_sites_.len() {
+        while ord < self.peer_sites_.len()
+            invariant
+                ord <= self.peer_sites_@.len(),
+                self.peer_sites_@.len() == self.peers_.spec_len(),
+            decreases self.peer_sites_@.len() - ord,
+        {
             if self.peer_sites_[ord] == site {
                 return ord;
             }
@@ -212,12 +276,18 @@ impl<C: Clone> RaftCore<C> {
     // at prev + 1. The caller holds mtx_.
     pub fn append_local(&mut self, cmd: C, has_value: bool,
                         is_tpc_commit: bool, kind: i32,
-                        payload_bytes: u64) -> u64 {
+                        payload_bytes: u64) -> u64
+        requires
+            old(self).inv(),
+            // the host contract: no index reaches the ceiling
+            old(self).raft_log_.spec_has_room(),
+        ensures final(self).inv(),
+    {
         let previous_index: u64 = self.raft_log_.last_index();
         let appended: u64 = self.raft_log_.append(RaftEntry::new(
             self.current_term_ as i64, cmd, has_value, is_tpc_commit, kind,
             payload_bytes));
-        assert!(appended == previous_index + 1);  // [move, M10]
+        runtime_assert(appended == previous_index + 1);  // [move, M10]
         previous_index
     }
 
@@ -250,9 +320,11 @@ impl<C: Clone> RaftCore<C> {
     // [move, M1] RaftServerBase::ElectionLastLogTermLocked: the term of the
     // last log entry, or the snapshot boundary term when the log has been
     // compacted past it. The caller holds mtx_.
-    pub fn election_last_log_term(&self) -> i64 {
+    pub fn election_last_log_term(&self) -> i64
+        requires self.inv(),
+    {
         let last_index: u64 = self.raft_log_.last_index();
-        assert!(last_index >= self.snapidx_);  // [move, M10]
+        runtime_assert(last_index >= self.snapidx_);  // [move, M10]
         if raft_server_election_last_log_uses_snapshot(
             last_index, self.snapidx_)
         {
@@ -262,7 +334,7 @@ impl<C: Clone> RaftCore<C> {
         // to a raw pointer and then verified it non-null. Asking the log
         // directly is the same lookup with the check kept.
         let last_log = self.raft_log_.get(last_index);
-        assert!(last_log.is_some());  // [move, M10]
+        runtime_assert(last_log.is_some());  // [move, M10]
         last_log.unwrap().term()
     }
 
@@ -279,7 +351,13 @@ impl<C: Clone> RaftCore<C> {
                    can_id: u16, can_term: i64, reply_term: &mut i64,
                    vote_granted: &mut i8, vote: bool, stopped: bool,
                    failover: bool, election_debug: bool,
-                   out: &mut CoreOutput) {
+                   out: &mut CoreOutput)
+        requires
+            old(self).inv(),
+            // the host contract: a term off the wire is below the ceiling
+            (can_term as int) < raft_index_limit(),
+        ensures final(self).inv(),
+    {
         *vote_granted = vote as i8;
         *reply_term = self.current_term_ as i64;
 
@@ -353,7 +431,13 @@ impl<C: Clone> RaftCore<C> {
     // `started_` is false when the campaign does not start.
     pub fn start_election(&mut self, timer_guarded: bool,
                           expected_generation: u64, now: u64, stopped: bool,
-                          out: &mut CoreOutput) -> CampaignStart {
+                          out: &mut CoreOutput) -> CampaignStart
+        requires
+            old(self).inv(),
+            // the host contract: the next term is below the ceiling
+            (old(self).current_term_ as int) + 1 < raft_index_limit(),
+        ensures final(self).inv(),
+    {
         let mut campaign: CampaignStart = CampaignStart::not_started();
         if stopped {
             self.req_voting_ = false;
@@ -368,7 +452,11 @@ impl<C: Clone> RaftCore<C> {
             return campaign;
         }
         if timer_guarded {
-            let elapsed: u64 = now - self.last_heartbeat_time_;
+            // [move, M10] `now` is read before mtx_, so a reset in between
+            // can leave it below last_heartbeat_time_; release builds always
+            // wrapped this, and the generation check below then refuses the
+            // campaign. wrapping_sub says so: the same machine operation.
+            let elapsed: u64 = now.wrapping_sub(self.last_heartbeat_time_);
             if !raft_server_timer_campaign_is_current(
                 self.is_leader_, expected_generation,
                 self.election_timer_generation_, elapsed,
@@ -423,7 +511,15 @@ impl<C: Clone> RaftCore<C> {
                            n_total: u64, timed_out: bool, stopped: bool,
                            looping: bool, failover: bool,
                            election_debug: bool,
-                           out: &mut CoreOutput) -> bool {
+                           out: &mut CoreOutput) -> bool
+        requires
+            old(self).inv(),
+            voters@.len() == granted@.len(),
+            voters@.len() == reply_terms@.len(),
+            // the host contract: a reply's term is below the ceiling
+            forall|k: int| 0 <= k < reply_terms@.len() ==> (#[trigger] reply_terms@[k] as int) < raft_index_limit(),
+        ensures final(self).inv(),
+    {
         if stopped {
             self.election_in_progress_ = false;
             self.req_voting_ = false;
@@ -437,7 +533,16 @@ impl<C: Clone> RaftCore<C> {
         // rather than read out of the lane's quorum object.
         let mut votes: VoteSet = VoteSet::new();
         let mut r: usize = 0;
-        while r < voters.len() {
+        while r < voters.len()
+            invariant
+                r <= voters@.len(),
+                voters@.len() == granted@.len(),
+                voters@.len() == reply_terms@.len(),
+                votes.wf(),
+                votes.spec_highest_term() < raft_index_limit(),
+                forall|k: int| 0 <= k < reply_terms@.len() ==> (#[trigger] reply_terms@[k] as int) < raft_index_limit(),
+            decreases voters@.len() - r,
+        {
             votes.feed(voters[r], granted[r], reply_terms[r]);
             r += 1;
         }
@@ -445,7 +550,7 @@ impl<C: Clone> RaftCore<C> {
         let observed_response_term: i64 = outcome.term_;
         let completion_action: i32 = raft_server_election_completion_action(
             self.election_in_progress_,
-            self.election_term_ as u64, term, self.current_term_,
+            #[verifier::truncate] (self.election_term_ as u64), term, self.current_term_,
             observed_response_term);
 
         if completion_action == ElectionCompletionAction::ADVANCE_HIGHER_TERM as i32 {
@@ -487,7 +592,7 @@ impl<C: Clone> RaftCore<C> {
             }
             return false;
         }
-        assert!(completion_action
+        runtime_assert(completion_action
             == ElectionCompletionAction::APPLY_CURRENT as i32);  // [move, M10]
         if election_debug {
             out.log(RAFT_LOG_INFO,
@@ -501,7 +606,7 @@ impl<C: Clone> RaftCore<C> {
         }
 
         if outcome.yes_ {
-            assert!(self.current_term_ >= term);  // [move, M10]
+            runtime_assert(self.current_term_ >= term);  // [move, M10]
             self.election_in_progress_ = false;
             self.req_voting_ = false;
 
@@ -585,7 +690,10 @@ impl<C: Clone> RaftCore<C> {
     // rather than obeyed. `published` is the shell's mirror. Returns whether
     // the index was recorded. The caller holds mtx_.
     pub fn on_applied(&mut self, index: u64, published: u64,
-                      out: &mut CoreOutput) -> bool {  // [move, M7]
+                      out: &mut CoreOutput) -> bool  // [move, M7]
+        requires old(self).inv(),
+        ensures final(self).inv(),
+    {
         if raft_server_log_index_above(published, index) {
             out.log(RAFT_LOG_WARN,
                 "[RAFT-APPLY] Site {} refusing to move applied index backward from {} to {}",
@@ -603,7 +711,10 @@ impl<C: Clone> RaftCore<C> {
     // resetTimerLocked did. Returns the previous heartbeat time, for the
     // shell's log line. Advances the generation, so a concurrent heartbeat
     // reset cannot leave a campaign running off an expired snapshot.
-    pub fn reset_election_timer(&mut self, now: u64, timeout_us: u64) -> u64 {
+    pub fn reset_election_timer(&mut self, now: u64, timeout_us: u64) -> u64
+        requires old(self).inv(),
+        ensures final(self).inv(),
+    {
         let prev_time: u64 = self.last_heartbeat_time_;
         self.last_heartbeat_time_ = now;
         self.election_timeout_us_ = timeout_us;
@@ -622,7 +733,15 @@ impl<C: Clone> RaftCore<C> {
     // callback (ROLE_SET, after mtx_ is released, [fix, F6]). `stopped` is
     // the shell's stop_ and `failover` its failover_; the caller holds mtx_.
     pub fn set_is_leader(&mut self, is_leader: bool, stopped: bool,
-                         failover: bool, out: &mut CoreOutput) {
+                         failover: bool, out: &mut CoreOutput)
+        requires old(self).inv(),
+        ensures
+            final(self).inv(),
+            final(self).raft_log_ == old(self).raft_log_,
+            final(self).current_term_ == old(self).current_term_,
+            final(self).commit_index_ == old(self).commit_index_,
+            final(self).snapidx_ == old(self).snapidx_,
+    {
         let prev_is_leader: bool = self.is_leader_;
         // raft_log_set_is_leader_entry's term, which it read first.
         let entry_term: u64 = self.current_term_;
@@ -658,7 +777,16 @@ impl<C: Clone> RaftCore<C> {
             self.rebuild_peer_tables(next_index);
             let peers: usize = self.peers_.len();
             let mut ord: usize = 0;
-            while ord < peers {
+            while ord < peers
+                invariant
+                    self.inv(),
+                    peers == self.peers_.spec_len(),
+                    self.raft_log_ == old(self).raft_log_,
+                    self.current_term_ == old(self).current_term_,
+                    self.commit_index_ == old(self).commit_index_,
+                    self.snapidx_ == old(self).snapidx_,
+                decreases peers - ord,
+            {
                 let site: u16 = self.peer_site_at(ord);
                 out.log(RAFT_LOG_DEBUG,
                     "loc_id_={} match_index_[{}]={}, next_index_[{}]={}",
@@ -736,7 +864,15 @@ impl<C: Clone> RaftCore<C> {
     // is terminal for the election in progress as well as for the leadership
     // epoch that is ending.
     pub fn step_down(&mut self, stopped: bool, failover: bool,
-                     out: &mut CoreOutput) {
+                     out: &mut CoreOutput)
+        requires old(self).inv(),
+        ensures
+            final(self).inv(),
+            final(self).raft_log_ == old(self).raft_log_,
+            final(self).current_term_ == old(self).current_term_,
+            final(self).commit_index_ == old(self).commit_index_,
+            final(self).snapidx_ == old(self).snapidx_,
+    {
         out.log(RAFT_LOG_INFO,
             "[SPEC-RAFT] Site {}: Stepping down as leader (term={})",
             &[(self.site_id_).arg(),
@@ -765,7 +901,9 @@ impl<C: Clone> RaftCore<C> {
 // than a RaftCore method, so the transpiled C++ declares the type first.
 pub fn raft_election_tick<C>(core: &RaftCore<C>, now: u64) -> ElectionTick {
     let heartbeat_time: u64 = core.last_heartbeat_time_;
-    let time_elapsed: u64 = now - heartbeat_time;
+    // [move, M10] The same wrap start_election's elapsed time has: `now` is
+    // read before mtx_, and release builds always wrapped it.
+    let time_elapsed: u64 = now.wrapping_sub(heartbeat_time);
     let election_timeout: u64 = core.election_timeout_us_;
     ElectionTick::new(
         time_elapsed,
@@ -813,7 +951,13 @@ pub fn raft_on_request_vote<C: Clone>(
     failover: bool,  // [move, M5]
     election_debug: bool,  // [move, M5]
     out: &mut CoreOutput,  // [move, M3]
-) {
+)
+    requires
+        old(core).inv(),
+        // the host contract: a term off the wire is below the ceiling
+        (can_term as int) < raft_index_limit(),
+    ensures final(core).inv(),
+{
     if stopped {
         *reply_term = core.current_term_ as i64;
         *vote_granted = 0;
@@ -867,7 +1011,7 @@ pub fn raft_on_request_vote<C: Clone>(
     // up-to-date candidate log. Defensive against damaged or legacy
     // persistent state, and the RequestVote rule in its direct form.
     // The last log index is not below the snapshot boundary.
-    assert!(core.raft_log_.last_index() >= core.snapidx_);  // [move, M10]
+    runtime_assert(core.raft_log_.last_index() >= core.snapidx_);  // [move, M10]
     let lstoff = core.raft_log_.last_index() - core.snapidx_;
     let curlstterm = core.election_last_log_term();
     let curlstidx = core.raft_log_.last_index();
@@ -885,7 +1029,7 @@ pub fn raft_on_request_vote<C: Clone>(
     }
 
     // Snapshot-aware offset invariant.
-    assert!(lstoff + core.snapidx_ == core.raft_log_.last_index());  // [move, M10]
+    runtime_assert(lstoff + core.snapidx_ == core.raft_log_.last_index());  // [move, M10]
 
     let grant = candidate_log_is_current;
     core.do_vote(lst_log_idx, lst_log_term, can_id, can_term,
@@ -1011,6 +1155,7 @@ pub trait InboundBatch<C> {
 // better Rust and it transpiles, but the emitter renders the binding with a
 // dot where the C++ needs an arrow, and an inferred binding COPIES the entry.
 #[allow(clippy::too_many_arguments, clippy::unnecessary_unwrap)]
+#[verifier::external_body]  // [Phase 6 WIP] proof pending
 pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     core: &mut RaftCore<C>,
     wire: &W,  // [move, M5] [move, M11]
@@ -1245,13 +1390,13 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
             let index: u64 = raft_server_append_sent_end(leader_prev_log_index, k + 1);
             if index >= first_write_index {
                 let appended: u64 = core.raft_log_.append(wire.entry_at(k));
-                assert!(appended == index);  // [move, M10]
+                runtime_assert(appended == index);  // [move, M10]
             }
             k += 1;
         }
     }
     // The append left the log tail where the result rule predicts.
-    assert!(core.raft_log_.last_index()
+    runtime_assert(core.raft_log_.last_index()
         == raft_server_append_result_last_index(old_last_log_index, accepted_through,
                                                 truncate_suffix));  // [move, M10]
 
@@ -1261,7 +1406,7 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         let old_commit = core.commit_index_;
         core.commit_index_ = follower_commit_candidate;
         // The commit index did not advance past the log tail.
-        assert!(core.raft_log_.last_index() >= core.commit_index_);  // [move, M10]
+        runtime_assert(core.raft_log_.last_index() >= core.commit_index_);  // [move, M10]
         let new_commit: u64 = core.commit_index_;
         out.push(CoreAction::apply_range(old_commit, new_commit));  // [move, M3]
     }
@@ -1275,3 +1420,5 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     report.accepted_ = true;
     report
 }
+
+} // verus!

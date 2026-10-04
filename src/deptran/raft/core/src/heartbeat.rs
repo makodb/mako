@@ -7,6 +7,8 @@
 
 #[allow(unused_imports)]
 use crate::*;
+#[allow(unused_imports)]
+use vstd::pervasive::runtime_assert;
 
 // ==========================================================================
 // THE ROUND SCOPE, AND THE COMMIT RULE BOTH PHASE 0 AND PHASE 3 APPLY
@@ -51,7 +53,7 @@ pub fn raft_commit_advance<C: Clone>(
     // Setup, and progress_ is never erased, so the size is invariant across
     // the round. Assert it rather than trusting the phases to stay in step.
     // Peer table and round membership agree.
-    assert!(consensus.peers_.len() == nservers - 1);  // [move, M10]
+    runtime_assert(consensus.peers_.len() == nservers - 1);  // [move, M10]
     let candidate_index = consensus.peers_
         .majority_match_index(nservers, consensus.raft_log_.last_index());
     if !raft_server_log_index_above(candidate_index, consensus.commit_index_) {
@@ -62,7 +64,7 @@ pub fn raft_commit_advance<C: Clone>(
     // to express it.
     let candidate = consensus.raft_log_.get(candidate_index);
     // The committable index is present in the log.
-    assert!(candidate.is_some());  // [move, M10]
+    runtime_assert(candidate.is_some());  // [move, M10]
     if !raft_server_log_entry_is_current_term(
         candidate.unwrap().term(),
         consensus.current_term_,
@@ -181,7 +183,7 @@ pub fn heartbeat_phase0_locked<C: Clone>(
         i += 1;
     }
     // The heartbeat round admitted a quorum containing this site.
-    assert!(core.round_.nservers() != 0 && core.round_.is_member(site_id));  // [move, M10]
+    runtime_assert(core.round_.nservers() != 0 && core.round_.is_member(site_id));  // [move, M10]
     // [move, M2] read before core is lent whole
     let nservers: usize = core.round_.nservers();
     let advance = raft_commit_advance(core, nservers);
@@ -573,7 +575,7 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
     // deliberately fail-closed UINT64_MAX saturation generation, which
     // open() declines rather than overwriting.
     if !core.round_.authority_inserted() {
-        assert!(core.round_.round_id() == u64::MAX);  // [move, M10]
+        runtime_assert(core.round_.round_id() == u64::MAX);  // [move, M10]
     }
     tick.round_id_ = core.round_.round_id();
 
@@ -658,7 +660,7 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
             });
             skip_follower = true;
         } else {
-            assert!(prev_log_index <= core.raft_log_.last_index());  // [move, M10]
+            runtime_assert(prev_log_index <= core.raft_log_.last_index());  // [move, M10]
             if prev_log_index == 0 {
                 send.prev_log_term_ = 0;
             } else if prev_log_index == core.snapidx_ && core.snapidx_ > 0 {
@@ -705,7 +707,7 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
             // assert's condition.
             let launched: bool =
                 core.authority_rounds_.launch(core.round_.round_id(), peer);
-            assert!(launched);
+            runtime_assert(launched);
         }
         tick.sends_.push(send);
         ord += 1;

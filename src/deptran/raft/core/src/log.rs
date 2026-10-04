@@ -205,7 +205,9 @@ impl<C> RaftLog<C> {
 
     pub fn last_index(&self) -> (r: u64)
         requires self.wf(),
-        ensures r == self.spec_last_index(),
+        ensures
+            r == self.spec_last_index(),
+            (r as int) < raft_index_limit(),
     {
         self.base_ + self.len_ - 1
     }
