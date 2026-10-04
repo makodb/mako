@@ -110,3 +110,43 @@ may not be cyclic, so the shell cannot import a wrapper that imports the
 core), which is Phase 6's crate split. `scripts/verus/core_access_census.py`
 lists the shell functions that still name core fields, as Phase 6's work
 list.
+
+## Phase 6 (the core crate, verified; F5's gate in the core, F9)
+
+Paths are `src/deptran/raft/`-relative; line numbers are at the phase's
+last code commit (`ce967f6f7`). From `3d768bdcf` on, every line of
+`core/src` is also checked mechanically: `scripts/verus/ledger_lint.py`
+classifies each as ghost, comment, structural, moved (present in the shell
+at the phase's start, `43c57e3ac`, after the recorded renames) or labelled
+(a tag on the statement or `(whole item)` / `(whole file)`), and
+`core_check.sh` fails a commit with any other line.
+
+| Commit | File:line (after) | Kind | What | Evidence |
+|---|---|---|---|---|
+| `43c57e3ac` | CMake, `ci/ci.sh`, `scripts/verus/tier1.sh`, deleted lane files | none (user decision Q9) | the hybrid and cpp lanes removed: the Verus worktree is rust-lane only | Tier 1 (rust): lab 30/30, four suites pass |
+| `896cdfc85` | `core/` (new crate `raft-core`), `src/server_h.rs` (`pub use raft_core::*`, aliases), `src/server_cc.rs` | M1 | the core's types and calls moved out of the shell verbatim, paths and visibility aside; quorum.hpp's two helpers copied in | Tier 1; clippy both feature sets |
+| | `core/src/node.rs` (`InboundBatch`), `src/server_h.rs` (`WireBatch`), `src/rusty-rustc` (`Clone for RaftCommand`) | M11 | the command is the type parameter `C`; the inbound payload is `W: InboundBatch<C>`; `append_into`'s loop runs in the core over `entry_at(k)`; the reply handler takes the reply's three scalars | as above |
+| | `core/src/logging.rs` (new), `core/src/output.rs`, every core log call | M7 | the core pushes log records into `CoreOutput`, filtered by level at the push; the shell prints them first in `run_locked_actions` | as above |
+| | `src/server_h.rs` (`run_locked_actions`, APPLY_RANGE) | M0 | the trace kit's stage-8 stamp moves from the commit rule to the shell's executor | traced runs (Phase 6 checkpoint) |
+| `53bb170b4` | `core/src/{helpers,logging,output,progress,pending,authority,election}.rs` | M12 | inside `verus!`, with the specs panic and overflow freedom need | `verify_core.sh` |
+| | `core/src/progress.rs:67-74` (`back_off_after_reject`) | M10 | `follower_last_log_index + 1` is `wrapping_add(1)`: release builds always wrapped it | as above |
+| `2fc0dcdba` | `core/src/log.rs` | M12, M11 | `RaftLog`'s block layout as its invariant, its index arithmetic proved below the 2^62 ceiling; `div_ceil` behind the trusted `blocks_for` | as above |
+| `92f571d3b`, `1121af91e` | `core/src/node.rs:110` (`inv`), every `RaftCore` method | M12, M10 | `RaftCore`'s invariant; `assert!` → `runtime_assert` (the same check at run time, a proof obligation for Verus); `now - last_heartbeat_time_` → `wrapping_sub` in the campaign and the election tick | as above |
+| `0166c0a89` | `core/src/authority.rs` (`SiteSet::insert`, `remove`) | M9, M12 | the sorted position, then `Vec::insert` / `Vec::remove` there: the sequence the hand-written bubble and shift made; set semantics specified | as above |
+| `de877ebc6`, `cb15e7c62` | `core/src/authority.rs`, `core/src/node.rs` | M12 | the ledger's round ids specified; the invariant covers peers, rounds and epochs | as above |
+| `b269b4589` | `core/src/node.rs:1319` (`raft_on_append_entries`) | M12 | the append handler verifies; `core_trusted.txt` holds only `blocks_for` | 261 verified |
+| `192e15c39` | `core/src/heartbeat.rs`, `progress.rs`, `authority.rs`, `node.rs` | M12 | the heartbeat round verifies; `AppendReplyAction` and `BackoffKind` derive `Structural` (expands to nothing under cargo) | 301 verified; clippy |
+| `62a237637` | `core/src/node.rs`, `src/server_h.rs:967` | M1 | `snapshot_threshold_` and the two snapshot-callback tokens move to `RaftServerBase`: the core never read them | field census exits 0 |
+| `7aa01a586` | `core/src/node.rs:204` (`set_identity`), `src/server_h.rs:3705` (`set_site_identity`) | M1 | `set_site_identity`'s core half as a core call | 305 verified |
+| | `core/src/node.rs:224` (`configure`), `src/server_h.rs:3531` (`LoadCurrentConfig`) | M1, F5 | `LoadCurrentConfig`'s write as a core call (M1) that also builds the peer table with next index 1 (F5: the core is consistent from Setup on; `HeartbeatPrologue`'s rebuild still runs and finds the same table) | as above; smoke suite |
+| | `core/src/node.rs:259` (`enter_gates`), `:99` (`gated_`), `src/server_h.rs:3519` (`verified_config_ok`) | F5 | `verified_config_ok`'s decision moved into the core (the plan's `new_gated`); a pass sets `gated_`, whose facts the invariant carries | as above |
+| `4962bd6d8` | `core/src/event.rs` (new: `Event` `:24`, `Reply` `:110`, `admits` `:240`, `step` `:356`) | M5 | the core's one entry point: each event dispatched to the core call the shell made directly, same arguments, same critical section; the two RPC handlers' out-params become reply fields | 319 verified; build; smoke suite |
+| | `src/server_h.rs:1407` (`RaftServerBase::step`), every shell call site in `src/server_h.rs` and `src/server_cc.rs:97`, `:252`, `:297`, `:317` | M5 | the shell calls the core only through `step` | as above |
+| | `core/src/node.rs:104` (`decoded_terms_`), `raft_on_append_entries` | M1 | the decode scratch moves from `RaftServerBase` into the core | as above |
+| | `src/server_cc.rs:364`, `:390` (`HeartbeatDriver::run`) | B15 (plan §3.1 rule 1) | the two round-state resets take `mtx_` (they did not) | as above |
+| `affc46aa7` | `src/server_h.rs:972` (`recorder_`), `:3379` (`CoreRecorder`), `:3426` (`command_digest`), `step` | M0 | the replay recorder behind `MAKO_RAFT_REPLAY_DIR`: one record per step; `T` lines at the snapshot paths' direct writes (`CompactLogLocked` only when it can move the log) | 40,524 recorded steps replay byte for byte |
+| | `replay/` (new crate `raft-replay`), `Cargo.toml`, `core/src/output.rs` (`log_level`) | M0 | the record format, the parser, `replay()`, and `core_replay` (A.4 item 4's test) | its unit tests; `core_replay` |
+| `9665c8f3e` | `core/src/event.rs:285` (`message_admitted`), `:315` (`step_checked`) | F9 | drop a message from this server or outside the configuration, at term 0, or (an append) with prev index 0 but a prev term or the reverse; read a success reply beyond the leader's log as no reply | 321 verified; `core/tests/step_checked.rs` |
+| | `src/server_h.rs:1427` (`step_checked`), `:4192` (`on_request_vote_locked`), `:4280` (`on_append_entries_locked`), `src/server_cc.rs:252` | F9 | inbound requests and replies go through `step_checked`; a dropped request is answered as an unavailable replica answers (append 0/0/0, vote "no" at the candidate's term) | lab case 15 |
+| | `src/lab_cases.rs:771` (case 15), `core/tests/step_checked.rs` | F9 | the new behaviour, end to end and for the reply case in the core | Tier 1 |
+| `3d768bdcf`, `0986e4b7f`, `ce967f6f7` | `scripts/verus/ledger_lint.py`, `core_check.sh`; tags in `core/src` | none (tooling, comments) | the ledger lint, run by `core_check.sh` with the correspondence doc's check | negative tests in the commit |

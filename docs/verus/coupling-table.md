@@ -149,18 +149,22 @@ the campaign term. No marked field depends on the "no" count; F2 is not needed.
 
 ## 5. Open work for Phase 8
 
-1. Not every core mutation is a core call yet: the shell still writes core
-   fields directly on some paths (propose's append runs inside `Start`,
-   `PublishAppliedIndex`, Setup, the snapshot paths). Phase 4's `with_core`
-   makes each of them a call this table can attribute; until then, the
-   replay recorder (plan A.4 item 3) cannot reproduce a run from the calls
-   alone.
+1. ~~Not every core mutation is a core call yet.~~ Done in Phase 6: every
+   decision the shell asks of the core is a `step(Event)` (or, for a message
+   from the network, `step_checked`, F9), Setup's identity, membership and
+   gate included; the only writes outside it are the snapshot paths, outside
+   the verified configuration, which mark the replay recorder. The recorder
+   reproduces a run from the calls alone (`core_replay`, Phase 6 report §4).
 2. `VoteSet` is local to `election_settle`: the votes of a campaign enter the
    core at settlement, all at once. The coupling records each granted reply
    as its own `Recv` group inside that call; Phase 8 must show that order and
    grouping are a legal interleaving (replies are independent receives).
-3. The core still logs through `rusty::raft_log_*` (M7 not yet done), and
-   reads `RaftEntry` handles through M11 wrappers (`raft_command_handle_clone`,
-   `WireBatch`), which Phase 6 makes `external_body`.
+3. ~~The core still logs, and reads handles through M11 wrappers.~~ Done in
+   Phase 6: the core's log lines are records in its output (M7), the command
+   is the type parameter `C` and the inbound payload an `InboundBatch` (M11),
+   both outside the crate, so nothing in the core is `external_body` but
+   `blocks_for`. F9's `step_checked` drops what boundary condition 1 and the
+   term-0 and prev-shape parts of 2 exclude, so those messages never reach a
+   handler.
 4. BR1/BR2 lemmas for batches, V1's coupling lemma, V2's refusal-precedes-write
    lemma.
