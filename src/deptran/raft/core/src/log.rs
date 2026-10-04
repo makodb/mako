@@ -7,6 +7,31 @@
 
 #[allow(unused_imports)]
 use crate::*;
+use vstd::prelude::*;
+#[allow(unused_imports)]
+use vstd::arithmetic::div_mod::*;
+
+verus! {
+
+// The ceiling the ghost invariants keep every log index below: 2^62. A log
+// reaching it would hold 2^62 entries (4.6e18; at a million appends a second,
+// about 146,000 years), so no execution comes near it. Keeping indices below
+// it is what lets the index arithmetic below be proved free of overflow; the
+// shell's side of it is the host-contract assumption that no index it hands
+// the core reaches it (docs/verus/reports/phase-6.md).
+pub open spec fn raft_index_limit() -> int {
+    0x4000_0000_0000_0000int
+}
+
+// How many 4096-entry blocks `positions` physical positions fill:
+// u64::div_ceil, which vstd does not specify, so its std meaning is stated
+// here and trusted ([move, M11]: the same call, at the same point).
+#[verifier::external_body]
+fn blocks_for(positions: u64) -> (r: u64)
+    ensures r as int == (positions as int + 4095) / 4096,
+{
+    positions.div_ceil(4096)
+}
 
 #[repr(C)]
 pub struct RaftEntry<C> {
@@ -24,8 +49,15 @@ pub struct RaftEntry<C> {
 }
 
 impl<C> RaftEntry<C> {
+    // The entry's term (ghost).
+    pub closed spec fn spec_term(&self) -> i64 {
+        self.term_
+    }
+
     pub fn new(term: i64, cmd: C, has_value: bool,
-               is_tpc_commit: bool, kind: i32, payload_bytes: u64) -> RaftEntry<C> {
+               is_tpc_commit: bool, kind: i32, payload_bytes: u64) -> (r: RaftEntry<C>)
+        ensures r.spec_term() == term,
+    {
         RaftEntry {
             term_: term,
             cmd_: cmd,
@@ -36,7 +68,9 @@ impl<C> RaftEntry<C> {
         }
     }
 
-    pub fn term(&self) -> i64 {
+    pub fn term(&self) -> (r: i64)
+        ensures r == self.spec_term(),
+    {
         self.term_
     }
 
@@ -79,44 +113,145 @@ pub struct RaftLog<C> {
     blocks_: Vec<Vec<RaftEntry<C>>>,
 }
 
+impl<C> RaftLog<C> {
+    // The block layout (ghost): live entries occupy physical positions
+    // [head_, head_ + len_) of the blocks laid end to end; every block but
+    // the last is full, the last holds at least one entry, and there are
+    // blocks exactly when there are positions. Indices stay below
+    // raft_index_limit().
+    pub closed spec fn wf(&self) -> bool {
+        let nb = self.blocks_@.len() as int;
+        &&& 1 <= self.base_
+        &&& self.base_ as int + (self.len_ as int) <= raft_index_limit()
+        &&& self.head_ < 4096
+        &&& (nb == 0 ==> self.head_ == 0 && self.len_ == 0)
+        &&& (nb > 0 ==> {
+            &&& (forall|b: int| 0 <= b < nb - 1 ==> (#[trigger] self.blocks_@[b])@.len() == 4096)
+            &&& 1 <= self.blocks_@[nb - 1]@.len() <= 4096
+            &&& self.head_ as int + self.len_ as int
+                    == 4096 * (nb - 1) + self.blocks_@[nb - 1]@.len()
+        })
+    }
+
+    pub closed spec fn spec_base(&self) -> int {
+        self.base_ as int
+    }
+
+    pub closed spec fn spec_len(&self) -> int {
+        self.len_ as int
+    }
+
+    pub open spec fn spec_last_index(&self) -> int {
+        self.spec_base() + self.spec_len() - 1
+    }
+
+    pub open spec fn spec_holds(&self, index: int) -> bool {
+        self.spec_base() <= index < self.spec_base() + self.spec_len()
+    }
+
+    // Room for one more entry below the ceiling (ghost).
+    pub open spec fn spec_has_room(&self) -> bool {
+        self.spec_base() + self.spec_len() < raft_index_limit()
+    }
+
+    // wf's facts a caller can use: the index bounds.
+    pub proof fn lemma_wf_bounds(&self)
+        requires self.wf(),
+        ensures
+            self.spec_base() >= 1,
+            self.spec_base() + self.spec_len() <= raft_index_limit(),
+            self.spec_len() >= 0,
+    {
+    }
+}
+
 #[allow(clippy::new_without_default)]
 impl<C> RaftLog<C> {
-    pub fn new() -> RaftLog<C> {
+    pub fn new() -> (r: RaftLog<C>)
+        ensures
+            r.wf(),
+            r.spec_base() == 1,
+            r.spec_len() == 0,
+    {
         RaftLog { base_: 1, head_: 0, len_: 0, blocks_: Vec::new() }
     }
 
     // Entries per block. 4096 * sizeof(RaftEntry) = 128KB, so a block is a
     // handful of huge pages' worth and the outer vector stays tiny: a
     // 400k-entry log is 98 pointers.
-    pub fn block_len() -> u64 {
+    pub fn block_len() -> (r: u64)
+        ensures r == 4096,
+    {
         4096
     }
 
-    pub fn base(&self) -> u64 {
+    pub fn base(&self) -> (r: u64)
+        ensures r == self.spec_base(),
+    {
         self.base_
     }
 
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> (r: usize)
+        ensures r == self.spec_len(),
+    {
         self.len_ as usize
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> (r: bool)
+        ensures r == (self.spec_len() == 0),
+    {
         self.len_ == 0
     }
 
-    pub fn last_index(&self) -> u64 {
+    pub fn last_index(&self) -> (r: u64)
+        requires self.wf(),
+        ensures r == self.spec_last_index(),
+    {
         self.base_ + self.len_ - 1
     }
 
-    pub fn holds(&self, index: u64) -> bool {
+    pub fn holds(&self, index: u64) -> (r: bool)
+        ensures r == self.spec_holds(index as int),
+    {
         index >= self.base_ && index - self.base_ < self.len_
     }
 
-    pub fn get(&self, index: u64) -> Option<&RaftEntry<C>> {
+    pub fn get(&self, index: u64) -> (r: Option<&RaftEntry<C>>)
+        requires self.wf(),
+        ensures r.is_some() == self.spec_holds(index as int),
+    {
         if !self.holds(index) {
             return None;
         }
         let phys = self.head_ + (index - self.base_);
+        proof {
+            let nb = self.blocks_@.len() as int;
+            let last_len = self.blocks_@[nb - 1]@.len() as int;
+            lemma_fundamental_div_mod(phys as int, 4096);
+            let q = phys as int / 4096;
+            let r = phys as int % 4096;
+            assert(0 <= r < 4096);
+            assert(phys as int == 4096 * q + r);
+            assert((phys as int) < 4096 * (nb - 1) + last_len);
+            assert(q < nb) by (nonlinear_arith)
+                requires
+                    phys as int == 4096 * q + r,
+                    0 <= r,
+                    (phys as int) < 4096 * (nb - 1) + last_len,
+                    last_len <= 4096,
+                    nb > 0,
+            ;
+            assert(q >= 0) by (nonlinear_arith)
+                requires phys as int == 4096 * q + r, phys >= 0, r < 4096;
+            if q == nb - 1 {
+                assert(r < last_len) by (nonlinear_arith)
+                    requires
+                        phys as int == 4096 * q + r,
+                        q == nb - 1,
+                        (phys as int) < 4096 * (nb - 1) + last_len,
+                ;
+            }
+        }
         let block = (phys / 4096) as usize;
         let slot = (phys % 4096) as usize;
         Some(&self.blocks_[block][slot])
@@ -126,7 +261,16 @@ impl<C> RaftLog<C> {
     // entry: a full block is left alone and a new one is pushed, so the
     // reallocation stall that a single growing vector pays under the Raft
     // mutex does not exist here.
-    pub fn append(&mut self, entry: RaftEntry<C>) -> u64 {
+    pub fn append(&mut self, entry: RaftEntry<C>) -> (r: u64)
+        requires
+            old(self).wf(),
+            old(self).spec_has_room(),
+        ensures
+            final(self).wf(),
+            final(self).spec_base() == old(self).spec_base(),
+            final(self).spec_len() == old(self).spec_len() + 1,
+            r == final(self).spec_last_index(),
+    {
         // "is there room in the last block", said directly rather than as
         // (head_ + len_) % BLOCK == 0, which clippy reads as a hand-rolled
         // is_multiple_of and which emits as a method call on a uint64_t.
@@ -139,12 +283,36 @@ impl<C> RaftLog<C> {
         let last = self.blocks_.len() - 1;
         self.blocks_[last].push(entry);
         self.len_ += 1;
+        proof {
+            let nb = self.blocks_@.len() as int;
+            assert forall|b: int| 0 <= b < nb - 1 implies (#[trigger] self.blocks_@[b])@.len() == 4096 by {
+                if need_block {
+                    if b < nb - 2 {
+                        assert(self.blocks_@[b] == old(self).blocks_@[b]);
+                    }
+                } else {
+                    assert(self.blocks_@[b] == old(self).blocks_@[b]);
+                }
+            }
+        }
         self.base_ + self.len_ - 1
     }
 
     // Discard [index, end). A no-op past the tail, which is the ordinary
     // extend case.
-    pub fn truncate_from(&mut self, index: u64) {
+    pub fn truncate_from(&mut self, index: u64)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            final(self).spec_base() == old(self).spec_base(),
+            final(self).spec_len() == (if (index as int) <= old(self).spec_base() {
+                0
+            } else if index as int - old(self).spec_base() >= old(self).spec_len() {
+                old(self).spec_len()
+            } else {
+                index as int - old(self).spec_base()
+            }),
+    {
         if index <= self.base_ {
             self.blocks_.clear();
             self.head_ = 0;
@@ -159,10 +327,60 @@ impl<C> RaftLog<C> {
         if new_phys == 0 {
             self.blocks_.clear();
         } else {
-            let nblocks = new_phys.div_ceil(4096) as usize;
+            let nblocks = blocks_for(new_phys) as usize;
+            proof {
+                let nb = old(self).blocks_@.len() as int;
+                let np = new_phys as int;
+                let k = nblocks as int;
+                assert(k == (np + 4095) / 4096);
+                lemma_fundamental_div_mod(np + 4095, 4096);
+                assert(1 <= k) by (nonlinear_arith)
+                    requires k == (np + 4095) / 4096, np >= 1;
+                assert(4096 * (k - 1) < np <= 4096 * k) by (nonlinear_arith)
+                    requires
+                        np + 4095 == 4096 * k + (np + 4095) % 4096,
+                        0 <= (np + 4095) % 4096 < 4096,
+                ;
+                // the old layout holds at least np positions, so k <= nb
+                let old_last_len = old(self).blocks_@[nb - 1]@.len() as int;
+                assert(np < 4096 * (nb - 1) + old_last_len);
+                assert(k <= nb) by (nonlinear_arith)
+                    requires
+                        4096 * (k - 1) < np,
+                        np < 4096 * (nb - 1) + old_last_len,
+                        old_last_len <= 4096,
+                ;
+            }
             self.blocks_.truncate(nblocks);
             let tail = (new_phys - 4096 * ((nblocks as u64) - 1)) as usize;
+            proof {
+                let nb = old(self).blocks_@.len() as int;
+                let k = nblocks as int;
+                assert(self.blocks_@.len() == k);
+                assert(1 <= tail <= 4096);
+                if k < nb {
+                    assert(self.blocks_@[k - 1] == old(self).blocks_@[k - 1]);
+                    assert(self.blocks_@[k - 1]@.len() == 4096);
+                } else {
+                    let old_last_len = old(self).blocks_@[nb - 1]@.len() as int;
+                    let cur_last_len = self.blocks_@[k - 1]@.len() as int;
+                    assert(cur_last_len == old_last_len);
+                    assert((tail as int) <= cur_last_len) by (nonlinear_arith)
+                        requires
+                            tail as int == new_phys as int - 4096 * (k - 1),
+                            k == nb,
+                            (new_phys as int) < 4096 * (nb - 1) + old_last_len,
+                            cur_last_len == old_last_len,
+                    ;
+                }
+            }
             self.blocks_[nblocks - 1].truncate(tail);
+            proof {
+                let k = nblocks as int;
+                assert forall|b: int| 0 <= b < k - 1 implies (#[trigger] self.blocks_@[b])@.len() == 4096 by {
+                    assert(self.blocks_@[b] == old(self).blocks_@[b]);
+                }
+            }
         }
         self.len_ = keep;
     }
@@ -170,8 +388,16 @@ impl<C> RaftLog<C> {
     // Discard [base, index] -- snapshot compaction. Returns how many went.
     // Whole leading blocks are released; a partial block is retained and its
     // dead prefix is recorded in head_, so the index arithmetic stays exact
-    // and no surviving entry is ever copied.
-    pub fn compact_through(&mut self, index: u64) -> usize {
+    // and no surviving entry is ever copied. Outside the verified
+    // configuration (CompactLog does nothing under the gates, [fix, F5]);
+    // proved here for its layout only.
+    pub fn compact_through(&mut self, index: u64) -> (r: usize)
+        requires
+            old(self).wf(),
+            index as int + 1 + old(self).spec_len() <= raft_index_limit(),
+        ensures
+            final(self).wf(),
+    {
         if index < self.base_ {
             return 0;
         }
@@ -186,9 +412,42 @@ impl<C> RaftLog<C> {
         // vector did: the log empties and the index space restarts above the
         // compaction point rather than at the old tail.
         self.base_ = index + 1;
-        while self.head_ >= 4096 && !self.blocks_.is_empty() {
+        while self.head_ >= 4096 && !self.blocks_.is_empty()
+            invariant
+                1 <= self.base_,
+                self.base_ as int + (self.len_ as int) <= raft_index_limit(),
+                self.blocks_@.len() == 0 ==> self.head_ as int + self.len_ as int == 0
+                    || self.len_ == 0,
+                self.blocks_@.len() > 0 ==> {
+                    let nb = self.blocks_@.len() as int;
+                    &&& (forall|b: int| 0 <= b < nb - 1 ==> (#[trigger] self.blocks_@[b])@.len() == 4096)
+                    &&& 1 <= self.blocks_@[nb - 1]@.len() <= 4096
+                    &&& self.head_ as int + self.len_ as int
+                            == 4096 * (nb - 1) + self.blocks_@[nb - 1]@.len()
+                },
+            decreases self.blocks_@.len(),
+        {
+            proof {
+                let nb = self.blocks_@.len() as int;
+                if nb == 1 {
+                    // the only block holds every position; head_ >= 4096
+                    // means none of them is live
+                    assert(self.len_ == 0);
+                }
+            }
+            let ghost pre = self.blocks_@;
             self.blocks_.remove(0);
             self.head_ -= 4096;
+            proof {
+                let nb = self.blocks_@.len() as int;
+                assert(self.blocks_@ == pre.remove(0));
+                if nb > 0 {
+                    assert forall|b: int| 0 <= b < nb - 1 implies (#[trigger] self.blocks_@[b])@.len() == 4096 by {
+                        assert(self.blocks_@[b] == pre[b + 1]);
+                    }
+                    assert(self.blocks_@[nb - 1] == pre[nb]);
+                }
+            }
         }
         if self.len_ == 0 {
             self.blocks_.clear();
@@ -199,10 +458,21 @@ impl<C> RaftLog<C> {
 
     // Drop everything and restart the index space at `base`. The follower
     // path after an InstallSnapshot that supersedes the whole local log.
-    pub fn reset(&mut self, base: u64) {
+    // Outside the verified configuration (snapshots are off under the gates).
+    pub fn reset(&mut self, base: u64)
+        requires
+            1 <= base,
+            (base as int) <= raft_index_limit(),
+        ensures
+            final(self).wf(),
+            final(self).spec_base() == base,
+            final(self).spec_len() == 0,
+    {
         self.blocks_.clear();
         self.head_ = 0;
         self.len_ = 0;
         self.base_ = base;
     }
 }
+
+} // verus!

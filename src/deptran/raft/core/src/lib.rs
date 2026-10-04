@@ -4,6 +4,15 @@
 // rest and calls in.
 #![forbid(unsafe_code)]
 
+// The platform: x86-64, where usize is 64 bits. In a module of its own so
+// the allow covers only what the erased declaration expands to.
+#[allow(unused_braces)]
+mod platform {
+    vstd::prelude::verus! {
+        global size_of usize == 8;
+    }
+}
+
 pub mod helpers;
 pub mod logging;
 pub mod log;

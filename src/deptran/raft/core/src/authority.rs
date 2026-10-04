@@ -117,9 +117,11 @@ impl SiteSet {
         if i == self.sites_.len() {
             return false;
         }
+        proof { vstd::std_specs::vec::axiom_spec_len(&self.sites_); }
         while i + 1 < self.sites_.len()
             invariant
                 i < self.sites_@.len(),
+                self.sites_@.len() <= usize::MAX,
                 self.sites_@.len() == old(self).sites_@.len(),
             decreases self.sites_@.len() - i,
         {
