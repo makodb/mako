@@ -1256,6 +1256,7 @@ fn recover_fresh(store: &rusty::RaftSnapshotManagerPtr, inject: bool, commit: u6
     }
     {
         let _lock = RaftLockGuard::new(svr.LabMutex());
+        svr.recorder_.taint("lab recover_fresh");  // [M0]
         svr.core.commit_index_ = commit;
         svr.core.current_term_ = term;
     }

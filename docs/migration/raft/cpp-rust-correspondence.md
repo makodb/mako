@@ -12,7 +12,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 545 | `raft/src/server_h.rs` | 4210 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.h` | 545 | `raft/src/server_h.rs` | 4312 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
 | `raft/server.cc` | 1751 | `raft/src/server_cc.rs` | 707 |  |
 | `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 177 | the Rust serves; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
 | `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1052 | the Rust sends; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
@@ -28,7 +28,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 |---|---|---|
 | C++ → Rust | prototypes in `raft/server_exports.h` | 32 |
 | C++ → Rust | prototypes in `raft/transport_exports.h` (raft_lane_rust.cc) | 17 |
-| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 95 |
+| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 96 |
 
 ## Counted facts the prose below leans on
 
@@ -52,7 +52,7 @@ defined nowhere or in two places.
 
 | class | count |
 |---|---|
-| HOST | 84 |
+| HOST | 85 |
 | SEAM | 39 |
 
 | kernel | class |
@@ -72,6 +72,7 @@ defined nowhere or in two places.
 | `raft_broadcast_vote_and_wait` | SEAM |
 | `raft_clear_async_callback_owner` | HOST |
 | `raft_command_clone_into` | HOST |
+| `raft_command_encode` | HOST |
 | `raft_command_has_value` | HOST |
 | `raft_command_meta` | HOST |
 | `raft_commo_set_network_enabled` | SEAM |

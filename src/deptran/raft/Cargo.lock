@@ -53,6 +53,7 @@ name = "raft"
 version = "0.0.0"
 dependencies = [
  "raft-core",
+ "raft-replay",
  "rusty",
 ]
 
@@ -63,6 +64,13 @@ dependencies = [
  "verus_builtin",
  "verus_builtin_macros",
  "vstd",
+]
+
+[[package]]
+name = "raft-replay"
+version = "0.0.0"
+dependencies = [
+ "raft-core",
 ]
 
 [[package]]

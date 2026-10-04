@@ -27,7 +27,7 @@ publish = false
 # A package under this root that was NOT a member would be rejected by cargo,
 # and one with its own [workspace] would silently lose panic = "abort".
 [workspace]
-members = [".", "rt", "core"]
+members = [".", "rt", "core", "replay"]
 
 [lib]
 path = "src/lib.rs"
@@ -64,6 +64,9 @@ rusty = { path = "../../rusty-rustc" }
 # The Raft core that Verus checks (Phase 6): no FFI, no dependencies of its
 # own. This crate is its shell.
 raft-core = { path = "core" }
+# [M0] The replay recorder's format (plan A.4): the writer the shell's
+# recorder uses; the replay itself is that crate's test.
+raft-replay = { path = "replay" }
 # NO srpc dependency: everything srpc-facing lives in rt/.
 
 [lints.rust]

@@ -142,6 +142,11 @@ impl CoreOutput {
         self.log_level_ = level;
     }
 
+    // [M0] The level lines are kept at, for the replay recorder (plan A.4).
+    pub fn log_level(&self) -> i32 {
+        self.log_level_
+    }
+
     // [move, M7] One log line, if its level is enabled. At most
     // CORE_LOG_MAX_ARGS arguments are kept.
     pub fn log(&mut self, level: i32, fmt: &'static str, args: &[LogArg]) {

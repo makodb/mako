@@ -564,6 +564,12 @@ unsafe extern "C" {
                                  voter: *mut u16, granted: *mut bool,
                                  term: *mut i64) -> bool;
     fn raft_command_has_value(cmd: *const rusty::RaftCommand) -> bool;
+    // [M0] The payload's wire bytes, as the Rust lane's send encodes them;
+    // the replay recorder's command digest hashes them.
+    fn raft_command_encode(cmd: *const rusty::RaftCommand,
+                           ctx: *mut core::ffi::c_void,
+                           emit: unsafe extern "C" fn(*mut core::ffi::c_void,
+                                                      *const u8, usize));
     // [move, M6] has_value, is_tpc_commit, kind and payload_bytes in one call
     fn raft_command_meta(cmd: *const rusty::RaftCommand, has_value: *mut bool,
                          is_tpc_commit: *mut bool, kind: *mut i32,
@@ -961,6 +967,9 @@ pub struct RaftServerBase {
     pub snapshot_threshold_: u64,
     pub snapshot_callback_owner_token_: u64,
     pub next_snapshot_callback_owner_token_: u64,
+    // [M0] The replay recorder (plan A.4): off unless MAKO_RAFT_REPLAY_DIR
+    // is set.
+    pub recorder_: CoreRecorder,
     // Was a function-static in EnqueueCommittedEntries. A DSL body has no
     // static local, and a per-server counter is the more honest shape: the
     // C++ one was shared across every RaftServer in a single-process test.
@@ -1058,6 +1067,7 @@ impl RaftServerBase {
             snapshot_threshold_: 10000,  // [move, M1]
             snapshot_callback_owner_token_: 0,  // [move, M1]
             next_snapshot_callback_owner_token_: 1,  // [move, M1]
+            recorder_: CoreRecorder::from_env(),  // [M0]
             enqueue_log_counter_: 0,
             n_prepare_: 0,
             n_accept_: 0,
@@ -1316,6 +1326,9 @@ impl RaftServerBase {
             return 0;
         }
 
+        if safe_index >= self.core.raft_log_.base() {
+            self.recorder_.taint("CompactLogLocked");  // [M0]
+        }
         let removed_memory: usize =
             self.core.raft_log_.compact_through(safe_index);
 
@@ -1392,7 +1405,21 @@ impl RaftServerBase {
     // its reply, under mtx_, which the caller holds (Setup's identity and
     // membership come before anything else can reach the server).
     pub fn step(&mut self, ev: Event<'_>, out: &mut CoreOutput) -> Reply {
-        self.core.step(ev, out)
+        if !self.recorder_.on() {
+            return self.core.step(ev, out);
+        }
+        // [M0] The replay recorder: the event as the shell built it, then
+        // what this call appended to `out`, and its reply.
+        let mut event: String = String::new();
+        raft_replay::write_event(&mut event, &ev, &command_digest);
+        let actions_from: usize = out.len();
+        let logs_from: usize = out.log_count();
+        let level: i32 = out.log_level();
+        let reply: Reply = self.core.step(ev, out);
+        let result: String = raft_replay::result_text(out, actions_from, logs_from,
+                                                      &reply, &command_digest);
+        self.recorder_.write(&raft_replay::record_line(&event, level, &result));
+        reply
     }
 
     // CALLER MUST HOLD mtx_ -- the one caller repo-wide is resetTimerLocked,
@@ -2026,6 +2053,7 @@ impl RaftServerBase {
                 "state-machine snapshot validation/load failed");
         }
 
+        self.recorder_.taint("InitializeSnapshotManagerLocked");  // [M0]
         self.core.snapidx_ = recovered_snapshot_index;
         self.core.snapterm_ = recovered_snapshot_term as i64;
         if retain_suffix {
@@ -2101,6 +2129,7 @@ impl RaftServerBase {
                                               send_term: u64,
                                               follower_term: u64,
                                               out: &mut CoreOutput) {
+        self.recorder_.taint("InstallSnapshotReplyAcceptedLocked");  // [M0]
         if raft_server_observed_higher_term(follower_term,
                                             self.core.current_term_) {
             rusty::raft_log_info_4(
@@ -2183,6 +2212,7 @@ impl RaftServerBase {
             *term_out = 0;
         }
 
+        self.recorder_.taint("OnInstallSnapshotLocked");  // [M0]
         // Edge case 0: the server is shutting down.
         if self.stop_.load(rusty::sync::atomic::Ordering::Acquire) {
             rusty::raft_log_info_1(
@@ -2755,6 +2785,7 @@ impl RaftServerBase {
         }
 
         let old_snapidx: u64 = self.core.snapidx_;
+        self.recorder_.taint("CreateSnapshotLocked");  // [M0]
         self.core.snapidx_ = snap_index;
         self.core.snapterm_ = snap_term;
         self.snapshot_trigger_index_
@@ -3317,6 +3348,77 @@ impl raft_core::InboundBatch<rusty::RaftCommand> for WireBatch {
         }
         raft_entry_from_command(self.next_log_term_ as i64, copy)  // [move, M6]
     }
+}
+
+// [M0] The replay recorder (plan A.4). With MAKO_RAFT_REPLAY_DIR=<dir> set,
+// every server writes each core step to <dir>/<pid>.<n>.rec (n counts the
+// process's servers), one record a line in raft-replay's format; the replay
+// test (raft-replay's core_replay) feeds them back to the core. Unset, the
+// recorder is one branch per step. A write to the core that does not go
+// through step (the snapshot paths) leaves a `T` line, where a replay stops.
+pub struct CoreRecorder {
+    file_: Option<std::fs::File>,
+}
+
+static RECORDER_SERIAL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+impl CoreRecorder {
+    pub fn from_env() -> CoreRecorder {
+        let dir: String = match std::env::var("MAKO_RAFT_REPLAY_DIR") {
+            Ok(d) if !d.is_empty() => d,
+            _ => return CoreRecorder { file_: None },
+        };
+        let n: u32 = RECORDER_SERIAL.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path: String = format!("{}/{}.{}.rec", dir, std::process::id(), n);
+        let _ = std::fs::create_dir_all(&dir);
+        match std::fs::File::create(&path) {
+            Ok(f) => CoreRecorder { file_: Some(f) },
+            Err(e) => {
+                eprintln!("[RAFT-REPLAY] cannot create {}: {}", path, e);
+                CoreRecorder { file_: None }
+            }
+        }
+    }
+
+    pub fn on(&self) -> bool {
+        self.file_.is_some()
+    }
+
+    // One record, written through at once: a lab process may exit without
+    // dropping its servers.
+    pub fn write(&mut self, line: &str) {
+        use std::io::Write;
+        if let Some(f) = self.file_.as_mut() {
+            let _ = f.write_all(format!("{}\n", line).as_bytes());
+        }
+    }
+
+    pub fn taint(&mut self, why: &str) {
+        if self.on() {
+            self.write(&format!("T {}", why));
+        }
+    }
+}
+
+// [M0] A command's digest for the recorder: FNV-1a over its wire bytes (the
+// kernel that encodes them for the send); 0 for an empty command, which the
+// send does not encode either.
+fn command_digest(cmd: &rusty::RaftCommand) -> u64 {
+    if !unsafe { raft_command_has_value(cmd as *const rusty::RaftCommand) } {
+        return 0;
+    }
+    let mut hash: raft_replay::Fnv64 = Default::default();
+    unsafe {
+        raft_command_encode(cmd as *const rusty::RaftCommand,
+                            &mut hash as *mut raft_replay::Fnv64 as *mut core::ffi::c_void,
+                            fnv_emit);
+    }
+    hash.0
+}
+
+unsafe extern "C" fn fnv_emit(ctx: *mut core::ffi::c_void, bytes: *const u8, len: usize) {
+    let hash: &mut raft_replay::Fnv64 = unsafe { &mut *(ctx as *mut raft_replay::Fnv64) };
+    hash.write(unsafe { core::slice::from_raw_parts(bytes, len) });
 }
 
 // [move, M6] An entry for the log, with the facts the core reads about its

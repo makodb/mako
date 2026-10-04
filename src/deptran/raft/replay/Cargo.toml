@@ -1,0 +1,17 @@
+# raft-replay: the Raft core's history as text (docs/verus/modification-plan.md
+# A.4). The shell's recorder writes one record per RaftCore::step -- the event,
+# then the actions, log lines and reply it produced -- and the replay feeds the
+# recorded events to a fresh core and compares what it produces, byte for
+# byte. A member of the Raft workspace; the shell (`raft`) uses its writer.
+[package]
+name = "raft-replay"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "raft_replay"
+path = "src/lib.rs"
+
+[dependencies]
+raft-core = { path = "../core" }
