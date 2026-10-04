@@ -3316,6 +3316,10 @@ pub struct RaftServerBase {
     pub is_leader_mirror_: rusty::sync::atomic::AtomicBool,
     pub leader_hint_mirror_: rusty::sync::atomic::AtomicU64,
     pub term_mirror_: rusty::sync::atomic::AtomicU64,
+    // [fix, F5] MAKO_RAFT_VERIFIED_GATES=1, read at setup: outside the
+    // verified configuration the server fails closed, and inside it log
+    // compaction and snapshots do nothing.
+    pub verified_gates_: bool,
     // Was a function-static in EnqueueCommittedEntries. A DSL body has no
     // static local, and a per-server counter is the more honest shape: the
     // C++ one was shared across every RaftServer in a single-process test.
@@ -3410,6 +3414,7 @@ impl RaftServerBase {
             leader_hint_mirror_: rusty::sync::atomic::AtomicU64::new(
                 RAFT_SERVER_INVALID_SITE_ID as u64),  // [fix, F8]
             term_mirror_: rusty::sync::atomic::AtomicU64::new(0),  // [fix, F8]
+            verified_gates_: false,  // [fix, F5]
             enqueue_log_counter_: 0,
             n_prepare_: 0,
             n_accept_: 0,
@@ -3675,6 +3680,10 @@ impl RaftServerBase {
 
     // @unsafe - acquiring entry point, for callers that do not hold mtx_.
     pub fn CompactLog(&mut self, up_to_index: u64) -> usize {
+        // [fix, F5] Inside the verified configuration the log stays whole.
+        if self.verified_gates_ {
+            return 0;
+        }
         let _lock = RaftLockGuard::new(&mut self.mtx_);
         self.CompactLogLocked(up_to_index)
     }
@@ -4106,6 +4115,7 @@ impl RaftServerBase {
             return false;
         }
         let gates = gates_env.unwrap();
+        self.verified_gates_ = gates.is_some() && gates.unwrap() == 1;
         if !self.verified_config_ok() {
             if gates.is_some() && gates.unwrap() == 1 {
                 rusty::raft_log_error_1(
@@ -5223,6 +5233,10 @@ impl RaftServerBase {
     // @unsafe - takes the state-machine apply gate, then mtx_. That order is
     // the one every apply-side path uses.
     pub fn MaybeCreateSnapshot(&mut self) {
+        // [fix, F5] Inside the verified configuration there are no snapshots.
+        if self.verified_gates_ {
+            return;
+        }
         let _apply_lock =
             RaftStdLockGuard::new(&mut self.state_machine_apply_mtx_);
         let _lock = RaftLockGuard::new(&mut self.mtx_);
