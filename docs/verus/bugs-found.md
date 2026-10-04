@@ -13,7 +13,9 @@ reading the source, not by running it. Paths are relative to
 Severity: **safety** (can break Raft's guarantees), **liveness** (delays or
 stalls progress), **race** (undefined behaviour or a torn read, harmless in
 practice so far), **robustness** (only malformed or non-genuine input triggers
-it), **metric** (wrong number in a measurement, no protocol effect).
+it), **metric** (wrong number in a measurement, no protocol effect),
+**proof coverage** (a run the certificate does not cover, no protocol
+effect). "Latent" means nothing in production reaches it today.
 
 | # | Severity | Summary | Status | Fate |
 |---|---|---|---|---|
@@ -33,7 +35,8 @@ it), **metric** (wrong number in a measurement, no protocol effect).
 | B14 | race | `heartbeat_interval_us_` is a plain field the lab's case 67 writes while the heartbeat and election loops read it | reproduced (Phase 4 TSan lab build, cpp lane) | recorded only (user, 2026-10-04): lab-only, outside the core |
 | B15 | race (latent) | The heartbeat driver reset the core's round state with no `mtx_` (`reset_round_state` at the loop's start and before its epilogue), taking `&mut` of the whole `RaftCore` while other threads may hold it under the lock | read in code (Phase 6) | fixed in Phase 6: both resets are `step(ResetRoundState)` under `mtx_` (plan §3.1 rule 1) |
 | B16 | liveness (latent) | An entry whose command has no value (an empty `Command`, which `Start` accepts) is never replicated: the leader's payload selection reads it as a missing entry and skips every follower behind it, every round; a follower's conflict scan likewise reads such a slot as absent | read in code (Phase 8) | recorded only (user, 2026-10-04): no caller proposes an empty command today; the proof takes "a proposal has a value" as a host-contract premise |
-| B17 | safety (race) | The round end (PHASE 3) advances the commit index without checking that this server still leads: `heartbeat_round_end_body` reads `IsLeader()` before taking `mtx_`, and `heartbeat_phase3_locked` calls `raft_commit_advance` whatever `is_leader` is. A server that lost leadership in that window, and meanwhile took a newer leader's entries over its tail, counts its old term's match indices against an entry of the new term | reproduced: `core/tests/b17_round_end.rs` (Phase 8) | recorded only (user, 2026-10-04): not fixed; the proof takes "the round end runs while leading" as a premise, which the race can violate |
+| B17 | safety (latent race) | The round end (PHASE 3) advances the commit index without checking that this server still leads: `heartbeat_round_end_body` reads `IsLeader()` before taking `mtx_`, and `heartbeat_phase3_locked` calls `raft_commit_advance` whatever `is_leader` is. A server that lost leadership in that window, and meanwhile took a newer leader's entries over its tail, counts its old term's match indices against an entry of the new term. In production the Rust lane's threading keeps the window closed; the lab's direct handler calls can open it (Reachability, corrected 2026-10-04) | reproduced at the core: `core/tests/b17_round_end.rs` (Phase 8) | recorded only (user, 2026-10-04): not fixed; the proof takes "the round end runs while leading" as a premise, which the race can violate |
+| B18 | proof coverage | Shutdown clears `looping_`, so `IsLeaderLocked()` reads false while the core still leads: a leader's `RecvAppendReply` or `RoundEnd` stepped after `PrepareForShutdown` (or `FailStop`) breaks its coupling premise (`is_leader` is the core's role). The core does nothing wrong then (a reply is ignored unless its term steps the core down; the round end commits as the leader the core still is and confirms no read authority), but the step is outside the certificate | read in code (while writing `code-structure.md`) | recorded; not fixed (needs the user's approval) |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
 
@@ -408,7 +411,7 @@ command. The proof takes "a proposal has a value" as a premise of the host
 contract (`docs/verus/host-contract.md`), and carries "every log entry has a
 value" in its invariant.
 
-## B17. The round end can commit after leadership is lost (race)
+## B17. The round end can commit after leadership is lost (latent race)
 
 **Where.** `src/server_cc.rs`, `heartbeat_round_end_body`: `if
 !server.IsLeader() { return; }`, then `RaftLockGuard::new(&mut
@@ -466,22 +469,86 @@ stays green: `cargo test -p raft-core --test b17_round_end -- --ignored`
 fails today. With the fix below applied to a working copy (not committed),
 it passes, and so do the core's other tests.
 
-**Reachability.** Needs the driver to stay blocked on `mtx_` across several
-of D's round trips (the backoff), so it is unlikely; nothing excludes it.
-PHASE 0's advance is guarded (`heartbeat_phase0_locked` returns before it
-when not leading) and the reply path counts a reply only while leading.
+**Reachability.** Not in production on this lane (inference, from reading the
+threading while writing [code-structure.md](code-structure.md) §6; corrected
+2026-10-04: this paragraph first said nothing excludes it). The interleaving
+above needs D's messages handled while A's driver sits between its check
+(`src/server_cc.rs:310`) and its lock (`:315`), and in production nothing
+can handle them there:
+- every step that changes the role or replaces the log's tail runs on the
+  server's transport poll thread: the inline RPC handlers, the reply
+  callbacks, the heartbeat and election fibers (code-structure.md §3.1, §7);
+- every critical section that changes the role publishes the mirror the
+  check reads before it releases `mtx_` (`run_locked_actions` ->
+  `publish_mirrors`, `src/server_h.rs:1560`);
+- nothing between the check and the lock suspends, and `mtx_` is a plain
+  `std::mutex` (`server.h:243-250`, `:273`): if another thread holds it, the whole
+  poll thread waits, so no handler runs in the window;
+- the other threads that take `mtx_` (submit, apply, shutdown) never change
+  the role or replace the tail.
+
+Lab builds can open the window: `src/lab.rs`'s `serve_vote` and
+`serve_append` call `ServeVote` and `ServeAppendEntries` directly from the
+harness thread (`src/lab.rs:520`, `:534`), not the replica's poll thread. So
+the defect is the core's (its round end does not check), latent in
+production behind the shell's threading; moving a handler off the poll
+thread, or adding a suspension point between the check and the lock, would
+expose it. PHASE 0's advance is guarded (`heartbeat_phase0_locked` returns
+before it when not leading) and the reply path counts a reply only while
+leading.
 
 **How found.** Phase 8, coupling the round end to `LAdvanceCommitIndex`,
 whose guard is `role is Leader`.
 
 **Fix (proposed, not applied).** In `heartbeat_phase3_locked`, advance only
 while leading: call `raft_commit_advance` when `core.is_leader_` holds (the
-shell's `is_leader` is the same value, read under the same lock), and
-otherwise return no advance. One branch; the read-index settlement after it
-is unchanged. With it, the round end's proof premise becomes a check, and
-the certificate no longer depends on the race not happening.
+shell's `is_leader` is the same value, read under the same lock, except at
+shutdown: B18), and otherwise return no advance. One branch; the read-index
+settlement after it is unchanged. With it, the round end's proof premise
+becomes a check, and the certificate no longer depends on the race not
+happening.
 
 **Fate.** Recorded only (user, 2026-10-04): not fixed. The proof's round-end
 contract takes "the round end runs while leading" as a premise, which the
-race above violates, so a run that hits the race is outside the
-certificate. The reproduction stays in the suite, ignored.
+race above violates, so a run that hits the race (a lab build, as things
+stand) is outside the certificate. The reproduction stays in the suite,
+ignored.
+
+## B18. Shutdown takes a leader outside its reply and round-end premises (proof coverage)
+
+**Where.** `src/server_h.rs:1236-1240`, `IsLeaderLocked()`: false when
+`looping_` is false, otherwise `core.is_leader_`. `looping_` is cleared by
+`PrepareForShutdown`, under `mtx_` on the shutdown thread (`:3781-3792`),
+and by `FailStop`, without the lock (`:2200-2209`; called when a startup or
+snapshot step fails). The heartbeat driver passes `IsLeaderLocked()` as
+`is_leader` to `RecvAppendReply` (`src/server_cc.rs:245-251`) and to
+`RoundEnd` (`:316-317`). The coupling's premises for both ask that
+`is_leader` be the core's role (`core/src/coupling.rs:2606-2611`, `:2622`).
+Host contract (`docs/verus/host-contract.md` §3) said the collection loop's
+`IsLeaderLocked()` guarantees it.
+
+**Scenario.** A leader's heartbeat driver passes its unlocked `IsLeader()`
+check (`src/server_cc.rs:221` for a reply, `:310` for the round end), and
+the shutdown thread runs `PrepareForShutdown`'s critical section before the
+driver takes `mtx_`. Under the lock the driver reads `is_leader = false`,
+while `core.is_leader_` is still true: the step breaks its premise.
+
+**Consequence.** None on the protocol. With `is_leader` false, the reply is
+recorded as read-index evidence and then ignored, unless its higher term
+steps the core down (`core/src/heartbeat.rs:1340-1382`). The round end
+advances the commit index as the leader the core still is (PHASE 3's own
+contract asks only that the core leads, `:1680`) and confirms no read
+authority (`core/src/authority.rs:690-692`). But the certificate covers a
+run only while every step meets its premise, so a run in which a leader
+shuts down mid-round leaves it at that step.
+
+**How found.** Writing [code-structure.md](code-structure.md), reading the
+round end's premise against what the shell passes.
+
+**Fix (not applied).** Ghost only: the two premises could ask for less, the
+round end only that the core leads (as PHASE 3's contract does), the reply
+only `is_leader ==> core.is_leader_` (as `TickHeartbeat`'s `admits` does),
+with the two handlers' proofs redone for `is_leader` false while leading.
+
+**Fate.** Recorded; not fixed (a new item needs the user's approval, plan
+0.7 point 3).

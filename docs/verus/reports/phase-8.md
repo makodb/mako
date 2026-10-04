@@ -186,3 +186,11 @@ the base file's own regions.
   while leading, makes it pass (tried in a working copy, not applied). Not
   fixed: the user's decision (2026-10-04); the certificate keeps the
   premise.
+
+After this report (2026-10-04, while writing
+[../code-structure.md](../code-structure.md)): B17's reachability was
+corrected. In production on this lane the shell's threading keeps the window
+closed (inference), and only the lab's direct handler calls can open it, so
+B17 is a latent race. B18 was recorded: once shutdown has begun, a leader's
+reply and round end break their premises (`is_leader` is the core's role),
+harmlessly but outside the certificate. Details: [../bugs-found.md](../bugs-found.md).

@@ -50,10 +50,12 @@ As in the plan's §1.3, from the group's composition
    (the gate, F5).
 4. **Segments are atomic and globally ordered.** Each core call runs to
    completion under `mtx_` (decision Q1; `RaftLockGuard` around every
-   `step`), so a server's segments happen in its ghost log's order, and a
-   send is made after the call that recorded it returns (the shell sends
-   from the call's output). The schedule `sched` is the real interleaving
-   of the servers' calls.
+   `step` but the three made before anything else can reach the server:
+   `SetIdentity`, `Configure` and the lab constructor's `SetFollower`,
+   [code-structure.md](code-structure.md) §3.2), so a server's segments
+   happen in its ghost log's order, and a send is made after the call that
+   recorded it returns (the shell sends from the call's output). The
+   schedule `sched` is the real interleaving of the servers' calls.
 5. **Per-node trusted base**: the transport, the codec, the kernels, storage
    (none persisted: no replica restarts in place under its old id, plan
    §4.4.2).
@@ -99,8 +101,8 @@ admission itself (`coupled_checked`).
 | `RecvRequestVote` | the gate; the candidate another member | `step_checked`'s admission (F9) |
 | `RecvAppendEntries` | the gate; the sender another server | `step_checked`'s admission (F9) |
 | `TickHeartbeat` | the gate; `is_leader` is the core's role (`admits`) | `heartbeat_tick_body` reads `IsLeaderLocked()` under the same lock (`src/server_cc.rs:85`) |
-| `RecvAppendReply` | the gate; `is_leader` is the core's role; a success reports no more than the leader's log | the collection loop reads `IsLeaderLocked()` under the lock (`src/server_cc.rs:246`); `step_checked` reads a success beyond the log as no reply (F9) |
-| `RoundEnd` | the gate; `is_leader` is the core's role, **and the server leads** | **violated by a race: bugs-found B17** (§6) |
+| `RecvAppendReply` | the gate; `is_leader` is the core's role; a success reports no more than the leader's log | the collection loop reads `IsLeaderLocked()` under the lock (`src/server_cc.rs:246`), which is the core's role only while `looping_` holds: **not once shutdown has begun, bugs-found B18** (§6); `step_checked` reads a success beyond the log as no reply (F9) |
+| `RoundEnd` | the gate; `is_leader` is the core's role, **and the server leads** | the driver checks the mirror before taking the lock and reads `IsLeaderLocked()` under it (`src/server_cc.rs:310`, `:316`); in production nothing steps the core down in between (inference, bugs-found B17), but nothing checks it: **violable in lab builds (B17) and once shutdown has begun (B18)** (§6) |
 
 Terms and indices off the wire and in the log stay below 2^62
 (`raft_index_limit`, the Phase 6 contract): a log that long would hold
@@ -127,15 +129,28 @@ term at least 0; V2.
 
 ## 6. Known gaps
 
-- **B17 (safety, race; recorded, not fixed: the user's decision,
+- **B17 (safety, latent race; recorded, not fixed: the user's decision,
   2026-10-04).** PHASE 3 advances the commit index without
   checking that the server still leads, and `heartbeat_round_end_body`
-  checks leadership before taking `mtx_`. In that window a step-down and a
-  newer leader's appends can run, and the round end then counts the old
-  term's match indices against an entry of the new term. The `RoundEnd`
-  premise ("the server leads") is what excludes it, so a run that hits the
-  race is outside the certificate. The fix would be one branch (advance only
-  while leading); `core/tests/b17_round_end.rs` reproduces the bug.
+  checks leadership before taking `mtx_`. If a step-down and a newer
+  leader's appends ran in that window, the round end would count the old
+  term's match indices against an entry of the new term. In production on
+  this lane they cannot (inference): they run on the poll thread, which the
+  driver holds or blocks from the check to the lock. Lab builds' direct
+  handler calls (`src/lab.rs:520`, `:534`) can. The `RoundEnd` premise ("the
+  server leads") is what excludes it, so a run that hits the race is outside
+  the certificate. The fix would be one branch (advance only while
+  leading); `core/tests/b17_round_end.rs` reproduces the bug at the core.
+- **B18 (proof coverage, recorded).** `IsLeaderLocked()` is `looping_ &&
+  core.is_leader_` (`src/server_h.rs:1236-1240`), and shutdown clears
+  `looping_` (`PrepareForShutdown` under `mtx_`; `FailStop` without it). A
+  leader's reply or round end stepped after that passes `is_leader = false`
+  while the core still leads, which breaks the `RecvAppendReply` and
+  `RoundEnd` premises. The core then does nothing wrong (the reply is
+  ignored unless its higher term steps the core down; the round end commits
+  as the leader the core still is and confirms no read authority), but the
+  step is outside the certificate. Weakening the two premises (ghost only,
+  with those two proofs redone) would cover it; not attempted.
 - **B16 (liveness, latent; recorded, not fixed: the user's decision,
   2026-10-04).** An entry without a value is never replicated. No caller
   proposes one, so `Propose`'s premise holds today; nothing enforces it.
