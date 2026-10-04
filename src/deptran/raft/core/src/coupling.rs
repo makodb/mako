@@ -2368,4 +2368,208 @@ pub proof fn lemma_advance_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, idx: u
     assert(post.state_view() == replay(l2));
 }
 
+// ===========================================================================
+// The leader's AppendEntries (heartbeat_tick, PHASE 1): one
+// LSendAppendEntries segment per component (BR1), each a Tick group, built
+// from the leader's log, its term, the RPC's prev and the commit read in the
+// same call (F3)
+// ===========================================================================
+
+// Component i of the leader's AppendEntries, as the spec sees it: the log's
+// entry prev + i + 1 behind its predecessor (the RPC's prev for i = 0); or,
+// without entries, prev and its term, with V1's commit min(commit, prev).
+// The follower's comp_msg / empty_msg are this message (the host contract:
+// the wire carries the leader's entries).
+pub open spec fn send_msg(log: Seq<LLogEntry>, me: int, term: int, prev: int, prev_term: int, lc: int,
+                          has_entry: bool, i: int) -> LRaftMessage {
+    if has_entry {
+        LRaftMessage::AppendEntries {
+            term,
+            leader: me,
+            prev_index: prev + i,
+            prev_term: if i == 0 { prev_term } else { log[prev + i - 1].term },
+            entry_term: log[prev + i].term,
+            value: log[prev + i].value,
+            entry_change: LConfChange::NoChange,
+            has_entry: true,
+            leader_commit: lc,
+            read_ctx: 0,
+        }
+    } else {
+        LRaftMessage::AppendEntries {
+            term,
+            leader: me,
+            prev_index: prev,
+            prev_term,
+            entry_term: 0,
+            value: 0,
+            entry_change: LConfChange::NoChange,
+            has_entry: false,
+            leader_commit: if lc <= prev { lc } else { prev },
+            read_ctx: 0,
+        }
+    }
+}
+
+pub open spec fn sae_label(f: int, m: LRaftMessage) -> ActionLabel {
+    ActionLabel::SendAppendEntries {
+        follower: f,
+        entry_term: m->AppendEntries_entry_term,
+        entry_value: m->AppendEntries_value,
+        entry_change: m->AppendEntries_entry_change,
+        prev_log_index: m->AppendEntries_prev_index,
+        prev_log_term: m->AppendEntries_prev_term,
+        has_entry: m->AppendEntries_has_entry,
+        leader_commit: m->AppendEntries_leader_commit,
+        read_ctx: 0,
+    }
+}
+
+// Components 0..k-1 of one AppendEntries to follower f, each a Tick group.
+pub open spec fn send_segs(l: Seq<Entry>, log: Seq<LLogEntry>, me: int, f: int, term: int, prev: int,
+                           prev_term: int, lc: int, has_entry: bool, k: int) -> Seq<Entry>
+    decreases k,
+{
+    if k <= 0 {
+        l
+    } else {
+        let m = send_msg(log, me, term, prev, prev_term, lc, has_entry, k - 1);
+        send_segs(l, log, me, f, term, prev, prev_term, lc, has_entry, k - 1)
+            .push(Entry::Tick).push(Entry::Send(f, m)).push(Entry::Close(sae_label(f, m)))
+    }
+}
+
+pub proof fn lemma_send_segs(l: Seq<Entry>, c: LConstants, log: Seq<LLogEntry>, me: int, f: int, term: int,
+                             prev: int, prev_term: int, lc: int, has_entry: bool, k: int)
+    requires
+        log_ok(l, c),
+        fully_closed(l),
+        replay(l).role is Leader,
+        replay(l).log == log,
+        replay(l).current_term == term,
+        c.my_id == me,
+        c.servers.contains(f),
+        0 <= lc <= replay(l).commit_index,
+        has_entry ==> lc == replay(l).commit_index,
+        prev >= 0,
+        prev > 0 ==> prev <= log.len() && log[prev - 1].term == prev_term,
+        has_entry ==> prev + k <= log.len(),
+        !has_entry ==> k <= 1 && prev <= log.len(),
+        forall|j: int| 0 <= j < log.len() ==> (#[trigger] log[j]).change == LConfChange::NoChange,
+        0 <= k,
+    ensures
+        log_ok(send_segs(l, log, me, f, term, prev, prev_term, lc, has_entry, k), c),
+        fully_closed(send_segs(l, log, me, f, term, prev, prev_term, lc, has_entry, k)),
+        replay(send_segs(l, log, me, f, term, prev, prev_term, lc, has_entry, k)) == replay(l),
+        l.is_prefix_of(send_segs(l, log, me, f, term, prev, prev_term, lc, has_entry, k)),
+    decreases k,
+{
+    if k == 0 {
+        assert(l.subrange(0, l.len() as int) =~= l);
+    } else {
+        lemma_send_segs(l, c, log, me, f, term, prev, prev_term, lc, has_entry, k - 1);
+        let rest = send_segs(l, log, me, f, term, prev, prev_term, lc, has_entry, k - 1);
+        let s = replay(rest);
+        let i = k - 1;
+        let m = send_msg(log, me, term, prev, prev_term, lc, has_entry, i);
+        lemma_g_open(rest, Entry::Tick, c);
+        let l1 = rest.push(Entry::Tick);
+        assert(seg_sends_to(l1, f));
+        lemma_g_send(l1, f, m, c);
+        let l2 = l1.push(Entry::Send(f, m));
+        assert(seg_sends(l2) =~= seq![m]);
+        if has_entry {
+            assert(log[prev + i].change == LConfChange::NoChange);
+        }
+        assert(LSendAppendEntries(s, replay(l2), c, f, m->AppendEntries_entry_term, m->AppendEntries_value,
+            m->AppendEntries_entry_change, m->AppendEntries_prev_index, m->AppendEntries_prev_term,
+            m->AppendEntries_has_entry, m->AppendEntries_leader_commit, 0, seg_sends(l2)));
+        lemma_g_close(l2, sae_label(f, m), f, c);
+        let l3 = l2.push(Entry::Close(sae_label(f, m)));
+        assert(l3 == send_segs(l, log, me, f, term, prev, prev_term, lc, has_entry, k));
+        assert(l.is_prefix_of(l3)) by {
+            assert(l3.subrange(0, l.len() as int) =~= rest.subrange(0, l.len() as int));
+        }
+    }
+}
+
+// How many components a send carries: one for a heartbeat, else its
+// entries.
+pub open spec fn send_count<C>(s: AppendSend<C>) -> int {
+    if s.payload_ == AppendPayload::HEARTBEAT { 1 } else { s.sent_end_index_ as int - s.prev_log_index_ as int }
+}
+
+// A tick's sends, in order, each its components' segments.
+pub open spec fn tick_sends_log<C>(l: Seq<Entry>, sends: Seq<AppendSend<C>>, log: Seq<LLogEntry>,
+                                   cfg: Seq<u16>, me: int, k: int) -> Seq<Entry>
+    decreases k,
+{
+    if k <= 0 {
+        l
+    } else {
+        let s = sends[k - 1];
+        send_segs(tick_sends_log(l, sends, log, cfg, me, k - 1), log, me, rank(cfg, s.site_id_),
+            s.term_ as int, s.prev_log_index_ as int, s.prev_log_term_ as int, s.commit_index_ as int,
+            s.payload_ != AppendPayload::HEARTBEAT, send_count(s))
+    }
+}
+
+pub proof fn lemma_tick_sends_push<C>(l: Seq<Entry>, sends: Seq<AppendSend<C>>, s: AppendSend<C>,
+                                      log: Seq<LLogEntry>, cfg: Seq<u16>, me: int, k: int)
+    requires 0 <= k <= sends.len(),
+    ensures tick_sends_log(l, sends.push(s), log, cfg, me, k) == tick_sends_log(l, sends, log, cfg, me, k),
+    decreases k,
+{
+    if k > 0 {
+        lemma_tick_sends_push(l, sends, s, log, cfg, me, k - 1);
+        assert(sends.push(s)[k - 1] == sends[k - 1]);
+    }
+}
+
+// The fields the spec state and ginv read, the ghost log aside, unchanged:
+// PHASE 1 moves only the next shadow, the slots and the ledger.
+pub open spec fn spec_fields_same<C>(a: &RaftCore<C>, b: &RaftCore<C>) -> bool {
+    &&& a.current_term_ == b.current_term_
+    &&& a.vote_for_ == b.vote_for_
+    &&& a.is_leader_ == b.is_leader_
+    &&& a.election_in_progress_ == b.election_in_progress_
+    &&& a.election_term_ == b.election_term_
+    &&& a.raft_log_ == b.raft_log_
+    &&& a.commit_index_ == b.commit_index_
+    &&& a.config_members_ == b.config_members_
+    &&& a.site_id_ == b.site_id_
+    &&& a.snapterm_ == b.snapterm_
+    &&& a.peer_sites_ == b.peer_sites_
+    &&& a.gated_ == b.gated_
+    &&& a.g_votes_ == b.g_votes_
+    &&& a.g_match_ == b.g_match_
+    &&& a.g_next_ == b.g_next_
+    &&& a.peers_.spec_len() == b.peers_.spec_len()
+    &&& forall|o: int| 0 <= o < a.peers_.spec_len() ==> #[trigger] a.peers_.spec_match(o) == b.peers_.spec_match(o)
+}
+
+// A core with the same spec-visible fields and a ghost log that stays a
+// certificate of the same state keeps ginv.
+pub proof fn lemma_same_fields_ginv<C>(b: &RaftCore<C>, a: &RaftCore<C>)
+    requires
+        b.ginv(),
+        spec_fields_same(a, b),
+        log_ok(a.g_log_@, b.c_view()),
+        fully_closed(a.g_log_@),
+        replay(a.g_log_@) == replay(b.g_log_@),
+    ensures a.ginv(),
+{
+    assert(a.c_view() == b.c_view());
+    assert(a.log_view() == b.log_view());
+    assert(a.state_view() == b.state_view());
+    if a.is_leader_ {
+        let cfg = a.config_members_@;
+        assert forall|o: int| 0 <= o < a.peers_.spec_len()
+            implies (#[trigger] a.peers_.spec_match(o)) as int
+                <= match_of(a.g_match_@, rank(cfg, a.peer_sites_@[o])) by {
+            assert(b.peers_.spec_match(o) as int <= match_of(b.g_match_@, rank(cfg, b.peer_sites_@[o])));
+        }
+    }
+}
+
 } // verus!

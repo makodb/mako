@@ -80,6 +80,7 @@ pub fn raft_commit_advance<C: Clone>(
         }),
         // [M12] an advance sets the commit index to its target
         r.spec_advanced() ==> final(consensus).commit_index_ == r.spec_to(),
+        r.spec_advanced() ==> final(consensus).commit_index_ > old(consensus).commit_index_,
         !r.spec_advanced() ==> final(consensus).commit_index_ == old(consensus).commit_index_,
         // [M12] a leader's advance is LAdvanceCommitIndex; no advance is
         // unseen by the spec
@@ -253,6 +254,7 @@ pub fn heartbeat_phase0_locked<C: Clone>(
         final(core).g_match_ == old(core).g_match_,
         final(core).g_next_ == old(core).g_next_,
         !r.spec_commit_advanced() ==> final(core).commit_index_ == old(core).commit_index_,
+        r.spec_commit_advanced() ==> final(core).commit_index_ > old(core).commit_index_,
 {
     if !is_leader {
         core.pending_rpcs_.abandon();
@@ -397,6 +399,7 @@ pub fn heartbeat_round_saturated(round_counter: u64) -> bool {
 /// How one follower's AppendEntries carries its payload.
 #[allow(non_camel_case_types)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[derive(Structural)]  // [M12] ghost: `==` is equality to the verifier
 #[repr(i32)]
 pub enum AppendPayload {
     // No entries: the RPC proves only prev.
@@ -432,7 +435,16 @@ pub struct AppendSend<C> {
 
 impl<C> AppendSend<C> {
     fn heartbeat(ord: usize, site_id: u16, term: u64, prev_log_index: u64,
-                 commit_index: u64, sent_round: u64) -> AppendSend<C> {
+                 commit_index: u64, sent_round: u64) -> (r: AppendSend<C>)
+        ensures  // [M12] the heartbeat at prev
+            r.site_id_ == site_id,
+            r.payload_ == AppendPayload::HEARTBEAT,
+            r.term_ == term,
+            r.prev_log_index_ == prev_log_index,
+            r.prev_log_term_ == 0,
+            r.commit_index_ == commit_index,
+            r.sent_end_index_ == prev_log_index,
+    {
         AppendSend {
             ord_: ord,
             site_id_: site_id,
@@ -477,7 +489,9 @@ pub struct HeartbeatTick<C> {
 }
 
 impl<C> HeartbeatTick<C> {
-    fn new() -> HeartbeatTick<C> {
+    fn new() -> (r: HeartbeatTick<C>)
+        ensures r.sends_@.len() == 0,  // [M12]
+    {
         HeartbeatTick {
             declined_: false,
             slots_reset_: false,
@@ -510,8 +524,28 @@ fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_i
     requires
         old(core).inv(),
         ord < old(core).peers_.spec_len(),
+        // [M12] the caller's prev is the follower's next less one, and the
+        // send so far is the heartbeat at prev
+        old(core).peers_.spec_next(ord as int) as int == prev_log_index as int + 1,
+        prev_log_index as int <= old(core).raft_log_.spec_last_index(),
+        old(send).prev_log_index_ == prev_log_index,
+        old(send).payload_ == AppendPayload::HEARTBEAT,
     ensures
         *final(core) == *old(core),
+        // [M12] the payload: none (the heartbeat at prev), or entries of the
+        // log from prev + 1 to the end it records; the RPC's other fields
+        // kept
+        final(send).site_id_ == old(send).site_id_,
+        final(send).term_ == old(send).term_,
+        final(send).prev_log_index_ == old(send).prev_log_index_,
+        final(send).prev_log_term_ == old(send).prev_log_term_,
+        final(send).commit_index_ == old(send).commit_index_,
+        !r && final(send).payload_ == AppendPayload::HEARTBEAT
+            ==> final(send).sent_end_index_ == old(send).sent_end_index_,
+        !r && final(send).payload_ != AppendPayload::HEARTBEAT ==> {
+            &&& (prev_log_index as int) < final(send).sent_end_index_ as int
+            &&& final(send).sent_end_index_ as int <= old(core).raft_log_.spec_last_index()
+        },
 {
     let mut skip_follower: bool = false;
 
@@ -604,9 +638,38 @@ fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_i
         while idx <= core.raft_log_.last_index() && batched < max_batch_entries
             invariant_except_break
                 !skip_follower,
+                // [M12] the batch so far: the entries prev + 1 .. idx - 1
+                batched as int == idx as int - batch_start_idx as int,
+                send.payload_ == AppendPayload::HEARTBEAT,
+                send.sent_end_index_ == old(send).sent_end_index_,
             invariant
                 core.inv(),
                 (prev_log_index as int) < u64::MAX,
+                // [M12]
+                batch_start_idx as int == prev_log_index as int + 1,
+                idx as int <= core.raft_log_.spec_last_index() + 1,
+                send.site_id_ == old(send).site_id_,
+                send.term_ == old(send).term_,
+                send.prev_log_index_ == old(send).prev_log_index_,
+                send.prev_log_term_ == old(send).prev_log_term_,
+                send.commit_index_ == old(send).commit_index_,
+            ensures
+                // [M12] a raw entry, at prev + 1, ends the loop
+                send.payload_ == AppendPayload::RAW_ENTRY ==> {
+                    &&& batched == 0
+                    &&& send.sent_end_index_ as int == prev_log_index as int + 1
+                    &&& prev_log_index as int + 1 <= core.raft_log_.spec_last_index()
+                },
+                send.payload_ != AppendPayload::RAW_ENTRY ==> {
+                    &&& send.payload_ == AppendPayload::HEARTBEAT
+                    &&& send.sent_end_index_ == old(send).sent_end_index_
+                    &&& (skip_follower || prev_log_index as int + batched as int <= core.raft_log_.spec_last_index())
+                },
+                send.site_id_ == old(send).site_id_,
+                send.term_ == old(send).term_,
+                send.prev_log_index_ == old(send).prev_log_index_,
+                send.prev_log_term_ == old(send).prev_log_term_,
+                send.commit_index_ == old(send).commit_index_,
             decreases core.raft_log_.spec_last_index() + 1 - idx,
         {
             let entry = core.raft_log_.get(idx);
@@ -708,7 +771,7 @@ fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_i
 pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
                       snapshot_configured: bool, batching: bool,
                       max_batch_entries: u64, max_batch_bytes: u64,
-                      out: &mut CoreOutput) -> HeartbeatTick<C>
+                      out: &mut CoreOutput) -> (r: HeartbeatTick<C>)
     requires
         old(core).inv(),
         // the host contract: is_leader is IsLeaderLocked, which reads the
@@ -716,8 +779,26 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
         is_leader ==> old(core).is_leader_,
         // the gate (F5): the configuration contains this server
         old(core).config_members_@.contains(old(core).site_id_),
-    ensures final(core).inv(),
+    ensures
+        final(core).inv(),
+        // [M12] PHASE 0's commit advance (LAdvanceCommitIndex, when the
+        // commit index moved), then each follower's AppendEntries, one
+        // LSendAppendEntries segment per component (BR1), built from the
+        // leader's log (coupling::send_msg); a declined tick sends nothing
+        old(core).ginv() && old(core).gated_ ==> {
+            &&& final(core).ginv()
+            &&& final(core).g_log_@ == crate::coupling::tick_sends_log(
+                    (if final(core).commit_index_ != old(core).commit_index_ {
+                        crate::coupling::advance_log(old(core).g_log_@, final(core).commit_index_ as int)
+                    } else {
+                        old(core).g_log_@
+                    }),
+                    r.sends_@, final(core).log_view(), final(core).config_members_@,
+                    final(core).my_rank(), r.sends_@.len() as int)
+        },
 {
+    let ghost pre = *core;
+    let ghost on = pre.ginv() && pre.gated_;
     let mut tick: HeartbeatTick<C> = HeartbeatTick::new();
 
     // ---- PHASE 0 ----
@@ -753,6 +834,10 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
     tick.slot_count_ = core.pending_rpcs_.len();
     if outcome.restart() {
         tick.declined_ = true;
+        proof {
+            // [M12] nothing sent
+            assert(tick.sends_@ =~= Seq::<AppendSend<C>>::empty());
+        }
         return tick;
     }
     if outcome.commit_advanced() {
@@ -781,6 +866,13 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
         runtime_assert(core.round_.round_id() == u64::MAX);  // [move, M10]
     }
     tick.round_id_ = core.round_.round_id();
+    // [M12] the state the sends are built from: PHASE 0's
+    let ghost mid = *core;
+    proof {
+        if on {
+            assert(tick.sends_@ =~= Seq::<AppendSend<C>>::empty());
+        }
+    }
 
     // ---- PHASE 1's decisions ----
     //
@@ -797,6 +889,15 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
             ord <= n0,
             core.round_ == round0,
             core.authority_rounds_.spec_has_id(round0.spec_round_id()),
+            // [M12] the spec's state is PHASE 0's; the ghost log, PHASE 0's
+            // and then the sends so far
+            crate::coupling::spec_fields_same(core, &mid),
+            mid.inv(),
+            on ==> mid.ginv(),
+            on ==> mid.gated_,
+            on ==> core.ginv(),
+            on ==> core.g_log_@ == crate::coupling::tick_sends_log(mid.g_log_@, tick.sends_@,
+                mid.log_view(), mid.config_members_@, mid.my_rank(), tick.sends_@.len() as int),
         decreases n0 - ord,
     {
         let peer: u16 = core.peer_site_at(ord);
@@ -923,7 +1024,42 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
                 core.authority_rounds_.launch(core.round_.round_id(), peer);
             runtime_assert(launched);
         }
+        let ghost sv = send;  // [M12]
+        let ghost sends0 = tick.sends_@;  // [M12]
         tick.sends_.push(send);
+        proof {
+            if on {
+                // [M12] this send's components, from PHASE 0's log
+                let cfg = mid.config_members_@;
+                let log = mid.log_view();
+                let me = mid.my_rank();
+                let f = crate::coupling::rank(cfg, sv.site_id_);
+                let has_entry = sv.payload_ != AppendPayload::HEARTBEAT;
+                let k = crate::coupling::send_count(sv);
+                let lb = core.g_log_@;
+                crate::coupling::lemma_my_rank(&mid);
+                crate::coupling::lemma_rank_bounds(cfg, sv.site_id_);
+                mid.raft_log_.lemma_wf_bounds();
+                assert forall|j: int| 0 <= j < log.len()
+                    implies (#[trigger] log[j]).change == glr::protocol::Raft::types::LConfChange::NoChange by {
+                    assert(log[j] == crate::coupling::entry_view(mid.raft_log_.view()[j]));
+                }
+                if sv.prev_log_index_ > 0 {
+                    assert(mid.raft_log_.view()[sv.prev_log_index_ - 1].spec_term() >= 0);
+                    assert(log[sv.prev_log_index_ - 1] == crate::coupling::entry_view(mid.raft_log_.view()[sv.prev_log_index_ - 1]));
+                }
+                crate::coupling::lemma_send_segs(lb, mid.c_view(), log, me, f, sv.term_ as int,
+                    sv.prev_log_index_ as int, sv.prev_log_term_ as int, sv.commit_index_ as int,
+                    has_entry, k);
+                crate::coupling::lemma_tick_sends_push(mid.g_log_@, sends0, sv, log, cfg, me,
+                    sends0.len() as int);
+                let ghost before = *core;
+                core.g_log_@ = crate::coupling::send_segs(lb, log, me, f, sv.term_ as int,
+                    sv.prev_log_index_ as int, sv.prev_log_term_ as int, sv.commit_index_ as int,
+                    has_entry, k);
+                crate::coupling::lemma_same_fields_ginv(&before, core);
+            }
+        }
         ord += 1;
     }
     tick.has_authority_ =

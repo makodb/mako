@@ -431,8 +431,9 @@ impl<C: Clone> RaftCore<C> {
     }
 
     // [move, M1] The site id at an ordinal of the peer table.
-    pub fn peer_site_at(&self, ordinal: usize) -> u16
+    pub fn peer_site_at(&self, ordinal: usize) -> (r: u16)
         requires ordinal < self.peer_sites_@.len(),
+        ensures r == self.peer_sites_@[ordinal as int],  // [M12]
     {
         self.peer_sites_[ordinal]
     }
