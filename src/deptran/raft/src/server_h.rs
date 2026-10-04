@@ -2310,6 +2310,21 @@ impl RaftCore {
         }
     }
 
+    // [move, M3] PublishAppliedIndexLocked's decision: the applied index
+    // never moves backward; a caller that tries is a bug, so it is reported
+    // rather than obeyed. `published` is the shell's mirror. Returns whether
+    // the index was recorded. The caller holds mtx_.
+    pub fn on_applied(&mut self, index: u64, published: u64) -> bool {
+        if raft_server_log_index_above(published, index) {
+            rusty::raft_log_warn_3(
+                "[RAFT-APPLY] Site {} refusing to move applied index backward from {} to {}",
+                self.site_id_, published, index);
+            return false;
+        }
+        self.execute_index_ = index;
+        true
+    }
+
     // [move, M4] resetTimerLocked's state change. The clock read and the
     // timeout sample are parameters: the shell samples both where
     // resetTimerLocked did. Returns the previous heartbeat time, for the
@@ -3252,7 +3267,9 @@ pub struct RaftServerBase {
     pub heartbeat_interval_us_: u64,
     pub log_retention_window_: u64,
     pub leader_change_cb_: rusty::RaftLeaderChangeCb,
-    pub preferred_leader_site_id_: u16,
+    // The preferred leader, written without mtx_ by SetPreferredLeader;
+    // only the election timeout's choice reads it.
+    pub preferred_leader_site_id_: rusty::sync::atomic::AtomicU64,
     pub startup_timestamp_: u64,
     // The replica set for this partition, sorted and duplicate-free. It was
     pub apply_thread_: rusty::RaftStdThread,
@@ -3375,7 +3392,8 @@ impl RaftServerBase {
             heartbeat_interval_us_: 0,
             log_retention_window_: 5000,
             leader_change_cb_: Default::default(),
-            preferred_leader_site_id_: RAFT_SERVER_INVALID_SITE_ID,
+            preferred_leader_site_id_: rusty::sync::atomic::AtomicU64::new(
+                RAFT_SERVER_INVALID_SITE_ID as u64),
             startup_timestamp_: 0,
             apply_thread_: Default::default(),
             apply_thread_running_: rusty::sync::atomic::AtomicBool::new(false),
@@ -3536,10 +3554,17 @@ impl RaftServerBase {
     // Role and progress accessors.
     // ------------------------------------------------------------------
 
+    // @safe - the preferred leader's site id (RAFT_SERVER_INVALID_SITE_ID
+    // when none is configured).
+    pub fn preferred_leader(&self) -> u16 {
+        self.preferred_leader_site_id_
+            .load(rusty::sync::atomic::Ordering::Acquire) as u16
+    }
+
     // @unsafe - CALLER MUST HOLD mtx_.
     pub fn AmIPreferredLeader(&self) -> bool {
         raft_server_site_is_preferred_leader(
-            self.site_id_, self.preferred_leader_site_id_)
+            self.site_id_, self.preferred_leader())
     }
 
     // @safe - acquire load pairing with PublishAppliedIndex.
@@ -3606,15 +3631,11 @@ impl RaftServerBase {
     // caller that tries is a bug, so it is reported rather than obeyed.
     pub fn PublishAppliedIndexLocked(&mut self, index: u64) {
         let published: u64 = self.GetAppliedIndex();
-        if raft_server_log_index_above(published, index) {
-            rusty::raft_log_warn_3(
-                "[RAFT-APPLY] Site {} refusing to move applied index backward from {} to {}",
-                self.site_id_, published, index);
-            return;
+        // [move, M3] the decision is the core's; the mirror is the shell's
+        if self.core.on_applied(index, published) {
+            self.appliedIndexForWait_
+                .store(index, rusty::sync::atomic::Ordering::Release);
         }
-        self.core.execute_index_ = index;
-        self.appliedIndexForWait_
-            .store(index, rusty::sync::atomic::Ordering::Release);
     }
 
     // @unsafe - takes mtx_.
@@ -3726,7 +3747,7 @@ impl RaftServerBase {
         // the predicate is one comparison and is spelled out rather than
         // bridged.
         let preferred_leader_configured: bool =
-            self.preferred_leader_site_id_ != RAFT_SERVER_INVALID_SITE_ID;
+            self.preferred_leader() != RAFT_SERVER_INVALID_SITE_ID;
 
         if !preferred_leader_configured {
             // Traditional Raft when no preferred leader is configured.
@@ -6005,11 +6026,13 @@ impl RaftSpecific for RaftServerBase {
         self.leader_hint_mirror_.load(rusty::sync::atomic::Ordering::Acquire) as u16
     }
 
-    // @unsafe - takes mtx_ and logs.
+    // @safe - writes a shell atomic and logs. [move, M1] Not mtx_ any more
+    // (plan Phase 4): only the election timeout's choice reads it, and
+    // nothing in the core does.
     fn SetPreferredLeader(&mut self, site_id: u16) {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
-        let old_preferred: u16 = self.preferred_leader_site_id_;
-        self.preferred_leader_site_id_ = site_id;
+        let old_preferred: u16 = self.preferred_leader();
+        self.preferred_leader_site_id_
+            .store(site_id as u64, rusty::sync::atomic::Ordering::Release);
         if old_preferred != site_id {
             rusty::raft_log_info_2(
                 "[LEADERSHIP-TRANSFER] Site {}: Preferred leader set to {}",
