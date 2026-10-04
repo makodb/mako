@@ -91,3 +91,22 @@ unless stated).
 | `25aacb728` | `src/server_h.rs:1695` (`VoteOutcome`, `VoteSet`, `CampaignStart`), `:2103` (`start_election`), `:2170` (`election_settle`), `:5363` (`RequestVoteImpl`), `:6228` (`raft_election_tick`) | M5, M4, F1 | the campaign as two core calls; the tally counted by the core from the replies each lane's wait gathered (F1 now on every lane); the election gather a core function | Tier 1 |
 | | `rt/src/transport.rs:614`, `rt/src/seam.rs:309`; `commo.h:66`, `commo.cc` (BroadcastVote), `server_seam_cpp.cc:159` | M5 | each lane records every vote reply (voter, vote, term) and exposes it through four seam kernels replacing `raft_vote_quorum_snapshot` | Tier 1, raft-rt tests |
 
+
+## Phase 4 (serialization and mirrors; F8)
+
+Line numbers are each commit's own (`src/server_h.rs`).
+
+| Commit | File:line (after) | Kind | What | Evidence |
+|---|---|---|---|---|
+| `c62fc2519` | `:3294` (`commit_index_mirror_`, `is_leader_mirror_`, `leader_hint_mirror_`, `term_mirror_`), `:3904` (`publish_mirrors`), `:3819` (its call at the end of `run_locked_actions`), `:4064` (after snapshot recovery), `:6255` (after the follower's InstallSnapshot) | F8 | the four mirrors, published under `mtx_` at the end of every critical section that runs a core decision and after the shell's own writes of those fields | Tier 1 ×2 |
+| | `:5993` (`IsLeader`), `:6002` (`GetLeaderHint`), `:6050` (`CommitIndex`) | F8 | read the mirrors with no `mtx_`; `CommitIndex`'s unlocked read of the core field (B2) is gone | Tier 1 ×2 |
+| `366b25935` | `:2313` (`RaftCore::on_applied`), `:3634` (`PublishAppliedIndexLocked`) | M3 | the applied index's no-going-back decision in the core; `appliedIndexForWait_` stays the shell's mirror | Tier 1 ×2 |
+| | `:3270` (`preferred_leader_site_id_` an `AtomicU64`), `:3557` (`preferred_leader`), `:3567`, `:3750`, `:6029` (`SetPreferredLeader`) | M1 | the preferred leader a shell atomic written with no `mtx_`; its readers go through `preferred_leader()` | Tier 1 ×2 |
+| `22a54332c` | `:3319` (`verified_gates_`), `:4118` (set at setup), `:3683` (`CompactLog`), `:5236` (`MaybeCreateSnapshot`) | F5 | under `MAKO_RAFT_VERIFIED_GATES=1` the two entry points that could shorten the log return at once | Tier 1 ×2 |
+
+Plan deviation: `with_core` as the compiler-enforced only accessor is not
+done here. It needs `RaftCore` in a module of its own (a C++20 module graph
+may not be cyclic, so the shell cannot import a wrapper that imports the
+core), which is Phase 6's crate split. `scripts/verus/core_access_census.py`
+lists the shell functions that still name core fields, as Phase 6's work
+list.

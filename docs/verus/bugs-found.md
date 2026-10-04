@@ -324,3 +324,26 @@ reading before any cpp build.
 parameter (Phase 2). A transpiler limitation, not Mako's; new code for the
 transpiled crate avoids shadowing.
 
+
+## B14. The heartbeat interval is a plain field written while the loops read it
+
+**Where.** `src/server_h.rs`, `RaftServerBase::heartbeat_interval_us_` and
+`SetHeartbeatInterval` (`:3609` at Phase 4's tip); readers `HeartbeatWait`
+(`:5192`) and the election timeout's window (`:3710`), on poll threads.
+
+**What is wrong.** `SetHeartbeatInterval` writes the field with no lock and
+no atomic. Production writes it only before the loops start
+(`ConstructRuntime`, the `MAKO_RAFT_HEARTBEAT_INTERVAL_US` override in
+`SetupInternal`), but lab case 67 ("heartbeat interval configurable",
+`src/lab_snapshot_cases.rs:866-886`) calls the setter on running servers, so
+the lab has a data race: undefined behaviour in both Rust's and C++'s memory
+models, a stale or torn read in practice at worst.
+
+**How found.** Phase 4's TSan lab build (cpp lane, `$RESULTS/p4/tsan/`):
+three reports, all this field (the heartbeat loop on two servers, the
+election timer on one), and nothing else.
+
+**Fate.** Recorded at Phase 4. Proposed fix: the field becomes an atomic
+read and written relaxed (it is a timing hint; a relaxed u64 load is a plain
+`mov` on x86-64). Not landed: it is outside A.2's numbered fixes, so it waits
+for the user (plan 0.7 point 3).
