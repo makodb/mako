@@ -115,6 +115,24 @@ impl<C> RaftCore<C> {
         &&& sites_sorted(self.config_members_@)
         &&& self.authority_rounds_.wf()
         &&& self.round_.wf()
+        // the peer table is the configuration without this server
+        &&& self.peer_sites_@.len()
+                + (if self.config_members_@.contains(self.site_id_) { 1int } else { 0int })
+                == self.config_members_@.len()
+        // an opened round admitted exactly the configuration
+        &&& (self.round_.spec_nservers() == 0 || {
+            &&& self.round_.spec_nservers() == self.config_members_@.len()
+            &&& forall|x: u16| self.round_.spec_is_member(x) == self.config_members_@.contains(x)
+        })
+        // round ids are fresh within a leadership epoch
+        &&& (self.heartbeat_round_ == u64::MAX
+            || self.pending_leader_term_ != Some(self.current_term_)
+            || self.authority_rounds_.spec_ids_below(self.heartbeat_round_))
+        // a leader runs no campaign; an epoch's term never passes the
+        // current term, and a campaign's is strictly above it
+        &&& (self.is_leader_ ==> !self.election_in_progress_)
+        &&& (self.pending_leader_term_ matches Some(t) ==> t <= self.current_term_)
+        &&& (self.election_in_progress_ ==> (self.pending_leader_term_ matches Some(t) ==> t < self.current_term_))
     }
 }
 
@@ -183,6 +201,14 @@ impl<C: Clone> RaftCore<C> {
             final(self).current_term_ == old(self).current_term_,
             final(self).commit_index_ == old(self).commit_index_,
             final(self).snapidx_ == old(self).snapidx_,
+            final(self).election_in_progress_ == old(self).election_in_progress_,
+            final(self).pending_leader_term_ == old(self).pending_leader_term_,
+            final(self).config_members_ == old(self).config_members_,
+            final(self).site_id_ == old(self).site_id_,
+            final(self).round_ == old(self).round_,
+            final(self).is_leader_ == old(self).is_leader_,
+            final(self).heartbeat_round_ == old(self).heartbeat_round_,
+            final(self).authority_rounds_ == old(self).authority_rounds_,
     {
         self.peer_sites_.clear();
         let mut self_is_a_member: bool = false;
@@ -731,13 +757,24 @@ impl<C: Clone> RaftCore<C> {
     // the shell's stop_ and `failover` its failover_; the caller holds mtx_.
     pub fn set_is_leader(&mut self, is_leader: bool, stopped: bool,
                          failover: bool, out: &mut CoreOutput)
-        requires old(self).inv(),
+        requires
+            old(self).inv(),
+            // becoming leader ends the campaign first, in a new epoch
+            is_leader ==> !old(self).election_in_progress_,
+            is_leader ==> old(self).pending_leader_term_ != Some(old(self).current_term_),
         ensures
             final(self).inv(),
             final(self).raft_log_ == old(self).raft_log_,
             final(self).current_term_ == old(self).current_term_,
             final(self).commit_index_ == old(self).commit_index_,
             final(self).snapidx_ == old(self).snapidx_,
+            final(self).election_in_progress_ == old(self).election_in_progress_,
+            final(self).pending_leader_term_ == old(self).pending_leader_term_,
+            final(self).config_members_ == old(self).config_members_,
+            final(self).site_id_ == old(self).site_id_,
+            final(self).round_ == old(self).round_,
+            !is_leader ==> final(self).authority_rounds_ == old(self).authority_rounds_,
+            !is_leader ==> final(self).heartbeat_round_ == old(self).heartbeat_round_,
     {
         let prev_is_leader: bool = self.is_leader_;
         // raft_log_set_is_leader_entry's term, which it read first.
@@ -782,6 +819,13 @@ impl<C: Clone> RaftCore<C> {
                     self.current_term_ == old(self).current_term_,
                     self.commit_index_ == old(self).commit_index_,
                     self.snapidx_ == old(self).snapidx_,
+                    self.election_in_progress_ == old(self).election_in_progress_,
+                    self.pending_leader_term_ == old(self).pending_leader_term_,
+                    self.config_members_ == old(self).config_members_,
+                    self.site_id_ == old(self).site_id_,
+                    self.round_ == old(self).round_,
+                    self.is_leader_ == old(self).is_leader_,
+                    self.heartbeat_round_ == 0,
                 decreases peers - ord,
             {
                 let site: u16 = self.peer_site_at(ord);
@@ -869,6 +913,11 @@ impl<C: Clone> RaftCore<C> {
             final(self).current_term_ == old(self).current_term_,
             final(self).commit_index_ == old(self).commit_index_,
             final(self).snapidx_ == old(self).snapidx_,
+            final(self).pending_leader_term_ == old(self).pending_leader_term_,
+            final(self).config_members_ == old(self).config_members_,
+            final(self).site_id_ == old(self).site_id_,
+            final(self).round_ == old(self).round_,
+            !final(self).election_in_progress_,
     {
         out.log(RAFT_LOG_INFO,
             "[SPEC-RAFT] Site {}: Stepping down as leader (term={})",
