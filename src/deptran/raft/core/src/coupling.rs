@@ -2214,4 +2214,158 @@ pub proof fn lemma_reply_stutter<C>(pre: &RaftCore<C>, post: &RaftCore<C>, accep
     }
 }
 
+// ===========================================================================
+// The leader's commit advance (raft_commit_advance; PHASE 0, and PHASE 3
+// under bugs-found B17's premise): LAdvanceCommitIndex, spontaneous
+// ===========================================================================
+
+// The ordinals in [0, k) whose match reaches v.
+pub open spec fn ge_ords(s: Seq<u64>, v: u64, k: int) -> Set<int>
+    decreases k,
+{
+    if k <= 0 {
+        Set::<int>::empty()
+    } else if s[k - 1] >= v {
+        ge_ords(s, v, k - 1).insert(k - 1)
+    } else {
+        ge_ords(s, v, k - 1)
+    }
+}
+
+pub proof fn lemma_ge_ords(s: Seq<u64>, v: u64, k: int)
+    requires 0 <= k <= s.len(),
+    ensures
+        ge_ords(s, v, k).len() == count_ge(s, v, k),
+        forall|o: int| #[trigger] ge_ords(s, v, k).contains(o) <==> (0 <= o < k && s[o] >= v),
+    decreases k,
+{
+    if k > 0 {
+        lemma_ge_ords(s, v, k - 1);
+    }
+}
+
+// The exec's commit quorum is the spec's: the followers whose match reaches
+// idx (count_ge of them), at their ranks, with this server, are a majority
+// of the configuration (V2: the spec's match is at least the exec's).
+pub proof fn lemma_commit_quorum<C>(core: &RaftCore<C>, idx: u64)
+    requires
+        core.inv(),
+        core.ginv(),
+        core.gated_,
+        core.is_leader_,
+        idx >= 1,
+        count_ge(core.peers_.spec_matches(), idx, core.peers_.spec_len())
+            >= core.peers_.spec_len() - (core.config_members_@.len() - 1) / 2,
+    ensures commit_quorum_ok(core.state_view(), core.c_view(), idx as int),
+{
+    let cfg = core.config_members_@;
+    let n = core.peers_.spec_len();
+    let nn = cfg.len() as int;
+    let s = core.state_view();
+    let c = core.c_view();
+    let ms = core.peers_.spec_matches();
+    core.peers_.lemma_matches();
+    lemma_sorted_len(cfg);
+    lemma_my_rank(core);
+    assert(n == nn - 1);
+    lemma_ge_ords(ms, idx, n);
+    let os = ge_ords(ms, idx, n);
+    let f = |o: int| rank(cfg, core.peer_sites_@[o]);
+    let rs = os.map(f);
+    broadcast use Set::lemma_map_contains;
+    assert(os.injective_on(f)) by {
+        assert forall|a: int, b: int| os.contains(a) && os.contains(b) && #[trigger] f(a) == #[trigger] f(b)
+            implies a == b by {
+            if a != b {
+                lemma_peer_ranks_differ(core, a, b);
+            }
+        }
+    }
+    vstd::set_lib::lemma_map_size(os, rs, f);
+    let me = core.my_rank();
+    assert(!rs.contains(me)) by {
+        if rs.contains(me) {
+            let o = choose|o: int| os.contains(o) && me == f(o);
+            lemma_rank_bounds(cfg, core.peer_sites_@[o]);
+            lemma_rank_bounds(cfg, core.site_id_);
+        }
+    }
+    let q = rs.insert(me);
+    let pred = |v: int| v == c.my_id
+        || (s.match_index.contains_key(v as u64) && s.match_index[v as u64] as int >= idx as int);
+    let rep = s.config.filter(pred);
+    broadcast use vstd::set::lemma_set_filter;
+    assert(q.subset_of(rep)) by {
+        assert forall|r: int| q.contains(r) implies rep.contains(r) by {
+            if r != me {
+                let o = choose|o: int| os.contains(o) && r == f(o);
+                lemma_rank_bounds(cfg, core.peer_sites_@[o]);
+                assert(ms[o] == core.peers_.spec_match(o));
+                assert(core.peers_.spec_match(o) as int <= match_of(core.g_match_@, r));
+                assert((r as u64) as int == r);
+            }
+        }
+    }
+    vstd::set_lib::lemma_len_subset(q, rep);
+    vstd::set_lib::lemma_int_range(0, nn);
+    assert(q.len() == count_ge(ms, idx, n) + 1);
+    assert(replicator_count(s, c, idx as int) == rep.len());
+}
+
+pub open spec fn advance_log(l: Seq<Entry>, idx: int) -> Seq<Entry> {
+    l.push(Entry::Tick)
+        .push(Entry::Set(LogField::CommitIndex, LogValue::VInt(idx)))
+        .push(Entry::Close(ActionLabel::AdvanceCommitIndex { new_commit_index: idx }))
+}
+
+pub proof fn lemma_advance_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, idx: u64)
+    requires
+        pre.inv(),
+        pre.ginv(),
+        pre.gated_,
+        pre.is_leader_,
+        idx > pre.commit_index_,
+        idx as int <= pre.raft_log_.spec_last_index(),
+        pre.raft_log_.view()[idx - 1].spec_term() as u64 == pre.current_term_,
+        count_ge(pre.peers_.spec_matches(), idx, pre.peers_.spec_len())
+            >= pre.peers_.spec_len() - (pre.config_members_@.len() - 1) / 2,
+        // only the commit index moves
+        post.commit_index_ == idx,
+        post.current_term_ == pre.current_term_,
+        post.vote_for_ == pre.vote_for_,
+        post.is_leader_ == pre.is_leader_,
+        post.election_in_progress_ == pre.election_in_progress_,
+        post.election_term_ == pre.election_term_,
+        post.raft_log_ == pre.raft_log_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.snapterm_ == pre.snapterm_,
+        post.peers_ == pre.peers_,
+        post.peer_sites_ == pre.peer_sites_,
+        post.g_votes_ == pre.g_votes_,
+        post.g_match_ == pre.g_match_,
+        post.g_next_ == pre.g_next_,
+        post.g_log_@ == advance_log(pre.g_log_@, idx as int),
+    ensures post.ginv(),
+{
+    let c = pre.c_view();
+    let l0 = pre.g_log_@;
+    let s0 = replay(l0);
+    pre.raft_log_.lemma_wf_bounds();
+    lemma_commit_quorum(pre, idx);
+    // the entry is of the current term (terms are non-negative)
+    assert(pre.raft_log_.view()[idx - 1].spec_term() >= 0);
+    assert(s0.log[idx - 1] == entry_view(pre.raft_log_.view()[idx - 1]));
+    lemma_g_open(l0, Entry::Tick, c);
+    let l1 = l0.push(Entry::Tick);
+    lemma_g_set(l1, LogField::CommitIndex, LogValue::VInt(idx as int), c);
+    let l2 = l1.push(Entry::Set(LogField::CommitIndex, LogValue::VInt(idx as int)));
+    assert(LAdvanceCommitIndex(s0, replay(l2), c, idx as int, seg_sends(l2)));
+    lemma_g_close(l2, ActionLabel::AdvanceCommitIndex { new_commit_index: idx as int }, 0, c);
+    assert(post.g_log_@ =~= l2.push(Entry::Close(ActionLabel::AdvanceCommitIndex { new_commit_index: idx as int })));
+    assert(post.c_view() == c);
+    assert(post.log_view() == pre.log_view());
+    assert(post.state_view() == replay(l2));
+}
+
 } // verus!

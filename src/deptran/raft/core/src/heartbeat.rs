@@ -32,7 +32,18 @@ pub struct CommitAdvance {
 }
 
 impl CommitAdvance {
-    pub fn advanced(&self) -> bool {
+    // [M12] Whether it advanced, and to where (ghost).
+    pub closed spec fn spec_advanced(&self) -> bool {
+        self.advanced_
+    }
+
+    pub closed spec fn spec_to(&self) -> u64 {
+        self.to_
+    }
+
+    pub fn advanced(&self) -> (r: bool)
+        ensures r == self.spec_advanced(),  // [M12]
+    {
         self.advanced_
     }
 
@@ -40,7 +51,9 @@ impl CommitAdvance {
         self.from_
     }
 
-    pub fn to_index(&self) -> u64 {
+    pub fn to_index(&self) -> (r: u64)
+        ensures r == self.spec_to(),  // [M12]
+    {
         self.to_
     }
 }
@@ -59,9 +72,27 @@ pub fn raft_commit_advance<C: Clone>(
         old(consensus).config_members_@.contains(old(consensus).site_id_),
     ensures
         final(consensus).inv(),
-        // only the commit index moves
-        *final(consensus) == (RaftCore { commit_index_: final(consensus).commit_index_, ..*old(consensus) }),
+        // only the commit index moves (and, Verus only, the ghost log)
+        *final(consensus) == (RaftCore {
+            commit_index_: final(consensus).commit_index_,
+            g_log_: final(consensus).g_log_,
+            ..*old(consensus)
+        }),
+        // [M12] an advance sets the commit index to its target
+        r.spec_advanced() ==> final(consensus).commit_index_ == r.spec_to(),
+        !r.spec_advanced() ==> final(consensus).commit_index_ == old(consensus).commit_index_,
+        // [M12] a leader's advance is LAdvanceCommitIndex; no advance is
+        // unseen by the spec
+        old(consensus).ginv() && old(consensus).gated_ && old(consensus).is_leader_ ==> {
+            &&& final(consensus).ginv()
+            &&& final(consensus).g_log_@ == (if r.spec_advanced() {
+                    crate::coupling::advance_log(old(consensus).g_log_@, r.spec_to() as int)
+                } else {
+                    old(consensus).g_log_@
+                })
+        },
 {
+    let ghost pre = *consensus;
     // nservers is the value latched in PHASE 0. Reusing it in PHASE 3 is
     // sound only because current_config_ has exactly one write, during
     // Setup, and progress_ is never erased, so the size is invariant across
@@ -88,6 +119,15 @@ pub fn raft_commit_advance<C: Clone>(
     }
     let from = consensus.commit_index_;
     consensus.commit_index_ = candidate_index;
+    proof {
+        if pre.ginv() && pre.gated_ && pre.is_leader_ {
+            // [M12] the majority (with this server; nservers is the
+            // configuration's size, its round latched) and the gate's log
+            pre.raft_log_.lemma_wf_bounds();
+            consensus.g_log_@ = crate::coupling::advance_log(pre.g_log_@, candidate_index as int);
+            crate::coupling::lemma_advance_ginv(&pre, consensus, candidate_index);
+        }
+    }
     // [M0] The trace kit's stage-8 stamp (commit advanced) is the shell's
     // now: it stamps when it carries out the APPLY_RANGE this advance pushes.
     CommitAdvance { advanced_: true, from_: from, to_: candidate_index }
@@ -121,7 +161,14 @@ impl Phase0Outcome {
         self.restart_
     }
 
-    pub fn commit_advanced(&self) -> bool {
+    // [M12] Whether the commit advanced (ghost).
+    pub closed spec fn spec_commit_advanced(&self) -> bool {
+        self.commit_advanced_
+    }
+
+    pub fn commit_advanced(&self) -> (r: bool)
+        ensures r == self.spec_commit_advanced(),  // [M12]
+    {
         self.commit_advanced_
     }
 
@@ -183,6 +230,29 @@ pub fn heartbeat_phase0_locked<C: Clone>(
             &&& final(core).heartbeat_round_ == (if old(core).heartbeat_round_ == u64::MAX {
                     u64::MAX } else { (old(core).heartbeat_round_ + 1) as u64 })
         },
+        // [M12] the round state is unseen by the spec; the commit advance is
+        // LAdvanceCommitIndex (to the new commit index)
+        old(core).ginv() && old(core).gated_ ==> {
+            &&& final(core).ginv()
+            &&& final(core).g_log_@ == (if r.spec_commit_advanced() {
+                    crate::coupling::advance_log(old(core).g_log_@, final(core).commit_index_ as int)
+                } else {
+                    old(core).g_log_@
+                })
+        },
+        // [M12] what the spec sees moves only by the advance
+        final(core).raft_log_ == old(core).raft_log_,
+        final(core).vote_for_ == old(core).vote_for_,
+        final(core).election_in_progress_ == old(core).election_in_progress_,
+        final(core).election_term_ == old(core).election_term_,
+        final(core).peers_ == old(core).peers_,
+        final(core).peer_sites_ == old(core).peer_sites_,
+        final(core).snapterm_ == old(core).snapterm_,
+        final(core).gated_ == old(core).gated_,
+        final(core).g_votes_ == old(core).g_votes_,
+        final(core).g_match_ == old(core).g_match_,
+        final(core).g_next_ == old(core).g_next_,
+        !r.spec_commit_advanced() ==> final(core).commit_index_ == old(core).commit_index_,
 {
     if !is_leader {
         core.pending_rpcs_.abandon();
@@ -1432,8 +1502,15 @@ pub struct Phase3Outcome {
 }
 
 impl Phase3Outcome {
-    pub fn commit(&self) -> &CommitAdvance {
+    pub fn commit(&self) -> (r: &CommitAdvance)
+        ensures *r == self.spec_commit(),  // [M12]
+    {
         &self.commit_
+    }
+
+    // [M12] The commit advance (ghost).
+    pub closed spec fn spec_commit(&self) -> CommitAdvance {
+        self.commit_
     }
 
     // True when a read-index generation reached quorum this round, in which
@@ -1452,14 +1529,26 @@ pub fn heartbeat_phase3_locked<C: Clone>(
     nservers: usize,
     members: &[u16],
     is_leader: bool,
-) -> Phase3Outcome
+) -> (r: Phase3Outcome)
     requires
         old(core).inv(),
         nservers == old(core).round_.spec_nservers(),
         nservers > 0,
         // the gate (F5): the configuration contains this server
         old(core).config_members_@.contains(old(core).site_id_),
-    ensures final(core).inv(),
+    ensures
+        final(core).inv(),
+        // [M12] a leader's advance is LAdvanceCommitIndex (bugs-found B17:
+        // the advance does not check is_leader, so this needs the server to
+        // lead); the read-index settlement is unseen by the spec
+        old(core).ginv() && old(core).gated_ && old(core).is_leader_ ==> {
+            &&& final(core).ginv()
+            &&& final(core).g_log_@ == (if r.spec_commit().spec_advanced() {
+                    crate::coupling::advance_log(old(core).g_log_@, final(core).commit_index_ as int)
+                } else {
+                    old(core).g_log_@
+                })
+        },
 {
     let commit = raft_commit_advance(core, nservers);
     let outcome = core.authority_rounds_.settle(
@@ -1485,7 +1574,7 @@ pub fn heartbeat_phase3_locked<C: Clone>(
 // launched it and must never be relabelled as the current round. The commit
 // range is an APPLY_RANGE action. Returns whether the commit index advanced.
 pub fn heartbeat_round_end<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
-                           out: &mut CoreOutput) -> bool
+                           out: &mut CoreOutput) -> (r: bool)
     requires
         old(core).inv(),
         // the host contract: a round end follows a tick that opened the
@@ -1493,7 +1582,20 @@ pub fn heartbeat_round_end<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
         old(core).round_.spec_nservers() > 0,
         // the gate (F5): the configuration contains this server
         old(core).config_members_@.contains(old(core).site_id_),
-    ensures final(core).inv(),
+    ensures
+        final(core).inv(),
+        // [M12] the commit advance is LAdvanceCommitIndex, to the new commit
+        // index. The premise: is_leader is IsLeaderLocked, and the server
+        // leads (bugs-found B17: the shell checks leadership before taking
+        // mtx_, and the advance does not check it)
+        old(core).ginv() && old(core).gated_ && is_leader == old(core).is_leader_ && is_leader ==> {
+            &&& final(core).ginv()
+            &&& final(core).g_log_@ == (if r {
+                    crate::coupling::advance_log(old(core).g_log_@, final(core).commit_index_ as int)
+                } else {
+                    old(core).g_log_@
+                })
+        },
 {
     let members: Vec<u16> = core.config_members_.clone();
     let nservers: usize = core.round_.nservers();
