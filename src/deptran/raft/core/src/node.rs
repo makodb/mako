@@ -231,9 +231,16 @@ impl<C: Clone> RaftCore<C> {
         ensures
             final(self).inv(),
             final(self).site_id_ == site_id,
-            // [M12] nothing the spec sees moves (no membership yet)
-            old(self).ginv() ==> final(self).ginv(),
+            // [M12] nothing the spec sees moves (no membership yet, and no
+            // action taken: the role a vote would bind is Follower)
+            final(self).g_log_ == old(self).g_log_,
+            old(self).ginv() && old(self).g_log_@.len() == 0 ==> final(self).ginv(),
     {
+        proof {
+            if old(self).g_log_@.len() == 0 {
+                assert(old(self).g_log_@ =~= Seq::<glr::protocol::Raft::ghost_log::Entry>::empty());
+            }
+        }
         self.loc_id_ = loc_id;
         self.site_id_ = site_id;
         self.partition_id_ = partition_id;
@@ -258,9 +265,12 @@ impl<C: Clone> RaftCore<C> {
             final(self).config_members_@ == members@,
             final(self).site_id_ == old(self).site_id_,
             // [M12] the LoadConfig segment, on a core no action has touched
-            old(self).ginv() && old(self).g_log_@.len() == 0 ==> final(self).ginv(),
+            // (the host contract: no member is the sentinel site)
+            old(self).ginv() && old(self).g_log_@.len() == 0
+                && !members@.contains(RAFT_SERVER_INVALID_SITE_ID) ==> final(self).ginv(),
     {
-        let ghost on = self.ginv() && self.g_log_@.len() == 0;
+        let ghost on = self.ginv() && self.g_log_@.len() == 0
+            && !members@.contains(RAFT_SERVER_INVALID_SITE_ID);
         self.config_members_.clear();
         let mut i: usize = 0;
         while i < members.len()
@@ -346,6 +356,8 @@ impl<C: Clone> RaftCore<C> {
             final(self).g_next_ == old(self).g_next_,  // [M12]
             final(self).vote_for_ == old(self).vote_for_,
             final(self).election_term_ == old(self).election_term_,
+            final(self).snapterm_ == old(self).snapterm_,
+            final(self).gated_ == old(self).gated_,
     {
         self.peer_sites_.clear();
         let mut self_is_a_member: bool = false;
@@ -498,9 +510,14 @@ impl<C: Clone> RaftCore<C> {
     // [move, M1] RaftServerBase::ElectionLastLogTermLocked: the term of the
     // last log entry, or the snapshot boundary term when the log has been
     // compacted past it. The caller holds mtx_.
-    pub fn election_last_log_term(&self) -> i64
+    pub fn election_last_log_term(&self) -> (r: i64)
         requires self.inv(),
+        ensures
+            // [M12] under the gate: the last entry's term, or the boundary's
+            // when the log is empty
+            self.gated_ ==> r as int == crate::coupling::last_term_of(self),
     {
+        proof { self.raft_log_.lemma_wf_bounds(); }
         let last_index: u64 = self.raft_log_.last_index();
         runtime_assert(last_index >= self.snapidx_);  // [move, M10]
         if raft_server_election_last_log_uses_snapshot(
@@ -534,7 +551,38 @@ impl<C: Clone> RaftCore<C> {
             old(self).inv(),
             // the host contract: a term off the wire is below the ceiling
             (can_term as int) < raft_index_limit(),
-        ensures final(self).inv(),
+        ensures
+            final(self).inv(),
+            // [M12] a higher term first (the term, no vote, a follower with
+            // no campaign), then the vote; the answer is the term it ends
+            // at, and the decision
+            *final(reply_term) as int == final(self).current_term_ as int,
+            (*final(vote_granted) != 0) == vote,
+            raft_server_signed_term_is_newer(can_term, old(self).current_term_) ==> {
+                &&& final(self).current_term_ as int == can_term as int
+                &&& !final(self).is_leader_
+                &&& !final(self).election_in_progress_
+            },
+            !raft_server_signed_term_is_newer(can_term, old(self).current_term_) ==> {
+                &&& final(self).current_term_ == old(self).current_term_
+                &&& final(self).election_in_progress_ == old(self).election_in_progress_
+                &&& (vote ==> !final(self).is_leader_)
+                &&& (!vote ==> final(self).is_leader_ == old(self).is_leader_)
+            },
+            final(self).vote_for_ == (if vote { can_id }
+                else if raft_server_signed_term_is_newer(can_term, old(self).current_term_) { RAFT_SERVER_INVALID_SITE_ID }
+                else { old(self).vote_for_ }),
+            final(self).election_term_ == old(self).election_term_,
+            final(self).raft_log_ == old(self).raft_log_,
+            final(self).commit_index_ == old(self).commit_index_,
+            final(self).config_members_ == old(self).config_members_,
+            final(self).site_id_ == old(self).site_id_,
+            final(self).snapterm_ == old(self).snapterm_,
+            final(self).gated_ == old(self).gated_,
+            final(self).g_log_ == old(self).g_log_,
+            final(self).g_votes_ == old(self).g_votes_,
+            final(self).g_match_ == old(self).g_match_,
+            final(self).g_next_ == old(self).g_next_,
     {
         *vote_granted = vote as i8;
         *reply_term = self.current_term_ as i64;
@@ -944,6 +992,8 @@ impl<C: Clone> RaftCore<C> {
             is_leader && stopped ==> final(self).is_leader_ == old(self).is_leader_,
             !is_leader ==> final(self).peers_ == old(self).peers_,
             !is_leader ==> final(self).peer_sites_ == old(self).peer_sites_,
+            final(self).snapterm_ == old(self).snapterm_,
+            final(self).gated_ == old(self).gated_,
             final(self).g_log_ == old(self).g_log_,  // [M12]
             final(self).g_votes_ == old(self).g_votes_,  // [M12]
             final(self).g_match_ == old(self).g_match_,  // [M12]
@@ -1003,6 +1053,8 @@ impl<C: Clone> RaftCore<C> {
                     self.heartbeat_round_ == 0,
                     self.vote_for_ == old(self).vote_for_,
                     self.election_term_ == old(self).election_term_,
+                    self.snapterm_ == old(self).snapterm_,
+                    self.gated_ == old(self).gated_,
                     self.g_log_ == old(self).g_log_,  // [M12]
                     self.g_votes_ == old(self).g_votes_,  // [M12]
                     self.g_match_ == old(self).g_match_,  // [M12]
@@ -1107,6 +1159,8 @@ impl<C: Clone> RaftCore<C> {
             final(self).election_term_ == old(self).election_term_,
             final(self).peers_ == old(self).peers_,
             final(self).peer_sites_ == old(self).peer_sites_,
+            final(self).snapterm_ == old(self).snapterm_,
+            final(self).gated_ == old(self).gated_,
             final(self).g_log_ == old(self).g_log_,  // [M12]
             final(self).g_votes_ == old(self).g_votes_,  // [M12]
             final(self).g_match_ == old(self).g_match_,  // [M12]
@@ -1195,17 +1249,64 @@ pub fn raft_on_request_vote<C: Clone>(
         old(core).inv(),
         // the host contract: a term off the wire is below the ceiling
         (can_term as int) < raft_index_limit(),
-    ensures final(core).inv(),
+    ensures
+        final(core).inv(),
+        // [M12] the request's group (coupling::vote_group), for a request
+        // from another member: a higher term taken up steps down first; the
+        // answer is the group's one send, back to the candidate
+        old(core).ginv() && old(core).gated_ && old(core).config_members_@.contains(can_id)
+            && can_id != old(core).site_id_ ==> {
+            &&& final(core).ginv()
+            &&& final(core).g_log_@ == crate::coupling::vote_group(old(core).g_log_@,
+                    crate::coupling::rank(old(core).config_members_@, can_id),
+                    crate::coupling::request_vote_msg(old(core).config_members_@, can_id,
+                        can_term, lst_log_idx, lst_log_term),
+                    crate::coupling::vote_steps(stopped, candidate_is_current_voter, can_term,
+                        lst_log_term, old(core).current_term_),
+                    *final(vote_granted) != 0, *final(reply_term) as int, old(core).my_rank())
+        },
 {
+    let ghost pre = *core;
+    let ghost on = pre.ginv() && pre.gated_ && pre.config_members_@.contains(can_id)
+        && can_id != pre.site_id_;
+    let ghost src = crate::coupling::rank(pre.config_members_@, can_id);
+    let ghost msg = crate::coupling::request_vote_msg(pre.config_members_@, can_id, can_term,
+        lst_log_idx, lst_log_term);
     if stopped {
         *reply_term = core.current_term_ as i64;
         *vote_granted = 0;
+        proof {
+            if on {
+                let stepped = crate::coupling::vote_steps(stopped, candidate_is_current_voter,
+                    can_term, lst_log_term, pre.current_term_);
+                core.g_log_@ = crate::coupling::vote_group(pre.g_log_@, src, msg, stepped,
+                    *vote_granted != 0, *reply_term as int, pre.my_rank());
+                if stepped {
+                    core.g_votes_@ = Set::<int>::empty();
+                }
+                crate::coupling::lemma_vote_group(&pre, core, can_id, can_term, lst_log_idx,
+                    lst_log_term, stepped, *vote_granted != 0, *reply_term);
+            }
+        }
         return;
     }
 
     if can_term < 0 || lst_log_term < 0 || !candidate_is_current_voter {
         *reply_term = core.current_term_ as i64;
         *vote_granted = 0;
+        proof {
+            if on {
+                let stepped = crate::coupling::vote_steps(stopped, candidate_is_current_voter,
+                    can_term, lst_log_term, pre.current_term_);
+                core.g_log_@ = crate::coupling::vote_group(pre.g_log_@, src, msg, stepped,
+                    *vote_granted != 0, *reply_term as int, pre.my_rank());
+                if stepped {
+                    core.g_votes_@ = Set::<int>::empty();
+                }
+                crate::coupling::lemma_vote_group(&pre, core, can_id, can_term, lst_log_idx,
+                    lst_log_term, stepped, *vote_granted != 0, *reply_term);
+            }
+        }
         return;
     }
 
@@ -1227,6 +1328,19 @@ pub fn raft_on_request_vote<C: Clone>(
         core.do_vote(lst_log_idx, lst_log_term, can_id, can_term,
                      reply_term, vote_granted, false, stopped, failover,
                      election_debug, out);
+        proof {
+            if on {
+                let stepped = crate::coupling::vote_steps(stopped, candidate_is_current_voter,
+                    can_term, lst_log_term, pre.current_term_);
+                core.g_log_@ = crate::coupling::vote_group(pre.g_log_@, src, msg, stepped,
+                    *vote_granted != 0, *reply_term as int, pre.my_rank());
+                if stepped {
+                    core.g_votes_@ = Set::<int>::empty();
+                }
+                crate::coupling::lemma_vote_group(&pre, core, can_id, can_term, lst_log_idx,
+                    lst_log_term, stepped, *vote_granted != 0, *reply_term);
+            }
+        }
         return;
     }
 
@@ -1243,6 +1357,19 @@ pub fn raft_on_request_vote<C: Clone>(
         core.do_vote(lst_log_idx, lst_log_term, can_id, can_term,
                      reply_term, vote_granted, false, stopped, failover,
                      election_debug, out);
+        proof {
+            if on {
+                let stepped = crate::coupling::vote_steps(stopped, candidate_is_current_voter,
+                    can_term, lst_log_term, pre.current_term_);
+                core.g_log_@ = crate::coupling::vote_group(pre.g_log_@, src, msg, stepped,
+                    *vote_granted != 0, *reply_term as int, pre.my_rank());
+                if stepped {
+                    core.g_votes_@ = Set::<int>::empty();
+                }
+                crate::coupling::lemma_vote_group(&pre, core, can_id, can_term, lst_log_idx,
+                    lst_log_term, stepped, *vote_granted != 0, *reply_term);
+            }
+        }
         return;
     }
 
@@ -1264,6 +1391,19 @@ pub fn raft_on_request_vote<C: Clone>(
         core.do_vote(lst_log_idx, lst_log_term, can_id, can_term,
                      reply_term, vote_granted, true, stopped, failover,
                      election_debug, out);
+        proof {
+            if on {
+                let stepped = crate::coupling::vote_steps(stopped, candidate_is_current_voter,
+                    can_term, lst_log_term, pre.current_term_);
+                core.g_log_@ = crate::coupling::vote_group(pre.g_log_@, src, msg, stepped,
+                    *vote_granted != 0, *reply_term as int, pre.my_rank());
+                if stepped {
+                    core.g_votes_@ = Set::<int>::empty();
+                }
+                crate::coupling::lemma_vote_group(&pre, core, can_id, can_term, lst_log_idx,
+                    lst_log_term, stepped, *vote_granted != 0, *reply_term);
+            }
+        }
         return;
     }
 
@@ -1274,6 +1414,19 @@ pub fn raft_on_request_vote<C: Clone>(
     core.do_vote(lst_log_idx, lst_log_term, can_id, can_term,
                  reply_term, vote_granted, grant, stopped, failover,
                  election_debug, out);
+    proof {
+            if on {
+                let stepped = crate::coupling::vote_steps(stopped, candidate_is_current_voter,
+                    can_term, lst_log_term, pre.current_term_);
+                core.g_log_@ = crate::coupling::vote_group(pre.g_log_@, src, msg, stepped,
+                    *vote_granted != 0, *reply_term as int, pre.my_rank());
+                if stepped {
+                    core.g_votes_@ = Set::<int>::empty();
+                }
+                crate::coupling::lemma_vote_group(&pre, core, can_id, can_term, lst_log_idx,
+                    lst_log_term, stepped, *vote_granted != 0, *reply_term);
+            }
+        }
 }
 
 // ==========================================================================

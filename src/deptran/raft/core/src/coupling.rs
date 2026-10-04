@@ -128,17 +128,25 @@ pub proof fn lemma_g_send(l: Seq<Entry>, dst: int, m: LRaftMessage, c: LConstant
 // Close the open segment as one atomic action: the caller owes the action
 // (between the segment's start and now, with its sends), the label's binding
 // to the trigger, and the sends' routing (all to one admitted destination).
+//
+// A group may hold several segments (a StepDown before the message's own
+// action): the next one starts from the closed state, with the same trigger
+// and nothing sent.
 pub proof fn lemma_g_close(l: Seq<Entry>, label: ActionLabel, d: int, c: LConstants)
     requires
         log_ok(l, c),
         action_holds(label, seg_state(l), replay(l), c, seg_sends(l)),
         label_compatible(label, seg_trigger(l)),
-        seg_sends_to(l, d),
-        dst_ok(label, seg_trigger(l), d) || seg_sends(l) == Seq::<LRaftMessage>::empty(),
+        seg_sends(l) == Seq::<LRaftMessage>::empty()
+            || (seg_sends_to(l, d) && dst_ok(label, seg_trigger(l), d)),
     ensures
         log_ok(l.push(Entry::Close(label)), c),
         fully_closed(l.push(Entry::Close(label))),
         replay(l.push(Entry::Close(label))) == replay(l),
+        seg_trigger(l.push(Entry::Close(label))) == seg_trigger(l),
+        seg_state(l.push(Entry::Close(label))) == replay(l),
+        seg_sends(l.push(Entry::Close(label))) == Seq::<LRaftMessage>::empty(),
+        forall|d2: int| seg_sends_to(l.push(Entry::Close(label)), d2),
 {
     if seg_sends(l) == Seq::<LRaftMessage>::empty() {
         lemma_no_send_entries(l, last_boundary(l), l.len() as int);
@@ -146,6 +154,9 @@ pub proof fn lemma_g_close(l: Seq<Entry>, label: ActionLabel, d: int, c: LConsta
     assert(seg_dsts_ok(l, label));
     lemma_seg_close(l, label, c);
     lemma_routed_push_close(l, label);
+    let l2 = l.push(Entry::Close(label));
+    assert(last_boundary(l2) == l2.len());
+    assert(l2.take(l2.len() as int) =~= l2);
 }
 
 // ===========================================================================
@@ -254,11 +265,18 @@ impl<C> RaftCore<C> {
         }
     }
 
-    // What the ghost log certifies at every step boundary.
+    // What the ghost log certifies at every step boundary, and the facts
+    // the coupling keeps beside it: no snapshot boundary term (snapshots
+    // are off under the gate, and only they write it), no configured site
+    // is the "no vote" sentinel, and a leader or a candidate voted for
+    // itself.
     pub open spec fn ginv(&self) -> bool {
         &&& log_ok(self.g_log_@, self.c_view())
         &&& fully_closed(self.g_log_@)
         &&& replay(self.g_log_@) == self.state_view()
+        &&& self.snapterm_ == 0
+        &&& !self.config_members_@.contains(RAFT_SERVER_INVALID_SITE_ID)
+        &&& (!(self.role_view() is Follower) ==> self.vote_for_ == self.site_id_)
     }
 }
 
@@ -277,6 +295,7 @@ impl<C> RaftCore<C> {
         &&& self.g_match_@ == Map::<u64, u64>::empty()
         &&& self.g_next_@ == Map::<u64, u64>::empty()
         &&& self.config_members_@.len() == 0
+        &&& self.snapterm_ == 0
     }
 }
 
@@ -295,6 +314,7 @@ pub proof fn lemma_new_ginv<C>(core: &RaftCore<C>)
     assert(wf(l));
     assert(core.log_view() =~= Seq::<LLogEntry>::empty());
     assert(Set::<int>::range(0, core.n_view()) =~= Set::<int>::empty());
+    assert(!core.config_members_@.contains(RAFT_SERVER_INVALID_SITE_ID));
     assert(replay(l) == init_state());
     assert(core.state_view() == init_state());
 }
@@ -329,6 +349,9 @@ pub proof fn lemma_load_config<C>(pre: &RaftCore<C>, post: &RaftCore<C>)
         post.g_votes_ == pre.g_votes_,
         post.g_match_ == pre.g_match_,
         post.g_next_ == pre.g_next_,
+        post.snapterm_ == pre.snapterm_,
+        // the host contract: no configured site is the sentinel
+        !post.config_members_@.contains(RAFT_SERVER_INVALID_SITE_ID),
     ensures post.ginv(),
 {
     let c = post.c_view();
@@ -379,6 +402,7 @@ pub open spec fn view_frame<C>(pre: &RaftCore<C>, post: &RaftCore<C>) -> bool {
     &&& post.site_id_ == pre.site_id_
     &&& post.g_match_ == pre.g_match_
     &&& post.g_next_ == pre.g_next_
+    &&& post.snapterm_ == pre.snapterm_
 }
 
 // ===========================================================================
@@ -499,6 +523,7 @@ pub proof fn lemma_client_request_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>,
         post.g_votes_ == pre.g_votes_,
         post.g_match_ == pre.g_match_,
         post.g_next_ == pre.g_next_,
+        post.snapterm_ == pre.snapterm_,
         post.g_log_@ == client_request_log(pre.g_log_@, post.log_view(), value_view(e.spec_cmd())),
     ensures post.ginv(),
 {
@@ -521,6 +546,263 @@ pub proof fn lemma_client_request_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>,
     assert(post.g_log_@ =~= l2.push(Entry::Close(ActionLabel::ClientRequest { value: v })));
     assert(post.c_view() == c);
     assert(post.state_view() == LState { log: new_log, ..pre.state_view() });
+}
+
+// ===========================================================================
+// A higher term received (LStepDown): its own segment, first in the group
+// the message opened
+// ===========================================================================
+
+pub open spec fn step_down_seg(l: Seq<Entry>, new_term: int) -> Seq<Entry> {
+    l.push(Entry::Set(LogField::CurrentTerm, LogValue::VInt(new_term)))
+        .push(Entry::Set(LogField::Role, LogValue::VRole(LServerRole::Follower)))
+        .push(Entry::Set(LogField::HasVoted, LogValue::VBool(false)))
+        .push(Entry::Set(LogField::VotedFor, LogValue::VInt(0)))
+        .push(Entry::Set(LogField::VotesGranted, LogValue::VIntSet(Set::<int>::empty())))
+        .push(Entry::Close(ActionLabel::StepDown { new_term }))
+}
+
+pub open spec fn stepped_down(s: LState, new_term: int) -> LState {
+    LState {
+        current_term: new_term,
+        role: LServerRole::Follower,
+        has_voted: false,
+        voted_for: 0int,
+        votes_granted: Set::<int>::empty(),
+        ..s
+    }
+}
+
+// `l` is a group a message of term `new_term` opened, nothing written or
+// sent in it yet.
+pub proof fn lemma_step_down_seg(l: Seq<Entry>, new_term: int, c: LConstants)
+    requires
+        log_ok(l, c),
+        seg_state(l) == replay(l),
+        seg_sends(l) == Seq::<LRaftMessage>::empty(),
+        seg_trigger(l) matches Option::Some(Entry::Recv(_, m)) && msg_term(m) == new_term,
+        new_term > replay(l).current_term,
+        replay(l).pending_reads == Seq::<LReadReq>::empty(),
+        replay(l).served_ctxs == Set::<int>::empty(),
+    ensures
+        log_ok(step_down_seg(l, new_term), c),
+        fully_closed(step_down_seg(l, new_term)),
+        replay(step_down_seg(l, new_term)) == stepped_down(replay(l), new_term),
+        seg_trigger(step_down_seg(l, new_term)) == seg_trigger(l),
+        seg_state(step_down_seg(l, new_term)) == replay(step_down_seg(l, new_term)),
+        seg_sends(step_down_seg(l, new_term)) == Seq::<LRaftMessage>::empty(),
+        forall|d: int| seg_sends_to(step_down_seg(l, new_term), d),
+{
+    let s = replay(l);
+    let e1 = Entry::Set(LogField::CurrentTerm, LogValue::VInt(new_term));
+    let e2 = Entry::Set(LogField::Role, LogValue::VRole(LServerRole::Follower));
+    let e3 = Entry::Set(LogField::HasVoted, LogValue::VBool(false));
+    let e4 = Entry::Set(LogField::VotedFor, LogValue::VInt(0));
+    let e5 = Entry::Set(LogField::VotesGranted, LogValue::VIntSet(Set::<int>::empty()));
+    lemma_g_set(l, LogField::CurrentTerm, LogValue::VInt(new_term), c);
+    let l1 = l.push(e1);
+    lemma_g_set(l1, LogField::Role, LogValue::VRole(LServerRole::Follower), c);
+    let l2 = l1.push(e2);
+    lemma_g_set(l2, LogField::HasVoted, LogValue::VBool(false), c);
+    let l3 = l2.push(e3);
+    lemma_g_set(l3, LogField::VotedFor, LogValue::VInt(0), c);
+    let l4 = l3.push(e4);
+    lemma_g_set(l4, LogField::VotesGranted, LogValue::VIntSet(Set::<int>::empty()), c);
+    let l5 = l4.push(e5);
+    assert(replay(l5) == stepped_down(s, new_term));
+    assert(LStepDown(seg_state(l5), replay(l5), c, new_term, seg_sends(l5)));
+    lemma_g_close(l5, ActionLabel::StepDown { new_term }, 0, c);
+    assert(step_down_seg(l, new_term) =~= l5.push(Entry::Close(ActionLabel::StepDown { new_term })));
+}
+
+// ===========================================================================
+// An inbound RequestVote: StepDown when it carries a higher term and is
+// taken up, then GrantVote or RejectVote, all in the request's group
+// ===========================================================================
+
+// The request as the spec sees it: the candidate is its rank
+// (coupling-table §2).
+pub open spec fn request_vote_msg(cfg: Seq<u16>, can_id: u16, can_term: i64, lst_log_idx: u64,
+                                  lst_log_term: i64) -> LRaftMessage {
+    LRaftMessage::RequestVote {
+        term: can_term as int,
+        candidate: rank(cfg, can_id),
+        last_log_index: lst_log_idx as int,
+        last_log_term: lst_log_term as int,
+    }
+}
+
+pub open spec fn vote_label(m: LRaftMessage, granted: bool) -> ActionLabel {
+    if granted {
+        ActionLabel::GrantVote {
+            candidate_term: m->RequestVote_term,
+            candidate_last_log_term: m->RequestVote_last_log_term,
+            candidate_last_log_index: m->RequestVote_last_log_index,
+            candidate_id: m->RequestVote_candidate,
+        }
+    } else {
+        ActionLabel::RejectVote {
+            candidate_term: m->RequestVote_term,
+            candidate_last_log_term: m->RequestVote_last_log_term,
+            candidate_last_log_index: m->RequestVote_last_log_index,
+            candidate_id: m->RequestVote_candidate,
+        }
+    }
+}
+
+// The request's group: the Recv; the StepDown segment when `stepped`; the
+// vote recorded when `granted`; the answer, back to the candidate, the
+// vote segment's one send.
+pub open spec fn vote_group(l: Seq<Entry>, src: int, m: LRaftMessage, stepped: bool, granted: bool,
+                            reply_term: int, me: int) -> Seq<Entry> {
+    let l1 = l.push(Entry::Recv(src, m));
+    let l2 = if stepped { step_down_seg(l1, m->RequestVote_term) } else { l1 };
+    let l3 = if granted {
+        l2.push(Entry::Set(LogField::HasVoted, LogValue::VBool(true)))
+            .push(Entry::Set(LogField::VotedFor, LogValue::VInt(m->RequestVote_candidate)))
+    } else {
+        l2
+    };
+    l3.push(Entry::Send(src, LRaftMessage::VoteResponse { term: reply_term, granted, voter: me }))
+        .push(Entry::Close(vote_label(m, granted)))
+}
+
+// Whether the handler takes the request's higher term up: a request it
+// does not refuse as stopped, malformed or from a non-voter.
+pub open spec fn vote_steps(stopped: bool, voter_ok: bool, can_term: i64, lst_log_term: i64,
+                            cur: u64) -> bool {
+    !stopped && can_term >= 0 && lst_log_term >= 0 && voter_ok
+        && raft_server_signed_term_is_newer(can_term, cur)
+}
+
+// The term of the last entry, or the boundary's when the log is empty: what
+// election_last_log_term reads under the gate.
+pub open spec fn last_term_of<C>(core: &RaftCore<C>) -> int {
+    if core.raft_log_.view().len() == 0 {
+        core.snapterm_ as int
+    } else {
+        core.raft_log_.view().last().spec_term() as int
+    }
+}
+
+pub proof fn lemma_vote_group<C>(pre: &RaftCore<C>, post: &RaftCore<C>, can_id: u16, can_term: i64,
+                                 lst_log_idx: u64, lst_log_term: i64, stepped: bool, granted: bool,
+                                 reply_term: i64)
+    requires
+        pre.inv(),
+        pre.ginv(),
+        pre.gated_,
+        pre.config_members_@.contains(can_id),
+        can_id != pre.site_id_,
+        // a higher term taken up: the step down
+        stepped ==> {
+            &&& can_term as int > pre.current_term_ as int
+            &&& post.current_term_ as int == can_term as int
+            &&& !post.is_leader_
+            &&& !post.election_in_progress_
+        },
+        !stepped ==> post.current_term_ == pre.current_term_,
+        // the vote, granted as the handler's checks allow it
+        post.vote_for_ == (if granted { can_id } else if stepped { RAFT_SERVER_INVALID_SITE_ID } else { pre.vote_for_ }),
+        granted && !stepped ==> {
+            &&& can_term as int == pre.current_term_ as int
+            &&& (pre.vote_for_ == RAFT_SERVER_INVALID_SITE_ID || pre.vote_for_ == can_id)
+            &&& !post.is_leader_
+            &&& post.election_in_progress_ == pre.election_in_progress_
+        },
+        granted ==> {
+            ||| lst_log_term as int > last_term_of(pre)
+            ||| (lst_log_term as int == last_term_of(pre)
+                 && lst_log_idx as int >= pre.raft_log_.spec_last_index())
+        },
+        !granted && !stepped ==> {
+            &&& post.is_leader_ == pre.is_leader_
+            &&& post.election_in_progress_ == pre.election_in_progress_
+        },
+        // the answer: the term the handler ends at
+        reply_term as int == post.current_term_ as int,
+        // what the vote does not touch
+        post.election_term_ == pre.election_term_,
+        post.raft_log_ == pre.raft_log_,
+        post.commit_index_ == pre.commit_index_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.snapterm_ == pre.snapterm_,
+        post.g_votes_@ == (if stepped { Set::<int>::empty() } else { pre.g_votes_@ }),
+        post.g_match_ == pre.g_match_,
+        post.g_next_ == pre.g_next_,
+        post.g_log_@ == vote_group(pre.g_log_@, rank(pre.config_members_@, can_id),
+            request_vote_msg(pre.config_members_@, can_id, can_term, lst_log_idx, lst_log_term),
+            stepped, granted, reply_term as int, pre.my_rank()),
+    ensures post.ginv(),
+{
+    let c = pre.c_view();
+    let cfg = pre.config_members_@;
+    let src = rank(cfg, can_id);
+    let me = pre.my_rank();
+    let m = request_vote_msg(cfg, can_id, can_term, lst_log_idx, lst_log_term);
+    let l0 = pre.g_log_@;
+    let s0 = replay(l0);
+    // the identities: a member is not the sentinel
+    assert(pre.site_id_ != RAFT_SERVER_INVALID_SITE_ID);
+    assert(can_id != RAFT_SERVER_INVALID_SITE_ID);
+    // the log, as the spec counts it: base 1 under the gate
+    pre.raft_log_.lemma_wf_bounds();
+    assert(pre.log_view().len() == pre.raft_log_.spec_last_index());
+    lemma_g_open(l0, Entry::Recv(src, m), c);
+    let l1 = l0.push(Entry::Recv(src, m));
+    // the vote segment's start: after the step down, or the Recv itself
+    let l2 = if stepped { step_down_seg(l1, can_term as int) } else { l1 };
+    let s2 = if stepped { stepped_down(s0, can_term as int) } else { s0 };
+    if stepped {
+        lemma_step_down_seg(l1, can_term as int, c);
+    }
+    assert(log_ok(l2, c));
+    assert(replay(l2) == s2);
+    assert(seg_state(l2) == s2);
+    assert(seg_sends(l2) == Seq::<LRaftMessage>::empty());
+    assert(seg_trigger(l2) == Option::Some(Entry::Recv(src, m)));
+    assert(seg_sends_to(l2, src));
+    // s2 is a follower at the request's term when granting
+    if granted && !stepped {
+        assert(pre.vote_for_ != pre.site_id_);
+        assert(pre.role_view() is Follower);
+    }
+    let reply = LRaftMessage::VoteResponse { term: reply_term as int, granted, voter: me };
+    let label = vote_label(m, granted);
+    let l3 = if granted {
+        l2.push(Entry::Set(LogField::HasVoted, LogValue::VBool(true)))
+            .push(Entry::Set(LogField::VotedFor, LogValue::VInt(src)))
+    } else {
+        l2
+    };
+    if granted {
+        lemma_g_set(l2, LogField::HasVoted, LogValue::VBool(true), c);
+        let l2a = l2.push(Entry::Set(LogField::HasVoted, LogValue::VBool(true)));
+        lemma_g_set(l2a, LogField::VotedFor, LogValue::VInt(src), c);
+    }
+    let s3 = replay(l3);
+    assert(seg_state(l3) == s2);
+    assert(seg_sends(l3) == Seq::<LRaftMessage>::empty());
+    assert(seg_trigger(l3) == Option::Some(Entry::Recv(src, m)));
+    assert(seg_sends_to(l3, src));
+    lemma_g_send(l3, src, reply, c);
+    let l4 = l3.push(Entry::Send(src, reply));
+    assert(seg_sends(l4) =~= seq![reply]);
+    if granted {
+        assert(s3 == LState { has_voted: true, voted_for: src, ..s2 });
+        assert(LGrantVote(s2, s3, c, can_term as int, lst_log_term as int, lst_log_idx as int, src, seg_sends(l4)));
+        assert(candidate_log_ok(s2, lst_log_term as int, lst_log_idx as int));
+    } else {
+        assert(s3 == s2);
+        assert(LRejectVote(s2, s3, c, can_term as int, lst_log_term as int, lst_log_idx as int, src, seg_sends(l4)));
+    }
+    lemma_g_close(l4, label, src, c);
+    assert(post.g_log_@ =~= l4.push(Entry::Close(label)));
+    // the coupling
+    assert(post.c_view() == c);
+    assert(post.log_view() == pre.log_view());
+    assert(post.state_view() == s3);
 }
 
 } // verus!
