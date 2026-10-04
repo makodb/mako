@@ -98,7 +98,10 @@ the transaction-path caller in repo `src/mako/sto/Transaction.cc:810-821` is
 commented out. On x86-64 an aligned u64 load does not tear, so no wrong value
 has been observed.
 
-**Fate.** F8 (Phase 4): an atomic mirror written after each core call.
+**Fate.** Fixed by F8 (Phase 4): `CommitIndex()` reads `commit_index_mirror_`, an
+atomic the shell publishes (`publish_mirrors`) at the end of every critical
+section that runs a core decision, and after the shell's own writes
+(snapshot recovery and install).
 
 ## B3. Vote replies counted by number
 

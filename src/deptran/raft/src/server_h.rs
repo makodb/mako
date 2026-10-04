@@ -3291,6 +3291,14 @@ pub struct RaftServerBase {
     // stays C++.
     pub batch_buffer_: rusty::Vec<rusty::RaftTpcCommitPtr>,
     pub appliedIndexForWait_: rusty::sync::atomic::AtomicU64,
+    // [fix, F8] What other threads read without mtx_: published from the
+    // core at the end of every critical section that can change them
+    // (publish_mirrors). IsLeader, GetLeaderHint and CommitIndex read
+    // these; the term is published with them.
+    pub commit_index_mirror_: rusty::sync::atomic::AtomicU64,
+    pub is_leader_mirror_: rusty::sync::atomic::AtomicBool,
+    pub leader_hint_mirror_: rusty::sync::atomic::AtomicU64,
+    pub term_mirror_: rusty::sync::atomic::AtomicU64,
     // Was a function-static in EnqueueCommittedEntries. A DSL body has no
     // static local, and a per-server counter is the more honest shape: the
     // C++ one was shared across every RaftServer in a single-process test.
@@ -3379,6 +3387,11 @@ impl RaftServerBase {
             pending_apply_command_: Default::default(),
             batch_buffer_: rusty::Vec::new(),
             appliedIndexForWait_: rusty::sync::atomic::AtomicU64::new(0),
+            commit_index_mirror_: rusty::sync::atomic::AtomicU64::new(0),  // [fix, F8]
+            is_leader_mirror_: rusty::sync::atomic::AtomicBool::new(false),  // [fix, F8]
+            leader_hint_mirror_: rusty::sync::atomic::AtomicU64::new(
+                RAFT_SERVER_INVALID_SITE_ID as u64),  // [fix, F8]
+            term_mirror_: rusty::sync::atomic::AtomicU64::new(0),  // [fix, F8]
             enqueue_log_counter_: 0,
             n_prepare_: 0,
             n_accept_: 0,
@@ -3803,6 +3816,7 @@ impl RaftServerBase {
             }
             i += 1;
         }
+        self.publish_mirrors();  // [fix, F8]
     }
 
     // [fix, F6] What a critical section leaves for after mtx_ is released:
@@ -3885,6 +3899,27 @@ impl RaftServerBase {
                 };
             }
         }
+    }
+
+    // [fix, F8] CALLER MUST HOLD mtx_. Publishes the fields other threads
+    // read without the lock. Called at the end of run_locked_actions, which
+    // every critical section that runs a core decision ends with, and after
+    // the shell's own writes of these fields (snapshot install and
+    // recovery).
+    pub fn publish_mirrors(&self) {
+        self.commit_index_mirror_
+            .store(self.core.commit_index_, rusty::sync::atomic::Ordering::Release);
+        self.is_leader_mirror_
+            .store(self.core.is_leader_, rusty::sync::atomic::Ordering::Release);
+        let hint: u16 = if self.core.is_leader_ {
+            self.site_id_
+        } else {
+            self.core.current_leader_id_
+        };
+        self.leader_hint_mirror_
+            .store(hint as u64, rusty::sync::atomic::Ordering::Release);
+        self.term_mirror_
+            .store(self.core.current_term_, rusty::sync::atomic::Ordering::Release);
     }
 
     // @safe - stop_ as setIsLeader read it, for the core's `stopped`.
@@ -4025,6 +4060,11 @@ impl RaftServerBase {
                 self.site_id_);
             self.FailClosed();
             return false;
+        }
+        {
+            // [fix, F8] recovery may have restored the term and commit index
+            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            self.publish_mirrors();
         }
 
         let replicas: u64 = self.LoadCurrentConfig();
@@ -5950,22 +5990,19 @@ impl RaftSpecific for RaftServerBase {
         }
     }
 
-    // Acquiring entry point, for callers that do not already hold mtx_.
+    // For callers that do not hold mtx_. [fix, F8] It no longer takes it:
+    // the role is the mirror the last critical section published.
     fn IsLeader(&mut self) -> bool {
         if !self.looping_.load(rusty::sync::atomic::Ordering::Acquire) {
             return false;
         }
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
-        self.core.is_leader_
+        self.is_leader_mirror_.load(rusty::sync::atomic::Ordering::Acquire)
     }
 
-    // @unsafe - synchronizes with role/leader publication through mtx_.
+    // [fix, F8] Without mtx_: this server's id while it leads, otherwise the
+    // leader it last heard from, as the last critical section published it.
     fn GetLeaderHint(&mut self) -> u16 {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
-        if self.core.is_leader_ {
-            return self.site_id_;
-        }
-        self.core.current_leader_id_
+        self.leader_hint_mirror_.load(rusty::sync::atomic::Ordering::Acquire) as u16
     }
 
     // @unsafe - takes mtx_ and logs.
@@ -6010,8 +6047,10 @@ impl RaftSpecific for RaftServerBase {
     }
 
     // See the trait: this is the unlocked read get_outstanding_logs makes.
+    // [fix, F8] It reads the mirror, not the core's field, which another
+    // thread may be writing under mtx_ (bugs-found B2).
     fn CommitIndex(&self) -> u64 {
-        self.core.commit_index_
+        self.commit_index_mirror_.load(rusty::sync::atomic::Ordering::Acquire)
     }
 
     // @unsafe - CALLER MUST NOT HOLD mtx_. Appends one command locally and
@@ -6213,6 +6252,8 @@ impl RaftServerBase {
                     *term_out = 0;
                 }
             }
+            // [fix, F8] the install wrote the term, role and commit index
+            self.publish_mirrors();
         }
         // [fix, F6] The role change's log entry and callback, both locks
         // released.
