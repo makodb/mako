@@ -20,6 +20,16 @@ if ! out=$(python3 "$REPO_ROOT/scripts/verus/ledger_lint.py" 2>&1); then
   echo "core_check: ledger lint FAILED"; echo "$out" | tail -40; exit 1
 fi
 echo "core_check: $(echo "$out" | tail -1)"
+# From Phase 8 on the core changes only in ghost code (plan Phase 8's
+# diff-2 lint): against the commit recorded in ghost_only_base.txt (Phase
+# 6's last), every changed line of core/src must be ghost.
+BASE_FILE="$REPO_ROOT/scripts/verus/ghost_only_base.txt"
+if [ -s "$BASE_FILE" ]; then
+  if ! out=$(python3 "$REPO_ROOT/scripts/verus/ledger_lint.py" --ghost-only --base "$(cat "$BASE_FILE")" 2>&1); then
+    echo "core_check: ghost-only lint FAILED"; echo "$out" | tail -40; exit 1
+  fi
+  echo "core_check: $(echo "$out" | tail -1)"
+fi
 # the build fails on a stale correspondence doc (line counts of the shell)
 if ! python3 "$REPO_ROOT/scripts/gen_correspondence.py" --check; then
   echo "core_check: run scripts/gen_correspondence.py"; exit 1
