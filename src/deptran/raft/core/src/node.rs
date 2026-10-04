@@ -1186,10 +1186,21 @@ impl AppendReport {
 // first (decode_terms, which also validates the count), then each appended
 // entry (entry_at, one handle clone and the entry's cached facts, M6).
 pub trait InboundBatch<C> {
+    // Whether the RPC carries a payload at all (ghost). The shell builds the
+    // batch from the flag it also passes the core as `has_cmd`.
+    spec fn spec_has_payload(&self) -> bool;
+
     // Fills `terms` with one term per encoded entry -- its length IS the
     // decoded count -- and reports whether that count fits after
     // leader_prev_log_index and every term is a Raft term ([fix, F4]).
-    fn decode_terms(&self, leader_prev_log_index: u64, terms: &mut Vec<i64>) -> bool;
+    //
+    // The host contract (unverified: the shell implements this): no payload
+    // decodes to no terms, and a batch the decoder accepts ends below the
+    // index ceiling, which no leader's log reaches.
+    fn decode_terms(&self, leader_prev_log_index: u64, terms: &mut Vec<i64>) -> (r: bool)
+        ensures
+            !self.spec_has_payload() ==> final(terms)@.len() == 0,
+            r ==> leader_prev_log_index as int + final(terms)@.len() < raft_index_limit();
     // The entry at position k (0-based) of the payload decode_terms read.
     fn entry_at(&self, k: u64) -> RaftEntry<C>;
 }
@@ -1201,7 +1212,6 @@ pub trait InboundBatch<C> {
 // better Rust and it transpiles, but the emitter renders the binding with a
 // dot where the C++ needs an arrow, and an inferred binding COPIES the entry.
 #[allow(clippy::too_many_arguments, clippy::unnecessary_unwrap)]
-#[verifier::external_body]  // [Phase 6 WIP] proof pending
 pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     core: &mut RaftCore<C>,
     wire: &W,  // [move, M5] [move, M11]
@@ -1219,7 +1229,15 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     follower_last_log_index: &mut u64,
     failover: bool,  // [move, M5]
     out: &mut CoreOutput,  // [move, M3]
-) -> AppendReport {
+) -> AppendReport
+    requires
+        old(core).inv(),
+        // the host contract: a term off the wire is below the ceiling, and
+        // has_cmd is the flag the batch was built from
+        (leader_current_term as int) < raft_index_limit(),
+        has_cmd == wire.spec_has_payload(),
+    ensures final(core).inv(),
+{
     let mut report = AppendReport {
         accepted_: false,
         term_ok_: false,
@@ -1373,7 +1391,30 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     let mut truncate_suffix = false;
     let mut first_write_index: u64 = 0;
     let mut i: u64 = 0;
-    while i < decoded_count {
+    while i < decoded_count
+        invariant_except_break
+            !have_first_write,
+            !truncate_suffix,
+            // every slot passed so far is held, so the first write comes at
+            // most one past the old tail: the log never gets a hole
+            leader_prev_log_index as int + i <= old_last_log_index,
+        invariant
+            core.inv(),
+            decoded_count == decoded_terms@.len(),
+            leader_prev_log_index as int + decoded_count < raft_index_limit(),
+            old_last_log_index == core.raft_log_.spec_last_index(),
+            i <= decoded_count,
+        ensures
+            !have_first_write ==> leader_prev_log_index as int + decoded_count <= old_last_log_index,
+            !have_first_write ==> !truncate_suffix,
+            have_first_write ==> {
+                &&& leader_prev_log_index < first_write_index
+                &&& first_write_index as int <= leader_prev_log_index as int + decoded_count
+                &&& first_write_index as int <= old_last_log_index as int + 1
+                &&& truncate_suffix == (first_write_index <= old_last_log_index)
+            },
+        decreases decoded_count - i,
+    {
         let index = leader_prev_log_index + i + 1;
         // ONE lookup per entry, as the original had. The lookup itself is
         // Rust -- the log is a Rust type -- and only "does this slot hold a
@@ -1421,6 +1462,9 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         return report;
     }
 
+    // a write starts at or above the log's base: below it, the slot would be
+    // at or below the commit index, which the check above refused
+    assert(have_first_write ==> core.raft_log_.spec_base() <= first_write_index);
     if have_first_write {
         // Two operations that cannot leave a hole: drop the divergent suffix,
         // then re-append in index order. truncate_from is a no-op when
@@ -1428,11 +1472,25 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         // case. The append is Rust; only the per-entry reads of the wire
         // payload are kernels.
         core.raft_log_.truncate_from(first_write_index);
+        assert(core.raft_log_.spec_last_index() == first_write_index - 1);
         // [move, M1, M11] WireBatch::append_into's loop, in the core: each
         // entry from first_write_index on is materialized from the payload
         // (one handle clone) and appended, in index order.
         let mut k: u64 = 0;
-        while k < decoded_count {
+        while k < decoded_count
+            invariant
+                core.inv(),
+                decoded_count == decoded_terms@.len(),
+                leader_prev_log_index as int + decoded_count < raft_index_limit(),
+                leader_prev_log_index < first_write_index,
+                first_write_index as int <= leader_prev_log_index as int + decoded_count,
+                k <= decoded_count,
+                // the tail: the write point less one, until the batch passes it
+                core.raft_log_.spec_last_index() == (if leader_prev_log_index as int + k
+                    < first_write_index as int - 1 { first_write_index as int - 1 }
+                    else { leader_prev_log_index as int + k }),
+            decreases decoded_count - k,
+        {
             let index: u64 = raft_server_append_sent_end(leader_prev_log_index, k + 1);
             if index >= first_write_index {
                 let appended: u64 = core.raft_log_.append(wire.entry_at(k));
