@@ -215,7 +215,7 @@ impl<C: Clone> RaftCore<C> {
         self.partition_id_ = partition_id;
     }
 
-    // [move, M1] LoadCurrentConfig's write: the partition's members, as the
+    // [move, M1] (whole item) LoadCurrentConfig's write: the partition's members, as the
     // config kernel lists them. [fix, F5] The peer table is built in the
     // same call (next index 1, as HeartbeatPrologue builds it), so the core
     // is consistent from Setup on rather than from the heartbeat loop's
@@ -252,7 +252,7 @@ impl<C: Clone> RaftCore<C> {
         self.rebuild_peer_tables(1);
     }
 
-    // [fix, F5] verified_config_ok's decision, made by the core (the plan's
+    // [fix, F5] (whole item) verified_config_ok's decision, made by the core (the plan's
     // new_gated): snapshots off, a whole log (no snapshot boundary, base
     // 1), failover on, and a configuration containing this server. When it
     // holds the core remembers it, and its invariant carries the facts.
@@ -528,7 +528,7 @@ impl<C: Clone> RaftCore<C> {
             // Publish the newly observed term, never the pre-transition one.
             *reply_term = self.current_term_ as i64;
             self.log_term_change("vote request carried newer term", prev_term,
-                               self.current_term_, can_id, out);
+                               self.current_term_, can_id, out);  // [move, M7]
         }
 
         if vote {
@@ -614,7 +614,7 @@ impl<C: Clone> RaftCore<C> {
 
         let now_term: u64 = self.current_term_;
         self.log_term_change("starting election", prev_local_term, now_term,
-                             RAFT_SERVER_INVALID_SITE_ID, out);
+                             RAFT_SERVER_INVALID_SITE_ID, out);  // [move, M7]
         campaign.lst_idx_ = self.raft_log_.last_index();
         campaign.lst_term_ = self.election_last_log_term();
         campaign.started_ = true;
@@ -692,7 +692,7 @@ impl<C: Clone> RaftCore<C> {
 
             self.log_term_change("observed higher term from RequestVote replies",
                                previous_term, self.current_term_,
-                               RAFT_SERVER_INVALID_SITE_ID, out);
+                               RAFT_SERVER_INVALID_SITE_ID, out);  // [move, M7]
             return false;
         }
 

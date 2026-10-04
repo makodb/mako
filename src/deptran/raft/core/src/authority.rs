@@ -110,6 +110,7 @@ impl SiteSet {
         if self.contains(&site) {
             return false;
         }
+        // [move, M9] (whole item) the sorted position, then Vec::insert there
         let mut pos: usize = 0;
         while pos < self.sites_.len() && self.sites_[pos] < site
             invariant
@@ -121,7 +122,7 @@ impl SiteSet {
             pos += 1;
         }
         let ghost pre = self.sites_@;
-        self.sites_.insert(pos, site);
+        self.sites_.insert(pos, site);  // [move, M9]
         proof {
             let post = self.sites_@;
             assert(post == pre.insert(pos as int, site));
@@ -203,7 +204,7 @@ impl SiteSet {
             return false;
         }
         let ghost pre = self.sites_@;
-        self.sites_.remove(i);
+        self.sites_.remove(i);  // [move, M9]
         proof {
             let post = self.sites_@;
             assert(post == pre.remove(i as int));

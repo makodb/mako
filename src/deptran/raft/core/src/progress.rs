@@ -65,13 +65,13 @@ impl FollowerProgress {
         ensures r == BackoffKind::FAST ==> final(self).next_ < old(self).next_,
     {
         if follower_last_log_index > 0
-            && follower_last_log_index.wrapping_add(1) < self.next_
+            && follower_last_log_index.wrapping_add(1) < self.next_  // [move, M10]
         {
-            self.next_ = follower_last_log_index.wrapping_add(1);
+            self.next_ = follower_last_log_index.wrapping_add(1);  // [move, M10]
             return BackoffKind::FAST;
         }
         if follower_last_log_index > 0
-            && follower_last_log_index.wrapping_add(1) == self.next_
+            && follower_last_log_index.wrapping_add(1) == self.next_  // [move, M10]
             && self.next_ > 1
         {
             self.next_ -= 1;

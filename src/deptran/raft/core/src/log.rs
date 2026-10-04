@@ -30,7 +30,7 @@ pub open spec fn raft_index_limit() -> int {
 fn blocks_for(positions: u64) -> (r: u64)
     ensures r as int == (positions as int + 4095) / 4096,
 {
-    positions.div_ceil(4096)
+    positions.div_ceil(4096)  // [move, M11]
 }
 
 #[repr(C)]
@@ -329,7 +329,7 @@ impl<C> RaftLog<C> {
         if new_phys == 0 {
             self.blocks_.clear();
         } else {
-            let nblocks = blocks_for(new_phys) as usize;
+            let nblocks = blocks_for(new_phys) as usize;  // [move, M11]
             proof {
                 let nb = old(self).blocks_@.len() as int;
                 let np = new_phys as int;

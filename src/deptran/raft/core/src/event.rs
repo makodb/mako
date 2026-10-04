@@ -1,4 +1,7 @@
-// The core's one entry point: every decision the shell asks of the core is
+// [move, M5] (whole file) The core's one entry point; [fix, F9] its checked
+// form for messages from the network.
+//
+// Every decision the shell asks of the core is
 // an Event, handed to RaftCore::step under mtx_, and answered with a Reply
 // plus the actions and log records in the CoreOutput (plan §3.1-3.2, Phase
 // 6). step only dispatches: each arm is the core call the shell used to make

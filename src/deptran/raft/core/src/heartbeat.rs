@@ -435,7 +435,7 @@ impl<C> HeartbeatTick<C> {
 fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_id: u16,
                             prev_log_index: u64, batching: bool,
                             max_batch_entries: u64, max_batch_bytes: u64,
-                            send: &mut AppendSend<C>,
+                            send: &mut AppendSend<C>,  // [move, M7]
                             out: &mut CoreOutput) -> (r: bool)
     requires
         old(core).inv(),
@@ -830,7 +830,7 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
             if !skip_follower {
                 skip_follower = heartbeat_select_payload(
                     core, ord, peer, prev_log_index, batching,
-                    max_batch_entries, max_batch_bytes, &mut send, out);
+                    max_batch_entries, max_batch_bytes, &mut send, out);  // [move, M7]
             }
         }
         if skip_follower {
@@ -1162,8 +1162,8 @@ pub struct ReplyResult {
 // step-down.
 #[allow(clippy::too_many_arguments)]
 pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
-                          resp_status: bool, resp_term: u64,
-                          resp_last_log_index: u64, is_leader: bool,
+                          resp_status: bool, resp_term: u64,  // [move, M11]
+                          resp_last_log_index: u64, is_leader: bool,  // [move, M11]
                           stopped: bool, failover: bool,
                           out: &mut CoreOutput) -> ReplyResult
     requires
@@ -1187,15 +1187,15 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
     // response as three scalars -- the srpc object itself never crosses --
     // and returns what to do about it.
     let response_available: bool =
-        !(!resp_status && resp_term == 0 && resp_last_log_index == 0);
+        !(!resp_status && resp_term == 0 && resp_last_log_index == 0);  // [move, M11]
     let resp_ord: usize = core.peer_ordinal(follower_id);
     let log_last_index: u64 = core.raft_log_.last_index();
     let outcome: AppendReplyOutcome = heartbeat_apply_append_reply(
         core,
         &SentAppend::new(follower_id, sent_term, sent_round, sent_end_index,
                          resp_ord),
-        &AppendReply::new(response_available, resp_status, resp_term,
-                          resp_last_log_index),
+        &AppendReply::new(response_available, resp_status, resp_term,  // [move, M11]
+                          resp_last_log_index),  // [move, M11]
         log_last_index,
         is_leader);
 
@@ -1209,7 +1209,7 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
              (outcome.previous_term()).arg()]);
         let now_term: u64 = core.current_term_;
         core.log_term_change("AppendEntries response carried newer term",
-                             outcome.previous_term(), now_term, follower_id, out);
+                             outcome.previous_term(), now_term, follower_id, out);  // [move, M7]
         // The step-down's effects are actions ([move, M3]); the decision to
         // take it was made above.
         core.step_down(stopped, failover, out);

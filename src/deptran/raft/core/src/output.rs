@@ -128,26 +128,27 @@ pub struct CoreOutput {
     // [move, M7] The call's log lines, in push order, and the threshold a
     // line's level must not exceed to be kept (the shell's current level;
     // everything until the shell says otherwise).
-    logs_: Vec<CoreLog>,
-    log_level_: i32,
+    logs_: Vec<CoreLog>,  // [move, M7]
+    log_level_: i32,  // [move, M7]
 }
 
 impl CoreOutput {
     pub fn new() -> CoreOutput {
-        CoreOutput { actions_: Vec::new(), logs_: Vec::new(), log_level_: RAFT_LOG_DEBUG }
+        CoreOutput { actions_: Vec::new(), logs_: Vec::new(), log_level_: RAFT_LOG_DEBUG }  // [move, M7]
     }
 
-    // [move, M7] Lines above `level` are dropped when pushed.
+    // [move, M7] (whole item) Lines above `level` are dropped when pushed.
     pub fn set_log_level(&mut self, level: i32) {
         self.log_level_ = level;
     }
 
-    // [M0] The level lines are kept at, for the replay recorder (plan A.4).
+    // [move, M0] (whole item) The level lines are kept at, for the replay
+    // recorder (plan A.4).
     pub fn log_level(&self) -> i32 {
         self.log_level_
     }
 
-    // [move, M7] One log line, if its level is enabled. At most
+    // [move, M7] (whole item) One log line, if its level is enabled. At most
     // CORE_LOG_MAX_ARGS arguments are kept.
     pub fn log(&mut self, level: i32, fmt: &'static str, args: &[LogArg]) {
         if level > self.log_level_ {
@@ -181,12 +182,14 @@ impl CoreOutput {
         self.actions_@.len() as int
     }
 
+    // [move, M7] (whole item) the records, for the shell to print
     pub fn log_count(&self) -> (r: usize)
         ensures r == self.spec_log_count(),
     {
         self.logs_.len()
     }
 
+    // [move, M7] (whole item)
     pub fn log_at(&self, i: usize) -> &CoreLog
         requires i < self.spec_log_count(),
     {

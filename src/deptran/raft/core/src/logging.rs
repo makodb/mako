@@ -1,4 +1,5 @@
-// The core's log lines, as data (M7). A core call never logs: it pushes a
+// [move, M7] (whole file) The core's log lines, as data. A core call never
+// logs: it pushes a
 // record into its CoreOutput, and the shell prints the records through the
 // Raft logger once the call returns (still under the guard, as the calls
 // used to log). A record at a level above the output's threshold is dropped
