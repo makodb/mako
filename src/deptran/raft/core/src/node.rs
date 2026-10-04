@@ -131,6 +131,11 @@ impl<C> RaftCore<C> {
         &&& self.peer_sites_@.len()
                 + (if self.config_members_@.contains(self.site_id_) { 1int } else { 0int })
                 == self.config_members_@.len()
+        // [M12] the peers are members other than this server, in order
+        &&& sites_sorted(self.peer_sites_@)
+        &&& forall|o: int| 0 <= o < self.peer_sites_@.len()
+                ==> self.config_members_@.contains(#[trigger] self.peer_sites_@[o])
+                    && self.peer_sites_@[o] != self.site_id_
     }
 
     // Everything else (ghost): the log's layout, the term below the index
@@ -360,6 +365,8 @@ impl<C: Clone> RaftCore<C> {
             final(self).election_term_ == old(self).election_term_,
             final(self).snapterm_ == old(self).snapterm_,
             final(self).gated_ == old(self).gated_,
+            forall|o: int| 0 <= o < final(self).peers_.spec_len()
+                ==> #[trigger] final(self).peers_.spec_match(o) == 0,  // [M12]
     {
         self.peer_sites_.clear();
         let mut self_is_a_member: bool = false;
@@ -373,15 +380,43 @@ impl<C: Clone> RaftCore<C> {
                 self.peer_sites_@.len() + (if self_is_a_member { 1int } else { 0int }) == i,
                 self_is_a_member <==> exists|k: int| 0 <= k < i && self.config_members_@[k] == self.site_id_,
                 self.site_id_ == old(self).site_id_,
+                // [M12] in order, members before position i, not this server
+                sites_sorted(self.peer_sites_@),
+                forall|o: int| 0 <= o < self.peer_sites_@.len()
+                    ==> self.peer_sites_@[o] != self.site_id_
+                        && exists|k: int| 0 <= k < i && self.config_members_@[k] == #[trigger] self.peer_sites_@[o],
             decreases self.config_members_@.len() - i,
         {
             let peer_id: u16 = self.config_members_[i];
             if peer_id == self.site_id_ {
                 self_is_a_member = true;
             } else {
+                let ghost before = self.peer_sites_@;
                 self.peer_sites_.push(peer_id);
+                proof {
+                    // every earlier peer is an earlier member, so below this one
+                    assert forall|o: int| 0 <= o < before.len() implies before[o] < peer_id by {
+                        let k = choose|k: int| 0 <= k < i && self.config_members_@[k] == before[o];
+                    }
+                    assert forall|o: int| 0 <= o < self.peer_sites_@.len() implies
+                        self.peer_sites_@[o] != self.site_id_
+                        && exists|k: int| 0 <= k < i + 1 && self.config_members_@[k] == #[trigger] self.peer_sites_@[o] by {
+                        if o < before.len() {
+                            let k = choose|k: int| 0 <= k < i && self.config_members_@[k] == before[o];
+                            assert(self.config_members_@[k] == self.peer_sites_@[o]);
+                        } else {
+                            assert(self.config_members_@[i as int] == self.peer_sites_@[o]);
+                        }
+                    }
+                }
             }
             i += 1;
+        }
+        proof {
+            assert forall|o: int| 0 <= o < self.peer_sites_@.len()
+                implies self.config_members_@.contains(#[trigger] self.peer_sites_@[o]) by {
+                let k = choose|k: int| 0 <= k < i && self.config_members_@[k] == self.peer_sites_@[o];
+            }
         }
         let followers: usize = self.peer_sites_.len();
         self.peers_.reset(followers, next_index);
@@ -431,7 +466,10 @@ impl<C: Clone> RaftCore<C> {
     // dangle across an RPC send or a re-entrant completion callback.
     pub fn peer_ordinal(&self, site: u16) -> (r: usize)
         requires self.inv(),
-        ensures r <= self.peers_.spec_len(),
+        ensures
+            r <= self.peers_.spec_len(),
+            // [M12] the follower's ordinal, or len when it is no peer
+            r < self.peers_.spec_len() ==> self.peer_sites_@[r as int] == site,
     {
         let mut ord: usize = 0;
         while ord < self.peer_sites_.len()
@@ -586,6 +624,8 @@ impl<C: Clone> RaftCore<C> {
             final(self).g_votes_ == old(self).g_votes_,
             final(self).g_match_ == old(self).g_match_,
             final(self).g_next_ == old(self).g_next_,
+            final(self).peers_ == old(self).peers_,
+            final(self).peer_sites_ == old(self).peer_sites_,
     {
         *vote_granted = vote as i8;
         *reply_term = self.current_term_ as i64;
@@ -774,7 +814,7 @@ impl<C: Clone> RaftCore<C> {
             // quorum's BecomeLeader, a higher reply term's StepDown, a lost
             // campaign's StepAside; no sends, and every receive one of the
             // replies handed in (coupling.rs, "A campaign settled")
-            old(self).ginv() && old(self).gated_
+            old(self).ginv() && old(self).gated_ && failover
                 && crate::coupling::settle_inputs_ok(old(self), voters@, granted@, reply_terms@,
                     term, n_total) ==> {
                 &&& final(self).ginv()
@@ -784,7 +824,7 @@ impl<C: Clone> RaftCore<C> {
             },
     {
         let ghost pre = *self;
-        let ghost on = pre.ginv() && pre.gated_
+        let ghost on = pre.ginv() && pre.gated_ && failover
             && crate::coupling::settle_inputs_ok(&pre, voters@, granted@, reply_terms@, term, n_total);
         if stopped {
             self.election_in_progress_ = false;
@@ -1122,6 +1162,9 @@ impl<C: Clone> RaftCore<C> {
             final(self).g_votes_ == old(self).g_votes_,  // [M12]
             final(self).g_match_ == old(self).g_match_,  // [M12]
             final(self).g_next_ == old(self).g_next_,  // [M12]
+            // [M12] a leader under failover starts its peer table at match 0
+            is_leader && failover && !stopped ==> forall|o: int| 0 <= o < final(self).peers_.spec_len()
+                ==> #[trigger] final(self).peers_.spec_match(o) == 0,
     {
         let prev_is_leader: bool = self.is_leader_;
         // raft_log_set_is_leader_entry's term, which it read first.
@@ -1183,6 +1226,8 @@ impl<C: Clone> RaftCore<C> {
                     self.g_votes_ == old(self).g_votes_,  // [M12]
                     self.g_match_ == old(self).g_match_,  // [M12]
                     self.g_next_ == old(self).g_next_,  // [M12]
+                    forall|o: int| 0 <= o < self.peers_.spec_len()
+                        ==> #[trigger] self.peers_.spec_match(o) == 0,  // [M12]
                 decreases peers - ord,
             {
                 let site: u16 = self.peer_site_at(ord);

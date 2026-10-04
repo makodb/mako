@@ -32,7 +32,9 @@ pub struct FollowerProgress {
 
 #[allow(clippy::new_without_default)]
 impl FollowerProgress {
-    pub fn new(next: u64, matched: u64) -> FollowerProgress {
+    pub fn new(next: u64, matched: u64) -> (r: FollowerProgress)
+        ensures r.next_ == next && r.match_ == matched,  // [M12]
+    {
         FollowerProgress { next_: next, match_: matched }
     }
 
@@ -49,7 +51,9 @@ impl FollowerProgress {
     }
 
     pub fn set_next_index(&mut self, value: u64)
-        ensures final(self).next_ == value,
+        ensures
+            final(self).next_ == value,
+            final(self).match_ == old(self).match_,  // [M12]
     {
         self.next_ = value;
     }
@@ -62,7 +66,9 @@ impl FollowerProgress {
     // "Repairing wrapped next_index" catches a resulting 0). wrapping_add
     // says so, and is the same machine operation.
     pub fn back_off_after_reject(&mut self, follower_last_log_index: u64) -> (r: BackoffKind)
-        ensures r == BackoffKind::FAST ==> final(self).next_ < old(self).next_,
+        ensures
+            r == BackoffKind::FAST ==> final(self).next_ < old(self).next_,
+            final(self).match_ == old(self).match_,  // [M12]
     {
         if follower_last_log_index > 0
             && follower_last_log_index.wrapping_add(1) < self.next_  // [move, M10]
@@ -92,7 +98,11 @@ impl FollowerProgress {
     // A successful AppendEntries proves the exact payload end and no more.
     // Both indices are monotonic: a late reply can never move them backwards.
     pub fn accept_through(&mut self, acknowledged_through: u64, has_successor: bool,
-                          follower_next: u64) {
+                          follower_next: u64)
+        ensures  // [M12] the match index rises to the acknowledged end, never falls
+            final(self).match_ == (if acknowledged_through > old(self).match_ {
+                acknowledged_through } else { old(self).match_ }),
+    {
         if acknowledged_through > self.match_ {
             self.match_ = acknowledged_through;
         }
@@ -140,6 +150,62 @@ impl PeerTable {
     pub closed spec fn spec_next(&self, ordinal: int) -> u64 {
         self.progress_@[ordinal].next_
     }
+
+    // [M12] A follower's match index, and all of them in ordinal order
+    // (ghost).
+    pub closed spec fn spec_match(&self, ordinal: int) -> u64 {
+        self.progress_@[ordinal].match_
+    }
+
+    pub closed spec fn spec_matches(&self) -> Seq<u64> {
+        Seq::new(self.progress_@.len(), |o: int| self.progress_@[o].match_)
+    }
+
+    pub proof fn lemma_matches(&self)
+        ensures
+            self.spec_matches().len() == self.spec_len(),
+            forall|o: int| 0 <= o < self.spec_len() ==> #[trigger] self.spec_matches()[o] == self.spec_match(o),
+    {
+    }
+}
+
+// [M12] How many of the first k match indices are at least v / below v (ghost;
+// the leader's commit rule counts with these, src/deptran/raft/verus/commit_rule.rs).
+pub open spec fn count_ge(s: Seq<u64>, v: u64, k: int) -> nat
+    decreases k,
+{
+    if k <= 0 { 0 } else { count_ge(s, v, k - 1) + if s[k - 1] >= v { 1nat } else { 0nat } }
+}
+
+pub open spec fn count_lt(s: Seq<u64>, v: u64, k: int) -> nat
+    decreases k,
+{
+    if k <= 0 { 0 } else { count_lt(s, v, k - 1) + if s[k - 1] < v { 1nat } else { 0nat } }
+}
+
+pub proof fn lemma_ge_lt_partition(s: Seq<u64>, v: u64, k: int)
+    requires 0 <= k,
+    ensures count_ge(s, v, k) + count_lt(s, v, k) == k,
+    decreases k,
+{
+    if k > 0 { lemma_ge_lt_partition(s, v, k - 1); }
+}
+
+pub proof fn lemma_all_ge_zero(s: Seq<u64>, k: int)
+    requires 0 <= k,
+    ensures count_ge(s, 0, k) == k,
+    decreases k,
+{
+    if k > 0 { lemma_all_ge_zero(s, k - 1); }
+}
+
+// Lowering the threshold keeps every follower counted.
+pub proof fn lemma_count_ge_antitone(s: Seq<u64>, lo: u64, hi: u64, k: int)
+    requires 0 <= k, lo <= hi,
+    ensures count_ge(s, lo, k) >= count_ge(s, hi, k),
+    decreases k,
+{
+    if k > 0 { lemma_count_ge_antitone(s, lo, hi, k - 1); }
 }
 
 #[allow(clippy::new_without_default)]
@@ -152,7 +218,9 @@ impl PeerTable {
 
     // One slot per follower, in ordinal order.
     pub fn reset(&mut self, peers: usize, next_index: u64)
-        ensures final(self).spec_len() == peers,
+        ensures
+            final(self).spec_len() == peers,
+            forall|o: int| 0 <= o < peers ==> final(self).spec_match(o) == 0,  // [M12]
     {
         self.progress_.clear();
         let mut i: usize = 0;
@@ -160,6 +228,7 @@ impl PeerTable {
             invariant
                 i <= peers,
                 self.progress_@.len() == i,
+                forall|o: int| 0 <= o < i ==> self.progress_@[o].match_ == 0,  // [M12]
             decreases peers - i,
         {
             self.progress_.push(FollowerProgress::new(next_index, 0));
@@ -194,12 +263,15 @@ impl PeerTable {
         ensures
             final(self).spec_len() == old(self).spec_len(),
             final(self).spec_next(ordinal as int) == value,
+            forall|o: int| 0 <= o < old(self).spec_len()
+                ==> final(self).spec_match(o) == old(self).spec_match(o),  // [M12]
     {
         self.progress_[ordinal].set_next_index(value);
     }
 
-    pub fn match_index(&self, ordinal: usize) -> u64
+    pub fn match_index(&self, ordinal: usize) -> (r: u64)
         requires ordinal < self.spec_len(),
+        ensures r == self.spec_match(ordinal as int),  // [M12]
     {
         self.progress_[ordinal].match_index()
     }
@@ -219,20 +291,36 @@ impl PeerTable {
     // Ties are broken by ordinal so the result matches a stable sort exactly.
     pub fn majority_match_index(&self, nservers: usize, last_log_index: u64) -> (r: u64)
         requires nservers >= 1,
-        ensures r <= last_log_index,
+        ensures
+            r <= last_log_index,
+            // [M12] with this server, a majority holds r (the counting is
+            // commit_rule.rs's)
+            nservers > 1 && self.spec_len() == nservers - 1 ==> count_ge(self.spec_matches(), r,
+                self.spec_len()) >= self.spec_len() - (nservers - 1) / 2,
     {
         let target = (nservers - 1) / 2;
         let n = self.progress_.len();
         let mut selected: u64 = 0;
+        let ghost ms = self.spec_matches();
+        proof {
+            self.lemma_matches();
+            lemma_all_ge_zero(ms, n as int);
+        }
         let mut i: usize = 0;
         while i < n
             invariant
                 i <= n,
                 n == self.progress_@.len(),
+                // [M12]
+                ms == self.spec_matches(),
+                ms.len() == n,
+                target == (nservers - 1) / 2,
+                count_ge(ms, selected, n as int) >= n - target,
             decreases n - i,
         {
             let value = self.progress_[i].match_index();
             let mut rank: usize = 0;
+            let ghost mut lt: nat = 0;  // [M12]
             let mut j: usize = 0;
             while j < n
                 invariant
@@ -240,18 +328,34 @@ impl PeerTable {
                     j <= n,
                     rank <= j,
                     n == self.progress_@.len(),
+                    // [M12] rank counts the matches below value, and ties
+                    ms == self.spec_matches(),
+                    value == ms[i as int],
+                    lt == count_lt(ms, value, j as int),
+                    lt <= rank,
                 decreases n - j,
             {
                 let other = self.progress_[j].match_index();
                 if other < value || (other == value && j < i) {
                     rank += 1;
                 }
+                proof {
+                    assert(other == ms[j as int]);
+                    lt = lt + if other < value { 1nat } else { 0nat };
+                }
                 j += 1;
             }
             if rank == target {
+                proof { lemma_ge_lt_partition(ms, value, n as int); }
                 selected = value;
             }
             i += 1;
+        }
+        proof {
+            if nservers > 1 {
+                let r = raft_server_commit_index_candidate(selected, nservers, last_log_index);
+                lemma_count_ge_antitone(ms, r, selected, n as int);
+            }
         }
         raft_server_commit_index_candidate(selected, nservers, last_log_index)
     }
@@ -263,6 +367,8 @@ impl PeerTable {
             final(self).spec_len() == old(self).spec_len(),
             r == BackoffKind::FAST
                 ==> final(self).spec_next(ordinal as int) < old(self).spec_next(ordinal as int),
+            forall|o: int| 0 <= o < old(self).spec_len()
+                ==> final(self).spec_match(o) == old(self).spec_match(o),  // [M12]
     {
         self.progress_[ordinal].back_off_after_reject(follower_last_log_index)
     }
@@ -270,7 +376,14 @@ impl PeerTable {
     pub fn accept_through(&mut self, ordinal: usize, acknowledged_through: u64,
                           has_successor: bool, follower_next: u64)
         requires ordinal < old(self).spec_len(),
-        ensures final(self).spec_len() == old(self).spec_len(),
+        ensures
+            final(self).spec_len() == old(self).spec_len(),
+            // [M12] the follower's match rises to the acknowledged end; the
+            // others stay
+            final(self).spec_match(ordinal as int) == (if acknowledged_through > old(self).spec_match(ordinal as int) {
+                acknowledged_through } else { old(self).spec_match(ordinal as int) }),
+            forall|o: int| 0 <= o < old(self).spec_len() && o != ordinal
+                ==> final(self).spec_match(o) == old(self).spec_match(o),
     {
         self.progress_[ordinal].accept_through(acknowledged_through,
                                                has_successor, follower_next);

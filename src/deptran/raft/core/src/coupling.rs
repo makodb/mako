@@ -202,6 +202,11 @@ pub proof fn lemma_rank_of(m: Seq<u16>, k: int)
 // The core as the spec sees it
 // ===========================================================================
 
+// The spec's match index for rank r (absent: 0).
+pub open spec fn match_of(m: Map<u64, u64>, r: int) -> int {
+    if m.contains_key(r as u64) { m[r as u64] as int } else { 0 }
+}
+
 // What a command means to the spec: uninterpreted, so every node reads a
 // command the same way (the codec's fidelity is the host contract's).
 pub uninterp spec fn value_view<C>(cmd: C) -> int;
@@ -281,6 +286,16 @@ impl<C> RaftCore<C> {
         &&& (!(self.role_view() is Follower) ==> self.vote_for_ == self.site_id_)
         &&& (self.role_view() is Candidate ==> self.g_votes_@.contains(self.my_rank()))
         &&& self.log_entries_ok()
+        &&& self.v2()
+    }
+
+    // V2 (plan §4.3): a leader's match index for a follower never exceeds
+    // the spec's (absent: 0), so the spec's quorum covers the exec's. The
+    // exec raises it by max(); the spec writes it only when it rises past.
+    pub open spec fn v2(&self) -> bool {
+        self.is_leader_ ==> forall|o: int| 0 <= o < self.peers_.spec_len()
+            ==> (#[trigger] self.peers_.spec_match(o)) as int
+                <= match_of(self.g_match_@, rank(self.config_members_@, self.peer_sites_@[o]))
     }
 
     // Every log entry's command has a value (bugs-found B16: the follower's
@@ -416,6 +431,8 @@ pub open spec fn view_frame<C>(pre: &RaftCore<C>, post: &RaftCore<C>) -> bool {
     &&& post.g_match_ == pre.g_match_
     &&& post.g_next_ == pre.g_next_
     &&& post.snapterm_ == pre.snapterm_
+    &&& post.peers_ == pre.peers_
+    &&& post.peer_sites_ == pre.peer_sites_
 }
 
 // ===========================================================================
@@ -537,6 +554,8 @@ pub proof fn lemma_client_request_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>,
         post.g_match_ == pre.g_match_,
         post.g_next_ == pre.g_next_,
         post.snapterm_ == pre.snapterm_,
+        post.peers_ == pre.peers_,
+        post.peer_sites_ == pre.peer_sites_,
         e.spec_has_value(),
         post.g_log_@ == client_request_log(pre.g_log_@, post.log_view(), value_view(e.spec_cmd())),
     ensures post.ginv(),
@@ -742,6 +761,8 @@ pub proof fn lemma_vote_group<C>(pre: &RaftCore<C>, post: &RaftCore<C>, can_id: 
         post.config_members_ == pre.config_members_,
         post.site_id_ == pre.site_id_,
         post.snapterm_ == pre.snapterm_,
+        post.peers_ == pre.peers_,
+        post.peer_sites_ == pre.peer_sites_,
         post.g_votes_@ == (if stepped { Set::<int>::empty() } else { pre.g_votes_@ }),
         post.g_match_ == pre.g_match_,
         post.g_next_ == pre.g_next_,
@@ -1310,6 +1331,9 @@ pub proof fn lemma_settle_won<C>(pre: &RaftCore<C>, post: &RaftCore<C>, voters: 
             pre.g_votes_@.union(granted_ranks(pre.config_members_@, voters, granted, voters.len() as int)) }),
         post.g_match_@ == Map::<u64, u64>::empty(),
         post.g_next_@ == Map::<u64, u64>::empty(),
+        // a new leader's peer table starts at match 0 (V2 against the empty
+        // spec table)
+        !rollback ==> forall|o: int| 0 <= o < post.peers_.spec_len() ==> #[trigger] post.peers_.spec_match(o) == 0,
         post.g_log_@ == settle_won_log(pre.g_log_@, pre.config_members_@, voters, granted, terms,
             pre.g_votes_@, rollback),
     ensures
@@ -1857,6 +1881,8 @@ pub proof fn lemma_append_entries<C>(pre: &RaftCore<C>, post: &RaftCore<C>, x: A
         post.g_votes_@ == (if stepped || aside { Set::<int>::empty() } else { pre.g_votes_@ }),
         post.g_match_ == pre.g_match_,
         post.g_next_ == pre.g_next_,
+        post.peers_ == pre.peers_,
+        post.peer_sites_ == pre.peer_sites_,
         // the log and the commit
         post.log_entries_ok(),
         !accepted ==> post.log_view() == pre.log_view() && post.commit_index_ == pre.commit_index_,
