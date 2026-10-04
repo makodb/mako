@@ -758,6 +758,85 @@ fn test_unavailable_voter_reply(_st: &mut LabState) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
+// [fix, F9] Messages the core does not take
+
+// An AppendEntries from a site outside the configuration, one at term 0, and
+// one whose prev index is 0 but whose prev term is not; a RequestVote from
+// outside the configuration, and one at term 0. Each is dropped: the replica
+// answers as an unavailable replica answers (an append 0/0/0, a vote "no"
+// at the candidate's own term), and its term, log and commit index do not
+// move. Before F9 the first two appends and both votes were refused with the
+// replica's own term, and the third append was accepted. The real leader's
+// entry-less append is accepted, as a control.
+fn test_unadmitted_messages_dropped(_st: &mut LabState) -> i32 {
+    init2(15, "Messages from outside the configuration, or malformed, are dropped");
+
+    let leader = lab::one_leader(-1);
+    if !check_msg(leader >= 0, "no leader") { return 1; }
+    let follower = lab::next_server_id(leader as u32, 1);
+    let Some(leader_site) = lab::site_id_of(leader as u32) else {
+        failed("leader not registered"); return 1;
+    };
+    let Some(candidate_site) = lab::site_id_of(lab::next_server_id(leader as u32, 2)) else {
+        failed("candidate not registered"); return 1;
+    };
+    // No replica of the lab's partition has this site id.
+    let stranger: u16 = 4000;
+    let Some((term, last, last_term, commit, _)) = lab::log_tail(follower) else {
+        failed("follower not registered"); return 1;
+    };
+
+    let Some((control_ok, _, _)) = lab::serve_append(follower, term, leader_site, last,
+                                                     last_term, commit, 0, -1) else {
+        failed("follower not registered"); return 1;
+    };
+    if !check_msg(control_ok == 1, "the leader's entry-less control append was refused") {
+        return 1;
+    }
+    let appends: [(u64, u16, u64, u64); 3] = [
+        (term, stranger, last, last_term),  // outside the configuration
+        (0, leader_site, last, last_term),  // term 0
+        (term, leader_site, 0, 1),          // prev 0 with a prev term
+    ];
+    for (k, (t, site, prev, prev_term)) in appends.iter().enumerate() {
+        let Some(reply) = lab::serve_append(follower, *t, *site, *prev, *prev_term,
+                                            commit, 0, -1) else {
+            failed("follower not registered"); return 1;
+        };
+        if !check_msg(reply == (0, 0, 0),
+                      &format!("append {} was answered {:?}, not dropped", k, reply)) {
+            return 1;
+        }
+    }
+    let votes: [(u16, i64); 2] = [
+        (stranger, term as i64 + 5),  // outside the configuration
+        (candidate_site, 0),          // term 0
+    ];
+    for (k, (site, can_term)) in votes.iter().enumerate() {
+        let Some(reply) = lab::serve_vote(follower, last, last_term as i64, *site,
+                                          *can_term) else {
+            failed("follower not registered"); return 1;
+        };
+        if !check_msg(reply == (*can_term, 0),
+                      &format!("vote {} was answered {:?}, not dropped", k, reply)) {
+            return 1;
+        }
+    }
+    // A refusal the core made would carry the follower's own term, which is
+    // at least 1, so 0/0/0 and a "no" at the probe's term can only be drops.
+    // A taken vote request at term + 5 would also have moved the term.
+    let Some((term_after, _, _, _, _)) = lab::log_tail(follower) else {
+        failed("follower not registered"); return 1;
+    };
+    if !check_msg(term_after == term, "a dropped RequestVote moved the follower's term") {
+        return 1;
+    }
+
+    passed();
+    0
+}
+
+// ---------------------------------------------------------------------------
 // [fix, F6] The leader-change callback
 
 // The callback fires after mtx_ is released now, from a queue that keeps the
@@ -842,6 +921,7 @@ fn run_basic_cases(st: &mut LabState) -> i32 {
         test_entry_term_zero_refused,  // [fix, F4]
         test_unavailable_voter_reply,
         test_leader_change_notices,  // [fix, F6]
+        test_unadmitted_messages_dropped,  // [fix, F9]
     ];
 
     for case in basic {

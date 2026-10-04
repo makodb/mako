@@ -265,6 +265,31 @@ pub fn write_event<C: Clone, W: InboundBatch<C>>(s: &mut String, ev: &Event<'_, 
     }
 }
 
+/// A message handed to `step_checked` ([fix, F9]): `C <name> <fields>...`.
+pub fn write_checked_event<C: Clone, W: InboundBatch<C>>(s: &mut String,
+                                                         ev: &Event<'_, C, W>,
+                                                         digest: Digest<'_, C>) {
+    write_event(s, ev, digest);
+    s.replace_range(0..1, "C");
+}
+
+/// `step_checked`'s result: `R dropped` for a message the core refused,
+/// else as [`result_text`].
+pub fn checked_result_text<C>(out: &CoreOutput, actions_from: usize, logs_from: usize,
+                              reply: &Option<Reply<C>>, digest: Digest<'_, C>) -> String {
+    match reply {
+        Some(r) => result_text(out, actions_from, logs_from, r, digest),
+        None => {
+            let mut text = String::new();
+            let s = &mut text;
+            write_outputs(s, out, actions_from, logs_from);
+            put(s, "R");
+            put(s, "dropped");
+            text[1..].to_string()
+        }
+    }
+}
+
 /// One record: the event's text (from [`write_event`]), the log level the
 /// call's CoreOutput kept (which decides its log lines), and the result's
 /// text (from [`result_text`]).
@@ -279,6 +304,14 @@ pub fn result_text<C>(out: &CoreOutput, actions_from: usize, logs_from: usize,
                       reply: &Reply<C>, digest: Digest<'_, C>) -> String {
     let mut text = String::new();
     let s = &mut text;
+    write_outputs(s, out, actions_from, logs_from);
+    put(s, "R");
+    write_reply(s, reply, digest);
+    // every token went in with a space before it
+    text[1..].to_string()
+}
+
+fn write_outputs(s: &mut String, out: &CoreOutput, actions_from: usize, logs_from: usize) {
     for i in actions_from..out.len() {
         let a = out.at(i);
         put(s, "A");
@@ -312,10 +345,6 @@ pub fn result_text<C>(out: &CoreOutput, actions_from: usize, logs_from: usize,
             }
         }
     }
-    put(s, "R");
-    write_reply(s, reply, digest);
-    // every token went in with a space before it
-    text[1..].to_string()
 }
 
 fn write_reply<C>(s: &mut String, reply: &Reply<C>, digest: Digest<'_, C>) {
@@ -592,11 +621,13 @@ impl<'a> Tokens<'a> {
 }
 
 /// The event section of a record (`E <name> <fields>...`).
-pub fn parse_event(text: &str) -> Result<OwnedEvent, String> {
+pub fn parse_event(text: &str) -> Result<(bool, OwnedEvent), String> {
     let mut t = Tokens { it: text.split_whitespace() };
-    if t.word()? != "E" {
-        return Err("an event section starts with E".to_string());
-    }
+    let checked = match t.word()? {
+        "E" => false,
+        "C" => true,
+        _ => return Err("an event section starts with E or C".to_string()),
+    };
     let name = t.word()?;
     let ev = match name {
         "identity" => OwnedEvent::SetIdentity {
@@ -692,7 +723,7 @@ pub fn parse_event(text: &str) -> Result<OwnedEvent, String> {
     if let Some(extra) = t.it.next() {
         return Err(format!("extra token after the {name} event: {extra}"));
     }
-    Ok(ev)
+    Ok((checked, ev))
 }
 
 // ---------------------------------------------------------------------------
@@ -739,12 +770,17 @@ pub fn replay(text: &str) -> Result<Replayed, Mismatch> {
         if parts.len() != 3 {
             return Err(fail("a record has three sections".to_string()));
         }
-        let ev = parse_event(parts[0]).map_err(fail)?;
+        let (checked, ev) = parse_event(parts[0]).map_err(fail)?;
         let level: i32 = parts[1].trim().parse().map_err(|_| fail("bad log level".to_string()))?;
         let mut out = CoreOutput::new();
         out.set_log_level(level);
-        let reply = core.step(ev.as_event(), &mut out);
-        let produced = result_text(&out, 0, 0, &reply, &replay_digest);
+        let produced = if checked {
+            let reply = core.step_checked(ev.as_event(), &mut out);
+            checked_result_text(&out, 0, 0, &reply, &replay_digest)
+        } else {
+            let reply = core.step(ev.as_event(), &mut out);
+            result_text(&out, 0, 0, &reply, &replay_digest)
+        };
         let recorded = parts[2];
         if produced != recorded {
             return Err(Mismatch {

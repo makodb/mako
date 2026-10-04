@@ -246,13 +246,15 @@ pub fn heartbeat_collect_body(server: &mut RaftServerBase, round_id: u64,
                 let is_leader: bool = server.IsLeaderLocked();
                 let stopped: bool = server.stopped_now();
                 let failover: bool = server.failover_;
-                let decided: ReplyResult = server.step(
+                // [fix, F9] Through step_checked, which never drops a reply
+                // but reads one claiming more than this leader's log as none.
+                let decided: ReplyResult = server.step_checked(
                     Event::RecvAppendReply {
                         ord: pending_ord, status: resp.status_, term: resp.term_,
                         last_log_index: resp.last_log_index_, is_leader, stopped,
                         failover,
                     },
-                    &mut out).into_append_reply();
+                    &mut out).unwrap().into_append_reply();
                 server.run_locked_actions(&out);
                 decided
             };

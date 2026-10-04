@@ -271,6 +271,84 @@ impl<C: Clone> RaftCore<C> {
         }
     }
 
+    // [fix, F9] What a message from the network must be before the core
+    // takes it at all (plan A.2): integer compares only. An AppendEntries or
+    // RequestVote from this server itself or from a site outside the
+    // configuration (B20); a term 0, which no leader or candidate ever
+    // holds; an AppendEntries whose prev index and prev term are not both 0
+    // or both positive (raft-rs's shape). A payload's own defects (an entry
+    // term below 1, a count that overflows) stay the decoder's refusals,
+    // after the handler's gates (A.2's closing paragraph).
+    pub fn message_admitted<W: InboundBatch<C>>(&self, ev: &Event<'_, C, W>) -> (r: bool)
+        ensures
+            match *ev {
+                Event::RecvAppendEntries { .. } | Event::RecvRequestVote { .. } => true,
+                _ => r,
+            },
+    {
+        match ev {
+            Event::RecvAppendEntries {
+                leader_current_term, leader_site_id, leader_prev_log_index,
+                leader_prev_log_term, ..
+            } => {
+                *leader_site_id != self.site_id_
+                    && self.is_config_member(*leader_site_id)
+                    && *leader_current_term != 0
+                    && ((*leader_prev_log_index == 0) == (*leader_prev_log_term == 0))
+            },
+            Event::RecvRequestVote { can_id, can_term, .. } => {
+                *can_id != self.site_id_ && self.is_config_member(*can_id) && *can_term != 0
+            },
+            _ => true,
+        }
+    }
+
+    // [fix, F9] step, for a message from the network. A message that fails
+    // message_admitted is dropped (None): the core does not see it, and the
+    // shell answers as an unavailable replica answers, which the sender
+    // reads as no reply. A success reply claiming more than this leader's
+    // log -- no follower can have accepted entries the leader never had --
+    // is read as no reply too: its slot is released and nothing is learned.
+    pub fn step_checked<W: InboundBatch<C>>(&mut self, ev: Event<'_, C, W>,
+                                            out: &mut CoreOutput) -> (r: Option<Reply<C>>)
+        requires
+            old(self).inv(),
+            old(self).admits(&ev),
+        ensures
+            final(self).inv(),
+            r is None ==> *final(self) == *old(self),
+            match ev {
+                Event::RecvAppendEntries { .. } => r matches Some(reply) ==> reply is Append,
+                Event::RecvRequestVote { .. } => r matches Some(reply) ==> reply is Vote,
+                Event::RecvAppendReply { .. } => r matches Some(reply) && reply is AppendReply,
+                _ => r is Some,
+            },
+    {
+        if !self.message_admitted(&ev) {
+            return None;
+        }
+        match ev {
+            Event::RecvAppendReply {
+                ord, status, term, last_log_index, is_leader, stopped, failover,
+            } => {
+                let beyond_log: bool = status && last_log_index > self.raft_log_.last_index();
+                let reply: Event<'_, C, W> = if beyond_log {
+                    // the unavailable reply's 0/0/0
+                    Event::RecvAppendReply {
+                        ord, status: false, term: 0, last_log_index: 0, is_leader,
+                        stopped, failover,
+                    }
+                } else {
+                    Event::RecvAppendReply {
+                        ord, status, term, last_log_index, is_leader, stopped, failover,
+                    }
+                };
+                Some(self.step(reply, out))
+            },
+            other => Some(self.step(other, out)),
+        }
+    }
+
     // The core's one entry point. The caller holds mtx_.
     pub fn step<W: InboundBatch<C>>(&mut self, ev: Event<'_, C, W>,
                                     out: &mut CoreOutput) -> (r: Reply<C>)

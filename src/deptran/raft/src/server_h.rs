@@ -1422,6 +1422,26 @@ impl RaftServerBase {
         reply
     }
 
+    // [fix, F9] The same, for a message from the network: None is a message
+    // the core dropped, which the caller answers as an unavailable replica.
+    pub fn step_checked(&mut self, ev: Event<'_>, out: &mut CoreOutput)
+        -> Option<Reply> {
+        if !self.recorder_.on() {
+            return self.core.step_checked(ev, out);
+        }
+        // [M0] the replay recorder, as in step
+        let mut event: String = String::new();
+        raft_replay::write_checked_event(&mut event, &ev, &command_digest);
+        let actions_from: usize = out.len();
+        let logs_from: usize = out.log_count();
+        let level: i32 = out.log_level();
+        let reply: Option<Reply> = self.core.step_checked(ev, out);
+        let result: String = raft_replay::checked_result_text(
+            out, actions_from, logs_from, &reply, &command_digest);
+        self.recorder_.write(&raft_replay::record_line(&event, level, &result));
+        reply
+    }
+
     // CALLER MUST HOLD mtx_ -- the one caller repo-wide is resetTimerLocked,
     // whose own callers take it. The configured identity is stable for the
     // whole decision because of that lock, not because anything is sampled
@@ -4197,14 +4217,29 @@ fn on_request_vote_locked(
 
     let election_debug: bool = unsafe { raft_election_debug_enabled() };
     let failover: bool = server.failover_;
-    let (term, granted) = server.step(
+    let decided: Option<Reply> = server.step_checked(
         Event::RecvRequestVote {
             stopped, candidate_is_current_voter, lst_log_idx, lst_log_term,
             can_id, can_term, failover, election_debug,
         },
-        out).into_vote();  // [move, M5]
-    *reply_term = term;
-    *vote_granted = granted;
+        out);  // [move, M5] [fix, F9]
+    match decided {
+        Some(reply) => {
+            let (term, granted) = reply.into_vote();
+            *reply_term = term;
+            *vote_granted = granted;
+        }
+        None => {
+            // [fix, F9] Dropped: answered as an unavailable replica answers
+            // (ServeVote), "no" at the candidate's own term, which the
+            // candidate reads as unmodelled input (plan §4.3, V3).
+            rusty::raft_log_warn_3(
+                "[RAFT_VOTE] Site {} dropping RequestVote from candidate {} at term {} (outside the configuration or term 0)",
+                server.site_id_, can_id, can_term);
+            *reply_term = can_term;
+            *vote_granted = 0;
+        }
+    }
 }
 
 // `cmd` is an opaque handle to the caller's janus::Command; it is passed
@@ -4265,14 +4300,27 @@ fn on_append_entries_locked(
     let wire: WireBatch = WireBatch::new(cmd, cmd_has_value,
                                          leader_next_log_term);  // [move, M5]
     let failover: bool = server.failover_;
-    let (report, ok, term, last_log_index) = server.step(
+    let decided: Option<Reply> = server.step_checked(
         Event::RecvAppendEntries {
             wire: &wire, stopped, sender_is_current_voter,
             has_cmd: cmd_has_value, leader_current_term, leader_site_id,
             leader_prev_log_index, leader_prev_log_term, leader_commit_index,
             failover,
         },
-        out).into_append();  // [move, M5]
+        out);  // [move, M5] [fix, F9]
+    let Some(decided) = decided else {
+        // [fix, F9] Dropped: answered as an unavailable replica answers
+        // (ServeAppendEntries), 0/0/0, which the leader reads as no reply.
+        rusty::raft_log_warn_5(
+            "[APPEND_DROP] Site {} dropping AppendEntries from {} term {} prev {}/{} (outside the configuration, term 0, or a malformed prev)",
+            server.site_id_, leader_site_id, leader_current_term,
+            leader_prev_log_index, leader_prev_log_term);
+        *follower_append_ok = 0;
+        *follower_current_term = 0;
+        *follower_last_log_index = 0;
+        return;
+    };
+    let (report, ok, term, last_log_index) = decided.into_append();
     let report: AppendReport = report;
     *follower_append_ok = ok;
     *follower_current_term = term;
