@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # core_check.sh -- what a raft-core commit must pass before it is made:
 # clippy -D warnings over the Raft workspace with and without the lab
-# feature (the build's source gate runs the former), and verify_core.sh.
+# feature (the build's source gate runs the former), the ledger lint (every
+# core line ghost, moved or labelled, plan A.3), and verify_core.sh.
 # Exits non-zero on the first failure, so `core_check.sh && git commit`
 # cannot commit a crate that plain cargo or Verus rejects.
 set -uo pipefail
@@ -14,4 +15,8 @@ for features in "" "--features raft_test"; do
   fi
 done
 echo "core_check: clippy ok (default, raft_test)"
+if ! out=$(python3 "$REPO_ROOT/scripts/verus/ledger_lint.py" 2>&1); then
+  echo "core_check: ledger lint FAILED"; echo "$out" | tail -40; exit 1
+fi
+echo "core_check: $(echo "$out" | tail -1)"
 "$REPO_ROOT/scripts/verus/verify_core.sh" "$@" || exit 1
