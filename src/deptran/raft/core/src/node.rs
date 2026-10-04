@@ -1671,7 +1671,7 @@ pub trait InboundBatch<C> {
             !self.spec_has_payload() ==> final(terms)@.len() == 0,
             r ==> leader_prev_log_index as int + final(terms)@.len() < raft_index_limit();
     // The entry at position k (0-based) of the payload decode_terms read.
-    fn entry_at(&self, k: u64) -> RaftEntry<C>;
+    fn entry_at(&self, k: u64) -> RaftEntry<C>;  // [move, M11]
 }
 
 // [move, M5] A core call: the caller holds mtx_, and passes the payload as
@@ -1759,7 +1759,7 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     // length IS the decoded count.
     let append_payload_valid = wire.decode_terms(leader_prev_log_index,
                                                  &mut core.decoded_terms_);  // [move, M1]
-    let decoded_count: u64 = core.decoded_terms_.len() as u64;
+    let decoded_count: u64 = core.decoded_terms_.len() as u64;  // [move, M1]
 
     let term_ok =
         raft_server_append_term_is_acceptable(leader_current_term, core.current_term_);
@@ -1807,7 +1807,7 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
                 false, true, core.site_id_, leader_site_id);
             let now_term: u64 = core.current_term_;
             core.log_term_change("AppendEntries leader term is newer",
-                                 prev_term, now_term, leader_site_id, out);
+                                 prev_term, now_term, leader_site_id, out);  // [move, M7]
             // `stopped` is the caller's read of stop_, under this same lock.
             if core.is_leader_ {
                 // The central transition, so no leadership state survives an
@@ -1945,7 +1945,7 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         // entry from first_write_index on is materialized from the payload
         // (one handle clone) and appended, in index order.
         let mut k: u64 = 0;
-        while k < decoded_count
+        while k < decoded_count  // [move, M1, M11]
             invariant
                 core.inv(),
                 leader_prev_log_index as int + decoded_count < raft_index_limit(),
@@ -1958,9 +1958,9 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
                     else { leader_prev_log_index as int + k }),
             decreases decoded_count - k,
         {
-            let index: u64 = raft_server_append_sent_end(leader_prev_log_index, k + 1);
+            let index: u64 = raft_server_append_sent_end(leader_prev_log_index, k + 1);  // [move, M1, M11]
             if index >= first_write_index {
-                let appended: u64 = core.raft_log_.append(wire.entry_at(k));
+                let appended: u64 = core.raft_log_.append(wire.entry_at(k));  // [move, M1, M11]
                 runtime_assert(appended == index);  // [move, M10]
             }
             k += 1;

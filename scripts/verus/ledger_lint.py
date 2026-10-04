@@ -104,8 +104,11 @@ def normalize(line):
     t = re.sub(r'^\s*pub(\(crate\))?\s+', '', t)
     t = re.sub(r'\s+', '', t)
     # a contract between a signature or loop head and its body moves the
-    # opening brace to a line of its own
+    # opening brace to a line of its own, and a bodiless trait method's
+    # semicolon to the contract's end
     t = t.rstrip('{')
+    if t.startswith('fn'):
+        t = t.rstrip(';')
     return t
 
 
@@ -172,17 +175,20 @@ def ghost_regions(text):
             code = line.split('//')[0]
             if re.match(r'^(requires|ensures|recommends|decreases|returns|opens_invariants)\b', st):
                 head_clauses = True
-            if head_clauses:
-                if st.startswith('{'):
-                    depth = code.count('{') - code.count('}')
-                    mode = 'block' if depth > 0 else None
+            if head_clauses and st.startswith('{'):
+                depth = code.count('{') - code.count('}')
+                mode = 'block' if depth > 0 else None
                 continue
             for k, ch in enumerate(code):
                 if ch in '([':
                     pdepth += 1
                 elif ch in ')]':
                     pdepth -= 1
-                elif ch == '{' and pdepth <= 0:
+                elif ch == ';' and pdepth <= 0:
+                    # a declaration without a body (a trait's spec fn) ends
+                    mode = None
+                    break
+                elif ch == '{' and pdepth <= 0 and not head_clauses:
                     rest = code[k:]
                     depth = rest.count('{') - rest.count('}')
                     mode = 'block' if depth > 0 else None
@@ -214,10 +220,12 @@ def ghost_regions(text):
         if re.match(r'^(pub\s+)?(open\s+|closed\s+|uninterp\s+)?(broadcast\s+)?(spec|proof)\s+fn\b', st):
             ghost.add(i)
             depth = line.count('{') - line.count('}')
-            if '{' not in line:
+            code = line.split('//')[0]
+            if '{' not in line and code.rstrip().endswith(';'):
+                pass  # a declaration without a body, on one line
+            elif '{' not in line:
                 mode = 'head'
                 head_clauses = False
-                code = line.split('//')[0]
                 pdepth = code.count('(') + code.count('[') - code.count(')') - code.count(']')
             elif depth > 0:
                 mode = 'block'
@@ -266,6 +274,20 @@ WHOLE_FILE = re.compile(r'\[(move|fix),\s*[MF]\d+\]\s*\(whole file\)')
 WHOLE_ITEM = re.compile(r'\[(move|fix),\s*[MF]\d+(,\s*(move|fix),\s*[MF]\d+)*\]\s*\(whole item\)')
 
 
+def verus_only_modules():
+    """The core's modules that exist only when Verus checks the crate: the
+    ones lib.rs declares under #[cfg(verus_keep_ghost)]. Plain cargo never
+    compiles them, so every line in them is ghost."""
+    names = set()
+    lib = open(os.path.join(ROOT, CORE, 'src', 'lib.rs')).read().split('\n')
+    for k, line in enumerate(lib[:-1]):
+        if re.match(r'^\s*#\[cfg\(verus_keep_ghost\)\]', line):
+            m = re.match(r'^\s*(pub\s+)?mod\s+(\w+)\s*;', lib[k + 1])
+            if m:
+                names.add(m.group(2) + '.rs')
+    return names
+
+
 def classify(path, text, moved, ghost_only):
     """(category, line number, text) for every line of one core file.
 
@@ -273,10 +295,13 @@ def classify(path, text, moved, ghost_only):
     comment (a multi-line call or signature to where its parentheses
     close); a body is still checked line by line. Only `(whole item)` --
     the next item to its closing brace -- and `(whole file)` register new
-    code wholesale."""
+    code wholesale. A Verus-only module is ghost throughout."""
+    lines = text.split('\n')
+    if os.path.basename(path) in verus_only_modules():
+        return [('comment' if l.strip() == '' or COMMENT.match(l) else 'ghost', i, l)
+                for i, l in enumerate(lines, 1)]
     regions = ghost_regions(text)
     out = []
-    lines = text.split('\n')
     whole_file = not ghost_only and any(WHOLE_FILE.search(l) for l in lines[:12])
     pending = None       # 'stmt' or 'item': what a tag comment above labels
     reg = None           # ['stmt', paren depth] or ['item', brace depth, opened]
@@ -361,23 +386,36 @@ def main():
         added = {}
         removed = {}
         fname = None
+        old_ghost = set()    # the base file's ghost lines
+        old_no = 0
         for line in diff.splitlines():
             if line.startswith('+++ b/'):
                 fname = line[6:]
                 added.setdefault(fname, set())
                 removed.setdefault(fname, [])
+                try:
+                    old_text = git('show', f'{args.base}:{fname}')
+                    old_ghost = (set(range(1, old_text.count('\n') + 2))
+                                 if os.path.basename(fname) in verus_only_modules()
+                                 else ghost_regions(old_text))
+                except subprocess.CalledProcessError:
+                    old_ghost = set()
                 continue
             if line.startswith('--- '):
                 continue
-            m = re.match(r'^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@', line)
+            m = re.match(r'^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,(\d+))? @@', line)
             if m and fname:
-                start_no, n = int(m.group(1)), int(m.group(2) if m.group(2) is not None else 1)
+                old_no = int(m.group(1))
+                start_no, n = int(m.group(2)), int(m.group(3) if m.group(3) is not None else 1)
                 added[fname].update(range(start_no, start_no + n))
                 continue
             if line.startswith('-') and fname:
                 text = line[1:]
-                if text.strip() and not COMMENT.match(text) and not GHOST_LINE.match(text):
+                # a removed line counts unless it was ghost where it stood
+                if (text.strip() and not COMMENT.match(text) and not GHOST_LINE.match(text)
+                        and old_no not in old_ghost):
                     removed[fname].append(text)
+                old_no += 1
         counts = Counter()
         bad = []
         for fname, nums in added.items():
