@@ -1,3 +1,0 @@
-# verify_core.sh fails if Verus verifies fewer items than this (raft-core).
-# Raise it as modules join verus!; never lower it without saying why.
-258

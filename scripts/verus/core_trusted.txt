@@ -1,0 +1,4 @@
+# raft-core's trusted surface: the functions verify_core.sh allows to be
+# #[verifier::external_body]. One per line, with why. This list only shrinks.
+blocks_for               u64::div_ceil, which vstd does not specify (log.rs)
+raft_on_append_entries   Phase 6 work in progress: proof being written

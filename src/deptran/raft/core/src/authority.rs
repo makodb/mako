@@ -9,28 +9,48 @@ use vstd::prelude::*;
 
 verus! {
 
+// A strictly increasing site list: a set's, and the configuration's, shape
+// (ghost).
+pub open spec fn sites_sorted(s: Seq<u16>) -> bool {
+    forall|i: int, j: int| 0 <= i < j < s.len() ==> s[i] < s[j]
+}
+
 // [move, M9] The site sets of the authority ledger and the round scope: a
 // sorted, duplicate-free Vec<u16> in place of rusty::BTreeSet<u16>, with the
 // same membership and the same order. Only insert, remove, contains, len,
 // is_empty and clear were ever used; nothing iterates. A set holds at most one
 // entry per replica (3 or 5), so a linear scan does as well as a tree, and a
-// Vec is a type the verifier specifies. Spelled with push, pop and indexing
-// only, which both lanes' Vec support.
+// Vec is a type the verifier specifies. insert and remove place and take the
+// element with Vec::insert and Vec::remove at its sorted position ([move,
+// M9], Phase 6): the same sequence the hand-written bubble and shift made
+// when only push, pop and indexing were common to the transpiled lane's Vec.
 pub struct SiteSet {
     sites_: Vec<u16>,
 }
 
 impl SiteSet {
-    // How many sites the set holds (ghost).
+    // How many sites the set holds, and whether it holds one (ghost).
     pub closed spec fn spec_len(&self) -> int {
         self.sites_@.len() as int
+    }
+
+    pub closed spec fn spec_contains(&self, site: u16) -> bool {
+        self.sites_@.contains(site)
+    }
+
+    // Sorted and duplicate-free (ghost).
+    pub closed spec fn wf(&self) -> bool {
+        sites_sorted(self.sites_@)
     }
 }
 
 #[allow(clippy::new_without_default)]
 impl SiteSet {
     pub fn new() -> (r: SiteSet)
-        ensures r.spec_len() == 0,
+        ensures
+            r.wf(),
+            r.spec_len() == 0,
+            forall|x: u16| !r.spec_contains(x),
     {
         SiteSet { sites_: Vec::new() }
     }
@@ -48,16 +68,22 @@ impl SiteSet {
     }
 
     pub fn clear(&mut self)
-        ensures final(self).spec_len() == 0,
+        ensures
+            final(self).wf(),
+            final(self).spec_len() == 0,
+            forall|x: u16| !final(self).spec_contains(x),
     {
         self.sites_.clear();
     }
 
-    pub fn contains(&self, site: &u16) -> bool {
+    pub fn contains(&self, site: &u16) -> (r: bool)
+        ensures r == self.spec_contains(*site),
+    {
         let mut i: usize = 0;
         while i < self.sites_.len()
             invariant
                 i <= self.sites_@.len(),
+                forall|k: int| 0 <= k < i ==> self.sites_@[k] != *site,
             decreases self.sites_@.len() - i,
         {
             if self.sites_[i] == *site {
@@ -69,39 +95,97 @@ impl SiteSet {
     }
 
     // BTreeSet::insert: false, and no change, if already present.
-    // manual_swap: Vec::swap is not among the operations both lanes' Vec
-    // support (push, pop and indexing; see above), so the swap is spelled out.
-    #[allow(clippy::manual_swap)]
     pub fn insert(&mut self, site: u16) -> (r: bool)
+        requires old(self).wf(),
         ensures
+            final(self).wf(),
+            r == !old(self).spec_contains(site),
+            forall|x: u16| final(self).spec_contains(x)
+                == (old(self).spec_contains(x) || x == site),
             r ==> final(self).spec_len() == old(self).spec_len() + 1,
             !r ==> final(self).spec_len() == old(self).spec_len(),
             final(self).spec_len() <= usize::MAX,
     {
+        proof { vstd::std_specs::vec::axiom_spec_len(&self.sites_); }
         if self.contains(&site) {
-            proof { vstd::std_specs::vec::axiom_spec_len(&self.sites_); }
             return false;
         }
-        self.sites_.push(site);
-        let mut j: usize = self.sites_.len() - 1;
-        while j > 0 && self.sites_[j - 1] > self.sites_[j]
+        let mut pos: usize = 0;
+        while pos < self.sites_.len() && self.sites_[pos] < site
             invariant
-                j < self.sites_@.len(),
-                self.sites_@.len() == old(self).sites_@.len() + 1,
-                self.sites_@.len() <= usize::MAX,
-            decreases j,
+                pos <= self.sites_@.len(),
+                self.sites_@ == old(self).sites_@,
+                forall|k: int| 0 <= k < pos ==> self.sites_@[k] < site,
+            decreases self.sites_@.len() - pos,
         {
-            let lower: u16 = self.sites_[j - 1];
-            self.sites_[j - 1] = self.sites_[j];
-            self.sites_[j] = lower;
-            j -= 1;
+            pos += 1;
+        }
+        let ghost pre = self.sites_@;
+        self.sites_.insert(pos, site);
+        proof {
+            let post = self.sites_@;
+            assert(post == pre.insert(pos as int, site));
+            // every element from pos on was above site: sorted, and not site
+            assert forall|k: int| pos <= k < pre.len() implies pre[k] > site by {
+                if pre[k] < site {
+                    assert(pre[pos as int] < site || pos as int == k);
+                } else {
+                    assert(pre[k] != site) by {
+                        assert(!pre.contains(site));
+                    }
+                }
+                if pos < pre.len() {
+                    assert(pre[pos as int] >= site);
+                    if k > pos as int {
+                        assert(pre[pos as int] < pre[k]);
+                    }
+                }
+            }
+            assert forall|i: int, j: int| 0 <= i < j < post.len() implies post[i] < post[j] by {
+                if j < pos {
+                } else if j == pos {
+                } else if i < pos {
+                    assert(post[j] == pre[j - 1]);
+                } else if i == pos {
+                    assert(post[j] == pre[j - 1]);
+                } else {
+                    assert(post[i] == pre[i - 1] && post[j] == pre[j - 1]);
+                }
+            }
+            assert forall|x: u16| post.contains(x) == (pre.contains(x) || x == site) by {
+                if pre.contains(x) {
+                    let k = choose|k: int| 0 <= k < pre.len() && pre[k] == x;
+                    if k < pos {
+                        assert(post[k] == x);
+                    } else {
+                        assert(post[k + 1] == x);
+                    }
+                }
+                if x == site {
+                    assert(post[pos as int] == site);
+                }
+                if post.contains(x) {
+                    let k = choose|k: int| 0 <= k < post.len() && post[k] == x;
+                    if k < pos {
+                        assert(pre[k] == x);
+                    } else if k > pos {
+                        assert(pre[k - 1] == x);
+                    }
+                }
+            }
+            vstd::std_specs::vec::axiom_spec_len(&self.sites_);
         }
         true
     }
 
     // BTreeSet::remove: false if absent.
     pub fn remove(&mut self, site: &u16) -> (r: bool)
+        requires old(self).wf(),
         ensures
+            final(self).wf(),
+            r == old(self).spec_contains(*site),
+            forall|x: u16| final(self).spec_contains(x)
+                == (old(self).spec_contains(x) && x != *site),
             r ==> final(self).spec_len() == old(self).spec_len() - 1,
             !r ==> final(self).spec_len() == old(self).spec_len(),
     {
@@ -110,6 +194,7 @@ impl SiteSet {
             invariant
                 i <= self.sites_@.len(),
                 self.sites_@ == old(self).sites_@,
+                forall|k: int| 0 <= k < i ==> self.sites_@[k] != *site,
             decreases self.sites_@.len() - i,
         {
             i += 1;
@@ -117,18 +202,41 @@ impl SiteSet {
         if i == self.sites_.len() {
             return false;
         }
-        proof { vstd::std_specs::vec::axiom_spec_len(&self.sites_); }
-        while i + 1 < self.sites_.len()
-            invariant
-                i < self.sites_@.len(),
-                self.sites_@.len() <= usize::MAX,
-                self.sites_@.len() == old(self).sites_@.len(),
-            decreases self.sites_@.len() - i,
-        {
-            self.sites_[i] = self.sites_[i + 1];
-            i += 1;
+        let ghost pre = self.sites_@;
+        self.sites_.remove(i);
+        proof {
+            let post = self.sites_@;
+            assert(post == pre.remove(i as int));
+            assert forall|a: int, b: int| 0 <= a < b < post.len() implies post[a] < post[b] by {
+                if b < i {
+                } else if a < i {
+                    assert(post[b] == pre[b + 1]);
+                } else {
+                    assert(post[a] == pre[a + 1] && post[b] == pre[b + 1]);
+                }
+            }
+            assert forall|x: u16| post.contains(x) == (pre.contains(x) && x != *site) by {
+                if post.contains(x) {
+                    let k = choose|k: int| 0 <= k < post.len() && post[k] == x;
+                    if k < i {
+                        assert(pre[k] == x);
+                        assert(pre[k] < pre[i as int]);
+                    } else {
+                        assert(pre[k + 1] == x);
+                        assert(pre[i as int] < pre[k + 1]);
+                    }
+                }
+                if pre.contains(x) && x != *site {
+                    let k = choose|k: int| 0 <= k < pre.len() && pre[k] == x;
+                    if k < i {
+                        assert(post[k] == x);
+                    } else {
+                        assert(k != i);
+                        assert(post[k - 1] == x);
+                    }
+                }
+            }
         }
-        self.sites_.pop();
         true
     }
 }
@@ -140,11 +248,20 @@ pub struct HeartbeatAuthority {
     outstanding_: SiteSet,  // [move, M9]
 }
 
+impl HeartbeatAuthority {
+    // Both sets well formed (ghost).
+    pub closed spec fn wf(&self) -> bool {
+        self.voters_.wf() && self.outstanding_.wf()
+    }
+}
+
 #[allow(clippy::new_without_default)]
 impl HeartbeatAuthority {
     // A generation begins with this site already counted as a voter: a leader
     // is evidence for its own authority.
-    pub fn new(term: u64, config_size: usize, self_site: u16) -> HeartbeatAuthority {
+    pub fn new(term: u64, config_size: usize, self_site: u16) -> (r: HeartbeatAuthority)
+        ensures r.wf(),
+    {
         let mut voters: SiteSet = SiteSet::new();  // [move, M9]
         voters.insert(self_site);
         HeartbeatAuthority {
@@ -169,15 +286,24 @@ impl HeartbeatAuthority {
 
     // One physical RPC exists per follower per generation, but these stay sets
     // so a future transport cannot double-count a voter.
-    pub fn launch(&mut self, site: u16) {
+    pub fn launch(&mut self, site: u16)
+        requires old(self).wf(),
+        ensures final(self).wf(),
+    {
         self.outstanding_.insert(site);
     }
 
-    pub fn retire(&mut self, site: u16) {
+    pub fn retire(&mut self, site: u16)
+        requires old(self).wf(),
+        ensures final(self).wf(),
+    {
         self.outstanding_.remove(&site);
     }
 
-    pub fn record_vote(&mut self, site: u16) {
+    pub fn record_vote(&mut self, site: u16)
+        requires old(self).wf(),
+        ensures final(self).wf(),
+    {
         self.voters_.insert(site);
     }
 
@@ -195,6 +321,11 @@ pub struct AuthorityGeneration {
 }
 
 impl AuthorityGeneration {
+    // Its launching membership and its evidence well formed (ghost).
+    pub closed spec fn wf(&self) -> bool {
+        self.config_.wf() && self.evidence_.wf()
+    }
+
     pub fn round_id(&self) -> u64 {
         self.round_id_
     }
@@ -312,17 +443,26 @@ impl AuthorityLedger {
     pub closed spec fn spec_len(&self) -> int {
         self.generations_@.len() as int
     }
+
+    // Every generation well formed (ghost).
+    pub closed spec fn wf(&self) -> bool {
+        forall|g: int| 0 <= g < self.generations_@.len() ==> (#[trigger] self.generations_@[g]).wf()
+    }
 }
 
 #[allow(clippy::new_without_default)]
 impl AuthorityLedger {
-    pub fn new() -> AuthorityLedger {
+    pub fn new() -> (r: AuthorityLedger)
+        ensures r.wf(),
+    {
         AuthorityLedger { generations_: Vec::new() }
     }
 
     // Dropped wholesale on leadership loss or a term change, so a prior
     // epoch's evidence can never be counted against the new one.
-    pub fn abandon(&mut self) {
+    pub fn abandon(&mut self)
+        ensures final(self).wf(),
+    {
         self.generations_.clear();
     }
 
@@ -330,7 +470,12 @@ impl AuthorityLedger {
     // if this round id is already present, which can only be the deliberately
     // fail-closed UINT64_MAX saturation generation; the caller asserts that.
     pub fn open(&mut self, round_id: u64, config: &[u16],
-                evidence: HeartbeatAuthority) -> bool {
+                evidence: HeartbeatAuthority) -> bool
+        requires
+            old(self).wf(),
+            evidence.wf(),
+        ensures final(self).wf(),
+    {
         if self.index_of(round_id) < self.generations_.len() {
             return false;
         }
@@ -339,6 +484,7 @@ impl AuthorityLedger {
         while i < config.len()
             invariant
                 i <= config@.len(),
+                snapshot.wf(),
             decreases config@.len() - i,
         {
             snapshot.insert(config[i]);
@@ -381,7 +527,10 @@ impl AuthorityLedger {
         self.generations_.is_empty()
     }
 
-    pub fn launch(&mut self, round_id: u64, site: u16) -> bool {
+    pub fn launch(&mut self, round_id: u64, site: u16) -> bool
+        requires old(self).wf(),
+        ensures final(self).wf(),
+    {
         let index = self.index_of(round_id);
         if index >= self.generations_.len() {
             return false;
@@ -401,7 +550,10 @@ impl AuthorityLedger {
     // One reply arrives. The RPC is retired unconditionally, and counted as a
     // vote only if it proves this exact generation: same term, a follower that
     // was in the launching membership, and the reply predicate agreeing.
-    pub fn record_reply(&mut self, reply: &AuthorityReply) {
+    pub fn record_reply(&mut self, reply: &AuthorityReply)
+        requires old(self).wf(),
+        ensures final(self).wf(),
+    {
         let index = self.index_of(reply.sent_round());
         if index >= self.generations_.len() {
             return;
@@ -429,7 +581,10 @@ impl AuthorityLedger {
     pub fn settle(&mut self, is_leader: bool, current_term: u64,
                   current_config: &[u16],
                   confirmed_term: u64, confirmed_round: u64)
-                  -> AuthorityOutcome {
+                  -> AuthorityOutcome
+        requires old(self).wf(),
+        ensures final(self).wf(),
+    {
         let mut outcome = AuthorityOutcome {
             confirmed_: false,
             term_: 0,
@@ -443,6 +598,7 @@ impl AuthorityLedger {
         while i < self.generations_.len()
             invariant
                 i <= self.generations_@.len(),
+                self.wf(),
             decreases self.generations_@.len() - i,
         {
             let context_is_current = is_leader &&
@@ -488,9 +644,32 @@ pub struct HeartbeatRoundScope {
     authority_inserted_: bool,
 }
 
+impl HeartbeatRoundScope {
+    // The round's membership: well formed, its size and its members (ghost).
+    pub closed spec fn wf(&self) -> bool {
+        self.config_.wf()
+    }
+
+    pub closed spec fn spec_nservers(&self) -> int {
+        self.config_.spec_len()
+    }
+
+    pub closed spec fn spec_is_member(&self, site: u16) -> bool {
+        self.config_.spec_contains(site)
+    }
+
+    pub closed spec fn spec_term(&self) -> u64 {
+        self.term_
+    }
+}
+
 #[allow(clippy::new_without_default)]
 impl HeartbeatRoundScope {
-    pub fn new() -> HeartbeatRoundScope {
+    pub fn new() -> (r: HeartbeatRoundScope)
+        ensures
+            r.wf(),
+            r.spec_nservers() == 0,
+    {
         HeartbeatRoundScope {
             term_: 0,
             round_id_: 0,
@@ -503,7 +682,13 @@ impl HeartbeatRoundScope {
     // Opens a round. Term, generation and membership are latched together so
     // no later phase can observe a half-established scope, and the previous
     // round's membership is dropped rather than accumulated.
-    pub fn begin(&mut self, term: u64, round_id: u64) {
+    pub fn begin(&mut self, term: u64, round_id: u64)
+        ensures
+            final(self).wf(),
+            final(self).spec_nservers() == 0,
+            forall|x: u16| !final(self).spec_is_member(x),
+            final(self).spec_term() == term,
+    {
         self.term_ = term;
         self.round_id_ = round_id;
         self.config_.clear();
@@ -511,11 +696,22 @@ impl HeartbeatRoundScope {
         self.authority_inserted_ = false;
     }
 
-    pub fn admit(&mut self, site: u16) {
+    pub fn admit(&mut self, site: u16)
+        requires old(self).wf(),
+        ensures
+            final(self).wf(),
+            forall|x: u16| final(self).spec_is_member(x)
+                == (old(self).spec_is_member(x) || x == site),
+            final(self).spec_nservers() == old(self).spec_nservers()
+                + (if old(self).spec_is_member(site) { 0int } else { 1int }),
+            final(self).spec_term() == old(self).spec_term(),
+    {
         self.config_.insert(site);
     }
 
-    pub fn term(&self) -> u64 {
+    pub fn term(&self) -> (r: u64)
+        ensures r == self.spec_term(),
+    {
         self.term_
     }
 
@@ -525,11 +721,15 @@ impl HeartbeatRoundScope {
 
     // The replica count this round was launched against, membership snapshot
     // included, which is what every quorum decision divides by.
-    pub fn nservers(&self) -> usize {
+    pub fn nservers(&self) -> (r: usize)
+        ensures r == self.spec_nservers(),
+    {
         self.config_.len()
     }
 
-    pub fn is_member(&self, site: u16) -> bool {
+    pub fn is_member(&self, site: u16) -> (r: bool)
+        ensures r == self.spec_is_member(site),
+    {
         self.config_.contains(&site)
     }
 

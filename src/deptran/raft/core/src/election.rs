@@ -38,7 +38,8 @@ impl VoteSet {
     // Each counted vote is one voter in the set, so neither count can
     // overflow (ghost).
     pub closed spec fn wf(&self) -> bool {
-        self.yes_ as int + self.no_ as int == self.voters_.spec_len()
+        &&& self.yes_ as int + self.no_ as int == self.voters_.spec_len()
+        &&& self.voters_.wf()
     }
 
     // The highest reply term seen so far (ghost).

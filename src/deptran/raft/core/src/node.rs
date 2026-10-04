@@ -99,11 +99,6 @@ pub struct RaftCore<C> {
     pub peer_sites_: Vec<u16>,
 }
 
-// A strictly increasing site list: the configuration's shape (ghost).
-pub open spec fn sites_sorted(s: Seq<u16>) -> bool {
-    forall|i: int, j: int| 0 <= i < j < s.len() ==> s[i] < s[j]
-}
-
 impl<C> RaftCore<C> {
     // What every core call keeps (ghost): the log's layout, the peer table
     // and its site list of one length, the term below the index ceiling,
@@ -118,6 +113,8 @@ impl<C> RaftCore<C> {
         &&& (self.commit_index_ as int) <= self.raft_log_.spec_last_index()
         &&& self.raft_log_.spec_base() <= self.snapidx_ as int + 1
         &&& sites_sorted(self.config_members_@)
+        &&& self.authority_rounds_.wf()
+        &&& self.round_.wf()
     }
 }
 
