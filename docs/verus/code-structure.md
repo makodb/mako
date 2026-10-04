@@ -717,7 +717,7 @@ not leading (`:259-270`, `:358`). So the check protecting the commit rule
 is the one at `:310`, outside the lock. A server that stepped down between
 `:310` and `:315`, and took a newer leader's entries meanwhile, would count
 its old term's match indices against an entry of the new term and could
-commit an entry no majority holds (docs/verus/bugs-found.md:414-515).
+commit an entry no majority holds (docs/verus/bugs-found.md:415-516).
 `core/tests/b17_round_end.rs` reproduces this at the core. The proof takes
 "the round end runs while leading" as a premise (host-contract.md:105,
 :132-143).
@@ -730,13 +730,13 @@ the other threads (submit, apply, shutdown) never change the role. The
 mirror is published at the end of every critical section that can change it
 (`src/server_h.rs:1560`, `:4080`). The bug log's interleaving, the driver
 "blocks on `mtx_` while the RPC handler takes D's messages"
-(bugs-found.md:442-443), needs a handler on another thread. Lab builds have
+(bugs-found.md:443-444), needs a handler on another thread. Lab builds have
 one: the harness calls `ServeVote` and `ServeAppendEntries` from site 0's
 own thread (`src/lab.rs:520`, `:534`; `src/deptran/server_worker.cc:135-138`).
 The core defect stands either way; the proposed fix moves the check into
-the core (bugs-found.md:503-509). B17's entry said "nothing excludes it"
+the core (bugs-found.md:504-510). B17's entry said "nothing excludes it"
 until this document was written; its reachability now says the above
-(bugs-found.md:472-498).
+(bugs-found.md:473-499).
 
 One premise gap does reach production, at shutdown (bugs-found B18, found
 while writing this). `IsLeaderLocked()` is false
@@ -853,7 +853,8 @@ and Mako threads, and `IsLeader` and `GetLeaderHint` on any Mako thread
 (`:3884`, `:3817`, `:3826`; `src/server_cc.rs:522-531`, `:580-585`).
 `mtx_`, the atomics and the per-field mutexes serialize the accesses that
 matter (`heartbeat_interval_us_` has none of them, B14), but the references
-alias, across threads too, which Rust's aliasing rules do not allow.
+alias, across threads too, which Rust's aliasing rules do not allow
+(recorded as bugs-found B19).
 
 ## 8. The two kinds of events
 

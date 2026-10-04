@@ -37,6 +37,7 @@ effect). "Latent" means nothing in production reaches it today.
 | B16 | liveness (latent) | An entry whose command has no value (an empty `Command`, which `Start` accepts) is never replicated: the leader's payload selection reads it as a missing entry and skips every follower behind it, every round; a follower's conflict scan likewise reads such a slot as absent | read in code (Phase 8) | recorded only (user, 2026-10-04): no caller proposes an empty command today; the proof takes "a proposal has a value" as a host-contract premise |
 | B17 | safety (latent race) | The round end (PHASE 3) advances the commit index without checking that this server still leads: `heartbeat_round_end_body` reads `IsLeader()` before taking `mtx_`, and `heartbeat_phase3_locked` calls `raft_commit_advance` whatever `is_leader` is. A server that lost leadership in that window, and meanwhile took a newer leader's entries over its tail, counts its old term's match indices against an entry of the new term. In production the Rust lane's threading keeps the window closed; the lab's direct handler calls can open it (Reachability, corrected 2026-10-04) | reproduced at the core: `core/tests/b17_round_end.rs` (Phase 8) | recorded only (user, 2026-10-04): not fixed; the proof takes "the round end runs while leading" as a premise, which the race can violate |
 | B18 | proof coverage | Shutdown clears `looping_`, so `IsLeaderLocked()` reads false while the core still leads: a leader's `RecvAppendReply` or `RoundEnd` stepped after `PrepareForShutdown` (or `FailStop`) breaks its coupling premise (`is_leader` is the core's role). The core does nothing wrong then (a reply is ignored unless its term steps the core down; the round end commits as the leader the core still is and confirms no read authority), but the step is outside the certificate | read in code (while writing `code-structure.md`) | recorded; not fixed (needs the user's approval) |
+| B19 | race | Every thread and fiber that enters the shell through a raw pointer makes its own `&mut RaftServerBase`, and some hold it long: the apply thread for its whole life, the heartbeat driver across every wait, each RPC handler through `RaftRpcService::server(&self) -> &mut`. These `&mut` alias across threads, which is undefined behaviour in Rust's model whatever lock or atomic guards the fields | read in code (while writing `code-structure.md` §7) | recorded only; no plan item |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
 
@@ -552,3 +553,45 @@ with the two handlers' proofs redone for `is_leader` false while leading.
 
 **Fate.** Recorded; not fixed (a new item needs the user's approval, plan
 0.7 point 3).
+
+## B19. Every thread holds its own `&mut RaftServerBase` (race)
+
+**Where.** The shell is reached through raw pointers, and each entry turns
+its pointer into a `&mut RaftServerBase`:
+- the C ABI exports call `&mut self` methods through `(*s)`
+  (`src/server_cc.rs:417-709`). `raft_server_apply_thread_loop` (`:644-646`)
+  runs `ApplyThreadLoop(&mut self)` (`src/server_h.rs:2572`) for the apply
+  thread's whole life.
+- `Start`, `IsLeader` and `GetLeaderHint` take `&mut self`
+  (`src/server_h.rs:3884`, `:3817`, `:3826`) and are called on the submit,
+  shutdown and Mako threads.
+- the RPC service makes `&mut *self.server.0` from `&self` for every
+  handler (`rt/src/service.rs:88-91`, under
+  `#[allow(clippy::mut_from_ref)]`).
+- the heartbeat driver binds one per run and keeps it across every wait
+  (`src/server_cc.rs:358`). The election-timer fiber calls
+  `RequestVoteFromElectionTimer(&mut self)` through its pointer
+  (`src/server_h.rs:4131-4133`, `:1137`), which keeps that `&mut` across
+  the vote wait in `RequestVoteImpl` (`:3155`, `:3222`).
+
+**What is wrong.** Two live `&mut` to one object are undefined behaviour in
+Rust's model, even when every field they touch is locked or atomic: while a
+`&mut` lives, the compiler may assume nothing else reaches that memory.
+`mtx_`, the atomics and the per-field mutexes serialize the accesses that
+matter (all but `heartbeat_interval_us_`, B14), so nothing observed goes
+wrong; correctness rests on the optimizer not exploiting the aliasing. B15
+was the same defect for `&mut RaftCore`, which Phase 6 fixed by moving two
+calls under `mtx_`; this one is in how every entry reaches the shell.
+
+**How found.** Writing [code-structure.md](code-structure.md) §7; one of
+its checkers raised it.
+
+**Fix (not applied).** Entries take `&RaftServerBase`, and every field that
+changes moves behind interior mutability: the core behind the lock it
+already has, the rest atomics or cells. The plan's F11d (Phase 7) would
+shrink the problem, because `Propose` and `Applied` become poll-thread jobs
+and `mtx_` goes, but the threads that enqueue them or read the mirrors
+would still need `&self`.
+
+**Fate.** Recorded only: no plan item covers it, and a fix needs the user's
+approval.
