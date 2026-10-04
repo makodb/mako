@@ -9,6 +9,13 @@
 #
 # Raw results land in $RESULTS/PHASE/POINT (never in git). Exits 1 if any
 # comparison fails, 2 on a usage or configuration error.
+#
+# G2 is gated on a traced metric (decided after the Phase 3 checkpoint,
+# docs/verus/reports/phase-3.md §3.1): the rotation runs with the Phase 0
+# trace kit on and scripts/verus/two_follower_rounds.py turns each run into
+# the time of its rounds that sent to both followers. G2_REPORT_ROUNDS (25)
+# untraced rounds follow in $OUT/untraced for the reported, ungated lines:
+# throughput and how many runs end with a follower behind.
 set -euo pipefail
 if [ $# -lt 4 ]; then
   echo "usage: $0 PHASE POINT PARENT CHILD [BASE]" >&2
@@ -34,7 +41,11 @@ B=$(echo "$row" | awk -F'|' '{gsub(/ /,"",$4); print $4}')
 mkdir -p "$RESULTS/$P"; OUT=$RESULTS/$P/$G
 mkdir -p "$OUT"; uptime > "$OUT.uptime"
 echo "gate_point: $P $G rounds=$N bounds=$B arms: $A $C ${BASE}"
-scripts/raft_perf/rotation_trial.sh "$OUT" "$N" "$A" "$C" ${BASE:+"$BASE"}
+if [ "$G" = G2 ]; then
+  TRACE=1 scripts/raft_perf/rotation_trial.sh "$OUT" "$N" "$A" "$C" ${BASE:+"$BASE"}
+else
+  scripts/raft_perf/rotation_trial.sh "$OUT" "$N" "$A" "$C" ${BASE:+"$BASE"}
+fi
 # rotation_trial.sh deletes a round's JSON when raft_bench.sh failed but keeps
 # its .log, so a log integrity violation would otherwise look like one
 # missing pair.
@@ -42,10 +53,23 @@ if grep -l 'log integrity violation' "$OUT"/*.log 2>/dev/null; then
   echo "GATE FAIL $G: log integrity"; exit 1
 fi
 rc=0
-python3 scripts/raft_perf/paired_stats.py "$OUT" "$N" "$A" "$C" --json > "$OUT/$A-vs-$C.json" || rc=1
+STATS=scripts/raft_perf/paired_stats.py
+if [ "$G" = G2 ]; then
+  python3 scripts/verus/two_follower_rounds.py summarize "$OUT" "$N" "$A" "$C" ${BASE:+"$BASE"} || rc=1
+  STATS="scripts/verus/two_follower_rounds.py stats"
+fi
+python3 $STATS "$OUT" "$N" "$A" "$C" --json > "$OUT/$A-vs-$C.json" || rc=1
 python3 scripts/verus/perf_gate.py "$OUT/$A-vs-$C.json" --bounds "$B" || rc=1
 if [ -n "$BASE" ]; then
-  python3 scripts/raft_perf/paired_stats.py "$OUT" "$N" "$BASE" "$C" --json > "$OUT/$BASE-vs-$C.json" || rc=1
+  python3 $STATS "$OUT" "$N" "$BASE" "$C" --json > "$OUT/$BASE-vs-$C.json" || rc=1
   python3 scripts/verus/perf_gate.py "$OUT/$BASE-vs-$C.json" --bounds "$B" || { echo "GATE FAIL $G cumulative"; rc=1; }
+fi
+if [ "$G" = G2 ]; then
+  # Reported beside the gate, never gated.
+  U=$OUT/untraced R=${G2_REPORT_ROUNDS:-25}
+  scripts/raft_perf/rotation_trial.sh "$U" "$R" "$A" "$C" ${BASE:+"$BASE"}
+  echo "G2 reported, not gated (untraced, $R rounds):"
+  python3 scripts/raft_perf/paired_stats.py "$U" "$R" "${BASE:-$A}" "$C" | grep -E "rounds|applied_per_sec" || true
+  python3 scripts/verus/follower_behind.py "$U" "$R" "${BASE:-$A}" "$C" ${BASE:+"$A"}
 fi
 exit $rc

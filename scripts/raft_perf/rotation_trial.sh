@@ -15,7 +15,9 @@
 # SNAPSHOT_BYTES (0 = none; snapshots then also need MAKO_RAFT_SNAPSHOTS=1
 # and MAKO_RAFT_SNAPSHOT_INTERVAL in the environment, which the launcher
 # passes through), STALL_AT / STALL_FOR (0 = no stall), GROUP (single|multi,
-# raft_bench.sh --group-mode).
+# raft_bench.sh --group-mode). TRACE=1 turns on the per-entry stage trace
+# for every run (MAKO_RAFT_TRACE_FILE=OUT_DIR/trace.r<i>.<arm>, one CSV per
+# process); scripts/verus/two_follower_rounds.py reads it.
 set -euo pipefail
 OUT="$1"; ROUNDS="$2"; shift 2
 ARMS=("$@")
@@ -24,10 +26,12 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PAYLOAD="${PAYLOAD:-4096}"; RATE="${RATE:-240}"; MAXOUT="${MAXOUT:-4096}"
 DUR="${DUR:-8}"; PARTS="${PARTS:-1}"; GROUP="${GROUP:-single}"
 SNAPSHOT_BYTES="${SNAPSHOT_BYTES:-0}"; STALL_AT="${STALL_AT:-0}"; STALL_FOR="${STALL_FOR:-0}"
+TRACE="${TRACE:-0}"
 mkdir -p "$OUT"
 run() {
-  local arm="$1" f="$2"
-  (cd "$REPO_ROOT" && examples/raft_bench.sh --build-dir "$arm" --out "$f" \
+  local arm="$1" f="$2" trace="$3"
+  (cd "$REPO_ROOT" && ${trace:+env MAKO_RAFT_TRACE_FILE="$trace"} \
+     examples/raft_bench.sh --build-dir "$arm" --out "$f" \
      --partitions "$PARTS" --group-mode "$GROUP" --payload-bytes "$PAYLOAD" --rate "$RATE" \
      --max-outstanding "$MAXOUT" --duration-sec "$DUR" \
      --snapshot-bytes "$SNAPSHOT_BYTES" --stall-follower-at-sec "$STALL_AT" \
@@ -38,7 +42,11 @@ for i in $(seq 1 "$ROUNDS"); do
     arm="${ARMS[$(( (i + j) % K ))]}"
     f="$OUT/r$i.$arm.json"
     [ -s "$f" ] && continue   # resumable: a finished run is kept
-    run "$arm" "$f" || { echo "round $i $arm FAILED (see $f.log)"; rm -f "$f"; }
+    trace=""
+    [ "$TRACE" = 1 ] && trace="$OUT/trace.r$i.$arm"
+    # A failed run's partial traces go with its record, so a re-run's files
+    # are the only ones under that prefix.
+    run "$arm" "$f" "$trace" || { echo "round $i $arm FAILED (see $f.log)"; rm -f "$f" ${trace:+"$trace".*}; }
   done
   echo "round $i done"
 done

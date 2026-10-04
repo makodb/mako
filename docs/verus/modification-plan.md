@@ -45,6 +45,7 @@ The user has answered them; nothing in this plan waits on the group.
 | Q5 | Snapshots (their A10) and restart | Ours: both gated for certificate v1; designs for later in §4.4. |
 | Q6 | Refused committed-conflict path | Ours: a view choice, V2, no spec change (§4.3). |
 | Q7 | How much testing between phases? | **Less**: correctness at every phase end, performance at three checkpoints only (0.10). Decided by the user after Phase 0's A/A runs had started. |
+| Q8 | How is G2 judged, once its throughput turned out to measure a timing race? | **By the time of rounds that sent to both followers**, traced; throughput and the follower-behind count are reported, not gated (0.10). The Phase 3 checkpoint passes. Decided by the user after the Phase 3 investigation. |
 
 **We may change the spec ourselves**, under two rules that apply to every
 change:
@@ -274,6 +275,16 @@ quiet-machine hours (about 86 h on the critical path become about 10 h).
 - **A failed checkpoint:** stop and report it (0.7 point 2). Investigate
   afterwards (0.6), first by running the failing point on the phase-end
   commits since the last checkpoint.
+- **G2 is traced (user, 2026-10-04, after the Phase 3 checkpoint).** At
+  G2's saturation the leader skips a follower whose reply missed the round's
+  early-quorum pass, and how often that happens is a timing race that decides
+  the throughput ([reports/phase-3.md](reports/phase-3.md) §3.1). So G2 gates
+  on the time of rounds that sent to both followers, from the Phase 0 trace
+  kit, over 10 rotated rounds with a +2% bound and §6's pass rule
+  (`scripts/verus/two_follower_rounds.py`, run by `gate_point.sh`). Beside
+  it, not gated: 25 untraced rounds' throughput and how many runs end with a
+  follower behind (`scripts/verus/follower_behind.py`). The Phase 3
+  checkpoint's G2 failure is passed by the same decision.
 - Optional Phases 5 and 7 get their checks when the user schedules them.
 
 ---

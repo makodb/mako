@@ -64,8 +64,9 @@ threads ran on, and G2 re-run on each phase's end commit (Phase 1
 `590370719` and Phase 2 `a85a19993`, built in their own worktrees). Raw data:
 `$RESULTS/p3/g2-trace/`, `g2-bisect-trace/`, `g2-bisect/`.
 
-**Result: the loss is a change in how often the leader skips a follower, it
-arrives with Phase 2, and the cost of a round did not grow.**
+**Result: the loss is a change in how often the leader skips a follower, and
+it arrives with Phase 2. The cost of a round grew by about 1% (validation
+below), inside G2's original 2% budget.**
 
 **How a G2 round works.** At 4 KB with no rate limit, every heartbeat round
 sends each follower up to 256 entries. The leader stops collecting replies
@@ -111,14 +112,15 @@ test): Phase 1 vs 0 −0.5% (p = 1.0); **Phase 2 vs 1 −4.7% (p = 0.043)**;
 Phase 3 vs 2 −2.3% (p = 0.69); Phase 3 vs 0 −5.1% (p = 0.015, the
 checkpoint's result again).
 
-**The cost of a round did not grow.** Traced runs (3 per build, rotated) give
-the time of rounds that sent to both followers, the one comparison the skip
+**The cost of a round, first look.** Traced runs (3 per build, rotated)
+give the time of rounds that sent to both followers, the comparison the skip
 rate cannot bias. Medians: Phase 0 7,346 µs, Phase 1 7,317, Phase 2 7,266,
 Phase 3 7,228. The follower's handler per 256-entry batch moved by +20 to
 +65 µs (Phase 0 2,562 µs; Phase 1 2,581; Phase 2 2,629; Phase 3 2,604),
-under 1% of a round. Tracing slows every build alike and shifts the race, so
-the traced runs skip at their own rates. The comparison above uses
-two-follower rounds only.
+under 1% of a round. Three runs per build cannot resolve 1%; the 10-round
+validation in 3.2 does, and finds Phase 3 about 1% slower. Tracing slows
+every build alike and shifts the race, so the traced runs skip at their own
+rates.
 
 **Placement modulates the race but is not the difference.** Runs whose three
 processes ran mostly on one NUMA node rarely ended behind (1 of 11); runs
@@ -137,9 +139,40 @@ in a mean the traces can resolve.
 
 **Reading.** G2 was meant to measure per-message CPU (plan §6, "default G2").
 At this point it measures mostly how often the stop-and-wait race starves a
-follower, and Phase 2 starves it less. Per-message cost, measured on rounds
-that send to both followers and on runs that end caught up, did not get
-worse in any phase.
+follower, and Phase 2 starves it less. Measured on runs that end caught up,
+no phase is slower; measured on rounds that send to both followers, which
+resolves less, Phase 3 is about 1% slower than Phase 0 (3.2).
+
+### 3.2 Decision (user, 2026-10-04)
+
+**The checkpoint passes**, G2 included. From the Phase 6 checkpoint on, G2
+gates on the traced time of rounds that sent to both followers (10 rotated
+rounds, +2% bound, §6's pass rule); 25 untraced rounds' throughput and the
+count of runs ending with a follower behind are reported beside it, not
+gated (plan 0.10, Q8). The user first chose to gate on the runs that end
+caught up; their spread (CV 3.45% over 110 runs) would have needed about
+75-100 rounds to hold −2%, so the traced metric replaced it, also by the
+user's choice.
+
+**Validation** (`$RESULTS/p3v/G2`: `gate_point.sh p3v G2` with a second
+link to the Phase 0 build as the parent arm, so one run gives an A/A and the
+Phase 3 comparison; 10 traced rounds, rotated):
+
+| Comparison | Two-follower round, median ratio | Rounds slower / faster | Sign test p | Verdict |
+|---|---|---|---|---|
+| Phase 0 vs a second link to it (A/A) | −0.58% | 3 / 7 | 0.344 | pass |
+| Phase 3 vs Phase 0 | +1.08% | 8 / 2 | 0.109 | pass |
+| Phase 3 vs the second link | +1.53% | 9 / 1 | 0.021 | pass (consistent shift within bound) |
+
+No false alarm on the A/A. Phase 3's rounds that send to both followers are
+about 1-1.5% slower than Phase 0's, consistently, inside the +2% bound. The
+paired spread is 1.4-3.1%. The larger values come from two A/A-arm runs
+that skipped heavily (65-69% of rounds sent to both followers); the median
+and the sign test absorb them. The first version of the metric counted every
+round. One Phase 3 run fell into a stretch of 1,208 short follow-up rounds,
+and its median dropped 21%, so the metric now counts full rounds only (the
+run's largest batch, 256 entries). The figures above are full-round figures.
+The untraced lines the gate reports beside it were exercised with 2 rounds.
 
 ## 4. Equivalence
 
