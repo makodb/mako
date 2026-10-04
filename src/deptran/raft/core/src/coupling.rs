@@ -26,6 +26,8 @@ use glr::protocol::Raft::raft::*;
 #[allow(unused_imports)]
 use glr::protocol::Raft::ghost_log::*;
 #[allow(unused_imports)]
+use glr::protocol::Raft::membership::*;
+#[allow(unused_imports)]
 use glr::protocol::Raft::ghost_log_compose::cluster_c;
 
 verus! {
@@ -803,6 +805,149 @@ pub proof fn lemma_vote_group<C>(pre: &RaftCore<C>, post: &RaftCore<C>, can_id: 
     assert(post.c_view() == c);
     assert(post.log_view() == pre.log_view());
     assert(post.state_view() == s3);
+}
+
+// ===========================================================================
+// A campaign (LTimeout): a follower takes the next term, votes for itself
+// and broadcasts its RequestVote; Tick-opened
+// ===========================================================================
+
+// The RequestVote a started campaign broadcasts, as the spec sees it.
+pub open spec fn campaign_msg(me: int, r: CampaignStart) -> LRaftMessage {
+    LRaftMessage::RequestVote {
+        term: r.term_ as int,
+        candidate: me,
+        last_log_index: r.lst_idx_ as int,
+        last_log_term: r.lst_term_ as int,
+    }
+}
+
+// The campaign's segment. A broadcast records one send (dst_ok admits any
+// destination; the composition copies it to every server).
+pub open spec fn timeout_log(l: Seq<Entry>, me: int, m: LRaftMessage) -> Seq<Entry> {
+    l.push(Entry::Tick)
+        .push(Entry::Set(LogField::CurrentTerm, LogValue::VInt(m->RequestVote_term)))
+        .push(Entry::Set(LogField::Role, LogValue::VRole(LServerRole::Candidate)))
+        .push(Entry::Set(LogField::HasVoted, LogValue::VBool(true)))
+        .push(Entry::Set(LogField::VotedFor, LogValue::VInt(me)))
+        .push(Entry::Set(LogField::VotesGranted, LogValue::VIntSet(Set::<int>::empty().insert(me))))
+        .push(Entry::Send(me, m))
+        .push(Entry::Close(ActionLabel::Timeout))
+}
+
+// The log view holds no configuration entry (a static configuration).
+pub proof fn lemma_no_conf_entries<C>(core: &RaftCore<C>, lo: int, hi: int)
+    ensures no_conf_entry_in(core.state_view(), lo, hi),
+{
+    let s = core.state_view();
+    assert forall|i: int| lo < i <= hi && i <= s.log.len() implies !#[trigger] conf_entry_at(s, i) by {
+        if 1 <= i {
+            assert(s.log[i - 1] == entry_view(core.raft_log_.view()[i - 1]));
+        }
+    }
+}
+
+// Under the gate a member's rank is a spec server id, and this server's
+// is in the configuration.
+pub proof fn lemma_my_rank<C>(core: &RaftCore<C>)
+    requires
+        core.inv(),
+        core.gated_,
+    ensures
+        0 <= core.my_rank() < core.n_view(),
+        Set::<int>::range(0, core.n_view()).contains(core.my_rank()),
+        core.c_view().servers.contains(core.my_rank()),
+{
+    lemma_rank_bounds(core.config_members_@, core.site_id_);
+}
+
+pub proof fn lemma_timeout_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, r: CampaignStart)
+    requires
+        pre.inv(),
+        pre.ginv(),
+        pre.gated_,
+        // admitted: no leader, no campaign
+        !pre.is_leader_,
+        !pre.election_in_progress_,
+        // the campaign
+        post.current_term_ as int == pre.current_term_ as int + 1,
+        post.vote_for_ == pre.site_id_,
+        !post.is_leader_,
+        post.election_in_progress_,
+        post.election_term_ as int == post.current_term_ as int,
+        post.g_votes_@ == Set::<int>::empty().insert(pre.my_rank()),
+        // what it broadcasts: the term, the log's last index and term
+        r.term_ == post.current_term_,
+        r.lst_idx_ as int == pre.raft_log_.spec_last_index(),
+        r.lst_term_ as int == last_term_of(pre),
+        // what it does not touch
+        post.raft_log_ == pre.raft_log_,
+        post.commit_index_ == pre.commit_index_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.snapterm_ == pre.snapterm_,
+        post.g_match_ == pre.g_match_,
+        post.g_next_ == pre.g_next_,
+        post.g_log_@ == timeout_log(pre.g_log_@, pre.my_rank(), campaign_msg(pre.my_rank(), r)),
+    ensures post.ginv(),
+{
+    let c = pre.c_view();
+    let me = pre.my_rank();
+    let m = campaign_msg(me, r);
+    let t = r.term_ as int;
+    let l0 = pre.g_log_@;
+    let s0 = replay(l0);
+    lemma_my_rank(pre);
+    pre.raft_log_.lemma_wf_bounds();
+    assert(pre.log_view().len() == pre.raft_log_.spec_last_index());
+    assert(pre.site_id_ != RAFT_SERVER_INVALID_SITE_ID);
+    // the guards: a follower; a voter with no configuration change pending
+    assert(pre.role_view() is Follower);
+    lemma_no_conf_entries(pre, 0, s0.commit_index);
+    assert(timeout_ok(s0, c));
+    // the segment
+    let ve = LogValue::VIntSet(Set::<int>::empty().insert(me));
+    lemma_g_open(l0, Entry::Tick, c);
+    let l1 = l0.push(Entry::Tick);
+    assert(seg_sends_to(l1, me));
+    lemma_g_set(l1, LogField::CurrentTerm, LogValue::VInt(t), c);
+    let l2 = l1.push(Entry::Set(LogField::CurrentTerm, LogValue::VInt(t)));
+    assert(seg_sends_to(l2, me));
+    lemma_g_set(l2, LogField::Role, LogValue::VRole(LServerRole::Candidate), c);
+    let l3 = l2.push(Entry::Set(LogField::Role, LogValue::VRole(LServerRole::Candidate)));
+    assert(seg_sends_to(l3, me));
+    lemma_g_set(l3, LogField::HasVoted, LogValue::VBool(true), c);
+    let l4 = l3.push(Entry::Set(LogField::HasVoted, LogValue::VBool(true)));
+    assert(seg_sends_to(l4, me));
+    lemma_g_set(l4, LogField::VotedFor, LogValue::VInt(me), c);
+    let l5 = l4.push(Entry::Set(LogField::VotedFor, LogValue::VInt(me)));
+    assert(seg_sends_to(l5, me));
+    lemma_g_set(l5, LogField::VotesGranted, ve, c);
+    let l6 = l5.push(Entry::Set(LogField::VotesGranted, ve));
+    assert(seg_sends_to(l6, me));
+    lemma_g_send(l6, me, m, c);
+    let l7 = l6.push(Entry::Send(me, m));
+    assert(seg_sends(l7) =~= seq![m]);
+    let s7 = replay(l7);
+    assert(s7 == LState {
+        current_term: t,
+        role: LServerRole::Candidate,
+        has_voted: true,
+        voted_for: me,
+        votes_granted: Set::<int>::empty().insert(me),
+        ..s0
+    });
+    if s0.log.len() > 0 {
+        assert(s0.log[s0.log.len() - 1] == entry_view(pre.raft_log_.view().last()));
+    }
+    assert(LTimeout(s0, s7, c, seg_sends(l7)));
+    lemma_g_close(l7, ActionLabel::Timeout, me, c);
+    assert(post.g_log_@ =~= l7.push(Entry::Close(ActionLabel::Timeout)));
+    // the coupling
+    assert(post.c_view() == c);
+    assert(post.log_view() == pre.log_view());
+    assert(post.role_view() is Candidate);
+    assert(post.state_view() == s7);
 }
 
 } // verus!

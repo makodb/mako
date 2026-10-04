@@ -657,13 +657,26 @@ impl<C: Clone> RaftCore<C> {
     // `started_` is false when the campaign does not start.
     pub fn start_election(&mut self, timer_guarded: bool,
                           expected_generation: u64, now: u64, stopped: bool,
-                          out: &mut CoreOutput) -> CampaignStart
+                          out: &mut CoreOutput) -> (r: CampaignStart)
         requires
             old(self).inv(),
             // the host contract: the next term is below the ceiling
             (old(self).current_term_ as int) + 1 < raft_index_limit(),
-        ensures final(self).inv(),
+        ensures
+            final(self).inv(),
+            // [M12] a campaign that starts is LTimeout, broadcasting r's
+            // RequestVote; one that does not is unseen by the spec
+            old(self).ginv() && old(self).gated_ ==> {
+                &&& final(self).ginv()
+                &&& final(self).g_log_@ == (if r.started_ {
+                        crate::coupling::timeout_log(old(self).g_log_@, old(self).my_rank(),
+                            crate::coupling::campaign_msg(old(self).my_rank(), r))
+                    } else {
+                        old(self).g_log_@
+                    })
+            },
     {
+        let ghost pre = *self;
         let mut campaign: CampaignStart = CampaignStart::not_started();
         if stopped {
             self.req_voting_ = false;
@@ -723,6 +736,14 @@ impl<C: Clone> RaftCore<C> {
         campaign.lst_idx_ = self.raft_log_.last_index();
         campaign.lst_term_ = self.election_last_log_term();
         campaign.started_ = true;
+        proof {
+            if pre.ginv() && pre.gated_ {
+                self.g_log_@ = crate::coupling::timeout_log(pre.g_log_@, pre.my_rank(),
+                    crate::coupling::campaign_msg(pre.my_rank(), campaign));
+                self.g_votes_@ = Set::<int>::empty().insert(pre.my_rank());
+                crate::coupling::lemma_timeout_ginv(&pre, self, campaign);
+            }
+        }
         campaign
     }
 

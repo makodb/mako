@@ -107,7 +107,9 @@ pub struct CampaignStart {
 }
 
 impl CampaignStart {
-    pub fn not_started() -> CampaignStart {
+    pub fn not_started() -> (r: CampaignStart)
+        ensures !r.started_,  // [M12]
+    {
         CampaignStart {
             started_: false,
             term_: 0,
