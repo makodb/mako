@@ -209,6 +209,7 @@ impl<C: Clone> RaftCore<C> {
             final(self).is_leader_ == old(self).is_leader_,
             final(self).heartbeat_round_ == old(self).heartbeat_round_,
             final(self).authority_rounds_ == old(self).authority_rounds_,
+            final(self).pending_rpcs_ == old(self).pending_rpcs_,
     {
         self.peer_sites_.clear();
         let mut self_is_a_member: bool = false;
@@ -773,6 +774,7 @@ impl<C: Clone> RaftCore<C> {
             final(self).config_members_ == old(self).config_members_,
             final(self).site_id_ == old(self).site_id_,
             final(self).round_ == old(self).round_,
+            final(self).pending_rpcs_ == old(self).pending_rpcs_,
             !is_leader ==> final(self).authority_rounds_ == old(self).authority_rounds_,
             !is_leader ==> final(self).heartbeat_round_ == old(self).heartbeat_round_,
     {
@@ -824,6 +826,7 @@ impl<C: Clone> RaftCore<C> {
                     self.config_members_ == old(self).config_members_,
                     self.site_id_ == old(self).site_id_,
                     self.round_ == old(self).round_,
+                    self.pending_rpcs_ == old(self).pending_rpcs_,
                     self.is_leader_ == old(self).is_leader_,
                     self.heartbeat_round_ == 0,
                 decreases peers - ord,
@@ -917,6 +920,7 @@ impl<C: Clone> RaftCore<C> {
             final(self).config_members_ == old(self).config_members_,
             final(self).site_id_ == old(self).site_id_,
             final(self).round_ == old(self).round_,
+            final(self).pending_rpcs_ == old(self).pending_rpcs_,
             !final(self).election_in_progress_,
     {
         out.log(RAFT_LOG_INFO,

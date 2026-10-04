@@ -9,6 +9,9 @@
 use crate::*;
 #[allow(unused_imports)]
 use vstd::pervasive::runtime_assert;
+use vstd::prelude::*;
+
+verus! {
 
 // ==========================================================================
 // THE ROUND SCOPE, AND THE COMMIT RULE BOTH PHASE 0 AND PHASE 3 APPLY
@@ -47,7 +50,18 @@ impl CommitAdvance {
 pub fn raft_commit_advance<C: Clone>(
     consensus: &mut RaftCore<C>,
     nservers: usize,
-) -> CommitAdvance {
+) -> (r: CommitAdvance)
+    requires
+        old(consensus).inv(),
+        nservers == old(consensus).round_.spec_nservers(),
+        nservers > 0,
+        // the gate (F5): the configuration contains this server
+        old(consensus).config_members_@.contains(old(consensus).site_id_),
+    ensures
+        final(consensus).inv(),
+        // only the commit index moves
+        *final(consensus) == (RaftCore { commit_index_: final(consensus).commit_index_, ..*old(consensus) }),
+{
     // nservers is the value latched in PHASE 0. Reusing it in PHASE 3 is
     // sound only because current_config_ has exactly one write, during
     // Setup, and progress_ is never erased, so the size is invariant across
@@ -97,7 +111,13 @@ pub struct Phase0Outcome {
 impl Phase0Outcome {
     // The round is over before it began -- this server is not the leader.
     // The caller returns, and the driver starts the next round.
-    pub fn restart(&self) -> bool {
+    pub closed spec fn spec_restart(&self) -> bool {
+        self.restart_
+    }
+
+    pub fn restart(&self) -> (r: bool)
+        ensures r == self.spec_restart(),
+    {
         self.restart_
     }
 
@@ -133,7 +153,37 @@ pub fn heartbeat_phase0_locked<C: Clone>(
     members: &[u16],
     site_id: u16,
     is_leader: bool,
-) -> Phase0Outcome {
+) -> (r: Phase0Outcome)
+    requires
+        old(core).inv(),
+        members@ == old(core).config_members_@,
+        site_id == old(core).site_id_,
+        // the host contract: is_leader is IsLeaderLocked, which reads the
+        // core's role
+        is_leader ==> old(core).is_leader_,
+        // the gate (F5): the configuration contains this server
+        old(core).config_members_@.contains(old(core).site_id_),
+    ensures
+        final(core).inv(),
+        r.spec_restart() == !is_leader,
+        final(core).config_members_ == old(core).config_members_,
+        final(core).site_id_ == old(core).site_id_,
+        final(core).is_leader_ == old(core).is_leader_,
+        final(core).current_term_ == old(core).current_term_,
+        is_leader ==> {
+            // the round opened: generation, term and membership latched
+            &&& final(core).round_.spec_round_id() == old(core).heartbeat_round_
+            &&& final(core).round_.spec_term() == final(core).current_term_
+            &&& final(core).round_.spec_nservers() > 0
+            &&& final(core).pending_rpcs_.spec_len() == final(core).peers_.spec_len()
+            // the epoch is current, and its generation id is fresh
+            &&& final(core).pending_leader_term_ == Some(final(core).current_term_)
+            &&& (old(core).heartbeat_round_ == u64::MAX
+                || final(core).authority_rounds_.spec_ids_below(old(core).heartbeat_round_))
+            &&& final(core).heartbeat_round_ == (if old(core).heartbeat_round_ == u64::MAX {
+                    u64::MAX } else { (old(core).heartbeat_round_ + 1) as u64 })
+        },
+{
     if !is_leader {
         core.pending_rpcs_.abandon();
         core.authority_rounds_.abandon();
@@ -147,6 +197,7 @@ pub fn heartbeat_phase0_locked<C: Clone>(
         };
     }
     let mut slots_reset: bool = false;  // [move, M5]
+    let ghost h0 = core.heartbeat_round_;
 
     core.round_.begin(core.current_term_, core.heartbeat_round_);
 
@@ -170,17 +221,63 @@ pub fn heartbeat_phase0_locked<C: Clone>(
         slots_reset = true;  // [move, M5]
     }
 
+    // the generation id this round opens is fresh in its epoch
+    assert(h0 == u64::MAX || core.authority_rounds_.spec_ids_below(h0));
     if raft_server_read_index_round_can_advance(core.heartbeat_round_) {
         core.heartbeat_round_ += 1;
+        proof { core.authority_rounds_.lemma_ids_below_mono(h0, core.heartbeat_round_); }
     }
     // Saturation is fail-closed for new reads: the round never wraps, so no
     // post-baseline proof can be forged from an old generation. The caller
     // reports it; see round_saturated below.
 
+    let ghost pre = *core;
     let mut i = 0;
-    while i < members.len() {
+    while i < members.len()
+        invariant
+            i <= members@.len(),
+            members@ == pre.config_members_@,
+            sites_sorted(members@),
+            core.round_.wf(),
+            core.round_.spec_nservers() == i,
+            forall|x: u16| core.round_.spec_is_member(x) == members@.subrange(0, i as int).contains(x),
+            core.round_.spec_term() == pre.round_.spec_term(),
+            core.round_.spec_round_id() == pre.round_.spec_round_id(),
+            *core == (RaftCore { round_: core.round_, ..pre }),
+        decreases members@.len() - i,
+    {
+        proof {
+            // sorted: the next member is not admitted yet
+            if members@.subrange(0, i as int).contains(members@[i as int]) {
+                let k = choose|k: int| 0 <= k < i && members@.subrange(0, i as int)[k] == members@[i as int];
+                assert(members@[k] == members@[i as int]);
+            }
+            assert(members@.subrange(0, i + 1) == members@.subrange(0, i as int).push(members@[i as int]));
+        }
         core.round_.admit(members[i]);
+        proof {
+            let s0 = members@.subrange(0, i as int);
+            let s1 = members@.subrange(0, i + 1);
+            assert forall|x: u16| core.round_.spec_is_member(x) == s1.contains(x) by {
+                if s1.contains(x) {
+                    let k = choose|k: int| 0 <= k < s1.len() && s1[k] == x;
+                    if k < i {
+                        assert(s0[k] == x);
+                    }
+                }
+                if s0.contains(x) {
+                    let k = choose|k: int| 0 <= k < s0.len() && s0[k] == x;
+                    assert(s1[k] == x);
+                }
+                if x == members@[i as int] {
+                    assert(s1[i as int] == x);
+                }
+            }
+        }
         i += 1;
+    }
+    proof {
+        assert(members@.subrange(0, members@.len() as int) == members@);
     }
     // The heartbeat round admitted a quorum containing this site.
     runtime_assert(core.round_.nservers() != 0 && core.round_.is_member(site_id));  // [move, M10]
@@ -339,7 +436,13 @@ fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_i
                             prev_log_index: u64, batching: bool,
                             max_batch_entries: u64, max_batch_bytes: u64,
                             send: &mut AppendSend<C>,
-                            out: &mut CoreOutput) -> bool {
+                            out: &mut CoreOutput) -> (r: bool)
+    requires
+        old(core).inv(),
+        ord < old(core).peers_.spec_len(),
+    ensures
+        *final(core) == *old(core),
+{
     let mut skip_follower: bool = false;
 
     if !batching {
@@ -428,7 +531,14 @@ fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_i
         skip_follower = true;
     } else if !skip_follower {
         let mut idx: u64 = batch_start_idx;
-        while idx <= core.raft_log_.last_index() && batched < max_batch_entries {
+        while idx <= core.raft_log_.last_index() && batched < max_batch_entries
+            invariant_except_break
+                !skip_follower,
+            invariant
+                core.inv(),
+                (prev_log_index as int) < u64::MAX,
+            decreases core.raft_log_.spec_last_index() + 1 - idx,
+        {
             let entry = core.raft_log_.get(idx);
             let usable: bool = entry.is_some() && entry.unwrap().has_value();
             if !usable {
@@ -528,7 +638,16 @@ fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_i
 pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
                       snapshot_configured: bool, batching: bool,
                       max_batch_entries: u64, max_batch_bytes: u64,
-                      out: &mut CoreOutput) -> HeartbeatTick<C> {
+                      out: &mut CoreOutput) -> HeartbeatTick<C>
+    requires
+        old(core).inv(),
+        // the host contract: is_leader is IsLeaderLocked, which reads the
+        // core's role
+        is_leader ==> old(core).is_leader_,
+        // the gate (F5): the configuration contains this server
+        old(core).config_members_@.contains(old(core).site_id_),
+    ensures final(core).inv(),
+{
     let mut tick: HeartbeatTick<C> = HeartbeatTick::new();
 
     // ---- PHASE 0 ----
@@ -540,7 +659,12 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
     }
     if is_leader {
         let mut ord: usize = 0;
-        while ord < core.peers_.len() {
+        while ord < core.peers_.len()
+            invariant
+                core.inv(),
+                ord <= core.peers_.spec_len(),
+            decreases core.peers_.spec_len() - ord,
+        {
             out.log(RAFT_LOG_DEBUG,
                 "[COMMIT-CALC] match_index_[{}] = {}",
                 &[(core.peer_site_at(ord)).arg(),
@@ -551,6 +675,8 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
 
     let site_id: u16 = core.site_id_;
     let members: Vec<u16> = core.config_members_.clone();
+    assert(members@ =~= core.config_members_@);
+    let ghost h0 = core.heartbeat_round_;
     let outcome: Phase0Outcome = heartbeat_phase0_locked(
         core, &members, site_id, is_leader);
     tick.slots_reset_ = outcome.slots_reset();
@@ -566,6 +692,13 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
 
     // The authority generation, opened under the guard now (the fiber that
     // owns the round state used to open it after releasing mtx_).
+    proof {
+        // below the saturated counter, this round's id is fresh
+        if h0 != u64::MAX {
+            core.authority_rounds_.lemma_ids_below_mono(h0, core.heartbeat_round_);
+            core.authority_rounds_.lemma_ids_below_excludes(h0);
+        }
+    }
     let opened: bool = core.authority_rounds_.open(
         core.round_.round_id(), &members,
         HeartbeatAuthority::new(core.round_.term(), core.round_.nservers(),
@@ -583,8 +716,19 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
     //
     // The ordinal is used for ITERATION ONLY; every read and write of a
     // follower's next index goes through core.peers_.next_index(ord).
+    let ghost round0 = core.round_;
+    let ghost n0 = core.peers_.spec_len();
     let mut ord: usize = 0;
-    while ord < core.peers_.len() {
+    while ord < core.peers_.len()
+        invariant
+            core.inv(),
+            core.peers_.spec_len() == n0,
+            core.pending_rpcs_.spec_len() == n0,
+            ord <= n0,
+            core.round_ == round0,
+            core.authority_rounds_.spec_has_id(round0.spec_round_id()),
+        decreases n0 - ord,
+    {
         let peer: u16 = core.peer_site_at(ord);
         if peer == site_id {
             ord += 1;
@@ -748,7 +892,14 @@ pub struct SentAppend {
 }
 
 impl SentAppend {
-    pub fn new(follower: u16, term: u64, round: u64, end_index: u64, ordinal: usize) -> SentAppend {
+    // The follower's ordinal (ghost).
+    pub closed spec fn spec_ordinal(&self) -> usize {
+        self.ordinal_
+    }
+
+    pub fn new(follower: u16, term: u64, round: u64, end_index: u64, ordinal: usize) -> (r: SentAppend)
+        ensures r.spec_ordinal() == ordinal,
+    {
         SentAppend { follower_: follower, term_: term, round_: round,
                      end_index_: end_index, ordinal_: ordinal }
     }
@@ -767,7 +918,14 @@ pub struct AppendReply {
 }
 
 impl AppendReply {
-    pub fn new(available: bool, status: bool, term: u64, last_log_index: u64) -> AppendReply {
+    // The reply's term (ghost).
+    pub closed spec fn spec_term(&self) -> u64 {
+        self.term_
+    }
+
+    pub fn new(available: bool, status: bool, term: u64, last_log_index: u64) -> (r: AppendReply)
+        ensures r.spec_term() == term,
+    {
         AppendReply { available_: available, status_: status, term_: term,
                       last_log_index_: last_log_index }
     }
@@ -775,6 +933,7 @@ impl AppendReply {
 
 #[allow(non_camel_case_types)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[derive(Structural)]  // [M12] ghost: `==` is equality to the verifier
 #[repr(i32)]
 pub enum AppendReplyAction {
     // Nothing was learned: the RPC failed, or the reply belongs to a term or
@@ -806,20 +965,45 @@ pub struct AppendReplyOutcome {
 }
 
 impl AppendReplyOutcome {
-    pub fn action(&self) -> AppendReplyAction {
+    // What the reply meant, and the backoff it took (ghost).
+    pub closed spec fn spec_action(&self) -> AppendReplyAction {
+        self.action_
+    }
+
+    pub closed spec fn spec_rung(&self) -> BackoffKind {
+        self.rung_
+    }
+
+    pub closed spec fn spec_old_next(&self) -> u64 {
+        self.old_next_
+    }
+
+    pub closed spec fn spec_new_next(&self) -> u64 {
+        self.new_next_
+    }
+
+    pub fn action(&self) -> (r: AppendReplyAction)
+        ensures r == self.spec_action(),
+    {
         self.action_
     }
 
     // BACKED_OFF only.
-    pub fn rung(&self) -> BackoffKind {
+    pub fn rung(&self) -> (r: BackoffKind)
+        ensures r == self.spec_rung(),
+    {
         self.rung_
     }
 
-    pub fn old_next(&self) -> u64 {
+    pub fn old_next(&self) -> (r: u64)
+        ensures r == self.spec_old_next(),
+    {
         self.old_next_
     }
 
-    pub fn new_next(&self) -> u64 {
+    pub fn new_next(&self) -> (r: u64)
+        ensures r == self.spec_new_next(),
+    {
         self.new_next_
     }
 
@@ -834,7 +1018,11 @@ impl AppendReplyOutcome {
     }
 }
 
-fn append_reply_nothing(action: AppendReplyAction) -> AppendReplyOutcome {
+fn append_reply_nothing(action: AppendReplyAction) -> (r: AppendReplyOutcome)
+    ensures
+        r.spec_action() == action,
+        r.spec_rung() == BackoffKind::FLOOR,
+{
     AppendReplyOutcome {
         action_: action,
         rung_: BackoffKind::FLOOR,
@@ -860,7 +1048,21 @@ pub fn heartbeat_apply_append_reply<C: Clone>(
     reply: &AppendReply,
     log_last_index: u64,
     is_leader: bool,
-) -> AppendReplyOutcome {
+) -> (r: AppendReplyOutcome)
+    requires
+        old(core).inv(),
+        sent.spec_ordinal() <= old(core).peers_.spec_len(),
+        // the host contract: a term off the wire is below the ceiling
+        (reply.spec_term() as int) < raft_index_limit(),
+    ensures
+        final(core).inv(),
+        final(core).pending_rpcs_ == old(core).pending_rpcs_,
+        final(core).round_ == old(core).round_,
+        final(core).peers_.spec_len() == old(core).peers_.spec_len(),
+        r.spec_action() == AppendReplyAction::ACCEPTED ==> sent.spec_ordinal() < final(core).peers_.spec_len(),
+        r.spec_action() == AppendReplyAction::BACKED_OFF && r.spec_rung() == BackoffKind::FAST
+            ==> r.spec_old_next() > r.spec_new_next(),
+{
     // Retire the RPC and, if it proves this exact generation, count the vote.
     // One physical RPC exists per follower per generation, but the evidence
     // stays a set so a future transport still cannot double-count a voter.
@@ -963,7 +1165,15 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
                           resp_status: bool, resp_term: u64,
                           resp_last_log_index: u64, is_leader: bool,
                           stopped: bool, failover: bool,
-                          out: &mut CoreOutput) -> ReplyResult {
+                          out: &mut CoreOutput) -> ReplyResult
+    requires
+        old(core).inv(),
+        // the host contract: the shell's response slots are the core's, and
+        // a term off the wire is below the ceiling
+        ord < old(core).pending_rpcs_.spec_len(),
+        (resp_term as int) < raft_index_limit(),
+    ensures final(core).inv(),
+{
     // Bound once per reply, not per use: every read below is the same shape
     // it was when this was a map value.
     let follower_id: u16 = core.pending_rpcs_.follower(ord);
@@ -1079,7 +1289,10 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
 
 // [move, M5] The shell's half of a leadership loss during collection: both
 // halves of every in-flight slot, and the authority evidence, dropped.
-pub fn heartbeat_abandon_round<C: Clone>(core: &mut RaftCore<C>) {
+pub fn heartbeat_abandon_round<C: Clone>(core: &mut RaftCore<C>)
+    requires old(core).inv(),
+    ensures final(core).inv(),
+{
     core.pending_rpcs_.abandon();
     core.authority_rounds_.abandon();
 }
@@ -1124,7 +1337,15 @@ pub fn heartbeat_phase3_locked<C: Clone>(
     nservers: usize,
     members: &[u16],
     is_leader: bool,
-) -> Phase3Outcome {
+) -> Phase3Outcome
+    requires
+        old(core).inv(),
+        nservers == old(core).round_.spec_nservers(),
+        nservers > 0,
+        // the gate (F5): the configuration contains this server
+        old(core).config_members_@.contains(old(core).site_id_),
+    ensures final(core).inv(),
+{
     let commit = raft_commit_advance(core, nservers);
     let outcome = core.authority_rounds_.settle(
         is_leader,
@@ -1149,7 +1370,16 @@ pub fn heartbeat_phase3_locked<C: Clone>(
 // launched it and must never be relabelled as the current round. The commit
 // range is an APPLY_RANGE action. Returns whether the commit index advanced.
 pub fn heartbeat_round_end<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
-                           out: &mut CoreOutput) -> bool {
+                           out: &mut CoreOutput) -> bool
+    requires
+        old(core).inv(),
+        // the host contract: a round end follows a tick that opened the
+        // round (the round's membership is latched)
+        old(core).round_.spec_nservers() > 0,
+        // the gate (F5): the configuration contains this server
+        old(core).config_members_@.contains(old(core).site_id_),
+    ensures final(core).inv(),
+{
     let members: Vec<u16> = core.config_members_.clone();
     let nservers: usize = core.round_.nservers();
     let outcome: Phase3Outcome = heartbeat_phase3_locked(
@@ -1173,3 +1403,5 @@ pub fn heartbeat_round_end<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
     }
     advanced
 }
+
+} // verus!

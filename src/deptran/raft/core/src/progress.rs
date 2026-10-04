@@ -13,6 +13,7 @@ verus! {
 // existing DSL enums in snapshot_format.hpp, which carries this same allow.
 #[allow(non_camel_case_types)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[derive(Structural)]  // [M12] ghost: `==` is equality to the verifier
 #[repr(i32)]
 pub enum BackoffKind {
     FAST = 0,
@@ -35,15 +36,21 @@ impl FollowerProgress {
         FollowerProgress { next_: next, match_: matched }
     }
 
-    pub fn next_index(&self) -> u64 {
+    pub fn next_index(&self) -> (r: u64)
+        ensures r == self.next_,
+    {
         self.next_
     }
 
-    pub fn match_index(&self) -> u64 {
+    pub fn match_index(&self) -> (r: u64)
+        ensures r == self.match_,
+    {
         self.match_
     }
 
-    pub fn set_next_index(&mut self, value: u64) {
+    pub fn set_next_index(&mut self, value: u64)
+        ensures final(self).next_ == value,
+    {
         self.next_ = value;
     }
 
@@ -54,7 +61,9 @@ impl FollowerProgress {
     // can wrap; release builds always wrapped it (the next round's
     // "Repairing wrapped next_index" catches a resulting 0). wrapping_add
     // says so, and is the same machine operation.
-    pub fn back_off_after_reject(&mut self, follower_last_log_index: u64) -> BackoffKind {
+    pub fn back_off_after_reject(&mut self, follower_last_log_index: u64) -> (r: BackoffKind)
+        ensures r == BackoffKind::FAST ==> final(self).next_ < old(self).next_,
+    {
         if follower_last_log_index > 0
             && follower_last_log_index.wrapping_add(1) < self.next_
         {
@@ -122,9 +131,14 @@ pub struct PeerTable {
 }
 
 impl PeerTable {
-    // How many followers the table holds (ghost).
+    // How many followers the table holds, and a follower's next index
+    // (ghost).
     pub closed spec fn spec_len(&self) -> int {
         self.progress_@.len() as int
+    }
+
+    pub closed spec fn spec_next(&self, ordinal: int) -> u64 {
+        self.progress_@[ordinal].next_
     }
 }
 
@@ -168,15 +182,18 @@ impl PeerTable {
         self.progress_.is_empty()
     }
 
-    pub fn next_index(&self, ordinal: usize) -> u64
+    pub fn next_index(&self, ordinal: usize) -> (r: u64)
         requires ordinal < self.spec_len(),
+        ensures r == self.spec_next(ordinal as int),
     {
         self.progress_[ordinal].next_index()
     }
 
     pub fn set_next_index(&mut self, ordinal: usize, value: u64)
         requires ordinal < old(self).spec_len(),
-        ensures final(self).spec_len() == old(self).spec_len(),
+        ensures
+            final(self).spec_len() == old(self).spec_len(),
+            final(self).spec_next(ordinal as int) == value,
     {
         self.progress_[ordinal].set_next_index(value);
     }
@@ -200,8 +217,9 @@ impl PeerTable {
     // 5) and is on the per-round path, not the per-entry path.
     //
     // Ties are broken by ordinal so the result matches a stable sort exactly.
-    pub fn majority_match_index(&self, nservers: usize, last_log_index: u64) -> u64
+    pub fn majority_match_index(&self, nservers: usize, last_log_index: u64) -> (r: u64)
         requires nservers >= 1,
+        ensures r <= last_log_index,
     {
         let target = (nservers - 1) / 2;
         let n = self.progress_.len();
@@ -239,9 +257,12 @@ impl PeerTable {
     }
 
     pub fn back_off_after_reject(&mut self, ordinal: usize,
-                                 follower_last_log_index: u64) -> BackoffKind
+                                 follower_last_log_index: u64) -> (r: BackoffKind)
         requires ordinal < old(self).spec_len(),
-        ensures final(self).spec_len() == old(self).spec_len(),
+        ensures
+            final(self).spec_len() == old(self).spec_len(),
+            r == BackoffKind::FAST
+                ==> final(self).spec_next(ordinal as int) < old(self).spec_next(ordinal as int),
     {
         self.progress_[ordinal].back_off_after_reject(follower_last_log_index)
     }

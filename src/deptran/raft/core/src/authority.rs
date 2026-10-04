@@ -459,6 +459,21 @@ impl AuthorityLedger {
         forall|g: int| 0 <= g < self.generations_@.len() ==> (#[trigger] self.generations_@[g]).round_id_ < n
     }
 
+    // A bound on the ids is a bound on any larger one, and excludes itself.
+    pub proof fn lemma_ids_below_mono(&self, n: u64, m: u64)
+        requires
+            self.spec_ids_below(n),
+            n <= m,
+        ensures self.spec_ids_below(m),
+    {
+    }
+
+    pub proof fn lemma_ids_below_excludes(&self, n: u64)
+        requires self.spec_ids_below(n),
+        ensures !self.spec_has_id(n),
+    {
+    }
+
     // Dropping a generation keeps every remaining id below any bound the
     // old ones were below.
     proof fn lemma_remove_keeps_ids_below(pre: Seq<AuthorityGeneration>, i: int, n: u64)
@@ -509,6 +524,7 @@ impl AuthorityLedger {
         ensures
             final(self).wf(),
             r == !old(self).spec_has_id(round_id),
+            final(self).spec_has_id(round_id),
             forall|n: u64| old(self).spec_ids_below(n) && round_id < n
                 ==> #[trigger] final(self).spec_ids_below(n),
             !r ==> forall|n: u64| old(self).spec_ids_below(n)
@@ -517,6 +533,7 @@ impl AuthorityLedger {
         if self.index_of(round_id) < self.generations_.len() {
             return false;
         }
+        let ghost pre = self.generations_@;
         let mut snapshot: SiteSet = SiteSet::new();  // [move, M9]
         let mut i: usize = 0;
         while i < config.len()
@@ -533,6 +550,7 @@ impl AuthorityLedger {
             config_: snapshot,
             evidence_: evidence,
         });
+        assert(self.generations_@[pre.len() as int].round_id_ == round_id);
         true
     }
 
@@ -574,12 +592,30 @@ impl AuthorityLedger {
             final(self).wf(),
             r == old(self).spec_has_id(round_id),
             forall|n: u64| old(self).spec_ids_below(n) ==> #[trigger] final(self).spec_ids_below(n),
+            forall|id: u64| final(self).spec_has_id(id) == #[trigger] old(self).spec_has_id(id),
     {
         let index = self.index_of(round_id);
         if index >= self.generations_.len() {
             return false;
         }
+        let ghost pre = self.generations_@;
         self.generations_[index].evidence_.launch(site);
+        proof {
+            // only the evidence moved: every generation keeps its id
+            assert forall|g: int| 0 <= g < pre.len()
+                implies (#[trigger] self.generations_@[g]).round_id_ == pre[g].round_id_ by {}
+            assert forall|id: u64| self.spec_has_id(id) == #[trigger] old(self).spec_has_id(id) by {
+                if old(self).spec_has_id(id) {
+                    let g = choose|g: int| 0 <= g < pre.len() && (#[trigger] pre[g]).round_id_ == id;
+                    assert(self.generations_@[g].round_id_ == id);
+                }
+                if self.spec_has_id(id) {
+                    let g = choose|g: int| 0 <= g < self.generations_@.len()
+                        && (#[trigger] self.generations_@[g]).round_id_ == id;
+                    assert(pre[g].round_id_ == id);
+                }
+            }
+        }
         true
     }
 
@@ -746,6 +782,16 @@ impl HeartbeatRoundScope {
     pub closed spec fn spec_term(&self) -> u64 {
         self.term_
     }
+
+    // The round's generation id, and whether it opened its authority
+    // generation fresh (ghost).
+    pub closed spec fn spec_round_id(&self) -> u64 {
+        self.round_id_
+    }
+
+    pub closed spec fn spec_authority_inserted(&self) -> bool {
+        self.authority_inserted_
+    }
 }
 
 #[allow(clippy::new_without_default)]
@@ -773,6 +819,7 @@ impl HeartbeatRoundScope {
             final(self).spec_nservers() == 0,
             forall|x: u16| !final(self).spec_is_member(x),
             final(self).spec_term() == term,
+            final(self).spec_round_id() == round_id,
     {
         self.term_ = term;
         self.round_id_ = round_id;
@@ -790,6 +837,7 @@ impl HeartbeatRoundScope {
             final(self).spec_nservers() == old(self).spec_nservers()
                 + (if old(self).spec_is_member(site) { 0int } else { 1int }),
             final(self).spec_term() == old(self).spec_term(),
+            final(self).spec_round_id() == old(self).spec_round_id(),
     {
         self.config_.insert(site);
     }
@@ -800,7 +848,9 @@ impl HeartbeatRoundScope {
         self.term_
     }
 
-    pub fn round_id(&self) -> u64 {
+    pub fn round_id(&self) -> (r: u64)
+        ensures r == self.spec_round_id(),
+    {
         self.round_id_
     }
 
@@ -820,7 +870,15 @@ impl HeartbeatRoundScope {
 
     // The commit index the round puts on the wire. Published by PHASE 0 after
     // it recalculates, read by PHASE 1 when it builds each AppendEntries.
-    pub fn publish_commit_index(&mut self, index: u64) {
+    pub fn publish_commit_index(&mut self, index: u64)
+        ensures
+            final(self).wf() == old(self).wf(),
+            final(self).spec_nservers() == old(self).spec_nservers(),
+            forall|x: u16| final(self).spec_is_member(x) == old(self).spec_is_member(x),
+            final(self).spec_term() == old(self).spec_term(),
+            final(self).spec_round_id() == old(self).spec_round_id(),
+            final(self).spec_authority_inserted() == old(self).spec_authority_inserted(),
+    {
         self.current_commit_index_ = index;
     }
 
@@ -831,11 +889,21 @@ impl HeartbeatRoundScope {
     // Whether this round owns a fresh authority generation. False only in the
     // deliberately fail-closed UINT64_MAX saturation case, where PHASE 1 must
     // not record evidence against a reused generation.
-    pub fn set_authority_inserted(&mut self, inserted: bool) {
+    pub fn set_authority_inserted(&mut self, inserted: bool)
+        ensures
+            final(self).wf() == old(self).wf(),
+            final(self).spec_nservers() == old(self).spec_nservers(),
+            forall|x: u16| final(self).spec_is_member(x) == old(self).spec_is_member(x),
+            final(self).spec_term() == old(self).spec_term(),
+            final(self).spec_round_id() == old(self).spec_round_id(),
+            final(self).spec_authority_inserted() == inserted,
+    {
         self.authority_inserted_ = inserted;
     }
 
-    pub fn authority_inserted(&self) -> bool {
+    pub fn authority_inserted(&self) -> (r: bool)
+        ensures r == self.spec_authority_inserted(),
+    {
         self.authority_inserted_
     }
 }
