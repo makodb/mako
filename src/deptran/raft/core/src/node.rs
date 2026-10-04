@@ -102,6 +102,18 @@ pub struct RaftCore<C> {
     // handled, valid only inside that call. Kept across calls so a decode
     // never allocates.
     pub decoded_terms_: Vec<i64>,
+    // [M12] The proof's state (plan Phase 8; Verus only, so a plain build has
+    // none of it): the ghost log of the core's actions, and the spec fields
+    // the core keeps no copy of -- the votes a campaign holds (V1), the
+    // leader's match and next tables as the spec sees them (V2, V3).
+    #[cfg(verus_keep_ghost)]
+    pub g_log_: Ghost<Seq<glr::protocol::Raft::ghost_log::Entry>>,
+    #[cfg(verus_keep_ghost)]
+    pub g_votes_: Ghost<Set<int>>,
+    #[cfg(verus_keep_ghost)]
+    pub g_match_: Ghost<Map<u64, u64>>,
+    #[cfg(verus_keep_ghost)]
+    pub g_next_: Ghost<Map<u64, u64>>,
 }
 
 impl<C> RaftCore<C> {
@@ -161,7 +173,9 @@ impl<C> RaftCore<C> {
 #[allow(clippy::new_without_default)]
 impl<C: Clone> RaftCore<C> {
     pub fn new() -> (r: RaftCore<C>)
-        ensures r.inv(),
+        ensures
+            r.inv(),
+            r.fresh(),  // [M12] (coupling::lemma_new_ginv: ginv)
     {
         RaftCore {
             // Overwritten by set_site_identity before anything reads them.
@@ -196,6 +210,14 @@ impl<C: Clone> RaftCore<C> {
             peer_sites_: Vec::new(),  // [move, M1]
             gated_: false,  // [fix, F5]
             decoded_terms_: Vec::new(),  // [move, M1]
+            #[cfg(verus_keep_ghost)]
+            g_log_: Ghost(Seq::empty()),  // [M12]
+            #[cfg(verus_keep_ghost)]
+            g_votes_: Ghost(Set::empty()),  // [M12]
+            #[cfg(verus_keep_ghost)]
+            g_match_: Ghost(Map::empty()),  // [M12]
+            #[cfg(verus_keep_ghost)]
+            g_next_: Ghost(Map::empty()),  // [M12]
         }
     }
 
@@ -209,6 +231,8 @@ impl<C: Clone> RaftCore<C> {
         ensures
             final(self).inv(),
             final(self).site_id_ == site_id,
+            // [M12] nothing the spec sees moves (no membership yet)
+            old(self).ginv() ==> final(self).ginv(),
     {
         self.loc_id_ = loc_id;
         self.site_id_ = site_id;
@@ -233,7 +257,10 @@ impl<C: Clone> RaftCore<C> {
             final(self).inv(),
             final(self).config_members_@ == members@,
             final(self).site_id_ == old(self).site_id_,
+            // [M12] the LoadConfig segment, on a core no action has touched
+            old(self).ginv() && old(self).g_log_@.len() == 0 ==> final(self).ginv(),
     {
+        let ghost on = self.ginv() && self.g_log_@.len() == 0;
         self.config_members_.clear();
         let mut i: usize = 0;
         while i < members.len()
@@ -250,6 +277,13 @@ impl<C: Clone> RaftCore<C> {
             assert(members@.subrange(0, members@.len() as int) == members@);
         }
         self.rebuild_peer_tables(1);
+        proof {
+            if on {
+                let ghost pre = *old(self);
+                self.g_log_@ = crate::coupling::load_config_log(self.n_view());
+                crate::coupling::lemma_load_config(&pre, self);
+            }
+        }
     }
 
     // [fix, F5] (whole item) verified_config_ok's decision, made by the core (the plan's
@@ -261,6 +295,7 @@ impl<C: Clone> RaftCore<C> {
         ensures
             final(self).inv(),
             r ==> final(self).gated_,
+            old(self).ginv() ==> final(self).ginv(),  // [M12] unseen by the spec
     {
         let whole_log: bool = self.snapidx_ == 0 && self.raft_log_.base() == 1;
         let contains_self: bool = self.is_config_member(self.site_id_);
@@ -303,6 +338,12 @@ impl<C: Clone> RaftCore<C> {
             final(self).authority_rounds_ == old(self).authority_rounds_,
             final(self).pending_rpcs_ == old(self).pending_rpcs_,
             final(self).decoded_terms_ == old(self).decoded_terms_,
+            final(self).g_log_ == old(self).g_log_,  // [M12]
+            final(self).g_votes_ == old(self).g_votes_,  // [M12]
+            final(self).g_match_ == old(self).g_match_,  // [M12]
+            final(self).g_next_ == old(self).g_next_,  // [M12]
+            final(self).vote_for_ == old(self).vote_for_,
+            final(self).election_term_ == old(self).election_term_,
     {
         self.peer_sites_.clear();
         let mut self_is_a_member: bool = false;

@@ -147,6 +147,13 @@ def ghost_regions(text):
     lines = text.split('\n')
     for i, line in enumerate(lines, 1):
         st = line.strip()
+        if mode == 'cfg':
+            ghost.add(i)
+            depth += line.count('{') - line.count('}') + line.count('(') - line.count(')')
+            code = line.split('//')[0].rstrip()
+            if depth <= 0 and (code.endswith((';', ',', '}')) or code == ''):
+                mode = None
+            continue
         if mode == 'block':
             ghost.add(i)
             depth += line.count('{') - line.count('}')
@@ -201,6 +208,21 @@ def ghost_regions(text):
             continue
         if re.match(r'^(let\s+ghost\b|let\s+tracked\b)', st) or re.match(r'^#!?\[verifier', st):
             ghost.add(i)
+            continue
+        # an item, field or statement that exists only when Verus checks the
+        # crate: the attribute and what it covers, to its end
+        if re.match(r'^#\[cfg\(verus_keep_ghost\)\]', st):
+            ghost.add(i)
+            mode = 'cfg'
+            depth = 0
+            continue
+        if mode == 'cfg':
+            ghost.add(i)
+            depth += line.count('{') - line.count('}') + line.count('(') - line.count(')')
+            code = line.split('//')[0].rstrip()
+            if depth <= 0 and (code.endswith((';', ',', '}')) or code == ''):
+                mode = None
+            continue
     return ghost
 
 
