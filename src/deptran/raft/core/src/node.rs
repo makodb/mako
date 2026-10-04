@@ -550,7 +550,7 @@ impl<C: Clone> RaftCore<C> {
         let observed_response_term: i64 = outcome.term_;
         let completion_action: i32 = raft_server_election_completion_action(
             self.election_in_progress_,
-            #[verifier::truncate] (self.election_term_ as u64), term, self.current_term_,
+            self.election_term_ as u64, term, self.current_term_,
             observed_response_term);
 
         if completion_action == ElectionCompletionAction::ADVANCE_HIGHER_TERM as i32 {
