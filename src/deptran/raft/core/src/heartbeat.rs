@@ -1291,7 +1291,9 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
 // halves of every in-flight slot, and the authority evidence, dropped.
 pub fn heartbeat_abandon_round<C: Clone>(core: &mut RaftCore<C>)
     requires old(core).inv(),
-    ensures final(core).inv(),
+    ensures
+        final(core).inv(),
+        old(core).ginv() ==> final(core).ginv(),  // [M12] unseen by the spec
 {
     core.pending_rpcs_.abandon();
     core.authority_rounds_.abandon();

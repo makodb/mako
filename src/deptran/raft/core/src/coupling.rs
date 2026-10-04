@@ -364,4 +364,163 @@ pub proof fn lemma_load_config<C>(pre: &RaftCore<C>, post: &RaftCore<C>)
     assert(post.state_view() == LState { config: cfg, ..init_state() });
 }
 
+// ===========================================================================
+// Frames: what the views read
+// ===========================================================================
+
+// Two cores agree on everything the spec state reads but the role and the
+// vote tally (the fields a step aside or a step down moves).
+pub open spec fn view_frame<C>(pre: &RaftCore<C>, post: &RaftCore<C>) -> bool {
+    &&& post.current_term_ == pre.current_term_
+    &&& post.vote_for_ == pre.vote_for_
+    &&& post.raft_log_ == pre.raft_log_
+    &&& post.commit_index_ == pre.commit_index_
+    &&& post.config_members_ == pre.config_members_
+    &&& post.site_id_ == pre.site_id_
+    &&& post.g_match_ == pre.g_match_
+    &&& post.g_next_ == pre.g_next_
+}
+
+// ===========================================================================
+// Step aside (LStepAside): a leader or a candidate returns to Follower at its
+// term, with no guard; spontaneous (a Tick group)
+// ===========================================================================
+
+pub open spec fn step_aside_log(l: Seq<Entry>) -> Seq<Entry> {
+    l.push(Entry::Tick)
+        .push(Entry::Set(LogField::Role, LogValue::VRole(LServerRole::Follower)))
+        .push(Entry::Set(LogField::VotesGranted, LogValue::VIntSet(Set::<int>::empty())))
+        .push(Entry::Close(ActionLabel::StepAside))
+}
+
+pub proof fn lemma_step_aside(l: Seq<Entry>, c: LConstants)
+    requires
+        log_ok(l, c),
+        fully_closed(l),
+        replay(l).pending_reads == Seq::<LReadReq>::empty(),
+        replay(l).served_ctxs == Set::<int>::empty(),
+    ensures
+        log_ok(step_aside_log(l), c),
+        fully_closed(step_aside_log(l)),
+        replay(step_aside_log(l)) == (LState {
+            role: LServerRole::Follower,
+            votes_granted: Set::<int>::empty(),
+            ..replay(l)
+        }),
+{
+    let s = replay(l);
+    lemma_g_open(l, Entry::Tick, c);
+    let l1 = l.push(Entry::Tick);
+    assert(seg_sends_to(l1, 0));
+    lemma_g_set(l1, LogField::Role, LogValue::VRole(LServerRole::Follower), c);
+    let l2 = l1.push(Entry::Set(LogField::Role, LogValue::VRole(LServerRole::Follower)));
+    assert(seg_sends_to(l2, 0));
+    lemma_g_set(l2, LogField::VotesGranted, LogValue::VIntSet(Set::<int>::empty()), c);
+    let l3 = l2.push(Entry::Set(LogField::VotesGranted, LogValue::VIntSet(Set::<int>::empty())));
+    assert(seg_sends_to(l3, 0));
+    let s_ = LState { role: LServerRole::Follower, votes_granted: Set::<int>::empty(), ..s };
+    assert(seg_state(l3) == s);
+    assert(replay(l3) == s_);
+    assert(LStepAside(s, s_, c, seg_sends(l3)));
+    lemma_g_close(l3, ActionLabel::StepAside, 0, c);
+    assert(step_aside_log(l) =~= l3.push(Entry::Close(ActionLabel::StepAside)));
+}
+
+// A core that left the leader or candidate role at its term, its ghost log
+// and tally updated as the step aside writes them, keeps ginv.
+pub proof fn lemma_step_aside_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>)
+    requires
+        pre.ginv(),
+        view_frame(pre, post),
+        post.role_view() == LServerRole::Follower,
+        post.g_log_@ == step_aside_log(pre.g_log_@),
+        post.g_votes_@ == Set::<int>::empty(),
+    ensures post.ginv(),
+{
+    let c = pre.c_view();
+    lemma_step_aside(pre.g_log_@, c);
+    assert(post.c_view() == c);
+    assert(post.log_view() == pre.log_view());
+    assert(post.state_view() == (LState {
+        role: LServerRole::Follower,
+        votes_granted: Set::<int>::empty(),
+        ..pre.state_view()
+    }));
+}
+
+// A role change that does not move the role view changes nothing the spec
+// sees.
+pub proof fn lemma_same_view_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>)
+    requires
+        pre.ginv(),
+        view_frame(pre, post),
+        post.role_view() == pre.role_view(),
+        post.g_log_ == pre.g_log_,
+        post.g_votes_ == pre.g_votes_,
+    ensures post.ginv(),
+{
+    assert(post.c_view() == pre.c_view());
+    assert(post.log_view() == pre.log_view());
+    assert(post.state_view() == pre.state_view());
+}
+
+// ===========================================================================
+// A proposal (LClientRequest): a leader appends at its term; spontaneous
+// ===========================================================================
+
+pub open spec fn client_request_log(l: Seq<Entry>, new_log: Seq<LLogEntry>, value: int) -> Seq<Entry> {
+    l.push(Entry::Tick)
+        .push(Entry::Set(LogField::RaftLog, LogValue::VLog(new_log)))
+        .push(Entry::Close(ActionLabel::ClientRequest { value }))
+}
+
+// The log view grows by the appended entry's view.
+pub proof fn lemma_log_view_push<C>(pre: &RaftCore<C>, post: &RaftCore<C>, e: RaftEntry<C>)
+    requires post.raft_log_.view() == pre.raft_log_.view().push(e),
+    ensures post.log_view() == pre.log_view().push(entry_view(e)),
+{
+    assert(post.log_view() =~= pre.log_view().push(entry_view(e)));
+}
+
+pub proof fn lemma_client_request_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, e: RaftEntry<C>)
+    requires
+        pre.ginv(),
+        pre.is_leader_,
+        post.raft_log_.view() == pre.raft_log_.view().push(e),
+        e.spec_term() as int == pre.current_term_ as int,
+        post.current_term_ == pre.current_term_,
+        post.vote_for_ == pre.vote_for_,
+        post.commit_index_ == pre.commit_index_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.is_leader_ == pre.is_leader_,
+        post.election_in_progress_ == pre.election_in_progress_,
+        post.election_term_ == pre.election_term_,
+        post.g_votes_ == pre.g_votes_,
+        post.g_match_ == pre.g_match_,
+        post.g_next_ == pre.g_next_,
+        post.g_log_@ == client_request_log(pre.g_log_@, post.log_view(), value_view(e.spec_cmd())),
+    ensures post.ginv(),
+{
+    let c = pre.c_view();
+    let l = pre.g_log_@;
+    let s = replay(l);
+    lemma_log_view_push(pre, post, e);
+    let new_log = post.log_view();
+    let v = value_view(e.spec_cmd());
+    lemma_g_open(l, Entry::Tick, c);
+    let l1 = l.push(Entry::Tick);
+    assert(seg_sends_to(l1, 0));
+    lemma_g_set(l1, LogField::RaftLog, LogValue::VLog(new_log), c);
+    let l2 = l1.push(Entry::Set(LogField::RaftLog, LogValue::VLog(new_log)));
+    assert(seg_sends_to(l2, 0));
+    assert(seg_state(l2) == s);
+    assert(new_log == s.log.push(LLogEntry { term: s.current_term, value: v, change: LConfChange::NoChange }));
+    assert(LClientRequest(s, replay(l2), c, v, seg_sends(l2)));
+    lemma_g_close(l2, ActionLabel::ClientRequest { value: v }, 0, c);
+    assert(post.g_log_@ =~= l2.push(Entry::Close(ActionLabel::ClientRequest { value: v })));
+    assert(post.c_view() == c);
+    assert(post.state_view() == LState { log: new_log, ..pre.state_view() });
+}
+
 } // verus!

@@ -310,7 +310,9 @@ impl<C: Clone> RaftCore<C> {
     // the heartbeat loop begins with an empty round state, as before.
     pub fn reset_round_state(&mut self)
         requires old(self).inv(),
-        ensures final(self).inv(),
+        ensures
+            final(self).inv(),
+            old(self).ginv() ==> final(self).ginv(),  // [M12] unseen by the spec
     {
         self.pending_rpcs_ = PendingTable::new();
         self.authority_rounds_ = AuthorityLedger::new();
@@ -443,13 +445,27 @@ impl<C: Clone> RaftCore<C> {
             old(self).inv(),
             // the host contract: no index reaches the ceiling
             old(self).raft_log_.spec_has_room(),
-        ensures final(self).inv(),
+        ensures
+            final(self).inv(),
+            // [M12] a leader's proposal is LClientRequest (the host contract:
+            // the shell proposes only while leading, under mtx_)
+            old(self).ginv() && old(self).is_leader_ ==> final(self).ginv(),
     {
+        let ghost pre = *self;
         let previous_index: u64 = self.raft_log_.last_index();
         let appended: u64 = self.raft_log_.append(RaftEntry::new(
             self.current_term_ as i64, cmd, has_value, is_tpc_commit, kind,
             payload_bytes));
         runtime_assert(appended == previous_index + 1);  // [move, M10]
+        proof {
+            if pre.ginv() && pre.is_leader_ {
+                let e = self.raft_log_.view().last();
+                assert(self.raft_log_.view() == pre.raft_log_.view().push(e));
+                self.g_log_@ = crate::coupling::client_request_log(
+                    pre.g_log_@, self.log_view(), crate::coupling::value_view(e.spec_cmd()));
+                crate::coupling::lemma_client_request_ginv(&pre, self, e);
+            }
+        }
         previous_index
     }
 
@@ -854,7 +870,9 @@ impl<C: Clone> RaftCore<C> {
     pub fn on_applied(&mut self, index: u64, published: u64,
                       out: &mut CoreOutput) -> bool  // [move, M7]
         requires old(self).inv(),
-        ensures final(self).inv(),
+        ensures
+            final(self).inv(),
+            old(self).ginv() ==> final(self).ginv(),  // [M12] unseen by the spec
     {
         if raft_server_log_index_above(published, index) {
             out.log(RAFT_LOG_WARN,
@@ -875,7 +893,9 @@ impl<C: Clone> RaftCore<C> {
     // reset cannot leave a campaign running off an expired snapshot.
     pub fn reset_election_timer(&mut self, now: u64, timeout_us: u64) -> u64
         requires old(self).inv(),
-        ensures final(self).inv(),
+        ensures
+            final(self).inv(),
+            old(self).ginv() ==> final(self).ginv(),  // [M12] unseen by the spec
     {
         let prev_time: u64 = self.last_heartbeat_time_;
         self.last_heartbeat_time_ = now;
@@ -916,6 +936,18 @@ impl<C: Clone> RaftCore<C> {
             final(self).decoded_terms_ == old(self).decoded_terms_,
             !is_leader ==> final(self).authority_rounds_ == old(self).authority_rounds_,
             !is_leader ==> final(self).heartbeat_round_ == old(self).heartbeat_round_,
+            // [M12] the role it leaves, and what it does not touch
+            final(self).vote_for_ == old(self).vote_for_,
+            final(self).election_term_ == old(self).election_term_,
+            !is_leader ==> !final(self).is_leader_,
+            is_leader && !stopped ==> final(self).is_leader_,
+            is_leader && stopped ==> final(self).is_leader_ == old(self).is_leader_,
+            !is_leader ==> final(self).peers_ == old(self).peers_,
+            !is_leader ==> final(self).peer_sites_ == old(self).peer_sites_,
+            final(self).g_log_ == old(self).g_log_,  // [M12]
+            final(self).g_votes_ == old(self).g_votes_,  // [M12]
+            final(self).g_match_ == old(self).g_match_,  // [M12]
+            final(self).g_next_ == old(self).g_next_,  // [M12]
     {
         let prev_is_leader: bool = self.is_leader_;
         // raft_log_set_is_leader_entry's term, which it read first.
@@ -969,6 +1001,12 @@ impl<C: Clone> RaftCore<C> {
                     self.decoded_terms_ == old(self).decoded_terms_,
                     self.is_leader_ == old(self).is_leader_,
                     self.heartbeat_round_ == 0,
+                    self.vote_for_ == old(self).vote_for_,
+                    self.election_term_ == old(self).election_term_,
+                    self.g_log_ == old(self).g_log_,  // [M12]
+                    self.g_votes_ == old(self).g_votes_,  // [M12]
+                    self.g_match_ == old(self).g_match_,  // [M12]
+                    self.g_next_ == old(self).g_next_,  // [M12]
                 decreases peers - ord,
             {
                 let site: u16 = self.peer_site_at(ord);
@@ -1063,6 +1101,16 @@ impl<C: Clone> RaftCore<C> {
             final(self).pending_rpcs_ == old(self).pending_rpcs_,
             final(self).decoded_terms_ == old(self).decoded_terms_,
             !final(self).election_in_progress_,
+            // [M12] the role it leaves, and what it does not touch
+            !final(self).is_leader_,
+            final(self).vote_for_ == old(self).vote_for_,
+            final(self).election_term_ == old(self).election_term_,
+            final(self).peers_ == old(self).peers_,
+            final(self).peer_sites_ == old(self).peer_sites_,
+            final(self).g_log_ == old(self).g_log_,  // [M12]
+            final(self).g_votes_ == old(self).g_votes_,  // [M12]
+            final(self).g_match_ == old(self).g_match_,  // [M12]
+            final(self).g_next_ == old(self).g_next_,  // [M12]
     {
         out.log(RAFT_LOG_INFO,
             "[SPEC-RAFT] Site {}: Stepping down as leader (term={})",

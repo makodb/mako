@@ -473,11 +473,38 @@ impl<C: Clone> RaftCore<C> {
                 Reply::Applied(self.on_applied(index, published, out))
             },
             Event::SetFollower { stopped, failover } => {
+                let ghost pre = *self;
                 self.set_is_leader(false, stopped, failover, out);
+                proof {
+                    // [M12] a leader steps aside; anyone else is unchanged
+                    if pre.ginv() {
+                        if pre.is_leader_ {
+                            self.g_log_@ = crate::coupling::step_aside_log(pre.g_log_@);
+                            self.g_votes_@ = Set::<int>::empty();
+                            crate::coupling::lemma_step_aside_ginv(&pre, self);
+                        } else {
+                            crate::coupling::lemma_same_view_ginv(&pre, self);
+                        }
+                    }
+                }
                 Reply::Done
             },
             Event::StepDown { stopped, failover } => {
+                let ghost pre = *self;
                 self.step_down(stopped, failover, out);
+                proof {
+                    // [M12] a leader or candidate steps aside; a follower is
+                    // unchanged
+                    if pre.ginv() {
+                        if !(pre.role_view() is Follower) {
+                            self.g_log_@ = crate::coupling::step_aside_log(pre.g_log_@);
+                            self.g_votes_@ = Set::<int>::empty();
+                            crate::coupling::lemma_step_aside_ginv(&pre, self);
+                        } else {
+                            crate::coupling::lemma_same_view_ginv(&pre, self);
+                        }
+                    }
+                }
                 Reply::Done
             },
         }
