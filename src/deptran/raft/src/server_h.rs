@@ -954,6 +954,12 @@ pub struct RaftServerBase {
     // verified configuration the server fails closed, and inside it log
     // compaction and snapshots do nothing.
     pub verified_gates_: bool,
+    // [move, M1] The snapshot configuration and the state machine's
+    // snapshot-callback ownership, from RaftCore: the shell's, the core
+    // never read them.
+    pub snapshot_threshold_: u64,
+    pub snapshot_callback_owner_token_: u64,
+    pub next_snapshot_callback_owner_token_: u64,
     // Was a function-static in EnqueueCommittedEntries. A DSL body has no
     // static local, and a per-server counter is the more honest shape: the
     // C++ one was shared across every RaftServer in a single-process test.
@@ -1049,6 +1055,9 @@ impl RaftServerBase {
                 RAFT_SERVER_INVALID_SITE_ID as u64),  // [fix, F8]
             term_mirror_: rusty::sync::atomic::AtomicU64::new(0),  // [fix, F8]
             verified_gates_: false,  // [fix, F5]
+            snapshot_threshold_: 10000,  // [move, M1]
+            snapshot_callback_owner_token_: 0,  // [move, M1]
+            next_snapshot_callback_owner_token_: 1,  // [move, M1]
             enqueue_log_counter_: 0,
             n_prepare_: 0,
             n_accept_: 0,
@@ -1088,7 +1097,7 @@ impl RaftServerBase {
 
     // CALLER MUST HOLD mtx_.
     pub fn SetSnapshotThresholdLocked(&mut self, threshold: u64) {
-        self.core.snapshot_threshold_ = threshold;
+        self.snapshot_threshold_ = threshold;
         self.snapshot_trigger_threshold_
             .store(threshold, rusty::sync::atomic::Ordering::Release);
     }
@@ -1162,12 +1171,12 @@ impl RaftServerBase {
             return false;
         }
         let _lock = RaftLockGuard::new(&mut self.mtx_);
-        if self.core.snapshot_callback_owner_token_ != callback_owner_token {
+        if self.snapshot_callback_owner_token_ != callback_owner_token {
             return false;
         }
         self.create_sm_snapshot_cb_ = Default::default();
         self.prepare_sm_snapshot_cb_ = Default::default();
-        self.core.snapshot_callback_owner_token_ = 0;
+        self.snapshot_callback_owner_token_ = 0;
         true
     }
 
@@ -2888,7 +2897,7 @@ impl RaftServerBase {
         if !configured
             || !raft_server_snapshot_is_due(self.core.snapidx_,
                                             self.core.execute_index_,
-                                            self.core.snapshot_threshold_)
+                                            self.snapshot_threshold_)
         {
             return;
         }
@@ -3830,11 +3839,11 @@ impl RaftSpecific for RaftServerBase {
         prepare_cb: &rusty::RaftPrepareSnapshotCb,
     ) -> u64 {
         let _lock = RaftLockGuard::new(&mut self.mtx_);
-        if self.core.next_snapshot_callback_owner_token_ == 0 {
-            self.core.next_snapshot_callback_owner_token_ = 1;
+        if self.next_snapshot_callback_owner_token_ == 0 {
+            self.next_snapshot_callback_owner_token_ = 1;
         }
-        let owner_token: u64 = self.core.next_snapshot_callback_owner_token_;
-        self.core.next_snapshot_callback_owner_token_ += 1;
+        let owner_token: u64 = self.next_snapshot_callback_owner_token_;
+        self.next_snapshot_callback_owner_token_ += 1;
         // In place, for the reason given on reg_learner_action.
         unsafe {
             raft_create_snapshot_cb_clone_into(
@@ -3844,7 +3853,7 @@ impl RaftSpecific for RaftServerBase {
                 prepare_cb as *const rusty::RaftPrepareSnapshotCb,
                 &mut self.prepare_sm_snapshot_cb_ as *mut rusty::RaftPrepareSnapshotCb);
         }
-        self.core.snapshot_callback_owner_token_ = owner_token;
+        self.snapshot_callback_owner_token_ = owner_token;
         owner_token
     }
 }

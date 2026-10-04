@@ -53,10 +53,6 @@ pub struct RaftCore<C> {
     pub election_timeout_us_: u64,
     pub election_timer_generation_: u64,
     pub vote_for_: u16,
-    // Snapshot configuration and callback ownership.
-    pub snapshot_threshold_: u64,
-    pub snapshot_callback_owner_token_: u64,
-    pub next_snapshot_callback_owner_token_: u64,
     // Leadership, and the campaign in progress.
     pub is_leader_: bool,
     pub req_voting_: bool,
@@ -153,10 +149,6 @@ impl<C: Clone> RaftCore<C> {
             election_timer_generation_: 0,
             // INVALID_SITEID is (siteid_t)-1 and siteid_t is uint16_t.
             vote_for_: u16::MAX,
-            // Anything before this slot has been freed by compaction.
-            snapshot_threshold_: 10000,
-            snapshot_callback_owner_token_: 0,
-            next_snapshot_callback_owner_token_: 1,
             is_leader_: false,
             req_voting_: false,
             election_in_progress_: false,
