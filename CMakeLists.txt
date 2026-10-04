@@ -1214,6 +1214,7 @@ set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft_rt.a")
 # generated lib.rs.
 file(GLOB RAFT_RUST_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-cpp-markers/src/*.rs
@@ -1251,6 +1252,7 @@ add_custom_command(
             ${RAFT_RPC_RUST}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/Cargo.toml
     COMMENT "cargo build: the Raft core and raft-rt as ${RAFT_RUST_LIB}"
     VERBATIM)

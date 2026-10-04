@@ -6,8 +6,13 @@ version = 4
 name = "raft"
 version = "0.0.0"
 dependencies = [
+ "raft-core",
  "rusty",
 ]
+
+[[package]]
+name = "raft-core"
+version = "0.0.0"
 
 [[package]]
 name = "raft-rt"

@@ -16,13 +16,15 @@ import collections, os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RS = os.path.join(ROOT, 'src/deptran/raft/src/server_h.rs')
+# RaftCore lives in the raft-core crate since the Verus plan's Phase 6.
+CORE_RS = os.path.join(ROOT, 'src/deptran/raft/core/src/node.rs')
 SERVER_RECEIVERS = re.compile(
     r'^(self|server|svr|svr_|s|this|rep_sched_|raft_server|raft_sched_|leader_server|follower_server'
     r'|frame->svr_|config_->GetServer\(.*\)|GetServer\(.*\)|worker->rep_sched_|it->second->svr_)$')
 
 
 def fields(struct, rs):
-    m = re.search(r'pub struct ' + struct + r' \{(.*?)\n\}', rs, re.S)
+    m = re.search(r'pub struct ' + struct + r'(?:<[^>]*>)? \{(.*?)\n\}', rs, re.S)
     return re.findall(r'^\s+(?:pub(?:\(crate\))? )?([a-z_][a-z0-9_]*)\s*:(?!:)', m.group(1), re.M)
 
 
@@ -38,13 +40,13 @@ def strip(src):
 
 def main():
     rs = open(RS).read()
-    names = set(fields('RaftServerBase', rs)) | set(fields('RaftCore', rs))
+    names = set(fields('RaftServerBase', rs)) | set(fields('RaftCore', open(CORE_RS).read()))
     alt = '|'.join(sorted(names, key=len, reverse=True))
     via_receiver = re.compile(r'([A-Za-z_][A-Za-z0-9_]*(?:\([^()]*\))?(?:\.[A-Za-z_][A-Za-z0-9_]*|->[A-Za-z_][A-Za-z0-9_]*)*)\s*(?:->|\.)\s*(' + alt + r')\b')
     bare = re.compile(r'(?<![\w>.])(' + alt + r')\b')
     server_sites, other = [], collections.Counter()
     for root, _, files in os.walk(os.path.join(ROOT, 'src/deptran')):
-        if '/raft/src' in root:
+        if '/raft/src' in root or '/raft/core' in root:
             continue
         for fn in files:
             if not fn.endswith(('.cc', '.h', '.hpp', '.cpp')):
@@ -71,7 +73,7 @@ def main():
                 if in_shim:
                     for m in bare.finditer(line):
                         server_sites.append((rel, lineno, '(implicit this)', m.group(1)))
-    print(f'fields: RaftServerBase {len(fields("RaftServerBase", rs))}, RaftCore {len(fields("RaftCore", rs))}')
+    print(f'fields: RaftServerBase {len(fields("RaftServerBase", rs))}, RaftCore {len(fields("RaftCore", open(CORE_RS).read()))}')
     print(f'hand-written C++ sites naming one through the Raft server: {len(server_sites)}')
     for rel, lineno, recv, field in server_sites:
         print(f'  {rel}:{lineno}: {recv} . {field}')

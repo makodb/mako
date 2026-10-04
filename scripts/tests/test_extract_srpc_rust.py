@@ -1204,10 +1204,10 @@ class CheckedInCanaryTests(unittest.TestCase):
         # Replace them with an EXACT count ratchet over the whole file. This
         # is not a relaxation: every count is equality, so any new unsafe in
         # the facade -- or any removal -- fails the gate.
-        #   #[allow(unsafe_code)]        1  -> 58 -> 59 -> 62 -> 63
+        #   #[allow(unsafe_code)]        1  -> 58 -> 59 -> 62 -> 63 -> 64
         #   unsafe extern                1  ->  1
         #   unsafe fn                    1  -> 53 -> 54
-        #   unsafe {                     0  -> 29 -> 30 -> 32 -> 34
+        #   unsafe {                     0  -> 29 -> 30 -> 32 -> 34 -> 35
         #   /// # Safety                 1  -> 38 -> 39
         # The 59th allowance and the 30th block are one site: the opaque
         # carriers' Drop layer (rusty_opaque_cpp_carrier_drop!), which calls
@@ -1221,15 +1221,20 @@ class CheckedInCanaryTests(unittest.TestCase):
         # MaybeUninit storage. The 63rd allowance and the 33rd/34th blocks are
         # raft_log_emit, the Raft logger's runtime (F2 slice 1c): it asks the
         # C++ logger whether a level is on and hands it one formatted line.
+        # The 64th allowance and the 35th block are RaftCommand's Clone (the
+        # raft_command_clone_into kernel, a refcount bump): the Raft core is
+        # generic over its command handle and clones through it, once the
+        # transpiled cpp lane that lowered `.clone()` its own way was removed
+        # (docs/verus/modification-plan.md, Q9).
         # `unsafe impl` / `unsafe trait` / `#![allow(unsafe_code)]` stay at
         # zero: the facade never asserts a thread-safety property, it only
         # models call boundaries.
         self.assertEqual(facade.count(logging_boundary), 1)
-        self.assertEqual(facade.count("#[allow(unsafe_code"), 63)
+        self.assertEqual(facade.count("#[allow(unsafe_code"), 64)
         self.assertEqual(facade.count("#![allow(unsafe_code"), 0)
         self.assertEqual(facade.count("unsafe extern"), 1)
         self.assertEqual(facade.count("unsafe fn"), 54)
-        self.assertEqual(facade.count("unsafe {"), 34)
+        self.assertEqual(facade.count("unsafe {"), 35)
         self.assertEqual(facade.count("unsafe impl"), 0)
         self.assertEqual(facade.count("unsafe trait"), 0)
         self.assertEqual(facade.count("/// # Safety"), 39)

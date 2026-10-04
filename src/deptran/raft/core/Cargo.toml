@@ -1,0 +1,14 @@
+# raft-core: the Raft core that Verus checks (docs/verus/modification-plan.md,
+# Phase 6). A member of the Raft workspace (../Cargo.toml), so the
+# workspace's panic = "abort" profile and its clippy gate cover it.
+[package]
+name = "raft-core"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "raft_core"
+path = "src/lib.rs"
+
+[dependencies]

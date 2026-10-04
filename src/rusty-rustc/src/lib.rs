@@ -379,15 +379,32 @@ pub struct RaftResponsePtr {
 /// and the C++ one are the same operation.
 /// `janus::Command` (`SerializableEnvelope<MakoCommands>`): 24 bytes, align 8,
 /// pinned by the static_assert block in src/deptran/raft/server.h.
-// Neither Clone nor Copy: `janus::Command` holds an Arc, so a copy is a
-// refcount bump the runtime cannot make bitwise. Copies are the
-// raft_command_clone_into kernel (step D1); a `.clone()` here is a compile
-// error, which is the point.
+// Not Copy: `janus::Command` holds an Arc, so a copy is a refcount bump the
+// runtime cannot make bitwise. Clone is that bump, through the
+// raft_command_clone_into kernel (step D1). It was deliberately absent while
+// the transpiled cpp lane lowered `.clone()` its own way; that lane is gone
+// (docs/verus/modification-plan.md, Q9), and the Raft core, generic over its
+// command, clones through this impl.
 #[derive(Default)]
 #[repr(C)]
 pub struct RaftCommand {
     _align: [u64; 0],
     _opaque: [u8; 24],
+}
+
+extern "C" {
+    fn raft_command_clone_into(src: *const RaftCommand, dst: *mut RaftCommand);
+}
+
+impl Clone for RaftCommand {
+    // SAFETY: `self` is a live carrier and `copy` a default-constructed one;
+    // the kernel destroys the default and copy-constructs `self` into it.
+    #[allow(unsafe_code)]
+    fn clone(&self) -> Self {
+        let mut copy = RaftCommand::default();
+        unsafe { raft_command_clone_into(self, &mut copy) };
+        copy
+    }
 }
 
 /// `std::shared_ptr<janus::RpcPeer>`: 16 bytes, align 8, pinned by the

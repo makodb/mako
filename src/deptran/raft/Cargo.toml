@@ -27,7 +27,7 @@ publish = false
 # A package under this root that was NOT a member would be rejected by cargo,
 # and one with its own [workspace] would silently lose panic = "abort".
 [workspace]
-members = [".", "rt"]
+members = [".", "rt", "core"]
 
 [lib]
 path = "src/lib.rs"
@@ -61,10 +61,10 @@ raft_test = []
 # types the Raft server holds opaquely. Keeping it inside the vendored
 # tree would put it in the path of every subtree pull.
 rusty = { path = "../../rusty-rustc" }
-# NO srpc dependency, on purpose. The core is the source BOTH lanes build:
-# rustc for the Rust lane, rusty-cpp for the C++ lane, and the transpiler
-# refuses a crate whose local dependency carries source-owned C++ contracts
-# (measured, plan revision 5). Everything srpc-facing lives in rt/.
+# The Raft core that Verus checks (Phase 6): no FFI, no dependencies of its
+# own. This crate is its shell.
+raft-core = { path = "core" }
+# NO srpc dependency: everything srpc-facing lives in rt/.
 
 [lints.rust]
 unsafe_code = "allow"   # the CRC32 kernel is deliberately unsafe; see its # Safety doc
