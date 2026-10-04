@@ -144,6 +144,7 @@ def ghost_regions(text):
     mode = None
     depth = 0
     cdepth = 0
+    pdepth = 0
     lines = text.split('\n')
     for i, line in enumerate(lines, 1):
         st = line.strip()
@@ -161,10 +162,21 @@ def ghost_regions(text):
                 mode = None
             continue
         if mode == 'head':
+            # the body opens at a brace outside parentheses: a struct literal
+            # in a clause is parenthesized (Verus parses clauses as Rust
+            # parses an `if` condition), so `(LState { ... })` stays head
             ghost.add(i)
-            if '{' in line:
-                depth = line.count('{') - line.count('}')
-                mode = 'block' if depth > 0 else None
+            code = line.split('//')[0]
+            for k, ch in enumerate(code):
+                if ch in '([':
+                    pdepth += 1
+                elif ch in ')]':
+                    pdepth -= 1
+                elif ch == '{' and pdepth <= 0:
+                    rest = code[k:]
+                    depth = rest.count('{') - rest.count('}')
+                    mode = 'block' if depth > 0 else None
+                    break
             continue
         if mode == 'contract':
             if (st.startswith('{') and cdepth == 0) or re.match(r'^(pub(\(\w+\))?\s+)?(const\s+)?fn\b', st):
@@ -188,6 +200,8 @@ def ghost_regions(text):
             depth = line.count('{') - line.count('}')
             if '{' not in line:
                 mode = 'head'
+                code = line.split('//')[0]
+                pdepth = code.count('(') + code.count('[') - code.count(')') - code.count(']')
             elif depth > 0:
                 mode = 'block'
             continue
