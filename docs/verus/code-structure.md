@@ -77,6 +77,15 @@ itself when no submit thread runs. The apply thread records applied indexes
 and, outside the verified gates, compacts the log (which removes nothing
 while snapshots are off) and, with snapshots on, creates snapshots. §7.
 
+**What did the verification work add to `core`, `rt` and `src`?** Four
+layers: proof code that cargo erases (4,580 lines, all in `core/`);
+reshaping that runs but keeps behaviour (one `step` entry point, effects
+returned as data, fibers cut at their waits); eight numbered behaviour
+changes (F1, F3-F9), some fixing bugs, some making the proof's assumptions
+true; and instrumentation that is off unless switched on. The last three
+together are the 1,819 code lines production gained (+22% over
+`verus-p0`). §11.
+
 **Is the core's `Event` the poll thread's event?** No. A reactor event is
 something a fiber waits on; the core's `Event` is a value passed to `step`,
 which returns before the caller goes on. §8.
@@ -946,3 +955,40 @@ heartbeat.rs 464, log.rs 328, authority.rs 354, coupling.rs 2,271, the rest
 under 140 each), about 2,240 are comments or blank, and cargo compiles
 about 3,680. The core's tests (`core/tests/`) are ordinary cargo tests run
 by hand; `b17_round_end.rs` is ignored because it fails until B17 is fixed.
+
+## 11. What the verification work added to `core`, `rt` and `src`
+
+Four layers. Only the first is proof; the other three are compiled and run.
+Every change is recorded with its kind in [diff-ledger.md](diff-ledger.md),
+and every changed line carries a tag: `[M<n>]` for the plan's "move, don't
+rewrite" steps (docs/verus/modification-plan.md:990-1002), `[fix, F<n>]`
+for its numbered behaviour changes (:963-972).
+
+Size, counting code lines only (no comments, blank lines, lab files or
+ghost code), for `src/`, `rt/src/` and `core/src/`: 8,087 at `verus-p0`,
+before the work (`src/` 6,085, `rt/src/` 2,002), and 9,906 now (`src/`
+4,165, `rt/src/` 2,060, `core/src/` 3,681): **+1,819, +22%**. Beside that
+are 4,580 ghost lines, which cargo erases, the replay crate's 771 code
+lines, and 271 more lab lines (2,068 to 2,339).
+
+| Layer | What | Where | In the binary? | Why |
+|---|---|---|---|---|
+| 1. Proof | `coupling.rs`; the ghost fields `g_log_`, `g_votes_`, `g_match_`, `g_next_`; every `requires`, `ensures`, `invariant`, `decreases`, `spec fn`, `proof fn`, `proof {}`, `let ghost`; `admits` | `core/` only (§10) | no | the proof (M12) |
+| 2. Reshaping, behaviour kept | the core as a crate of its own, its code moved, not rewritten (M1); one entry point, `Event` → `step` → `Reply` (M5, `core/src/event.rs`); side effects returned as actions and log lines as data (M3, M7: `core/src/output.rs`, `core/src/logging.rs`), carried out by the shell (`src/server_h.rs:1516-1589`); each fiber cut at its wait, so an election and a heartbeat round are several core calls with the waits in the shell (M5), and rt's vote tally now hands each reply over (`rt/src/transport.rs:611-624`, `rt/src/seam.rs:306-342`); clock reads and random samples passed in (M4); per-entry facts cached in `RaftEntry` instead of asked of C++ (M6); a sorted `Vec` for `BTreeSet<u16>` (M9); `runtime_assert` and explicit wrapping arithmetic (M10); the command a type parameter, the inbound payload behind `InboundBatch`, which the shell's `WireBatch` implements (`src/server_h.rs:3286`), and `div_ceil` behind the trusted `blocks_for` (M11) | `core/`, the shell, a little of `rt/` | yes | Verus checks only code it sees whole: no lock, I/O, clock, callback, closure or foreign call inside, and every effect visible as a value. Tier 1 and the replay (§9) check that behaviour did not change |
+| 3. Behaviour changes | F1 one vote per voter; F3 the leadership re-check and the commit index read in the critical section that builds the message; F4 entry terms below 1 refused; F5 the verified-configuration gate (`MAKO_RAFT_VERIFIED_GATES`, `enter_gates` at `core/src/node.rs:310`, `verified_config_ok` at `src/server_h.rs:3519`); F6 the leader-change callback after the unlock; F7 entry stamping after the lock; F8 the atomic mirrors; F9 message admission (`step_checked`) | `rt/` (F1), the shell, `core/` | yes | F1, F4 and F8 fix bugs the work found (bugs-found B3, B4, B2). F6 takes Mako's callback out of the lock, a lock-order hazard (fixing B11 with it); F7 moves work out of the lock. F3, F5 and F9 make the proof's assumptions true: the commit index a SendAppendEntries carries; snapshots off and a static configuration; only well-formed messages from other members |
+| 4. Instrumentation | the replay recorder (`MAKO_RAFT_REPLAY_DIR`, `src/server_h.rs:3373-3442`, written from the `step` wrapper, `:1407-1443`) and `replay/`; the trace kit (`MAKO_RAFT_TRACE_FILE`, `rt/src/trace.rs` and its hooks); the lab's commit dumps and cases 12-15; `core/tests/` | the shell, `rt/`, `replay/`, the lab | the recorder and trace kit compiled in, inert unless their variable is set; the rest no | the equivalence check (A.4 item 4) and the performance gates (M0) |
+
+`rt/` changed least: F1's tally, the per-reply record M5 needed, and the
+trace hooks, +120/-28 lines in all (`git diff --stat verus-p0 HEAD`). Its
+transport, codec, service and snapshot store predate the work.
+
+What layer 2 is not: new protocol logic. Of the core's 10,487 lines,
+`scripts/verus/ledger_lint.py --stats` finds 1,713 carried over verbatim
+from the shell as it stood when Phase 6 began (`43c57e3ac`, which already
+held Phases 1-4's reshaping) and 966 new or changed in Phase 6, each under
+its tag; the rest are ghost (4,580), comments (2,239) and structure (1,002).
+The largest new pieces are `event.rs` (316 lines: the events, the dispatch,
+F9), the cut heartbeat round in `heartbeat.rs` (215) and `node.rs` (271).
+
+The cost was measured: every phase's performance checkpoint compares with
+`verus-p0`, and Phase 8's passes on every point (reports/phase-8.md §4).
