@@ -153,7 +153,7 @@ runs that ended behind, 39,285/s against 39,066/s.
   empty spec table: `set_is_leader` rebuilds it only under failover, so the
   settlement's premise includes the gate's failover.
 - **The round end's premise** (B17, §7): the certificate holds for runs that
-  do not hit the race until it is fixed.
+  do not hit the race (B17 stays unfixed, the user's decision).
 - **Phase 6 lines found unregistered.** The ledger lint's scanner had read
   `raft_on_append_entries`' whole body as ghost since Phase 6 (a bodiless
   trait `spec fn` opened a head that never closed). Fixed in `a09862d2f`;
@@ -175,8 +175,7 @@ the base file's own regions.
 - **B16** (liveness, latent): an entry without a value is never replicated
   (the leader reads it as missing and skips every follower behind it). No
   caller proposes one; the proof takes "a proposal has a value" as a
-  premise. A fix (`Start` refusing an empty command) is a behaviour change
-  for the user.
+  premise. Not fixed: the user's decision (2026-10-04).
 - **B17** (safety, race): PHASE 3 advances the commit index without checking
   that the server still leads; the shell checks leadership before taking
   `mtx_`. A server that steps down in that window, and takes a newer
@@ -184,5 +183,6 @@ the base file's own regions.
   hold (the five-server scenario in [../bugs-found.md](../bugs-found.md)).
   Reproduced at the core by `core/tests/b17_round_end.rs` (ignored, so the
   suite stays green; it fails with `--ignored`). The fix, advancing only
-  while leading, makes it pass (tried in a working copy, not applied); it
-  is a behaviour change outside A.2: **for the user to decide**.
+  while leading, makes it pass (tried in a working copy, not applied). Not
+  fixed: the user's decision (2026-10-04); the certificate keeps the
+  premise.

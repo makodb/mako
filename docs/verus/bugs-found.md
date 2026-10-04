@@ -32,8 +32,8 @@ it), **metric** (wrong number in a measurement, no protocol effect).
 | B13 | toolchain | The transpiled C++ cannot redeclare a name in one scope: a Rust `let` that shadows a binding, or a function parameter, at the same block level is a C++ redefinition | reproduced (cpp-lane lab build, Phase 1) | worked around by renaming; a constraint on every transpiled file |
 | B14 | race | `heartbeat_interval_us_` is a plain field the lab's case 67 writes while the heartbeat and election loops read it | reproduced (Phase 4 TSan lab build, cpp lane) | recorded only (user, 2026-10-04): lab-only, outside the core |
 | B15 | race (latent) | The heartbeat driver reset the core's round state with no `mtx_` (`reset_round_state` at the loop's start and before its epilogue), taking `&mut` of the whole `RaftCore` while other threads may hold it under the lock | read in code (Phase 6) | fixed in Phase 6: both resets are `step(ResetRoundState)` under `mtx_` (plan §3.1 rule 1) |
-| B16 | liveness (latent) | An entry whose command has no value (an empty `Command`, which `Start` accepts) is never replicated: the leader's payload selection reads it as a missing entry and skips every follower behind it, every round; a follower's conflict scan likewise reads such a slot as absent | read in code (Phase 8) | recorded; no caller proposes an empty command today; the proof takes "a proposal has a value" as a host-contract premise |
-| B17 | safety (race) | The round end (PHASE 3) advances the commit index without checking that this server still leads: `heartbeat_round_end_body` reads `IsLeader()` before taking `mtx_`, and `heartbeat_phase3_locked` calls `raft_commit_advance` whatever `is_leader` is. A server that lost leadership in that window, and meanwhile took a newer leader's entries over its tail, counts its old term's match indices against an entry of the new term | reproduced: `core/tests/b17_round_end.rs` (Phase 8) | open: the fix (advance only while leading) is a behaviour change for the user to decide; the proof takes "the round end runs while leading" as a premise |
+| B16 | liveness (latent) | An entry whose command has no value (an empty `Command`, which `Start` accepts) is never replicated: the leader's payload selection reads it as a missing entry and skips every follower behind it, every round; a follower's conflict scan likewise reads such a slot as absent | read in code (Phase 8) | recorded only (user, 2026-10-04): no caller proposes an empty command today; the proof takes "a proposal has a value" as a host-contract premise |
+| B17 | safety (race) | The round end (PHASE 3) advances the commit index without checking that this server still leads: `heartbeat_round_end_body` reads `IsLeader()` before taking `mtx_`, and `heartbeat_phase3_locked` calls `raft_commit_advance` whatever `is_leader` is. A server that lost leadership in that window, and meanwhile took a newer leader's entries over its tail, counts its old term's match indices against an entry of the new term | reproduced: `core/tests/b17_round_end.rs` (Phase 8) | recorded only (user, 2026-10-04): not fixed; the proof takes "the round end runs while leading" as a premise, which the race can violate |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
 
@@ -403,10 +403,10 @@ lab's `start`, pass a `TpcCommitCommand`, and the leader's no-op is a
 `LFollowerAppendEntries`: the spec keeps a same-term entry, and the exec
 keeps it only when it has a value.
 
-**Fate.** Recorded. The proof takes "a proposal has a value" as a premise of
-the host contract (`docs/verus/host-contract.md`), and carries "every log
-entry has a value" in its invariant. Refusing an empty command in `Start` is a
-behaviour change for the user to decide (plan 0.7 point 3).
+**Fate.** Recorded only (user, 2026-10-04): `Start` keeps accepting an empty
+command. The proof takes "a proposal has a value" as a premise of the host
+contract (`docs/verus/host-contract.md`), and carries "every log entry has a
+value" in its invariant.
 
 ## B17. The round end can commit after leadership is lost (race)
 
@@ -481,7 +481,7 @@ otherwise return no advance. One branch; the read-index settlement after it
 is unchanged. With it, the round end's proof premise becomes a check, and
 the certificate no longer depends on the race not happening.
 
-**Fate.** Open: the fix is a behaviour change outside A.2, for the user to
-decide (plan 0.7 point 3). Until then the proof's round-end contract takes
-"the round end runs while leading" as a premise, which the race above
-violates.
+**Fate.** Recorded only (user, 2026-10-04): not fixed. The proof's round-end
+contract takes "the round end runs while leading" as a premise, which the
+race above violates, so a run that hits the race is outside the
+certificate. The reproduction stays in the suite, ignored.

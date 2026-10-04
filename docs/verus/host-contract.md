@@ -127,17 +127,18 @@ term at least 0; V2.
 
 ## 6. Known gaps
 
-- **B17 (safety, race; open).** PHASE 3 advances the commit index without
+- **B17 (safety, race; recorded, not fixed: the user's decision,
+  2026-10-04).** PHASE 3 advances the commit index without
   checking that the server still leads, and `heartbeat_round_end_body`
   checks leadership before taking `mtx_`. In that window a step-down and a
   newer leader's appends can run, and the round end then counts the old
   term's match indices against an entry of the new term. The `RoundEnd`
-  premise ("the server leads") is what excludes it; until the fix
-  (advance only while leading) lands, a run that hits the race is outside
-  the certificate.
-- **B16 (liveness, latent).** An entry without a value is never replicated.
-  No caller proposes one, so `Propose`'s premise holds today; nothing
-  enforces it.
+  premise ("the server leads") is what excludes it, so a run that hits the
+  race is outside the certificate. The fix would be one branch (advance only
+  while leading); `core/tests/b17_round_end.rs` reproduces the bug.
+- **B16 (liveness, latent; recorded, not fixed: the user's decision,
+  2026-10-04).** An entry without a value is never replicated. No caller
+  proposes one, so `Propose`'s premise holds today; nothing enforces it.
 
 ## 7. Trusted code
 
