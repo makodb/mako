@@ -158,6 +158,8 @@ impl<C> RaftCore<C> {
         // a leader runs no campaign; an epoch's term never passes the
         // current term, and a campaign's is strictly above it
         &&& (self.is_leader_ ==> !self.election_in_progress_)
+        // [M12] a campaign's term is a term (start_election's copy of one)
+        &&& self.election_term_ >= 0
         &&& (self.pending_leader_term_ matches Some(t) ==> t <= self.current_term_)
         &&& (self.election_in_progress_ ==> (self.pending_leader_term_ matches Some(t) ==> t < self.current_term_))
         // the gate (F5): inside the verified configuration the log is whole
@@ -765,11 +767,36 @@ impl<C: Clone> RaftCore<C> {
             voters@.len() == reply_terms@.len(),
             // the host contract: a reply's term is below the ceiling
             forall|k: int| 0 <= k < reply_terms@.len() ==> (#[trigger] reply_terms@[k] as int) < raft_index_limit(),
-        ensures final(self).inv(),
+        ensures
+            final(self).inv(),
+            // [M12] the settlement's segments: each granted reply and a yes
+            // quorum's BecomeLeader, a higher reply term's StepDown, a lost
+            // campaign's StepAside; no sends, and every receive one of the
+            // replies handed in (coupling.rs, "A campaign settled")
+            old(self).ginv() && old(self).gated_
+                && crate::coupling::settle_inputs_ok(old(self), voters@, granted@, reply_terms@,
+                    term, n_total) ==> {
+                &&& final(self).ginv()
+                &&& old(self).g_log_@.is_prefix_of(final(self).g_log_@)
+                &&& crate::coupling::settle_entries_ok(final(self).g_log_@, old(self).g_log_@.len() as int,
+                        old(self).config_members_@, voters@, granted@, reply_terms@)
+            },
     {
+        let ghost pre = *self;
+        let ghost on = pre.ginv() && pre.gated_
+            && crate::coupling::settle_inputs_ok(&pre, voters@, granted@, reply_terms@, term, n_total);
         if stopped {
             self.election_in_progress_ = false;
             self.req_voting_ = false;
+            proof {
+                if on {
+                    if pre.role_view() is Candidate {
+                        self.g_log_@ = crate::coupling::step_aside_log(pre.g_log_@);
+                        self.g_votes_@ = Set::<int>::empty();
+                    }
+                    crate::coupling::lemma_settle_aside(&pre, self, voters@, granted@, reply_terms@);
+                }
+            }
             return false;
         }
         // A higher term dominates every outcome, TIMEOUT and a concurrently
@@ -779,6 +806,8 @@ impl<C: Clone> RaftCore<C> {
         // [move, M5] The tally, counted here from the campaign's replies
         // rather than read out of the lane's quorum object.
         let mut votes: VoteSet = VoteSet::new();
+        // [M12] the voters counted yes
+        let ghost mut yes_set: Set<u16> = Set::<u16>::empty();
         let mut r: usize = 0;
         while r < voters.len()
             invariant
@@ -788,8 +817,21 @@ impl<C: Clone> RaftCore<C> {
                 votes.wf(),
                 votes.spec_highest_term() < raft_index_limit(),
                 forall|k: int| 0 <= k < reply_terms@.len() ==> (#[trigger] reply_terms@[k] as int) < raft_index_limit(),
+                // [M12] the yes count is the yes voters', each fed granted;
+                // the highest term is a reply's (or none yet)
+                votes.spec_yes_count() == yes_set.len(),
+                forall|x: u16| #[trigger] yes_set.contains(x) ==> votes.spec_has(x),
+                forall|x: u16| #[trigger] yes_set.contains(x)
+                    ==> exists|k: int| 0 <= k < r && voters@[k] == x && granted@[k],
+                votes.spec_highest_term() == 0
+                    || exists|k: int| 0 <= k < r && reply_terms@[k] == votes.spec_highest_term(),
             decreases voters@.len() - r,
         {
+            proof {
+                if !votes.spec_has(voters@[r as int]) && granted@[r as int] {
+                    yes_set = yes_set.insert(voters@[r as int]);
+                }
+            }
             votes.feed(voters[r], granted[r], reply_terms[r]);
             r += 1;
         }
@@ -819,6 +861,18 @@ impl<C: Clone> RaftCore<C> {
             self.log_term_change("observed higher term from RequestVote replies",
                                previous_term, self.current_term_,
                                RAFT_SERVER_INVALID_SITE_ID, out);  // [move, M7]
+            proof {
+                if on {
+                    // the reply that carried the highest term
+                    let k = choose|k: int| 0 <= k < reply_terms@.len()
+                        && reply_terms@[k] == observed_response_term;
+                    self.g_log_@ = crate::coupling::settle_step_down_log(pre.g_log_@,
+                        pre.config_members_@, voters@[k], granted@[k], reply_terms@[k]);
+                    self.g_votes_@ = Set::<int>::empty();
+                    crate::coupling::lemma_settle_step_down(&pre, self, voters@, granted@,
+                        reply_terms@, k);
+                }
+            }
             return false;
         }
 
@@ -836,6 +890,11 @@ impl<C: Clone> RaftCore<C> {
                      (self.current_term_).arg(),
                      (self.election_term_).arg(),
                      (self.election_in_progress_).arg()]);
+            }
+            proof {
+                if on {
+                    assert(pre.g_log_@.subrange(0, pre.g_log_@.len() as int) =~= pre.g_log_@);
+                }
             }
             return false;
         }
@@ -884,6 +943,21 @@ impl<C: Clone> RaftCore<C> {
                     &[(loc_id).arg(),
                      (self.current_term_).arg()]);
                 self.req_voting_ = false;
+                proof {
+                    if on {
+                        // APPLY_CURRENT: the campaign of the current term runs
+                        assert(pre.election_term_ as u64 == term && term == pre.current_term_);
+                        assert(pre.election_term_ as int == pre.current_term_ as int);
+                        self.g_log_@ = crate::coupling::settle_won_log(pre.g_log_@,
+                            pre.config_members_@, voters@, granted@, reply_terms@, pre.g_votes_@, false);
+                        self.g_votes_@ = pre.g_votes_@.union(crate::coupling::granted_ranks(
+                            pre.config_members_@, voters@, granted@, voters@.len() as int));
+                        self.g_match_@ = Map::<u64, u64>::empty();
+                        self.g_next_@ = Map::<u64, u64>::empty();
+                        crate::coupling::lemma_settle_won(&pre, self, voters@, granted@, reply_terms@,
+                            term, n_total, yes_set, false);
+                    }
+                }
                 true
             } else {
                 out.log(RAFT_LOG_DEBUG,
@@ -891,6 +965,20 @@ impl<C: Clone> RaftCore<C> {
                     &[(loc_id).arg(),
                      (self.current_term_).arg()]);
                     self.set_is_leader(false, stopped, failover, out);  // [move, M3]
+                proof {
+                    if on {
+                        // APPLY_CURRENT: the campaign of the current term runs
+                        assert(pre.election_term_ as u64 == term && term == pre.current_term_);
+                        assert(pre.election_term_ as int == pre.current_term_ as int);
+                        self.g_log_@ = crate::coupling::settle_won_log(pre.g_log_@,
+                            pre.config_members_@, voters@, granted@, reply_terms@, pre.g_votes_@, true);
+                        self.g_votes_@ = Set::<int>::empty();
+                        self.g_match_@ = Map::<u64, u64>::empty();
+                        self.g_next_@ = Map::<u64, u64>::empty();
+                        crate::coupling::lemma_settle_won(&pre, self, voters@, granted@, reply_terms@,
+                            term, n_total, yes_set, true);
+                    }
+                }
                 false
             }
         } else if outcome.no_ {
@@ -911,6 +999,13 @@ impl<C: Clone> RaftCore<C> {
                 self.election_in_progress_ = false;
             }
             self.req_voting_ = false;
+            proof {
+                if on {
+                    self.g_log_@ = crate::coupling::step_aside_log(pre.g_log_@);
+                    self.g_votes_@ = Set::<int>::empty();
+                    crate::coupling::lemma_settle_aside(&pre, self, voters@, granted@, reply_terms@);
+                }
+            }
             false
         } else {
             out.log(RAFT_LOG_DEBUG, "vote timeout {}", &[(loc_id).arg()]);
@@ -928,6 +1023,13 @@ impl<C: Clone> RaftCore<C> {
                 self.election_in_progress_ = false;
             }
             self.req_voting_ = false;
+            proof {
+                if on {
+                    self.g_log_@ = crate::coupling::step_aside_log(pre.g_log_@);
+                    self.g_votes_@ = Set::<int>::empty();
+                    crate::coupling::lemma_settle_aside(&pre, self, voters@, granted@, reply_terms@);
+                }
+            }
             false
         }
     }

@@ -279,6 +279,7 @@ impl<C> RaftCore<C> {
         &&& self.snapterm_ == 0
         &&& !self.config_members_@.contains(RAFT_SERVER_INVALID_SITE_ID)
         &&& (!(self.role_view() is Follower) ==> self.vote_for_ == self.site_id_)
+        &&& (self.role_view() is Candidate ==> self.g_votes_@.contains(self.my_rank()))
     }
 }
 
@@ -481,8 +482,8 @@ pub proof fn lemma_same_view_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>)
         pre.ginv(),
         view_frame(pre, post),
         post.role_view() == pre.role_view(),
-        post.g_log_ == pre.g_log_,
-        post.g_votes_ == pre.g_votes_,
+        post.g_log_@ == pre.g_log_@,
+        post.g_votes_@ == pre.g_votes_@,
     ensures post.ginv(),
 {
     assert(post.c_view() == pre.c_view());
@@ -948,6 +949,459 @@ pub proof fn lemma_timeout_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, r: Cam
     assert(post.log_view() == pre.log_view());
     assert(post.role_view() is Candidate);
     assert(post.state_view() == s7);
+}
+
+// ===========================================================================
+// A campaign settled (election_settle): each granted reply is
+// LReceiveVoteGranted and a yes quorum then LBecomeLeader; a reply of a
+// higher term is LStepDown; a lost or timed-out campaign LStepAside
+// ===========================================================================
+
+// A vote reply from `voter` as the spec sees it (coupling-table §2): the
+// voter is the reply's peer (F1), at its rank.
+pub open spec fn vote_reply_view(cfg: Seq<u16>, voter: u16, granted: bool, term: i64) -> LRaftMessage {
+    LRaftMessage::VoteResponse { term: term as int, granted, voter: rank(cfg, voter) }
+}
+
+// What the shell hands a settlement (the host contract): the configured
+// size; replies from other members (the peer each callback was made for,
+// F1); a grant at the campaign's term (the reply answers this campaign's
+// request, and a voter grants at the request's term).
+pub open spec fn settle_inputs_ok<C>(core: &RaftCore<C>, voters: Seq<u16>, granted: Seq<bool>,
+                                     terms: Seq<i64>, term: u64, n_total: u64) -> bool {
+    &&& n_total as int == core.config_members_@.len()
+    &&& forall|k: int| 0 <= k < voters.len()
+            ==> core.config_members_@.contains(#[trigger] voters[k]) && voters[k] != core.site_id_
+    &&& forall|k: int| 0 <= k < granted.len() && #[trigger] granted[k] ==> terms[k] as int == term as int
+}
+
+// The entries a settlement adds from position `lo`: no sends, and every
+// receive one of the replies the shell handed in.
+pub open spec fn settle_entries_ok(l: Seq<Entry>, lo: int, cfg: Seq<u16>, voters: Seq<u16>,
+                                   granted: Seq<bool>, terms: Seq<i64>) -> bool {
+    forall|i: int| lo <= i < l.len() ==> {
+        &&& !(#[trigger] l[i] is Send)
+        &&& (l[i] is Recv ==> exists|k: int| 0 <= k < voters.len()
+                && l[i] == Entry::Recv(rank(cfg, voters[k]), vote_reply_view(cfg, voters[k], granted[k], terms[k])))
+    }
+}
+
+// The granted voters among the first k replies, as ranks.
+pub open spec fn granted_ranks(cfg: Seq<u16>, voters: Seq<u16>, granted: Seq<bool>, k: int) -> Set<int>
+    decreases k,
+{
+    if k <= 0 {
+        Set::<int>::empty()
+    } else if granted[k - 1] {
+        granted_ranks(cfg, voters, granted, k - 1).insert(rank(cfg, voters[k - 1]))
+    } else {
+        granted_ranks(cfg, voters, granted, k - 1)
+    }
+}
+
+pub proof fn lemma_granted_ranks_contains(cfg: Seq<u16>, voters: Seq<u16>, granted: Seq<bool>, k: int, j: int)
+    requires
+        0 <= j < k,
+        granted[j],
+    ensures granted_ranks(cfg, voters, granted, k).contains(rank(cfg, voters[j])),
+    decreases k,
+{
+    if j < k - 1 {
+        lemma_granted_ranks_contains(cfg, voters, granted, k - 1, j);
+    }
+}
+
+// The granted replies' groups, the first k: Recv, the tally with the voter
+// added, Close(ReceiveVoteGranted).
+pub open spec fn grant_groups(l: Seq<Entry>, cfg: Seq<u16>, voters: Seq<u16>, granted: Seq<bool>,
+                              terms: Seq<i64>, votes0: Set<int>, k: int) -> Seq<Entry>
+    decreases k,
+{
+    if k <= 0 {
+        l
+    } else {
+        let rest = grant_groups(l, cfg, voters, granted, terms, votes0, k - 1);
+        if granted[k - 1] {
+            let v = rank(cfg, voters[k - 1]);
+            rest.push(Entry::Recv(v, vote_reply_view(cfg, voters[k - 1], true, terms[k - 1])))
+                .push(Entry::Set(LogField::VotesGranted,
+                    LogValue::VIntSet(votes0.union(granted_ranks(cfg, voters, granted, k)))))
+                .push(Entry::Close(ActionLabel::ReceiveVoteGranted {
+                    vote_term: terms[k - 1] as int, vote_granted: true, voter: v }))
+        } else {
+            rest
+        }
+    }
+}
+
+pub proof fn lemma_grant_groups(l: Seq<Entry>, c: LConstants, cfg: Seq<u16>, voters: Seq<u16>,
+                                granted: Seq<bool>, terms: Seq<i64>, votes0: Set<int>, k: int)
+    requires
+        log_ok(l, c),
+        fully_closed(l),
+        c.servers == Set::<int>::range(0, cfg.len() as int),
+        replay(l).role is Candidate,
+        replay(l).votes_granted == votes0,
+        0 <= k <= voters.len(),
+        voters.len() == granted.len(),
+        voters.len() == terms.len(),
+        forall|j: int| 0 <= j < k && #[trigger] granted[j]
+            ==> terms[j] as int == replay(l).current_term && cfg.contains(voters[j]),
+    ensures
+        log_ok(grant_groups(l, cfg, voters, granted, terms, votes0, k), c),
+        fully_closed(grant_groups(l, cfg, voters, granted, terms, votes0, k)),
+        replay(grant_groups(l, cfg, voters, granted, terms, votes0, k)) == (LState {
+            votes_granted: votes0.union(granted_ranks(cfg, voters, granted, k)),
+            ..replay(l)
+        }),
+        l.is_prefix_of(grant_groups(l, cfg, voters, granted, terms, votes0, k)),
+        settle_entries_ok(grant_groups(l, cfg, voters, granted, terms, votes0, k), l.len() as int,
+            cfg, voters, granted, terms),
+    decreases k,
+{
+    let s = replay(l);
+    if k == 0 {
+        assert(votes0.union(Set::<int>::empty()) =~= votes0);
+        assert(l.subrange(0, l.len() as int) =~= l);
+    } else {
+        lemma_grant_groups(l, c, cfg, voters, granted, terms, votes0, k - 1);
+        let rest = grant_groups(l, cfg, voters, granted, terms, votes0, k - 1);
+        let gr = granted_ranks(cfg, voters, granted, k - 1);
+        if granted[k - 1] {
+            let v = rank(cfg, voters[k - 1]);
+            let m = vote_reply_view(cfg, voters[k - 1], true, terms[k - 1]);
+            let gk = granted_ranks(cfg, voters, granted, k);
+            let vs = votes0.union(gk);
+            lemma_rank_bounds(cfg, voters[k - 1]);
+            lemma_g_open(rest, Entry::Recv(v, m), c);
+            let l1 = rest.push(Entry::Recv(v, m));
+            lemma_g_set(l1, LogField::VotesGranted, LogValue::VIntSet(vs), c);
+            let l2 = l1.push(Entry::Set(LogField::VotesGranted, LogValue::VIntSet(vs)));
+            let sr = replay(rest);
+            assert(vs =~= votes0.union(gr).insert(v));
+            let label = ActionLabel::ReceiveVoteGranted { vote_term: terms[k - 1] as int, vote_granted: true, voter: v };
+            assert(LReceiveVoteGranted(sr, replay(l2), c, terms[k - 1] as int, true, v, seg_sends(l2)));
+            lemma_g_close(l2, label, 0, c);
+            let l3 = l2.push(Entry::Close(label));
+            assert(l3 == grant_groups(l, cfg, voters, granted, terms, votes0, k));
+            assert(replay(l3) =~= (LState { votes_granted: vs, ..s }));
+            // the prefix and the new entries
+            assert(l.is_prefix_of(l3)) by {
+                assert(l3.subrange(0, l.len() as int) =~= rest.subrange(0, l.len() as int));
+            }
+            assert forall|i: int| l.len() <= i < l3.len() implies {
+                &&& !(#[trigger] l3[i] is Send)
+                &&& (l3[i] is Recv ==> exists|j: int| 0 <= j < voters.len()
+                        && l3[i] == Entry::Recv(rank(cfg, voters[j]), vote_reply_view(cfg, voters[j], granted[j], terms[j])))
+            } by {
+                if i < rest.len() {
+                    assert(l3[i] == rest[i]);
+                } else if i == rest.len() {
+                    assert(l3[i] == Entry::Recv(v, m));
+                    assert(vote_reply_view(cfg, voters[k - 1], granted[k - 1], terms[k - 1]) == m);
+                }
+            }
+        } else {
+            assert(granted_ranks(cfg, voters, granted, k) == gr);
+        }
+    }
+}
+
+// BecomeLeader: spontaneous, its own Tick group; the match and next
+// tables start empty.
+pub open spec fn become_leader_log(l: Seq<Entry>) -> Seq<Entry> {
+    l.push(Entry::Tick)
+        .push(Entry::Set(LogField::Role, LogValue::VRole(LServerRole::Leader)))
+        .push(Entry::Set(LogField::MatchIndex, LogValue::VU64Map(Map::<u64, u64>::empty())))
+        .push(Entry::Set(LogField::NextIndex, LogValue::VU64Map(Map::<u64, u64>::empty())))
+        .push(Entry::Close(ActionLabel::BecomeLeader))
+}
+
+pub proof fn lemma_become_leader(l: Seq<Entry>, c: LConstants)
+    requires
+        log_ok(l, c),
+        fully_closed(l),
+        replay(l).role is Candidate,
+        election_quorum_ok(replay(l)),
+        replay(l).pending_reads == Seq::<LReadReq>::empty(),
+        replay(l).served_ctxs == Set::<int>::empty(),
+    ensures
+        log_ok(become_leader_log(l), c),
+        fully_closed(become_leader_log(l)),
+        replay(become_leader_log(l)) == (LState {
+            role: LServerRole::Leader,
+            match_index: Map::<u64, u64>::empty(),
+            next_index: Map::<u64, u64>::empty(),
+            ..replay(l)
+        }),
+{
+    let s = replay(l);
+    let em = LogValue::VU64Map(Map::<u64, u64>::empty());
+    lemma_g_open(l, Entry::Tick, c);
+    let l1 = l.push(Entry::Tick);
+    lemma_g_set(l1, LogField::Role, LogValue::VRole(LServerRole::Leader), c);
+    let l2 = l1.push(Entry::Set(LogField::Role, LogValue::VRole(LServerRole::Leader)));
+    lemma_g_set(l2, LogField::MatchIndex, em, c);
+    let l3 = l2.push(Entry::Set(LogField::MatchIndex, em));
+    lemma_g_set(l3, LogField::NextIndex, em, c);
+    let l4 = l3.push(Entry::Set(LogField::NextIndex, em));
+    assert(LBecomeLeader(seg_state(l4), replay(l4), c, seg_sends(l4)));
+    lemma_g_close(l4, ActionLabel::BecomeLeader, 0, c);
+    assert(become_leader_log(l) =~= l4.push(Entry::Close(ActionLabel::BecomeLeader)));
+}
+
+// The exec's yes quorum is the spec's: this server and the voters counted
+// yes, all distinct members, are a majority of the configuration.
+pub proof fn lemma_settle_quorum(cfg: Seq<u16>, me_site: u16, yes: Set<u16>, votes: Set<int>, n_total: u64)
+    requires
+        sites_sorted(cfg),
+        cfg.contains(me_site),
+        n_total as int == cfg.len(),
+        yes.len() >= n_total as int / 2,
+        forall|x: u16| yes.contains(x) ==> cfg.contains(x) && x != me_site,
+        votes.contains(rank(cfg, me_site)),
+        forall|x: u16| #[trigger] yes.contains(x) ==> votes.contains(rank(cfg, x)),
+    ensures
+        votes.intersect(Set::<int>::range(0, cfg.len() as int)).len()
+            >= majority(Set::<int>::range(0, cfg.len() as int)),
+{
+    broadcast use Set::lemma_map_contains;
+    let n = cfg.len() as int;
+    let range = Set::<int>::range(0, n);
+    let f = |x: u16| rank(cfg, x);
+    let ry = yes.map(f);
+    assert(yes.injective_on(f)) by {
+        assert forall|a: u16, b: u16| yes.contains(a) && yes.contains(b) && #[trigger] f(a) == #[trigger] f(b)
+            implies a == b by {
+            lemma_rank_bounds(cfg, a);
+            lemma_rank_bounds(cfg, b);
+        }
+    }
+    vstd::set_lib::lemma_map_size(yes, ry, f);
+    let me = rank(cfg, me_site);
+    lemma_rank_bounds(cfg, me_site);
+    assert(!ry.contains(me)) by {
+        if ry.contains(me) {
+            let x = choose|x: u16| yes.contains(x) && me == f(x);
+            lemma_rank_bounds(cfg, x);
+        }
+    }
+    let q = ry.insert(me);
+    assert(q.subset_of(votes.intersect(range))) by {
+        assert forall|r: int| q.contains(r) implies votes.intersect(range).contains(r) by {
+            if r != me {
+                let x = choose|x: u16| yes.contains(x) && r == f(x);
+                lemma_rank_bounds(cfg, x);
+            }
+        }
+    }
+    vstd::set_lib::lemma_len_subset(q, votes.intersect(range));
+    vstd::set_lib::lemma_int_range(0, n);
+    assert(q.len() == yes.len() + 1);
+}
+
+// A vote reply of a higher term (ADVANCE_HIGHER_TERM): its Recv, then the
+// StepDown segment.
+pub open spec fn settle_step_down_log(l: Seq<Entry>, cfg: Seq<u16>, voter: u16, granted: bool,
+                                      term: i64) -> Seq<Entry> {
+    step_down_seg(l.push(Entry::Recv(rank(cfg, voter), vote_reply_view(cfg, voter, granted, term))), term as int)
+}
+
+pub proof fn lemma_settle_step_down<C>(pre: &RaftCore<C>, post: &RaftCore<C>, voters: Seq<u16>,
+                                       granted: Seq<bool>, terms: Seq<i64>, k: int)
+    requires
+        pre.inv(),
+        pre.ginv(),
+        pre.gated_,
+        0 <= k < voters.len(),
+        voters.len() == granted.len(),
+        voters.len() == terms.len(),
+        pre.config_members_@.contains(voters[k]),
+        terms[k] as int > pre.current_term_ as int,
+        post.current_term_ as int == terms[k] as int,
+        post.vote_for_ == RAFT_SERVER_INVALID_SITE_ID,
+        !post.is_leader_,
+        !post.election_in_progress_,
+        post.raft_log_ == pre.raft_log_,
+        post.commit_index_ == pre.commit_index_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.snapterm_ == pre.snapterm_,
+        post.g_votes_@ == Set::<int>::empty(),
+        post.g_match_ == pre.g_match_,
+        post.g_next_ == pre.g_next_,
+        post.g_log_@ == settle_step_down_log(pre.g_log_@, pre.config_members_@, voters[k], granted[k], terms[k]),
+    ensures
+        post.ginv(),
+        pre.g_log_@.is_prefix_of(post.g_log_@),
+        settle_entries_ok(post.g_log_@, pre.g_log_@.len() as int, pre.config_members_@, voters, granted, terms),
+{
+    let c = pre.c_view();
+    let cfg = pre.config_members_@;
+    let l0 = pre.g_log_@;
+    let e = Entry::Recv(rank(cfg, voters[k]), vote_reply_view(cfg, voters[k], granted[k], terms[k]));
+    lemma_g_open(l0, e, c);
+    let l1 = l0.push(e);
+    lemma_step_down_seg(l1, terms[k] as int, c);
+    let l2 = step_down_seg(l1, terms[k] as int);
+    assert(post.c_view() == c);
+    assert(post.log_view() == pre.log_view());
+    assert(post.state_view() == stepped_down(replay(l0), terms[k] as int));
+    assert(l0.is_prefix_of(l2)) by {
+        assert(l2.subrange(0, l0.len() as int) =~= l0);
+    }
+    assert forall|i: int| l0.len() <= i < l2.len() implies {
+        &&& !(#[trigger] l2[i] is Send)
+        &&& (l2[i] is Recv ==> exists|j: int| 0 <= j < voters.len()
+                && l2[i] == Entry::Recv(rank(cfg, voters[j]), vote_reply_view(cfg, voters[j], granted[j], terms[j])))
+    } by {
+        if i == l0.len() {
+            assert(l2[i] == e);
+        }
+    }
+}
+
+// A won campaign: the granted replies' groups, BecomeLeader, and when the
+// shell's loop has stopped (or set_is_leader declined) the rollback's
+// StepAside.
+pub open spec fn settle_won_log(l: Seq<Entry>, cfg: Seq<u16>, voters: Seq<u16>, granted: Seq<bool>,
+                                terms: Seq<i64>, votes0: Set<int>, rollback: bool) -> Seq<Entry> {
+    let lb = become_leader_log(grant_groups(l, cfg, voters, granted, terms, votes0, voters.len() as int));
+    if rollback { step_aside_log(lb) } else { lb }
+}
+
+pub proof fn lemma_settle_won<C>(pre: &RaftCore<C>, post: &RaftCore<C>, voters: Seq<u16>, granted: Seq<bool>,
+                                 terms: Seq<i64>, term: u64, n_total: u64, yes: Set<u16>, rollback: bool)
+    requires
+        pre.inv(),
+        pre.ginv(),
+        pre.gated_,
+        pre.role_view() is Candidate,
+        pre.current_term_ == term,
+        voters.len() == granted.len(),
+        voters.len() == terms.len(),
+        settle_inputs_ok(pre, voters, granted, terms, term, n_total),
+        // the exec's yes: its voters were fed granted, and are a quorum
+        yes.len() >= n_total as int / 2,
+        forall|x: u16| #[trigger] yes.contains(x)
+            ==> exists|k: int| 0 <= k < voters.len() && voters[k] == x && granted[k],
+        // the role it ends in
+        rollback ==> !post.is_leader_ && !post.election_in_progress_,
+        !rollback ==> post.is_leader_,
+        post.current_term_ == pre.current_term_,
+        post.vote_for_ == pre.vote_for_,
+        post.raft_log_ == pre.raft_log_,
+        post.commit_index_ == pre.commit_index_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.snapterm_ == pre.snapterm_,
+        post.g_votes_@ == (if rollback { Set::<int>::empty() } else {
+            pre.g_votes_@.union(granted_ranks(pre.config_members_@, voters, granted, voters.len() as int)) }),
+        post.g_match_@ == Map::<u64, u64>::empty(),
+        post.g_next_@ == Map::<u64, u64>::empty(),
+        post.g_log_@ == settle_won_log(pre.g_log_@, pre.config_members_@, voters, granted, terms,
+            pre.g_votes_@, rollback),
+    ensures
+        post.ginv(),
+        pre.g_log_@.is_prefix_of(post.g_log_@),
+        settle_entries_ok(post.g_log_@, pre.g_log_@.len() as int, pre.config_members_@, voters, granted, terms),
+{
+    let c = pre.c_view();
+    let cfg = pre.config_members_@;
+    let n = cfg.len() as int;
+    let l0 = pre.g_log_@;
+    let s0 = replay(l0);
+    let votes0 = pre.g_votes_@;
+    let len = voters.len() as int;
+    lemma_my_rank(pre);
+    // the granted replies
+    lemma_grant_groups(l0, c, cfg, voters, granted, terms, votes0, len);
+    let lg = grant_groups(l0, cfg, voters, granted, terms, votes0, len);
+    let gr = granted_ranks(cfg, voters, granted, len);
+    let sg = replay(lg);
+    // the quorum
+    assert forall|x: u16| #[trigger] yes.contains(x) implies votes0.union(gr).contains(rank(cfg, x)) by {
+        let k = choose|k: int| 0 <= k < voters.len() && voters[k] == x && granted[k];
+        lemma_granted_ranks_contains(cfg, voters, granted, len, k);
+    }
+    assert forall|x: u16| yes.contains(x) implies cfg.contains(x) && x != pre.site_id_ by {
+        let k = choose|k: int| 0 <= k < voters.len() && voters[k] == x && granted[k];
+    }
+    lemma_settle_quorum(cfg, pre.site_id_, yes, votes0.union(gr), n_total);
+    assert(sg.config == Set::<int>::range(0, n));
+    assert(election_quorum_ok(sg));
+    // BecomeLeader
+    lemma_become_leader(lg, c);
+    let lb = become_leader_log(lg);
+    let sb = replay(lb);
+    // the new entries: the groups' receives, then no receive or send
+    assert(l0.is_prefix_of(lb)) by {
+        assert(lb.subrange(0, l0.len() as int) =~= lg.subrange(0, l0.len() as int));
+    }
+    assert forall|i: int| l0.len() <= i < lb.len() implies {
+        &&& !(#[trigger] lb[i] is Send)
+        &&& (lb[i] is Recv ==> exists|j: int| 0 <= j < voters.len()
+                && lb[i] == Entry::Recv(rank(cfg, voters[j]), vote_reply_view(cfg, voters[j], granted[j], terms[j])))
+    } by {
+        if i < lg.len() {
+            assert(lb[i] == lg[i]);
+        }
+    }
+    if rollback {
+        lemma_step_aside(lb, c);
+        let la = step_aside_log(lb);
+        assert(l0.is_prefix_of(la)) by {
+            assert(la.subrange(0, l0.len() as int) =~= lb.subrange(0, l0.len() as int));
+        }
+        assert forall|i: int| l0.len() <= i < la.len() implies {
+            &&& !(#[trigger] la[i] is Send)
+            &&& (la[i] is Recv ==> exists|j: int| 0 <= j < voters.len()
+                    && la[i] == Entry::Recv(rank(cfg, voters[j]), vote_reply_view(cfg, voters[j], granted[j], terms[j])))
+        } by {
+            if i < lb.len() {
+                assert(la[i] == lb[i]);
+            }
+        }
+        assert(post.role_view() is Follower);
+        assert(post.state_view() == replay(la));
+    } else {
+        assert(post.role_view() is Leader);
+        assert(post.log_view() == pre.log_view());
+        assert(post.state_view() == sb);
+    }
+    assert(post.c_view() == c);
+}
+
+// A settlement that only leaves the campaign (stopped, lost, timed out): a
+// candidate steps aside; any other role is unchanged.
+pub proof fn lemma_settle_aside<C>(pre: &RaftCore<C>, post: &RaftCore<C>, voters: Seq<u16>,
+                                   granted: Seq<bool>, terms: Seq<i64>)
+    requires
+        pre.ginv(),
+        view_frame(pre, post),
+        post.role_view() == (if pre.role_view() is Candidate { LServerRole::Follower } else { pre.role_view() }),
+        post.g_log_@ == (if pre.role_view() is Candidate { step_aside_log(pre.g_log_@) } else { pre.g_log_@ }),
+        post.g_votes_@ == (if pre.role_view() is Candidate { Set::<int>::empty() } else { pre.g_votes_@ }),
+    ensures
+        post.ginv(),
+        pre.g_log_@.is_prefix_of(post.g_log_@),
+        settle_entries_ok(post.g_log_@, pre.g_log_@.len() as int, pre.config_members_@, voters, granted, terms),
+{
+    let l0 = pre.g_log_@;
+    if pre.role_view() is Candidate {
+        lemma_step_aside_ginv(pre, post);
+        let la = step_aside_log(l0);
+        assert(l0.is_prefix_of(la)) by {
+            assert(la.subrange(0, l0.len() as int) =~= l0);
+        }
+        assert forall|i: int| l0.len() <= i < la.len() implies !(#[trigger] la[i] is Send) && !(la[i] is Recv) by {
+        }
+    } else {
+        lemma_same_view_ginv(pre, post);
+        assert(l0.is_prefix_of(l0)) by {
+            assert(l0.subrange(0, l0.len() as int) =~= l0);
+        }
+    }
 }
 
 } // verus!

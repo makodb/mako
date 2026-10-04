@@ -46,6 +46,15 @@ impl VoteSet {
     pub closed spec fn spec_highest_term(&self) -> i64 {
         self.highest_term_
     }
+
+    // [M12] The yes count, and whether a voter has been counted (ghost).
+    pub closed spec fn spec_yes_count(&self) -> int {
+        self.yes_ as int
+    }
+
+    pub closed spec fn spec_has(&self, voter: u16) -> bool {
+        self.voters_.spec_contains(voter)
+    }
 }
 
 #[allow(clippy::new_without_default)]
@@ -54,6 +63,9 @@ impl VoteSet {
         ensures
             r.wf(),
             r.spec_highest_term() == 0,
+            // [M12] nothing counted
+            r.spec_yes_count() == 0,
+            forall|x: u16| !r.spec_has(x),
     {
         VoteSet { voters_: SiteSet::new(), yes_: 0, no_: 0, highest_term_: 0 }
     }
@@ -64,6 +76,10 @@ impl VoteSet {
             final(self).wf(),
             final(self).spec_highest_term() == old(self).spec_highest_term()
                 || final(self).spec_highest_term() == term,
+            // [M12] a voter counts once, yes when granted
+            forall|x: u16| final(self).spec_has(x) == (old(self).spec_has(x) || x == voter),
+            final(self).spec_yes_count() == old(self).spec_yes_count()
+                + (if !old(self).spec_has(voter) && granted { 1int } else { 0int }),
     {
         if !self.voters_.insert(voter) {
             return;
@@ -81,7 +97,9 @@ impl VoteSet {
     // `n_total` is the configured partition size, self included, as the
     // lane counted it.
     pub fn outcome(&self, n_total: u64, timed_out: bool) -> (r: VoteOutcome)
-        ensures r.term_ == self.spec_highest_term(),
+        ensures
+            r.term_ == self.spec_highest_term(),
+            r.yes_ == (self.spec_yes_count() >= n_total as int / 2),  // [M12]
     {
         let quorum: u64 = n_total / 2;
         VoteOutcome {
