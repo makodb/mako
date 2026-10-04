@@ -2572,4 +2572,135 @@ pub proof fn lemma_same_fields_ginv<C>(b: &RaftCore<C>, a: &RaftCore<C>)
     }
 }
 
+// ===========================================================================
+// The core's one entry point (step, step_checked): what each event needs of
+// the host for the coupling, and the per-node certificate
+// ===========================================================================
+
+impl<C> RaftCore<C> {
+    // Beyond admits: the gate for the protocol's events; Setup's order on a
+    // fresh core; a proposal while leading, with a value (bugs-found B16);
+    // a reply's role read under mtx_ and F9's admission for messages; a
+    // round end while leading (bugs-found B17).
+    pub open spec fn coupled<W: InboundBatch<C>>(&self, ev: &Event<'_, C, W>) -> bool {
+        match *ev {
+            Event::SetIdentity { .. } => self.g_log_@.len() == 0,
+            Event::Configure { members } => {
+                &&& self.g_log_@.len() == 0
+                &&& !members@.contains(RAFT_SERVER_INVALID_SITE_ID)
+            },
+            Event::Propose { has_value, .. } => self.is_leader_ && has_value,
+            Event::StartElection { .. } => self.gated_,
+            Event::SettleElection { term, voters, granted, reply_terms, n_total, failover, .. } => {
+                &&& self.gated_
+                &&& failover
+                &&& settle_inputs_ok(self, voters@, granted@, reply_terms@, term, n_total)
+            },
+            Event::RecvRequestVote { can_id, .. } => {
+                &&& self.gated_
+                &&& self.config_members_@.contains(can_id)
+                &&& can_id != self.site_id_
+            },
+            Event::RecvAppendEntries { leader_site_id, .. } => self.gated_ && leader_site_id != self.site_id_,
+            Event::TickHeartbeat { .. } => self.gated_,
+            Event::RecvAppendReply { status, last_log_index, is_leader, .. } => {
+                &&& self.gated_
+                &&& is_leader == self.is_leader_
+                &&& (status ==> last_log_index as int <= self.raft_log_.spec_last_index())
+            },
+            Event::RoundEnd { is_leader } => self.gated_ && is_leader == self.is_leader_ && is_leader,
+            _ => true,
+        }
+    }
+
+    // step_checked's: its admission (F9) supplies the messages' sender
+    // facts and a reply's bound on the leader's log.
+    pub open spec fn coupled_checked<W: InboundBatch<C>>(&self, ev: &Event<'_, C, W>) -> bool {
+        match *ev {
+            Event::RecvRequestVote { .. } => self.gated_,
+            Event::RecvAppendEntries { .. } => self.gated_,
+            Event::RecvAppendReply { is_leader, .. } => self.gated_ && is_leader == self.is_leader_,
+            _ => self.coupled(ev),
+        }
+    }
+}
+
+// RebuildPeerTables: the peer table rebuilt at match 0, nothing the spec
+// sees moved.
+pub proof fn lemma_rebuild_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>)
+    requires
+        pre.ginv(),
+        post.current_term_ == pre.current_term_,
+        post.vote_for_ == pre.vote_for_,
+        post.is_leader_ == pre.is_leader_,
+        post.election_in_progress_ == pre.election_in_progress_,
+        post.election_term_ == pre.election_term_,
+        post.raft_log_ == pre.raft_log_,
+        post.commit_index_ == pre.commit_index_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.snapterm_ == pre.snapterm_,
+        post.g_log_ == pre.g_log_,
+        post.g_votes_ == pre.g_votes_,
+        post.g_match_ == pre.g_match_,
+        post.g_next_ == pre.g_next_,
+        forall|o: int| 0 <= o < post.peers_.spec_len() ==> #[trigger] post.peers_.spec_match(o) == 0,
+    ensures post.ginv(),
+{
+    assert(post.c_view() == pre.c_view());
+    assert(post.log_view() == pre.log_view());
+    assert(post.state_view() == pre.state_view());
+}
+
+// The per-node certificate: a core that keeps ginv holds a ghost log that
+// is the group's node_cert, for its cluster (n members, every one a voter)
+// and its rank.
+pub proof fn lemma_node_cert<C>(core: &RaftCore<C>)
+    requires core.ginv(),
+    ensures
+        glr::protocol::Raft::ghost_log_compose::node_cert(core.g_log_@, core.n_view(),
+            Set::<int>::range(0, core.n_view()), core.my_rank()),
+{
+}
+
+// The cluster theorem, instantiated (plan Phase 8's goal): n servers, each
+// a core that keeps ginv, in an n-member configuration, at its own rank.
+// Under any schedule of their ghost logs' segments that is causal -- the
+// host contract (docs/verus/host-contract.md): the transport delivers only
+// what a verified server's ghost log sent, and each server's segments run
+// in its log's order -- the distributed model's safety invariant holds
+// after every step: at most one leader per term, logs that match, committed
+// entries never lost (glr ghost_log_compose.rs, theorem_compose_safety).
+pub open spec fn cluster_logs<C>(cores: Seq<RaftCore<C>>) -> Seq<Seq<Entry>> {
+    Seq::new(cores.len(), |i: int| cores[i].g_log_@)
+}
+
+pub proof fn theorem_mako_safety<C>(cores: Seq<RaftCore<C>>, n: int, sched: Seq<int>, k: int)
+    requires
+        0 < n,
+        cores.len() == n,
+        forall|i: int| 0 <= i < n ==> (#[trigger] cores[i]).inv() && cores[i].ginv()
+            && cores[i].n_view() == n && cores[i].my_rank() == i,
+        glr::protocol::Raft::ghost_log_compose::sched_ok(cluster_logs(cores), n, Set::<int>::range(0, n), sched),
+        glr::protocol::Raft::ghost_log_compose::causal(cluster_logs(cores), n, Set::<int>::range(0, n), sched),
+        0 <= k <= sched.len(),
+    ensures
+        glr::protocol::Raft::refinement_proof::invariants::RaftSafetyInvariant(
+            glr::protocol::Raft::ghost_log_compose::ds_at(cluster_logs(cores), n, Set::<int>::range(0, n), sched, k)),
+{
+    let logs = cluster_logs(cores);
+    let cfg0 = Set::<int>::range(0, n);
+    // n fits: a configuration of u16 sites has at most 2^16 members
+    assert(cores[0].inv());
+    lemma_sorted_len(cores[0].config_members_@);
+    vstd::set_lib::lemma_int_range(0, n);
+    assert(glr::protocol::Raft::ghost_log_compose::cfg0_ok(n, cfg0));
+    assert forall|i: int| 0 <= i < n implies
+        glr::protocol::Raft::ghost_log_compose::node_cert(#[trigger] logs[i], n, cfg0, i) by {
+        lemma_node_cert(&cores[i]);
+    }
+    assert(glr::protocol::Raft::ghost_log_compose::certs_ok(logs, n, cfg0));
+    glr::protocol::Raft::ghost_log_compose::theorem_compose_safety(logs, n, cfg0, sched, k);
+}
+
 } // verus!

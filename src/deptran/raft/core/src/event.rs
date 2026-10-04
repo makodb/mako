@@ -285,7 +285,19 @@ impl<C: Clone> RaftCore<C> {
     pub fn message_admitted<W: InboundBatch<C>>(&self, ev: &Event<'_, C, W>) -> (r: bool)
         ensures
             match *ev {
-                Event::RecvAppendEntries { .. } | Event::RecvRequestVote { .. } => true,
+                // [M12] what admission checks
+                Event::RecvAppendEntries { leader_current_term, leader_site_id,
+                    leader_prev_log_index, leader_prev_log_term, .. } => r == {
+                    &&& leader_site_id != self.site_id_
+                    &&& self.config_members_@.contains(leader_site_id)
+                    &&& leader_current_term != 0
+                    &&& (leader_prev_log_index == 0) == (leader_prev_log_term == 0)
+                },
+                Event::RecvRequestVote { can_id, can_term, .. } => r == {
+                    &&& can_id != self.site_id_
+                    &&& self.config_members_@.contains(can_id)
+                    &&& can_term != 0
+                },
                 _ => r,
             },
     {
@@ -320,6 +332,9 @@ impl<C: Clone> RaftCore<C> {
         ensures
             final(self).inv(),
             r is None ==> *final(self) == *old(self),
+            // [M12] the coupling kept (F9's admission and reply bound are
+            // its own)
+            old(self).ginv() && old(self).coupled_checked(&ev) ==> final(self).ginv(),
             match ev {
                 Event::RecvAppendEntries { .. } => r matches Some(reply) ==> reply is Append,
                 Event::RecvRequestVote { .. } => r matches Some(reply) ==> reply is Vote,
@@ -360,6 +375,8 @@ impl<C: Clone> RaftCore<C> {
             old(self).admits(&ev),
         ensures
             final(self).inv(),
+            // [M12] the coupling kept, under each event's premise
+            old(self).ginv() && old(self).coupled(&ev) ==> final(self).ginv(),
             match ev {
                 Event::SetIdentity { .. } | Event::Configure { .. }
                 | Event::RebuildPeers { .. } | Event::AbandonRound
@@ -391,7 +408,14 @@ impl<C: Clone> RaftCore<C> {
                 Reply::Gates(self.enter_gates(snapshots_enabled, failover))
             },
             Event::RebuildPeers { next_index } => {
+                let ghost pre = *self;
                 self.rebuild_peer_tables(next_index);
+                proof {
+                    // [M12] the peer table rebuilt at match 0
+                    if pre.ginv() {
+                        crate::coupling::lemma_rebuild_ginv(&pre, self);
+                    }
+                }
                 Reply::Done
             },
             Event::Propose { cmd, has_value, is_tpc_commit, kind, payload_bytes } => {
