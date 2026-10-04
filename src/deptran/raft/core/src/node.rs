@@ -462,8 +462,9 @@ impl<C: Clone> RaftCore<C> {
         ensures
             final(self).inv(),
             // [M12] a leader's proposal is LClientRequest (the host contract:
-            // the shell proposes only while leading, under mtx_)
-            old(self).ginv() && old(self).is_leader_ ==> final(self).ginv(),
+            // the shell proposes only while leading, under mtx_, and a
+            // command with a value, bugs-found B16)
+            old(self).ginv() && old(self).is_leader_ && has_value ==> final(self).ginv(),
     {
         let ghost pre = *self;
         let previous_index: u64 = self.raft_log_.last_index();
@@ -472,7 +473,7 @@ impl<C: Clone> RaftCore<C> {
             payload_bytes));
         runtime_assert(appended == previous_index + 1);  // [move, M10]
         proof {
-            if pre.ginv() && pre.is_leader_ {
+            if pre.ginv() && pre.is_leader_ && has_value {
                 let e = self.raft_log_.view().last();
                 assert(self.raft_log_.view() == pre.raft_log_.view().push(e));
                 self.g_log_@ = crate::coupling::client_request_log(
@@ -1659,6 +1660,11 @@ pub trait InboundBatch<C> {
     // batch from the flag it also passes the core as `has_cmd`.
     spec fn spec_has_payload(&self) -> bool;
 
+    // [M12] The payload's entries as the leader encoded them (ghost): what
+    // the follower's ghost log receives (coupling::comp_msg). The host
+    // contract: the codec hands the core the leader's entries.
+    spec fn spec_entries(&self) -> Seq<RaftEntry<C>>;
+
     // Fills `terms` with one term per encoded entry -- its length IS the
     // decoded count -- and reports whether that count fits after
     // leader_prev_log_index and every term is a Raft term ([fix, F4]).
@@ -1669,9 +1675,21 @@ pub trait InboundBatch<C> {
     fn decode_terms(&self, leader_prev_log_index: u64, terms: &mut Vec<i64>) -> (r: bool)
         ensures
             !self.spec_has_payload() ==> final(terms)@.len() == 0,
-            r ==> leader_prev_log_index as int + final(terms)@.len() < raft_index_limit();
+            r ==> leader_prev_log_index as int + final(terms)@.len() < raft_index_limit(),
+            // [M12] no payload is no entries; an accepted decode reads the
+            // entries' terms, each a Raft term (F4), and every entry has a
+            // value (bugs-found B16)
+            !self.spec_has_payload() ==> self.spec_entries().len() == 0,
+            r ==> final(terms)@.len() == self.spec_entries().len(),
+            r ==> forall|k: int| 0 <= k < final(terms)@.len()
+                ==> #[trigger] final(terms)@[k] == self.spec_entries()[k].spec_term()
+                    && final(terms)@[k] >= 1,
+            forall|k: int| 0 <= k < self.spec_entries().len()
+                ==> (#[trigger] self.spec_entries()[k]).spec_has_value();
     // The entry at position k (0-based) of the payload decode_terms read.
-    fn entry_at(&self, k: u64) -> RaftEntry<C>;  // [move, M11]
+    fn entry_at(&self, k: u64) -> (r: RaftEntry<C>)  // [move, M11]
+        requires (k as int) < self.spec_entries().len(),  // [M12]
+        ensures r == self.spec_entries()[k as int];  // [M12]
 }
 
 // [move, M5] A core call: the caller holds mtx_, and passes the payload as
@@ -1681,6 +1699,7 @@ pub trait InboundBatch<C> {
 // better Rust and it transpiles, but the emitter renders the binding with a
 // dot where the C++ needs an arrow, and an inferred binding COPIES the entry.
 #[allow(clippy::too_many_arguments, clippy::unnecessary_unwrap)]
+#[verifier::rlimit(40)]  // [M12] the handler and its proof, one query
 pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     core: &mut RaftCore<C>,
     wire: &W,  // [move, M5] [move, M11]
@@ -1704,8 +1723,26 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         // has_cmd is the flag the batch was built from
         (leader_current_term as int) < raft_index_limit(),
         has_cmd == wire.spec_has_payload(),
-    ensures final(core).inv(),
+    ensures
+        final(core).inv(),
+        // [M12] the RPC's group (coupling::ae_log), for a message from
+        // another server (F9 drops this server's own): StepDown when its
+        // higher term is taken up, then the refusal (at the term the handler
+        // ends at), or the accepted message or components, whose last answer
+        // is the reply
+        old(core).ginv() && old(core).gated_ && leader_site_id != old(core).site_id_ ==> {
+            &&& final(core).ginv()
+            &&& crate::coupling::ae_log_ok(final(core).g_log_@, old(core).g_log_@,
+                    crate::coupling::ae_view(old(core), wire, leader_site_id, leader_current_term,
+                        leader_prev_log_index, leader_prev_log_term, leader_commit_index),
+                    *final(follower_append_ok) != 0, old(core).log_view(),
+                    old(core).commit_index_ as int, *final(follower_current_term) as int)
+        },
 {
+    let ghost pre = *core;
+    let ghost on = pre.ginv() && pre.gated_ && leader_site_id != pre.site_id_;
+    let ghost x = crate::coupling::ae_view(&pre, wire, leader_site_id, leader_current_term,
+        leader_prev_log_index, leader_prev_log_term, leader_commit_index);
     let mut report = AppendReport {
         accepted_: false,
         term_ok_: false,
@@ -1721,6 +1758,13 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         *follower_append_ok = 0;
         *follower_current_term = core.current_term_;
         *follower_last_log_index = core.raft_log_.last_index();
+        proof {
+            if on {
+                core.g_log_@ = crate::coupling::ae_log(pre.g_log_@, x, false, false, false, pre.log_view(),
+                    pre.commit_index_ as int, *follower_current_term as int);
+                crate::coupling::lemma_append_entries(&pre, core, x, false, false, false, 0);
+            }
+        }
         return report;
     }
 
@@ -1745,6 +1789,13 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         *follower_append_ok = 0;
         *follower_current_term = core.current_term_;
         *follower_last_log_index = core.raft_log_.last_index();
+        proof {
+            if on {
+                core.g_log_@ = crate::coupling::ae_log(pre.g_log_@, x, false, false, false, pre.log_view(),
+                    pre.commit_index_ as int, *follower_current_term as int);
+                crate::coupling::lemma_append_entries(&pre, core, x, false, false, false, 0);
+            }
+        }
         return report;
     }
 
@@ -1793,6 +1844,8 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     report.prev_term_ok_ = prev_term_ok;
     report.local_prev_term_ = local_prev_term;
 
+    // [M12] whether the RPC's higher term is taken up (its StepDown)
+    let ghost stepped = term_ok && leader_current_term > core.current_term_;
     // Reset the timer for any current-term leader, even when the log
     // conflicts, so a follower being repaired by backtracking does not keep
     // starting elections.
@@ -1832,6 +1885,16 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         *follower_append_ok = 0;
         *follower_current_term = core.current_term_;
         *follower_last_log_index = core.raft_log_.last_index();
+        proof {
+            if on {
+                core.g_log_@ = crate::coupling::ae_log(pre.g_log_@, x, stepped, false, false, pre.log_view(),
+                    pre.commit_index_ as int, *follower_current_term as int);
+                if stepped {
+                    core.g_votes_@ = Set::<int>::empty();
+                }
+                crate::coupling::lemma_append_entries(&pre, core, x, stepped, false, false, 0);
+            }
+        }
         return report;
     }
 
@@ -1872,6 +1935,12 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
             leader_prev_log_index as int + decoded_count < raft_index_limit(),
             old_last_log_index == core.raft_log_.spec_last_index(),
             i <= decoded_count,
+            // [M12] the log is the handler's entry log; the batch's terms are
+            // terms (F4); the slots passed so far hold them
+            core.raft_log_ == pre.raft_log_,
+            forall|j: int| 0 <= j < decoded_count ==> #[trigger] core.decoded_terms_@[j] >= 1,
+            pre.ginv() ==> forall|j: int| 0 <= j < i ==> #[trigger] core.decoded_terms_@[j]
+                == pre.raft_log_.view()[leader_prev_log_index as int + j + 1 - pre.raft_log_.spec_base()].spec_term(),
         ensures
             !have_first_write ==> leader_prev_log_index as int + decoded_count <= old_last_log_index,
             !have_first_write ==> !truncate_suffix,
@@ -1880,6 +1949,17 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
                 &&& first_write_index as int <= leader_prev_log_index as int + decoded_count
                 &&& first_write_index as int <= old_last_log_index as int + 1
                 &&& truncate_suffix == (first_write_index <= old_last_log_index)
+            },
+            // [M12] the first write is at slot i: absent, without a value, or
+            // of another term; none when the scan ran through
+            !have_first_write ==> i == decoded_count,
+            have_first_write ==> {
+                &&& first_write_index as int == leader_prev_log_index as int + i + 1
+                &&& leader_prev_log_index as int + i <= old_last_log_index
+                &&& !(pre.raft_log_.spec_holds(leader_prev_log_index as int + i + 1)
+                    && pre.raft_log_.view()[leader_prev_log_index as int + i + 1 - pre.raft_log_.spec_base()].spec_has_value()
+                    && pre.raft_log_.view()[leader_prev_log_index as int + i + 1 - pre.raft_log_.spec_base()].spec_term()
+                        == core.decoded_terms_@[i as int])
             },
         decreases decoded_count - i,
     {
@@ -1909,6 +1989,18 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
             truncate_suffix = index <= old_last_log_index;
             break;
         }
+        proof {
+            // [M12] no conflict: the slot holds the incoming term (both terms
+            // are non-negative, so their u64 casts are the terms)
+            if pre.ginv() {
+                pre.raft_log_.lemma_wf_bounds();
+                let q = index as int - pre.raft_log_.spec_base();
+                assert(0 <= q < pre.raft_log_.view().len());
+                assert(pre.raft_log_.view()[q].spec_term() >= 0);
+                assert(local_term >= 0);
+                assert(local_term == incoming_term);
+            }
+        }
         i += 1;
     }
 
@@ -1927,12 +2019,26 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         *follower_append_ok = 0;
         *follower_current_term = core.current_term_;
         *follower_last_log_index = core.raft_log_.last_index();
+        proof {
+            if on {
+                // the handler made this server a follower before refusing: a
+                // candidate of the RPC's term steps aside
+                let aside = !stepped && pre.role_view() is Candidate;
+                core.g_log_@ = crate::coupling::ae_log(pre.g_log_@, x, stepped, aside, false, pre.log_view(),
+                    pre.commit_index_ as int, *follower_current_term as int);
+                if stepped || aside {
+                    core.g_votes_@ = Set::<int>::empty();
+                }
+                crate::coupling::lemma_append_entries(&pre, core, x, stepped, aside, false, 0);
+            }
+        }
         return report;
     }
 
     // a write starts at or above the log's base: below it, the slot would be
     // at or below the commit index, which the check above refused
     assert(have_first_write ==> core.raft_log_.spec_base() <= first_write_index);
+    let ghost mut trunc: Seq<RaftEntry<C>> = Seq::<RaftEntry<C>>::empty();  // [M12] the log, cut
     if have_first_write {
         // Two operations that cannot leave a hole: drop the divergent suffix,
         // then re-append in index order. truncate_from is a no-op when
@@ -1941,6 +2047,7 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         // payload are kernels.
         core.raft_log_.truncate_from(first_write_index);
         assert(core.raft_log_.spec_last_index() == first_write_index - 1);
+        proof { trunc = core.raft_log_.view(); }  // [M12]
         // [move, M1, M11] WireBatch::append_into's loop, in the core: each
         // entry from first_write_index on is materialized from the payload
         // (one handle clone) and appended, in index order.
@@ -1956,12 +2063,28 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
                 core.raft_log_.spec_last_index() == (if leader_prev_log_index as int + k
                     < first_write_index as int - 1 { first_write_index as int - 1 }
                     else { leader_prev_log_index as int + k }),
+                // [M12] the log: cut at the write point, then the batch's
+                // entries from there
+                decoded_count as int == wire.spec_entries().len(),
+                core.raft_log_.view() == trunc + wire.spec_entries().subrange(
+                    first_write_index as int - leader_prev_log_index as int - 1,
+                    if (k as int) < first_write_index as int - leader_prev_log_index as int - 1 {
+                        first_write_index as int - leader_prev_log_index as int - 1
+                    } else {
+                        k as int
+                    }),
             decreases decoded_count - k,
         {
             let index: u64 = raft_server_append_sent_end(leader_prev_log_index, k + 1);  // [move, M1, M11]
             if index >= first_write_index {
+                let ghost before = core.raft_log_.view();
                 let appended: u64 = core.raft_log_.append(wire.entry_at(k));  // [move, M1, M11]
                 runtime_assert(appended == index);  // [move, M10]
+                proof {
+                    let f0 = first_write_index as int - leader_prev_log_index as int - 1;
+                    assert(wire.spec_entries().subrange(f0, k as int).push(wire.spec_entries()[k as int])
+                        =~= wire.spec_entries().subrange(f0, k as int + 1));
+                }
             }
             k += 1;
         }
@@ -1989,6 +2112,51 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     // tail instead, as a backoff hint.
     *follower_last_log_index = accepted_through;
     report.accepted_ = true;
+    proof {
+        if on {
+            // [M12] the accepted RPC: its components, from the first write
+            let es = wire.spec_entries();
+            let m = es.len() as int;
+            let pv = leader_prev_log_index as int;
+            let f0: int = if have_first_write { first_write_index as int - pv - 1 } else { m };
+            let ov = pre.raft_log_.view();
+            pre.raft_log_.lemma_wf_bounds();
+            // the payload and the scan, in view positions (base 1)
+            assert(count as int == m);
+            assert forall|p: int| pv <= p < pv + f0 implies #[trigger] ov[p].spec_term() == es[p - pv].spec_term() by {
+                assert(core.decoded_terms_@[p - pv] == es[p - pv].spec_term());
+            }
+            if have_first_write && pv + f0 < ov.len() {
+                assert(ov[pv + f0].spec_has_value());
+            }
+            // the log after: unchanged, or cut and refilled
+            if have_first_write {
+                assert(trunc =~= ov.subrange(0, pv + f0));
+            }
+            crate::coupling::lemma_ae_result(ov, core.raft_log_.view(), es, pv, f0);
+            // every entry still has a value and a term
+            let nv = core.raft_log_.view();
+            assert forall|q: int| 0 <= q < nv.len()
+                implies (#[trigger] nv[q]).spec_has_value() && nv[q].spec_term() >= 0 by {
+                if have_first_write && q >= pv + f0 {
+                    assert(nv[q] == es[f0 + (q - (pv + f0))]);
+                    assert(core.decoded_terms_@[f0 + (q - (pv + f0))] >= 1);
+                } else {
+                    assert(nv[q] == ov[q]);
+                }
+            }
+            // the prev entry, as the handler checked it
+            if pv > 0 {
+                assert(ov[pv - 1].spec_term() >= 0);
+            }
+            core.g_log_@ = crate::coupling::ae_log(pre.g_log_@, x, stepped, false, true, pre.log_view(),
+                pre.commit_index_ as int, *follower_current_term as int);
+            if stepped {
+                core.g_votes_@ = Set::<int>::empty();
+            }
+            crate::coupling::lemma_append_entries(&pre, core, x, stepped, false, true, f0);
+        }
+    }
     report
 }
 

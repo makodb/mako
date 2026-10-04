@@ -32,6 +32,7 @@ it), **metric** (wrong number in a measurement, no protocol effect).
 | B13 | toolchain | The transpiled C++ cannot redeclare a name in one scope: a Rust `let` that shadows a binding, or a function parameter, at the same block level is a C++ redefinition | reproduced (cpp-lane lab build, Phase 1) | worked around by renaming; a constraint on every transpiled file |
 | B14 | race | `heartbeat_interval_us_` is a plain field the lab's case 67 writes while the heartbeat and election loops read it | reproduced (Phase 4 TSan lab build, cpp lane) | recorded only (user, 2026-10-04): lab-only, outside the core |
 | B15 | race (latent) | The heartbeat driver reset the core's round state with no `mtx_` (`reset_round_state` at the loop's start and before its epilogue), taking `&mut` of the whole `RaftCore` while other threads may hold it under the lock | read in code (Phase 6) | fixed in Phase 6: both resets are `step(ResetRoundState)` under `mtx_` (plan §3.1 rule 1) |
+| B16 | liveness (latent) | An entry whose command has no value (an empty `Command`, which `Start` accepts) is never replicated: the leader's payload selection reads it as a missing entry and skips every follower behind it, every round; a follower's conflict scan likewise reads such a slot as absent | read in code (Phase 8) | recorded; no caller proposes an empty command today; the proof takes "a proposal has a value" as a host-contract premise |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
 
@@ -372,3 +373,36 @@ the only two made without the lock.
 **Fate.** Fixed in Phase 6 (the `step` commit): both are
 `step(Event::ResetRoundState)` under `mtx_`. No decision changes.
 
+## B16. An entry with no value is never replicated (latent)
+
+**Where.** The leader's payload selection, `core/src/heartbeat.rs`
+(`select_payload`'s raw and batch paths: `usable = slot.is_some() &&
+slot.unwrap().has_value()`); the follower's conflict scan,
+`raft_on_append_entries` in `core/src/node.rs` (`local_exists =
+entry.has_value()`); `Start` in `src/server_h.rs`, which appends whatever
+command it is given.
+
+**What is wrong.** `has_value()` is whether the entry's command is
+non-empty. `Start` does not refuse an empty command, so a leader can hold an
+entry without a value. The leader then reads that slot as a missing entry
+("Missing log entry ..., skipping follower") and skips every follower whose
+next index reaches it, in every round, so replication to them stops for the
+rest of the term. On a follower, a slot without a value counts as absent in
+the conflict scan, so a duplicated append over a matching slot would truncate
+the follower's suffix where Raft keeps it; that case needs the follower to
+hold a same-term entry it can only have proposed itself, so it does not
+arise, but it is why the proof needs every log entry to have a value.
+
+**Reachability.** None today: both callers, `raft_worker.cc`'s `Submit`
+(through the C++ shim's `RaftServer::Start`, `raft_server_start`) and the
+lab's `start`, pass a `TpcCommitCommand`, and the leader's no-op is a
+`TpcNoopCommand`, all non-empty.
+
+**How found.** Phase 8, coupling the follower's append to
+`LFollowerAppendEntries`: the spec keeps a same-term entry, and the exec
+keeps it only when it has a value.
+
+**Fate.** Recorded. The proof takes "a proposal has a value" as a premise of
+the host contract (`docs/verus/host-contract.md`), and carries "every log
+entry has a value" in its invariant. Refusing an empty command in `Start` is a
+behaviour change for the user to decide (plan 0.7 point 3).

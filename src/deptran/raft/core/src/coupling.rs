@@ -280,6 +280,16 @@ impl<C> RaftCore<C> {
         &&& !self.config_members_@.contains(RAFT_SERVER_INVALID_SITE_ID)
         &&& (!(self.role_view() is Follower) ==> self.vote_for_ == self.site_id_)
         &&& (self.role_view() is Candidate ==> self.g_votes_@.contains(self.my_rank()))
+        &&& self.log_entries_ok()
+    }
+
+    // Every log entry's command has a value (bugs-found B16: the follower's
+    // conflict scan reads a slot without one as absent), and its term is a
+    // term (the handlers compare terms as u64).
+    pub open spec fn log_entries_ok(&self) -> bool {
+        forall|k: int| 0 <= k < self.raft_log_.view().len()
+            ==> (#[trigger] self.raft_log_.view()[k]).spec_has_value()
+                && self.raft_log_.view()[k].spec_term() >= 0
     }
 }
 
@@ -527,6 +537,7 @@ pub proof fn lemma_client_request_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>,
         post.g_match_ == pre.g_match_,
         post.g_next_ == pre.g_next_,
         post.snapterm_ == pre.snapterm_,
+        e.spec_has_value(),
         post.g_log_@ == client_request_log(pre.g_log_@, post.log_view(), value_view(e.spec_cmd())),
     ensures post.ginv(),
 {
@@ -1401,6 +1412,534 @@ pub proof fn lemma_settle_aside<C>(pre: &RaftCore<C>, post: &RaftCore<C>, voters
         assert(l0.is_prefix_of(l0)) by {
             assert(l0.subrange(0, l0.len() as int) =~= l0);
         }
+    }
+}
+
+// ===========================================================================
+// An inbound AppendEntries (raft_on_append_entries): StepDown when its term
+// is higher; then RejectAppendEntries, or one FollowerAppendEntries segment
+// per component (BR2), each component in a group of its own
+// ===========================================================================
+
+// The follower's log after the first i components, as the spec applies them
+// one by one (ae_log_after: append at the end, keep a same-term entry,
+// replace a conflicting tail).
+pub open spec fn comp_logs<C>(log0: Seq<LLogEntry>, prev: int, es: Seq<RaftEntry<C>>, i: int) -> Seq<LLogEntry>
+    decreases i,
+{
+    if i <= 0 {
+        log0
+    } else {
+        let l = comp_logs(log0, prev, es, i - 1);
+        let p = prev + i - 1;
+        let e = entry_view(es[i - 1]);
+        if p == l.len() {
+            l.push(e)
+        } else if l[p].term == e.term {
+            l
+        } else {
+            l.take(p).push(e)
+        }
+    }
+}
+
+pub open spec fn entries_view<C>(es: Seq<RaftEntry<C>>) -> Seq<LLogEntry> {
+    es.map_values(|e: RaftEntry<C>| entry_view(e))
+}
+
+// Mako's single pass is the spec's one by one: the components before the
+// first conflict (f0) match the log, and from f0 on the batch replaces the
+// tail.
+pub proof fn lemma_comp_logs<C>(log0: Seq<LLogEntry>, prev: int, es: Seq<RaftEntry<C>>, f0: int, i: int)
+    requires
+        0 <= prev <= log0.len(),
+        0 <= f0 <= es.len(),
+        0 <= i <= es.len(),
+        prev + f0 <= log0.len(),
+        forall|p: int| prev <= p < prev + f0 ==> #[trigger] log0[p].term == es[p - prev].spec_term() as int,
+        f0 < es.len() ==> prev + f0 == log0.len() || log0[prev + f0].term != es[f0].spec_term() as int,
+    ensures
+        comp_logs(log0, prev, es, i) == (if i <= f0 { log0 } else {
+            log0.take(prev + f0) + entries_view(es.subrange(f0, i)) }),
+    decreases i,
+{
+    if i > 0 {
+        lemma_comp_logs(log0, prev, es, f0, i - 1);
+        let e = entry_view(es[i - 1]);
+        if i <= f0 {
+            assert(log0[prev + i - 1].term == es[i - 1].spec_term() as int);
+        } else if i == f0 + 1 {
+            if prev + f0 == log0.len() {
+                assert(log0.take(prev + f0) =~= log0);
+            }
+            assert(log0.take(prev + f0) + entries_view(es.subrange(f0, i)) =~= log0.take(prev + f0).push(e));
+        } else {
+            let l = log0.take(prev + f0) + entries_view(es.subrange(f0, i - 1));
+            assert(l.len() == prev + i - 1);
+            assert(log0.take(prev + f0) + entries_view(es.subrange(f0, i)) =~= l.push(e));
+        }
+    }
+}
+
+// After component i (i >= 1) the entry at prev + i is the batch's entry
+// i - 1, as far as its term goes, and the log reaches it.
+pub proof fn lemma_comp_logs_prev<C>(log0: Seq<LLogEntry>, prev: int, es: Seq<RaftEntry<C>>, f0: int, i: int)
+    requires
+        0 <= prev <= log0.len(),
+        0 <= f0 <= es.len(),
+        1 <= i <= es.len(),
+        prev + f0 <= log0.len(),
+        forall|p: int| prev <= p < prev + f0 ==> #[trigger] log0[p].term == es[p - prev].spec_term() as int,
+        f0 < es.len() ==> prev + f0 == log0.len() || log0[prev + f0].term != es[f0].spec_term() as int,
+    ensures
+        prev + i <= comp_logs(log0, prev, es, i).len(),
+        comp_logs(log0, prev, es, i)[prev + i - 1].term == es[i - 1].spec_term() as int,
+        i > f0 ==> comp_logs(log0, prev, es, i).len() == prev + i,
+{
+    lemma_comp_logs(log0, prev, es, f0, i);
+    if i <= f0 {
+        assert(log0[prev + i - 1].term == es[i - 1].spec_term() as int);
+    } else {
+        let l = log0.take(prev + f0) + entries_view(es.subrange(f0, i));
+        assert(l[prev + i - 1] == entry_view(es[i - 1]));
+    }
+}
+
+// An inbound AppendEntries as the spec sees it: the leader's rank, the
+// RPC's term, prev, prev term and commit, the payload's entries, and this
+// server's rank (the answers' sender).
+pub struct AeView<C> {
+    pub ldr: int,
+    pub term: int,
+    pub prev: int,
+    pub prev_term: int,
+    pub lc: int,
+    pub es: Seq<RaftEntry<C>>,
+    pub me: int,
+}
+
+// The view of the RPC raft_on_append_entries handles.
+pub open spec fn ae_view<C, W: InboundBatch<C>>(core: &RaftCore<C>, wire: &W, leader: u16, term: u64,
+                                              prev: u64, prev_term: u64, lc: u64) -> AeView<C> {
+    AeView {
+        ldr: rank(core.config_members_@, leader),
+        term: term as int,
+        prev: prev as int,
+        prev_term: prev_term as int,
+        lc: lc as int,
+        es: wire.spec_entries(),
+        me: core.my_rank(),
+    }
+}
+
+// The exec's append result is the spec's components: the old log cut at the
+// first write (f0 past prev), then the batch from there.
+pub proof fn lemma_ae_result<C>(old_v: Seq<RaftEntry<C>>, new_v: Seq<RaftEntry<C>>, es: Seq<RaftEntry<C>>,
+                                prev: int, f0: int)
+    requires
+        0 <= prev,
+        0 <= f0 <= es.len(),
+        prev + f0 <= old_v.len(),
+        forall|p: int| prev <= p < prev + f0 ==> #[trigger] old_v[p].spec_term() == es[p - prev].spec_term(),
+        f0 < es.len() ==> prev + f0 == old_v.len() || old_v[prev + f0].spec_term() != es[f0].spec_term(),
+        new_v == (if f0 < es.len() { old_v.subrange(0, prev + f0) + es.subrange(f0, es.len() as int) } else { old_v }),
+    ensures
+        new_v.map_values(|e: RaftEntry<C>| entry_view(e))
+            == comp_logs(old_v.map_values(|e: RaftEntry<C>| entry_view(e)), prev, es, es.len() as int),
+{
+    let log0 = old_v.map_values(|e: RaftEntry<C>| entry_view(e));
+    assert forall|p: int| prev <= p < prev + f0 implies #[trigger] log0[p].term == es[p - prev].spec_term() as int by {
+        assert(old_v[p].spec_term() == es[p - prev].spec_term());
+    }
+    if f0 < es.len() && prev + f0 < old_v.len() {
+        assert(log0[prev + f0].term == old_v[prev + f0].spec_term() as int);
+    }
+    lemma_comp_logs(log0, prev, es, f0, es.len() as int);
+    if f0 < es.len() {
+        assert(new_v.map_values(|e: RaftEntry<C>| entry_view(e))
+            =~= log0.take(prev + f0) + entries_view(es.subrange(f0, es.len() as int)));
+    }
+}
+
+// Component i of an AppendEntries carrying entries (BR1/BR2): the batch's
+// entry i at prev + i + 1, behind entry i - 1 (the RPC's prev for i = 0);
+// the term, the leader and the commit are the RPC's.
+pub open spec fn comp_msg<C>(x: AeView<C>, i: int) -> LRaftMessage {
+    LRaftMessage::AppendEntries {
+        term: x.term,
+        leader: x.ldr,
+        prev_index: x.prev + i,
+        prev_term: if i == 0 { x.prev_term } else { x.es[i - 1].spec_term() as int },
+        entry_term: x.es[i].spec_term() as int,
+        value: value_view(x.es[i].spec_cmd()),
+        entry_change: LConfChange::NoChange,
+        has_entry: true,
+        leader_commit: x.lc,
+        read_ctx: 0,
+    }
+}
+
+// An AppendEntries without entries (a heartbeat, or a probe at prev): V1
+// reads its commit as min(commit, prev).
+pub open spec fn empty_msg<C>(x: AeView<C>) -> LRaftMessage {
+    LRaftMessage::AppendEntries {
+        term: x.term,
+        leader: x.ldr,
+        prev_index: x.prev,
+        prev_term: x.prev_term,
+        entry_term: 0,
+        value: 0,
+        entry_change: LConfChange::NoChange,
+        has_entry: false,
+        leader_commit: if x.lc <= x.prev { x.lc } else { x.prev },
+        read_ctx: 0,
+    }
+}
+
+// The message that opens the RPC's group.
+pub open spec fn first_msg<C>(x: AeView<C>) -> LRaftMessage {
+    if x.es.len() == 0 { empty_msg(x) } else { comp_msg(x, 0) }
+}
+
+// A FollowerAppendEntries label: the message's own fields, as
+// label_compatible binds them.
+pub open spec fn fae_label(m: LRaftMessage) -> ActionLabel {
+    ActionLabel::FollowerAppendEntries {
+        ae_term: m->AppendEntries_term,
+        ae_leader: m->AppendEntries_leader,
+        ae_prev_index: m->AppendEntries_prev_index,
+        ae_prev_term: m->AppendEntries_prev_term,
+        ae_entry_term: m->AppendEntries_entry_term,
+        ae_value: m->AppendEntries_value,
+        ae_change: m->AppendEntries_entry_change,
+        ae_has_entry: m->AppendEntries_has_entry,
+        ae_leader_commit: m->AppendEntries_leader_commit,
+    }
+}
+
+pub open spec fn ae_reject_label<C>(x: AeView<C>) -> ActionLabel {
+    ActionLabel::RejectAppendEntries {
+        ae_term: x.term,
+        ae_prev_index: x.prev,
+        ae_prev_term: x.prev_term,
+        ae_has_entry: x.es.len() > 0,
+    }
+}
+
+pub open spec fn ae_answer<C>(x: AeView<C>, term: int, success: bool, match_index: int) -> LRaftMessage {
+    LRaftMessage::AppendResponse { term, success, match_index, follower: x.me, read_ctx: 0 }
+}
+
+// ae_commit_after: the commit raised to the carried commit, capped at the
+// payload's end, never lowered.
+pub open spec fn raise_commit(c0: int, lc: int, end: int) -> int {
+    let t = if lc <= end { lc } else { end };
+    if t > c0 { t } else { c0 }
+}
+
+// One accepted message's segment: Follower, the log and the commit after
+// it, the success answer.
+pub open spec fn fae_seg<C>(l: Seq<Entry>, x: AeView<C>, m: LRaftMessage, log: Seq<LLogEntry>,
+                            commit: int, match_index: int) -> Seq<Entry> {
+    l.push(Entry::Set(LogField::Role, LogValue::VRole(LServerRole::Follower)))
+        .push(Entry::Set(LogField::RaftLog, LogValue::VLog(log)))
+        .push(Entry::Set(LogField::CommitIndex, LogValue::VInt(commit)))
+        .push(Entry::Send(x.ldr, ae_answer(x, x.term, true, match_index)))
+        .push(Entry::Close(fae_label(m)))
+}
+
+// The commit after i components.
+pub open spec fn comp_commit(c0: int, lc: int, prev: int, i: int) -> int {
+    if i <= 0 { c0 } else { raise_commit(c0, lc, prev + i) }
+}
+
+// Components 0..i-1 after l2, which holds component 0's Recv (and its step
+// down); every later component opens a group of its own.
+pub open spec fn fae_groups<C>(l2: Seq<Entry>, x: AeView<C>, log0: Seq<LLogEntry>, c0: int, i: int) -> Seq<Entry>
+    decreases i,
+{
+    if i <= 0 {
+        l2
+    } else {
+        let rest = fae_groups(l2, x, log0, c0, i - 1);
+        let opened = if i == 1 { rest } else { rest.push(Entry::Recv(x.ldr, comp_msg(x, i - 1))) };
+        fae_seg(opened, x, comp_msg(x, i - 1), comp_logs(log0, x.prev, x.es, i),
+            comp_commit(c0, x.lc, x.prev, i), x.prev + i)
+    }
+}
+
+// The segment a message's group continues with is a FollowerAppendEntries
+// for message m, from state s to s with Follower, `log` and `commit`.
+pub proof fn lemma_fae_seg<C>(l: Seq<Entry>, x: AeView<C>, m: LRaftMessage, log: Seq<LLogEntry>,
+                              commit: int, match_index: int, c: LConstants)
+    requires
+        log_ok(l, c),
+        seg_state(l) == replay(l),
+        seg_sends(l) == Seq::<LRaftMessage>::empty(),
+        seg_trigger(l) == Option::Some(Entry::Recv(x.ldr, m)),
+        seg_sends_to(l, x.ldr),
+        m is AppendEntries,
+        LFollowerAppendEntries(replay(l),
+            LState { role: LServerRole::Follower, log, commit_index: commit, ..replay(l) }, c,
+            m->AppendEntries_term, m->AppendEntries_leader, m->AppendEntries_prev_index,
+            m->AppendEntries_prev_term, m->AppendEntries_entry_term, m->AppendEntries_value,
+            m->AppendEntries_entry_change, m->AppendEntries_has_entry, m->AppendEntries_leader_commit,
+            seq![ae_answer(x, x.term, true, match_index)]),
+    ensures
+        log_ok(fae_seg(l, x, m, log, commit, match_index), c),
+        fully_closed(fae_seg(l, x, m, log, commit, match_index)),
+        replay(fae_seg(l, x, m, log, commit, match_index))
+            == (LState { role: LServerRole::Follower, log, commit_index: commit, ..replay(l) }),
+        l.is_prefix_of(fae_seg(l, x, m, log, commit, match_index)),
+{
+    let s = replay(l);
+    let a = ae_answer(x, x.term, true, match_index);
+    lemma_g_set(l, LogField::Role, LogValue::VRole(LServerRole::Follower), c);
+    let l1 = l.push(Entry::Set(LogField::Role, LogValue::VRole(LServerRole::Follower)));
+    assert(seg_sends_to(l1, x.ldr));
+    lemma_g_set(l1, LogField::RaftLog, LogValue::VLog(log), c);
+    let l2 = l1.push(Entry::Set(LogField::RaftLog, LogValue::VLog(log)));
+    assert(seg_sends_to(l2, x.ldr));
+    lemma_g_set(l2, LogField::CommitIndex, LogValue::VInt(commit), c);
+    let l3 = l2.push(Entry::Set(LogField::CommitIndex, LogValue::VInt(commit)));
+    assert(seg_sends_to(l3, x.ldr));
+    lemma_g_send(l3, x.ldr, a, c);
+    let l4 = l3.push(Entry::Send(x.ldr, a));
+    assert(seg_sends(l4) =~= seq![a]);
+    assert(replay(l4) == LState { role: LServerRole::Follower, log, commit_index: commit, ..s });
+    lemma_g_close(l4, fae_label(m), x.ldr, c);
+    let l5 = l4.push(Entry::Close(fae_label(m)));
+    assert(fae_seg(l, x, m, log, commit, match_index) =~= l5);
+    assert(l.is_prefix_of(l5)) by {
+        assert(l5.subrange(0, l.len() as int) =~= l);
+    }
+}
+
+pub proof fn lemma_fae_groups<C>(l2: Seq<Entry>, x: AeView<C>, c: LConstants, log0: Seq<LLogEntry>,
+                                 c0: int, f0: int, i: int)
+    requires
+        log_ok(l2, c),
+        seg_state(l2) == replay(l2),
+        seg_sends(l2) == Seq::<LRaftMessage>::empty(),
+        seg_trigger(l2) == Option::Some(Entry::Recv(x.ldr, comp_msg(x, 0))),
+        forall|d: int| seg_sends_to(l2, d),
+        x.me == c.my_id,
+        x.es.len() >= 1,
+        0 <= i <= x.es.len(),
+        replay(l2).current_term == x.term,
+        replay(l2).log == log0,
+        replay(l2).commit_index == c0,
+        replay(l2).pending_reads == Seq::<LReadReq>::empty(),
+        replay(l2).served_ctxs == Set::<int>::empty(),
+        0 <= x.prev <= log0.len(),
+        // the RPC's prev entry, as the handler checked it
+        prev_log_ok(replay(l2), x.prev, x.prev_term),
+        // the first conflict, as the handler's scan found it
+        0 <= f0 <= x.es.len(),
+        x.prev + f0 <= log0.len(),
+        forall|p: int| x.prev <= p < x.prev + f0 ==> #[trigger] log0[p].term == x.es[p - x.prev].spec_term() as int,
+        f0 < x.es.len() ==> x.prev + f0 == log0.len() || log0[x.prev + f0].term != x.es[f0].spec_term() as int,
+        // a replaced entry is above the commit (the handler refuses otherwise)
+        f0 < x.es.len() && x.prev + f0 < log0.len() ==> x.prev + f0 >= c0,
+    ensures
+        log_ok(fae_groups(l2, x, log0, c0, i), c),
+        i >= 1 ==> fully_closed(fae_groups(l2, x, log0, c0, i)),
+        i >= 1 ==> replay(fae_groups(l2, x, log0, c0, i)) == (LState {
+            role: LServerRole::Follower,
+            log: comp_logs(log0, x.prev, x.es, i),
+            commit_index: comp_commit(c0, x.lc, x.prev, i),
+            ..replay(l2)
+        }),
+        l2.is_prefix_of(fae_groups(l2, x, log0, c0, i)),
+    decreases i,
+{
+    if i == 0 {
+        assert(l2.subrange(0, l2.len() as int) =~= l2);
+    } else {
+        lemma_fae_groups(l2, x, c, log0, c0, f0, i - 1);
+        let k = i - 1;
+        let rest = fae_groups(l2, x, log0, c0, k);
+        let m = comp_msg(x, k);
+        let opened = if i == 1 { rest } else { rest.push(Entry::Recv(x.ldr, m)) };
+        if i > 1 {
+            lemma_g_open(rest, Entry::Recv(x.ldr, m), c);
+        }
+        let sk = replay(opened);
+        assert(seg_state(opened) == sk);
+        assert(seg_sends(opened) == Seq::<LRaftMessage>::empty());
+        assert(seg_trigger(opened) == Option::Some(Entry::Recv(x.ldr, m)));
+        assert(seg_sends_to(opened, x.ldr));
+        // the state at component k
+        assert(sk.current_term == x.term);
+        assert(sk.log == comp_logs(log0, x.prev, x.es, k)) by {
+            if k == 0 { assert(comp_logs(log0, x.prev, x.es, 0) == log0); }
+        }
+        assert(sk.commit_index == comp_commit(c0, x.lc, x.prev, k));
+        // its guards
+        if k >= 1 {
+            lemma_comp_logs_prev(log0, x.prev, x.es, f0, k);
+        }
+        assert(prev_log_ok(sk, x.prev + k, m->AppendEntries_prev_term));
+        lemma_comp_logs(log0, x.prev, x.es, f0, k);
+        if k > f0 {
+            lemma_comp_logs_prev(log0, x.prev, x.es, f0, k);
+        }
+        if k < f0 {
+            assert(log0[x.prev + k].term == x.es[k].spec_term() as int);
+        }
+        assert(truncate_ok(sk, x.prev + k, m->AppendEntries_entry_term, true));
+        let log = comp_logs(log0, x.prev, x.es, i);
+        let commit = comp_commit(c0, x.lc, x.prev, i);
+        assert(log == ae_log_after(sk, x.prev + k, m->AppendEntries_entry_term, m->AppendEntries_value,
+            LConfChange::NoChange, true));
+        assert(commit == ae_commit_after(sk, x.lc, x.prev + k + 1));
+        assert(step_down_if_needed(sk, x.term) == sk);
+        assert(LFollowerAppendEntries(sk, LState { role: LServerRole::Follower, log, commit_index: commit, ..sk }, c,
+            m->AppendEntries_term, m->AppendEntries_leader, m->AppendEntries_prev_index,
+            m->AppendEntries_prev_term, m->AppendEntries_entry_term, m->AppendEntries_value,
+            m->AppendEntries_entry_change, m->AppendEntries_has_entry, m->AppendEntries_leader_commit,
+            seq![ae_answer(x, x.term, true, x.prev + i)]));
+        lemma_fae_seg(opened, x, m, log, commit, x.prev + i, c);
+        let li = fae_seg(opened, x, m, log, commit, x.prev + i);
+        assert(li == fae_groups(l2, x, log0, c0, i));
+        assert(l2.is_prefix_of(li)) by {
+            assert(li.subrange(0, l2.len() as int) =~= rest.subrange(0, l2.len() as int));
+        }
+    }
+}
+
+// The RPC's ghost log: its first message's Recv; the StepDown segment when
+// it carried a higher term the handler took up; then the refusal (and a
+// candidate's StepAside, when the handler left the campaign before
+// refusing a committed conflict), or the accepted message (entry-less) or
+// components.
+pub open spec fn ae_log<C>(l0: Seq<Entry>, x: AeView<C>, stepped: bool, aside: bool, accepted: bool,
+                           log0: Seq<LLogEntry>, c0: int, cur: int) -> Seq<Entry> {
+    let l1 = l0.push(Entry::Recv(x.ldr, first_msg(x)));
+    let l2 = if stepped { step_down_seg(l1, x.term) } else { l1 };
+    if !accepted {
+        let lr = l2.push(Entry::Send(x.ldr, ae_answer(x, cur, false, 0))).push(Entry::Close(ae_reject_label(x)));
+        if aside { step_aside_log(lr) } else { lr }
+    } else if x.es.len() == 0 {
+        fae_seg(l2, x, empty_msg(x), log0, raise_commit(c0, x.lc, x.prev), x.prev)
+    } else {
+        fae_groups(l2, x, log0, c0, x.es.len() as int)
+    }
+}
+
+// The handler's ghost contract: the log is the RPC's group, with or
+// without the step down.
+pub open spec fn ae_log_ok<C>(l: Seq<Entry>, l0: Seq<Entry>, x: AeView<C>, accepted: bool,
+                              log0: Seq<LLogEntry>, c0: int, cur: int) -> bool {
+    exists|stepped: bool, aside: bool| l == #[trigger] ae_log(l0, x, stepped, aside, accepted, log0, c0, cur)
+}
+
+pub proof fn lemma_append_entries<C>(pre: &RaftCore<C>, post: &RaftCore<C>, x: AeView<C>,
+                                     stepped: bool, aside: bool, accepted: bool, f0: int)
+    requires
+        pre.inv(),
+        pre.ginv(),
+        pre.gated_,
+        x.me == pre.my_rank(),
+        x.prev >= 0,
+        stepped ==> x.term > pre.current_term_ as int,
+        accepted && !stepped ==> x.term == pre.current_term_ as int,
+        // what the handler leaves: the term, the vote, the role
+        post.current_term_ as int == (if stepped || accepted { x.term } else { pre.current_term_ as int }),
+        post.vote_for_ == (if stepped { RAFT_SERVER_INVALID_SITE_ID } else { pre.vote_for_ }),
+        stepped || accepted ==> !post.is_leader_ && !post.election_in_progress_,
+        !stepped && !accepted && !aside ==> post.role_view() == pre.role_view(),
+        aside ==> !stepped && !accepted && pre.role_view() is Candidate && post.role_view() is Follower,
+        post.election_term_ == pre.election_term_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.snapterm_ == pre.snapterm_,
+        post.g_votes_@ == (if stepped || aside { Set::<int>::empty() } else { pre.g_votes_@ }),
+        post.g_match_ == pre.g_match_,
+        post.g_next_ == pre.g_next_,
+        // the log and the commit
+        post.log_entries_ok(),
+        !accepted ==> post.log_view() == pre.log_view() && post.commit_index_ == pre.commit_index_,
+        accepted && x.es.len() == 0 ==> post.log_view() == pre.log_view()
+            && post.commit_index_ as int == raise_commit(pre.commit_index_ as int, x.lc, x.prev),
+        accepted && x.es.len() > 0 ==> post.log_view() == comp_logs(pre.log_view(), x.prev, x.es, x.es.len() as int)
+            && post.commit_index_ as int == comp_commit(pre.commit_index_ as int, x.lc, x.prev, x.es.len() as int),
+        // an accepted RPC passed the handler's checks: its prev entry; its
+        // first conflict (f0); no committed entry replaced
+        accepted ==> x.prev <= pre.log_view().len() && prev_log_ok(pre.state_view(), x.prev, x.prev_term),
+        accepted && x.es.len() > 0 ==> {
+            &&& 0 <= f0 <= x.es.len()
+            &&& x.prev + f0 <= pre.log_view().len()
+            &&& (forall|p: int| x.prev <= p < x.prev + f0
+                    ==> #[trigger] pre.log_view()[p].term == x.es[p - x.prev].spec_term() as int)
+            &&& (f0 < x.es.len() ==> x.prev + f0 == pre.log_view().len()
+                    || pre.log_view()[x.prev + f0].term != x.es[f0].spec_term() as int)
+            &&& (f0 < x.es.len() && x.prev + f0 < pre.log_view().len()
+                    ==> x.prev + f0 >= pre.commit_index_ as int)
+        },
+        post.g_log_@ == ae_log(pre.g_log_@, x, stepped, aside, accepted, pre.log_view(),
+            pre.commit_index_ as int, post.current_term_ as int),
+    ensures post.ginv(),
+{
+    let c = pre.c_view();
+    let l0 = pre.g_log_@;
+    let s0 = replay(l0);
+    let m0 = first_msg(x);
+    lemma_my_rank(pre);
+    lemma_g_open(l0, Entry::Recv(x.ldr, m0), c);
+    let l1 = l0.push(Entry::Recv(x.ldr, m0));
+    let l2 = if stepped { step_down_seg(l1, x.term) } else { l1 };
+    let s2 = if stepped { stepped_down(s0, x.term) } else { s0 };
+    if stepped {
+        lemma_step_down_seg(l1, x.term, c);
+    }
+    assert(log_ok(l2, c));
+    assert(replay(l2) == s2);
+    assert(seg_state(l2) == s2);
+    assert(seg_sends(l2) == Seq::<LRaftMessage>::empty());
+    assert(seg_trigger(l2) == Option::Some(Entry::Recv(x.ldr, m0)));
+    assert(forall|d: int| seg_sends_to(l2, d));
+    assert(seg_sends_to(l2, x.ldr));
+    assert(post.c_view() == c);
+    if !accepted {
+        let a = ae_answer(x, post.current_term_ as int, false, 0);
+        lemma_g_send(l2, x.ldr, a, c);
+        let l3 = l2.push(Entry::Send(x.ldr, a));
+        assert(seg_sends(l3) =~= seq![a]);
+        assert(LRejectAppendEntries(s2, replay(l3), c, x.term, x.prev, x.prev_term, x.es.len() > 0, seg_sends(l3)));
+        lemma_g_close(l3, ae_reject_label(x), x.ldr, c);
+        let lr = l3.push(Entry::Close(ae_reject_label(x)));
+        if aside {
+            lemma_step_aside(lr, c);
+            assert(post.g_log_@ =~= step_aside_log(lr));
+            assert(post.state_view() == LState {
+                role: LServerRole::Follower,
+                votes_granted: Set::<int>::empty(),
+                ..s2
+            });
+        } else {
+            assert(post.g_log_@ =~= lr);
+            assert(post.state_view() == s2);
+        }
+    } else if x.es.len() == 0 {
+        let commit = raise_commit(pre.commit_index_ as int, x.lc, x.prev);
+        let m = empty_msg(x);
+        assert(step_down_if_needed(s2, x.term) == s2);
+        assert(LFollowerAppendEntries(s2, LState { role: LServerRole::Follower, log: s2.log, commit_index: commit, ..s2 }, c,
+            m->AppendEntries_term, m->AppendEntries_leader, m->AppendEntries_prev_index,
+            m->AppendEntries_prev_term, m->AppendEntries_entry_term, m->AppendEntries_value,
+            m->AppendEntries_entry_change, m->AppendEntries_has_entry, m->AppendEntries_leader_commit,
+            seq![ae_answer(x, x.term, true, x.prev)]));
+        lemma_fae_seg(l2, x, m, s2.log, commit, x.prev, c);
+        assert(post.state_view() == LState { role: LServerRole::Follower, log: s2.log, commit_index: commit, ..s2 });
+    } else {
+        lemma_fae_groups(l2, x, c, pre.log_view(), pre.commit_index_ as int, f0, x.es.len() as int);
+        assert(post.state_view() == LState {
+            role: LServerRole::Follower,
+            log: comp_logs(pre.log_view(), x.prev, x.es, x.es.len() as int),
+            commit_index: comp_commit(pre.commit_index_ as int, x.lc, x.prev, x.es.len() as int),
+            ..s2
+        });
     }
 }
 

@@ -58,11 +58,17 @@ impl<C> RaftEntry<C> {
         self.cmd_
     }
 
+    // [M12] Whether its command has a value (ghost).
+    pub closed spec fn spec_has_value(&self) -> bool {
+        self.has_value_
+    }
+
     pub fn new(term: i64, cmd: C, has_value: bool,
                is_tpc_commit: bool, kind: i32, payload_bytes: u64) -> (r: RaftEntry<C>)
         ensures
             r.spec_term() == term,
             r.spec_cmd() == cmd,
+            r.spec_has_value() == has_value,  // [M12]
     {
         RaftEntry {
             term_: term,
@@ -88,7 +94,9 @@ impl<C> RaftEntry<C> {
     }
 
     // [move, M6] raft_command_has_value(cmd)
-    pub fn has_value(&self) -> bool {
+    pub fn has_value(&self) -> (r: bool)
+        ensures r == self.spec_has_value(),  // [M12]
+    {
         self.has_value_
     }
 
