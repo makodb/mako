@@ -5,6 +5,9 @@
 
 #[allow(unused_imports)]
 use crate::*;
+use vstd::prelude::*;
+
+verus! {
 
 // [move, M9] The site sets of the authority ledger and the round scope: a
 // sorted, duplicate-free Vec<u16> in place of rusty::BTreeSet<u16>, with the
@@ -17,27 +20,46 @@ pub struct SiteSet {
     sites_: Vec<u16>,
 }
 
+impl SiteSet {
+    // How many sites the set holds (ghost).
+    pub closed spec fn spec_len(&self) -> int {
+        self.sites_@.len() as int
+    }
+}
+
 #[allow(clippy::new_without_default)]
 impl SiteSet {
-    pub fn new() -> SiteSet {
+    pub fn new() -> (r: SiteSet)
+        ensures r.spec_len() == 0,
+    {
         SiteSet { sites_: Vec::new() }
     }
 
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> (r: usize)
+        ensures r == self.spec_len(),
+    {
         self.sites_.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> (r: bool)
+        ensures r == (self.spec_len() == 0),
+    {
         self.sites_.is_empty()
     }
 
-    pub fn clear(&mut self) {
+    pub fn clear(&mut self)
+        ensures final(self).spec_len() == 0,
+    {
         self.sites_.clear();
     }
 
     pub fn contains(&self, site: &u16) -> bool {
         let mut i: usize = 0;
-        while i < self.sites_.len() {
+        while i < self.sites_.len()
+            invariant
+                i <= self.sites_@.len(),
+            decreases self.sites_@.len() - i,
+        {
             if self.sites_[i] == *site {
                 return true;
             }
@@ -50,13 +72,25 @@ impl SiteSet {
     // manual_swap: Vec::swap is not among the operations both lanes' Vec
     // support (push, pop and indexing; see above), so the swap is spelled out.
     #[allow(clippy::manual_swap)]
-    pub fn insert(&mut self, site: u16) -> bool {
+    pub fn insert(&mut self, site: u16) -> (r: bool)
+        ensures
+            r ==> final(self).spec_len() == old(self).spec_len() + 1,
+            !r ==> final(self).spec_len() == old(self).spec_len(),
+            final(self).spec_len() <= usize::MAX,
+    {
         if self.contains(&site) {
+            proof { vstd::std_specs::vec::axiom_spec_len(&self.sites_); }
             return false;
         }
         self.sites_.push(site);
         let mut j: usize = self.sites_.len() - 1;
-        while j > 0 && self.sites_[j - 1] > self.sites_[j] {
+        while j > 0 && self.sites_[j - 1] > self.sites_[j]
+            invariant
+                j < self.sites_@.len(),
+                self.sites_@.len() == old(self).sites_@.len() + 1,
+                self.sites_@.len() <= usize::MAX,
+            decreases j,
+        {
             let lower: u16 = self.sites_[j - 1];
             self.sites_[j - 1] = self.sites_[j];
             self.sites_[j] = lower;
@@ -66,15 +100,29 @@ impl SiteSet {
     }
 
     // BTreeSet::remove: false if absent.
-    pub fn remove(&mut self, site: &u16) -> bool {
+    pub fn remove(&mut self, site: &u16) -> (r: bool)
+        ensures
+            r ==> final(self).spec_len() == old(self).spec_len() - 1,
+            !r ==> final(self).spec_len() == old(self).spec_len(),
+    {
         let mut i: usize = 0;
-        while i < self.sites_.len() && self.sites_[i] != *site {
+        while i < self.sites_.len() && self.sites_[i] != *site
+            invariant
+                i <= self.sites_@.len(),
+                self.sites_@ == old(self).sites_@,
+            decreases self.sites_@.len() - i,
+        {
             i += 1;
         }
         if i == self.sites_.len() {
             return false;
         }
-        while i + 1 < self.sites_.len() {
+        while i + 1 < self.sites_.len()
+            invariant
+                i < self.sites_@.len(),
+                self.sites_@.len() == old(self).sites_@.len(),
+            decreases self.sites_@.len() - i,
+        {
             self.sites_[i] = self.sites_[i + 1];
             i += 1;
         }
@@ -182,7 +230,11 @@ impl AuthorityGeneration {
             return false;
         }
         let mut i: usize = 0;
-        while i < sites.len() {
+        while i < sites.len()
+            invariant
+                i <= sites@.len(),
+            decreases sites@.len() - i,
+        {
             if !self.config_.contains(&sites[i]) {
                 return false;
             }
@@ -253,6 +305,13 @@ pub struct AuthorityLedger {
     generations_: Vec<AuthorityGeneration>,
 }
 
+impl AuthorityLedger {
+    // How many generations are open (ghost).
+    pub closed spec fn spec_len(&self) -> int {
+        self.generations_@.len() as int
+    }
+}
+
 #[allow(clippy::new_without_default)]
 impl AuthorityLedger {
     pub fn new() -> AuthorityLedger {
@@ -275,7 +334,11 @@ impl AuthorityLedger {
         }
         let mut snapshot: SiteSet = SiteSet::new();  // [move, M9]
         let mut i: usize = 0;
-        while i < config.len() {
+        while i < config.len()
+            invariant
+                i <= config@.len(),
+            decreases config@.len() - i,
+        {
             snapshot.insert(config[i]);
             i += 1;
         }
@@ -289,10 +352,17 @@ impl AuthorityLedger {
 
     // Returns generations_.len() when absent. An index, never a reference, so
     // nothing can dangle across an RPC send or a re-entrant callback.
-    pub fn index_of(&self, round_id: u64) -> usize {
+    pub fn index_of(&self, round_id: u64) -> (r: usize)
+        ensures r <= self.spec_len(),
+    {
         let n = self.generations_.len();
         let mut i: usize = 0;
-        while i < n {
+        while i < n
+            invariant
+                i <= n,
+                n == self.generations_@.len(),
+            decreases n - i,
+        {
             if self.generations_[i].round_id_ == round_id {
                 return i;
             }
@@ -368,7 +438,11 @@ impl AuthorityLedger {
         let mut running_term = confirmed_term;
         let mut running_round = confirmed_round;
         let mut i: usize = 0;
-        while i < self.generations_.len() {
+        while i < self.generations_.len()
+            invariant
+                i <= self.generations_@.len(),
+            decreases self.generations_@.len() - i,
+        {
             let context_is_current = is_leader &&
                 current_term == self.generations_[i].evidence_.term() &&
                 self.generations_[i].config_matches(current_config);
@@ -478,3 +552,5 @@ impl HeartbeatRoundScope {
         self.authority_inserted_
     }
 }
+
+} // verus!

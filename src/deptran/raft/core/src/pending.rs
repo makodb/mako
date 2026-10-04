@@ -5,6 +5,9 @@
 
 #[allow(unused_imports)]
 use crate::*;
+use vstd::prelude::*;
+
+verus! {
 
 // ==========================================================================
 // THE HEARTBEAT ROUND'S STATE ([move, M1], from server_cc.rs, where the
@@ -47,18 +50,34 @@ pub struct PendingTable {
     slots_: Vec<Option<PendingAppend>>,
 }
 
+impl PendingTable {
+    // How many follower slots the table holds (ghost).
+    pub closed spec fn spec_len(&self) -> int {
+        self.slots_@.len() as int
+    }
+}
+
 #[allow(clippy::new_without_default)]
 impl PendingTable {
-    pub fn new() -> PendingTable {
+    pub fn new() -> (r: PendingTable)
+        ensures r.spec_len() == 0,
+    {
         PendingTable { slots_: Vec::new() }
     }
 
     // One slot per follower, all empty. Called wherever the peer table is
     // sized, so the two always agree on what an ordinal means.
-    pub fn resize(&mut self, peers: usize) {
+    pub fn resize(&mut self, peers: usize)
+        ensures final(self).spec_len() == peers,
+    {
         self.slots_.clear();
         let mut i: usize = 0;
-        while i < peers {
+        while i < peers
+            invariant
+                i <= peers,
+                self.slots_@.len() == i,
+            decreases peers - i,
+        {
             self.slots_.push(None);
             i += 1;
         }
@@ -66,53 +85,75 @@ impl PendingTable {
 
     // Drops every in-flight context. Used on leadership loss and on a term
     // change, so a prior epoch's RPC can never occupy a slot.
-    pub fn abandon(&mut self) {
+    pub fn abandon(&mut self)
+        ensures final(self).spec_len() == old(self).spec_len(),
+    {
         let peers = self.slots_.len();
         self.resize(peers);
     }
 
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> (r: usize)
+        ensures r == self.spec_len(),
+    {
         self.slots_.len()
     }
 
-    pub fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> (r: bool)
+        ensures r == (self.spec_len() == 0),
+    {
         self.slots_.is_empty()
     }
 
-    pub fn occupied(&self, ordinal: usize) -> bool {
+    pub fn occupied(&self, ordinal: usize) -> bool
+        requires ordinal < self.spec_len(),
+     {
         self.slots_[ordinal].is_some()
     }
 
-    pub fn place(&mut self, ordinal: usize, pending: PendingAppend) {
+    pub fn place(&mut self, ordinal: usize, pending: PendingAppend)
+        requires ordinal < old(self).spec_len(),
+        ensures final(self).spec_len() == old(self).spec_len(),
+     {
         self.slots_[ordinal] = Some(pending);
     }
 
-    pub fn release(&mut self, ordinal: usize) {
+    pub fn release(&mut self, ordinal: usize)
+        requires ordinal < old(self).spec_len(),
+        ensures final(self).spec_len() == old(self).spec_len(),
+     {
         self.slots_[ordinal] = None;
     }
 
-    pub fn follower(&self, ordinal: usize) -> u16 {
+    pub fn follower(&self, ordinal: usize) -> u16
+        requires ordinal < self.spec_len(),
+     {
         if self.slots_[ordinal].is_none() {
             return 0;
         }
         self.slots_[ordinal].as_ref().unwrap().follower_
     }
 
-    pub fn sent_term(&self, ordinal: usize) -> u64 {
+    pub fn sent_term(&self, ordinal: usize) -> u64
+        requires ordinal < self.spec_len(),
+     {
         if self.slots_[ordinal].is_none() {
             return 0;
         }
         self.slots_[ordinal].as_ref().unwrap().sent_term_
     }
 
-    pub fn sent_round(&self, ordinal: usize) -> u64 {
+    pub fn sent_round(&self, ordinal: usize) -> u64
+        requires ordinal < self.spec_len(),
+     {
         if self.slots_[ordinal].is_none() {
             return 0;
         }
         self.slots_[ordinal].as_ref().unwrap().sent_round_
     }
 
-    pub fn sent_end_index(&self, ordinal: usize) -> u64 {
+    pub fn sent_end_index(&self, ordinal: usize) -> u64
+        requires ordinal < self.spec_len(),
+     {
         if self.slots_[ordinal].is_none() {
             return 0;
         }
@@ -120,10 +161,14 @@ impl PendingTable {
     }
 
     // [move, M5] Whether the in-flight RPC carried entries.
-    pub fn has_entries(&self, ordinal: usize) -> bool {
+    pub fn has_entries(&self, ordinal: usize) -> bool
+        requires ordinal < self.spec_len(),
+     {
         if self.slots_[ordinal].is_none() {
             return false;
         }
         self.slots_[ordinal].as_ref().unwrap().has_entries_
     }
 }
+
+} // verus!

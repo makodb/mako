@@ -5,6 +5,9 @@
 
 #[allow(unused_imports)]
 use crate::*;
+use vstd::prelude::*;
+
+verus! {
 
 // ==========================================================================
 // WHAT A CORE DECISION ASKS THE SHELL TO DO ([move, M3], Phase 2)
@@ -152,7 +155,11 @@ impl CoreOutput {
             nargs: 0,
         };
         let mut i: usize = 0;
-        while i < args.len() && i < CORE_LOG_MAX_ARGS {
+        while i < args.len() && i < CORE_LOG_MAX_ARGS
+            invariant
+                i <= CORE_LOG_MAX_ARGS,
+            decreases CORE_LOG_MAX_ARGS - i,
+        {
             record.args[i] = args[i];
             i += 1;
         }
@@ -160,11 +167,24 @@ impl CoreOutput {
         self.logs_.push(record);
     }
 
-    pub fn log_count(&self) -> usize {
+    // How many log lines, and how many actions, the call recorded.
+    pub closed spec fn spec_log_count(&self) -> int {
+        self.logs_@.len() as int
+    }
+
+    pub closed spec fn spec_len(&self) -> int {
+        self.actions_@.len() as int
+    }
+
+    pub fn log_count(&self) -> (r: usize)
+        ensures r == self.spec_log_count(),
+    {
         self.logs_.len()
     }
 
-    pub fn log_at(&self, i: usize) -> &CoreLog {
+    pub fn log_at(&self, i: usize) -> &CoreLog
+        requires i < self.spec_log_count(),
+    {
         &self.logs_[i]
     }
 
@@ -172,7 +192,9 @@ impl CoreOutput {
         self.actions_.push(action);
     }
 
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> (r: usize)
+        ensures r == self.spec_len(),
+    {
         self.actions_.len()
     }
 
@@ -180,7 +202,11 @@ impl CoreOutput {
         self.actions_.is_empty()
     }
 
-    pub fn at(&self, i: usize) -> &CoreAction {
+    pub fn at(&self, i: usize) -> &CoreAction
+        requires i < self.spec_len(),
+    {
         &self.actions_[i]
     }
 }
+
+} // verus!

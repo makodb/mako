@@ -5,6 +5,9 @@
 
 #[allow(unused_imports)]
 use crate::*;
+use vstd::prelude::*;
+
+verus! {
 
 // SCREAMING_CASE variants match the surrounding C++ enum convention and the
 // existing DSL enums in snapshot_format.hpp, which carries this same allow.
@@ -47,15 +50,19 @@ impl FollowerProgress {
     // The five-way backoff ladder taken when a follower rejects AppendEntries.
     // Returns which rung was used so the caller can log it; the arithmetic
     // itself is identical to the inline version it replaces.
+    // [move, M10] `follower_last_log_index` comes off the wire, so its + 1
+    // can wrap; release builds always wrapped it (the next round's
+    // "Repairing wrapped next_index" catches a resulting 0). wrapping_add
+    // says so, and is the same machine operation.
     pub fn back_off_after_reject(&mut self, follower_last_log_index: u64) -> BackoffKind {
         if follower_last_log_index > 0
-            && (follower_last_log_index + 1) < self.next_
+            && follower_last_log_index.wrapping_add(1) < self.next_
         {
-            self.next_ = follower_last_log_index + 1;
+            self.next_ = follower_last_log_index.wrapping_add(1);
             return BackoffKind::FAST;
         }
         if follower_last_log_index > 0
-            && (follower_last_log_index + 1) == self.next_
+            && follower_last_log_index.wrapping_add(1) == self.next_
             && self.next_ > 1
         {
             self.next_ -= 1;
@@ -114,42 +121,69 @@ pub struct PeerTable {
     progress_: Vec<FollowerProgress>,
 }
 
+impl PeerTable {
+    // How many followers the table holds (ghost).
+    pub closed spec fn spec_len(&self) -> int {
+        self.progress_@.len() as int
+    }
+}
+
 #[allow(clippy::new_without_default)]
 impl PeerTable {
-    pub fn new() -> PeerTable {
+    pub fn new() -> (r: PeerTable)
+        ensures r.spec_len() == 0,
+    {
         PeerTable { progress_: Vec::new() }
     }
 
     // One slot per follower, in ordinal order.
-    pub fn reset(&mut self, peers: usize, next_index: u64) {
+    pub fn reset(&mut self, peers: usize, next_index: u64)
+        ensures final(self).spec_len() == peers,
+    {
         self.progress_.clear();
         let mut i: usize = 0;
-        while i < peers {
+        while i < peers
+            invariant
+                i <= peers,
+                self.progress_@.len() == i,
+            decreases peers - i,
+        {
             self.progress_.push(FollowerProgress::new(next_index, 0));
             i += 1;
         }
     }
 
-    pub fn len(&self) -> usize {
+    pub fn len(&self) -> (r: usize)
+        ensures r == self.spec_len(),
+    {
         self.progress_.len()
     }
 
     // Required by clippy alongside len(). A leader always has followers in
     // this table unless the partition is single-replica, which is exactly the
     // case the commit-index selector special-cases.
-    pub fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> (r: bool)
+        ensures r == (self.spec_len() == 0),
+    {
         self.progress_.is_empty()
     }
 
-    pub fn next_index(&self, ordinal: usize) -> u64 {
+    pub fn next_index(&self, ordinal: usize) -> u64
+        requires ordinal < self.spec_len(),
+    {
         self.progress_[ordinal].next_index()
     }
 
-    pub fn set_next_index(&mut self, ordinal: usize, value: u64) {
+    pub fn set_next_index(&mut self, ordinal: usize, value: u64)
+        requires ordinal < old(self).spec_len(),
+        ensures final(self).spec_len() == old(self).spec_len(),
+    {
         self.progress_[ordinal].set_next_index(value);
     }
 
-    pub fn match_index(&self, ordinal: usize) -> u64 {
+    pub fn match_index(&self, ordinal: usize) -> u64
+        requires ordinal < self.spec_len(),
+    {
         self.progress_[ordinal].match_index()
     }
 
@@ -166,16 +200,30 @@ impl PeerTable {
     // 5) and is on the per-round path, not the per-entry path.
     //
     // Ties are broken by ordinal so the result matches a stable sort exactly.
-    pub fn majority_match_index(&self, nservers: usize, last_log_index: u64) -> u64 {
+    pub fn majority_match_index(&self, nservers: usize, last_log_index: u64) -> u64
+        requires nservers >= 1,
+    {
         let target = (nservers - 1) / 2;
         let n = self.progress_.len();
         let mut selected: u64 = 0;
         let mut i: usize = 0;
-        while i < n {
+        while i < n
+            invariant
+                i <= n,
+                n == self.progress_@.len(),
+            decreases n - i,
+        {
             let value = self.progress_[i].match_index();
             let mut rank: usize = 0;
             let mut j: usize = 0;
-            while j < n {
+            while j < n
+                invariant
+                    i < n,
+                    j <= n,
+                    rank <= j,
+                    n == self.progress_@.len(),
+                decreases n - j,
+            {
                 let other = self.progress_[j].match_index();
                 if other < value || (other == value && j < i) {
                     rank += 1;
@@ -191,13 +239,21 @@ impl PeerTable {
     }
 
     pub fn back_off_after_reject(&mut self, ordinal: usize,
-                                 follower_last_log_index: u64) -> BackoffKind {
+                                 follower_last_log_index: u64) -> BackoffKind
+        requires ordinal < old(self).spec_len(),
+        ensures final(self).spec_len() == old(self).spec_len(),
+    {
         self.progress_[ordinal].back_off_after_reject(follower_last_log_index)
     }
 
     pub fn accept_through(&mut self, ordinal: usize, acknowledged_through: u64,
-                          has_successor: bool, follower_next: u64) {
+                          has_successor: bool, follower_next: u64)
+        requires ordinal < old(self).spec_len(),
+        ensures final(self).spec_len() == old(self).spec_len(),
+    {
         self.progress_[ordinal].accept_through(acknowledged_through,
                                                has_successor, follower_next);
     }
 }
+
+} // verus!

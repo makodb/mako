@@ -5,6 +5,9 @@
 
 #[allow(unused_imports)]
 use crate::*;
+use vstd::prelude::*;
+
+verus! {
 
 // [move, M5] One campaign's outcome as the core counted it: the fields
 // raft_vote_quorum_snapshot used to read out of the lane's quorum object,
@@ -31,13 +34,26 @@ pub struct VoteSet {
     highest_term_: i64,
 }
 
+impl VoteSet {
+    // Each counted vote is one voter in the set, so neither count can
+    // overflow (ghost).
+    pub closed spec fn wf(&self) -> bool {
+        self.yes_ as int + self.no_ as int == self.voters_.spec_len()
+    }
+}
+
 #[allow(clippy::new_without_default)]
 impl VoteSet {
-    pub fn new() -> VoteSet {
+    pub fn new() -> (r: VoteSet)
+        ensures r.wf(),
+    {
         VoteSet { voters_: SiteSet::new(), yes_: 0, no_: 0, highest_term_: 0 }
     }
 
-    pub fn feed(&mut self, voter: u16, granted: bool, term: i64) {
+    pub fn feed(&mut self, voter: u16, granted: bool, term: i64)
+        requires old(self).wf(),
+        ensures final(self).wf(),
+    {
         if !self.voters_.insert(voter) {
             return;
         }
@@ -128,3 +144,5 @@ impl ElectionTick {
     pub fn term(&self) -> u64 { self.term_ }
     pub fn vote_for(&self) -> u16 { self.vote_for_ }
 }
+
+} // verus!

@@ -12,3 +12,10 @@ name = "raft_core"
 path = "src/lib.rs"
 
 [dependencies]
+# Verus's macro and library crates at exactly the pinned Verus's version
+# (=0.0.0-2026-08-02-0125, docs/verus/reports/phase-0.md spike (a)). Under
+# plain cargo the verus! macro erases the ghost code, and what is left is
+# the exec code the shell links.
+vstd = "=0.0.0-2026-08-02-0125"
+verus_builtin = "=0.0.0-2026-08-02-0125"
+verus_builtin_macros = "=0.0.0-2026-08-02-0125"

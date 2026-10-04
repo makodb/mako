@@ -5,6 +5,9 @@
 
 #[allow(unused_imports)]
 use crate::*;
+use vstd::prelude::*;
+
+verus! {
 
 #[allow(non_camel_case_types)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
@@ -20,118 +23,172 @@ pub enum ElectionCompletionAction {
 // here lets the predicates below stop taking it as a parameter.
 pub const RAFT_SERVER_INVALID_SITE_ID: u16 = 65535u16;
 
-pub const fn raft_server_log_index_at_or_below(index: u64, boundary: u64) -> bool {
+#[verifier::allow_in_spec]
+pub const fn raft_server_log_index_at_or_below(index: u64, boundary: u64) -> bool
+    returns index <= boundary,
+{
     index <= boundary
 }
 
-pub const fn raft_server_log_index_above(index: u64, boundary: u64) -> bool {
+#[verifier::allow_in_spec]
+pub const fn raft_server_log_index_above(index: u64, boundary: u64) -> bool
+    returns index > boundary,
+{
     index > boundary
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_site_is_preferred_leader(site_id: u16,
-                                                   preferred_site_id: u16) -> bool {
+                                                   preferred_site_id: u16) -> bool
+    returns preferred_site_id != RAFT_SERVER_INVALID_SITE_ID && site_id == preferred_site_id,
+{
     preferred_site_id != RAFT_SERVER_INVALID_SITE_ID && site_id == preferred_site_id
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_election_timeout_has_fired(is_leader: bool,
                                                      elapsed: u64,
-                                                     timeout: u64) -> bool {
+                                                     timeout: u64) -> bool
+    returns !is_leader && elapsed > timeout,
+{
     !is_leader && elapsed > timeout
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_timer_campaign_is_current(is_leader: bool,
                                                     observed_generation: u64,
                                                     current_generation: u64,
                                                     elapsed: u64,
-                                                    timeout: u64) -> bool {
+                                                    timeout: u64) -> bool
+    returns observed_generation == current_generation && raft_server_election_timeout_has_fired(is_leader, elapsed, timeout),
+{
     observed_generation == current_generation &&
         raft_server_election_timeout_has_fired(is_leader, elapsed, timeout)
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_campaign_can_start(is_leader: bool,
-                                             election_in_progress: bool) -> bool {
+                                             election_in_progress: bool) -> bool
+    returns !is_leader && !election_in_progress,
+{
     !is_leader && !election_in_progress
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_vote_term_is_stale(candidate_term: u64,
-                                             current_term: u64) -> bool {
+                                             current_term: u64) -> bool
+    returns candidate_term < current_term,
+{
     candidate_term < current_term
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_vote_is_idempotent(candidate_term: u64,
                                              current_term: u64,
                                              voted_for: u16,
-                                             candidate_id: u16) -> bool {
+                                             candidate_id: u16) -> bool
+    returns candidate_term == current_term && voted_for == candidate_id,
+{
     candidate_term == current_term && voted_for == candidate_id
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_candidate_log_is_at_least(candidate_term: i64,
                                                     current_term: i64,
                                                     candidate_index: u64,
-                                                    current_index: u64) -> bool {
+                                                    current_index: u64) -> bool
+    returns candidate_term > current_term || (candidate_term == current_term && candidate_index >= current_index),
+{
     candidate_term > current_term ||
         (candidate_term == current_term && candidate_index >= current_index)
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_election_last_log_uses_snapshot(last_log_index: u64,
-                                                          snapshot_index: u64) -> bool {
+                                                          snapshot_index: u64) -> bool
+    returns last_log_index == snapshot_index,
+{
     last_log_index == snapshot_index
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_snapshot_is_stale(last_included_index: u64,
-                                           local_progress_index: u64) -> bool {
+                                           local_progress_index: u64) -> bool
+    returns last_included_index <= local_progress_index,
+{
     last_included_index <= local_progress_index
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_snapshot_boundary_matches(has_entry: bool,
                                                     local_term: u64,
-                                                    snapshot_term: u64) -> bool {
+                                                    snapshot_term: u64) -> bool
+    returns has_entry && local_term == snapshot_term,
+{
     has_entry && local_term == snapshot_term
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_snapshot_term_is_valid(snapshot_term: u64,
-                                                 leader_term: u64) -> bool {
+                                                 leader_term: u64) -> bool
+    returns snapshot_term <= leader_term,
+{
     snapshot_term <= leader_term
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_snapshot_recovery_retains_suffix(
     has_suffix: bool,
     has_boundary: bool,
     boundary_matches: bool,
-    live_snapshot_proves_suffix: bool) -> bool {
+    live_snapshot_proves_suffix: bool) -> bool
+    returns has_suffix && ((has_boundary && boundary_matches) || (!has_boundary && live_snapshot_proves_suffix)),
+{
     has_suffix &&
         ((has_boundary && boundary_matches) ||
          (!has_boundary && live_snapshot_proves_suffix))
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_snapshot_recovery_has_unproven_gap(
     has_suffix: bool,
     has_boundary: bool,
-    live_snapshot_proves_suffix: bool) -> bool {
+    live_snapshot_proves_suffix: bool) -> bool
+    returns has_suffix && !has_boundary && !live_snapshot_proves_suffix,
+{
     has_suffix && !has_boundary && !live_snapshot_proves_suffix
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_snapshot_term_uses_boundary(snapshot_index: u64,
-                                                      existing_snapshot_index: u64) -> bool {
+                                                      existing_snapshot_index: u64) -> bool
+    returns snapshot_index == existing_snapshot_index,
+{
     snapshot_index == existing_snapshot_index
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_election_result_is_current(election_in_progress: bool,
                                                      election_term: u64,
                                                      result_term: u64,
-                                                     current_term: u64) -> bool {
+                                                     current_term: u64) -> bool
+    returns election_in_progress && election_term == result_term && result_term == current_term,
+{
     election_in_progress &&
         election_term == result_term &&
         result_term == current_term
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_election_completion_action(
     election_in_progress: bool,
     election_term: u64,
     campaign_term: u64,
     current_term: u64,
     observed_response_term: i64,
-) -> i32 {
+) -> i32
+    returns if raft_server_signed_term_is_newer(observed_response_term, current_term) { ElectionCompletionAction::ADVANCE_HIGHER_TERM as i32 } else if raft_server_election_result_is_current( election_in_progress, election_term, campaign_term, current_term, ) { ElectionCompletionAction::APPLY_CURRENT as i32 } else { ElectionCompletionAction::IGNORE_STALE as i32 },
+{
     if raft_server_signed_term_is_newer(observed_response_term, current_term) {
         ElectionCompletionAction::ADVANCE_HIGHER_TERM as i32
     } else if raft_server_election_result_is_current(
@@ -143,46 +200,70 @@ pub const fn raft_server_election_completion_action(
     }
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_apply_epoch_is_current(entry_epoch: u64,
-                                                 current_epoch: u64) -> bool {
+                                                 current_epoch: u64) -> bool
+    returns entry_epoch == current_epoch,
+{
     entry_epoch == current_epoch
 }
 
-pub const fn raft_server_log_index_has_successor(index: u64) -> bool {
+#[verifier::allow_in_spec]
+pub const fn raft_server_log_index_has_successor(index: u64) -> bool
+    returns index != u64::MAX,
+{
     index != u64::MAX
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_append_term_is_acceptable(leader_term: u64,
-                                                    follower_term: u64) -> bool {
+                                                    follower_term: u64) -> bool
+    returns leader_term >= follower_term,
+{
     leader_term >= follower_term
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_append_is_acceptable(term_ok: bool,
                                                index_ok: bool,
-                                               previous_term_ok: bool) -> bool {
+                                               previous_term_ok: bool) -> bool
+    returns term_ok && index_ok && previous_term_ok,
+{
     term_ok && index_ok && previous_term_ok
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_append_entry_count_fits(previous_index: u64,
-                                                  entry_count: u64) -> bool {
+                                                  entry_count: u64) -> bool
+    returns entry_count <= u64::MAX - previous_index,
+{
     entry_count <= u64::MAX - previous_index
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_append_batch_count_is_valid(previous_index: u64,
-                                                      entry_count: u64) -> bool {
+                                                      entry_count: u64) -> bool
+    returns entry_count != 0 && raft_server_append_entry_count_fits(previous_index, entry_count),
+{
     entry_count != 0 &&
         raft_server_append_entry_count_fits(previous_index, entry_count)
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_append_entry_conflicts(local_entry_exists: bool,
                                                  local_term: u64,
-                                                 incoming_term: u64) -> bool {
+                                                 incoming_term: u64) -> bool
+    returns !local_entry_exists || local_term != incoming_term,
+{
     !local_entry_exists || local_term != incoming_term
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_append_result_last_index(old_last_index: u64,
                                                    accepted_through: u64,
-                                                   found_conflict: bool) -> u64 {
+                                                   found_conflict: bool) -> u64
+    returns if found_conflict || accepted_through > old_last_index { accepted_through } else { old_last_index },
+{
     if found_conflict || accepted_through > old_last_index {
         accepted_through
     } else {
@@ -190,14 +271,21 @@ pub const fn raft_server_append_result_last_index(old_last_index: u64,
     }
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_append_sent_end(previous_index: u64,
-                                         entry_count: u64) -> u64 {
+                                         entry_count: u64) -> u64
+    requires previous_index + entry_count <= u64::MAX,
+    returns (previous_index + entry_count) as u64,
+{
     previous_index + entry_count
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_append_acknowledged_through(reported_index: u64,
                                                      sent_end_index: u64,
-                                                     leader_last_index: u64) -> u64 {
+                                                     leader_last_index: u64) -> u64
+    returns ({ let r = if reported_index < sent_end_index { reported_index } else { sent_end_index }; if r < leader_last_index { r } else { leader_last_index } }),
+{
     let reported_through_send = if reported_index < sent_end_index {
         reported_index
     } else {
@@ -210,8 +298,11 @@ pub const fn raft_server_append_acknowledged_through(reported_index: u64,
     }
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_commit_index_clamp(candidate_index: u64,
-                                             last_log_index: u64) -> u64 {
+                                             last_log_index: u64) -> u64
+    returns if candidate_index > last_log_index { last_log_index } else { candidate_index },
+{
     if candidate_index > last_log_index {
         last_log_index
     } else {
@@ -232,9 +323,12 @@ pub const fn raft_server_commit_index_clamp(candidate_index: u64,
 //
 // The caller still applies the current-term rule, which needs a log lookup
 // this function cannot do.
+#[verifier::allow_in_spec]
 pub const fn raft_server_commit_index_candidate(selected_match: u64,
                                                  nservers: usize,
-                                                 last_log_index: u64) -> u64 {
+                                                 last_log_index: u64) -> u64
+    returns ({ let c = if nservers > 1 { selected_match } else { last_log_index }; if c > last_log_index { last_log_index } else { c } }),
+{
     let mut candidate = last_log_index;
     if nservers > 1 {
         candidate = selected_match;
@@ -246,10 +340,14 @@ pub const fn raft_server_commit_index_candidate(selected_match: u64,
     }
 }
 
-pub const fn raft_server_read_index_round_can_advance(round: u64) -> bool {
+#[verifier::allow_in_spec]
+pub const fn raft_server_read_index_round_can_advance(round: u64) -> bool
+    returns round != u64::MAX,
+{
     round != u64::MAX
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_read_index_reply_confirms_authority(
     response_available: bool,
     is_leader: bool,
@@ -258,7 +356,9 @@ pub const fn raft_server_read_index_reply_confirms_authority(
     current_term: u64,
     sent_round: u64,
     active_round: u64,
-) -> bool {
+) -> bool
+    returns response_available && is_leader && sent_term == current_term && response_term == sent_term && sent_round == active_round,
+{
     response_available &&
         is_leader &&
         sent_term == current_term &&
@@ -266,21 +366,30 @@ pub const fn raft_server_read_index_reply_confirms_authority(
         sent_round == active_round
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_log_entry_is_current_term(entry_term: i64,
-                                                    current_term: u64) -> bool {
+                                                    current_term: u64) -> bool
+    returns entry_term as u64 == current_term,
+{
     entry_term as u64 == current_term
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_snapshot_is_due(snapshot_index: u64,
                                           execute_index: u64,
-                                          threshold: u64) -> bool {
+                                          threshold: u64) -> bool
+    returns snapshot_index < execute_index && (execute_index - snapshot_index) > threshold,
+{
     snapshot_index < execute_index &&
         (execute_index - snapshot_index) > threshold
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_compaction_safe_index(candidate_index: u64,
                                                 commit_index: u64,
-                                                snapshot_index: u64) -> u64 {
+                                                snapshot_index: u64) -> u64
+    returns ({ let c = if candidate_index < commit_index { candidate_index } else { commit_index }; if c < snapshot_index { c } else { snapshot_index } }),
+{
     let committed = if candidate_index < commit_index {
         candidate_index
     } else {
@@ -293,9 +402,12 @@ pub const fn raft_server_compaction_safe_index(candidate_index: u64,
     }
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_snapshot_progress_clamp(candidate_index: u64,
                                                   commit_index: u64,
-                                                  upper_bound: u64) -> u64 {
+                                                  upper_bound: u64) -> u64
+    returns ({ let f = if candidate_index < commit_index { commit_index } else { candidate_index }; if f > upper_bound { upper_bound } else { f } }),
+{
     let committed_floor = if candidate_index < commit_index {
         commit_index
     } else {
@@ -308,12 +420,18 @@ pub const fn raft_server_snapshot_progress_clamp(candidate_index: u64,
     }
 }
 
-pub const fn raft_server_follower_next_index(last_log_index: u64) -> u64 {
+#[verifier::allow_in_spec]
+pub const fn raft_server_follower_next_index(last_log_index: u64) -> u64
+    returns last_log_index.wrapping_add(1),
+{
     last_log_index.wrapping_add(1)
 }
 
 
-pub const fn raft_server_retention_window_normalize(window: u64) -> u64 {
+#[verifier::allow_in_spec]
+pub const fn raft_server_retention_window_normalize(window: u64) -> u64
+    returns if window > 0 { window } else { 1 },
+{
     if window > 0 {
         window
     } else {
@@ -328,20 +446,29 @@ pub const fn raft_server_retention_window_normalize(window: u64) -> u64 {
 // emitter output for it, apply the change on its own with the predicate
 // reviewed, then remove this allow.
 #[allow(clippy::implicit_saturating_sub)]
+#[verifier::allow_in_spec]
 pub const fn raft_server_observed_higher_term(observed_term: u64,
-                                               current_term: u64) -> bool {
+                                               current_term: u64) -> bool
+    returns observed_term > current_term,
+{
     observed_term > current_term
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_signed_term_is_newer(observed_term: i64,
-                                               current_term: u64) -> bool {
+                                               current_term: u64) -> bool
+    returns observed_term >= 0 && observed_term as u64 > current_term,
+{
     observed_term >= 0 && observed_term as u64 > current_term
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_leader_hint_after_transition(is_leader: bool,
                                                        has_known_leader: bool,
                                                        self_id: u16,
-                                                       known_leader_id: u16) -> u16 {
+                                                       known_leader_id: u16) -> u16
+    returns if is_leader { self_id } else if has_known_leader { known_leader_id } else { RAFT_SERVER_INVALID_SITE_ID },
+{
     if is_leader {
         self_id
     } else if has_known_leader {
@@ -351,19 +478,44 @@ pub const fn raft_server_leader_hint_after_transition(is_leader: bool,
     }
 }
 
+#[verifier::allow_in_spec]
 pub const fn raft_server_leader_rpc_sender_is_authoritative(
     leader_has_higher_term: bool,
     local_is_leader: bool,
     sender_is_self: bool,
     has_known_leader: bool,
     known_leader_matches_sender: bool,
-) -> bool {
+) -> bool
+    returns (sender_is_self && local_is_leader && !leader_has_higher_term) || (!sender_is_self && (leader_has_higher_term || (!local_is_leader && (!has_known_leader || known_leader_matches_sender)))),
+{
     (sender_is_self && local_is_leader && !leader_has_higher_term) ||
         (!sender_is_self &&
          (leader_has_higher_term ||
           (!local_is_leader &&
            (!has_known_leader || known_leader_matches_sender))))
 }
+
+// [move, M1] The two quorum helpers the authority ledger uses, copied from
+// src/deptran/raft/src/quorum_hpp.rs (whose inline-DSL block in quorum.hpp
+// stays the source of the C++ copies). The core depends on no shell crate.
+#[verifier::allow_in_spec]
+pub const fn raft_quorum_majority_count(total: usize) -> usize
+    returns ((total / 2) + 1) as usize,
+{
+    (total / 2) + 1
+}
+
+#[verifier::allow_in_spec]
+pub const fn raft_quorum_count_reached(count: usize, quorum: usize) -> bool
+    returns count >= quorum,
+{
+    count >= quorum
+}
+
+} // verus!
+
+// Compile-time checks of the helpers above (outside verus!: they are
+// rustc's, not Verus's).
 // The predicates' tests, one `const` assert each, in the order the C++
 // static_asserts had them. The emitter lowers each to a static_assert, so
 // the transpiled build checks them exactly as before; rustc checks them at
@@ -477,14 +629,3 @@ const _: () = assert!(!raft_server_signed_term_is_newer(-1, 0));
 const _: () = assert!(!raft_server_signed_term_is_newer(0, 0));
 const _: () = assert!(raft_server_signed_term_is_newer(1, 0));
 const _: () = assert!(raft_server_log_entry_is_current_term(-1, u64::MAX));
-
-// [move, M1] The two quorum helpers the authority ledger uses, copied from
-// src/deptran/raft/src/quorum_hpp.rs (whose inline-DSL block in quorum.hpp
-// stays the source of the C++ copies). The core depends on no shell crate.
-pub const fn raft_quorum_majority_count(total: usize) -> usize {
-    (total / 2) + 1
-}
-
-pub const fn raft_quorum_count_reached(count: usize, quorum: usize) -> bool {
-    count >= quorum
-}

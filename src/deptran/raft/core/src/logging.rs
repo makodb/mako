@@ -4,6 +4,10 @@
 // used to log). A record at a level above the output's threshold is dropped
 // at the push, so a disabled debug line costs one comparison.
 
+use vstd::prelude::*;
+
+verus! {
+
 // srpc's levels (src/srpc/base/logging.rs), as the shell's logger numbers
 // them: FATAL 0, ERROR 1, WARN 2, INFO 3, DEBUG 4.
 pub const RAFT_LOG_ERROR: i32 = 1;
@@ -85,3 +89,5 @@ pub struct CoreLog {
     pub args: [LogArg; CORE_LOG_MAX_ARGS],
     pub nargs: usize,
 }
+
+} // verus!
