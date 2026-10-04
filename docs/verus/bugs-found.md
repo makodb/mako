@@ -33,7 +33,7 @@ it), **metric** (wrong number in a measurement, no protocol effect).
 | B14 | race | `heartbeat_interval_us_` is a plain field the lab's case 67 writes while the heartbeat and election loops read it | reproduced (Phase 4 TSan lab build, cpp lane) | recorded only (user, 2026-10-04): lab-only, outside the core |
 | B15 | race (latent) | The heartbeat driver reset the core's round state with no `mtx_` (`reset_round_state` at the loop's start and before its epilogue), taking `&mut` of the whole `RaftCore` while other threads may hold it under the lock | read in code (Phase 6) | fixed in Phase 6: both resets are `step(ResetRoundState)` under `mtx_` (plan §3.1 rule 1) |
 | B16 | liveness (latent) | An entry whose command has no value (an empty `Command`, which `Start` accepts) is never replicated: the leader's payload selection reads it as a missing entry and skips every follower behind it, every round; a follower's conflict scan likewise reads such a slot as absent | read in code (Phase 8) | recorded; no caller proposes an empty command today; the proof takes "a proposal has a value" as a host-contract premise |
-| B17 | safety (race) | The round end (PHASE 3) advances the commit index without checking that this server still leads: `heartbeat_round_end_body` reads `IsLeader()` before taking `mtx_`, and `heartbeat_phase3_locked` calls `raft_commit_advance` whatever `is_leader` is. A server that lost leadership in that window, and meanwhile took a newer leader's entries over its tail, counts its old term's match indices against an entry of the new term | read in code (Phase 8) | open: the fix (advance only while leading) is a behaviour change for the user to decide; the proof takes "the round end runs while leading" as a premise |
+| B17 | safety (race) | The round end (PHASE 3) advances the commit index without checking that this server still leads: `heartbeat_round_end_body` reads `IsLeader()` before taking `mtx_`, and `heartbeat_phase3_locked` calls `raft_commit_advance` whatever `is_leader` is. A server that lost leadership in that window, and meanwhile took a newer leader's entries over its tail, counts its old term's match indices against an entry of the new term | reproduced: `core/tests/b17_round_end.rs` (Phase 8) | open: the fix (advance only while leading) is a behaviour change for the user to decide; the proof takes "the round end runs while leading" as a premise |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
 
@@ -428,23 +428,43 @@ while `current_term_` is the new term.
 
 **Scenario.** Five servers, A to E; entries 1..8 (term 2) everywhere.
 A, leader at term 2, appended 9 and 10 (term 2) and replicated neither. D
-won term 4 with E's and B's votes, appended 9 (term 4), reached only E, and
-went quiet. A won term 5 with B's and C's votes (its log 1..10 at term 2 is
-at least theirs; D and E refuse, their last term being 4), replicated 9 and
-10 to B and C, and so holds B = C = 10 in its peer table; entry 10 is of
-term 2, so A rightly commits nothing (its own no-op at 11, term 5, is not
-yet acknowledged). D returns and wins term 7: its last term, 4, beats B's
-and C's, 2. It appends its no-op at 10 (term 7). A's heartbeat driver
-passes the unlocked `IsLeader()` check and blocks on `mtx_` while the RPC
-handler takes D's appends: the first steps A down to term 7; after D backs
-off, a later one replaces A's 9 and 10 with D's (terms 4 and 7). When the
-driver gets the lock, `RoundEnd` runs with `is_leader = false`: the
-majority match is 10 (A, B, C), A's entry 10 is now of term 7 =
-`current_term_`, and A commits 10, which only D and A hold. If D then fails,
-E can win term 8 (B and C vote for it; its last term 4 beats their 2),
-append its no-op at 10, and overwrite A's entry 10, which A has already
-handed to its state machine. Had D taken a client command at 10 instead of
-its no-op, A would have applied a command the cluster then discards.
+won term 4 with E's and B's votes (their logs equal to its own), appended
+its no-op at 9 (term 4), reached only E, and went quiet. A won term 5 with
+B's and C's votes (its log 1..10 at term 2 is at least theirs; D and E
+refuse, their last term being 4), appended its no-op at 11 (term 5), and
+replicated 9 and 10 to B and C, not yet to D or E (a batch stops before the
+no-op, which is not a `TpcCommitCommand`), so its peer table holds B = C =
+10, D = E = 0. Entry 10 is of term 2, so A rightly commits nothing. D returns and wins term 7: its last
+term, 4, beats B's and C's, 2. It appends its no-op at 10 (term 7). A's
+heartbeat driver passes the unlocked `IsLeader()` check and blocks on
+`mtx_` while the RPC handler takes D's messages: D's RequestVote steps A down
+to term 7; after D backs off, an append at prev 8 replaces A's 9 to 11 with
+D's 9 (term 4) and 10 (term 7). When the driver gets the lock, `RoundEnd`
+runs with `is_leader = false`: the majority match is 10 (A, B, C, from term
+5), A's entry 10 is now of term 7 = `current_term_`, and A sets its commit
+index to 10 and hands entry 10 to its state machine. Only D and A hold it.
+
+**Consequence.** If D then fails before its entry 10 reaches anyone else, E can
+win term 8 (B and C vote for it: its last term, 4, beats their 2) and append
+its own no-op at 10. In the
+scenario above the entry A applied is D's no-op, so A's state machine is
+unharmed, but A's commit index is past the cluster's, and A now refuses
+E's entry at 10 for ever as a conflict at or below its commit index (the
+`refused_committed_conflict` check): A can no longer rejoin. The same works
+one index further with a client command: had A's term-2 entries reached 11
+and B and C acknowledged 11, D would put its no-op at 10 and a client's
+command at 11, and A would commit and apply that command, which the
+cluster then discards. That is a divergence of A's state machine.
+
+**Reproduction.** `core/tests/b17_round_end.rs` drives server A's core
+through the scenario's inputs in the race's order (its round's replies, D's
+RequestVote and append, then the round end); at the core no timing is
+involved, since it takes each input as a whole call. Every intermediate
+state is as described, and the round end then moves A's commit index from 8
+to 10. The test asserts the correct outcome and is ignored, so the suite
+stays green: `cargo test -p raft-core --test b17_round_end -- --ignored`
+fails today. With the fix below applied to a working copy (not committed),
+it passes, and so do the core's other tests.
 
 **Reachability.** Needs the driver to stay blocked on `mtx_` across several
 of D's round trips (the backoff), so it is unlikely; nothing excludes it.
@@ -454,8 +474,14 @@ when not leading) and the reply path counts a reply only while leading.
 **How found.** Phase 8, coupling the round end to `LAdvanceCommitIndex`,
 whose guard is `role is Leader`.
 
-**Fate.** Open. The fix is to advance only while leading (`is_leader` in
-`heartbeat_phase3_locked`, which the shell reads under the same lock), a
-behaviour change outside A.2 for the user to decide (plan 0.7 point 3).
-Until then the proof's round-end contract takes "the round end runs while
-leading" as a premise, which the race above violates.
+**Fix (proposed, not applied).** In `heartbeat_phase3_locked`, advance only
+while leading: call `raft_commit_advance` when `core.is_leader_` holds (the
+shell's `is_leader` is the same value, read under the same lock), and
+otherwise return no advance. One branch; the read-index settlement after it
+is unchanged. With it, the round end's proof premise becomes a check, and
+the certificate no longer depends on the race not happening.
+
+**Fate.** Open: the fix is a behaviour change outside A.2, for the user to
+decide (plan 0.7 point 3). Until then the proof's round-end contract takes
+"the round end runs while leading" as a premise, which the race above
+violates.
