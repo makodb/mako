@@ -2,7 +2,8 @@
 # core_check.sh -- what a raft-core commit must pass before it is made:
 # clippy -D warnings over the Raft workspace with and without the lab
 # feature (the build's source gate runs the former), the ledger lint (every
-# core line ghost, moved or labelled, plan A.3), and verify_core.sh.
+# core line ghost, moved or labelled, plan A.3), the correspondence doc's
+# freshness (the build checks it), and verify_core.sh.
 # Exits non-zero on the first failure, so `core_check.sh && git commit`
 # cannot commit a crate that plain cargo or Verus rejects.
 set -uo pipefail
@@ -19,4 +20,8 @@ if ! out=$(python3 "$REPO_ROOT/scripts/verus/ledger_lint.py" 2>&1); then
   echo "core_check: ledger lint FAILED"; echo "$out" | tail -40; exit 1
 fi
 echo "core_check: $(echo "$out" | tail -1)"
+# the build fails on a stale correspondence doc (line counts of the shell)
+if ! python3 "$REPO_ROOT/scripts/gen_correspondence.py" --check; then
+  echo "core_check: run scripts/gen_correspondence.py"; exit 1
+fi
 "$REPO_ROOT/scripts/verus/verify_core.sh" "$@" || exit 1

@@ -12,8 +12,8 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 545 | `raft/src/server_h.rs` | 4312 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1751 | `raft/src/server_cc.rs` | 707 |  |
+| `raft/server.h` | 545 | `raft/src/server_h.rs` | 4360 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1751 | `raft/src/server_cc.rs` | 709 |  |
 | `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 177 | the Rust serves; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
 | `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1052 | the Rust sends; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
 | `communicator.h` | 567 | `raft/src/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
