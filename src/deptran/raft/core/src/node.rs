@@ -97,6 +97,11 @@ pub struct RaftCore<C> {
     // (enter_gates): snapshots off and a whole log, failover on, and a
     // configuration that contains this server. Set once, never cleared.
     pub gated_: bool,
+    // [move, M1] raft_on_append_entries' decode scratch, from
+    // RaftServerBase: one term per encoded entry of the append being
+    // handled, valid only inside that call. Kept across calls so a decode
+    // never allocates.
+    pub decoded_terms_: Vec<i64>,
 }
 
 impl<C> RaftCore<C> {
@@ -190,6 +195,7 @@ impl<C: Clone> RaftCore<C> {
             config_members_: Vec::new(),  // [move, M1]
             peer_sites_: Vec::new(),  // [move, M1]
             gated_: false,  // [fix, F5]
+            decoded_terms_: Vec::new(),  // [move, M1]
         }
     }
 
@@ -296,6 +302,7 @@ impl<C: Clone> RaftCore<C> {
             final(self).heartbeat_round_ == old(self).heartbeat_round_,
             final(self).authority_rounds_ == old(self).authority_rounds_,
             final(self).pending_rpcs_ == old(self).pending_rpcs_,
+            final(self).decoded_terms_ == old(self).decoded_terms_,
     {
         self.peer_sites_.clear();
         let mut self_is_a_member: bool = false;
@@ -865,6 +872,7 @@ impl<C: Clone> RaftCore<C> {
             final(self).site_id_ == old(self).site_id_,
             final(self).round_ == old(self).round_,
             final(self).pending_rpcs_ == old(self).pending_rpcs_,
+            final(self).decoded_terms_ == old(self).decoded_terms_,
             !is_leader ==> final(self).authority_rounds_ == old(self).authority_rounds_,
             !is_leader ==> final(self).heartbeat_round_ == old(self).heartbeat_round_,
     {
@@ -917,6 +925,7 @@ impl<C: Clone> RaftCore<C> {
                     self.site_id_ == old(self).site_id_,
                     self.round_ == old(self).round_,
                     self.pending_rpcs_ == old(self).pending_rpcs_,
+                    self.decoded_terms_ == old(self).decoded_terms_,
                     self.is_leader_ == old(self).is_leader_,
                     self.heartbeat_round_ == 0,
                 decreases peers - ord,
@@ -1011,6 +1020,7 @@ impl<C: Clone> RaftCore<C> {
             final(self).site_id_ == old(self).site_id_,
             final(self).round_ == old(self).round_,
             final(self).pending_rpcs_ == old(self).pending_rpcs_,
+            final(self).decoded_terms_ == old(self).decoded_terms_,
             !final(self).election_in_progress_,
     {
         out.log(RAFT_LOG_INFO,
@@ -1309,7 +1319,6 @@ pub trait InboundBatch<C> {
 pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     core: &mut RaftCore<C>,
     wire: &W,  // [move, M5] [move, M11]
-    decoded_terms: &mut Vec<i64>,  // [move, M5]
     stopped: bool,
     sender_is_current_voter: bool,
     has_cmd: bool,
@@ -1384,8 +1393,8 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     // decode_terms fills decoded_terms, one term per encoded entry, so its
     // length IS the decoded count.
     let append_payload_valid = wire.decode_terms(leader_prev_log_index,
-                                                 decoded_terms);
-    let decoded_count: u64 = decoded_terms.len() as u64;
+                                                 &mut core.decoded_terms_);  // [move, M1]
+    let decoded_count: u64 = core.decoded_terms_.len() as u64;
 
     let term_ok =
         raft_server_append_term_is_acceptable(leader_current_term, core.current_term_);
@@ -1494,7 +1503,7 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
             leader_prev_log_index as int + i <= old_last_log_index,
         invariant
             core.inv(),
-            decoded_count == decoded_terms@.len(),
+            decoded_count == core.decoded_terms_@.len(),
             leader_prev_log_index as int + decoded_count < raft_index_limit(),
             old_last_log_index == core.raft_log_.spec_last_index(),
             i <= decoded_count,
@@ -1527,7 +1536,7 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         // the loop condition is i < decoded_count, and nothing in the body
         // touches the vector. The kernel this replaces needed a verify only
         // because i arrived across the language boundary.
-        let incoming_term: i64 = decoded_terms[i as usize];
+        let incoming_term: i64 = core.decoded_terms_[i as usize];  // [move, M1]
         if raft_server_append_entry_conflicts(local_exists, local_term as u64,
                                               incoming_term as u64) {
             have_first_write = true;
@@ -1574,7 +1583,6 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         while k < decoded_count
             invariant
                 core.inv(),
-                decoded_count == decoded_terms@.len(),
                 leader_prev_log_index as int + decoded_count < raft_index_limit(),
                 leader_prev_log_index < first_write_index,
                 first_write_index as int <= leader_prev_log_index as int + decoded_count,

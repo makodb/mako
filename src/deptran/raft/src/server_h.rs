@@ -12,6 +12,10 @@ pub type RaftLog = raft_core::RaftLog<rusty::RaftCommand>;
 pub type RaftCore = raft_core::RaftCore<rusty::RaftCommand>;
 pub type AppendSend = raft_core::AppendSend<rusty::RaftCommand>;
 pub type HeartbeatTick = raft_core::HeartbeatTick<rusty::RaftCommand>;
+// [move, M5] The core's one entry point, over the shell's command and wire
+// batch (RaftServerBase::step).
+pub type Event<'a> = raft_core::Event<'a, rusty::RaftCommand, WireBatch>;
+pub type Reply = raft_core::Reply<rusty::RaftCommand>;
 // [move, M1] for the authority ledger, which moved here from server_cc.rs
 // A delayed vote quorum result is interpreted before its YES/NO/TIMEOUT
 // payload. Higher-term evidence is globally authoritative; every ordinary
@@ -861,9 +865,6 @@ pub struct RaftServerBase {
     pub mtx_: rusty::RaftCheckedMutex,
     // The consensus cluster mtx_ guards, as one Rust-owned value.
     pub core: RaftCore,
-    // Scratch for raft_ae_decode_payload; valid only inside one
-    // OnAppendEntries call, which is entirely under mtx_.
-    pub decoded_terms_: rusty::Vec<i64>,
     // RPC futures can outlive the server during shutdown. Destruction nulls
     // this shared gate after waiting for any callback already using it.
     pub async_callback_lifetime_: rusty::RaftAsyncCallbackLifetimePtr,
@@ -998,7 +999,6 @@ impl RaftServerBase {
             partition_id_: 0,
             mtx_: Default::default(),
             core: RaftCore::new(),
-            decoded_terms_: rusty::Vec::new(),
             // Null here; RaftServer's constructor allocates it, because it
             // also has to store `this` into the gate.
             async_callback_lifetime_: Default::default(),
@@ -1281,7 +1281,8 @@ impl RaftServerBase {
         let published: u64 = self.GetAppliedIndex();
         // [move, M3] the decision is the core's; the mirror is the shell's
         let mut out: CoreOutput = core_output();
-        let recorded: bool = self.core.on_applied(index, published, &mut out);
+        let recorded: bool =
+            self.step(Event::Applied { index, published }, &mut out).into_applied();
         print_core_logs(&out);  // [move, M7]
         if recorded {
             self.appliedIndexForWait_
@@ -1383,7 +1384,15 @@ impl RaftServerBase {
     // @unsafe - CALLER MUST HOLD mtx_. [move, M1] The body is
     // RaftCore::rebuild_peer_tables.
     pub fn RebuildPeerTables(&mut self, next_index: u64) {
-        self.core.rebuild_peer_tables(next_index);
+        let mut out: CoreOutput = core_output();
+        self.step(Event::RebuildPeers { next_index }, &mut out).into_done();
+    }
+
+    // [move, M5] The one way into the core (plan §3.1 rule 1): an event and
+    // its reply, under mtx_, which the caller holds (Setup's identity and
+    // membership come before anything else can reach the server).
+    pub fn step(&mut self, ev: Event<'_>, out: &mut CoreOutput) -> Reply {
+        self.core.step(ev, out)
     }
 
     // CALLER MUST HOLD mtx_ -- the one caller repo-wide is resetTimerLocked,
@@ -1427,7 +1436,10 @@ impl RaftServerBase {
         // body made them, then the core records them.
         let now: u64 = unsafe { raft_time_now_us() };
         let timeout: u64 = self.GetElectionTimeout();
-        let prev_time: u64 = self.core.reset_election_timer(now, timeout);
+        let mut out: CoreOutput = core_output();
+        let prev_time: u64 = self.step(
+            Event::ResetElectionTimer { now, timeout_us: timeout }, &mut out)
+            .into_timer_reset();
         // Log only the resets that matter (elections, votes), never the
         // routine heartbeat ones.
         if reason == "granted vote" || reason == "start election timer" {
@@ -2108,7 +2120,8 @@ impl RaftServerBase {
                 raft_server_leader_hint_after_transition(
                     false, false, self.site_id_, site_id);
             let stopped: bool = self.stopped_now();
-            self.core.step_down(stopped, self.failover_, out);  // [move, M3]
+            let failover: bool = self.failover_;
+            self.step(Event::StepDown { stopped, failover }, out).into_done();  // [move, M3]
             self.core.req_voting_ = false;
             self.core.election_in_progress_ = false;
             return;
@@ -2262,10 +2275,11 @@ impl RaftServerBase {
         // until OnInstallSnapshot has released mtx_ ([fix, F6]).
         let mut out: CoreOutput = core_output();
         let stopped: bool = self.stopped_now();
+        let failover: bool = self.failover_;
         if self.core.is_leader_ {
-            self.core.step_down(stopped, self.failover_, &mut out);
+            self.step(Event::StepDown { stopped, failover }, &mut out).into_done();
         } else {
-            self.core.set_is_leader(false, stopped, self.failover_, &mut out);
+            self.step(Event::SetFollower { stopped, failover }, &mut out).into_done();
         }
         self.run_locked_actions(&out);
         self.install_out_ = out;
@@ -3110,8 +3124,10 @@ impl RaftServerBase {
             let stopped: bool = self.stopped_now();
             // [move, M4] the clock read, as the timer check made it
             let now: u64 = unsafe { raft_time_now_us() };
-            let decided: CampaignStart = self.core.start_election(
-                timer_guarded, expected_generation, now, stopped, &mut out1);
+            let decided: CampaignStart = self.step(
+                Event::StartElection { timer_guarded, expected_generation, now,
+                                       stopped },
+                &mut out1).into_campaign();
             self.run_locked_actions(&out1);
             decided
         };
@@ -3193,10 +3209,14 @@ impl RaftServerBase {
             let looping: bool =
                 self.looping_.load(rusty::sync::atomic::Ordering::Acquire);
             let election_debug: bool = unsafe { raft_election_debug_enabled() };
-            let decided: bool = self.core.election_settle(
-                term, loc_id, &voters, &granted, &reply_terms, n_total,
-                timed_out, stopped, looping, self.failover_, election_debug,
-                &mut out);
+            let failover: bool = self.failover_;
+            let decided: bool = self.step(
+                Event::SettleElection {
+                    term, loc_id, voters: &voters, granted: &granted,
+                    reply_terms: &reply_terms, n_total, timed_out, stopped,
+                    looping, failover, election_debug,
+                },
+                &mut out).into_settled();
             self.run_locked_actions(&out);
             decided
         };
@@ -3344,8 +3364,10 @@ impl RaftServerBase {
                               &mut kind as *mut i32,
                               &mut payload_bytes as *mut u64);
         }
-        self.core.append_local(cmd, has_value, is_tpc_commit, kind,
-                               payload_bytes)
+        let mut out: CoreOutput = core_output();
+        self.step(Event::Propose { cmd, has_value, is_tpc_commit, kind,
+                                   payload_bytes },
+                  &mut out).into_proposed()
     }
 
     // The new leader's no-op entry, so the term commits something without
@@ -3377,7 +3399,9 @@ impl RaftServerBase {
         let _lock = RaftLockGuard::new(&mut self.mtx_);
         // [fix, F5] The decision is the core's, which remembers a pass.
         let failover: bool = self.failover_;
-        self.core.enter_gates(snapshots_enabled, failover)
+        let mut out: CoreOutput = core_output();
+        self.step(Event::EnterGates { snapshots_enabled, failover }, &mut out)
+            .into_gates()
     }
 
     // config_members_ from the static config: the partition's sorted,
@@ -3395,7 +3419,8 @@ impl RaftServerBase {
         }
         // [move, M1] The core keeps the membership, and [fix, F5] builds its
         // peer table from it in the same call.
-        self.core.configure(&members);
+        let mut out: CoreOutput = core_output();
+        self.step(Event::Configure { members: &members }, &mut out).into_done();
         replicas
     }
 
@@ -3426,7 +3451,8 @@ impl RaftServerBase {
             // [move, M3] No lock: nothing else can see the server yet.
             let mut out: CoreOutput = core_output();
             let stopped: bool = self.stopped_now();
-            self.core.set_is_leader(false, stopped, self.failover_, &mut out);
+            let failover: bool = self.failover_;
+            self.step(Event::SetFollower { stopped, failover }, &mut out).into_done();
             self.run_locked_actions(&out);
             self.run_unlocked_actions(&out);
         }
@@ -3567,7 +3593,9 @@ impl TxLogServer for RaftServerBase {
         self.loc_id_ = loc_id;
         self.site_id_ = site_id;
         self.partition_id_ = partition_id;
-        self.core.set_identity(loc_id, site_id, partition_id);  // [move, M1]
+        let mut out: CoreOutput = core_output();
+        self.step(Event::SetIdentity { loc_id, site_id, partition_id }, &mut out)
+            .into_done();  // [move, M1]
         assert!(self.core.site_id_ == self.site_id_
             && self.core.partition_id_ == self.partition_id_
             && self.core.loc_id_ == self.loc_id_);  // [move, M10]
@@ -4066,10 +4094,15 @@ fn on_request_vote_locked(
     }
 
     let election_debug: bool = unsafe { raft_election_debug_enabled() };
-    raft_on_request_vote(&mut server.core, stopped, candidate_is_current_voter,
-                         lst_log_idx, lst_log_term, can_id, can_term,
-                         reply_term, vote_granted, server.failover_,
-                         election_debug, out);  // [move, M5]
+    let failover: bool = server.failover_;
+    let (term, granted) = server.step(
+        Event::RecvRequestVote {
+            stopped, candidate_is_current_voter, lst_log_idx, lst_log_term,
+            can_id, can_term, failover, election_debug,
+        },
+        out).into_vote();  // [move, M5]
+    *reply_term = term;
+    *vote_granted = granted;
 }
 
 // `cmd` is an opaque handle to the caller's janus::Command; it is passed
@@ -4129,12 +4162,19 @@ fn on_append_entries_locked(
     // path a remote peer drives.
     let wire: WireBatch = WireBatch::new(cmd, cmd_has_value,
                                          leader_next_log_term);  // [move, M5]
-    let report: AppendReport = raft_on_append_entries(
-        &mut server.core, &wire, &mut server.decoded_terms_, stopped,
-        sender_is_current_voter, cmd_has_value, leader_current_term,
-        leader_site_id, leader_prev_log_index, leader_prev_log_term,
-        leader_commit_index, follower_append_ok, follower_current_term,
-        follower_last_log_index, server.failover_, out);
+    let failover: bool = server.failover_;
+    let (report, ok, term, last_log_index) = server.step(
+        Event::RecvAppendEntries {
+            wire: &wire, stopped, sender_is_current_voter,
+            has_cmd: cmd_has_value, leader_current_term, leader_site_id,
+            leader_prev_log_index, leader_prev_log_term, leader_commit_index,
+            failover,
+        },
+        out).into_append();  // [move, M5]
+    let report: AppendReport = report;
+    *follower_append_ok = ok;
+    *follower_current_term = term;
+    *follower_last_log_index = last_log_index;
     server.run_locked_actions(out);  // [move, M3]
 
     if !stopped && !report.accepted() {

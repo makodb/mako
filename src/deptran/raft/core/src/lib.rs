@@ -23,6 +23,7 @@ pub mod pending;
 pub mod authority;
 pub mod output;
 pub mod election;
+pub mod event;
 
 pub use helpers::*;
 pub use logging::*;
@@ -34,3 +35,4 @@ pub use pending::*;
 pub use authority::*;
 pub use output::*;
 pub use election::*;
+pub use event::*;

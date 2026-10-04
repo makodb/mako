@@ -9,9 +9,8 @@ fn IsPreferredLeaderConfigured(preferred_leader_site_id: u16) -> bool {
 
 // [move, M1] The heartbeat round's core calls and their types live in
 // raft-core (Phase 6).
-use raft_core::{heartbeat_abandon_round, heartbeat_on_reply, heartbeat_round_end,
-                heartbeat_tick, AppendPayload, ReplyResult, SnapshotSend};
-use crate::server_h::{core_output, AppendSend, HeartbeatTick};
+use raft_core::{AppendPayload, ReplyResult, SnapshotSend};
+use crate::server_h::{core_output, AppendSend, Event, HeartbeatTick};
 use crate::server_h::CoreOutput;  // [move, M3]
 use crate::server_h::AppendResponses;  // [move, M5]
 // [move, M1] the heartbeat round's state, moved into server_h.rs with RaftCore
@@ -94,9 +93,10 @@ pub fn heartbeat_tick_body(server: &mut RaftServerBase) -> HeartbeatTick {
         let batching: bool = unsafe { raft_batch_optimization_enabled() };
         let max_batch_entries: u64 = unsafe { raft_append_entries_batch_max() };
         let max_batch_bytes: u64 = unsafe { raft_append_entries_batch_max_bytes() };
-        let decided: HeartbeatTick = heartbeat_tick(
-            &mut server.core, is_leader, snapshot_configured, batching,
-            max_batch_entries, max_batch_bytes, &mut out);
+        let decided: HeartbeatTick = server.step(
+            Event::TickHeartbeat { is_leader, snapshot_configured, batching,
+                                   max_batch_entries, max_batch_bytes },
+            &mut out).into_tick();
         server.run_locked_actions(&out);
         // The InstallSnapshot kernel keeps its place under the guard. Its
         // completion callback takes the SAME mutex, which is why PHASE 1
@@ -246,10 +246,13 @@ pub fn heartbeat_collect_body(server: &mut RaftServerBase, round_id: u64,
                 let is_leader: bool = server.IsLeaderLocked();
                 let stopped: bool = server.stopped_now();
                 let failover: bool = server.failover_;
-                let decided: ReplyResult = heartbeat_on_reply(
-                    &mut server.core, pending_ord, resp.status_, resp.term_,
-                    resp.last_log_index_, is_leader, stopped,
-                    failover, &mut out);
+                let decided: ReplyResult = server.step(
+                    Event::RecvAppendReply {
+                        ord: pending_ord, status: resp.status_, term: resp.term_,
+                        last_log_index: resp.last_log_index_, is_leader, stopped,
+                        failover,
+                    },
+                    &mut out).into_append_reply();
                 server.run_locked_actions(&out);
                 decided
             };
@@ -288,7 +291,8 @@ pub fn heartbeat_collect_body(server: &mut RaftServerBase, round_id: u64,
     if stop_response_processing {
         {
             let _lock = RaftLockGuard::new(&mut server.mtx_);
-            heartbeat_abandon_round(&mut server.core);
+            let mut out: CoreOutput = core_output();
+            server.step(Event::AbandonRound, &mut out).into_done();
         }
         let slots: usize = server.append_responses_.len();
         server.append_responses_.reset(slots);
@@ -308,8 +312,8 @@ pub fn heartbeat_round_end_body(server: &mut RaftServerBase) {
     let commit_advanced_after_send: bool = {
         let _lock = RaftLockGuard::new(&mut server.mtx_);
         let is_leader: bool = server.IsLeaderLocked();
-        let advanced: bool = heartbeat_round_end(&mut server.core, is_leader,
-                                                 &mut out);
+        let advanced: bool = server.step(Event::RoundEnd { is_leader }, &mut out)
+            .into_round_end();
         server.run_locked_actions(&out);
         advanced
     };
@@ -350,8 +354,13 @@ impl HeartbeatDriver {
     // collection loop (PHASE 2) and the round end (PHASE 3).
     pub fn run(&mut self) {
         let server: &mut RaftServerBase = unsafe { &mut *self.server_ };
-        // [move, M1] a fresh round state per run, as the driver's own was
-        server.core.reset_round_state();
+        // [move, M1] a fresh round state per run, as the driver's own was,
+        // under mtx_ like every core call (plan §3.1 rule 1; bugs-found B15)
+        {
+            let _lock = RaftLockGuard::new(&mut server.mtx_);
+            let mut out: CoreOutput = core_output();
+            server.step(Event::ResetRoundState, &mut out).into_done();
+        }
         server.append_responses_ = AppendResponses::new();  // [move, M5]
         server.HeartbeatPrologue();
         while server.HeartbeatLooping() {
@@ -372,8 +381,12 @@ impl HeartbeatDriver {
         // [move, M1] The in-flight handles are released when the loop ends, as
         // they were when the driver's own round state went out of scope.
         // Before the epilogue, not after: once it reports the loop stopped,
-        // shutdown may free the server.
-        server.core.reset_round_state();
+        // shutdown may free the server. Under mtx_ (bugs-found B15).
+        {
+            let _lock = RaftLockGuard::new(&mut server.mtx_);
+            let mut out: CoreOutput = core_output();
+            server.step(Event::ResetRoundState, &mut out).into_done();
+        }
         server.append_responses_ = AppendResponses::new();  // [move, M5]
         server.HeartbeatEpilogue();
     }

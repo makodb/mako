@@ -30,6 +30,8 @@ it), **metric** (wrong number in a measurement, no protocol effect).
 | B11 | race (latent) | `RegisterLeaderChangeCallback` writes `leader_change_cb_` with no lock while a role change reads and calls it under `mtx_` | read in code | fixed with F6 (Phase 2): registration and every read of the slot take `leader_notices_`'s lock; the callback runs from a copy |
 | B12 | dead code | `heartbeat_phase0_body` returns `true` when phase 0 declines the round (not leader), so the driver's `continue` never fires and phases 1-3 run, each exiting at its first leadership check | read in code | Phase 3: the cut heartbeat ends the round when `tick_heartbeat` declines it (no protocol-visible difference) |
 | B13 | toolchain | The transpiled C++ cannot redeclare a name in one scope: a Rust `let` that shadows a binding, or a function parameter, at the same block level is a C++ redefinition | reproduced (cpp-lane lab build, Phase 1) | worked around by renaming; a constraint on every transpiled file |
+| B14 | race | `heartbeat_interval_us_` is a plain field the lab's case 67 writes while the heartbeat and election loops read it | reproduced (Phase 4 TSan lab build, cpp lane) | recorded only (user, 2026-10-04): lab-only, outside the core |
+| B15 | race (latent) | The heartbeat driver reset the core's round state with no `mtx_` (`reset_round_state` at the loop's start and before its epilogue), taking `&mut` of the whole `RaftCore` while other threads may hold it under the lock | read in code (Phase 6) | fixed in Phase 6: both resets are `step(ResetRoundState)` under `mtx_` (plan §3.1 rule 1) |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
 
@@ -348,3 +350,25 @@ election timer on one), and nothing else.
 lab-only and outside the core, and the cpp lane, the only one TSan could
 check, was removed (plan Q9). The fix, if wanted later, is a relaxed atomic
 (a plain `mov` on x86-64).
+
+## B15. The round state was reset without `mtx_`
+
+**Where.** `src/server_cc.rs`, `HeartbeatDriver::run` (`:354` and `:376` at
+`7aa01a586`): `server.core.reset_round_state()` when the heartbeat loop
+starts and again before its epilogue, with no `RaftLockGuard`.
+
+**What is wrong.** Phase 1 moved the driver's round state (in-flight slots,
+authority ledger, leader epoch, round scope) into `RaftCore`, and the two
+resets kept their old place outside the lock. Only the heartbeat fiber
+reads or writes those four fields, so no field is raced in practice; but the
+call takes `&mut RaftCore` while an RPC handler or the election loop may hold
+`&mut RaftCore` under `mtx_` on another thread, which is aliasing undefined
+behaviour in Rust's model, and it breaks the serialization the proof relies
+on (plan §3.1 rule 1, Q1: one core call at a time, under `mtx_`).
+
+**How found.** Converting every core call to `step` in Phase 6: these were
+the only two made without the lock.
+
+**Fate.** Fixed in Phase 6 (the `step` commit): both are
+`step(Event::ResetRoundState)` under `mtx_`. No decision changes.
+
