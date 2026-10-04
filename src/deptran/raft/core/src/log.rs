@@ -49,14 +49,20 @@ pub struct RaftEntry<C> {
 }
 
 impl<C> RaftEntry<C> {
-    // The entry's term (ghost).
+    // The entry's term and command (ghost).
     pub closed spec fn spec_term(&self) -> i64 {
         self.term_
     }
 
+    pub closed spec fn spec_cmd(&self) -> C {
+        self.cmd_
+    }
+
     pub fn new(term: i64, cmd: C, has_value: bool,
                is_tpc_commit: bool, kind: i32, payload_bytes: u64) -> (r: RaftEntry<C>)
-        ensures r.spec_term() == term,
+        ensures
+            r.spec_term() == term,
+            r.spec_cmd() == cmd,
     {
         RaftEntry {
             term_: term,
@@ -75,7 +81,9 @@ impl<C> RaftEntry<C> {
     }
 
     // Handed back to C++, never followed from Rust.
-    pub fn cmd(&self) -> &C {
+    pub fn cmd(&self) -> (r: &C)
+        ensures *r == self.spec_cmd(),
+    {
         &self.cmd_
     }
 
@@ -161,8 +169,36 @@ impl<C> RaftLog<C> {
             self.spec_base() >= 1,
             self.spec_base() + self.spec_len() <= raft_index_limit(),
             self.spec_len() >= 0,
+            self.view().len() == self.spec_len(),
     {
     }
+
+    // The entry at physical position p (ghost): block p / 4096, slot
+    // p % 4096.
+    pub closed spec fn at_phys(&self, p: int) -> RaftEntry<C> {
+        self.blocks_@[p / 4096]@[p % 4096]
+    }
+
+    // The live entries in index order (ghost): entry k is logical index
+    // base + k, at physical position head + k. What the proof reads the log
+    // as; the blocks are how it is stored.
+    pub closed spec fn view(&self) -> Seq<RaftEntry<C>> {
+        Seq::new(self.len_ as nat, |k: int| self.at_phys(self.head_ as int + k))
+    }
+}
+
+// A physical position's block and slot: p is 4096 * (p / 4096) + p % 4096,
+// and q, r are those two exactly when p == 4096 * q + r with 0 <= r < 4096.
+proof fn lemma_pos(p: int, q: int, r: int)
+    requires
+        p >= 0,
+        0 <= r < 4096,
+        p == 4096 * q + r,
+    ensures
+        p / 4096 == q,
+        p % 4096 == r,
+{
+    lemma_fundamental_div_mod_converse(p, 4096, q, r);
 }
 
 #[allow(clippy::new_without_default)]
@@ -172,6 +208,7 @@ impl<C> RaftLog<C> {
             r.wf(),
             r.spec_base() == 1,
             r.spec_len() == 0,
+            r.view().len() == 0,
     {
         RaftLog { base_: 1, head_: 0, len_: 0, blocks_: Vec::new() }
     }
@@ -220,7 +257,9 @@ impl<C> RaftLog<C> {
 
     pub fn get(&self, index: u64) -> (r: Option<&RaftEntry<C>>)
         requires self.wf(),
-        ensures r.is_some() == self.spec_holds(index as int),
+        ensures
+            r.is_some() == self.spec_holds(index as int),
+            r matches Some(e) ==> *e == self.view()[index as int - self.spec_base()],
     {
         if !self.holds(index) {
             return None;
@@ -256,6 +295,7 @@ impl<C> RaftLog<C> {
         }
         let block = (phys / 4096) as usize;
         let slot = (phys % 4096) as usize;
+        assert(self.view()[index as int - self.base_ as int] == self.at_phys(phys as int));
         Some(&self.blocks_[block][slot])
     }
 
@@ -272,7 +312,9 @@ impl<C> RaftLog<C> {
             final(self).spec_base() == old(self).spec_base(),
             final(self).spec_len() == old(self).spec_len() + 1,
             r == final(self).spec_last_index(),
+            final(self).view() == old(self).view().push(entry),
     {
+        let ghost pre = *self;
         // "is there room in the last block", said directly rather than as
         // (head_ + len_) % BLOCK == 0, which clippy reads as a hand-rolled
         // is_multiple_of and which emits as a method call on a uint64_t.
@@ -296,6 +338,55 @@ impl<C> RaftLog<C> {
                     assert(self.blocks_@[b] == old(self).blocks_@[b]);
                 }
             }
+            // the view: every old position keeps its entry, and the new one
+            // sits right after them
+            let nb0 = pre.blocks_@.len() as int;
+            let h = self.head_ as int;
+            let n0 = pre.len_ as int;
+            assert forall|k: int| 0 <= k < n0
+                implies #[trigger] self.view()[k] == pre.view()[k] by {
+                let p = h + k;
+                assert(self.view()[k] == self.at_phys(p));
+                assert(pre.view()[k] == pre.at_phys(p));
+                let q = p / 4096;
+                let r = p % 4096;
+                lemma_fundamental_div_mod(p, 4096);
+                assert(0 <= r < 4096);
+                assert(p == 4096 * q + r);
+                // p is below the old layout's end: an old block, an old slot
+                assert(nb0 > 0);
+                let l0 = pre.blocks_@[nb0 - 1]@.len() as int;
+                assert(p < 4096 * (nb0 - 1) + l0);
+                assert(q < nb0) by (nonlinear_arith)
+                    requires p == 4096 * q + r, 0 <= r, p < 4096 * (nb0 - 1) + l0, l0 <= 4096;
+                assert(q >= 0) by (nonlinear_arith)
+                    requires p == 4096 * q + r, p >= 0, r < 4096;
+                if need_block || q < nb0 - 1 {
+                    assert(self.blocks_@[q] == pre.blocks_@[q]);
+                } else {
+                    assert(q == nb0 - 1);
+                    assert(r < l0) by (nonlinear_arith)
+                        requires p == 4096 * q + r, q == nb0 - 1, p < 4096 * (nb0 - 1) + l0;
+                    assert(self.blocks_@[q]@ == pre.blocks_@[q]@.push(entry));
+                }
+            }
+            // the new entry's position
+            let pn = h + n0;
+            if need_block {
+                assert(nb == nb0 + 1);
+                if nb0 > 0 {
+                    assert(pn == 4096 * nb0);
+                }
+                lemma_pos(pn, nb0, 0);
+                assert(self.blocks_@[nb0]@ == Seq::<RaftEntry<C>>::empty().push(entry));
+            } else {
+                let l0 = pre.blocks_@[nb0 - 1]@.len() as int;
+                lemma_pos(pn, nb0 - 1, l0);
+                assert(self.blocks_@[nb0 - 1]@ == pre.blocks_@[nb0 - 1]@.push(entry));
+            }
+            assert(self.at_phys(pn) == entry);
+            assert(self.view()[n0] == self.at_phys(pn));
+            assert(self.view() =~= pre.view().push(entry));
         }
         self.base_ + self.len_ - 1
     }
@@ -314,15 +405,19 @@ impl<C> RaftLog<C> {
             } else {
                 index as int - old(self).spec_base()
             }),
+            final(self).view() == old(self).view().subrange(0, final(self).spec_len()),
     {
+        let ghost pre = *self;
         if index <= self.base_ {
             self.blocks_.clear();
             self.head_ = 0;
             self.len_ = 0;
+            assert(self.view() =~= pre.view().subrange(0, 0));
             return;
         }
         let keep = index - self.base_;
         if keep >= self.len_ {
+            assert(self.view() =~= pre.view().subrange(0, pre.len_ as int));
             return;
         }
         let new_phys = self.head_ + keep;
@@ -385,6 +480,39 @@ impl<C> RaftLog<C> {
             }
         }
         self.len_ = keep;
+        proof {
+            // the view: every kept position keeps its entry
+            let h = self.head_ as int;
+            let np = new_phys as int;
+            assert forall|j: int| 0 <= j < keep as int
+                implies #[trigger] self.view()[j] == pre.view()[j] by {
+                let p = h + j;
+                assert(self.view()[j] == self.at_phys(p));
+                assert(pre.view()[j] == pre.at_phys(p));
+                let q = p / 4096;
+                let r = p % 4096;
+                lemma_fundamental_div_mod(p, 4096);
+                assert(p == 4096 * q + r);
+                assert(q >= 0) by (nonlinear_arith)
+                    requires p == 4096 * q + r, p >= 0, r < 4096;
+                // np > 0 here (a zero new_phys means keep == 0)
+                let nk = self.blocks_@.len() as int;
+                lemma_fundamental_div_mod(np + 4095, 4096);
+                let tl = self.blocks_@[nk - 1]@.len() as int;
+                assert(np == 4096 * (nk - 1) + tl);
+                assert(q < nk) by (nonlinear_arith)
+                    requires p == 4096 * q + r, 0 <= r, p < np, np == 4096 * (nk - 1) + tl, tl <= 4096;
+                if q < nk - 1 {
+                    assert(self.blocks_@[q] == pre.blocks_@[q]);
+                } else {
+                    assert(q == nk - 1);
+                    assert(r < tl) by (nonlinear_arith)
+                        requires p == 4096 * q + r, q == nk - 1, p < np, np == 4096 * (nk - 1) + tl;
+                    assert(self.blocks_@[q]@ == pre.blocks_@[q]@.subrange(0, tl));
+                }
+            }
+            assert(self.view() =~= pre.view().subrange(0, keep as int));
+        }
     }
 
     // Discard [base, index] -- snapshot compaction. Returns how many went.
@@ -469,11 +597,13 @@ impl<C> RaftLog<C> {
             final(self).wf(),
             final(self).spec_base() == base,
             final(self).spec_len() == 0,
+            final(self).view() == Seq::<RaftEntry<C>>::empty(),
     {
         self.blocks_.clear();
         self.head_ = 0;
         self.len_ = 0;
         self.base_ = base;
+        assert(self.view() =~= Seq::<RaftEntry<C>>::empty());
     }
 }
 
