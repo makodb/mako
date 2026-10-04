@@ -150,3 +150,32 @@ at the phase's start, `43c57e3ac`, after the recorded renames) or labelled
 | | `src/server_h.rs:1427` (`step_checked`), `:4192` (`on_request_vote_locked`), `:4280` (`on_append_entries_locked`), `src/server_cc.rs:252` | F9 | inbound requests and replies go through `step_checked`; a dropped request is answered as an unavailable replica answers (append 0/0/0, vote "no" at the candidate's term) | lab case 15 |
 | | `src/lab_cases.rs:771` (case 15), `core/tests/step_checked.rs` | F9 | the new behaviour, end to end and for the reply case in the core | Tier 1 |
 | `3d768bdcf`, `0986e4b7f`, `ce967f6f7` | `scripts/verus/ledger_lint.py`, `core_check.sh`; tags in `core/src` | none (tooling, comments) | the ledger lint, run by `core_check.sh` with the correspondence doc's check | negative tests in the commit |
+
+## Phase 8 (the coupling and the proof; ghost only)
+
+Every core change is M12: ghost code (specs, proof blocks, ghost fields
+under `cfg(verus_keep_ghost)`, the Verus-only module `core/src/coupling.rs`)
+and comments. `core_check.sh` runs the ghost-only lint against Phase 6's last
+commit (`51d100d1f`, `scripts/verus/ghost_only_base.txt`): every changed
+line of `core/src` is ghost, comment, structural, or the same code as a
+removed line (a named return, a contract moving a brace). At `998b86820`:
+0 executable changes. No shell change.
+
+| Commit | File (after) | Kind | What | Evidence |
+|---|---|---|---|---|
+| `dfe6ba6d8` | `scripts/verus/verify_core.sh`, `core/src/coupling.rs` (new), `core/Cargo.toml` | M12 | the proof side imports spec v1 (Verus `--export`/`--import` of the frozen tag); the coupling module exists only for Verus | `verify_core.sh` |
+| `0feae5ac7` | `core/src/log.rs` | M12 | `RaftLog::view()`: the live entries in index order; `get`, `append`, `truncate_from`, `new` state their effect on it | as above |
+| `274a72654` | `scripts/verus/core_check.sh`, `ghost_only_base.txt` | tooling | the ghost-only lint (the plan's diff-2 lint) on every commit | -- |
+| `5f97ae6fe` | `core/src/coupling.rs`, `core/src/node.rs` (ghost fields `g_log_`, `g_votes_`, `g_match_`, `g_next_`) | M12 | the coupling: `state_view`, `ginv`, the four ghost-log operations; `RaftCore::new` is fresh; `configure` records LoadConfig | 336 verified |
+| `426eb7e1d`, `4d8357131`, `a09862d2f` | `scripts/verus/ledger_lint.py`; tags in `core/src/node.rs` | tooling; comments | the lint's ghost scanner fixed three ways (a struct literal or a block in a clause; a multi-line `let ghost`; a bodiless trait `spec fn`, which since Phase 6 had made `raft_on_append_entries`' body count as ghost); Verus-only modules are ghost; six Phase 6 lines of that body tagged with their Phase 6 items (M1, M7, M11) | the scanner's ghost lines diffed before and after |
+| `6b5030ff4` | `core/src/{node,heartbeat,event}.rs` | M12 | the stutters; StepAside (`SetFollower`, `StepDown`); ClientRequest (`append_local`) | 341 verified |
+| `033078d5b` | `core/src/node.rs` (`raft_on_request_vote`, `do_vote`) | M12 | an inbound RequestVote: StepDown, then GrantVote or RejectVote; `ginv` gains `snapterm_ == 0`, no member the sentinel, a leader or candidate voted for itself | 343 verified |
+| `cc73145a0` | `core/src/node.rs` (`start_election`), `core/src/election.rs` | M12 | a started campaign is LTimeout | 346 verified |
+| `e2f63615e` | `core/src/node.rs` (`election_settle`, `inv_config`), `core/src/election.rs` (`VoteSet`) | M12 | a settled campaign: ReceiveVoteGranted per grant, BecomeLeader on the exec's quorum, StepDown on a higher reply, StepAside; `inv_config` gains `election_term_ >= 0` | 355 verified |
+| `762573fc4` | `core/src/node.rs` (`raft_on_append_entries`, `InboundBatch`), `core/src/log.rs` | M12 | an inbound AppendEntries: StepDown, then RejectAppendEntries, or one FollowerAppendEntries per component (BR2); the trait gains `spec_entries` and contracts; `ginv` gains every entry's value and term (B16) | 363 verified |
+| `1d8babc9c` | `core/src/{progress,node,coupling}.rs` | M12 | V2 in `ginv`; the peer table's matches and the majority count (Phase 3's `commit_rule.rs`); `inv_peers` gains the peers' order and membership | 369 verified |
+| `e60880223` | `core/src/{heartbeat,pending}.rs` | M12 | a heartbeat reply: StepDown, HandleAppendResponse, or unseen | 375 verified |
+| `37319d389` | `core/src/heartbeat.rs` (`raft_commit_advance`, phases 0 and 3, `heartbeat_round_end`); `docs/verus/bugs-found.md` | M12; doc | the commit advance is AdvanceCommitIndex (`lemma_commit_quorum`); B17 recorded | 379 verified |
+| `ba5e0ed1b` | `core/src/heartbeat.rs` (`heartbeat_tick`, `heartbeat_select_payload`), `core/src/node.rs` | M12 | a tick's AppendEntries: SendAppendEntries per component (BR1), built from the leader's log | 384 verified |
+| `998b86820` | `core/src/event.rs` (`step`, `step_checked`, `message_admitted`), `core/src/coupling.rs` | M12 | `step` and `step_checked` keep `ginv` under `coupled(ev)`; `lemma_node_cert`; `theorem_mako_safety` | 387 verified |
+

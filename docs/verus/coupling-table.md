@@ -147,24 +147,30 @@ the campaign term. No marked field depends on the "no" count; F2 is not needed.
 5. Each core call runs under `mtx_` with no other access to the core between
    its start and its actions (Phase 4 enforces this through `with_core`).
 
-## 5. Open work for Phase 8
+## 5. Phase 8: done, and where it departed from this table
 
-1. ~~Not every core mutation is a core call yet.~~ Done in Phase 6: every
-   decision the shell asks of the core is a `step(Event)` (or, for a message
-   from the network, `step_checked`, F9), Setup's identity, membership and
-   gate included; the only writes outside it are the snapshot paths, outside
-   the verified configuration, which mark the replay recorder. The recorder
-   reproduces a run from the calls alone (`core_replay`, Phase 6 report §4).
-2. `VoteSet` is local to `election_settle`: the votes of a campaign enter the
-   core at settlement, all at once. The coupling records each granted reply
-   as its own `Recv` group inside that call; Phase 8 must show that order and
-   grouping are a legal interleaving (replies are independent receives).
-3. ~~The core still logs, and reads handles through M11 wrappers.~~ Done in
-   Phase 6: the core's log lines are records in its output (M7), the command
-   is the type parameter `C` and the inbound payload an `InboundBatch` (M11),
-   both outside the crate, so nothing in the core is `external_body` but
-   `blocks_for`. F9's `step_checked` drops what boundary condition 1 and the
-   term-0 and prev-shape parts of 2 exclude, so those messages never reach a
-   handler.
-4. BR1/BR2 lemmas for batches, V1's coupling lemma, V2's refusal-precedes-write
-   lemma.
+Every path above is proved in Phase 8 (`core/src/coupling.rs`; the Phase 8
+report). Departures from the table:
+
+1. **Backoff is a stutter, not `LHandleAppendReject`.** `next_index` is a
+   ghost shadow (V3) no guard reads, so a refusal's backoff writes nothing
+   the spec sees; the reply is not recorded. Likewise the stale, contradictory
+   and removed-follower replies (§3.4).
+2. **`LHandleAppendResponse` takes the reported match**, recorded only when
+   it rises past the spec's (V2 as an inequality: the exec raises a match by
+   `max()` to at most the reported index, so it never passes the spec's).
+   F9's `step_checked` supplies `match <= the leader's log`.
+3. **The votes of a won campaign are recorded at settlement**, one Recv group
+   per granted reply (open point 2 of the earlier list), then BecomeLeader in
+   a Tick group; refusals and a lost campaign's votes are not recorded (V3).
+4. **A candidate refused for a committed conflict also steps aside**
+   (`raft_on_append_entries` makes it a follower before refusing): an
+   `LStepAside` segment after the `LRejectAppendEntries` one.
+5. **The round end's advance needs leadership as a premise** (bugs-found B17):
+   PHASE 3 does not check it.
+6. **A heartbeat's commit view (V1)** is `min(commit, prev)` on both sides, so
+   a heartbeat at prev 0 carries commit 0 and `heartbeat_commit_ok` holds
+   trivially.
+
+The host contract the certificate rests on is
+[host-contract.md](host-contract.md).
