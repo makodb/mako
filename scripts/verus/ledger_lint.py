@@ -145,6 +145,7 @@ def ghost_regions(text):
     depth = 0
     cdepth = 0
     pdepth = 0
+    head_clauses = False
     lines = text.split('\n')
     for i, line in enumerate(lines, 1):
         st = line.strip()
@@ -162,11 +163,20 @@ def ghost_regions(text):
                 mode = None
             continue
         if mode == 'head':
-            # the body opens at a brace outside parentheses: a struct literal
-            # in a clause is parenthesized (Verus parses clauses as Rust
-            # parses an `if` condition), so `(LState { ... })` stays head
+            # Before its clauses, a head's body opens at the first brace
+            # outside parentheses (`) -> T {`); once a clause began, at a
+            # line that starts with one, as the crate writes it: a clause's
+            # own braces (`x ==> { ... }`, a parenthesized `(LState { .. })`)
+            # end their lines instead
             ghost.add(i)
             code = line.split('//')[0]
+            if re.match(r'^(requires|ensures|recommends|decreases|returns|opens_invariants)\b', st):
+                head_clauses = True
+            if head_clauses:
+                if st.startswith('{'):
+                    depth = code.count('{') - code.count('}')
+                    mode = 'block' if depth > 0 else None
+                continue
             for k, ch in enumerate(code):
                 if ch in '([':
                     pdepth += 1
@@ -177,6 +187,12 @@ def ghost_regions(text):
                     depth = rest.count('{') - rest.count('}')
                     mode = 'block' if depth > 0 else None
                     break
+            continue
+        if mode == 'stmt':
+            # a ghost statement continued: to its semicolon
+            ghost.add(i)
+            if line.split('//')[0].rstrip().endswith(';'):
+                mode = None
             continue
         if mode == 'contract':
             if (st.startswith('{') and cdepth == 0) or re.match(r'^(pub(\(\w+\))?\s+)?(const\s+)?fn\b', st):
@@ -200,6 +216,7 @@ def ghost_regions(text):
             depth = line.count('{') - line.count('}')
             if '{' not in line:
                 mode = 'head'
+                head_clauses = False
                 code = line.split('//')[0]
                 pdepth = code.count('(') + code.count('[') - code.count(')') - code.count(']')
             elif depth > 0:
@@ -220,7 +237,12 @@ def ghost_regions(text):
                 mode = 'contract'
                 cdepth = line.count('{') - line.count('}')
             continue
-        if re.match(r'^(let\s+ghost\b|let\s+tracked\b)', st) or re.match(r'^#!?\[verifier', st):
+        if re.match(r'^(let\s+ghost\b|let\s+tracked\b)', st):
+            ghost.add(i)
+            if not line.split('//')[0].rstrip().endswith(';'):
+                mode = 'stmt'
+            continue
+        if re.match(r'^#!?\[verifier', st):
             ghost.add(i)
             continue
         # an item, field or statement that exists only when Verus checks the
