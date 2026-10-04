@@ -897,8 +897,15 @@ impl SentAppend {
         self.ordinal_
     }
 
+    // [M12] The term it was sent at (ghost).
+    pub closed spec fn spec_term(&self) -> u64 {
+        self.term_
+    }
+
     pub fn new(follower: u16, term: u64, round: u64, end_index: u64, ordinal: usize) -> (r: SentAppend)
-        ensures r.spec_ordinal() == ordinal,
+        ensures
+            r.spec_ordinal() == ordinal,
+            r.spec_term() == term,  // [M12]
     {
         SentAppend { follower_: follower, term_: term, round_: round,
                      end_index_: end_index, ordinal_: ordinal }
@@ -923,8 +930,27 @@ impl AppendReply {
         self.term_
     }
 
+    // [M12] Whether there was a reply, its status and its reported index
+    // (ghost).
+    pub closed spec fn spec_available(&self) -> bool {
+        self.available_
+    }
+
+    pub closed spec fn spec_status(&self) -> bool {
+        self.status_
+    }
+
+    pub closed spec fn spec_last(&self) -> u64 {
+        self.last_log_index_
+    }
+
     pub fn new(available: bool, status: bool, term: u64, last_log_index: u64) -> (r: AppendReply)
-        ensures r.spec_term() == term,
+        ensures
+            r.spec_term() == term,
+            // [M12]
+            r.spec_available() == available,
+            r.spec_status() == status,
+            r.spec_last() == last_log_index,
     {
         AppendReply { available_: available, status_: status, term_: term,
                       last_log_index_: last_log_index }
@@ -1062,6 +1088,45 @@ pub fn heartbeat_apply_append_reply<C: Clone>(
         r.spec_action() == AppendReplyAction::ACCEPTED ==> sent.spec_ordinal() < final(core).peers_.spec_len(),
         r.spec_action() == AppendReplyAction::BACKED_OFF && r.spec_rung() == BackoffKind::FAST
             ==> r.spec_old_next() > r.spec_new_next(),
+        // [M12] what the reply wrote: a higher term (STEP_DOWN); a leader's
+        // match raised by max() to at most the reported index (ACCEPTED, a
+        // success at the current term); nothing else the spec sees
+        r.spec_action() == AppendReplyAction::STEP_DOWN ==> {
+            &&& reply.spec_available()
+            &&& reply.spec_term() > old(core).current_term_
+            &&& final(core).current_term_ == reply.spec_term()
+            &&& final(core).vote_for_ == RAFT_SERVER_INVALID_SITE_ID
+        },
+        r.spec_action() != AppendReplyAction::STEP_DOWN ==> {
+            &&& final(core).current_term_ == old(core).current_term_
+            &&& final(core).vote_for_ == old(core).vote_for_
+        },
+        r.spec_action() == AppendReplyAction::ACCEPTED ==> {
+            &&& reply.spec_available()
+            &&& reply.spec_status()
+            &&& reply.spec_term() == old(core).current_term_
+            &&& is_leader
+            &&& (final(core).peers_.spec_match(sent.spec_ordinal() as int)
+                    == old(core).peers_.spec_match(sent.spec_ordinal() as int)
+                || final(core).peers_.spec_match(sent.spec_ordinal() as int) <= reply.spec_last())
+        },
+        forall|o: int| 0 <= o < old(core).peers_.spec_len()
+            && (r.spec_action() != AppendReplyAction::ACCEPTED || o != sent.spec_ordinal())
+            ==> #[trigger] final(core).peers_.spec_match(o) == old(core).peers_.spec_match(o),
+        final(core).is_leader_ == old(core).is_leader_,
+        final(core).election_in_progress_ == old(core).election_in_progress_,
+        final(core).election_term_ == old(core).election_term_,
+        final(core).raft_log_ == old(core).raft_log_,
+        final(core).commit_index_ == old(core).commit_index_,
+        final(core).config_members_ == old(core).config_members_,
+        final(core).site_id_ == old(core).site_id_,
+        final(core).snapterm_ == old(core).snapterm_,
+        final(core).peer_sites_ == old(core).peer_sites_,
+        final(core).gated_ == old(core).gated_,
+        final(core).g_log_ == old(core).g_log_,
+        final(core).g_votes_ == old(core).g_votes_,
+        final(core).g_match_ == old(core).g_match_,
+        final(core).g_next_ == old(core).g_next_,
 {
     // Retire the RPC and, if it proves this exact generation, count the vote.
     // One physical RPC exists per follower per generation, but the evidence
@@ -1172,8 +1237,29 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
         // a term off the wire is below the ceiling
         ord < old(core).pending_rpcs_.spec_len(),
         (resp_term as int) < raft_index_limit(),
-    ensures final(core).inv(),
+    ensures
+        final(core).inv(),
+        // [M12] the reply's group (coupling::reply_log_ok), from the
+        // follower its slot was sent to: a higher term's StepDown, a success
+        // past the spec's match its HandleAppendResponse, or nothing the
+        // spec sees. The host contract: is_leader is IsLeaderLocked, and a
+        // success never reports past the leader's log (F9's step_checked
+        // drops one that does)
+        old(core).ginv() && old(core).gated_ && is_leader == old(core).is_leader_
+            && (resp_status ==> resp_last_log_index as int <= old(core).raft_log_.spec_last_index()) ==> {
+            &&& final(core).ginv()
+            &&& crate::coupling::reply_log_ok(final(core).g_log_@, old(core).g_log_@,
+                    crate::coupling::rank(old(core).config_members_@,
+                        old(core).pending_rpcs_.spec_follower(ord as int)),
+                    crate::coupling::reply_msg(old(core).config_members_@,
+                        old(core).pending_rpcs_.spec_follower(ord as int), resp_status, resp_term,
+                        resp_last_log_index),
+                    old(core).g_match_@, old(core).g_next_@)
+        },
 {
+    let ghost pre = *core;
+    let ghost on = pre.ginv() && pre.gated_ && is_leader == pre.is_leader_
+        && (resp_status ==> resp_last_log_index as int <= pre.raft_log_.spec_last_index());
     // Bound once per reply, not per use: every read below is the same shape
     // it was when this was a map value.
     let follower_id: u16 = core.pending_rpcs_.follower(ord);
@@ -1279,6 +1365,33 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
 
     let completed_previous_round: bool = sent_round != core.round_.round_id();
     core.pending_rpcs_.release(ord);
+    proof {
+        if on {
+            let cfg = pre.config_members_@;
+            let f = crate::coupling::rank(cfg, follower_id);
+            let m = crate::coupling::reply_msg(cfg, follower_id, resp_status, resp_term,
+                resp_last_log_index);
+            if action == AppendReplyAction::STEP_DOWN {
+                core.g_log_@ = crate::coupling::step_down_seg(
+                    pre.g_log_@.push(glr::protocol::Raft::ghost_log::Entry::Recv(f, m)), resp_term as int);
+                core.g_votes_@ = Set::<int>::empty();
+                crate::coupling::lemma_recv_step_down(&pre, core, f, m);
+            } else if action == AppendReplyAction::ACCEPTED
+                && resp_last_log_index as int > crate::coupling::match_of(pre.g_match_@, f)
+            {
+                core.g_log_@ = crate::coupling::har_log(pre.g_log_@, f, resp_term as int,
+                    resp_last_log_index as int, pre.g_match_@, pre.g_next_@);
+                core.g_match_@ = pre.g_match_@.insert(f as u64, resp_last_log_index);
+                core.g_next_@ = pre.g_next_@.insert(f as u64,
+                    glr::protocol::Raft::raft::u64_inc(resp_last_log_index));
+                crate::coupling::lemma_har_ginv(&pre, core, resp_ord as int, resp_term,
+                    resp_last_log_index);
+            } else {
+                crate::coupling::lemma_reply_stutter(&pre, core,
+                    action == AppendReplyAction::ACCEPTED, resp_ord as int, resp_last_log_index);
+            }
+        }
+    }
     ReplyResult {
         stepped_down_: stepped_down,
         completed_previous_round_: completed_previous_round,

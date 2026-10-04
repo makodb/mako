@@ -55,6 +55,15 @@ impl PendingTable {
     pub closed spec fn spec_len(&self) -> int {
         self.slots_@.len() as int
     }
+
+    // [M12] The follower an in-flight slot was sent to (0 when empty)
+    // (ghost).
+    pub closed spec fn spec_follower(&self, ordinal: int) -> u16 {
+        match self.slots_@[ordinal] {
+            Some(p) => p.follower_,
+            None => 0,
+        }
+    }
 }
 
 #[allow(clippy::new_without_default)]
@@ -124,8 +133,9 @@ impl PendingTable {
         self.slots_[ordinal] = None;
     }
 
-    pub fn follower(&self, ordinal: usize) -> u16
+    pub fn follower(&self, ordinal: usize) -> (r: u16)
         requires ordinal < self.spec_len(),
+        ensures r == self.spec_follower(ordinal as int),  // [M12]
      {
         if self.slots_[ordinal].is_none() {
             return 0;

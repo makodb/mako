@@ -181,6 +181,31 @@ pub proof fn lemma_rank_bounds(m: Seq<u16>, site: u16)
 {
 }
 
+// A sorted configuration of u16 sites has at most 2^16 members (so a rank
+// fits any spec key).
+pub proof fn lemma_sorted_len(m: Seq<u16>)
+    requires sites_sorted(m),
+    ensures m.len() <= 65536,
+{
+    if m.len() > 0 {
+        assert forall|i: int| 0 <= i < m.len() implies #[trigger] m[i] as int >= i by {
+            lemma_sorted_ge(m, i);
+        }
+        assert(m[m.len() - 1] as int >= m.len() - 1);
+    }
+}
+
+proof fn lemma_sorted_ge(m: Seq<u16>, i: int)
+    requires sites_sorted(m), 0 <= i < m.len(),
+    ensures m[i] as int >= i,
+    decreases i,
+{
+    if i > 0 {
+        lemma_sorted_ge(m, i - 1);
+        assert(m[i - 1] < m[i]);
+    }
+}
+
 // In a sorted configuration a member's rank is its position.
 pub proof fn lemma_rank_of(m: Seq<u16>, k: int)
     requires
@@ -1966,6 +1991,226 @@ pub proof fn lemma_append_entries<C>(pre: &RaftCore<C>, post: &RaftCore<C>, x: A
             commit_index: comp_commit(pre.commit_index_ as int, x.lc, x.prev, x.es.len() as int),
             ..s2
         });
+    }
+}
+
+// ===========================================================================
+// A reply to the leader's AppendEntries (heartbeat_on_reply): StepDown on a
+// higher term; HandleAppendResponse when a success reports a match past
+// the spec's; anything else unseen by the spec (V2 holds: the exec raises
+// a match by max(), to at most the reported index)
+// ===========================================================================
+
+// The reply as the spec sees it (coupling-table §2): from the follower its
+// slot was sent to, the match a success reports (0 for a refusal).
+pub open spec fn reply_msg(cfg: Seq<u16>, follower: u16, status: bool, term: u64, last: u64) -> LRaftMessage {
+    LRaftMessage::AppendResponse {
+        term: term as int,
+        success: status,
+        match_index: if status { last as int } else { 0 },
+        follower: rank(cfg, follower),
+        read_ctx: 0,
+    }
+}
+
+pub open spec fn har_label(f: int, term: int, nmi: int) -> ActionLabel {
+    ActionLabel::HandleAppendResponse {
+        resp_term: term,
+        resp_success: true,
+        resp_match_index: nmi,
+        resp_follower: f,
+        follower: f as u64,
+        new_match_index: nmi as u64,
+    }
+}
+
+pub open spec fn har_log(l: Seq<Entry>, f: int, term: int, nmi: int, gm: Map<u64, u64>,
+                         gn: Map<u64, u64>) -> Seq<Entry> {
+    l.push(Entry::Recv(f, LRaftMessage::AppendResponse { term, success: true, match_index: nmi, follower: f, read_ctx: 0 }))
+        .push(Entry::Set(LogField::MatchIndex, LogValue::VU64Map(gm.insert(f as u64, nmi as u64))))
+        .push(Entry::Set(LogField::NextIndex, LogValue::VU64Map(gn.insert(f as u64, u64_inc(nmi as u64)))))
+        .push(Entry::Close(har_label(f, term, nmi)))
+}
+
+// The reply's ghost log: unchanged, its Recv and a StepDown, or a
+// HandleAppendResponse.
+pub open spec fn reply_log_ok(l: Seq<Entry>, l0: Seq<Entry>, f: int, m: LRaftMessage,
+                              gm: Map<u64, u64>, gn: Map<u64, u64>) -> bool {
+    ||| l == l0
+    ||| l == step_down_seg(l0.push(Entry::Recv(f, m)), msg_term(m))
+    ||| (m is AppendResponse && m->AppendResponse_success && m->AppendResponse_follower == f
+         && l == har_log(l0, f, m->AppendResponse_term, m->AppendResponse_match_index, gm, gn))
+}
+
+// Two peers are two members, so two ranks.
+pub proof fn lemma_peer_ranks_differ<C>(core: &RaftCore<C>, o1: int, o2: int)
+    requires
+        core.inv(),
+        0 <= o1 < core.peers_.spec_len(),
+        0 <= o2 < core.peers_.spec_len(),
+        o1 != o2,
+    ensures
+        rank(core.config_members_@, core.peer_sites_@[o1]) != rank(core.config_members_@, core.peer_sites_@[o2]),
+{
+    let cfg = core.config_members_@;
+    let (a, b) = (core.peer_sites_@[o1], core.peer_sites_@[o2]);
+    if o1 < o2 { assert(a < b); } else { assert(b < a); }
+    lemma_rank_bounds(cfg, a);
+    lemma_rank_bounds(cfg, b);
+}
+
+// A message of a higher term, received: its Recv, then StepDown.
+pub proof fn lemma_recv_step_down<C>(pre: &RaftCore<C>, post: &RaftCore<C>, src: int, m: LRaftMessage)
+    requires
+        pre.ginv(),
+        msg_term(m) > pre.current_term_ as int,
+        post.current_term_ as int == msg_term(m),
+        post.vote_for_ == RAFT_SERVER_INVALID_SITE_ID,
+        !post.is_leader_,
+        !post.election_in_progress_,
+        post.raft_log_ == pre.raft_log_,
+        post.commit_index_ == pre.commit_index_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.snapterm_ == pre.snapterm_,
+        post.g_votes_@ == Set::<int>::empty(),
+        post.g_match_ == pre.g_match_,
+        post.g_next_ == pre.g_next_,
+        post.g_log_@ == step_down_seg(pre.g_log_@.push(Entry::Recv(src, m)), msg_term(m)),
+    ensures post.ginv(),
+{
+    let c = pre.c_view();
+    let l0 = pre.g_log_@;
+    lemma_g_open(l0, Entry::Recv(src, m), c);
+    lemma_step_down_seg(l0.push(Entry::Recv(src, m)), msg_term(m), c);
+    assert(post.c_view() == c);
+    assert(post.log_view() == pre.log_view());
+    assert(post.state_view() == stepped_down(replay(l0), msg_term(m)));
+}
+
+// A success reporting a match past the spec's: HandleAppendResponse.
+pub proof fn lemma_har_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, o: int, term: u64, reported: u64)
+    requires
+        pre.inv(),
+        pre.ginv(),
+        pre.gated_,
+        pre.is_leader_,
+        0 <= o < pre.peers_.spec_len(),
+        term == pre.current_term_,
+        reported as int <= pre.raft_log_.spec_last_index(),
+        reported as int > match_of(pre.g_match_@, rank(pre.config_members_@, pre.peer_sites_@[o])),
+        // the reply's write: the follower's match, raised by max() to at
+        // most the reported index; the rest as they were
+        post.current_term_ == pre.current_term_,
+        post.vote_for_ == pre.vote_for_,
+        post.is_leader_ == pre.is_leader_,
+        post.election_in_progress_ == pre.election_in_progress_,
+        post.election_term_ == pre.election_term_,
+        post.raft_log_ == pre.raft_log_,
+        post.commit_index_ == pre.commit_index_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.snapterm_ == pre.snapterm_,
+        post.peer_sites_ == pre.peer_sites_,
+        post.g_votes_ == pre.g_votes_,
+        post.peers_.spec_len() == pre.peers_.spec_len(),
+        post.peers_.spec_match(o) == pre.peers_.spec_match(o) || post.peers_.spec_match(o) <= reported,
+        forall|o2: int| 0 <= o2 < pre.peers_.spec_len() && o2 != o
+            ==> #[trigger] post.peers_.spec_match(o2) == pre.peers_.spec_match(o2),
+        post.g_match_@ == pre.g_match_@.insert(rank(pre.config_members_@, pre.peer_sites_@[o]) as u64, reported),
+        post.g_next_@ == pre.g_next_@.insert(rank(pre.config_members_@, pre.peer_sites_@[o]) as u64, u64_inc(reported)),
+        post.g_log_@ == har_log(pre.g_log_@, rank(pre.config_members_@, pre.peer_sites_@[o]), term as int,
+            reported as int, pre.g_match_@, pre.g_next_@),
+    ensures post.ginv(),
+{
+    let c = pre.c_view();
+    let cfg = pre.config_members_@;
+    let f = rank(cfg, pre.peer_sites_@[o]);
+    let l0 = pre.g_log_@;
+    let s0 = replay(l0);
+    let m = LRaftMessage::AppendResponse { term: term as int, success: true, match_index: reported as int, follower: f, read_ctx: 0 };
+    lemma_rank_bounds(cfg, pre.peer_sites_@[o]);
+    pre.raft_log_.lemma_wf_bounds();
+    lemma_g_open(l0, Entry::Recv(f, m), c);
+    let l1 = l0.push(Entry::Recv(f, m));
+    let mv = LogValue::VU64Map(pre.g_match_@.insert(f as u64, reported));
+    let nv = LogValue::VU64Map(pre.g_next_@.insert(f as u64, u64_inc(reported)));
+    lemma_g_set(l1, LogField::MatchIndex, mv, c);
+    let l2 = l1.push(Entry::Set(LogField::MatchIndex, mv));
+    lemma_g_set(l2, LogField::NextIndex, nv, c);
+    let l3 = l2.push(Entry::Set(LogField::NextIndex, nv));
+    let s3 = replay(l3);
+    assert(pre.role_view() is Leader);
+    assert(LHandleAppendResponse(s0, s3, c, term as int, true, reported as int, f, f as u64, reported, seg_sends(l3)));
+    // the label binds the follower and the match to the reply's
+    lemma_sorted_len(cfg);
+    assert(0 <= f < cfg.len());
+    assert((f as u64) as int == f);
+    assert(((reported as int) as u64) == reported);
+    assert(term as int == s0.current_term);
+    assert(action_holds(har_label(f, term as int, reported as int), seg_state(l3), replay(l3), c, seg_sends(l3)));
+    lemma_g_close(l3, har_label(f, term as int, reported as int), 0, c);
+    assert(post.g_log_@ =~= l3.push(Entry::Close(har_label(f, term as int, reported as int))));
+    // the coupling
+    assert(post.c_view() == c);
+    assert(post.log_view() == pre.log_view());
+    assert(post.state_view() == s3);
+    // V2: the follower's match is at most what the spec now holds; every
+    // other peer's rank, and its spec match, is untouched
+    assert forall|o2: int| 0 <= o2 < post.peers_.spec_len()
+        implies (#[trigger] post.peers_.spec_match(o2)) as int
+            <= match_of(post.g_match_@, rank(cfg, post.peer_sites_@[o2])) by {
+        if o2 != o {
+            lemma_peer_ranks_differ(pre, o2, o);
+            assert(pre.peers_.spec_match(o2) as int <= match_of(pre.g_match_@, rank(cfg, pre.peer_sites_@[o2])));
+        } else {
+            assert(pre.peers_.spec_match(o) as int <= match_of(pre.g_match_@, f));
+        }
+    }
+}
+
+// A reply the spec does not see: V2 still holds.
+pub proof fn lemma_reply_stutter<C>(pre: &RaftCore<C>, post: &RaftCore<C>, accepted: bool, o: int, reported: u64)
+    requires
+        pre.inv(),
+        pre.ginv(),
+        post.current_term_ == pre.current_term_,
+        post.vote_for_ == pre.vote_for_,
+        post.is_leader_ == pre.is_leader_,
+        post.election_in_progress_ == pre.election_in_progress_,
+        post.election_term_ == pre.election_term_,
+        post.raft_log_ == pre.raft_log_,
+        post.commit_index_ == pre.commit_index_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.snapterm_ == pre.snapterm_,
+        post.peer_sites_ == pre.peer_sites_,
+        post.g_log_ == pre.g_log_,
+        post.g_votes_ == pre.g_votes_,
+        post.g_match_ == pre.g_match_,
+        post.g_next_ == pre.g_next_,
+        post.peers_.spec_len() == pre.peers_.spec_len(),
+        forall|o2: int| 0 <= o2 < pre.peers_.spec_len() && (!accepted || o2 != o)
+            ==> #[trigger] post.peers_.spec_match(o2) == pre.peers_.spec_match(o2),
+        // an accepted reply raised one match to at most its report, which
+        // the spec already holds
+        accepted ==> {
+            &&& 0 <= o < pre.peers_.spec_len()
+            &&& (post.peers_.spec_match(o) == pre.peers_.spec_match(o) || post.peers_.spec_match(o) <= reported)
+            &&& reported as int <= match_of(pre.g_match_@, rank(pre.config_members_@, pre.peer_sites_@[o]))
+        },
+    ensures post.ginv(),
+{
+    assert(post.c_view() == pre.c_view());
+    assert(post.log_view() == pre.log_view());
+    assert(post.state_view() == pre.state_view());
+    let cfg = pre.config_members_@;
+    if post.is_leader_ {
+        assert forall|o2: int| 0 <= o2 < post.peers_.spec_len()
+            implies (#[trigger] post.peers_.spec_match(o2)) as int
+                <= match_of(post.g_match_@, rank(cfg, post.peer_sites_@[o2])) by {
+            assert(pre.peers_.spec_match(o2) as int <= match_of(pre.g_match_@, rank(cfg, pre.peer_sites_@[o2])));
+        }
     }
 }
 
