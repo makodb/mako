@@ -448,12 +448,42 @@ impl AuthorityLedger {
     pub closed spec fn wf(&self) -> bool {
         forall|g: int| 0 <= g < self.generations_@.len() ==> (#[trigger] self.generations_@[g]).wf()
     }
+
+    // Whether a generation with this round id is open, and whether every
+    // open generation's id is below n (ghost): the round ids are fresh.
+    pub closed spec fn spec_has_id(&self, id: u64) -> bool {
+        exists|g: int| 0 <= g < self.generations_@.len() && (#[trigger] self.generations_@[g]).round_id_ == id
+    }
+
+    pub closed spec fn spec_ids_below(&self, n: u64) -> bool {
+        forall|g: int| 0 <= g < self.generations_@.len() ==> (#[trigger] self.generations_@[g]).round_id_ < n
+    }
+
+    // Dropping a generation keeps every remaining id below any bound the
+    // old ones were below.
+    proof fn lemma_remove_keeps_ids_below(pre: Seq<AuthorityGeneration>, i: int, n: u64)
+        requires
+            0 <= i < pre.len(),
+            forall|g: int| 0 <= g < pre.len() ==> (#[trigger] pre[g]).round_id_ < n,
+        ensures
+            forall|g: int| 0 <= g < pre.remove(i).len() ==> (#[trigger] pre.remove(i)[g]).round_id_ < n,
+    {
+        assert forall|g: int| 0 <= g < pre.remove(i).len() implies (#[trigger] pre.remove(i)[g]).round_id_ < n by {
+            if g < i {
+                assert(pre.remove(i)[g] == pre[g]);
+            } else {
+                assert(pre.remove(i)[g] == pre[g + 1]);
+            }
+        }
+    }
 }
 
 #[allow(clippy::new_without_default)]
 impl AuthorityLedger {
     pub fn new() -> (r: AuthorityLedger)
-        ensures r.wf(),
+        ensures
+            r.wf(),
+            forall|n: u64| r.spec_ids_below(n),
     {
         AuthorityLedger { generations_: Vec::new() }
     }
@@ -461,7 +491,9 @@ impl AuthorityLedger {
     // Dropped wholesale on leadership loss or a term change, so a prior
     // epoch's evidence can never be counted against the new one.
     pub fn abandon(&mut self)
-        ensures final(self).wf(),
+        ensures
+            final(self).wf(),
+            forall|n: u64| final(self).spec_ids_below(n),
     {
         self.generations_.clear();
     }
@@ -470,11 +502,17 @@ impl AuthorityLedger {
     // if this round id is already present, which can only be the deliberately
     // fail-closed UINT64_MAX saturation generation; the caller asserts that.
     pub fn open(&mut self, round_id: u64, config: &[u16],
-                evidence: HeartbeatAuthority) -> bool
+                evidence: HeartbeatAuthority) -> (r: bool)
         requires
             old(self).wf(),
             evidence.wf(),
-        ensures final(self).wf(),
+        ensures
+            final(self).wf(),
+            r == !old(self).spec_has_id(round_id),
+            forall|n: u64| old(self).spec_ids_below(n) && round_id < n
+                ==> #[trigger] final(self).spec_ids_below(n),
+            !r ==> forall|n: u64| old(self).spec_ids_below(n)
+                ==> #[trigger] final(self).spec_ids_below(n),
     {
         if self.index_of(round_id) < self.generations_.len() {
             return false;
@@ -501,7 +539,9 @@ impl AuthorityLedger {
     // Returns generations_.len() when absent. An index, never a reference, so
     // nothing can dangle across an RPC send or a re-entrant callback.
     pub fn index_of(&self, round_id: u64) -> (r: usize)
-        ensures r <= self.spec_len(),
+        ensures
+            r <= self.spec_len(),
+            (r < self.spec_len()) == self.spec_has_id(round_id),
     {
         let n = self.generations_.len();
         let mut i: usize = 0;
@@ -509,6 +549,7 @@ impl AuthorityLedger {
             invariant
                 i <= n,
                 n == self.generations_@.len(),
+                forall|g: int| 0 <= g < i ==> (#[trigger] self.generations_@[g]).round_id_ != round_id,
             decreases n - i,
         {
             if self.generations_[i].round_id_ == round_id {
@@ -527,9 +568,12 @@ impl AuthorityLedger {
         self.generations_.is_empty()
     }
 
-    pub fn launch(&mut self, round_id: u64, site: u16) -> bool
+    pub fn launch(&mut self, round_id: u64, site: u16) -> (r: bool)
         requires old(self).wf(),
-        ensures final(self).wf(),
+        ensures
+            final(self).wf(),
+            r == old(self).spec_has_id(round_id),
+            forall|n: u64| old(self).spec_ids_below(n) ==> #[trigger] final(self).spec_ids_below(n),
     {
         let index = self.index_of(round_id);
         if index >= self.generations_.len() {
@@ -552,7 +596,9 @@ impl AuthorityLedger {
     // was in the launching membership, and the reply predicate agreeing.
     pub fn record_reply(&mut self, reply: &AuthorityReply)
         requires old(self).wf(),
-        ensures final(self).wf(),
+        ensures
+            final(self).wf(),
+            forall|n: u64| old(self).spec_ids_below(n) ==> #[trigger] final(self).spec_ids_below(n),
     {
         let index = self.index_of(reply.sent_round());
         if index >= self.generations_.len() {
@@ -583,7 +629,9 @@ impl AuthorityLedger {
                   confirmed_term: u64, confirmed_round: u64)
                   -> AuthorityOutcome
         requires old(self).wf(),
-        ensures final(self).wf(),
+        ensures
+            final(self).wf(),
+            forall|n: u64| old(self).spec_ids_below(n) ==> #[trigger] final(self).spec_ids_below(n),
     {
         let mut outcome = AuthorityOutcome {
             confirmed_: false,
@@ -599,6 +647,7 @@ impl AuthorityLedger {
             invariant
                 i <= self.generations_@.len(),
                 self.wf(),
+                forall|n: u64| old(self).spec_ids_below(n) ==> #[trigger] self.spec_ids_below(n),
             decreases self.generations_@.len() - i,
         {
             let context_is_current = is_leader &&
@@ -608,7 +657,19 @@ impl AuthorityLedger {
                 self.generations_[i].evidence_.term() &&
                 self.generations_[i].round_id_ <= running_round;
             if !context_is_current || already_published {
+                let ghost pre = self.generations_@;
+                proof {
+                    assert forall|n: u64| old(self).spec_ids_below(n) implies
+                        (forall|g: int| 0 <= g < pre.len() ==> (#[trigger] pre[g]).round_id_ < n) by {
+                        assert(self.spec_ids_below(n));
+                    }
+                }
                 self.generations_.remove(i);
+                proof {
+                    assert forall|n: u64| old(self).spec_ids_below(n) implies #[trigger] self.spec_ids_below(n) by {
+                        Self::lemma_remove_keeps_ids_below(pre, i as int, n);
+                    }
+                }
                 continue;
             }
             if self.generations_[i].has_quorum() {
@@ -621,13 +682,37 @@ impl AuthorityLedger {
                     voter_count_: self.generations_[i].evidence_.voter_count(),
                     config_size_: self.generations_[i].evidence_.config_size(),
                 };
+                let ghost pre = self.generations_@;
+                proof {
+                    assert forall|n: u64| old(self).spec_ids_below(n) implies
+                        (forall|g: int| 0 <= g < pre.len() ==> (#[trigger] pre[g]).round_id_ < n) by {
+                        assert(self.spec_ids_below(n));
+                    }
+                }
                 self.generations_.remove(i);
+                proof {
+                    assert forall|n: u64| old(self).spec_ids_below(n) implies #[trigger] self.spec_ids_below(n) by {
+                        Self::lemma_remove_keeps_ids_below(pre, i as int, n);
+                    }
+                }
                 continue;
             }
             if self.generations_[i].all_completed() {
                 // Every RPC launched in this generation completed without a
                 // quorum. No later event can add evidence to it.
+                let ghost pre = self.generations_@;
+                proof {
+                    assert forall|n: u64| old(self).spec_ids_below(n) implies
+                        (forall|g: int| 0 <= g < pre.len() ==> (#[trigger] pre[g]).round_id_ < n) by {
+                        assert(self.spec_ids_below(n));
+                    }
+                }
                 self.generations_.remove(i);
+                proof {
+                    assert forall|n: u64| old(self).spec_ids_below(n) implies #[trigger] self.spec_ids_below(n) by {
+                        Self::lemma_remove_keeps_ids_below(pre, i as int, n);
+                    }
+                }
                 continue;
             }
             i += 1;
