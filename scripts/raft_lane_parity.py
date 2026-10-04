@@ -1,22 +1,17 @@
 #!/usr/bin/env python3
-"""Keep the Raft lanes honest (plan phase L4).
-
-Two checks over real archives, via `nm`:
-
-  --cores A B      Core parity. The rustc core (libraft.a) and the transpiled
-                   core (libraft_cpp_core.a) must export the same `raft_*` C
-                   symbols and import the same `raft_*` C symbols. Both cores
-                   reach every C++ object through the same opaque carriers
-                   and kernels, so there is no per-lane allow-delta: any
-                   difference is a lane drifting.
+"""Keep the Raft kernel ABI honest (plan phase L4), over real archives, via `nm`:
 
   --once CORE INPUT...
-                   Exactly-once. Every `raft_*` symbol the core imports is
-                   defined exactly once across the lane's other link inputs
-                   (the txlog_core archive, and raft-rt's archive on the Rust
-                   lane). Zero is an unresolved kernel; two is a seam defined
-                   by both runtimes. A symbol the core defines must also not
-                   be defined by any other input.
+                   Exactly-once. Every `raft_*` symbol the core (raft-rt's
+                   archive, which holds the core crate) imports is defined
+                   exactly once across the other link inputs (the txlog_core
+                   archive). Zero is an unresolved kernel; two is a kernel
+                   defined twice. A symbol the core defines must also not be
+                   defined by any other input.
+
+The core-parity check (--cores) compared the rustc core with the transpiled
+one; it went with the cpp and hybrid lanes (docs/verus/modification-plan.md,
+Q9).
 
 Only unmangled C symbols count: a Rust or C++ mangled name is never part of
 the kernel ABI.
@@ -52,25 +47,6 @@ def show(label: str, names: set[str]) -> None:
         print(f"  {label} {n}")
 
 
-def cores(a: Path, b: Path) -> int:
-    da, ua = symbols(a)
-    db, ub = symbols(b)
-    bad = 0
-    if da != db:
-        print(f"export sets differ ({a.name} vs {b.name}):")
-        show(f"only {a.name}:", da - db)
-        show(f"only {b.name}:", db - da)
-        bad = 1
-    if ua != ub:
-        print(f"import sets differ ({a.name} vs {b.name}):")
-        show(f"only {a.name}:", ua - ub)
-        show(f"only {b.name}:", ub - ua)
-        bad = 1
-    if not bad:
-        print(f"core parity: {len(da)} exports, {len(ua)} imports, identical")
-    return bad
-
-
 def once(core: Path, inputs: list[Path]) -> int:
     exports, imports = symbols(core)
     count: dict[str, int] = {n: 0 for n in imports}
@@ -79,8 +55,8 @@ def once(core: Path, inputs: list[Path]) -> int:
         defined, _ = symbols(archive)
         for n in defined & imports:
             count[n] += 1
-        # The core archive defines a symbol the host defines too: on the Rust
-        # lane that is a seam kernel in both raft-rt and server_seam_cpp.cc.
+        # The core archive defines a symbol the host defines too: a seam
+        # kernel defined both in raft-rt and in host C++.
         clash |= defined & exports
     missing = {n for n, c in count.items() if c == 0}
     twice = {n for n, c in count.items() if c > 1}
@@ -94,8 +70,6 @@ def once(core: Path, inputs: list[Path]) -> int:
 
 
 def main() -> int:
-    if len(sys.argv) == 4 and sys.argv[1] == "--cores":
-        return cores(Path(sys.argv[2]), Path(sys.argv[3]))
     if len(sys.argv) >= 4 and sys.argv[1] == "--once":
         return once(Path(sys.argv[2]), [Path(p) for p in sys.argv[3:]])
     print(__doc__, file=sys.stderr)

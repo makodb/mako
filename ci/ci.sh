@@ -453,21 +453,17 @@ run_2shard_replication_simple() {
 # It needs its OWN build directory. -DRAFT_TEST=ON defines RAFT_TEST_CORO,
 # which changes RaftServer's behaviour, so the flags must not be folded into
 # the build every other suite measures and tests.
-# $1: the Raft runtime lane (MAKO_RAFT_LANE): rust (the default) or hybrid.
-# Each lane gets its own build tree, so both stay built and tested.
+# On this branch Raft has one lane, rust; the hybrid and cpp lanes were
+# removed for the Verus work (docs/verus/modification-plan.md, Q9).
 run_raft_lab_test() {
-    local lane="${1:-rust}"
+    local lane="rust"
     echo "========================================="
     echo "Running: ./ci/ci.sh raftLabTest (lane ${lane})"
     echo "========================================="
     local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-32}}"
     local generator="${CMAKE_GENERATOR:-Ninja}"
     local build_type="${CMAKE_BUILD_TYPE:-Release}"
-    local suffix="_raftlab"
-    if [ "${lane}" != "rust" ]; then
-        suffix="_raftlab_${lane}"
-    fi
-    local lab_build_dir="${RAFT_LAB_BUILD_DIR:-${BUILD_DIR}${suffix}}"
+    local lab_build_dir="${RAFT_LAB_BUILD_DIR:-${BUILD_DIR}_raftlab}"
 
     echo "Configuring ${lab_build_dir} with MAKO_USE_RAFT=ON RAFT_TEST=ON MAKO_RAFT_LANE=${lane}"
     cmake -S . -B "${lab_build_dir}" -G "${generator}" \
@@ -487,11 +483,11 @@ run_raft_lab_test() {
     local passed expected
     passed=$(grep -c '^TEST [0-9]* Passed' "${log}" || true)
     # The case count, derived from the source rather than written down: the
-    # init2(N ids of the Rust harness plus the UnitInit(N ids of tests 50-52
-    # (lab_unit_tests.cc on hybrid/cpp; lab_runtime.rs runs the same ids on
-    # the Rust lane).
+    # init2(N ids of the Rust harness plus the unit cases raft-rt's
+    # lab_runtime.rs runs (tests 50-52), each announced by a
+    # `TEST <id>:` line.
     expected=$(( $(grep -ohE 'init2\([0-9]+' src/deptran/raft/src/*.rs | sort -u | wc -l) + \
-                 $(grep -ohE 'UnitInit\([0-9]+' src/deptran/raft/lab_unit_tests.cc | sort -u | wc -l) ))
+                 $(grep -ohE 'eprintln!\("TEST [0-9]+:' src/deptran/raft/rt/src/lab_runtime.rs | sort -u | wc -l) ))
     echo "raftLabTest: ${passed}/${expected} case(s) passed, deptran_server exited ${status}"
 
     # Three conditions, deliberately. The exit status is the verdict
@@ -806,13 +802,7 @@ case "${1:-}" in
         run_2shard_replication_simple_raft
         ;;
     raftLabTest)
-        run_raft_lab_test rust
-        ;;
-    raftLabTestHybrid)
-        run_raft_lab_test hybrid
-        ;;
-    raftLabTestCpp)
-        run_raft_lab_test cpp
+        run_raft_lab_test
         ;;
     rocksdbTests)
         run_rocksdb_tests
@@ -856,9 +846,7 @@ case "${1:-}" in
         run_2shard_replication_raft
         run_1shard_replication_simple_raft
         run_2shard_replication_simple_raft
-        run_raft_lab_test rust
-        run_raft_lab_test hybrid
-        run_raft_lab_test cpp
+        run_raft_lab_test
         run_rocksdb_tests
         # run_shard_fault_tolerance  # DISABLED: test script not implemented
         run_multi_shard_single_process
@@ -876,7 +864,7 @@ case "${1:-}" in
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
         echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
-        echo "  raftLabTest, raftLabTestHybrid, raftLabTestCpp,"
+        echo "  raftLabTest,"
         echo "  rocksdbTests, multiShardSingleProcess,"
         echo "  shard2SingleProcess, shard2SingleProcessReplication,"
         echo "  srpcTests, cpuThrottlingScaling, clientServer, all"

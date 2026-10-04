@@ -2897,7 +2897,7 @@ use crate::scheduler_h::RaftStartResult;
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     fn raft_trace_at(stage: i32, idx: u64, t_us: u64);  // [M0] trace kit
-    // Suspends the calling fiber (server_seam_cpp.cc / rt/src/seam.rs).
+    // Suspends the calling fiber (rt/src/seam.rs).
     fn raft_fiber_sleep_us(micros: u64);
     fn raft_time_now_us() -> u64;
     fn raft_snapshot_manager_is_set(manager: *const rusty::RaftSnapshotManagerPtr) -> bool;

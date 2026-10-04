@@ -5,10 +5,9 @@
 //
 // Rust owns the definitions (src/server_pods_h.rs, canonical); each is
 // `#[repr(C)]` and bound to the name below with `cpp_native_type`, so the
-// transpiled C++ lane uses THESE declarations rather than emitting its own,
-// and the host (server.h, server.cc, server_seam_cpp.cc) uses them too. They
-// are global-scope C declarations on purpose: a kernel's global declaration
-// (raft_cpp_lane_kernels.h) can name only global types.
+// host (server.h, server.cc) uses THESE declarations. They are global-scope
+// C declarations on purpose (they once also served the transpiled cpp lane,
+// whose global kernel declarations could name only global types).
 //
 // No imports and no namespaces: this header is included from C++20 module
 // global fragments.

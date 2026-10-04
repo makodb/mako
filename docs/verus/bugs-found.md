@@ -321,8 +321,9 @@ redeclaring `raft_on_append_entries`' `stopped` parameter, found by
 reading before any cpp build.
 
 **Fate.** Worked around by renaming (case 12's bindings) and by using the
-parameter (Phase 2). A transpiler limitation, not Mako's; new code for the
-transpiled crate avoids shadowing.
+parameter (Phase 2). A transpiler limitation, not Mako's. Moot on this branch
+from Phase 6: the cpp and hybrid lanes, the only ones that transpiled the
+crate, were removed (plan Q9).
 
 
 ## B14. The heartbeat interval is a plain field written while the loops read it
@@ -343,7 +344,7 @@ models, a stale or torn read in practice at worst.
 three reports, all this field (the heartbeat loop on two servers, the
 election timer on one), and nothing else.
 
-**Fate.** Recorded at Phase 4. Proposed fix: the field becomes an atomic
-read and written relaxed (it is a timing hint; a relaxed u64 load is a plain
-`mov` on x86-64). Not landed: it is outside A.2's numbered fixes, so it waits
-for the user (plan 0.7 point 3).
+**Fate.** Recorded at Phase 4 and left as is (2026-10-04): the race is
+lab-only and outside the core, and the cpp lane, the only one TSan could
+check, was removed (plan Q9). The fix, if wanted later, is a relaxed atomic
+(a plain `mov` on x86-64).

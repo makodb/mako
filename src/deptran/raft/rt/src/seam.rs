@@ -4,10 +4,9 @@
 // WHAT THIS IS. The core (src/deptran/raft/src) never names a runtime. It
 // calls a fixed set of `extern "C"` kernels -- spawn a fiber, sleep, wait on
 // an event, queue a wake job, send an RPC -- and carries the runtime's handles
-// as opaque carriers whose bytes it never reads (src/rusty-rustc). In the C++
-// lane those kernels are server_seam_cpp.cc, over the C++ srpc runtime. Here
-// they are the same symbols over the Rust srpc runtime, so the same core
-// source runs on either reactor. Only one of the two files is ever linked.
+// as opaque carriers whose bytes it never reads (src/rusty-rustc), over the
+// Rust srpc runtime. (A C++ twin of this file served the hybrid and cpp lanes
+// until those were removed; docs/verus/modification-plan.md, Q9.)
 //
 // HOW THE CARRIERS ARE FILLED. Each carrier is sized for its C++ type, and
 // the Rust value stored in it is chosen to fit:

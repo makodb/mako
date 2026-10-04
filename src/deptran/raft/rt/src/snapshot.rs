@@ -153,8 +153,8 @@ pub(crate) unsafe fn put(m: *mut rusty::RaftSnapshotManagerPtr, store: Arc<Snaps
 }
 
 // ---------------------------------------------------------------------------
-// SEAM kernels, Rust-lane bodies. Same names and signatures as the C++ bodies
-// in snapshot_seam_cpp.cc, so the core's externs do not change.
+// SEAM kernels: the snapshot store's bodies of the names the core's externs
+// declare.
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {
@@ -315,9 +315,8 @@ fn take_handoff(index: u64, term: u64, len: usize) -> Option<Vec<u8>> {
 
 
 // ---------------------------------------------------------------------------
-// InstallSnapshot, leader side (N5). The C++ lanes' body is in
-// snapshot_seam_cpp.cc; here the image is read as an Arc (O(1), under the
-// caller's mtx_) and sent on the Rust transport.
+// InstallSnapshot, leader side (N5). The image is read as an Arc (O(1), under
+// the caller's mtx_) and sent on the Rust transport.
 // ---------------------------------------------------------------------------
 
 unsafe extern "C" {

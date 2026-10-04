@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# tier1.sh PHASE [lanes...]
+# tier1.sh PHASE [rust|rustlab]
 #
 # Tier 1 of docs/verus/modification-plan.md §6: the Raft suites, serially,
 # logging to $RESULTS/PHASE/tier1/, then the first-attempt failure count.
-# Lanes: rust (default; the lab plus the four replication suites), rustlab (the
-# rust lab alone), hybrid, cpp.
+# rust (default): the lab plus the four replication suites; rustlab: the lab
+# alone. Raft has no other lane on this branch (the plan, Q9).
 #
 # ci.sh's cleanup_processes kill -9s EVERY process of this user named dbtest,
 # simpleTransactionRep, simplePaxos, simpleTransaction or simpleRaft, and
@@ -12,7 +12,7 @@
 # running those. So before each suite this waits until no such process runs
 # from a directory outside this worktree, and refuses to start after an hour.
 set -uo pipefail
-P=${1:?usage: tier1.sh PHASE [rust] [hybrid] [cpp]}; shift
+P=${1:?usage: tier1.sh PHASE [rust|rustlab]}; shift
 LANES=("$@"); [ ${#LANES[@]} -eq 0 ] && LANES=(rust)
 : "${RESULTS:?source ~/mako-verus-env.sh first}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -58,8 +58,6 @@ for lane in "${LANES[@]}"; do
         run "$t" build_rust "$t"
       done;;
     rustlab) run raftLabTest build_rust raftLabTest;;
-    hybrid) run hybrid build raftLabTestHybrid;;
-    cpp) run cpp build_cpp raftLabTestCpp;;
     *) echo "unknown lane $lane"; rc=2;;
   esac
 done

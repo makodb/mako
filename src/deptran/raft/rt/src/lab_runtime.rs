@@ -31,8 +31,7 @@ pub extern "C" fn raft_rt_run_lab() -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// The snapshot lab kernels, Rust-lane bodies over SnapshotStore (plan N4).
-// Hybrid and cpp define the same names in snapshot_seam_cpp.cc.
+// The snapshot lab kernels, over SnapshotStore (plan N4).
 // ---------------------------------------------------------------------------
 
 use crate::snapshot::{put, store_of, SnapshotStore};
@@ -115,8 +114,8 @@ pub unsafe extern "C" fn raft_lab_snapshot_copy_latest(
 
 // ---------------------------------------------------------------------------
 // Tests 50-52 on the Rust lane (plan N10): new tests under the old numbers,
-// over SnapshotStore, printing the lines ci.sh counts (`^TEST N Passed`), in
-// the format lab_unit_tests.cc uses.
+// over SnapshotStore, printing the lines ci.sh counts (`TEST N:` to derive
+// the expected count, `^TEST N Passed` for the passes).
 // ---------------------------------------------------------------------------
 
 fn unit_check(id: i32, ok: bool, msg: &str) -> bool {

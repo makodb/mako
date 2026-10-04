@@ -2,8 +2,8 @@
 
 // The kernels that cross between server.cc (HOST: Mako's objects -- the
 // Command payload, the snapshot manager, embedder callbacks; linked in every
-// lane) and a lane's runtime seam (server_seam_cpp.cc on the C++ lanes,
-// raft-rt's src/seam.rs on the Rust lane). Every other kernel goes from the
+// lane) and the runtime seam (raft-rt's src/seam.rs; the C++ lanes' seam went
+// with those lanes, docs/verus/modification-plan.md Q9). Every other kernel goes from the
 // Rust core to one side or the other and is declared in the core's extern
 // blocks; these are called by C++ on both sides, so they need a header.
 
@@ -16,9 +16,8 @@ struct RaftServerBase;
 
 extern "C" {
 
-// LANE: the snapshot store's accessors that HOST C++ calls (plan N4). The
-// C++ lanes define them in snapshot_seam_cpp.cc over the C++ manager, the Rust
-// lane in raft-rt's rt/src/snapshot.rs over the Rust store. The carrier types
+// LANE: the snapshot store's accessors that HOST C++ calls (plan N4), defined
+// in raft-rt's rt/src/snapshot.rs over the Rust store. The carrier types
 // are server.h's, so include this after it.
 bool raft_snapshot_manager_is_set(const rusty::RaftSnapshotManagerPtr* manager);
 void raft_snapshot_manager_ptr_clone_into(const rusty::RaftSnapshotManagerPtr* src,

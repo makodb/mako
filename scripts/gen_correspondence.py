@@ -35,16 +35,15 @@ def kernels():
     return len(names)
 
 
-# Each lane's seam, one file list per lane. The Rust lane's snapshot store
-# (plan N4) and its lab kernels are seam too, as are their C++ counterparts.
+# The runtime seam: raft-rt's kernels, its snapshot store (plan N4) and its
+# lab kernels included. The C++ seam of the hybrid and cpp lanes went with
+# those lanes (docs/verus/modification-plan.md, Q9).
 RT_SEAM = [ROOT / "src/deptran/raft/rt/src" / f
            for f in ("seam.rs", "snapshot.rs", "lab_runtime.rs")]
-CPP_SEAM = [ROOT / "src/deptran/raft" / f
-            for f in ("server_seam_cpp.cc", "snapshot_seam_cpp.cc", "lab_unit_tests.cc")]
 FACADE = ROOT / "src/rusty-rustc/src/lib.rs"
 LANE_KERNELS = ROOT / "src/deptran/raft/lane_kernels.h"
 CPP_HOST = [p for p in (ROOT / "src/deptran").rglob("*.cc")
-            if p not in CPP_SEAM and "/raft/rt/" not in str(p)]
+            if "/raft/rt/" not in str(p)]
 
 # Kernels that are C++ only because of where the boundary sits: std time,
 # env, a mutex, a thread sleep. Each could become plain Rust in the core (plan
@@ -120,11 +119,10 @@ def cpp_defined(path):
 
 
 def classify():
-    """Every declared kernel, by where it is defined. The check half: a SEAM
-    kernel must be defined by BOTH lanes, and nothing may be defined twice."""
+    """Every declared kernel, by where it is defined. The check half: a kernel
+    is defined exactly once, by raft-rt's seam or by host C++."""
     declared = declared_kernels()
     rt = set().union(*(rust_defined(p) for p in RT_SEAM))
-    cseam = set().union(*(cpp_defined(p) for p in CPP_SEAM))
     marked = lane_kernel_entries()
     host = {}
     for f in CPP_HOST:
@@ -132,14 +130,14 @@ def classify():
             host.setdefault(n, []).append(f.relative_to(ROOT / "src/deptran").as_posix())
     rows, problems = [], []
     for n in sorted(declared):
-        in_rt, in_c, in_h = n in rt, n in cseam, n in host
-        if in_rt and in_c and not in_h:
+        in_rt, in_h = n in rt, n in host
+        if in_rt and not in_h:
             cls = "SEAM"
-        elif in_h and not in_rt and not in_c:
+        elif in_h and not in_rt and len(host[n]) == 1:
             cls = "HOST" + (" (CORE candidate)" if n in CORE_CANDIDATES else "")
         else:
             cls = "?"
-            problems.append(f"{n}: rt={in_rt} cpp_seam={in_c} host={host.get(n)}")
+            problems.append(f"{n}: rt={in_rt} host={host.get(n)}")
         want = {"LANE": "SEAM", "HOST": "HOST"}.get(marked.get(n))
         if want and not cls.startswith(want):
             problems.append(f"{n}: lane_kernels.h marks it {marked[n]} but it classifies {cls}")
@@ -178,11 +176,9 @@ PAIRS = [
      "Rust owns it; the C++ left is kernels and a pointer-holding shim"),
     ("raft/server.cc", "raft/src/server_cc.rs", ""),
     ("raft/service.cc", "raft/rt/src/service.rs",
-     "one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust"),
+     "the Rust serves; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST"),
     ("raft/commo.cc", "raft/rt/src/transport.rs",
-     "one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust"),
-    ("raft/server_seam_cpp.cc", "raft/rt/src/seam.rs",
-     "the runtime seam, one per lane; exactly one is linked"),
+     "the Rust sends; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST"),
     ("communicator.h", "raft/src/communicator_h.rs",
      "ONE source: the Rust is transpiled into the C++ both engines link"),
 ]
@@ -221,7 +217,7 @@ def body():
     w("|---|---|---|")
     w(f"| C++ → Rust | prototypes in `raft/server_exports.h` | "
       f"{exports('src/deptran/raft/server_exports.h')} |")
-    w(f"| C++ → Rust | prototypes in `raft/transport_exports.h` — the Rust lane only (raft_lane_rust.cc) |"
+    w(f"| C++ → Rust | prototypes in `raft/transport_exports.h` (raft_lane_rust.cc) |"
       f" {exports('src/deptran/raft/transport_exports.h')} |")
     w(f"| Rust → C++ | distinct `raft_*` kernels declared in `extern \"C\"` blocks under "
       f"`raft/src/` | {kernels()} |")
@@ -246,13 +242,12 @@ def body():
     for _, cls in rows:
         counts[cls.split(" ")[0]] = counts.get(cls.split(" ")[0], 0) + 1
     w("Every kernel the core or the rustc facade imports, CLASSIFIED BY WHERE IT")
-    w("IS DEFINED (plan S1): **SEAM** -- defined by both lanes' runtime seams,")
-    w("`raft/server_seam_cpp.cc` and `raft/rt/src/seam.rs`, exactly one of which")
-    w("is linked; **HOST** -- defined once in host C++ that every lane links")
-    w("(Mako's objects: the Command payload, the snapshot manager, embedder")
+    w("IS DEFINED (plan S1): **SEAM** -- defined by raft-rt's runtime seam")
+    w("(`raft/rt/src/seam.rs`, the snapshot store, the lab kernels); **HOST** --")
+    w("defined once in host C++ (Mako's objects: the Command payload, embedder")
     w("callbacks). A HOST kernel marked *CORE candidate* is C++ only by position")
     w("and could become plain Rust in the core. `--check` fails if a kernel is")
-    w("defined by one lane but not the other, or in two places.")
+    w("defined nowhere or in two places.")
     w("")
     w("| class | count |")
     w("|---|---|")

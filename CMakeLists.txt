@@ -462,31 +462,21 @@ option(COCO "Enable COCO" OFF)
 option(MAKO_USE_RAFT "Build Mako with the Raft replication helper" OFF)
 option(RAFT_TEST "Enable Raft lab testing fiber" OFF)
 option(SINGLE_RAFT_INSTANCE "Default runtime Raft group mode (ON=single group, OFF=one group per partition)" ON)
-# Which runtime the Raft core runs on. One Rust source (src/deptran/raft/src),
-# two runtimes, the model srpc itself uses (docs/migration/raft/
-# the two-lane RPC plan (removed; see git history), revision 5):
-#   rust    (default) the core plus raft-rt (src/deptran/raft/rt) compiled by
-#           rustc into libraft_rt.a: the seam kernels, the RPC transport, the
-#           poll thread and the message types are the Rust srpc crate's. The
-#           default since plan step T5, after T4 showed no regression against
-#           hybrid or the C++ baseline (docs/performance/raft-rust-9a361eccd).
-#   hybrid  the core compiled by rustc into libraft.a, over the C++ seam
-#           kernels (raft/server_seam_cpp.cc) and the C++ srpc runtime.
-#   cpp     the core transpiled by rusty-cpp into C++20 modules
-#           (cmake/raft_cpp_lane.cmake, libraft_cpp_core.a) over the C++ seam
-#           kernels and the C++ srpc runtime. No rustc in the lane at all.
-set(MAKO_RAFT_LANE "rust" CACHE STRING "Raft runtime lane: rust | hybrid | cpp")
-set_property(CACHE MAKO_RAFT_LANE PROPERTY STRINGS hybrid rust cpp)
-if(MAKO_RAFT_LANE STREQUAL "rust")
-  add_compile_definitions(MAKO_RAFT_LANE_RUST=1)
-  message(STATUS "Raft lane: rust (raft-rt over the Rust srpc runtime)")
-elseif(MAKO_RAFT_LANE STREQUAL "hybrid")
-  message(STATUS "Raft lane: hybrid (rustc core over the C++ srpc runtime)")
-elseif(MAKO_RAFT_LANE STREQUAL "cpp")
-  message(STATUS "Raft lane: cpp (transpiled core over the C++ srpc runtime)")
-else()
-  message(FATAL_ERROR "MAKO_RAFT_LANE=${MAKO_RAFT_LANE}: expected rust, hybrid or cpp")
+# Which runtime the Raft core runs on. On this branch (verus-raft) there is
+# one: rust, the core plus raft-rt (src/deptran/raft/rt) compiled by rustc into
+# libraft_rt.a over the Rust srpc runtime. The hybrid and cpp lanes, which ran
+# the same core through rusty-cpp or over C++ seam kernels, were removed for
+# the Verus work (docs/verus/modification-plan.md, Q9): the core is written
+# for rustc and Verus alone. The variable stays so a stale cache or script
+# that sets it fails loudly instead of silently building something else.
+set(MAKO_RAFT_LANE "rust" CACHE STRING "Raft runtime lane: rust (the only one on this branch)")
+set_property(CACHE MAKO_RAFT_LANE PROPERTY STRINGS rust)
+if(NOT MAKO_RAFT_LANE STREQUAL "rust")
+  message(FATAL_ERROR "MAKO_RAFT_LANE=${MAKO_RAFT_LANE}: this branch builds the rust lane only "
+                      "(the hybrid and cpp lanes were removed; docs/verus/modification-plan.md, Q9)")
 endif()
+add_compile_definitions(MAKO_RAFT_LANE_RUST=1)
+message(STATUS "Raft lane: rust (raft-rt over the Rust srpc runtime)")
 
 if(MAKO_USE_RAFT)
   add_compile_definitions(MAKO_USE_RAFT=1)
@@ -1082,7 +1072,6 @@ endif()
 add_subdirectory(src/srpc-cmake src/srpc)
 # Build and export masstree-specific test wiring from a dedicated CMakeLists.
 add_subdirectory(src/masstree)
-include(cmake/raft_cpp_lane.cmake)
 
 # Build libtxlog.so natively with CMake instead of WAF
 # Collect SRPC source files (de-modularized: plain .cpp/.cc impl units).
@@ -1122,30 +1111,10 @@ set(DEPTRAN_CORE_SRC
     src/deptran/tpcc_sharding.cc
     src/deptran/view_data.cc
 )
-# The runtime seam, per lane: exactly one set of the kernels the Raft core
-# calls for fibers, events, the poll thread and the wire is linked.
-# The snapshot store is part of the seam (plan N4): the C++ manager's kernels
-# on hybrid/cpp (snapshot_seam_cpp.cc), the Rust store's in raft-rt.
-if(MAKO_RAFT_LANE STREQUAL "rust")
-  list(APPEND DEPTRAN_CORE_SRC src/deptran/raft/raft_lane_rust.cc)
-else()
-  list(APPEND DEPTRAN_CORE_SRC src/deptran/raft/server_seam_cpp.cc
-                               src/deptran/raft/snapshot_seam_cpp.cc)
-endif()
-
-# Tests 50-52 are C++ unit tests of the C++ snapshot classes on hybrid/cpp;
-# on the Rust lane raft-rt runs its own over the Rust store (plan N10).
-if(RAFT_TEST AND NOT MAKO_RAFT_LANE STREQUAL "rust")
-    list(APPEND DEPTRAN_CORE_SRC
-        # All that is left of the C++ lab harness: the three cases that are
-        # unit tests of C++ classes (SnapshotMetadata, SnapshotFormat,
-        # MemorySnapshotManager) and touch no RaftServer. The suite itself is
-        # Rust -- src/deptran/raft/src/lab*.rs -- which is what let test.cc and
-        # testconf.cc be deleted along with 41 of the 73 exports (the lab
-        # harness plan, Phase 4; the plan doc is in git history).
-        src/deptran/raft/lab_unit_tests.cc
-    )
-endif()
+# The runtime seam: the kernels the Raft core calls for fibers, events, the
+# poll thread, the wire and the snapshot store (plan N4) are raft-rt's; this
+# file installs its hooks.
+list(APPEND DEPTRAN_CORE_SRC src/deptran/raft/raft_lane_rust.cc)
 
 # Runtime replication switching: compile BOTH Paxos and Raft helpers
 # The replication_helper.cc dispatcher routes calls based on runtime configuration
@@ -1233,17 +1202,10 @@ add_custom_command(
     VERBATIM)
 
 set(RAFT_RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/raft-cargo")
-# One cargo workspace (src/deptran/raft), two artifacts: the hybrid lane links
-# the core alone (libraft.a); the Rust lane links raft-rt (libraft_rt.a),
-# which contains the core as an rlib. Never both: raft-rt defines the seam
-# kernels server_seam_cpp.cc also defines.
-if(MAKO_RAFT_LANE STREQUAL "rust")
-  set(RAFT_RUST_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml")
-  set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft_rt.a")
-else()
-  set(RAFT_RUST_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml")
-  set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft.a")
-endif()
+# The linked artifact is raft-rt (libraft_rt.a), which contains the core
+# crate (src/deptran/raft) as an rlib.
+set(RAFT_RUST_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml")
+set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft_rt.a")
 # The srpc crate is in here because the Raft crate depends on it -- commo.rs
 # names srpc::client::Client. Without these, editing a canonical srpc .rs
 # leaves libraft.a stale: ninja sees no changed dependency, never re-invokes
@@ -1290,7 +1252,7 @@ add_custom_command(
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/Cargo.toml
-    COMMENT "cargo build: the Raft ${MAKO_RAFT_LANE} lane as ${RAFT_RUST_LIB}"
+    COMMENT "cargo build: the Raft core and raft-rt as ${RAFT_RUST_LIB}"
     VERBATIM)
 add_custom_target(raft_rust_build DEPENDS ${RAFT_RUST_LIB})
 add_library(raft_rust STATIC IMPORTED GLOBAL)
@@ -1299,18 +1261,10 @@ set_target_properties(raft_rust PROPERTIES
     # what Rust's std needs from the platform
     INTERFACE_LINK_LIBRARIES "pthread;dl;m;rt;util;gcc_s")
 
-# The Raft core every link site below uses, chosen by lane: the rustc
-# artifact (raft_rust) for rust and hybrid, the transpiled C++ modules
-# (raft_cpp_core, cmake/raft_cpp_lane.cmake) for cpp. RAFT_CORE_DEPS is what
-# must be built before anything that links it.
-if(MAKO_RAFT_LANE STREQUAL "cpp")
-  set(RAFT_CORE_TARGET raft_cpp_core)
-  set(RAFT_CORE_DEPS raft_cpp_core)
-  set_target_properties(raft_cpp_core PROPERTIES EXCLUDE_FROM_ALL OFF)
-else()
-  set(RAFT_CORE_TARGET raft_rust)
-  set(RAFT_CORE_DEPS raft_rust_build)
-endif()
+# The Raft core every link site below uses (the rustc artifact), and what must
+# be built before anything that links it.
+set(RAFT_CORE_TARGET raft_rust)
+set(RAFT_CORE_DEPS raft_rust_build)
 
 # Build the replication core from the explicit manifest above.
 add_library(txlog_core_obj OBJECT
@@ -1379,59 +1333,41 @@ set(TXLOG_BUILD_DEPS
     txlog_core ${RAFT_CORE_DEPS}
 )
 
-# Plan phase L4, keeping the lanes honest (scripts/raft_lane_parity.py), on
-# every build:
-#  * exactly-once -- each raft_* symbol the lane's core imports is defined
-#    exactly once by the host archive, and nothing the core defines (raft-rt's
-#    seam, on the Rust lane) is defined by the host as well;
-#  * core parity, on the hybrid lane -- the rustc core and the transpiled
-#    core export and import the same raft_* C symbols. Both cores come from
-#    one source whatever the lane, so the tree that already builds the rustc
-#    core also builds the transpiled one and compares them.
-if(MAKO_RAFT_LANE STREQUAL "cpp")
-  set(RAFT_CORE_ARCHIVE "$<TARGET_FILE:raft_cpp_core>")
-else()
-  set(RAFT_CORE_ARCHIVE "${RAFT_RUST_LIB}")
-endif()
+# Plan phase L4's exactly-once check (scripts/raft_lane_parity.py), on every
+# build: each raft_* symbol the core imports is defined exactly once by the
+# host archive, and nothing the core defines (raft-rt's seam) is defined by
+# the host as well.
 set(RAFT_LANE_CHECK_COMMANDS
     COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_lane_parity.py
-            --once "${RAFT_CORE_ARCHIVE}" "$<TARGET_FILE:txlog_core>")
+            --once "${RAFT_RUST_LIB}" "$<TARGET_FILE:txlog_core>")
 set(RAFT_LANE_CHECK_DEPS txlog_core ${RAFT_CORE_DEPS})
-if(MAKO_RAFT_LANE STREQUAL "hybrid")
-  list(APPEND RAFT_LANE_CHECK_COMMANDS
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_lane_parity.py
-            --cores "${RAFT_RUST_LIB}" "$<TARGET_FILE:raft_cpp_core>")
-  list(APPEND RAFT_LANE_CHECK_DEPS raft_cpp_core)
-endif()
-# Plan N8: on the Rust lane raft-rt's own tests (the snapshot store's unit
+# Plan N8: raft-rt's own tests (the snapshot store's unit
 # tests, the transport round trips, resend suppression, the frame cap) gate
 # the build too. A stamp keeps them from rerunning when nothing they cover
 # changed; the lane's feature set is passed so the tests see the lab or
 # production crate this tree links.
-if(MAKO_RAFT_LANE STREQUAL "rust")
-  file(GLOB RAFT_RT_TEST_SOURCES CONFIGURE_DEPENDS
-      ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/tests/*.rs)
-  set(RAFT_RT_TEST_STAMP "${CMAKE_BINARY_DIR}/raft_rt_test.stamp")
-  add_custom_command(
-      OUTPUT ${RAFT_RT_TEST_STAMP}
-      COMMAND ${CMAKE_COMMAND} -E env
-              "CC=${CMAKE_C_COMPILER}"
-              "AR=${CMAKE_AR}"
-              cargo test --release --quiet
-              --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml
-              --target-dir ${RAFT_RUST_TARGET_DIR}
-              ${RAFT_RUST_FEATURES}
-      COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_RT_TEST_STAMP}
-      DEPENDS ${RAFT_RUST_SOURCES} ${RAFT_RT_TEST_SOURCES} ${RAFT_RUST_LIB}
-      COMMENT "cargo test: raft-rt"
-      VERBATIM)
-  add_custom_target(raft_rt_test DEPENDS ${RAFT_RT_TEST_STAMP})
-  list(APPEND RAFT_LANE_CHECK_DEPS raft_rt_test)
-endif()
+file(GLOB RAFT_RT_TEST_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/tests/*.rs)
+set(RAFT_RT_TEST_STAMP "${CMAKE_BINARY_DIR}/raft_rt_test.stamp")
+add_custom_command(
+    OUTPUT ${RAFT_RT_TEST_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E env
+            "CC=${CMAKE_C_COMPILER}"
+            "AR=${CMAKE_AR}"
+            cargo test --release --quiet
+            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml
+            --target-dir ${RAFT_RUST_TARGET_DIR}
+            ${RAFT_RUST_FEATURES}
+    COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_RT_TEST_STAMP}
+    DEPENDS ${RAFT_RUST_SOURCES} ${RAFT_RT_TEST_SOURCES} ${RAFT_RUST_LIB}
+    COMMENT "cargo test: raft-rt"
+    VERBATIM)
+add_custom_target(raft_rt_test DEPENDS ${RAFT_RT_TEST_STAMP})
+list(APPEND RAFT_LANE_CHECK_DEPS raft_rt_test)
 add_custom_target(raft_lane_check ALL
     ${RAFT_LANE_CHECK_COMMANDS}
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_lane_parity.py
-    COMMENT "Checking the Raft lane's kernel ABI (exactly-once, core parity)"
+    COMMENT "Checking the Raft kernel ABI (exactly-once)"
     VERBATIM)
 add_dependencies(raft_lane_check ${RAFT_LANE_CHECK_DEPS})
 
@@ -1440,13 +1376,12 @@ file(GLOB RAFT_BORROW_SRC
     "src/deptran/raft/*.cc"
     "src/deptran/raft/*.cpp"
 )
-# Exclude test files from raft borrow checking. test.cc and testconf.cc are
-# gone -- the suite is Rust now (src/deptran/raft/src/lab*.rs) -- but
-# lab_unit_tests.cc, the three cases that exercise C++ classes, is still a test
-# and still matched by this filter.
+# Exclude test files from raft borrow checking. The lab suite is Rust
+# (src/deptran/raft/src/lab*.rs, raft-rt's lab_runtime.rs); this filter is
+# kept for any C++ test file added here.
 # NOTE: raft_main_helper.cc is also excluded because it includes third-party headers
 # (YAML, etc.) that generate 1000+ false positive violations from header code.
-list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*(test(conf)?|lab_unit_tests)\\.cc$")
+list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*test(conf)?\\.cc$")
 # Note: config_manager.cc / cluster_config.cc / config_watcher.cc moved to
 # src/cluster/ and are no longer part of RAFT_BORROW_SRC.
 

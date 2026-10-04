@@ -718,8 +718,7 @@ impl VoteTally {
 //
 // The server cannot hold this: RaftTransport is !Send while RaftServerBase
 // must stay Send + Sync, or RaftRpcService loses srpc's trait bound. So it
-// lives in a registry keyed by server identity -- the shape the C++ lane's
-// commo table has (server_seam_cpp.cc), and read the same lock-free way: the
+// lives in a registry keyed by server identity, read lock-free: the
 // table is published, never mutated, and readers walk whatever they loaded.
 // ===========================================================================
 

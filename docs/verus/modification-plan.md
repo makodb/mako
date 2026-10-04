@@ -46,6 +46,7 @@ The user has answered them; nothing in this plan waits on the group.
 | Q6 | Refused committed-conflict path | Ours: a view choice, V2, no spec change (§4.3). |
 | Q7 | How much testing between phases? | **Less**: correctness at every phase end, performance at three checkpoints only (0.10). Decided by the user after Phase 0's A/A runs had started. |
 | Q8 | How is G2 judged, once its throughput turned out to measure a timing race? | **By the time of rounds that sent to both followers**, traced; throughput and the follower-behind count are reported, not gated (0.10). The Phase 3 checkpoint passes. Decided by the user after the Phase 3 investigation. |
+| Q9 | Do the cpp and hybrid lanes follow the verified core (Phase 6)? | **No: removed from this worktree** at Phase 6's start. "It's a verus code for verification, we care about implementation of Raft, not compatibility with the rest of the repo." The core is written for rustc and Verus alone; srpc's own C++ lane is not Raft and stays. Decided by the user at the pre-Phase 6 stop. |
 
 **We may change the spec ourselves**, under two rules that apply to every
 change:
@@ -82,12 +83,12 @@ and Verus machine time ("Schedule", end of §5).
 `src/server_h.rs` and `src/server_cc.rs` are canonical Rust
 (`kind = "canonical"`, `rust-modules.toml:97-103`): edit them directly. The
 header comment of `Cargo.toml` saying they are generated is stale for them.
-The cpp and hybrid lanes transpile the same crate with rusty-cpp
-(`scripts/raft_cpp_stage.py`), so **they inherit every core change** (F1, F3-F5,
-F8, the Phase 1-4 restructuring) until a Phase 6 decision freezes them. Every
-build runs `raft_goal0_source_gate` (root `CMakeLists.txt:257-281`,
-`scripts/raft_dsl.sh --check`), so every crate change must still pass the
-cpp-lane build (Phase 0 spike b).
+Through Phase 4 the cpp and hybrid lanes transpiled the same crate with
+rusty-cpp, so they inherited every core change (F1, F3-F5, F8, the Phase 1-4
+restructuring), and every crate change had to pass the cpp-lane build.
+**Removed at Phase 6's start (Q9):** Raft builds the rust lane only on this
+branch; `raft_goal0_source_gate` still checks the inline-DSL C++ headers
+(`scripts/raft_dsl.sh --check`), which never covered the core crate.
 
 ### 0.3 Environment (once per shell)
 
@@ -202,11 +203,9 @@ the path and the 3-5 conclusions that matter. Stop and report:
    check (A.4), diff-ledger summary, new bug-log entries (0.9), commit SHA
    pushed to `backup`.
 6. **Real blockers only** (toolchain cannot be repaired; Verus cannot express a
-   construct, with the attempt shown; the cpp lane cannot transpile `verus!`
-   code). Do not stop at self-chosen checkpoints inside a phase.
+   construct, with the attempt shown). Do not stop at self-chosen checkpoints inside a phase.
 7. **User decisions; stop and wait** at exactly these points: before Phase 6
-   starts (fate of the cpp and hybrid lanes, unless spike (b) settled it and
-   the user already agreed); after Phase 8 (whether to do Phase 5 and/or
+   starts (fate of the cpp and hybrid lanes: **decided**, removed, Q9); after Phase 8 (whether to do Phase 5 and/or
    Phase 7); before F11d (Propose's result scheme); before falling back from
    V3 to F2 (§4.3).
 8. **Comparator exemptions out of hand**: if more than half the lab cases
@@ -1255,8 +1254,9 @@ the verified code itself: no separate port.
 - `RaftLog` keeps its blocked layout (`src/server_h.rs:581-725`, chosen against
   reallocation stalls, `:636-639`) behind a `view(): Seq<Term>` spec.
 - F9 (`step_checked`, integer checks only).
-- Cpp and hybrid lanes per spike (b): generate erased Rust for rusty-cpp, or
-  freeze those lanes on the pre-Phase 6 core (**user decision**, raise here).
+- Cpp and hybrid lanes: **removed** (Q9), the phase's first commit. The core
+  crate is written for rustc and Verus only; B13-class transpiler limits no
+  longer apply to it.
 - Prove panic freedom (A5) for the ~29 `assert!`s (peer-table size, missing
   entry, tail mismatch, vote-handler panics). Use `verus/commit_rule.rs` as the
   skeleton for the commit rule.
@@ -1548,8 +1548,6 @@ Run from `/home/users/zyang2/mako-verus` with `~/mako-verus-env.sh` sourced;
 P=p1; mkdir -p $RESULTS/$P/tier1; rc=0
 for t in raftLabTest shard1ReplicationRaft shard2ReplicationRaft shard1ReplicationSimpleRaft shard2ReplicationSimpleRaft; do
   BUILD_DIR=build_rust ./ci/ci.sh $t > $RESULTS/$P/tier1/$t.log 2>&1 || { echo "FAIL $t"; rc=1; }; done
-BUILD_DIR=build     ./ci/ci.sh raftLabTestHybrid > $RESULTS/$P/tier1/hybrid.log 2>&1 || { echo "FAIL hybrid"; rc=1; }  # while kept
-BUILD_DIR=build_cpp ./ci/ci.sh raftLabTestCpp    > $RESULTS/$P/tier1/cpp.log 2>&1    || { echo "FAIL cpp"; rc=1; }     # while kept
 grep -c '^Retrying' $RESULTS/$P/tier1/*.log    # first-attempt failures: report every non-zero
 # srpc touched: also simplePaxos shard1Replication shard2Replication shardNoReplication srpcTests
 echo "tier1 rc=$rc"
@@ -1697,17 +1695,12 @@ records the sweep under `$RESULTS/p0/sweep/child`.)
 **Non-goals.** Verifying srpc, the codec, the C++ shim, the apply callback or
 RocksDB; liveness; snapshots, restart, membership or reads in certificate v1;
 timer changes before Phase 7; changing the `add_log_to_nc`/`RaftWorker` API;
-lane-private C++ code of the cpp and hybrid lanes (for example the C++
-`RaftVoteQuorumEvent` tally, which F1 leaves alone); persistence. Note that the
-cpp and hybrid lanes are **not** untouched: they transpile the same crate, so
-they inherit every core change (F1, F3-F5, F8, Phases 1-4) until the Phase 6
-decision (0.2).
+persistence. The cpp and hybrid lanes are gone from this worktree (Q9).
 
 **User decisions still open** (stop and wait at the points listed in 0.7
 point 7):
 1. Phase 5 reply echo (any time; not needed for the proof).
-2. The fate of the cpp and hybrid lanes (at Phase 6 at the latest; freezing
-   them earlier shortens every iteration).
+2. (Decided: the cpp and hybrid lanes are removed, Q9.)
 3. Propose's result scheme, only if F11d is done.
 4. Offering S1 (and any later S-change) upstream to the group, and pushing
    `mako-spec` anywhere.

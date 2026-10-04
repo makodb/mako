@@ -9,8 +9,8 @@
 // testSnapshotFormatRoundTrip and testSnapshotManagerSaveLoad construct a
 // SnapshotMetadata, call SnapshotFormat's statics and exercise a
 // MemorySnapshotManager on the stack. They are unit tests of C++ classes and
-// touch no RaftServer, so they live in lab_unit_tests.cc and this suite calls
-// them through one kernel.
+// touch no RaftServer, so they live with the snapshot store in raft-rt
+// (rt/src/lab_runtime.rs) and this suite calls them through one kernel.
 
 #![allow(non_snake_case)]
 
@@ -62,8 +62,8 @@ unsafe extern "C" {
                                prepare_out: *mut rusty::RaftPrepareSnapshotCb);
     fn raft_lab_probe_flags() -> u32;
     fn raft_lab_probe_release();
-    /// Tests 50-52: the C++ unit tests on hybrid/cpp (lab_unit_tests.cc),
-    /// the Rust store's on the Rust lane (rt/src/lab_runtime.rs). 0 on success.
+    /// Tests 50-52: the snapshot store's unit tests (rt/src/lab_runtime.rs).
+    /// 0 on success.
     fn raft_lab_snapshot_unit_tests() -> i32;
     /// The snapshot manager's shared_ptr, copied into a default-constructed
     /// slot. A shared_ptr relocates bitwise; the std::function carriers do

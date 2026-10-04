@@ -14,9 +14,8 @@ wolf gets switched off. `--check` is the freshness guarantee.
 |---|---|---|---|---|
 | `raft/server.h` | 545 | `raft/src/server_h.rs` | 7026 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
 | `raft/server.cc` | 1751 | `raft/src/server_cc.rs` | 1817 |  |
-| `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 177 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
-| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1053 | one per lane: the C++ for hybrid, the Rust for MAKO_RAFT_LANE=rust |
-| `raft/server_seam_cpp.cc` | 361 | `raft/rt/src/seam.rs` | 479 | the runtime seam, one per lane; exactly one is linked |
+| `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 177 | the Rust serves; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
+| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1052 | the Rust sends; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
 | `communicator.h` | 567 | `raft/src/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
 | `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 582 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
 
@@ -28,7 +27,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 | direction | mechanism | count |
 |---|---|---|
 | C++ → Rust | prototypes in `raft/server_exports.h` | 32 |
-| C++ → Rust | prototypes in `raft/transport_exports.h` — the Rust lane only (raft_lane_rust.cc) | 17 |
+| C++ → Rust | prototypes in `raft/transport_exports.h` (raft_lane_rust.cc) | 17 |
 | Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 95 |
 
 ## Counted facts the prose below leans on
@@ -44,13 +43,12 @@ today, not because Rust cannot express them. An earlier revision of this
 file said kernels exist for "the reactor, threads"; both were wrong.
 
 Every kernel the core or the rustc facade imports, CLASSIFIED BY WHERE IT
-IS DEFINED (plan S1): **SEAM** -- defined by both lanes' runtime seams,
-`raft/server_seam_cpp.cc` and `raft/rt/src/seam.rs`, exactly one of which
-is linked; **HOST** -- defined once in host C++ that every lane links
-(Mako's objects: the Command payload, the snapshot manager, embedder
+IS DEFINED (plan S1): **SEAM** -- defined by raft-rt's runtime seam
+(`raft/rt/src/seam.rs`, the snapshot store, the lab kernels); **HOST** --
+defined once in host C++ (Mako's objects: the Command payload, embedder
 callbacks). A HOST kernel marked *CORE candidate* is C++ only by position
 and could become plain Rust in the core. `--check` fails if a kernel is
-defined by one lane but not the other, or in two places.
+defined nowhere or in two places.
 
 | class | count |
 |---|---|
