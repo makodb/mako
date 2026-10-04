@@ -24,6 +24,9 @@ pub mod authority;
 pub mod output;
 pub mod election;
 pub mod event;
+// [M12] the proof side: Verus only (scripts/verus/verify_core.sh)
+#[cfg(verus_keep_ghost)]
+pub mod coupling;
 
 pub use helpers::*;
 pub use logging::*;

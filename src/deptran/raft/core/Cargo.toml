@@ -19,3 +19,8 @@ path = "src/lib.rs"
 vstd = "=0.0.0-2026-08-02-0125"
 verus_builtin = "=0.0.0-2026-08-02-0125"
 verus_builtin_macros = "=0.0.0-2026-08-02-0125"
+
+[lints.rust]
+# Verus sets these when it verifies (the proof side of the crate: the
+# coupling to the group's spec, which plain cargo never compiles).
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_keep_ghost_body)'] }

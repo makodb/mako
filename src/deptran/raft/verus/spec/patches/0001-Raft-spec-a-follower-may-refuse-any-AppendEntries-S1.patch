@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: zyang2 <zyang2@zoo-003.maas>
 Date: Sat, 3 Oct 2026 04:04:36 +0000
-Subject: [PATCH] Raft spec: a follower may refuse any AppendEntries (S1)
+Subject: [PATCH 1/2] Raft spec: a follower may refuse any AppendEntries (S1)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

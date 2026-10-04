@@ -20,6 +20,7 @@ The patch series and the frozen manifest live in
 |---|---|---|---|---|---|
 | v0 | `raft-spec-v0` (= `d7e04ed7`) | upstream, unmodified | 0.2026.08.02.b677dd5 | 2129 verified, 0 errors (5 min 26 s, 6.7 GB) | `$RESULTS/spec/v0-pin.log` |
 | v1 | `raft-spec-v1` (= `a19122cf`) | v0 + S1 | 0.2026.08.02.b677dd5 | 2129 verified, 0 errors (5 min 24 s, 6.7 GB) | `$RESULTS/spec/v1-pin.log` |
+| v1 (export) | `raft-spec-v1-export` (= `c0c242ab`) | v1 + `pub mod protocol;` in the crate root (patch 0002): visibility only, so the core can import the spec (plan §4.5, spike (d) choice (i)). No statement-bearing file changes, so the version stays v1: the manifest's ten sha256 are unchanged | 0.2026.08.02.b677dd5 | 2129 verified, 0 errors (5 min 9 s) | `$RESULTS/spec/verify_spec.v1-export.log` |
 
 ## Changes
 

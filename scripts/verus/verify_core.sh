@@ -7,8 +7,9 @@
 # (#[verifier::external_body]) without being listed in
 # scripts/verus/core_trusted.txt -- the crate's trusted surface, which must
 # only shrink. (Verus's "verified" count is reported but not gated: it counts
-# verification conditions, not functions, and moves under refactoring.) From
-# Phase 8 the same run imports spec v1 (§4.5, spike (d) choice (i)).
+# verification conditions, not functions, and moves under refactoring.) The
+# run imports spec v1 (the manifest's tag; plan §4.5, spike (d) choice (i))
+# for the proof side (core/src/coupling.rs, Verus only).
 #
 # The crate also builds with plain cargo, ghost code erased (spike (a)):
 # this script is the proof half, not the build.
@@ -21,8 +22,27 @@ LOG=""
 if [ "${1:-}" = "--log" ]; then LOG="$2"; shift 2; fi
 LOG="${LOG:-$(mktemp /tmp/verify_core_XXXX.log)}"
 
+# The spec the proof side imports (plan §4.5, Phase 0 spike (d) choice (i)):
+# the group's crate exported by Verus from the frozen tag the manifest
+# names, archived out of $GLR (so its working tree does not matter) and
+# built once per tag into $RESULTS/spec/export/<tag>.
+: "${GLR:?source ~/mako-verus-env.sh first}"
+: "${RESULTS:?source ~/mako-verus-env.sh first}"
+TAG=$(sed -n 's/^tag = "\(.*\)"$/\1/p' "$REPO_ROOT/src/deptran/raft/verus/spec/SPEC_VERSION.toml")
+EXPORT="$RESULTS/spec/export/$TAG"
+if [ ! -s "$EXPORT/glr.vir" ] || [ ! -s "$EXPORT/libglr.rlib" ]; then
+  echo "verify_core: exporting the spec crate at $TAG (about 45 s, once per tag)"
+  rm -rf "$EXPORT" && mkdir -p "$EXPORT"
+  git -C "$GLR" archive "$TAG" src | tar -x -C "$EXPORT" || { echo "verify_core: cannot archive $TAG"; exit 2; }
+  # this Verus takes --export's argument as the output path
+  (cd "$EXPORT" && "$VERUS_PIN" --crate-type=lib --crate-name glr src/lib.rs --no-verify \
+       --export glr.vir --compile -o libglr.rlib > export.log 2>&1) \
+    || { echo "verify_core: export failed, see $EXPORT/export.log"; exit 2; }
+fi
+
 t0=$SECONDS
-"$VERUS_PIN" --crate-type=lib "$CORE" "$@" > "$LOG" 2>&1
+"$VERUS_PIN" --crate-type=lib "$CORE" --extern glr="$EXPORT/libglr.rlib" \
+  --import glr="$EXPORT/glr.vir" "$@" > "$LOG" 2>&1
 rc=$?
 summary=$(grep -E "verification results::" "$LOG" | tail -1)
 echo "verify_core: ${summary:-no summary} ($((SECONDS - t0)) s, log $LOG)"

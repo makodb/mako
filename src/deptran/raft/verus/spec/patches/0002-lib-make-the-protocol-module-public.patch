@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: zyang2 <zeyyang@cs.stonybrook.edu>
+Date: Sun, 4 Oct 2026 09:44:50 +0000
+Subject: [PATCH 2/2] lib: make the protocol module public
+
+So that a separately verified client crate can import the Raft spec and
+the ghost-log method (verus --export / --import): the crate root kept
+the protocol module private, and only items reachable from the root are
+exported. Visibility only; no definition changes.
+---
+ src/lib.rs | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/src/lib.rs b/src/lib.rs
+index e6d70830..03e54059 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -26,7 +26,7 @@ mod examples;
+ mod generated;
+ mod implementation;
+ mod ports;
+-mod protocol;
++pub mod protocol;
+ mod services;
+ mod verus_extra;
+ 

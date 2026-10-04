@@ -3,9 +3,9 @@
 upstream = "git@github.com:ZhangZihao270/ghost-log-refinement.git"
 base_commit = "d7e04ed7"
 branch = "mako-spec"
-tag = "raft-spec-v1"
-tag_commit = "a19122cf4446c3834fb361cc3e5a856b5f6cdf06"
-patches = ["0001-Raft-spec-a-follower-may-refuse-any-AppendEntries-S1.patch"]
+tag = "raft-spec-v1-export"
+tag_commit = "c0c242ab75d81f004f907f47989b657818a09147"
+patches = ["0001-Raft-spec-a-follower-may-refuse-any-AppendEntries-S1.patch", "0002-lib-make-the-protocol-module-public.patch"]
 verus_version = "0.2026.08.02.b677dd5"
 toolchain = "1.97.1-x86_64-unknown-linux-gnu"
 verify_command = "verus --crate-type=dylib --expand-errors src/lib.rs (in $GLR)"
