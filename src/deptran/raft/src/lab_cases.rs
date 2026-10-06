@@ -662,9 +662,10 @@ fn test_figure8(st: &mut LabState) -> i32 {
 // An AppendEntries whose entry carries term 0 -- no Raft term; the spec's
 // B16 -- is refused and leaves the follower's log alone. The same append
 // without its entry is accepted first, so the refusal can only be the
-// entry's term.
+// entry's term. [fix, F14] So is one whose entry's term is later than the
+// AppendEntries' own (bugs-found B4).
 fn test_entry_term_zero_refused(_st: &mut LabState) -> i32 {
-    init2(12, "AppendEntries carrying an entry of term 0 is refused");
+    init2(12, "AppendEntries carrying an entry of term 0, or later than its own, is refused");
 
     let leader = lab::one_leader(-1);
     if !check_msg(leader >= 0, "no leader") { return 1; }
@@ -707,6 +708,25 @@ fn test_entry_term_zero_refused(_st: &mut LabState) -> i32 {
         failed("follower not registered"); return 1;
     };
     if !check_msg(!zero_after, "a term-0 entry reached the follower's log") { return 1; }
+
+    // [fix, F14] The second probe: one entry whose term is one later than
+    // the AppendEntries' own.
+    let Some((late_ok, _, _)) = lab::serve_append(follower, term, leader_site, last,
+                                                  last_term, commit, term + 1, 1201) else {
+        failed("follower not registered"); return 1;
+    };
+    if !check_msg(late_ok == 0, "an entry later than its AppendEntries' term was accepted") {
+        return 1;
+    }
+    // The real leader may still be replicating, so the follower's last index
+    // can move; but no entry of a later term than the leader's can reach its
+    // log except the probe's.
+    let Some((_, _, last_term_after, _, _)) = lab::log_tail(follower) else {
+        failed("follower not registered"); return 1;
+    };
+    if !check_msg(last_term_after != term + 1, "a refused entry reached the follower's log") {
+        return 1;
+    }
 
     passed();
     0

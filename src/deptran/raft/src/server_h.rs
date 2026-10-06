@@ -3287,6 +3287,9 @@ pub struct WireBatch {
     cmd_: *const core::ffi::c_void,
     has_cmd_: bool,
     next_log_term_: u64,
+    // [fix, F14] The AppendEntries' own term: no entry it carries may be of
+    // a later term (bugs-found B4).
+    leader_term_: u64,
     // The batch decode_terms found (null for a single-entry payload), kept
     // for entry_at so the payload is cast once per call, as it was when
     // append_into cast it again itself.
@@ -3296,8 +3299,9 @@ pub struct WireBatch {
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 impl WireBatch {
     pub fn new(cmd: *const core::ffi::c_void, has_cmd: bool,
-               next_log_term: u64) -> WireBatch {
+               next_log_term: u64, leader_term: u64) -> WireBatch {  // [fix, F14]
         WireBatch { cmd_: cmd, has_cmd_: has_cmd, next_log_term_: next_log_term,
+                    leader_term_: leader_term,  // [fix, F14]
                     batch_: core::cell::Cell::new(core::ptr::null()) }
     }
 }
@@ -3325,12 +3329,14 @@ impl raft_core::InboundBatch<rusty::RaftCommand> for WireBatch {
             let count: u64 = unsafe { raft_batch_len(batch) };
             // [fix, F4] Every entry term must be a Raft term, i.e. at least 1
             // (the spec's B16). A payload carrying any other is refused like
-            // any undecodable one.
+            // any undecodable one. [fix, F14] Nor may it exceed the
+            // AppendEntries' own term: a leader's log holds no entry of a
+            // later term (bugs-found B4).
             let mut terms_valid: bool = true;
             let mut i: u64 = 0;
             while i < count {
                 let term: i64 = unsafe { raft_batch_term_at(batch, i) };
-                if term < 1 {
+                if term < 1 || term as u64 > self.leader_term_ {  // [fix, F14]
                     terms_valid = false;  // [fix, F4]
                 }
                 terms.push(term);
@@ -3341,8 +3347,10 @@ impl raft_core::InboundBatch<rusty::RaftCommand> for WireBatch {
                     leader_prev_log_index, count);
         }
         terms.push(self.next_log_term_ as i64);
-        // [fix, F4] the single entry's term, checked as decoded
+        // [fix, F4] the single entry's term, checked as decoded; [fix, F14]
+        // and no later than the AppendEntries' own term
         (self.next_log_term_ as i64) >= 1
+            && self.next_log_term_ <= self.leader_term_  // [fix, F14]
             && raft_server_append_entry_count_fits(leader_prev_log_index, 1)
     }
 
@@ -4312,7 +4320,8 @@ fn on_append_entries_locked(
     // rejected AppendEntries pay a dynamic cast and N refcount bumps on a
     // path a remote peer drives.
     let wire: WireBatch = WireBatch::new(cmd, cmd_has_value,
-                                         leader_next_log_term);  // [move, M5]
+                                         leader_next_log_term,  // [move, M5]
+                                         leader_current_term);  // [fix, F14]
     let failover: bool = server.failover_;
     let decided: Option<Reply> = server.step_checked(
         Event::RecvAppendEntries {
