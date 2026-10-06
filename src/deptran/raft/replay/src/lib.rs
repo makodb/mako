@@ -866,7 +866,7 @@ mod tests {
         assert_ne!(tampered, text, "the round end should have advanced the commit index");
         assert_eq!(replay(&tampered).unwrap_err().line, 9);
         // A write outside step stops the replay where it is marked.
-        let tainted = format!("{}T test\n{}", &text, &text);
+        let tainted = format!("{}T test\n{}", text, text);
         assert_eq!(replay(&tainted).unwrap(), Replayed { steps: 11, tainted_at: Some(12) });
     }
 
