@@ -82,13 +82,13 @@ fn raft_command_handle_clone(cmd: &rusty::RaftCommand) -> rusty::RaftCommand {
 // mtx_ and its actions (with any InstallSnapshot kernel) before the guard
 // drops, then each AppendEntries built and sent in follower order
 // ([fix, F7]). Returns the tick for the rest of the round.
-pub fn heartbeat_tick_body(server: &mut RaftServerBase) -> HeartbeatTick {
+pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
     let mut out: CoreOutput = core_output();
     let tick: HeartbeatTick = {
-        let _lock = RaftLockGuard::new(&mut server.mtx_);
+        let _lock = RaftLockGuard::new(server.mtx());
         let is_leader: bool = server.IsLeaderLocked();
         let snapshot_configured: bool = unsafe {
-            raft_snapshot_manager_is_set(&server.snapshot_manager_)
+            raft_snapshot_manager_is_set(server.snapshot_manager_.as_ptr())
         };
         let batching: bool = unsafe { raft_batch_optimization_enabled() };
         let max_batch_entries: u64 = unsafe { raft_append_entries_batch_max() };
@@ -107,9 +107,9 @@ pub fn heartbeat_tick_body(server: &mut RaftServerBase) -> HeartbeatTick {
             let sent: bool = unsafe {
                 raft_phase1_load_and_send_snapshot(
                     server.handle(),
-                    &server.snapshot_manager_
+                    server.snapshot_manager_.as_ptr()
                         as *const rusty::RaftSnapshotManagerPtr,
-                    &server.async_callback_lifetime_
+                    server.async_callback_lifetime_.as_ptr()
                         as *const rusty::RaftAsyncCallbackLifetimePtr,
                     server.site_id_, server.partition_id_, snapshot.term_,
                     snapshot.site_id_, snapshot.ord_)
@@ -125,7 +125,7 @@ pub fn heartbeat_tick_body(server: &mut RaftServerBase) -> HeartbeatTick {
     };
     server.run_unlocked_actions(&out);
     if tick.slots_reset_ {
-        server.append_responses_.reset(tick.slot_count_);
+        server.append_responses().reset(tick.slot_count_);
     }
     if tick.declined_ {
         return tick;
@@ -144,7 +144,7 @@ pub fn heartbeat_tick_body(server: &mut RaftServerBase) -> HeartbeatTick {
             cmd = raft_command_handle_clone(&send.cmds_[0]);
         } else if send.payload_ == AppendPayload::BATCH {
             // A fresh buffer per follower, as the C++ local was.
-            server.batch_buffer_.clear();
+            server.batch_buffer().clear();
             let mut k: usize = 0;
             while k < send.cmds_.len() {
                 let stamped: rusty::RaftTpcCommitPtr = unsafe {
@@ -152,12 +152,12 @@ pub fn heartbeat_tick_body(server: &mut RaftServerBase) -> HeartbeatTick {
                         &send.cmds_[k] as *const rusty::RaftCommand,
                         send.terms_[k])
                 };
-                server.batch_buffer_.push(stamped);
+                server.batch_buffer().push(stamped);
                 k += 1;
             }
             unsafe {
-                raft_batch_finalize(server.batch_buffer_.as_mut_ptr(),
-                                    server.batch_buffer_.len(),
+                raft_batch_finalize(server.batch_buffer().as_mut_ptr(),
+                                    server.batch_buffer().len(),
                                     &mut cmd as *mut rusty::RaftCommand);
             }
         }
@@ -172,7 +172,7 @@ pub fn heartbeat_tick_body(server: &mut RaftServerBase) -> HeartbeatTick {
                 &mut sent_response as *mut rusty::RaftResponsePtr);
         }
         unsafe { raft_trace_through(4, send.sent_end_index_, 0) };  // [M0] trace kit
-        server.append_responses_.place(send.ord_, sent_response,
+        server.append_responses().place(send.ord_, sent_response,
                                        send.sent_round_);
         i += 1;
     }
@@ -193,7 +193,7 @@ pub fn heartbeat_tick_body(server: &mut RaftServerBase) -> HeartbeatTick {
 // `has_authority` are what the round's tick reported.
 // ==========================================================================
 #[allow(clippy::manual_clamp)]
-pub fn heartbeat_collect_body(server: &mut RaftServerBase, round_id: u64,
+pub fn heartbeat_collect_body(server: &RaftServerBase, round_id: u64,
                               has_authority: bool) {
     const RESPONSE_POLL_STEP_US: u64 = 1000;
     // max(1, min(100000, heartbeat_interval_us_)). Spelled out rather than
@@ -218,19 +218,19 @@ pub fn heartbeat_collect_body(server: &mut RaftServerBase, round_id: u64,
     while !stop_response_processing {
         let mut waiting_for_current_round: bool = false;
         let mut pending_ord: usize = 0;
-        while pending_ord < server.append_responses_.len() {
+        while pending_ord < server.append_responses().len() {
             if !server.IsLeader() {
                 stop_response_processing = true;
                 break;
             }
-            if !server.append_responses_.occupied(pending_ord) {
+            if !server.append_responses().occupied(pending_ord) {
                 pending_ord += 1;
                 continue;
             }
-            let sent_round: u64 = server.append_responses_.sent_round(pending_ord);
+            let sent_round: u64 = server.append_responses().sent_round(pending_ord);
             let resp: AppendRespView = unsafe {
                 raft_append_response_read(
-                    server.append_responses_.response(pending_ord)
+                    server.append_responses().response(pending_ord)
                         as *const rusty::RaftResponsePtr)
             };
             if !resp.completed_ {
@@ -243,7 +243,7 @@ pub fn heartbeat_collect_body(server: &mut RaftServerBase, round_id: u64,
 
             let mut out: CoreOutput = core_output();
             let reply: ReplyResult = {
-                let _lock = RaftLockGuard::new(&mut server.mtx_);
+                let _lock = RaftLockGuard::new(server.mtx());
                 let is_leader: bool = server.IsLeaderLocked();
                 let stopped: bool = server.stopped_now();
                 let failover: bool = server.failover_;
@@ -260,7 +260,7 @@ pub fn heartbeat_collect_body(server: &mut RaftServerBase, round_id: u64,
                 decided
             };
             server.run_unlocked_actions(&out);  // [fix, F6]
-            server.append_responses_.release(pending_ord);
+            server.append_responses().release(pending_ord);
             retry_released_follower =
                 retry_released_follower || reply.completed_previous_round_;
             current_round_has_authority = reply.has_authority_;
@@ -293,12 +293,12 @@ pub fn heartbeat_collect_body(server: &mut RaftServerBase, round_id: u64,
 
     if stop_response_processing {
         {
-            let _lock = RaftLockGuard::new(&mut server.mtx_);
+            let _lock = RaftLockGuard::new(server.mtx());
             let mut out: CoreOutput = core_output();
             server.step(Event::AbandonRound, &mut out).into_done();
         }
-        let slots: usize = server.append_responses_.len();
-        server.append_responses_.reset(slots);
+        let slots: usize = server.append_responses().len();
+        server.append_responses().reset(slots);
     } else if retry_released_follower {
         // A completion from an older round opened a per-follower slot after
         // PHASE 1. Prompt another round instead of waiting a full interval.
@@ -307,13 +307,13 @@ pub fn heartbeat_collect_body(server: &mut RaftServerBase, round_id: u64,
 }
 
 // PHASE 3 around its core call.
-pub fn heartbeat_round_end_body(server: &mut RaftServerBase) {
+pub fn heartbeat_round_end_body(server: &RaftServerBase) {
     if !server.IsLeader() {
         return;
     }
     let mut out: CoreOutput = core_output();
     let commit_advanced_after_send: bool = {
-        let _lock = RaftLockGuard::new(&mut server.mtx_);
+        let _lock = RaftLockGuard::new(server.mtx());
         let is_leader: bool = server.IsLeaderLocked();
         let advanced: bool = server.step(Event::RoundEnd { is_leader }, &mut out)
             .into_round_end();
@@ -356,15 +356,15 @@ impl HeartbeatDriver {
     // decide -> emit -> collect -> decide: the tick (PHASE 0 and 1), the
     // collection loop (PHASE 2) and the round end (PHASE 3).
     pub fn run(&mut self) {
-        let server: &mut RaftServerBase = unsafe { &mut *self.server_ };
+        let server: &RaftServerBase = unsafe { &*self.server_ };  // [fix, F19]
         // [move, M1] a fresh round state per run, as the driver's own was,
         // under mtx_ like every core call (plan §3.1 rule 1; bugs-found B15)
         {
-            let _lock = RaftLockGuard::new(&mut server.mtx_);
+            let _lock = RaftLockGuard::new(server.mtx());
             let mut out: CoreOutput = core_output();
             server.step(Event::ResetRoundState, &mut out).into_done();
         }
-        server.append_responses_ = AppendResponses::new();  // [move, M5]
+        *server.append_responses() = AppendResponses::new();  // [move, M5] [fix, F19]
         server.HeartbeatPrologue();
         while server.HeartbeatLooping() {
             // The wake gate returns false on shutdown rather than on timeout.
@@ -386,11 +386,11 @@ impl HeartbeatDriver {
         // Before the epilogue, not after: once it reports the loop stopped,
         // shutdown may free the server. Under mtx_ (bugs-found B15).
         {
-            let _lock = RaftLockGuard::new(&mut server.mtx_);
+            let _lock = RaftLockGuard::new(server.mtx());
             let mut out: CoreOutput = core_output();
             server.step(Event::ResetRoundState, &mut out).into_done();
         }
-        server.append_responses_ = AppendResponses::new();  // [move, M5]
+        *server.append_responses() = AppendResponses::new();  // [move, M5] [fix, F19]
         server.HeartbeatEpilogue();
     }
 }
@@ -483,58 +483,58 @@ pub unsafe extern "C" fn raft_server_set_site_identity(s: *mut RaftServerBase,
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_set_commo(s: *mut RaftServerBase,
+pub unsafe extern "C" fn raft_server_set_commo(s: *const RaftServerBase,
                                                commo: *mut rusty::Communicator) {
-    (*s).set_commo(commo)
+    (*s).bind_commo(commo)
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_reg_learner_action(s: *mut RaftServerBase,
+pub unsafe extern "C" fn raft_server_reg_learner_action(s: *const RaftServerBase,
                                                         learner_action: *const rusty::LearnerAction) {
-    (*s).reg_learner_action(&*learner_action)
+    (*s).register_learner_action(&*learner_action)
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_ensure_setup(s: *mut RaftServerBase) {
+pub unsafe extern "C" fn raft_server_ensure_setup(s: *const RaftServerBase) {
     (*s).EnsureSetup()
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_wait_for_startup(s: *mut RaftServerBase) -> bool {
+pub unsafe extern "C" fn raft_server_wait_for_startup(s: *const RaftServerBase) -> bool {
     (*s).WaitForStartup()
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_prepare_for_shutdown(s: *mut RaftServerBase) {
+pub unsafe extern "C" fn raft_server_prepare_for_shutdown(s: *const RaftServerBase) {
     (*s).PrepareForShutdown()
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_is_leader(s: *mut RaftServerBase) -> bool {
+pub unsafe extern "C" fn raft_server_is_leader(s: *const RaftServerBase) -> bool {
     (*s).IsLeader()
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_get_leader_hint(s: *mut RaftServerBase) -> u16 {
+pub unsafe extern "C" fn raft_server_get_leader_hint(s: *const RaftServerBase) -> u16 {
     (*s).GetLeaderHint()
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_set_preferred_leader(s: *mut RaftServerBase,
+pub unsafe extern "C" fn raft_server_set_preferred_leader(s: *const RaftServerBase,
                                                           site_id: u16) {
     (*s).SetPreferredLeader(site_id)
 }
@@ -542,7 +542,7 @@ pub unsafe extern "C" fn raft_server_set_preferred_leader(s: *mut RaftServerBase
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_register_leader_change_callback(s: *mut RaftServerBase,
+pub unsafe extern "C" fn raft_server_register_leader_change_callback(s: *const RaftServerBase,
                                                                      cb: *const rusty::RaftLeaderChangeCb) {
     (*s).RegisterLeaderChangeCallback(&*cb)
 }
@@ -578,7 +578,7 @@ pub unsafe extern "C" fn raft_server_commit_index(s: *const RaftServerBase) -> u
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_start(s: *mut RaftServerBase,
+pub unsafe extern "C" fn raft_server_start(s: *const RaftServerBase,
                                            cmd: *const rusty::RaftCommand,
                                            index: *mut u64,
                                            term: *mut u64) -> RaftStartResult {
@@ -588,7 +588,7 @@ pub unsafe extern "C" fn raft_server_start(s: *mut RaftServerBase,
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_serve_vote(s: *mut RaftServerBase,
+pub unsafe extern "C" fn raft_server_serve_vote(s: *const RaftServerBase,
                                                 lst_log_idx: u64,
                                                 lst_log_term: i64,
                                                 can_id: u16,
@@ -601,7 +601,7 @@ pub unsafe extern "C" fn raft_server_serve_vote(s: *mut RaftServerBase,
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_serve_append_entries(s: *mut RaftServerBase,
+pub unsafe extern "C" fn raft_server_serve_append_entries(s: *const RaftServerBase,
                                                           leader_current_term: u64,
                                                           leader_site_id: u16,
                                                           leader_prev_log_index: u64,
@@ -618,7 +618,7 @@ pub unsafe extern "C" fn raft_server_serve_append_entries(s: *mut RaftServerBase
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_serve_install_snapshot(s: *mut RaftServerBase,
+pub unsafe extern "C" fn raft_server_serve_install_snapshot(s: *const RaftServerBase,
                                                             term: u64,
                                                             leader_id: u64,
                                                             last_included_index: u64,
@@ -631,7 +631,7 @@ pub unsafe extern "C" fn raft_server_serve_install_snapshot(s: *mut RaftServerBa
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_set_state_machine_snapshot_callbacks(s: *mut RaftServerBase,
+pub unsafe extern "C" fn raft_server_set_state_machine_snapshot_callbacks(s: *const RaftServerBase,
                                                                           create_cb: *const rusty::RaftCreateSnapshotCb,
                                                                           prepare_cb: *const rusty::RaftPrepareSnapshotCb) -> u64 {
     (*s).SetStateMachineSnapshotCallbacks(&*create_cb, &*prepare_cb)
@@ -642,14 +642,14 @@ pub unsafe extern "C" fn raft_server_set_state_machine_snapshot_callbacks(s: *mu
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_apply_thread_loop(s: *mut RaftServerBase) {
+pub unsafe extern "C" fn raft_server_apply_thread_loop(s: *const RaftServerBase) {
     (*s).ApplyThreadLoop()
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_bind_replication_wake_owner(s: *mut RaftServerBase,
+pub unsafe extern "C" fn raft_server_bind_replication_wake_owner(s: *const RaftServerBase,
                                                                  owner: *const rusty::RaftPollThreadPtr) {
     let owner_copy: rusty::RaftPollThreadPtr = (*owner).clone();
     (*s).BindReplicationWakeOwner(owner_copy)
@@ -658,21 +658,21 @@ pub unsafe extern "C" fn raft_server_bind_replication_wake_owner(s: *mut RaftSer
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_fail_stop(s: *mut RaftServerBase) {
+pub unsafe extern "C" fn raft_server_fail_stop(s: *const RaftServerBase) {
     (*s).FailStop()
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_initialize_snapshot_manager_locked(s: *mut RaftServerBase) -> bool {
+pub unsafe extern "C" fn raft_server_initialize_snapshot_manager_locked(s: *const RaftServerBase) -> bool {
     (*s).InitializeSnapshotManagerLocked()
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_install_snapshot_reply_accepted(s: *mut RaftServerBase,
+pub unsafe extern "C" fn raft_server_install_snapshot_reply_accepted(s: *const RaftServerBase,
                                                                      site_id: u16,
                                                                      ord: usize,
                                                                      snap_last_idx: u64,
@@ -684,7 +684,7 @@ pub unsafe extern "C" fn raft_server_install_snapshot_reply_accepted(s: *mut Raf
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_on_install_snapshot_locked(s: *mut RaftServerBase,
+pub unsafe extern "C" fn raft_server_on_install_snapshot_locked(s: *const RaftServerBase,
                                                                 term: u64,
                                                                 leader_id: u64,
                                                                 last_included_index: u64,
@@ -697,14 +697,15 @@ pub unsafe extern "C" fn raft_server_on_install_snapshot_locked(s: *mut RaftServ
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_setup_internal(s: *mut RaftServerBase) -> bool {
+pub unsafe extern "C" fn raft_server_setup_internal(s: *const RaftServerBase) -> bool {
     (*s).SetupInternal()
 }
 
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
-pub unsafe extern "C" fn raft_server_start_election_timer(s: *mut RaftServerBase) {
+pub unsafe extern "C" fn raft_server_start_election_timer(s: *const RaftServerBase) {
     (*s).StartElectionTimer()
 }
+
 // --- GENERATED EXPORTS END ---

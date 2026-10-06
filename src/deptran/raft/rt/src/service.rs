@@ -80,14 +80,12 @@ impl RaftRpcService {
         RaftRpcService { server: ServerHandle(server) }
     }
 
-    // `Service::__dispatch__` and `RaftHandler` both take `&self`, while the
-    // handlers take `&mut self`, exactly as the C++ `const` service calls
-    // non-const methods through its stored pointer. What actually serialises
-    // concurrent handlers is mtx_ inside the server, on both lanes.
-    #[allow(clippy::mut_from_ref)]
-    fn server(&self) -> &mut RaftServerBase {
+    // `Service::__dispatch__` and `RaftHandler` take `&self`, and so do the
+    // handlers: concurrent handlers share the server, and what serialises
+    // them is mtx_ inside it (bugs-found B19).
+    fn server(&self) -> &RaftServerBase {
         // SAFETY: see ServerHandle.
-        unsafe { &mut *self.server.0 }
+        unsafe { &*self.server.0 }
     }
 }
 

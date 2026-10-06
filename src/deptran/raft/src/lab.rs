@@ -22,7 +22,7 @@
 
 #![allow(non_snake_case)]
 
-use crate::scheduler_h::{RaftSpecific, RaftStartResult, TxLogServer};
+use crate::scheduler_h::{RaftSpecific, RaftStartResult};
 use crate::server_h::{lab_entries, lab_get, LabEntry, RaftLockGuard, RaftServerBase, RaftStdLockGuard};
 use std::collections::BTreeMap;
 use std::sync::Mutex;
@@ -151,10 +151,10 @@ pub const UNEXPECTED_LEADER: i32 = -3;
 
 /// Borrow one replica. See the lab registry's note (server_h.rs) on why this is sound in a
 /// lab build and nowhere else.
-pub fn with_entry_server<R>(entry: &LabEntry, f: impl FnOnce(&mut RaftServerBase) -> R) -> R {
+pub fn with_entry_server<R>(entry: &LabEntry, f: impl FnOnce(&RaftServerBase) -> R) -> R {
     // SAFETY: the worker owns every registered server for the life of the
     // suite, and the harness runs on a fiber in that same process.
-    unsafe { f(&mut *entry.server()) }
+    unsafe { f(&*entry.server()) }  // [fix, F19] shared, as every entry
 }
 
 fn state_of(entry: &LabEntry) -> (bool, u64, bool) {
@@ -421,14 +421,14 @@ pub fn set_learner_action() {
         with_entry_server(&e, |svr| {
             let mut action: rusty::LearnerAction = Default::default();
             // SAFETY: the kernel copies the callable into the slot; `action`
-            // is then handed to reg_learner_action, which copies it again
+            // is then handed to register_learner_action, which copies it again
             // into app_next_ (never moves it -- see that method's note).
             unsafe {
                 raft_lab_make_learner_action(
                     entry.loc_id as u64, lab_apply, &raw mut action);
             }
             let _apply_lock = RaftStdLockGuard::new(svr.LabApplyMutex());
-            svr.reg_learner_action(&action);
+            svr.register_learner_action(&action);  // [fix, F19] the shared twin
         });
     }
 }

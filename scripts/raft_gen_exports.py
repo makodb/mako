@@ -22,6 +22,11 @@ INTERFACE = ['set_site_identity', 'set_commo', 'reg_learner_action', 'EnsureSetu
              'RegisterLeaderChangeCallback', 'IsRpcReady', 'SiteId', 'PartitionId',
              'CommitIndex', 'Start', 'ServeVote', 'ServeAppendEntries', 'ServeInstallSnapshot',
              'SetStateMachineSnapshotCallbacks']
+# [fix, F19] TxLogServer methods whose export calls a `&self` inherent twin
+# rather than the trait method: TxLogServer keeps `&mut self` because
+# PaxosServer implements it too, and the worker can call these after the
+# server is shared (bugs-found B19). The export keeps the trait method's name.
+SHARED_TWINS = {'set_commo': 'bind_commo', 'reg_learner_action': 'register_learner_action'}
 KERNEL_CALLED = ['ApplyThreadLoop', 'BindReplicationWakeOwner', 'FailStop', 'InitializeSnapshotManagerLocked',
                  'InstallSnapshotReplyAccepted', 'OnInstallSnapshotLocked', 'SetupInternal', 'StartElectionTimer']
 
@@ -40,7 +45,8 @@ def signature(rs, name):
 
 
 def export(rs, name):
-    params, ret = signature(rs, name)
+    target = SHARED_TWINS.get(name, name)
+    params, ret = signature(rs, target)
     recv = params[0]
     assert recv in ('&self', '&mut self'), (name, recv)
     s_ty = '*const RaftServerBase' if recv == '&self' else '*mut RaftServerBase'
@@ -71,7 +77,7 @@ def export(rs, name):
             args.append(f'{pname}_copy')
         else:
             out_params.append(f'{pname}: {pty}'); args.append(pname)
-    call = f'(*s).{name}({", ".join(args)})'
+    call = f'(*s).{target}({", ".join(args)})'
     if ret.startswith('&mut '):
         ret_c, call = f'*mut {ret[5:]}', f'{call} as *mut {ret[5:]}'
     elif ret.startswith('&'):
@@ -122,7 +128,7 @@ def cpp_type(t):
 
 
 def prototype(rs, name):
-    params, ret = signature(rs, name)
+    params, ret = signature(rs, SHARED_TWINS.get(name, name))
     recv = params[0]
     s_ty = 'const RaftServerBase*' if recv == '&self' else 'RaftServerBase*'
     cps = [f'{s_ty} s']

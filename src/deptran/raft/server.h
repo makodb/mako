@@ -516,22 +516,22 @@ class RaftServer : public RaftSpecific {
   void set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id) override { raft_server_set_site_identity(impl_, loc_id, site_id, partition_id); }
   void set_commo(rusty::Communicator* commo) override { raft_server_set_commo(impl_, commo); }
   void reg_learner_action(const rusty::LearnerAction& learner_action) override { raft_server_reg_learner_action(impl_, &learner_action); }
-  void EnsureSetup() override { raft_server_ensure_setup(impl_); }
-  bool WaitForStartup() override { return raft_server_wait_for_startup(impl_); }
-  void PrepareForShutdown() override { raft_server_prepare_for_shutdown(impl_); }
-  bool IsLeader() override { return raft_server_is_leader(impl_); }
-  uint16_t GetLeaderHint() override { return raft_server_get_leader_hint(impl_); }
-  void SetPreferredLeader(uint16_t site_id) override { raft_server_set_preferred_leader(impl_, site_id); }
-  void RegisterLeaderChangeCallback(const rusty::RaftLeaderChangeCb& cb) override { raft_server_register_leader_change_callback(impl_, &cb); }
+  void EnsureSetup() const override { raft_server_ensure_setup(impl_); }
+  bool WaitForStartup() const override { return raft_server_wait_for_startup(impl_); }
+  void PrepareForShutdown() const override { raft_server_prepare_for_shutdown(impl_); }
+  bool IsLeader() const override { return raft_server_is_leader(impl_); }
+  uint16_t GetLeaderHint() const override { return raft_server_get_leader_hint(impl_); }
+  void SetPreferredLeader(uint16_t site_id) const override { raft_server_set_preferred_leader(impl_, site_id); }
+  void RegisterLeaderChangeCallback(const rusty::RaftLeaderChangeCb& cb) const override { raft_server_register_leader_change_callback(impl_, &cb); }
   bool IsRpcReady() const override { return raft_server_is_rpc_ready(impl_); }
   uint16_t SiteId() const override { return raft_server_site_id(impl_); }
   uint32_t PartitionId() const override { return raft_server_partition_id(impl_); }
   uint64_t CommitIndex() const override { return raft_server_commit_index(impl_); }
-  RaftStartResult Start(const rusty::RaftCommand& cmd, uint64_t* index, uint64_t* term) override { return raft_server_start(impl_, &cmd, index, term); }
-  void ServeVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted) override { raft_server_serve_vote(impl_, lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted); }
-  void ServeAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index) override { raft_server_serve_append_entries(impl_, leader_current_term, leader_site_id, leader_prev_log_index, leader_prev_log_term, leader_commit_index, &cmd, leader_next_log_term, follower_append_ok, follower_current_term, follower_last_log_index); }
-  void ServeInstallSnapshot(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString& data, uint64_t* term_out) override { raft_server_serve_install_snapshot(impl_, term, leader_id, last_included_index, last_included_term, &data, term_out); }
-  uint64_t SetStateMachineSnapshotCallbacks(const rusty::RaftCreateSnapshotCb& create_cb, const rusty::RaftPrepareSnapshotCb& prepare_cb) override { return raft_server_set_state_machine_snapshot_callbacks(impl_, &create_cb, &prepare_cb); }
+  RaftStartResult Start(const rusty::RaftCommand& cmd, uint64_t* index, uint64_t* term) const override { return raft_server_start(impl_, &cmd, index, term); }
+  void ServeVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted) const override { raft_server_serve_vote(impl_, lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted); }
+  void ServeAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index) const override { raft_server_serve_append_entries(impl_, leader_current_term, leader_site_id, leader_prev_log_index, leader_prev_log_term, leader_commit_index, &cmd, leader_next_log_term, follower_append_ok, follower_current_term, follower_last_log_index); }
+  void ServeInstallSnapshot(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString& data, uint64_t* term_out) const override { raft_server_serve_install_snapshot(impl_, term, leader_id, last_included_index, last_included_term, &data, term_out); }
+  uint64_t SetStateMachineSnapshotCallbacks(const rusty::RaftCreateSnapshotCb& create_cb, const rusty::RaftPrepareSnapshotCb& prepare_cb) const override { return raft_server_set_state_machine_snapshot_callbacks(impl_, &create_cb, &prepare_cb); }
 
   // The Rust object itself, for the one caller that must hand it to
   // Rust rather than forward a method: the Rust lane's transport binds

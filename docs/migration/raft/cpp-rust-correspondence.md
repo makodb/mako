@@ -12,9 +12,9 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 545 | `raft/src/server_h.rs` | 4386 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1751 | `raft/src/server_cc.rs` | 710 |  |
-| `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 177 | the Rust serves; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
+| `raft/server.h` | 545 | `raft/src/server_h.rs` | 4516 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1751 | `raft/src/server_cc.rs` | 711 |  |
+| `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 175 | the Rust serves; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
 | `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1060 | the Rust sends; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
 | `communicator.h` | 567 | `raft/src/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
 | `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 582 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |

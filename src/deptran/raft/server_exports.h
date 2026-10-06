@@ -21,33 +21,33 @@ void raft_server_run_election_timer_loop(RaftServerBase* s, uint64_t wait_int_us
 void raft_wake_job_run(void* token);
 // --- The replication interface: TxLogServer and RaftSpecific.
 void raft_server_set_site_identity(RaftServerBase* s, uint32_t loc_id, uint16_t site_id, uint32_t partition_id);
-void raft_server_set_commo(RaftServerBase* s, rusty::Communicator* commo);
-void raft_server_reg_learner_action(RaftServerBase* s, const rusty::LearnerAction* learner_action);
-void raft_server_ensure_setup(RaftServerBase* s);
-bool raft_server_wait_for_startup(RaftServerBase* s);
-void raft_server_prepare_for_shutdown(RaftServerBase* s);
-bool raft_server_is_leader(RaftServerBase* s);
-uint16_t raft_server_get_leader_hint(RaftServerBase* s);
-void raft_server_set_preferred_leader(RaftServerBase* s, uint16_t site_id);
-void raft_server_register_leader_change_callback(RaftServerBase* s, const rusty::RaftLeaderChangeCb* cb);
+void raft_server_set_commo(const RaftServerBase* s, rusty::Communicator* commo);
+void raft_server_reg_learner_action(const RaftServerBase* s, const rusty::LearnerAction* learner_action);
+void raft_server_ensure_setup(const RaftServerBase* s);
+bool raft_server_wait_for_startup(const RaftServerBase* s);
+void raft_server_prepare_for_shutdown(const RaftServerBase* s);
+bool raft_server_is_leader(const RaftServerBase* s);
+uint16_t raft_server_get_leader_hint(const RaftServerBase* s);
+void raft_server_set_preferred_leader(const RaftServerBase* s, uint16_t site_id);
+void raft_server_register_leader_change_callback(const RaftServerBase* s, const rusty::RaftLeaderChangeCb* cb);
 bool raft_server_is_rpc_ready(const RaftServerBase* s);
 uint16_t raft_server_site_id(const RaftServerBase* s);
 uint32_t raft_server_partition_id(const RaftServerBase* s);
 uint64_t raft_server_commit_index(const RaftServerBase* s);
-RaftStartResult raft_server_start(RaftServerBase* s, const rusty::RaftCommand* cmd, uint64_t* index, uint64_t* term);
-void raft_server_serve_vote(RaftServerBase* s, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted);
-void raft_server_serve_append_entries(RaftServerBase* s, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand* cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index);
-void raft_server_serve_install_snapshot(RaftServerBase* s, uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t* term_out);
-uint64_t raft_server_set_state_machine_snapshot_callbacks(RaftServerBase* s, const rusty::RaftCreateSnapshotCb* create_cb, const rusty::RaftPrepareSnapshotCb* prepare_cb);
+RaftStartResult raft_server_start(const RaftServerBase* s, const rusty::RaftCommand* cmd, uint64_t* index, uint64_t* term);
+void raft_server_serve_vote(const RaftServerBase* s, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted);
+void raft_server_serve_append_entries(const RaftServerBase* s, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand* cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index);
+void raft_server_serve_install_snapshot(const RaftServerBase* s, uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t* term_out);
+uint64_t raft_server_set_state_machine_snapshot_callbacks(const RaftServerBase* s, const rusty::RaftCreateSnapshotCb* create_cb, const rusty::RaftPrepareSnapshotCb* prepare_cb);
 // --- What the kernels in server.cc call back into.
-void raft_server_apply_thread_loop(RaftServerBase* s);
-void raft_server_bind_replication_wake_owner(RaftServerBase* s, const rusty::RaftPollThreadPtr* owner);
-void raft_server_fail_stop(RaftServerBase* s);
-bool raft_server_initialize_snapshot_manager_locked(RaftServerBase* s);
-void raft_server_install_snapshot_reply_accepted(RaftServerBase* s, uint16_t site_id, size_t ord, uint64_t snap_last_idx, uint64_t send_term, uint64_t follower_term);
-void raft_server_on_install_snapshot_locked(RaftServerBase* s, uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t* term_out);
-bool raft_server_setup_internal(RaftServerBase* s);
-void raft_server_start_election_timer(RaftServerBase* s);
+void raft_server_apply_thread_loop(const RaftServerBase* s);
+void raft_server_bind_replication_wake_owner(const RaftServerBase* s, const rusty::RaftPollThreadPtr* owner);
+void raft_server_fail_stop(const RaftServerBase* s);
+bool raft_server_initialize_snapshot_manager_locked(const RaftServerBase* s);
+void raft_server_install_snapshot_reply_accepted(const RaftServerBase* s, uint16_t site_id, size_t ord, uint64_t snap_last_idx, uint64_t send_term, uint64_t follower_term);
+void raft_server_on_install_snapshot_locked(const RaftServerBase* s, uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString* data, uint64_t* term_out);
+bool raft_server_setup_internal(const RaftServerBase* s);
+void raft_server_start_election_timer(const RaftServerBase* s);
 }  // extern "C"
 }  // namespace janus
 

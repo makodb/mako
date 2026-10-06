@@ -109,13 +109,12 @@ pub struct RaftLockGuard {
 }
 
 impl RaftLockGuard {
-    // A raw pointer rather than `&mut RaftCheckedMutex`, because the emitter
-    // renders the argument `&mut self.mtx_` as `&this->mtx_` either way, and
-    // a reference parameter would then not bind. The pointer is not a
-    // widening of the contract: every call site in this file passes
-    // `&mut self.mtx_`, a field of the live object whose method is running,
-    // and the borrow ends with the constructing statement -- which is
-    // precisely what lets the body go on using `self` while the lock is held.
+    // A raw pointer rather than `&mut RaftCheckedMutex`: every call site
+    // passes `self.mtx()`, the address of a field of the live object whose
+    // method is running, reached from `&self` through its ShellCell
+    // ([fix, F19], bugs-found B19). The C++ mutex is locked in place; no
+    // reference to it is held, so the body goes on using `self` while the
+    // lock is held.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn new(mutex: *mut rusty::RaftCheckedMutex) -> RaftLockGuard {
         unsafe {
@@ -171,6 +170,45 @@ impl Drop for RaftStdLockGuard {
         }
     }
 }
+
+// [fix, F19] A shell field that changes after the server is shared
+// (bugs-found B19). Every entry reaches the server as a shared
+// `&RaftServerBase` now -- the C ABI exports, the RPC service, the fibers,
+// the apply thread, the lab -- so a field that changes lives in an atomic,
+// a mutex, or one of these. `get` hands out the one `&mut` while the caller
+// keeps the field's discipline, stated at the field: the lock that guards it
+// (mtx_ for the core), or the single thread or fiber that owns it, or "set
+// up before the server is shared". UnsafeCell is what makes mutation through
+// a shared reference legal; nothing checks the discipline itself, exactly as
+// nothing checked mtx_ before.
+pub struct ShellCell<T>(core::cell::UnsafeCell<T>);
+
+// SAFETY: every ShellCell field states the lock or the single owner it is
+// reached under, so no two threads touch one at once -- the same contract
+// as Mutex<T>, and the same bound: a `&mut T` handed to another thread
+// needs T: Send. The C++ carriers in some of them (mutexes, callbacks,
+// threads) are shared across threads by design, as they were before.
+unsafe impl<T: Send> Sync for ShellCell<T> {}
+
+impl<T> ShellCell<T> {
+    pub fn new(value: T) -> ShellCell<T> {
+        ShellCell(core::cell::UnsafeCell::new(value))
+    }
+
+    /// # Safety
+    /// The caller keeps the field's discipline (holds its lock, or is its
+    /// owner), and no other reference into the field is live.
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn get(&self) -> &mut T {
+        unsafe { &mut *self.0.get() }
+    }
+
+    // A pointer for a kernel that reads or writes the field in place.
+    pub fn as_ptr(&self) -> *mut T {
+        self.0.get()
+    }
+}
+
 
 // The reactor event's two verbs, as kernels. `set` and `wait_timeout` are
 // methods of the srpc::IntEvent behind the Arc, and the emitter renders a
@@ -866,20 +904,28 @@ pub struct RaftServerBase {
     // mirror note on RaftCore for why both copies exist.
     pub loc_id_: u32,
     pub site_id_: u16,
-    pub app_next_: rusty::LearnerAction,
+    // [fix, F19] Set before startup (reg_learner_action), or under the apply
+    // gate (state_machine_apply_mtx_, as the lab does); the apply thread
+    // reads it under that gate.
+    pub app_next_: ShellCell<rusty::LearnerAction>,
     pub partition_id_: u32,
-    pub mtx_: rusty::RaftCheckedMutex,
+    // [fix, F19] A C++ mutex: locked through its pointer from a shared reference.
+    pub mtx_: ShellCell<rusty::RaftCheckedMutex>,
     // The consensus cluster mtx_ guards, as one Rust-owned value.
-    pub core: RaftCore,
+    // [fix, F19] Under mtx_ (or before the server is shared): reached through core().
+    pub core: ShellCell<RaftCore>,
     // RPC futures can outlive the server during shutdown. Destruction nulls
     // this shared gate after waiting for any callback already using it.
-    pub async_callback_lifetime_: rusty::RaftAsyncCallbackLifetimePtr,
-    pub snapshot_manager_: rusty::RaftSnapshotManagerPtr,
+    // [fix, F19] Set by ConstructRuntime; the C++ side locks its own mutex.
+    pub async_callback_lifetime_: ShellCell<rusty::RaftAsyncCallbackLifetimePtr>,
+    // [fix, F19] Under mtx_.
+    pub snapshot_manager_: ShellCell<rusty::RaftSnapshotManagerPtr>,
     pub snapshot_manager_configured_: rusty::sync::atomic::AtomicBool,
     pub snapshot_trigger_index_: rusty::sync::atomic::AtomicU64,
     pub snapshot_trigger_threshold_: rusty::sync::atomic::AtomicU64,
-    pub create_sm_snapshot_cb_: rusty::RaftCreateSnapshotCb,
-    pub prepare_sm_snapshot_cb_: rusty::RaftPrepareSnapshotCb,
+    // [fix, F19] Under mtx_.
+    pub create_sm_snapshot_cb_: ShellCell<rusty::RaftCreateSnapshotCb>,
+    pub prepare_sm_snapshot_cb_: ShellCell<rusty::RaftPrepareSnapshotCb>,
     pub stop_: rusty::sync::atomic::AtomicBool,
     pub rpc_ready_: rusty::sync::atomic::AtomicBool,
     // The heartbeat/election wake gate, shared with whatever owner-thread job
@@ -895,7 +941,7 @@ pub struct RaftServerBase {
     // read a value the waiter has already been handed exclusive sight of.
     pub startup_finished_: rusty::Mutex<bool>,
     pub startup_cv_: rusty::Condvar,
-    pub startup_succeeded_: bool,
+    pub startup_succeeded_: rusty::sync::atomic::AtomicBool,  // [fix, F19]
     pub wait_int_: i32,
     pub disconnected_: rusty::sync::atomic::AtomicBool,
     pub in_applying_logs_: bool,
@@ -904,37 +950,43 @@ pub struct RaftServerBase {
     pub heartbeat_loop_running_: rusty::sync::atomic::AtomicBool,
     pub election_loop_running_: rusty::sync::atomic::AtomicBool,
     pub heartbeat_: bool,
-    pub heartbeat_setup_: bool,
+    pub heartbeat_setup_: rusty::sync::atomic::AtomicBool,  // [fix, F19]
     // [fix, F17] An atomic: lab case 67 sets it on running servers while the
     // heartbeat and election loops read it (bugs-found B14). Relaxed: no
     // other memory is published with it.
     pub heartbeat_interval_us_: rusty::sync::atomic::AtomicU64,
-    pub log_retention_window_: u64,
-    pub leader_change_cb_: rusty::RaftLeaderChangeCb,
+    pub log_retention_window_: rusty::sync::atomic::AtomicU64,  // [fix, F19]
+    // [fix, F19] Under leader_notices_'s lock (F6).
+    pub leader_change_cb_: ShellCell<rusty::RaftLeaderChangeCb>,
     // The preferred leader, written without mtx_ by SetPreferredLeader;
     // only the election timeout's choice reads it.
     pub preferred_leader_site_id_: rusty::sync::atomic::AtomicU64,
-    pub startup_timestamp_: u64,
+    pub startup_timestamp_: rusty::sync::atomic::AtomicU64,  // [fix, F19]
     // The replica set for this partition, sorted and duplicate-free. It was
-    pub apply_thread_: rusty::RaftStdThread,
+    // [fix, F19] Spawned by the startup job, joined at shutdown.
+    pub apply_thread_: ShellCell<rusty::RaftStdThread>,
     pub apply_thread_running_: rusty::sync::atomic::AtomicBool,
-    pub state_machine_apply_mtx_: rusty::RaftStdMutex,
+    // [fix, F19] A C++ mutex: locked through its pointer from a shared reference.
+    pub state_machine_apply_mtx_: ShellCell<rusty::RaftStdMutex>,
     pub apply_queue_: rusty::Mutex<ApplyQueue>,
     // [fix, F6] Fired after mtx_ is released, in transition order.
     pub leader_notices_: rusty::Mutex<LeaderNotices>,
     // [move, M5] The heartbeat's response handles (the core holds the
     // protocol half of each in-flight slot). Heartbeat fiber only.
-    pub append_responses_: AppendResponses,
+    // [fix, F19] Owned by the heartbeat fiber.
+    pub append_responses_: ShellCell<AppendResponses>,
     // [move, M3] OnInstallSnapshotLocked's actions, which reach it through a
     // C++ kernel (raft_install_snapshot_guarded) rather than a parameter;
     // OnInstallSnapshot runs their unlocked half. Touched only under mtx_
     // and by that one caller.
-    pub install_out_: CoreOutput,
+    // [fix, F19] Under mtx_.
+    pub install_out_: ShellCell<CoreOutput>,
     // The command the apply thread popped and is about to hand to the
     // learner. A staging field rather than a local because Command is opaque
     // to Rust: the pop kernel moves it here and the invoke kernel reads it,
     // both under the apply thread's own serialisation.
-    pub pending_apply_command_: rusty::RaftCommand,
+    // [fix, F19] Owned by the apply thread.
+    pub pending_apply_command_: ShellCell<rusty::RaftCommand>,
     // PHASE 1's batch under assembly. A field rather than a local because
     // its element type is a wire command Rust cannot construct; the loop
     // that fills it is Rust, the pushes and the final wrap are kernels. Only
@@ -950,7 +1002,8 @@ pub struct RaftServerBase {
     // PHASE 1's batch under assembly. Rust drives the loop that fills it,
     // clears it and reads its length; only the marshalling of each element
     // stays C++.
-    pub batch_buffer_: rusty::Vec<rusty::RaftTpcCommitPtr>,
+    // [fix, F19] Owned by the heartbeat fiber.
+    pub batch_buffer_: ShellCell<rusty::Vec<rusty::RaftTpcCommitPtr>>,
     pub appliedIndexForWait_: rusty::sync::atomic::AtomicU64,
     // [fix, F8] What other threads read without mtx_: published from the
     // core at the end of every critical section that can change them
@@ -963,20 +1016,21 @@ pub struct RaftServerBase {
     // [fix, F5] MAKO_RAFT_VERIFIED_GATES=1, read at setup: outside the
     // verified configuration the server fails closed, and inside it log
     // compaction and snapshots do nothing.
-    pub verified_gates_: bool,
+    pub verified_gates_: rusty::sync::atomic::AtomicBool,  // [fix, F19]
     // [move, M1] The snapshot configuration and the state machine's
     // snapshot-callback ownership, from RaftCore: the shell's, the core
     // never read them.
-    pub snapshot_threshold_: u64,
-    pub snapshot_callback_owner_token_: u64,
-    pub next_snapshot_callback_owner_token_: u64,
+    pub snapshot_threshold_: rusty::sync::atomic::AtomicU64,  // [fix, F19]
+    pub snapshot_callback_owner_token_: rusty::sync::atomic::AtomicU64,  // [fix, F19]
+    pub next_snapshot_callback_owner_token_: rusty::sync::atomic::AtomicU64,  // [fix, F19]
     // [M0] The replay recorder (plan A.4): off unless MAKO_RAFT_REPLAY_DIR
     // is set.
-    pub recorder_: CoreRecorder,
+    // [fix, F19] Under mtx_ (the step wrapper).
+    pub recorder_: ShellCell<CoreRecorder>,
     // Was a function-static in EnqueueCommittedEntries. A DSL body has no
     // static local, and a per-server counter is the more honest shape: the
     // C++ one was shared across every RaftServer in a single-process test.
-    pub enqueue_log_counter_: u64,
+    pub enqueue_log_counter_: rusty::sync::atomic::AtomicU64,  // [fix, F19]
     pub n_prepare_: i32,
     pub n_accept_: i32,
     pub n_commit_: i32,
@@ -990,8 +1044,8 @@ impl RaftServerBase {
     // The address a kernel receives: kernels are declared over the opaque
     // RaftServerHandle (server_pods_h.rs) so their C declarations name only
     // global types, and this is the one cast from the real type.
-    pub fn handle(&mut self) -> *mut RaftServerHandle {
-        self as *mut RaftServerBase as *mut RaftServerHandle
+    pub fn handle(&self) -> *mut RaftServerHandle {
+        self as *const RaftServerBase as *mut RaftServerHandle  // [fix, F19]
     }
 
     // Every default here is the one the hand-written member declaration
@@ -1007,19 +1061,19 @@ impl RaftServerBase {
             // locid_t is uint32_t, so `static_cast<locid_t>(-1)` is this.
             loc_id_: 4294967295,
             site_id_: RAFT_SERVER_INVALID_SITE_ID,
-            app_next_: Default::default(),
+            app_next_: ShellCell::new(Default::default()),
             partition_id_: 0,
-            mtx_: Default::default(),
-            core: RaftCore::new(),
+            mtx_: ShellCell::new(Default::default()),
+            core: ShellCell::new(RaftCore::new()),  // [fix, F19]
             // Null here; RaftServer's constructor allocates it, because it
             // also has to store `this` into the gate.
-            async_callback_lifetime_: Default::default(),
-            snapshot_manager_: Default::default(),
+            async_callback_lifetime_: ShellCell::new(Default::default()),
+            snapshot_manager_: ShellCell::new(Default::default()),
             snapshot_manager_configured_: rusty::sync::atomic::AtomicBool::new(false),
             snapshot_trigger_index_: rusty::sync::atomic::AtomicU64::new(0),
             snapshot_trigger_threshold_: rusty::sync::atomic::AtomicU64::new(10000),
-            create_sm_snapshot_cb_: Default::default(),
-            prepare_sm_snapshot_cb_: Default::default(),
+            create_sm_snapshot_cb_: ShellCell::new(Default::default()),
+            prepare_sm_snapshot_cb_: ShellCell::new(Default::default()),
             stop_: rusty::sync::atomic::AtomicBool::new(false),
             rpc_ready_: rusty::sync::atomic::AtomicBool::new(false),
             // new_cyclic, not new: the emitter lowers `Arc::new(T::new())` to
@@ -1032,7 +1086,7 @@ impl RaftServerBase {
                 |_weak| ReplicationWakeGate::new()),
             startup_finished_: rusty::Mutex::new(false),
             startup_cv_: rusty::Condvar::new(),
-            startup_succeeded_: false,
+            startup_succeeded_: rusty::sync::atomic::AtomicBool::new(false),  // [fix, F19]
             wait_int_: 100000,
             disconnected_: rusty::sync::atomic::AtomicBool::new(false),
             in_applying_logs_: false,
@@ -1041,37 +1095,37 @@ impl RaftServerBase {
             heartbeat_loop_running_: rusty::sync::atomic::AtomicBool::new(false),
             election_loop_running_: rusty::sync::atomic::AtomicBool::new(false),
             heartbeat_: true,
-            heartbeat_setup_: false,
+            heartbeat_setup_: rusty::sync::atomic::AtomicBool::new(false),  // [fix, F19]
             // HEARTBEAT_INTERVAL is a macro whose value depends on
             // RAFT_TEST; RaftServer's constructor applies it, because a DSL
             // block drops #[cfg] silently and must not decide this.
             heartbeat_interval_us_: rusty::sync::atomic::AtomicU64::new(0),  // [fix, F17]
-            log_retention_window_: 5000,
-            leader_change_cb_: Default::default(),
+            log_retention_window_: rusty::sync::atomic::AtomicU64::new(5000),  // [fix, F19]
+            leader_change_cb_: ShellCell::new(Default::default()),
             preferred_leader_site_id_: rusty::sync::atomic::AtomicU64::new(
                 RAFT_SERVER_INVALID_SITE_ID as u64),
-            startup_timestamp_: 0,
-            apply_thread_: Default::default(),
+            startup_timestamp_: rusty::sync::atomic::AtomicU64::new(0),  // [fix, F19]
+            apply_thread_: ShellCell::new(Default::default()),
             apply_thread_running_: rusty::sync::atomic::AtomicBool::new(false),
-            state_machine_apply_mtx_: Default::default(),
+            state_machine_apply_mtx_: ShellCell::new(Default::default()),
             apply_queue_: rusty::Mutex::new(ApplyQueue::new()),
             leader_notices_: rusty::Mutex::new(LeaderNotices::new()),  // [fix, F6]
-            append_responses_: AppendResponses::new(),  // [move, M5]
-            install_out_: core_output(),  // [move, M3]
-            pending_apply_command_: Default::default(),
-            batch_buffer_: rusty::Vec::new(),
+            append_responses_: ShellCell::new(AppendResponses::new()),  // [move, M5] [fix, F19]
+            install_out_: ShellCell::new(core_output()),  // [move, M3] [fix, F19]
+            pending_apply_command_: ShellCell::new(Default::default()),
+            batch_buffer_: ShellCell::new(rusty::Vec::new()),  // [fix, F19]
             appliedIndexForWait_: rusty::sync::atomic::AtomicU64::new(0),
             commit_index_mirror_: rusty::sync::atomic::AtomicU64::new(0),  // [fix, F8]
             is_leader_mirror_: rusty::sync::atomic::AtomicBool::new(false),  // [fix, F8]
             leader_hint_mirror_: rusty::sync::atomic::AtomicU64::new(
                 RAFT_SERVER_INVALID_SITE_ID as u64),  // [fix, F8]
             term_mirror_: rusty::sync::atomic::AtomicU64::new(0),  // [fix, F8]
-            verified_gates_: false,  // [fix, F5]
-            snapshot_threshold_: 10000,  // [move, M1]
-            snapshot_callback_owner_token_: 0,  // [move, M1]
-            next_snapshot_callback_owner_token_: 1,  // [move, M1]
-            recorder_: CoreRecorder::from_env(),  // [M0]
-            enqueue_log_counter_: 0,
+            verified_gates_: rusty::sync::atomic::AtomicBool::new(false),  // [fix, F5] [fix, F19]
+            snapshot_threshold_: rusty::sync::atomic::AtomicU64::new(10000),  // [move, M1] [fix, F19]
+            snapshot_callback_owner_token_: rusty::sync::atomic::AtomicU64::new(0),  // [move, M1] [fix, F19]
+            next_snapshot_callback_owner_token_: rusty::sync::atomic::AtomicU64::new(1),  // [move, M1] [fix, F19]
+            recorder_: ShellCell::new(CoreRecorder::from_env()),  // [M0] [fix, F19]
+            enqueue_log_counter_: rusty::sync::atomic::AtomicU64::new(0),  // [fix, F19]
             n_prepare_: 0,
             n_accept_: 0,
             n_commit_: 0,
@@ -1086,12 +1140,12 @@ impl RaftServerBase {
 
     // CALLER MUST HOLD mtx_.
     pub fn GetSnapshotIndexLocked(&self) -> u64 {
-        self.core.snapidx_
+        self.core().snapidx_
     }
 
     // @unsafe - returns the last snapshotted log index under mtx_.
-    pub fn GetSnapshotIndex(&mut self) -> u64 {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+    pub fn GetSnapshotIndex(&self) -> u64 {
+        let _lock = RaftLockGuard::new(self.mtx());
         self.GetSnapshotIndexLocked()
     }
 
@@ -1099,25 +1153,25 @@ impl RaftServerBase {
     pub fn GetSnapshotTermLocked(&self) -> u64 {
         // snapterm_ is ballot_t (int64_t); the C++ signature returned
         // uint64_t and relied on the implicit conversion.
-        self.core.snapterm_ as u64
+        self.core().snapterm_ as u64
     }
 
     // @unsafe - returns the snapshot boundary term under mtx_.
-    pub fn GetSnapshotTerm(&mut self) -> u64 {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+    pub fn GetSnapshotTerm(&self) -> u64 {
+        let _lock = RaftLockGuard::new(self.mtx());
         self.GetSnapshotTermLocked()
     }
 
     // CALLER MUST HOLD mtx_.
-    pub fn SetSnapshotThresholdLocked(&mut self, threshold: u64) {
-        self.snapshot_threshold_ = threshold;
+    pub fn SetSnapshotThresholdLocked(&self, threshold: u64) {
+        self.snapshot_threshold_.store(threshold, rusty::sync::atomic::Ordering::Relaxed);  // [fix, F19]
         self.snapshot_trigger_threshold_
             .store(threshold, rusty::sync::atomic::Ordering::Release);
     }
 
     // @unsafe - takes mtx_.
-    pub fn SetSnapshotThreshold(&mut self, threshold: u64) {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+    pub fn SetSnapshotThreshold(&self, threshold: u64) {
+        let _lock = RaftLockGuard::new(self.mtx());
         self.SetSnapshotThresholdLocked(threshold);
     }
 
@@ -1127,7 +1181,7 @@ impl RaftServerBase {
     }
 
     // @safe - two release stores
-    pub fn HeartbeatEpilogue(&mut self) {
+    pub fn HeartbeatEpilogue(&self) {
         self.looping_
             .store(false, rusty::sync::atomic::Ordering::Release);
         self.heartbeat_loop_running_
@@ -1137,7 +1191,7 @@ impl RaftServerBase {
     // @unsafe - the campaign the election timer starts. Timer-only entry:
     // it carries the reset generation observed at expiry, and the first
     // RequestVote state lock revalidates it immediately before term++.
-    pub fn RequestVoteFromElectionTimer(&mut self, expected_generation: u64)
+    pub fn RequestVoteFromElectionTimer(&self, expected_generation: u64)
         -> bool
     {
         self.RequestVoteImpl(true, expected_generation)
@@ -1149,65 +1203,69 @@ impl RaftServerBase {
     }
 
     // @unsafe - takes mtx_ to read core.req_voting_
-    pub fn ElectionLoopVoting(&mut self) -> bool {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
-        self.core.req_voting_
+    pub fn ElectionLoopVoting(&self) -> bool {
+        let _lock = RaftLockGuard::new(self.mtx());
+        self.core().req_voting_
     }
 
     // @safe - release store on an atomic
-    pub fn ElectionLoopSetRunning(&mut self, running: bool) {
+    pub fn ElectionLoopSetRunning(&self, running: bool) {
         self.election_loop_running_
             .store(running, rusty::sync::atomic::Ordering::Release);
     }
 
     // @unsafe - takes mtx_ and reads the whole election cluster in one scope,
     // so the Rust loop can branch on copies after the lock is released.
-    pub fn ElectionLoopGather(&mut self) -> ElectionTick {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+    pub fn ElectionLoopGather(&self) -> ElectionTick {
+        let _lock = RaftLockGuard::new(self.mtx());
         // [move, M4] the clock read, then the core's gather ([move, M5])
         let time_now: u64 = unsafe { raft_time_now_us() };
-        raft_election_tick(&self.core, time_now)
+        raft_election_tick(self.core(), time_now)
     }
 
     // CALLER MUST HOLD mtx_. [move, M1] RaftCore::election_last_log_term.
     pub fn ElectionLastLogTermLocked(&self) -> i64 {
-        self.core.election_last_log_term()
+        self.core().election_last_log_term()
     }
 
 
     // @unsafe - takes mtx_; a non-owning token is refused.
     pub fn ClearStateMachineSnapshotCallbacks(
-        &mut self,
+        &self,
         callback_owner_token: u64,
     ) -> bool {
         if callback_owner_token == 0 {
             return false;
         }
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
-        if self.snapshot_callback_owner_token_ != callback_owner_token {
+        let _lock = RaftLockGuard::new(self.mtx());
+        if self.snapshot_callback_owner_token_.load(rusty::sync::atomic::Ordering::Relaxed) != callback_owner_token {  // [fix, F19]
             return false;
         }
-        self.create_sm_snapshot_cb_ = Default::default();
-        self.prepare_sm_snapshot_cb_ = Default::default();
-        self.snapshot_callback_owner_token_ = 0;
+        // SAFETY: under mtx_, the callbacks' lock.
+        unsafe {
+            *self.create_sm_snapshot_cb_.get() = Default::default();  // [fix, F19]
+            *self.prepare_sm_snapshot_cb_.get() = Default::default();  // [fix, F19]
+        }
+        self.snapshot_callback_owner_token_.store(0, rusty::sync::atomic::Ordering::Relaxed);  // [fix, F19]
         true
     }
 
     // CALLER MUST HOLD mtx_.
     pub fn SetSnapshotManagerLocked(
-        &mut self,
+        &self,
         manager: rusty::RaftSnapshotManagerPtr,
     ) {
-        self.snapshot_manager_ = manager;
+        // SAFETY: under mtx_, the manager's lock.
+        unsafe { *self.snapshot_manager_.get() = manager };  // [fix, F19]
         let configured: bool =
-            unsafe { raft_snapshot_manager_is_set(&self.snapshot_manager_) };
+            unsafe { raft_snapshot_manager_is_set(self.snapshot_manager_.as_ptr()) };
         self.snapshot_manager_configured_
             .store(configured, rusty::sync::atomic::Ordering::Release);
     }
 
     // @unsafe - takes mtx_.
-    pub fn SetSnapshotManager(&mut self, manager: rusty::RaftSnapshotManagerPtr) {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+    pub fn SetSnapshotManager(&self, manager: rusty::RaftSnapshotManagerPtr) {
+        let _lock = RaftLockGuard::new(self.mtx());
         self.SetSnapshotManagerLocked(manager);
     }
 
@@ -1234,25 +1292,67 @@ impl RaftServerBase {
             .load(rusty::sync::atomic::Ordering::Acquire)
     }
 
+    // [fix, F19] The core. CALLER MUST HOLD mtx_, or run before the server is
+    // shared (setup), and keep no other reference into the core while it
+    // uses this one: mtx_ is what makes this the only `&mut RaftCore`.
+    #[allow(clippy::mut_from_ref)]
+    pub fn core(&self) -> &mut RaftCore {
+        // SAFETY: the discipline above.
+        unsafe { self.core.get() }
+    }
+
+    // [fix, F19] mtx_'s address, for a lock guard.
+    pub fn mtx(&self) -> *mut rusty::RaftCheckedMutex {
+        self.mtx_.as_ptr()
+    }
+
+    // [fix, F19] The step wrapper's recorder. CALLER MUST HOLD mtx_.
+    #[allow(clippy::mut_from_ref)]
+    pub fn recorder(&self) -> &mut CoreRecorder {
+        // SAFETY: under mtx_, like the core.
+        unsafe { self.recorder_.get() }
+    }
+
+    // [fix, F19] The InstallSnapshot handler's output. CALLER MUST HOLD mtx_.
+    #[allow(clippy::mut_from_ref)]
+    pub fn install_out(&self) -> &mut CoreOutput {
+        // SAFETY: under mtx_, like the core.
+        unsafe { self.install_out_.get() }
+    }
+
+    // [fix, F19] The response slots. Only the heartbeat fiber calls this.
+    #[allow(clippy::mut_from_ref)]
+    pub fn append_responses(&self) -> &mut AppendResponses {
+        // SAFETY: the heartbeat fiber is the slots' one owner.
+        unsafe { self.append_responses_.get() }
+    }
+
+    // [fix, F19] The batch buffer. Only the heartbeat fiber calls this.
+    #[allow(clippy::mut_from_ref)]
+    pub fn batch_buffer(&self) -> &mut rusty::Vec<rusty::RaftTpcCommitPtr> {
+        // SAFETY: the heartbeat fiber is the buffer's one owner.
+        unsafe { self.batch_buffer_.get() }
+    }
+
     // The looping_ check is not an optimisation: it is the guard against
     // reading members during destruction.
     pub fn IsLeaderLocked(&self) -> bool {
         if !self.looping_.load(rusty::sync::atomic::Ordering::Acquire) {
             return false;
         }
-        self.core.is_leader_
+        self.core().is_leader_
     }
 
     // @unsafe - writes through caller-provided out-pointers under mtx_. The
     // signature is the C++ one; every call site passes the address of a
     // local.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn GetState(&mut self, is_leader: *mut bool, term: *mut u64) {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+    pub fn GetState(&self, is_leader: *mut bool, term: *mut u64) {
+        let _lock = RaftLockGuard::new(self.mtx());
         let leading: bool = self.IsLeaderLocked();
         unsafe {
             *is_leader = leading;
-            *term = self.core.current_term_;
+            *term = self.core().current_term_;
         }
     }
 
@@ -1262,20 +1362,20 @@ impl RaftServerBase {
     }
 
     // @safe - an atomic (F17)
-    pub fn SetHeartbeatInterval(&mut self, micros: u64) {
+    pub fn SetHeartbeatInterval(&self, micros: u64) {
         self.heartbeat_interval_us_.store(micros, rusty::sync::atomic::Ordering::Relaxed);  // [fix, F17]
     }
 
     // @safe - POD field
     pub fn GetLogRetentionWindow(&self) -> u64 {
-        self.log_retention_window_
+        self.log_retention_window_.load(rusty::sync::atomic::Ordering::Relaxed)  // [fix, F19]
     }
 
     // @safe - POD field, floored at 1 so the retention arithmetic cannot
     // divide by zero.
-    pub fn SetLogRetentionWindow(&mut self, window: u64) {
-        self.log_retention_window_ =
-            raft_server_retention_window_normalize(window);
+    pub fn SetLogRetentionWindow(&self, window: u64) {
+        self.log_retention_window_.store(  // [fix, F19]
+            raft_server_retention_window_normalize(window), rusty::sync::atomic::Ordering::Relaxed);
     }
 
     // @safe - reads the atomic trigger mirror.
@@ -1290,7 +1390,7 @@ impl RaftServerBase {
 
     // CALLER MUST HOLD mtx_. The applied index never moves backward; a
     // caller that tries is a bug, so it is reported rather than obeyed.
-    pub fn PublishAppliedIndexLocked(&mut self, index: u64) {
+    pub fn PublishAppliedIndexLocked(&self, index: u64) {
         let published: u64 = self.GetAppliedIndex();
         // [move, M3] the decision is the core's; the mirror is the shell's
         let mut out: CoreOutput = core_output();
@@ -1304,22 +1404,22 @@ impl RaftServerBase {
     }
 
     // @unsafe - takes mtx_.
-    pub fn PublishAppliedIndex(&mut self, index: u64) {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+    pub fn PublishAppliedIndex(&self, index: u64) {
+        let _lock = RaftLockGuard::new(self.mtx());
         self.PublishAppliedIndexLocked(index);
     }
 
     // CALLER MUST HOLD mtx_. Compaction is safe only through the prefix
     // covered by BOTH the committed state and the snapshot boundary.
-    pub fn CompactLogLocked(&mut self, up_to_index: u64) -> usize {
+    pub fn CompactLogLocked(&self, up_to_index: u64) -> usize {
         let requested_index: u64 = up_to_index;
         let safe_index: u64 = raft_server_compaction_safe_index(
-            up_to_index, self.core.commit_index_, self.core.snapidx_);
+            up_to_index, self.core().commit_index_, self.core().snapidx_);
         if safe_index != requested_index {
             rusty::raft_log_warn_5(
                 "[RAFT-COMPACT] Site {}: Clamped compaction {} -> {} (core.commit_index_={}, snapidx={})",
                 self.site_id_, requested_index, safe_index,
-                self.core.commit_index_, self.core.snapidx_);
+                self.core().commit_index_, self.core().snapidx_);
         }
 
         if !raft_server_log_index_has_successor(safe_index) {
@@ -1329,11 +1429,11 @@ impl RaftServerBase {
             return 0;
         }
 
-        if safe_index >= self.core.raft_log_.base() {
-            self.recorder_.taint("CompactLogLocked");  // [M0]
+        if safe_index >= self.core().raft_log_.base() {
+            self.recorder().taint("CompactLogLocked");  // [M0]
         }
         let removed_memory: usize =
-            self.core.raft_log_.compact_through(safe_index);
+            self.core().raft_log_.compact_through(safe_index);
 
         rusty::raft_log_info_3(
             "[RAFT-COMPACT] Site {}: Compacted in-memory entries through {} (memory={})",
@@ -1342,12 +1442,12 @@ impl RaftServerBase {
     }
 
     // @unsafe - acquiring entry point, for callers that do not hold mtx_.
-    pub fn CompactLog(&mut self, up_to_index: u64) -> usize {
+    pub fn CompactLog(&self, up_to_index: u64) -> usize {
         // [fix, F5] Inside the verified configuration the log stays whole.
-        if self.verified_gates_ {
+        if self.verified_gates_.load(rusty::sync::atomic::Ordering::Relaxed) {  // [fix, F19]
             return 0;
         }
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        let _lock = RaftLockGuard::new(self.mtx());
         self.CompactLogLocked(up_to_index)
     }
 
@@ -1360,7 +1460,7 @@ impl RaftServerBase {
     pub fn LogTermChange(&self, reason: &'static str, old_term: u64,
                          new_term: u64, source: u16) {
         let mut out: CoreOutput = core_output();
-        self.core.log_term_change(reason, old_term, new_term, source, &mut out);  // [move, M1]
+        self.core().log_term_change(reason, old_term, new_term, source, &mut out);  // [move, M1]
         print_core_logs(&out);  // [move, M7]
     }
 
@@ -1399,7 +1499,7 @@ impl RaftServerBase {
 
     // @unsafe - CALLER MUST HOLD mtx_. [move, M1] The body is
     // RaftCore::rebuild_peer_tables.
-    pub fn RebuildPeerTables(&mut self, next_index: u64) {
+    pub fn RebuildPeerTables(&self, next_index: u64) {
         let mut out: CoreOutput = core_output();
         self.step(Event::RebuildPeers { next_index }, &mut out).into_done();
     }
@@ -1407,9 +1507,9 @@ impl RaftServerBase {
     // [move, M5] The one way into the core (plan §3.1 rule 1): an event and
     // its reply, under mtx_, which the caller holds (Setup's identity and
     // membership come before anything else can reach the server).
-    pub fn step(&mut self, ev: Event<'_>, out: &mut CoreOutput) -> Reply {
-        if !self.recorder_.on() {
-            return self.core.step(ev, out);
+    pub fn step(&self, ev: Event<'_>, out: &mut CoreOutput) -> Reply {
+        if !self.recorder().on() {
+            return self.core().step(ev, out);
         }
         // [M0] The replay recorder: the event as the shell built it, then
         // what this call appended to `out`, and its reply.
@@ -1418,19 +1518,19 @@ impl RaftServerBase {
         let actions_from: usize = out.len();
         let logs_from: usize = out.log_count();
         let level: i32 = out.log_level();
-        let reply: Reply = self.core.step(ev, out);
+        let reply: Reply = self.core().step(ev, out);
         let result: String = raft_replay::result_text(out, actions_from, logs_from,
                                                       &reply, &command_digest);
-        self.recorder_.write(&raft_replay::record_line(&event, level, &result));
+        self.recorder().write(&raft_replay::record_line(&event, level, &result));
         reply
     }
 
     // [fix, F9] The same, for a message from the network: None is a message
     // the core dropped, which the caller answers as an unavailable replica.
-    pub fn step_checked(&mut self, ev: Event<'_>, out: &mut CoreOutput)
+    pub fn step_checked(&self, ev: Event<'_>, out: &mut CoreOutput)
         -> Option<Reply> {
-        if !self.recorder_.on() {
-            return self.core.step_checked(ev, out);
+        if !self.recorder().on() {
+            return self.core().step_checked(ev, out);
         }
         // [M0] the replay recorder, as in step
         let mut event: String = String::new();
@@ -1438,10 +1538,10 @@ impl RaftServerBase {
         let actions_from: usize = out.len();
         let logs_from: usize = out.log_count();
         let level: i32 = out.log_level();
-        let reply: Option<Reply> = self.core.step_checked(ev, out);
+        let reply: Option<Reply> = self.core().step_checked(ev, out);
         let result: String = raft_replay::checked_result_text(
             out, actions_from, logs_from, &reply, &command_digest);
-        self.recorder_.write(&raft_replay::record_line(&event, level, &result));
+        self.recorder().write(&raft_replay::record_line(&event, level, &result));
         reply
     }
 
@@ -1457,7 +1557,7 @@ impl RaftServerBase {
         let knobs: RaftElectionTimeouts = unsafe { raft_election_timeouts() };
         let current_time: u64 = unsafe { raft_time_now_us() };
         let in_grace_period: bool =
-            (current_time - self.startup_timestamp_) < knobs.grace_period_us_;
+            (current_time - self.startup_timestamp_.load(rusty::sync::atomic::Ordering::Relaxed)) < knobs.grace_period_us_;  // [fix, F19]
         // IsPreferredLeaderConfigured's whole body (server.cc). It is a DSL
         // function of the server.cc carrier, so this block cannot name it;
         // the predicate is one comparison and is spelled out rather than
@@ -1481,7 +1581,7 @@ impl RaftServerBase {
     // CALLER MUST HOLD mtx_. Samples exactly one timeout and advances the
     // generation, so a concurrent heartbeat reset cannot leave a campaign
     // running off an expired snapshot.
-    pub fn resetTimerLocked(&mut self, reason: &str) {
+    pub fn resetTimerLocked(&self, reason: &str) {
         // [move, M4] The clock read and the timeout sample, in the order the
         // body made them, then the core records them.
         let now: u64 = unsafe { raft_time_now_us() };
@@ -1496,16 +1596,16 @@ impl RaftServerBase {
             rusty::raft_log_info_7(
                 "[TIMER_RESET] Site {}: reset timer ({}) - prev_hb_time={} new_hb_time={} delta={} timeout={} generation={}",
                 self.site_id_, reason, prev_time,
-                self.core.last_heartbeat_time_,
-                self.core.last_heartbeat_time_ - prev_time,
-                self.core.election_timeout_us_,
-                self.core.election_timer_generation_);
+                self.core().last_heartbeat_time_,
+                self.core().last_heartbeat_time_ - prev_time,
+                self.core().election_timeout_us_,
+                self.core().election_timer_generation_);
         }
     }
 
     // @unsafe - acquiring entry point, for callers that do not hold mtx_.
-    pub fn resetTimer(&mut self, reason: &str) {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+    pub fn resetTimer(&self, reason: &str) {
+        let _lock = RaftLockGuard::new(self.mtx());
         self.resetTimerLocked(reason);
     }
 
@@ -1516,7 +1616,7 @@ impl RaftServerBase {
     // order. CALLER MUST HOLD mtx_. A ROLE_SET that is a transition queues
     // its leader-change notice here, under mtx_, so notices are queued in
     // transition order ([fix, F6]); run_unlocked_actions fires them.
-    pub fn run_locked_actions(&mut self, out: &CoreOutput) {
+    pub fn run_locked_actions(&self, out: &CoreOutput) {
         print_core_logs(out);  // [move, M7] the call's log lines first
         let mut i: usize = 0;
         while i < out.len() {
@@ -1533,7 +1633,7 @@ impl RaftServerBase {
                     self.resetTimerLocked("became follower");
                     rusty::raft_log_info_2(
                         "[RAFT_TIMER] Site {} reset election timer when becoming follower (last_hb now={})",
-                        self.site_id_, self.core.last_heartbeat_time_);
+                        self.site_id_, self.core().last_heartbeat_time_);
                 } else if reason == TimerResetReason::STEP_DOWN {
                     self.resetTimerLocked("stepDown");
                 } else if reason == TimerResetReason::GRANTED_VOTE {
@@ -1553,7 +1653,7 @@ impl RaftServerBase {
                 let mut notices = self.leader_notices_.lock().unwrap();
                 if unsafe {
                     raft_leader_change_cb_is_set(
-                        &self.leader_change_cb_ as *const rusty::RaftLeaderChangeCb)
+                        self.leader_change_cb_.as_ptr() as *const rusty::RaftLeaderChangeCb)
                 } {
                     notices.pending_.push_back(action.became_leader());
                 }
@@ -1566,7 +1666,7 @@ impl RaftServerBase {
     // [fix, F6] What a critical section leaves for after mtx_ is released:
     // each role setting's log entry, in push order, then the queued
     // leader-change notices. CALLER MUST NOT HOLD mtx_.
-    pub fn run_unlocked_actions(&mut self, out: &CoreOutput) {
+    pub fn run_unlocked_actions(&self, out: &CoreOutput) {
         let mut transitioned: bool = false;
         let mut i: usize = 0;
         while i < out.len() {
@@ -1596,7 +1696,7 @@ impl RaftServerBase {
     // finds the queue idle drains it, taking the queue's lock only to pop.
     // A callback may take mtx_; one that causes another transition only
     // queues its notice, and this loop fires it next.
-    fn fire_leader_notices(&mut self) {
+    fn fire_leader_notices(&self) {
         {
             let mut notices = self.leader_notices_.lock().unwrap();
             if notices.draining_ || notices.pending_.is_empty() {
@@ -1619,7 +1719,7 @@ impl RaftServerBase {
                     became_leader = notices.pending_.pop_front().unwrap();
                     unsafe {
                         raft_leader_change_cb_clone_into(
-                            &self.leader_change_cb_ as *const rusty::RaftLeaderChangeCb,
+                            self.leader_change_cb_.as_ptr() as *const rusty::RaftLeaderChangeCb,
                             &mut cb as *mut rusty::RaftLeaderChangeCb);
                     }
                     have = true;
@@ -1652,18 +1752,18 @@ impl RaftServerBase {
     // recovery).
     pub fn publish_mirrors(&self) {
         self.commit_index_mirror_
-            .store(self.core.commit_index_, rusty::sync::atomic::Ordering::Release);
+            .store(self.core().commit_index_, rusty::sync::atomic::Ordering::Release);
         self.is_leader_mirror_
-            .store(self.core.is_leader_, rusty::sync::atomic::Ordering::Release);
-        let hint: u16 = if self.core.is_leader_ {
+            .store(self.core().is_leader_, rusty::sync::atomic::Ordering::Release);
+        let hint: u16 = if self.core().is_leader_ {
             self.site_id_
         } else {
-            self.core.current_leader_id_
+            self.core().current_leader_id_
         };
         self.leader_hint_mirror_
             .store(hint as u64, rusty::sync::atomic::Ordering::Release);
         self.term_mirror_
-            .store(self.core.current_term_, rusty::sync::atomic::Ordering::Release);
+            .store(self.core().current_term_, rusty::sync::atomic::Ordering::Release);
     }
 
     // @safe - stop_ as setIsLeader read it, for the core's `stopped`.
@@ -1677,7 +1777,7 @@ impl RaftServerBase {
 
     // @safe - the site id at an ordinal of the peer table.
     pub fn peer_site_at(&self, ordinal: usize) -> u16 {
-        self.core.peer_site_at(ordinal)  // [move, M1]
+        self.core().peer_site_at(ordinal)  // [move, M1]
     }
 
     // A whole non-negative decimal that fits in u64, parsed in Rust.
@@ -1744,14 +1844,14 @@ impl RaftServerBase {
     #[allow(clippy::unnecessary_unwrap)]
     // @unsafe - the owner-thread startup job. Every failure path closes the
     // server fail-closed rather than starting half a replica.
-    pub fn SetupInternal(&mut self) -> bool {
+    pub fn SetupInternal(&self) -> bool {
         // RPC services may already be listening when this job begins. Keep
         // every handler fail-closed until snapshot loading has completed.
         self.rpc_ready_
             .store(false, rusty::sync::atomic::Ordering::Release);
 
         // Record startup time for the grace-period logic.
-        self.startup_timestamp_ = unsafe { raft_time_now_us() };
+        self.startup_timestamp_.store(unsafe { raft_time_now_us() }, rusty::sync::atomic::Ordering::Relaxed);  // [fix, F19]
 
         let hb_env = self.raft_env_u64(RAFT_ENV_HEARTBEAT_INTERVAL_US);
         if hb_env.is_err() {
@@ -1788,11 +1888,11 @@ impl RaftServerBase {
         }
         let lrw_override = lrw_env.unwrap();
         if lrw_override.is_some() {
-            self.log_retention_window_ =
-                raft_server_retention_window_normalize(lrw_override.unwrap());
+            self.log_retention_window_.store(  // [fix, F19]
+                raft_server_retention_window_normalize(lrw_override.unwrap()), rusty::sync::atomic::Ordering::Relaxed);
             rusty::raft_log_info_1(
                 "[RAFT] Log retention window set to {} from env",
-                self.log_retention_window_);
+                self.log_retention_window_.load(rusty::sync::atomic::Ordering::Relaxed));  // [fix, F19]
         }
 
         if !unsafe {
@@ -1807,7 +1907,7 @@ impl RaftServerBase {
         }
         {
             // [fix, F8] recovery may have restored the term and commit index
-            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            let _lock = RaftLockGuard::new(self.mtx());
             self.publish_mirrors();
         }
 
@@ -1829,7 +1929,7 @@ impl RaftServerBase {
             return false;
         }
         let gates = gates_env.unwrap();
-        self.verified_gates_ = gates.is_some() && gates.unwrap() == 1;
+        self.verified_gates_.store(gates.is_some() && gates.unwrap() == 1, rusty::sync::atomic::Ordering::Relaxed);  // [fix, F19]
         if !self.verified_config_ok() {
             if gates.is_some() && gates.unwrap() == 1 {
                 rusty::raft_log_error_1(
@@ -1873,7 +1973,7 @@ impl RaftServerBase {
 
     // @safe - the fail-stop a snapshot recovery failure performs, with the
     // reason. Was a lambda inside InitializeSnapshotManager.
-    pub fn FailSnapshotRecovery(&mut self, reason: &str) -> bool {
+    pub fn FailSnapshotRecovery(&self, reason: &str) -> bool {
         rusty::raft_log_error_2(
             "[RAFT-SNAPSHOT] Site {} recovery failed: {}", self.site_id_,
             reason);
@@ -1885,12 +1985,12 @@ impl RaftServerBase {
     // Both mean the live log was compacted by a snapshot this manager does
     // not have.
     pub fn HasUncoveredProgress(&self) -> bool {
-        let orphaned_compacted_suffix: bool = self.core.snapidx_ == 0
-            && !self.core.raft_log_.is_empty()
-            && self.core.raft_log_.base() > 1;
-        let uncovered_empty_progress: bool = self.core.snapidx_ == 0
-            && self.core.raft_log_.is_empty()
-            && self.core.commit_index_ != 0;
+        let orphaned_compacted_suffix: bool = self.core().snapidx_ == 0
+            && !self.core().raft_log_.is_empty()
+            && self.core().raft_log_.base() > 1;
+        let uncovered_empty_progress: bool = self.core().snapidx_ == 0
+            && self.core().raft_log_.is_empty()
+            && self.core().commit_index_ != 0;
         orphaned_compacted_suffix || uncovered_empty_progress
     }
 
@@ -1904,18 +2004,18 @@ impl RaftServerBase {
     // `if let` binding with a dot where the C++ needs an arrow. Same
     // constraint as ReplicationWakeGate::wake_on_owner.
     #[allow(clippy::unnecessary_unwrap)]
-    pub fn InitializeSnapshotManagerLocked(&mut self) -> bool {
+    pub fn InitializeSnapshotManagerLocked(&self) -> bool {
         if !unsafe { raft_env_snapshots_enabled() } {
-            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            let _lock = RaftLockGuard::new(self.mtx());
             if self.HasUncoveredProgress() {
-                let first: u64 = if self.core.raft_log_.is_empty() {
+                let first: u64 = if self.core().raft_log_.is_empty() {
                     0
                 } else {
-                    self.core.raft_log_.base()
+                    self.core().raft_log_.base()
                 };
                 rusty::raft_log_error_3(
                     "[RAFT-SNAPSHOT] Site {} has recovered progress without its covering snapshot (first={} commit={}); snapshots are disabled",
-                    self.site_id_, first, self.core.commit_index_);
+                    self.site_id_, first, self.core().commit_index_);
                 self.FailStop();
                 return false;
             }
@@ -1939,13 +2039,13 @@ impl RaftServerBase {
         }
 
         let _apply_lock =
-            RaftStdLockGuard::new(&mut self.state_machine_apply_mtx_);
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+            RaftStdLockGuard::new(self.state_machine_apply_mtx_.as_ptr());
+        let _lock = RaftLockGuard::new(self.mtx());
 
         let mut manager: rusty::RaftSnapshotManagerPtr = Default::default();
         unsafe {
             raft_snapshot_recovery_pick_manager(
-                &self.snapshot_manager_ as *const rusty::RaftSnapshotManagerPtr,
+                self.snapshot_manager_.as_ptr() as *const rusty::RaftSnapshotManagerPtr,
                 &mut manager as *mut rusty::RaftSnapshotManagerPtr);
         }
 
@@ -1958,11 +2058,12 @@ impl RaftServerBase {
                 &mut discovered_term as *mut u64)
         };
         if !has_latest {
-            if self.core.snapidx_ != 0 || self.HasUncoveredProgress() {
+            if self.core().snapidx_ != 0 || self.HasUncoveredProgress() {
                 return self.FailSnapshotRecovery(
                     "empty snapshot manager cannot cover the compacted live log");
             }
-            self.snapshot_manager_ = manager;
+            // SAFETY: under mtx_, the manager's lock.
+            unsafe { *self.snapshot_manager_.get() = manager };  // [fix, F19]
             self.snapshot_manager_configured_
                 .store(true, rusty::sync::atomic::Ordering::Release);
             rusty::raft_log_info_3(
@@ -1999,10 +2100,10 @@ impl RaftServerBase {
             return self.FailSnapshotRecovery(
                 "snapshot boundary is outside the recoverable log range");
         }
-        if recovered_snapshot_index < self.core.snapidx_
-            || (recovered_snapshot_index == self.core.snapidx_
-                && self.core.snapidx_ != 0
-                && recovered_snapshot_term != self.core.snapterm_ as u64)
+        if recovered_snapshot_index < self.core().snapidx_
+            || (recovered_snapshot_index == self.core().snapidx_
+                && self.core().snapidx_ != 0
+                && recovered_snapshot_term != self.core().snapterm_ as u64)
         {
             return self.FailSnapshotRecovery(
                 "snapshot manager would move the live boundary backward or change its term");
@@ -2010,7 +2111,7 @@ impl RaftServerBase {
         let has_prepare_cb: bool =
             unsafe {
                 raft_prepare_snapshot_cb_is_set(
-                    &self.prepare_sm_snapshot_cb_
+                    self.prepare_sm_snapshot_cb_.as_ptr()
                         as *const rusty::RaftPrepareSnapshotCb)
             };
         if has_prepare_cb && self.GetAppliedIndex() > recovered_snapshot_index
@@ -2019,17 +2120,17 @@ impl RaftServerBase {
                 "refusing to rewind a live state machine to an older snapshot");
         }
 
-        let previous_snapshot_index: u64 = self.core.snapidx_;
-        let previous_snapshot_term: u64 = self.core.snapterm_ as u64;
-        let previous_last_log_index: u64 = self.core.raft_log_.last_index();
-        let previous_min_active_slot: u64 = self.core.raft_log_.base();
+        let previous_snapshot_index: u64 = self.core().snapidx_;
+        let previous_snapshot_term: u64 = self.core().snapterm_ as u64;
+        let previous_last_log_index: u64 = self.core().raft_log_.last_index();
+        let previous_min_active_slot: u64 = self.core().raft_log_.base();
 
         // Reconstruct Figure 13's suffix decision from the old boundary when
         // it is still present. A live reinitialisation would use its exact
         // existing snapshot tuple as the same proof; that proof is
         // unreachable today because Setup is the only caller and snapidx_ is
         // still 0 there.
-        let boundary = self.core.raft_log_.get(recovered_snapshot_index);
+        let boundary = self.core().raft_log_.get(recovered_snapshot_index);
         #[allow(clippy::unnecessary_unwrap)]
         let has_boundary: bool = boundary.is_some()
             && boundary.unwrap().has_value();  // [move, M6]
@@ -2066,7 +2167,7 @@ impl RaftServerBase {
 
         if !unsafe {
             raft_load_state_machine_snapshot(
-                &self.prepare_sm_snapshot_cb_
+                self.prepare_sm_snapshot_cb_.as_ptr()
                     as *const rusty::RaftPrepareSnapshotCb,
                 self.site_id_,
                 &snapshot_data as *const rusty::RaftByteString,
@@ -2076,48 +2177,52 @@ impl RaftServerBase {
                 "state-machine snapshot validation/load failed");
         }
 
-        self.recorder_.taint("InitializeSnapshotManagerLocked");  // [M0]
-        self.core.snapidx_ = recovered_snapshot_index;
-        self.core.snapterm_ = recovered_snapshot_term as i64;
+        self.recorder().taint("InitializeSnapshotManagerLocked");  // [M0]
+        self.core().snapidx_ = recovered_snapshot_index;
+        self.core().snapterm_ = recovered_snapshot_term as i64;
+        // [fix, F19] One core reference for the receiver and its argument:
+        // two core() calls in one call would overlap two `&mut RaftCore`.
+        let core: &mut RaftCore = self.core();
         if retain_suffix {
-            self.core.raft_log_.compact_through(self.core.snapidx_);
+            core.raft_log_.compact_through(core.snapidx_);
         } else {
-            self.core.raft_log_.reset(self.core.snapidx_ + 1);
+            core.raft_log_.reset(core.snapidx_ + 1);
         }
-        self.core.commit_index_ = raft_server_snapshot_progress_clamp(
-            self.core.commit_index_, self.core.snapidx_,
-            self.core.raft_log_.last_index());
+        self.core().commit_index_ = raft_server_snapshot_progress_clamp(
+            self.core().commit_index_, self.core().snapidx_,
+            self.core().raft_log_.last_index());
 
-        if self.core.current_term_ < self.core.snapterm_ as u64 {
+        if self.core().current_term_ < self.core().snapterm_ as u64 {
             rusty::raft_log_warn_3(
                 "[RAFT-SNAPSHOT] Site {} advancing recovered term {} -> {} to cover snapshot boundary",
-                self.site_id_, self.core.current_term_,
-                self.core.snapterm_);
-            self.core.current_term_ = self.core.snapterm_ as u64;
-            self.core.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+                self.site_id_, self.core().current_term_,
+                self.core().snapterm_);
+            self.core().current_term_ = self.core().snapterm_ as u64;
+            self.core().vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
         }
 
         assert!(
-            self.core.commit_index_
-                <= self.core.raft_log_.last_index());  // [move, M10]
+            self.core().commit_index_
+                <= self.core().raft_log_.last_index());  // [move, M10]
 
-        self.snapshot_manager_ = manager;
+        // SAFETY: under mtx_, the manager's lock.
+        unsafe { *self.snapshot_manager_.get() = manager };  // [fix, F19]
         self.snapshot_manager_configured_
             .store(true, rusty::sync::atomic::Ordering::Release);
         self.snapshot_trigger_index_
-            .store(self.core.snapidx_,
+            .store(self.core().snapidx_,
                    rusty::sync::atomic::Ordering::Release);
 
-        if self.core.snapidx_ > self.GetAppliedIndex() {
-            self.PublishAppliedIndexLocked(self.core.snapidx_);
+        if self.core().snapidx_ > self.GetAppliedIndex() {
+            self.PublishAppliedIndexLocked(self.core().snapidx_);
         }
 
         rusty::raft_log_info_8(
             "[RAFT-SNAPSHOT] Restored snapshot for site {}: index={} term={} size={} commit={} last={} min_active={} retain_suffix={}",
-            self.site_id_, self.core.snapidx_, self.core.snapterm_,
-            snapshot_size_bytes, self.core.commit_index_,
-            self.core.raft_log_.last_index(),
-            self.core.raft_log_.base(), retain_suffix);
+            self.site_id_, self.core().snapidx_, self.core().snapterm_,
+            snapshot_size_bytes, self.core().commit_index_,
+            self.core().raft_log_.last_index(),
+            self.core().raft_log_.base(), retain_suffix);
         rusty::raft_log_info_3(
             "[RAFT-SNAPSHOT] Initialized for site {} partition {}: interval={}",
             self.site_id_, self.partition_id_, snapshot_interval);
@@ -2129,14 +2234,14 @@ impl RaftServerBase {
     // async-callback lifetime lock and confirmed the reply is available;
     // it does NOT hold mtx_, which this takes, and that ordering is what
     // keeps the inline-completion path from self-deadlocking.
-    pub fn InstallSnapshotReplyAccepted(&mut self, site_id: u16, ord: usize,
+    pub fn InstallSnapshotReplyAccepted(&self, site_id: u16, ord: usize,
                                         snap_last_idx: u64, send_term: u64,
                                         follower_term: u64) {
         // [move, M3] The decision under mtx_, its locked actions before the
         // guard drops, the leader-change callback after ([fix, F6]).
         let mut out: CoreOutput = core_output();
         {
-            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            let _lock = RaftLockGuard::new(self.mtx());
             self.InstallSnapshotReplyAcceptedLocked(site_id, ord, snap_last_idx,
                                                     send_term, follower_term,
                                                     &mut out);
@@ -2147,38 +2252,38 @@ impl RaftServerBase {
 
     // [move, M3] InstallSnapshotReplyAccepted's body. CALLER MUST HOLD mtx_.
     #[allow(clippy::too_many_arguments)]
-    pub fn InstallSnapshotReplyAcceptedLocked(&mut self, site_id: u16,
+    pub fn InstallSnapshotReplyAcceptedLocked(&self, site_id: u16,
                                               ord: usize, snap_last_idx: u64,
                                               send_term: u64,
                                               follower_term: u64,
                                               out: &mut CoreOutput) {
-        self.recorder_.taint("InstallSnapshotReplyAcceptedLocked");  // [M0]
+        self.recorder().taint("InstallSnapshotReplyAcceptedLocked");  // [M0]
         if raft_server_observed_higher_term(follower_term,
-                                            self.core.current_term_) {
+                                            self.core().current_term_) {
             rusty::raft_log_info_4(
                 "[HEARTBEAT-SNAPSHOT] Site {}: Follower {} has higher term {} > {}, stepping down",
                 self.site_id_, site_id, follower_term,
-                self.core.current_term_);
-            let previous_term: u64 = self.core.current_term_;
-            self.core.current_term_ = follower_term;
-            self.core.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+                self.core().current_term_);
+            let previous_term: u64 = self.core().current_term_;
+            self.core().current_term_ = follower_term;
+            self.core().vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
             self.LogTermChange("InstallSnapshot reply carried newer term",
-                               previous_term, self.core.current_term_,
+                               previous_term, self.core().current_term_,
                                site_id);
             // A follower's higher term does not identify the leader of that
             // term. Retire the previous leader hint before publishing
             // follower state.
-            self.core.current_leader_id_ =
+            self.core().current_leader_id_ =
                 raft_server_leader_hint_after_transition(
                     false, false, self.site_id_, site_id);
             let stopped: bool = self.stopped_now();
             let failover: bool = self.failover_;
             self.step(Event::StepDown { stopped, failover }, out).into_done();  // [move, M3]
-            self.core.req_voting_ = false;
-            self.core.election_in_progress_ = false;
+            self.core().req_voting_ = false;
+            self.core().election_in_progress_ = false;
             return;
         }
-        if self.core.current_term_ != send_term {
+        if self.core().current_term_ != send_term {
             rusty::raft_log_info_1(
                 "[HEARTBEAT-SNAPSHOT] Site {}: Term changed since snapshot send, ignoring response",
                 self.site_id_);
@@ -2191,16 +2296,16 @@ impl RaftServerBase {
         } else {
             snap_last_idx
         };
-        self.core.peers_.accept_through(ord, snap_last_idx, has_successor,
+        self.core().peers_.accept_through(ord, snap_last_idx, has_successor,
                                           next_index);
         rusty::raft_log_info_4(
             "[HEARTBEAT-SNAPSHOT] Site {}: Updated follower {}: next_index={} match_index={}",
-            self.site_id_, site_id, self.core.peers_.next_index(ord),
-            self.core.peers_.match_index(ord));
+            self.site_id_, site_id, self.core().peers_.next_index(ord),
+            self.core().peers_.match_index(ord));
     }
 
     // @safe - the fail-stop every unrecoverable snapshot path performs.
-    pub fn FailStop(&mut self) {
+    pub fn FailStop(&self) {
         self.rpc_ready_
             .store(false, rusty::sync::atomic::Ordering::Release);
         self.stop_
@@ -2226,7 +2331,7 @@ impl RaftServerBase {
     // arrives through the C ABI and the kernel as a pointer, and an `&mut`
     // here would only be rebuilt from it at the boundary.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn OnInstallSnapshotLocked(&mut self, term: u64, leader_id: u64,
+    pub fn OnInstallSnapshotLocked(&self, term: u64, leader_id: u64,
                                    last_included_index: u64,
                                    last_included_term: u64,
                                    data: *const rusty::RaftByteString,
@@ -2235,7 +2340,7 @@ impl RaftServerBase {
             *term_out = 0;
         }
 
-        self.recorder_.taint("OnInstallSnapshotLocked");  // [M0]
+        self.recorder().taint("OnInstallSnapshotLocked");  // [M0]
         // Edge case 0: the server is shutting down.
         if self.stop_.load(rusty::sync::atomic::Ordering::Acquire) {
             rusty::raft_log_info_1(
@@ -2245,12 +2350,12 @@ impl RaftServerBase {
         }
 
         // Edge case 1: a stale term is rejected.
-        if term < self.core.current_term_ {
+        if term < self.core().current_term_ {
             rusty::raft_log_info_4(
                 "[INSTALL-SNAPSHOT] Site {}: Rejecting InstallSnapshot from leader {} (leader_term={} < my_term={})",
-                self.site_id_, leader_id, term, self.core.current_term_);
+                self.site_id_, leader_id, term, self.core().current_term_);
             unsafe {
-                *term_out = self.core.current_term_;
+                *term_out = self.core().current_term_;
             }
             return;
         }
@@ -2279,41 +2384,41 @@ impl RaftServerBase {
                 && leader_site != self.site_id_
                 && self.IsConfigMember(leader_site);
         let leader_has_higher_term: bool =
-            raft_server_observed_higher_term(term, self.core.current_term_);
+            raft_server_observed_higher_term(term, self.core().current_term_);
         let sender_is_self: bool = leader_site == self.site_id_;
         let has_known_leader: bool =
-            self.core.current_leader_id_ != RAFT_SERVER_INVALID_SITE_ID;
+            self.core().current_leader_id_ != RAFT_SERVER_INVALID_SITE_ID;
         let known_leader_matches_sender: bool =
-            self.core.current_leader_id_ == leader_site;
+            self.core().current_leader_id_ == leader_site;
         if !sender_is_current_voter
             || !raft_server_leader_rpc_sender_is_authoritative(
-                leader_has_higher_term, self.core.is_leader_,
+                leader_has_higher_term, self.core().is_leader_,
                 sender_is_self, has_known_leader,
                 known_leader_matches_sender)
         {
             rusty::raft_log_warn_7(
                 "[INSTALL-SNAPSHOT] Site {} rejected unauthoritative leader {} in term {} (local_term={} leader={} known_leader={} voter={})",
-                self.site_id_, leader_id, term, self.core.current_term_,
-                self.core.is_leader_, self.core.current_leader_id_,
+                self.site_id_, leader_id, term, self.core().current_term_,
+                self.core().is_leader_, self.core().current_leader_id_,
                 sender_is_current_voter);
             return;
         }
 
         // Edge case 2: a higher or equal term is accepted as a legitimate
         // leader.
-        let previous_term: u64 = self.core.current_term_;
+        let previous_term: u64 = self.core().current_term_;
         if leader_has_higher_term {
             rusty::raft_log_info_4(
                 "[INSTALL-SNAPSHOT] Site {}: Leader {} has higher term ({} > {}) - updating",
-                self.site_id_, leader_id, term, self.core.current_term_);
-            self.core.current_term_ = term;
-            self.core.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+                self.site_id_, leader_id, term, self.core().current_term_);
+            self.core().current_term_ = term;
+            self.core().vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
         }
 
         // InstallSnapshot comes from a known leader. Publish its identity
         // before a possible leader-to-follower callback observes the role
         // transition.
-        self.core.current_leader_id_ =
+        self.core().current_leader_id_ =
             raft_server_leader_hint_after_transition(false, true,
                                                      self.site_id_,
                                                      leader_site);
@@ -2329,19 +2434,19 @@ impl RaftServerBase {
         let mut out: CoreOutput = core_output();
         let stopped: bool = self.stopped_now();
         let failover: bool = self.failover_;
-        if self.core.is_leader_ {
+        if self.core().is_leader_ {
             self.step(Event::StepDown { stopped, failover }, &mut out).into_done();
         } else {
             self.step(Event::SetFollower { stopped, failover }, &mut out).into_done();
         }
         self.run_locked_actions(&out);
-        self.install_out_ = out;
-        self.core.req_voting_ = false;
-        self.core.election_in_progress_ = false;
+        *self.install_out() = out;  // [fix, F19]
+        self.core().req_voting_ = false;
+        self.core().election_in_progress_ = false;
 
         if leader_has_higher_term {
             self.LogTermChange("InstallSnapshot carried newer term",
-                               previous_term, self.core.current_term_,
+                               previous_term, self.core().current_term_,
                                leader_site);
         }
 
@@ -2350,32 +2455,32 @@ impl RaftServerBase {
         // From here current_term_ denotes an accepted current-term leader
         // contact; individual install failures overwrite it with zero.
         unsafe {
-            *term_out = self.core.current_term_;
+            *term_out = self.core().current_term_;
         }
 
         // A current-term leader may retry a snapshot after this follower has
         // already committed, applied or snapshotted through its boundary.
         // Acknowledge the contact, but roll no local state backward and do
         // not install the stale payload.
-        let mut local_progress_index: u64 = self.core.commit_index_;
-        if self.core.execute_index_ > local_progress_index {
-            local_progress_index = self.core.execute_index_;
+        let mut local_progress_index: u64 = self.core().commit_index_;
+        if self.core().execute_index_ > local_progress_index {
+            local_progress_index = self.core().execute_index_;
         }
         let applied: u64 = self.GetAppliedIndex();
         if applied > local_progress_index {
             local_progress_index = applied;
         }
-        if self.core.snapidx_ > local_progress_index {
-            local_progress_index = self.core.snapidx_;
+        if self.core().snapidx_ > local_progress_index {
+            local_progress_index = self.core().snapidx_;
         }
-        if last_included_index == self.core.snapidx_
-            && self.core.snapidx_ != 0
-            && last_included_term != self.core.snapterm_ as u64
+        if last_included_index == self.core().snapidx_
+            && self.core().snapidx_ != 0
+            && last_included_term != self.core().snapterm_ as u64
         {
             rusty::raft_log_error_5(
                 "[INSTALL-SNAPSHOT] Site {}: rejecting snapshot boundary ({}, {}) that conflicts with local snapshot ({}, {})",
                 self.site_id_, last_included_index, last_included_term,
-                self.core.snapidx_, self.core.snapterm_);
+                self.core().snapidx_, self.core().snapterm_);
             unsafe {
                 *term_out = 0;
             }
@@ -2386,8 +2491,8 @@ impl RaftServerBase {
             rusty::raft_log_info_6(
                 "[INSTALL-SNAPSHOT] Site {}: Snapshot index {} is already covered (commit={} execute={} applied={} snapidx={}); acknowledging no-op",
                 self.site_id_, last_included_index,
-                self.core.commit_index_, self.core.execute_index_,
-                self.GetAppliedIndex(), self.core.snapidx_);
+                self.core().commit_index_, self.core().execute_index_,
+                self.GetAppliedIndex(), self.core().snapidx_);
             return;
         }
         if !raft_server_log_index_has_successor(last_included_index) {
@@ -2403,7 +2508,7 @@ impl RaftServerBase {
         }
 
         let configured: bool =
-            unsafe { raft_snapshot_manager_is_set(&self.snapshot_manager_) };
+            unsafe { raft_snapshot_manager_is_set(self.snapshot_manager_.as_ptr()) };
         if !configured {
             rusty::raft_log_error_2(
                 "[INSTALL-SNAPSHOT] Site {}: Cannot install snapshot at index {} without configured snapshot storage",
@@ -2418,7 +2523,7 @@ impl RaftServerBase {
         // BEFORE the application loader can replace external state. A
         // decoded command is required, so a synthesized empty RaftEntry can
         // never prove the snapshot boundary.
-        let boundary = self.core.raft_log_.get(last_included_index);
+        let boundary = self.core().raft_log_.get(last_included_index);
         #[allow(clippy::unnecessary_unwrap)]
         let has_boundary: bool = boundary.is_some()
             && boundary.unwrap().has_value();  // [move, M6]
@@ -2434,9 +2539,9 @@ impl RaftServerBase {
 
         let install: i32 = unsafe {
             raft_install_snapshot_payload(
-                &self.prepare_sm_snapshot_cb_
+                self.prepare_sm_snapshot_cb_.as_ptr()
                     as *const rusty::RaftPrepareSnapshotCb,
-                &self.snapshot_manager_ as *const rusty::RaftSnapshotManagerPtr,
+                self.snapshot_manager_.as_ptr() as *const rusty::RaftSnapshotManagerPtr,
                 self.site_id_, last_included_index, last_included_term, data)
         };
         if install == 2 {
@@ -2453,17 +2558,17 @@ impl RaftServerBase {
             return;
         }
 
-        self.core.snapidx_ = last_included_index;
-        self.core.snapterm_ = last_included_term as i64;
+        self.core().snapidx_ = last_included_index;
+        self.core().snapterm_ = last_included_term as i64;
         self.snapshot_trigger_index_
-            .store(self.core.snapidx_,
+            .store(self.core().snapidx_,
                    rusty::sync::atomic::Ordering::Release);
 
         // Reconcile the in-memory log and the queued application work.
         if retain_suffix {
-            self.core.raft_log_.compact_through(last_included_index);
+            self.core().raft_log_.compact_through(last_included_index);
         } else {
-            self.core.raft_log_.reset(last_included_index + 1);
+            self.core().raft_log_.reset(last_included_index + 1);
         }
         let mut purged_apply_entries: u64 = 0;
         {
@@ -2494,10 +2599,10 @@ impl RaftServerBase {
             }
         }
 
-        self.core.commit_index_ = last_included_index;
+        self.core().commit_index_ = last_included_index;
         assert!(
-            self.core.commit_index_
-                <= self.core.raft_log_.last_index());  // [move, M10]
+            self.core().commit_index_
+                <= self.core().raft_log_.last_index());  // [move, M10]
 
         // Publish application only after the state machine has finished
         // loading. Acquire waiters must never observe the covered indices
@@ -2506,9 +2611,9 @@ impl RaftServerBase {
 
         rusty::raft_log_info_9(
             "[INSTALL-SNAPSHOT] Site {}: Installed snapshot from leader {} (snapidx={}, snapterm={}, core.commit_index_={}, core.execute_index_={}, core.raft_log_.last_index()={}, retain_suffix={}, purged_apply={})",
-            self.site_id_, leader_id, self.core.snapidx_,
-            self.core.snapterm_, self.core.commit_index_,
-            self.core.execute_index_, self.core.raft_log_.last_index(),
+            self.site_id_, leader_id, self.core().snapidx_,
+            self.core().snapterm_, self.core().commit_index_,
+            self.core().execute_index_, self.core().raft_log_.last_index(),
             retain_suffix, purged_apply_entries);
     }
 
@@ -2519,12 +2624,12 @@ impl RaftServerBase {
     // the thread holds the server and keeps pulling from the apply queue
     // after the server is destroyed, which shows up as an empty
     // std::function invocation.
-    pub fn StartApplyThread(&mut self) {
+    pub fn StartApplyThread(&self) {
         self.apply_thread_running_
             .store(true, rusty::sync::atomic::Ordering::SeqCst);
         unsafe {
             let thread: *mut rusty::RaftStdThread =
-                &mut self.apply_thread_ as *mut rusty::RaftStdThread;
+                self.apply_thread_.as_ptr();
             raft_spawn_apply_thread(self.handle(), thread);
         }
     }
@@ -2546,7 +2651,7 @@ impl RaftServerBase {
             .load(rusty::sync::atomic::Ordering::Acquire));  // [move, M10]
         unsafe {
             raft_clear_async_callback_owner(
-                &self.async_callback_lifetime_
+                self.async_callback_lifetime_.as_ptr()
                     as *const rusty::RaftAsyncCallbackLifetimePtr);
         }
 
@@ -2557,7 +2662,7 @@ impl RaftServerBase {
             .store(false, rusty::sync::atomic::Ordering::SeqCst);
         unsafe {
             raft_apply_thread_join(
-                &mut self.apply_thread_ as *mut rusty::RaftStdThread);
+                self.apply_thread_.as_ptr());
         }
 
         rusty::raft_log_info_5(
@@ -2572,7 +2677,7 @@ impl RaftServerBase {
     // Rust forms: this lowers to C++, where uint64_t has no such members.
     #[allow(clippy::manual_is_multiple_of, clippy::implicit_saturating_sub,
             clippy::manual_clamp)]
-    pub fn ApplyThreadLoop(&mut self) {
+    pub fn ApplyThreadLoop(&self) {
         rusty::raft_log_info_1(
             "[APPLY-THREAD] Site {}: Started background apply thread",
             self.site_id_);
@@ -2603,8 +2708,11 @@ impl RaftServerBase {
                     // const source turns the assignment into a Command COPY
                     // -- an Arc refcount pair per applied entry that the
                     // std::move in the kernel this replaces did not pay.
-                    self.pending_apply_command_ =
-                        core::mem::take(&mut entry.command_);
+                    // SAFETY: the apply thread is the slot's one owner.
+                    unsafe {  // [fix, F19]
+                        *self.pending_apply_command_.get() =
+                            core::mem::take(&mut entry.command_);
+                    }
                     got_entry = true;
                 }
                 size_before
@@ -2615,8 +2723,8 @@ impl RaftServerBase {
                 let now_secs: u64 = unsafe { raft_monotonic_now_secs() };
                 if now_secs - last_log_time >= 5 {
                     let commit_index_snapshot: u64 = {
-                        let _lock = RaftLockGuard::new(&mut self.mtx_);
-                        self.core.commit_index_
+                        let _lock = RaftLockGuard::new(self.mtx());
+                        self.core().commit_index_
                     };
                     rusty::raft_log_info_5(
                         "[APPLY-THREAD] Site {}: IDLE core.execute_index_={} core.commit_index_={} queue_size={} applied_total={}",
@@ -2637,7 +2745,7 @@ impl RaftServerBase {
                 // published applied index inside the gate, so an entry the
                 // snapshot covers is skipped once the snapshot state is in.
                 let _apply_lock =
-                    RaftStdLockGuard::new(&mut self.state_machine_apply_mtx_);
+                    RaftStdLockGuard::new(self.state_machine_apply_mtx_.as_ptr());
                 let current_epoch: u64 =
                     self.apply_queue_.lock().unwrap().epoch_;
                 let applied_index: u64 = self.GetAppliedIndex();
@@ -2661,8 +2769,8 @@ impl RaftServerBase {
                     }
                     if !unsafe {
                         raft_apply_invoke(
-                            &self.app_next_ as *const rusty::LearnerAction,
-                            &self.pending_apply_command_
+                            self.app_next_.as_ptr() as *const rusty::LearnerAction,
+                            self.pending_apply_command_.as_ptr()
                                 as *const rusty::RaftCommand,
                             self.site_id_, id)
                     } {
@@ -2737,7 +2845,7 @@ impl RaftServerBase {
 
     // @safe - the three stores every SetupInternal failure path performed.
     // Named rather than repeated so a new failure path cannot forget one.
-    pub fn FailClosed(&mut self) {
+    pub fn FailClosed(&self) {
         self.stop_
             .store(true, rusty::sync::atomic::Ordering::Release);
         self.looping_
@@ -2750,9 +2858,9 @@ impl RaftServerBase {
     // @unsafe - CALLER MUST HOLD mtx_. Takes a state-machine checkpoint at
     // the applied index, records the new snapshot boundary, and compacts the
     // log behind it.
-    pub fn CreateSnapshotLocked(&mut self) -> bool {
+    pub fn CreateSnapshotLocked(&self) -> bool {
         let configured: bool =
-            unsafe { raft_snapshot_manager_is_set(&self.snapshot_manager_) };
+            unsafe { raft_snapshot_manager_is_set(self.snapshot_manager_.as_ptr()) };
         if !configured {
             rusty::raft_log_debug_1(
                 "[RAFT-SNAPSHOT] Site {}: No snapshot manager, skipping CreateSnapshot",
@@ -2760,7 +2868,7 @@ impl RaftServerBase {
             return false;
         }
 
-        let snap_index: u64 = self.core.execute_index_;
+        let snap_index: u64 = self.core().execute_index_;
         if snap_index == 0 {
             rusty::raft_log_debug_1(
                 "[RAFT-SNAPSHOT] Site {}: core.execute_index_ is 0, nothing to snapshot",
@@ -2776,13 +2884,13 @@ impl RaftServerBase {
 
         let snap_term: i64;
         if raft_server_snapshot_term_uses_boundary(snap_index,
-                                                   self.core.snapidx_) {
+                                                   self.core().snapidx_) {
             // The boundary entry is intentionally absent after compaction.
             // Its term is carried by snapshot metadata; do not recreate the
             // entry or rewind the log's base by appending it again.
-            snap_term = self.core.snapterm_;
+            snap_term = self.core().snapterm_;
         } else {
-            let instance = self.core.raft_log_.get(snap_index);
+            let instance = self.core().raft_log_.get(snap_index);
             if instance.is_some() {
                 snap_term = instance.unwrap().term();
             } else {
@@ -2800,19 +2908,19 @@ impl RaftServerBase {
 
         if !unsafe {
             raft_snapshot_serialize_and_save(
-                &self.create_sm_snapshot_cb_ as *const rusty::RaftCreateSnapshotCb,
-                &self.snapshot_manager_ as *const rusty::RaftSnapshotManagerPtr,
+                self.create_sm_snapshot_cb_.as_ptr() as *const rusty::RaftCreateSnapshotCb,
+                self.snapshot_manager_.as_ptr() as *const rusty::RaftSnapshotManagerPtr,
                 self.site_id_, snap_index, snap_term)
         } {
             return false;
         }
 
-        let old_snapidx: u64 = self.core.snapidx_;
-        self.recorder_.taint("CreateSnapshotLocked");  // [M0]
-        self.core.snapidx_ = snap_index;
-        self.core.snapterm_ = snap_term;
+        let old_snapidx: u64 = self.core().snapidx_;
+        self.recorder().taint("CreateSnapshotLocked");  // [M0]
+        self.core().snapidx_ = snap_index;
+        self.core().snapterm_ = snap_term;
         self.snapshot_trigger_index_
-            .store(self.core.snapidx_,
+            .store(self.core().snapidx_,
                    rusty::sync::atomic::Ordering::Release);
         rusty::raft_log_info_4(
             "[RAFT-SNAPSHOT] Site {}: Snapshot saved at index={} term={} (prev snapidx={})",
@@ -2827,12 +2935,12 @@ impl RaftServerBase {
 
     // @safe - [move, M1] RaftCore::is_config_member.
     pub fn IsConfigMember(&self, site: u16) -> bool {
-        self.core.is_config_member(site)
+        self.core().is_config_member(site)
     }
 
     // @safe - [move, M1] RaftCore::peer_ordinal.
     pub fn PeerOrdinal(&self, site: u16) -> usize {
-        self.core.peer_ordinal(site)
+        self.core().peer_ordinal(site)
     }
 
     // @unsafe - publishes the cross-thread replication wake.
@@ -2841,7 +2949,7 @@ impl RaftServerBase {
     // accepting, reserve_wake_owner() hands out the owner thread if a waiter
     // is armed and no wake is already queued, and the job the reactor runs is
     // a Rust-owned token (queue_wake_job). Only PollThread::add is a kernel.
-    pub fn RequestReplication(&mut self) {
+    pub fn RequestReplication(&self) {
         if !self.replication_wake_gate_.publish() {
             return;
         }
@@ -2882,7 +2990,7 @@ impl RaftServerBase {
     // binding with a dot where the C++ needs an arrow. The annotation is
     // load-bearing, not documentation.
     #[allow(clippy::unnecessary_unwrap)]
-    pub fn WaitForReplicationOrHeartbeat(&mut self, timeout_us: u64) -> bool {
+    pub fn WaitForReplicationOrHeartbeat(&self, timeout_us: u64) -> bool {
         let decided: rusty::Option<bool> =
             self.replication_wake_gate_.begin_wait_for_work();
         if decided.is_some() {
@@ -2896,7 +3004,7 @@ impl RaftServerBase {
     //
     // The accepting() check stays AHEAD of the factory call: a closed gate
     // must not allocate an event it will never wait on.
-    pub fn WaitForElectionTimeoutOrShutdown(&mut self,
+    pub fn WaitForElectionTimeoutOrShutdown(&self,
                                             timeout_us: u64) -> bool {
         if !self.replication_wake_gate_.accepting() {
             return false;
@@ -2908,21 +3016,21 @@ impl RaftServerBase {
 
     // @unsafe - one heartbeat tick's wait, which is the above bound to the
     // configured interval.
-    pub fn HeartbeatWait(&mut self) -> bool {
+    pub fn HeartbeatWait(&self) -> bool {
         self.WaitForReplicationOrHeartbeat(self.GetHeartbeatInterval())  // [fix, F17]
     }
 
     // @unsafe - Bind the gate to the communicator's PollThread before
     // HeartbeatLoop can publish an owner-thread-only IntEvent against it.
     pub fn BindReplicationWakeOwner(
-        &mut self, owner: rusty::RaftPollThreadPtr) {
+        &self, owner: rusty::RaftPollThreadPtr) {
         self.replication_wake_gate_.bind_owner(owner);
     }
 
     // @unsafe - Close ordering is intentional: make new submissions inert,
     // queue one owner-thread wake for an armed waiter, then drop the owner's
     // gate handle.
-    pub fn CloseReplicationWakeGate(&mut self) {
+    pub fn CloseReplicationWakeGate(&self) {
         self.replication_wake_gate_.close();
         let owner: rusty::Option<rusty::RaftPollThreadPtr> =
             self.replication_wake_gate_.reserve_shutdown_wake_owner();
@@ -2933,7 +3041,7 @@ impl RaftServerBase {
     }
 
     // @unsafe - timer allocation and the first peer-table build.
-    pub fn HeartbeatPrologue(&mut self) {
+    pub fn HeartbeatPrologue(&self) {
         self.heartbeat_loop_running_
             .store(true, rusty::sync::atomic::Ordering::Release);
         {
@@ -2941,7 +3049,7 @@ impl RaftServerBase {
             // and this did not, which was safe only because both run as
             // fibers on one poll thread with no suspension between them --
             // an accident, not a design.
-            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            let _lock = RaftLockGuard::new(self.mtx());
             self.RebuildPeerTables(1);
         }
         rusty::raft_log_debug_1("heartbeat loop init from site: {}",
@@ -2952,20 +3060,20 @@ impl RaftServerBase {
 
     // @unsafe - takes the state-machine apply gate, then mtx_. That order is
     // the one every apply-side path uses.
-    pub fn MaybeCreateSnapshot(&mut self) {
+    pub fn MaybeCreateSnapshot(&self) {
         // [fix, F5] Inside the verified configuration there are no snapshots.
-        if self.verified_gates_ {
+        if self.verified_gates_.load(rusty::sync::atomic::Ordering::Relaxed) {  // [fix, F19]
             return;
         }
         let _apply_lock =
-            RaftStdLockGuard::new(&mut self.state_machine_apply_mtx_);
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+            RaftStdLockGuard::new(self.state_machine_apply_mtx_.as_ptr());
+        let _lock = RaftLockGuard::new(self.mtx());
         let configured: bool =
-            unsafe { raft_snapshot_manager_is_set(&self.snapshot_manager_) };
+            unsafe { raft_snapshot_manager_is_set(self.snapshot_manager_.as_ptr()) };
         if !configured
-            || !raft_server_snapshot_is_due(self.core.snapidx_,
-                                            self.core.execute_index_,
-                                            self.snapshot_threshold_)
+            || !raft_server_snapshot_is_due(self.core().snapidx_,
+                                            self.core().execute_index_,
+                                            self.snapshot_threshold_.load(rusty::sync::atomic::Ordering::Relaxed))  // [fix, F19]
         {
             return;
         }
@@ -2978,15 +3086,15 @@ impl RaftServerBase {
     // The copy is real (plan N4): before, only the is_set test ran under the
     // lock and the query read snapshot_manager_ after releasing it, so a
     // concurrent SetSnapshotManagerLocked could replace the carrier mid-read.
-    pub fn HasSnapshot(&mut self) -> bool {
+    pub fn HasSnapshot(&self) -> bool {
         let mut manager: rusty::RaftSnapshotManagerPtr = Default::default();
         let configured: bool = {
-            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            let _lock = RaftLockGuard::new(self.mtx());
             let set: bool =
-                unsafe { raft_snapshot_manager_is_set(&self.snapshot_manager_) };
+                unsafe { raft_snapshot_manager_is_set(self.snapshot_manager_.as_ptr()) };
             if set {
                 unsafe {
-                    raft_snapshot_manager_ptr_clone_into(&self.snapshot_manager_,
+                    raft_snapshot_manager_ptr_clone_into(self.snapshot_manager_.as_ptr(),
                                                          &raw mut manager);
                 }
             }
@@ -3005,34 +3113,31 @@ impl RaftServerBase {
     }
 
     // @unsafe - gates inbound and outbound test traffic under mtx_.
-    pub fn Disconnect(&mut self, disconnect: bool) {
-        // Taken before the guard, not inside it: RaftLockGuard borrows
-        // self.mtx_ mutably, so `self as *mut RaftServerBase` cannot be
-        // written in its scope. The kernel resolves the communicator from
-        // this identity -- see commo_of in server.cc.
-        let this = self as *mut RaftServerBase;
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+    pub fn Disconnect(&self, disconnect: bool) {
+        // The kernel resolves the communicator from this identity -- see
+        // commo_of in server.cc.
+        let _lock = RaftLockGuard::new(self.mtx());
         assert!(
             self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
                 != disconnect);  // [move, M10]
         unsafe {
             // A seam kernel: each lane's runtime owns its own network flag
             // (the C++ lane's RaftCommo, the Rust lane's RaftTransport).
-            raft_commo_set_network_enabled(this as *mut RaftServerHandle, !disconnect);
+            raft_commo_set_network_enabled(self.handle(), !disconnect);  // [fix, F19]
         }
         self.disconnected_
             .store(disconnect, rusty::sync::atomic::Ordering::Release);
     }
 
     // @safe - calls Disconnect and resets the timer.
-    pub fn Reconnect(&mut self) {
+    pub fn Reconnect(&self) {
         self.Disconnect(false);
         self.resetTimer("reconnect");
     }
 
     // @unsafe - runs SetupInternal under a catch-all and publishes the
     // result to whoever is blocked in WaitForStartup.
-    pub fn Setup(&mut self) {
+    pub fn Setup(&self) {
         let succeeded: bool =
             unsafe { raft_setup_internal_guarded(self.handle(),
                                                  self.site_id_) };
@@ -3050,7 +3155,7 @@ impl RaftServerBase {
         let ready: bool = self.IsRpcReady();
         // Published BEFORE the flag, so the unlock below releases it to
         // whichever thread the wait hands the flag to.
-        self.startup_succeeded_ = succeeded && ready;
+        self.startup_succeeded_.store(succeeded && ready, rusty::sync::atomic::Ordering::Release);  // [fix, F19]
         {
             let mut finished = self.startup_finished_.lock().unwrap();
             *finished = true;
@@ -3059,7 +3164,7 @@ impl RaftServerBase {
     }
 
     // @safe - election timer setup; the fiber spawn is a kernel.
-    pub fn StartElectionTimer(&mut self) {
+    pub fn StartElectionTimer(&self) {
         self.ElectionLoopSetRunning(true);
         self.resetTimer("start election timer");
         let wait_int: u64 = self.wait_int_ as u64;
@@ -3075,14 +3180,14 @@ impl RaftServerBase {
     // must not be read while the apply queue is locked -- the reason this used
     // to be split between a Rust scan and a C++ push kernel. Copying a
     // Command is a refcount bump on its inner Arc, not a payload copy.
-    pub fn EnqueueCommittedEntries(&mut self, old_commit: u64,
+    pub fn EnqueueCommittedEntries(&self, old_commit: u64,
                                    new_commit: u64) {
         let mut batch: rusty::VecDeque<QueuedApplyEntry> =
             rusty::VecDeque::new();
         let mut first_missing: u64 = 0;
         let mut id: u64 = old_commit + 1;
         while id <= new_commit {
-            let found = self.core.raft_log_.get(id);
+            let found = self.core().raft_log_.get(id);
             if found.is_none() {
                 first_missing = id;
                 break;
@@ -3113,8 +3218,7 @@ impl RaftServerBase {
         // One in fifty, so a steady stream of commits does not drown the log.
         // `%` rather than is_multiple_of: this lowers to C++, where uint64_t
         // has no such member.
-        let ticket: u64 = self.enqueue_log_counter_;
-        self.enqueue_log_counter_ += 1;
+        let ticket: u64 = self.enqueue_log_counter_.fetch_add(1, rusty::sync::atomic::Ordering::Relaxed);  // [fix, F19]
         let want_size: bool = ticket % 50 == 0;
 
         // ONE acquisition covering the push and the size read, and none at
@@ -3155,7 +3259,7 @@ impl RaftServerBase {
     //
     // Returns true only when this server both won the election and still
     // held leadership when the result was applied.
-    pub fn RequestVoteImpl(&mut self, timer_guarded: bool,
+    pub fn RequestVoteImpl(&self, timer_guarded: bool,
                            expected_generation: u64) -> bool {
         // The election timer fiber can fire after ~RaftServer has run, which
         // would reach TxLogServer::RequestVote and its verify(0). stop_ is
@@ -3174,7 +3278,7 @@ impl RaftServerBase {
         // reset is an action that runs before the guard drops.
         let mut out1: CoreOutput = core_output();
         let campaign: CampaignStart = {
-            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            let _lock = RaftLockGuard::new(self.mtx());
             let stopped: bool = self.stopped_now();
             // [move, M4] the clock read, as the timer check made it
             let now: u64 = unsafe { raft_time_now_us() };
@@ -3234,7 +3338,7 @@ impl RaftServerBase {
         // leader-change callback after it ([fix, F6]).
         let mut out: CoreOutput = core_output();
         let won: bool = {
-            let _lock1 = RaftLockGuard::new(&mut self.mtx_);
+            let _lock1 = RaftLockGuard::new(self.mtx());
             let q: *const rusty::RaftVoteQuorumPtr =
                 &quorum as *const rusty::RaftVoteQuorumPtr;
             let n_total: u64 = unsafe { raft_vote_quorum_size(q) };
@@ -3483,7 +3587,7 @@ pub fn raft_entry_from_command(term: i64, cmd: rusty::RaftCommand) -> RaftEntry 
 impl RaftServerBase {
     // Appends one entry at the current term -- mtx_ held by the caller -- and
     // reports the PRE-append tail: the new entry lands at prev + 1.
-    pub fn AppendLocal(&mut self, cmd: rusty::RaftCommand) -> u64 {
+    pub fn AppendLocal(&self, cmd: rusty::RaftCommand) -> u64 {
         // [move, M3] The shell asks the command's metadata (a kernel); the
         // core appends it at its current term.
         let mut has_value: bool = false;
@@ -3506,7 +3610,7 @@ impl RaftServerBase {
     // The new leader's no-op entry, so the term commits something without
     // waiting for a client. Skipped in lab mode, where the suite counts
     // entries.
-    pub fn AppendLeaderNoop(&mut self) {
+    pub fn AppendLeaderNoop(&self) {
         if cfg!(feature = "raft_test") {
             return;
         }
@@ -3516,20 +3620,20 @@ impl RaftServerBase {
         }
         let previous_index: u64 = self.AppendLocal(noop);
         assert!(
-            self.core.raft_log_.last_index() == previous_index + 1);  // [move, M10]
+            self.core().raft_log_.last_index() == previous_index + 1);  // [move, M10]
         rusty::raft_log_info_3(
             "[RAFT-NOOP] Site {} appended leader no-op at index {} term {}",
-            self.site_id_, self.core.raft_log_.last_index(),
-            self.core.current_term_);
+            self.site_id_, self.core().raft_log_.last_index(),
+            self.core().current_term_);
         self.RequestReplication();
     }
 
     // [fix, F5] The gates of the verified configuration: snapshots off, so
     // the log is whole (no snapshot boundary, base 1); failover on; a static
     // configuration that contains this server. CALLER MUST NOT HOLD mtx_.
-    pub fn verified_config_ok(&mut self) -> bool {
+    pub fn verified_config_ok(&self) -> bool {
         let snapshots_enabled: bool = unsafe { raft_env_snapshots_enabled() };
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
+        let _lock = RaftLockGuard::new(self.mtx());
         // [fix, F5] The decision is the core's, which remembers a pass.
         let failover: bool = self.failover_;
         let mut out: CoreOutput = core_output();
@@ -3539,7 +3643,7 @@ impl RaftServerBase {
 
     // config_members_ from the static config: the partition's sorted,
     // de-duplicated site ids. Returns the replica count.
-    pub fn LoadCurrentConfig(&mut self) -> u64 {
+    pub fn LoadCurrentConfig(&self) -> u64 {
         let replicas: u64 =
             unsafe { raft_config_replica_count(self.partition_id_) };
         let mut members: rusty::Vec<u16> = rusty::Vec::new();
@@ -3569,8 +3673,7 @@ impl RaftServerBase {
 impl RaftServerBase {
     pub fn ConstructRuntime(&mut self) {
         let lifetime_slot: *mut rusty::RaftAsyncCallbackLifetimePtr =
-            &mut self.async_callback_lifetime_
-                as *mut rusty::RaftAsyncCallbackLifetimePtr;
+            self.async_callback_lifetime_.as_ptr();  // [fix, F19]
         unsafe {
             raft_new_callback_lifetime(self.handle(),
                                        lifetime_slot);
@@ -3604,53 +3707,54 @@ impl RaftServerBase {
     // Raw pointers, which is what the lock guards take: the transpiled C++
     // lane does not apply Rust's &mut -> *mut coercion to a returned
     // reference.
-    pub fn LabMutex(&mut self) -> *mut rusty::RaftCheckedMutex {
-        &raw mut self.mtx_
+    pub fn LabMutex(&self) -> *mut rusty::RaftCheckedMutex {
+        self.mtx()
     }
-    pub fn LabApplyMutex(&mut self) -> *mut rusty::RaftStdMutex {
-        &raw mut self.state_machine_apply_mtx_
+    pub fn LabApplyMutex(&self) -> *mut rusty::RaftStdMutex {
+        self.state_machine_apply_mtx_.as_ptr()
     }
     pub fn LabStopped(&self) -> bool {
         self.stop_.load(rusty::sync::atomic::Ordering::Acquire)
     }
     pub fn LabCurrentTerm(&self) -> u64 {
-        self.core.current_term_
+        self.core().current_term_
     }
     pub fn LabCommitIndex(&self) -> u64 {
-        self.core.commit_index_
+        self.core().commit_index_
     }
     pub fn LabExecuteIndex(&self) -> u64 {
-        self.core.execute_index_
+        self.core().execute_index_
     }
     pub fn LabLastLogIndex(&self) -> u64 {
-        self.core.raft_log_.last_index()
+        self.core().raft_log_.last_index()
     }
     pub fn LabLogBase(&self) -> u64 {
-        self.core.raft_log_.base()
+        self.core().raft_log_.base()
     }
     pub fn LabIsLeader(&self) -> bool {
-        self.core.is_leader_
+        self.core().is_leader_
     }
     pub fn LabVoteFor(&self) -> u16 {
-        self.core.vote_for_
+        self.core().vote_for_
     }
     pub fn LabCurrentLeaderId(&self) -> u16 {
-        self.core.current_leader_id_
+        self.core().current_leader_id_
     }
     pub fn LabReqVoting(&self) -> bool {
-        self.core.req_voting_
+        self.core().req_voting_
     }
     pub fn LabElectionInProgress(&self) -> bool {
-        self.core.election_in_progress_
+        self.core().election_in_progress_
     }
     pub fn LabSnapIdx(&self) -> u64 {
-        self.core.snapidx_
+        self.core().snapidx_
     }
     pub fn LabSnapTerm(&self) -> i64 {
-        self.core.snapterm_
+        self.core().snapterm_
     }
     pub fn LabSnapshotManager(&self) -> &rusty::RaftSnapshotManagerPtr {
-        &self.snapshot_manager_
+        // SAFETY: the lab reads it between steps, with no writer running.
+        unsafe { &*self.snapshot_manager_.as_ptr() }  // [fix, F19]
     }
     // The lab suite's log fingerprint (test.cc RaftLogFingerprint), one
     // element per call so the harness never holds a pointer into the log:
@@ -3658,22 +3762,49 @@ impl RaftServerBase {
     // 0 where there is none. is_some()/unwrap() rather than `if let`, for the
     // reason recorded on ReplicationWakeGate::wake_on_owner.
     pub fn LabLogFingerprintLen(&self) -> u64 {
-        2 + self.core.raft_log_.len() as u64
+        2 + self.core().raft_log_.len() as u64
     }
     #[allow(clippy::unnecessary_unwrap)]
     pub fn LabLogFingerprintAt(&self, i: u64) -> u64 {
         if i == 0 {
-            return self.core.raft_log_.base();
+            return self.core().raft_log_.base();
         }
         if i == 1 {
-            return self.core.raft_log_.len() as u64;
+            return self.core().raft_log_.len() as u64;
         }
+        let core: &RaftCore = self.core();  // [fix, F19] one reference, as above
         let entry: rusty::Option<&RaftEntry> =
-            self.core.raft_log_.get(self.core.raft_log_.base() + (i - 2));
+            core.raft_log_.get(core.raft_log_.base() + (i - 2));
         if entry.is_some() {
             return entry.unwrap().term() as u64;
         }
         0
+    }
+}
+
+// [fix, F19] The shared twins of TxLogServer's set_commo and
+// reg_learner_action (bugs-found B19). The worker registers the RPC service
+// before it calls reg_learner_action, so an inbound handler can already hold
+// the server as `&RaftServerBase` when it does: the call must not make a
+// `&mut` of it. TxLogServer keeps `&mut self` because PaxosServer implements
+// it too, so the C ABI calls these instead (scripts/raft_gen_exports.py,
+// SHARED_TWINS), and the trait methods forward to them.
+#[allow(non_snake_case)]
+impl RaftServerBase {
+    // not_unsafe_ptr_arg_deref: see TxLogServer::set_commo below.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn bind_commo(&self, commo: *mut rusty::Communicator) {
+        unsafe { raft_bind_commo(self.handle(), commo) }
+    }
+
+    // The callback is copied INTO its slot by the kernel; see
+    // TxLogServer::reg_learner_action below for why it is never moved.
+    pub fn register_learner_action(&self, learner_action: &rusty::LearnerAction) {
+        unsafe {
+            raft_learner_action_clone_into(
+                learner_action as *const rusty::LearnerAction,
+                self.app_next_.as_ptr());
+        }
     }
 }
 
@@ -3708,9 +3839,10 @@ impl TxLogServer for RaftServerBase {
     // implements TxLogServer, whose signature is shared with the Paxos server
     // (src/deptran/scheduler.h). The contract is the one that method always
     // had: the worker passes a live Communicator and outlives the server.
+    // [fix, F19] The C ABI calls the shared twin, bind_commo, not this.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     fn set_commo(&mut self, commo: *mut rusty::Communicator) {
-        unsafe { raft_bind_commo(self.handle(), commo) }
+        self.bind_commo(commo)
     }
 
     fn set_site_identity(&mut self, loc_id: u32, site_id: u16, partition_id: u32) {
@@ -3729,9 +3861,9 @@ impl TxLogServer for RaftServerBase {
         let mut out: CoreOutput = core_output();
         self.step(Event::SetIdentity { loc_id, site_id, partition_id }, &mut out)
             .into_done();  // [move, M1]
-        assert!(self.core.site_id_ == self.site_id_
-            && self.core.partition_id_ == self.partition_id_
-            && self.core.loc_id_ == self.loc_id_);  // [move, M10]
+        assert!(self.core().site_id_ == self.site_id_
+            && self.core().partition_id_ == self.partition_id_
+            && self.core().loc_id_ == self.loc_id_);  // [move, M10]
     }
 
     // The callback is copied INTO its slot by the kernel, never moved: a
@@ -3739,12 +3871,9 @@ impl TxLogServer for RaftServerBase {
     // buffer, so a bitwise move (a Rust move) leaves it pointing at the old
     // storage and the next call or destruction runs off a dead stack frame --
     // the SIGSEGV the first rustc-compiled build hit right here.
+    // [fix, F19] The C ABI calls the shared twin, register_learner_action.
     fn reg_learner_action(&mut self, learner_action: &rusty::LearnerAction) {
-        unsafe {
-            raft_learner_action_clone_into(
-                learner_action as *const rusty::LearnerAction,
-                &mut self.app_next_ as *mut rusty::LearnerAction);
-        }
+        self.register_learner_action(learner_action)
     }
 }
 
@@ -3762,16 +3891,16 @@ impl TxLogServer for RaftServerBase {
 #[allow(clippy::too_many_arguments)]
 impl RaftSpecific for RaftServerBase {
     // @unsafe - idempotent one-shot setup.
-    fn EnsureSetup(&mut self) {
-        if self.heartbeat_setup_ {
+    fn EnsureSetup(&self) {
+        // [fix, F19] One atomic test-and-set: two callers cannot both set up.
+        if self.heartbeat_setup_.swap(true, rusty::sync::atomic::Ordering::AcqRel) {
             return;
         }
-        self.heartbeat_setup_ = true;
         self.Setup();
     }
 
     // @safe - waits for the owner-thread startup job and reports its result.
-    fn WaitForStartup(&mut self) -> bool {
+    fn WaitForStartup(&self) -> bool {
         {
             let finished = self.startup_finished_.lock().unwrap();
             // wait_while re-checks under the lock on every wake, so a
@@ -3782,18 +3911,18 @@ impl RaftSpecific for RaftServerBase {
                 .wait_while(finished, |done: &mut bool| !*done)
                 .unwrap();
         }
-        self.startup_succeeded_
+        self.startup_succeeded_.load(rusty::sync::atomic::Ordering::Acquire)  // [fix, F19]
     }
 
     // @unsafe - must be called from a reactor fiber before destroying a live
     // server; signals both runtime loops and waits for their completion
     // flags, then stops and joins the apply thread while the server is still
     // fully alive (applying an entry can trigger snapshot compaction).
-    fn PrepareForShutdown(&mut self) {
+    fn PrepareForShutdown(&self) {
         {
             // Linearize admission closure with every RPC and local mutation
             // under mtx_.
-            let _admission_lock = RaftLockGuard::new(&mut self.mtx_);
+            let _admission_lock = RaftLockGuard::new(self.mtx());
             self.rpc_ready_
                 .store(false, rusty::sync::atomic::Ordering::Release);
             self.stop_
@@ -3819,13 +3948,13 @@ impl RaftSpecific for RaftServerBase {
             .store(false, rusty::sync::atomic::Ordering::SeqCst);
         unsafe {
             raft_apply_thread_join(
-                &mut self.apply_thread_ as *mut rusty::RaftStdThread);
+                self.apply_thread_.as_ptr());
         }
     }
 
     // For callers that do not hold mtx_. [fix, F8] It no longer takes it:
     // the role is the mirror the last critical section published.
-    fn IsLeader(&mut self) -> bool {
+    fn IsLeader(&self) -> bool {
         if !self.looping_.load(rusty::sync::atomic::Ordering::Acquire) {
             return false;
         }
@@ -3834,14 +3963,14 @@ impl RaftSpecific for RaftServerBase {
 
     // [fix, F8] Without mtx_: this server's id while it leads, otherwise the
     // leader it last heard from, as the last critical section published it.
-    fn GetLeaderHint(&mut self) -> u16 {
+    fn GetLeaderHint(&self) -> u16 {
         self.leader_hint_mirror_.load(rusty::sync::atomic::Ordering::Acquire) as u16
     }
 
     // @safe - writes a shell atomic and logs. [move, M1] Not mtx_ any more
     // (plan Phase 4): only the election timeout's choice reads it, and
     // nothing in the core does.
-    fn SetPreferredLeader(&mut self, site_id: u16) {
+    fn SetPreferredLeader(&self, site_id: u16) {
         let old_preferred: u16 = self.preferred_leader();
         self.preferred_leader_site_id_
             .store(site_id as u64, rusty::sync::atomic::Ordering::Release);
@@ -3858,12 +3987,12 @@ impl RaftSpecific for RaftServerBase {
     // mtx_ is released, the slot is read under that lock instead
     // (run_locked_actions, fire_leader_notices), so writing it there keeps
     // registration from racing a firing.
-    fn RegisterLeaderChangeCallback(&mut self, cb: &rusty::RaftLeaderChangeCb) {
+    fn RegisterLeaderChangeCallback(&self, cb: &rusty::RaftLeaderChangeCb) {
         let _notices = self.leader_notices_.lock().unwrap();
         unsafe {
             raft_leader_change_cb_clone_into(
                 cb as *const rusty::RaftLeaderChangeCb,
-                &mut self.leader_change_cb_ as *mut rusty::RaftLeaderChangeCb);
+                self.leader_change_cb_.as_ptr());
         }
     }
 
@@ -3892,10 +4021,10 @@ impl RaftSpecific for RaftServerBase {
     // then publishes the replication wake, in that order: the wake path never
     // nests the gate's owner mutex below Raft state.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    fn Start(&mut self, cmd: &rusty::RaftCommand, index: *mut u64,
+    fn Start(&self, cmd: &rusty::RaftCommand, index: *mut u64,
              term: *mut u64) -> RaftStartResult {
         {
-            let _lock = RaftLockGuard::new(&mut self.mtx_);
+            let _lock = RaftLockGuard::new(self.mtx());
             if !self.IsLeaderLocked() {
                 unsafe {
                     *index = 0;
@@ -3926,10 +4055,10 @@ impl RaftSpecific for RaftServerBase {
             // AppendLocal reports the OLD last index; Start reports the
             // index of the entry it just appended.
             assert!(
-                self.core.raft_log_.last_index() == previous_index + 1);  // [move, M10]
+                self.core().raft_log_.last_index() == previous_index + 1);  // [move, M10]
             unsafe {
-                *index = self.core.raft_log_.last_index();
-                *term = self.core.current_term_;
+                *index = self.core().raft_log_.last_index();
+                *term = self.core().current_term_;
                 rusty::raft_log_debug_3("Start(): ldr={} index={} term={}",
                                         self.loc_id_, *index, *term);
             }
@@ -3947,7 +4076,7 @@ impl RaftSpecific for RaftServerBase {
     // The order of the two reads matches the predicate it replaces --
     // `!has_server || disconnected || !rpc_ready` -- minus the null test,
     // which stays in C++ because a null server has no method to call.
-    fn ServeVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
+    fn ServeVote(&self, lst_log_idx: u64, lst_log_term: i64,
                  can_id: u16, can_term: i64, reply_term: *mut i64,
                  vote_granted: *mut i8) {
         if self.IsDisconnected() || !self.IsRpcReady() {
@@ -3961,7 +4090,7 @@ impl RaftSpecific for RaftServerBase {
                            reply_term, vote_granted);
     }
 
-    fn ServeAppendEntries(&mut self, leader_current_term: u64,
+    fn ServeAppendEntries(&self, leader_current_term: u64,
                           leader_site_id: u16, leader_prev_log_index: u64,
                           leader_prev_log_term: u64, leader_commit_index: u64,
                           cmd: &rusty::RaftCommand, leader_next_log_term: u64,
@@ -3983,7 +4112,7 @@ impl RaftSpecific for RaftServerBase {
                              follower_last_log_index);
     }
 
-    fn ServeInstallSnapshot(&mut self, term: u64, leader_id: u64,
+    fn ServeInstallSnapshot(&self, term: u64, leader_id: u64,
                             last_included_index: u64, last_included_term: u64,
                             data: &rusty::RaftByteString,
                             term_out: *mut u64) {
@@ -4002,26 +4131,27 @@ impl RaftSpecific for RaftServerBase {
     // an embedder (raft_bench, through the replication helper) can register
     // them; before, only the lab reached it, as an inherent method.
     fn SetStateMachineSnapshotCallbacks(
-        &mut self,
+        &self,
         create_cb: &rusty::RaftCreateSnapshotCb,
         prepare_cb: &rusty::RaftPrepareSnapshotCb,
     ) -> u64 {
-        let _lock = RaftLockGuard::new(&mut self.mtx_);
-        if self.next_snapshot_callback_owner_token_ == 0 {
-            self.next_snapshot_callback_owner_token_ = 1;
+        let _lock = RaftLockGuard::new(self.mtx());
+        // [fix, F19] Under mtx_: a load and a store, not a read-modify-write.
+        let mut owner_token: u64 = self.next_snapshot_callback_owner_token_.load(rusty::sync::atomic::Ordering::Relaxed);
+        if owner_token == 0 {
+            owner_token = 1;
         }
-        let owner_token: u64 = self.next_snapshot_callback_owner_token_;
-        self.next_snapshot_callback_owner_token_ += 1;
+        self.next_snapshot_callback_owner_token_.store(owner_token + 1, rusty::sync::atomic::Ordering::Relaxed);
         // In place, for the reason given on reg_learner_action.
         unsafe {
             raft_create_snapshot_cb_clone_into(
                 create_cb as *const rusty::RaftCreateSnapshotCb,
-                &mut self.create_sm_snapshot_cb_ as *mut rusty::RaftCreateSnapshotCb);
+                self.create_sm_snapshot_cb_.as_ptr());
             raft_prepare_snapshot_cb_clone_into(
                 prepare_cb as *const rusty::RaftPrepareSnapshotCb,
-                &mut self.prepare_sm_snapshot_cb_ as *mut rusty::RaftPrepareSnapshotCb);
+                self.prepare_sm_snapshot_cb_.as_ptr());
         }
-        self.snapshot_callback_owner_token_ = owner_token;
+        self.snapshot_callback_owner_token_.store(owner_token, rusty::sync::atomic::Ordering::Relaxed);  // [fix, F19]
         owner_token
     }
 }
@@ -4045,7 +4175,7 @@ impl RaftServerBase {
     // exempt from the lint as trait-impl methods; the contract did not change
     // with the impl block.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn OnRequestVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
+    pub fn OnRequestVote(&self, lst_log_idx: u64, lst_log_term: i64,
                      can_id: u16, can_term: i64, reply_term: *mut i64,
                      vote_granted: *mut i8) {
         // The body is the free function on_request_vote_body, below.
@@ -4055,7 +4185,7 @@ impl RaftServerBase {
     }
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn OnAppendEntries(&mut self, leader_current_term: u64,
+    pub fn OnAppendEntries(&self, leader_current_term: u64,
                        leader_site_id: u16, leader_prev_log_index: u64,
                        leader_prev_log_term: u64, leader_commit_index: u64,
                        cmd: &rusty::RaftCommand, leader_next_log_term: u64,
@@ -4078,7 +4208,7 @@ impl RaftServerBase {
     }
 
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub fn OnInstallSnapshot(&mut self, term: u64, leader_id: u64,
+    pub fn OnInstallSnapshot(&self, term: u64, leader_id: u64,
                          last_included_index: u64, last_included_term: u64,
                          data: &rusty::RaftByteString, term_out: *mut u64) {
         // Lock order: the state-machine apply gate, then mtx_ -- the order
@@ -4086,9 +4216,9 @@ impl RaftServerBase {
         // still C++ (raft_install_snapshot_guarded); false is the throw.
         {
             let _apply_lock =
-                RaftStdLockGuard::new(&mut self.state_machine_apply_mtx_);
-            let _lock = RaftLockGuard::new(&mut self.mtx_);
-            self.install_out_ = core_output();  // [move, M3]
+                RaftStdLockGuard::new(self.state_machine_apply_mtx_.as_ptr());
+            let _lock = RaftLockGuard::new(self.mtx());
+            *self.install_out() = core_output();  // [move, M3] [fix, F19]
             let installed: bool = unsafe {
                 raft_install_snapshot_guarded(
                     self.handle(), self.site_id_, term, leader_id,
@@ -4106,7 +4236,7 @@ impl RaftServerBase {
         }
         // [fix, F6] The role change's log entry and callback, both locks
         // released.
-        let out: CoreOutput = core::mem::take(&mut self.install_out_);
+        let out: CoreOutput = core::mem::take(self.install_out());  // [fix, F19]
         self.run_unlocked_actions(&out);
     }
 }
@@ -4197,14 +4327,14 @@ unsafe extern "C" {
 #[allow(clippy::too_many_arguments)]
 // Called directly by RaftServerBase::OnRequestVote (server_h.rs).
 pub fn on_request_vote_body(
-    server: &mut RaftServerBase, lst_log_idx: u64,
+    server: &RaftServerBase, lst_log_idx: u64,
     lst_log_term: i64, can_id: u16, can_term: i64,
     reply_term: &mut i64, vote_granted: &mut i8) {
     // [move, M3] The decision under mtx_ and its locked actions before the
     // guard drops; the leader-change callback after it ([fix, F6]).
     let mut out: CoreOutput = core_output();
     {
-        let _lock = RaftLockGuard::new(&mut server.mtx_);
+        let _lock = RaftLockGuard::new(server.mtx());
         on_request_vote_locked(server, lst_log_idx, lst_log_term, can_id,
                                can_term, reply_term, vote_granted, &mut out);
         server.run_locked_actions(&out);
@@ -4215,7 +4345,7 @@ pub fn on_request_vote_body(
 // [move, M3] on_request_vote_body's critical section. CALLER MUST HOLD mtx_.
 #[allow(clippy::too_many_arguments)]
 fn on_request_vote_locked(
-    server: &mut RaftServerBase, lst_log_idx: u64,
+    server: &RaftServerBase, lst_log_idx: u64,
     lst_log_term: i64, can_id: u16, can_term: i64,
     reply_term: &mut i64, vote_granted: &mut i8, out: &mut CoreOutput) {
     rusty::raft_log_debug_1("raft receives vote from candidate: {:x}", can_id);
@@ -4272,7 +4402,7 @@ fn on_request_vote_locked(
 #[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
 // Called by RaftServerBase::OnAppendEntries (server_h.rs), likewise.
 pub fn on_append_entries_body(
-    server: &mut RaftServerBase,
+    server: &RaftServerBase,
                               leader_current_term: u64, leader_site_id: u16,
                               leader_prev_log_index: u64,
                               leader_prev_log_term: u64,
@@ -4287,7 +4417,7 @@ pub fn on_append_entries_body(
     // guard drops; the leader-change callback after it ([fix, F6]).
     let mut out: CoreOutput = core_output();
     {
-        let _lock = RaftLockGuard::new(&mut server.mtx_);
+        let _lock = RaftLockGuard::new(server.mtx());
         on_append_entries_locked(server, leader_current_term, leader_site_id,
                                  leader_prev_log_index, leader_prev_log_term,
                                  leader_commit_index, cmd, cmd_has_value,
@@ -4303,7 +4433,7 @@ pub fn on_append_entries_body(
 // rejection log lines, where the effects used to sit.
 #[allow(clippy::too_many_arguments, clippy::not_unsafe_ptr_arg_deref)]
 fn on_append_entries_locked(
-    server: &mut RaftServerBase,
+    server: &RaftServerBase,
     leader_current_term: u64, leader_site_id: u16,
     leader_prev_log_index: u64, leader_prev_log_term: u64,
     leader_commit_index: u64, cmd: *const core::ffi::c_void,
@@ -4359,7 +4489,7 @@ fn on_append_entries_locked(
             rusty::raft_log_error_4(
                 "[APPEND_REJECT] Site {} refusing conflict at committed index {} (commit_index={}, execute_index={})",
                 server.site_id_, report.conflict_index(),
-                server.core.commit_index_, server.core.execute_index_);
+                server.core().commit_index_, server.core().execute_index_);
         } else if report.unauthoritative() {
             // Dispatch on WHICH gate rejected, not on
             // sender_is_current_voter. A stale-term or non-authoritative
@@ -4370,15 +4500,15 @@ fn on_append_entries_locked(
             rusty::raft_log_warn_6(
                 "[APPEND_REJECT] Site {} rejecting unauthoritative AppendEntries sender {} term {} (local_term={} leader={} voter={})",
                 server.site_id_, leader_site_id, leader_current_term,
-                server.core.current_term_,
-                server.core.current_leader_id_, sender_is_current_voter);
+                server.core().current_term_,
+                server.core().current_leader_id_, sender_is_current_voter);
         } else {
             rusty::raft_log_info_10(
                 "[APPEND_REJECT] Site {} rejecting AppendEntries from leader {} - term_ok={} index_ok={} prev_term_ok={} (leaderTerm={} myTerm={} prevIdx={} myLastIdx={} local_prev_term={})",
                 server.site_id_, leader_site_id, report.term_ok(),
                 report.index_ok(), report.prev_term_ok(), leader_current_term,
-                server.core.current_term_, leader_prev_log_index,
-                server.core.raft_log_.last_index(),
+                server.core().current_term_, leader_prev_log_index,
+                server.core().raft_log_.last_index(),
                 report.local_prev_term());
         }
     }

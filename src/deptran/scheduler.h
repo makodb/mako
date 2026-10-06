@@ -138,19 +138,27 @@ pub enum RaftStartResult {
 // Method names are the C++ names the workers, the service and the lab tests
 // already call; renaming them to snake_case is a mechanical follow-up once
 // nothing hand-written calls them.
+//
+// Every method takes `&self` (bugs-found B19): the worker, the RPC service,
+// the fibers and the apply thread call these concurrently on one server, so
+// none of them may hold it as `&mut`. What serialises them is the server's
+// own mtx_ and atomics. TxLogServer above keeps `&mut self`: PaxosServer
+// implements it too, so the Raft server's C ABI reaches set_commo and
+// reg_learner_action through `&self` twins (raft_gen_exports.py
+// SHARED_TWINS).
 #[allow(non_snake_case)]
 #[allow(clippy::too_many_arguments)]
 pub trait RaftSpecific: TxLogServer {
     // Lifecycle, as the worker drives it.
-    fn EnsureSetup(&mut self);
-    fn WaitForStartup(&mut self) -> bool;
-    fn PrepareForShutdown(&mut self);
+    fn EnsureSetup(&self);
+    fn WaitForStartup(&self) -> bool;
+    fn PrepareForShutdown(&self);
     // Leadership.
-    fn IsLeader(&mut self) -> bool;
-    fn GetLeaderHint(&mut self) -> u16;
-    fn SetPreferredLeader(&mut self, site_id: u16);
+    fn IsLeader(&self) -> bool;
+    fn GetLeaderHint(&self) -> u16;
+    fn SetPreferredLeader(&self, site_id: u16);
     // By reference, for the reason given on reg_learner_action.
-    fn RegisterLeaderChangeCallback(&mut self, cb: &rusty::RaftLeaderChangeCb);
+    fn RegisterLeaderChangeCallback(&self, cb: &rusty::RaftLeaderChangeCb);
     // Admission. The service no longer asks: ServeVote and friends below
     // apply the gate themselves, inside the one call. What is left here is
     // the worker's readiness probe (raft_worker.cc, ServerStatus::set_ready).
@@ -164,7 +172,7 @@ pub trait RaftSpecific: TxLogServer {
     fn PartitionId(&self) -> u32;
     fn CommitIndex(&self) -> u64;
     // Replication entry: the worker's "replicate this command".
-    fn Start(&mut self, cmd: &rusty::RaftCommand, index: *mut u64,
+    fn Start(&self, cmd: &rusty::RaftCommand, index: *mut u64,
              term: *mut u64) -> RaftStartResult;
     // Inbound RPC, as the service hands it over: ONE call per request, gate
     // included. The C++ service used to ask IsDisconnected and IsRpcReady
@@ -176,28 +184,28 @@ pub trait RaftSpecific: TxLogServer {
     // EmptyAppendEntries has no method of its own: the service calls
     // ServeAppendEntries with an empty Command and leader_next_log_term 0,
     // exactly as it called OnAppendEntries before.
-    fn ServeVote(&mut self, lst_log_idx: u64, lst_log_term: i64,
+    fn ServeVote(&self, lst_log_idx: u64, lst_log_term: i64,
                  can_id: u16, can_term: i64, reply_term: *mut i64,
                  vote_granted: *mut i8);
-    fn ServeAppendEntries(&mut self, leader_current_term: u64,
+    fn ServeAppendEntries(&self, leader_current_term: u64,
                           leader_site_id: u16, leader_prev_log_index: u64,
                           leader_prev_log_term: u64, leader_commit_index: u64,
                           cmd: &rusty::RaftCommand, leader_next_log_term: u64,
                           follower_append_ok: *mut u64,
                           follower_current_term: *mut u64,
                           follower_last_log_index: *mut u64);
-    fn ServeInstallSnapshot(&mut self, term: u64, leader_id: u64,
+    fn ServeInstallSnapshot(&self, term: u64, leader_id: u64,
                             last_included_index: u64, last_included_term: u64,
                             data: &rusty::RaftByteString, term_out: *mut u64);
     // The embedder's state-machine snapshot callbacks. By reference, as
     // RegisterLeaderChangeCallback: std::function is not bitwise-relocatable.
     // Returns the owner token ClearStateMachineSnapshotCallbacks takes.
-    fn SetStateMachineSnapshotCallbacks(&mut self,
+    fn SetStateMachineSnapshotCallbacks(&self,
                                         create_cb: &rusty::RaftCreateSnapshotCb,
                                         prepare_cb: &rusty::RaftPrepareSnapshotCb) -> u64;
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=8de2da57fd3a59eb45d4ea3f531b82e8fe6b3cc009ebbf0f8fe66769f799e79a*/
+/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=d04755016a9c260600b98d9dd4894cd1ea825a7adec51686d7b7ad740cf188cb*/
 enum class RaftStartResult : int32_t;
 constexpr RaftStartResult RaftStartResult_REJECTED();
 constexpr RaftStartResult RaftStartResult_APPENDED();
@@ -232,22 +240,22 @@ template <class U> class TxLogServerAdapterRefMut;
 class RaftSpecific : public TxLogServer {
 public:
     virtual ~RaftSpecific() noexcept(false) {}
-    virtual void EnsureSetup() = 0;
-    virtual bool WaitForStartup() = 0;
-    virtual void PrepareForShutdown() = 0;
-    virtual bool IsLeader() = 0;
-    virtual uint16_t GetLeaderHint() = 0;
-    virtual void SetPreferredLeader(uint16_t site_id) = 0;
-    virtual void RegisterLeaderChangeCallback(const rusty::RaftLeaderChangeCb& cb) = 0;
+    virtual void EnsureSetup() const = 0;
+    virtual bool WaitForStartup() const = 0;
+    virtual void PrepareForShutdown() const = 0;
+    virtual bool IsLeader() const = 0;
+    virtual uint16_t GetLeaderHint() const = 0;
+    virtual void SetPreferredLeader(uint16_t site_id) const = 0;
+    virtual void RegisterLeaderChangeCallback(const rusty::RaftLeaderChangeCb& cb) const = 0;
     virtual bool IsRpcReady() const = 0;
     virtual uint16_t SiteId() const = 0;
     virtual uint32_t PartitionId() const = 0;
     virtual uint64_t CommitIndex() const = 0;
-    virtual RaftStartResult Start(const rusty::RaftCommand& cmd, uint64_t* index, uint64_t* term) = 0;
-    virtual void ServeVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted) = 0;
-    virtual void ServeAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index) = 0;
-    virtual void ServeInstallSnapshot(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString& data, uint64_t* term_out) = 0;
-    virtual uint64_t SetStateMachineSnapshotCallbacks(const rusty::RaftCreateSnapshotCb& create_cb, const rusty::RaftPrepareSnapshotCb& prepare_cb) = 0;
+    virtual RaftStartResult Start(const rusty::RaftCommand& cmd, uint64_t* index, uint64_t* term) const = 0;
+    virtual void ServeVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted) const = 0;
+    virtual void ServeAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index) const = 0;
+    virtual void ServeInstallSnapshot(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString& data, uint64_t* term_out) const = 0;
+    virtual uint64_t SetStateMachineSnapshotCallbacks(const rusty::RaftCreateSnapshotCb& create_cb, const rusty::RaftPrepareSnapshotCb& prepare_cb) const = 0;
     RaftSpecific(const RaftSpecific&) = delete;
     RaftSpecific& operator=(const RaftSpecific&) = delete;
     RaftSpecific(RaftSpecific&&) = delete;

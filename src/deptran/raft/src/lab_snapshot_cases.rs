@@ -553,7 +553,7 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
 /// The receiver state every rejection in test 59 must leave untouched.
 type Test59State = (u64, i64, u64, u64, u64, u64, u16, u16, bool, bool, bool);
 
-fn test59_state(svr: &mut RaftServerBase) -> Test59State {
+fn test59_state(svr: &RaftServerBase) -> Test59State {
     let _lock = RaftLockGuard::new(svr.LabMutex());
     (svr.LabSnapIdx(), svr.LabSnapTerm(), svr.LabCommitIndex(),
      svr.LabExecuteIndex(), svr.LabLastLogIndex(), svr.LabCurrentTerm(),
@@ -1249,16 +1249,18 @@ fn recover_fresh(store: &rusty::RaftSnapshotManagerPtr, inject: bool, commit: u6
     // the address its runtime registers stays put.
     let s: *mut RaftServerBase = Box::into_raw(Box::new(RaftServerBase::new()));
     // SAFETY: `s` is the live allocation above until the from_raw below.
-    let svr: &mut RaftServerBase = unsafe { &mut *s };
-    svr.ConstructRuntime();
+    // The two `&mut` calls bracket every shared use, as raft_server_new and
+    // raft_server_delete do (bugs-found B19).
+    unsafe { (*s).ConstructRuntime() };
+    let svr: &RaftServerBase = unsafe { &*s };
     if inject {
         svr.SetSnapshotManager(clone_manager(store));
     }
     {
         let _lock = RaftLockGuard::new(svr.LabMutex());
-        svr.recorder_.taint("lab recover_fresh");  // [M0]
-        svr.core.commit_index_ = commit;
-        svr.core.current_term_ = term;
+        svr.recorder().taint("lab recover_fresh");  // [M0]
+        svr.core().commit_index_ = commit;
+        svr.core().current_term_ = term;
     }
     // SAFETY: the server is live; recovery takes its own locks.
     let ok = unsafe { raft_initialize_snapshot_manager(svr.handle(), 0) };
@@ -1283,8 +1285,8 @@ fn recover_fresh(store: &rusty::RaftSnapshotManagerPtr, inject: bool, commit: u6
     out.has_snapshot = has_snapshot;
     // What raft_server_delete does; this server was never bound to a
     // communicator, so there is nothing to unbind.
-    svr.Shutdown();
-    // SAFETY: from into_raw above; `svr` is not used after this.
+    // SAFETY: as above; `svr` is not used after this.
+    unsafe { (*s).Shutdown() };
     drop(unsafe { rusty::Box::from_raw(s) });
     out
 }
