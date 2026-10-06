@@ -3892,6 +3892,20 @@ impl RaftSpecific for RaftServerBase {
                 }
                 return RaftStartResult::REJECTED;
             }
+            // [fix, F13] A command without a value would become an entry the
+            // leader never replicates: its payload selection reads such a
+            // slot as missing (bugs-found B16). Refuse it, as a non-leader's
+            // proposal is refused.
+            if !unsafe { raft_command_has_value(cmd as *const rusty::RaftCommand) } {
+                rusty::raft_log_warn_1(
+                    "Start(): site {} refuses a command without a value",
+                    self.site_id_);
+                unsafe {
+                    *index = 0;
+                    *term = 0;
+                }
+                return RaftStartResult::REJECTED;
+            }
             let mut copy: rusty::RaftCommand = Default::default();
             unsafe {
                 raft_command_clone_into(cmd as *const rusty::RaftCommand,

@@ -500,6 +500,18 @@ pub fn start(svr: u32, cmd: i32) -> (bool, u64, u64) {
     (appended.unwrap_or(false), index, term)
 }
 
+/// [fix, F13] Start on replica `svr` with a command that has no value (an
+/// empty command, as `Default` makes it). Returns whether it was appended,
+/// or None if no such replica. Bugs-found B16: it must be refused.
+pub fn start_empty(svr: u32) -> Option<bool> {
+    let mut index: u64 = 0;
+    let mut term: u64 = 0;
+    lab_get(svr).map(|e| with_entry_server(&e, |server| {
+        let command: rusty::RaftCommand = Default::default();
+        server.Start(&command, &raw mut index, &raw mut term) == RaftStartResult::APPENDED
+    }))
+}
+
 /// [fix, F4] One AppendEntries handed to replica `svr` as if it had arrived:
 /// a single entry (a lab command carrying `tx_id`) whose entry term is
 /// `entry_term`, or no entry at all when `tx_id` is negative. Returns the

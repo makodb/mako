@@ -837,6 +837,39 @@ fn test_unadmitted_messages_dropped(_st: &mut LabState) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
+// [fix, F13] A command without a value
+
+// Start on the leader with an empty command. Before F13 the leader appended
+// it, and its payload selection then read the slot as missing and skipped
+// every follower whose next index reached it (bugs-found B16). Now Start
+// refuses it, and the leader's log does not move.
+fn test_empty_command_refused(_st: &mut LabState) -> i32 {
+    init2(16, "Start refuses a command without a value");
+
+    let leader = lab::one_leader(-1);
+    if !check_msg(leader >= 0, "no leader") { return 1; }
+    let Some((_, last_before, _, _, _)) = lab::log_tail(leader as u32) else {
+        failed("leader not registered"); return 1;
+    };
+    let Some(appended) = lab::start_empty(leader as u32) else {
+        failed("leader not registered"); return 1;
+    };
+    if !check_msg(!appended, "the leader appended a command without a value") {
+        return 1;
+    }
+    let Some((_, last_after, _, _, _)) = lab::log_tail(leader as u32) else {
+        failed("leader not registered"); return 1;
+    };
+    if !check_msg(last_after == last_before,
+                  &format!("the leader's log moved from {} to {}", last_before, last_after)) {
+        return 1;
+    }
+
+    passed();
+    0
+}
+
+// ---------------------------------------------------------------------------
 // [fix, F6] The leader-change callback
 
 // The callback fires after mtx_ is released now, from a queue that keeps the
@@ -922,6 +955,7 @@ fn run_basic_cases(st: &mut LabState) -> i32 {
         test_unavailable_voter_reply,
         test_leader_change_notices,  // [fix, F6]
         test_unadmitted_messages_dropped,  // [fix, F9]
+        test_empty_command_refused,  // [fix, F13]
     ];
 
     for case in basic {
