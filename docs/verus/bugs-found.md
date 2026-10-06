@@ -22,7 +22,7 @@ effect). "Latent" means nothing in production reaches it today.
 | B1 | liveness | Candidate's "no" quorum is off by one: a lost election is never decided early | read in code; already known and pinned for lane parity by `rt/tests/transport_roundtrip.rs:142-155` | not in the plan; changing it would be a new F-item (needs approval) |
 | B2 | race | `CommitIndex()` reads `state_.commit_index_` without `mtx_` | read in code | F8 (Phase 4) |
 | B3 | robustness | Vote replies are counted by number, so a duplicated reply counts twice | read in code; whether srpc can duplicate is open | Rust lane: fixed by F1 in `b75f285e2` (Phase 1); C++ lanes: by the core's own count (Phase 3) |
-| B4 | robustness | Decoded AppendEntries entry terms are never checked (0, negative, above the leader's term) | read in code | 0 and negative: fixed by F4 in `a38c5012e` (Phase 1); above the leader's term: F9 (Phase 6) |
+| B4 | robustness | Decoded AppendEntries entry terms are never checked (0, negative, above the leader's term) | read in code | 0 and negative: fixed by F4 in `a38c5012e` (Phase 1); above the leader's term: still accepted (corrected 2026-10-06: F9's admission does not check entry terms) |
 | B5 | latent | Phase 1 sends with the round's term and never re-checks leadership under the lock that builds the message; the Rust send kernel ignores its `is_leader` argument | read in code; not reachable today | fixed by F3 in `372b73e6f` (Phase 1) |
 | B6 | safety (assumed away) | Raft state is memory-only: a replica restarted under its old id can vote twice in a term, and a majority restart loses committed entries | read in code (plan §4.4.2) | v1 trusted assumption; spec v3 later |
 | B7 | metric | `get_outstanding_logs` subtracts the global commit index from a per-node submission count | read in code | report only |
@@ -140,7 +140,15 @@ triggers it; but a stored term-0 entry breaks the "entry terms are positive"
 invariant (the group's B16) that log-matching proofs use.
 
 **Fate.** F4 (Phase 1): reject term-0 (and, as a refusal, any non-positive)
-entry terms on both the batch and single-entry paths.
+entry terms on both the batch and single-entry paths. An entry term above
+the leader's own is still accepted. Neither the decoder
+(`WireBatch::decode_terms`) nor F9's admission (Phase 6, `step_checked`)
+compares entry terms with the leader's term; F9 checks the sender, the
+message's term and the shape of `prev`. The table above said, until
+2026-10-06, that F9 covered it. The certificate does not depend on this,
+because its genuine-packets assumption (host contract §1) excludes such a
+message. A corrupt or forged append of this kind could still make a
+follower's log look more up to date than it is.
 
 ## B5. Phase 1 does not re-check leadership where it builds the message (latent)
 

@@ -726,7 +726,7 @@ not leading (`:259-270`, `:358`). So the check protecting the commit rule
 is the one at `:310`, outside the lock. A server that stepped down between
 `:310` and `:315`, and took a newer leader's entries meanwhile, would count
 its old term's match indices against an entry of the new term and could
-commit an entry no majority holds (docs/verus/bugs-found.md:415-516).
+commit an entry no majority holds (docs/verus/bugs-found.md:423-524).
 `core/tests/b17_round_end.rs` reproduces this at the core. The proof takes
 "the round end runs while leading" as a premise (host-contract.md:105,
 :132-143).
@@ -739,13 +739,13 @@ the other threads (submit, apply, shutdown) never change the role. The
 mirror is published at the end of every critical section that can change it
 (`src/server_h.rs:1560`, `:4080`). The bug log's interleaving, the driver
 "blocks on `mtx_` while the RPC handler takes D's messages"
-(bugs-found.md:443-444), needs a handler on another thread. Lab builds have
+(bugs-found.md:451-452), needs a handler on another thread. Lab builds have
 one: the harness calls `ServeVote` and `ServeAppendEntries` from site 0's
 own thread (`src/lab.rs:520`, `:534`; `src/deptran/server_worker.cc:135-138`).
 The core defect stands either way; the proposed fix moves the check into
-the core (bugs-found.md:504-510). B17's entry said "nothing excludes it"
+the core (bugs-found.md:512-518). B17's entry said "nothing excludes it"
 until this document was written; its reachability now says the above
-(bugs-found.md:473-499).
+(bugs-found.md:481-507).
 
 One premise gap does reach production, at shutdown (bugs-found B18, found
 while writing this). `IsLeaderLocked()` is false
@@ -975,7 +975,7 @@ lines, and 271 more lab lines (2,068 to 2,339).
 |---|---|---|---|---|
 | 1. Proof | `coupling.rs`; the ghost fields `g_log_`, `g_votes_`, `g_match_`, `g_next_`; every `requires`, `ensures`, `invariant`, `decreases`, `spec fn`, `proof fn`, `proof {}`, `let ghost`; `admits` | `core/` only (§10) | no | the proof (M12) |
 | 2. Reshaping, behaviour kept | the core as a crate of its own, its code moved, not rewritten (M1); one entry point, `Event` → `step` → `Reply` (M5, `core/src/event.rs`); side effects returned as actions and log lines as data (M3, M7: `core/src/output.rs`, `core/src/logging.rs`), carried out by the shell (`src/server_h.rs:1516-1589`); each fiber cut at its wait, so an election and a heartbeat round are several core calls with the waits in the shell (M5), and rt's vote tally now hands each reply over (`rt/src/transport.rs:611-624`, `rt/src/seam.rs:306-342`); clock reads and random samples passed in (M4); per-entry facts cached in `RaftEntry` instead of asked of C++ (M6); a sorted `Vec` for `BTreeSet<u16>` (M9); `runtime_assert` and explicit wrapping arithmetic (M10); the command a type parameter, the inbound payload behind `InboundBatch`, which the shell's `WireBatch` implements (`src/server_h.rs:3286`), and `div_ceil` behind the trusted `blocks_for` (M11) | `core/`, the shell, a little of `rt/` | yes | Verus checks only code it sees whole: no lock, I/O, clock, callback, closure or foreign call inside, and every effect visible as a value. Tier 1 and the replay (§9) check that behaviour did not change |
-| 3. Behaviour changes | F1 one vote per voter; F3 the leadership re-check and the commit index read in the critical section that builds the message; F4 entry terms below 1 refused; F5 the verified-configuration gate (`MAKO_RAFT_VERIFIED_GATES`, `enter_gates` at `core/src/node.rs:310`, `verified_config_ok` at `src/server_h.rs:3519`); F6 the leader-change callback after the unlock; F7 entry stamping after the lock; F8 the atomic mirrors; F9 message admission (`step_checked`) | `rt/` (F1), the shell, `core/` | yes | F1, F4 and F8 fix bugs the work found (bugs-found B3, B4, B2). F6 takes Mako's callback out of the lock, a lock-order hazard (fixing B11 with it); F7 moves work out of the lock. F3, F5 and F9 make the proof's assumptions true: the commit index a SendAppendEntries carries; snapshots off and a static configuration; only well-formed messages from other members |
+| 3. Behaviour changes | F1 one vote per voter; F3 the leadership re-check and the commit index read in the critical section that builds the message; F4 entry terms below 1 refused; F5 the verified-configuration gate (`MAKO_RAFT_VERIFIED_GATES`, `enter_gates` at `core/src/node.rs:310`, `verified_config_ok` at `src/server_h.rs:3519`); F6 the leader-change callback after the unlock; F7 entry stamping after the lock; F8 the atomic mirrors; F9 message admission (`step_checked`) | `rt/` (F1), the shell, `core/` | yes | F1 and F8 fix bugs the work found (bugs-found B3, B2), and F4 fixes part of B4 (entry terms above the leader's are still accepted). F6 takes Mako's callback out of the lock, a lock-order hazard (fixing B11 with it); F7 moves work out of the lock. F3, F5 and F9 make the proof's assumptions true: the commit index a SendAppendEntries carries; snapshots off and a static configuration; only well-formed messages from other members |
 | 4. Instrumentation | the replay recorder (`MAKO_RAFT_REPLAY_DIR`, `src/server_h.rs:3373-3442`, written from the `step` wrapper, `:1407-1443`) and `replay/`; the trace kit (`MAKO_RAFT_TRACE_FILE`, `rt/src/trace.rs` and its hooks); the lab's commit dumps and cases 12-15; `core/tests/` | the shell, `rt/`, `replay/`, the lab | the recorder and trace kit compiled in, inert unless their variable is set; the rest no | the equivalence check (A.4 item 4) and the performance gates (M0) |
 
 `rt/` changed least: F1's tally, the per-reply record M5 needed, and the
