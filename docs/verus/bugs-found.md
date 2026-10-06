@@ -45,7 +45,8 @@ Found at commit `150be3e3b` (2026-10-03) unless stated.
 bug before the merge ("can you first fix all remaining bugs of Raft on this
 branch?"). B1, B4's remainder, B7, B8, B14, B16, B17, B18 and B19 were
 fixed as plan items F12-F19 (modification-plan.md A.2; diff-ledger.md,
-"Bug fixes after Phase 8"). B6 stays a trusted assumption (persistence is
+"Bug fixes after Phase 8"; the phase's gates, replay and performance
+checkpoint: [reports/bug-fixes.md](reports/bug-fixes.md)). B6 stays a trusted assumption (persistence is
 its own project, [disk-persistence.md](disk-persistence.md)); B9, B10 and
 B13 are tooling, not Raft.
 
@@ -448,7 +449,10 @@ keeps it only when it has a value.
 
 **Fate.** Recorded only at first (user, 2026-10-04), then fixed by F13 in
 `924a4dfdd` (2026-10-06): `Start` refuses (REJECTED, with a warning) a
-command without a value before anything is appended, so the host
+command without a value before anything is appended. "Without a value"
+is an envelope holding no command object (`SerializableEnvelope::has_value`
+is `inner_.is_some()`); an empty payload, such as raft_bench's end
+markers (`add_log_to_nc("", 0, ...)`), is still a value. So the host
 contract's "a proposal has a value" premise is now checked by the shell
 rather than assumed (`docs/verus/host-contract.md`). Lab case 16
 (`test_empty_command_refused`) proposes one and checks the refusal and
