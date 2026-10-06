@@ -139,17 +139,18 @@ fn a_campaign_over_tcp_reaches_a_quorum() {
 }
 
 #[test]
-fn a_rejected_three_replica_campaign_waits_out_its_timeout() {
-    // The C++ rule: no() is n_voted_no > n - n/2 = 2, which two peers cannot
-    // reach -- so, exactly as on the C++ lane, the campaign does not lose
-    // early; the caller's one-second wait times out.
+fn a_rejected_three_replica_campaign_is_lost_at_once() {
+    // [fix, F15] no() is n_voted_no > (n - 1) - n/2 = 1: both peers'
+    // refusals decide the campaign as lost, without waiting out the
+    // caller's one-second deadline (bugs-found B1; before F15 the rule was
+    // > n - n/2 = 2, which two peers could not reach).
     let (transport, _servers) = cluster([0, 0, 0]);
     let req = VoteRequest { lst_log_idx: 0, lst_log_term: 0, site_id: 1, cur_term: 3 };
     let tally = transport.broadcast_vote(7, 1, &req);
-    std::thread::sleep(Duration::from_millis(500));
-    assert!(!tally.decided());
-    let outcome = tally.outcome(true);
-    assert!(!outcome.yes_ && !outcome.no_);
+    assert!(wait_until(Duration::from_secs(10), || tally.decided()),
+            "two refusals of three did not decide the campaign");
+    let outcome = tally.outcome(false);
+    assert!(!outcome.yes_ && outcome.no_);
     assert_eq!(outcome.n_voted_no_, 2, "both peers' rejections were counted");
 }
 

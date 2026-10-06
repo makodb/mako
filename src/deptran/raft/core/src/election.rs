@@ -105,7 +105,11 @@ impl VoteSet {
         VoteOutcome {
             term_: self.highest_term_,
             yes_: self.yes_ >= quorum,
-            no_: self.no_ > n_total - quorum,
+            // [fix, F15] Lost once so many of the n_total - 1 peers refused
+            // that the quorum of peer votes is out of reach: no > (n - 1) - n/2
+            // (bugs-found B1). It was no > n - n/2, which counted this server
+            // as a possible refusal: with three servers it could never hold.
+            no_: n_total > 0 && self.no_ > n_total - quorum - 1,  // [fix, F15]
             n_voted_yes_: self.yes_ as i32,
             n_voted_no_: self.no_ as i32,
             timeouted_: timed_out,

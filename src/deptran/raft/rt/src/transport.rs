@@ -640,9 +640,13 @@ impl TallyState {
         self.yes >= self.quorum
     }
 
-    // QuorumEvent::no under the default policy.
+    // [fix, F15] Lost once so many of the n_total - 1 peers refused that the
+    // quorum of peer votes is out of reach: no > (n - 1) - n/2 (bugs-found
+    // B1). The C++ QuorumEvent::no it came from, no > n - n/2, counted this
+    // server as a possible refusal, so with three servers a lost campaign
+    // always waited out its deadline.
     fn no(&self) -> bool {
-        self.no > self.n_total - self.quorum
+        self.n_total > 0 && self.no > self.n_total - self.quorum - 1
     }
 }
 
@@ -1023,18 +1027,22 @@ mod tests {
     }
 
     #[test]
-    fn three_replicas_never_lose_early() {
-        // C++: no() is n_voted_no > n - n/2 = 2, unreachable with two peers,
-        // so a rejected three-replica campaign waits out its timeout.
+    fn three_replicas_lose_once_both_peers_reject() {
+        // [fix, F15] no() is n_voted_no > (n - 1) - n/2 = 1: with both peers
+        // refusing, a yes quorum is out of reach (bugs-found B1). One refusal
+        // decides nothing: the other peer may still grant.
+        assert!(!fed(3, &[(false, 4)]).decided());
         let tally = fed(3, &[(false, 4), (false, 4)]);
-        assert!(!tally.decided());
-        assert!(!tally.outcome(true).no_);
+        assert!(tally.decided());
+        assert!(tally.outcome(false).no_);
     }
 
     #[test]
-    fn five_replicas_lose_only_when_every_peer_rejects() {
-        assert!(!fed(5, &[(false, 1), (false, 1), (false, 1)]).decided());
-        assert!(fed(5, &[(false, 1), (false, 1), (false, 1), (false, 1)]).decided());
+    fn five_replicas_lose_once_three_peers_reject() {
+        // [fix, F15] no() > (5 - 1) - 2 = 2: three refusals leave one peer,
+        // short of the two peer votes a quorum needs.
+        assert!(!fed(5, &[(false, 1), (false, 1)]).decided());
+        assert!(fed(5, &[(false, 1), (false, 1), (false, 1)]).decided());
     }
 
     #[test]
