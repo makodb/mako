@@ -95,14 +95,14 @@ admission itself (`coupled_checked`).
 | `SetIdentity` | the core is fresh (empty ghost log): the identity before anything else; the configuration still empty | the worker sets the identity before Setup |
 | `Configure` | the core is fresh; the membership once, sorted, duplicate-free (`admits`); no member is the sentinel site 65535 | Setup's `LoadCurrentConfig`; the config kernel lists real site ids |
 | `EnterGates`, `RebuildPeers`, `AbandonRound`, `ResetRoundState`, `ResetElectionTimer`, `Applied`, `SetFollower`, `StepDown` | none beyond `admits` | -- |
-| `Propose` | the core leads; the command has a value | `Start` returns REJECTED unless `IsLeaderLocked()` under `mtx_` (`src/server_h.rs:3884`); the no-op is `APPEND_NOOP`'s action after becoming leader (`:1543`, `:3498`); every caller proposes a non-empty command (bugs-found B16) |
+| `Propose` | the core leads; the command has a value | `Start` (`src/server_h.rs`) returns REJECTED unless `IsLeaderLocked()` under `mtx_`, and, under the same lock, refuses a command without a value before appending (F13, bugs-found B16); the no-op is `APPEND_NOOP`'s action after becoming leader |
 | `StartElection` | the gate | F5's `enter_gates` |
 | `SettleElection` | the gate; failover on; `n_total` is the configuration's size; every reply from another member; a grant is at the campaign's term | `RequestVoteImpl` (`src/server_h.rs:3155`): `n_total` is the lane's quorum size; the replies are this campaign's quorum object's (F1: the callback's peer); a voter grants only at the request's term |
 | `RecvRequestVote` | the gate; the candidate another member | `step_checked`'s admission (F9) |
 | `RecvAppendEntries` | the gate; the sender another server | `step_checked`'s admission (F9) |
 | `TickHeartbeat` | the gate; `is_leader` is the core's role (`admits`) | `heartbeat_tick_body` reads `IsLeaderLocked()` under the same lock (`src/server_cc.rs:85`) |
-| `RecvAppendReply` | the gate; `is_leader` is the core's role; a success reports no more than the leader's log | the collection loop reads `IsLeaderLocked()` under the lock (`src/server_cc.rs:246`), which is the core's role only while `looping_` holds: **not once shutdown has begun, bugs-found B18** (§6); `step_checked` reads a success beyond the log as no reply (F9) |
-| `RoundEnd` | the gate; `is_leader` is the core's role, **and the server leads** | the driver checks the mirror before taking the lock and reads `IsLeaderLocked()` under it (`src/server_cc.rs:310`, `:316`); in production nothing steps the core down in between (inference, bugs-found B17), but nothing checks it: **violable in lab builds (B17) and once shutdown has begun (B18)** (§6) |
+| `RecvAppendReply` | the gate; `is_leader ==> ` the core leads (F12, bugs-found B18); a success reports no more than the leader's log | the collection loop reads `IsLeaderLocked()` under the lock (`heartbeat_collect_body`), which is `looping_ && core.is_leader_`: true only while the core leads, before and after shutdown begins; `step_checked` reads a success beyond the log as no reply (F9) |
+| `RoundEnd` | the gate | F5's `enter_gates`. Nothing about the role: PHASE 3 advances the commit index only while the core leads (F12), so a round end after a step-down or during shutdown commits nothing (bugs-found B17, B18) |
 
 Terms and indices off the wire and in the log stay below 2^62
 (`raft_index_limit`, the Phase 6 contract): a log that long would hold
@@ -117,6 +117,8 @@ implements it (`src/server_h.rs:3307`):
   `has_cmd` is the flag the batch was built from; no payload is no entries.
 - `decode_terms`: an accepted decode reads exactly the entries' terms, each
   at least 1 (F4), and ends below the index ceiling; every entry has a value.
+  The shell also refuses a term above the append's own (F14, bugs-found
+  B4); the proof does not need that.
 - `entry_at(k)` is entry k.
 
 ## 5. Facts the coupling carries (proved, from the premises above)
@@ -129,31 +131,25 @@ term at least 0; V2.
 
 ## 6. Known gaps
 
-- **B17 (safety, latent race; recorded, not fixed: the user's decision,
-  2026-10-04).** PHASE 3 advances the commit index without
-  checking that the server still leads, and `heartbeat_round_end_body`
-  checks leadership before taking `mtx_`. If a step-down and a newer
-  leader's appends ran in that window, the round end would count the old
-  term's match indices against an entry of the new term. In production on
-  this lane they cannot (inference): they run on the poll thread, which the
-  driver holds or blocks from the check to the lock. Lab builds' direct
-  handler calls (`src/lab.rs:520`, `:534`) can. The `RoundEnd` premise ("the
-  server leads") is what excludes it, so a run that hits the race is outside
-  the certificate. The fix would be one branch (advance only while
-  leading); `core/tests/b17_round_end.rs` reproduces the bug at the core.
-- **B18 (proof coverage, recorded).** `IsLeaderLocked()` is `looping_ &&
-  core.is_leader_` (`src/server_h.rs:1236-1240`), and shutdown clears
-  `looping_` (`PrepareForShutdown` under `mtx_`; `FailStop` without it). A
-  leader's reply or round end stepped after that passes `is_leader = false`
-  while the core still leads, which breaks the `RecvAppendReply` and
-  `RoundEnd` premises. The core then does nothing wrong (the reply is
-  ignored unless its higher term steps the core down; the round end commits
-  as the leader the core still is and confirms no read authority), but the
-  step is outside the certificate. Weakening the two premises (ghost only,
-  with those two proofs redone) would cover it; not attempted.
-- **B16 (liveness, latent; recorded, not fixed: the user's decision,
-  2026-10-04).** An entry without a value is never replicated. No caller
-  proposes one, so `Propose`'s premise holds today; nothing enforces it.
+None of the shell's own: the three this section listed were closed on
+2026-10-06 (modification-plan.md A.2), with the user's approval to fix
+every open Raft bug before the merge.
+
+- **B17 (closed by F12).** PHASE 3 used to advance the commit index
+  without checking that the server still led, and the round end checked
+  leadership before taking `mtx_`, so the `RoundEnd` premise "the server
+  leads" was violable in lab builds. PHASE 3 now advances only while the
+  core leads, and the premise is the gate alone.
+- **B18 (closed with F12, ghost only).** Shutdown clears `looping_`, so
+  `IsLeaderLocked()` read false while the core still led, against the old
+  premises' "`is_leader` is the core's role". The reply's premise is now
+  `is_leader ==> ` the core leads, and the round end's is the gate.
+- **B16 (closed by F13).** `Start` refuses a command without a value, so
+  `Propose`'s value premise is checked, not assumed.
+
+What the certificate still assumes is in §1 and §2: genuine packets,
+memory-only state with no in-place restart under an old id (bugs-found
+B6), and the codec's fidelity.
 
 ## 7. Trusted code
 

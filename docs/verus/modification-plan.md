@@ -978,7 +978,7 @@ Each lands in its own commit with a lab case showing the new behaviour.
 | F16 | fixes | `set_is_leader`'s dead stale-publication term check removed (B8) | Dead code; no behaviour change |
 | F17 | fixes | `heartbeat_interval_us_` becomes an atomic (B14) | Removes a data race; no behaviour change |
 | F18 | fixes | `get_outstanding_logs` counts this worker's own accepted submissions above the commit index (B7) | A metric; no protocol effect |
-| F19 | fixes | The shell's entry points take `&RaftServerBase`; the fields they change move behind interior mutability (B19) | Removes aliased `&mut`; no behaviour change |
+| F19 | fixes | The shell's entry points take `&RaftServerBase`; the fields they change move behind interior mutability (B19). `RaftSpecific` (scheduler.h) takes `&self` throughout, so its C++ virtuals become `const`; `TxLogServer`, which PaxosServer shares, is unchanged, and its two late-callable methods export `&self` twins | Removes aliased `&mut`; no behaviour change |
 
 Because of S1, the extra append refusals (stopped, non-voter, unauthoritative
 sender, bad payload) and the refused committed conflict

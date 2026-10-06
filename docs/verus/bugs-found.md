@@ -19,27 +19,35 @@ effect). "Latent" means nothing in production reaches it today.
 
 | # | Severity | Summary | Status | Fate |
 |---|---|---|---|---|
-| B1 | liveness | Candidate's "no" quorum is off by one: a lost election is never decided early | read in code; already known and pinned for lane parity by `rt/tests/transport_roundtrip.rs:142-155` | not in the plan; changing it would be a new F-item (needs approval) |
+| B1 | liveness | Candidate's "no" quorum is off by one: a lost election is never decided early | read in code; already known and pinned for lane parity by `rt/tests/transport_roundtrip.rs:142-155` | fixed by F15 in `ad7af330e` (2026-10-06): lost once a yes quorum is out of reach |
 | B2 | race | `CommitIndex()` reads `state_.commit_index_` without `mtx_` | read in code | F8 (Phase 4) |
 | B3 | robustness | Vote replies are counted by number, so a duplicated reply counts twice | read in code; whether srpc can duplicate is open | Rust lane: fixed by F1 in `b75f285e2` (Phase 1); C++ lanes: by the core's own count (Phase 3) |
-| B4 | robustness | Decoded AppendEntries entry terms are never checked (0, negative, above the leader's term) | read in code | 0 and negative: fixed by F4 in `a38c5012e` (Phase 1); above the leader's term: still accepted (corrected 2026-10-06: F9's admission does not check entry terms) |
+| B4 | robustness | Decoded AppendEntries entry terms are never checked (0, negative, above the leader's term) | read in code | 0 and negative: fixed by F4 in `a38c5012e` (Phase 1); above the leader's term: fixed by F14 in `21c287832` (2026-10-06) |
 | B5 | latent | Phase 1 sends with the round's term and never re-checks leadership under the lock that builds the message; the Rust send kernel ignores its `is_leader` argument | read in code; not reachable today | fixed by F3 in `372b73e6f` (Phase 1) |
 | B6 | safety (assumed away) | Raft state is memory-only: a replica restarted under its old id can vote twice in a term, and a majority restart loses committed entries | read in code (plan §4.4.2) | v1 trusted assumption; spec v3 later |
-| B7 | metric | `get_outstanding_logs` subtracts the global commit index from a per-node submission count | read in code | report only |
-| B8 | dead code | `setIsLeader`'s "stale leadership publication" check compares `current_term_` with a copy of itself, so its term half never fires | read in code | report only (behaviour freeze) |
+| B7 | metric | `get_outstanding_logs` subtracts the global commit index from a per-node submission count | read in code | fixed by F18 in `cd46bbf20` (2026-10-06) |
+| B8 | dead code | `setIsLeader`'s "stale leadership publication" check compares `current_term_` with a copy of itself, so its term half never fires | read in code | fixed by F16 in `cd46bbf20` (2026-10-06): the check removed |
 | B9 | test infra | `ci.sh`'s `cleanup_processes` kill -9s every same-user process named `dbtest`, `simpleTransactionRep`, ... and deletes the shared `/tmp/$USER_mako_rocksdb_shard*`, so a suite in one worktree kills tests running in another | read in code | worked around: `scripts/verus/tier1.sh` waits until no such process runs outside this worktree |
 | B10 | toolchain | rusty-cpp's transpiled `BTreeMap` port cannot compile `clone()` of a `BTreeMap<u32, Vec<i32>>` (no matching `push` in the internal-node clone path) | reproduced (cpp-lane lab build) | worked around in `src/lab.rs`; third-party, report only |
 | B11 | race (latent) | `RegisterLeaderChangeCallback` writes `leader_change_cb_` with no lock while a role change reads and calls it under `mtx_` | read in code | fixed with F6 (Phase 2): registration and every read of the slot take `leader_notices_`'s lock; the callback runs from a copy |
 | B12 | dead code | `heartbeat_phase0_body` returns `true` when phase 0 declines the round (not leader), so the driver's `continue` never fires and phases 1-3 run, each exiting at its first leadership check | read in code | Phase 3: the cut heartbeat ends the round when `tick_heartbeat` declines it (no protocol-visible difference) |
 | B13 | toolchain | The transpiled C++ cannot redeclare a name in one scope: a Rust `let` that shadows a binding, or a function parameter, at the same block level is a C++ redefinition | reproduced (cpp-lane lab build, Phase 1) | worked around by renaming; a constraint on every transpiled file |
-| B14 | race | `heartbeat_interval_us_` is a plain field the lab's case 67 writes while the heartbeat and election loops read it | reproduced (Phase 4 TSan lab build, cpp lane) | recorded only (user, 2026-10-04): lab-only, outside the core |
+| B14 | race | `heartbeat_interval_us_` is a plain field the lab's case 67 writes while the heartbeat and election loops read it | reproduced (Phase 4 TSan lab build, cpp lane) | fixed by F17 in `cd46bbf20` (2026-10-06): an atomic |
 | B15 | race (latent) | The heartbeat driver reset the core's round state with no `mtx_` (`reset_round_state` at the loop's start and before its epilogue), taking `&mut` of the whole `RaftCore` while other threads may hold it under the lock | read in code (Phase 6) | fixed in Phase 6: both resets are `step(ResetRoundState)` under `mtx_` (plan §3.1 rule 1) |
-| B16 | liveness (latent) | An entry whose command has no value (an empty `Command`, which `Start` accepts) is never replicated: the leader's payload selection reads it as a missing entry and skips every follower behind it, every round; a follower's conflict scan likewise reads such a slot as absent | read in code (Phase 8) | recorded only (user, 2026-10-04): no caller proposes an empty command today; the proof takes "a proposal has a value" as a host-contract premise |
-| B17 | safety (latent race) | The round end (PHASE 3) advances the commit index without checking that this server still leads: `heartbeat_round_end_body` reads `IsLeader()` before taking `mtx_`, and `heartbeat_phase3_locked` calls `raft_commit_advance` whatever `is_leader` is. A server that lost leadership in that window, and meanwhile took a newer leader's entries over its tail, counts its old term's match indices against an entry of the new term. In production the Rust lane's threading keeps the window closed; the lab's direct handler calls can open it (Reachability, corrected 2026-10-04) | reproduced at the core: `core/tests/b17_round_end.rs` (Phase 8) | recorded only (user, 2026-10-04): not fixed; the proof takes "the round end runs while leading" as a premise, which the race can violate |
-| B18 | proof coverage | Shutdown clears `looping_`, so `IsLeaderLocked()` reads false while the core still leads: a leader's `RecvAppendReply` or `RoundEnd` stepped after `PrepareForShutdown` (or `FailStop`) breaks its coupling premise (`is_leader` is the core's role). The core does nothing wrong then (a reply is ignored unless its term steps the core down; the round end commits as the leader the core still is and confirms no read authority), but the step is outside the certificate | read in code (while writing `code-structure.md`) | recorded; not fixed (needs the user's approval) |
-| B19 | race | Every thread and fiber that enters the shell through a raw pointer makes its own `&mut RaftServerBase`, and some hold it long: the apply thread for its whole life, the heartbeat driver across every wait, each RPC handler through `RaftRpcService::server(&self) -> &mut`. These `&mut` alias across threads, which is undefined behaviour in Rust's model whatever lock or atomic guards the fields | read in code (while writing `code-structure.md` §7) | recorded only; no plan item |
+| B16 | liveness (latent) | An entry whose command has no value (an empty `Command`, which `Start` accepts) is never replicated: the leader's payload selection reads it as a missing entry and skips every follower behind it, every round; a follower's conflict scan likewise reads such a slot as absent | read in code (Phase 8) | fixed by F13 in `924a4dfdd` (2026-10-06): `Start` refuses such a command |
+| B17 | safety (latent race) | The round end (PHASE 3) advances the commit index without checking that this server still leads: `heartbeat_round_end_body` reads `IsLeader()` before taking `mtx_`, and `heartbeat_phase3_locked` calls `raft_commit_advance` whatever `is_leader` is. A server that lost leadership in that window, and meanwhile took a newer leader's entries over its tail, counts its old term's match indices against an entry of the new term. In production the Rust lane's threading keeps the window closed; the lab's direct handler calls can open it (Reachability, corrected 2026-10-04) | reproduced at the core: `core/tests/b17_round_end.rs` (Phase 8) | fixed by F12 in `a586a7f51` (2026-10-06): the round end advances only while the core leads |
+| B18 | proof coverage | Shutdown clears `looping_`, so `IsLeaderLocked()` reads false while the core still leads: a leader's `RecvAppendReply` or `RoundEnd` stepped after `PrepareForShutdown` (or `FailStop`) breaks its coupling premise (`is_leader` is the core's role). The core does nothing wrong then (a reply is ignored unless its term steps the core down; the round end commits as the leader the core still is and confirms no read authority), but the step is outside the certificate | read in code (while writing `code-structure.md`) | fixed with F12 in `a586a7f51` (2026-10-06): both premises weakened, ghost only |
+| B19 | race | Every thread and fiber that enters the shell through a raw pointer makes its own `&mut RaftServerBase`, and some hold it long: the apply thread for its whole life, the heartbeat driver across every wait, each RPC handler through `RaftRpcService::server(&self) -> &mut`. These `&mut` alias across threads, which is undefined behaviour in Rust's model whatever lock or atomic guards the fields | read in code (while writing `code-structure.md` §7) | fixed by F19 in `74dab7c9a` (2026-10-06): every entry takes `&RaftServerBase` |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
+
+**The fix phase (2026-10-06).** The user approved fixing every open Raft
+bug before the merge ("can you first fix all remaining bugs of Raft on this
+branch?"). B1, B4's remainder, B7, B8, B14, B16, B17, B18 and B19 were
+fixed as plan items F12-F19 (modification-plan.md A.2; diff-ledger.md,
+"Bug fixes after Phase 8"). B6 stays a trusted assumption (persistence is
+its own project, [disk-persistence.md](disk-persistence.md)); B9, B10 and
+B13 are tooling, not Raft.
 
 ---
 
@@ -83,12 +91,19 @@ early"). So it is a conscious parity choice with the C++ lane, whose generic
 is recorded here because it is still a liveness cost against standard Raft,
 and because it contradicts one of the plan's lab-case descriptions (below).
 
-**Fate.** Not in the plan's F-list; the behaviour freeze (plan §A) keeps it.
-Plan correction: the Phase 1 lab case "vote request to a server whose
-`rpc_ready_` is false ... gives up on a 'no' quorum without waiting for its
-deadline" holds in the 5-node lab only if **all four** peers refuse; with one
-peer silent or granting, the candidate waits for the deadline. Fixing B1 would
-be a new F-item (plan 0.7 point 3) and would change G7 election times.
+**Fate.** Fixed by F15 in `ad7af330e` (2026-10-06). A campaign is lost as
+soon as the peers that refused leave the peer-vote quorum out of reach,
+`no > (n - 1) - n/2` with `n` the partition size: two refusals in a
+three-replica cluster, three in five. Both tallies changed, raft-rt's
+`TallyState::no` (`rt/src/transport.rs`) and the core's `VoteSet::outcome`
+(`core/src/election.rs`). The lane-parity test became
+`a_rejected_three_replica_campaign_is_lost_at_once`
+(`rt/tests/transport_roundtrip.rs`), and two unit tests pin the three- and
+five-replica losses. A lost campaign now ends early, so G7's election
+times can shorten. Plan correction, kept from before the fix: the Phase 1
+lab case "vote request to a server whose `rpc_ready_` is false ... gives up
+on a 'no' quorum without waiting for its deadline" held in the 5-node lab
+only if all four peers refused.
 
 ## B2. `CommitIndex()` is an unlocked cross-thread read
 
@@ -150,6 +165,14 @@ because its genuine-packets assumption (host contract §1) excludes such a
 message. A corrupt or forged append of this kind could still make a
 follower's log look more up to date than it is.
 
+F14 in `21c287832` (2026-10-06) closes the rest: `WireBatch` carries the
+append's own term (`leader_term_`), and the decoder refuses a batch entry
+whose term exceeds it, as it refuses a term below 1, and a single entry
+whose `leader_next_log_term` does. A refused payload is answered like any
+undecodable one (S1). Lab case 12 sends an entry one term later than its
+append and checks that it is refused and that no entry of that term
+reaches the follower's log.
+
 ## B5. Phase 1 does not re-check leadership where it builds the message (latent)
 
 **Where.** `src/server_cc.rs:1101` (`IsLeader()` takes and drops `mtx_`),
@@ -203,7 +226,12 @@ cast to `int`, which truncates past 2^31 entries.
 **Effect.** Only `raft_bench`'s `peak_raft_outstanding` metric reads it today
 (see B2). No protocol effect.
 
-**Fate.** Report only; out of the plan's scope.
+**Fate.** Fixed by F18 in `cd46bbf20` (2026-10-06). The worker records the
+index of each submission `Start` accepts (`RaftWorker::Submit`,
+`own_uncommitted_`, under its own mutex) and drops those at or below the
+commit index; `get_outstanding_logs` returns that count
+(`RaftWorker::OutstandingOwnLogs`). Both numbers are now this worker's
+own.
 
 ## B8. `setIsLeader`'s stale-publication term check is a tautology
 
@@ -232,8 +260,10 @@ guard was meant to make (`stop_ || current_term_ != term`, with `term` the
 campaign's term). The check in `setIsLeader` is dead code that reads as a
 safety net.
 
-**Fate.** Report only. The Phase 2 restructuring (`become_leader()` taking the
-campaign term) is the natural place to make the check real or delete it.
+**Fate.** Fixed by F16 in `cd46bbf20` (2026-10-06): the term half is
+removed and the guard is what it always did, `if stopped`, suppressing
+the publication while the server stops (`core/src/node.rs`,
+`set_is_leader`). No behaviour change.
 
 ## B9. `ci.sh` cleanup reaches into other worktrees' test runs
 
@@ -360,10 +390,11 @@ models, a stale or torn read in practice at worst.
 three reports, all this field (the heartbeat loop on two servers, the
 election timer on one), and nothing else.
 
-**Fate.** Recorded at Phase 4 and left as is (2026-10-04): the race is
-lab-only and outside the core, and the cpp lane, the only one TSan could
-check, was removed (plan Q9). The fix, if wanted later, is a relaxed atomic
-(a plain `mov` on x86-64).
+**Fate.** Recorded at Phase 4 and left as is (2026-10-04), then fixed by
+F17 in `cd46bbf20` (2026-10-06): `heartbeat_interval_us_` is an
+`AtomicU64` read and written Relaxed through `Get`/`SetHeartbeatInterval`
+(a plain `mov` on x86-64), and the heartbeat's collect phase reads it once
+per round.
 
 ## B15. The round state was reset without `mtx_`
 
@@ -415,10 +446,14 @@ lab's `start`, pass a `TpcCommitCommand`, and the leader's no-op is a
 `LFollowerAppendEntries`: the spec keeps a same-term entry, and the exec
 keeps it only when it has a value.
 
-**Fate.** Recorded only (user, 2026-10-04): `Start` keeps accepting an empty
-command. The proof takes "a proposal has a value" as a premise of the host
-contract (`docs/verus/host-contract.md`), and carries "every log entry has a
-value" in its invariant.
+**Fate.** Recorded only at first (user, 2026-10-04), then fixed by F13 in
+`924a4dfdd` (2026-10-06): `Start` refuses (REJECTED, with a warning) a
+command without a value before anything is appended, so the host
+contract's "a proposal has a value" premise is now checked by the shell
+rather than assumed (`docs/verus/host-contract.md`). Lab case 16
+(`test_empty_command_refused`) proposes one and checks the refusal and
+that the log does not grow. The invariant "every log entry has a value" is
+unchanged.
 
 ## B17. The round end can commit after leadership is lost (latent race)
 
@@ -517,11 +552,13 @@ settlement after it is unchanged. With it, the round end's proof premise
 becomes a check, and the certificate no longer depends on the race not
 happening.
 
-**Fate.** Recorded only (user, 2026-10-04): not fixed. The proof's round-end
-contract takes "the round end runs while leading" as a premise, which the
-race above violates, so a run that hits the race (a lab build, as things
-stand) is outside the certificate. The reproduction stays in the suite,
-ignored.
+**Fate.** Recorded only at first (user, 2026-10-04), then fixed by F12 in
+`a586a7f51` (2026-10-06): `heartbeat_phase3_locked` runs
+`raft_commit_advance` only while `core.is_leader_`, and otherwise reports
+no advance. The round end's premise no longer asks that the server lead
+(`coupled(RoundEnd)` is the gate), so a run that hits the race stays
+inside the certificate, and nothing commits in it.
+`core/tests/b17_round_end.rs` is no longer ignored and passes.
 
 ## B18. Shutdown takes a leader outside its reply and round-end premises (proof coverage)
 
@@ -554,13 +591,13 @@ shuts down mid-round leaves it at that step.
 **How found.** Writing [code-structure.md](code-structure.md), reading the
 round end's premise against what the shell passes.
 
-**Fix (not applied).** Ghost only: the two premises could ask for less, the
-round end only that the core leads (as PHASE 3's contract does), the reply
-only `is_leader ==> core.is_leader_` (as `TickHeartbeat`'s `admits` does),
-with the two handlers' proofs redone for `is_leader` false while leading.
+**Fix.** Ghost only, with F12: the reply's premise is
+`is_leader ==> core.is_leader_` (as `TickHeartbeat`'s `admits` is), and the
+round end's is the gate alone, since F12 makes PHASE 3 safe whatever the
+role (`core/src/coupling.rs`, `core/src/heartbeat.rs`).
 
-**Fate.** Recorded; not fixed (a new item needs the user's approval, plan
-0.7 point 3).
+**Fate.** Fixed with F12 in `a586a7f51` (2026-10-06); 387 verified, 0
+errors. A leader that shuts down mid-round is inside the certificate.
 
 ## B19. Every thread holds its own `&mut RaftServerBase` (race)
 
@@ -594,12 +631,38 @@ calls under `mtx_`; this one is in how every entry reaches the shell.
 **How found.** Writing [code-structure.md](code-structure.md) §7; one of
 its checkers raised it.
 
-**Fix (not applied).** Entries take `&RaftServerBase`, and every field that
-changes moves behind interior mutability: the core behind the lock it
-already has, the rest atomics or cells. The plan's F11d (Phase 7) would
-shrink the problem, because `Propose` and `Applied` become poll-thread jobs
-and `mtx_` goes, but the threads that enqueue them or read the mirrors
-would still need `&self`.
+**Fix.** F19 in `74dab7c9a` (2026-10-06). No two `&mut RaftServerBase`
+exist at once any more:
+- Every entry takes `&RaftServerBase`. The C ABI export of a `&self` method
+  takes `*const RaftServerBase` (`scripts/raft_gen_exports.py`), the RPC
+  service's `server()` returns `&RaftServerBase`, the heartbeat driver and
+  the election timer call `&self` methods through their raw pointers, and
+  `ApplyThreadLoop`, `Start`, `IsLeader` and the handlers are `&self`.
+- `RaftSpecific`'s twelve methods take `&self` at their declaration
+  (`src/deptran/scheduler.h`; the C++ virtuals become `const`).
+  `TxLogServer` keeps `&mut self` because `PaxosServer` implements it too,
+  so the exports of `set_commo` and `reg_learner_action` call `&self`
+  twins, `bind_commo` and `register_learner_action`: the worker calls
+  `reg_learner_action` after it registers the RPC service.
+- A field that changes after the server is shared is an atomic (the
+  startup flags and timestamp, `verified_gates_`, the retention window, the
+  enqueue counter, the snapshot threshold and owner tokens) or sits in a
+  `ShellCell<T>`, an `UnsafeCell` that is `Sync` when `T: Send`, reached
+  under the discipline its field comment names: `mtx_` for the core
+  (`core()`), the recorder, the install output, the snapshot manager and
+  callbacks; `leader_notices_`'s lock for the leader-change callback; the
+  heartbeat fiber for the response slots and the batch buffer; the apply
+  thread for its staging command. `EnsureSetup`'s check-then-set is one
+  atomic swap.
+- Three expressions that made two `core()` references at once (a call
+  whose receiver and argument both reached the core) take one.
+- What still takes `&mut self` runs while no other reference exists:
+  `set_site_identity` (before the service is registered), and
+  `ConstructRuntime` and `Shutdown` (inside `raft_server_new` and
+  `raft_server_delete`).
 
-**Fate.** Recorded only: no plan item covers it, and a fix needs the user's
-approval.
+Nothing checks the per-field discipline, as nothing checked `mtx_`
+before; what the fix removes is the aliasing the compiler was entitled to
+assume away. No behaviour change.
+
+**Fate.** Fixed by F19 in `74dab7c9a` (2026-10-06).

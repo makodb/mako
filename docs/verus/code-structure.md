@@ -17,6 +17,28 @@ root. This worktree builds Raft on the Rust lane only
 (docs/verus/modification-plan.md:49, decision Q9) and are not described.
 "Inference" marks a conclusion drawn from the code rather than read in it.
 
+**Changed since this snapshot (2026-10-06).** The bug-fix phase closed
+every open Raft bug the text below describes as open (bugs-found.md,
+"The fix phase"; plan items F12-F19). Line numbers below are still those
+of `9f95bd6da`; the passages marked *[since: Fn]* describe the code
+before the fix.
+- F12 (B17, and B18's premises): PHASE 3 advances the commit index only
+  while the core leads, inside the lock; the round end's premise is the
+  gate, the reply's `is_leader ==> ` the core leads (§6).
+- F13 (B16): `Start` refuses a command without a value.
+- F14 (B4): the AppendEntries decoder refuses an entry term above the
+  append's own.
+- F15 (B1): a campaign is lost once `no > (n - 1) - n/2`, two refusals of
+  three; the split vote of §5.4 no longer waits out its second.
+- F16 (B8), F17 (B14), F18 (B7): the dead term check removed;
+  `heartbeat_interval_us_` an atomic; `get_outstanding_logs` counts the
+  worker's own uncommitted submissions.
+- F19 (B19): no thread holds `&mut RaftServerBase` (§7). Every entry takes
+  `&RaftServerBase`; the core is reached through `core()` under `mtx_`, and
+  every other field that changes is an atomic or a `ShellCell` with a
+  stated lock or owner. `RaftSpecific`'s methods take `&self`, so its C++
+  virtuals are `const`.
+
 ## 0. Short answers
 
 **(1) Do `core`, `rt` and `src` contain all the protocol code?** Yes: every
@@ -132,7 +154,7 @@ src/deptran/raft/
     src/logging.rs       94  log lines as data
     src/lib.rs           41
     src/coupling.rs    2706  VERIFY: the coupling to the spec (cfg(verus_keep_ghost))
-    tests/step_checked.rs 133, tests/b17_round_end.rs 166   TEST, by hand (B17's is ignored)
+    tests/step_checked.rs 133, tests/b17_round_end.rs 166   TEST, by hand (B17's is ignored) [since: F12, it passes]
   rt/               raft-rt (PROD)
     src/transport.rs  1052  RaftTransport: poll thread, server, clients, vote tally, C ABI
     src/snapshot.rs    627  the in-memory snapshot store; InstallSnapshot send
@@ -219,7 +241,7 @@ snapshot-path steps.
 | Message admission (F9) | `core/src/event.rs:285-368` | yes | yes |
 | The decision to send a snapshot | `core/src/heartbeat.rs:959-976` | yes | snapshots are gated off |
 | Start's leader check | `src/server_h.rs:3887-3894`; the core's `append_local` has none (`core/src/node.rs:494-524`) | no | a premise (host-contract.md:98) |
-| The round end's leadership check | `src/server_cc.rs:310-316`; phase 3 advances commit regardless (`core/src/heartbeat.rs:1689`) | no | a premise that lab builds (B17) and shutdown (B18) can violate (§6) |
+| The round end's leadership check | `src/server_cc.rs:310-316`; phase 3 advances commit regardless (`core/src/heartbeat.rs:1689`) | no | a premise that lab builds (B17) and shutdown (B18) can violate (§6) *[since: F12, in the core and proved]* |
 | The quorum size `n_total` | `rt/src/transport.rs:332-334`, `:562` | no | a premise (host-contract.md:100) |
 | Which voter a reply came from (F1) | `rt/src/transport.rs:580-584` | no | a premise (host-contract.md:45-48) |
 | Entry terms at least 1 in an inbound payload (F4) | `src/server_h.rs:3326-3345` | no | a trusted contract (host-contract.md:111-120) |
@@ -529,7 +551,9 @@ no votes exceed n - n/2 (`rt/src/transport.rs:639-646`), or 1 s passes.
 (`src/srpc/reactor/reactor.rs:3087-3093`, `:2482-2534`); the poll loop then
 writes frames, runs inbound handlers and reply callbacks, and resumes ready
 fibers (`:3302-3380`, `:1508-1610`). With three servers a lost campaign
-always waits the full second (bugs-found B1).
+always waits the full second (bugs-found B1). *[since: F15, no votes
+exceeding (n - 1) - n/2 decide a loss, so two refusals of three end it at
+once]*
 
 B1. B's poll thread decodes the request and calls `ServeVote` inline
 (`src/srpc/rpc/server.rs:1388-1479`; `rt/src/rpc.rs:426-436`;
@@ -604,7 +628,10 @@ E_A  1 s deadline: lock, settle ->                brief  |
 
 Each handler runs while the other server's campaign fiber sleeps, holds
 `mtx_` for one critical section and waits for nothing. A's settle, late
-(B1), finds the campaign no longer current.
+(B1), finds the campaign no longer current. *[since: F15, A's two
+refusals decide its campaign at once: A settles as a follower of term t+1,
+and B's AppendEntries then only resets its timer. If the append wins the
+race instead, the settle ignores the stale campaign as above.]*
 
 Every interleaving of the round, and what handles it:
 
@@ -700,7 +727,8 @@ The leader's heartbeat fiber runs `HeartbeatDriver::run`
    (`:301-305`).
 4. Round end (`:309-330`): `step(RoundEnd)` advances the commit index and
    settles read-index authority; if the commit moved, another round is
-   requested at once.
+   requested at once. *[since: F12, it advances only while the core
+   leads]*
 
 A follower handles each AppendEntries as one `step_checked` under `mtx_`
 (`src/server_h.rs:4249-4359`), decoding the payload only after the
@@ -709,6 +737,11 @@ committed entries to the apply queue under `mtx_`
 (`src/server_h.rs:3075-3144`); the apply thread runs Mako's callback under
 its apply gate, not `mtx_`, then records `Applied` under `mtx_`
 (`:2630-2685`).
+
+*[since: F12, the rest of this section is history: PHASE 3 checks
+`core.is_leader_` itself, under the lock, so the mirror read below is an
+early exit only; `core/tests/b17_round_end.rs` passes; and the premises
+B18 broke were weakened, ghost only.]*
 
 B17 is the example of a check made outside the lock:
 
@@ -812,7 +845,7 @@ the flags `stop_`, `looping_`, `rpc_ready_`, `disconnected_` and
 `preferred_leader_site_id_`, all atomics. The response handles and the
 batch buffer belong to the heartbeat fiber alone (`:922-950`);
 `heartbeat_interval_us_` is a plain field the lab writes while the loops
-read it (bugs-found B14).
+read it (bugs-found B14). *[since: F17, an atomic]*
 
 Why there is no deadlock:
 
@@ -863,7 +896,11 @@ and Mako threads, and `IsLeader` and `GetLeaderHint` on any Mako thread
 `mtx_`, the atomics and the per-field mutexes serialize the accesses that
 matter (`heartbeat_interval_us_` has none of them, B14), but the references
 alias, across threads too, which Rust's aliasing rules do not allow
-(recorded as bugs-found B19).
+(recorded as bugs-found B19). *[since: F19, every one of these takes
+`&RaftServerBase` instead; the fields they change are atomics or
+`ShellCell`s reached under a stated lock or owner, and `set_site_identity`,
+`ConstructRuntime` and `Shutdown`, which still take `&mut self`, run while
+no other reference exists]*
 
 ## 8. The two kinds of events
 
@@ -954,7 +991,8 @@ commit 4,580 of the core's 10,487 lines are ghost (node.rs 733,
 heartbeat.rs 464, log.rs 328, authority.rs 354, coupling.rs 2,271, the rest
 under 140 each), about 2,240 are comments or blank, and cargo compiles
 about 3,680. The core's tests (`core/tests/`) are ordinary cargo tests run
-by hand; `b17_round_end.rs` is ignored because it fails until B17 is fixed.
+by hand; `b17_round_end.rs` is ignored because it fails until B17 is fixed
+*[since: F12, it passes and is no longer ignored]*.
 
 ## 11. What the verification work added to `core`, `rt` and `src`
 
