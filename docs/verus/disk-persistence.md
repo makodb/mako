@@ -64,9 +64,11 @@ constraints rather than proof work.
   commit (§2.9).
 
 **Recommended design.** Term, vote, commit index and the whole log (base 1)
-go into a Rust write-ahead log, one per server. The core reports, with each
-step's output, what changed and whether the step emitted anything (with one
-server, also whether it advanced the commit index, §2.2); the shell
+go into a Rust write-ahead log, one per server. The disk is simulated: the log
+lives on tmpfs, and an injected delay models the flush cost (§2.7). The core
+reports, with each step's output, what changed and whether the step emitted
+anything (with one server, also whether it advanced the commit index, §2.2);
+the shell
 queues those records under `mtx_` in step order and, before any emission,
 writes and fdatasyncs them after releasing `mtx_`, on the emitting thread.
 The leader flushes once per round (group commit), a follower once per
@@ -348,12 +350,25 @@ Rust). If it is chosen anyway: one `WriteBatch` per barrier with
 `sync = true`, `DeleteRange` for a replaced suffix, never `rocksdb_flush` as
 a sync. Verus is indifferent: storage is trusted either way.
 
-**Location.** Never under `/tmp/$USER_*`, which `examples/run_rocksdb_test.sh:27`
-deletes (`ci/ci.sh:84` deletes `/tmp/$USER_mako_rocksdb_shard*`). On
-zoo-003 (checked read-only, 2026-10-06) `/` is ext4 on `/dev/sda2`, a
-hardware RAID logical volume over rotational disks that the kernel reports
-as "write through"; `/tmp` is tmpfs; home is NFS.
-Durability tests use ext4; tmpfs only measures the software cost.
+**Location, and a simulated disk** (owner, 2026-10-06: "we simulate disk
+write, we don't require hard disk write on the particular machine"; the home
+directory is NFS, so nothing heavy goes there).
+- **Where.** The store lives on tmpfs (`/tmp`), under its own prefix, for
+  example `/tmp/raft-wal-$USER/<site>-<partition>/`. A knob overrides the
+  directory. It must never sit under `/tmp/$USER_*`, which
+  `examples/run_rocksdb_test.sh:27` deletes, nor under
+  `/tmp/$USER_mako_rocksdb_shard*`, which `ci/ci.sh:84` deletes.
+- **The flush cost.** On tmpfs `fdatasync` returns in about 1 µs (measured
+  2026-10-06, §2.9). A disk's cost is therefore modelled by an injected delay
+  per flush (a knob, default 0), applied where the fdatasync would block, so
+  the barriers and group commit see a realistic F.
+- **What this tests.** tmpfs files survive `kill -9`, which tests the
+  ordering and the restart path. The fault-injecting backend models what
+  fsync promises: a simulated crash drops unsynced records. The injected
+  delay models timing.
+- **What it does not test.** A device's durability, which is not a
+  requirement. (For reference: `/` is ext4 on a hardware RAID volume;
+  `/home/users` is NFS.)
 
 **Failure.** A write or fdatasync error panics, which aborts the process
 (`Cargo.toml:80-84`) before the reply or send; after a failed fsync Linux
@@ -366,6 +381,14 @@ re-add it.
 grows without bound: about 155 MB/s per replica at G2's rate (37,760 × 4 KB;
 inference). The whole log is loaded into memory and replayed at restart, so
 restart time and memory grow with it.
+
+On tmpfs the log is RAM. `/tmp` is 47 GB, about 24 GB of it free
+(2026-10-06). At G2's rate three replicas write about 465 MB/s, which fills
+the free space in under a minute; G4's rate, about 2.7 GB/s, fills it in
+about 9 s. Disk-mode throughput runs must therefore either be short and
+delete their stores, or use a **timing-only store**: it applies the injected
+delay and keeps no payload, so it cannot serve a restart. Restart tests keep
+the real files.
 
 ### 2.8 Testing
 
@@ -402,15 +425,15 @@ Baselines: `docs/verus/modification-plan.md:1461-1464`,
 (inference); effects are a model to be measured, with F the fdatasync time
 and W the time to write a batch.
 
-| Point | Today | Bytes per replica | Effect of B1 + S2 | zoo-003, three replicas on one volume |
+| Point | Today | Bytes per replica | Effect of B1 + S2 | tmpfs (RAM), three replicas |
 |---|---|---|---|---|
-| G1, 4 KB at 240/s | p50 2.647 ms | ~1 MB/s | +2F per commit, plus a commit-only round off its path (below); Rule A +F more; S3 (outside) would be about +F | the same |
-| G2, 4 KB unthrottled | 37,760/s | ~155 MB/s | one fdatasync per round on the leader, per AppendEntries on a follower | ~465 MB/s in all: likely disk-bound |
-| G3, 286 KB × 6 at 190/s | p50 3.343 ms | ~54 MB/s | +2F + 2W | contention |
-| G4, 286 KB × 6 unthrottled | 3,132/s | ~896 MB/s | six groups, six fsync streams (`examples/raft_bench.sh:73`, multi-group) | ~2.7 GB/s in all: far beyond |
-| G5, 1 MiB at 55/s | p50 8.767 ms | ~58 MB/s | +2F + 2W | contention |
-| G6, 1 MiB unthrottled | 183/s | ~192 MB/s | W dominates | ~576 MB/s in all |
-| G7, leader kill | ~630 ms to first commit | -- | the new leader's no-op adds about 2F | the same |
+| G1, 4 KB at 240/s | p50 2.647 ms | ~1 MB/s | +2F per commit, plus a commit-only round off its path (below); Rule A +F more; S3 (outside) would be about +F | ~3 MB/s in all |
+| G2, 4 KB unthrottled | 37,760/s | ~155 MB/s | one fdatasync per round on the leader, per AppendEntries on a follower | ~465 MB/s in all: fills the free ~24 GB in under a minute |
+| G3, 286 KB × 6 at 190/s | p50 3.343 ms | ~54 MB/s | +2F + 2W | ~160 MB/s in all |
+| G4, 286 KB × 6 unthrottled | 3,132/s | ~896 MB/s | six groups, six fsync streams (`examples/raft_bench.sh:73`, multi-group) | ~2.7 GB/s in all: about 9 s |
+| G5, 1 MiB at 55/s | p50 8.767 ms | ~58 MB/s | +2F + 2W | ~174 MB/s in all |
+| G6, 1 MiB unthrottled | 183/s | ~192 MB/s | W dominates | ~576 MB/s in all: under a minute |
+| G7, leader kill | ~630 ms to first commit | -- | the new leader's no-op adds about 2F | -- |
 
 The per-commit figures leave out one cost of staying inside. A commit
 advanced at a round's end goes out at once in a follow-up round
@@ -426,11 +449,21 @@ so they can delay the next proposal's round (inference). Plain strict sync,
 with the commit a hint, pays neither.
 
 Group commit keeps throughput: one fdatasync per proposal would cap a group
-at 1/F proposals per second (5,000/s at F = 0.2 ms, 87% below G2). Typical F,
-not measured here: 0.02-0.3 ms behind a protected cache, 0.5-5 ms on consumer
-SSDs, 5-15 ms on uncached disks. Memory mode must stay inside today's G1-G7
-bounds against `verus-p0` (`docs/verus/reports/phase-8.md` §4), the barrier
-costing one branch; disk mode needs its own baselines, on tmpfs and ext4.
+at 1/F proposals per second (5,000/s at F = 0.2 ms, 87% below G2).
+
+Measured on zoo-003 (2026-10-06; one writer appending, then calling
+fdatasync):
+
+| Where | 4 KB: p50 / p99.9 | 256 KB: p50 / p99.9 |
+|---|---|---|
+| tmpfs `/tmp` | 1.0 µs / 8.4 µs | 1.0 µs / 9.4 µs |
+| ext4 `/var/tmp` (reference only) | 0.16 ms / 0.66 ms | 0.31 ms / 5.8 ms |
+
+Since the disk is simulated, F is a parameter: the injected delay (§2.7),
+swept over, say, 0.2, 1 and 5 ms. Memory mode must stay inside today's
+G1-G7 bounds against `verus-p0` (`docs/verus/reports/phase-8.md` §4), the
+barrier costing one branch. Disk mode needs its own baselines on tmpfs, one
+for each simulated F.
 
 ## 3. What Verus adds
 
@@ -564,7 +597,7 @@ phase that touches the core.
 
 | Phase | Work | Plain | Verus |
 |---|---|---|---|
-| P0 | measure fdatasync p50/p99/p99.9 on zoo-003's ext4 and on tmpfs, with one and three writers; settle the controller-cache question | 0.25-0.5 | -- |
+| P0 | fdatasync is measured for one writer (§2.9, 2026-10-06); choose the simulated delays and bound tmpfs use (three writers, run length, the timing-only store) | 0.25 | -- |
 | P1 | the WAL crate: records, recovery, the fault-injecting backend, crash-at-every-offset tests | 1.5-2.5 | -- (trusted) |
 | P2 | core: `Restore` and its checks; the persist record in `CoreOutput`; recorder and replayer support | 0.5-1.5 | O1, O2 (1-2); the host contract, B6 and the gate text (0.5-1) |
 | P3 | shell: the queue and the four barriers (B1); R3 and R5; InstallSnapshot refuses first; the restore in `SetupInternal`, the apply backlog, the campaign hold; knobs; abort on error; disk mode refuses snapshots | 1.5-2.5 | the commit index durable and restored (0.5) |
@@ -575,7 +608,7 @@ phase that touches the core.
 | P8 | memory mode against today's gates; disk-mode baselines | 1-2 | -- |
 | later | B2: a disk thread and deferred replies (srpc's `DeferredReply`, `src/srpc/rpc/server.rs:443-516`), inside the certificate | 3-5 | small (inference) |
 
-Order: P0 first, because F decides whether B1 is enough. O1 goes with P2,
+Order: P0 first, because the simulated F decides whether B1 is enough. O1 goes with P2,
 since a failing proof may reshape `Restore`; P4 comes before P5, so the
 record's shape is settled before tests are written against it.
 
@@ -583,11 +616,14 @@ record's shape is settled before tests are written against it.
 
 Risks:
 
-1. **The disk on zoo-003 is unknown:** F may be 0.1 ms (a flash-backed
-   controller cache) or 5-15 ms (none). At 10 ms G1's latency grows several
-   times and rounds miss their 5 ms deadline (inference). P0 answers it.
-2. **Bandwidth.** With all three replicas on one volume, G2, G4 and G6 need
-   0.5-2.7 GB/s of writes in all (§2.9).
+1. **The simulated F decides the results.** The disk is simulated (§2.7), so
+   disk-mode numbers hold for the chosen delay, not for a device. At
+   F = 10 ms, G1's latency grows several times and rounds miss their 5 ms
+   deadline (inference). Sweep F.
+2. **tmpfs is RAM.** At G2, G4 and G6's rates, three replicas write
+   0.5-2.7 GB/s in all, and about 24 GB is free. Full-rate disk-mode runs
+   must be short and clean up after themselves, or use the timing-only store
+   (§2.7). Nothing goes to the NFS home directory.
 3. **Unbounded log.** Restart time and memory grow with the log. Durable
    snapshots are needed for long runs, and they need the spec retarget (1-3
    days, inference), the snapshot coupling (3-5 days,
