@@ -189,3 +189,7 @@ again, and the ledger lint still requires a tag on every one.
 
 | Commit | File:line (after) | Kind | What | Evidence |
 |---|---|---|---|---|
+| `a586a7f51` | `core/src/heartbeat.rs:1692-1700` (`heartbeat_phase3_locked`) | F12 | the commit advance only when `core.is_leader_`; otherwise no advance (bugs-found B17) | `core/tests/b17_round_end.rs` passes, no longer ignored; 387 verified |
+| | `core/src/heartbeat.rs:1676-1690`, `:1727-1735`; `core/src/coupling.rs:2611` | M12 | phase 3's and the round end's contracts lose the `is_leader` premise; `coupled(RoundEnd)` is the gate | as above |
+| | `core/src/heartbeat.rs:1455`, `:1468`; `core/src/coupling.rs:2608`, `:2622` | M12 | the reply's premise is `is_leader ==> core.is_leader_` (bugs-found B18) | as above |
+| | `scripts/verus/ghost_only_base.txt`, `docs/verus/modification-plan.md` A.2 | tooling, plan | the ghost-only lint retired; F12-F19 registered | ledger lint 0 unregistered |
