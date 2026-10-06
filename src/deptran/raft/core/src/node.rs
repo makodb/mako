@@ -1173,14 +1173,15 @@ impl<C: Clone> RaftCore<C> {
 
         if is_leader && !prev_is_leader {
             // Leadership publication must not proceed once shutdown began.
-            let publication_term: u64 = self.current_term_;
-            if stopped || self.current_term_ != publication_term {
+            // [fix, F16] Its term half compared current_term_ with a copy
+            // taken on the line before, so it never fired (bugs-found B8).
+            // The one promotion, election_settle's, checks the campaign's
+            // term against the current one before it calls here.
+            if stopped {  // [fix, F16]
                 out.log(RAFT_LOG_WARN,
-                    "[RAFT_STATE] Site {} suppressing stale leadership publication for term {} (current={}, stopping={})",
+                    "[RAFT_STATE] Site {} suppressing leadership publication for term {} (stopping)",
                     &[(self.site_id_).arg(),
-                     (publication_term).arg(),
-                     (self.current_term_).arg(),
-                     (stopped).arg()]);
+                     (self.current_term_).arg()]);  // [fix, F16]
                 out.push(CoreAction::role_set(entry_term, prev_is_leader,
                                               is_leader, false, false));
                 return;

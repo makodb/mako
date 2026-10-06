@@ -905,7 +905,10 @@ pub struct RaftServerBase {
     pub election_loop_running_: rusty::sync::atomic::AtomicBool,
     pub heartbeat_: bool,
     pub heartbeat_setup_: bool,
-    pub heartbeat_interval_us_: u64,
+    // [fix, F17] An atomic: lab case 67 sets it on running servers while the
+    // heartbeat and election loops read it (bugs-found B14). Relaxed: no
+    // other memory is published with it.
+    pub heartbeat_interval_us_: rusty::sync::atomic::AtomicU64,
     pub log_retention_window_: u64,
     pub leader_change_cb_: rusty::RaftLeaderChangeCb,
     // The preferred leader, written without mtx_ by SetPreferredLeader;
@@ -1042,7 +1045,7 @@ impl RaftServerBase {
             // HEARTBEAT_INTERVAL is a macro whose value depends on
             // RAFT_TEST; RaftServer's constructor applies it, because a DSL
             // block drops #[cfg] silently and must not decide this.
-            heartbeat_interval_us_: 0,
+            heartbeat_interval_us_: rusty::sync::atomic::AtomicU64::new(0),  // [fix, F17]
             log_retention_window_: 5000,
             leader_change_cb_: Default::default(),
             preferred_leader_site_id_: rusty::sync::atomic::AtomicU64::new(
@@ -1253,14 +1256,14 @@ impl RaftServerBase {
         }
     }
 
-    // @safe - POD field
+    // @safe - an atomic (F17)
     pub fn GetHeartbeatInterval(&self) -> u64 {
-        self.heartbeat_interval_us_
+        self.heartbeat_interval_us_.load(rusty::sync::atomic::Ordering::Relaxed)  // [fix, F17]
     }
 
-    // @safe - POD field
+    // @safe - an atomic (F17)
     pub fn SetHeartbeatInterval(&mut self, micros: u64) {
-        self.heartbeat_interval_us_ = micros;
+        self.heartbeat_interval_us_.store(micros, rusty::sync::atomic::Ordering::Relaxed);  // [fix, F17]
     }
 
     // @safe - POD field
@@ -1369,8 +1372,8 @@ impl RaftServerBase {
     pub fn ElectionLoopRandomDelay(&self) -> u64 {
         unsafe {
             raft_random_range_us(
-                self.heartbeat_interval_us_ * 2,
-                self.heartbeat_interval_us_ * 4)
+                self.GetHeartbeatInterval() * 2,  // [fix, F17]
+                self.GetHeartbeatInterval() * 4)
         }
     }
 
@@ -1759,10 +1762,10 @@ impl RaftServerBase {
         }
         let hb_override = hb_env.unwrap();
         if hb_override.is_some() {
-            self.heartbeat_interval_us_ = hb_override.unwrap();
+            self.heartbeat_interval_us_.store(hb_override.unwrap(), rusty::sync::atomic::Ordering::Relaxed);  // [fix, F17]
             rusty::raft_log_info_1(
                 "[RAFT] Heartbeat interval set to {} us from env",
-                self.heartbeat_interval_us_);
+                self.GetHeartbeatInterval());
         }
 
         if !unsafe {
@@ -2906,7 +2909,7 @@ impl RaftServerBase {
     // @unsafe - one heartbeat tick's wait, which is the above bound to the
     // configured interval.
     pub fn HeartbeatWait(&mut self) -> bool {
-        self.WaitForReplicationOrHeartbeat(self.heartbeat_interval_us_)
+        self.WaitForReplicationOrHeartbeat(self.GetHeartbeatInterval())  // [fix, F17]
     }
 
     // @unsafe - Bind the gate to the communicator's PollThread before
@@ -3572,8 +3575,8 @@ impl RaftServerBase {
             raft_new_callback_lifetime(self.handle(),
                                        lifetime_slot);
         }
-        self.heartbeat_interval_us_ =
-            unsafe { raft_heartbeat_interval_default() };
+        self.heartbeat_interval_us_.store(  // [fix, F17]
+            unsafe { raft_heartbeat_interval_default() }, rusty::sync::atomic::Ordering::Relaxed);
         unsafe {
             raft_ensure_legacy_payload_registered();
         }

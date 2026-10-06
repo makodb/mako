@@ -975,18 +975,17 @@ std::map<std::string, std::string> getHosts(std::string filename) {
 }
 
 // get_outstanding_logs reports how many Raft slots the local worker still owes.
+// [fix, F18] Its own accepted submissions still above the commit index. It
+// was n_tot - CommitIndex(): this worker's submission count minus a commit
+// index that also counts every leader's no-op and other servers' entries,
+// so it drifted low and could go negative (bugs-found B7).
 int get_outstanding_logs(uint32_t par_id) {
   auto worker = find_worker(par_id);
   if (!worker) {
     Log_warn("get_outstanding_logs(): unknown partition {}", par_id);
     return -1;
   }
-  auto* raft_server = worker->GetRaftServer();
-  if (!raft_server) {
-    return -1;
-  }
-  return static_cast<int>(worker->n_tot.load()) -
-         static_cast<int>(raft_server->CommitIndex());
+  return worker->OutstandingOwnLogs();
 }
 
 // shutdown_paxos drains workers, tears down configs, and mirrors the Paxos helper API.

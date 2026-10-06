@@ -101,6 +101,11 @@ private:
   std::mutex submit_mutex_;
   std::condition_variable submit_cv_;
   std::atomic<bool> submit_thread_stop_{false};
+  // [fix, F18] The log indices of this worker's own accepted submissions not
+  // yet known to be committed, oldest first. Pruned against the commit index
+  // at every push and read, so it holds only the uncommitted ones.
+  std::deque<uint64_t> own_uncommitted_;
+  std::mutex own_uncommitted_mutex_;
   bool submit_thread_started_{false};
   std::thread submit_thread_;
   int batch_limit_ = 1;
@@ -116,6 +121,10 @@ public:
   // drivers in `paxos_main_helper.cc`.  `tot_num` is left in place
   // alongside its PaxosWorker counterpart.
   int tot_num = 0;
+
+  // [fix, F18] How many of this worker's own accepted submissions are still
+  // above the commit index (bugs-found B7); -1 without a Raft server.
+  int OutstandingOwnLogs();
 
   // Configuration
   Config::SiteInfo* site_info_ = nullptr;

@@ -409,7 +409,7 @@ pub unsafe extern "C" fn raft_phase1_load_and_send_snapshot(
         last_included_term: image.term,
         data: &image.bytes,
     };
-    let heartbeat_us = unsafe { (*s).heartbeat_interval_us_ };
+    let heartbeat_us = unsafe { (*s).GetHeartbeatInterval() };  // [fix, F17] an atomic now
     let deadline = install_deadline(heartbeat_us, image.bytes.len());
     // The callback owns the context: it delivers at most once and frees on
     // drop, whether or not it ever ran. A send that never left, or one

@@ -865,9 +865,34 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   raft_trace_at(0, index, t_trace_enq_us);
   raft_trace_at(1, index, trace_submit_us);
   raft_trace_at(2, index, 0);
+
+  {
+    // [fix, F18] Remember this submission's index until it commits.
+    const uint64_t committed = raft_server->CommitIndex();
+    std::lock_guard<std::mutex> guard(own_uncommitted_mutex_);
+    own_uncommitted_.push_back(index);
+    while (!own_uncommitted_.empty() && own_uncommitted_.front() <= committed) {
+      own_uncommitted_.pop_front();
+    }
+  }
   }
 
   n_tot++;
+}
+
+// @unsafe - [fix, F18] reads the commit index through the server, under the
+// tracker's own mutex
+int RaftWorker::OutstandingOwnLogs() {
+  auto* raft_server = GetRaftServer();
+  if (!raft_server) {
+    return -1;
+  }
+  const uint64_t committed = raft_server->CommitIndex();
+  std::lock_guard<std::mutex> guard(own_uncommitted_mutex_);
+  while (!own_uncommitted_.empty() && own_uncommitted_.front() <= committed) {
+    own_uncommitted_.pop_front();
+  }
+  return static_cast<int>(own_uncommitted_.size());
 }
 
 // @safe

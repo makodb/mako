@@ -198,13 +198,14 @@ pub fn heartbeat_collect_body(server: &mut RaftServerBase, round_id: u64,
     const RESPONSE_POLL_STEP_US: u64 = 1000;
     // max(1, min(100000, heartbeat_interval_us_)). Spelled out rather than
     // with clamp: this lowers to C++, where uint64_t has no such member.
+    let heartbeat_us: u64 = server.GetHeartbeatInterval();  // [fix, F17] read once
     let response_round_timeout_us: u64 =
-        if server.heartbeat_interval_us_ > 100000 {
+        if heartbeat_us > 100000 {
             100000
-        } else if server.heartbeat_interval_us_ < 1 {
+        } else if heartbeat_us < 1 {
             1
         } else {
-            server.heartbeat_interval_us_
+            heartbeat_us
         };
     let response_deadline_us: u64 =
         unsafe { raft_monotonic_now_us() } + response_round_timeout_us;
