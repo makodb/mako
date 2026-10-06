@@ -1448,10 +1448,11 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
         // [M12] the reply's group (coupling::reply_log_ok), from the
         // follower its slot was sent to: a higher term's StepDown, a success
         // past the spec's match its HandleAppendResponse, or nothing the
-        // spec sees. The host contract: is_leader is IsLeaderLocked, and a
-        // success never reports past the leader's log (F9's step_checked
+        // spec sees. The host contract: is_leader implies the core leads
+        // (IsLeaderLocked; it reads false once shutdown has begun, B18), and
+        // a success never reports past the leader's log (F9's step_checked
         // drops one that does)
-        old(core).ginv() && old(core).gated_ && is_leader == old(core).is_leader_
+        old(core).ginv() && old(core).gated_ && (is_leader ==> old(core).is_leader_)
             && (resp_status ==> resp_last_log_index as int <= old(core).raft_log_.spec_last_index()) ==> {
             &&& final(core).ginv()
             &&& crate::coupling::reply_log_ok(final(core).g_log_@, old(core).g_log_@,
@@ -1464,7 +1465,7 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
         },
 {
     let ghost pre = *core;
-    let ghost on = pre.ginv() && pre.gated_ && is_leader == pre.is_leader_
+    let ghost on = pre.ginv() && pre.gated_ && (is_leader ==> pre.is_leader_)
         && (resp_status ==> resp_last_log_index as int <= pre.raft_log_.spec_last_index());
     // Bound once per reply, not per use: every read below is the same shape
     // it was when this was a map value.
@@ -1674,10 +1675,10 @@ pub fn heartbeat_phase3_locked<C: Clone>(
         old(core).config_members_@.contains(old(core).site_id_),
     ensures
         final(core).inv(),
-        // [M12] a leader's advance is LAdvanceCommitIndex (bugs-found B17:
-        // the advance does not check is_leader, so this needs the server to
-        // lead); the read-index settlement is unseen by the spec
-        old(core).ginv() && old(core).gated_ && old(core).is_leader_ ==> {
+        // [M12] a leader's advance is LAdvanceCommitIndex; a server that no
+        // longer leads advances nothing (F12); the read-index settlement is
+        // unseen by the spec
+        old(core).ginv() && old(core).gated_ ==> {
             &&& final(core).ginv()
             &&& final(core).g_log_@ == (if r.spec_commit().spec_advanced() {
                     crate::coupling::advance_log(old(core).g_log_@, final(core).commit_index_ as int)
@@ -1685,8 +1686,17 @@ pub fn heartbeat_phase3_locked<C: Clone>(
                     old(core).g_log_@
                 })
         },
+        // [M12] no advance unless the core leads (F12)
+        r.spec_commit().spec_advanced() ==> old(core).is_leader_,
 {
-    let commit = raft_commit_advance(core, nservers);
+    // [fix, F12] The commit rule is the leader's (bugs-found B17). A server
+    // that stepped down after its round began must not count the old term's
+    // match indices against the log it holds now.
+    let commit = if core.is_leader_ {  // [fix, F12]
+        raft_commit_advance(core, nservers)  // [fix, F12] the advance, now only while leading
+    } else {
+        CommitAdvance { advanced_: false, from_: 0, to_: 0 }  // [fix, F12]
+    };
     let outcome = core.authority_rounds_.settle(
         is_leader,
         core.current_term_,
@@ -1721,10 +1731,9 @@ pub fn heartbeat_round_end<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
     ensures
         final(core).inv(),
         // [M12] the commit advance is LAdvanceCommitIndex, to the new commit
-        // index. The premise: is_leader is IsLeaderLocked, and the server
-        // leads (bugs-found B17: the shell checks leadership before taking
-        // mtx_, and the advance does not check it)
-        old(core).ginv() && old(core).gated_ && is_leader == old(core).is_leader_ && is_leader ==> {
+        // index; the core advances only while it leads (F12), so the round
+        // end needs nothing of the shell's is_leader (bugs-found B17, B18)
+        old(core).ginv() && old(core).gated_ ==> {
             &&& final(core).ginv()
             &&& final(core).g_log_@ == (if r {
                     crate::coupling::advance_log(old(core).g_log_@, final(core).commit_index_ as int)

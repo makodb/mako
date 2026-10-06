@@ -971,6 +971,14 @@ Each lands in its own commit with a lab case showing the new behaviour.
 | F9 | 6 | `step_checked` refuses (no reply) only: sender self or not a configured voter (B20), term 0, a success reply claiming more than the leader's log (B4), entry term 0 (B16), and raft-rs's prev shape (prev index 0 ⇔ prev term 0; index + count must not overflow; glr/`src/ports/raftrs/raft.rs:2999-3000`, which has **no** prev ≤ last check). A prev beyond the follower's log is **not** refused: it is ordinary log repair, answered today with a reject carrying the `last_index` hint (`src/server_h.rs:5349-5355`) that drives the leader's FAST backoff (`:762-788`), and it is `LRejectAppendEntries` under the existing guard (`!prev_log_ok`, glr/`raft.rs:612`). That path stays unchanged | Out of gate; a refusal is a drop |
 | F10 | 5, optional | Reply echo `(follower, sent_term, sent_end)` on the Rust-lane wire; mismatch refused | Defence in depth only |
 | F11a-d | 7, optional | (a) replies as events, `RoundEnd` at quorum or deadline; (b) eventfd wake; (c) blocking apply channel with batched `Applied(n)`; (d) poll-thread ownership | Performance only |
+| F12 | fixes | The round end advances the commit index only while the core leads: `heartbeat_phase3_locked` calls `raft_commit_advance` only when `core.is_leader_` (bugs-found B17) | The commit rule is the leader's (`LAdvanceCommitIndex`'s guard) |
+| F13 | fixes | `Start` refuses (REJECTED) a command without a value, before appending (B16) | Every log entry has a value |
+| F14 | fixes | The AppendEntries decoder refuses an entry whose term exceeds the leader's term, on the batch and single-entry paths (the rest of B4) | A genuine leader never sends one; refused like any undecodable payload (S1) |
+| F15 | fixes | A campaign is lost as soon as enough peers refuse that a yes quorum is out of reach, `no > (n - 1) - n/2`, in raft-rt's tally and the core's `VoteSet` (B1) | Standard Raft; a lost election ends early (G7 timing) |
+| F16 | fixes | `set_is_leader`'s dead stale-publication term check removed (B8) | Dead code; no behaviour change |
+| F17 | fixes | `heartbeat_interval_us_` becomes an atomic (B14) | Removes a data race; no behaviour change |
+| F18 | fixes | `get_outstanding_logs` counts this worker's own accepted submissions above the commit index (B7) | A metric; no protocol effect |
+| F19 | fixes | The shell's entry points take `&RaftServerBase`; the fields they change move behind interior mutability (B19) | Removes aliased `&mut`; no behaviour change |
 
 Because of S1, the extra append refusals (stopped, non-voter, unauthoritative
 sender, bad payload) and the refused committed conflict
@@ -978,6 +986,10 @@ sender, bad payload) and the refused committed conflict
 
 **Adding to the list**: a behaviour that cannot be specified abstractly and
 correctly becomes F12, F13, ... with a row as above; stop at 0.7 point 3 first.
+
+F12-F19 were approved together by the user on 2026-10-06: "can you first fix
+all remaining bugs of Raft on this branch?" B6 (memory-only state) is not
+among them; it is the disk-persistence project ([disk-persistence.md](disk-persistence.md)).
 
 ### A.3 "Move, don't rewrite": allowed transformation kinds
 

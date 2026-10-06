@@ -7,9 +7,9 @@
 // end. No timing is involved at this level: the core takes each input as a
 // whole call, so the race shows as an order of calls.
 //
-// It asserts the correct outcome, so it fails today; it is ignored so the
-// suite stays green. Reproduce with:
-//   cargo test -p raft-core --test b17_round_end -- --ignored
+// It asserts the correct outcome. It failed until F12 made the round end
+// advance the commit index only while the core leads; it is now a regression
+// test.
 
 use raft_core::*;
 
@@ -91,7 +91,6 @@ fn term_at(core: &RaftCore<Cmd>, index: u64) -> i64 {
 }
 
 #[test]
-#[ignore = "bugs-found B17: fails until the round end advances the commit index only while leading"]
 fn round_end_after_losing_leadership_does_not_commit() {
     let mut core: RaftCore<Cmd> = RaftCore::new();
     core.step::<Batch>(Event::SetIdentity { loc_id: 0, site_id: A, partition_id: 0 }, &mut out())

@@ -2605,10 +2605,10 @@ impl<C> RaftCore<C> {
             Event::TickHeartbeat { .. } => self.gated_,
             Event::RecvAppendReply { status, last_log_index, is_leader, .. } => {
                 &&& self.gated_
-                &&& is_leader == self.is_leader_
+                &&& (is_leader ==> self.is_leader_)
                 &&& (status ==> last_log_index as int <= self.raft_log_.spec_last_index())
             },
-            Event::RoundEnd { is_leader } => self.gated_ && is_leader == self.is_leader_ && is_leader,
+            Event::RoundEnd { .. } => self.gated_,
             _ => true,
         }
     }
@@ -2619,7 +2619,7 @@ impl<C> RaftCore<C> {
         match *ev {
             Event::RecvRequestVote { .. } => self.gated_,
             Event::RecvAppendEntries { .. } => self.gated_,
-            Event::RecvAppendReply { is_leader, .. } => self.gated_ && is_leader == self.is_leader_,
+            Event::RecvAppendReply { is_leader, .. } => self.gated_ && (is_leader ==> self.is_leader_),
             _ => self.coupled(ev),
         }
     }

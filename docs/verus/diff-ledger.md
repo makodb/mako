@@ -179,3 +179,13 @@ removed line (a named return, a contract moving a brace). At `998b86820`:
 | `ba5e0ed1b` | `core/src/heartbeat.rs` (`heartbeat_tick`, `heartbeat_select_payload`), `core/src/node.rs` | M12 | a tick's AppendEntries: SendAppendEntries per component (BR1), built from the leader's log | 384 verified |
 | `998b86820` | `core/src/event.rs` (`step`, `step_checked`, `message_admitted`), `core/src/coupling.rs` | M12 | `step` and `step_checked` keep `ginv` under `coupled(ev)`; `lemma_node_cert`; `theorem_mako_safety` | 387 verified |
 
+
+## Bug fixes after Phase 8 (F12-F19; the user's approval, 2026-10-06)
+
+The behaviour freeze is lifted for these numbered items only
+([modification-plan.md](modification-plan.md) A.2, F12-F19). The ghost-only lint of Phase 8
+is retired (`scripts/verus/ghost_only_base.txt` is empty): executable core lines may change
+again, and the ledger lint still requires a tag on every one.
+
+| Commit | File:line (after) | Kind | What | Evidence |
+|---|---|---|---|---|
