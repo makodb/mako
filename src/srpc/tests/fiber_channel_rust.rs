@@ -313,3 +313,89 @@ fn drop_detaches_all_callbacks_before_proxy_teardown() {
     }
     assert_eq!(handle.callbacks_bound(), (false, false, false));
 }
+
+// S4 step 5 of docs/dev/lion-runtime-plan.md: a parked receive is not on the
+// reactor's per-pass scan. The transport callbacks ping the wrapper's ticket
+// after publishing, and the owner re-tests the receiver's predicate on its
+// next pass. A foreign delivery or close therefore resumes the receiver on
+// that pass, on the owner, and never inside the callback.
+
+#[test]
+fn a_parked_receive_is_armed_not_scanned() {
+    let (channel, handle) = make_channel();
+    let wrapper = bind(channel);
+    let reactor = srpc::reactor::Reactor::get_reactor();
+    let waiting = reactor.waiting_events_.borrow().len();
+    let armed = srpc::reactor::event_wake_report::<()>().armed_pings;
+    let received = std::rc::Rc::new(std::cell::Cell::new(false));
+    let result = received.clone();
+    srpc::reactor::Fiber::create_run(move || {
+        assert_eq!(wrapper.as_ref().get_ref().recv_frame().unwrap().bytes, [5]);
+        result.set(true);
+    });
+    assert!(!received.get());
+    assert_eq!(reactor.waiting_events_.borrow().len(), waiting, "a parked receive joined the scan");
+    assert_eq!(srpc::reactor::event_wake_report::<()>().armed_pings, armed + 1);
+    for _ in 0..64 {
+        reactor.run_loop(false, true);
+    }
+    assert!(!received.get());
+    handle.deliver(&[5]);
+    assert!(!received.get(), "the frame callback resumed the receiver inline");
+    reactor.run_loop(false, true);
+    assert!(received.get());
+    // The receive disarmed its ticket when it resumed.
+    assert_eq!(srpc::reactor::event_wake_report::<()>().armed_pings, armed);
+}
+
+#[test]
+fn a_foreign_close_wakes_a_parked_receive_on_the_owners_next_pass() {
+    let (channel, handle) = make_channel();
+    let wrapper = bind(channel);
+    let owner = std::thread::current().id();
+    let done = std::rc::Rc::new(std::cell::Cell::new(false));
+    let completed = done.clone();
+    srpc::reactor::Fiber::create_run(move || {
+        assert!(wrapper.as_ref().get_ref().recv_frame().is_none());
+        assert_eq!(std::thread::current().id(), owner);
+        completed.set(true);
+    });
+    assert!(!done.get());
+    std::thread::spawn(move || handle.deliver_closed(ChannelError::ConnectionReset))
+        .join()
+        .unwrap();
+    assert!(!done.get());
+    srpc::reactor::Reactor::get_reactor().run_loop(false, true);
+    assert!(done.get());
+}
+
+#[test]
+fn foreign_deliveries_between_passes_are_all_received() {
+    // Several foreign frames before one pass queue the ticket once; the
+    // receiver drains every frame, re-arming after each empty queue.
+    let (channel, handle) = make_channel();
+    let wrapper = bind(channel);
+    let got = std::rc::Rc::new(std::cell::RefCell::new(Vec::<u8>::new()));
+    let sink = got.clone();
+    srpc::reactor::Fiber::create_run(move || {
+        for _ in 0..4 {
+            let frame = wrapper.as_ref().get_ref().recv_frame().unwrap();
+            sink.borrow_mut().extend_from_slice(&frame.bytes);
+        }
+    });
+    let first = handle.clone();
+    std::thread::spawn(move || {
+        first.deliver(&[1]);
+        first.deliver(&[2]);
+        first.deliver(&[3]);
+    })
+    .join()
+    .unwrap();
+    let reactor = srpc::reactor::Reactor::get_reactor();
+    reactor.run_loop(false, true);
+    assert_eq!(*got.borrow(), [1, 2, 3]);
+    std::thread::spawn(move || handle.deliver(&[4])).join().unwrap();
+    assert_eq!(*got.borrow(), [1, 2, 3]);
+    reactor.run_loop(false, true);
+    assert_eq!(*got.borrow(), [1, 2, 3, 4]);
+}
