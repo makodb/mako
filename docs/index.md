@@ -193,6 +193,8 @@ The plans below are the `@safe`/`@unsafe` borrow-checker and smart-pointer track
 
 ## Reference
 
+- **[Redis-Compatible Interface](redis_interface.md)** - Redis protocol layer, FFI contract, and makoCon execution path
+- **[RocksDB-Compatible Interface](rocksdb_interface.md)** - RocksDB-style table/database interface
 - **[Function Dependencies](reference/function-dependencies.md)** - Function dependency analysis
 - **[Naming Conventions](reference/naming-conventions.md)** - Codebase naming conventions
 - **[TPC-C Sharding](reference/tpcc-sharding.md)** - TPC-C benchmark sharding behavior

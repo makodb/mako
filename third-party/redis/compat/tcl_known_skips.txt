@@ -1,0 +1,7 @@
+# Redis TCL Known Skips
+
+# Project decision: Redis keyspace notification Pub/Sub is outside the current
+# compatibility surface. Pub/Sub command delivery is implemented, but Redis
+# keyspace event notification fanout for data mutations is not claimed.
+/^Keyspace notifications:
+SMOVE only notify dstset when the addition is successful

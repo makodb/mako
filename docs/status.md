@@ -18,7 +18,7 @@ Mako is a **research-grade distributed transactional datastore** with strong aca
 | [Transaction Engine](#5-transaction-engine) | 80% | Partial |
 | [RocksDB Persistence](#6-rocksdb-persistence) | 20% | No |
 | [Client API (RocksDB-Compatible)](#7-client-api-rocksdb-compatible) | 40% | No |
-| [Redis-Compatible Interface](#8-redis-compatible-interface) | 15% | No |
+| [Redis-Compatible Interface](#8-redis-compatible-interface) | 228 of 251 Redis 7.4 commands | No |
 | [Testing & CI](#9-testing--ci) | 80% | Yes |
 | [Security](#10-security) | 5% | No |
 | [Observability](#11-observability) | 10% | No |
@@ -272,36 +272,35 @@ The API shape is right but the implementation is shallow. Priority: (1) add data
 
 ## 8. Redis-Compatible Interface
 
-**Status: 15% — Early Prototype**
+**Status: broad command surface, not production-ready** (updated 2026-09-24)
 
 ### What Exists
 
-- **makoCon** server: Located in `examples/makoCon.cc` and `third-party/makocon/`.
-- Supports basic Redis protocol: `GET`, `SET`, `DEL`, `MULTI/EXEC`.
-- Thread-per-core architecture with `SO_REUSEPORT`.
-- Python-based correctness test suite (`tests/correctness/`) uses makoCon as the server.
+- **makoCon** server: `third-party/redis/cpp/makoCon.cc` with the Rust RESP front end in `third-party/redis/rust-lib/`.
+- 228 of the 251 top-level Redis 7.4 commands: strings, bitmaps, HyperLogLog, keyspace and expiry, sixteen logical databases, `MULTI`/`EXEC`/`WATCH`, sets, lists, hashes with field expiry, sorted sets, geo, streams with consumer groups, blocking commands, Pub/Sub, Lua scripting, `MONITOR`, and single-node `CLUSTER` emulation. See `docs/redis_interface.md`.
+- Every data command runs inside Mako transactions; scripts and the storing geo commands use an interactive transaction held open across calls.
+- Thread-per-core front end with one shared nonblocking listener, validated with 1-32 request workers.
+- Validation in `third-party/redis/compat/`: pytest suite, a 1,328-check command script, the Redis 7.4 Tcl semantic guard (11 files), ecosystem clients, and G2/G3/G4 correctness harnesses.
 
 ### What's Missing
 
 | Gap | Severity | Impact |
 |-----|----------|--------|
-| **No Redis AUTH** | HIGH | No authentication support. |
-| **No Redis Cluster protocol** | HIGH | No CLUSTER SLOTS, MOVED/ASK redirects. |
-| **Limited command coverage** | HIGH | Only basic GET/SET/DEL/MULTI. No HASH, LIST, SET, SORTED SET, PUB/SUB, STREAM, etc. |
-| **No persistence semantics** | HIGH | In-memory only, no RDB/AOF equivalent. |
-| **No replication protocol** | MEDIUM | No Redis REPLCONF/PSYNC equivalent. |
-| **No Lua scripting** | LOW | No EVAL/EVALSHA support. |
-| **No TTL/expiry** | MEDIUM | No EXPIRE, TTL, PTTL commands. |
+| **Oversized transactions crash the server** | HIGH | One command or `MULTI` needing more than 32,768 STO items overflows STO's item array (for example a 14,975-member `GEOADD`). The bounds check is a debug-only assert. |
+| **No persistence commands** | HIGH | `BGSAVE`/`LASTSAVE` need a consistent snapshot at the vector watermark cut; `SAVE` and `SHUTDOWN` are refused. |
+| **No replication control** | MEDIUM | `REPLICAOF`/`SLAVEOF`/`FAILOVER` need Paxos membership changes; `ROLE` is missing and `WAIT` always answers 0. |
+| **No authentication** | HIGH | `AUTH` accepts any password; `ACL` knows only the implicit default user. |
+| **No sharded Redis Cluster** | MEDIUM | `CLUSTER` emulates one node owning all slots; no `MOVED`/`ASK` and no slot migration. |
+| **Collections hidden from `KEYS`/`SCAN`/`DBSIZE`** | MEDIUM | Only string keys are enumerated; scans are local to the process. |
+| **No modules** | LOW | JSON, Search and the probabilistic types are not implemented; Search would need a cross-shard scan. |
 
 ### Recommendation
 
-The Redis interface is a thin protocol wrapper, not a Redis replacement. To be useful as a Redis alternative:
-
-1. Implement core data structures (HASH, LIST, SET, ZSET).
-2. Add AUTH and ACL.
-3. Add TTL/expiry support.
-4. Implement Redis Cluster protocol for transparent sharding.
-5. Wire persistence through the RocksDB layer.
+1. Reject oversized requests in the adapter, or make STO's item array growable.
+2. Add a consistent snapshot to unlock `BGSAVE`/`SAVE`/`LASTSAVE` and replica state transfer.
+3. Expose replication state for `ROLE`, `INFO replication` and a real `WAIT`.
+4. Add real `AUTH`/`ACL`.
+5. Add a logical-key index so collections appear in `KEYS`/`SCAN`/`DBSIZE`.
 
 ---
 
@@ -434,7 +433,7 @@ Based on this assessment, here are the recommended development priorities:
 
 ### P2 — Production Hardening
 
-11. **Redis command coverage**: HASH, LIST, SET, ZSET, TTL/expiry, AUTH.
+11. **Redis layer hardening**: transaction size limit, snapshots for `BGSAVE`, replication state for `ROLE`/`WAIT`, AUTH.
 12. **Language bindings**: C, Python, Java, Go client libraries.
 13. **Performance regression CI**: Automated TPS/latency tracking per commit.
 14. **Sanitizer builds**: ASan, TSan, MSan in CI pipeline.

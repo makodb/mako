@@ -196,6 +196,10 @@ int get_outstanding_logs(uint32_t par_id) {
     DISPATCH_RAFT_OR_PAXOS(get_outstanding_logs, par_id);  // @unsafe
 }
 
+bool is_replication_leader(uint32_t par_id) {
+    DISPATCH_RAFT_OR_PAXOS(is_replication_leader, par_id);  // @unsafe
+}
+
 int shutdown_paxos() {
     DISPATCH_RAFT_OR_PAXOS(shutdown_paxos);  // @unsafe
 }

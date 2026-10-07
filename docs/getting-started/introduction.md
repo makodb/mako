@@ -104,7 +104,7 @@ The key insight is that we don't need to wait for replication consensus before c
 
 ### Developer-Friendly Interfaces
 - **RocksDB-compatible API**: Drop-in replacement for single-node RocksDB *(To be implemented)*
-- **Redis-compatible layer**: Use familiar Redis commands with enhanced consistency *(To be implemented)*
+- **Redis-compatible layer**: Use familiar Redis commands with enhanced consistency; see [Redis interface](../redis_interface.md)
 - **Native C++ API**: Direct access to Mako's full capabilities *(To be implemented)*
 
 ## When Should You Use Mako?

@@ -41,7 +41,6 @@
 #include "lib/multi_transport_manager.h"
 #include "lib/common.h"
 #include "lib/server.h"
-#include "lib/rust_wrapper.h"
 
 // Initialize Rust wrapper: communicate with rust-based redis client
 /*

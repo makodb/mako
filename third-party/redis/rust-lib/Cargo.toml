@@ -1,0 +1,17 @@
+[package]
+name = "rust_redis"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+redis-protocol = { version = "6.0.0", features = ["resp3", "bytes", "codec"] }
+bytes = "1.4"
+itoa = "1.0"
+libc = "0.2"
+socket2 = { version = "0.5", features = ["all"] }
+# Lua 5.1, the dialect Redis scripts are written against, built from source so
+# the adapter does not depend on a system Lua.
+mlua = { version = "0.9", features = ["lua51", "vendored"] }
+
+[lib]
+crate-type = ["staticlib"]

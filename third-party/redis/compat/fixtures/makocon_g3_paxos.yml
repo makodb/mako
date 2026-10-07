@@ -1,0 +1,13 @@
+site:
+  server:
+    - ["s101:45001", "s201:45101", "s301:45201", "s401:45301"]
+process:
+  s101: localhost
+  s201: p1
+  s301: p2
+  s401: learner
+host:
+  localhost: 127.0.0.1
+  p1: 127.0.0.1
+  p2: 127.0.0.1
+  learner: 127.0.0.1

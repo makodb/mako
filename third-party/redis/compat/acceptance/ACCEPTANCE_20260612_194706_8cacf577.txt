@@ -1,0 +1,13 @@
+G1 wire compatibility              N/A  makoCon not reachable at 127.0.0.1:6395
+G2 bank transfer                   PASS bank transfer invariant preserved transfers=40 total=12000 retries=0
+G2 cross-shard demo                PASS cross-shard demo captured: Redis Cluster rejected; bank transfer invariant preserved transfers=40 total=12000 retries=0
+G3 failover durability             N/A  missing MAKO_G3_START_CMD
+G4 Elle isolation                  N/A  missing Elle jar at third-party/redis/compat/elle.jar
+Throughput guard                   N/A  makoCon not reachable at 127.0.0.1:6395
+Memtier p99 guard                  N/A  makoCon not reachable at 127.0.0.1:6395
+TCL semantic guard                 N/A  missing third-party/redis/redis-tests/tests/test_helper.tcl
+INFO metrics guard                 N/A  makoCon not reachable at 127.0.0.1:6395
+Soak guard                         N/A  makoCon not reachable at 127.0.0.1:6395
+Restart durability guard           N/A  missing MAKO_RESTART_STOP_CMD or MAKO_RESTART_START_CMD
+Client failover guard              N/A  missing MAKO_FAILOVER_TARGETS
+RESP fuzz guard                    N/A  makoCon not reachable at 127.0.0.1:6395

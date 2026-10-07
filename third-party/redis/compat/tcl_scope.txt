@@ -1,0 +1,39 @@
+# Redis TCL Scope
+
+In scope:
+
+- unit/type/string
+- unit/type/hash
+- unit/type/list
+- unit/type/set
+- unit/type/zset
+- unit/expire
+- unit/scan
+- unit/multi
+- unit/keyspace
+- unit/networking
+- unit/pubsub
+
+Whole-file exclusions:
+
+- unit/cluster: Redis Cluster hash-slot routing is not Mako's sharding API.
+- unit/sentinel: Sentinel is Redis's monitoring/failover control plane.
+- unit/moduleapi: Mako does not expose the Redis module ABI.
+- unit/dump, unit/rdb, unit/aof: Redis persistence internals are replaced by
+  Mako storage/replication paths.
+- unit/scripting: run and reported since package 8, but not gated. The adapter
+  implements the EVAL/EVALSHA/SCRIPT command surface; that file also tests
+  Redis's scripting internals (LDB, function and effects replication, the
+  global-protection sandbox, RESP3 inside scripts), which this adapter does not
+  claim.
+- unit/type/stream, unit/type/stream-cgroups: run and reported since package 9,
+  but not gated, in the same way unit/scripting is. The adapter implements the
+  whole stream command surface; those two files also assert Redis's radix-tree
+  macro-node trimming granularity, its private RDB stream payload, its
+  `rdb_changes_since_last_save` bookkeeping and a 10,000-command MULTI this
+  executor cannot take, none of which this adapter claims. The failures and
+  their reasons are in known_divergences.txt.
+- ACL/TLS/client-cache files: outside this Redis layer scope.
+
+The TCL guard is an external-server semantic test. It should not be used to
+validate Redis internals that Mako deliberately does not implement.

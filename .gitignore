@@ -92,6 +92,7 @@ experiment_*.sh
 nfs_sync_*
 out-perf.masstree/*
 *.json
+!third-party/redis/compat/command_tiers.json
 /tmp
 /log
 /archive
@@ -108,6 +109,10 @@ cmake-build/*
 
 # Misc build/test artifacts
 /Testing/
+third-party/redis/compat/_client_tmp/
+third-party/redis/compat/benchmark_logs/
+third-party/redis/compat/probe_results.json
+third-party/redis/rust-lib/target/
 
 # Local assistant workspace
 /.claude/
