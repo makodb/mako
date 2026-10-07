@@ -39,7 +39,7 @@ use std::sync::{Arc, Weak};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64};
 
 use crate::basetypes::Time;
-use crate::epoll_wrapper::{Epoll, PollMode, PollReady, Pollable};
+use crate::epoll_wrapper::{PollMode, SrpcEpollBackend};
 use crate::misc::Job;
 use crate::pollable_proxy::{PollableBase, PollableProxy};
 use crate::logging::{log_line, Log};
@@ -57,10 +57,7 @@ pub type FiberTaskFn = Option<Box<dyn FnMut(&mut fiber_yield_t)>>;
 pub type StacklessPollFn = Option<Box<dyn FnMut(&mut Context<'_>) -> bool>>;
 pub type TaskVoid = Pin<Box<dyn Future<Output = ()>>>;
 pub type PollCmdReceiver = std::sync::mpsc::Receiver<PollCommand>;
-pub type FdPollableMap = HashMap<i32, PollableProxy>;
-pub type FdModeMap = HashMap<i32, i32>;
 pub type FdSet = HashSet<i32>;
-pub type JobSet = std::collections::BTreeMap<usize, Arc<dyn Job>>;
 pub type PollJoinSlot = std::sync::Mutex<Option<std::thread::JoinHandle<()>>>;
 // The tuple alias keeps the historical std::pair callback element profile.
 pub type QuorumDangling = (u16, i64);
@@ -265,6 +262,17 @@ trait EventCore: EventPollable {
     fn core_self(&self) -> &Weak<dyn EventPollable>;
     fn core_self_mut(&mut self) -> &mut Weak<dyn EventPollable>;
     fn core_is_composite(&self) -> bool;
+    // Every event's readiness changes only through something that tests it
+    // (S4 of docs/dev/lion-runtime-plan.md): its own methods (`set`,
+    // `vote_*`, or a direct `test()` after a field write); for a TimeoutEvent,
+    // the reactor's deadline map; for a WaitAny or WaitAll, a child's test
+    // (event_parents_notify); for a predicate IntEvent, its publisher, which
+    // calls set() or, from another thread, pings the owner (event_ping), whose
+    // drain tests it.  So every event waited on its owner thread wakes on
+    // change: its WAIT->READY edge queues it on the owner's ready queue, and
+    // run_loop never re-tests it.  A predicate must be installed before
+    // `wait`, and a predicate over state another thread publishes needs that
+    // publisher to ping.
 }
 
 fn event_core_set_self<W: EventCore>(ev: &mut W, p: Weak<dyn EventPollable>) {
@@ -730,8 +738,10 @@ pub struct WaitAll {
 
 impl WaitAll {
     pub fn add_event(&self, x: Arc<dyn EventPollable>) {
+        // The child tells this parent when it becomes ready (S4 step 4).
+        event_parent_link::<()>(&x, &self.self_);
         // Bind the guard, then deref — chaining `.borrow_mut().push(x)`
-        // mis-lowers to push(Vec::from_iter(x)). See §7.33.
+        // mis-lowers to push(Vec::from_iter(x)). See §8.33.
         let mut g = self.events_.borrow_mut();
         (*g).push(x);
     }
@@ -960,6 +970,58 @@ pub struct StacklessTaskEntry {
 
 const STACKLESS_UNREGISTERED_SLOT: usize = usize::MAX;
 
+// The wake handle of a PollThread's driver task (S3 of
+// docs/dev/lion-runtime-plan.md).  A PollThread runs a Lion runtime, and one
+// Lion task on it, the driver, does the owner-side work that run_loop does on
+// a thread with no loop: commands and jobs, pings, the ready queue, expired
+// deadlines.  Each source of such work wakes the driver through this handle
+// on its own empty->non-empty edge: a queued command, the ping that made the
+// ping ingress non-empty, the first wake queued on the stackless ingress, an
+// event queued on an empty ready queue, a deadline earlier than the one the
+// driver sleeps until, and a pending write for a registered descriptor.  Any
+// thread may wake it; only the poll thread drains.
+//
+// `pending` turns a burst of wakes into one Lion wake: only the wake that sets
+// it wakes the waker.  The driver clears it before each drain, and after the
+// drain publishes its waker and reads it again before it sleeps.  A wake that
+// lands before the publish is seen by that read; one that lands after it finds
+// the new waker.  Both sides take the `waker` mutex, which orders them.
+struct PollDriverWake {
+    pending: AtomicBool,
+    // The driver task's Lion waker; None before its first poll and after it
+    // has finished.
+    waker: std::sync::Mutex<Option<Waker>>,
+}
+
+// Wake the driver unless a wake is already pending.  Any thread.
+fn poll_driver_wake(wake: &PollDriverWake) {
+    if wake.pending.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return;
+    }
+    // Cloned under the lock, woken after it is released: a Lion wake from
+    // another thread takes the runtime's own queue lock and signals its
+    // eventfd.
+    let waker: Option<Waker> = {
+        let guard = wake.waker.lock().unwrap();
+        (*guard).clone()
+    };
+    if let Some(waker) = waker {
+        waker.wake();
+    }
+}
+
+// The driver bound to `slot`, if any, woken as by poll_driver_wake.  For the
+// ingresses other threads reach (pings, stackless wakes).
+fn poll_driver_wake_bound(slot: &std::sync::Mutex<Option<Arc<PollDriverWake>>>) {
+    let bound: Option<Arc<PollDriverWake>> = {
+        let guard = slot.lock().unwrap();
+        (*guard).clone()
+    };
+    if let Some(wake) = bound {
+        poll_driver_wake(&wake);
+    }
+}
+
 struct StacklessWakeTicket {
     slot: std::sync::atomic::AtomicUsize,
     enqueued: std::sync::atomic::AtomicBool,
@@ -968,6 +1030,12 @@ struct StacklessWakeTicket {
 struct StacklessWakeIngress {
     accepting: std::sync::atomic::AtomicBool,
     pending: std::sync::Mutex<VecDeque<Arc<StacklessWakeTicket>>>,
+    // The PollThread driver of the owner thread, if it has one (S3): the
+    // first wake queued after a drain wakes it.  On a PollThread every task
+    // spawned through reactor_spawn_stackless_task_* runs on Lion instead, so
+    // this serves only pollers registered directly with
+    // Reactor::register_stackless_poller there.
+    driver: std::sync::Mutex<Option<Arc<PollDriverWake>>>,
 }
 
 struct StacklessWakeTarget {
@@ -1159,11 +1227,22 @@ fn stackless_wake_request<WakeDomain>(ingress: &Arc<StacklessWakeIngress>, ticke
     if ticket.enqueued.swap(true, std::sync::atomic::Ordering::AcqRel) {
         return;
     }
-    let mut pending = ingress.pending.lock().unwrap();
-    if ingress.accepting.load(std::sync::atomic::Ordering::Acquire) {
-        (*pending).push_back(ticket.clone());
-    } else {
-        ticket.enqueued.store(false, std::sync::atomic::Ordering::Release);
+    let first: bool = {
+        let mut pending = ingress.pending.lock().unwrap();
+        if ingress.accepting.load(std::sync::atomic::Ordering::Acquire) {
+            let was_empty: bool = (*pending).is_empty();
+            (*pending).push_back(ticket.clone());
+            was_empty
+        } else {
+            ticket.enqueued.store(false, std::sync::atomic::Ordering::Release);
+            false
+        }
+    };
+    // The empty->non-empty edge wakes the owner's PollThread driver, if it
+    // has one; on a thread with no loop nothing is bound and the owner's next
+    // run_loop pass takes the wake, as before.
+    if first {
+        poll_driver_wake_bound(&ingress.driver);
     }
 }
 
@@ -1190,6 +1269,7 @@ fn stackless_wake_ingress<WakeDomain>(reactor: &Reactor) -> Arc<StacklessWakeIng
     let ingress = Arc::new(StacklessWakeIngress {
         accepting: std::sync::atomic::AtomicBool::new(true),
         pending: std::sync::Mutex::new(VecDeque::<Arc<StacklessWakeTicket>>::new()),
+        driver: std::sync::Mutex::new(poll_driver_wake_of(reactor)),
     });
     let owner = StacklessWakeOwner {
         reactor_key: key,
@@ -1410,6 +1490,682 @@ fn stackless_wake_unregister<WakeDomain>(reactor: &Reactor) {
     stackless_wake_release_empty_storage::<WakeDomain>(owners_ptr);
 }
 
+// ---------------------------------------------------------------------------
+// Owner-side event wake state (S4 of docs/dev/lion-runtime-plan.md)
+// ---------------------------------------------------------------------------
+//
+// run_loop used to find work by re-testing every waiting event on every pass
+// and by scanning every timed wait for an expired deadline.  Events now reach
+// it through this per-thread state instead, each one when it changes:
+//
+// * The ready queue (steps 1-2).  An event waited on its owner thread joins
+//   no scanned queue.  event_test_impl pushes it here on its WAIT->READY edge,
+//   and run_loop moves this queue into its dispatch list on every pass, so
+//   run_loop's cost for such events is O(ready), not O(waiting).  The queue
+//   holds strong references, so a ready event stays alive until its waiter
+//   has been dispatched.
+//
+// * The deadline map (step 3).  Every timed wait, and every TimeoutEvent from
+//   its creation, has an entry keyed by its deadline in Time::now(true)
+//   microseconds.  check_timeout pops the expired prefix in deadline order,
+//   equal deadlines in insertion order, so run_loop's timer cost is
+//   O(expired) and a pass reads the clock only while a deadline is pending.
+//   At a timed wait's deadline the rule is the one the linear scan of
+//   timeout_events_ had: READY if the event is ready, else TIMEOUT.  Entries
+//   are deleted lazily (see EventDeadline).  event_next_deadline_us gives the
+//   earliest deadline to a driver that has to sleep until it (S3).
+//
+// * Parent links (step 4).  A WaitAny or WaitAll child cannot tell its
+//   parents anything through `dyn EventPollable`, and the pinned event
+//   layouts have no room for a list, so the links live here, keyed by the
+//   child's address (event_address).  create_sp_waitany,
+//   create_sp_waitall_from and WaitAll::add_event record them; a test() that
+//   finds the child ready tests the parents (event_parents_notify), whose
+//   WAIT->READY edge then queues them.  A composite holds its children
+//   strongly, so a child's address cannot be reused while any parent it lists
+//   is alive; entries whose parents all died are pruned lazily.
+//
+// * Pings (step 5).  An IntEvent predicate may read state that other threads
+//   publish; FiberChannel's reads its frame queue and closed latch, filled by
+//   transport callbacks on the poll thread, an in-memory sender's thread or
+//   any closer's thread.  Such a publisher holds an EventPing ticket and
+//   pings it after publishing (event_ping).  The ticket crosses to the owner
+//   through a mutex-guarded ingress, in the shape of the stackless wake
+//   ingress, with an "already queued" flag so repeated pings before a drain
+//   queue it once.  Each pass, the owner takes the pinged tickets, looks up
+//   the event each one has armed (event_ping_arm), and tests only those; a
+//   ready one takes its ordinary WAIT->READY edge onto the ready queue.
+//
+// Resumption stays deferred throughout: an edge or a deadline only marks the
+// event, and the owner's next drain resumes the waiter through the one
+// dispatch block in run_loop, with the same DONE de-dup, registry, PAUSED,
+// READY->DONE and sticky-TIMEOUT checks.
+//
+// One state per thread, owned by that thread's TLS Reactor: reactor_tls_get
+// opens it when it creates the Reactor, and Reactor::drop closes it.
+// `event_wake_owner_th_` names the owning Reactor, so a disk reactor or a
+// directly constructed Reactor on the same thread never drains it.  Only
+// trivially destructible values live in TLS, for the reason given at
+// stackless_wake_owners_slot: C++ destroys a thread-local container before a
+// TLS Reactor that was created ahead of it, and Reactor teardown can still
+// reach event_test_impl (a cancelled task's destructor may set an event).
+// After the state is closed an edge queues nothing and a wait registers no
+// deadline.
+//
+// Only the owner thread touches the state; the one exception is the ping
+// ingress, which exists to be reached from other threads.  An edge taken on
+// a foreign thread sets READY and queues nothing.  An untimed waiter is then
+// not woken.  A timed waiter is woken at its deadline, because the deadline
+// rule finds the event READY and dispatches it.  (Before S4 the per-pass
+// scan found such an event by racing on its status Cell, and check_timeout
+// took READY entries on every pass.)  Events are owner-thread-only; a
+// foreign publisher pings, or goes through another ingress queue.
+//
+// None of this enters the exact strong-symbol census: the thread-locals lower
+// to `inline thread_local`, the state structs are private aggregates with no
+// methods, the helpers are generic, and the open, drain and close steps live
+// inside functions that already exist.
+
+// One entry of the deadline map.  `clock` marks a TimeoutEvent's own entry:
+// that event's readiness is a clock comparison, so reaching the deadline is
+// what makes it ready, and the entry tests it -- INIT->DONE, or WAIT->READY
+// through the ready queue.  Every other entry is a timed wait, and at its
+// deadline the waiter resumes READY if the event is ready, else TIMEOUT.
+//
+// Deletion is lazy.  A wait that ends first leaves its entry behind, and the
+// entry is dropped unserved when it is popped, because its event is gone, is
+// no longer waiting, or now waits with a different deadline
+// (event_wait_impl records every wait's deadline in wakeup_time_, 0 for an
+// untimed wait).  `event` is weak, so an entry never keeps an event alive.
+// event_deadline_push sweeps stale entries whenever their number passes a
+// threshold, so a long timeout on a wait that ended early costs O(1)
+// amortized instead of a map entry until the timeout.
+struct EventDeadline {
+    deadline: u64,
+    clock: bool,
+    event: Weak<dyn EventPollable>,
+}
+
+struct EventWakeState {
+    // Self-notifying events whose WAIT->READY edge was taken on the owner
+    // thread, in edge order.
+    ready: RefCell<VecDeque<Arc<dyn EventPollable>>>,
+    // Pending deadlines.  Each key's entries are in insertion order.
+    deadlines: RefCell<BTreeMap<u64, Vec<EventDeadline>>>,
+    // Entries in `deadlines`, counting stale ones not yet dropped.
+    deadline_entries: Cell<usize>,
+    // When `deadline_entries` passes this, event_deadline_push sweeps.
+    deadline_sweep_at: Cell<usize>,
+    // The smallest key in `deadlines`, or u64::MAX when it is empty.
+    next_deadline: Cell<u64>,
+    // Each composite child's parents, keyed by the child's event_address.
+    parents: RefCell<HashMap<usize, EventParentList>>,
+    // Entries in `parents`; 0 lets event_test_impl skip the lookup.
+    parent_keys: Cell<usize>,
+    // When `parent_keys` passes this, event_parent_link sweeps.
+    parents_sweep_at: Cell<usize>,
+    // Tickets pinged from any thread since the last drain.
+    pings: Arc<EventPingIngress>,
+    // The event each armed ticket re-tests, keyed by the ticket's address.
+    armed: RefCell<HashMap<usize, Weak<dyn EventPollable>>>,
+}
+
+// One composite child's parents.  Weak, so a link never keeps a parent alive.
+// Dead links are pruned when the list passes `prune_at`, which is then re-armed
+// at twice the live length, so a long-lived child shared by many short-lived
+// parents costs O(1) amortized per link.
+struct EventParentList {
+    parents: Vec<Weak<dyn EventPollable>>,
+    prune_at: usize,
+}
+
+thread_local! {
+    static event_wake_state_th_: Cell<*mut EventWakeState> =
+        const { Cell::new(core::ptr::null_mut()) };
+    static event_wake_owner_th_: Cell<usize> = const { Cell::new(0usize) };
+}
+
+// Queue an event on this thread's ready queue.  Called only from
+// event_test_impl's WAIT->READY edge, and only on the event's owner thread.
+fn event_ready_enqueue<W: EventCore>(ev: &W) {
+    let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
+    if state_ptr.is_null() {
+        return;
+    }
+    let self_ref: Option<Arc<dyn EventPollable>> = ev.core_self().upgrade();
+    if self_ref.is_none() {
+        return;
+    }
+    // The state is heap storage owned by this thread's TLS Reactor, and the
+    // queue is only ever borrowed for one push or one drain, never across user
+    // code.  The guard is typed: the emitter needs RefMut to lower `->`
+    // through it.
+    let first: bool = unsafe {
+        let mut queue_guard: RefMut<VecDeque<Arc<dyn EventPollable>>> = (*state_ptr).ready.borrow_mut();
+        let was_empty: bool = queue_guard.is_empty();
+        queue_guard.push_back(self_ref.unwrap());
+        was_empty
+    };
+    // On a PollThread the driver drains this queue (S3).  An edge taken
+    // outside its poll, in a transport task or a stackless task, wakes it on
+    // the empty->non-empty edge.
+    if first {
+        poll_driver_wake_owner();
+    }
+}
+
+// Register a deadline for `ev` with this thread's deadline map.  `clock` marks
+// a TimeoutEvent's own entry (see EventDeadline).  Owner thread only.
+fn event_deadline_push<W: EventCore>(ev: &W, deadline: u64, clock: bool) {
+    let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
+    if state_ptr.is_null() {
+        return;
+    }
+    let state: &EventWakeState = unsafe { &*state_ptr };
+    let entry = EventDeadline {
+        deadline,
+        clock,
+        event: ev.core_self().clone(),
+    };
+    {
+        let mut map_guard: RefMut<BTreeMap<u64, Vec<EventDeadline>>> = state.deadlines.borrow_mut();
+        map_guard.entry(deadline).or_default().push(entry);
+    }
+    state.deadline_entries.set(state.deadline_entries.get() + 1usize);
+    if deadline < state.next_deadline.get() {
+        state.next_deadline.set(deadline);
+    }
+    if state.deadline_entries.get() > state.deadline_sweep_at.get() {
+        event_deadline_sweep::<()>(state);
+    }
+    // A PollThread's driver sleeps until the earliest deadline it saw (S3);
+    // an earlier one pushed outside its poll wakes it to sleep less.
+    poll_driver_deadline_added(deadline);
+}
+
+// Whether a deadline entry can still do something when it is popped: its event
+// is alive and, for a timed wait, still waits on exactly this deadline (it may
+// already be READY, which the deadline rule hands over).  A TimeoutEvent's own
+// entry stays live until it fires.  Reads statuses only.
+// MEASURED allow — see the `extra_unused_type_parameters` note on
+// `stackless_wake_owners_slot`.
+#[allow(clippy::extra_unused_type_parameters)]
+fn event_deadline_is_live<WakeDomain>(entry: &EventDeadline) -> bool {
+    let upgraded: Option<Arc<dyn EventPollable>> = entry.event.upgrade();
+    if upgraded.is_none() {
+        return false;
+    }
+    if entry.clock {
+        return true;
+    }
+    let ev: Arc<dyn EventPollable> = upgraded.unwrap();
+    let status: EventStatus = (*ev).status();
+    (*ev).wakeup_time() == entry.deadline
+        && (status == EventStatus::WAIT || status == EventStatus::READY)
+}
+
+// Drop every stale entry (see EventDeadline) and re-arm the sweep threshold at
+// twice the live count.  Reads statuses only; it tests nothing, so no event
+// code runs while the map is borrowed.
+// MEASURED allow — see the `extra_unused_type_parameters` note on
+// `stackless_wake_owners_slot`: the tag keeps this helper a template, which
+// is what keeps it out of the exact strong-symbol census.
+#[allow(clippy::extra_unused_type_parameters)]
+fn event_deadline_sweep<WakeDomain>(state: &EventWakeState) {
+    let mut map_guard: RefMut<BTreeMap<u64, Vec<EventDeadline>>> = state.deadlines.borrow_mut();
+    let mut keys: Vec<u64> = Vec::new();
+    {
+        let ks = map_guard.keys();
+        for key in ks {
+            keys.push(*key);
+        }
+    }
+    let mut live: usize = 0usize;
+    let mut next: u64 = u64::MAX;
+    for key in keys {
+        // Pruned in place; an emptied key is removed through
+        // event_deadline_remove_key.
+        let emptied: bool = {
+            let slot: &mut Vec<EventDeadline> = map_guard.get_mut(&key).unwrap();
+            slot.retain(move |entry: &EventDeadline| -> bool { event_deadline_is_live::<WakeDomain>(entry) });
+            live += slot.len();
+            slot.is_empty()
+        };
+        if emptied {
+            let _husk: Vec<EventDeadline> = event_deadline_remove_key::<WakeDomain>(&mut map_guard, key);
+        } else if key < next {
+            next = key;
+        }
+    }
+    state.deadline_entries.set(live);
+    state.next_deadline.set(next);
+    state.deadline_sweep_at.set(live * 2usize + 64usize);
+}
+
+// Remove `key`, which the caller found present, and return its entries.  A
+// plain BTreeMap::remove: the btree port's C++ remove used to copy the value
+// out and never destroy the original, so this took the entries out first and
+// removed only an empty Vec.  rusty-cpp 400cb4d1 (plan T7) made the port's
+// reads relocate, and the workaround is gone.
+// MEASURED allow — see the `extra_unused_type_parameters` note on
+// `stackless_wake_owners_slot`.
+#[allow(clippy::extra_unused_type_parameters)]
+fn event_deadline_remove_key<WakeDomain>(
+    map_guard: &mut RefMut<BTreeMap<u64, Vec<EventDeadline>>>,
+    key: u64,
+) -> Vec<EventDeadline> {
+    map_guard.remove(&key).unwrap()
+}
+
+// The earliest pending deadline of `reactor`'s deadline map, in
+// Time::now(true) microseconds.  None when no deadline is pending, or when
+// `reactor` does not own this thread's wake state.  It is a lower bound: an
+// entry deleted lazily counts until it is popped, so a driver that sleeps
+// until this instant may wake to find nothing due and simply asks again.
+// Deliberately private.  check_timeout uses it for its clock-free fast path;
+// the only other caller is the Lion driver task of a PollThread (S3), which
+// sleeps until it (poll_driver_arm_timer).
+fn event_next_deadline_us<WakeDomain>(reactor: &Reactor) -> Option<u64> {
+    let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
+    if state_ptr.is_null()
+        || event_wake_owner_th_.with(|owner| owner.get()) != stackless_wake_reactor_key::<WakeDomain>(reactor)
+    {
+        return None;
+    }
+    let next: u64 = unsafe { (*state_ptr).next_deadline.get() };
+    if next == u64::MAX {
+        return None;
+    }
+    Some(next)
+}
+
+// Pop every entry whose deadline has passed, in deadline order.  The clock is
+// read only when a deadline is pending.  The map is not borrowed once this
+// returns, so serving the entries may push new deadlines.
+fn event_deadline_take_expired<WakeDomain>(reactor: &Reactor) -> Vec<EventDeadline> {
+    let mut expired: Vec<EventDeadline> = Vec::new();
+    let next: Option<u64> = event_next_deadline_us::<WakeDomain>(reactor);
+    if next.is_none() {
+        return expired;
+    }
+    let time_now: u64 = Time::now(true);
+    if time_now < next.unwrap() {
+        return expired;
+    }
+    let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
+    let state: &EventWakeState = unsafe { &*state_ptr };
+    let mut remaining_next: u64 = u64::MAX;
+    {
+        let mut map_guard: RefMut<BTreeMap<u64, Vec<EventDeadline>>> = state.deadlines.borrow_mut();
+        loop {
+            let head: Option<u64> = map_guard.keys().next().copied();
+            if head.is_none() {
+                break;
+            }
+            let key: u64 = head.unwrap();
+            if key > time_now {
+                remaining_next = key;
+                break;
+            }
+            // `mut` keeps the C++ binding non-const, so each entry moves out.
+            let mut entries: Vec<EventDeadline> = event_deadline_remove_key::<WakeDomain>(&mut map_guard, key);
+            for entry in entries {
+                expired.push(entry);
+            }
+        }
+    }
+    state.next_deadline.set(remaining_next);
+    state.deadline_entries.set(state.deadline_entries.get() - expired.len());
+    expired
+}
+
+// The address that keys an event in `parents`: its data pointer, the same
+// whichever handle reaches it.
+// MEASURED allow — see the `extra_unused_type_parameters` note on
+// `stackless_wake_owners_slot`.
+#[allow(clippy::extra_unused_type_parameters)]
+fn event_address<WakeDomain>(ev: &Arc<dyn EventPollable>) -> usize {
+    let ptr: *const dyn EventPollable = Arc::as_ptr(ev);
+    ptr as *const u8 as usize
+}
+
+// Record that `parent` (a WaitAny or WaitAll) waits on `child`.  Owner thread
+// only.  Called after reactor_setup_sp_event: before it, the parent has no
+// self weak-link, and setup's Arc::get_mut must see no other reference.
+// MEASURED allow — see the `extra_unused_type_parameters` note on
+// `stackless_wake_owners_slot`.
+#[allow(clippy::extra_unused_type_parameters)]
+fn event_parent_link<WakeDomain>(child: &Arc<dyn EventPollable>, parent: &Weak<dyn EventPollable>) {
+    let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
+    if state_ptr.is_null() {
+        return;
+    }
+    let state: &EventWakeState = unsafe { &*state_ptr };
+    let key: usize = event_address::<WakeDomain>(child);
+    {
+        let mut map_guard: RefMut<HashMap<usize, EventParentList>> = state.parents.borrow_mut();
+        let list: &mut EventParentList = map_guard.entry(key).or_insert(EventParentList {
+            parents: Vec::new(),
+            prune_at: 8usize,
+        });
+        list.parents.push(parent.clone());
+        if list.parents.len() > list.prune_at {
+            list.parents.retain(move |p: &Weak<dyn EventPollable>| -> bool { p.strong_count() > 0usize });
+            list.prune_at = list.parents.len() * 2usize + 8usize;
+        }
+        state.parent_keys.set(map_guard.len());
+    }
+    if state.parent_keys.get() > state.parents_sweep_at.get() {
+        event_parent_sweep::<WakeDomain>(state);
+    }
+}
+
+// Drop every child entry whose parents have all died, and re-arm the sweep
+// threshold at twice the live count.  Tests nothing.
+// MEASURED allow — see the `extra_unused_type_parameters` note on
+// `stackless_wake_owners_slot`.
+#[allow(clippy::extra_unused_type_parameters)]
+fn event_parent_sweep<WakeDomain>(state: &EventWakeState) {
+    let mut map_guard: RefMut<HashMap<usize, EventParentList>> = state.parents.borrow_mut();
+    let mut keys: Vec<usize> = Vec::new();
+    {
+        let ks = map_guard.keys();
+        for key in ks {
+            keys.push(*key);
+        }
+    }
+    for key in keys {
+        // `mut` keeps the C++ binding non-const, so the list moves back in.
+        let mut list: EventParentList = map_guard.remove(&key).unwrap();
+        list.parents.retain(move |p: &Weak<dyn EventPollable>| -> bool { p.strong_count() > 0usize });
+        if !list.parents.is_empty() {
+            list.prune_at = list.parents.len() * 2usize + 8usize;
+            map_guard.insert(key, list);
+        }
+    }
+    state.parent_keys.set(map_guard.len());
+    state.parents_sweep_at.set(map_guard.len() * 2usize + 64usize);
+}
+
+// `ev` was just tested and found ready: test each parent that can still use
+// it.  A parent that is waiting takes its WAIT->READY edge, which queues it
+// for the owner's drain; a parent nobody waits on yet (INIT) moves to DONE and
+// tells its own parents in turn, which is how nested composites propagate.
+// A parent already DONE, READY or TIMEOUT has nothing to gain, and is left
+// alone, so a satisfied composite is never moved back to INIT here.  The
+// list is copied out first: a parent's test() re-enters this function.
+// Owner thread only; costs one thread-local read while no composite exists.
+fn event_parents_notify<W: EventCore>(ev: &W) {
+    let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
+    if state_ptr.is_null() {
+        return;
+    }
+    let state: &EventWakeState = unsafe { &*state_ptr };
+    if state.parent_keys.get() == 0usize {
+        return;
+    }
+    // The links live on the owner thread, like the ready queue.
+    if std::thread::current().id() != ev.core_owner_thread() {
+        return;
+    }
+    let self_ref: Option<Arc<dyn EventPollable>> = ev.core_self().upgrade();
+    if self_ref.is_none() {
+        return;
+    }
+    let key: usize = event_address::<()>(&self_ref.unwrap());
+    let mut parents: Vec<Weak<dyn EventPollable>> = Vec::new();
+    {
+        let map_guard: RefMut<HashMap<usize, EventParentList>> = state.parents.borrow_mut();
+        let found: Option<&EventParentList> = map_guard.get(&key);
+        if let Some(list) = found {
+            let list: &EventParentList = list;
+            for p in list.parents.iter() {
+                parents.push(p.clone());
+            }
+        }
+    }
+    for p in parents.iter() {
+        let upgraded: Option<Arc<dyn EventPollable>> = p.upgrade();
+        if let Some(parent) = upgraded {
+            let parent: Arc<dyn EventPollable> = parent;
+            let status: EventStatus = (*parent).status();
+            if status == EventStatus::WAIT || status == EventStatus::INIT {
+                (*parent).test();
+            }
+        }
+    }
+}
+
+// A cross-thread readiness ping for one predicate event at a time (S4 step 5).
+// Built by event_ping_new on any thread and shared with the publishers, which
+// call event_ping after publishing.  The owner thread arms it with the event
+// its fiber is about to wait on (event_ping_arm), which also binds it to that
+// thread's ingress, and disarms it when the wait is over (event_ping_disarm).
+// Only atomics and a mutex: the event itself is !Send and never leaves the
+// owner, which maps the ticket back to it through its `armed` table.
+pub struct EventPing {
+    // The ingress of the owner thread that last armed this ticket.
+    ingress: std::sync::Mutex<Option<Arc<EventPingIngress>>>,
+    // Set by the ping that queues the ticket, cleared by the owner's drain.
+    queued: AtomicBool,
+}
+
+// The owner side of the pings.  `accepting` goes false when the owner's wake
+// state closes, which turns later pings into no-ops.  `signaled` lets the
+// owner skip the mutex on a pass with nothing pinged.  `driver` is the owner
+// thread's PollThread driver while one runs there (S3): the ping that makes
+// the ingress non-empty wakes it.
+struct EventPingIngress {
+    accepting: AtomicBool,
+    signaled: AtomicBool,
+    pending: std::sync::Mutex<Vec<Arc<EventPing>>>,
+    driver: std::sync::Mutex<Option<Arc<PollDriverWake>>>,
+}
+
+// The ticket's address, which keys the owner's `armed` table.  Bound through
+// a typed pointer: the emitter lowers `ptr as usize` only from a named one.
+// MEASURED allow — see the `extra_unused_type_parameters` note on
+// `stackless_wake_owners_slot`.
+#[allow(clippy::extra_unused_type_parameters)]
+fn event_ping_key<WakeDomain>(ping: &Arc<EventPing>) -> usize {
+    let ptr: *const EventPing = Arc::as_ptr(ping);
+    ptr as usize
+}
+
+// A fresh, unarmed ticket.  Generic for the same reason as
+// stackless_cancel_report: a template adds no strong symbol.
+pub fn event_ping_new<WakeDomain>() -> Arc<EventPing> {
+    Arc::new(EventPing {
+        ingress: std::sync::Mutex::new(None),
+        queued: AtomicBool::new(false),
+    })
+}
+
+// Tell the owner that the armed event may have become ready.  Call it after
+// publishing the state the event's predicate reads, from any thread.  It
+// never tests the event and never resumes a waiter: the owner re-tests the
+// armed event on its next run_loop pass.  A ticket already queued and not yet
+// drained is not queued again; the drain clears the flag before it tests, so
+// a publish that lands after the test re-queues the ticket.  Returns true when
+// this ping made the owner's ingress non-empty.  On that edge it also wakes
+// the owner's PollThread driver, if the owner runs one (S3); a thread with no
+// loop notices on its next run_loop pass.
+pub fn event_ping<WakeDomain>(ping: &Arc<EventPing>) -> bool {
+    let bound: Option<Arc<EventPingIngress>> = {
+        let guard = ping.ingress.lock().unwrap();
+        (*guard).clone()
+    };
+    if bound.is_none() {
+        // Never armed: nothing waits on it, and the arming fiber rechecks the
+        // published state after arming.
+        return false;
+    }
+    let ingress: Arc<EventPingIngress> = bound.unwrap();
+    if !ingress.accepting.load(std::sync::atomic::Ordering::Acquire) {
+        return false;
+    }
+    if ping.queued.swap(true, std::sync::atomic::Ordering::AcqRel) {
+        return false;
+    }
+    // A statement block, not a block expression with an early return: the
+    // guard is released at its closing brace, before the driver is woken.
+    let mut was_empty: bool = false;
+    {
+        let mut pending = ingress.pending.lock().unwrap();
+        if ingress.accepting.load(std::sync::atomic::Ordering::Acquire) {
+            was_empty = (*pending).is_empty();
+            (*pending).push(ping.clone());
+            ingress.signaled.store(true, std::sync::atomic::Ordering::Release);
+        } else {
+            ping.queued.store(false, std::sync::atomic::Ordering::Release);
+        }
+    }
+    // Woken after the ingress lock is released, on the edge only: a ping
+    // that finds tickets queued knows an earlier one already woke the driver.
+    if was_empty {
+        poll_driver_wake_bound(&ingress.driver);
+    }
+    was_empty
+}
+
+// Arm `ping` with `ev`: until disarmed, each drained ping of it re-tests `ev`.
+// Owner thread only, before the wait, and before the arming code rechecks the
+// state the predicate reads; a publish that lands in between is then caught
+// either by that recheck or by the ping.
+pub fn event_ping_arm<Ev: EventPollable + 'static>(ping: &Arc<EventPing>, ev: &Arc<Ev>) {
+    let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
+    if state_ptr.is_null() {
+        return;
+    }
+    let state: &EventWakeState = unsafe { &*state_ptr };
+    {
+        let mut guard = ping.ingress.lock().unwrap();
+        *guard = Some(state.pings.clone());
+    }
+    let base: Arc<dyn EventPollable> = ev.clone();
+    let key: usize = event_ping_key::<()>(ping);
+    let mut armed_guard: RefMut<HashMap<usize, Weak<dyn EventPollable>>> = state.armed.borrow_mut();
+    armed_guard.insert(key, Arc::downgrade(&base));
+}
+
+// Disarm `ping`.  Owner thread only, once its wait is over.  A ping still
+// queued is dropped unserved by the drain.
+pub fn event_ping_disarm<WakeDomain>(ping: &Arc<EventPing>) {
+    let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
+    if state_ptr.is_null() {
+        return;
+    }
+    let state: &EventWakeState = unsafe { &*state_ptr };
+    let key: usize = event_ping_key::<WakeDomain>(ping);
+    let mut armed_guard: RefMut<HashMap<usize, Weak<dyn EventPollable>>> = state.armed.borrow_mut();
+    armed_guard.remove(&key);
+}
+
+// Test the event armed on each ticket pinged since the last drain.  Owner
+// reactor only.  One atomic load when nothing was pinged.  Returns whether any
+// ticket was drained.
+fn event_ping_drain<WakeDomain>(reactor: &Reactor) -> bool {
+    let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
+    if state_ptr.is_null()
+        || event_wake_owner_th_.with(|owner| owner.get()) != stackless_wake_reactor_key::<WakeDomain>(reactor)
+    {
+        return false;
+    }
+    let state: &EventWakeState = unsafe { &*state_ptr };
+    if !state.pings.signaled.load(std::sync::atomic::Ordering::Acquire) {
+        return false;
+    }
+    let pinged: Vec<Arc<EventPing>> = {
+        let mut pending = state.pings.pending.lock().unwrap();
+        state.pings.signaled.store(false, std::sync::atomic::Ordering::Release);
+        core::mem::take(&mut *pending)
+    };
+    for ping in pinged.iter() {
+        // Clear the flag before the test (AcqRel: the publish that set it is
+        // visible to the test), so a publish after the test queues again.
+        ping.queued.swap(false, std::sync::atomic::Ordering::AcqRel);
+        let key: usize = event_ping_key::<WakeDomain>(ping);
+        let armed: Option<Weak<dyn EventPollable>> = {
+            let armed_guard: RefMut<HashMap<usize, Weak<dyn EventPollable>>> = state.armed.borrow_mut();
+            armed_guard.get(&key).cloned()
+        };
+        if let Some(weak) = armed {
+            let upgraded: Option<Arc<dyn EventPollable>> = weak.upgrade();
+            if let Some(ev) = upgraded {
+                let ev: Arc<dyn EventPollable> = ev;
+                (*ev).test();
+            }
+        }
+    }
+    !pinged.is_empty()
+}
+
+// Counters over this thread's event wake state, for tests and diagnostics.
+// A plain aggregate with no methods, like StacklessCancelReport, so it
+// contributes no symbol.
+pub struct EventWakeReport {
+    // Events on the ready queue, waiting for the owner's next drain.
+    pub ready_queued: usize,
+    // Deadline entries whose event can still be served (see
+    // event_deadline_is_live): a timed wait that has not ended, or a
+    // TimeoutEvent that has not fired.
+    pub live_deadlines: usize,
+    // All deadline entries, counting ended waits whose entries are deleted
+    // lazily and have not been dropped yet.
+    pub deadline_entries: usize,
+    // Composite children with a parent list, counting lists whose parents
+    // have all died and are not swept yet.
+    pub composite_children: usize,
+    // Parent links over all those lists, dead ones included.
+    pub parent_links: usize,
+    // Pings armed with an event (see EventPing).
+    pub armed_pings: usize,
+}
+
+// Generic for the same reason as stackless_cancel_report: a template adds no
+// strong symbol.  Reads this thread's state whichever Reactor owns it; all
+// zero when the thread has none.
+pub fn event_wake_report<WakeDomain>() -> EventWakeReport {
+    let mut report = EventWakeReport {
+        ready_queued: 0usize,
+        live_deadlines: 0usize,
+        deadline_entries: 0usize,
+        composite_children: 0usize,
+        parent_links: 0usize,
+        armed_pings: 0usize,
+    };
+    let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
+    if state_ptr.is_null() {
+        return report;
+    }
+    let state: &EventWakeState = unsafe { &*state_ptr };
+    {
+        let queue_guard: RefMut<VecDeque<Arc<dyn EventPollable>>> = state.ready.borrow_mut();
+        report.ready_queued = queue_guard.len();
+    }
+    report.deadline_entries = state.deadline_entries.get();
+    {
+        let map_guard: RefMut<BTreeMap<u64, Vec<EventDeadline>>> = state.deadlines.borrow_mut();
+        let vs = map_guard.values();
+        for entries in vs {
+            for entry in entries.iter() {
+                if event_deadline_is_live::<WakeDomain>(entry) {
+                    report.live_deadlines += 1usize;
+                }
+            }
+        }
+    }
+    let parents_guard: RefMut<HashMap<usize, EventParentList>> = state.parents.borrow_mut();
+    report.composite_children = parents_guard.len();
+    let lists = parents_guard.values();
+    for list in lists {
+        report.parent_links += list.parents.len();
+    }
+    let armed_guard: RefMut<HashMap<usize, Weak<dyn EventPollable>>> = state.armed.borrow_mut();
+    report.armed_pings = armed_guard.len();
+    report
+}
+
 thread_local! {
     pub static reactor_clients_th_: RefCell<HashMap<String, Vec<PollableProxy>>> =
         RefCell::new(HashMap::<String, Vec<PollableProxy>>::new());
@@ -1421,7 +2177,6 @@ pub struct Reactor {
     pub server_id_: Cell<i32>,
     pub all_events_: RefCell<VecDeque<Arc<dyn EventPollable>>>,
     pub waiting_events_: RefCell<VecDeque<Arc<dyn EventPollable>>>,
-    pub timeout_events_: RefCell<VecDeque<Arc<dyn EventPollable>>>,
     pub composite_events_: RefCell<VecDeque<Arc<dyn EventPollable>>>,
     pub fibers_: RefCell<BTreeMap<usize, Rc<Fiber>>>,
     pub available_fibers_: RefCell<Vec<Rc<Fiber>>>,
@@ -1440,8 +2195,10 @@ pub struct Reactor {
     // and a ready queue.  `run_loop` drains the ready queue via
     // `process_stackless_tasks()` each pass; waking a task pushes its index
     // back onto it. Standard pinned Futures are polled with a borrowed
-    // Context, and each Waker owns its wake target. `pollworker_poll_loop`
-    // pumps `run_loop` after every epoll pass. See docs/async-runtime.md.
+    // Context, and each Waker owns its wake target. On a PollThread the
+    // spawn functions hand pending tasks to Lion instead, and the driver
+    // task pumps `run_loop` for what remains here (S3). See
+    // docs/async-runtime.md.
     pub stackless_tasks_: RefCell<Vec<StacklessTaskEntry>>,
     pub free_stackless_task_slots_: RefCell<Vec<usize>>,
     pub ready_stackless_tasks_: RefCell<VecDeque<usize>>,
@@ -1454,7 +2211,6 @@ impl Reactor {
             server_id_: Default::default(),
             all_events_: Default::default(),
             waiting_events_: Default::default(),
-            timeout_events_: Default::default(),
             composite_events_: Default::default(),
             fibers_: RefCell::new(BTreeMap::<usize, Rc<Fiber>>::new()),
             available_fibers_: Default::default(),
@@ -1505,6 +2261,16 @@ impl Reactor {
                     found_ready_events = true;
                 }
                 let mut ready_events: VecDeque<Arc<dyn EventPollable>> = Default::default();
+                // Pinged predicate events are re-tested here; a ready one
+                // queues itself on the ready queue drained below.
+                if event_ping_drain::<()>(self) {
+                    found_ready_events = true;
+                }
+                // The per-pass scans below serve only a wait taken on a thread
+                // other than the event's owner (see event_wait_impl): no event
+                // type is scanned when waited on its owner thread any more.
+                // Both queues are empty otherwise, and cost one borrow and one
+                // length check each per pass.
                 {
                     let mut waiting_guard = self.waiting_events_.borrow_mut();
                     let mut i: usize = 0usize;
@@ -1520,8 +2286,15 @@ impl Reactor {
                     if ready_events.len() > n_before {
                         found_ready_events = true;
                     }
+                    // Evict both terminal states. TIMEOUT is sticky: only
+                    // check_timeout sets it, it has already handed the event
+                    // to the dispatcher on the pass that set it, and
+                    // event_test_impl never moves a TIMEOUT event again. Kept
+                    // here it was re-tested on every pass for as long as the
+                    // reactor lived. Eviction leaves the status untouched.
                     waiting_guard.retain(move |ev: &Arc<dyn EventPollable>| -> bool {
-                        (*ev).status() != EventStatus::DONE
+                        let status = (*ev).status();
+                        status != EventStatus::DONE && status != EventStatus::TIMEOUT
                     });
                 }
                 {
@@ -1539,8 +2312,10 @@ impl Reactor {
                     if ready_events.len() > n_before {
                         found_ready_events = true;
                     }
+                    // Same terminal-state eviction as the waiting queue.
                     composite_guard.retain(move |ev: &Arc<dyn EventPollable>| -> bool {
-                        (*ev).status() != EventStatus::DONE
+                        let status = (*ev).status();
+                        status != EventStatus::DONE && status != EventStatus::TIMEOUT
                     });
                 }
                 if do_check_timeout {
@@ -1550,15 +2325,65 @@ impl Reactor {
                         found_ready_events = true;
                     }
                 }
+                // Self-notifying events arrive through the ready queue, pushed
+                // by their WAIT->READY edge; the scans above never see them.
+                // Drained last so that any edge taken before dispatch, even one
+                // taken inside a scan's predicate, is served on this pass.
+                // Edges taken during dispatch land in the queue again and are
+                // served on the next pass, which runs because dispatch implies
+                // found_ready_events.  A timed event can also arrive from
+                // check_timeout, which hands expired timers over in deadline
+                // order; the DONE de-dup below serves it once.  An entry that
+                // is no longer READY is dropped: it was already dispatched, or
+                // its event was re-armed, and its next edge queues it again.
+                // The queue is borrowed only to read its length and to take it
+                // whole, so no event destructor or dispatch runs under a
+                // borrow and an edge taken there can still push.  An empty
+                // queue costs one thread-local read and one length check per
+                // pass: create_run drains on every call, so this sits on the
+                // fiber-RPC path.
+                let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
+                if !state_ptr.is_null() {
+                    let pending: usize = {
+                        // Typed for the emitter, as in event_ready_enqueue.
+                        let queue_guard: RefMut<VecDeque<Arc<dyn EventPollable>>> =
+                            unsafe { (*state_ptr).ready.borrow_mut() };
+                        queue_guard.len()
+                    };
+                    if pending > 0usize
+                        && event_wake_owner_th_.with(|owner| owner.get()) == stackless_wake_reactor_key::<()>(self)
+                    {
+                        let mut drained: VecDeque<Arc<dyn EventPollable>> = {
+                            let mut queue_guard: RefMut<VecDeque<Arc<dyn EventPollable>>> =
+                                unsafe { (*state_ptr).ready.borrow_mut() };
+                            core::mem::take(&mut *queue_guard)
+                        };
+                        let n_before = ready_events.len();
+                        move_matching(&mut drained, &mut ready_events, move |ev: &Arc<dyn EventPollable>| -> bool {
+                            (*ev).status() == EventStatus::READY
+                        });
+                        if ready_events.len() > n_before {
+                            found_ready_events = true;
+                        }
+                    }
+                }
                 // Dispatch ready events. `continue` restructured as nested
                 // ifs (the DSL has no continue); the Arc is cloned out of
                 // the deque so no reference is held across continue_fiber.
+                // An event can be listed twice (the ready queue and its
+                // deadline both hand it over), so only a status the hand-over
+                // set is dispatched: a READY event becomes DONE on its first
+                // dispatch, and a later entry skips it.  WAIT and INIT are
+                // skipped too.  They mean the first dispatch resumed a waiter
+                // that re-armed the event and waits on it again, a new wait
+                // this entry must not end.
                 {
                     let mut i: usize = 0usize;
                     while i < ready_events.len() {
                         let ev = ready_events[i].clone();
                         i += 1usize;
-                        if (*ev).status() != EventStatus::DONE {
+                        let handed_over: EventStatus = (*ev).status();
+                        if handed_over == EventStatus::READY || handed_over == EventStatus::TIMEOUT {
                             let option_fiber = (*ev).upgrade_fiber();
                             if let Some(fiber) = option_fiber {
                                 // Block-expression bind: the registry lookup IS
@@ -1846,37 +2671,52 @@ impl Reactor {
         did_work
     }
 
+    // Serve every expired deadline of this reactor (S4 step 3 of
+    // docs/dev/lion-runtime-plan.md).  The entries come from the thread's
+    // deadline map in deadline order; see EventDeadline for the two kinds and
+    // for lazy deletion.  A timed wait that reached its deadline resumes
+    // READY if its event is ready, else TIMEOUT -- the rule the linear scan of
+    // timeout_events_ applied, now applied through test(), so a ready event
+    // takes its ordinary WAIT->READY edge.  An event that is already READY is
+    // handed over too: that is how a timed wait whose event was made ready
+    // without an owner-thread test() (a foreign-thread set, or a direct field
+    // write) still completes, at its deadline.  Only the entry that sets
+    // TIMEOUT hands that event over, once: dispatch de-duplicates READY
+    // events through DONE, but TIMEOUT is sticky and is not de-duplicated.
+    // (The timeout_events_ queue that scan read was retired in S7b.)
     pub fn check_timeout(&self, ready_events: &mut VecDeque<Arc<dyn EventPollable>>) {
-        let time_now: u64 = Time::now(true);
-        let mut guard = self.timeout_events_.borrow_mut();
-        // First pass: update the status of timed-out events. The Arc is
-        // cloned per slot so no reference into the guard is held across
-        // the status mutations.
-        let mut i: usize = 0usize;
-        while i < guard.len() {
-            let event = (*guard)[i].clone();
-            if (*event).status() == EventStatus::WAIT {
-                let wakeup_time = (*event).wakeup_time();
-                reactor_verify(wakeup_time > 0u64);
-                if time_now >= wakeup_time {
-                    if (*event).is_ready() {
-                        (*event).set_status(EventStatus::READY);
-                    } else {
-                        (*event).set_status(EventStatus::TIMEOUT);
+        let expired: Vec<EventDeadline> = event_deadline_take_expired::<()>(self);
+        for entry in expired.iter() {
+            let upgraded: Option<Arc<dyn EventPollable>> = entry.event.upgrade();
+            if let Some(ev) = upgraded {
+                let ev: Arc<dyn EventPollable> = ev;
+                if entry.clock {
+                    // A TimeoutEvent became ready.  Its test() is the edge:
+                    // INIT->DONE, or WAIT->READY, which also queues it.  Hand
+                    // a woken waiter over here as well, so that timers that
+                    // expire on one pass resume in deadline order.  Any other
+                    // status has nothing left to take: its own timed wait
+                    // (fiber_sleep's) may have been served first on this pass.
+                    let before: EventStatus = (*ev).status();
+                    if before == EventStatus::INIT || before == EventStatus::WAIT {
+                        (*ev).test();
+                        if before == EventStatus::WAIT && (*ev).status() == EventStatus::READY {
+                            ready_events.push_back(ev.clone());
+                        }
+                    }
+                } else if (*ev).wakeup_time() == entry.deadline {
+                    let status: EventStatus = (*ev).status();
+                    if status == EventStatus::WAIT {
+                        if !(*ev).test() {
+                            (*ev).set_status(EventStatus::TIMEOUT);
+                        }
+                        ready_events.push_back(ev.clone());
+                    } else if status == EventStatus::READY {
+                        ready_events.push_back(ev.clone());
                     }
                 }
             }
-            i += 1usize;
         }
-        // Extract events that are READY or TIMEOUT.
-        move_matching(&mut guard, ready_events, move |sp: &Arc<dyn EventPollable>| -> bool {
-            let status = (*sp).status();
-            status == EventStatus::READY || status == EventStatus::TIMEOUT
-        });
-        // Drop events that are DONE.
-        guard.retain(move |sp: &Arc<dyn EventPollable>| -> bool {
-            (*sp).status() != EventStatus::DONE
-        });
     }
 }
 
@@ -1885,6 +2725,35 @@ impl Drop for Reactor {
         reactor_verify(std::thread::current().id() == self.thread_id_.get());
         reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), format!("[Reactor::~Reactor] Starting destruction, all_events_.len()={}, fibers_.size()={}",
                   self.all_events_.borrow().len(), self.fibers_.borrow().len()));
+        // Close this thread's event wake state if this Reactor owns it, before
+        // any teardown step can set an event.  Its waiters die with this
+        // Reactor, and no later reactor may resume them.  The slot is cleared
+        // first, so anything the state's destructor reaches finds no state.
+        if event_wake_owner_th_.with(|owner| owner.get()) == stackless_wake_reactor_key::<()>(self) {
+            let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
+            event_wake_state_th_.with(|slot| slot.set(core::ptr::null_mut()));
+            event_wake_owner_th_.with(|owner| owner.set(0usize));
+            if !state_ptr.is_null() {
+                // Refuse later pings, then release what is queued, as
+                // stackless_wake_shutdown_begin does for wakes.  A publisher
+                // may still hold a ticket bound to this ingress; it now
+                // pings nothing.
+                {
+                    let state: &EventWakeState = unsafe { &*state_ptr };
+                    state.pings.accepting.store(false, std::sync::atomic::Ordering::Release);
+                    let drained: Vec<Arc<EventPing>> = {
+                        let mut pending = state.pings.pending.lock().unwrap();
+                        core::mem::take(&mut *pending)
+                    };
+                    for ping in drained.iter() {
+                        ping.queued.store(false, std::sync::atomic::Ordering::Release);
+                    }
+                }
+                // Allocated by Box::into_raw in reactor_tls_get; the slot no
+                // longer names it, so this is the only owner.
+                drop(unsafe { Box::from_raw(state_ptr) });
+            }
+        }
         // Reject new foreign wakes first. Destroy every Task-bearing closure
         // while its owned Waker binding still exists, then retire the
         // private ingress. Reactor's public field layout remains unchanged.
@@ -1930,11 +2799,22 @@ impl Drop for Reactor {
 
 // Poll once immediately, register a pending future, and deliver its completed
 // value through on_ready. See docs/async-runtime.md for the wake protocol.
+//
+// Two executors serve this (S3 of docs/dev/lion-runtime-plan.md).  On a
+// PollThread, while its driver runs, a task still pending after the first
+// poll becomes a Lion `spawn_local` task (stackless_lion_spawn_with_result).
+// Everywhere else -- a thread with no loop, and a PollThread once its driver
+// has stopped -- it registers with this Reactor's own stackless executor,
+// which run_loop pumps, as before.  S7 revisits the split.
 pub fn reactor_spawn_stackless_task_with_result<T: 'static, OnReady>(self_: &Reactor, mut task: Pin<Box<dyn Future<Output = T>>>, mut on_ready: OnReady)
 where
     OnReady: FnMut(T) + 'static,
 {
     reactor_verify(std::thread::current().id() == self_.thread_id_.get());
+    if poll_driver_accepts_spawn(self_) {
+        stackless_lion_spawn_with_result(task, on_ready);
+        return;
+    }
     let ingress = stackless_wake_ingress::<()>(self_);
     let mut early_binding = stackless_wake_make_binding(ingress);
     let early_ticket = early_binding.ticket.clone();
@@ -2024,7 +2904,15 @@ pub fn create_sp_int_event(target: i32) -> Arc<IntEvent> {
 }
 
 pub fn create_sp_timeout_event(wait_us: u64) -> Arc<TimeoutEvent> {
-    reactor_setup_sp_event::<TimeoutEvent>(timeout_event_make(wait_us))
+    let sp: Arc<TimeoutEvent> = reactor_setup_sp_event::<TimeoutEvent>(timeout_event_make(wait_us));
+    // A TimeoutEvent is ready once `Time::now(true) > wakeup_time_`, which
+    // first holds at wakeup_time_ + 1.  The deadline map tests it then (S4
+    // step 3), whether or not anything waits on it yet: that test is the edge
+    // that resumes its own waiter and tells a waiting WaitAny/WaitAll parent.
+    // Registered here rather than in wait() so that a timer created ahead of
+    // its wait, or waited only as a composite's child, still fires on time.
+    event_deadline_push::<TimeoutEvent>(&*sp, sp.wakeup_time_ + 1u64, true);
+    sp
 }
 
 pub fn create_sp_never_event() -> Arc<NeverEvent> {
@@ -2032,7 +2920,13 @@ pub fn create_sp_never_event() -> Arc<NeverEvent> {
 }
 
 pub fn create_sp_waitany(a: Arc<dyn EventPollable>, b: Arc<dyn EventPollable>) -> Arc<WaitAny> {
-    reactor_setup_sp_event::<WaitAny>(waitany_make(a, b))
+    let sp: Arc<WaitAny> = reactor_setup_sp_event::<WaitAny>(waitany_make(a, b));
+    // Each child tells this parent when it becomes ready (S4 step 4).  Linked
+    // here, not in waitany_make: setup must see the only reference.
+    for child in sp.events_.iter() {
+        event_parent_link::<()>(child, &sp.self_);
+    }
+    sp
 }
 
 pub fn create_sp_waitall() -> Arc<WaitAll> {
@@ -2040,7 +2934,13 @@ pub fn create_sp_waitall() -> Arc<WaitAll> {
 }
 
 pub fn create_sp_waitall_from(evs: &Vec<Arc<dyn EventPollable>>) -> Arc<WaitAll> {
-    reactor_setup_sp_event::<WaitAll>(waitall_make_from(evs))
+    let sp: Arc<WaitAll> = reactor_setup_sp_event::<WaitAll>(waitall_make_from(evs));
+    // Each child tells this parent when it becomes ready (S4 step 4).  Linked
+    // here, not in waitall_make_from: setup must see the only reference.
+    for child in evs.iter() {
+        event_parent_link::<()>(child, &sp.self_);
+    }
+    sp
 }
 
 pub fn create_sp_box_event<T: Clone + Default + 'static>() -> Arc<BoxEvent<T>> {
@@ -2057,43 +2957,18 @@ pub enum PollCommand {
     Shutdown,
 }
 
-thread_local! {
-    pub static g_current_poll_worker: Cell<*mut PollThreadWorker> =
-        const { Cell::new(core::ptr::null_mut()) };
-}
-
-#[repr(C)]
-pub struct PollThreadWorker {
-    pub receiver_: PollCmdReceiver,
-    pub poll_: Epoll,
-    pub fd_to_pollable_: FdPollableMap,
-    pub mode_: FdModeMap,
-    pub pending_remove_: FdSet,
-    pub jobs_: JobSet,
-    pub stop_: bool,
-}
-
-impl PollThreadWorker {
-    // Factory: worker wrapped in Rc<RefCell<>> for its thread.
-    pub fn create(receiver: PollCmdReceiver) -> Rc<RefCell<PollThreadWorker>> {
-        pollworker_create(receiver)
-    }
-
-    // Main polling loop — epoll events + channel commands.
-    pub fn poll_loop(&mut self) {
-        pollworker_poll_loop(self)
-    }
-
-    // Direct mode update (bypasses the channel; poll-thread only).
-    pub fn update_mode(&mut self, poll: &mut dyn Pollable, new_mode: i32) {
-        pollworker_update_mode(self, poll, new_mode)
-    }
-}
-
+// True on a thread whose PollThread is running: inside its Lion driver, a
+// job, a fiber the driver resumes, or one of its runtime's tasks.
 pub fn pollworker_is_on_poll_thread() -> bool {
-    g_current_poll_worker.with(|worker| !worker.get().is_null())
+    poll_driver_th_.with(|driver| !driver.get().is_null())
 }
 
+// One OS thread running one Lion runtime (S3 of docs/dev/lion-runtime-plan.md).
+// The thread builds the runtime itself (a Lion Runtime is !Send) over
+// SrpcEpollBackend and runs the driver task (PollDriverTask) until a Shutdown
+// command stops it.  Commands still travel over `sender_`; every method that
+// sends also wakes the driver, so nothing polls the channel.  A command sent
+// on `sender_` directly waits for the next wake.
 #[repr(C)]
 pub struct PollThread {
     pub sender_: std::sync::mpsc::Sender<PollCommand>,
@@ -2104,6 +2979,8 @@ pub struct PollThread {
     pub shutdown_called_: AtomicBool,
     /// Number of removal commands accepted by the worker's command queue.
     remove_count_: AtomicI32,
+    // The driver's wake handle, shared with the poll thread.
+    driver_: Arc<PollDriverWake>,
 }
 
 impl PollThread {
@@ -2128,6 +3005,7 @@ impl PollThread {
         // explicitly rather than silently: C++ never warned here, so the
         // incumbent's identical discard was invisible.
         let _dropped_when_worker_gone = self.sender_.send(PollCommand::Shutdown);
+        poll_driver_wake(&self.driver_);
         reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[PollThread::shutdown] CmdShutdown sent".to_string());
         // Thread-safe read of the poll thread's id.
         let poll_tid = self.poll_thread_id_bits_.load(std::sync::atomic::Ordering::Acquire);
@@ -2157,10 +3035,7 @@ impl PollThread {
         // Err == the poll worker exited; there is no epoll set left to add to.
         let _dropped_when_worker_gone =
             self.sender_.send(PollCommand::AddPollable { pollable: poll });
-    }
-
-    pub fn remove(&self, poll: &mut dyn Pollable) {
-        self.remove_fd(poll.fd());
+        poll_driver_wake(&self.driver_);
     }
 
     /// Unregister the caller's current descriptor asynchronously.
@@ -2169,6 +3044,7 @@ impl PollThread {
     pub fn remove_fd(&self, fd: i32) {
         if self.sender_.send(PollCommand::RemovePollable { fd }).is_ok() {
             self.remove_count_.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            poll_driver_wake(&self.driver_);
         }
     }
 
@@ -2179,6 +3055,7 @@ impl PollThread {
         // Err == the poll worker exited; it already closed everything it owned.
         let _dropped_when_worker_gone =
             self.sender_.send(PollCommand::ClosePollable { fd });
+        poll_driver_wake(&self.driver_);
     }
 
     /// Change the caller's current registration asynchronously. Its descriptor
@@ -2188,12 +3065,23 @@ impl PollThread {
         if result.is_err() {
             reactor_log_line(Log::ERROR, 0i32, core::ptr::null(), "PollThread::update_mode: send failed! Channel disconnected?".to_string());
         }
+        poll_driver_wake(&self.driver_);
     }
 
     pub fn add(&self, job: Arc<dyn Job>) {
         // Err == the poll worker exited; there is no loop left to run the job.
         let _dropped_when_worker_gone =
             self.sender_.send(PollCommand::AddJob { job });
+        poll_driver_wake(&self.driver_);
+    }
+
+    /// Whether the calling thread is this PollThread's own thread while its
+    /// Lion runtime runs: inside its driver, a fiber the driver resumes, a job,
+    /// or one of the runtime's tasks.  State that must live on the runtime (a
+    /// Lion `AsyncFd`, a `spawn_local` task) can then be created in place
+    /// rather than through a job.
+    pub fn is_current_thread(&self) -> bool {
+        poll_driver_is_current(&self.driver_)
     }
 
     /// Count accepted remove requests, including requests for an absent fd.
@@ -2307,8 +3195,11 @@ impl QuorumEvent {
             (*fe).set(self.n_voted_yes_.get() + self.n_voted_no_.get());
         }
     }
+    // A QuorumEvent has no child events. It used to report itself composite
+    // only so that run_loop would put it on the scanned composite queue; it
+    // now wakes on change instead (see the event wake state).
     pub fn is_composite_event(&self) -> bool {
-        true
+        false
     }
     pub fn wait(&self) {
         event_wait_impl(self, 0u64)
@@ -2385,7 +3276,7 @@ impl EventCore for QuorumEvent {
     fn core_state_mut(&mut self) -> &mut EventState { &mut self.state_ }
     fn core_self(&self) -> &Weak<dyn EventPollable> { &self.self_ }
     fn core_self_mut(&mut self) -> &mut Weak<dyn EventPollable> { &mut self.self_ }
-    fn core_is_composite(&self) -> bool { true }
+    fn core_is_composite(&self) -> bool { false }
 }
 
 #[cfg_attr(any(), cpp_namespace(::janus))]
@@ -2480,24 +3371,43 @@ fn event_wait_impl<W: EventCore>(ev: &W, timeout: u64) {
         let fiber = fiber_opt.unwrap();
 
         let reactor_rc = Reactor::get_reactor();
+        // An event waited on its owner thread wakes on change:
+        // event_test_impl queues it on its WAIT->READY edge, so it joins no
+        // scanned queue and run_loop never re-tests it.  An event waited on
+        // another thread -- possible only from C++, since events are !Send --
+        // cannot reach this thread's ready queue, so it is still found by
+        // run_loop's per-pass scan of waiting_events_.  The same condition
+        // decides the edge's enqueue in event_test_impl.
+        let wakes_on_change: bool = std::thread::current().id() == ev.core_owner_thread();
         // Inline `borrow_mut().push_back(…)`: the RefMut temporary releases at
         // the end of each statement — before the yield below — so the reactor
         // loop can re-borrow these queues while this fiber sleeps.  With the
         // receiver spelled bare these lower to
         // `(*reactor_rc).waiting_events_.borrow_mut()->push_back(…)` — the
         // guard is still a per-statement temporary.
-        reactor_rc.waiting_events_.borrow_mut().push_back(ev.core_self().upgrade().unwrap());
+        if !wakes_on_change {
+            reactor_rc.waiting_events_.borrow_mut().push_back(ev.core_self().upgrade().unwrap());
+        }
 
-        // Composite events (WaitAll/WaitAny/Quorum) need periodic polling; add
-        // them to a smaller scanned queue. Regular RPC events self-notify.
-        if ev.core_is_composite() {
+        // A composite waited off its owner thread cannot hear from its
+        // children, whose links live on the owner's thread, so it still joins
+        // the scanned composite queue.  On the owner thread the children
+        // test it (event_parents_notify) and it joins no scanned queue.
+        if ev.core_is_composite() && !wakes_on_change {
             reactor_rc.composite_events_.borrow_mut().push_back(ev.core_self().upgrade().unwrap());
         }
 
+        // A timed wait registers its deadline with this thread's deadline
+        // map, which check_timeout drains in deadline order (S4 step 3).
+        // wakeup_time_ names the deadline of this wait, and 0 for an untimed
+        // one: an entry left by an earlier wait of the same event no longer
+        // matches it, and is dropped unserved (see EventDeadline).
         if timeout > 0 {
             let now = Time::now(true);
             ev.core_state().wakeup_time_.set(now + timeout);
-            reactor_rc.timeout_events_.borrow_mut().push_back(ev.core_self().upgrade().unwrap());
+            event_deadline_push(ev, now + timeout, false);
+        } else {
+            ev.core_state().wakeup_time_.set(0u64);
         }
 
         // Transpiled Weak has no implicit Rc→Weak conversion; use the static
@@ -2518,7 +3428,8 @@ fn event_test_impl<W: EventCore>(ev: &W) -> bool {
         if ev.core_status().get() == EventStatus::INIT {
             ev.core_status().set(EventStatus::DONE);
         } else if ev.core_status().get() == EventStatus::WAIT {
-            if std::thread::current().id() == ev.core_owner_thread() {
+            let on_owner: bool = std::thread::current().id() == ev.core_owner_thread();
+            if on_owner {
                 // Owner-thread-only: upgrading the weak fiber ref mutates a plain
                 // (non-atomic) Rc strong count; doing this from a foreign thread
                 // races the owner's own Rc<Fiber> clones and corrupts the count.
@@ -2528,6 +3439,14 @@ fn event_test_impl<W: EventCore>(ev: &W) -> bool {
                 reactor_verify(ev.core_status().get() != EventStatus::DEBUG);
             }
             ev.core_status().set(EventStatus::READY);
+            // The WAIT->READY edge of an event that wakes on change: queue it
+            // once for the owner's next drain (see event_ready_enqueue).  This
+            // is reached from set(), vote_*(), a direct test(), a deadline, a
+            // child's test and a drained ping alike.  It only queues; the
+            // waiter resumes when run_loop drains, never here.
+            if on_owner {
+                event_ready_enqueue(ev);
+            }
         } else if ev.core_status().get() == EventStatus::READY {
             reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "event status ready, triggered?".to_string());
         } else if ev.core_status().get() == EventStatus::DONE
@@ -2537,6 +3456,10 @@ fn event_test_impl<W: EventCore>(ev: &W) -> bool {
         } else {
             reactor_verify(false);
         }
+        // A composite waiting on this event learns of it here (S4 step 4):
+        // on the child's INIT->DONE edge from set(), a direct test(), or a
+        // child timer's deadline.
+        event_parents_notify(ev);
         return true;
     } else if ev.core_status().get() == EventStatus::DONE {
         ev.core_status().set(EventStatus::INIT);
@@ -3092,6 +4015,36 @@ fn reactor_tls_get() -> Rc<Reactor> {
             reactor_log_create(false);
             let r = reactor_make();
             r.thread_id_.set(std::thread::current().id());
+            // Open this thread's event wake state for the new TLS Reactor.  A
+            // state can still be open here only if an earlier TLS Reactor's
+            // slot was cleared while another Rc kept that reactor alive.  It
+            // is handed over rather than freed, so no event is dropped while
+            // this slot is borrowed; its entries name the earlier reactor's
+            // fibers, which the new owner's registry check skips.  The first
+            // deadline and parent sweeps run at 64 entries (see
+            // event_deadline_sweep and event_parent_sweep).
+            if event_wake_state_th_.with(|slot| slot.get()).is_null() {
+                let fresh: Box<EventWakeState> = Box::new(EventWakeState {
+                    ready: RefCell::new(VecDeque::<Arc<dyn EventPollable>>::new()),
+                    deadlines: RefCell::new(BTreeMap::<u64, Vec<EventDeadline>>::new()),
+                    deadline_entries: Cell::new(0usize),
+                    deadline_sweep_at: Cell::new(64usize),
+                    next_deadline: Cell::new(u64::MAX),
+                    parents: RefCell::new(HashMap::<usize, EventParentList>::new()),
+                    parent_keys: Cell::new(0usize),
+                    parents_sweep_at: Cell::new(64usize),
+                    pings: Arc::new(EventPingIngress {
+                        accepting: AtomicBool::new(true),
+                        signaled: AtomicBool::new(false),
+                        pending: std::sync::Mutex::new(Vec::<Arc<EventPing>>::new()),
+                        driver: std::sync::Mutex::new(None),
+                    }),
+                    armed: RefCell::new(HashMap::<usize, Weak<dyn EventPollable>>::new()),
+                });
+                event_wake_state_th_.with(|slot| slot.set(Box::into_raw(fresh)));
+            }
+            let reactor_ptr: *const Reactor = Rc::<Reactor>::as_ptr(&r);
+            event_wake_owner_th_.with(|owner| owner.set(reactor_ptr as usize));
             *guard = Some(r);
         }
         guard.as_ref().unwrap().clone()
@@ -3206,6 +4159,11 @@ fn reactor_create_run_fiber_at_impl(self_: &Reactor, func: FiberFn, file: SrcFil
 #[allow(clippy::arc_with_non_send_sync)]
 pub fn reactor_spawn_stackless_task_impl(self_: &Reactor, mut task: TaskVoid) {
     reactor_verify(std::thread::current().id() == self_.thread_id_.get());
+    // The same executor split as reactor_spawn_stackless_task_with_result.
+    if poll_driver_accepts_spawn(self_) {
+        stackless_lion_spawn_void(task);
+        return;
+    }
     let ingress = stackless_wake_ingress::<()>(self_);
     let mut early_binding = stackless_wake_make_binding(ingress);
     let early_ticket = early_binding.ticket.clone();
@@ -3249,193 +4207,6 @@ pub fn reactor_spawn_stackless_task_impl(self_: &Reactor, mut task: TaskVoid) {
     }
 }
 
-fn pollworker_make(receiver: PollCmdReceiver) -> PollThreadWorker {
-    PollThreadWorker {
-        receiver_: receiver,
-        poll_: Epoll::new(),
-        fd_to_pollable_: Default::default(),
-        mode_: Default::default(),
-        pending_remove_: Default::default(),
-        jobs_: Default::default(),
-        stop_: false,
-    }
-}
-
-fn pollworker_create(receiver: PollCmdReceiver) -> Rc<RefCell<PollThreadWorker>> {
-    let mut worker = pollworker_make(receiver);
-    Rc::new(RefCell::new(worker))
-}
-
-fn pollworker_snapshot_fds(w: &mut PollThreadWorker) -> Vec<i32> {
-    let mut fds: Vec<i32> = Vec::new();
-    let mut ks = w.fd_to_pollable_.keys();
-    for fd in ks {
-        fds.push(*fd);
-    }
-    fds
-}
-
-// MEASURED allow — see the `borrowed_box` note on `pollable_proxy_fd`.
-#[allow(clippy::borrowed_box)]
-fn pollworker_poll_loop(w: &mut PollThreadWorker) {
-    reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[poll_loop] Starting poll loop".to_string());
-    while !w.stop_ {
-        pollworker_trigger_job(w);
-
-        // Wait for events (epoll_wait with short timeout). Dispatch
-        // through proxy storage by fd; no Pollable* userdata assumptions.
-        // Collect the readiness batch first so the callback does not retain a
-        // mutable borrow of `poll_` while dispatch re-enters the worker.
-        let mut ready_batch: Vec<(i32, i32)> = Vec::new();
-        w.poll_.Wait(|fd: i32, ready_events: i32| {
-            ready_batch.push((fd, ready_events));
-        });
-        for (fd, ready_events) in ready_batch {
-            let mut write_mode: Option<i32> = None;
-            // The re-annotating `let p: &mut Box<dyn PollableBase> = p;` below
-            // is load-bearing, not style — here and at every other if-let over
-            // `fd_to_pollable_` in this file.  An if-let payload carries no
-            // annotation, and the emitter does not model `HashMap::get_mut`'s
-            // return type, so a bare `p` lowers to `decltype(auto)`; the
-            // auto-deref Rust performs (`Box<dyn PollableBase>` ->
-            // `dyn PollableBase`) is then not reproduced and the generated
-            // `p.handle_read()` fails to compile against
-            // `rusty::Box<PollableBase>`.  Restating the type hands the emitter
-            // back the `rusty::Box<PollableBase>&` binding it needs.
-            let opt = w.fd_to_pollable_.get_mut(&fd);
-            if let Some(p) = opt {
-                let p: &mut Box<dyn PollableBase> = p;
-                if (ready_events & PollReady::READABLE) != 0i32 {
-                    p.handle_read();
-                }
-                if (ready_events & PollReady::WRITABLE) != 0i32 {
-                    let new_mode = p.handle_write();
-                    if new_mode != PollMode::NO_CHANGE {
-                        write_mode = Some(new_mode);
-                    }
-                }
-            }
-            if let Some(new_mode) = write_mode {
-                pollworker_do_update_mode(w, fd, new_mode);
-            }
-            if (ready_events & PollReady::ERROR) != 0i32 {
-                let err_opt = w.fd_to_pollable_.get_mut(&fd);
-                if let Some(p) = err_opt {
-                    let p: &mut Box<dyn PollableBase> = p;
-                    p.handle_error();
-                }
-            }
-        }
-
-        // Process commands from the channel (non-blocking try_recv).
-        pollworker_process_commands(w);
-        pollworker_trigger_job(w);
-        // Process deferred removals.
-        pollworker_process_pending_removals(w);
-        pollworker_trigger_job(w);
-        let reactor = Reactor::get_reactor();
-        (*reactor).run_loop(false, true);
-
-        // One key snapshot serves both sweeps below: neither of them
-        // adds an fd to fd_to_pollable_ (do_update_mode only touches
-        // mode_/poll_), so the key set cannot grow in between.
-        let fds = pollworker_snapshot_fds(w);
-
-        // Check for pending write updates (set by end_reply() during
-        // fiber execution). Reads a pollable's interior-mutable
-        // pending_write_update_ flag through the shared Arc; no cast.
-        let mut i: usize = 0;
-        while i < fds.len() {
-            let fd = fds[i];
-            let opt = w.fd_to_pollable_.get_mut(&fd);
-            if let Some(p) = opt {
-                let p: &mut Box<dyn PollableBase> = p;
-                if p.check_pending_write_update() {
-                    pollworker_do_update_mode(w, fd, PollMode::READ | PollMode::WRITE);
-                }
-            }
-            i += 1;
-        }
-
-        // Check for pollables closed by handle_error() and remove them.
-        // This prevents fd reuse issues when an old connection is closed
-        // but not removed. Collect first, mutate second — close() can
-        // re-enter, so the scan must not be mutating as it goes.
-        let mut closed_fds: Vec<i32> = Vec::new();
-        let mut j: usize = 0;
-        while j < fds.len() {
-            let fd = fds[j];
-            let opt = w.fd_to_pollable_.get(&fd);
-            if let Some(p) = opt {
-                let p: &Box<dyn PollableBase> = p;
-                if p.is_closed() {
-                    closed_fds.push(fd);
-                }
-            }
-            j += 1;
-        }
-        let mut n: usize = 0;
-        while n < closed_fds.len() {
-            let fd = closed_fds[n];
-            // Detach before the callout, retain the proxy lease through DEL,
-            // then invoke close without a live map borrow.
-            pollworker_do_close_pollable(w, fd);
-            n += 1;
-        }
-    }
-
-    reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[poll_loop] Exited while loop (stop_=true), starting cleanup".to_string());
-    // Shutdown cleanup — unregister all remaining pollables. Only the
-    // keys matter here, so the proxies are never touched.
-    let rest = pollworker_snapshot_fds(w);
-    let mut k: usize = 0;
-    while k < rest.len() {
-        let fd = rest[k];
-        if w.mode_.contains_key(&fd) {
-            w.poll_.Remove(fd);
-        }
-        k += 1;
-    }
-    w.fd_to_pollable_.clear();
-    w.mode_.clear();
-    w.pending_remove_.clear();
-    reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[poll_loop] Cleanup complete, poll_loop exiting".to_string());
-}
-
-fn pollworker_process_commands(self_: &mut PollThreadWorker) {
-    loop {
-        let result = self_.receiver_.try_recv();
-        if result.is_err() {
-            // Empty or disconnected -- either way, stop draining.
-            break;
-        }
-        let cmd = result.unwrap();
-        match cmd {
-            PollCommand::AddPollable { pollable } => {
-                pollworker_do_add_pollable(self_, pollable);
-            }
-            PollCommand::RemovePollable { fd } => {
-                pollworker_do_remove_pollable(self_, fd);
-            }
-            PollCommand::ClosePollable { fd } => {
-                pollworker_do_close_pollable(self_, fd);
-            }
-            PollCommand::UpdateMode { fd, new_mode } => {
-                pollworker_do_update_mode(self_, fd, new_mode);
-            }
-            PollCommand::AddJob { job } => {
-                pollworker_do_add_job(self_, job);
-            }
-            PollCommand::RemoveJob { job } => {
-                pollworker_do_remove_job(self_, job);
-            }
-            PollCommand::Shutdown => {
-                self_.stop_ = true;
-            }
-        }
-    }
-}
-
 fn job_ready(job: &Arc<dyn Job>) -> bool {
     let job_ptr: *const dyn Job = Arc::as_ptr(job);
     let job_mut: *mut dyn Job = job_ptr as *mut dyn Job;
@@ -3451,129 +4222,9 @@ fn job_spawn_work(job: &Arc<dyn Job>) {
     });
 }
 
-// The C++ BTreeMap uses an explicit new_ factory and has no default constructor.
-#[allow(clippy::mem_replace_with_default)]
-fn pollworker_trigger_job(w: &mut PollThreadWorker) {
-    let jobs_exec = core::mem::replace(&mut w.jobs_, JobSet::new());
-    for job in jobs_exec.values() {
-        if job_ready(job) {
-            // Ready jobs ran (or are running) — do NOT re-add them.
-            job_spawn_work(job);
-        } else {
-            // Not ready yet — check again on the next pass.
-            w.jobs_.insert(job_identity(job), job.clone());
-        }
-    }
-}
-
-// Preserve the shared Box reference across HashMap lookup; see the measured
-// lowering requirement on pollable_proxy_fd below.
-#[allow(clippy::borrowed_box)]
-fn pollworker_do_add_pollable(w: &mut PollThreadWorker, poll: PollableProxy) {
-    let fd = pollable_proxy_fd(&poll);
-    let poll_mode = pollable_proxy_mode(&poll);
-
-    // The proxy owns its descriptor through every epoll operation, including
-    // close racing this check. A queued registration already logically closed
-    // needs no epoll entry; dropping the proxy releases its descriptor lease.
-    //
-    // The `&Box<dyn PollableBase>` rebind is a measured lowering requirement,
-    // the same one `old` needs below. The emitter writes `->` for a receiver
-    // whose declared type is literally `&Box<..>`; a by-value receiver of the
-    // alias type `PollableProxy` lowered to `poll.is_closed()` on a
-    // `rusty::Box<PollableBase>` -- "no member named 'is_closed'" -- and the
-    // srpc.reactor module failed to compile. The fn-level `borrowed_box`
-    // allow above covers this rebind too.
-    let poll_ref: &Box<dyn PollableBase> = &poll;
-    if fd < 0 || poll_ref.is_closed() {
-        return;
-    }
-    if w.fd_to_pollable_.contains_key(&fd) {
-        let old = w.fd_to_pollable_.get(&fd).unwrap();
-        let old: &Box<dyn PollableBase> = old;
-        if !old.is_closed() {
-            return;
-        }
-        // Retire the closed registration before admitting a replacement,
-        // including any removal queued for the old connection.
-        pollworker_do_close_pollable(w, fd);
-    }
-    w.fd_to_pollable_.insert(fd, poll);
-    w.mode_.insert(fd, poll_mode);
-    // A failed registration still owns its descriptor until this proxy drops.
-    if w.poll_.Add(fd, poll_mode) != 0 {
-        w.fd_to_pollable_.remove(&fd);
-        w.mode_.remove(&fd);
-    }
-}
-
-fn pollworker_do_remove_pollable(w: &mut PollThreadWorker, fd: i32) {
-    if !w.fd_to_pollable_.contains_key(&fd) {
-        return;
-    }
-    // Deferred: actual removal happens after epoll_wait.
-    w.pending_remove_.insert(fd);
-}
-
-fn pollworker_do_close_pollable(w: &mut PollThreadWorker, fd: i32) {
-    w.pending_remove_.remove(&fd);
-    let retired = w.fd_to_pollable_.remove(&fd);
-    if let Some(mut poll) = retired {
-        if w.mode_.contains_key(&fd) {
-            w.poll_.Remove(fd);
-        }
-        w.mode_.remove(&fd);
-        // Own the retired proxy across its callout. A close callback may
-        // reenter the worker after the old registration has been removed.
-        let poll: &mut Box<dyn PollableBase> = &mut poll;
-        poll.close();
-    }
-}
-
-fn pollworker_do_update_mode(w: &mut PollThreadWorker, fd: i32, new_mode: i32) {
-    if !w.fd_to_pollable_.contains_key(&fd) {
-        return;
-    }
-    let mode_opt = w.mode_.get(&fd);
-    if mode_opt.is_none() {
-        return;
-    }
-    let old_mode = *mode_opt.unwrap();
-    w.mode_.insert(fd, new_mode);
-    if new_mode != old_mode {
-        w.poll_.Update(fd, new_mode, old_mode);
-    }
-}
-
 #[allow(unsafe_code)]
 fn job_identity(job: &Arc<dyn Job>) -> usize {
     Arc::as_ptr(job) as *const () as usize
-}
-
-fn pollworker_do_add_job(w: &mut PollThreadWorker, job: Arc<dyn Job>) {
-    w.jobs_.insert(job_identity(&job), job);
-}
-
-fn pollworker_do_remove_job(w: &mut PollThreadWorker, job: Arc<dyn Job>) {
-    w.jobs_.remove(&job_identity(&job));
-}
-
-fn pollworker_process_pending_removals(w: &mut PollThreadWorker) {
-    // take-to-Vec kernel: the HashSet rejects the rusty::iter shim.
-    let remove_fds = pollworker_take_removals(w);
-    let mut i: usize = 0;
-    while i < remove_fds.len() {
-        let fd = remove_fds[i];
-        if w.fd_to_pollable_.contains_key(&fd) {
-            // fd not reused (still in the mode map) => unregister.
-            if w.mode_.contains_key(&fd) {
-                w.poll_.Remove(fd);
-            }
-            w.fd_to_pollable_.remove(&fd);
-            w.mode_.remove(&fd);
-        }
-        i += 1;
-    }
 }
 
 // MEASURED allow (clippy::borrowed_box).  `&Box<dyn PollableBase>` is the
@@ -3590,18 +4241,6 @@ fn pollable_proxy_fd(p: &PollableProxy) -> i32 {
     b.fd()
 }
 
-fn pollworker_take_removals(w: &mut PollThreadWorker) -> Vec<i32> {
-    // The HashSet port has no drain(); take the whole set (leaves an
-    // empty one behind — same net effect as the old iterate-then-clear)
-    // and copy the fds out through iter().
-    let taken = core::mem::take(&mut w.pending_remove_);
-    let mut v: Vec<i32> = Vec::new();
-    for fd in taken.iter() {
-        v.push(*fd);
-    }
-    v
-}
-
 // MEASURED allow — see the `borrowed_box` note on `pollable_proxy_fd`.
 #[allow(clippy::borrowed_box)]
 fn pollable_proxy_mode(p: &PollableProxy) -> i32 {
@@ -3609,29 +4248,19 @@ fn pollable_proxy_mode(p: &PollableProxy) -> i32 {
     b.poll_mode()
 }
 
-fn pollworker_close_proxy_of(w: &mut PollThreadWorker, fd: i32) {
-    // The map port's non-const get() returns Option<V&>; the &mut-typed
-    // Box binding keeps the mutable overload selected so close()'s
-    // non-const dispatch compiles.
-    let proxy_opt = w.fd_to_pollable_.get_mut(&fd);
-    if let Some(p) = proxy_opt {
-        let p: &mut Box<dyn PollableBase> = p;
-        p.close();
-    }
-}
-
-fn pollworker_update_mode(w: &mut PollThreadWorker, poll: &mut dyn Pollable, new_mode: i32) {
-    pollworker_do_update_mode(w, poll.fd(), new_mode);
-}
-
 fn pollthread_create() -> Arc<PollThread> {
     let (sender, receiver) = std::sync::mpsc::channel::<PollCommand>();
+    let wake: Arc<PollDriverWake> = Arc::new(PollDriverWake {
+        pending: AtomicBool::new(false),
+        waker: std::sync::Mutex::new(None),
+    });
     let seed = PollThread {
         sender_: sender,
         join_handle_: PollJoinSlot::new(None),
         poll_thread_id_bits_: std::sync::atomic::AtomicU64::new(0),
         shutdown_called_: std::sync::atomic::AtomicBool::new(false),
         remove_count_: AtomicI32::new(0),
+        driver_: wake.clone(),
     };
     let arc: Arc<PollThread> = Arc::new(seed);
     // rusty atomic ops are const, so a const* suffices through the Arc.
@@ -3640,13 +4269,7 @@ fn pollthread_create() -> Arc<PollThread> {
         let tid = current_thread_gettid() as u64;
         let thread_id_ptr = thread_id_address as *const std::sync::atomic::AtomicU64;
         unsafe { (*thread_id_ptr).store(tid, std::sync::atomic::Ordering::Release) };
-        // Raw TLS pointer (not a re-borrow) so fibers on this thread can
-        // reach the worker while the borrow_mut guard is held.
-        let worker: Rc<RefCell<PollThreadWorker>> = PollThreadWorker::create(receiver);
-        let mut guard: RefMut<PollThreadWorker> = worker.borrow_mut();
-        g_current_poll_worker.with(|worker| worker.set(&raw mut *guard));
-        guard.poll_loop();
-        g_current_poll_worker.with(|worker| worker.set(core::ptr::null_mut()));
+        pollthread_run(receiver, wake);
     });
     {
         let mut slot = arc.join_handle_.lock().unwrap();
@@ -3660,6 +4283,1037 @@ fn pollthread_drop(pt: &PollThread) {
     reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), format!("[PollThread::~PollThread] Destructor called from TID={}", tid as i32));
     pt.shutdown();
     reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[PollThread::~PollThread] Destructor complete".to_string());
+}
+
+// ---------------------------------------------------------------------------
+// The PollThread driver (S3 of docs/dev/lion-runtime-plan.md)
+// ---------------------------------------------------------------------------
+//
+// A PollThread is one OS thread running one Lion runtime over
+// SrpcEpollBackend.  The thread builds the runtime itself, because a Lion
+// Runtime is !Send, and blocks in `block_on` on the JoinHandle of the driver
+// task until a Shutdown command ends it.  The root future is only that join;
+// all of SRPC's work runs in spawned local tasks, which are what Lion's
+// scheduler (and its liveness argument) is about:
+//
+// * The driver (PollDriverTask) does the owner-side work that run_loop does
+//   on a thread with no loop.  Woken through PollDriverWake, it drains the
+//   command channel, applies deferred removals, runs ready jobs, and calls
+//   run_loop(false, true) -- the
+//   same drain a thread with no loop runs -- which serves pings, the ready
+//   queue and expired deadlines and resumes fibers.  Then it sleeps on a Lion
+//   timer until event_next_deadline_us, rounded up to whole milliseconds
+//   (Lion's clock), or until woken.  Resumption stays in that drain, never in
+//   set(); Fiber::create_run and continue_fiber stay synchronous.
+//
+// * Each pollable registered with add_proxy gets a task (PollFdTask) that
+//   waits on its descriptor through Lion's AsyncFd and calls handle_read and
+//   handle_write, as the epoll loop's dispatch did.  This was S3's interim
+//   adapter for TCP.  Since S5 the TCP connections and listeners run their
+//   own reader, writer and accept tasks (srpc.tcp_channel), and no production
+//   pollable remains; S7b kept the adapter because add_proxy is the public
+//   extension API for custom pollables, documented in both books.
+//
+// * Stackless tasks spawned on the thread run as Lion spawn_local tasks (see
+//   reactor_spawn_stackless_task_with_result).
+//
+// What is polled rather than woken: Job::Ready has no wake, so while a job
+// waits to become ready the driver re-checks it every millisecond, the rate
+// of the old loop.  With no waiting job, an idle PollThread parks until a
+// wake, a timer, or Lion's 100 ms idle bound.
+//
+// Every task on the thread aborts the process if a poll unwinds
+// (PollTaskUnwindAbort), which is what the thread's catch-all
+// (spawn_abort_on_panic) did before Lion's tasks started catching panics.
+//
+// The epoll loop this replaced (PollThreadWorker and its pollworker_*
+// helpers) was deleted in S7b; the comments below still name the rules it had
+// where the driver keeps them.
+
+// The driver of this thread's PollThread, while it runs; null elsewhere.
+thread_local! {
+    static poll_driver_th_: Cell<*const PollDriver> = const { Cell::new(core::ptr::null()) };
+}
+
+// The driver's state.  Owned by the poll thread (Rc), reached from the driver
+// task, the transport tasks and, through poll_driver_th_, from the wake hooks
+// on this thread.
+struct PollDriver {
+    wake: Arc<PollDriverWake>,
+    receiver: PollCmdReceiver,
+    // Jobs waiting to run, in submission order, one entry per job (identity
+    // is the Arc address).  The epoll worker's job set ran them in address
+    // order; callers rely on submission order (a close job queued before a
+    // later job runs first).
+    jobs: RefCell<Vec<Arc<dyn Job>>>,
+    // One registration per descriptor, as fd_to_pollable_ was.
+    fds: RefCell<HashMap<i32, Rc<PollFdEntry>>>,
+    // RemovePollable is applied after the command batch that carried it, as
+    // it was after each epoll pass.
+    pending_remove: RefCell<FdSet>,
+    stop: Cell<bool>,
+    // Whether stackless spawns go to Lion; false once shutdown has begun.
+    accepting: Cell<bool>,
+    // Whether the driver task is being polled.  Its own drain covers what the
+    // owner-side hooks would wake it for, so they skip the wake then.
+    running: Cell<bool>,
+    // The Lion timer the driver sleeps on, and the event deadline it was
+    // armed for (u64::MAX when none).
+    timer: RefCell<Option<lion_reactor::ResourceId>>,
+    armed_us: Cell<u64>,
+}
+
+// One registered pollable.  The transport task and the driver share it; both
+// run on the poll thread and never at once.  `async_fd` is dropped before
+// `proxy`: the proxy's descriptor lease keeps the fd open until Lion has
+// deregistered it (AsyncFd requires the fd to outlive it).
+struct PollFdEntry {
+    fd: i32,
+    proxy: RefCell<Option<PollableProxy>>,
+    async_fd: RefCell<Option<lion_reactor::AsyncFd>>,
+    mode: Cell<i32>,
+    // The transport task's waker, for mode changes, pending writes and
+    // retirement.
+    waker: RefCell<Option<Waker>>,
+}
+
+// Aborts the process when dropped while still armed, i.e. when a task's poll
+// unwinds.  Every poll disarms it before returning.  Public so that tasks
+// other modules spawn on the poll thread (S5's TCP transport) abort alike.
+pub struct PollTaskUnwindAbort {
+    pub armed: bool,
+}
+
+impl Drop for PollTaskUnwindAbort {
+    fn drop(&mut self) {
+        if self.armed {
+            reactor_log_line(Log::FATAL, 0i32, core::ptr::null(), "[PollThread] a task on the poll thread panicked; aborting, as the poll thread always has".to_string());
+            std::process::abort();
+        }
+    }
+}
+
+// The body of a PollThread's OS thread.
+fn pollthread_run(receiver: PollCmdReceiver, wake: Arc<PollDriverWake>) {
+    reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[PollThread] starting its Lion runtime".to_string());
+    let backend = SrpcEpollBackend::new();
+    reactor_verify(backend.is_ok());
+    let os_backend: Box<dyn lion_reactor::OsBackend> = Box::new(backend.unwrap());
+    let built = lion_executor::RuntimeBuilder::new().os_backend(os_backend).build();
+    reactor_verify(built.is_ok());
+    let runtime: lion_executor::Runtime = built.unwrap();
+    // This thread's Reactor and its event wake state, which the driver drains.
+    let reactor: Rc<Reactor> = Reactor::get_reactor();
+    let driver: Rc<PollDriver> = Rc::new(PollDriver {
+        wake,
+        receiver,
+        jobs: RefCell::new(Vec::new()),
+        fds: RefCell::new(HashMap::<i32, Rc<PollFdEntry>>::new()),
+        pending_remove: RefCell::new(FdSet::new()),
+        stop: Cell::new(false),
+        accepting: Cell::new(true),
+        running: Cell::new(false),
+        timer: RefCell::new(None),
+        armed_us: Cell::new(u64::MAX),
+    });
+    poll_driver_bind(&driver, &reactor);
+    let driver_task = PollDriverTask { driver: driver.clone() };
+    let joined = runtime.block_on(runtime.handle().spawn_local(driver_task));
+    // Not cancelled (nothing aborts it) and not panicked (its poll aborts).
+    reactor_verify(joined.is_ok());
+    reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[PollThread] driver stopped, tearing down".to_string());
+    // From here on the thread has no loop: stackless spawns and wake hooks go
+    // back to the plain Reactor, which this thread's exit tears down.
+    poll_driver_unbind(&driver, &reactor);
+    // Unregister every pollable without closing it, as the epoll loop's
+    // shutdown cleanup did, while the runtime can still deregister them.
+    poll_driver_retire_all(&driver);
+    // Dropping the runtime drops every task left on it, here on its thread:
+    // stackless tasks (counted as cancelled, see StacklessLionTask) and the
+    // finished transport tasks.
+    drop(runtime);
+    drop(driver);
+    reactor_log_line(Log::DEBUG, 0i32, core::ptr::null(), "[PollThread] poll thread exiting".to_string());
+}
+
+// Make `driver` this thread's driver: the TLS slot the owner-side hooks read,
+// and the ping and stackless ingresses other threads reach.
+fn poll_driver_bind(driver: &Rc<PollDriver>, reactor: &Reactor) {
+    poll_driver_th_.with(|slot| slot.set(Rc::as_ptr(driver)));
+    poll_driver_bind_ingresses(reactor, Some(driver.wake.clone()));
+}
+
+fn poll_driver_unbind(driver: &PollDriver, reactor: &Reactor) {
+    driver.accepting.set(false);
+    poll_driver_th_.with(|slot| slot.set(core::ptr::null()));
+    poll_driver_bind_ingresses(reactor, None);
+    // A late wake has no task to wake.
+    let mut slot = driver.wake.waker.lock().unwrap();
+    *slot = None;
+}
+
+// Point the owner-thread ingresses of `reactor` at `wake` (or at nothing).
+fn poll_driver_bind_ingresses(reactor: &Reactor, wake: Option<Arc<PollDriverWake>>) {
+    let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
+    if !state_ptr.is_null()
+        && event_wake_owner_th_.with(|owner| owner.get()) == stackless_wake_reactor_key::<()>(reactor)
+    {
+        let state: &EventWakeState = unsafe { &*state_ptr };
+        let mut guard = state.pings.driver.lock().unwrap();
+        *guard = wake.clone();
+    }
+    let owners_ptr = stackless_wake_owners_existing_ptr::<()>();
+    if owners_ptr.is_null() {
+        return;
+    }
+    let key = stackless_wake_reactor_key::<()>(reactor);
+    let mut ingress: Option<Arc<StacklessWakeIngress>> = None;
+    unsafe {
+        let owners = &mut *owners_ptr;
+        let mut i: usize = 0usize;
+        while i < owners.len() {
+            if owners[i].reactor_key == key {
+                ingress = owners[i].ingress.as_ref().cloned();
+                break;
+            }
+            i += 1usize;
+        }
+    }
+    if let Some(ingress) = ingress {
+        let mut guard = ingress.driver.lock().unwrap();
+        *guard = wake;
+    }
+}
+
+// The wake handle a new stackless ingress of `reactor` binds to: this
+// thread's driver, if `reactor` is the Reactor it drains.
+fn poll_driver_wake_of(reactor: &Reactor) -> Option<Arc<PollDriverWake>> {
+    let local: *const PollDriver = poll_driver_th_.with(|slot| slot.get());
+    if local.is_null()
+        || event_wake_owner_th_.with(|owner| owner.get()) != stackless_wake_reactor_key::<()>(reactor)
+    {
+        return None;
+    }
+    let driver: &PollDriver = unsafe { &*local };
+    Some(driver.wake.clone())
+}
+
+// Whether a stackless spawn on `reactor` goes to this thread's Lion runtime.
+fn poll_driver_accepts_spawn(reactor: &Reactor) -> bool {
+    let local: *const PollDriver = poll_driver_th_.with(|slot| slot.get());
+    if local.is_null() {
+        return false;
+    }
+    let driver: &PollDriver = unsafe { &*local };
+    driver.accepting.get()
+        && event_wake_owner_th_.with(|owner| owner.get()) == stackless_wake_reactor_key::<()>(reactor)
+}
+
+// Wake this thread's driver from an owner-side edge (the ready queue), unless
+// the driver is draining, which serves the edge itself.
+fn poll_driver_wake_owner() {
+    let local: *const PollDriver = poll_driver_th_.with(|slot| slot.get());
+    if local.is_null() {
+        return;
+    }
+    let driver: &PollDriver = unsafe { &*local };
+    if !driver.running.get() {
+        poll_driver_wake(&driver.wake);
+    }
+}
+
+// A deadline was pushed on this thread: wake the driver if it sleeps past it.
+fn poll_driver_deadline_added(deadline: u64) {
+    let local: *const PollDriver = poll_driver_th_.with(|slot| slot.get());
+    if local.is_null() {
+        return;
+    }
+    let driver: &PollDriver = unsafe { &*local };
+    if !driver.running.get() && deadline < driver.armed_us.get() {
+        poll_driver_wake(&driver.wake);
+    }
+}
+
+// Whether this thread runs the driver that owns `wake`, and that driver still
+// accepts work on its runtime.
+fn poll_driver_is_current(wake: &Arc<PollDriverWake>) -> bool {
+    let local: *const PollDriver = poll_driver_th_.with(|slot| slot.get());
+    if local.is_null() {
+        return false;
+    }
+    let driver: &PollDriver = unsafe { &*local };
+    driver.accepting.get() && Arc::ptr_eq(&driver.wake, wake)
+}
+
+fn poll_fd_entry_wake(entry: &PollFdEntry) {
+    let waker: Option<Waker> = {
+        let guard = entry.waker.borrow();
+        (*guard).clone()
+    };
+    if let Some(waker) = waker {
+        waker.wake();
+    }
+}
+
+// The driver task.  Unpin, so poll can reach its fields through get_mut.
+struct PollDriverTask {
+    driver: Rc<PollDriver>,
+}
+
+impl Future for PollDriverTask {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let this: &mut PollDriverTask = self.get_mut();
+        let mut unwind = PollTaskUnwindAbort { armed: true };
+        this.driver.running.set(true);
+        let result: Poll<()> = poll_driver_poll(&this.driver, cx);
+        this.driver.running.set(false);
+        unwind.armed = false;
+        result
+    }
+}
+
+// One poll of the driver: drain until no wake is pending, then sleep.
+fn poll_driver_poll(driver: &Rc<PollDriver>, cx: &mut Context<'_>) -> Poll<()> {
+    let reactor: Rc<Reactor> = Reactor::get_reactor();
+    loop {
+        // Cleared before the drain, so a wake that lands during it is seen
+        // below (see PollDriverWake).  A swap, not a store: reading the flag
+        // a wake set acquires the work that wake published.
+        driver.wake.pending.swap(false, std::sync::atomic::Ordering::AcqRel);
+        poll_driver_process_commands(driver);
+        poll_driver_apply_removals(driver);
+        poll_driver_trigger_jobs(driver);
+        (*reactor).run_loop(false, true);
+        if driver.stop.get() {
+            poll_driver_disarm_timer(driver);
+            return Poll::Ready(());
+        }
+        {
+            let mut slot = driver.wake.waker.lock().unwrap();
+            *slot = Some(cx.waker().clone());
+        }
+        if driver.wake.pending.load(std::sync::atomic::Ordering::Acquire) {
+            continue;
+        }
+        if poll_driver_arm_timer(driver, &reactor, cx) {
+            return Poll::Pending;
+        }
+        // The next deadline passed during this drain: serve it now.
+    }
+}
+
+// Sleep on a Lion timer until the earliest of the next event deadline and,
+// while a job waits to become ready, the next job re-check.  Returns false
+// when that instant has already passed; the caller drains again.
+fn poll_driver_arm_timer(driver: &PollDriver, reactor: &Reactor, cx: &mut Context<'_>) -> bool {
+    // Job::Ready has no wake; a waiting job is re-checked this often, the
+    // rate of the old poll loop.
+    let job_recheck_us: u64 = 1000u64;
+    let mut target: u64 = u64::MAX;
+    let next: Option<u64> = event_next_deadline_us::<()>(reactor);
+    if let Some(deadline) = next {
+        target = deadline;
+    }
+    driver.armed_us.set(target);
+    let jobs_waiting: bool = {
+        let jobs_guard = driver.jobs.borrow();
+        !(*jobs_guard).is_empty()
+    };
+    if target == u64::MAX && !jobs_waiting {
+        poll_driver_disarm_timer(driver);
+        return true;
+    }
+    let now_us: u64 = Time::now(true);
+    if jobs_waiting && now_us + job_recheck_us < target {
+        target = now_us + job_recheck_us;
+    }
+    if target <= now_us {
+        poll_driver_disarm_timer(driver);
+        return false;
+    }
+    // Lion's clock counts whole milliseconds from its own origin, so the
+    // wait is converted as a duration, rounded up.  Lion truncates its clock,
+    // so the timer can fire up to a millisecond before `target`; the drain
+    // then finds nothing due and the driver sleeps again for the rest.
+    // div_ceil lowers to rusty::div_ceil.
+    let wait_ms: u64 = (target - now_us).div_ceil(1000u64);
+    poll_driver_disarm_timer(driver);
+    let deadline: lion_reactor::Instant = lion_reactor::Instant::now() + lion_reactor::Duration::from_millis(wait_ms);
+    let waker: lion_reactor::Waker = lion_reactor::Waker::from_std(cx.waker().clone());
+    let registered = lion_reactor::ReactorHandle::new().register_timer(deadline, waker);
+    match registered {
+        lion_reactor::IoResult::Ok(rid) => {
+            let mut timer_guard = driver.timer.borrow_mut();
+            *timer_guard = Some(rid);
+        }
+        lion_reactor::IoResult::Err(_) => {
+            reactor_verify(false);
+        }
+    }
+    true
+}
+
+// Drop the driver's timer, if any.  Deregistration is deferred inside Lion,
+// which re-uses the slot when the next timer has the same deadline.
+fn poll_driver_disarm_timer(driver: &PollDriver) {
+    let previous: Option<lion_reactor::ResourceId> = {
+        let mut timer_guard = driver.timer.borrow_mut();
+        (*timer_guard).take()
+    };
+    if let Some(rid) = previous {
+        lion_reactor::ReactorHandle::new().deregister_timer(rid);
+    }
+}
+
+// Drain the command channel, as pollworker_process_commands did each pass.
+fn poll_driver_process_commands(driver: &Rc<PollDriver>) {
+    loop {
+        let result = driver.receiver.try_recv();
+        if result.is_err() {
+            // Empty or disconnected -- either way, stop draining.
+            break;
+        }
+        let cmd = result.unwrap();
+        match cmd {
+            PollCommand::AddPollable { pollable } => {
+                poll_driver_add(driver, pollable);
+            }
+            PollCommand::RemovePollable { fd } => {
+                let known: bool = {
+                    let fds_guard = driver.fds.borrow();
+                    (*fds_guard).contains_key(&fd)
+                };
+                if known {
+                    let mut remove_guard = driver.pending_remove.borrow_mut();
+                    (*remove_guard).insert(fd);
+                }
+            }
+            PollCommand::ClosePollable { fd } => {
+                poll_driver_close(driver, fd);
+            }
+            PollCommand::UpdateMode { fd, new_mode } => {
+                poll_driver_update_mode(driver, fd, new_mode);
+            }
+            PollCommand::AddJob { job } => {
+                poll_driver_add_job(driver, job);
+            }
+            PollCommand::RemoveJob { job } => {
+                let key: usize = job_identity(&job);
+                let mut jobs_guard = driver.jobs.borrow_mut();
+                (*jobs_guard).retain(move |queued: &Arc<dyn Job>| -> bool { job_identity(queued) != key });
+            }
+            PollCommand::Shutdown => {
+                driver.stop.set(true);
+            }
+        }
+    }
+}
+
+// Admit a registration with the rules of pollworker_do_add_pollable: a closed
+// or fd-less proxy is dropped; a second registration for a live one is
+// dropped; a closed one is retired first.  The new registration gets an
+// AsyncFd and its transport task.
+// MEASURED allow — see the `borrowed_box` note on `pollable_proxy_fd`.
+#[allow(clippy::borrowed_box)]
+fn poll_driver_add(driver: &Rc<PollDriver>, poll: PollableProxy) {
+    let fd = pollable_proxy_fd(&poll);
+    let poll_mode = pollable_proxy_mode(&poll);
+    let poll_ref: &Box<dyn PollableBase> = &poll;
+    if fd < 0 || poll_ref.is_closed() {
+        return;
+    }
+    let existing: Option<Rc<PollFdEntry>> = {
+        let fds_guard = driver.fds.borrow();
+        (*fds_guard).get(&fd).cloned()
+    };
+    if let Some(old) = existing {
+        let old: Rc<PollFdEntry> = old;
+        if !poll_fd_entry_is_closed(&old) {
+            return;
+        }
+        poll_driver_close(driver, fd);
+    }
+    // A failed registration drops the proxy, which releases its lease.
+    let registered = lion_reactor::AsyncFd::new(fd);
+    if registered.is_err() {
+        return;
+    }
+    let entry: Rc<PollFdEntry> = Rc::new(PollFdEntry {
+        fd,
+        proxy: RefCell::new(Some(poll)),
+        async_fd: RefCell::new(Some(registered.unwrap())),
+        mode: Cell::new(poll_mode),
+        waker: RefCell::new(None),
+    });
+    {
+        let mut fds_guard = driver.fds.borrow_mut();
+        (*fds_guard).insert(fd, entry.clone());
+    }
+    // Detached: retirement ends the task by emptying its entry and waking it,
+    // and the runtime's drop takes whatever is left at shutdown.
+    let task = PollFdTask { driver: driver.clone(), entry };
+    let handle: lion_executor::JoinHandle<()> = lion_executor::spawn_local(task);
+    drop(handle);
+}
+
+// ClosePollable: retire the registration and close its pollable, as
+// pollworker_do_close_pollable did, cancelling a queued removal of it.
+fn poll_driver_close(driver: &PollDriver, fd: i32) {
+    {
+        let mut remove_guard = driver.pending_remove.borrow_mut();
+        (*remove_guard).remove(&fd);
+    }
+    let retired: Option<Rc<PollFdEntry>> = {
+        let mut fds_guard = driver.fds.borrow_mut();
+        (*fds_guard).remove(&fd)
+    };
+    if let Some(entry) = retired {
+        let entry: Rc<PollFdEntry> = entry;
+        poll_fd_entry_retire(&entry, true);
+    }
+}
+
+// UpdateMode: record the mode and let the transport task act on it.
+fn poll_driver_update_mode(driver: &PollDriver, fd: i32, new_mode: i32) {
+    let entry: Option<Rc<PollFdEntry>> = {
+        let fds_guard = driver.fds.borrow();
+        (*fds_guard).get(&fd).cloned()
+    };
+    if let Some(entry) = entry {
+        let entry: Rc<PollFdEntry> = entry;
+        entry.mode.set(new_mode);
+        poll_fd_entry_wake(&entry);
+    }
+}
+
+// The removals of the command batch just drained.  Unregistered, not closed,
+// as pollworker_process_pending_removals did.
+fn poll_driver_apply_removals(driver: &PollDriver) {
+    // The HashSet port has no drain(); take the set and copy the fds out.
+    let taken: FdSet = {
+        let mut remove_guard = driver.pending_remove.borrow_mut();
+        core::mem::take(&mut *remove_guard)
+    };
+    let mut fds: Vec<i32> = Vec::new();
+    for fd in taken.iter() {
+        fds.push(*fd);
+    }
+    for fd in fds.iter() {
+        let retired: Option<Rc<PollFdEntry>> = {
+            let mut fds_guard = driver.fds.borrow_mut();
+            (*fds_guard).remove(fd)
+        };
+        if let Some(entry) = retired {
+            let entry: Rc<PollFdEntry> = entry;
+            poll_fd_entry_retire(&entry, false);
+        }
+    }
+}
+
+// Queue a job unless the same job (by identity) is already queued.  The scan
+// is over the jobs waiting on this thread, normally none or a few.
+fn poll_driver_add_job(driver: &PollDriver, job: Arc<dyn Job>) {
+    let key: usize = job_identity(&job);
+    let mut jobs_guard = driver.jobs.borrow_mut();
+    let mut i: usize = 0usize;
+    while i < (*jobs_guard).len() {
+        if job_identity(&(*jobs_guard)[i]) == key {
+            return;
+        }
+        i += 1usize;
+    }
+    (*jobs_guard).push(job);
+}
+
+// Run every ready job in a fiber, in submission order, and keep the rest in
+// order, as pollworker_trigger_job did apart from the order.  A job still
+// waiting keeps the driver's 1 ms re-check armed.
+fn poll_driver_trigger_jobs(driver: &PollDriver) {
+    let jobs_exec: Vec<Arc<dyn Job>> = {
+        let mut jobs_guard = driver.jobs.borrow_mut();
+        core::mem::take(&mut *jobs_guard)
+    };
+    for job in jobs_exec.iter() {
+        if job_ready(job) {
+            // Ready jobs ran (or are running) -- do NOT re-add them.
+            job_spawn_work(job);
+        } else {
+            let mut jobs_guard = driver.jobs.borrow_mut();
+            (*jobs_guard).push(job.clone());
+        }
+    }
+}
+
+// Shutdown: unregister every pollable without closing it, and drop the jobs
+// and the timer.  Runs with the runtime still alive.
+fn poll_driver_retire_all(driver: &PollDriver) {
+    let taken: HashMap<i32, Rc<PollFdEntry>> = {
+        let mut fds_guard = driver.fds.borrow_mut();
+        core::mem::take(&mut *fds_guard)
+    };
+    let mut entries: Vec<Rc<PollFdEntry>> = Vec::new();
+    for entry in taken.values() {
+        entries.push(entry.clone());
+    }
+    drop(taken);
+    for entry in entries.iter() {
+        poll_fd_entry_retire(entry, false);
+    }
+    {
+        let mut remove_guard = driver.pending_remove.borrow_mut();
+        (*remove_guard).clear();
+    }
+    {
+        let mut jobs_guard = driver.jobs.borrow_mut();
+        (*jobs_guard).clear();
+    }
+    poll_driver_disarm_timer(driver);
+}
+
+// MEASURED allow — see the `borrowed_box` note on `pollable_proxy_fd`.
+#[allow(clippy::borrowed_box)]
+fn poll_fd_entry_is_closed(entry: &PollFdEntry) -> bool {
+    let guard = entry.proxy.borrow();
+    match (*guard).as_ref() {
+        Some(p) => {
+            let p: &Box<dyn PollableBase> = p;
+            p.is_closed()
+        }
+        None => true,
+    }
+}
+
+// Retire a registration: deregister its descriptor from Lion while the
+// proxy's lease still holds it open, optionally close the pollable (the
+// epoll loop's order: unregister, then close, then release the lease), and
+// wake the transport task, which then finds the entry empty and finishes.
+fn poll_fd_entry_retire(entry: &PollFdEntry, close: bool) {
+    let async_fd: Option<lion_reactor::AsyncFd> = {
+        let mut fd_guard = entry.async_fd.borrow_mut();
+        (*fd_guard).take()
+    };
+    drop(async_fd);
+    let proxy: Option<PollableProxy> = {
+        let mut proxy_guard = entry.proxy.borrow_mut();
+        (*proxy_guard).take()
+    };
+    if let Some(mut poll) = proxy {
+        if close {
+            let poll_ref: &mut Box<dyn PollableBase> = &mut poll;
+            poll_ref.close();
+        }
+        drop(poll);
+    }
+    let waker: Option<Waker> = {
+        let mut waker_guard = entry.waker.borrow_mut();
+        (*waker_guard).take()
+    };
+    if let Some(waker) = waker {
+        waker.wake();
+    }
+}
+
+// The task of one add_proxy registration (the pollable adapter).  Unpin, so
+// poll can reach its fields through get_mut.
+struct PollFdTask {
+    driver: Rc<PollDriver>,
+    entry: Rc<PollFdEntry>,
+}
+
+impl Future for PollFdTask {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let this: &mut PollFdTask = self.get_mut();
+        let mut unwind = PollTaskUnwindAbort { armed: true };
+        let result: Poll<()> = poll_fd_task_poll(&this.driver, &this.entry, cx);
+        unwind.armed = false;
+        result
+    }
+}
+
+// One poll of a transport task.  It keeps the epoll loop's edge-triggered
+// dispatch: one handle_read per read edge, and handle_write while the mode
+// asks for writes and the socket takes them.
+//
+// Readiness is Lion's AsyncFd flag per direction, which only a park sets and
+// only an observed WouldBlock clears.  A pollable drains internally and does
+// not report EAGAIN, so the adapter maps its results onto the flags, under
+// the EPOLLET contract the epoll loop gave pollables:
+// * A read edge is consumed before handle_read runs.  A pollable must read
+//   until EAGAIN or a short read (accept until EAGAIN), so data that arrives
+//   after its read raises a new edge.
+// * The write flag is consumed only when handle_write returns NO_CHANGE,
+//   which a pollable returns only after send(2) hit EAGAIN (TCP's retired
+//   pollable did).  Any other mode means the socket is still writable, so
+//   the flag stays set and the next pending write goes out at once.
+// ERR and HUP wake both directions in Lion, so a failed or hung-up socket is
+// seen by handle_read (recv fails or reads EOF) rather than handle_error,
+// which the adapter does not call.
+// The pending-write latch is read here after every handle_read (a fast
+// handler's reply is written in the same poll) and whenever the task is woken
+// for another reason.  Nothing wakes the task for the latch alone: a pollable
+// that wants write interest from another thread asks for it with
+// PollThread::update_mode.  (The epoll loop swept every registration's latch
+// each pass; S3's notify_pending_write replaced that sweep for TCP, and went
+// with TCP's pollable surface in S7b.)  A pollable found closed is retired and
+// closed, as that loop's closed sweep did.
+fn poll_fd_task_poll(driver: &PollDriver, entry: &Rc<PollFdEntry>, cx: &mut Context<'_>) -> Poll<()> {
+    // Publish the waker before reading any state it may be woken for.
+    {
+        let mut waker_guard = entry.waker.borrow_mut();
+        *waker_guard = Some(cx.waker().clone());
+    }
+    let retired: bool = {
+        let proxy_guard = entry.proxy.borrow();
+        (*proxy_guard).is_none()
+    };
+    if retired {
+        let mut waker_guard = entry.waker.borrow_mut();
+        *waker_guard = None;
+        return Poll::Ready(());
+    }
+    if (entry.mode.get() & PollMode::READ) != 0 && poll_fd_take_ready(entry, cx, false) {
+        poll_fd_entry_handle_read(entry);
+    }
+    if poll_fd_entry_is_closed(entry) {
+        poll_fd_task_retire(driver, entry);
+        return Poll::Ready(());
+    }
+    if poll_fd_entry_latched(entry) {
+        entry.mode.set(PollMode::READ | PollMode::WRITE);
+    }
+    if (entry.mode.get() & PollMode::WRITE) != 0 && poll_fd_is_ready(entry, cx, true) {
+        let new_mode: i32 = poll_fd_entry_handle_write(entry);
+        if new_mode == PollMode::NO_CHANGE {
+            let _consumed: bool = poll_fd_take_ready(entry, cx, true);
+        } else {
+            entry.mode.set(new_mode);
+        }
+    }
+    if poll_fd_entry_is_closed(entry) {
+        poll_fd_task_retire(driver, entry);
+        return Poll::Ready(());
+    }
+    // Wait for the directions the mode asks for.  A direction consumed above
+    // registers the waker now; one still flagged (the mode changed under the
+    // task) is served on another poll.
+    let mut again: bool = false;
+    if (entry.mode.get() & PollMode::READ) != 0 && poll_fd_is_ready(entry, cx, false) {
+        again = true;
+    }
+    if (entry.mode.get() & PollMode::WRITE) != 0 && poll_fd_is_ready(entry, cx, true) {
+        again = true;
+    }
+    if again {
+        cx.waker().wake_by_ref();
+    }
+    Poll::Pending
+}
+
+// Whether the registration's descriptor is ready in one direction.  When it is
+// not, `cx`'s waker is registered for that direction's next edge.
+fn poll_fd_is_ready(entry: &PollFdEntry, cx: &mut Context<'_>, write: bool) -> bool {
+    let fd_guard = entry.async_fd.borrow();
+    if (*fd_guard).is_none() {
+        return false;
+    }
+    let async_fd: &lion_reactor::AsyncFd = (*fd_guard).as_ref().unwrap();
+    lion_fd_poll_ready(async_fd, cx, write)
+}
+
+// Consume one direction's readiness (see lion_fd_consume_ready).
+fn poll_fd_take_ready(entry: &PollFdEntry, cx: &mut Context<'_>, write: bool) -> bool {
+    let fd_guard = entry.async_fd.borrow();
+    if (*fd_guard).is_none() {
+        return false;
+    }
+    let async_fd: &lion_reactor::AsyncFd = (*fd_guard).as_ref().unwrap();
+    lion_fd_consume_ready(async_fd, cx, write)
+}
+
+/// Whether `async_fd` may be ready in one direction (read, or write when
+/// `write`).  When it is not, `cx`'s waker is registered for that
+/// direction's next edge and false is returned.  Call on the poll thread that
+/// registered the descriptor.
+///
+/// A true result obliges the caller to act: perform the operation, and when
+/// it reports EAGAIN, call `lion_fd_consume_ready` in the same poll; or wake
+/// its own task before returning Pending.  Otherwise no waker is registered
+/// and nothing wakes the task (the AsyncFd protocol of U8).
+pub fn lion_fd_poll_ready(async_fd: &lion_reactor::AsyncFd, cx: &mut Context<'_>, write: bool) -> bool {
+    let polled = if write {
+        async_fd.poll_write_ready(cx)
+    } else {
+        async_fd.poll_read_ready(cx)
+    };
+    match polled {
+        Poll::Ready(Ok(_ready)) => true,
+        Poll::Ready(Err(_misuse)) => {
+            // Only an AsyncFd polled off its reactor's thread fails here.
+            reactor_verify(false);
+            false
+        }
+        Poll::Pending => false,
+    }
+}
+
+/// Consume one direction's readiness: true if it was ready, and the flag is
+/// then clear until the next edge.  The guard's try_io is the only way to
+/// clear it, and clears only on WouldBlock, which the empty operation reports.
+///
+/// Call it only right after the caller's own operation on the descriptor
+/// returned EAGAIN, in the same poll: no park lies between that EAGAIN and
+/// the clear, so the clear consumes exactly the readiness the EAGAIN
+/// disproved (U8 invariant 2), and the next transition raises a new edge.
+/// (The pollable adapter also calls it before handle_read, whose pollables
+/// drain to EAGAIN or a short read under EPOLLET rules.)
+pub fn lion_fd_consume_ready(async_fd: &lion_reactor::AsyncFd, cx: &mut Context<'_>, write: bool) -> bool {
+    let polled = if write {
+        async_fd.poll_write_ready(cx)
+    } else {
+        async_fd.poll_read_ready(cx)
+    };
+    match polled {
+        Poll::Ready(Ok(ready)) => {
+            let _cleared = ready.try_io(|_fd: lion_reactor::RawFd| -> std::io::Result<()> {
+                Err(std::io::Error::from(std::io::ErrorKind::WouldBlock))
+            });
+            true
+        }
+        Poll::Ready(Err(_misuse)) => {
+            reactor_verify(false);
+            false
+        }
+        Poll::Pending => false,
+    }
+}
+
+// MEASURED allow — see the `borrowed_box` note on `pollable_proxy_fd`.
+#[allow(clippy::borrowed_box)]
+fn poll_fd_entry_handle_read(entry: &PollFdEntry) {
+    // Held across the callout: only this task and the driver touch the proxy,
+    // and the driver never runs inside a transport task's poll.
+    let mut proxy_guard = entry.proxy.borrow_mut();
+    if let Some(p) = (*proxy_guard).as_mut() {
+        let p: &mut Box<dyn PollableBase> = p;
+        p.handle_read();
+    }
+}
+
+// MEASURED allow — see the `borrowed_box` note on `pollable_proxy_fd`.
+#[allow(clippy::borrowed_box)]
+fn poll_fd_entry_handle_write(entry: &PollFdEntry) -> i32 {
+    let mut proxy_guard = entry.proxy.borrow_mut();
+    if let Some(p) = (*proxy_guard).as_mut() {
+        let p: &mut Box<dyn PollableBase> = p;
+        return p.handle_write();
+    }
+    PollMode::NO_CHANGE
+}
+
+// MEASURED allow — see the `borrowed_box` note on `pollable_proxy_fd`.
+#[allow(clippy::borrowed_box)]
+fn poll_fd_entry_latched(entry: &PollFdEntry) -> bool {
+    let proxy_guard = entry.proxy.borrow();
+    if let Some(p) = (*proxy_guard).as_ref() {
+        let p: &Box<dyn PollableBase> = p;
+        return p.check_pending_write_update();
+    }
+    false
+}
+
+// A transport task found its pollable closed: leave the driver's map (unless
+// a replacement already took the descriptor) with any queued removal, and
+// retire it with a close, as the epoll loop's closed sweep did.
+fn poll_fd_task_retire(driver: &PollDriver, entry: &Rc<PollFdEntry>) {
+    let current: Option<Rc<PollFdEntry>> = {
+        let fds_guard = driver.fds.borrow();
+        (*fds_guard).get(&entry.fd).cloned()
+    };
+    if let Some(current) = current {
+        let current: Rc<PollFdEntry> = current;
+        if Rc::ptr_eq(&current, entry) {
+            {
+                let mut fds_guard = driver.fds.borrow_mut();
+                (*fds_guard).remove(&entry.fd);
+            }
+            let mut remove_guard = driver.pending_remove.borrow_mut();
+            (*remove_guard).remove(&entry.fd);
+        }
+    }
+    {
+        // The task finishes in this poll; nothing needs to wake it.
+        let mut waker_guard = entry.waker.borrow_mut();
+        *waker_guard = None;
+    }
+    poll_fd_entry_retire(entry, true);
+}
+
+// ---------------------------------------------------------------------------
+// Stackless tasks on a PollThread's Lion runtime (S3)
+// ---------------------------------------------------------------------------
+//
+// The first poll runs inside the spawn call, as on the Reactor's own
+// executor, so a task that completes at once delivers inline and never
+// becomes a Lion task.  The waker of that first poll is a forwarder
+// (StacklessLionWake): the future may keep it, so it wakes whatever Lion task
+// the future became, from any thread.  Each later poll re-points it at that
+// poll's Lion waker before polling.
+//
+// Teardown owes waiters an error (W2) here too: a task the runtime drops
+// before it completes -- when its PollThread shuts down -- is counted in
+// g_stackless_cancel.teardown_tasks and logged at ERROR, and its future and
+// completion callback are destroyed then, on the poll thread.
+
+struct StacklessLionWake {
+    target: std::sync::Mutex<Option<Waker>>,
+}
+
+impl Wake for StacklessLionWake {
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        let target: Option<Waker> = {
+            let guard = self.target.lock().unwrap();
+            (*guard).clone()
+        };
+        if let Some(waker) = target {
+            waker.wake();
+        }
+    }
+}
+
+fn stackless_lion_forward_to(forward: &StacklessLionWake, waker: Option<Waker>) {
+    let mut guard = forward.target.lock().unwrap();
+    *guard = waker;
+}
+
+// A task with a completion callback.  `on_ready` is boxed so the task is
+// Unpin whatever the callback captures.
+struct StacklessLionTask<T, OnReady> {
+    task: Pin<Box<dyn Future<Output = T>>>,
+    on_ready: Option<Box<OnReady>>,
+    forward: Arc<StacklessLionWake>,
+    done: bool,
+}
+
+impl<T: 'static, OnReady: FnMut(T) + 'static> Future for StacklessLionTask<T, OnReady> {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let this: &mut StacklessLionTask<T, OnReady> = self.get_mut();
+        let mut unwind = PollTaskUnwindAbort { armed: true };
+        stackless_lion_forward_to(&this.forward, Some(cx.waker().clone()));
+        let polled: Poll<T> = this.task.as_mut().poll(cx);
+        let mut result: Poll<()> = Poll::Pending;
+        if let Poll::Ready(value) = polled {
+            this.done = true;
+            let callback: Option<Box<OnReady>> = this.on_ready.take();
+            if let Some(mut f) = callback {
+                (*f)(value);
+            }
+            result = Poll::Ready(());
+        }
+        unwind.armed = false;
+        result
+    }
+}
+
+impl<T, OnReady> Drop for StacklessLionTask<T, OnReady> {
+    fn drop(&mut self) {
+        stackless_lion_forward_to(&self.forward, None);
+        if !self.done {
+            stackless_lion_note_cancelled();
+        }
+    }
+}
+
+// A task without a completion value.
+struct StacklessLionVoidTask {
+    task: TaskVoid,
+    forward: Arc<StacklessLionWake>,
+    done: bool,
+}
+
+impl Future for StacklessLionVoidTask {
+    type Output = ();
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<()> {
+        let this: &mut StacklessLionVoidTask = self.get_mut();
+        let mut unwind = PollTaskUnwindAbort { armed: true };
+        stackless_lion_forward_to(&this.forward, Some(cx.waker().clone()));
+        let ready: bool = this.task.as_mut().poll(cx).is_ready();
+        if ready {
+            this.done = true;
+        }
+        unwind.armed = false;
+        if ready {
+            Poll::Ready(())
+        } else {
+            Poll::Pending
+        }
+    }
+}
+
+impl Drop for StacklessLionVoidTask {
+    fn drop(&mut self) {
+        stackless_lion_forward_to(&self.forward, None);
+        if !self.done {
+            stackless_lion_note_cancelled();
+        }
+    }
+}
+
+fn stackless_lion_note_cancelled() {
+    g_stackless_cancel.teardown_tasks.fetch_add(1u64, std::sync::atomic::Ordering::Relaxed);
+    reactor_log_line(Log::ERROR, 0i32, core::ptr::null(), "[PollThread] cancelling an outstanding stackless task at shutdown; its callback and captures are destroyed now, so waiters are released with an error instead of blocking forever".to_string());
+}
+
+fn stackless_lion_spawn_with_result<T: 'static, OnReady>(mut task: Pin<Box<dyn Future<Output = T>>>, mut on_ready: OnReady)
+where
+    OnReady: FnMut(T) + 'static,
+{
+    let forward: Arc<StacklessLionWake> = Arc::new(StacklessLionWake {
+        target: std::sync::Mutex::new(None),
+    });
+    let early_waker: Waker = Waker::from(forward.clone());
+    let mut ectx = Context::from_waker(&early_waker);
+    if let Poll::Ready(value) = task.as_mut().poll(&mut ectx) {
+        on_ready(value);
+        return;
+    }
+    let lion_task = StacklessLionTask {
+        task,
+        on_ready: Some(Box::new(on_ready)),
+        forward,
+        done: false,
+    };
+    // Detached: the runtime owns the task until it completes or is dropped.
+    let handle: lion_executor::JoinHandle<()> = lion_executor::spawn_local(lion_task);
+    drop(handle);
+}
+
+fn stackless_lion_spawn_void(mut task: TaskVoid) {
+    let forward: Arc<StacklessLionWake> = Arc::new(StacklessLionWake {
+        target: std::sync::Mutex::new(None),
+    });
+    let early_waker: Waker = Waker::from(forward.clone());
+    let mut ectx = Context::from_waker(&early_waker);
+    if task.as_mut().poll(&mut ectx).is_ready() {
+        return;
+    }
+    let lion_task = StacklessLionVoidTask {
+        task,
+        forward,
+        done: false,
+    };
+    let handle: lion_executor::JoinHandle<()> = lion_executor::spawn_local(lion_task);
+    drop(handle);
 }
 
 fn fiber_yield_invoke(y: &mut fiber_yield_t) {
@@ -3766,12 +5420,10 @@ fn quorum_event_finalize(qe: &QuorumEvent, timeout: u64,
             // Didn't receive all RPC replies.
             let dr: &mut QuorumDanglingVec = &mut dangling_rpc;
             let _ret = finalize_func.as_mut().unwrap()(dr);
-            // Drain guard: a TIMEOUT'd event is never evicted by the
-            // reactor loop (extract takes READY, retain drops DONE), so
-            // a registered finalize_event_ would otherwise linger in the
-            // queues forever at broadcast rate. Mark it DONE here (we
-            // run on the owner thread) so the next pass evicts and
-            // prune can free it.
+            // Historical drain guard. This was added when run_loop kept
+            // TIMEOUT events in its queues forever; run_loop now evicts
+            // them itself. The DONE mark stays because callers can observe
+            // finalize_event_'s final status. We run on the owner thread.
             final_ev.status_.set(EventStatus::DONE);
         }
     });
@@ -3789,5 +5441,5 @@ fn quorum_event_is_slow(_qe: &QuorumEvent) -> bool {
 }
 
 #[cfg(test)]
-#[path = "../tests/helpers/pollworker_fd_reuse.rs"]
-mod pollworker_fd_reuse_tests;
+#[path = "../tests/helpers/event_wake_state.rs"]
+mod event_wake_state_tests;

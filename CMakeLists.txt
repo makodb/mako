@@ -127,6 +127,32 @@ endif()
 include("${SRPC_RUSTY_CPP_DIR}/cmake/RustyCppSubmodule.cmake")
 include("${SRPC_RUSTY_CPP_DIR}/cmake/RustyCppTranspiler.cmake")
 create_rustycpp_transpiler_build_target()
+
+# The Lion dependency crates (docs/dev/lion-runtime-plan.md, S1 and D5) keep
+# their executable code inside `verus! { }`. `--verus-exec` erases it with
+# Verus's own EraseAll pass, which runs out of process in rusty-cpp's
+# `rusty-cpp-verus-erase` helper. Build the helper in its OWN cargo
+# invocation: it links verus_syn, which turns on proc-macro2's
+# `span-locations` feature for everything built in the same invocation, and
+# building it together with the transpiler would unify that feature back into
+# the transpiler (rusty-cpp verus-erase/Cargo.toml; plan T1b). Both land in the
+# same target directory, so the order edge below only avoids a lock wait.
+set(SRPC_VERUS_ERASE_HELPER
+    "${RUSTYCPP_TRANSPILER_TARGET_DIR}/rusty-cpp-verus-erase")
+add_custom_target(build_rusty_cpp_verus_erase
+    COMMAND
+        "${CARGO_EXECUTABLE}"
+        build
+        --locked
+        -p
+        verus-erase
+        ${RUSTYCPP_TRANSPILER_CARGO_BUILD_FLAGS}
+    WORKING_DIRECTORY "${RUSTYCPP_DIR}"
+    COMMENT "Building rusty-cpp-verus-erase (separate cargo invocation)..."
+    VERBATIM
+)
+add_dependencies(build_rusty_cpp_verus_erase build_rusty_cpp_transpiler)
+
 add_subdirectory(third-party/rusty-cpp EXCLUDE_FROM_ALL)
 foreach(_rusty_port_target IN ITEMS
     vec_port btree_port rc_port std_port std_port_hashbrown rusty_async rusty
@@ -456,6 +482,41 @@ set(SRPC_MODULE_BASE_DIRS
 set_source_files_properties(${SRPC_GOAL0_CRATE_CHILD_SRC}
     PROPERTIES GENERATED TRUE)
 
+# Dependency providers: the generated Lion crates (docs/dev/lion-runtime-plan.md,
+# D5 and S1). They are NOT canonical SRPC modules -- they are Lion's pinned,
+# unmodified sources under the third-party/lion gitlink -- so they stay out of
+# SRPC_MODULE_SRC and the 37-provider checks above, and are inventoried as a
+# separate class here and in scripts/check_srpc_crate_mode.py
+# (DEPENDENCY_PROVIDERS), which requires this list to equal the transpiler's
+# crate-graph.json exactly. `--crate-graph` emits each dependency crate as ONE
+# named module at <output>/<package>/<module>.cppm; this order is
+# crate-graph.json's, dependencies first. The list changes only with a Lion
+# pin or a transpiler bump.
+#
+# They compile in the SAME target and file set as SRPC's providers, with the
+# same flags: a separate library target got CMake's other rusty-port BMI
+# variant, and Clang rejected the mixed BMIs (plan T4). Their objects land in
+# libsrpc.a beside SRPC's (D5), so C++ consumers link one archive.
+set(SRPC_LION_PROVIDERS
+    lion-executor-spec/lion_executor_spec
+    lion-slab/lion_slab
+    lion-timer-wheel/lion_timer_wheel
+    lion-reactor/lion_reactor
+    lion-executor/lion_executor
+)
+set(SRPC_LION_PROVIDER_SRC)
+foreach(_SRPC_LION_PROVIDER IN LISTS SRPC_LION_PROVIDERS)
+    list(APPEND SRPC_LION_PROVIDER_SRC
+        ${SRPC_GOAL0_CRATE_CPP_DIR}/${_SRPC_LION_PROVIDER}.cppm)
+endforeach()
+set_source_files_properties(${SRPC_LION_PROVIDER_SRC}
+    PROPERTIES GENERATED TRUE)
+# Lion's sources are transpiler inputs exactly like the canonical modules, so a
+# gitlink bump must re-run crate generation.
+file(GLOB_RECURSE SRPC_LION_RUST_SRC CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lion/lion-*/Cargo.toml"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/lion/lion-*/src/*.rs")
+
 list(LENGTH SRPC_INLINE_MODULE_SRC _SRPC_INLINE_MODULE_COUNT)
 list(LENGTH SRPC_MODULE_SRC _SRPC_PRODUCTION_MODULE_COUNT)
 set(_SRPC_PRODUCTION_MODULE_NAMES
@@ -549,10 +610,13 @@ target_link_libraries(srpc_goal0_rand_kernel_smoke PRIVATE
 if(NOT TARGET srpc)
     add_library(srpc STATIC ${SRPC_BENCH_SRC})
     if(SRPC_MODULE_SRC)
+        # The Lion dependency providers share this one file set (see
+        # SRPC_LION_PROVIDERS); BASE_DIRS already covers their package
+        # subdirectories of the generated crate directory.
         target_sources(srpc PUBLIC
             FILE_SET srpc_modules TYPE CXX_MODULES
             BASE_DIRS ${SRPC_MODULE_BASE_DIRS}
-            FILES ${SRPC_MODULE_SRC}
+            FILES ${SRPC_LION_PROVIDER_SRC} ${SRPC_MODULE_SRC}
         )
     endif()
     # Both Rust and generated C++ call the same C platform kernels.
@@ -718,7 +782,12 @@ add_custom_target(srpc_goal0_source_gate
     USES_TERMINAL
     VERBATIM
 )
-add_dependencies(srpc_goal0_source_gate build_rusty_cpp_transpiler)
+# The contract tests transpile the crate under --verus-exec, which runs the
+# separately built verus-erase helper.
+add_dependencies(srpc_goal0_source_gate
+    build_rusty_cpp_transpiler
+    build_rusty_cpp_verus_erase
+)
 add_dependencies(srpc srpc_goal0_source_gate)
 
 # Cargo owns the transpiler executable, but build_rusty_cpp_transpiler is an
@@ -745,6 +814,27 @@ add_dependencies(
     srpc_goal0_transpiler_fingerprint
     build_rusty_cpp_transpiler
 )
+# The verus-erase helper is the other half of the emitter under --verus-exec:
+# it rewrites every Lion `verus!` item before the transpiler reads it. It is a
+# separate Cargo artifact, so it gets its own fingerprint edge for the same
+# reason as the transpiler's.
+set(SRPC_GOAL0_VERUS_ERASE_FINGERPRINT
+    "${CMAKE_CURRENT_BINARY_DIR}/goal0-verus-erase.fingerprint"
+)
+add_custom_target(srpc_goal0_verus_erase_fingerprint
+    COMMAND
+        "${CMAKE_COMMAND}"
+        "-DINPUT=${SRPC_VERUS_ERASE_HELPER}"
+        "-DOUTPUT=${SRPC_GOAL0_VERUS_ERASE_FINGERPRINT}"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/scripts/update_file_fingerprint.cmake"
+    BYPRODUCTS "${SRPC_GOAL0_VERUS_ERASE_FINGERPRINT}"
+    COMMENT "Fingerprinting the Goal-0 verus-erase helper"
+    VERBATIM
+)
+add_dependencies(
+    srpc_goal0_verus_erase_fingerprint
+    build_rusty_cpp_verus_erase
+)
 
 # CI's incremental regression reads these configure-time paths, touches a real
 # emitter input, and verifies that one build both replaces the executable and
@@ -765,8 +855,10 @@ file(GENERATE
 set(SRPC_GOAL0_CRATE_GENERATED_OUTPUTS
     ${SRPC_GOAL0_CRATE_CHILD_SRC}
     ${SRPC_GOAL0_CRATE_ROOT_SRC}
+    ${SRPC_LION_PROVIDER_SRC}
     ${SRPC_GOAL0_CRATE_CPP_DIR}/CMakeLists.txt
     ${SRPC_GOAL0_CRATE_CPP_DIR}/rusty_hand_slots.md
+    ${SRPC_GOAL0_CRATE_CPP_DIR}/crate-graph.json
 )
 set(SRPC_GOAL0_MODULE_PREAMBLE
     ${CMAKE_CURRENT_SOURCE_DIR}/module-preambles.toml
@@ -796,10 +888,15 @@ add_custom_command(
         --module-preamble "${SRPC_GOAL0_MODULE_PREAMBLE}"
         --type-map "${SRPC_GOAL0_TYPE_MAP}"
         --cpp-module-index "${SRPC_GOAL0_CPP_MODULE_INDEX}"
+        --verus-exec
+        --crate-graph
+        --verus-erase-helper "${SRPC_VERUS_ERASE_HELPER}"
     DEPENDS
         srpc_goal0_source_gate
         srpc_goal0_transpiler_fingerprint
         "${SRPC_GOAL0_TRANSPILER_FINGERPRINT}"
+        srpc_goal0_verus_erase_fingerprint
+        "${SRPC_GOAL0_VERUS_ERASE_FINGERPRINT}"
         "${SRPC_GOAL0_CRATE_MANIFEST}"
         "${CMAKE_CURRENT_SOURCE_DIR}/Cargo.lock"
         "${CMAKE_CURRENT_SOURCE_DIR}/rust-modules.toml"
@@ -808,6 +905,7 @@ add_custom_command(
         "${SRPC_GOAL0_CPP_MODULE_INDEX}"
         "${CMAKE_CURRENT_SOURCE_DIR}/src/lib.rs"
         ${SRPC_GOAL0_CANONICAL_RUST_SRC}
+        ${SRPC_LION_RUST_SRC}
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     COMMENT "Generating Goal-0 srpc crate C++ child modules"
     USES_TERMINAL
@@ -876,6 +974,14 @@ endif()
 # now import individual std ports, so their dependency graph alone does not
 # build the umbrella BMI that C++ consumers still import. Match srpc's flags
 # and link only the runtime here to avoid the mixed std-module closure below.
+#
+# The same holds for srpc's own `std` variant (@cmake_cxx_std@synth_0): no
+# provider or port imports `std`, yet goal0-battery-modules.modmap names its
+# `std` and `std.compat` BMIs for every battery program and rpcbench.  Only
+# stale BMIs in an old tree hid that nothing built them.  The probe therefore
+# also imports `std` and `std.compat`; with srpc's flags it resolves them to
+# the same synth variant as srpc (CXXModules.json of both targets agree), and
+# the modmap command below depends on this target.
 add_library(srpc_runtime_imports OBJECT EXCLUDE_FROM_ALL
     tests/runtime_imports.cc
 )
@@ -893,6 +999,7 @@ add_custom_target(srpc_goal0_dual_compile ALL
         "${Python3_EXECUTABLE}"
         "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check_srpc_crate_mode.py"
         --transpiler "${RUSTYCPP_TRANSPILER}"
+        --verus-erase-helper "${SRPC_VERUS_ERASE_HELPER}"
         --generated-dir "${SRPC_GOAL0_CRATE_CPP_DIR}"
         --production-library "$<TARGET_FILE:srpc>"
         --runtime-module-root
@@ -1073,6 +1180,11 @@ if(SRPC_RUNTIME_BATTERY_AVAILABLE)
     list(APPEND SRPC_BATTERY_OWN_MAIN test_native_policy)
     set(SRPC_BATTERY_SRC_test_native_policy tests/native_policy_test.cc)
 
+    # The Lion OS backend (reactor/epoll_wrapper.rs SrpcEpollBackend) through
+    # the generated provider: real epoll, eventfd and pipes, so a runtime suite.
+    list(APPEND SRPC_RUNTIME_BATTERY test_epoll_backend)
+    set(SRPC_BATTERY_SRC_test_epoll_backend tests/epoll_backend_test.cc)
+
     list(APPEND SRPC_RUNTIME_BATTERY test_runtime_parity)
     list(APPEND SRPC_BATTERY_OWN_MAIN test_runtime_parity)
     set(SRPC_BATTERY_SRC_test_runtime_parity tests/runtime_parity_test.cc)
@@ -1151,15 +1263,6 @@ if(SRPC_RUNTIME_BATTERY_AVAILABLE)
             target_link_libraries(${_battery_target} PRIVATE srpc_gtest)
         endif()
     endforeach()
-
-    # A test-only reactor implementation unit can exercise private canonical
-    # worker operations without adding production exports or duplicating them.
-    set(_fd_reuse_source ${CMAKE_CURRENT_SOURCE_DIR}/tests/pollworker_fd_reuse_test.cc)
-    target_sources(test_reactor_extended PRIVATE ${_fd_reuse_source})
-    set_source_files_properties(${_fd_reuse_source} PROPERTIES
-        CXX_SCAN_FOR_MODULES OFF
-        COMPILE_OPTIONS "@${SRPC_BATTERY_MODMAP}"
-        OBJECT_DEPENDS "${SRPC_BATTERY_MODMAP}")
 
     # The documentation guard checks both the Rust guide and C++ companion.
     # Absolute source paths also work when CTest runs from the build tree.

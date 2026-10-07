@@ -159,6 +159,122 @@ TEST(AndEventTest, MixedEventTypes) {
     EXPECT_TRUE(completed);
 }
 
+// S4 step 4 of docs/dev/lion-runtime-plan.md: composites wake on change.
+// A child that tests ready tests its waiting parents, whose WAIT->READY edge
+// queues them; nothing re-tests a composite per pass. These run the generated
+// C++ parent links; the Rust lane's versions are in
+// tests/reactor_composite_rust.rs. Captures are shared and every fiber
+// finishes inside its test (the S4 step 0 rule).
+
+TEST(AndEventTest, CompositeIsNotRetestedPerPass) {
+    auto reactor = Reactor::get_reactor();
+    const size_t waiting_before = reactor->waiting_events_.borrow()->len();
+    const size_t composite_before = reactor->composite_events_.borrow()->len();
+
+    auto probes = std::make_shared<int>(0);
+    auto answer = std::make_shared<bool>(false);
+    auto child = create_sp_int_event(1);
+    *child->state_.test_.borrow_mut() = [probes, answer](int32_t) {
+        ++*probes;
+        return *answer;
+    };
+    rusty::Vec<rusty::Arc<EventPollable>> children = {child};
+    auto and_event = create_sp_waitall_from(children);
+    auto resumed = std::make_shared<int>(0);
+    reactor->create_run_fiber([and_event, resumed]() {
+        and_event->wait();
+        ++*resumed;
+    });
+    EXPECT_EQ(reactor->waiting_events_.borrow()->len(), waiting_before);
+    EXPECT_EQ(reactor->composite_events_.borrow()->len(), composite_before);
+
+    const int parked_probes = *probes;
+    for (int i = 0; i < 16; i++) {
+        reactor->run_loop(false, true);
+    }
+    EXPECT_EQ(*probes, parked_probes) << "run_loop evaluated a waiting composite";
+
+    *answer = true;
+    EXPECT_TRUE(child->test());
+    EXPECT_EQ(and_event->status_.get(), EventStatus::READY);
+    EXPECT_EQ(*resumed, 0) << "a child test resumed its parent inline";
+    reactor->run_loop(false, true);
+    EXPECT_EQ(*resumed, 1);
+    EXPECT_EQ(and_event->status_.get(), EventStatus::DONE);
+}
+
+TEST(AndEventTest, SharedChildWakesBothParents) {
+    auto reactor = Reactor::get_reactor();
+    auto shared = create_sp_int_event(1);
+    auto other = create_sp_int_event(1);
+    rusty::Vec<rusty::Arc<EventPollable>> children = {shared, other};
+    auto all = create_sp_waitall_from(children);
+    auto any = create_sp_waitany(create_sp_never_event(), shared);
+    auto all_resumed = std::make_shared<int>(0);
+    auto any_resumed = std::make_shared<int>(0);
+    reactor->create_run_fiber([all, all_resumed]() {
+        all->wait();
+        ++*all_resumed;
+    });
+    reactor->create_run_fiber([any, any_resumed]() {
+        any->wait();
+        ++*any_resumed;
+    });
+    other->set(1);
+    reactor->run_loop(false, true);
+    EXPECT_EQ(*all_resumed + *any_resumed, 0);
+
+    shared->set(1);
+    EXPECT_EQ(all->status_.get(), EventStatus::READY);
+    EXPECT_EQ(any->status_.get(), EventStatus::READY);
+    reactor->run_loop(false, true);
+    EXPECT_EQ(*all_resumed, 1);
+    EXPECT_EQ(*any_resumed, 1);
+}
+
+TEST(AndEventTest, NestedCompositePropagatesThroughUnwaitedMiddle) {
+    auto reactor = Reactor::get_reactor();
+    auto a = create_sp_int_event(1);
+    auto b = create_sp_int_event(1);
+    auto c = create_sp_int_event(1);
+    auto inner = create_sp_waitany(a, b);
+    rusty::Vec<rusty::Arc<EventPollable>> children = {inner, c};
+    auto outer = create_sp_waitall_from(children);
+    auto resumed = std::make_shared<int>(0);
+    reactor->create_run_fiber([outer, resumed]() {
+        outer->wait();
+        ++*resumed;
+    });
+    c->set(1);
+    reactor->run_loop(false, true);
+    EXPECT_EQ(*resumed, 0);
+    b->set(1);
+    EXPECT_EQ(inner->status_.get(), EventStatus::DONE);
+    EXPECT_EQ(outer->status_.get(), EventStatus::READY);
+    reactor->run_loop(false, true);
+    EXPECT_EQ(*resumed, 1);
+}
+
+TEST(AndEventTest, AddEventLinksTheNewChild) {
+    auto reactor = Reactor::get_reactor();
+    auto all = create_sp_waitall();
+    auto a = create_sp_int_event(1);
+    auto b = create_sp_int_event(1);
+    all->add_event(a);
+    all->add_event(b);
+    auto resumed = std::make_shared<int>(0);
+    reactor->create_run_fiber([all, resumed]() {
+        all->wait();
+        ++*resumed;
+    });
+    a->set(1);
+    reactor->run_loop(false, true);
+    EXPECT_EQ(*resumed, 0);
+    b->set(1);
+    reactor->run_loop(false, true);
+    EXPECT_EQ(*resumed, 1);
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

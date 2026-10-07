@@ -471,12 +471,24 @@ TEST_F(ReactorTest, QuorumEvent) {
     EXPECT_EQ(sp_event->n_voted_yes_.get(), 2);
 }
 
+// Adapted for S3 of docs/dev/lion-runtime-plan.md (04aebb2). This test used to
+// count handle_read calls and expect exactly one per write. On Lion a new
+// registration's AsyncFd starts with both readiness flags set (U8: Lion cannot
+// know the descriptor's state when it registers), so the S3 adapter delivers
+// one handle_read per descriptor before any data arrives, and that read finds
+// EAGAIN. The epoll loop registered EPOLLET with no initial edge and never
+// did. No contract promised the absence of such a read: an edge-triggered
+// handle_read must already tolerate EAGAIN (a short read, a drained buffer, a
+// coalesced edge), and the Rust lane behaves the same way. What the test is
+// about -- every event reaches its pollable under load -- is the byte count,
+// so it now counts bytes read, and requires at least one call per descriptor.
 TEST_F(ReactorTest, StressTest) {
     const int num_fds = 10;
     const int events_per_fd = 10;
     std::vector<std::pair<int, int>> socket_pairs;
     std::vector<rusty::Arc<TestPollable>> pollables;
     std::atomic<int> total_events{0};
+    std::atomic<int> total_bytes{0};
 
     // Create multiple socket pairs
     for (int i = 0; i < num_fds; i++) {
@@ -484,10 +496,13 @@ TEST_F(ReactorTest, StressTest) {
         auto [fd1, fd2] = socket_pairs.back();
 
         auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, PollMode::READ));
-        p->set_read_handler([&total_events, fd1]() {
+        p->set_read_handler([&total_events, &total_bytes, fd1]() {
             total_events++;
             char buf[256];
-            read(fd1, buf, sizeof(buf));
+            ssize_t n;
+            while ((n = read(fd1, buf, sizeof(buf))) > 0) {
+                total_bytes += static_cast<int>(n);
+            }
         });
 
         {
@@ -508,9 +523,15 @@ TEST_F(ReactorTest, StressTest) {
     }
 
     // Wait for processing
-    std::this_thread::sleep_for(milliseconds(500));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    while (total_bytes.load() < num_fds * events_per_fd &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(milliseconds(10));
+    }
 
-    EXPECT_EQ(total_events, num_fds * events_per_fd);
+    EXPECT_EQ(total_bytes.load(), num_fds * events_per_fd);
+    // Every byte arrived in some read; a read may also find nothing.
+    EXPECT_GE(total_events.load(), num_fds);
 
     // Cleanup
     {
@@ -528,21 +549,25 @@ TEST_F(ReactorTest, StressTest) {
     }
 }
 
-// Test for Issue #1: Destructor cleanup order problem
-// This test DEMONSTRATES THE BUG by showing that epoll Remove() is NOT called
-// when PollThread is destroyed with pollables still registered.
+// Test for Issue #1: shutdown must release every registration even when the
+// caller never removed it.
 //
-// BUG (before fix): When PollThread destructor runs, it:
-// 1. Joins the thread (stops poll_loop)
-// 2. Calls remove() for each pollable
-// 3. remove() adds fds to pending_remove_ queue
-// 4. BUT poll_loop has stopped, so pending_remove_ is NEVER processed!
-// 5. Result: epoll_.Remove() is never called for these fds
+// The original bug: the PollThread destructor queued removals after joining
+// the poll loop, so they were never processed and the fds stayed registered.
+// The fix moved the removals before the join.
 //
-// FIX: Move the remove() calls to BEFORE joining the thread, so poll_loop
-// can process pending_remove_ before exiting.
-//
-// This test uses instrumentation (static remove_count_) to verify the fix works.
+// Adapted for S3 of docs/dev/lion-runtime-plan.md (04aebb2). This test used to
+// observe the fix through srpc::epoll_remove_count, which the epoll loop's
+// Epoll::Remove bumped once per removed fd. A PollThread now runs one Lion
+// runtime: at shutdown its driver retires every registration
+// (poll_driver_retire_all) by dropping the registration's AsyncFd, which
+// deregisters the fd from Lion's reactor, and then the proxy, without closing
+// the pollable (the old cleanup did not close it either). The epoll loop and
+// its counter no longer run (S7 deletes them), so the counter would stay 0. The
+// contract is asserted directly instead: every registration is first shown to
+// be live (a byte from each peer reaches its pollable), and once shutdown
+// returns (it joins the poll thread) the PollThread holds no reference to any
+// pollable and has closed none of them.
 TEST_F(ReactorTest, DestructorCleanupWithoutExplicitRemove) {
     const int NUM_POLLABLES = 5;
     std::vector<std::pair<int, int>> socket_pairs;
@@ -552,49 +577,63 @@ TEST_F(ReactorTest, DestructorCleanupWithoutExplicitRemove) {
         socket_pairs.push_back(create_socket_pair());
     }
 
-    // Reset the global remove counter (was Epoll::remove_count_ static member;
-    // hoisted to srpc::epoll_remove_count when Epoll moved to the DSL).
-    srpc::epoll_remove_count.store(0);
-
+    std::vector<rusty::Arc<TestPollable>> pollables;
+    std::array<std::atomic<int>, NUM_POLLABLES> reads{};
     {
         auto test_poll_worker = PollThread::create();
 
-        // Add pollables WITHOUT explicit remove
-        for (auto& [fd1, fd2] : socket_pairs) {
+        // Add pollables WITHOUT explicit remove. Each counts its read edges,
+        // which only a live registration can deliver.
+        for (int i = 0; i < NUM_POLLABLES; i++) {
+            const int fd1 = socket_pairs[i].first;
             auto p = rusty::Arc<TestPollable>::new_(TestPollable(fd1, PollMode::READ));
+            p->set_read_handler([&reads, i, fd1]() {
+                char buf[64];
+                while (read(fd1, buf, sizeof(buf)) > 0) {
+                }
+                reads[i].fetch_add(1, std::memory_order_relaxed);
+            });
             test_poll_worker->add_proxy(make_pollable_proxy_from_typed_arc(p.clone()));
+            pollables.push_back(std::move(p));
         }
 
-        // Allow worker thread time to process the add commands via channel
-        std::this_thread::sleep_for(milliseconds(100));
+        // Prove every registration is live: a byte from each peer must reach
+        // its pollable through the poll thread. (A reference count alone
+        // would not do: a queued Add command also holds the proxy.)
+        for (const auto& pair : socket_pairs) {
+            ASSERT_EQ(write(pair.second, "x", 1), 1);
+        }
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+        auto all_read = [&] {
+            for (const auto& count : reads) {
+                if (count.load(std::memory_order_relaxed) == 0) return false;
+            }
+            return true;
+        };
+        while (!all_read() && std::chrono::steady_clock::now() < deadline) {
+            std::this_thread::sleep_for(milliseconds(1));
+        }
+        ASSERT_TRUE(all_read()) << "not every pollable was registered with the poll thread";
+        for (const auto& p : pollables) {
+            EXPECT_EQ(p.strong_count(), 2u) << "the registration holds one reference";
+        }
 
-        // Verify no removes happened yet
-        EXPECT_EQ(srpc::epoll_remove_count.load(), 0);
-
-        // Destroy PollThread WITHOUT calling remove() on pollables
-        // With the FIX, the destructor will:
-        // 1. Set stop_flag_ = true
-        // 2. Call remove() for each pollable (adds to pending_remove_)
-        // 3. Join the thread (thread processes pending_remove_ before exiting)
-        // 4. epoll_.Remove() gets called for each pollable!
-        // Shutdown (const method, no lock needed)
+        // Shut down WITHOUT calling remove() on the pollables.
         test_poll_worker->shutdown();
 
+        // shutdown() joined the poll thread, and the driver released every
+        // registration before its runtime was dropped.
+        for (const auto& p : pollables) {
+            EXPECT_EQ(p.strong_count(), 1u)
+                << "a registration outlived its PollThread's shutdown";
+            EXPECT_FALSE(p->is_closed()) << "shutdown must not close a pollable";
+        }
     }
 
-    // Now check the global remove counter
-    int final_remove_count = srpc::epoll_remove_count.load();
-
-    std::cout << "Remove count after destruction: " << final_remove_count << std::endl;
-    std::cout << "Expected (correct behavior): " << NUM_POLLABLES << std::endl;
-
-    // THIS TEST SHOULD FAIL with the bug, PASS with the fix!
-    // After the fix, the destructor properly calls epoll_.Remove()
-    // for each pollable, so the count will be NUM_POLLABLES.
-    EXPECT_EQ(final_remove_count, NUM_POLLABLES);
-
-    // Shutdown closed the registered ends through their pollable owners.
-    // Only the unregistered peer descriptors still belong to this scope.
+    // Nothing closed the descriptors, so both ends still belong to this scope.
+    for (const auto& p : pollables) {
+        p->close();
+    }
     for (const auto& pair : socket_pairs) {
         close(pair.second);
     }

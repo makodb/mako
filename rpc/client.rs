@@ -27,15 +27,19 @@
 //! (six here, one in `rpc/server.rs`): an allow that suppresses nothing is
 //! clutter that reads as a warning.
 //!
-//! Pinned with an item-scoped `#[allow]`: 43 attributes on 42 items across 15
-//! families. Lifting every one of them yields 70 findings across 11 families
-//! on 33 items. Four pinned families -- `borrowed_box`, `unnecessary_cast`,
-//! `upper_case_acronyms`, `wrong_self_convention` -- produce no finding under
-//! this clippy, so those pins are inert today, and the two ABI hazards they
-//! once guarded (renaming the emitted enumerator and `DisconnectBehavior_QUEUE()`
-//! accessor; changing an emitted method signature) cannot currently be
-//! re-measured because `--fix` has nothing to apply. Two live families still
-//! change the provider's ABI when taken, both re-verified 2026-09-11:
+//! Pinned with an item-scoped `#[allow]`: 39 attributes on 38 items across 14
+//! families. Lifting every one of them yields 69 findings across 10 families
+//! on 32 items. (Re-measured 2026-09-26, same clippy, when `Client` became
+//! `Send + Sync`: that removed the one `arc_with_non_send_sync` finding, on
+//! `Client::create`, and with it all four pins of that family -- the other
+//! three already suppressed nothing.) Four pinned families -- `borrowed_box`,
+//! `unnecessary_cast`, `upper_case_acronyms`, `wrong_self_convention` --
+//! produce no finding under this clippy, so those pins are inert today, and
+//! the two ABI hazards they once guarded (renaming the emitted enumerator and
+//! `DisconnectBehavior_QUEUE()` accessor; changing an emitted method
+//! signature) cannot currently be re-measured because `--fix` has nothing to
+//! apply. Two live families still change the provider's ABI when taken, both
+//! re-verified 2026-09-11:
 //!
 //!   * `ptr_arg` retypes exported `clientpool_select` from
 //!     `const rusty::Vec<rusty::Arc<Client>>&` to
@@ -66,10 +70,10 @@ use crate::reactor as _;
 #[allow(unused_imports)]
 use crate::threading as _;
 
-use std::cell::{Cell, RefCell};
+use std::cell::Cell;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 // (`std::ffi::CStr` is deliberately NOT imported: see `clientconn_addr_to_string`.)
-use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, AtomicU64};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, Weak};
 use std::time::Duration;
 use crate::rand::randgen_range;
@@ -528,8 +532,6 @@ impl Future {
         }
     }
 
-    // clippy::arc_with_non_send_sync -- no fix short of changing the payload type; the C++ Arc erases Rust auto traits. See the Task-2 measurement block above.
-    #[allow(clippy::arc_with_non_send_sync)]
     fn create(xid: i64, attr: FutureAttr) -> Arc<Future> {
         Arc::new(Future::new(xid, attr))
     }
@@ -1547,17 +1549,33 @@ impl ClientConnection {
     fn is_closed(&self) -> bool { self.state_machine_.is_terminal() }
 }
 
+// One `Arc<Client>` is entered from several threads at once: the thread
+// that owns it, and the client's poll thread, where reply callbacks run and
+// may issue the next request through the same handle (rpcbench's pipeline).
+// Every field is therefore synchronized, and `Client` is `Send + Sync`.
+//
+// These fields used to be `RefCell` and `Cell`. Generated C++ erases Rust's
+// auto traits (`rusty::Arc` and `rusty::Function` carry no `Send` bound), so
+// C++ callers shared the handle anyway. `rusty::RefCell` counts borrows in a
+// plain `int`: two threads borrowing the connection slot at once lost an
+// update, the count reached -1, and the next `connection()` panicked
+// "already mutably borrowed" although nothing had borrowed it mutably.
+//
+// The connection slot is only locked to clone the handle out or to swap it,
+// never across a call into the connection, so a reply callback that
+// re-enters `request_async` cannot deadlock. The scalars are independent
+// values that publish no other data, so they use relaxed atomics.
 pub struct Client {
-    connection_field: RefCell<Option<Arc<ClientConnection>>>,
+    connection_field: std::sync::Mutex<Option<Arc<ClientConnection>>>,
     poll_thread_worker_field: Arc<PollThread>,
-    is_client_mode_field: Cell<bool>,
-    time_field: Cell<i64>,
-    timeout_field: Cell<u64>,
-    rpc_id_field: Cell<i32>,
-    pending_keepalive_config_field: Cell<KeepaliveConfig>,
-    pending_heartbeat_config_field: Cell<HeartbeatConfig>,
-    pending_circuit_breaker_config_field: Cell<CircuitBreakerConfig>,
-    pending_reconnect_policy_field: Cell<ReconnectPolicy>,
+    is_client_mode_field: AtomicBool,
+    time_field: AtomicI64,
+    timeout_field: AtomicU64,
+    rpc_id_field: AtomicI32,
+    pending_keepalive_config_field: ClientCloneCell<KeepaliveConfig>,
+    pending_heartbeat_config_field: ClientCloneCell<HeartbeatConfig>,
+    pending_circuit_breaker_config_field: ClientCloneCell<CircuitBreakerConfig>,
+    pending_reconnect_policy_field: ClientCloneCell<ReconnectPolicy>,
     callback_manager_field: Arc<CallbackManager>,
     pending_factory_field: std::sync::Mutex<Option<ChannelFactoryProxy>>,
     // The Client retains the same counters as its connection so references
@@ -1574,36 +1592,34 @@ impl Drop for Client {
 impl Client {
     fn new(poll_thread_worker: Arc<PollThread>) -> Client {
         Client {
-            connection_field: RefCell::<Option<Arc<ClientConnection>>>::new(None),
+            connection_field: std::sync::Mutex::<Option<Arc<ClientConnection>>>::new(None),
             poll_thread_worker_field: poll_thread_worker,
-            is_client_mode_field: Cell::<bool>::new(false),
-            time_field: Cell::<i64>::new(0i64),
-            timeout_field: Cell::<u64>::new(0u64),
-            rpc_id_field: Cell::<i32>::new(0i32),
-            pending_keepalive_config_field: Cell::<KeepaliveConfig>::new(KeepaliveConfig::new()),
-            pending_heartbeat_config_field: Cell::<HeartbeatConfig>::new(HeartbeatConfig::disabled()),
-            pending_circuit_breaker_config_field: Cell::<CircuitBreakerConfig>::new(CircuitBreakerConfig::disabled()),
-            pending_reconnect_policy_field: Cell::<ReconnectPolicy>::new(ReconnectPolicy::conservative()),
+            is_client_mode_field: AtomicBool::new(false),
+            time_field: AtomicI64::new(0i64),
+            timeout_field: AtomicU64::new(0u64),
+            rpc_id_field: AtomicI32::new(0i32),
+            pending_keepalive_config_field: ClientCloneCell::<KeepaliveConfig>::new(KeepaliveConfig::new()),
+            pending_heartbeat_config_field: ClientCloneCell::<HeartbeatConfig>::new(HeartbeatConfig::disabled()),
+            pending_circuit_breaker_config_field: ClientCloneCell::<CircuitBreakerConfig>::new(CircuitBreakerConfig::disabled()),
+            pending_reconnect_policy_field: ClientCloneCell::<ReconnectPolicy>::new(ReconnectPolicy::conservative()),
             callback_manager_field: Arc::<CallbackManager>::new(CallbackManager::new()),
             pending_factory_field: std::sync::Mutex::<Option<ChannelFactoryProxy>>::new(None),
             metrics_field: Arc::new(ConnectionMetrics::new()),
         }
     }
 
-    // clippy::arc_with_non_send_sync -- no fix short of changing the payload type; the C++ Arc erases Rust auto traits. See the Task-2 measurement block above.
-    #[allow(clippy::arc_with_non_send_sync)]
     pub fn create(poll_thread_worker: Arc<PollThread>) -> Arc<Client> {
         Arc::<Client>::new(Client::new(poll_thread_worker))
     }
 
-    fn set_client_mode(&self, v: bool) { self.is_client_mode_field.set(v); }
-    fn client_mode(&self) -> bool { self.is_client_mode_field.get() }
-    fn set_time(&self, v: i64) { self.time_field.set(v); }
-    fn time(&self) -> i64 { self.time_field.get() }
-    fn set_timeout(&self, v: u64) { self.timeout_field.set(v); }
-    fn timeout(&self) -> u64 { self.timeout_field.get() }
-    fn set_rpc_id(&self, v: i32) { self.rpc_id_field.set(v); }
-    fn rpc_id(&self) -> i32 { self.rpc_id_field.get() }
+    fn set_client_mode(&self, v: bool) { self.is_client_mode_field.store(v, std::sync::atomic::Ordering::Relaxed); }
+    fn client_mode(&self) -> bool { self.is_client_mode_field.load(std::sync::atomic::Ordering::Relaxed) }
+    fn set_time(&self, v: i64) { self.time_field.store(v, std::sync::atomic::Ordering::Relaxed); }
+    fn time(&self) -> i64 { self.time_field.load(std::sync::atomic::Ordering::Relaxed) }
+    fn set_timeout(&self, v: u64) { self.timeout_field.store(v, std::sync::atomic::Ordering::Relaxed); }
+    fn timeout(&self) -> u64 { self.timeout_field.load(std::sync::atomic::Ordering::Relaxed) }
+    fn set_rpc_id(&self, v: i32) { self.rpc_id_field.store(v, std::sync::atomic::Ordering::Relaxed); }
+    fn rpc_id(&self) -> i32 { self.rpc_id_field.load(std::sync::atomic::Ordering::Relaxed) }
 
     pub fn request<F>(&self, rpc_id: i32, attr: &FutureAttr, write_fn: F) -> FutureResult
     where F: FnMut(&mut BinaryWriteArchive) {
@@ -1611,7 +1627,7 @@ impl Client {
         if guard.is_none() {
             return FutureResult::Err(CLIENT_ERR_NOT_CONNECTED);
         }
-        self.rpc_id_field.set(rpc_id);
+        self.rpc_id_field.store(rpc_id, std::sync::atomic::Ordering::Relaxed);
         guard.as_ref().unwrap().request(rpc_id, attr, write_fn)
     }
 
@@ -1621,7 +1637,7 @@ impl Client {
         if guard.is_none() {
             return FutureResult::Err(CLIENT_ERR_NOT_CONNECTED);
         }
-        self.rpc_id_field.set(rpc_id);
+        self.rpc_id_field.store(rpc_id, std::sync::atomic::Ordering::Relaxed);
         let attr: FutureAttr = FutureAttr { callback: Default::default() };
         guard.as_ref().unwrap().request_with_options(
             rpc_id,
@@ -1637,7 +1653,7 @@ impl Client {
         if guard.is_none() {
             return Result::<(), i32>::Err(CLIENT_ERR_NOT_CONNECTED);
         }
-        self.rpc_id_field.set(rpc_id);
+        self.rpc_id_field.store(rpc_id, std::sync::atomic::Ordering::Relaxed);
         guard.as_ref().unwrap().request_async(rpc_id, write_fn, on_reply)
     }
 
@@ -1651,7 +1667,7 @@ impl Client {
             value.is_client_mode_ = client;
             value
         });
-        self.is_client_mode_field.set(client);
+        self.is_client_mode_field.store(client, std::sync::atomic::Ordering::Relaxed);
 
         conn.set_keepalive(&self.pending_keepalive_config_field.get());
         conn.set_heartbeat_config(&self.pending_heartbeat_config_field.get());
@@ -1674,15 +1690,16 @@ impl Client {
         let result: i32 = conn.connect(addr);
 
         if result == 0i32 {
-            let mut store_guard = self.connection_field.borrow_mut();
-            *store_guard = Some(conn);
+            // Swap under the lock, but release the replaced connection after
+            // the guard is gone: its teardown must not run while another
+            // thread waits for the slot.
+            let retired: Option<Arc<ClientConnection>> = self.connection_field.lock().unwrap().replace(conn);
+            drop(retired);
         }
 
         result
     }
 
-    // clippy::arc_with_non_send_sync -- no fix short of changing the payload type; the C++ Arc erases Rust auto traits. See the Task-2 measurement block above.
-    #[allow(clippy::arc_with_non_send_sync)]
     pub fn close(&self) {
         if let Some(conn_ref) = self.connection() {
             let generation = conn_ref.mark_closing();
@@ -1793,11 +1810,8 @@ impl Client {
     }
 
     pub fn connection(&self) -> Option<Arc<ClientConnection>> {
-        let guard = self.connection_field.borrow();
-        if guard.is_some() {
-            return Some(guard.as_ref().unwrap().clone());
-        }
-        None
+        let guard = self.connection_field.lock().unwrap();
+        (*guard).clone()
     }
 
     pub fn server_instance_id(&self) -> u64 {
@@ -2848,8 +2862,6 @@ pub fn clientconn_recv_job_entry(weak_self: WeakClientConnection, channel: Arc<B
     }
 }
 
-// clippy::arc_with_non_send_sync -- no fix short of changing the payload type; the C++ Arc erases Rust auto traits. See the Task-2 measurement block above.
-#[allow(clippy::arc_with_non_send_sync)]
 pub fn clientconn_bind_channel_via_poll_thread(conn: &ClientConnection,
                                            channel: NullableChannelConnectionProxy) {
     if channel.is_none() {
@@ -3055,7 +3067,7 @@ pub fn clientpool_remove_unhealthy_clients(self_: &ClientPool, addr: &str) -> us
     let mut removed: usize = 0usize;
     // Probe with get(): an intermediate `let opt = ...get_mut(..)` binding
     // lowers to `auto&` on a temporary Option (won't compile). The chained
-    // one-step unwrap below binds the inner &mut directly (§7.37).
+    // one-step unwrap below binds the inner &mut directly (§8.37).
     let has_entry: bool = guard.cache.get(addr).is_some();
     if has_entry {
         let clients: &mut Vec<Arc<Client>> = guard.cache.get_mut(addr).unwrap();

@@ -2,6 +2,7 @@
   "version": 1,
   "runtime": {
     "tests/client_replay_test.cc": "test_client_replay",
+    "tests/epoll_backend_test.cc": "test_epoll_backend",
     "tests/fiber_runtime.cc": "test_fiber_runtime",
     "tests/fiber_test.cc": "test_fiber",
     "tests/native_policy_test.cc": "test_native_policy",
@@ -39,7 +40,6 @@
     "tests/rpc_docs_symbols_test.cc": "test_rpc_docs_symbols"
   },
   "support": {
-    "tests/pollworker_fd_reuse_test.cc": "test_reactor_extended",
     "tests/runtime_imports.cc": "srpc_runtime_imports"
   },
   "benchmark": {
@@ -99,7 +99,7 @@
         "tests/fiber_channel_rust.rs::parked_receive_wakes_after_owner_thread_delivery",
         "tests/inmemory_channel_rust.rs::fault_injection_is_per_side_drop_first_and_clearable",
         "tests/tcp_channel_rust.rs::listener_bind_close_and_single_use_state_match_the_cpp_contract",
-        "tests/tcp_channel_rust.rs::close_waits_for_the_whole_accept_driver_with_two_readers"
+        "tests/tcp_channel_rust.rs::close_waits_for_the_whole_accept_driver"
       ],
       "cpp_replacements": [
         "test_rpc_transport_matrix",
