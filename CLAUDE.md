@@ -260,13 +260,16 @@ Exceptions that stay std:
    follow-up if it's blocking something.
 
 For Goal 0 canonical Rust production, `third-party/rusty-cpp` is pinned to
-`1689f4380c25d13455cbe1f9eb8e5ff94e49861c`, matching SRPC's pin at
-`99f625d339602702d127179ce0a09d846f3d4d49`. The compiler commit is on upstream
-`codex/canonical-rust-std-support`. It descends from Mako's previous
-`a1f8fef85e8d43bb00f85f8ef32e5ecc69408642` pin, with 48 additional commits.
-These changes support SRPC's standard Rust callbacks, nullable owners,
-threads and panic payloads. Use Mako's root submodule for its build;
-the subtree's nested submodules remain disabled in `.gitmodules`.
+`7e0c201f1b0d548f0166dc9ee700f24bc18066a4`, matching SRPC's pin at
+`6f5ca63117158b4682738b5e63e8036291da6c5c`. The compiler commit is on upstream
+`main`. It descends from Mako's previous
+`1689f4380c25d13455cbe1f9eb8e5ff94e49861c` pin, with 43 additional commits.
+These add the lane SRPC's Lion runtime needs: `--verus-exec` and
+`--crate-graph` crate generation, plus the separately built
+`rusty-cpp-verus-erase` helper that erases Lion's `verus!` items. Use Mako's
+root submodule for its build. Of the subtree's nested submodules only
+`src/srpc/third-party/lion` is checked out, because SRPC's crate depends on
+Lion's crates; the other two remain disabled in `.gitmodules`.
 
 SRPC now supplies its native source manifest at
 `src/srpc/scripts/native-kernel-sources.txt`. The C++ epoll implementation
@@ -294,8 +297,8 @@ commit. The pin attestation is triple-enforced — the gitlink, the
 submodule HEAD, and the transpiler's own `--build-info` `git_hash` must
 all agree, and the transpiler must be built from a clean tree so
 `git_dirty=false`. That is enforced in code, not by convention:
-`scripts/extract_srpc_rust.py:647-679` checks all three against
-`REQUIRED_RUSTY_CPP_COMMIT` (`:36`) and rejects a submodule carrying tracked
+`scripts/extract_srpc_rust.py:672-724` checks all three against
+`REQUIRED_RUSTY_CPP_COMMIT` (`:49`) and rejects a submodule carrying tracked
 local changes, and the source gate above runs it on every build. Never pin
 uncommitted local patches: a transpiler binary parked outside the tree cannot
 pass this check unless it was built from the pinned, clean submodule anyway.

@@ -46,7 +46,7 @@ PACKAGE_NAME = "srpc"
 GENERATED_ROOT = PurePosixPath("src")
 GENERATED_LIB = GENERATED_ROOT / "lib.rs"
 RUSTY_CPP_SUBMODULE = "third-party/rusty-cpp"
-REQUIRED_RUSTY_CPP_COMMIT = "1689f4380c25d13455cbe1f9eb8e5ff94e49861c"
+REQUIRED_RUSTY_CPP_COMMIT = "7e0c201f1b0d548f0166dc9ee700f24bc18066a4"
 APPROVED_PRODUCTION_ROOTS = (
     PurePosixPath("base"),
     PurePosixPath("misc"),
@@ -702,6 +702,131 @@ def verify_pinned_toolchain(root: Path, transpiler: Path) -> None:
         raise ExtractionError("rusty-cpp submodule has tracked local changes")
 
     verify_transpiler_build_info(root, transpiler)
+    # Cargo.lock is crate content, so the coupling check reads the vendored
+    # tree's (see CRATE_ROOT); everything above is mako's own toolchain.
+    verify_verus_erasure_coupling(crate_root(root), transpiler)
+
+
+# Version coupling for the Lion dependency crates (docs/dev/lion-runtime-plan.md,
+# T1 and S1). The Rust lane compiles Lion's `verus!` blocks through the
+# verus_builtin_macros proc-macro that Cargo.lock resolves; the C++ lane
+# erases the same blocks with the copy of that pass rusty-cpp vendors. The two
+# are the same erasure only if they come from the same Verus commit, so the
+# transpiler's `--verus-build-info` must name exactly the commit and the
+# builtin_macros version Cargo.lock resolves. A Lion pin bump that moves Verus,
+# or a transpiler bump that re-vendors it, fails here instead of silently
+# transpiling a different erasure than rustc compiles.
+VERUS_GIT_SOURCE = re.compile(
+    r"git\+https://github\.com/verus-lang/verus\?rev=[0-9a-f]+#([0-9a-f]{40})\Z"
+)
+# Lion's crates depend on vstd; vstd brings verus_builtin and the two
+# proc-macros. These three must be present, so an empty match cannot pass.
+REQUIRED_VERUS_PACKAGES = ("vstd", "verus_builtin", "verus_builtin_macros")
+
+
+def transpiler_verus_build_info(root: Path, transpiler: Path) -> dict[str, str]:
+    try:
+        completed = subprocess.run(
+            [str(transpiler), "--verus-build-info"],
+            cwd=root,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+    except OSError as exc:
+        raise ExtractionError(
+            f"cannot read rusty-cpp transpiler Verus build info: {exc}"
+        ) from exc
+    if completed.returncode != 0:
+        diagnostic = (completed.stdout + completed.stderr).strip()
+        raise ExtractionError(
+            "rusty-cpp transpiler --verus-build-info failed with exit "
+            f"{completed.returncode}: {diagnostic}"
+        )
+    lines = completed.stdout.splitlines()
+    if len(lines) != 1:
+        raise ExtractionError(
+            "rusty-cpp transpiler --verus-build-info must emit exactly one JSON line"
+        )
+    try:
+        info = json.loads(lines[0])
+    except json.JSONDecodeError as exc:
+        raise ExtractionError(
+            f"rusty-cpp transpiler --verus-build-info emitted invalid JSON: {exc}"
+        ) from exc
+    keys = {"verus_builtin_macros_version", "verus_git_rev"}
+    if (
+        not isinstance(info, dict)
+        or set(info) != keys
+        or not all(isinstance(info[key], str) for key in keys)
+    ):
+        raise ExtractionError(
+            "rusty-cpp transpiler --verus-build-info JSON keys must be exactly "
+            "verus_builtin_macros_version and verus_git_rev (strings)"
+        )
+    if re.fullmatch(r"[0-9a-f]{40}", info["verus_git_rev"]) is None:
+        raise ExtractionError(
+            "rusty-cpp transpiler --verus-build-info verus_git_rev must be a "
+            f"full commit id; got {info['verus_git_rev']!r}"
+        )
+    return info
+
+
+def locked_verus_packages(root: Path) -> dict[str, tuple[str, str]]:
+    """Return {package: (version, resolved commit)} for Verus git sources."""
+
+    lock_path = root / "Cargo.lock"
+    try:
+        with lock_path.open("rb") as stream:
+            lock = tomllib.load(stream)
+    except (OSError, tomllib.TOMLDecodeError) as exc:
+        raise ExtractionError(f"cannot read {lock_path}: {exc}") from exc
+    packages: dict[str, tuple[str, str]] = {}
+    for package in lock.get("package", []):
+        source = package.get("source", "")
+        if "verus-lang/verus" not in source:
+            continue
+        match = VERUS_GIT_SOURCE.fullmatch(source)
+        if match is None:
+            raise ExtractionError(
+                f"Cargo.lock package {package.get('name')!r} has an "
+                f"unrecognised Verus source: {source!r}"
+            )
+        name = package["name"]
+        if name in packages:
+            raise ExtractionError(
+                f"Cargo.lock resolves Verus package {name!r} more than once"
+            )
+        packages[name] = (package["version"], match.group(1))
+    return packages
+
+
+def verify_verus_erasure_coupling(root: Path, transpiler: Path) -> None:
+    info = transpiler_verus_build_info(root, transpiler)
+    packages = locked_verus_packages(root)
+    missing = [name for name in REQUIRED_VERUS_PACKAGES if name not in packages]
+    if missing:
+        raise ExtractionError(
+            "Cargo.lock lacks the Verus package(s) the Lion crates need: "
+            + ", ".join(missing)
+        )
+    commits = {commit for _, commit in packages.values()}
+    if commits != {info["verus_git_rev"]}:
+        raise ExtractionError(
+            "Verus erasure version coupling broken: the transpiler vendors "
+            f"verus {info['verus_git_rev']}, Cargo.lock resolves "
+            + ", ".join(
+                f"{name} at {commit}" for name, (_, commit) in sorted(packages.items())
+            )
+        )
+    macros_version = packages["verus_builtin_macros"][0]
+    if macros_version != info["verus_builtin_macros_version"]:
+        raise ExtractionError(
+            "Verus erasure version coupling broken: the transpiler vendors "
+            f"verus_builtin_macros {info['verus_builtin_macros_version']}, "
+            f"Cargo.lock resolves {macros_version}"
+        )
 
 
 def normalize_payload(raw: bytes, output_label: str) -> bytes:
@@ -811,10 +936,9 @@ def render_lib(
         "",
     ]
     for module in sorted(modules, key=lambda entry: entry.rust_module):
-        # srpc.epoll_wrapper keeps the historical C++ spellings of the Epoll
-        # members (Add/Remove/Update/Wait) and of the PollMode/PollReady
-        # constant namespaces, because ~40 mako call sites name them. Pin the
-        # style lint for that one module rather than renaming a public API.
+        # srpc.epoll_wrapper keeps the historical C++ spellings of its
+        # PollMode/PollReady constant namespaces. Pin the style lint for that
+        # one module rather than renaming a public API.
         style_allow = (
             "non_snake_case, " if module.rust_module == "epoll_wrapper" else ""
         )
