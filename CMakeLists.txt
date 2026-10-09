@@ -461,6 +461,10 @@ option(CHECK_INVARIANTS "Enable invariant checking" OFF)
 option(COCO "Enable COCO" OFF)
 option(MAKO_USE_RAFT "Build Mako with the Raft replication helper" OFF)
 option(RAFT_TEST "Enable Raft lab testing fiber" OFF)
+# Raft disk persistence (docs/verus/disk-persistence-plan.md): a build switch,
+# not a run-time one. OFF is the memory-mode binary with the disk code
+# compiled out; ON turns on the raft crates' cargo feature `raft_disk`.
+option(MAKO_RAFT_DISK "Build the Raft write-ahead log and recovery (disk mode)" OFF)
 option(SINGLE_RAFT_INSTANCE "Default runtime Raft group mode (ON=single group, OFF=one group per partition)" ON)
 # Which runtime the Raft core runs on. On this branch (verus-raft) there is
 # one: rust, the core plus raft-rt (src/deptran/raft/rt) compiled by rustc into
@@ -486,6 +490,10 @@ endif()
 if(RAFT_TEST)
   add_compile_definitions(RAFT_TEST_CORO=1)
   message(STATUS "Raft lab testing fiber enabled (note: REUSE_FIBER is always enabled)")
+endif()
+
+if(MAKO_RAFT_DISK)
+  message(STATUS "Raft disk mode enabled (cargo feature raft_disk)")
 endif()
 
 if(SINGLE_RAFT_INSTANCE)
@@ -1216,6 +1224,8 @@ file(GLOB RAFT_RUST_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/replay/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-cpp-markers/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/base/*.rs
@@ -1227,9 +1237,18 @@ file(GLOB RAFT_RUST_SOURCES CONFIGURE_DEPENDS
 # the C++ side; the crate needs the matching cargo feature or the two halves
 # disagree about whether they are in lab mode (the leader no-op and the lab's
 # initial role both branch on it). One switch, both languages.
-set(RAFT_RUST_FEATURES)
+# -DMAKO_RAFT_DISK=ON adds the disk-mode feature the same way.
+set(RAFT_RUST_FEATURE_LIST)
 if(RAFT_TEST)
-    set(RAFT_RUST_FEATURES --features raft_test)
+    list(APPEND RAFT_RUST_FEATURE_LIST raft_test)
+endif()
+if(MAKO_RAFT_DISK)
+    list(APPEND RAFT_RUST_FEATURE_LIST raft_disk)
+endif()
+set(RAFT_RUST_FEATURES)
+if(RAFT_RUST_FEATURE_LIST)
+    list(JOIN RAFT_RUST_FEATURE_LIST "," RAFT_RUST_FEATURE_CSV)
+    set(RAFT_RUST_FEATURES --features ${RAFT_RUST_FEATURE_CSV})
 endif()
 add_custom_command(
     OUTPUT ${RAFT_RUST_LIB}
@@ -1253,6 +1272,8 @@ add_custom_command(
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/replay/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/Cargo.toml
     COMMENT "cargo build: the Raft core and raft-rt as ${RAFT_RUST_LIB}"
     VERBATIM)
@@ -1366,6 +1387,24 @@ add_custom_command(
     VERBATIM)
 add_custom_target(raft_rt_test DEPENDS ${RAFT_RT_TEST_STAMP})
 list(APPEND RAFT_LANE_CHECK_DEPS raft_rt_test)
+# raft-store's tests (the WAL crash sweep, recovery, creation, the flusher)
+# gate the build in both modes. No feature list: raft-store has none, and
+# cargo refuses a --features it does not declare.
+file(GLOB RAFT_STORE_TEST_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/tests/*.rs)
+set(RAFT_STORE_TEST_STAMP "${CMAKE_BINARY_DIR}/raft_store_test.stamp")
+add_custom_command(
+    OUTPUT ${RAFT_STORE_TEST_STAMP}
+    COMMAND cargo test --release --quiet
+            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/Cargo.toml
+            --target-dir ${RAFT_RUST_TARGET_DIR}
+    COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_STORE_TEST_STAMP}
+    DEPENDS ${RAFT_RUST_SOURCES} ${RAFT_STORE_TEST_SOURCES}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/Cargo.toml
+    COMMENT "cargo test: raft-store"
+    VERBATIM)
+add_custom_target(raft_store_test DEPENDS ${RAFT_STORE_TEST_STAMP})
+list(APPEND RAFT_LANE_CHECK_DEPS raft_store_test)
 add_custom_target(raft_lane_check ALL
     ${RAFT_LANE_CHECK_COMMANDS}
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_lane_parity.py
@@ -1736,6 +1775,10 @@ add_apps(rocksdbInterfaceTest examples/rocksdbInterfaceTest.cc)
 # Raft example executables; the Raft helper itself is always compiled into
 # `mako` via TXLOG_HELPER_SRC, so the driver measures the production build.
 add_apps(raft_bench src/deptran/raft/raft_bench.cc)
+# raft_kill_node -- one Raft replica for the process-kill tests
+# (docs/verus/disk-persistence-plan.md P6, scripts/raft_kill/run.py): no Raft
+# logic, events by write(2).
+add_apps(raft_kill_node src/deptran/raft/raft_kill_node.cc)
 # Provenance the record cannot otherwise obtain: neither MODE nor
 # CMAKE_BUILD_TYPE is a preprocessor macro, and a number is not interpretable
 # without knowing which build produced it.

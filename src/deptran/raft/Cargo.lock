@@ -126,6 +126,7 @@ version = "0.0.0"
 dependencies = [
  "raft-core",
  "raft-replay",
+ "raft-store",
  "rusty",
 ]
 

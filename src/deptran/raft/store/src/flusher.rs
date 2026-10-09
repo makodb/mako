@@ -96,11 +96,79 @@ impl DurableState {
     }
 }
 
+/// Replies held until the WAL is durable through their tail (design §3,
+/// "What waits for the disk"; plan P4). A reply whose tail is already
+/// durable goes at once. The flusher releases the rest after each publish,
+/// in hold order. `hold` reads the durable number under the list's mutex and
+/// the flusher takes that mutex only after publishing, so a reply never
+/// waits for a later flush than the one that covers it.
+/// A held reply's send.
+pub type SendReply = Box<dyn FnOnce() + Send>;
+
+pub struct HeldReplies {
+    durable: Arc<DurableState>,
+    held: Mutex<Vec<(u64, SendReply)>>,
+}
+
+impl HeldReplies {
+    pub fn new(durable: Arc<DurableState>) -> Self {
+        HeldReplies { durable, held: Mutex::new(Vec::new()) }
+    }
+
+    /// Sends `send` once records 1..=tail are durable: now, or from the
+    /// flusher's release.
+    pub fn hold(&self, tail: u64, send: SendReply) {
+        let mut g = self.held.lock().unwrap_or_else(|e| e.into_inner());
+        if self.durable.seq() >= tail {
+            drop(g);
+            send();
+        } else {
+            g.push((tail, send));
+        }
+    }
+
+    /// Sends every held reply records 1..=seq cover. The flusher calls it
+    /// after publishing `seq`.
+    pub fn release(&self, seq: u64) {
+        let ready: Vec<SendReply> = {
+            let mut g = self.held.lock().unwrap_or_else(|e| e.into_inner());
+            if g.is_empty() {
+                return;
+            }
+            let mut ready = Vec::new();
+            let mut keep = Vec::with_capacity(g.len());
+            for (tail, send) in g.drain(..) {
+                if tail <= seq {
+                    ready.push(send);
+                } else {
+                    keep.push((tail, send));
+                }
+            }
+            *g = keep;
+            ready
+        };
+        for send in ready {
+            send();
+        }
+    }
+
+    /// How many replies wait (tests, shutdown checks).
+    pub fn len(&self) -> usize {
+        self.held.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+}
+
 /// The flusher's settings.
 pub struct FlusherConfig {
     /// The injected sleep after each sync (`MAKO_RAFT_FLUSH_DELAY_US`): a
     /// device's sync latency, on a store that has none.
     pub delay: Duration,
+    /// The applier's queue (plan P7): each synced batch is offered to it.
+    pub tap: Option<crate::applier::ApplierTap>,
 }
 
 /// A running flusher; [`Flusher::join`] after closing its queue.
@@ -148,6 +216,9 @@ impl Flusher {
                     let d = Durable { seq: first + encoded.len() as u64 - 1, last, commit };
                     durable.publish(d);
                     on_durable(d);
+                    if let Some(tap) = &cfg.tap {
+                        tap.offer(first, encoded);
+                    }
                 }
             })
             .expect("spawn the raft flusher");

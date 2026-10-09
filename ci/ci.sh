@@ -75,6 +75,37 @@ is_ancestor_pid() {
     return 1
 }
 
+# Raft disk mode (docs/verus/disk-persistence-plan.md P0): a tree configured
+# with -DMAKO_RAFT_DISK=ON. Each run of a Raft suite in one gets a fresh,
+# locked store run directory on the local disk, MAKO_RAFT_CREATE=1 (every
+# launch in these suites creates its cluster) and MAKO_RAFT_DISK_VERIFY=1
+# (a cleanly stopped server compares its WAL with its state), deleted after
+# the run; a run killed outright is deleted by the next sweep. Memory trees
+# run the command as is.
+raft_disk_tree() {
+    grep -qs '^MAKO_RAFT_DISK:BOOL=ON' "${1:-${BUILD_DIR}}/CMakeCache.txt"
+}
+
+with_raft_store() {  # with_raft_store LABEL CMD...
+    local label=$1
+    shift
+    if ! raft_disk_tree; then
+        "$@"
+        return $?
+    fi
+    (
+        # shellcheck source=../scripts/raft_disk/store_dir.sh
+        source ./scripts/raft_disk/store_dir.sh
+        raft_store_make_run "$label" || exit 1
+        echo "[raft disk] store run directory ${RAFT_RUN_DIR}"
+        export MAKO_RAFT_CREATE=1 MAKO_RAFT_DISK_VERIFY=1
+        "$@"
+        rc=$?
+        raft_store_cleanup
+        exit $rc
+    )
+}
+
 cleanup_processes() {
     result=ci_results_${RUN_NUM}_${RUN_INDEX}
     mkdir -p ~/results/$result
@@ -82,6 +113,8 @@ cleanup_processes() {
     # Clean up RocksDB data from previous runs
     local user_name=${USER:-$(whoami)}
     rm -rf /tmp/${user_name}_mako_rocksdb_shard*
+    # Raft store run directories no live process holds (killed runs).
+    ( source ./scripts/raft_disk/store_dir.sh && raft_store_sweep )
     echo "Cleaning up any lingering test processes..."
 
     for proc in simpleTransactionRep dbtest simplePaxos simpleTransaction simpleRaft; do
@@ -464,18 +497,25 @@ run_raft_lab_test() {
     local generator="${CMAKE_GENERATOR:-Ninja}"
     local build_type="${CMAKE_BUILD_TYPE:-Release}"
     local lab_build_dir="${RAFT_LAB_BUILD_DIR:-${BUILD_DIR}_raftlab}"
+    # A disk-mode tree (-DMAKO_RAFT_DISK=ON, docs/verus/disk-persistence-plan.md
+    # P0) gets a disk-mode lab; the lab tree is named from BUILD_DIR, so only
+    # this cache read keeps a disk lab off the memory tree's lab, and back.
+    local disk="OFF"
+    if grep -qs '^MAKO_RAFT_DISK:BOOL=ON' "${BUILD_DIR}/CMakeCache.txt"; then
+        disk="ON"
+    fi
 
-    echo "Configuring ${lab_build_dir} with MAKO_USE_RAFT=ON RAFT_TEST=ON MAKO_RAFT_LANE=${lane}"
+    echo "Configuring ${lab_build_dir} with MAKO_USE_RAFT=ON RAFT_TEST=ON MAKO_RAFT_LANE=${lane} MAKO_RAFT_DISK=${disk}"
     cmake -S . -B "${lab_build_dir}" -G "${generator}" \
         -DCMAKE_BUILD_TYPE="${build_type}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-        -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON -DMAKO_RAFT_LANE="${lane}"
+        -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON -DMAKO_RAFT_LANE="${lane}" -DMAKO_RAFT_DISK="${disk}"
     cmake --build "${lab_build_dir}" --parallel "${jobs}" --target deptran_server
 
     local log
     log="$(mktemp /tmp/raft_lab_test_XXXX.log)"
     echo "Running the lab suite (log: ${log})"
     set +e
-    timeout 1800 "./${lab_build_dir}/deptran_server" \
+    with_raft_store lab timeout 1800 "./${lab_build_dir}/deptran_server" \
         -f config/raft_lab_test.yml -P localhost > "${log}" 2>&1
     local status=$?
     set -e
@@ -520,7 +560,7 @@ run_1shard_replication_raft() {
         cleanup_processes
         # Run test and capture exit code (set +e to prevent immediate exit)
         set +e
-        bash ./examples/test_1shard_replication_raft.sh
+        with_raft_store 1shard_replication_raft bash ./examples/test_1shard_replication_raft.sh
         local test_result=$?
         set -e
         # Always check for hanging processes, even if test failed
@@ -547,7 +587,7 @@ run_2shard_replication_raft() {
         cleanup_processes
         # Run test and capture exit code (set +e to prevent immediate exit)
         set +e
-        bash ./examples/test_2shard_replication_raft.sh
+        with_raft_store 2shard_replication_raft bash ./examples/test_2shard_replication_raft.sh
         local test_result=$?
         set -e
         # Always check for hanging processes, even if test failed
@@ -571,7 +611,7 @@ run_1shard_replication_simple_raft() {
     cleanup_processes
     # Run test and capture exit code (set +e to prevent immediate exit)
     set +e
-    bash ./examples/test_1shard_replication_simple_raft.sh
+    with_raft_store 1shard_replication_simple_raft bash ./examples/test_1shard_replication_simple_raft.sh
     local test_result=$?
     set -e
     # Always check for hanging processes, even if test failed
@@ -588,7 +628,7 @@ run_2shard_replication_simple_raft() {
     cleanup_processes
     # Run test and capture exit code (set +e to prevent immediate exit)
     set +e
-    bash ./examples/test_2shard_replication_simple_raft.sh
+    with_raft_store 2shard_replication_simple_raft bash ./examples/test_2shard_replication_simple_raft.sh
     local test_result=$?
     set -e
     # Always check for hanging processes, even if test failed
@@ -596,6 +636,23 @@ run_2shard_replication_simple_raft() {
     local hanging_check=$?
     # Return failure if either check failed
     [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+}
+
+# Raft disk persistence's process-kill tests (docs/verus/disk-persistence-plan.md
+# P6): three raft_kill_node replicas SIGKILLed and restarted onto their stores,
+# at random and at crash points, then checked (scripts/raft_kill/check.py).
+# Host only: a -DMAKO_RAFT_DISK=ON tree.
+run_raft_kill_test() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh raftKillTest"
+    echo "========================================="
+    if ! raft_disk_tree; then
+        echo "ERROR: raftKillTest needs a -DMAKO_RAFT_DISK=ON tree (BUILD_DIR=${BUILD_DIR})"
+        return 1
+    fi
+    cleanup_processes
+    python3 scripts/raft_kill/test_check.py || return 1
+    python3 scripts/raft_kill/run.py --build-dir "${BUILD_DIR}" ${RAFT_KILL_ARGS:-}
 }
 
 run_rocksdb_tests() {
@@ -803,6 +860,9 @@ case "${1:-}" in
         ;;
     raftLabTest)
         run_raft_lab_test
+        ;;
+    raftKillTest)
+        run_raft_kill_test
         ;;
     rocksdbTests)
         run_rocksdb_tests

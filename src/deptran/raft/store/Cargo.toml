@@ -15,5 +15,10 @@ publish = false
 name = "raft_store"
 path = "src/lib.rs"
 
+[features]
+# The RocksDB base (plan P7): links librocksdb, which the Raft binaries link
+# already. Off, the crate is std only and its tests need no C++.
+rocksdb = []
+
 [lints.rust]
 unsafe_code = "allow"   # crc.rs (SSE4.2 intrinsics) and crash.rs (kill(2))

@@ -14,22 +14,27 @@
 //! the tests run on [`MemFs`], which models what a crash or a power cut
 //! keeps.
 
+pub mod applier;
+pub mod base;
 pub mod crash;
 pub mod crc;
 pub mod create;
 pub mod flusher;
 pub mod fs;
+pub mod images;
 pub mod local;
 pub mod queue;
 pub mod record;
 pub mod segment;
 pub mod state;
 pub mod wal;
+#[cfg(feature = "rocksdb")]
+pub mod rocks;
 
 mod bytes;
 
-pub use create::{open_store, store_path, Opened};
-pub use flusher::{Durable, DurableState, Flusher};
+pub use create::{open_store, open_store_with_base, store_path, BaseFactory, Opened};
+pub use flusher::{Durable, DurableState, Flusher, HeldReplies};
 pub use fs::{MemFs, RealFs, StoreFile, StoreFs};
 pub use queue::RecordQueue;
 pub use record::{BytesCodec, Codec, Hard, Record, SnapRef};

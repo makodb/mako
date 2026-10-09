@@ -30,6 +30,9 @@ crate-type = ["rlib", "staticlib"]
 # The RaftLab harness, forwarded to the core: CMake turns it on exactly when
 # -DRAFT_TEST=ON, as for the core alone.
 raft_test = ["raft/raft_test"]
+# Disk mode, forwarded to the core's shell: CMake turns it on exactly when
+# -DMAKO_RAFT_DISK=ON.
+raft_disk = ["raft/raft_disk"]
 
 [dependencies]
 raft = { path = ".." }

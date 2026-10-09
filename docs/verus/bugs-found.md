@@ -24,7 +24,7 @@ effect). "Latent" means nothing in production reaches it today.
 | B3 | robustness | Vote replies are counted by number, so a duplicated reply counts twice | read in code; whether srpc can duplicate is open | Rust lane: fixed by F1 in `b75f285e2` (Phase 1); C++ lanes: by the core's own count (Phase 3) |
 | B4 | robustness | Decoded AppendEntries entry terms are never checked (0, negative, above the leader's term) | read in code | 0 and negative: fixed by F4 in `a38c5012e` (Phase 1); above the leader's term: fixed by F14 in `21c287832` (2026-10-06) |
 | B5 | latent | Phase 1 sends with the round's term and never re-checks leadership under the lock that builds the message; the Rust send kernel ignores its `is_leader` argument | read in code; not reachable today | fixed by F3 in `372b73e6f` (Phase 1) |
-| B6 | safety (assumed away) | Raft state is memory-only: a replica restarted under its old id can vote twice in a term, and a majority restart loses committed entries | read in code (plan §4.4.2) | v1 trusted assumption; spec v3 later |
+| B6 | safety (assumed away) | Raft state is memory-only: a replica restarted under its old id can vote twice in a term, and a majority restart loses committed entries | read in code (plan §4.4.2) | memory builds: v1 trusted assumption; disk builds (`-DMAKO_RAFT_DISK=ON`, 2026-10-09): fixed by the WAL, the base and `Restore` (disk plan P0-P9), restarts proved as a step aside under host-contract §1 item 5 |
 | B7 | metric | `get_outstanding_logs` subtracts the global commit index from a per-node submission count | read in code | fixed by F18 in `cd46bbf20` (2026-10-06) |
 | B8 | dead code | `setIsLeader`'s "stale leadership publication" check compares `current_term_` with a copy of itself, so its term half never fires | read in code | fixed by F16 in `cd46bbf20` (2026-10-06): the check removed |
 | B9 | test infra | `ci.sh`'s `cleanup_processes` kill -9s every same-user process named `dbtest`, `simpleTransactionRep`, ... and deletes the shared `/tmp/$USER_mako_rocksdb_shard*`, so a suite in one worktree kills tests running in another | read in code | worked around: `scripts/verus/tier1.sh` waits until no such process runs outside this worktree |
@@ -221,7 +221,10 @@ majority restarts, committed entries are lost.
 is **not verified** (a grep of `ci/ci.sh` found only cleanup kills).
 
 **Fate.** Certificate v1 states "no in-place restart under the old id" as a
-trusted assumption. A real fix needs synchronous persistence (out of scope).
+trusted assumption for memory builds. Disk builds fix it: synchronous
+persistence (docs/verus/disk-persistence.md), restarts through `Restore`
+(F22), coupled in `lemma_restore_ginv`, and tested by killing processes
+(`ci/ci.sh raftKillTest`).
 
 ## B7. `get_outstanding_logs` mixes two different counters
 

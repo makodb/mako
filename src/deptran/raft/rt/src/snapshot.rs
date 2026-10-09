@@ -279,6 +279,45 @@ pub unsafe extern "C" fn raft_snapshot_store_save(
 }
 
 // ---------------------------------------------------------------------------
+// Disk builds (docs/verus/disk-persistence-plan.md P8): the shell writes the
+// latest image to a file, and recovery builds a store from a file's bytes.
+// ---------------------------------------------------------------------------
+
+/// Hands the latest snapshot's index, term and bytes to `emit` (one call),
+/// borrowed for the call. False if the store is empty or absent.
+///
+/// # Safety
+/// `manager` is a live carrier of this lane; `emit` is safe to call with
+/// `ctx` and a slice valid for the call.
+#[no_mangle]
+pub unsafe extern "C" fn raft_snapshot_manager_with_latest(
+    manager: *const rusty::RaftSnapshotManagerPtr, ctx: *mut core::ffi::c_void,
+    emit: unsafe extern "C" fn(*mut core::ffi::c_void, u64, u64, *const u8, usize)) -> bool {
+    let Some(latest) = (unsafe { store_of(manager) }).and_then(|s| s.latest()) else {
+        return false;
+    };
+    unsafe { emit(ctx, latest.index, latest.term, latest.bytes.as_ptr(), latest.bytes.len()) };
+    true
+}
+
+/// A new store holding one snapshot, into the all-zero carrier `out`: the
+/// image recovery read from its file, injected before Setup (N7 keeps it).
+///
+/// # Safety
+/// `out` is a live, all-zero carrier; `data` is valid for `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn raft_snapshot_manager_from_bytes(
+    out: *mut rusty::RaftSnapshotManagerPtr, index: u64, term: u64, data: *const u8, len: usize) -> bool {
+    let store = SnapshotStore::new();
+    let bytes = if len == 0 { Vec::new() } else { unsafe { core::slice::from_raw_parts(data, len) }.to_vec() };
+    if !store.save_owned(index, term, bytes) {
+        return false;
+    }
+    unsafe { put(out, store) };
+    true
+}
+
+// ---------------------------------------------------------------------------
 // The follower's InstallSnapshot handoff (N5). ServeInstallSnapshot runs
 // synchronously on the poll thread, so the service parks the decoded buffer
 // here, tagged with (index, term, len), for exactly the duration of that

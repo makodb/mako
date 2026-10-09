@@ -317,6 +317,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# ---------------------------------------------------------------------------
+# Raft disk mode (docs/verus/disk-persistence-plan.md P0): a -DMAKO_RAFT_DISK=ON
+# tree gets a fresh, locked store run directory on the local disk, each
+# replica creates its store (MAKO_RAFT_CREATE=1), and the directory goes when
+# this script exits; a run killed outright is swept by the next launcher.
+# MAKO_RAFT_FLUSH_DELAY_US and MAKO_RAFT_DATA_ROOT pass through.
+# ---------------------------------------------------------------------------
+if grep -qs '^MAKO_RAFT_DISK:BOOL=ON' "${REPO_ROOT}/${BUILD_DIR}/CMakeCache.txt"; then
+    # shellcheck source=../scripts/raft_disk/store_dir.sh
+    source "${REPO_ROOT}/scripts/raft_disk/store_dir.sh"
+    raft_store_make_run bench || { echo "raft_bench.sh: no store run directory" >&2; exit 1; }
+    export MAKO_RAFT_CREATE=1
+    trap 'cleanup; raft_store_cleanup' EXIT
+fi
+
 
 run_one() {
     local proc="$1"

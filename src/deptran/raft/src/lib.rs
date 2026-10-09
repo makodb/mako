@@ -9,6 +9,7 @@
 pub mod channel_transport_hpp;
 pub mod commo_h;
 pub mod communicator_h;
+pub mod disk;
 pub mod frame_cc;
 #[cfg(feature = "raft_test")]
 pub mod lab;

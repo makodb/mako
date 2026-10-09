@@ -216,3 +216,55 @@ pub fn recover(fs: &dyn StoreFs, dir: &Path, id: &Identity, c: u64) -> Result<Re
     }
     Ok(Recovered { records, d, repairs })
 }
+
+/// The records numbered `from..=to`, read from the segments as they are now
+/// (the applier's catch-up, plan P7). Changes nothing on disk. The open
+/// segment may end in a batch still being written; records past `to` are
+/// never read, and `to` must be durable.
+pub fn read_range(fs: &dyn StoreFs, dir: &Path, id: &Identity, from: u64, to: u64)
+    -> Result<Vec<(u64, Vec<u8>)>, String> {
+    let ctx = |e: io::Error| format!("{}: {e}", dir.display());
+    let mut segs: Vec<u64> = fs.list(dir).map_err(ctx)?.iter().filter_map(|n| segment::parse_name(n)).collect();
+    segs.sort_unstable();
+    let mut out = Vec::new();
+    for (k, first) in segs.iter().enumerate() {
+        let next = segs.get(k + 1).copied().unwrap_or(u64::MAX);
+        if next <= from || *first > to {
+            continue;
+        }
+        let path = dir.join(segment::name(*first));
+        let bytes = fs.read(&path).map_err(ctx)?;
+        let (hid, _) = segment::parse_header(&bytes).map_err(|e| format!("{}: {e}", path.display()))?;
+        if hid != *id {
+            return Err(format!("{}: belongs to {hid:?}", path.display()));
+        }
+        let scan = segment::scan(&bytes[HEADER_LEN..]).map_err(|e| format!("{}: {e}", path.display()))?;
+        for b in &scan.batches {
+            for (j, r) in b.records.iter().enumerate() {
+                let seq = b.first_seq + j as u64;
+                if seq >= from && seq <= to {
+                    out.push((seq, r.to_vec()));
+                }
+            }
+        }
+    }
+    if out.len() as u64 != to + 1 - from || out.first().map(|r| r.0) != Some(from) {
+        return Err(format!("{}: records {from}..={to} are not all in the WAL ({} found)", dir.display(), out.len()));
+    }
+    Ok(out)
+}
+
+/// The closed segments whose records all lie at or below `c`: those a base
+/// holding records 1..=c makes redundant. The last segment (the open one)
+/// is never listed.
+pub fn covered_segments(fs: &dyn StoreFs, dir: &Path, c: u64) -> io::Result<Vec<PathBuf>> {
+    let mut segs: Vec<u64> = fs.list(dir)?.iter().filter_map(|n| segment::parse_name(n)).collect();
+    segs.sort_unstable();
+    let mut out = Vec::new();
+    for w in segs.windows(2) {
+        if w[1] <= c + 1 {
+            out.push(dir.join(segment::name(w[0])));
+        }
+    }
+    Ok(out)
+}

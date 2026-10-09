@@ -74,6 +74,56 @@ half-made store that blocks both kinds of relaunch (P2, P5). **Stale stores
 are swept**: deletion at exit does not run when a launcher is killed, so every
 launcher first deletes the run directories no live run holds (P0, P6).
 
+## Implementation status (2026-10-09, branch `raft-disk`)
+All ten phases are written; runtime validation and the model check are
+recorded in the commits that follow them.
+- **P0** the switch, the `raft_disk` features, `raft_store_test`, cargo inputs
+  `replay/` and `store/` (B27), the `rustdisk` Tier 1 lane, clippy with
+  `raft_disk`, `scripts/verus/verus_gate.py` with `verified_functions.txt` (B26;
+  `test_verus_gate.py`), `ci.sh`'s `with_raft_store` and the store sweep,
+  `examples/raft_bench.sh`'s run directory. The example scripts run outside
+  `ci.sh` are not wrapped.
+- **P1** as planned, with two changes: the note lives in `CoreOutput`, set by
+  the two log writers and `step`'s before-and-after compare of the hard state
+  (no `RaftLog` field, so no frame proof); `Restore` takes its entries last
+  first (`entries_rev`), moved in with `pop`, since `RaftEntry` has no `Clone`.
+  The replay's shadow checks every note's exactness on every recording.
+- **P2** as planned, plus B30 and B31 (bugs-found.md), found by its tests.
+- **P3** as planned; the verify encodes each core entry and compares bytes.
+- **P4** the generated `dispatch_held` returns a `HeldReply` (xid, pending
+  guard, connection, body: `Send`), held in raft-store's `HeldReplies` and sent
+  by the flusher. The tick and the campaign wait on an event the flusher sets
+  through a job on their owner thread (no polling: Lion rounds fiber sleeps
+  to 1 ms); the leader's apply waits. Not done: `CloseAdmissionForDrain` (the
+  worker drains RPCs before the store stops, so held replies still leave).
+- **P5** `Restore` at startup, the campaign gate, B21's reconnect policy. The
+  store opens before snapshot recovery (P8 injects the image there) and
+  `Restore` runs after `Configure`. Not done: B22's majority start (the
+  `down` scenario is not run).
+- **P6** `raft_kill_node`, `scripts/raft_kill/{run,check,test_check}.py`,
+  `ci.sh raftKillTest`; checks by apply prefixes, acknowledgements, the verify
+  lines, `.creating`, a bounded WAL; `install` events for snapshots. Not done:
+  the `reveal`/`recovered` lines and the one-leader-per-term and one-vote
+  checks (they need recordings).
+- **P7** `store/src/{base,rocks,applier}.rs`: RocksDB through `rocksdb/c.h`
+  with its WAL off, the applier fed by the flusher's offers with catch-up
+  reads, checkpoints that delete covered segments and older images; crash
+  points `base.write`, `base.flush`, `base.delete`, `recover.base`.
+- **P8** `store/src/images.rs` (checksummed image files), two rt exports
+  (`raft_snapshot_manager_with_latest`, `raft_snapshot_manager_from_bytes`);
+  the image is written under `mtx_` (not under the apply gate alone), and an
+  install commits the image before its record is durable (no output depends
+  on it before then: the reply is held).
+- **P9** `Restore`'s coupling: the premise is that *some* previous ghost log
+  replays to the restored state (an existential, so the shell passes no ghost
+  argument), proved by `lemma_restore_ginv` over the step-aside lemma; the
+  notes' exactness is trusted in the host contract (§1 item 5), with the
+  replay's shadow and the cargo tests as evidence. Verus: 400 verified.
+- **The model** (`scripts/raft_disk/model.py`) is the Lion-era one: the
+  leader's flush is exposed in full plus one cross-thread wake (no 1 ms hop),
+  s and c per filesystem, memory baselines measured;
+  `scripts/raft_disk/measure.py` runs paired rounds and compares.
+
 ## 1. Ground rules
 **Branch.** `raft-disk` from `srpc-subtree-forward`, merged forward as that
 moves and pushed to `backup`; PR #92 merges without it. **The switch.**

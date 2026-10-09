@@ -1,34 +1,115 @@
 #!/usr/bin/env python3
-"""The disk plan's model (docs/verus/disk-persistence-plan.md §5): F(n, K) and the
-low-load and saturated estimates for the gate points, from the measured
-parameters and the memory baselines (bug-fix gate, 0633e1ffc). Prints both CRC32C
-variants; the plan's table is the SSE4.2 one."""
+"""The disk plan's cost model (docs/verus/disk-persistence-plan.md §5), Lion era.
+
+One flush of n entries, K KiB in all, costs F(n, K) = s + D + c*K + e*n, where
+s is the sync's fixed cost, D the injected delay (MAKO_RAFT_FLUSH_DELAY_US), c
+the per-KiB cost (write, copy, CRC32C) and e the per-entry encoding.
+
+Low load (one entry a round; G1, G3, G5). The leader's flush starts at Start
+and, since Lion wakes the tick at once (no 1 ms poll hop), is exposed in
+full: the tick waits for it, plus one cross-thread wake w (flusher -> poll
+thread -> fiber). The follower holds its reply for its own flush; collect
+sees replies at its q-microsecond steps, so the reply's delay costs whole
+steps: dC = q*(ceil((r + w + F1)/q) - ceil(r/q)), r the memory round trip.
+
+  L_disk = L + (F1 + w) + dC
+
+Saturation (rounds of B entries; G2, G4, G6). Each round puts k flushes of the
+round's batch in series with the memory round T = B/X: the follower's (its
+reply waits) and, under the tail rule, the leader's burst (k = 2).
+
+  X_disk = B / (T + k*F_B)
+
+  model.py [--fs tmpfs|ext4] [--baseline FILE.json]       print the estimates
+  model.py --compare MEASURED.json [--fs ...] [--baseline ...]
+      MEASURED.json: {"D": us, "G1_p50": us, "G2": per_s, ...} -> each against
+      its estimate; a miss over a quarter of the estimate names a wrong term.
+
+A baseline file holds the memory build's medians: {"G1_p50": us, "G2": per_s,
+...}; without one the bug-fix gate's pre-Lion numbers are used (stale).
+"""
+import argparse
+import json
 import math
-s, cn, h, q = 1.0, 0.5, 1000.0, 1000.0          # us
-CB = {'sse4.2': 0.80, 'software': 1.32}          # us per KiB: write 0.60 + copy 0.07 + crc
-def F(kib, n, D, cb): return s + D + kib * cb + n * cn
-def wait_leader(F1): return F1 * F1 / (2 * h) + F1 / 2 if F1 <= h else F1
-def collect_shift(r0, F1): return q * (math.ceil((r0 + F1) / q) - math.ceil(r0 / q))
-for crc, cb in CB.items():
-    print(f'== CRC {crc} ({cb} us/KiB)')
+
+# Measured on zoo-003 (scripts/raft_disk/params.rs, 2026-10-09): write plus
+# fdatasync, p50. s is fdatasync alone at 4 KiB; cw the write per KiB.
+FS = {
+    "tmpfs": {"s": 1.0, "cw": 0.57},
+    "ext4": {"s": 165.0, "cw": 1.41},
+}
+COPY, CRC, E = 0.07, 0.13, 0.5     # us per KiB, per KiB (SSE4.2), per entry
+W = 50.0                           # us: a cross-thread wake to the fiber (Lion)
+Q = 1000.0                         # us: collect's poll step
+
+# Points: (kind, KiB per entry, entries per round B, partitions, round trip r)
+POINTS = {
+    "G1": ("low", 4.0, 1, 1, 100.0),
+    "G3": ("low", 279.5, 1, 6, 400.0),
+    "G5": ("low", 1024.0, 1, 1, None),
+    "G2": ("sat", 4.0, 256, 1, None),
+    "G4": ("sat", 279.5, 58, 6, None),
+    "G6": ("sat", 1024.0, 16, 1, None),
+}
+# Pre-Lion memory baselines (bug-fix gate 0633e1ffc): stale; pass --baseline.
+OLD_BASE = {"G1_p50": 2641, "G3_p50": 3362, "G5_p50": 8489, "G2": 34112, "G4": 2859, "G6": 187}
+
+
+def F(kib, n, D, fs):
+    p = FS[fs]
+    return p["s"] + D + kib * (p["cw"] + COPY + CRC) + n * E
+
+
+def estimate(point, D, fs, base, k=2):
+    kind, kib, B, parts, r = POINTS[point]
+    if kind == "low":
+        L = base[f"{point}_p50"]
+        F1 = F(kib, 1, D, fs)
+        if r is None:  # a round trip of several collect steps: the flush adds itself
+            dC = F1
+        else:
+            dC = Q * (math.ceil((r + W + F1) / Q) - math.ceil(r / Q))
+        return L + F1 + W + dC
+    X = base[point]
+    T = parts * B / X * 1e6
+    FB = F(kib * B, B, D, fs)
+    return parts * B / (T + k * FB) * 1e6
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--fs", default="tmpfs", choices=FS)
+    ap.add_argument("--baseline")
+    ap.add_argument("--compare")
+    ap.add_argument("--k", type=int, default=2)
+    a = ap.parse_args()
+    base = json.load(open(a.baseline)) if a.baseline else OLD_BASE
+    if a.compare:
+        m = json.load(open(a.compare))
+        D = m["D"]
+        bad = 0
+        for key, got in m.items():
+            if key == "D":
+                continue
+            point = key.split("_")[0]
+            est = estimate(point, D, a.fs, base, a.k)
+            off = (got - est) / est
+            ok = abs(off) <= 0.25
+            bad += not ok
+            print(f"{key:8s} D={D:5.0f}us measured {got:10.1f} estimate {est:10.1f} ({off:+6.1%}) "
+                  f"{'ok' if ok else 'MISS: a term is wrong'}")
+        return 1 if bad else 0
+    print(f"fs={a.fs} k={a.k} baseline={'given' if a.baseline else 'pre-Lion (stale)'}")
     for D in (0, 200, 1000):
-        out = []
-        # low load: one entry per round
-        for g, kib, base, r0 in (('G1', 4, 2641, 100), ('G3', 279.5, 3362, 400), ('G5', 1024, 8489, None)):
-            F1 = F(kib, 1, D, cb)
-            dc = F1 if r0 is None else collect_shift(r0, F1)
-            dl = wait_leader(F1) + dc
-            out.append(f'{g} F1={F1:7.0f} +{dl:6.0f} -> {base+dl:7.0f} ({dl/base*100:+5.1f}%)')
-        # G2, traced round: 256 x 4 KiB per round
-        B = 256; T = B / 34112 * 1e6
-        FB = F(1024, B, D, cb)
-        for rule, nf in (('tail', 2), ('sent', 1)):
-            X = B / (T + nf * FB) * 1e6
-            out.append(f'G2[{rule}] F(B)={FB:5.0f} X={X:7.0f}/s ({X/34112*100-100:+5.1f}%)')
-        # G4 (6 partitions, 58-entry rounds) and G6 (16-entry rounds), per entry
-        for g, xm, parts, kib, Bn in (('G4', 2859.4, 6, 279.5, 58), ('G6', 186.8, 1, 1024, 16)):
-            t = parts / xm * 1e6; ce = kib * cb + cn
-            for rule, nf in (('tail', 2), ('sent', 1)):
-                X = parts / (t + nf * ce + nf * (D + s) / Bn) * 1e6
-                out.append(f'{g}[{rule}] X={X:6.0f}/s ({X/xm*100-100:+5.1f}%)')
-        print(f'D={D:4d}us:'); [print('   ', o) for o in out]
+        row = []
+        for point in POINTS:
+            est = estimate(point, D, a.fs, base, a.k)
+            mem = base[f"{point}_p50"] if POINTS[point][0] == "low" else base[point]
+            unit = "us" if POINTS[point][0] == "low" else "/s"
+            row.append(f"{point} {est:8.0f}{unit} ({est / mem - 1:+6.1%})")
+        print(f"D={D:5d}us  " + "  ".join(row))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

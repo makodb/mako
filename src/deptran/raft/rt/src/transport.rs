@@ -97,6 +97,22 @@ unsafe fn decode_reply<T: Deserialize + Default>(ptr: *const u8, len: usize)
 pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(120 * 1000);
 pub const CONNECT_SLEEP: Duration = Duration::from_millis(1000);
 
+/// Disk builds (docs/verus/disk-persistence-plan.md P5; bugs-found B21): a
+/// survivor re-dials a closed peer for good, from 50 ms doubling to 200 ms
+/// (25-300 ms with jitter), so a restarted replica is reached again before
+/// its first campaign (the shortest non-preferred election timeout is
+/// 0.5 s). srpc's default policy gives up after five tries over 15.5-46.5 s,
+/// and its `aggressive()` waits up to 5 s, time for several campaigns. A
+/// memory build keeps the default.
+pub const DISK_RECONNECT: srpc::reconnect_policy::ReconnectPolicy = srpc::reconnect_policy::ReconnectPolicy {
+    auto_reconnect: true,
+    max_retries: 0,
+    initial_delay_ms: 50,
+    max_delay_ms: 200,
+    backoff_multiplier: 2.0,
+    jitter_enabled: true,
+};
+
 pub struct RaftTransport {
     poll: Arc<PollThread>,
     // None until serve() binds. Taken explicitly on delete, before the poll
@@ -279,6 +295,9 @@ impl RaftTransport {
             return false;
         }
         let client = Client::create(self.poll.clone());
+        if cfg!(feature = "raft_disk") {
+            client.set_reconnect_policy(&DISK_RECONNECT);
+        }
         let start = Instant::now();
         loop {
             if client.connect(addr, false) == 0 {

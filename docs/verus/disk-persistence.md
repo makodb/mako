@@ -1,6 +1,8 @@
 # Disk persistence for the Rust Raft: a design
 
-**Status.** A design; nothing is built. Raft state is memory-only today
+**Status.** Built on branch `raft-disk` (2026-10-09) as
+[disk-persistence-plan.md](disk-persistence-plan.md) records; a memory build
+is unchanged, and its Raft state stays memory-only
 ([bugs-found.md](bugs-found.md) B6). The disk is simulated: tmpfs plus an
 injected delay per flush. Code is cited at `44d07a3ee`, under
 `src/deptran/raft/` unless a path starts `src/mako/`, `src/srpc/`,

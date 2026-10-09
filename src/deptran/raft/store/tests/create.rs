@@ -34,11 +34,20 @@ fn missing_store_needs_the_flag() {
 }
 
 #[test]
-fn the_flag_refuses_an_existing_store() {
+fn the_flag_refuses_a_store_with_records_and_reopens_an_empty_one() {
     let fs = fresh();
     drop(open(&fs, true).unwrap());
+    // Never recorded anything: a creating relaunch takes it (a creation
+    // killed after its rename).
+    let mut o = open(&fs, true).unwrap();
+    assert!(o.created && o.d == 0);
+    let mut b = Vec::new();
+    let r: raft_store::Record<Vec<u8>> = raft_store::Record { replace_from: Some(1), entries: vec![(1, vec![7])], ..Default::default() };
+    raft_store::record::encode(&r, &BytesCodec, &mut b);
+    o.wal.append(1, &[b]).unwrap();
+    drop(o);
     let why = open(&fs, true).err().unwrap();
-    assert!(why.contains("a store exists"), "{why}");
+    assert!(why.contains("1 record(s) exists"), "{why}");
     assert!(!open(&fs, false).unwrap().created);
 }
 

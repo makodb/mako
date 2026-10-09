@@ -84,7 +84,7 @@ fn raft_command_handle_clone(cmd: &rusty::RaftCommand) -> rusty::RaftCommand {
 // ([fix, F7]). Returns the tick for the rest of the round.
 pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
     let mut out: CoreOutput = core_output();
-    let tick: HeartbeatTick = {
+    let (tick, disk_tail): (HeartbeatTick, u64) = {
         let _lock = RaftLockGuard::new(server.mtx());
         let is_leader: bool = server.IsLeaderLocked();
         let snapshot_configured: bool = unsafe {
@@ -121,7 +121,12 @@ pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
             }
             i += 1;
         }
-        decided
+        // Disk builds (plan P4): nothing this section produced leaves before
+        // the WAL holds every record queued so far, the entries sent and the
+        // commit they carry included. The InstallSnapshot above is the one
+        // exception (design §3): its image is a committed prefix.
+        let disk_tail: u64 = server.disk().map_or(0, |d| d.tail());
+        (decided, disk_tail)
     };
     server.run_unlocked_actions(&out);
     if tick.slots_reset_ {
@@ -129,6 +134,11 @@ pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
     }
     if tick.declined_ {
         return tick;
+    }
+    if let Some(d) = server.disk() {
+        if !d.wait_durable(disk_tail, 10_000, &|| server.stopped_now()) {
+            return tick;
+        }
     }
 
     // [fix, F7] Each payload is built from the handles the core copied out

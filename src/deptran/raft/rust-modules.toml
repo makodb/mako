@@ -96,6 +96,10 @@ cfg_feature = "raft_test"
 
 [[module]]
 kind = "canonical"
+output = "src/deptran/raft/src/disk.rs"
+
+[[module]]
+kind = "canonical"
 output = "src/deptran/raft/src/server_cc.rs"
 
 [[module]]

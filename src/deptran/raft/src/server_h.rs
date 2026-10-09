@@ -280,6 +280,11 @@ impl ReplicationWakeGate {
         self.pending_.store(true, rusty::sync::atomic::Ordering::Release);
     }
 
+    // Disk builds: the owner thread, to post a durable wake to.
+    pub fn owner_clone(&self) -> rusty::Option<rusty::RaftPollThreadPtr> {
+        (*self.owner_.lock().unwrap()).clone()
+    }
+
     pub fn clear_owner(&self) {
         let mut guard = self.owner_.lock().unwrap();
         *guard = rusty::None;
@@ -487,6 +492,9 @@ impl ReplicationWakeGate {
 pub struct GateWakeJob {
     pub gate: rusty::sync::Arc<ReplicationWakeGate>,
     pub shutdown: bool,
+    // Disk builds: the event of a fiber waiting for the WAL (disk.rs), set
+    // on its owner thread; the gate is then left alone.
+    pub durable: rusty::Option<rusty::RaftIntEventPtr>,
 }
 
 impl GateWakeJob {
@@ -495,6 +503,10 @@ impl GateWakeJob {
     // method call on it with an arrow; from another module it would emit a
     // dot, which does not compile.
     pub fn run(&self) {
+        if let rusty::Some(event) = &self.durable {
+            unsafe { raft_int_event_set(event as *const rusty::RaftIntEventPtr, 1) };
+            return;
+        }
         if self.shutdown {
             self.gate.wake_shutdown_on_owner();
         } else {
@@ -1027,6 +1039,10 @@ pub struct RaftServerBase {
     // is set.
     // [fix, F19] Under mtx_ (the step wrapper).
     pub recorder_: ShellCell<CoreRecorder>,
+    // Disk persistence (docs/verus/disk-persistence-plan.md P3): the store,
+    // set once by SetupInternal in disk builds (never in memory builds), and
+    // read by the step wrappers under mtx_ and at shutdown.
+    pub disk_: std::sync::OnceLock<std::sync::Arc<crate::disk::DiskShell>>,
     // Was a function-static in EnqueueCommittedEntries. A DSL body has no
     // static local, and a per-server counter is the more honest shape: the
     // C++ one was shared across every RaftServer in a single-process test.
@@ -1125,6 +1141,7 @@ impl RaftServerBase {
             snapshot_callback_owner_token_: rusty::sync::atomic::AtomicU64::new(0),  // [move, M1] [fix, F19]
             next_snapshot_callback_owner_token_: rusty::sync::atomic::AtomicU64::new(1),  // [move, M1] [fix, F19]
             recorder_: ShellCell::new(CoreRecorder::from_env()),  // [M0] [fix, F19]
+            disk_: std::sync::OnceLock::new(),
             enqueue_log_counter_: rusty::sync::atomic::AtomicU64::new(0),  // [fix, F19]
             n_prepare_: 0,
             n_accept_: 0,
@@ -1194,6 +1211,15 @@ impl RaftServerBase {
     pub fn RequestVoteFromElectionTimer(&self, expected_generation: u64)
         -> bool
     {
+        // Disk builds (plan P5): a restarted server campaigns only once its
+        // state machine has re-applied what recovery found committed; Mako's
+        // apply callback is chosen by role, and a leader's would not replay.
+        if let Some(d) = self.disk() {
+            if self.GetAppliedIndex()
+                < d.recovered_commit.load(rusty::sync::atomic::Ordering::Acquire) {
+                return false;
+            }
+        }
         self.RequestVoteImpl(true, expected_generation)
     }
 
@@ -1509,7 +1535,9 @@ impl RaftServerBase {
     // membership come before anything else can reach the server).
     pub fn step(&self, ev: Event<'_>, out: &mut CoreOutput) -> Reply {
         if !self.recorder().on() {
-            return self.core().step(ev, out);
+            let reply: Reply = self.core().step(ev, out);
+            self.disk_note(out);
+            return reply;
         }
         // [M0] The replay recorder: the event as the shell built it, then
         // what this call appended to `out`, and its reply.
@@ -1522,7 +1550,36 @@ impl RaftServerBase {
         let result: String = raft_replay::result_text(out, actions_from, logs_from,
                                                       &reply, &command_digest);
         self.recorder().write(&raft_replay::record_line(&event, level, &result));
+        self.record_persist_note(out);  // [fix, F21]
+        self.disk_note(out);
         reply
+    }
+
+    // Disk builds: the store, once SetupInternal opened it.
+    pub fn disk(&self) -> Option<&std::sync::Arc<crate::disk::DiskShell>> {
+        if cfg!(feature = "raft_disk") {
+            self.disk_.get()
+        } else {
+            None
+        }
+    }
+
+    // Disk builds: the step's persist note becomes a WAL record, numbered
+    // in step order (disk design §3, "Records, under the lock"). CALLER
+    // MUST HOLD mtx_.
+    fn disk_note(&self, out: &mut CoreOutput) {
+        if let Some(d) = self.disk() {
+            if let Some(note) = out.take_persist() {
+                d.push_note(&note, &self.core().raft_log_);
+            }
+        }
+    }
+
+    // [fix, F21] The step's persist note, as a `P` line after its record.
+    fn record_persist_note(&self, out: &CoreOutput) {
+        if let Some(note) = out.persist() {
+            self.recorder().write(&raft_replay::persist_line(&note));
+        }
     }
 
     // [fix, F9] The same, for a message from the network: None is a message
@@ -1530,7 +1587,11 @@ impl RaftServerBase {
     pub fn step_checked(&self, ev: Event<'_>, out: &mut CoreOutput)
         -> Option<Reply> {
         if !self.recorder().on() {
-            return self.core().step_checked(ev, out);
+            let reply: Option<Reply> = self.core().step_checked(ev, out);
+            if reply.is_some() {
+                self.disk_note(out);
+            }
+            return reply;
         }
         // [M0] the replay recorder, as in step
         let mut event: String = String::new();
@@ -1542,6 +1603,10 @@ impl RaftServerBase {
         let result: String = raft_replay::checked_result_text(
             out, actions_from, logs_from, &reply, &command_digest);
         self.recorder().write(&raft_replay::record_line(&event, level, &result));
+        if reply.is_some() {
+            self.record_persist_note(out);  // [fix, F21]
+            self.disk_note(out);
+        }
         reply
     }
 
@@ -1895,6 +1960,13 @@ impl RaftServerBase {
                 self.log_retention_window_.load(rusty::sync::atomic::Ordering::Relaxed));  // [fix, F19]
         }
 
+        // Disk builds: the store opens before snapshot recovery, so a
+        // recovered snapshot image is the store that recovery loads (P8).
+        if cfg!(feature = "raft_disk") && !self.OpenDiskStore() {
+            self.FailClosed();
+            return false;
+        }
+
         if !unsafe {
             raft_initialize_snapshot_manager(self.handle(),
                                              self.site_id_)
@@ -1915,6 +1987,11 @@ impl RaftServerBase {
         rusty::raft_log_info_3(
             "[RAFT-CONFIG] Initialized current_config_ for site {} partition {} with {} replicas",
             self.site_id_, self.partition_id_, replicas);
+
+        if cfg!(feature = "raft_disk") && !self.RestoreDiskState() {
+            self.FailClosed();
+            return false;
+        }
 
         // [fix, F5] The configuration the verification covers
         // (docs/verus/modification-plan.md §4.1). Outside it a normal run
@@ -1969,6 +2046,146 @@ impl RaftServerBase {
             }
         }
         true
+    }
+
+    // Disk builds (plan P3): opens or creates this server's store and starts
+    // its flusher. A recovered store is plan P5's; until then it fails
+    // closed with the reason, as every refusal here does.
+    fn OpenDiskStore(&self) -> bool {
+        let params = match crate::disk::DiskParams::from_env() {
+            Ok(p) => p,
+            Err(why) => {
+                eprintln!("[RAFT-DISK] Site {}: {why}", self.site_id_);
+                return false;
+            }
+        };
+        // The configured members, as Configure will hold them (sorted, no
+        // duplicates): the store's identity names them.
+        let replicas: u64 = unsafe { raft_config_replica_count(self.partition_id_) };
+        let mut members: Vec<u16> = (0..replicas)
+            .map(|i| unsafe { raft_config_replica_site(self.partition_id_, i) })
+            .collect();
+        members.sort_unstable();
+        members.dedup();
+        // A fiber waiting for the WAL is woken on its owner thread, by the
+        // same job kernel the replication wake uses (a foreign set() is not
+        // a wake).
+        let gate = self.replication_wake_gate_.clone();
+        let wake: crate::disk::FiberWake = Box::new(move |event: rusty::RaftIntEventPtr| {
+            if let rusty::Some(owner) = gate.owner_clone() {
+                let token: rusty::Box<GateWakeJob> = rusty::Box::new(GateWakeJob {
+                    gate: gate.clone(), shutdown: false, durable: rusty::Some(event),
+                });
+                unsafe {
+                    raft_queue_wake_job(&owner as *const rusty::RaftPollThreadPtr,
+                                        rusty::Box::into_raw(token) as *mut core::ffi::c_void);
+                }
+            }
+        });
+        let opened = crate::disk::DiskShell::open(params, self.site_id_, self.partition_id_,
+                                                  &members, RAFT_SERVER_INVALID_SITE_ID, wake);
+        let (shell, recovered) = match opened {
+            Ok(x) => x,
+            Err(why) => {
+                eprintln!("[RAFT-DISK] Site {}: {why}", self.site_id_);
+                return false;
+            }
+        };
+        let store = crate::disk::describe(&shell.store);
+        if let Some(r) = recovered {
+            for repair in r.repairs.iter() {
+                eprintln!("[RAFT-DISK] Site {}: recovery repaired {store}: {repair}", self.site_id_);
+            }
+            if r.state.snap_index != 0 {
+                // Plan P8: the image the state names becomes the snapshot
+                // store recovery loads; snapshots off, or a missing or
+                // damaged image, fails closed.
+                let why: Option<String> = if !unsafe { raft_env_snapshots_enabled() } {
+                    Some(format!("the state names a snapshot at {} but snapshots are off (MAKO_RAFT_SNAPSHOTS)",
+                                 r.state.snap_index))
+                } else {
+                    match r.state.image.clone() {
+                        None => Some(format!("the state names a snapshot at {} without an image",
+                                             r.state.snap_index)),
+                        Some(name) => match shell.image_store(r.state.snap_index, r.state.snap_term, &name) {
+                            Ok(m) => {
+                                self.SetSnapshotManager(m);
+                                None
+                            }
+                            Err(why) => Some(why),
+                        },
+                    }
+                };
+                if let Some(why) = why {
+                    eprintln!("[RAFT-DISK] Site {}: {store}: {why}", self.site_id_);
+                    shell.stop();
+                    return false;
+                }
+            }
+            *shell.recovered_slot() = Some(r);
+        }
+        rusty::raft_log_info_2("[RAFT-DISK] Site {}: store {} open", self.site_id_, store);
+        let _ = self.disk_.set(std::sync::Arc::new(shell));
+        true
+    }
+
+    // Disk builds (plan P5): the recovered state enters the core as one
+    // event, after Configure and snapshot recovery, before EnterGates.
+    fn RestoreDiskState(&self) -> bool {
+        let Some(shell) = self.disk() else { return true };
+        let Some(r) = shell.take_recovered() else { return true };
+        let store = crate::disk::describe(&shell.store);
+        // The entries go last first (Restore moves each in with pop); each
+        // command's facts are asked once, here.
+        let hard = r.state.hard;
+        let snap = r.state.snap_index;
+        let mut entries_rev: Vec<RaftEntry> = Vec::with_capacity(r.state.entries.len());
+        for (term, cmd) in r.state.entries.into_iter().rev() {
+            entries_rev.push(raft_entry_from_command(term as i64, cmd));
+        }
+        let n: u64 = entries_rev.len() as u64;
+        let restored: bool = {
+            let _lock = RaftLockGuard::new(self.mtx());
+            let mut out: CoreOutput = core_output();
+            let ok: bool = self.step(
+                Event::Restore { term: hard.term, vote: hard.vote, commit: hard.commit, entries_rev },
+                &mut out).into_restored();
+            if ok {
+                // APPLY_RANGE(S, commit): the committed suffix goes back on
+                // the apply queue, for the apply thread to re-apply.
+                self.run_locked_actions(&out);
+                self.publish_mirrors();
+            }
+            ok
+        };
+        if !restored {
+            eprintln!("[RAFT-DISK] Site {}: {store} holds a state no Raft step produces (term {}, vote {}, commit {}, snapshot {snap}, {n} entries); refusing it",
+                      self.site_id_, hard.term, hard.vote, hard.commit);
+            return false;
+        }
+        shell.recovered_commit.store(hard.commit, std::sync::atomic::Ordering::Release);
+        eprintln!("[RAFT-DISK] Site {}: recovered {store}: {} records, term {}, vote {}, commit {}, snapshot {snap}, last {}",
+                  self.site_id_, r.d, hard.term, hard.vote, hard.commit, snap + n);
+        true
+    }
+
+    // Disk builds: after every producer of records has stopped (the loops,
+    // the RPCs, the apply thread), the flusher writes what is queued and
+    // stops; MAKO_RAFT_DISK_VERIFY=1 then compares the WAL with the core.
+    // Idempotent.
+    fn StopDiskStore(&self) {
+        let Some(d) = self.disk() else { return };
+        d.stop();
+        if d.params.verify {
+            let _lock = RaftLockGuard::new(self.mtx());
+            match d.verify(self.core()) {
+                Ok(what) => eprintln!("[DISK-VERIFY] site={} {what}", self.site_id_),
+                Err(why) => {
+                    eprintln!("[DISK-VERIFY] site={} MISMATCH: {why}", self.site_id_);
+                    std::process::abort();
+                }
+            }
+        }
     }
 
     // @safe - the fail-stop a snapshot recovery failure performs, with the
@@ -2257,32 +2474,24 @@ impl RaftServerBase {
                                               send_term: u64,
                                               follower_term: u64,
                                               out: &mut CoreOutput) {
-        self.recorder().taint("InstallSnapshotReplyAcceptedLocked");  // [M0]
         if raft_server_observed_higher_term(follower_term,
                                             self.core().current_term_) {
             rusty::raft_log_info_4(
                 "[HEARTBEAT-SNAPSHOT] Site {}: Follower {} has higher term {} > {}, stepping down",
                 self.site_id_, site_id, follower_term,
                 self.core().current_term_);
-            let previous_term: u64 = self.core().current_term_;
-            self.core().current_term_ = follower_term;
-            self.core().vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
-            self.LogTermChange("InstallSnapshot reply carried newer term",
-                               previous_term, self.core().current_term_,
-                               site_id);
-            // A follower's higher term does not identify the leader of that
-            // term. Retire the previous leader hint before publishing
-            // follower state.
-            self.core().current_leader_id_ =
-                raft_server_leader_hint_after_transition(
-                    false, false, self.site_id_, site_id);
+            // [fix, F20] The raise is a core step, so a persist note covers
+            // it: the term raised, the vote and the leader hint cleared (a
+            // follower's higher term does not identify that term's leader),
+            // the role dropped, the campaign over.
             let stopped: bool = self.stopped_now();
             let failover: bool = self.failover_;
-            self.step(Event::StepDown { stopped, failover }, out).into_done();  // [move, M3]
-            self.core().req_voting_ = false;
-            self.core().election_in_progress_ = false;
+            self.step(Event::ObserveTerm { term: follower_term, stopped, failover },
+                      out).into_done();
             return;
         }
+        // [M0] the accept branch writes the volatile peer table outside step
+        self.recorder().taint("InstallSnapshotReplyAcceptedLocked");
         if self.core().current_term_ != send_term {
             rusty::raft_log_info_1(
                 "[HEARTBEAT-SNAPSHOT] Site {}: Term changed since snapshot send, ignoring response",
@@ -2406,13 +2615,16 @@ impl RaftServerBase {
 
         // Edge case 2: a higher or equal term is accepted as a legitimate
         // leader.
-        let previous_term: u64 = self.core().current_term_;
+        let mut out: CoreOutput = core_output();
+        let stopped: bool = self.stopped_now();
+        let failover: bool = self.failover_;
         if leader_has_higher_term {
             rusty::raft_log_info_4(
                 "[INSTALL-SNAPSHOT] Site {}: Leader {} has higher term ({} > {}) - updating",
                 self.site_id_, leader_id, term, self.core().current_term_);
-            self.core().current_term_ = term;
-            self.core().vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+            // [fix, F20] the raise is a core step (the term, the vote, the
+            // role), so a persist note covers it
+            self.step(Event::ObserveTerm { term, stopped, failover }, &mut out).into_done();
         }
 
         // InstallSnapshot comes from a known leader. Publish its identity
@@ -2431,9 +2643,6 @@ impl RaftServerBase {
         // setIsLeader ran them, so the timer resets keep their place ahead of
         // the install below; the leader-change callback waits in install_out_
         // until OnInstallSnapshot has released mtx_ ([fix, F6]).
-        let mut out: CoreOutput = core_output();
-        let stopped: bool = self.stopped_now();
-        let failover: bool = self.failover_;
         if self.core().is_leader_ {
             self.step(Event::StepDown { stopped, failover }, &mut out).into_done();
         } else {
@@ -2443,12 +2652,6 @@ impl RaftServerBase {
         *self.install_out() = out;  // [fix, F19]
         self.core().req_voting_ = false;
         self.core().election_in_progress_ = false;
-
-        if leader_has_higher_term {
-            self.LogTermChange("InstallSnapshot carried newer term",
-                               previous_term, self.core().current_term_,
-                               leader_site);
-        }
 
         // Legitimate leader contact.
         self.resetTimerLocked("received InstallSnapshot");
@@ -2603,6 +2806,25 @@ impl RaftServerBase {
         assert!(
             self.core().commit_index_
                 <= self.core().raft_log_.last_index());  // [move, M10]
+        // Disk builds: the install's outcome, as one record (disk design §3:
+        // outcomes, never rules): the boundary, whether the suffix stayed,
+        // and the commit at the boundary.
+        if let Some(d) = self.disk() {
+            // SAFETY: the server's own carrier, under mtx_.
+            let image = unsafe {
+                d.write_latest_image(self.snapshot_manager_.as_ptr()
+                    as *const rusty::RaftSnapshotManagerPtr)
+            }.map(|(_, _, name)| name);
+            d.queue.push(raft_store::Record {
+                hard: Some(raft_store::Hard { term: self.core().current_term_,
+                                              vote: self.core().vote_for_,
+                                              commit: last_included_index }),
+                snapshot: Some(raft_store::SnapRef { index: last_included_index,
+                                                     term: last_included_term,
+                                                     image, keep: retain_suffix }),
+                ..Default::default()
+            });
+        }
 
         // Publish application only after the state machine has finished
         // loading. Acquire waiters must never observe the covered indices
@@ -2664,6 +2886,7 @@ impl RaftServerBase {
             raft_apply_thread_join(
                 self.apply_thread_.as_ptr());
         }
+        self.StopDiskStore();
 
         rusty::raft_log_info_5(
             "site par {}, loc {}: prepare {}, accept {}, commit {}",
@@ -2736,6 +2959,24 @@ impl RaftServerBase {
                     raft_thread_sleep_ms(1);
                 }
                 continue;
+            }
+
+            // Disk builds (plan P4): a leader's apply tells Mako the entry is
+            // replicated, so the entry must be on this server's disk first; a
+            // leader never cuts its log, so a durable last index at or above
+            // id means it is. With two or more servers this never blocks (a
+            // commit needs a follower's acknowledgement of an entry the
+            // leader flushed before sending it). A follower's apply is memory
+            // a restart rebuilds. The wait rechecks the running flag so the
+            // join cannot hang.
+            if let Some(d) = self.disk() {
+                if self.is_leader_mirror_.load(rusty::sync::atomic::Ordering::Acquire) {
+                    while !d.durable.wait_last(id, std::time::Duration::from_millis(100)) {
+                        if !self.apply_thread_running_.load(rusty::sync::atomic::Ordering::SeqCst) {
+                            break;
+                        }
+                    }
+                }
             }
 
             let mut applied_entry: bool = false;
@@ -2919,6 +3160,22 @@ impl RaftServerBase {
         self.recorder().taint("CreateSnapshotLocked");  // [M0]
         self.core().snapidx_ = snap_index;
         self.core().snapterm_ = snap_term;
+        // Disk builds: the boundary moves and the log through it goes; the
+        // entries after it stay. (The image file is plan P8; until then a
+        // recovered state naming a snapshot fails closed.)
+        // Disk builds (P8): the image file first, then the record naming it.
+        if let Some(d) = self.disk() {
+            // SAFETY: the server's own carrier, under mtx_.
+            let image = unsafe {
+                d.write_latest_image(self.snapshot_manager_.as_ptr()
+                    as *const rusty::RaftSnapshotManagerPtr)
+            }.map(|(_, _, name)| name);
+            d.queue.push(raft_store::Record {
+                snapshot: Some(raft_store::SnapRef { index: snap_index, term: snap_term as u64,
+                                                     image, keep: true }),
+                ..Default::default()
+            });
+        }
         self.snapshot_trigger_index_
             .store(self.core().snapidx_,
                    rusty::sync::atomic::Ordering::Release);
@@ -2970,6 +3227,7 @@ impl RaftServerBase {
         let token: rusty::Box<GateWakeJob> = rusty::Box::new(GateWakeJob {
             gate: self.replication_wake_gate_.clone(),
             shutdown: is_shutdown,
+            durable: rusty::None,
         });
         unsafe {
             raft_queue_wake_job(
@@ -3277,7 +3535,7 @@ impl RaftServerBase {
         // [move, M5] The campaign's start, a core call under mtx_; its timer
         // reset is an action that runs before the guard drops.
         let mut out1: CoreOutput = core_output();
-        let campaign: CampaignStart = {
+        let (campaign, disk_tail): (CampaignStart, u64) = {
             let _lock = RaftLockGuard::new(self.mtx());
             let stopped: bool = self.stopped_now();
             // [move, M4] the clock read, as the timer check made it
@@ -3287,11 +3545,18 @@ impl RaftServerBase {
                                        stopped },
                 &mut out1).into_campaign();
             self.run_locked_actions(&out1);
-            decided
+            (decided, self.disk().map_or(0, |d| d.tail()))
         };
         self.run_unlocked_actions(&out1);
         if !campaign.started_ {
             return false;
+        }
+        // Disk builds (plan P4): the vote requests carry term + 1 and imply
+        // the self-vote, so they leave only once the WAL holds both.
+        if let Some(d) = self.disk() {
+            if !d.wait_durable(disk_tail, 10_000, &|| self.stopped_now()) {
+                return false;
+            }
         }
         let prev_term: u64 = campaign.prev_term_;
         let prev_vote_for: u16 = campaign.prev_vote_for_;
@@ -3950,6 +4215,7 @@ impl RaftSpecific for RaftServerBase {
             raft_apply_thread_join(
                 self.apply_thread_.as_ptr());
         }
+        self.StopDiskStore();
     }
 
     // For callers that do not hold mtx_. [fix, F8] It no longer takes it:

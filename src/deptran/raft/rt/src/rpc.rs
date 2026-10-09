@@ -13,6 +13,7 @@ use srpc::serializable::{
     Serialize,
 };
 use srpc::server::{
+    PendingRequestGuard, ServerReplyFn,
     reject_malformed_request, Request, Server, WeakServerConnection,
 };
 
@@ -489,6 +490,108 @@ fn reply_with<R: Serialize + 'static>(
             })),
         ),
     }
+}
+
+/// A held reply's body: the response's serializer, sendable to any thread.
+pub type HeldBody = Option<Box<dyn FnMut(&mut BinaryWriteArchive) + Send>>;
+
+/// A reply the handler produced, held until the caller sends it
+/// (disk builds: once the WAL is durable through the handler's records).
+/// `Send`, so any thread may send it.
+pub struct HeldReply {
+    xid: i64,
+    pending_guard: Option<Box<PendingRequestGuard>>,
+    weak_sconn: WeakServerConnection,
+    code: i32,
+    body: HeldBody,
+}
+
+impl HeldReply {
+    /// Sends the reply, as `dispatch` would have: a header-only request
+    /// carries the xid. A closed connection drops it.
+    pub fn send(self) {
+        let Some(sconn) = self.weak_sconn.upgrade() else { return };
+        let req = Request {
+            body: Vec::new(),
+            src: BufferSource::new(core::ptr::null(), 0),
+            xid: self.xid,
+            pending_guard: self.pending_guard,
+        };
+        let body: ServerReplyFn = match self.body {
+            Some(b) => Some(b as Box<dyn FnMut(&mut BinaryWriteArchive)>),
+            None => None,
+        };
+        sconn.reply(&req, self.code, body);
+    }
+}
+
+fn held<R: Serialize + Send + 'static>(
+    result: Result<R, i32>,
+) -> (i32, HeldBody) {
+    match result {
+        Err(code) => (code, None),
+        Ok(resp) => (0, Some(Box::new(move |ar: &mut BinaryWriteArchive| {
+            resp.serialize(ar);
+        }))),
+    }
+}
+
+/// `dispatch`, holding the reply: the handler runs now, and its reply
+/// is returned for the caller to send. A malformed request is refused at
+/// once (no handler ran, nothing changed); an unknown id gets nothing.
+pub fn dispatch_held<H: RaftHandler>(
+    handler: &H,
+    rpc_id: i32,
+    mut req: Box<Request>,
+    weak_sconn: WeakServerConnection,
+) -> Option<HeldReply> {
+    let (code, body) = match rpc_id {
+        rpc_id::VOTE => {
+            let mut typed = VoteRequest::default();
+            let mut ar = BinaryReadArchive::new(unsafe {
+                make_source_proxy_buffer(&req.src as *const _ as *mut _)
+            });
+            typed.deserialize(&mut ar);
+            if ar.failed() {
+                reject_malformed_request(&req, &weak_sconn);
+                return None;
+            }
+            held(handler.vote(&typed))
+        }
+        rpc_id::APPENDENTRIES => {
+            let Some(typed) = AppendEntriesRequestRef::from_body(args_of(&req)) else {
+                reject_malformed_request(&req, &weak_sconn);
+                return None;
+            };
+            held(handler.append_entries(&typed))
+        }
+        rpc_id::EMPTYAPPENDENTRIES => {
+            let mut typed = EmptyAppendEntriesRequest::default();
+            let mut ar = BinaryReadArchive::new(unsafe {
+                make_source_proxy_buffer(&req.src as *const _ as *mut _)
+            });
+            typed.deserialize(&mut ar);
+            if ar.failed() {
+                reject_malformed_request(&req, &weak_sconn);
+                return None;
+            }
+            held(handler.empty_append_entries(&typed))
+        }
+        rpc_id::INSTALLSNAPSHOT => {
+            let mut typed = InstallSnapshotRequest::default();
+            let mut ar = BinaryReadArchive::new(unsafe {
+                make_source_proxy_buffer(&req.src as *const _ as *mut _)
+            });
+            typed.deserialize(&mut ar);
+            if ar.failed() {
+                reject_malformed_request(&req, &weak_sconn);
+                return None;
+            }
+            held(handler.install_snapshot(typed))
+        }
+        _ => return None,
+    };
+    Some(HeldReply { xid: req.xid, pending_guard: req.pending_guard.take(), weak_sconn, code, body })
 }
 
 /// Client side. One method per RPC, mirroring RaftProxy in
