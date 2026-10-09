@@ -1,0 +1,19 @@
+# raft-store: the Rust Raft's on-disk store (docs/verus/disk-persistence.md,
+# plan P2). The write-ahead log (WAL), its crash points, the saved state a
+# replay folds, the record queue and the flusher thread.
+#
+# std only: no `rusty`, no kernel, no C++, so its tests are plain `cargo test`.
+# The shell (src/disk.rs) supplies the payload codec; everything here is
+# generic over the payload type.
+[package]
+name = "raft-store"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+name = "raft_store"
+path = "src/lib.rs"
+
+[lints.rust]
+unsafe_code = "allow"   # crc.rs (SSE4.2 intrinsics) and crash.rs (kill(2))

@@ -27,7 +27,7 @@ publish = false
 # A package under this root that was NOT a member would be rejected by cargo,
 # and one with its own [workspace] would silently lose panic = "abort".
 [workspace]
-members = [".", "rt", "core", "replay"]
+members = [".", "rt", "core", "replay", "store"]
 
 [lib]
 path = "src/lib.rs"
