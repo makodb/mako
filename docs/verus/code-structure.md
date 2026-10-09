@@ -467,7 +467,7 @@ reply. Nothing in the round holds a lock while it waits for another server.
 |---|---|---|
 | The election-timer fiber, which runs the campaign: one long-lived fiber per server (`rt/src/seam.rs:206-211`; `src/server_h.rs:1859-1866`, `:3059-3066`) | the transport's poll thread | in two short sections, plus brief reads before and after |
 | Inbound RPC handlers, run inline without a fiber: Raft registers all four RPCs as "fast" (`rt/src/rpc.rs:386-404`; `src/srpc/rpc/server.rs:1476-1479`) | the same poll thread | once per call |
-| Vote reply callbacks, run from the client's frame handling (`src/srpc/rpc/client.rs:1036-1041`, `:2987-2991`) | the same poll thread | never; the tally has its own mutex |
+| Vote reply callbacks, run from the client's frame handling (`src/srpc/rpc/client.rs:1038-1043`, `:2987-2991`) | the same poll thread | never; the tally has its own mutex |
 | The heartbeat fiber, which declines every tick while the server does not lead (`src/server_cc.rs:376-379`) | the same poll thread | once per tick |
 | `Start` and `Applied` | the submit and apply threads | once per call; neither changes the role |
 
@@ -540,17 +540,17 @@ under the lock (`:3176-3177`), whatever `core/src/node.rs:738-741` says.
 A3. Broadcast, no lock (`src/server_h.rs:3220-3226`, `rt/src/seam.rs:263-275`,
 `rt/src/transport.rs:560-591`). The quorum size counts every site recorded
 for the partition, A included (`:332-334`). Each other peer gets one
-`vote_async`, which registers the callback and appends the frame to an
-outbound buffer without waiting (`src/srpc/rpc/client.rs:2388-2471`;
-`src/srpc/rpc/tcp_channel.rs:877-899`); a failed send is ignored
+`vote_async`, which registers the callback and queues the frame, or writes
+it to an idle socket, without waiting (`src/srpc/rpc/client.rs:2402-2485`;
+`src/srpc/rpc/tcp_channel.rs:719-786`); a failed send is ignored
 (`rt/src/transport.rs:586-588`).
 
 A4. Wait (`rt/src/seam.rs:276-284`) until peer yes votes reach n/2 or peer
 no votes exceed n - n/2 (`rt/src/transport.rs:639-646`), or 1 s passes.
 `Fiber::sleep(200)` parks the fiber and yields
-(`src/srpc/reactor/reactor.rs:3087-3093`, `:2482-2534`); the poll loop then
-writes frames, runs inbound handlers and reply callbacks, and resumes ready
-fibers (`:3302-3380`, `:1508-1610`). With three servers a lost campaign
+(`src/srpc/reactor/reactor.rs:3999-4005`, `:3362-3434`); the poll thread's
+Lion driver then runs queued jobs, inbound handlers and reply callbacks, and
+resumes ready fibers (`:4589-4616`, `:2264-2430`). With three servers a lost campaign
 always waits the full second (bugs-found B1). *[since: F15, no votes
 exceeding (n - 1) - n/2 decide a loss, so two refusals of three end it at
 once]*
@@ -666,7 +666,7 @@ waits for A":
    timer wait (`:4117`), `await_vote_settled` (`:4155`) and the shutdown
    barrier (`:3803`); docs/verus/README.md:88 states the rule.
 2. Waiting gives the thread back: a fiber's wait returns to the poll loop
-   (`src/srpc/reactor/reactor.rs:2482-2534`), which runs the inbound handlers
+   (`src/srpc/reactor/reactor.rs:3362-3434`), which runs the inbound handlers
    and reply callbacks on the same thread.
 3. No handler or reply callback suspends or waits for another server. The
    four Raft RPCs run inline, without a fiber, so a handler cannot suspend.
@@ -801,7 +801,7 @@ outside the verified gates and, with snapshots on, creates snapshots.
 
 | Thread | Created at | Core calls | Other Raft state it touches |
 |---|---|---|---|
-| Transport poll thread, one per Raft server | `rt/src/transport.rs:198`; spawned at `src/srpc/reactor/reactor.rs:3649-3672` | all events except `SetIdentity`; `Applied` only on the snapshot paths (§3.1) | handlers, the heartbeat and election fibers, the startup job, wake jobs, reply callbacks (tally and reply slots only, except the InstallSnapshot reply's, which takes `mtx_`, §5.5), Mako's leader-change callback (no lock held, except the callback-lifetime mutex on the InstallSnapshot reply path) |
+| Transport poll thread, one per Raft server | `rt/src/transport.rs:198`; spawned at `src/srpc/reactor/reactor.rs:4262-4290` | all events except `SetIdentity`; `Applied` only on the snapshot paths (§3.1) | handlers, the heartbeat and election fibers, the startup job, wake jobs, reply callbacks (tally and reply slots only, except the InstallSnapshot reply's, which takes `mtx_`, §5.5), Mako's leader-change callback (no lock held, except the callback-lifetime mutex on the InstallSnapshot reply path) |
 | Submit thread, one per worker | `raft_worker.cc:743-753` | `Propose`, through `Start` | the submit queue |
 | Mako's transaction threads | Mako (`src/mako/sto/Transaction.cc:833`) | `Propose`, only when no submit thread runs (`src/deptran/raft_main_helper.cc:644-648`) | the mirrors (`src/deptran/raft_main_helper.cc:1166-1167`, `:988-989`); `SetPreferredLeader`, an atomic (`src/server_h.rs:3833-3842`) |
 | Apply thread, one per server | `server.cc:987-990`, from `src/server_h.rs:1843` | `Applied`; an idle-time read of the commit index (`src/server_h.rs:2614-2617`); after each entry whose index is a multiple of 5000, `CompactLog` under `mtx_`, which reads core fields and calls `raft_log_.compact_through` outside `step`, removing nothing while snapshots are off, and is skipped under `MAKO_RAFT_VERIFIED_GATES=1` (`:2720-2728`, `:1342-1349`, `:1311-1339`); with snapshots on, `MaybeCreateSnapshot` -> `CreateSnapshotLocked` under the apply gate and `mtx_`, which runs the embedder's create-snapshot callback, writes `snapidx_` and `snapterm_` and compacts (`:2701-2716`, `:2952-2970`, `:2799-2818`) | the apply queue; Mako's apply callback, under the apply gate, not `mtx_` (`src/server_h.rs:2636-2666`) |
@@ -810,8 +810,8 @@ outside the verified gates and, with snapshots on, creates snapshots.
 | Lab harness thread (lab builds) | `src/deptran/server_worker.cc:135-138` | handlers and getters, called directly (`src/lab.rs:520`, `:534`) | |
 
 There is no timer thread (timeouts are reactor waits,
-`src/srpc/reactor/reactor.rs:1568-1574`). srpc's reconnect threads
-(`src/srpc/rpc/client.rs:900`, `:1405`) only complete callbacks with an
+`src/srpc/reactor/reactor.rs:2332-2338`). srpc's reconnect threads
+(`src/srpc/rpc/client.rs:902`, `:1407`) only complete callbacks with an
 error code, which Raft's callbacks ignore or store (inference). In the
 default single-group mode one poll thread also serves the other partitions'
 ports (`src/deptran/raft_main_helper.cc:377-389`).
@@ -859,7 +859,7 @@ Why there is no deadlock:
    `installs` set and srpc's client mutexes (`src/server_h.rs:2211-2215`;
    `server.cc:1361-1366`; `rt/src/snapshot.rs:36-40`;
    `src/server_cc.rs:104-123`, `rt/src/transport.rs:501-502`,
-   `src/srpc/rpc/client.rs:2392-2449`, `src/srpc/rpc/tcp_channel.rs:878`);
+   `src/srpc/rpc/client.rs:2406-2463`, `src/srpc/rpc/tcp_channel.rs:735`);
    srpc releases its locks before it runs or drops a callback
    (`src/srpc/rpc/client.rs:2987-2991`, `:2467`, `:1244-1254`). Every path
    that takes the gate and `mtx_` takes the gate first
@@ -908,15 +908,15 @@ They share a name and nothing else.
 
 | | srpc reactor event (`IntEvent`, `TimeoutEvent`) | raft-core `Event` |
 |---|---|---|
-| What it is | a condition a fiber parks on: an `IntEvent` is ready when its value reaches a target, a `TimeoutEvent` when its time has passed (`src/srpc/reactor/reactor.rs:497-503`, `:656-658`) | a plain value, one of 18 inputs to the core (`core/src/event.rs:24-108`) |
-| Consumed by | the reactor's run loop, which resumes the parked fiber (`src/srpc/reactor/reactor.rs:1508-1610`) | `step` or `step_checked`, which returns a `Reply` before the caller goes on |
+| What it is | a condition a fiber parks on: an `IntEvent` is ready when its value reaches a target, a `TimeoutEvent` when its time has passed (`src/srpc/reactor/reactor.rs:505-511`, `:664-666`) | a plain value, one of 18 inputs to the core (`core/src/event.rs:24-108`) |
+| Consumed by | the reactor's run loop, which resumes the parked fiber (`src/srpc/reactor/reactor.rs:2264-2430`) | `step` or `step_checked`, which returns a `Reply` before the caller goes on |
 | Thread | only the poll thread that owns it; a set or wait elsewhere aborts (`rt/src/seam.rs:98-128`) | any thread holding `mtx_`, except `SetIdentity`, `Configure` and the lab constructor's `SetFollower`, which run without it before anything else can reach the server (§3.2 item 5) |
 | Waits? | waiting is its purpose (`src/srpc/reactor/reactor.rs:2482-2534`) | never |
 | Raft uses it for | the wake gate's two waits, the heartbeat fiber's and the timer fiber's (`src/server_h.rs:365-415`; `rt/src/seam.rs:82-85`), and every `Fiber::sleep` (the vote wait, reply polling, `await_vote_settled`) | every decision of the protocol |
 
 Work crosses threads on a third mechanism, the poll thread's job channel
-(`src/srpc/reactor/reactor.rs:2215-2219`, run in a new fiber at
-`:3467-3474`): the worker posts `EnsureSetup` on it and `RequestReplication`
+(`src/srpc/reactor/reactor.rs:3082-3087`, run in a new fiber at
+`:4227-4234`): the worker posts `EnsureSetup` on it and `RequestReplication`
 the wake job (`rt/src/seam.rs:155-164`). Core events never travel on it.
 
 ## 9. The replay crate

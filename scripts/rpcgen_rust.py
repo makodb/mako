@@ -507,7 +507,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     # Dispatch. Deliberately does NOT spawn a fiber, unlike the generated C++
     # wrapper's `Fiber::create_run`: srpc's Rust server already chooses
     # between dispatching inline and spawning one before it calls
-    # __dispatch__ (rpc/server.rs:1478-1505), so spawning here would nest a
+    # __dispatch__ (rpc/server.rs:1478-1511), so spawning here would nest a
     # second fiber per request and put an Rc<Fiber> -- thread-bound -- in code
     # that must stay Send.
     w(f"/// Route one request to `handler`. Call this from `Service::__dispatch__`.")

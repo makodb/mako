@@ -418,7 +418,7 @@ glr/`docs/ghost-log/spec/raft-spec.md` §2; `msg_view` is defined in §2):
 | Rest of reply pairing | Not needed; Phase 5 is an optional echo; the vote tally becomes a voter-id set (F1) |
 | Sender is a configured voter | Checked by `step_checked` (F9) |
 | Encode/decode fidelity | Trusted, tested (round-trip property test, replay recorder) |
-| Timers, clock, randomness, srpc retries and reconnect replay (`src/srpc/rpc/client.rs:1544`) | Need nothing |
+| Timers, clock, randomness, srpc retries and reconnect replay (`src/srpc/rpc/client.rs:1546`) | Need nothing |
 | No in-place restart under the old id | Trusted assumption of v1 (§4.4.2) |
 | Liveness | Not proved; CI suites only |
 
@@ -1342,12 +1342,12 @@ gated on its own; the core must not change (A.4 item 5).
   or deadline; vote replies settle elections immediately. The callback must
   capture a server reference valid through round end and teardown, stay `Send`,
   and take `mtx_` once per reply. F3 is what keeps A9 true here.
-- **F11b eventfd wake** on `PollThread::add` (`src/srpc/reactor/reactor.rs:2215-2219`),
-  written only when an atomic "sleeping" flag is set. The epoll timeout stays
-  the fixed 1 ms (`src/srpc/reactor/epoll_wrapper.rs:124`); the eventfd removes
-  the 0-1 ms submit→poll hop
-  (`docs/performance/raft-latency-breakdown/`, since removed). Shared
-  subtree: re-apply list; Paxos and `srpcTests` must pass.
+- **F11b eventfd wake**: done upstream. Since the Lion merge (2026-10-09)
+  `PollThread::add` wakes the poll thread's driver on its pending edge
+  (`src/srpc/reactor/reactor.rs:3082-3087`, `:1008-1024`), which Lion signals
+  through its eventfd, and the epoll wait blocks until a wake or the next
+  deadline (`src/srpc/reactor/epoll_wrapper.rs:146-169`) instead of the fixed
+  1 ms, so the 0-1 ms submit→poll hop is gone without a Raft change.
 - **F11c blocking apply channel** replacing `raft_thread_sleep_ms(1)`
   (`src/server_h.rs:3372`), draining up to K entries then one `Applied(n)`.
   Review the readers of `appliedIndexForWait_`/`execute_index_` (Phase 4 list

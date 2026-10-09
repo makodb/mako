@@ -2260,7 +2260,7 @@ pub mod srpc {
                 }
             }
 
-            /// Models `IntEvent::wait_timeout` (src/srpc/reactor/reactor.rs:393),
+            /// Models `IntEvent::wait_timeout` (src/srpc/reactor/reactor.rs:439),
             /// which the production C++ resolves through the type map. Added
             /// for src/deptran/raft, whose ReplicationWakeGate waits on an
             /// IntEvent with a deadline; the model returns immediately because

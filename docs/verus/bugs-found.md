@@ -55,7 +55,7 @@ B13 are tooling, not Raft.
 ## B1. The candidate's "no" quorum can never form early (off by one)
 
 **Where.** `rt/src/transport.rs:591-628` (`TallyState`); its C++ original is the
-generic `QuorumEvent::no` (repo `src/srpc/reactor/reactor.rs:2309-2315`), used
+generic `QuorumEvent::no` (repo `src/srpc/reactor/reactor.rs:3186-3192`), used
 by `RaftCommo::BroadcastVote` (repo `src/deptran/raft/commo.cc:118-119`) as
 `RaftVoteQuorumEvent(n, n / 2)`.
 
@@ -139,7 +139,7 @@ taken for a quorum (`yes >= 2`).
 **Reachability.** Each peer gets one RPC per campaign, and srpc fires each
 reply callback once as far as read so far; whether srpc can ever fire a
 callback twice (for example around reconnect replay, repo
-`src/srpc/rpc/client.rs:1544`) is the plan's open question 1, **not verified**.
+`src/srpc/rpc/client.rs:1546`) is the plan's open question 1, **not verified**.
 
 **Fate.** F1 (Phase 1): count distinct voter ids for the campaign term.
 
