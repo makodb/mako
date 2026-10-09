@@ -13,35 +13,51 @@ pub open spec fn held_image(session:SessionView,addresses:expansion::Addresses) 
     let held = expansion::expanded(session,addresses);
     Map::new(held.dom(),|k:int| master::grant(held[k]))
 }
-pub open spec fn session_observed(registry:Map<u64,SessionView>,s:p::State,id:TxnId,addresses:expansion::Addresses) -> bool {
+/// A participant represents its own slice, never the transaction's other owners.
+pub open spec fn owned_holds(held:Map<int,p::Grant>,owner:u32) -> Map<int,p::Grant> {
+    Map::new(held.dom().filter(|k:int| held[k].owner == owner as int),|k:int| held[k])
+}
+pub open spec fn session_observed(registry:Map<u64,SessionView>,s:p::State,id:TxnId,
+    addresses:expansion::Addresses,owner:u32) -> bool {
     registry.contains_key(id.client) && registry[id.client].sequence == id.sequence
         && s.sessions.contains_key(transaction(id))
-        && s.sessions[transaction(id)].held == held_image(registry[id.client],addresses)
+        && owned_holds(s.sessions[transaction(id)].held,owner) == held_image(registry[id.client],addresses)
 }
 pub open spec fn registry_wf(registry:Map<u64,SessionView>) -> bool {
     forall|client:u64| registry.contains_key(client) ==> registry[client].wf()
 }
 
-/// Freshness is the retained native sequence frontier coupled to the global
-/// allocated-ID history. A repeated begin of the same open session stutters.
+/// The first participant opens the global identity; later participants join the
+/// same unresolved transaction. Neither duplicate begin nor join loses holds.
+/// The transaction interface prohibits joining an already completed global ID.
 pub proof fn native_begin(c:p::Constants,s:p::State,before:Map<u64,SessionView>,after:Map<u64,SessionView>,id:TxnId,status:Status,
-    addresses:expansion::Addresses) -> (tracked out:ClosedTransfer)
+    addresses:expansion::Addresses,owner:u32) -> (tracked out:ClosedTransfer)
     requires native::begin_effect(before,after,id,status),
-        before != after ==> !s.sessions.contains_key(transaction(id)),
-        before == after && status == Status::Ok ==> session_observed(before,s,id,addresses),
-    ensures out.valid(c,s),status == Status::Ok ==> session_observed(after,out.after(s),id,addresses),
-        status != Status::Ok ==> out.after(s) == s,
+        before != after && s.sessions.contains_key(transaction(id)) ==>
+            !s.sessions[transaction(id)].resolved
+            && owned_holds(s.sessions[transaction(id)].held,owner).dom() == Set::<int>::empty(),
+        before == after && status == Status::Ok ==> session_observed(before,s,id,addresses,owner),
+    ensures out.valid(c,s),status == Status::Ok ==> session_observed(after,out.after(s),id,addresses,owner),
+        status != Status::Ok || s.sessions.contains_key(transaction(id)) ==> out.after(s) == s,
+        status == Status::Ok && !s.sessions.contains_key(transaction(id)) ==> out.after(s) ==
+            (p::State { sessions:s.sessions.insert(transaction(id),p::Session { held:Map::empty(),resolved:false }),..s }),
 {
+    let t = transaction(id);
     if before == after { empty_segment(c,s) } else {
-        let t = transaction(id);
-        master::nonce_injective(id,id);
-        let write = log::Write::Session { txn:t,value:p::Session { held:Map::empty(),resolved:false } };
-        log::single_write(s,write);
-        let next = log::apply_write(s,write);
         assert(expansion::expanded(after[id.client],addresses).dom() =~= Set::<int>::empty());
         assert(held_image(after[id.client],addresses) =~= Map::<int,p::Grant>::empty());
-        log::accepted(c,s,next,p::Action::Open { txn:t });
-        ClosedTransfer { segment:log::Segment { writes:seq![write],states:seq![s,next],actions:seq![p::Action::Open { txn:t }] } }
+        if s.sessions.contains_key(t) {
+            assert(owned_holds(s.sessions[t].held,owner) =~= Map::<int,p::Grant>::empty());
+            empty_segment(c,s)
+        } else {
+            master::nonce_injective(id,id);
+            let write = log::Write::Session { txn:t,value:p::Session { held:Map::empty(),resolved:false } };
+            log::single_write(s,write);
+            let next = log::apply_write(s,write);
+            assert(owned_holds(next.sessions[t].held,owner) =~= Map::<int,p::Grant>::empty());
+            log::accepted(c,s,next,p::Action::Open { txn:t });
+            ClosedTransfer { segment:log::Segment { writes:seq![write],states:seq![s,next],actions:seq![p::Action::Open { txn:t }] } }
+        }
     }
 }
 
@@ -51,8 +67,13 @@ pub proof fn native_lease_unchanged(c:p::Constants,s:p::State,before:Map<u64,Ses
     ensures out.valid(c,s),out.after(s) == s,
 { empty_segment(c,s) }
 
-pub(super) open spec fn overlay(old:Map<int,p::Grant>,target:Map<int,p::Grant>,keys:Set<int>) -> Map<int,p::Grant> {
+pub open spec fn overlay(old:Map<int,p::Grant>,target:Map<int,p::Grant>,keys:Set<int>) -> Map<int,p::Grant> {
     Map::new(old.dom().union(keys),|k:int| if keys.contains(k) { target[k] } else { old[k] })
+}
+pub open spec fn registration_state(s:p::State,after:Map<u64,SessionView>,id:TxnId,addresses:expansion::Addresses) -> p::State {
+    let target = held_image(after[id.client],addresses);
+    p::State { sessions:s.sessions.insert(transaction(id),p::Session {
+        held:overlay(s.sessions[transaction(id)].held,target,target.dom()),resolved:false }),..s }
 }
 
 /// Finite lease expansion enumerates each logical key exactly once. The set
@@ -155,7 +176,7 @@ pub(super) proof fn acquire_keys(c:p::Constants,s:p::State,t:int,work:Seq<int>,t
 proof fn registered(c:p::Constants,s:p::State,before:Map<u64,SessionView>,after:Map<u64,SessionView>,id:TxnId,
     scope:native::ScopeView,node:&Participant,addresses:expansion::Addresses)
     -> (tracked out:ClosedTransfer)
-    requires registry_wf(before),registry_wf(after),session_observed(before,s,id,addresses),
+    requires p::inv(c,s),registry_wf(before),registry_wf(after),session_observed(before,s,id,addresses,node.owner_view()),
         before[id.client].sequence == id.sequence,!before[id.client].terminal,!s.sessions[transaction(id)].resolved,
         after.contains_key(id.client),after[id.client].sequence == id.sequence,
         forall|k:int,g:Grant| addresses.contains_key(k) ==> (after[id.client].has(addresses[k].0,addresses[k].1,g)
@@ -170,8 +191,11 @@ proof fn registered(c:p::Constants,s:p::State,before:Map<u64,SessionView>,after:
         forall|k:int| addresses.contains_key(k) ==> s.physical.contains_key((node.owner_view() as int,k))
             && node.local_meta(addresses[k].0,addresses[k].1).is_some()
             && crate::participant_proofs::metadata(node.local_meta(addresses[k].0,addresses[k].1).unwrap(),p::replica(s,node.owner_view() as int,k)),
-    ensures out.valid(c,s),session_observed(after,out.after(s),id,addresses),
+    ensures out.valid(c,s),session_observed(after,out.after(s),id,addresses,node.owner_view()),
         out.after(s).physical == s.physical,out.after(s).logical == s.logical,
+        out.after(s) == registration_state(s,after,id,addresses),
+        forall|owner:u32| owner != node.owner_view() ==>
+            owned_holds(out.after(s).sessions[transaction(id)].held,owner) == owned_holds(s.sessions[transaction(id)].held,owner),
 {
     let initial = expansion::expanded(before[id.client],addresses);
     let final_holds = expansion::expanded(after[id.client],addresses);
@@ -194,20 +218,59 @@ proof fn registered(c:p::Constants,s:p::State,before:Map<u64,SessionView>,after:
         expansion::expanded_exact(after[id.client],addresses,k,final_holds[k]);
         expansion::expanded_exact(before[id.client],addresses,k,final_holds[k]);
     }
+    assert forall|k:int| added.contains(k) implies !s.sessions[transaction(id)].held.contains_key(k) by {
+        assert(final_holds[k]==scope.grant);
+        assert(scope.contains(addresses[k].0,addresses[k].1));
+        assert(node.local_meta(addresses[k].0,addresses[k].1).unwrap().role==crate::types::Role::Serving);
+        assert(c.keys.contains(k));
+        assert(c.shards.contains(node.owner_view() as int));
+        assert(p::key_inv(c,s,k));
+        assert(crate::participant_proofs::metadata(node.local_meta(addresses[k].0,addresses[k].1).unwrap(),p::replica(s,node.owner_view() as int,k)));
+        assert(p::replica(s,node.owner_view() as int,k).role is Serving);
+        assert(p::directory(s)[k].owner==node.owner_view() as int);
+        if s.sessions[transaction(id)].held.contains_key(k) {
+            assert(p::session_inv(c,s,transaction(id)));
+            assert(s.sessions[transaction(id)].held[k].owner == node.owner_view() as int);
+            assert(owned_holds(s.sessions[transaction(id)].held,node.owner_view()).contains_key(k));
+        }
+    }
+    assert(added.disjoint(s.sessions[transaction(id)].held.dom()));
     assert forall|k:int| work.to_set().contains(k) implies s.physical.contains_key((target[k].owner,k))
         && p::replica(s,target[k].owner,k).role is Serving && p::replica(s,target[k].owner,k).epoch == target[k].epoch by {
         assert(added.contains(k));
         assert(crate::participant_proofs::metadata(node.local_meta(addresses[k].0,addresses[k].1).unwrap(),p::replica(s,node.owner_view() as int,k)));
     }
     let tracked out = acquire_keys(c,s,transaction(id),work,target);
-    assert(s.sessions[transaction(id)].held.dom() == initial.dom());
+    assert(owned_holds(s.sessions[transaction(id)].held,node.owner_view()).dom() == initial.dom());
     assert(target.dom() == final_holds.dom());
-    assert(overlay(s.sessions[transaction(id)].held,target,work.to_set()) =~= target) by {
+    assert forall|k:int| target.contains_key(k) implies target[k].owner == node.owner_view() as int by {
+        if added.contains(k) { assert(final_holds[k] == scope.grant); }
+        else {
+            assert(initial.contains_key(k));
+            assert(held_image(before[id.client],addresses).contains_key(k));
+            assert(owned_holds(s.sessions[transaction(id)].held,node.owner_view()).contains_key(k));
+            assert(held_image(before[id.client],addresses)[k]==crate::migration_refinement::grant(initial[k]));
+            assert(held_image(before[id.client],addresses)[k].owner==node.owner_view() as int);
+            assert(final_holds[k]==initial[k]);
+            assert(initial[k].owner==node.owner_view());
+        }
+    }
+    assert(owned_holds(overlay(s.sessions[transaction(id)].held,target,work.to_set()),node.owner_view()) =~= target) by {
         assert forall|k:int| target.contains_key(k) && !added.contains(k)
             implies s.sessions[transaction(id)].held[k] == target[k] by {
             assert(initial.contains_key(k));
             assert(final_holds[k] == initial[k]);
+            assert(held_image(before[id.client],addresses).contains_key(k));
+            assert(held_image(before[id.client],addresses)[k]==crate::migration_refinement::grant(initial[k]));
+            assert(owned_holds(s.sessions[transaction(id)].held,node.owner_view()).contains_key(k));
+            assert(owned_holds(s.sessions[transaction(id)].held,node.owner_view())[k]==held_image(before[id.client],addresses)[k]);
         }
+    }
+    assert(overlay(s.sessions[transaction(id)].held,target,work.to_set()) =~=
+        overlay(s.sessions[transaction(id)].held,target,target.dom()));
+    assert forall|owner:u32| owner != node.owner_view() implies
+        owned_holds(out.after(s).sessions[transaction(id)].held,owner) == owned_holds(s.sessions[transaction(id)].held,owner) by {
+        assert(owned_holds(out.after(s).sessions[transaction(id)].held,owner) =~= owned_holds(s.sessions[transaction(id)].held,owner));
     }
     out
 }
@@ -215,8 +278,8 @@ proof fn registered(c:p::Constants,s:p::State,before:Map<u64,SessionView>,after:
 pub proof fn native_point_admission(c:p::Constants,s:p::State,before:&Participant,after:&Participant,
     id:TxnId,table:u64,coordinate:Seq<u8>,grant:Grant,status:Status,addresses:expansion::Addresses)
     -> (tracked out:ClosedTransfer)
-    requires before.wf(),after.wf(),registry_wf(before.lease_view()),registry_wf(after.lease_view()),
-        session_observed(before.lease_view(),s,id,addresses),
+    requires p::inv(c,s),before.wf(),after.wf(),registry_wf(before.lease_view()),registry_wf(after.lease_view()),
+        session_observed(before.lease_view(),s,id,addresses,before.owner_view()),
         status != Status::Ok ==> after.lease_view() == before.lease_view(),
         status == Status::Ok ==> after.lease_view() == before.lease_view()
             || native::acquire_effect(before.lease_view(),after.lease_view(),id,table,coordinate,grant,status),
@@ -229,8 +292,12 @@ pub proof fn native_point_admission(c:p::Constants,s:p::State,before:&Participan
         forall|k:int| addresses.contains_key(k) ==> s.physical.contains_key((before.owner_view() as int,k))
             && before.local_meta(addresses[k].0,addresses[k].1).is_some()
             && crate::participant_proofs::metadata(before.local_meta(addresses[k].0,addresses[k].1).unwrap(),p::replica(s,before.owner_view() as int,k)),
-    ensures out.valid(c,s),session_observed(after.lease_view(),out.after(s),id,addresses),
+    ensures out.valid(c,s),session_observed(after.lease_view(),out.after(s),id,addresses,before.owner_view()),
         out.after(s).physical == s.physical,out.after(s).logical == s.logical,
+        out.after(s) == if after.lease_view() == before.lease_view() { s }
+            else { registration_state(s,after.lease_view(),id,addresses) },
+        forall|owner:u32| owner != before.owner_view() ==>
+            owned_holds(out.after(s).sessions[transaction(id)].held,owner) == owned_holds(s.sessions[transaction(id)].held,owner),
 {
     let b = before.lease_view(); let z = after.lease_view();
     if b == z { empty_segment(c,s) } else {
@@ -246,8 +313,8 @@ pub proof fn native_point_admission(c:p::Constants,s:p::State,before:&Participan
 pub proof fn native_range_admission(c:p::Constants,s:p::State,before:&Participant,after:&Participant,
     id:TxnId,table:u64,lo:Seq<u8>,hi:Option<Seq<u8>>,grant:Grant,status:Status,addresses:expansion::Addresses)
     -> (tracked out:ClosedTransfer)
-    requires before.wf(),after.wf(),registry_wf(before.lease_view()),registry_wf(after.lease_view()),
-        session_observed(before.lease_view(),s,id,addresses),
+    requires p::inv(c,s),before.wf(),after.wf(),registry_wf(before.lease_view()),registry_wf(after.lease_view()),
+        session_observed(before.lease_view(),s,id,addresses,before.owner_view()),
         status != Status::Ok ==> after.lease_view() == before.lease_view(),
         status == Status::Ok ==> after.lease_view() == before.lease_view()
             || native::acquire_range_effect(before.lease_view(),after.lease_view(),id,table,lo,hi,grant,status),
@@ -261,8 +328,12 @@ pub proof fn native_range_admission(c:p::Constants,s:p::State,before:&Participan
         forall|k:int| addresses.contains_key(k) ==> s.physical.contains_key((before.owner_view() as int,k))
             && before.local_meta(addresses[k].0,addresses[k].1).is_some()
             && crate::participant_proofs::metadata(before.local_meta(addresses[k].0,addresses[k].1).unwrap(),p::replica(s,before.owner_view() as int,k)),
-    ensures out.valid(c,s),session_observed(after.lease_view(),out.after(s),id,addresses),
+    ensures out.valid(c,s),session_observed(after.lease_view(),out.after(s),id,addresses,before.owner_view()),
         out.after(s).physical == s.physical,out.after(s).logical == s.logical,
+        out.after(s) == if after.lease_view() == before.lease_view() { s }
+            else { registration_state(s,after.lease_view(),id,addresses) },
+        forall|owner:u32| owner != before.owner_view() ==>
+            owned_holds(out.after(s).sessions[transaction(id)].held,owner) == owned_holds(s.sessions[transaction(id)].held,owner),
 {
     let b = before.lease_view(); let z = after.lease_view();
     if b == z { empty_segment(c,s) } else {
@@ -330,22 +401,33 @@ pub(super) proof fn release_keys(c:p::Constants,s:p::State,t:int,keys:Seq<int>) 
     }
 }
 
-/// Finish is sequenced after the actual terminal engine callback. It resolves
-/// the native fence and releases ALL expanded keys; it is not an engine commit.
+/// Finish follows global engine completion but releases only this participant's
+/// expanded holds. Other owners keep blocking their own drains until they finish.
 pub proof fn native_finish(c:p::Constants,s:p::State,before:Map<u64,SessionView>,after:Map<u64,SessionView>,id:TxnId,status:Status,
-    addresses:expansion::Addresses,tracked completion:&EngineCompletion) -> (tracked out:ClosedTransfer)
-    requires native::finish_effect(before,after,id,status),session_observed(before,s,id,addresses),
+    addresses:expansion::Addresses,owner:u32,tracked completion:&EngineCompletion) -> (tracked out:ClosedTransfer)
+    requires native::finish_effect(before,after,id,status),session_observed(before,s,id,addresses,owner),
         completion.matches(id),s.sessions[transaction(id)].resolved,
-    ensures out.valid(c,s),session_observed(after,out.after(s),id,addresses),
-        status == Status::Ok ==> out.after(s).sessions[transaction(id)].held.dom() == Set::<int>::empty(),
+    ensures out.valid(c,s),session_observed(after,out.after(s),id,addresses,owner),
+        status == Status::Ok ==> owned_holds(out.after(s).sessions[transaction(id)].held,owner).dom() == Set::<int>::empty(),
+        out.after(s) == if status != Status::Ok { s } else { p::State {
+            sessions:s.sessions.insert(transaction(id),p::Session {
+                held:s.sessions[transaction(id)].held.remove_keys(held_image(before[id.client],addresses).dom()),resolved:true }),..s } },
+        forall|other:u32| other != owner ==>
+            owned_holds(out.after(s).sessions[transaction(id)].held,other) == owned_holds(s.sessions[transaction(id)].held,other),
 {
     expansion::finish_accounting(before,after,id,status,addresses);
     if status != Status::Ok { empty_segment(c,s) } else {
-        lease_keys(s.sessions[transaction(id)].held.dom());
-        let keys = s.sessions[transaction(id)].held.dom().to_seq();
+        let local = owned_holds(s.sessions[transaction(id)].held,owner);
+        lease_keys(local.dom());
+        let keys = local.dom().to_seq();
+        assert(local.dom().subset_of(s.sessions[transaction(id)].held.dom()));
         let tracked out = release_keys(c,s,transaction(id),keys);
-        assert(s.sessions[transaction(id)].held.remove_keys(keys.to_set()) =~= Map::<int,p::Grant>::empty());
+        assert(owned_holds(out.after(s).sessions[transaction(id)].held,owner) =~= Map::<int,p::Grant>::empty());
         assert(held_image(after[id.client],addresses) =~= Map::<int,p::Grant>::empty());
+        assert forall|other:u32| other != owner implies
+            owned_holds(out.after(s).sessions[transaction(id)].held,other) == owned_holds(s.sessions[transaction(id)].held,other) by {
+            assert(owned_holds(out.after(s).sessions[transaction(id)].held,other) =~= owned_holds(s.sessions[transaction(id)].held,other));
+        }
         out
     }
 }

@@ -32,6 +32,12 @@ pub use engine::*;
 #[path = "transfer_bootstrap.rs"]
 mod bootstrap;
 pub use bootstrap::*;
+#[path = "lease_composition_proofs.rs"]
+mod lease_composition;
+pub use lease_composition::*;
+#[path = "source_execution.rs"]
+mod source_execution;
+pub use source_execution::*;
 verus! {
 /// Evidence of an actual emitted participant response. Semantic certificates
 /// from Empty masking alone cannot construct this token or authorize receipt.
@@ -70,36 +76,45 @@ impl ClosedTransfer {
 }
 
 pub proof fn captured(c: p::Constants,node: &Participant,plan: MigrationPlan,
-    s: p::State,keys: Seq<int>,labels: Map<int,Cell>,source: Image,k: int,writer: int,code: spec_fn(Seq<u8>)->int,
+    s: p::State,keys: Seq<int>,labels: Map<int,Cell>,source: Image,k: int,writer: int,
     cursor:Option<crate::storage::Identity>,row:Option<crate::types::Row>)
     -> (tracked out: ClosedTransfer)
     requires transfer::labels_cover(plan,s,keys,labels),transfer::local_coupling(node,plan,s,labels),
         node.capture_authorized(plan),keys.to_set().contains(k),
         crate::storage::first(source,plan.range,cursor,row),transfer::scan_covers(plan.range,cursor,row,labels[k]),
         p::drained(s,s.plans[plan.generation as nat].keys) == node.drained_view(plan.range),
-        transfer::observed(source,labels[k],writer,code) == p::replica(s,plan.source as int,k).cell,
-    ensures out.valid(c,s),out.after(s).packets.contains(transfer::packet(plan.generation as nat,k,transfer::observed(source,labels[k],writer,code))),
+        transfer::observed(source,labels[k],writer) == p::replica(s,plan.source as int,k).cell,
+    ensures out.valid(c,s),out.after(s).packets.contains(transfer::packet(plan.generation as nat,k,transfer::observed(source,labels[k],writer))),
+        out.after(s) == (p::State {
+            packets:s.packets.insert(transfer::packet(plan.generation as nat,k,transfer::observed(source,labels[k],writer))),
+            ..s
+        }),
 {
-    let segment = transfer::capture_segment(c,node,plan,s,keys,labels,source,k,writer,code,cursor,row);
+    let segment = transfer::capture_segment(c,node,plan,s,keys,labels,source,k,writer,cursor,row);
     ClosedTransfer { segment }
 }
 
 pub proof fn copied(c: p::Constants,node: &Participant,plan: MigrationPlan,
     s: p::State,keys: Seq<int>,labels: Map<int,Cell>,key: int,
     before: Image,after: Image,row_value: Option<Seq<u8>>,writers_before: Map<int,int>,writers_after: Map<int,int>,
-    source_cell: p::Cell,code: spec_fn(Seq<u8>)->int)
+    source_cell: p::Cell)
     -> (tracked out: ClosedTransfer)
     requires transfer::labels_cover(plan,s,keys,labels),transfer::local_coupling(node,plan,s,labels),
         node.transfer_authorized(plan,false),keys.to_set().contains(key),
         s.physical.contains_key((plan.destination as int,key)),s.packets.contains(transfer::packet(plan.generation as nat,key,source_cell)),
         after == match row_value { Some(v) => before.insert(labels[key],v), None => before.remove(labels[key]) },
-        source_cell.value == match row_value { Some(v) => Some(code(v)), None => None },
+        source_cell.value == crate::sharding_bytes::value_option(row_value),
         writers_after == writers_before.insert(key,source_cell.writer),
     ensures out.valid(c,s),
-        out.after(s).physical[(plan.destination as int,key)].cell == transfer::observed(after,labels[key],writers_after[key],code),
+        out.after(s).physical[(plan.destination as int,key)].cell == transfer::observed(after,labels[key],writers_after[key]),
         out.after(s).physical[(plan.destination as int,key)].covered,
+        out.after(s) == (p::State {
+            physical:s.physical.insert((plan.destination as int,key),p::Replica {
+                cell:source_cell,covered:true,..s.physical[(plan.destination as int,key)]
+            }),..s
+        }),
 {
-    transfer::native_copy_effect(before,after,labels[key],row_value,labels,key,writers_before,writers_after,source_cell,code);
+    transfer::native_copy_effect(before,after,labels[key],row_value,labels,key,writers_before,writers_after,source_cell);
     let segment = transfer::copy_segment(c,node,plan,s,keys,labels,key,source_cell);
     reveal_with_fuel(log::apply_writes,3);
     ClosedTransfer { segment }
@@ -109,7 +124,7 @@ pub proof fn copied(c: p::Constants,node: &Participant,plan: MigrationPlan,
 /// even when no physical delete was needed. Real ordered EOF/gaps prove absence.
 pub proof fn absent_copy(c: p::Constants,node: &Participant,plan: MigrationPlan,
     s: p::State,keys: Seq<int>,labels: Map<int,Cell>,key: int,image: Image,
-    writers: Map<int,int>,cell: p::Cell,code: spec_fn(Seq<u8>)->int)
+    writers: Map<int,int>,cell: p::Cell)
     -> (tracked out: ClosedTransfer)
     requires transfer::labels_cover(plan,s,keys,labels),transfer::local_coupling(node,plan,s,labels),
         node.transfer_authorized(plan,false),keys.to_set().contains(key),
@@ -119,7 +134,7 @@ pub proof fn absent_copy(c: p::Constants,node: &Participant,plan: MigrationPlan,
         out.after(s).physical[(plan.destination as int,key)].cell == cell,
 {
     assert(image.remove(labels[key]) =~= image);
-    copied(c,node,plan,s,keys,labels,key,image,image,None,writers,writers.insert(key,cell.writer),cell,code)
+    copied(c,node,plan,s,keys,labels,key,image,image,None,writers,writers.insert(key,cell.writer),cell)
 }
 
 pub open spec fn ready_writes(owner: int,keys: Seq<int>) -> Seq<log::Write>
@@ -158,18 +173,22 @@ pub proof fn ready_replay(s: p::State,owner: int,keys: Seq<int>)
 /// ALL selected model keys must have source-certified delivery coverage first.
 pub proof fn sealed(c: p::Constants,before: &Participant,after: &Participant,plan: MigrationPlan,
     s: p::State,keys: Seq<int>,labels: Map<int,Cell>,current: Image,initial: Image,source: Image,
-    writers: Map<int,int>,code: spec_fn(Seq<u8>)->int) -> (tracked out: ClosedTransfer)
+    writers: Map<int,int>) -> (tracked out: ClosedTransfer)
     requires transfer::labels_cover(plan,s,keys,labels),transfer::local_coupling(before,plan,s,labels),
         before.transfer_authorized(plan,false),after.seal_frame(*before,plan),
         after.owner_view() == before.owner_view(),
         crate::storage::complete(current,initial,source,plan.range),
         forall|k: int| keys.to_set().contains(k) ==> s.physical.contains_key((plan.destination as int,k))
             && s.physical[(plan.destination as int,k)].covered
-            && s.physical[(plan.destination as int,k)].cell == transfer::observed(current,labels[k],writers[k],code),
+            && s.physical[(plan.destination as int,k)].cell == transfer::observed(current,labels[k],writers[k]),
     ensures out.valid(c,s),out.after(s).certificates.contains((plan.generation as nat,p::Certificate::Ready)),
         transfer::local_coupling(after,plan,out.after(s),labels),
+        out.after(s) == (p::State {
+            certificates:s.certificates.insert((plan.generation as nat,p::Certificate::Ready)),
+            ..ready_state(s,plan.destination as int,keys)
+        }),
 {
-    transfer::completed_coverage(current,initial,source,plan,keys,labels,writers,code);
+    transfer::completed_coverage(current,initial,source,plan,keys,labels,writers);
     let g = plan.generation as nat;
     let owner = plan.destination as int;
     assert forall|k:int| s.plans[g].keys.contains(k) implies {
@@ -276,27 +295,27 @@ proof fn copy_sequence(c:p::Constants,node:&Participant,plan:MigrationPlan,s:p::
 /// theorem proves these agree, and the sequence covers EVERY model key.
 pub proof fn completed_final(c:p::Constants,before:&Participant,after:&Participant,
     plan:MigrationPlan,s:p::State,keys:Seq<int>,labels:Map<int,Cell>,initial:Image,current:Image,source:Image,
-    writers:Map<int,int>,code:spec_fn(Seq<u8>)->int) -> (tracked out:ClosedTransfer)
+    writers:Map<int,int>) -> (tracked out:ClosedTransfer)
     requires transfer::labels_cover(plan,s,keys,labels),transfer::local_coupling(before,plan,s,labels),
         before.transfer_authorized(plan,false),after.seal_frame(*before,plan),
         after.owner_view() == before.owner_view(),
         crate::storage::complete(current,initial,source,plan.range),
         forall|k:int| keys.to_set().contains(k) ==> s.physical.contains_key((plan.destination as int,k))
-            && s.packets.contains(transfer::packet(plan.generation as nat,k,transfer::observed(source,labels[k],writers[k],code))),
+            && s.packets.contains(transfer::packet(plan.generation as nat,k,transfer::observed(source,labels[k],writers[k]))),
     ensures out.valid(c,s),out.after(s).certificates.contains((plan.generation as nat,p::Certificate::Ready)),
         transfer::local_coupling(after,plan,out.after(s),labels),
 {
-    transfer::completed_coverage(current,initial,source,plan,keys,labels,writers,code);
-    let cells = Map::new(keys.to_set(),|k:int| transfer::observed(current,labels[k],writers[k],code));
+    transfer::completed_coverage(current,initial,source,plan,keys,labels,writers);
+    let cells = Map::new(keys.to_set(),|k:int| transfer::observed(current,labels[k],writers[k]));
     let tracked copied = copy_sequence(c,before,plan,s,keys,labels,keys,cells);
     let mid = copied.after(s);
     assert forall|k:int| keys.to_set().contains(k) implies mid.physical.contains_key((plan.destination as int,k))
         && mid.physical[(plan.destination as int,k)].covered
-        && mid.physical[(plan.destination as int,k)].cell == transfer::observed(current,labels[k],writers[k],code) by {
-        assert(cells[k] == transfer::observed(current,labels[k],writers[k],code));
+        && mid.physical[(plan.destination as int,k)].cell == transfer::observed(current,labels[k],writers[k]) by {
+        assert(cells[k] == transfer::observed(current,labels[k],writers[k]));
         assert(copied.after(s).physical[(plan.destination as int,k)].covered);
     }
-    let tracked ready = sealed(c,before,after,plan,mid,keys,labels,current,initial,source,writers,code);
+    let tracked ready = sealed(c,before,after,plan,mid,keys,labels,current,initial,source,writers);
     join(c,s,copied,ready)
 }
 
@@ -307,46 +326,46 @@ pub proof fn completed_final(c:p::Constants,before:&Participant,after:&Participa
 /// Only a later successful completed_final may append Seal/emit Ready.
 pub proof fn partial_final(c:p::Constants,node:&Participant,after_node:&Participant,plan:MigrationPlan,
     s:p::State,keys:Seq<int>,labels:Map<int,Cell>,initial:Image,current:Image,source:Image,
-    cursor:Option<crate::storage::Identity>,source_writers:Map<int,int>,result:crate::participant::ControlResult,
-    code:spec_fn(Seq<u8>)->int) -> (tracked out:ClosedTransfer)
+    cursor:Option<crate::storage::Identity>,source_writers:Map<int,int>,result:crate::participant::ControlResult)
+    -> (tracked out:ClosedTransfer)
     requires transfer::labels_cover(plan,s,keys,labels),transfer::local_coupling(node,plan,s,labels),
         node.transfer_authorized(plan,false),after_node.local_unchanged(*node),
         result.status != crate::types::Status::Ok,result.certificate.is_none(),after_node.same_metadata(*node),
         crate::storage::mirrored(current,initial,source,plan.range,cursor),
         forall|k:int| keys.to_set().contains(k) ==> s.physical.contains_key((plan.destination as int,k))
             && (p::replica(s,plan.destination as int,k).covered ==>
-                p::replica(s,plan.destination as int,k).cell.value == transfer::observed(initial,labels[k],0,code).value),
+                p::replica(s,plan.destination as int,k).cell.value == transfer::observed(initial,labels[k],0).value),
         forall|k:int| keys.to_set().contains(k) && !crate::storage::beyond(cursor,labels[k].1) ==>
             source_writers.contains_key(k)
-            && s.packets.contains(transfer::packet(plan.generation as nat,k,transfer::observed(source,labels[k],source_writers[k],code))),
+            && s.packets.contains(transfer::packet(plan.generation as nat,k,transfer::observed(source,labels[k],source_writers[k]))),
     ensures out.valid(c,s),transfer::local_coupling(after_node,plan,out.after(s),labels),
         out.after(s).certificates == s.certificates,
         forall|k:int| keys.to_set().contains(k) && p::replica(out.after(s),plan.destination as int,k).covered ==>
-            p::replica(out.after(s),plan.destination as int,k).cell.value == transfer::observed(current,labels[k],0,code).value,
+            p::replica(out.after(s),plan.destination as int,k).cell.value == transfer::observed(current,labels[k],0).value,
         forall|k:int| keys.to_set().contains(k) && !crate::storage::beyond(cursor,labels[k].1) ==>
-            p::replica(out.after(s),plan.destination as int,k).cell == transfer::observed(current,labels[k],source_writers[k],code),
+            p::replica(out.after(s),plan.destination as int,k).cell == transfer::observed(current,labels[k],source_writers[k]),
 {
     let processed = keys.to_set().filter(|k:int| !crate::storage::beyond(cursor,labels[k].1));
     processed.lemma_to_seq_to_set_id();
     let work = processed.to_seq();
-    let cells = Map::new(processed,|k:int| transfer::observed(current,labels[k],source_writers[k],code));
+    let cells = Map::new(processed,|k:int| transfer::observed(current,labels[k],source_writers[k]));
     assert forall|k:int| processed.contains(k) implies cells[k] ==
-        transfer::observed(source,labels[k],source_writers[k],code) by {
+        transfer::observed(source,labels[k],source_writers[k]) by {
         assert(crate::storage::in_range(plan.range,labels[k]));
     }
     let tracked out = copy_sequence(c,node,plan,s,keys,labels,work,cells);
     assert forall|k:int| keys.to_set().contains(k) && p::replica(out.after(s),plan.destination as int,k).covered implies
-        p::replica(out.after(s),plan.destination as int,k).cell.value == transfer::observed(current,labels[k],0,code).value by {
+        p::replica(out.after(s),plan.destination as int,k).cell.value == transfer::observed(current,labels[k],0).value by {
         assert(crate::storage::in_range(plan.range,labels[k]));
         if processed.contains(k) {
-            assert(cells[k] == transfer::observed(current,labels[k],source_writers[k],code));
+            assert(cells[k] == transfer::observed(current,labels[k],source_writers[k]));
         } else {
             assert(out.after(s).physical[(plan.destination as int,k)] == s.physical[(plan.destination as int,k)]);
             assert(crate::storage::value(current,labels[k]) == crate::storage::value(initial,labels[k]));
         }
     }
     assert forall|k:int| keys.to_set().contains(k) && !crate::storage::beyond(cursor,labels[k].1) implies
-        p::replica(out.after(s),plan.destination as int,k).cell == transfer::observed(current,labels[k],source_writers[k],code) by {
+        p::replica(out.after(s),plan.destination as int,k).cell == transfer::observed(current,labels[k],source_writers[k]) by {
         assert(processed.contains(k));
         assert(work.to_set().contains(k));
         assert(out.after(s).physical[(plan.destination as int,k)].cell == cells[k]);
@@ -396,7 +415,6 @@ pub proof fn completed_terminal(c:p::Constants,before:&Participant,after:&Partic
         (command == crate::types::Command::Commit && before.owner_view() == plan.source)
             || (command == crate::types::Command::Abort && before.owner_view() == plan.destination),
         s.commands.contains((plan.generation as nat,crate::participant_proofs::command(command))),
-        p::drained(s,s.plans[plan.generation as nat].keys) == before.drained_view(plan.range),
         after.control_frame(*before,plan,command),after.owner_view() == before.owner_view(),after.cleanup_done(plan.generation),
         crate::storage::complete(current,initial,Map::empty(),plan.range),
         forall|k:int| keys.to_set().contains(k) ==> s.physical.contains_key((before.owner_view() as int,k))

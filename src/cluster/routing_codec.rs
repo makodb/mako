@@ -24,6 +24,10 @@ impl<'a> Reader<'a> {
     pub closed spec fn data(&self) -> Seq<u8> { self.data@ }
     pub closed spec fn position(&self) -> nat { self.position as nat }
     pub closed spec fn wf(&self) -> bool { self.position <= self.data.len() }
+    pub proof fn position_bound(&self)
+        requires self.wf(),
+        ensures self.position() <= self.data().len(),
+    {}
     pub fn new(data: &'a [u8]) -> (r: Self)
         ensures r.wf(), r.data() == data@, r.position() == 0,
     { Self { data,position: 0 } }

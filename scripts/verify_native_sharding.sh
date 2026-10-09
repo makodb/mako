@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Docker entry: ./docker_build.sh ci nativeShardingProof
-# No module/function filters, trusted-handler exemptions, or resource overrides.
+# Whole-crate positives; only negative controls use module/function filters.
+# No trusted-handler exemptions or resource overrides.
 set -euo pipefail
 if [[ ! -f /.dockerenv && ! -f /run/.containerenv ]]; then
     echo 'Run ./docker_build.sh ci nativeShardingProof (Docker is required).' >&2
@@ -43,10 +44,9 @@ export LD_LIBRARY_PATH="$VERUS_SYSROOT/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 python3 scripts/native_sharding_proof_sources.py
 # The same lib.rs and executable modules feed cargo and Verus. This is the
 # production verification; the independent specification below is additional.
-"$VERUS_PATH" --sysroot "$VERUS_SYSROOT" --crate-type=lib --edition=2021 src/cluster/lib.rs \
-    --no-cheating --num-threads 8 --triggers-mode silent
+python3 tla/mako/scripts/verify_controls.py --native
 # This runner first verifies the complete unchanged independent model, then
-# demands semantic (not compile/timeout/resource) failure of all 13 mutants.
+# demands semantic (not compile/timeout/resource) failure of its model mutants.
 python3 tla/mako/scripts/verify_controls.py
 cargo test --locked --manifest-path src/cluster/Cargo.toml \
     --target-dir "${BUILD_DIR:-build_docker}/native-sharding"

@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Require semantic proof failures when MakoV2 or sharding safety rules are weakened.
+"""Require semantic proof failures when native or independent invariants weaken.
 
-Run in the same container as verify.sh. No model checker or execution simulator
-is used: each mutant must fail its named safety lemma after the
-unchanged complete crate passes.
+Run in the same container as verify.sh. Each mutant must fail its named
+obligation after the unchanged complete crate passes; --native selects the
+same-source production entry point and its correspondence controls.
 """
 from pathlib import Path
 import os
+import argparse
 import re
 import shutil
 import subprocess
@@ -18,6 +19,42 @@ if VERUS is None:
     raise SystemExit("Set VERUS_PATH to the pinned Verus executable")
 SYSROOT_ARGS = (["--sysroot", os.environ["VERUS_SYSROOT"]]
                 if os.environ.get("VERUS_SYSROOT") else [])
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--native", action="store_true")
+NATIVE = parser.parse_args().native
+REPOSITORY = ROOT.parents[1]
+
+NATIVE_CONTROLS = [
+    (
+        "canonical byte encoding forgets byte contents",
+        "tla/mako/src/sharding_bytes.rs",
+        "256 * value_code(value.drop_last()) + value.last() as int",
+        "256 * value_code(value.drop_last())",
+        ("sharding_bytes", "value_code_injective"),
+    ),
+    (
+        "unknown callback authorizes transaction completion",
+        "src/cluster/source_engine_history.rs",
+        "EngineRecord::Completion { id,outcome } => if outcome is Unknown { s }",
+        "EngineRecord::Completion { id,outcome } => if outcome is Unknown { "
+        "SourceState { completed:s.completed.insert(id),..s } }",
+        ("execution_refinement::source_execution::causality", "unknown_callback_cannot_complete"),
+    ),
+    (
+        "registration discards another owner's held keys",
+        "src/cluster/transfer_lease_execution.rs",
+        "held:overlay(s.sessions[transaction(id)].held,target,target.dom()),resolved:false",
+        "held:target,resolved:false",
+        ("execution_refinement::lease_execution", "registered"),
+    ),
+    (
+        "private mirror bytes bypass source scan provenance",
+        "src/cluster/source_transfer_history.rs",
+        "&& s.private_packets.contains(self.packet) && self.packet.0==self.plan.generation",
+        "&& self.packet.0==self.plan.generation",
+        ("execution_refinement::source_execution::causality", "private_copy_origin"),
+    ),
+]
 
 CONTROLS = [
     (
@@ -112,36 +149,61 @@ CONTROLS = [
         "&& true",
         ("sharding_placement::proofs", "old_command_rejected"),
     ),
+    (
+        "restarted authority accepts a stale admission incarnation",
+        "sharding_recovery.rs",
+        "registered(s,a) && head(s,a).incarnation == incarnation",
+        "registered(s,a)",
+        ("sharding_recovery::proofs", "theorem_stale_incarnation"),
+    ),
+    (
+        "collector discards an uncheckpointed recovery dependency",
+        "sharding_retention.rs",
+        "&& d.records[client].generation <= d.recovery_floor",
+        "&& true",
+        ("sharding_retention", "theorem_no_active_or_checkpoint_collection"),
+    ),
 ]
 
 # A mutation failure is evidence only if the unchanged complete crate passes.
 # Exercise the public entry point, rather than maintaining a second baseline.
 try:
+    baseline_command = (
+        [VERUS, *SYSROOT_ARGS, "--crate-type=lib", "--edition=2021",
+         "src/cluster/lib.rs", "--no-cheating", "--num-threads", "8", "--triggers-mode", "silent"]
+        if NATIVE else [str(ROOT / "scripts" / "verify.sh")]
+    )
     baseline = subprocess.run(
-        [str(ROOT / "scripts" / "verify.sh")],
-        cwd=ROOT, env={**os.environ, "VERUS_PATH": VERUS},
+        baseline_command,
+        cwd=REPOSITORY if NATIVE else ROOT, env={**os.environ, "VERUS_PATH": VERUS},
         text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=1800,
     )
 except subprocess.TimeoutExpired:
-    raise SystemExit("Unchanged MakoV2 verification timed out; controls were not run")
+    raise SystemExit("Unchanged crate verification timed out; controls were not run")
 if baseline.returncode != 0:
-    raise SystemExit(f"Unchanged MakoV2 verification failed; controls were not run\n{baseline.stdout}")
+    raise SystemExit(f"Unchanged crate verification failed; controls were not run\n{baseline.stdout}")
 print(baseline.stdout, end="", flush=True)
 
 # Isolate each mutant's safety obligation. Unrelated constructive
 # traces or SMT resource failures must not masquerade as rejecting the bug.
-for name, filename, before, after, (module, function) in CONTROLS:
-    with tempfile.TemporaryDirectory(prefix="makov2-proof-control-") as directory:
+for name, filename, before, after, (module, function) in (NATIVE_CONTROLS if NATIVE else CONTROLS):
+    with tempfile.TemporaryDirectory(prefix="mako-proof-control-") as directory:
         dest = Path(directory)
-        shutil.copytree(ROOT / "src", dest / "src")
-        path = dest / "src" / filename
+        if NATIVE:
+            shutil.copytree(REPOSITORY / "src" / "cluster", dest / "src" / "cluster")
+            shutil.copytree(ROOT / "src", dest / "tla" / "mako" / "src")
+            path = dest / filename
+        else:
+            shutil.copytree(ROOT / "src", dest / "src")
+            path = dest / "src" / filename
         text = path.read_text()
         if text.count(before) != 1:
             raise SystemExit(f"{name}: mutation site is not unique; no control was run")
         path.write_text(text.replace(before, after))
         try:
             result = subprocess.run(
-                [VERUS, *SYSROOT_ARGS, "--crate-type=lib", "src/lib.rs", "--no-cheating",
+                [VERUS, *SYSROOT_ARGS, "--crate-type=lib", "--edition=2021",
+                 "src/cluster/lib.rs" if NATIVE else "src/lib.rs", "--no-cheating",
                  "--num-threads", "4", "--triggers-mode", "silent",
                  "--verify-only-module", module, "--verify-function", function],
                 cwd=dest, text=True, stdout=subprocess.PIPE,

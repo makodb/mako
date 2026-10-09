@@ -236,6 +236,14 @@ inline MakoShardBytes oi_mbta_scan_bytes(const std::string& value) {
 inline void oi_mbta_scan_require(uint32_t status) {
   if (status != MAKO_SHARD_OK) throw abstract_db::abstract_abort_exception();
 }
+// @unsafe - borrows bounded transport storage only for the immediate Rust call.
+inline MakoScanIdentity oi_mbta_scan_identity(const mako::ShardingRequest& request) {
+  if (request.coordinate_length > sizeof(request.coordinate))
+    throw abstract_db::abstract_abort_exception();
+  return {request.transaction, request.grant, request.table,
+          uint32_t(request.fixed_coordinate),
+          {request.coordinate, request.coordinate_length}};
+}
 
 // @unsafe - Rust owns opaque cursor/page allocations, C++ owns lexical lifetime.
 struct oi_mbta_scan_state {
@@ -267,6 +275,8 @@ inline void oi_mbta_full_scan_page(mbta_table* table,
   if (table->get_is_remote()) throw abstract_db::abstract_abort_exception();
   oi_mbta_scan_page_state state;
   oi_mbta_scan_require(mako_scan_page_new({input, input_length}, &state.page));
+  const auto identity = oi_mbta_scan_identity(request);
+  oi_mbta_scan_require(mako_scan_page_identity_matches(state.page, &identity));
   const auto bounds = mako_scan_page_bounds(state.page);
   const std::string lo(reinterpret_cast<const char*>(bounds.lo.data), bounds.lo.len);
   const std::string hi(reinterpret_cast<const char*>(bounds.hi.data), bounds.hi.len);
@@ -375,13 +385,14 @@ struct oi_mbta_scan_dispatch {
       const auto high = self.fixed
           ? (self.hi ? oi_mbta_scan_bytes(*self.hi) : MakoShardBytes{}) : segment_hi;
       const uint32_t bounded = self.fixed ? self.hi != nullptr : has_hi;
-      oi_mbta_scan_state state;
-      oi_mbta_scan_require(mako_full_scan_new(
-          {low, high, {}, bounded, 0, self.reverse}, &state.scan));
       auto request = mako::sharding_request_with_grant(
           self.table->get_table_id(), std::string(), grant);
       // Disabled routing still needs the physical destination on the wire.
       request.grant = grant;
+      const auto identity = oi_mbta_scan_identity(request);
+      oi_mbta_scan_state state;
+      oi_mbta_scan_require(mako_full_scan_new(
+          {low, high, {}, bounded, 0, self.reverse}, &identity, &state.scan));
       uint8_t input[mako::full_scan_request_capacity];
       std::string response;
       uint32_t done = 0;

@@ -1,4 +1,4 @@
-# MakoV2 and live-process range sharding
+# MakoV2 and the sharding protocol
 
 [tla-rs](https://github.com/stonysystems/tla-rs)-style transition systems in
 Verus, with inductive safety and strict-serializability proofs. The MakoV2 core
@@ -11,17 +11,22 @@ physical Raft log per shard. There is no vector-clock mode, worker-indexed
 replication stream, centralized timestamp allocator, or cluster-wide shared
 transaction log. The configuration manager (CM) uses shard 0's existing log.
 
-There are **two distinct proof scopes**:
+There are **three distinct proof scopes**:
 
 - **MakoV2 core:** scalar timestamps, speculative installation/publication and
   fault recovery, with fixed `key % shards` placement.
-- **Corrected range handoff:** dynamic placement among live shards, composed
-  with an explicit atomic successful-OCC transaction-engine interface.
+- **Sharding protocol against interfaces:** dynamic ownership, crash recovery,
+  configured-owner removal/rejoin, conditional progress, and administrative
+  retention. Transaction atomicity/settlement and committed Raft prefixes are
+  explicit contracts; the sharding algorithms themselves are not assumed correct.
+- **Native live-process correspondence:** same-source Rust actors, canonical
+  byte values, sharded scans, and source histories constructed from native API
+  effects. The foreign engine, transport and persistence adapters have separate
+  boundaries described below.
 
-These are **not one combined migration-plus-failure theorem**. The native Rust
-sharding crate now refines the corrected **placement** specification through
-source-effect ghost-log certificates, under the native boundaries below.
-It does not refine the transaction-history composition or prove the C++ engine.
+These are not a native crash-safe migration deployment or one combined proof
+of MakoV2's distributed transaction engine under changing log participants.
+Production migration still requires fixed live owners and non-replicated mode.
 The source-derived counterexamples describe the retired C++ sharding graph.
 
 ## Design sources and deliberate additions
@@ -283,6 +288,19 @@ of the master's current phase, when handling messages.
 Unqualified entries above belong to `sharding_placement`, except the final row,
 which belongs to `sharding_transactions`.
 
+Additional interface and native contracts:
+
+| Export | Guarantee |
+|---|---|
+| `sharding_bytes::value_code_injective` | Different byte sequences cannot denote the same logical value; empty bytes and absence remain distinct. |
+| `sharding_recovery::theorem_reachable_reconstruction`, `theorem_serving_gate` | Committed per-authority checkpoints plus engine suffixes reconstruct the placement state; serving requires completed replay and a fresh durable admission. |
+| `sharding_recovery::theorem_stale_incarnation`, `theorem_safe_removal`, `theorem_rejoin_fence` | Restarted/removed owners reject stale credentials; removal cannot abandon directory ownership, active handoff endpoints or leases; numeric owner reuse advances its membership fence. |
+| `sharding_progress::theorem_service_eventual_completion` | Under the primitive fairness/settlement contracts below, an admitted migration eventually finishes with the necessary actual historical physical cleanup. |
+| `sharding_retention::{theorem_collection,theorem_forgotten,theorem_space}` and `protocol` | Acknowledged, checkpoint-covered administrative records can be collected without nonce reuse; stale requests/control/copies are fenced, and materialized administrative state has a configured bound. |
+| Native `full_scan_proofs::{sharded_scan,native_fixed_coordinate_scan}` | Ordered complete forward/reverse results agree byte-for-byte with the trusted transactional image and placement projection, including fixed warehouse coordinates. |
+| Native `execution_refinement::{finite_source_history,loaded_source_history}` | Actual source-step observations construct a placement history and its invariants; the caller supplies no already-certified model path or ghost journal. |
+
+
 The transaction model supports point `Read`, `Put`, `Delete` and `Add`, with
 absence represented explicitly and absent-as-zero for `Add`. Reads occur after
 separate lease admission. Successful commit validates the recorded cells against
@@ -316,13 +334,58 @@ guards of progressing actions—not merely assuming a desirable final state:
 These are nonvacuity proofs alongside the arbitrary-finite-behavior induction,
 not a substitute for it or a liveness proof.
 
+### Trusted recovery and progress interfaces
+
+`sharding_recovery` keeps separate coordinator, participant and transaction
+authority journals. Acknowledged RPC acceptance or an unknown append result
+does not commit a sharding effect. Replay installs a local committed checkpoint
+and overlays that authority's durable engine suffix; the ghost global placement
+state is not a recovery input. Its concrete requirements are:
+
+- Raft retains each authority's committed prefix without rewriting it.
+- Engine success durably settles the exact atomic write set and outcome;
+  a settled abort fences old work. Unknown outcomes and restart do not release
+  leases or invent settlement.
+- Durable transaction-authority names can be enumerated after restart.
+  Namespace publication is atomic with the corresponding authority record.
+  Admission incarnations and owner-membership floors survive restart.
+- Copy reservations, immutable copy versions, deletion fences and completion
+  records are durable engine data. Work starts only after its reservation is
+  committed. A deletion receipt denotes completed generation-scoped work,
+  not an accepted request or metadata-only `Empty` state.
+
+Progress starts from a verified finite prefix, including a recovered prefix.
+The infinite continuation allows arbitrary legal transaction outcomes, not a
+scripted sequence of successful migrations. It requires eventual transaction
+settlement and delivery of known completion, fair primitive scheduling and
+message delivery, a finite selected image, and an eventually error-free raw-I/O
+suffix. Restartable mirror/cleanup traversal terminates by a finite rank;
+infinitely many isolated successful I/O calls are not enough. One shared
+physical-world history binds each job's generation, owner, issue time, complete
+inventory (including private stale rows), exact bytes, scan gaps and emissions.
+There is no assumption that cleanup or an administrative phase eventually
+completes, and there is no wall-clock deadline bound.
+
+Retention's checkpoint is **administrative only**. It preserves request
+incarnations, acknowledged sequence floors, next generation and current routes.
+External `protocol::Input::Finish` derives its outcome from its own evolving
+placement state and requires both terminal receipts. Collection neither erases
+participant journals nor proves that all background work is quiescent. A pending
+old copy can outlive administrative Finish; its recovery state must still be
+retained. The bound is on materialized administrative records/namespaces/routes
+for a fixed configured client/key universe, not total bytes, Raft logs, native
+receipt tables or pending I/O dictionaries. Exhaustion/backpressure fails closed;
+there is no timeout-based identifier reuse.
+
 ### Representation and implementation obligations
 
 - The corrected model has an arbitrary finite pool of live shards and arbitrary
   finite logical-key universe, including valid absent keys—not just existing
   rows. No fixed key/transaction/step bound is used by the safety induction.
   A partition representation relation connects its directory projection to
-  ordered metadata; byte encodings and native table-binding code are not proved.
+  ordered metadata. Native routing/scan codecs and the canonical row-value
+  embedding are proved; native physical-table/warehouse binding remains an
+  explicit foreign interface.
 - Logical `Cell.writer` is application provenance/OCC revision, not a native
   STO TID or a transplanted Raft record. A new owner may initialize fresh native
   versions because old leases have drained; version comparisons must remain
@@ -339,13 +402,13 @@ not a substitute for it or a liveness proof.
   upper bounds have the same infinity meaning in routing and the data plane.
   A physical index spanning several warehouses cannot be wholly deleted when
   only one warehouse's routing interval moves.
-- IDs/generations never wrap or get reused. A fixed-width implementation must
-  refuse allocation on exhaustion. Outcomes, message provenance and fences are
-  retained; bounded-memory reclamation needs a separate quiescence/delay proof.
-- No process crash/restart, Byzantine corruption, live membership join/removal,
-  hash-ring rebalance, range-query semantics, fairness or bounded completion
-  time is proved. The current metadata-only membership APIs are not safe
-  lifecycle protocols.
+- IDs/generations never wrap or get reused. Fixed-width actors refuse allocation
+  on exhaustion. The administrative retention protocol keeps durable high-water
+  marks rather than forgetting identifiers after a delay.
+- Protocol recovery and configured-owner lifecycle proofs do not implement a
+  production recovery adapter. Arbitrary pool expansion, hash-ring rebalance,
+  Byzantine behavior, follower reads and bounded completion time are outside
+  these results. Metadata-only membership edits are not the proved lifecycle.
 
 ### Native Rust correspondence
 
@@ -362,21 +425,38 @@ There is no alternate executable model in the production data path.
 | `migration*` | Retained caller nonces, fresh generations, issued controls, receipts, publication and terminal outcomes. |
 | `storage*`, `transfer*` | Ordered exact mirror, explicit EOF, destination-only deletion, cleanup completion and real failure prefixes. |
 | `ghost_log*`, `execution_refinement*`, `transfer_*proofs` | Raw field/entry effects and closed certificates relating concrete views to independent placement paths. |
+| `full_scan_core`, `full_scan_proofs` | Transaction/grant/table/coordinate-bound request codecs, actual raw callback/page assembly, ordered pagination, range coverage and byte-value correspondence. |
+| `source_*history`, `source_execution`, `source_causality`, `lease_composition_proofs` | Chained participant/engine images, multi-owner lease union, actual settlement before release, and capture/emission provenance. |
+| `transfer_progress` | Exact native scan/put/delete interpretation and checked final-copy/cleanup callbacks under primitive availability. |
 
-The ghost journal records raw effects, not a logger's assertion that the
-desired model action happened. An open segment may contain intermediate
-states that do not satisfy placement invariants. Closing it requires both
-its replayed concrete effect and a proved independent-spec path. Private
-completion/certificate tokens distinguish metadata changes from actual
-completed storage and emitted responses. A cleanup error after metadata
-changed is therefore not certified as rejection or stutter. Loader commits
-establish the initial journal; bootstrap writer identities occupy a namespace
-disjoint from ordinary transaction identities.
+The public source-history entry points calculate the placement image from each
+native record and construct their own closed effect certificates. Participant
+snapshots and owner-local registries are chained, rather than replacing an actor
+with a merely metadata-compatible object. Global drain follows from the union
+of those registries; finishing one owner cannot release another owner's holds.
+Actual engine settlement precedes a known completion callback and lease release.
+An unknown callback cannot manufacture completion.
 
-The theorem is conditional on the explicitly named embedding contracts:
-canonical finite logical-key/byte labeling (including absence), authentic
-issued RPCs and captures, actual atomic engine effects and their frames,
-and exclusion of competing transfer effects on the selected range. A metadata
+Private completion/certificate tokens distinguish metadata changes from
+completed storage and emitted responses. Captures require actual ordered
+first-row/gap/EOF evidence; unmodelled private copy/deletion effects still update
+the physical image history. A cleanup error cannot erase its already-applied
+prefix. Successful Final delivery and executable receipt-preservation contracts
+establish the receipt required by the later real seal callback. Loader commits
+establish the initial journal with writer identities disjoint from ordinary
+transactions.
+
+The row-value embedding is fixed and injective (`code([]) = 1`,
+`code(prefix ++ [b]) = 256 * code(prefix) + b`), not a caller-supplied encoding.
+It is ghost-only and adds no runtime value conversion.
+
+The theorem remains conditional on named embedding contracts: canonical finite
+logical-key/physical-cell labeling (including absence), transport request/result
+association, actual atomic engine effects and their frames, transactional
+ordered scan semantics, transaction lifecycle (no fresh participant enrollment
+after settlement), and exclusion of competing transfer effects on the selected
+range. Capture and response provenance are derived from the source
+history rather than supplied as a pre-certified placement history. A metadata
 mutex does not exclude already-admitted writes to unrelated ranges.
 
 `host.rs`, `wire.rs`, `runtime.rs`, `ffi.rs`, and `gateway_ffi.rs` are native
@@ -388,12 +468,14 @@ Real-engine smoke scenarios exercise this boundary but are not a proof of it.
 `full_scan.rs` supplies native byte/FFI/callback adapters around the verified
 `full_scan_core.rs`; those adapters are likewise not a verified handler theorem.
 
-In particular, `execution_refinement` imports **placement**, not
-`sharding_transactions`: the independent model's strict-serializability theorem
-is not a native distributed transaction-history refinement. Live migration
-requires fixed live owners and non-replicated mode. Crash/restart, membership
-change, Raft/migration composition, liveness and retained-state reclamation
-remain outside the result.
+`execution_refinement` imports **placement**, not `sharding_transactions`: it is
+not a native distributed transaction-history refinement. The recovery,
+conditional-progress and administrative-retention protocols specify the missing
+interfaces; they do not silently add them to `HostAbi` or `runtime.rs`.
+Production migration state/admission namespaces are not restart-persistent,
+raw migration writes use the non-Paxos path, and replicated migration is rejected.
+Restoring metadata alone would not restore receipt, pending-work, lease,
+canonical-binding or incarnation state required by the recovery contract.
 
 ## Layout
 
@@ -410,6 +492,10 @@ remain outside the result.
 | `sharding_placement*.rs` | Corrected ownership, leases, copy rounds, immutable publication, abort/retry and induction. |
 | `sharding_transactions.rs` | Successful-OCC composition, observable serial histories and retained terminal results. |
 | `sharding_*witness*.rs` | Enabled forward, abort/retry and partial-return executions. |
+| `sharding_bytes.rs` | Shared injective byte-value representation. |
+| `sharding_recovery*.rs` | Per-authority recovery, durable engine suffixes, admission/membership fencing and constructive lifecycle witnesses. |
+| `sharding_progress*.rs` | Actual-execution fairness, restartable raw traversal, one physical-world interpretation and conditional completion. |
+| `sharding_retention*.rs` | Source-connected administrative retention, durable reconstruction, stale-message fences and bounded materialized state. |
 | `scripts/verify.sh`, `scripts/verify_controls.py` | Complete-crate verifier entry point and negative proof controls. |
 
 ## Verification
@@ -449,22 +535,23 @@ For the native cutover, use the repository's Docker gates:
 ./docker_build.sh ci-quick nativeShardingSmoke
 ```
 
-The proof gate attests the pinned Verus archive, verifies all reachable
-production proof modules without function/module filters, runs the independent
-model and all negative controls, then runs locked Cargo tests. The source
-coverage audit is an inventory, not a proof.
+The proof gate attests the pinned Verus archive, verifies both complete crates
+without positive function/module filters, runs their semantic negative controls,
+then runs locked Cargo tests. The source coverage audit is an inventory, not a
+proof. `verify_controls.py --native` selects the same-source production crate;
+the default selects the independent crate. Each mode verifies its entire
+unchanged baseline before mutating temporary copies.
 
-The standalone model verifier checks the **entire model crate**, including
-witnesses, with `--no-cheating`. Its controls runner invokes that baseline first, then
-copies the model into temporary directories and requires semantic proof
-failures in the affected safety lemmas. It injects thirteen bugs:
-the seven core MakoV2 mutations (ignoring local holes; bypassing finality
-coverage; skipping read validation; accepting a non-increasing timestamp;
-treating maximum log transaction time as a frontier; relabeling stale reports;
-inflating an epoch's close cut), plus six sharding mutations (retaining
-destination-only keys; accepting stale physical observations; admitting new
-leases after freeze; accepting the wrong copy round; sealing without complete
-coverage; accepting an obsolete abort).
+The independent runner injects fifteen bugs: seven core MakoV2 mutations
+(ignoring local holes; bypassing finality coverage; skipping read validation;
+accepting a non-increasing timestamp; treating maximum log transaction time as
+a frontier; relabeling stale reports; inflating an epoch's close cut), six
+placement/transaction mutations (retaining destination-only keys; accepting stale
+physical observations; admitting leases after freeze; accepting the wrong copy
+round; sealing without coverage; accepting an obsolete abort), plus stale
+recovery admission and collection before checkpoint coverage.
+The native runner removes byte-content injectivity, permits unknown completion,
+discards another owner's holds, and bypasses private-copy scan provenance.
 Mutants target named safety lemmas, so unrelated constructive-trace failures
 cannot pass a control. Type errors, verifier crashes and resource exhaustion
 also do not count as successful controls. Originals remain unchanged.
@@ -474,30 +561,30 @@ or model-checking results are used to establish the result.
 
 ### Checked result
 
-On the pinned toolchain in a network-disabled container
-(`python:3.13-slim-trixie`, model mounted read-only):
+The complete `scripts/verify_native_sharding.sh` gate passed in the Docker
+development image with Rust `1.97.1` and pinned Verus
+`0.2026.08.02.b677dd5`:
 
 ```
-verification results:: 280 verified, 0 errors
+native src/cluster/lib.rs:   940 verified, 0 errors
+independent model:          526 verified, 0 errors
+native negative controls:    4 passed
+model negative controls:    15 passed
+locked native Cargo tests:  14 passed
 ```
 
-All **13 negative controls passed**: each mutation produced one semantic failure
-in its named safety lemma. The complete baseline includes the five core MakoV2
-constructive executions, timestamp proofs, strict serializability, durability,
-atomicity and recovery theorems, plus the sharding algorithms, source-derived
-counterexamples, corrected ownership/history induction and enabled
-forward/abort/retry/partial-return executions. The two proof scopes remain
-separate as described above; this is not a combined crash-safe migration theorem.
+Both unchanged positive crates were verified in full before their mutations.
+Every negative control produced one semantic failure in its named theorem;
+type errors, resource exhaustion and verifier crashes were not accepted.
+The native source inventory reported 68 reachable files. Obligation counts
+overlap because the native crate imports shared model modules; the inventory
+and count totals are not additional correctness claims.
 
-The native cutover was also checked in the Docker development image on that
-same pinned toolchain:
-
-```
-native src/cluster/lib.rs: 683 verified, 0 errors
-independent model:        280 verified, 0 errors
-semantic negative controls: 13 passed
-native Cargo tests:         12 passed
-```
+The baseline includes the original core MakoV2 theorems and counterexamples,
+placement/history induction, and the recovery, lifecycle, actual-physical
+progress, administrative retention, canonical-value and scan results above.
+The three proof scopes remain distinct; this is not a production crash-safe
+migration deployment.
 
 The native MBTA/STO/srpc smoke passed with separate processes and with two owners
 in one process: raw and warehouse handoff/return, values and absence,
@@ -505,8 +592,8 @@ destination-only cleanup, post-handoff writes/deletes, forward/reverse paginatio
 old epochs, retained outcomes, held-lease abort, lost successful Commit reply,
 and replay of previously issued controls. Fault injection drops a reply at the
 real peer callback boundary; it does not substitute an engine or model oracle.
-Separate live `dbtest` runs completed warehouse forward/return and `new_order`
-migration while transactions continued in both topologies.
+The `native_sharding_smoke` and `mako_admin` CMake targets built successfully;
+the storage DSL regeneration drift check passed with the unchanged compiler pin.
 
 
 ## Boundaries of the result
@@ -520,14 +607,16 @@ migration while transactions continued in both topologies.
 - **Timestamp service.** Origin leases and recovery fencing are trusted service
   contracts. The proof does not establish physical clock synchronization or
   the current packed storage encoding.
-- **Core placement and membership.** The scalar/single-Raft model has arbitrary
-  positive shard count, fixed for a history, with `key % shards` placement and
-  integer values initially zero. Its operations are point `Read`, `Put`, `Add`.
-  The separate live-process range-handoff model has the scope stated above;
-  neither model proves live process membership change or range-query semantics.
-- **Safety, not liveness.** Constructive progress examples are not a fairness
-  proof. Histories, logs and replay outcomes are retained; their reclamation and
-  follower read APIs are not verified.
+- **Core placement versus sharding.** The scalar/single-Raft MakoV2 model retains
+  fixed `key % shards` placement and point operations. The separate sharding
+  protocol and native scan theorems have the explicit interface scopes above;
+  they do not re-prove the distributed transaction engine.
+- **Conditional progress, not availability under arbitrary failure.** Permanent
+  partitions, nonterminating transactions, endless I/O failures and unbounded
+  restarts are not covered. No latency bound is proved.
+- **Administrative collection, not global storage reclamation.** Participant
+  recovery journals, native receipt dictionaries and outstanding copy/cleanup
+  state are not garbage-collected by this protocol.
 - **Provisional replies are revocable.** Treating them as final successful
   operations is outside—and contradicts—the proved client contract.
 - **Trusted base:** Verus, its supported vstd specifications, Rust frontend and

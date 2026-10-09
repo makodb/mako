@@ -59,3 +59,13 @@ pub mod execution_refinement;
 pub mod routing_proofs;
 #[cfg(verus_keep_ghost)]
 pub mod routing_codec_proofs;
+#[cfg(verus_keep_ghost)]
+pub mod full_scan_proofs;
+#[cfg(verus_keep_ghost)]
+#[path = "../../tla/mako/src/sharding_progress.rs"]
+pub mod sharding_progress;
+#[cfg(verus_keep_ghost)]
+pub mod transfer_progress;
+#[cfg(verus_keep_ghost)]
+#[path = "../../tla/mako/src/sharding_bytes.rs"]
+pub mod sharding_bytes;

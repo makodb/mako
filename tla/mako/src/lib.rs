@@ -33,3 +33,10 @@ pub mod sharding_transactions;
 pub mod sharding_witness;
 pub mod sharding_return_witness;
 pub mod sharding_abort_witness;
+
+// Sharding protocol extensions under explicit transaction/Raft interfaces.
+// These modules do not enable the production durability/recovery adapters.
+pub mod sharding_recovery;
+pub mod sharding_progress;
+pub mod sharding_retention;
+pub mod sharding_bytes;

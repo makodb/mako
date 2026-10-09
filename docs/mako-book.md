@@ -373,15 +373,23 @@ are removed. There is no replicated `reshard/*` journal, live membership
 change, automatic rebalance or crash-recovery guarantee. Configuration CRUD
 does not perform migration.
 
-The executable Rust actors and their raw-effect ghost-log correspondence are
-checked against the independent placement specification in
-[`tla/mako`](../tla/mako/README.md#native-rust-correspondence).
-This is not a native distributed transaction-history or combined
-Raft/migration theorem. Native threading, wire/FFI dispatch, engine atomicity,
-canonical index binding and callback lifetimes remain explicit trusted
-boundaries. Run `./docker_build.sh ci nativeShardingProof` and
-`./docker_build.sh ci nativeShardingSmoke` for the separate proof and real-engine
-gates.
+The executable Rust actors and source histories construct a refinement of the
+independent placement specification in
+[`tla/mako`](../tla/mako/README.md#native-rust-correspondence). The native proofs
+also cover injective byte values, full scan identity and forward/reverse range
+coverage under transactional ordered-scan semantics. This is not a native
+distributed transaction-history or combined Raft/migration theorem. Native
+threading, wire/FFI dispatch, engine atomicity, canonical index binding and
+callback lifetimes remain explicit trusted boundaries.
+
+Separate sharding protocols establish per-authority crash reconstruction,
+admission/membership fencing, conditional progress from primitive fairness,
+and safe administrative compaction. The current native adapter does not
+implement their durable recovery interfaces. Administrative compaction does
+not collect participant journals, receipt dictionaries or outstanding copy work.
+See [the trusted interface contract](../tla/mako/README.md#trusted-recovery-and-progress-interfaces).
+Run `./docker_build.sh ci nativeShardingProof` and
+`./docker_build.sh ci nativeShardingSmoke` for the separate proof and real-engine gates.
 
 ### Speculation Recovery (Epoch-Based)
 

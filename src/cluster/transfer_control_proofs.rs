@@ -67,6 +67,7 @@ pub proof fn coordinator_transition(c:p::Constants,b:native::Native,z:native::Na
         status != Status::Ok ==> out.after(s) == s,
         request is Commit && status == Status::Ok ==>
             p::directory(out.after(s)) == master::directory(c,z,observations),
+        out.after(s) == master::transition_image(b,z,s,request,master::directory(c,z,observations),status),
 {
     let snapshot = master::directory(c,z,observations);
     if request is Commit && status == Status::Ok {
@@ -88,6 +89,9 @@ pub proof fn coordinator_reply(c:p::Constants,b:native::Native,z:native::Native,
         result is None ==> out.after(s) == s,
         result is Some ==> out.after(s).replies.contains_key(master::nonce(id))
             && out.after(s).replies[master::nonce(id)] == master::outcome(result.unwrap()),
+        out.after(s) == if result is Some { p::State {
+            replies:s.replies.insert(master::nonce(id),master::outcome(result.unwrap())),..s
+        } } else { s },
 {
     let segment = master::reply_segment(c,b,z,s,id,result);
     reveal_with_fuel(log::apply_writes,2);
@@ -106,6 +110,7 @@ pub proof fn coordinator_receive(c:p::Constants,b:native::Native,z:native::Nativ
         s.certificates.contains((generation as nat,master::certificate(certificate))),
     ensures out.valid(c,s),master::master(z,out.after(s)),
         out.after(s).received.contains((generation as nat,master::certificate(certificate))),
+        out.after(s) == (p::State { received:s.received.insert((generation as nat,master::certificate(certificate))),..s }),
 {
     let segment = master::receive_segment(c,b,z,s,generation,authenticated_owner,certificate,Status::Ok);
     reveal_with_fuel(log::apply_writes,2);
@@ -139,6 +144,7 @@ pub proof fn cache_installed(c:p::Constants,s:p::State,client:int,index:nat,
         after != before ==> out.after(s).views.contains_key(client) && out.after(s).views[client] == index,
         after is Some ==> out.after(s).views.contains_key(client)
             && cache::observed(after.unwrap(),out.after(s),out.after(s).views[client],tables,coordinates),
+        out.after(s) == if after == before { s } else { p::State { views:s.views.insert(client,index),..s } },
 {
     if after == before {
         empty_segment(c,s)
@@ -160,7 +166,7 @@ pub proof fn cache_installed(c:p::Constants,s:p::State,client:int,index:nat,
 /// if an authenticated source subsequently processes Abort before local seal.
 pub proof fn ready_emitted(c:p::Constants,before:&Participant,after:&Participant,
     plan:MigrationPlan,result:ControlResult,s:p::State,keys:Seq<int>,labels:Map<int,Cell>,
-    initial:Image,current:Image,source:Image,writers:Map<int,int>,code:spec_fn(Seq<u8>)->int)
+    initial:Image,current:Image,source:Image,writers:Map<int,int>)
     -> (tracked out:(ClosedTransfer,EmittedCertificate))
     requires result.status == Status::Ok,result.certificate == Some(Certificate::Ready),
         transfer::labels_cover(plan,s,keys,labels),transfer::local_coupling(before,plan,s,labels),
@@ -168,12 +174,12 @@ pub proof fn ready_emitted(c:p::Constants,before:&Participant,after:&Participant
         after.owner_view() == before.owner_view(),
         crate::storage::complete(current,initial,source,plan.range),
         forall|k:int| keys.to_set().contains(k) ==> s.physical.contains_key((plan.destination as int,k))
-            && s.packets.contains(transfer::packet(plan.generation as nat,k,transfer::observed(source,labels[k],writers[k],code))),
+            && s.packets.contains(transfer::packet(plan.generation as nat,k,transfer::observed(source,labels[k],writers[k]))),
     ensures out.0.valid(c,s),out.0.after(s).certificates.contains((plan.generation as nat,p::Certificate::Ready)),
         transfer::local_coupling(after,plan,out.0.after(s),labels),
         out.1.matches(plan.generation,after.owner_view(),Certificate::Ready),
 {
-    let tracked segment = completed_final(c,before,after,plan,s,keys,labels,initial,current,source,writers,code);
+    let tracked segment = completed_final(c,before,after,plan,s,keys,labels,initial,current,source,writers);
     let tracked emitted = EmittedCertificate {
         generation:plan.generation,owner:after.owner_view(),certificate:Certificate::Ready,
     };

@@ -79,9 +79,15 @@ impl Participant {
         requires self.wf(),
         ensures forall|client:u64| self.lease_view().contains_key(client) ==> self.lease_view()[client].wf(),
     {}
+    pub proof fn drained_lease_view(&self,range:KeyRange)
+        ensures self.drained_view(range)==(forall|client:u64| self.lease_view().contains_key(client) ==>
+            self.lease_view()[client].drained(range)),
+    {}
 
     pub fn new(owner: u32, tables: Vec<RouteTable>) -> (out: Result<Self,Status>)
-        ensures match out { Ok(p) => p.wf(), Err(_) => true },
+        ensures match out { Ok(p) => p.wf() && p.owner_view()==owner
+            && p.lease_view()==Map::<u64,crate::leases::SessionView>::empty()
+            && forall|g:u64| !p.has_receipt(g), Err(_) => true },
     {
         let mut local: HashMap<u64,MetaTable> = HashMap::new();
         let mut t = 0usize;
@@ -134,6 +140,20 @@ impl Participant {
     pub closed spec fn open_range(&self, id: TxnId, table: u64, lo: Seq<u8>, hi: Option<Seq<u8>>, grant: Grant) -> bool {
         self.leases.holds_range(id,table,lo,hi,grant) && !self.leases@[id.client].terminal
     }
+    pub proof fn open_range_lease(&self,id:TxnId,table:u64,lo:Seq<u8>,hi:Option<Seq<u8>>,grant:Grant)
+        requires self.open_range(id,table,lo,hi,grant),
+        ensures self.lease_view().contains_key(id.client),self.lease_view()[id.client].sequence==id.sequence,
+            !self.lease_view()[id.client].terminal,self.lease_view()[id.client].has_range(table,lo,hi,grant),
+    {}
+    pub proof fn open_hold_lease(&self,id:TxnId,table:u64,coordinate:Seq<u8>,grant:Grant)
+        requires self.open_hold(id,table,coordinate,grant),
+        ensures self.lease_view().contains_key(id.client),self.lease_view()[id.client].sequence==id.sequence,
+            !self.lease_view()[id.client].terminal,self.lease_view()[id.client].has(table,coordinate,grant),
+    {}
+    pub proof fn lease_frame_open_range(&self,before:Self,id:TxnId,table:u64,lo:Seq<u8>,hi:Option<Seq<u8>>,grant:Grant)
+        requires self.lease_view()==before.lease_view(),before.open_range(id,table,lo,hi,grant),
+        ensures self.open_range(id,table,lo,hi,grant),
+    {}
     pub fn owner(&self) -> (out: u32) ensures out == self.owner_view(), { self.owner }
     pub fn meta(&self, table: u64, coordinate: &[u8]) -> (out: Option<ReplicaMeta>)
         ensures self.table_wf(table) ==> out == self.local_meta(table,coordinate@),
@@ -224,11 +244,14 @@ impl Participant {
         ensures match out { Some(g) => self.open_range(id,table,lo@,crate::directory::hi_view(hi),g), None => true },
     { self.leases.held_range(id,table,lo,hi) }
 
-    fn envelope(&self, plan: &MigrationPlan) -> (yes: bool)
-        ensures yes ==> plan.generation > 0 && plan.source != plan.destination
+    pub closed spec fn envelope_view(&self, plan: MigrationPlan) -> bool {
+        plan.generation > 0 && plan.source != plan.destination
             && (self.owner == plan.source || self.owner == plan.destination)
-            && crate::directory::proper(plan.range.lo@,match plan.range.hi { Some(h) => Some(h@), None => None })
-            && crate::directory::wellformed(plan.old@) && self.tables@.contains_key(plan.range.table),
+            && crate::directory::proper(plan.range.lo@,match plan.range.hi { Some(h) => Some(h@),None => None })
+            && crate::directory::wellformed(plan.old@) && self.tables@.contains_key(plan.range.table)
+    }
+    fn envelope(&self, plan: &MigrationPlan) -> (yes: bool)
+        ensures yes == self.envelope_view(*plan),
     {
         if plan.generation == 0 || plan.source == plan.destination
             || (self.owner != plan.source && self.owner != plan.destination) { return false; }
@@ -323,7 +346,11 @@ impl Participant {
         requires self.wf(), crate::directory::wellformed(plan.old@),
         ensures yes ==> forall|k: Seq<u8>| crate::bytes::contains_spec(plan.range,plan.range.table,k) ==>
             self.command_at(*plan,command,drained,k),
+            crate::directory::proper(plan.range.lo@,match plan.range.hi { Some(h) => Some(h@),None => None })
+                && (forall|k:Seq<u8>| crate::bytes::contains_spec(plan.range,plan.range.table,k) ==>
+                    self.command_at(*plan,command,drained,k)) ==> yes,
     {
+        proof { crate::bytes::cmp_laws(plan.range.lo@,plan.range.lo@); }
         if !self.point_guard(plan,command,&plan.range.lo,drained) { return false; }
         if let Some(table) = self.tables.get(&plan.range.table) {
             let mut i = 0usize;
@@ -393,6 +420,25 @@ impl Participant {
     pub closed spec fn command_seen(&self, generation: u64, command: Command) -> bool {
         self.receipts@.contains_key(generation) && (self.receipts@[generation].applied & command_bit(command)) != 0
     }
+    pub closed spec fn terminal_seen(&self, generation:u64) -> bool {
+        self.receipts@.contains_key(generation) && (self.receipts@[generation].applied & 48) != 0
+    }
+    pub closed spec fn has_receipt(&self, generation:u64) -> bool {
+        self.receipts@.contains_key(generation)
+    }
+    pub open spec fn retains_receipts(&self,before:Self) -> bool {
+        forall|generation:u64| before.has_receipt(generation) ==> self.has_receipt(generation)
+    }
+    pub proof fn metadata_receipts(&self,before:Self)
+        requires self.same_metadata(before),
+        ensures self.owner_view()==before.owner_view(),self.retains_receipts(before),
+    {}
+    pub open spec fn delivery_authorized(&self, plan:MigrationPlan,command:Command) -> bool {
+        self.envelope_view(plan) && (self.command_seen(plan.generation,command)
+            || !self.terminal_seen(plan.generation)
+                && (forall|k:Seq<u8>| crate::bytes::contains_spec(plan.range,plan.range.table,k) ==>
+                    self.command_at(plan,command,self.drained_view(plan.range),k)))
+    }
     pub open spec fn control_frame(&self, before: Self, plan: MigrationPlan, command: Command) -> bool {
         forall|table: u64,k: Seq<u8>| self.local_meta(table,k) ==
             if crate::bytes::contains_spec(plan.range,table,k) {
@@ -401,13 +447,34 @@ impl Participant {
                 }
             } else { before.local_meta(table,k) }
     }
+    pub proof fn retire_authorized(&self,plan:MigrationPlan)
+        requires self.envelope_view(plan),
+            forall|k:Seq<u8>| crate::bytes::contains_spec(plan.range,plan.range.table,k) ==>
+                self.command_at(plan,Command::Retire,self.drained_view(plan.range),k),
+        ensures self.capture_authorized(plan),
+    {
+        crate::bytes::cmp_laws(plan.range.lo@,plan.range.lo@);
+        assert(crate::bytes::contains_spec(plan.range,plan.range.table,plan.range.lo@));
+        assert(self.command_at(plan,Command::Retire,self.drained_view(plan.range),plan.range.lo@));
+        assert forall|k:Seq<u8>| crate::bytes::contains_spec(plan.range,plan.range.table,k) implies
+            self.local_meta(plan.range.table,k).is_some()
+                && role_spec(self.local_meta(plan.range.table,k).unwrap(),plan.generation,Role::Frozen,None,false) by {
+            assert(self.command_at(plan,Command::Retire,self.drained_view(plan.range),k));
+        }
+    }
 
     pub fn deliver(&mut self, plan: &MigrationPlan, command: Command) -> (out: ControlResult)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).lease_view() == old(self).lease_view(),
             final(self).owner_view() == old(self).owner_view(),
+            final(self).retains_receipts(*old(self)),
+            out.status == Status::Ok <==> old(self).delivery_authorized(*plan,command),
+            out.status == Status::Ok ==> final(self).command_seen(plan.generation,command)
+                && final(self).has_receipt(plan.generation),
             out.status != Status::Ok || old(self).command_seen(plan.generation,command) ==> final(self).same_metadata(*old(self)),
             out.status != Status::Ok || old(self).command_seen(plan.generation,command) ==> final(self).local_unchanged(*old(self)),
+            out.status==Status::Ok && command==Command::Retire && !old(self).command_seen(plan.generation,command) ==>
+                old(self).capture_authorized(*plan),
             out.certificate.is_some() ==> out.status == Status::Ok && out.cleanup == Cleanup::None,
             out.certificate == Some(Certificate::Retired) ==> command == Command::Retire,
             out.certificate == Some(Certificate::SourceDone) ==> (command == Command::Commit || command == Command::Abort) && old(self).owner_view() == plan.source,
@@ -431,12 +498,23 @@ impl Participant {
         };
         proof {
             assert(0u8 & mask == 0u8) by(bit_vector);
-            assert(receipt.applied & mask != 0 ==> self.command_seen(plan.generation,command));
+            assert((receipt.applied & mask != 0) == self.command_seen(plan.generation,command));
+            assert(0u8 & 48u8 == 0u8) by(bit_vector);
+            assert((receipt.applied & 48 != 0) == self.terminal_seen(plan.generation));
         }
         if receipt.applied & mask != 0 { return self.result(plan,command,receipt); }
         // A conflicting terminal decision cannot revive an already terminal role.
         if receipt.applied & 48 != 0 { return ControlResult::status(Status::Retry); }
         let drained = if matches!(command,Command::Retire) { self.leases.drained(&plan.range) } else { false };
+        proof {
+            assert forall|k:Seq<u8>| self.command_at(*plan,command,drained,k)
+                == self.command_at(*plan,command,self.drained_view(plan.range),k) by {
+                match command {
+                    Command::Start => {},Command::Freeze => {},Command::Final => {},
+                    Command::Retire => {},Command::Commit => {},Command::Abort => {},
+                }
+            }
+        }
         if !self.range_guard(plan,command,drained) { return ControlResult::status(Status::Retry); }
         proof {
             crate::bytes::cmp_laws(plan.range.lo@,plan.range.lo@);
@@ -446,6 +524,7 @@ impl Participant {
                 self.command_at(*plan,command,self.drained_view(plan.range),k) by {
                 assert(self.command_at(*plan,command,drained,k));
             }
+            if matches!(command,Command::Retire) { self.retire_authorized(*plan); }
         }
         let ghost before_tables = self.tables@;
         if let Some(mut table) = self.tables.remove(&plan.range.table) {
@@ -462,6 +541,10 @@ impl Participant {
                 if t != plan.range.table { assert(self.tables@.contains_key(t) == before_tables.contains_key(t)); }
             }
         }
+        proof {
+            let applied=receipt.applied;
+            assert(((applied | mask) & mask)==mask) by(bit_vector);
+        }
         receipt.applied = receipt.applied | mask;
         if matches!(command,Command::Commit) && self.owner == plan.source { receipt.cleanup = Cleanup::Source; }
         if matches!(command,Command::Abort) && self.owner == plan.destination { receipt.cleanup = Cleanup::Destination; }
@@ -474,13 +557,27 @@ impl Participant {
             crate::bytes::contains_spec(plan.range,plan.range.table,k) ==>
                 self.local_meta(plan.range.table,k).is_some()
                 && role_spec(self.local_meta(plan.range.table,k).unwrap(),plan.generation,role,round,terminal),
+            self.wf() && crate::directory::proper(plan.range.lo@,match plan.range.hi { Some(h) => Some(h@),None => None })
+                && self.range_role(*plan,role,round,terminal) ==> yes,
     {
+        proof { crate::bytes::cmp_laws(plan.range.lo@,plan.range.lo@); }
+        proof {
+            if crate::directory::proper(plan.range.lo@,match &plan.range.hi { Some(h)=>Some(h@),None=>None }) {
+                assert(crate::bytes::contains_spec(plan.range,plan.range.table,plan.range.lo@));
+                if self.range_role(*plan,role,round,terminal) {
+                    assert(self.local_meta(plan.range.table,plan.range.lo@).is_some());
+                    assert(role_spec(self.local_meta(plan.range.table,plan.range.lo@).unwrap(),plan.generation,role,round,terminal));
+                }
+            }
+        }
         let table = match self.tables.get(&plan.range.table) { Some(t) => t, None => return false };
         let at_lo = match table.lookup(&plan.range.lo) { Some(m) => m, None => return false };
         if !role_guard(at_lo,plan.generation,role,round,terminal) { return false; }
         let mut i = 0usize;
         while i < table.boundaries.len()
             invariant i <= table.boundaries.len(),
+                self.tables@.contains_key(plan.range.table),
+                table.boundaries@ == self.tables@[plan.range.table].boundaries@,
                 meta_wf(table.boundaries@) ==> meta_route(table.boundaries@,plan.range.lo@).is_some()
                     && role_spec(meta_route(table.boundaries@,plan.range.lo@).unwrap(),plan.generation,role,round,terminal),
                 forall|j: int| 0 <= j < i && crate::bytes::contains_spec(plan.range,plan.range.table,table.boundaries@[j].start@) ==>
@@ -488,6 +585,17 @@ impl Participant {
             decreases table.boundaries.len() - i,
         {
             let b = &table.boundaries[i];
+            proof {
+                if self.wf() {
+                    crate::bytes::cmp_laws(b.start@,b.start@);
+                    assert forall|j:int| i < j < table.boundaries.len() implies
+                        crate::bytes::cmp_spec(table.boundaries@[j].start@,b.start@) > 0 by {
+                        crate::bytes::cmp_laws(table.boundaries@[i as int].start@,table.boundaries@[j].start@);
+                    }
+                    selected_meta(table.boundaries@,i as int,b.start@);
+                    assert(self.local_meta(plan.range.table,b.start@) == Some(b.meta));
+                }
+            }
             if contains(&plan.range,plan.range.table,&b.start) && !role_guard(b.meta,plan.generation,role,round,terminal) { return false; }
             i += 1;
         }
@@ -507,6 +615,9 @@ impl Participant {
                 && role_spec(self.local_meta(plan.range.table,k).unwrap(),plan.generation,Role::Frozen,None,false)),
             out.certificate == Some(Certificate::Drained) ==> out.status == Status::Ok && out.cleanup == Cleanup::None,
             out.certificate == Some(Certificate::Drained) && self.wf() ==> self.capture_authorized(*plan),
+            out.certificate == Some(Certificate::Drained) ==> self.envelope_view(*plan),
+            self.wf() && self.envelope_view(*plan) && self.capture_authorized(*plan) ==>
+                out.status == Status::Ok && out.certificate == Some(Certificate::Drained),
     {
         if !self.envelope(plan) || self.owner != plan.source { return ControlResult::status(Status::Invalid); }
         if !self.all_role(plan,Role::Frozen,None,false) || !self.leases.drained(&plan.range) {
@@ -536,6 +647,7 @@ impl Participant {
     pub(crate) fn authorize_transfer(&self, plan: &MigrationPlan, cleanup: bool) -> (status: Status)
         requires self.wf(),
         ensures status == Status::Ok ==> self.transfer_authorized(*plan,cleanup),
+            status == Status::Ok <==> self.envelope_view(*plan) && self.transfer_authorized(*plan,cleanup),
     {
         if !self.envelope(plan) { return Status::Invalid; }
         if cleanup {
@@ -562,6 +674,7 @@ impl Participant {
     pub(crate) fn authorize_capture(&self, plan: &MigrationPlan) -> (status: Status)
         requires self.wf(),
         ensures status == Status::Ok ==> self.capture_authorized(*plan),
+            status == Status::Ok <==> self.envelope_view(*plan) && self.capture_authorized(*plan),
     {
         let result = self.drain(plan);
         match result.certificate { Some(Certificate::Drained) => Status::Ok, _ => Status::Retry }
@@ -574,6 +687,20 @@ impl Participant {
         self.receipts@.contains_key(generation) && self.receipts@[generation].cleanup != Cleanup::None
             && self.receipts@[generation].complete
     }
+    pub open spec fn can_seal(&self,plan:MigrationPlan) -> bool {
+        self.envelope_view(plan) && self.owner_view() == plan.destination && self.has_receipt(plan.generation)
+            && (self.ready_seen(plan.generation) || self.range_role(plan,Role::Stage,Some(1),false))
+    }
+    pub closed spec fn can_complete_cleanup(&self,plan:MigrationPlan) -> bool {
+        self.envelope_view(plan) && self.receipts@.contains_key(plan.generation)
+            && self.receipts@[plan.generation].cleanup != Cleanup::None
+            && (self.receipts@[plan.generation].complete || self.range_role(plan,Role::Empty,None,true))
+    }
+    pub proof fn pending_cleanup_is_completable(&self,plan:MigrationPlan)
+        requires self.envelope_view(plan),self.transfer_authorized(plan,true),
+        ensures self.can_complete_cleanup(plan),
+            self.owner_view()==plan.source || self.owner_view()==plan.destination,
+    {}
     pub open spec fn local_unchanged(&self, before: Self) -> bool {
         self.owner_view() == before.owner_view()
             && forall|table: u64,k: Seq<u8>| self.local_meta(table,k) == before.local_meta(table,k)
@@ -591,6 +718,9 @@ impl Participant {
         requires old(self).wf(),
         ensures final(self).wf(), final(self).lease_view() == old(self).lease_view(),
             final(self).owner_view() == old(self).owner_view(),
+            final(self).retains_receipts(*old(self)),
+            out.status == Status::Ok <==> old(self).can_seal(*plan)
+                && completed.matches_spec(*plan,old(self).owner_view()),
             out.status != Status::Ok ==> out.certificate == None,
             out.status != Status::Ok || old(self).ready_seen(plan.generation) ==> final(self).same_metadata(*old(self)),
             out.status != Status::Ok ==> final(self).local_unchanged(*old(self)),
@@ -631,6 +761,9 @@ impl Participant {
     pub(crate) fn complete_cleanup(&mut self, plan: &MigrationPlan, completed: CompletedCleanup) -> (out: ControlResult)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).lease_view() == old(self).lease_view(), final(self).local_unchanged(*old(self)),
+            final(self).retains_receipts(*old(self)),
+            out.status == Status::Ok <==> old(self).can_complete_cleanup(*plan)
+                && completed.matches_spec(*plan,old(self).owner_view()),
             out.status != Status::Ok ==> final(self).same_metadata(*old(self)),
             out.status != Status::Ok ==> out.certificate == None,
             out.status == Status::Ok ==> completed.matches_spec(*plan,old(self).owner_view())

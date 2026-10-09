@@ -18,19 +18,27 @@ verus! {
 pub trait RawStore {
     spec fn image(&self, range: KeyRange) -> Image;
     spec fn wf(&self) -> bool;
+    /// Proof-only stabilized I/O boundary; every primitive succeeds while this
+    /// borrowed range remains available. Production exposes no stability claim.
+    spec fn available(&self,range: KeyRange) -> bool;
     fn scan(&self, range: &KeyRange, after: Option<&Row>) -> (result: Result<Option<Row>,Status>)
         requires self.wf(),
         ensures result is Ok ==> first(self.image(*range),*range,
-            match after { None => None, Some(r) => Some(identity(*r)) },result->Ok_0);
+            match after { None => None, Some(r) => Some(identity(*r)) },result->Ok_0),
+            self.available(*range) ==> result is Ok;
     fn put(&mut self, range: &KeyRange, row: &Row) -> (status: Status)
         requires old(self).wf(), in_range(*range,row_cell(range.table,*row)),
         ensures final(self).wf(),
+            final(self).available(*range) == old(self).available(*range),
+            old(self).available(*range) ==> status == Status::Ok,
             status == Status::Ok ==> final(self).image(*range)
                 == old(self).image(*range).insert(row_cell(range.table,*row),row.value@),
             status != Status::Ok ==> final(self).image(*range) == old(self).image(*range);
     fn delete(&mut self, range: &KeyRange, row: &Row) -> (status: Status)
         requires old(self).wf(), in_range(*range,row_cell(range.table,*row)),
         ensures final(self).wf(),
+            final(self).available(*range) == old(self).available(*range),
+            old(self).available(*range) ==> status == Status::Ok,
             status == Status::Ok ==> final(self).image(*range)
                 == old(self).image(*range).remove(row_cell(range.table,*row)),
             status != Status::Ok ==> final(self).image(*range) == old(self).image(*range);
@@ -56,6 +64,9 @@ impl<'a,K: RawStore> Store for GuardedStore<'a,K> {
     closed spec fn authorized(&self,plan: MigrationPlan,owner: u32,cleanup: bool) -> bool {
         storage::same_plan(*self.plan,plan) && owner == self.participant.owner_view()
             && cleanup == self.cleanup && self.participant.transfer_authorized(*self.plan,cleanup)
+    }
+    closed spec fn available(&self,plan: MigrationPlan) -> bool {
+        storage::same_plan(*self.plan,plan) && self.raw.available(self.plan.range)
     }
     fn validate(&self,plan: &MigrationPlan,owner: u32,cleanup: bool) -> (status: Status) {
         if owner != self.participant.owner() || cleanup != self.cleanup
@@ -92,6 +103,8 @@ pub fn capture<K: RawStore>(node: &Participant,store: &K,plan: &MigrationPlan,af
     ensures result is Ok ==> node.capture_authorized(*plan)
         && first(store.image(plan.range),plan.range,
             match after { None => None, Some(r) => Some(identity(*r)) },result->Ok_0),
+        node.envelope_view(*plan) && node.capture_authorized(*plan)
+            && store.available(plan.range) ==> result is Ok,
 {
     let status = node.authorize_capture(plan);
     match status { Status::Ok => {}, _ => return Err(status) }
@@ -116,6 +129,9 @@ pub fn execute_final<K: RawStore,S: Source>(node: &mut Participant,store: &mut K
         result.certificate.is_none() ==> final(node).local_unchanged(*old(node)),
         result.certificate.is_none() ==> final(node).same_metadata(*old(node)),
         final(store).image(plan.range) != old(store).image(plan.range) ==> old(node).transfer_authorized(*plan,false),
+        old(node).envelope_view(*plan) && old(node).transfer_authorized(*plan,false)
+            && old(node).has_receipt(plan.generation) && old(store).available(plan.range) && source.available(*plan) ==>
+            result.status == Status::Ok && result.certificate == Some(Certificate::Ready),
 {
     proof {
         node.metadata_reflexive();
@@ -152,6 +168,10 @@ pub fn execute_cleanup<K: RawStore>(node: &mut Participant,store: &mut K,plan: &
         storage::preserves_outside(final(store).image(plan.range),old(store).image(plan.range),plan.range),
         storage::prefix(final(store).image(plan.range),old(store).image(plan.range),Map::empty(),plan.range),
         result.certificate.is_none() ==> final(node).same_metadata(*old(node)),
+        old(node).envelope_view(*plan) && old(node).transfer_authorized(*plan,true)
+            && old(store).available(plan.range) ==>
+            result.status == Status::Ok
+                && result.certificate == Some(if old(node).owner_view() == plan.source { Certificate::SourceDone } else { Certificate::DestinationDone }),
 {
     proof {
         node.metadata_reflexive();
@@ -159,9 +179,14 @@ pub fn execute_cleanup<K: RawStore>(node: &mut Participant,store: &mut K,plan: &
     }
     let status = node.authorize_transfer(plan,true);
     match status { Status::Ok => {}, _ => return rejected(status) }
+    proof { node.pending_cleanup_is_completable(*plan); }
     let owner = node.owner();
     let completed = {
         let mut guarded = GuardedStore { participant: &*node, raw: &mut *store, plan, cleanup: true };
+        proof {
+            assert(guarded.authorized(*plan,owner,true));
+            assert(owner == plan.source || owner == plan.destination);
+        }
         let completed = storage::cleanup(plan,owner,&mut guarded);
         let raw = guarded.raw;
         proof { assert(raw.wf()); }

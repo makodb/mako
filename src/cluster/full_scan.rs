@@ -1,134 +1,27 @@
 //! Native scan ABI and transport-byte adapters. Production cursor/range/page
 //! decisions and decoded-order contracts live in the same-source checked core.
 use crate::full_scan_core as checked;
-use checked::{Request, PageBudget, Completion, Maximum, read_blob, REQUEST_CAPACITY,
-              PAGE_CAPACITY, REQUEST_TAG, PAGE_TAG};
+use checked::{Request, BoundRequest, ScanIdentity, FullScan, Page};
 #[cfg(test)]
-use checked::PAGE_ROWS;
+use checked::{PAGE_ROWS, PAGE_CAPACITY, REQUEST_CAPACITY, Maximum};
 use crate::types::Status;
-use crate::routing_codec::{Reader, Writer};
 
 fn check(status: Status) -> Result<(), Status> {
     if status == Status::Ok { Ok(()) } else { Err(status) }
 }
 
-// Marshaling uses the shared LE-word/u64-blob convention. The allocation-free
-// request writer targets the caller's fixed native buffer directly.
-impl Request {
-    fn decode(bytes: &[u8]) -> Result<Self, Status> {
-        if bytes.len() > REQUEST_CAPACITY { return Err(Status::Invalid); }
-        let mut reader = Reader::new(bytes);
-        if reader.read_u32()? != REQUEST_TAG { return Err(Status::Invalid); }
-        let flags = reader.read_u32()?;
-        if flags & !7 != 0 { return Err(Status::Invalid); }
-        let lo = read_blob(&mut reader)?.to_vec();
-        let hi = read_blob(&mut reader)?;
-        let cursor = read_blob(&mut reader)?;
-        if (flags & 1 == 0 && !hi.is_empty()) || (flags & 2 == 0 && !cursor.is_empty()) {
-            return Err(Status::Invalid);
-        }
-        check(reader.finish())?;
-        let request = Self {
-            lo, hi: if flags & 1 != 0 { Some(hi.to_vec()) } else { None },
-            cursor: if flags & 2 != 0 { Some(cursor.to_vec()) } else { None },
-            reverse: flags & 4 != 0,
-        };
-        if !request.valid() { return Err(Status::Invalid); }
-        Ok(request)
-    }
-    fn encode(&self, output: &mut [u8]) -> Result<usize, Status> {
-        let hi = self.hi.as_deref().unwrap_or(&[]);
-        let cursor = self.cursor.as_deref().unwrap_or(&[]);
-        let length = 32usize.checked_add(self.lo.len()).and_then(|n| n.checked_add(hi.len()))
-            .and_then(|n| n.checked_add(cursor.len())).ok_or(Status::Exhausted)?;
-        if length > REQUEST_CAPACITY || length > output.len() { return Err(Status::Exhausted); }
-        let flags = u32::from(self.hi.is_some()) | (u32::from(self.cursor.is_some()) << 1)
-            | (u32::from(self.reverse) << 2);
-        output[..4].copy_from_slice(&REQUEST_TAG.to_le_bytes());
-        output[4..8].copy_from_slice(&flags.to_le_bytes());
-        let mut offset = 8;
-        for bytes in [self.lo.as_slice(), hi, cursor] {
-            output[offset..offset+8].copy_from_slice(&(bytes.len() as u64).to_le_bytes());
-            offset += 8;
-            output[offset..offset+bytes.len()].copy_from_slice(bytes);
-            offset += bytes.len();
-        }
-        Ok(length)
-    }
-}
-
-pub struct FullScan { request: Request, completion: Completion }
 impl FullScan {
-    fn new(request: Request) -> Self { Self { request,completion: Completion {done: false} } }
     fn consume(&mut self, bytes: &[u8], mut callback: impl FnMut(&[u8], &[u8]) -> bool)
         -> Result<bool, Status>
     {
-        if self.completion.done { return Err(Status::Invalid); }
-        // Validation has no callbacks/field edits. Rejection cannot expose a
-        // partial malformed batch. Keys and values borrow transport storage.
-        let page = self.request.validate_page(bytes)?;
-        let mut reader = Reader::new(bytes);
-        reader.read_slice(12)?;
-        for _ in 0..page.count {
-            let key = read_blob(&mut reader)?;
-            let value = read_blob(&mut reader)?;
-            if !callback(key,value) {
-                check(self.completion.complete(page.count,page.eof,true))?;
-                return Ok(true);
-            }
+        let mut page = self.begin_page(bytes)?;
+        while let Some((key,value)) = page.next()? {
+            if !callback(key,value) { page.stop(); break; }
         }
-        if let Some(last) = page.last { check(self.request.advance(last))?; }
-        check(self.completion.complete(page.count,page.eof,false))?;
-        Ok(self.completion.done)
+        self.finish_page(&page)
     }
 }
 
-pub struct Page {
-    request: Request,
-    bytes: Writer,
-    last_offset: usize,
-    last_length: usize,
-    budget: PageBudget,
-    error: Option<Status>,
-    maximum: Maximum,
-}
-impl Page {
-    fn new(request: Request) -> Result<Self, Status> {
-        let mut bytes = Writer::with_capacity(PAGE_CAPACITY)?;
-        check(bytes.write_u32(PAGE_TAG))?;
-        check(bytes.write_u32(0))?;
-        check(bytes.write_u32(0))?;
-        Ok(Self { request,bytes,last_offset: 0,last_length: 0,
-            budget: PageBudget::new(),error: None,maximum: Maximum::new() })
-    }
-    fn add(&mut self, key: &[u8], value: &[u8]) -> Result<bool, Status> {
-        if self.error.is_some() { return Err(Status::Invalid); }
-        let previous = if self.budget.count == 0 { self.request.cursor.as_deref() }
-            else { Some(&self.bytes.as_bytes()[self.last_offset..self.last_offset+self.last_length]) };
-        if !self.request.follows(key,previous) {
-            self.error = Some(Status::Invalid); return Err(Status::Invalid);
-        }
-        match self.budget.reserve(key.len(),value.len()) {
-            Status::Ok => {},
-            Status::NotFound => return Ok(false),
-            error => { self.error = Some(error); return Err(error); },
-        }
-        self.last_offset = self.bytes.len()+8;
-        self.last_length = key.len();
-        let result = check(self.bytes.write_bytes(key))
-            .and_then(|()| check(self.bytes.write_bytes(value)));
-        if let Err(error) = result { self.error = Some(error); return Err(error); }
-        Ok(true)
-    }
-    fn finish(&self, output: &mut [u8]) -> Result<usize, Status> {
-        if let Some(error) = self.error { return Err(error); }
-        if output.len() < self.bytes.len() { return Err(Status::Exhausted); }
-        output[..self.bytes.len()].copy_from_slice(self.bytes.as_bytes());
-        output[4..8].copy_from_slice(&(self.budget.count as u32).to_le_bytes());
-        output[8..12].copy_from_slice(&u32::from(!self.budget.more).to_le_bytes());
-        Ok(self.bytes.len())
-    }
-}
 
 // Native pointer and callback adapters are the narrow ABI boundary, not engine
 // admission or a trusted statement that storage is complete.
@@ -152,14 +45,32 @@ mod ffi {
         lo: Bytes, hi: Bytes, cursor: Bytes,
         has_hi: u32, has_cursor: u32, reverse: u32,
     }
+    #[repr(C)]
+    pub struct Identity {
+        transaction: crate::types::TxnId,
+        grant: crate::types::Grant,
+        table: u64,
+        fixed_coordinate: u32,
+        coordinate: Bytes,
+    }
+    impl Identity {
+        unsafe fn decode(&self) -> Result<ScanIdentity,Status> {
+            if self.fixed_coordinate > 1 || self.coordinate.len > 64
+                || (self.fixed_coordinate == 0 && self.coordinate.len != 0) { return Err(Status::Invalid); }
+            let coordinate = self.coordinate.slice()?;
+            Ok(ScanIdentity {transaction:self.transaction,grant:self.grant,table:self.table,
+                fixed_coordinate:self.fixed_coordinate != 0,coordinate:coordinate.to_vec()})
+        }
+    }
     unsafe fn output<'a>(data: *mut u8, size: usize) -> Result<&'a mut [u8], Status> {
         if data.is_null() || size > isize::MAX as usize { return Err(Status::Invalid); }
         Ok(std::slice::from_raw_parts_mut(data, size))
     }
     fn status(result: Result<(), Status>) -> u32 { result.err().unwrap_or(Status::Ok) as u32 }
     #[no_mangle]
-    pub unsafe extern "C" fn mako_full_scan_new(bounds: Bounds, out: *mut *mut FullScan) -> u32 {
+    pub unsafe extern "C" fn mako_full_scan_new(bounds: Bounds, identity: *const Identity, out: *mut *mut FullScan) -> u32 {
         status((|| {
+            let identity = identity.as_ref().ok_or(Status::Invalid)?;
             if out.is_null() || bounds.has_hi > 1 || bounds.has_cursor > 1 || bounds.reverse > 1 {
                 return Err(Status::Invalid);
             }
@@ -170,7 +81,7 @@ mod ffi {
                 reverse: bounds.reverse != 0,
             };
             if !request.valid() { return Err(Status::Invalid); }
-            *out = Box::into_raw(Box::new(FullScan::new(request)));
+            *out = Box::into_raw(Box::new(FullScan::new(BoundRequest {identity:identity.decode()?,bounds:request})));
             Ok(())
         })())
     }
@@ -205,7 +116,7 @@ mod ffi {
     pub unsafe extern "C" fn mako_scan_page_new(request: Bytes, out: *mut *mut Page) -> u32 {
         status((|| {
             if out.is_null() { return Err(Status::Invalid); }
-            let request = Request::decode(request.slice()?)?;
+            let request = BoundRequest::decode(request.slice()?)?;
             *out = Box::into_raw(Box::new(Page::new(request)?)); Ok(())
         })())
     }
@@ -215,18 +126,30 @@ mod ffi {
     }
     #[no_mangle]
     pub unsafe extern "C" fn mako_scan_page_bounds(page: *const Page) -> Bounds {
-        let r = &(*page).request;
+        let r = &(*page).request.bounds;
         Bounds { lo: Bytes::from_slice(&r.lo), hi: Bytes::from_slice(r.hi.as_deref().unwrap_or(&[])),
             cursor: Bytes::from_slice(r.cursor.as_deref().unwrap_or(&[])),
             has_hi: u32::from(r.hi.is_some()), has_cursor: u32::from(r.cursor.is_some()),
             reverse: u32::from(r.reverse) }
     }
     #[no_mangle]
+    pub unsafe extern "C" fn mako_scan_page_identity_matches(page: *const Page, identity: *const Identity) -> u32 {
+        status((|| {
+            let page = page.as_ref().ok_or(Status::Invalid)?;
+            let identity = identity.as_ref().ok_or(Status::Invalid)?;
+            if identity.fixed_coordinate > 1 || identity.coordinate.len > 64
+                || (identity.fixed_coordinate == 0 && identity.coordinate.len != 0) { return Err(Status::Invalid); }
+            let matches = page.request.identity.matches(identity.transaction,identity.grant,identity.table,
+                identity.fixed_coordinate != 0,identity.coordinate.slice()?);
+            if matches { Ok(()) } else { Err(Status::Invalid) }
+        })())
+    }
+    #[no_mangle]
     pub unsafe extern "C" fn mako_scan_page_observe_max(page: *mut Page, key: Bytes) -> u32 {
         status((|| {
             let page = page.as_mut().ok_or(Status::Invalid)?;
             if page.error.is_some() || page.budget.count != 0 { return Err(Status::Invalid); }
-            let result = check(page.maximum.observe(&page.request,key.slice()?));
+            let result = check(page.maximum.observe(&page.request.bounds,key.slice()?));
             if let Err(error) = result { page.error = Some(error); }
             result
         })())
@@ -266,8 +189,13 @@ mod ffi {
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn request(reverse: bool) -> Request {
-        Request { lo: vec![], hi: Some(vec![255]), cursor: None, reverse }
+    fn request(reverse: bool) -> BoundRequest {
+        BoundRequest {identity:identity(),bounds:Request { lo: vec![], hi: Some(vec![255]), cursor: None, reverse }}
+    }
+    fn identity() -> ScanIdentity {
+        ScanIdentity {transaction:crate::types::TxnId {client:7,sequence:9},
+            grant:crate::types::Grant {owner:2,epoch:11},table:13,
+            fixed_coordinate:false,coordinate:vec![]}
     }
     #[test]
     fn binary_cursor_and_explicit_eof() {
@@ -304,12 +232,17 @@ mod tests {
         for i in 0..PAGE_ROWS { assert!(page.add(&[i as u8],b"v").ok().unwrap()); }
         assert!(!page.add(&[PAGE_ROWS as u8],b"v").ok().unwrap());
         let mut bytes = [0; REQUEST_CAPACITY];
-        let r = Request { lo: b"a\0".to_vec(), hi: Some(b"z".to_vec()), cursor: Some(b"b\0".to_vec()), reverse: true };
+        let r = BoundRequest {identity:identity(),bounds:Request {
+            lo: b"a\0".to_vec(), hi: Some(b"z".to_vec()), cursor: Some(b"b\0".to_vec()), reverse: true }};
         let n = r.encode(&mut bytes).ok().unwrap();
-        let decoded = Request::decode(&bytes[..n]).ok().unwrap();
-        assert_eq!(decoded.lo,r.lo); assert_eq!(decoded.hi,r.hi);
-        assert_eq!(decoded.cursor,r.cursor); assert!(decoded.reverse);
-        assert!(Request::decode(&bytes[..n+1]).is_err());
+        let decoded = BoundRequest::decode(&bytes[..n]).ok().unwrap();
+        assert_eq!(decoded.bounds.lo,r.bounds.lo); assert_eq!(decoded.bounds.hi,r.bounds.hi);
+        assert_eq!(decoded.bounds.cursor,r.bounds.cursor); assert!(decoded.bounds.reverse);
+        assert!(decoded.identity.transaction == r.identity.transaction);
+        assert!(decoded.identity.grant == r.identity.grant);
+        assert_eq!(decoded.identity.table,r.identity.table);
+        assert_eq!(decoded.identity.coordinate,r.identity.coordinate);
+        assert!(BoundRequest::decode(&bytes[..n+1]).is_err());
     }
     #[test]
     fn oversized_and_out_of_range_rows_are_errors_not_eof() {
@@ -335,8 +268,8 @@ mod tests {
         assert!(!scan.consume(&bytes[..n],|_,_| true).ok().unwrap());
         let mut encoded = [0; REQUEST_CAPACITY];
         let n = scan.request.encode(&mut encoded).ok().unwrap();
-        let next = Request::decode(&encoded[..n]).ok().unwrap();
-        assert_eq!(next.cursor.as_deref(),Some(b"a\0".as_slice()));
+        let next = BoundRequest::decode(&encoded[..n]).ok().unwrap();
+        assert_eq!(next.bounds.cursor.as_deref(),Some(b"a\0".as_slice()));
         let mut second = Page::new(next).ok().unwrap();
         assert!(second.add(b"a",b"two").ok().unwrap());
         assert!(second.add(b"",b"three").ok().unwrap());
@@ -347,15 +280,15 @@ mod tests {
     }
     #[test]
     fn unbounded_reverse_discovers_real_maximum_and_preserves_empty_key() {
-        let unbounded = || Request { lo: vec![],hi: None,cursor: None,reverse: true };
+        let unbounded = || BoundRequest {identity:identity(),bounds:Request { lo: vec![],hi: None,cursor: None,reverse: true }};
         let mut scan = FullScan::new(unbounded());
         let mut encoded = [0; REQUEST_CAPACITY];
         let n = scan.request.encode(&mut encoded).ok().unwrap();
-        let mut page = Page::new(Request::decode(&encoded[..n]).ok().unwrap()).ok().unwrap();
+        let mut page = Page::new(BoundRequest::decode(&encoded[..n]).ok().unwrap()).ok().unwrap();
         assert!(page.maximum.key.is_none());
         let keys = [vec![],vec![0],vec![255],vec![255,0,255]];
         for key in &keys {
-            assert_eq!(page.maximum.observe(&page.request,key),Status::Ok);
+            assert_eq!(page.maximum.observe(&page.request.bounds,key),Status::Ok);
         }
         assert_eq!(page.maximum.key.as_ref(),keys.last());
         for key in keys.iter().rev() { assert!(page.add(key,b"").ok().unwrap()); }
@@ -366,15 +299,15 @@ mod tests {
             assert!(value.is_empty()); delivered.push(key.to_vec()); true
         }).ok().unwrap());
         assert_eq!(delivered,keys.into_iter().rev().collect::<Vec<_>>());
-        assert_eq!(scan.request.cursor.as_deref(),Some(b"".as_slice()));
+        assert_eq!(scan.request.bounds.cursor.as_deref(),Some(b"".as_slice()));
         assert!(scan.consume(&bytes[..n],|_,_| panic!("completed scan replay")).is_err());
         let mut only_empty = Maximum::new();
-        assert_eq!(only_empty.observe(&unbounded(),b""),Status::Ok);
+        assert_eq!(only_empty.observe(&unbounded().bounds,b""),Status::Ok);
         assert_eq!(only_empty.key.as_deref(),Some(b"".as_slice()));
     }
     #[test]
     fn byte_full_page_and_callback_stop_are_terminal_without_replay() {
-        let unbounded = || Request { lo: vec![],hi: None,cursor: None,reverse: false };
+        let unbounded = || BoundRequest {identity:identity(),bounds:Request { lo: vec![],hi: None,cursor: None,reverse: false }};
         let mut page = Page::new(unbounded()).ok().unwrap();
         assert!(page.add(b"",&vec![0; PAGE_CAPACITY-28]).ok().unwrap());
         assert!(!page.add(b"a",b"").ok().unwrap());
@@ -387,5 +320,38 @@ mod tests {
         let mut empty = FullScan::new(unbounded());
         let n = Page::new(unbounded()).ok().unwrap().finish(&mut bytes).ok().unwrap();
         assert!(empty.consume(&bytes[..n],|_,_| panic!("empty page delivered")).ok().unwrap());
+    }
+    #[test]
+    fn identity_roundtrip_distinguishes_fixed_empty_and_rejects_relabeling() {
+        let mut r = request(false);
+        r.identity.fixed_coordinate = true;
+        r.identity.coordinate = vec![0,255,0];
+        let mut bytes = [0; REQUEST_CAPACITY];
+        let n = r.encode(&mut bytes).ok().unwrap();
+        let decoded = BoundRequest::decode(&bytes[..n]).ok().unwrap();
+        assert!(decoded.identity.matches(r.identity.transaction,r.identity.grant,r.identity.table,
+            true,&[0,255,0]));
+        assert!(!decoded.identity.matches(r.identity.transaction,r.identity.grant,r.identity.table+1,
+            true,&[0,255,0]));
+        assert!(!decoded.identity.matches(r.identity.transaction,
+            crate::types::Grant {epoch:r.identity.grant.epoch+1,..r.identity.grant},
+            r.identity.table,true,&[0,255,0]));
+        r.identity.coordinate.clear();
+        let n = r.encode(&mut bytes).ok().unwrap();
+        let decoded = BoundRequest::decode(&bytes[..n]).ok().unwrap();
+        assert!(decoded.identity.fixed_coordinate);
+        assert!(!decoded.identity.matches(r.identity.transaction,r.identity.grant,r.identity.table,false,&[]));
+    }
+    #[test]
+    fn raw_identity_does_not_bound_raw_keys_to_coordinate_capacity() {
+        let mut r = request(false);
+        r.bounds.lo = vec![0;128];
+        r.bounds.hi = None;
+        let mut bytes = [0; REQUEST_CAPACITY];
+        let n = r.encode(&mut bytes).ok().unwrap();
+        let decoded = BoundRequest::decode(&bytes[..n]).ok().unwrap();
+        assert_eq!(decoded.bounds.lo,r.bounds.lo);
+        assert!(!decoded.identity.fixed_coordinate);
+        assert!(decoded.identity.coordinate.is_empty());
     }
 }

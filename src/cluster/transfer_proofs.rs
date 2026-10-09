@@ -15,11 +15,17 @@ pub proof fn split_set<T>(keys:Seq<T>)
     assert(keys.drop_last().push(keys.last()) =~= keys);
     keys.drop_last().lemma_push_to_set_commute(keys.last());
 }
-/// Encoding byte strings as mathematical values is part of the finite-key
-/// embedding. Writers are historical application provenance, including deleted
-/// keys; absence does NOT reset writer to -1.
-pub open spec fn observed(image: Image,label: Cell,writer: int,code: spec_fn(Seq<u8>)->int) -> p::Cell {
-    p::Cell { value: match storage::value(image,label) { Some(v) => Some(code(v)), None => None }, writer }
+/// One canonical injective representation is shared by every native event.
+/// Writers are historical application provenance, including deleted keys;
+/// absence does NOT reset writer to -1.
+pub open spec fn observed(image: Image,label: Cell,writer: int) -> p::Cell {
+    p::Cell { value: crate::sharding_bytes::value_option(storage::value(image,label)), writer }
+}
+pub proof fn observed_bytes(a:Image,b:Image,label_a:Cell,label_b:Cell,writer_a:int,writer_b:int)
+    requires observed(a,label_a,writer_a).value == observed(b,label_b,writer_b).value,
+    ensures storage::value(a,label_a) == storage::value(b,label_b),
+{
+    crate::sharding_bytes::value_option_injective(storage::value(a,label_a),storage::value(b,label_b));
 }
 pub open spec fn packet(g: nat,k: int,cell: p::Cell) -> p::Packet {
     p::Packet { generation:g,round:1,key:k,cell }
@@ -62,16 +68,16 @@ pub open spec fn scan_covers(range:crate::types::KeyRange,after:Option<Identity>
 /// Remaining premises are the global lease expansion and authentic source
 /// byte/provenance embedding, not an assumed handler transition.
 pub proof fn capture_segment(c: p::Constants,node: &Participant,plan: MigrationPlan,
-    s: p::State,keys: Seq<int>,labels: Map<int,Cell>,source: Image,k: int,writer: int,code: spec_fn(Seq<u8>)->int,
+    s: p::State,keys: Seq<int>,labels: Map<int,Cell>,source: Image,k: int,writer: int,
     cursor:Option<Identity>,row:Option<crate::types::Row>)
     -> (segment: log::Segment)
     requires labels_cover(plan,s,keys,labels),local_coupling(node,plan,s,labels),
         node.capture_authorized(plan),keys.to_set().contains(k),
         storage::first(source,plan.range,cursor,row),scan_covers(plan.range,cursor,row,labels[k]),
         p::drained(s,s.plans[plan.generation as nat].keys) == node.drained_view(plan.range),
-        observed(source,labels[k],writer,code) == p::replica(s,plan.source as int,k).cell,
+        observed(source,labels[k],writer) == p::replica(s,plan.source as int,k).cell,
     ensures log::certificate(c,s,segment),
-        segment.writes == seq![log::Write::Packet { value: packet(plan.generation as nat,k,observed(source,labels[k],writer,code)) }],
+        segment.writes == seq![log::Write::Packet { value: packet(plan.generation as nat,k,observed(source,labels[k],writer)) }],
         segment.actions == seq![p::Action::Capture { generation:plan.generation as nat,round:1,key:k }],
 {
     if row is None || labels[k] != storage::row_cell(plan.range.table,row.unwrap()) {
@@ -87,7 +93,7 @@ pub proof fn capture_segment(c: p::Constants,node: &Participant,plan: MigrationP
         assert(metadata::metadata(node.local_meta(labels[key].0,labels[key].1.0).unwrap(),p::replica(s,plan.source as int,key)));
     }
     let action = p::Action::Capture { generation:g,round:1,key:k };
-    let write = log::Write::Packet { value: packet(g,k,observed(source,labels[k],writer,code)) };
+    let write = log::Write::Packet { value: packet(g,k,observed(source,labels[k],writer)) };
     log::single_write(s,write);
     let after = log::apply_write(s,write);
     log::accepted(c,s,after,action);
@@ -129,25 +135,25 @@ pub proof fn copy_segment(c: p::Constants,node: &Participant,plan: MigrationPlan
 /// is retained even for tombstones. Unrelated labels are framed by injectivity.
 pub proof fn native_copy_effect(before: Image,after: Image,label: Cell,row_value: Option<Seq<u8>>,
     labels: Map<int,Cell>,key: int,writers_before: Map<int,int>,writers_after: Map<int,int>,
-    source_cell: p::Cell,code: spec_fn(Seq<u8>)->int)
+    source_cell: p::Cell)
     requires labels.dom().contains(key),labels[key] == label,
         forall|a: int,b: int| labels.dom().contains(a) && labels.dom().contains(b) && labels[a] == labels[b] ==> a == b,
         after == match row_value { Some(v) => before.insert(label,v), None => before.remove(label) },
-        source_cell.value == match row_value { Some(v) => Some(code(v)), None => None },
+        source_cell.value == crate::sharding_bytes::value_option(row_value),
         writers_after == writers_before.insert(key,source_cell.writer),
-    ensures observed(after,label,writers_after[key],code) == source_cell,
+    ensures observed(after,label,writers_after[key]) == source_cell,
         forall|k: int| labels.dom().contains(k) && k != key ==>
-            observed(after,labels[k],writers_after[k],code) == observed(before,labels[k],writers_before[k],code),
+            observed(after,labels[k],writers_after[k]) == observed(before,labels[k],writers_before[k]),
 {}
 
 /// End-to-end exact mirror coverage includes all finite model labels, including
 /// absent-in-both keys. The source writers are carried from actual captures.
 pub proof fn completed_coverage(current: Image,initial: Image,source: Image,plan: MigrationPlan,
-    keys: Seq<int>,labels: Map<int,Cell>,writers: Map<int,int>,code: spec_fn(Seq<u8>)->int)
+    keys: Seq<int>,labels: Map<int,Cell>,writers: Map<int,int>)
     requires storage::complete(current,initial,source,plan.range),labels.dom() == keys.to_set(),
         forall|k: int| labels.dom().contains(k) ==> storage::in_range(plan.range,labels[k]),
     ensures forall|k: int| labels.dom().contains(k) ==>
-        observed(current,labels[k],writers[k],code) == observed(source,labels[k],writers[k],code),
+        observed(current,labels[k],writers[k]) == observed(source,labels[k],writers[k]),
 {
     let dense = Seq::new(keys.len(),|i: int| labels[keys[i]]);
     assert forall|i:int| 0 <= i < dense.len() implies storage::in_range(plan.range,dense[i]) by {

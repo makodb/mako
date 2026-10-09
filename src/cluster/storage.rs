@@ -146,10 +146,14 @@ pub proof fn prefix_at(current:Image,initial:Image,source:Image,r:KeyRange,curso
 pub trait Source {
     spec fn image(&self) -> Image;
     spec fn wf(&self) -> bool;
+    /// Stabilized authenticated-source interface: each individual scan returns
+    /// successfully. This is not a premise that the mirror traversal completes.
+    spec fn available(&self,plan: MigrationPlan) -> bool;
     fn scan(&self,plan: &MigrationPlan,after: Option<&Row>) -> (result: Result<Option<Row>,Status>)
         requires self.wf(),
         ensures result is Ok ==> first(self.image(),plan.range,
-            match after { None => None, Some(x) => Some(identity(*x)) },result->Ok_0);
+            match after { None => None, Some(x) => Some(identity(*x)) },result->Ok_0),
+            self.available(*plan) ==> result is Ok;
 }
 
 /// Checked adapter boundary, implemented by transfer::GuardedStore, not FFI.
@@ -171,18 +175,22 @@ pub trait Store {
     spec fn image(&self) -> Image;
     spec fn wf(&self) -> bool;
     spec fn authorized(&self,plan: MigrationPlan,owner: u32,cleanup: bool) -> bool;
+    spec fn available(&self,plan: MigrationPlan) -> bool;
     fn validate(&self,plan: &MigrationPlan,owner: u32,cleanup: bool) -> (status: Status)
         requires self.wf(),
-        ensures status == Status::Ok ==> self.authorized(*plan,owner,cleanup);
+        ensures (status == Status::Ok) == self.authorized(*plan,owner,cleanup);
     fn scan(&self,plan: &MigrationPlan,after: Option<&Row>) -> (result: Result<Option<Row>,Status>)
         requires self.wf(),
         ensures result is Ok ==> first(self.image(),plan.range,
-            match after { None => None, Some(x) => Some(identity(*x)) },result->Ok_0);
+            match after { None => None, Some(x) => Some(identity(*x)) },result->Ok_0),
+            self.available(*plan) ==> result is Ok;
     fn put(&mut self,plan: &MigrationPlan,owner: u32,row: &Row) -> (status: Status)
         requires old(self).wf(), old(self).authorized(*plan,owner,false),
             in_range(plan.range,row_cell(plan.range.table,*row)),
         ensures final(self).wf(), final(self).authorized(*plan,owner,false),
             final(self).context() == old(self).context(),
+            final(self).available(*plan) == old(self).available(*plan),
+            old(self).available(*plan) ==> status == Status::Ok,
             status == Status::Ok ==> final(self).image()
                 == old(self).image().insert(row_cell(plan.range.table,*row),row.value@),
             status != Status::Ok ==> final(self).image() == old(self).image();
@@ -191,6 +199,8 @@ pub trait Store {
             in_range(plan.range,row_cell(plan.range.table,*row)),
         ensures final(self).wf(), final(self).authorized(*plan,owner,cleanup),
             final(self).context() == old(self).context(),
+            final(self).available(*plan) == old(self).available(*plan),
+            old(self).available(*plan) ==> status == Status::Ok,
             status == Status::Ok ==> final(self).image()
                 == old(self).image().remove(row_cell(plan.range.table,*row)),
             status != Status::Ok ==> final(self).image() == old(self).image();
@@ -211,6 +221,9 @@ pub fn mirror<'a,S: Store,R: Source>(plan: &'a MigrationPlan,owner: u32,store: &
         preserves_outside(final(store).image(),old(store).image(),plan.range),
         final(store).context() == old(store).context(),
         prefix(final(store).image(),old(store).image(),source.image(),plan.range),
+        final(store).available(*plan) == old(store).available(*plan),
+        owner == plan.destination && old(store).authorized(*plan,owner,false)
+            && old(store).available(*plan) && source.available(*plan) ==> result is Ok,
 {
     proof { prefix_at(store.image(),store.image(),source.image(),plan.range,None); }
     if owner != plan.destination { return Err(Status::Invalid); }
@@ -224,6 +237,7 @@ pub fn mirror<'a,S: Store,R: Source>(plan: &'a MigrationPlan,owner: u32,store: &
         invariant store.wf(),source.wf(),store.authorized(*plan,owner,false),
             initial == old(store).image(),
             store.context() == old(store).context(),
+            store.available(*plan) == old(store).available(*plan),
             first(source.image(),plan.range,row_option(after),src),
             first(initial,plan.range,row_option(after),dst),
             mirrored(store.image(),initial,source.image(),plan.range,row_option(after)),
@@ -290,6 +304,9 @@ pub fn cleanup<'a,S: Store>(plan: &'a MigrationPlan,owner: u32,store: &mut S)
         prefix(final(store).image(),old(store).image(),Map::empty(),plan.range),
         preserves_outside(final(store).image(),old(store).image(),plan.range),
         final(store).context() == old(store).context(),
+        final(store).available(*plan) == old(store).available(*plan),
+        (owner == plan.source || owner == plan.destination)
+            && old(store).authorized(*plan,owner,true) && old(store).available(*plan) ==> result is Ok,
 {
     proof { prefix_at(store.image(),store.image(),Map::empty(),plan.range,None); }
     if owner != plan.source && owner != plan.destination { return Err(Status::Invalid); }
@@ -302,6 +319,7 @@ pub fn cleanup<'a,S: Store>(plan: &'a MigrationPlan,owner: u32,store: &mut S)
         invariant store.wf(),store.authorized(*plan,owner,true),
             initial == old(store).image(),
             store.context() == old(store).context(),
+            store.available(*plan) == old(store).available(*plan),
             first(initial,plan.range,row_option(after),dst),
             mirrored(store.image(),initial,Map::empty(),plan.range,row_option(after)),
             preserves_outside(store.image(),initial,plan.range),

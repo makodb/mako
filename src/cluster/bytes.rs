@@ -135,4 +135,5 @@ pub fn contains(r: &KeyRange, table: u64, key: &[u8]) -> (yes: bool)
     if r.table != table || compare(&r.lo,key) > 0 { return false; }
     match &r.hi { Some(h) => compare(key,h) < 0, None => true }
 }
+
 } // verus!

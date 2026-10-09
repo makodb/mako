@@ -90,10 +90,14 @@ attests the Verus `0.2026.08.02.b677dd5` release archive by SHA-256, uses Rust
 resource overrides. Native transport/thread/lifetime/engine boundary code
 outside Verus is not claimed as verified handler logic; the source-coverage
 audit is not itself a proof.
-The ghost-log correspondence targets the independent **placement** specification,
-not native distributed transaction-history strict serializability or crash-safe
-migration. See [the proof contract and checked results](tla/mako/README.md#native-rust-correspondence)
-for the source mapping and trusted boundaries.
+Native source histories construct the independent **placement** refinement from
+actor and engine effects; they also establish canonical byte-value and ordered
+scan correspondence. Separate sharding protocols prove recovery, configured-owner
+lifecycle, conditional progress and administrative retention against explicit
+transaction/Raft/storage interfaces. Those interfaces do not make the current
+live-only native adapter crash-safe or reclaim its participant journals.
+See [the proof scopes, contracts and checked results](tla/mako/README.md)
+for the exact guarantees and trusted boundaries.
 
 The native build uses ordinary `cargo`/`rustc` from `PATH` (minimum Rust
 `1.97.1`), including the Docker image's official `/opt/rust` tarball installation;

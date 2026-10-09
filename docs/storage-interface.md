@@ -156,6 +156,43 @@ lifecycle hook suppresses only that reentry and leaves normal admission intact.
 The host binds each native thread to its actual shard and allocator/Masstree
 runtime and releases its transaction state before worker exit.
 
+### Governed range scans
+
+The V2 scan request binds the complete transaction identity, owner/epoch grant,
+logical table, and raw-versus-fixed warehouse coordinate. The C++ receiver
+compares that embedded identity with the outer `ShardingRequest` before lease
+admission or engine access. `mako_full_scan_new` takes `MakoScanIdentity`;
+`mako_scan_page_identity_matches` validates it without allocating a coordinate
+copy. Raw scans carry no fixed coordinate, so long raw keys are not constrained
+by the warehouse-coordinate buffer.
+
+`full_scan_core.rs` owns checked request encoding/decoding, raw callback page
+assembly and cursor consumption. `full_scan_proofs.rs` derives forward/reverse
+coverage and exact byte values from transactional ordered engine callbacks,
+explicit exhaustion/stop reasons, the held grant and placement coherence.
+A nonempty short page is not EOF; errors, byte-budget stops and user callback
+stops cannot masquerade as complete range coverage. The FFI/lifetime wrappers,
+SRPC response association, physical-handle labeling and MBTA metadata stripping
+remain foreign contracts, not verified C++ bodies.
+
+### Recovery and progress scope
+
+The Verus sharding recovery protocol requires committed per-authority
+checkpoints, durable engine suffixes/outcomes and pending-work records,
+enumerable transaction namespaces, persisted admission/membership fences,
+immutable copy versions and generation-scoped deletion completion. Native
+source histories now chain actual participant snapshots and derive retained
+Final receipts; raw traversal and callbacks have conditional progress proofs
+under primitive availability and eventual transaction settlement.
+
+Those requirements are not implemented by the current native migration
+persistence adapter: live migration still uses fixed owners and the
+non-replicated path. Metadata-only restoration is insufficient. Administrative
+retention separately bounds acknowledged, checkpoint-covered request records;
+it does not reclaim participant recovery logs, receipt tables or outstanding
+copy/cleanup work. See [the proof scopes and interfaces](../tla/mako/README.md).
+
+
 ## Authoring & regenerating the DSL blocks
 
 - Regenerate with `scripts/regen_storage_dsl.sh` (never bare

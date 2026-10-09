@@ -15,6 +15,14 @@ typedef struct MakoScanBounds {
     uint32_t has_cursor;
     uint32_t reverse;
 } MakoScanBounds;
+/* Identity bytes are borrowed only for the constructor/comparison call. */
+typedef struct MakoScanIdentity {
+    MakoShardTxn transaction;
+    MakoShardGrant grant;
+    uint64_t table;
+    uint32_t fixed_coordinate;
+    MakoShardBytes coordinate;
+} MakoScanIdentity;
 /* Runtime pins one immutable snapshot through the complete visitor traversal.
  * The visitor may block/reenter: no cache/participant mutex may remain held.
  * Visitor: 0 continue, 1 stop, 2 error. Bounds are borrowed during the call. */
@@ -27,7 +35,9 @@ uint32_t mako_sharding_scan_segments(uint64_t table, MakoShardBytes lo,
                                       void* context);
 /* Callback bytes are borrowed only for the call; exceptions must not cross Rust. */
 typedef uint32_t (*MakoScanRowCallback)(void*, MakoShardBytes, MakoShardBytes);
-uint32_t mako_full_scan_new(MakoScanBounds bounds, MakoFullScan** output);
+uint32_t mako_full_scan_new(MakoScanBounds bounds,
+                            const MakoScanIdentity* identity,
+                            MakoFullScan** output);
 void mako_full_scan_free(MakoFullScan* scan);
 uint32_t mako_full_scan_request(const MakoFullScan* scan, uint8_t* output,
                                 size_t capacity, size_t* length);
@@ -35,6 +45,8 @@ uint32_t mako_full_scan_consume(MakoFullScan* scan, MakoShardBytes page,
                                 MakoScanRowCallback callback, void* context,
                                 uint32_t* done);
 uint32_t mako_scan_page_new(MakoShardBytes request, MakoScanPage** output);
+uint32_t mako_scan_page_identity_matches(const MakoScanPage* page,
+                                        const MakoScanIdentity* identity);
 void mako_scan_page_free(MakoScanPage* page);
 MakoScanBounds mako_scan_page_bounds(const MakoScanPage* page);
 /* Reverse without hi/cursor first observes every key of a forward native scan

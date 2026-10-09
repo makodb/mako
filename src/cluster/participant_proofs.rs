@@ -85,7 +85,7 @@ pub proof fn native_guard_matches(actor: &crate::participant::Participant,
     requires
         s.plans[plan.generation as nat].src == plan.source,
         s.plans[plan.generation as nat].dst == plan.destination,
-        p::drained(s,s.plans[plan.generation as nat].keys) == actor.drained_view(plan.range),
+        c == Command::Retire ==> p::drained(s,s.plans[plan.generation as nat].keys) == actor.drained_view(plan.range),
         forall|k: int| s.plans[plan.generation as nat].keys.contains(k) ==>
             actor.command_at(plan,c,actor.drained_view(plan.range),coordinates(k)),
         forall|k: int| s.plans[plan.generation as nat].keys.contains(k) ==>
@@ -95,6 +95,17 @@ pub proof fn native_guard_matches(actor: &crate::participant::Participant,
     ensures p::local_guard(s,plan.generation as nat,command(c),actor.owner_view() as int),
 {
     let local = |k: int| actor.local_meta(plan.range.table,coordinates(k)).unwrap();
+    // Drain gates retirement only. New-owner transactions may already hold the
+    // range during old-owner Commit cleanup; Abort may retain unresolved holders.
+    assert forall|k:int| s.plans[plan.generation as nat].keys.contains(k) implies
+        guard_spec(local(k),s.plans[plan.generation as nat].old[k].epoch as u64,
+            plan.generation,c,actor.owner_view() == plan.source,
+            actor.owner_view() == plan.destination,p::drained(s,s.plans[plan.generation as nat].keys)) by {
+        match c {
+            Command::Start => {},Command::Freeze => {},Command::Final => {},
+            Command::Retire => {},Command::Commit => {},Command::Abort => {},
+        }
+    }
     guard_matches(s,plan.generation,c,actor.owner_view() as int,local);
 }
 

@@ -36,6 +36,22 @@ pub open spec fn delivery_certificate(command: Command, source: bool) -> Option<
     }
 }
 
+/// Full endpoint reconstructed from observed native metadata and its field frame.
+pub open spec fn metadata_image(s:p::State,after:&Participant,plan:MigrationPlan,
+    command:Command,keys:Seq<int>,labels:Map<int,Cell>) -> p::State {
+    let owner = after.owner_view() as int;
+    let records = Map::new(keys.to_set(),|k:int|
+        delivered_record(after.local_meta(labels[k].0,labels[k].1.0).unwrap(),
+            p::replica(s,owner,k),command));
+    p::State {
+        certificates:match delivery_certificate(command,after.owner_view() == plan.source) {
+            Some(cert) => s.certificates.insert((plan.generation as nat,cert)),
+            None => s.certificates,
+        },
+        ..transfer::terminal_state(s,owner,keys,records)
+    }
+}
+
 proof fn delivered_record_matches(before: &Participant, after: &Participant,
     plan: MigrationPlan, command: Command, s: p::State, key: int, coordinate: Seq<u8>)
     requires
@@ -90,7 +106,7 @@ pub proof fn metadata_delivered(c: p::Constants, before: &Participant, after: &P
             Command::Freeze | Command::Retire => before.owner_view() == plan.source,
             Command::Commit | Command::Abort => before.owner_view() == plan.source || before.owner_view() == plan.destination,
         },
-        p::drained(s,s.plans[plan.generation as nat].keys) == before.drained_view(plan.range),
+        command == Command::Retire ==> p::drained(s,s.plans[plan.generation as nat].keys) == before.drained_view(plan.range),
         s.commands.contains((plan.generation as nat,metadata::command(command))),
         forall|k: int| keys.to_set().contains(k) ==>
             s.physical.contains_key((before.owner_view() as int,k))
@@ -99,6 +115,7 @@ pub proof fn metadata_delivered(c: p::Constants, before: &Participant, after: &P
         out.valid(c,s),
         out.after(s) == p::delivered(s,plan.generation as nat,metadata::command(command),before.owner_view() as int),
         transfer::local_coupling(after,plan,out.after(s),labels),
+        out.after(s) == metadata_image(s,after,plan,command,keys,labels),
         out.after(s).plans == s.plans, out.after(s).sessions == s.sessions,
         match delivery_certificate(command,before.owner_view() == plan.source) {
             Some(cert) => out.after(s).certificates.contains((plan.generation as nat,cert)),

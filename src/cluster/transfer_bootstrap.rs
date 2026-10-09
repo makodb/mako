@@ -63,13 +63,21 @@ pub struct BootstrapCommit {
     pub outcome:EngineOutcome,
     pub lifecycle:BootstrapLifecycle,
 }
-pub open spec fn bootstrap_cell(events:Seq<BootstrapCommit>,key:int,code:spec_fn(Seq<u8>)->int) -> p::Cell
+pub open spec fn bootstrap_cell(events:Seq<BootstrapCommit>,key:int) -> p::Cell
     decreases events.len(),
 {
     if events.len() == 0 { p::empty_cell() }
     else if events.last().writes.contains_key(key) {
-        p::Cell { value:encoded_writes(events.last().writes,code)[key],writer:bootstrap_id((events.len()-1) as nat) }
-    } else { bootstrap_cell(events.drop_last(),key,code) }
+        p::Cell { value:encoded_writes(events.last().writes)[key],writer:bootstrap_id((events.len()-1) as nat) }
+    } else { bootstrap_cell(events.drop_last(),key) }
+}
+proof fn bootstrap_append_cell(events:Seq<BootstrapCommit>,event:BootstrapCommit,key:int)
+    ensures bootstrap_cell(events.push(event),key)==
+        if event.writes.contains_key(key) {
+            p::Cell { value:encoded_writes(event.writes)[key],writer:bootstrap_id(events.len()) }
+        } else { bootstrap_cell(events,key) },
+{
+    assert(events.push(event).drop_last() =~= events);
 }
 /// Exact initial directory and migration metadata, with only cell contents and
 /// historical sessions permitted to differ from the empty initial state.
@@ -122,7 +130,6 @@ pub tracked struct Bootstrap {
     ghost state:p::State,
     ghost images:EngineImages,
     ghost labels:Map<int,Cell>,
-    ghost code:spec_fn(Seq<u8>)->int,
     ghost events:Seq<BootstrapCommit>,
     ghost lifecycle:BootstrapLifecycle,
 }
@@ -131,29 +138,29 @@ impl Bootstrap {
     pub closed spec fn images(&self) -> EngineImages { self.images }
     pub closed spec fn history(&self) -> Seq<BootstrapCommit> { self.events }
     pub closed spec fn lifecycle(&self) -> BootstrapLifecycle { self.lifecycle }
-    pub closed spec fn valid(&self,c:p::Constants,labels:Map<int,Cell>,code:spec_fn(Seq<u8>)->int) -> bool {
-        self.constants == c && self.labels == labels && self.code == code
+    pub closed spec fn valid(&self,c:p::Constants,labels:Map<int,Cell>) -> bool {
+        self.constants == c && self.labels == labels
             && p::constants_ok(c) && labels.dom() == c.keys
             && self.execution.closed(c,self.state)
             && bootstrap_layout(c,self.state)
             && bootstrap_closed_sessions(self.state,self.events.len())
             && bootstrap_exclusive(c,self.lifecycle)
-            && engine_observed(self.state,self.images,labels,code)
+            && engine_observed(self.state,self.images,labels)
             && bootstrap_trace(c,self.events,self.images,labels)
-            && (forall|k:int| c.keys.contains(k) ==> self.state.logical[k] == bootstrap_cell(self.events,k,code))
+            && (forall|k:int| c.keys.contains(k) ==> self.state.logical[k] == bootstrap_cell(self.events,k))
             && (forall|i:int| 0 <= i < self.events.len() ==> loader_bytes(c,self.events[i],labels)
                 && bootstrap_exclusive(c,self.events[i].lifecycle)
                 && !self.events[i].lifecycle.loaded.contains(self.events[i].owner)
                 && !self.events[i].lifecycle.activated.contains(self.events[i].owner))
     }
-    pub proof fn new(c:p::Constants,images:EngineImages,labels:Map<int,Cell>,code:spec_fn(Seq<u8>)->int,
+    pub proof fn new(c:p::Constants,images:EngineImages,labels:Map<int,Cell>,
         lifecycle:BootstrapLifecycle) -> (tracked out:Self)
         requires p::constants_ok(c),labels.dom() == c.keys,
             forall|a:int,b:int| labels.contains_key(a) && labels.contains_key(b) && labels[a] == labels[b] ==> a == b,
             bootstrap_exclusive(c,lifecycle),lifecycle.loaded == Set::<int>::empty(),
             forall|k:int| c.keys.contains(k) ==> images.contains_key(c.owners[k])
                 && crate::storage::value(images[c.owners[k]],labels[k]) == None,
-        ensures out.valid(c,labels,code),out.state() == p::initial(c),out.images() == images,
+        ensures out.valid(c,labels),out.state() == p::initial(c),out.images() == images,
             out.history() == Seq::<BootstrapCommit>::empty(),out.lifecycle() == lifecycle,
     {
         let s = p::initial(c);
@@ -161,26 +168,27 @@ impl Bootstrap {
             && !(p::replica(s,q.0,q.1).role is Empty)
             && (!(p::replica(s,q.0,q.1).role is Stage) || p::replica(s,q.0,q.1).covered) implies
             images.contains_key(q.0) && p::replica(s,q.0,q.1).cell.value ==
-                match crate::storage::value(images[q.0],labels[q.1]) { Some(v) => Some(code(v)),None => None } by {
+                crate::sharding_bytes::value_option(crate::storage::value(images[q.0],labels[q.1])) by {
             assert(q.0 == c.owners[q.1]);
         }
         let tracked execution = Execution::new(c);
-        Self { execution,constants:c,state:s,images,labels,code,events:Seq::empty(),lifecycle }
+        Self { execution,constants:c,state:s,images,labels,events:Seq::empty(),lifecycle }
     }
 
     /// Append one real successful loader commit, with no registry activity.
     /// Exclusive bootstrap makes the initial-home acquisitions legitimate model
     /// scopes; the native loader never has to issue begin/acquire/finish RPCs.
-    pub proof fn actual_commit(tracked self,c:p::Constants,labels:Map<int,Cell>,code:spec_fn(Seq<u8>)->int,
+    pub proof fn actual_commit(tracked self,c:p::Constants,labels:Map<int,Cell>,
         event:BootstrapCommit) -> (tracked out:Self)
-        requires self.valid(c,labels,code),event.before == self.images(),loader_bytes(c,event,labels),
+        requires self.valid(c,labels),event.before == self.images(),loader_bytes(c,event,labels),
             bootstrap_exclusive(c,event.lifecycle),bootstrap_progress(self.lifecycle(),event.lifecycle),
             !event.lifecycle.loaded.contains(event.owner),!event.lifecycle.activated.contains(event.owner),
-        ensures out.valid(c,labels,code),out.images() == event.after,
+        ensures out.valid(c,labels),out.images() == event.after,
             out.history() == self.history().push(event),out.lifecycle() == event.lifecycle,
             forall|k:int| event.writes.contains_key(k) ==> out.state().logical[k] ==
-                transfer::observed(event.after[event.owner],labels[k],bootstrap_id(self.history().len()),code),
+                transfer::observed(event.after[event.owner],labels[k],bootstrap_id(self.history().len())),
     {
+        hide(bootstrap_cell);
         let s = self.state;
         let t = bootstrap_id(self.events.len());
         let target = Map::new(event.writes.dom(),|k:int| p::Grant { owner:c.owners[k],epoch:0 });
@@ -214,7 +222,7 @@ impl Bootstrap {
             && held.physical.contains_key((held.sessions[t].held[k].owner,k)) by {
             assert(c.shards.contains(c.owners[k]));
         }
-        let tracked committed = engine::engine_effect(c,held,t,event.outcome,event.before,event.after,labels,event.writes,code);
+        let tracked committed = engine::engine_effect(c,held,t,event.outcome,event.before,event.after,labels,event.writes);
         let resolved = committed.after(held);
         let tracked released = lease_execution::release_keys(c,resolved,t,work);
         let next = released.after(resolved);
@@ -227,15 +235,17 @@ impl Bootstrap {
             && next.sessions[u].held == Map::<int,p::Grant>::empty() by {
             if u != t { assert(next.sessions[u] == s.sessions[u]); }
         }
-        let cells = Map::new(event.writes.dom(),|k:int| transfer::observed(event.after[held.sessions[t].held[k].owner],labels[k],t,code));
+        let cells = Map::new(event.writes.dom(),|k:int| transfer::observed(event.after[held.sessions[t].held[k].owner],labels[k],t));
         assert forall|k:int| event.writes.contains_key(k) implies cells[k] ==
-            (p::Cell { value:encoded_writes(event.writes,code)[k],writer:t }) by {
+            (p::Cell { value:encoded_writes(event.writes)[k],writer:t }) by {
             assert(c.owners[k] == event.owner);
             assert(crate::storage::value(event.after[event.owner],labels[k]) == event.writes[k]);
         }
         let events = self.events.push(event);
         assert(events.drop_last() =~= self.events);
-        assert forall|k:int| c.keys.contains(k) implies next.logical[k] == bootstrap_cell(events,k,code) by {
+        assert forall|k:int| c.keys.contains(k) implies next.logical[k] == bootstrap_cell(events,k) by {
+            bootstrap_append_cell(self.events,event,k);
+            assert(s.logical[k]==bootstrap_cell(self.events,k));
             if event.writes.contains_key(k) { assert(next.logical[k] == cells[k]); }
             else { assert(next.logical[k] == s.logical[k]); }
         }
@@ -257,22 +267,22 @@ impl Bootstrap {
         let tracked execution = execution.append(c,opened,acquired);
         let tracked execution = execution.append(c,held,committed);
         let tracked execution = execution.append(c,resolved,released);
-        Self { execution,constants:c,state:next,images:event.after,labels,code,events,lifecycle:event.lifecycle }
+        Self { execution,constants:c,state:next,images:event.after,labels,events,lifecycle:event.lifecycle }
     }
 
     /// Activation consumes the exclusive ledger only after ALL fixed peers have
     /// completed their actual load, activated, and published compatible HELLOs.
     /// No desired state is accepted: the returned Execution is the existing
     /// journal, closed from p::initial through the actual loader byte events.
-    pub proof fn activate(tracked self,c:p::Constants,labels:Map<int,Cell>,code:spec_fn(Seq<u8>)->int,
+    pub proof fn activate(tracked self,c:p::Constants,labels:Map<int,Cell>,
         lifecycle:BootstrapLifecycle) -> (tracked out:(Execution,BootstrapCertificate))
-        requires self.valid(c,labels,code),bootstrap_ready(c,lifecycle),bootstrap_progress(self.lifecycle(),lifecycle),
-        ensures out.0.closed(c,self.state()),out.1.valid(c,self.state(),self.images(),labels,code),
+        requires self.valid(c,labels),bootstrap_ready(c,lifecycle),bootstrap_progress(self.lifecycle(),lifecycle),
+        ensures out.0.closed(c,self.state()),out.1.valid(c,self.state(),self.images(),labels),
             out.1.history() == self.history(),out.1.lifecycle() == lifecycle,
     {
         self.execution.finite_history(c,self.state);
         let tracked certificate = BootstrapCertificate {
-            constants:c,state:self.state,images:self.images,labels,code,events:self.events,lifecycle,
+            constants:c,state:self.state,images:self.images,labels,events:self.events,lifecycle,
         };
         (self.execution,certificate)
     }
@@ -285,7 +295,6 @@ pub tracked struct BootstrapCertificate {
     ghost state:p::State,
     ghost images:EngineImages,
     ghost labels:Map<int,Cell>,
-    ghost code:spec_fn(Seq<u8>)->int,
     ghost events:Seq<BootstrapCommit>,
     ghost lifecycle:BootstrapLifecycle,
 }
@@ -293,13 +302,13 @@ impl BootstrapCertificate {
     pub closed spec fn history(&self) -> Seq<BootstrapCommit> { self.events }
     pub closed spec fn lifecycle(&self) -> BootstrapLifecycle { self.lifecycle }
     pub closed spec fn valid(&self,c:p::Constants,s:p::State,images:EngineImages,
-        labels:Map<int,Cell>,code:spec_fn(Seq<u8>)->int) -> bool {
-        self.constants == c && self.state == s && self.images == images && self.labels == labels && self.code == code
+        labels:Map<int,Cell>) -> bool {
+        self.constants == c && self.state == s && self.images == images && self.labels == labels
             && p::constants_ok(c) && labels.dom() == c.keys && bootstrap_ready(c,self.lifecycle)
             && bootstrap_layout(c,s) && bootstrap_closed_sessions(s,self.events.len())
-            && engine_observed(s,images,labels,code)
+            && engine_observed(s,images,labels)
             && bootstrap_trace(c,self.events,images,labels)
-            && (forall|k:int| c.keys.contains(k) ==> s.logical[k] == bootstrap_cell(self.events,k,code))
+            && (forall|k:int| c.keys.contains(k) ==> s.logical[k] == bootstrap_cell(self.events,k))
             && (forall|i:int| 0 <= i < self.events.len() ==> loader_bytes(c,self.events[i],labels)
                 && bootstrap_exclusive(c,self.events[i].lifecycle)
                 && !self.events[i].lifecycle.loaded.contains(self.events[i].owner)
@@ -308,12 +317,12 @@ impl BootstrapCertificate {
     }
     /// Public elimination rule for the private activation certificate.
     pub proof fn established_prefix(tracked &self,c:p::Constants,s:p::State,images:EngineImages,
-        labels:Map<int,Cell>,code:spec_fn(Seq<u8>)->int)
-        requires self.valid(c,s,images,labels,code),
+        labels:Map<int,Cell>)
+        requires self.valid(c,s,images,labels),
         ensures bootstrap_ready(c,self.lifecycle()),bootstrap_layout(c,s),
             bootstrap_closed_sessions(s,self.history().len()),
-            bootstrap_trace(c,self.history(),images,labels),engine_observed(s,images,labels,code),
-            forall|k:int| c.keys.contains(k) ==> s.logical[k] == bootstrap_cell(self.history(),k,code),
+            bootstrap_trace(c,self.history(),images,labels),engine_observed(s,images,labels),
+            forall|k:int| c.keys.contains(k) ==> s.logical[k] == bootstrap_cell(self.history(),k),
             forall|i:int| 0 <= i < self.history().len() ==> loader_bytes(c,self.history()[i],labels)
                 && bootstrap_exclusive(c,self.history()[i].lifecycle)
                 && !self.history()[i].lifecycle.loaded.contains(self.history()[i].owner)
@@ -322,12 +331,11 @@ impl BootstrapCertificate {
     {}
 
     pub proof fn loaded_owner(tracked &self,c:p::Constants,s:p::State,images:EngineImages,
-        labels:Map<int,Cell>,code:spec_fn(Seq<u8>)->int,key:int)
-        requires self.valid(c,s,images,labels,code),c.keys.contains(key),
-        ensures s.logical[key] == bootstrap_cell(self.history(),key,code),
+        labels:Map<int,Cell>,key:int)
+        requires self.valid(c,s,images,labels),c.keys.contains(key),
+        ensures s.logical[key] == bootstrap_cell(self.history(),key),
             s.logical[key] == p::replica(s,c.owners[key],key).cell,
-            s.logical[key].value == match crate::storage::value(images[c.owners[key]],labels[key]) {
-                Some(v) => Some(code(v)),None => None },
+            s.logical[key].value == crate::sharding_bytes::value_option(crate::storage::value(images[c.owners[key]],labels[key])),
             p::replica(s,c.owners[key],key).role is Serving,
             p::replica(s,c.owners[key],key).epoch == 0,
             p::drained(s,c.keys),p::inv(c,s),
