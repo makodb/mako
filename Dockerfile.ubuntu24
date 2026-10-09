@@ -31,18 +31,9 @@ RUN bash /tmp/apt_packages.sh && rm /tmp/apt_packages.sh
 # Install Rust toolchain from official static tarballs.
 # This avoids rustup runtime issues seen in some restricted Docker environments.
 ARG RUST_VERSION=1.97.1
-RUN set -eux; \
-    arch="$(dpkg --print-architecture)"; \
-    case "${arch}" in \
-      amd64) rust_target="x86_64-unknown-linux-gnu" ;; \
-      arm64) rust_target="aarch64-unknown-linux-gnu" ;; \
-      *) echo "Unsupported architecture: ${arch}" >&2; exit 1 ;; \
-    esac; \
-    rust_tarball="rust-${RUST_VERSION}-${rust_target}.tar.gz"; \
-    curl -LO "https://static.rust-lang.org/dist/${rust_tarball}"; \
-    tar xzf "${rust_tarball}"; \
-    "./rust-${RUST_VERSION}-${rust_target}/install.sh" --prefix=/opt/rust; \
-    rm -rf "rust-${RUST_VERSION}-${rust_target}" "${rust_tarball}"
+COPY scripts/ci/install_rust_toolchain.sh /tmp/install_rust_toolchain.sh
+RUN bash /tmp/install_rust_toolchain.sh "${RUST_VERSION}" /opt/rust \
+    && rm /tmp/install_rust_toolchain.sh
 ENV PATH="/opt/rust/bin:${PATH}"
 
 # Pre-create build directory

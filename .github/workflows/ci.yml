@@ -59,6 +59,11 @@ jobs:
           fi
           rg --version | head -1
 
+      # PRs consume the last published image, not this checkout's Dockerfile.
+      # Provision the exact official toolchain required by native sharding/Verus.
+      - name: Install pinned Rust toolchain
+        run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
+
       - name: Configure canonical Rust providers
         run: >-
           cmake -S . -B "${GOAL0_BUILD_DIR}" -G "${CMAKE_GENERATOR}"
@@ -253,6 +258,9 @@ jobs:
             DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq ripgrep
           fi
           rg --version | head -1
+
+      - name: Install pinned Rust toolchain
+        run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
 
       - name: Environments
         run: |

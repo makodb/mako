@@ -418,6 +418,13 @@ Pin: **Verus `0.2026.08.02.b677dd5`, Rust `1.97.1`**. Run the commands in a
 Docker development container with that toolchain available; do not run project
 tests on the host.
 
+Both CI jobs provision this exact Rust release with
+`bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust` before building or
+verifying. The Dockerfile uses the same official-tarball installer, which checks
+the release archive's published SHA-256 and does not require rustup. PR checks
+consume the previously published CI image, so they upgrade an older toolchain
+in the job rather than relying on a Dockerfile change having been published.
+
 ```bash
 # Inside the container, from the repository root:
 VERUS_PATH=/path/to/verus tla/mako/scripts/verify.sh
