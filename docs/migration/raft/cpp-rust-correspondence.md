@@ -12,12 +12,12 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 545 | `raft/src/server_h.rs` | 4516 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1751 | `raft/src/server_cc.rs` | 711 |  |
-| `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 175 | the Rust serves; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
-| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1060 | the Rust sends; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
+| `raft/server.h` | 545 | `raft/src/server_h.rs` | 4782 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1751 | `raft/src/server_cc.rs` | 721 |  |
+| `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 189 | the Rust serves; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
+| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1079 | the Rust sends; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
 | `communicator.h` | 567 | `raft/src/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
-| `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 582 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
+| `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 685 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
 
 `communicator_h.rs` is extracted from the HEADER, not the `.cc` --
 `raft/rust-modules.toml` names `src/deptran/communicator.h` as its source.
@@ -52,8 +52,8 @@ defined nowhere or in two places.
 
 | class | count |
 |---|---|
-| HOST | 85 |
-| SEAM | 39 |
+| HOST | 86 |
+| SEAM | 41 |
 
 | kernel | class |
 |---|---|
@@ -73,6 +73,7 @@ defined nowhere or in two places.
 | `raft_clear_async_callback_owner` | HOST |
 | `raft_command_clone_into` | HOST |
 | `raft_command_encode` | HOST |
+| `raft_command_from_bytes` | HOST |
 | `raft_command_has_value` | HOST |
 | `raft_command_meta` | HOST |
 | `raft_commo_set_network_enabled` | SEAM |
@@ -152,10 +153,12 @@ defined nowhere or in two places.
 | `raft_random_range_us` | HOST (CORE candidate) |
 | `raft_setup_internal_guarded` | HOST |
 | `raft_shutdown_barrier_yield` | SEAM |
+| `raft_snapshot_manager_from_bytes` | SEAM |
 | `raft_snapshot_manager_is_set` | SEAM |
 | `raft_snapshot_manager_latest` | SEAM |
 | `raft_snapshot_manager_load` | SEAM |
 | `raft_snapshot_manager_ptr_clone_into` | SEAM |
+| `raft_snapshot_manager_with_latest` | SEAM |
 | `raft_snapshot_recovery_pick_manager` | SEAM |
 | `raft_snapshot_reply_ctx_new` | HOST |
 | `raft_snapshot_reply_deliver` | HOST |

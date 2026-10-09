@@ -2,14 +2,17 @@
 # verify_core.sh [--log FILE] [extra verus args...]
 #
 # Verus over the Raft core crate (src/deptran/raft/core, plan Phase 6) with
-# the pinned binary ($VERUS_PIN, docs/verus/modification-plan.md §0.3). Exits
-# 1 on any verification error, or if any function in the crate is trusted
-# (#[verifier::external_body]) without being listed in
-# scripts/verus/core_trusted.txt -- the crate's trusted surface, which must
-# only shrink. (Verus's "verified" count is reported but not gated: it counts
-# verification conditions, not functions, and moves under refactoring.) The
-# run imports spec v1 (the manifest's tag; plan §4.5, spike (d) choice (i))
-# for the proof side (core/src/coupling.rs, Verus only).
+# the pinned binary ($VERUS_PIN, docs/verus/modification-plan.md §0.3). The
+# run uses --output-json --time-expanded, and scripts/verus/verus_gate.py
+# decides (docs/verus/disk-persistence-plan.md §4): it exits 1 on any
+# verification error, if a function named in
+# scripts/verus/verified_functions.txt is missing or failed, or if the core
+# trusts anything (external_body or external in either attribute spelling,
+# external_fn_specification, assume_specification, assume(...), admit()) not
+# listed in scripts/verus/core_trusted.txt -- the crate's trusted surface,
+# which must only shrink. The run imports spec v1 (the manifest's tag; plan
+# §4.5, spike (d) choice (i)) for the proof side (core/src/coupling.rs, Verus
+# only).
 #
 # The crate also builds with plain cargo, ghost code erased (spike (a)):
 # this script is the proof half, not the build.
@@ -42,25 +45,13 @@ fi
 
 t0=$SECONDS
 "$VERUS_PIN" --crate-type=lib "$CORE" --extern glr="$EXPORT/libglr.rlib" \
-  --import glr="$EXPORT/glr.vir" "$@" > "$LOG" 2>&1
+  --import glr="$EXPORT/glr.vir" --output-json --time-expanded "$@" > "$LOG" 2>&1
 rc=$?
-summary=$(grep -E "verification results::" "$LOG" | tail -1)
-echo "verify_core: ${summary:-no summary} ($((SECONDS - t0)) s, log $LOG)"
-if [ $rc -ne 0 ] || [ -z "$summary" ]; then
+echo "verify_core: verus exit $rc ($((SECONDS - t0)) s, log $LOG)"
+if [ $rc -ne 0 ]; then
   grep -E "^error" "$LOG" | sort | uniq -c | sort -rn | head -20
-  echo "verify_core: FAILED (verus exit $rc)"
-  exit 1
 fi
-errors=$(echo "$summary" | sed -E 's/.* ([0-9]+) errors.*/\1/')
-if [ "$errors" != "0" ]; then
-  echo "verify_core: FAILED ($errors errors)"; exit 1
-fi
-# The trusted surface: every external_body function, by name.
-trusted=$(grep -h -A4 '#\[verifier::external_body\]' "$REPO_ROOT"/src/deptran/raft/core/src/*.rs \
-          | grep -oE 'fn [a-z_][a-z0-9_]*' | sed 's/^fn //' | sort -u)
-allowed=$(grep -vE '^\s*(#|$)' "$TRUSTED_FILE" 2>/dev/null | awk '{print $1}' | sort -u)
-extra=$(comm -23 <(echo "$trusted") <(echo "$allowed") | grep -v '^$' || true)
-if [ -n "$extra" ]; then
-  echo "verify_core: FAILED (trusted but not in core_trusted.txt: $(echo $extra))"; exit 1
-fi
-echo "verify_core: ok ($summary; trusted: $(echo $trusted))"
+python3 "$REPO_ROOT/scripts/verus/verus_gate.py" check "$LOG" \
+  "$REPO_ROOT/src/deptran/raft/core/src" \
+  "$REPO_ROOT/scripts/verus/verified_functions.txt" "$TRUSTED_FILE" || exit 1
+[ $rc -eq 0 ] || { echo "verify_core: FAILED (verus exit $rc)"; exit 1; }

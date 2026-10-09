@@ -23,6 +23,14 @@ pub open spec fn raft_index_limit() -> int {
     0x4000_0000_0000_0000int
 }
 
+// [fix, F22] The same ceiling as a value, for Restore's refusals.
+pub const RAFT_INDEX_LIMIT: u64 = 0x4000_0000_0000_0000;
+
+// [fix, F22] A sequence reversed (ghost): Restore's entries arrive last first.
+pub open spec fn rev_seq<T>(s: Seq<T>) -> Seq<T> {
+    Seq::new(s.len(), |i: int| s[s.len() - 1 - i])
+}
+
 // How many 4096-entry blocks `positions` physical positions fill:
 // u64::div_ceil, which vstd does not specify, so its std meaning is stated
 // here and trusted ([move, M11]: the same call, at the same point).
@@ -397,6 +405,54 @@ impl<C> RaftLog<C> {
             assert(self.view() =~= pre.view().push(entry));
         }
         self.base_ + self.len_ - 1
+    }
+
+    // [fix, F22] (whole item) Restore's append: the entries of `rev`, last
+    // first, so each is moved out with pop and none is copied. The loop pops
+    // inside its body because Verus takes no `while let` (the lint's form).
+    #[allow(clippy::manual_while_let_some)]
+    pub fn append_rev(&mut self, rev: Vec<RaftEntry<C>>)
+        requires
+            old(self).wf(),
+            old(self).spec_base() + old(self).spec_len() + rev@.len() < raft_index_limit(),
+        ensures
+            final(self).wf(),
+            final(self).spec_base() == old(self).spec_base(),
+            final(self).spec_len() == old(self).spec_len() + rev@.len(),
+            final(self).view() == old(self).view() + rev_seq(rev@),
+    {
+        let ghost orig = rev@;
+        let ghost v0 = self.view();
+        let mut rev = rev;
+        let ghost total: int = self.spec_len() + rev@.len();
+        while !rev.is_empty()
+            invariant
+                self.wf(),
+                self.spec_base() == old(self).spec_base(),
+                self.spec_len() + rev@.len() == total,
+                old(self).spec_base() + total < raft_index_limit(),
+                total == v0.len() + orig.len(),
+                rev@.len() <= orig.len(),
+                rev@ == orig.subrange(0, rev@.len() as int),
+                self.view() == v0 + rev_seq(orig).subrange(0, orig.len() - rev@.len()),
+            decreases rev@.len(),
+        {
+            let ghost before = self.view();
+            let ghost m: int = orig.len() - rev@.len();
+            let e = rev.pop().unwrap();
+            proof {
+                assert(e == orig[orig.len() - 1 - m]);
+            }
+            self.append(e);
+            proof {
+                assert(rev_seq(orig).subrange(0, m).push(rev_seq(orig)[m])
+                    =~= rev_seq(orig).subrange(0, m + 1));
+                assert(rev@ =~= orig.subrange(0, rev@.len() as int));
+            }
+        }
+        proof {
+            assert(rev_seq(orig).subrange(0, orig.len() as int) =~= rev_seq(orig));
+        }
     }
 
     // Discard [index, end). A no-op past the tail, which is the ordinary

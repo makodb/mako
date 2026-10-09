@@ -105,6 +105,14 @@ pub enum Event<'a, C, W> {
     // the InstallSnapshot paths (outside the verified configuration) ----
     SetFollower { stopped: bool, failover: bool },
     StepDown { stopped: bool, failover: bool },
+
+    // ---- Disk persistence (docs/verus/disk-persistence-plan.md P1) ----
+    // [fix, F20] A newer term seen outside a modeled message (InstallSnapshot
+    // and its reply): raised, the vote cleared, and the server steps down.
+    ObserveTerm { term: u64, stopped: bool, failover: bool },
+    // [fix, F22] A recovered state, before EnterGates: term, vote, commit and
+    // the entries after the snapshot boundary, last first.
+    Restore { term: u64, vote: u16, commit: u64, entries_rev: Vec<RaftEntry<C>> },
 }
 
 pub enum Reply<C> {
@@ -124,6 +132,8 @@ pub enum Reply<C> {
     AppendReply(ReplyResult),
     RoundEnd(bool),
     Applied(bool),
+    // [fix, F22] whether Restore took the state (false: refused, unchanged)
+    Restored(bool),
 }
 
 impl<C> Reply<C> {
@@ -232,6 +242,16 @@ impl<C> Reply<C> {
             _ => vstd::pervasive::unreached(),
         }
     }
+
+    // [fix, F22] (whole item)
+    pub fn into_restored(self) -> bool
+        requires self is Restored,
+    {
+        match self {
+            Reply::Restored(ok) => ok,
+            _ => vstd::pervasive::unreached(),
+        }
+    }
 }
 
 impl<C: Clone> RaftCore<C> {
@@ -270,6 +290,10 @@ impl<C: Clone> RaftCore<C> {
                 &&& self.round_.spec_nservers() > 0
                 &&& self.config_members_@.contains(self.site_id_)
             },
+            // [fix, F20, F22] the term below the ceiling; a restore into an
+            // empty, ungated core (the host contract: before EnterGates)
+            Event::ObserveTerm { term, .. } => (term as int) < raft_index_limit(),
+            Event::Restore { .. } => !self.gated_ && self.raft_log_.spec_len() == 0,
             _ => true,
         }
     }
@@ -393,9 +417,16 @@ impl<C: Clone> RaftCore<C> {
                 Event::RecvAppendReply { .. } => r is AppendReply,
                 Event::RoundEnd { .. } => r is RoundEnd,
                 Event::Applied { .. } => r is Applied,
+                Event::ObserveTerm { .. } => r is Done,  // [fix, F20]
+                Event::Restore { .. } => r is Restored,  // [fix, F22]
             },
     {
-        match ev {
+        // [fix, F21] the saved fields before the arm, for the persist note
+        let term0: u64 = self.current_term_;  // [fix, F21]
+        let vote0: u16 = self.vote_for_;  // [fix, F21]
+        let commit0: u64 = self.commit_index_;  // [fix, F21]
+        let restoring: bool = matches!(ev, Event::Restore { .. });  // [fix, F21]
+        let r: Reply<C> = match ev {
             Event::SetIdentity { loc_id, site_id, partition_id } => {
                 self.set_identity(loc_id, site_id, partition_id);
                 Reply::Done
@@ -419,8 +450,10 @@ impl<C: Clone> RaftCore<C> {
                 Reply::Done
             },
             Event::Propose { cmd, has_value, is_tpc_commit, kind, payload_bytes } => {
-                Reply::Proposed(self.append_local(cmd, has_value, is_tpc_commit, kind,
-                                                  payload_bytes))
+                let previous: u64 = self.append_local(cmd, has_value, is_tpc_commit, kind,
+                                                      payload_bytes);
+                out.note_log_write(self.raft_log_.last_index());  // [fix, F21]
+                Reply::Proposed(previous)
             },
             Event::StartElection { timer_guarded, expected_generation, now, stopped } => {
                 Reply::Campaign(self.start_election(timer_guarded, expected_generation,
@@ -531,7 +564,46 @@ impl<C: Clone> RaftCore<C> {
                 }
                 Reply::Done
             },
-        }
+            Event::ObserveTerm { term, stopped, failover } => {
+                self.observe_term(term, stopped, failover, out);  // [fix, F20]
+                Reply::Done
+            },
+            Event::Restore { term, vote, commit, entries_rev } => {
+                let ghost pre = *self;
+                let ghost rev = entries_rev@;
+                let ok: bool = self.restore(term, vote, commit, entries_rev, out);  // [fix, F22]
+                proof {
+                    // [M12] (disk plan P9) taken: the previous run's ghost log,
+                    // stepped aside; refused: nothing moved
+                    let log = crate::coupling::restore_log(rev);
+                    if ok && pre.ginv() && !pre.is_leader_ && !pre.election_in_progress_
+                        && pre.raft_log_.spec_len() == 0
+                        && exists|p: Seq<glr::protocol::Raft::ghost_log::Entry>|
+                            #[trigger] crate::coupling::restore_prev_ok(&pre, p, term, vote, log, commit)
+                    {
+                        let prev = choose|p: Seq<glr::protocol::Raft::ghost_log::Entry>|
+                            #[trigger] crate::coupling::restore_prev_ok(&pre, p, term, vote, log, commit);
+                        pre.raft_log_.lemma_wf_bounds();
+                        assert(pre.raft_log_.view() =~= Seq::<RaftEntry<C>>::empty());
+                        assert(self.raft_log_.view() =~= rev_seq(rev));
+                        assert(self.log_view() =~= log);
+                        self.g_log_@ = crate::coupling::step_aside_log(prev);
+                        self.g_votes_@ = Set::<int>::empty();
+                        self.g_match_@ = glr::protocol::Raft::ghost_log::replay(prev).match_index;
+                        self.g_next_@ = glr::protocol::Raft::ghost_log::replay(prev).next_index;
+                        assert(self.log_entries_ok());
+                        crate::coupling::lemma_restore_ginv(&pre, self, prev);
+                    }
+                }
+                Reply::Restored(ok)
+            },
+        };
+        // [fix, F21] the note: the hard state if it moved, the log's lowest
+        // write; Restore loads state the store already holds, so none
+        let hard: bool = !restoring && (self.current_term_ != term0 || self.vote_for_ != vote0
+            || self.commit_index_ != commit0);  // [fix, F21]
+        out.finish_persist(hard, self.current_term_, self.vote_for_, self.commit_index_);  // [fix, F21]
+        r
     }
 }
 

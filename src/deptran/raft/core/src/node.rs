@@ -523,6 +523,121 @@ impl<C: Clone> RaftCore<C> {
         previous_index
     }
 
+    // [fix, F20] (whole item) A newer term seen outside a modeled message:
+    // the InstallSnapshot handler's and its reply's raise, formerly written
+    // by the shell itself (src/server_h.rs), moved into a step so a persist
+    // note covers it. As SettleElection's higher-term branch: the term
+    // raised, the vote and leader hint cleared, the role dropped, the
+    // campaign over. A term at or below the current one changes nothing.
+    pub fn observe_term(&mut self, term: u64, stopped: bool, failover: bool,
+                        out: &mut CoreOutput)
+        requires
+            old(self).inv(),
+            (term as int) < raft_index_limit(),
+        ensures
+            final(self).inv(),
+    {
+        if term <= self.current_term_ {
+            return;
+        }
+        let previous_term: u64 = self.current_term_;
+        self.current_term_ = term;
+        self.vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
+        self.current_leader_id_ =
+            raft_server_leader_hint_after_transition(
+                false, false, self.site_id_, self.current_leader_id_);
+        if self.is_leader_ {
+            self.step_down(stopped, failover, out);
+        } else {
+            self.set_is_leader(false, stopped, failover, out);
+        }
+        self.election_in_progress_ = false;
+        self.req_voting_ = false;
+        self.log_term_change("observed higher term outside a vote or append",
+                             previous_term, self.current_term_,
+                             RAFT_SERVER_INVALID_SITE_ID, out);
+    }
+
+    // [fix, F22] (whole item) Loads a recovered state (disk design §3,
+    // "Startup"): term, vote, commit and the entries after the snapshot
+    // boundary, last first. Refuses, changing nothing, a state no step
+    // produces: a term at the ceiling or below the current one, a log that
+    // does not start right after the boundary or would reach the ceiling, a
+    // commit outside the boundary..last, a vote for a non-member, an entry
+    // without a value or of term 0, terms that fall, start below the
+    // boundary's term or exceed the stored term. Queues the apply of
+    // boundary+1..commit; sets no persist note (step's caller sees none).
+    pub fn restore(&mut self, term: u64, vote: u16, commit: u64,
+                   entries_rev: Vec<RaftEntry<C>>, out: &mut CoreOutput) -> (r: bool)
+        requires
+            old(self).inv(),
+            !old(self).gated_,
+            old(self).raft_log_.spec_len() == 0,
+        ensures
+            final(self).inv(),
+            // [M12] refused: unchanged; taken: exactly the given state
+            !r ==> *final(self) == *old(self),
+            r ==> (final(self).current_term_ == term),
+            r ==> (final(self).vote_for_ == vote),
+            r ==> (final(self).commit_index_ == commit),
+            r ==> (final(self).raft_log_.view() == old(self).raft_log_.view() + rev_seq(entries_rev@)),
+            r ==> (forall|k: int| 0 <= k < entries_rev@.len() ==> (#[trigger] entries_rev@[k]).spec_has_value() && entries_rev@[k].spec_term() >= 1),
+            r ==> (final(self).config_members_ == old(self).config_members_),
+            r ==> (final(self).site_id_ == old(self).site_id_),
+            r ==> (final(self).is_leader_ == old(self).is_leader_),
+            r ==> (final(self).election_in_progress_ == old(self).election_in_progress_),
+            r ==> (final(self).election_term_ == old(self).election_term_),
+            r ==> (final(self).snapterm_ == old(self).snapterm_),
+            r ==> (final(self).peers_ == old(self).peers_),
+            r ==> (final(self).peer_sites_ == old(self).peer_sites_),
+            r ==> (final(self).g_log_ == old(self).g_log_),
+            r ==> (final(self).g_votes_ == old(self).g_votes_),
+            r ==> (final(self).g_match_ == old(self).g_match_),
+            r ==> (final(self).g_next_ == old(self).g_next_),
+    {
+        let s: u64 = self.snapidx_;
+        let n: u64 = entries_rev.len() as u64;
+        if term >= RAFT_INDEX_LIMIT || term < self.current_term_ {
+            return false;
+        }
+        if s >= RAFT_INDEX_LIMIT || n >= RAFT_INDEX_LIMIT - s - 1 {
+            return false;
+        }
+        if self.raft_log_.base() != s + 1 {
+            return false;
+        }
+        if commit < s || commit > s + n {
+            return false;
+        }
+        if vote != RAFT_SERVER_INVALID_SITE_ID && !self.is_config_member(vote) {
+            return false;
+        }
+        let mut prev: i64 = self.snapterm_;
+        let mut k: usize = entries_rev.len();
+        while k > 0
+            invariant
+                k <= entries_rev@.len(),
+                self.inv(),
+                *self == *old(self),
+                forall|j: int| k <= j < entries_rev@.len()
+                    ==> (#[trigger] entries_rev@[j]).spec_has_value() && entries_rev@[j].spec_term() >= 1,
+            decreases k,
+        {
+            k -= 1;
+            let t: i64 = entries_rev[k].term();
+            if !entries_rev[k].has_value() || t < 1 || t < prev || t as u64 > term {
+                return false;
+            }
+            prev = t;
+        }
+        self.current_term_ = term;
+        self.vote_for_ = vote;
+        self.raft_log_.append_rev(entries_rev);
+        self.commit_index_ = commit;
+        out.push(CoreAction::apply_range(s, commit));
+        true
+    }
+
     // [move, M1] RaftServerBase::LogTermChange's body (a log line), so a core
     // event can report its term changes itself.
     pub fn log_term_change(&self, reason: &'static str, old_term: u64,
@@ -2093,6 +2208,7 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         // case. The append is Rust; only the per-entry reads of the wire
         // payload are kernels.
         core.raft_log_.truncate_from(first_write_index);
+        out.note_log_write(first_write_index);  // [fix, F21] the log from here is rewritten
         assert(core.raft_log_.spec_last_index() == first_write_index - 1);
         proof { trunc = core.raft_log_.view(); }  // [M12]
         // [move, M1, M11] WireBatch::append_into's loop, in the core: each

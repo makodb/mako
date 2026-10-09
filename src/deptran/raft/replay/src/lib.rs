@@ -262,7 +262,34 @@ pub fn write_event<C: Clone, W: InboundBatch<C>>(s: &mut String, ev: &Event<'_, 
             put(s, b(*stopped));
             put(s, b(*failover));
         }
+        Event::ObserveTerm { term, stopped, failover } => {
+            put(s, "observe_term");
+            put_u(s, *term);
+            put(s, b(*stopped));
+            put(s, b(*failover));
+        }
+        Event::Restore { term, vote, commit, entries_rev } => {
+            put(s, "restore");
+            put_u(s, *term);
+            put_u(s, *vote as u64);
+            put_u(s, *commit);
+            put_u(s, entries_rev.len() as u64);
+            for e in entries_rev.iter() {
+                put_i(s, e.term());
+                put(s, b(e.has_value()));
+                put(s, b(e.is_tpc_commit()));
+                put_i(s, e.kind() as i64);
+                put_u(s, e.payload_bytes());
+                put_u(s, digest(e.cmd()));
+            }
+        }
     }
+}
+
+/// A step's persist note ([fix, F21]): `P <hard> <term> <vote> <commit>
+/// <log_from>`, on its own line after the step's record.
+pub fn persist_line(note: &PersistNote) -> String {
+    format!("P {} {} {} {} {}", b(note.hard_), note.term_, note.vote_, note.commit_, note.log_from_)
 }
 
 /// A message handed to `step_checked` ([fix, F9]): `C <name> <fields>...`.
@@ -443,6 +470,10 @@ fn write_reply<C>(s: &mut String, reply: &Reply<C>, digest: Digest<'_, C>) {
             put(s, "applied");
             put(s, b(*recorded));
         }
+        Reply::Restored(ok) => {
+            put(s, "restored");
+            put(s, b(*ok));
+        }
     }
 }
 
@@ -510,6 +541,10 @@ pub enum OwnedEvent {
     Applied { index: u64, published: u64 },
     SetFollower { stopped: bool, failover: bool },
     StepDown { stopped: bool, failover: bool },
+    ObserveTerm { term: u64, stopped: bool, failover: bool },
+    // entries last first, as Event::Restore takes them: (term, has_value,
+    // is_tpc_commit, kind, payload_bytes, digest)
+    Restore { term: u64, vote: u16, commit: u64, entries_rev: Vec<(i64, bool, bool, i32, u64, u64)> },
 }
 
 impl OwnedEvent {
@@ -587,6 +622,15 @@ impl OwnedEvent {
             },
             OwnedEvent::StepDown { stopped, failover } => Event::StepDown {
                 stopped: *stopped, failover: *failover,
+            },
+            OwnedEvent::ObserveTerm { term, stopped, failover } => Event::ObserveTerm {
+                term: *term, stopped: *stopped, failover: *failover,
+            },
+            OwnedEvent::Restore { term, vote, commit, entries_rev } => Event::Restore {
+                term: *term, vote: *vote, commit: *commit,
+                entries_rev: entries_rev.iter().map(|&(t, v, tpc, kind, bytes, d)| {
+                    RaftEntry::new(t, ReplayCmd(d), v, tpc, kind, bytes)
+                }).collect(),
             },
         }
     }
@@ -718,6 +762,18 @@ pub fn parse_event(text: &str) -> Result<(bool, OwnedEvent), String> {
         "applied" => OwnedEvent::Applied { index: t.u()?, published: t.u()? },
         "follower" => OwnedEvent::SetFollower { stopped: t.b()?, failover: t.b()? },
         "step_down" => OwnedEvent::StepDown { stopped: t.b()?, failover: t.b()? },
+        "observe_term" => OwnedEvent::ObserveTerm { term: t.u()?, stopped: t.b()?, failover: t.b()? },
+        "restore" => {
+            let term = t.u()?;
+            let vote = t.u()? as u16;
+            let commit = t.u()?;
+            let n = t.u()?;
+            let mut entries_rev = Vec::new();
+            for _ in 0..n {
+                entries_rev.push((t.i()?, t.b()?, t.b()?, t.i()? as i32, t.u()?, t.u()?));
+            }
+            OwnedEvent::Restore { term, vote, commit, entries_rev }
+        }
         other => return Err(format!("unknown event {other}")),
     };
     if let Some(extra) = t.it.next() {
@@ -749,15 +805,113 @@ pub struct Replayed {
     pub tainted_at: Option<usize>,
 }
 
+/// The saved state the persist notes describe ([fix, F21]; disk plan P1):
+/// folded from the replay core's own notes, and compared with the core.
+/// A step that changed term, vote, commit or the log without a note that
+/// covers the change makes the two differ: the notes are not exact.
+struct Shadow {
+    term: u64,
+    vote: u16,
+    commit: u64,
+    // (term, digest) for each index from `base`
+    base: u64,
+    log: Vec<(i64, u64)>,
+}
+
+fn core_entry(core: &RaftCore<ReplayCmd>, index: u64) -> (i64, u64) {
+    let e = core.raft_log_.get(index).expect("index within the core's log");
+    (e.term(), e.cmd().0)
+}
+
+impl Shadow {
+    fn of(core: &RaftCore<ReplayCmd>) -> Shadow {
+        let base = core.raft_log_.base();
+        let last = core.raft_log_.last_index();
+        Shadow {
+            term: core.current_term_,
+            vote: core.vote_for_,
+            commit: core.commit_index_,
+            base,
+            log: (base..=last).map(|i| core_entry(core, i)).collect(),
+        }
+    }
+
+    fn apply(&mut self, note: &PersistNote, core: &RaftCore<ReplayCmd>) -> Result<(), String> {
+        if note.hard_ {
+            self.term = note.term_;
+            self.vote = note.vote_;
+            self.commit = note.commit_;
+        }
+        if note.log_from_ != 0 {
+            let from = note.log_from_;
+            if from < self.base || from > self.base + self.log.len() as u64 {
+                return Err(format!("note writes from {from}, outside {}..={}", self.base,
+                                   self.base + self.log.len() as u64));
+            }
+            self.log.truncate((from - self.base) as usize);
+            for i in from..=core.raft_log_.last_index() {
+                self.log.push(core_entry(core, i));
+            }
+        }
+        Ok(())
+    }
+
+    /// The hard state and the log's tail every step; the whole log when
+    /// `full`.
+    fn check(&self, core: &RaftCore<ReplayCmd>, full: bool) -> Result<(), String> {
+        let hard = (core.current_term_, core.vote_for_, core.commit_index_);
+        if hard != (self.term, self.vote, self.commit) {
+            return Err(format!("persist notes: hard state {:?}, the core has {hard:?}",
+                               (self.term, self.vote, self.commit)));
+        }
+        let last = core.raft_log_.last_index();
+        let mine = self.base + self.log.len() as u64 - 1;
+        if core.raft_log_.base() != self.base || last != mine {
+            return Err(format!("persist notes: log {}..={mine}, the core has {}..={last}",
+                               self.base, core.raft_log_.base()));
+        }
+        let from = if full { self.base } else { last.saturating_sub(1).max(self.base) };
+        for i in from..=last {
+            if self.log[(i - self.base) as usize] != core_entry(core, i) {
+                return Err(format!("persist notes: entry {i} differs"));
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Replays one node's recording through a fresh core. Every record's
-/// actions, log lines and reply must match the recorded text exactly.
+/// actions, log lines and reply must match the recorded text exactly; where
+/// the recording has `P` lines, each step's persist note must match its
+/// line. Whether or not it has them, the notes the replay core emits must
+/// describe its saved state exactly (the [`Shadow`]).
 pub fn replay(text: &str) -> Result<Replayed, Mismatch> {
     let mut core: RaftCore<ReplayCmd> = RaftCore::new();
+    let mut shadow = Shadow::of(&core);
+    let has_notes = text.lines().any(|l| l.starts_with("P "));
+    let mut expect_note: Option<(usize, String)> = None;
     let mut steps = 0;
     for (n, line) in text.lines().enumerate() {
         let lineno = n + 1;
         if line.is_empty() {
             continue;
+        }
+        if let Some(note) = line.strip_prefix("P ") {
+            match expect_note.take() {
+                Some((_, produced)) if produced == line => continue,
+                other => {
+                    return Err(Mismatch {
+                        line: lineno, event: "P".to_string(), recorded: note.to_string(),
+                        replayed: other.map(|(_, p)| p).unwrap_or_else(|| "no note".to_string()),
+                    })
+                }
+            }
+        }
+        if let Some((at, produced)) = expect_note.take() {
+            return Err(Mismatch {
+                line: at, event: "P".to_string(), recorded: "no P line".to_string(),
+                replayed: produced,
+            });
         }
         if line.starts_with("T ") || line == "T" {
             return Ok(Replayed { steps, tainted_at: Some(lineno) });
@@ -774,6 +928,7 @@ pub fn replay(text: &str) -> Result<Replayed, Mismatch> {
         let level: i32 = parts[1].trim().parse().map_err(|_| fail("bad log level".to_string()))?;
         let mut out = CoreOutput::new();
         out.set_log_level(level);
+        let restoring = matches!(ev, OwnedEvent::Restore { .. });
         let produced = if checked {
             let reply = core.step_checked(ev.as_event(), &mut out);
             checked_result_text(&out, 0, 0, &reply, &replay_digest)
@@ -788,7 +943,33 @@ pub fn replay(text: &str) -> Result<Replayed, Mismatch> {
                 replayed: produced,
             });
         }
+        // The shadow: a Restore loads state the store already holds (no
+        // note); every other step's changes must be its note's.
+        let note = out.take_persist();
+        let shadowed = if restoring {
+            shadow = Shadow::of(&core);
+            Ok(())
+        } else {
+            note.as_ref().map_or(Ok(()), |p| shadow.apply(p, &core))
+                .and_then(|_| shadow.check(&core, steps % 4096 == 0))
+        };
+        if let Err(why) = shadowed {
+            return Err(Mismatch { line: lineno, event: parts[0].to_string(),
+                                  recorded: recorded.to_string(), replayed: why });
+        }
+        if has_notes {
+            if let Some(p) = &note {
+                expect_note = Some((lineno, persist_line(p)));
+            }
+        }
         steps += 1;
+    }
+    if let Some((at, produced)) = expect_note {
+        return Err(Mismatch { line: at, event: "P".to_string(), recorded: "no P line".to_string(),
+                              replayed: produced });
+    }
+    if let Err(why) = shadow.check(&core, true) {
+        return Err(Mismatch { line: 0, event: "end".to_string(), recorded: String::new(), replayed: why });
     }
     Ok(Replayed { steps, tainted_at: None })
 }

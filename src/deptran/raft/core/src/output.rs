@@ -121,6 +121,20 @@ impl CoreAction {
     pub fn became_follower(&self) -> bool { self.became_follower_ }
 }
 
+// [fix, F21] (whole item) One step's change to the saved state (disk design
+// §3, "Records"): the hard state after the step if term, vote or commit
+// changed, and the lowest log index the step wrote (0: the log is unchanged;
+// the log from that index on is the step's log there). The shell turns it
+// into a write-ahead log record in disk builds and ignores it otherwise.
+#[derive(Clone, Copy)]
+pub struct PersistNote {
+    pub hard_: bool,
+    pub term_: u64,
+    pub vote_: u16,
+    pub commit_: u64,
+    pub log_from_: u64,
+}
+
 // The actions of one critical section, in push order.
 #[cfg_attr(not(any()), derive(Default))]
 pub struct CoreOutput {
@@ -130,11 +144,48 @@ pub struct CoreOutput {
     // everything until the shell says otherwise).
     logs_: Vec<CoreLog>,  // [move, M7]
     log_level_: i32,  // [move, M7]
+    // [fix, F21] the step in progress's lowest log write (0: none), and the
+    // last finished step's note
+    log_from_: u64,  // [fix, F21]
+    persist_: Option<PersistNote>,  // [fix, F21]
 }
 
 impl CoreOutput {
     pub fn new() -> CoreOutput {
-        CoreOutput { actions_: Vec::new(), logs_: Vec::new(), log_level_: RAFT_LOG_DEBUG }  // [move, M7]
+        CoreOutput { actions_: Vec::new(), logs_: Vec::new(), log_level_: RAFT_LOG_DEBUG,  // [move, M7]
+                     log_from_: 0, persist_: None }  // [fix, F21]
+    }
+
+    // [fix, F21] (whole item) A log writer marks the lowest index it wrote.
+    pub fn note_log_write(&mut self, index: u64) {
+        if self.log_from_ == 0 || index < self.log_from_ {
+            self.log_from_ = index;
+        }
+    }
+
+    // [fix, F21] (whole item) step's end: the note, if the step changed the
+    // saved state; a step that changed nothing leaves none.
+    pub fn finish_persist(&mut self, hard: bool, term: u64, vote: u16, commit: u64) {
+        if hard || self.log_from_ != 0 {
+            self.persist_ = Some(PersistNote { hard_: hard, term_: term, vote_: vote,
+                                               commit_: commit, log_from_: self.log_from_ });
+        } else {
+            self.persist_ = None;
+        }
+        self.log_from_ = 0;
+    }
+
+    // [fix, F21] (whole item) The last step's note, left in place (the
+    // replay recorder reads it; disk builds take it).
+    pub fn persist(&self) -> Option<PersistNote> {
+        self.persist_
+    }
+
+    // [fix, F21] (whole item) The last step's note, taken.
+    pub fn take_persist(&mut self) -> Option<PersistNote> {
+        let note = self.persist_;
+        self.persist_ = None;
+        note
     }
 
     // [move, M7] (whole item) Lines above `level` are dropped when pushed.

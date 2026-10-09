@@ -56,9 +56,20 @@ As in the plan's §1.3, from the group's composition
    happen in its ghost log's order, and a send is made after the call that
    recorded it returns (the shell sends from the call's output). The
    schedule `sched` is the real interleaving of the servers' calls.
-5. **Per-node trusted base**: the transport, the codec, the kernels, storage
-   (none persisted: no replica restarts in place under its old id, plan
-   §4.4.2).
+5. **Per-node trusted base**: the transport, the codec, the kernels, storage.
+   In a memory build none is persisted, and no replica restarts in place
+   under its old id (plan §4.4.2). In a disk build (`-DMAKO_RAFT_DISK=ON`,
+   [disk-persistence.md](disk-persistence.md)) a restart is the `Restore`
+   event, coupled as a step aside from the previous run's ghost log (F22,
+   `lemma_restore_ginv`), under these trusted facts: every persist note is
+   exact (a step with no note changes no saved field, and a note's values
+   and log suffix are the step's; checked on every recording by the replay's
+   shadow, `replay/src/lib.rs`, and by the cargo tests `core/tests/persist_note.rs`,
+   not proved); the WAL and the base keep whole records in step order and
+   lose only a suffix that no output depended on (`raft-store`'s crash
+   tests and the process-kill tests, `scripts/raft_kill/`); and the restored
+   state is the replay of a prefix of the previous run's ghost log that
+   covers everything the previous run sent.
 6. **Nothing else about the network**: loss, duplication, reordering and
    delay are allowed; a message the core refuses counts as dropped.
 
@@ -147,9 +158,10 @@ every open Raft bug before the merge.
 - **B16 (closed by F13).** `Start` refuses a command without a value, so
   `Propose`'s value premise is checked, not assumed.
 
-What the certificate still assumes is in §1 and §2: genuine packets,
-memory-only state with no in-place restart under an old id (bugs-found
-B6), and the codec's fidelity.
+What the certificate still assumes is in §1 and §2: genuine packets, the
+codec's fidelity, and either memory-only state with no in-place restart
+under an old id (bugs-found B6, memory builds) or, in disk builds, the
+storage facts of §1 item 5.
 
 ## 7. Trusted code
 

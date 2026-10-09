@@ -979,6 +979,9 @@ Each lands in its own commit with a lab case showing the new behaviour.
 | F17 | fixes | `heartbeat_interval_us_` becomes an atomic (B14) | Removes a data race; no behaviour change |
 | F18 | fixes | `get_outstanding_logs` counts this worker's own accepted submissions above the commit index (B7) | A metric; no protocol effect |
 | F19 | fixes | The shell's entry points take `&RaftServerBase`; the fields they change move behind interior mutability (B19). `RaftSpecific` (scheduler.h) takes `&self` throughout, so its C++ virtuals become `const`; `TxLogServer`, which PaxosServer shares, is unchanged, and its two late-callable methods export `&self` twins | Removes aliased `&mut`; no behaviour change |
+| F20 | disk P1 | `Event::ObserveTerm { term, stopped, failover }`: a newer term seen outside a modeled message (InstallSnapshot and its reply) is raised, the vote and leader hint cleared, and the server steps down as `SettleElection` does; the shell no longer writes `current_term_`/`vote_for_` itself (disk plan, the user's decisions of 2026-10-08) | Only core steps write term and vote, so a persist note covers every change; uncoupled (`coupled` false), never stepped under the verified gates |
+| F21 | disk P1 | The persist note: `step` compares term, vote and commit before and after its arm, and the two log writers (`Propose`, the AppendEntries handler) mark the lowest index they wrote; `CoreOutput` carries the note (disk design §3, Decision 4) | Each step's saved-state change, exactly; no behaviour change (the shell reads it only in disk builds) |
+| F22 | disk P1 | `Event::Restore { term, vote, commit, entries }` loads a recovered state before `EnterGates`, refusing (`Restored(false)`, unchanged) a state no step produces; it sets no persist note and queues the apply of the committed prefix (disk design §3 "Startup") | A restart resumes from its saved state (B6); uncoupled until disk plan P9 |
 
 Because of S1, the extra append refusals (stopped, non-voter, unauthoritative
 sender, bad payload) and the refused committed conflict
@@ -990,6 +993,8 @@ correctly becomes F12, F13, ... with a row as above; stop at 0.7 point 3 first.
 F12-F19 were approved together by the user on 2026-10-06: "can you first fix
 all remaining bugs of Raft on this branch?" B6 (memory-only state) is not
 among them; it is the disk-persistence project ([disk-persistence.md](disk-persistence.md)).
+F20 was decided by the user on 2026-10-08 (disk plan, "The user's decisions");
+F21 and F22 with the plan, on 2026-10-09: "start implementing the plan".
 
 ### A.3 "Move, don't rewrite": allowed transformation kinds
 

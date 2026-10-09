@@ -461,6 +461,65 @@ pub open spec fn view_frame<C>(pre: &RaftCore<C>, post: &RaftCore<C>) -> bool {
 }
 
 // ===========================================================================
+// Restore ([fix, F22], disk plan P9): a restart resumes from the previous
+// run's ghost log `prev`, as a step aside
+// ===========================================================================
+
+// Restore's entries, last first, as the log they make.
+pub open spec fn restore_log<C>(rev: Seq<RaftEntry<C>>) -> Seq<LLogEntry> {
+    rev_seq(rev).map_values(|e: RaftEntry<C>| entry_view(e))
+}
+
+// The previous run's ghost log certifies a state whose term, vote, log and
+// commit are the restored ones, with no read in flight (a restart serves
+// none) and the static configuration.
+pub open spec fn restore_prev_ok<C>(core: &RaftCore<C>, prev: Seq<Entry>, term: u64, vote: u16,
+                                    log: Seq<LLogEntry>, commit: u64) -> bool {
+    let s = replay(prev);
+    &&& log_ok(prev, core.c_view())
+    &&& fully_closed(prev)
+    &&& s.pending_reads == Seq::<LReadReq>::empty()
+    &&& s.served_ctxs == Set::<int>::empty()
+    &&& s.current_term == term as int
+    &&& s.has_voted == (vote != RAFT_SERVER_INVALID_SITE_ID)
+    &&& s.voted_for == (if vote != RAFT_SERVER_INVALID_SITE_ID {
+            rank(core.config_members_@, vote)
+        } else {
+            0int
+        })
+    &&& s.log == log
+    &&& s.commit_index == commit as int
+    &&& s.config == Set::<int>::range(0, core.n_view())
+    &&& s.conf_index == 0int
+}
+
+// A core restored from `prev`'s state, its ghost log `prev` stepped aside and
+// its spec tables `prev`'s, keeps ginv.
+pub proof fn lemma_restore_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, prev: Seq<Entry>)
+    requires
+        pre.ginv(),
+        restore_prev_ok(pre, prev, post.current_term_, post.vote_for_, post.log_view(),
+                        post.commit_index_),
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.snapterm_ == pre.snapterm_,
+        !post.is_leader_,
+        !post.election_in_progress_,
+        post.log_entries_ok(),
+        post.g_log_@ == step_aside_log(prev),
+        post.g_votes_@ == Set::<int>::empty(),
+        post.g_match_@ == replay(prev).match_index,
+        post.g_next_@ == replay(prev).next_index,
+    ensures post.ginv(),
+{
+    let c = pre.c_view();
+    lemma_step_aside(prev, c);
+    assert(post.c_view() == c);
+    assert(post.role_view() == LServerRole::Follower);
+    assert(replay(step_aside_log(prev)) == post.state_view());
+}
+
+// ===========================================================================
 // Step aside (LStepAside): a leader or a candidate returns to Follower at its
 // term, with no guard; spontaneous (a Tick group)
 // ===========================================================================
@@ -2609,6 +2668,19 @@ impl<C> RaftCore<C> {
                 &&& (status ==> last_log_index as int <= self.raft_log_.spec_last_index())
             },
             Event::RoundEnd { .. } => self.gated_,
+            // [fix, F20] uncoupled: ObserveTerm's term comes in no modeled
+            // message
+            Event::ObserveTerm { .. } => false,
+            // [fix, F22] (disk plan P9) a restart: some previous ghost log
+            // whose replay holds the restored term, vote, log and commit; the
+            // restarted core steps aside from it (LStepAside, no guard)
+            Event::Restore { term, vote, commit, entries_rev } => {
+                &&& !self.is_leader_
+                &&& !self.election_in_progress_
+                &&& self.raft_log_.spec_len() == 0
+                &&& exists|prev: Seq<Entry>| #[trigger] restore_prev_ok(self, prev, term, vote,
+                        restore_log(entries_rev@), commit)
+            },
             _ => true,
         }
     }

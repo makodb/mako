@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # core_check.sh -- what a raft-core commit must pass before it is made:
-# clippy -D warnings over the Raft workspace with and without the lab
-# feature (the build's source gate runs the former), the ledger lint (every
+# clippy -D warnings over the Raft workspace with and without the lab and
+# disk features (the build's source gate runs the first), the ledger lint (every
 # core line ghost, moved or labelled, plan A.3), the correspondence doc's
 # freshness (the build checks it), and verify_core.sh.
 # Exits non-zero on the first failure, so `core_check.sh && git commit`
@@ -10,12 +10,12 @@ set -uo pipefail
 : "${VERUS_PIN:?source ~/mako-verus-env.sh first}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT/src/deptran/raft" || exit 2
-for features in "" "--features raft_test"; do
+for features in "" "--features raft_test" "--features raft_disk" "--features raft_test,raft_disk"; do
   if ! out=$(cargo clippy --quiet --workspace $features -- -D warnings 2>&1); then
     echo "core_check: clippy ${features:-(default)} FAILED"; echo "$out" | head -40; exit 1
   fi
 done
-echo "core_check: clippy ok (default, raft_test)"
+echo "core_check: clippy ok (default, raft_test, raft_disk, both)"
 if ! out=$(python3 "$REPO_ROOT/scripts/verus/ledger_lint.py" 2>&1); then
   echo "core_check: ledger lint FAILED"; echo "$out" | tail -40; exit 1
 fi
