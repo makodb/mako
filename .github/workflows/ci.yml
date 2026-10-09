@@ -59,6 +59,11 @@ jobs:
           fi
           rg --version | head -1
 
+      # PRs consume the last published image, not this checkout's Dockerfile.
+      # Provision the exact official toolchain required by native sharding/Verus.
+      - name: Install pinned Rust toolchain
+        run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
+
       - name: Configure canonical Rust providers
         run: >-
           cmake -S . -B "${GOAL0_BUILD_DIR}" -G "${CMAKE_GENERATOR}"
@@ -254,6 +259,9 @@ jobs:
           fi
           rg --version | head -1
 
+      - name: Install pinned Rust toolchain
+        run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
+
       - name: Environments
         run: |
           pwd
@@ -279,8 +287,14 @@ jobs:
           cmake --version
           clang --version
 
+      - name: Verify native sharding and independent negative controls
+        run: ./ci/ci.sh nativeShardingProof
+
       - name: Compile
         run: ./ci/ci.sh compile
+
+      - name: Run native sharding real-engine migration smoke
+        run: ./ci/ci.sh nativeShardingSmoke
 
       - name: Run tests - SRPC unit tests
         run: ./ci/ci.sh srpcTests

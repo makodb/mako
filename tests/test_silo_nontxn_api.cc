@@ -260,6 +260,28 @@ TEST_F(SiloNonTxnApi, L3ScanOrderAndEarlyStop) {
     }
 }
 
+// @unsafe - callbacks cross the engine boundary; exceptions must close the read txn.
+TEST_F(SiloNonTxnApi, ScanCallbackExceptionReleasesTransaction) {
+    struct ScanFailure {};
+    struct ThrowingCallback : oi_scan_callback {
+        // @unsafe - deliberately exercises the engine's callback exception boundary.
+        bool invoke(const char*, size_t, const std::string&) override {
+            throw ScanFailure{};
+        }
+    } callback;
+    auto* table = make_table("throwing_scan");
+    ASSERT_TRUE(table->put(lcdf::Str("key"), "before"));
+    const std::string lower = "a", upper = "z";
+    EXPECT_THROW(table->scan(lower, &upper, callback, nullptr), ScanFailure);
+    ASSERT_FALSE(Sto::in_progress());
+    EXPECT_THROW(table->rscan(upper, &lower, callback, nullptr), ScanFailure);
+    ASSERT_FALSE(Sto::in_progress());
+    EXPECT_FALSE(table->put(lcdf::Str("key"), "after"));
+    std::string value;
+    ASSERT_TRUE(table->get(lcdf::Str("key"), value, std::string::npos));
+    EXPECT_EQ(value, "after");
+}
+
 // ===========================================================================
 // 3. Sharded level
 // ===========================================================================

@@ -44,6 +44,8 @@ Welcome to the Mako documentation.
 - **[Design Principles](architecture/design-principles.md)** - Core design philosophy and principles
 - **[Speculative 2PC](architecture/speculative-2pc.md)** - Speculative two-phase commit protocol
 - **[Paxos](architecture/paxos.md)** - Paxos benchmarking commands
+- **[Native Rust Sharding](mako-book.md#data-migration-protocol-live-native-sharding)** - Live migration protocol and operational boundaries
+  - [Specification and Verification](../tla/mako/README.md#native-rust-correspondence) - Ghost-log correspondence, guarantees, and trusted embedding contracts
 
 ---
 
@@ -165,10 +167,6 @@ The plans below are the `@safe`/`@unsafe` borrow-checker and smart-pointer track
 | [Raft Integration](plans/log-persistence/phase1_3_raft_integration.md) | [Uncommitted Entries](plans/log-persistence/phase2_3_uncommitted_entries.md) | [Snapshot Storage](plans/log-persistence/phase3_3_snapshot_storage.md) | |
 | [Paxos Integration](plans/log-persistence/phase1_4_paxos_integration.md) | [State Machine Recovery](plans/log-persistence/phase2_4_state_machine_recovery.md) | [Log Compaction](plans/log-persistence/phase3_4_log_compaction.md) | |
 
-### Range Sharding
-
-- [Task 1](plans/range-sharding/task1.md) | [Task 2](plans/range-sharding/task2.md) | [Task 3](plans/range-sharding/task3.md) | [Task 4](plans/range-sharding/task4.md)
-
 ### Client-Server Unification
 
 - [Unify Interface](plans/client-server/unify_client_server_interface_plan.md)
@@ -178,7 +176,6 @@ The plans below are the `@safe`/`@unsafe` borrow-checker and smart-pointer track
 - [Evaluation](plans/client-server/client_server_evaluation.md)
 - [Test Client Service](plans/client-server/test_client_service_plan.md)
 - [Legacy API Removal](plans/client-server/legacy_api_removal_plan.md)
-- [Startup Tests](plans/client-server/task8_4_startup_tests_plan.md)
 
 ### Issue Fixes
 

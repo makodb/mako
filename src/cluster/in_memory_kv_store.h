@@ -13,7 +13,7 @@ namespace janus {
 /**
  * InMemoryKvStore — a btree_port::BTreeMap-backed KvStore for unit tests.
  * This is the test double of the KvStore port; it lets test_config_manager
- * drive ConfigManager / ClusterConfig / ConfigWatcher with no storage
+ * drive ConfigManager with no storage
  * engine, no cluster, no masstree config — a genuinely standalone
  * binary.
  */

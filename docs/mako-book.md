@@ -219,237 +219,177 @@ By storing config in shard 0 (replicated via Raft), config changes are:
 
 ### Config Table Schema
 
-All configuration lives in a reserved table `__mako_config__` on shard 0, accessed via the standard `ITable::Put/Get/Delete` API.
+`ConfigManager` retains a metadata persistence interface over the reserved
+`__mako_config__` table. These keys are metadata utilities, not the authority
+for native Rust routing; writing them does not publish a native ownership change.
 
 | Key Pattern | Value | Description |
 |-------------|-------|-------------|
 | `__version__` | uint64 | Monotonically increasing config version |
 | `shard_count` | uint32 | Number of live shards |
 | `next_shard_id` | uint32 | Monotonic id allocator — the master hands out `next_shard_id` on `register_shard` and increments it; ids are never reused |
-| `bucket_count` | uint32 | Fixed hash-slot count for the consistent-hashing strategy — set once at cluster creation, never changes |
 | `shard/<id>/replicas` | JSON array | Ordered replica list (first = preferred leader) |
 | `shard/<id>/leader` | string | Current leader site name |
 | `shard/<id>/status` | string | `active`, `draining`, `adding`, `removing` |
 | `epoch` | uint64 | Global speculative epoch number (all shards converge to this) |
-| `shard/<id>/replacement` | uint32 | For `status=dead`: taker shard whose Raft group inherits routing that would hash to this shard. Chased transitively with a cycle guard. |
-| `sharding/mode` | string | `hash` (default) or `range` — the routing mode Path A of `get_shard_for_key` uses when no per-table policy is registered |
-| `sharding/policy/<table>` | bytes | Serialized `TableShardingPolicy` for one table — its `KeyExtractor` plus a sorted vector of `RangeMapping`s. Absence means "fall back to `sharding/mode`". |
+| `shard/<id>/replacement` | uint32 | Recorded replacement for a dead shard; metadata only |
+| `sharding/mode` | string | Stored mode label; does not select a native routing implementation |
+| `sharding/policy/<table>` | bytes | Opaque bytes persisted without parsing or installing a routing policy |
 | `node/<site>/addr` | string | Node address (`ip:port`) |
 | `node/<site>/status` | string | `alive`, `dead`, `decommissioning` |
-| `reshard/active` | bool | Whether resharding is in progress |
-| `reshard/phase` | string | `prepare`, `migrating`, `committed` |
 
 ### Key Components
 
 **ConfigManager**: Typed configuration over a `KvStore` port (`get`/`put`/`remove`), not a bespoke store. Provides methods like `get_shard_replicas()`, `add_shard()`, `set_shard_leader()`, `advance_epoch()`. Every write increments `__version__` (written last). On shard 0's leader the port binds to the unified `FullOrderedIndex` — the `__mako_config__` system table — via the `OrderedIndexKvStore` adapter; other nodes bind a `RemoteKvStore` that reads shard 0 over RPC; unit tests bind an in-memory fake. The port keeps `cluster/` standalone-testable with no storage-engine dependency (see [The Storage Interface](storage-interface.md#cluster-metadata-port-srcclusterkv_storeh)).
 
-**ClusterConfig**: In-memory cache of the full cluster topology. Every node holds a local copy. Includes a `get_shard_for_key()` routing helper.
-
-**ConfigWatcher**: Background fiber on non-master shards. Polls shard 0's `__version__` key periodically (default: 1 second). On version change, fetches the full `ClusterConfig` and invokes a callback to update local routing.
+**Native sharding runtime**: Owns governed routing and migration decisions in
+Rust. The former C++ `ClusterConfig`, `ConfigWatcher`, policy builder/cache,
+and stub shard manager have been retired; there is no C++ routing fallback.
+`RemoteKvStore` and `ConfigKvService` remain metadata read boundaries, not
+alternate ownership authorities.
 
 ### Bootstrap Protocol
 
-**First boot**: Shard 0 leader loads the static YAML config, populates `__mako_config__`, sets `__version__ = 1`. Other shards connect to shard 0 (via a static seed list: `--master-addrs=s1:8100,s2:8101,s3:8102`) and fetch the config.
+The native sharding runtime is enabled with `MAKO_CLUSTER_CONFIG=1`.
+TPC-C registers its canonical catalog and warehouse opener **before loading**.
+`bench_runner::run()` calls `BootstrapClusterConfig(db)` after all loaders join;
+the bootstrap creates a separate native Rust participant/work queue and srpc
+service for each actual owner, including multiple owners in one process.
+After loader synchronization, `mako_sharding_wait_ready(owner)` waits for the
+native catalog/peer handshake before ordinary workers are launched. A filesystem
+load marker alone does not establish native admission readiness.
 
-**Subsequent boots**: Shard 0 recovers its Masstree from Raft log + snapshot. Config is immediately available from the replicated state — the original YAML is not re-read. Other shards fetch the latest version from shard 0.
+The `NativeSharding::Invoke` service uses the shared benchmark transport
+configuration's shard address with port delta `20000`, not DepTran's partition-0
+address. A listener is permanently bound to its actual owner. Its poll-thread
+handler only enqueues owned request bytes and a deferred reply into Rust;
+blocking peer RPC and physical storage work run on owner-bound native workers.
+The callback contract is in `src/mako/native_sharding_host.h`.
 
-**Runtime wiring** (`src/mako/cluster_bootstrap.cc`): `BootstrapClusterConfig(db)` runs once from `init_env()` after the RPC servers are up. It is the single seam that constructs and connects the read-side components on a live node, and is gated twice — no-op unless `MAKO_CLUSTER_CONFIG=1` **and** `nshards > 1` — so single-shard / unsharded runs keep the legacy routing path untouched. When active it branches on node identity (`BenchmarkConfig::getShardIndex/getLeaderConfig`):
+Normal shutdown joins ordinary workers while their client transports and every
+owner's helper/control service remain available for terminal RPC cleanup.
+The Rust runtime coordinates the fixed owners through the existing shared
+`getNfsSyncDir()` directory: owner 0 creates a fresh exclusive rendezvous,
+distributes its token, waits for every owner, fences new admin work and drains
+retained migration receipts. Services stay live until its completion marker.
+Rendezvous markers are retained until external run-directory cleanup; they are
+not a restart/recovery protocol. Native service acceptance then stops, Rust jobs
+join while srpc remains live, and RPC resources are released before indexes.
+`ShutdownClusterConfig(owner)` precedes slow-exit index deletion; `db_close()`
+provides process-wide teardown.
 
-- **Shard 0's leader** opens its `__mako_config__` index, wraps it in an `OrderedIndexKvStore`, seeds it from the cluster-wide topology (`Config::SitesByPartitionId` / `LeaderSiteByPartitionId`), and stands up a dedicated `ConfigKvService` RPC server on `leader_port + 20000` (distinct from the `+10000` heartbeat control delta).
-- **Every other node** (shard-0 followers + all non-zero shards) resolves shard 0's leader from the same `Config`, connects there, and wraps the RPC in a `RemoteKvStore`.
+Live migration is explicitly non-replicated: the bootstrap passes
+`allow_migration=0` when replication is enabled. This does not disable ordinary
+replicated workloads, and does not claim crash recovery or Raft/migration
+composition. With native configuration disabled, the existing static workload
+path is unchanged.
+Replication replay uses a separate scoped engine-lifetime guard, never ordinary
+workload admission. It is accepted only for replicated configuration with no
+migration-enabled native node, and latches against later migration activation.
+It retains the engine's committed/stale-write behavior without granting normal
+workloads permission to access a foreign ownership incarnation.
 
-Both sides then run a `ConfigWatcher` that keeps the local `janus::get_cluster_config()` routing cache fresh — shard 0's leader watches its local store (no self-RPC), everyone else polls shard 0. Because server bind and client connect derive the address from the same `Config`, they stay symmetric. Functional verification needs a live multi-shard cluster, e.g. `./docker_build.sh ci shard2Replication` with `MAKO_CLUSTER_CONFIG=1`.
+The `mako_admin` client uses the real native service and the Rust wire codec:
 
-### Config Change Protocol
-
-All config changes are regular transactions on shard 0:
-
-1. A joining shard calls `ConfigManager::register_shard(replicas)`; the master allocates its id from `next_shard_id` and returns it.
-2. ConfigManager begins a transaction, writes `shard/<id>/replicas`, advances `next_shard_id`, increments `shard_count` and `__version__`.
-3. Transaction commits (replicated via Raft).
-4. ConfigWatcher on other shards detects the version bump, fetches the new config.
-5. Shard router updates routing table.
-
-### Data Partitioning
-
-The Configuration Manager is the authority on how the key space is divided among shards. Two strategies are supported:
-
-**Lex-order ranges** (default): each shard owns a contiguous slice of the raw key space in lexicographic order, `[start_key, end_key) → shard`. This is the natural partitioning for an ordered store (Masstree) — it keeps range scans shard-local. The range→shard assignment *is* the sharding policy (below); publishing a new assignment triggers a rebalance.
-
-**Consistent hashing** (second strategy): for workloads that want even spread without range locality. Crucially this is **not** `hash(key) % shard_count` — dividing by the live shard count remaps the *entire* key space every time the cluster grows or shrinks (which is exactly why a naive `remove_shard` that decrements the count would reshuffle everything). Instead:
-
-1. `bucket = hash(key) % bucket_count`, where `bucket_count` is **fixed once at cluster creation and never changes** (a fixed slot space, à la Redis Cluster's 16384 hash slots).
-2. Each shard is placed on a hash ring at `hash(shard_id)` positions; a bucket is owned by the shard that succeeds it on the ring.
-
-Because `key → bucket` is frozen, only the `bucket → shard` map moves on a membership change, and consistent hashing bounds that to ≈`bucket_count / N` buckets — never a full reshuffle. Adding or removing a shard migrates only its arc of the ring.
-
-Every node caches the shard map via `ClusterConfig::get_shard_for_key()` for routing.
-
-> **Current vs target.** The routing described here is the target model. The code today still takes the naive `hash(key) % shard_count` path when no per-table policy is registered (`cc_route`, `src/cluster/cluster_config.cc`), and range policies are keyed on an *extracted int64* (via `KeyExtractor`, below) rather than raw-key lex order. The fixed-`bucket_count` ring and the raw-key lex default are not yet built.
-
-#### Key Extractors
-
-For range-based sharding, the policy doesn't operate on the raw row key directly — it operates on an *extracted* sharding key. `KeyExtractor` (`src/cluster/sharding_policy.h:46`) supports three strategies:
-
-- **`FIELD_INDEX`** — extract the *n*th field from a composite key. TPC-C uses this: `w_id` is field 0 of every table that's keyed off a warehouse.
-- **`PREFIX_BYTES`** — read the first N bytes as a big-endian int64.
-- **`HASH_MOD`** — hash the whole key, mod `num_shards`. Used as the default fallback.
-
-A `TableShardingPolicy` holds a sorted `vector<RangeMapping>` (each `[start_key, end_key) → shard_id`) and looks up shards via binary search (`src/cluster/sharding_policy.h:152`). Policies are built at startup with a fluent builder:
-
-```cpp
-// From src/cluster/sharding_policy_builder.h
-ShardingPolicyBuilder(num_shards)
-    .table("WAREHOUSE").shardByField(0)
-        .addRange(0, 5, 0).addRange(5, 10, 1);
+```bash
+mako_admin begin HOST:CONTROL_PORT CLIENT SEQUENCE TABLE LO_HEX HI_HEX SOURCE DESTINATION
+mako_admin poll HOST:CONTROL_PORT CLIENT SEQUENCE
+mako_admin abort HOST:CONTROL_PORT CLIENT SEQUENCE
 ```
 
-The full schema (KeyExtractor types, RangeMapping serialization, TableShardingPolicy lookup) was designed in `docs/plans/range-sharding/task{1..4}.md`.
+`CONTROL_PORT` is the configured coordinator shard port plus `20000`. Preserve
+the same caller-owned `(CLIENT, SEQUENCE)` nonce and identical intent when a
+begin reply is lost; poll returns the retained outcome without consuming it.
+The table must already exist in the canonical catalog. Bounds are hexadecimal
+bytes: `''` is an empty bound, while the literal `inf` in place of `HI_HEX` is an
+unbounded upper endpoint. Warehouse IDs use four-byte big-endian coordinates.
+The client prints `pending`, `committed`, or `aborted`; a transport error does
+not imply that begin was rejected. There is no demo table or synthetic copy path.
 
-#### Where the sharding policy lives
+### Config Persistence and Routing
 
-The policy is **not** stored in a separate metadata service. It lives in the same `__mako_config__` system table on shard 0, under the `sharding/policy/<table>` key prefix — one key per table. Every shard and every client fetches the policy through **the standard KV interface** (`ITable::Get`), pointed at shard 0.
+`ConfigManager` preserves topology CRUD, monotonic ID allocation, epoch and
+version updates, node addressing, and opaque policy-byte persistence. Its
+`register_shard`, `kill_shard`, and `remove_shard` methods update metadata;
+they do not themselves move data, recover replicas, or change native routing.
+Likewise, `set_sharding_policy` and `set_sharding_mode` persist values rather
+than install a policy. `RemoteKvStore` reads those values through a caller-supplied
+read function; `ConfigKvService` supplies the RPC metadata-read boundary.
 
-The one thing that has to be special-cased is *how you find shard 0 in the first place*. `__mako_config__` is **pinned to shard 0** by convention: any lookup against this table skips the normal hash routing and goes straight to shard 0's current leader (whose address the node knows from the initial YAML seed list). There is no chicken-and-egg problem because you know shard 0 before you know anything else.
+Use the native service and `mako_admin begin`/`poll` described above for live
+range movement. Table identity and key coordinates come from the canonical
+catalog registered by the workload. Governed operations reach the Rust runtime
+through the native host bridge; C++ does not compute a second ownership answer.
+With native configuration disabled, `src/cluster/shard_router.cc` retains only
+static physical table-slot geometry. That helper is not a fallback for a
+native route failure.
 
-Everything else flows from this:
-
-- A client that wants to route key `k` in table `T` fetches `sharding/policy/T` from `__mako_config__` (which lives on shard 0), plus `__version__`, and caches both.
-- If the client sees the same `__version__` on refresh, it keeps the cached policy.
-- If `__version__` bumped, the client re-fetches every table policy it cares about.
-- If the client has no cached policy for `T`, it uses the default `sharding/mode` (hash or range) plus `shard_count`.
-
-Because the storage medium is just replicated KV, everything about the policy is already **versioned, transactional, and durable** — no separate config-service RPC, no separate replication path.
-
-#### Cache invalidation: version bumps + wrong-shard errors
-
-Two mechanisms keep every node's routing table converging on the current policy.
-
-**Version-based polling (background, sub-second staleness).** Each node runs a `ConfigWatcher` fiber. It calls `ITable::Get(__mako_config__, __version__)` on shard 0's leader, default every 1 second. When the returned version differs from its cached value, the watcher refreshes the cluster topology and every registered per-table policy, then invokes update callbacks so anything that depends on routing (client shard picker, coordinator, gossip) can react.
-
-**Wrong-shard errors (foreground, single-request recovery).** Any shard that receives an RPC for a key it doesn't own returns a `WrongShard` error containing the `__version__` it thinks is current. The caller compares that version to its cached one:
-
-- Caller's version is behind: refresh immediately, retry the RPC against the shard the new policy resolves to.
-- Caller's version is equal to or ahead of the shard's: means the caller is right about routing and the shard is stale. Wait briefly and retry — the shard's own `ConfigWatcher` will catch up in <1 second.
-
-This is the "moved, retry" pattern from the resharding survey (`docs/reference/resharding-survey.md`), specifically the YugabyteDB flavor: the routing state is authoritative on shard 0, but every actor can independently detect its own staleness without needing a broadcast. Together with 1-second polling, a torn cluster reconverges in worst-case one RTT of the client's next request.
-
-#### Master API: the shardmaster commands
-
-Cluster-lifecycle changes are exposed as RPCs on **every shard**, not just shard 0, so a client (or an operator's admin CLI) can issue them on any node without knowing which shard is the master:
-
-- **Non-shard-0 nodes** implement each RPC as a **forwarder**: they hold a client connection to shard 0's current leader and re-issue the RPC there. Return values propagate straight back.
-- **Shard 0's leader** implements the RPC as the actual mutation — it invokes the corresponding `ConfigManager` verb, which writes the atomic Raft batch to `__mako_config__`. Every write bumps `__version__`, which every other node's `ConfigWatcher` picks up.
-
-The command surface (✅ implemented today · 🟡 partial · ⬜ not yet built):
-
-**Membership & lifecycle**
-
-| Command | Effect | Status |
-|---|---|---|
-| `register_shard(replicas) -> id` | **An empty shard joins.** The shard starts with no id, calls this with its replica set, and the **master allocates its id** — `next_shard_id` (monotonic, never reused) — records the replica set + `status=active`, bumps `shard_count`, and returns the id. | ✅ |
-| `kill_shard(dead, taker)` | **Brutal** failure handoff (the shard is usually dead): set `status=dead`, `replacement=taker`, clear replicas, advance epoch. The dead shard's range reroutes to `taker`; its data is recovered from replicas, not migrated. `shard_count` is left unchanged so only the dead shard's keys move. | ✅ |
-| `remove_shard(id)` | **Gentle** decommission: drain the shard's data onto the other shards *first*, then delete it and shrink the cluster. | 🟡 metadata-only delete today; the drain is not yet wired |
-| `drain_shard(id)` | Rebalance a shard's ranges/buckets onto the remaining shards without removing it. | ⬜ |
-| `revive_shard(id, replicas)` | Promote a dead shard's replacement back to a first-class shard. | ⬜ |
-| `split_shard(source, split_key, dest)` | Split `source`'s range at `split_key`; the upper half becomes `dest`. | ⬜ |
-| `merge_shard(a, b)` | Merge two adjacent shards into one. | ⬜ |
-
-**Placement & policy**
-
-| Command | Effect | Status |
-|---|---|---|
-| `set_sharding_policy(table, assignment)` | Publish a table's `[range) → shard` (or `bucket → shard`) assignment. **Triggers a rebalance** — the affected partitions migrate to match — and bumps `__version__`. | 🟡 stores the policy today; the migration is not yet wired |
-| `get_sharding_policy(table)` · `list_sharding_policy_tables()` · `delete_sharding_policy(table)` | Read / list / drop per-table policies. | ✅ |
-| `set_sharding_mode(lex \| hash)` | Select the default strategy for tables with no policy. | ✅ |
-| `move_range(table, range, from, to)` · `move_bucket(bucket, to)` | Move a single partition between shards — the migration primitive `remove_shard`/`rebalance` build on. | ⬜ |
-| `rebalance()` | Even out ranges/buckets across shards after a membership change. | ⬜ |
-
-**Replica set, leadership & epoch**
-
-| Command | Effect | Status |
-|---|---|---|
-| `set_shard_replicas(id, replicas)` · `set_shard_leader(id, site)` · `set_shard_status(id, status)` | Manage a shard's replica set, Raft/Paxos leader, and lifecycle status. | ✅ |
-| `advance_epoch()` | Bump the global speculative epoch (a speculation barrier; see below). | ✅ |
-| `set_node_addr(site, addr)` · `set_node_status(site, status)` | Physical node registry. | ✅ |
-
-**Read plane (queries)**
-
-| Command | Effect | Status |
-|---|---|---|
-| `get_version()` | Current config version — clients poll it to invalidate their routing cache. | ✅ |
-| `get_shard_count()` · `get_shard_replicas(id)` · `get_shard_leader(id)` · `get_shard_status(id)` · `get_shard_replacement(id)` | Per-shard topology reads. | ✅ |
-
-Any command that mutates the shard map advances `__version__` in the same atomic batch — the single knob that drives cache invalidation across the cluster. `kill_shard` is the *brutal* verb (a shard died, reassign its range, don't move data); `remove_shard` is the *gentle* one (drain data out, then remove) — see [Resharding](#resharding-2pc-style) for how the migration runs.
-
-#### Routing implementation
-
-The router lives entirely inside `ClusterConfig`. `ClusterConfig::get_shard_for_key(table, key)`:
-
-1. If a `TableShardingPolicy` is loaded for `table`, extract the sharding key using its `KeyExtractor` (`FIELD_INDEX`, `PREFIX_BYTES`, or `HASH_MOD`) and binary-search the sorted range list. This is the **range-based** path.
-2. Otherwise, fall back to the default `sharding/mode`:
-   - `lex` (default): return the shard whose `[start_key, end_key)` range covers the raw key.
-   - `hash`: `bucket = hash(key) % bucket_count` (fixed slot space), then the shard that owns that bucket on the `hash(shard_id)` ring. *(Target model — the code today still computes the naive `hash(key) % shard_count`; see Data Partitioning.)*
-3. If the shard the previous step landed on is currently `dead`, follow its `replacement` pointer (transitively, with a cycle guard bounded by `shard_count + 1` hops).
-
-Callers are in `src/cluster/` — `shard_router.{h,cc}` is the public dispatcher; `sharding_policy.h`, `sharding_policy_cache.h`, `sharding_policy_builder.h` are the pure data types, cache, and fluent builder respectively.
-
-`compute_shard_for_key(table_id, key)` (`shard_router.cc`) consults a **process-global `ClusterConfig`** (`janus::get_cluster_config()`, populated by the `ConfigWatcher`'s update callback) as the single source of truth once it has a nonzero `shard_count` — resolving the `table_id` to a table name via `TableRegistry` and delegating to `ClusterConfig::get_shard_for_key(table, key)`. Until the watcher populates that global (i.e. before the shard-0 config path is wired at a node), the router falls back to the legacy `ShardingPolicyCache` and, failing that, the table-ID heuristic `(table_id - 1) / NUM_TABLES_PER_SHARD`. This gate means the `ClusterConfig`-based path is a no-op until wired in, so it can land ahead of the runtime bootstrap without changing behavior.
-
-The byte-key path (`compute_shard_for_key`) hard-codes the "first 8 bytes, big-endian" decoding for `FIELD_INDEX`; callers whose sharding field isn't at offset 0 should use `compute_shard_for_key_value` with the value pre-extracted.
 
 For expected cross-shard ratios under TPC-C (the canonical benchmark), see `docs/reference/tpcc-sharding.md` — warehouse-based sharding yields ~5% remote NewOrder and ~8% remote Payment with 2 shards.
 
-### Data Migration Protocol (Online Resharding)
+### Data Migration Protocol (Live Native Sharding)
 
-Moving a key range (or hash bucket) from a **source** shard to a **destination** shard is the primitive under `move_range`, `remove_shard`/`drain_shard`, `rebalance`, and `set_sharding_policy`. Mako does it **online** — the source keeps serving the range until the very last moment — with a long background bulk copy followed by a short two-phase-commit cutover. Shard 0 (the master) is the coordinator; the source and destination are the participants. All phase state lives in `reshard/*` keys on `__mako_config__`, so it is replicated and crash-recoverable like any other config.
+`src/cluster/` owns the protocol in native Rust; C++ supplies narrow storage,
+RPC and lifetime callbacks. Owner 0 coordinates one active range move among
+fixed, live, non-replicated owners. The service retains caller nonces, plans,
+issued controls, receipts and outcomes. Repeating an identical request returns
+its existing generation/outcome; it does not allocate another attempt.
 
-Besides the master's global view, **each shard also keeps a small piece of local metadata**: the set of key ranges it is currently in charge of, and — for any migration it is participating in — its role (source or destination), the stage (copying vs. locked), and the attempt's generation. This participant-local state is what lets a shard reject a request for a key it no longer owns (a `WrongShard` error), freeze *its* range at LOCK, and cast its own prepare vote — without consulting the master on every request.
+1. **Stage destination and freeze source.** The destination's selected range
+   enters staging under the new generation. The source rejects new admissions
+   for that range while existing leases finish.
+2. **Drain every access lease.** Readers, absent-key observations, range scans
+   and writers all count. Leases remain held through actual engine completion
+   and terminal peer cleanup, not merely until an RPC response or commit decision.
+3. **Exact final mirror.** With the source range stable, merge ordered
+   `(coordinate, row key)` scans, copy actual values and delete destination-only
+   rows. EOF is explicit; an error or short nonempty page is not EOF. Destination
+   readiness requires complete exact coverage, not a checksum.
+4. **Retire and publish.** Fence the old source incarnation before publishing
+   an immutable complete owner/epoch directory snapshot. Unrelated intervals
+   retain their routes. A returned owner receives a new epoch, so an old grant
+   cannot become valid merely because its owner number matches again.
+5. **Finish both participants.** Report a terminal outcome only after the
+   required source/destination completion receipts. A storage cleanup failure
+   retains its real partial state and is retried; changing metadata alone is
+   not a cleanup acknowledgement.
 
-**Design goals.**
-- The source serves reads *and* writes for the range throughout the (potentially long) bulk copy — no availability hit while the data moves.
-- **No lost writes**: writes that arrive during the copy are captured and applied before cutover.
-- The unavailability window is bounded to the *final delta* (small), not the whole dataset.
-- Crash-recoverable: every phase transition is a durable, versioned Raft write on shard 0, so a coordinator or participant crash resumes or aborts cleanly.
+This implementation deliberately has **no background bulk copy**. The source
+freeze covers the complete final mirror, not a claimed bounded final delta.
+Abort before the irrevocable cutover restores source service and cleans staging;
+after the decision, retries complete that decision. Generation, copy-round and
+terminal fences reject delayed authentic controls from older attempts. No timeout
+is interpreted as proof that an effect did not happen.
 
-```
-             PREPARE            LOCK            COMMIT
-                v                v                 v
- source: serving ── serving ────┤ frozen ├──────── drops range
-                 (bulk copy)    │(final  │
- dest:   building ── catching-up┤ sync)  ├──────── serving
-                 ^              ^                 ^
-          snapshot + delta   delta small     routing flips
-          (async, online)   (stop the range)  (version bump)
-```
+TPC-C routes its first eleven canonical tables by four-byte big-endian global
+warehouse coordinates; row keys keep their existing encoding. The immutable
+`item` table is explicitly replicated/static, not assigned a fictitious mutable
+warehouse owner. Adopted local indexes are materialized before publication and
+identified by physical owner as well as canonical table/coordinate. Same-process
+cross-owner access still uses the real participant RPC and lease path.
 
-**Phase 0 — PREPARE (intent).** The master writes the migration intent in one atomic Raft batch — `reshard/active=1`, `reshard/src`, `reshard/dst`, `reshard/range=[lo,hi)`, `reshard/phase=copy` — bumping `__version__`. From here the operation is durable: a master crash re-reads the intent and resumes. The routing assignment still points at the **source**; the range is merely flagged *migrating*.
+The old C++ policy/cache/migration graph, checksum cutover and write-only drain
+are removed. There is no replicated `reshard/*` journal, live membership
+change, automatic rebalance or crash-recovery guarantee. Configuration CRUD
+does not perform migration.
 
-**Phase 1 — BACKGROUND COPY (source live).** The destination pulls a consistent snapshot of the range from the source and bulk-loads it, in the background. Meanwhile the source **keeps serving reads and writes** for the range. Writes that land on the range after the snapshot point are captured as a **delta** — the source dual-writes them into a change buffer the destination tails — so the destination converges toward the source. A **deletion is a tombstone** in that delta (a "null write"), so a key removed after the snapshot is propagated as a positive fact — the destination learns the key is *gone*, not merely "not copied." This phase is unbounded in time and fully online. It ends when the destination has caught up to "most of the data" (the outstanding delta is small).
+The executable Rust actors and source histories construct a refinement of the
+independent placement specification in
+[`tla/mako`](../tla/mako/README.md#native-rust-correspondence). The native proofs
+also cover injective byte values, full scan identity and forward/reverse range
+coverage under transactional ordered-scan semantics. This is not a native
+distributed transaction-history or combined Raft/migration theorem. Native
+threading, wire/FFI dispatch, engine atomicity, canonical index binding and
+callback lifetimes remain explicit trusted boundaries.
 
-**Phase 2 — LOCK (2PC prepare: freeze the range).** The master flips `reshard/phase=lock` and tells **both** participants to prepare:
-- The **source stops serving the range** — reads/writes for `[lo,hi)` are rejected with a `Migrating`/`WrongShard`-style error, so clients retry (blocking briefly on *that range only*; the rest of the source's key space is unaffected).
-- The **destination** stops tailing and readies to take ownership.
-
-This is the *only* window where the range is unavailable, and it covers just the final delta.
-
-**Phase 3 — FINAL SYNC + VERIFY.** The source ships the remaining delta (puts *and* delete-tombstones since the last applied point) to the destination, which applies it. Both sides then compute a **checksum over the range** (a hash folding every live key→value pair *and* every tombstone). The destination acks "prepared" **only if its checksum equals the source's** — proof the copy is complete and byte-identical. A mismatch (a dropped or garbled transfer) is a "no" vote, so the master **aborts** rather than cutting over to a divergent copy. This is what makes the cutover safe: the routing flip in COMMIT is gated on a positive equality proof, not just "the copy finished."
-
-**Phase 4 — COMMIT.** The master commits **only if both participants voted "prepared"** (source frozen, destination caught up). It writes the cutover atomically: the range→shard assignment now names the **destination**, `reshard/phase=committed` (then the `reshard/*` keys clear), and `__version__` bumps. On the new version every node's `ConfigWatcher` re-resolves routing — the range routes to the destination, which begins serving it — and the source **drops** the range's data. The unavailability window closes.
-
-**ABORT (a participant times out).** If either participant fails to ack "prepared" within the timeout — say the destination is unreachable during the final step — the master **aborts** instead of committing. It clears the intent / writes `reshard/phase=abort`; the source **resumes serving** the range (it never lost the data — it only stopped *serving* during LOCK), and the destination discards its partial copy. Because the assignment still points at the source until COMMIT, an abort is invisible to clients beyond the brief LOCK-window retry.
-
-**Stale votes are fenced by a generation.** Each migration attempt carries a monotonic **generation** id, and every prepare-ack the master accepts must match the current one. So if a timed-out participant's ack arrives *after* the master has already aborted (or moved on to a new attempt), the master sees a superseded generation and **ignores it** — a late "prepared" can never resurrect an aborted migration or wrongly count toward a later one. This is the classic 2PC coordinator rule: once the coordinator decides ABORT, no delayed vote can flip it.
-
-**Crash recovery.** The `reshard/*` keys (Raft-replicated on shard 0) are authoritative. On master restart mid-migration: `phase=copy` → restart the copy (idempotent — re-snapshot); `phase=lock`/`final_sync` → roll forward (re-run final sync + commit) or abort; `phase=committed` → finish cleanup. A participant crash during COPY just restarts the copy; during LOCK the master aborts and the source resumes, since no commit was reached.
-
-**How the master commands use it.**
-- `move_range(table, range, from, to)` — one migration, `from`→`to`.
-- `remove_shard(id)` / `drain_shard(id)` — a *set* of migrations, one per range the leaving shard owns, spread across the remaining shards; the shard is removed only once all commit.
-- `rebalance()` — a batch of `move_range`s computed to even the load.
-- `set_sharding_policy(table, assignment)` — diff the new assignment against the current one; every moved partition becomes a migration.
-
-Only the COMMIT of each migration bumps the routing version, so clients observe a clean before/after per range — never a half-migrated state. (`kill_shard` skips this protocol entirely: the source is *dead*, so there is nothing to copy — it just reassigns the range via the `replacement` pointer and recovers data from the destination's own replicas.)
+Separate sharding protocols establish per-authority crash reconstruction,
+admission/membership fencing, conditional progress from primitive fairness,
+and safe administrative compaction. The current native adapter does not
+implement their durable recovery interfaces. Administrative compaction does
+not collect participant journals, receipt dictionaries or outstanding copy work.
+See [the trusted interface contract](../tla/mako/README.md#trusted-recovery-and-progress-interfaces).
+Run `./docker_build.sh ci nativeShardingProof` and
+`./docker_build.sh ci nativeShardingSmoke` for the separate proof and real-engine gates.
 
 ### Speculation Recovery (Epoch-Based)
 

@@ -8,7 +8,7 @@
 // calling thread has been through mbta static_init + thread_init. Here
 // we do that bring-up (mirroring mbta_wrapper::thread_init, same as
 // test_silo_nontxn_api) and confirm the adapter round-trips raw bytes,
-// and that ConfigManager / ClusterConfig work end-to-end on real
+// and that ConfigManager works end-to-end on real
 // storage. Config indexes use a reserved table-id range (9000+) so they
 // never collide with a benchmark's table-id sequence.
 
@@ -121,30 +121,6 @@ TEST_F(ConfigManagerMbtaTest, ShardingPolicyBytesRoundTripOnRealMbta) {
     auto tables = cm.list_sharding_policy_tables();
     ASSERT_EQ(tables.size(), 1u);
     EXPECT_EQ(tables[0], "WAREHOUSE");
-}
-
-TEST_F(ConfigManagerMbtaTest, ClusterConfigLoadAndKillShardOnRealMbta) {
-    OrderedIndexKvStore kv(make_config_index());
-    ConfigManager cm(&kv);
-    ASSERT_TRUE(cm.add_shard(0, {"a"}));
-    ASSERT_TRUE(cm.add_shard(1, {"b"}));
-
-    ClusterConfig cc = ClusterConfig::new_();
-    ASSERT_TRUE(cc.load_from_config_manager(&cm));
-    EXPECT_EQ(cc.get_shard_count(), 2u);
-
-    // Find a key that routes to shard 1, then kill 1 -> taker 0.
-    std::string probe;
-    for (int i = 0; i < 64; ++i) {
-        const std::string c = "k" + std::to_string(i);
-        if (cc.get_shard_for_key_default(c) == 1u) { probe = c; break; }
-    }
-    ASSERT_FALSE(probe.empty());
-
-    ASSERT_TRUE(cm.kill_shard(1, 0));
-    ASSERT_TRUE(cc.load_from_config_manager(&cm));
-    EXPECT_EQ(cc.get_shard_for_key_default(probe), 0u)
-        << "killed shard's keys must reroute to the taker, end to end on mbta";
 }
 
 }  // namespace

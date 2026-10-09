@@ -177,14 +177,6 @@ if [ ! -f "$log_file" ]; then
     exit 1
 fi
 
-# Check for TPC-C sharding policy initialization
-if grep -q "TPC-C Sharding: Initialized policy" "$log_file"; then
-    echo "  ✓ TPC-C sharding policy initialized"
-    grep "TPC-C Sharding: Initialized policy" "$log_file" | tail -1 | sed 's/^/    /'
-else
-    echo "  ✗ TPC-C sharding policy not initialized"
-    failed=1
-fi
 
 # Check for throughput output
 if grep -q "agg_persist_throughput" "$log_file"; then

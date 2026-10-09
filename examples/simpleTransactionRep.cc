@@ -12,7 +12,7 @@
 // Usage:
 //   ./simpleTransactionRep <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]
 //   ./simpleTransactionRep --server <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]
-//   ./simpleTransactionRep --client <server_host> <server_port>
+//   ./simpleTransactionRep --client <server_host> <server_port> <unique_high_bit_client_id>
 //
 // See docs/client_server_architecture.md for architecture details.
 // See docs/dev/unify_client_server_interface_plan.md for implementation plan.
@@ -665,9 +665,13 @@ void run_tests(mako::IDatabase* db) {
 }
 
 // Verify data integrity for all tests
+// @unsafe - Reads the replica's physical table through legacy storage APIs.
 bool verify_data_integrity(abstract_db* db, int nshards, int nthreads) {
     mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
-    auto records = scan_tables(db, table);
+    // Verify replayed rows here, not a distributed scan of other live owners.
+    auto* replica_table = table->shard_for_index(
+        BenchmarkConfig::getInstance().getShardIndex());
+    auto records = scan_tables(db, replica_table);
 
     printf("\n=== Database contents (%zu rows) ===\n", records.size());
     for (const auto &entry : records) {
@@ -907,8 +911,9 @@ bool verify_data_integrity(abstract_db* db, int nshards, int nthreads) {
 
 // @safe - Print client mode usage
 static void print_client_usage(const char* program_name) {
-    printf("Client Mode Usage: %s --client <server_host> <server_port>\n", program_name);
-    printf("Example: %s --client localhost 31000\n", program_name);
+    printf("Client Mode Usage: %s --client <server_host> <server_port> <unique_high_bit_client_id>\n", program_name);
+    printf("Example: %s --client localhost 31000 0x8000000000000001\n", program_name);
+    printf("Never reuse that client ID for another client or after a restart.\n");
 }
 
 // ============================================================================
@@ -917,7 +922,8 @@ static void print_client_usage(const char* program_name) {
 
 // @safe - Run simple transaction tests using unified IDatabase interface
 // This function works for both local and remote database connections.
-static bool run_simple_test(mako::IDatabase* db, const std::string& test_prefix = "unified") {
+static bool run_simple_test(mako::IDatabase* db, const std::string& test_prefix = "unified",
+                            bool separately_committed = false) {
     printf("\n--- Running Simple Tests (%s) via IDatabase ---\n", test_prefix.c_str());
 
     mako::ITable* table = db->GetTable("customer_0");
@@ -998,7 +1004,7 @@ static bool run_simple_test(mako::IDatabase* db, const std::string& test_prefix 
         all_passed = false;
     }
 
-    // Test 3: Rollback test - write then rollback, verify key doesn't exist
+    // Test 3: local atomic rollback versus explicitly auto-committed gateway calls.
     printf("[%s] Testing rollback...\n", test_prefix.c_str());
     {
         std::string rollback_key = test_prefix + "_rollback_test";
@@ -1009,18 +1015,18 @@ static bool run_simple_test(mako::IDatabase* db, const std::string& test_prefix 
             table->Put(txn, rollback_key, rollback_value);
             db->Rollback(txn);
 
-            // Note: Due to auto-commit semantics, the key may still exist
-            // This test documents the current behavior
+            // The gateway has no multi-operation atomicity: Rollback closes its
+            // session, while local transactions can undo their staged write.
             void* txn2 = db->BeginTransaction();
             std::string check_value;
             mako::Status s = table->Get(txn2, rollback_key, check_value);
             db->Commit(txn2);
 
-            if (s.IsNotFound()) {
-                printf(GREEN "[PASS]" RESET " Rollback prevented commit\n");
+            if (separately_committed ? s.ok() : s.IsNotFound()) {
+                printf(GREEN "[PASS]" RESET " Rollback follows the selected API semantics\n");
             } else {
-                // Auto-commit semantics: rollback doesn't undo completed puts
-                printf(YELLOW "[INFO]" RESET " Rollback test: key exists (auto-commit semantics)\n");
+                printf(RED "[FAIL]" RESET " Unexpected rollback result: %s\n", s.ToString().c_str());
+                all_passed = false;
             }
         }
     }
@@ -1057,24 +1063,25 @@ static int run_client_mode(const mako::Options& opts, int shard_index = 0) {
 
     // Run unified simple tests using the IDatabase interface
     // This is the SAME test code that can be used with local DB
-    bool tests_passed = run_simple_test(remote_db, "remote");
+    bool tests_passed = run_simple_test(remote_db, "remote", true);
 
     printf("\n--- Client Mode Summary ---\n");
     printf("Using unified mako::Options with client.enabled = true\n");
-    printf("Same run_simple_test() works for both local DB and RemoteDB.\n");
+    printf("Gateway Put/Get/Delete commit separately; Commit/Rollback only close sessions.\n");
 
     delete remote_db;
     return tests_passed ? 0 : 1;
 }
 
-// @safe - Legacy run_client_mode using deprecated RemoteOptions (backward compatible)
-static int run_client_mode_legacy(const char* server_host, int server_port) {
-    printf("=== Mako Client Mode (Legacy) ===\n");
+// @unsafe - command-line configuration crosses the legacy SDK boundary.
+static int run_client_mode_configured(const char* server_host, int server_port, uint64_t client_id) {
+    printf("=== Mako Client Mode ===\n");
     printf("Connecting to server at %s:%d...\n", server_host, server_port);
 
     // Convert to unified Options
     mako::Options opts;
     opts.client.enabled = true;
+    opts.client.client_id = client_id;
     opts.client.server_hosts.push_back(server_host);
     opts.client.server_ports.push_back(server_port);
 
@@ -1092,14 +1099,14 @@ int main(int argc, char **argv) {
     // Check for --client flag
     if (argc >= 2 && strcmp(argv[1], "--client") == 0) {
         mode = RunMode::CLIENT_ONLY;
-        if (argc != 4) {
+        if (argc != 5) {
             print_client_usage(argv[0]);
             return 1;
         }
-        // Use legacy function for backward compatibility with simple --client host port
         const char* server_host = argv[2];
         int server_port = std::stoi(argv[3]);
-        return run_client_mode_legacy(server_host, server_port);
+        const uint64_t client_id = std::stoull(argv[4], nullptr, 0);
+        return run_client_mode_configured(server_host, server_port, client_id);
     }
 
     // Check for --server flag
@@ -1116,7 +1123,7 @@ int main(int argc, char **argv) {
     if (effective_argc < 6 || effective_argc > 7) {
         printf("Usage: %s <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]\n", argv[0]);
         printf("       %s --server <nshards> <shardIdx> <nthreads> <paxos_proc_name> <is_replicated> [replication_type]\n", argv[0]);
-        printf("       %s --client <server_host> <server_port>\n", argv[0]);
+        printf("       %s --client <server_host> <server_port> <unique_high_bit_client_id>\n", argv[0]);
         printf("\nModes (RunMode enum):\n");
         printf("  COLOCATE (default):  Run database server with transaction tests\n");
         printf("  SERVER_ONLY (--server): Run standalone database server only (wait for clients/shutdown)\n");
@@ -1129,7 +1136,7 @@ int main(int argc, char **argv) {
         printf("  %s 2 0 6 localhost 1 raft         # COLOCATE + Raft\n", argv[0]);
         printf("  %s --server 2 0 6 localhost 1     # SERVER_ONLY + Paxos\n", argv[0]);
         printf("  %s --server 1 0 4 localhost 0     # SERVER_ONLY (no replication)\n", argv[0]);
-        printf("  %s --client localhost 31000       # CLIENT_ONLY\n", argv[0]);
+        printf("  %s --client localhost 31000 0x8000000000000001 # unique external client\n", argv[0]);
         return 1;
     }
 

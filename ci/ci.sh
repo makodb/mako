@@ -6,7 +6,7 @@ set -e  # Exit on error
 export MAKO_NO_GDB=1
 
 # Build directory (can be overridden via environment variable)
-BUILD_DIR=${BUILD_DIR:-build}
+export BUILD_DIR="${BUILD_DIR:-build}"
 
 # Function to check for hanging processes after a test
 check_for_hanging_processes() {
@@ -697,6 +697,12 @@ case "${1:-}" in
     compile)
         compile
         ;;
+    nativeShardingProof)
+        bash ./scripts/verify_native_sharding.sh
+        ;;
+    nativeShardingSmoke)
+        bash ./examples/test_native_sharding.sh
+        ;;
     cleanup)
        cleanup
         ;;
@@ -759,7 +765,9 @@ case "${1:-}" in
         ;;
     all)
         # Run all steps in sequence
+        bash ./scripts/verify_native_sharding.sh
         compile
+        bash ./examples/test_native_sharding.sh
         run_srpc_unit_tests
         run_simple_transaction
         run_client_server_test
@@ -788,6 +796,7 @@ case "${1:-}" in
         echo "Supported targets:"
         echo "  compile, cleanup, simpleTransaction, simplePaxos,"
         echo "  shardNoReplication,"
+        echo "  nativeShardingProof, nativeShardingSmoke,"
         echo "  shard1Replication, shard2Replication,"
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
         echo "  shard1ReplicationRaft, shard2ReplicationRaft,"

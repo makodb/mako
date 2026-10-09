@@ -1,0 +1,21 @@
+[package]
+name = "mako-sharding"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.97.1"
+publish = false
+
+[lib]
+path = "lib.rs"
+crate-type = ["rlib", "staticlib"]
+
+[dependencies]
+vstd = { git = "https://github.com/verus-lang/verus", rev = "b677dd5a766f25f56e9aa1e32621aa4e53304b47" }
+parking_lot = "0.12"
+
+[lints.rust]
+unsafe_code = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(verus_keep_ghost_body)', 'cfg(verus)'] }
+
+[profile.release]
+panic = "abort"

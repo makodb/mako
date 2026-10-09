@@ -921,6 +921,7 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/transport.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/fasttransport.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/srpc_rpc_backend.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/sharding_leases.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/multi_transport_manager.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/configuration.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/timestamp.cc"
@@ -930,6 +931,9 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/server.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/abstract_db.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/cluster_bootstrap.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/native_sharding_storage.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/native_sharding_rpc.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/gateway_receiver.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_service.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_proxy.cc"
 )
@@ -1053,25 +1057,49 @@ set(TXLOG_HELPER_SRC
     src/deptran/raft_main_helper.cc
 )
 
+# Native sharding is ordinary Rust, never a rusty-cpp/transpiler input. Keep its
+# Cargo output isolated from SRPC's independently pinned crate/toolchain.
+find_program(MAKO_SHARDING_CARGO cargo REQUIRED)
+set(MAKO_SHARDING_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/native-sharding")
+set(MAKO_SHARDING_ARCHIVE "${MAKO_SHARDING_TARGET_DIR}/release/libmako_sharding.a")
+file(GLOB_RECURSE MAKO_SHARDING_RUST_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/*.rs"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tla/mako/src/*.rs")
+add_custom_command(
+    OUTPUT "${MAKO_SHARDING_ARCHIVE}"
+    COMMAND "${MAKO_SHARDING_CARGO}" build --locked --release --lib
+        --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.toml"
+        --target-dir "${MAKO_SHARDING_TARGET_DIR}"
+    DEPENDS ${MAKO_SHARDING_RUST_SOURCES}
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.lock"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Building native Rust sharding staticlib (locked dependencies)"
+    VERBATIM)
+add_custom_target(mako_sharding_rust_build DEPENDS "${MAKO_SHARDING_ARCHIVE}")
+add_library(mako_sharding_native STATIC IMPORTED GLOBAL)
+set_target_properties(mako_sharding_native PROPERTIES
+    IMPORTED_LOCATION "${MAKO_SHARDING_ARCHIVE}"
+    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    INTERFACE_LINK_LIBRARIES "pthread;${CMAKE_DL_LIBS};m;rt;util")
+add_dependencies(mako_sharding_native mako_sharding_rust_build)
+
+# Explicit Docker-only proof gate; it verifies the production crate, not a
+# separate executable model. The independent model/controls run in addition.
+add_custom_target(verify_native_sharding
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_native_sharding.sh"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    USES_TERMINAL VERBATIM)
+
 # ---------------------------------------------------------------------------
-# `cluster` — Mako's config/sharding metadata + control-plane component,
-# authored as a C++23 named module. src/cluster/*.h are module partition
-# interface units (NOT headers — never #included); src/cluster/cluster.ccm is
-# the primary interface unit re-exporting them; the two .cc are module
-# implementation units. Mirrors the `srpc` module library: consumers write
-# `import cluster;` and link this target. See src/cluster/cluster.ccm.
+# `cluster` retains the configuration KV ports and the disabled/static engine
+# table-address bridge. Governed placement/leases/migration live exclusively
+# in the native Rust staticlib, not retired C++ policy/cache module partitions.
 set(CLUSTER_MODULE_INTERFACES
     ${CMAKE_SOURCE_DIR}/src/cluster/kv_store.h
     ${CMAKE_SOURCE_DIR}/src/cluster/in_memory_kv_store.h
     ${CMAKE_SOURCE_DIR}/src/cluster/remote_kv_store.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy_builder.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy_cache.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/shard.h
     ${CMAKE_SOURCE_DIR}/src/cluster/config_manager.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/cluster_config.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/config_watcher.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/shard_manager.h
     ${CMAKE_SOURCE_DIR}/src/cluster/shard_router.h
     ${CMAKE_SOURCE_DIR}/src/cluster/cluster.ccm
 )
@@ -1080,7 +1108,6 @@ set(CLUSTER_MODULE_INTERFACES
 set_source_files_properties(${CLUSTER_MODULE_INTERFACES} PROPERTIES LANGUAGE CXX)
 # Module implementation units (module cluster;) — regular C++ sources.
 set(CLUSTER_MODULE_IMPLS
-    ${CMAKE_SOURCE_DIR}/src/cluster/cluster_config.cc
     ${CMAKE_SOURCE_DIR}/src/cluster/shard_router.cc
 )
 add_library(cluster STATIC ${CLUSTER_MODULE_IMPLS})
@@ -1100,7 +1127,7 @@ target_include_directories(cluster PUBLIC
 target_compile_options(cluster PUBLIC ${BENCH_CXXFLAGS})
 # std_port supersedes the deleted hashbrown_port target; it PUBLIC-links
 # std_port_hashbrown, so naming std_port pulls in both archives/BMIs.
-target_link_libraries(cluster PUBLIC srpc pthread btree_port vec_port rc_port std_port)
+target_link_libraries(cluster PUBLIC srpc pthread btree_port vec_port rc_port std_port mako_sharding_native)
 
 # Build the replication core from the explicit manifest above.
 add_library(txlog_core_obj OBJECT
@@ -1178,8 +1205,6 @@ file(GLOB RAFT_BORROW_SRC
 #     false positive violations from header code.
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*test(conf)?\\.cc$")
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*replicated_db\\.cc$")
-# Note: config_manager.cc / cluster_config.cc / config_watcher.cc moved to
-# src/cluster/ and are no longer part of RAFT_BORROW_SRC.
 
 if(RAFT_BORROW_SRC)
     add_library(raft_borrow OBJECT ${RAFT_BORROW_SRC})
@@ -1259,10 +1284,6 @@ set(DEPTRAN_BORROW_SRC
     src/deptran/paxos_worker.cc
     src/deptran/replication_helper.cc
     src/deptran/scheduler.cc
-    # Files below excluded due to violations from included headers (not the .cc files themselves):
-    # src/deptran/shard_router.cc           # 51 violations from masstree/sharding headers
-    # src/deptran/sharding_policy_cache.cc  # 14 violations from sharding/Mutex headers
-    # src/deptran/tpcc_sharding.cc          # 23 violations from sharding_policy_builder.h headers
 )
 
 if(DEPTRAN_BORROW_SRC)
@@ -1347,7 +1368,8 @@ target_include_directories(mako PUBLIC
 target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS} ${MASSTREE_FORCE_INCLUDE_FLAG})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 # Inherit srpc module BMI paths from txlog_core_obj.
-target_link_libraries(mako PUBLIC txlog_core_obj masstree)
+target_link_libraries(mako PUBLIC txlog_core_obj masstree mako_sharding_native)
+add_dependencies(mako rcc_rpc_gen)
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
 
@@ -1466,6 +1488,8 @@ function(add_apps exec_name exec_path)
 endfunction()
 
 add_apps(dbtest src/mako/benchmarks/dbtest.cc)
+add_apps(mako_admin src/mako/mako_admin.cc)
+add_apps(native_sharding_smoke examples/native_sharding_smoke.cc)
 add_apps(simpleTransaction examples/simpleTransaction.cc
     TXLOG_LIBS txlog_core
     TXLOG_DEPS txlog_core
@@ -1634,45 +1658,15 @@ if(BUILD_TESTS)
     add_executable(test_client_service tests/test_client_service.cc)
     target_include_directories(test_client_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_client_service PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_client_service ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_client_service ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} mako_sharding_native pthread)
     add_test(NAME test_client_service COMMAND test_client_service)
 
-    # Sharding Policy Tests
-    #
-    # The policy value types now serialize via their srpc Serializable
-    # save()/load() DSL methods (BinaryWriteArchive), so the old free-function
-    # srpc::Marshal operators (sharding_policy_marshal.{h,cc}) are gone.
-    # sharding_policy.h pulls in the srpc.serializable module directly, so this
-    # test just compiles the one source file.
-    add_executable(test_sharding_policy
-        tests/sharding_policy_test.cc
-    )
-    target_include_directories(test_sharding_policy PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_sharding_policy PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_sharding_policy cluster ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_sharding_policy COMMAND test_sharding_policy)
-
-    # Sharding Policy Cache Tests (requires txlog bench/core for ConfigClient)
-    add_executable(test_sharding_policy_cache tests/sharding_policy_cache_test.cc)
-    target_include_directories(test_sharding_policy_cache PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
-    target_compile_options(test_sharding_policy_cache PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_sharding_policy_cache ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_sharding_policy_cache COMMAND test_sharding_policy_cache)
-
-    # Shard Router Integration Tests (requires txlog bench/core for ShardingPolicyCache)
+    # Disabled/static physical table routing and table-registry tests.
     add_executable(test_shard_router tests/shard_router_test.cc)
     target_include_directories(test_shard_router PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako)
     target_compile_options(test_shard_router PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_shard_router ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_shard_router COMMAND test_shard_router)
-
-    # TPC-C Sharding Integration Tests (requires txlog bench/core for ShardingPolicyCache)
-    add_executable(test_tpcc_sharding tests/tpcc_sharding_test.cc)
-    target_include_directories(test_tpcc_sharding PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako)
-    target_compile_options(test_tpcc_sharding PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_tpcc_sharding ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_tpcc_sharding COMMAND test_tpcc_sharding)
-
 
     # ConfigKvService server-handler read-logic tests (Stage 3d). The
     # ConfigKvServiceImpl handler is generated from rcc_rpc.rpc, so this
@@ -1713,26 +1707,6 @@ if(BUILD_TESTS)
         cluster srpc ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
     )
     add_test(NAME test_config_manager COMMAND test_config_manager)
-
-    # ShardManager control-plane test — stub Shards (in-memory KV stand-ins
-    # for masstree shards) driven through the REAL ConfigManager/ClusterConfig
-    # reconfiguration verbs (add/kill/remove). Pure cluster like
-    # test_config_manager: no storage engine, no RPC.
-    add_executable(test_shard_manager
-        tests/shard_manager_test.cc
-    )
-    target_include_directories(test_shard_manager PRIVATE
-        src
-        ${GTEST_INCLUDE_DIRS}
-    )
-    target_link_options(test_shard_manager PRIVATE
-        "-L${_CXX_COMPILER_ROOT}/lib"
-        "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
-    )
-    target_link_libraries(test_shard_manager
-        cluster srpc ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
-    )
-    add_test(NAME test_shard_manager COMMAND test_shard_manager)
 
     # OrderedIndexKvStore adapter test — the cluster<->mako binding seam.
     # Unlike test_config_manager (pure cluster), this TU pulls the
@@ -2170,7 +2144,7 @@ if(BUILD_TESTS)
     # Test: distributed (two-shards-in-one-process) non-txn API — the
     # gating tests for docs/mako-nontxn-api-plan.md. Exercises the
     # nontxnPut/Insert/Remove RPCs + remoteGet end-to-end over the
-    # loopback fake transport.
+    # real loopback srpc transport.
     add_executable(test_mako_nontxn_distributed tests/test_mako_nontxn_distributed.cc)
     # Out-of-tree build dirs have no ./src or ../src — bake the source root.
     target_compile_definitions(test_mako_nontxn_distributed PRIVATE

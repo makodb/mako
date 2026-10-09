@@ -1834,7 +1834,6 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Created test/sharding_startup_test.cc with 12 tests
         - Tests cover: C-node first boot/reboot, policy persistence, RPC serving
         - Tests cover: Initializer sending policy, data node fetching, end-to-end flow
-        - Plan: docs/dev/task8_4_startup_tests_plan.md
     - [x] **Task 9: Testing** [~300 LOC] [DONE 2026-01-13]
       - [x] *high* 9.1 Unit tests [DONE - existing tests verified]
         - test_sharding_policy.cc: 34 tests (serialization, builder validation, key extraction)

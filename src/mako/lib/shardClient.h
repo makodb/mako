@@ -2,10 +2,12 @@
 #ifndef _LIB_SHARDCLIENT_H_
 #define _LIB_SHARDCLIENT_H_
 
+#include <rusty/rusty.hpp>
 #include "lib/fasttransport.h"
 #include "lib/client.h"
 #include "lib/promise.h"
 #include "lib/common.h"
+import rusty;
 
 namespace mako
 {
@@ -14,9 +16,18 @@ namespace mako
     class ShardClient
     {
     public:
-        ShardClient(std::string file, string cluster, int shardIndex, int par_id);
+        ShardClient(std::string file, string cluster, int shardIndex, int par_id,
+                    bool ephemeral_client = false);
+        // @unsafe - closes the legacy transport before destroying callback state.
+        ~ShardClient();
+        ShardClient(const ShardClient&) = delete;
+        ShardClient& operator=(const ShardClient&) = delete;
         int remoteGet(int remote_table_id, std::string key, std::string &value);
         int remoteScan(int remote_table_id, std::string start_key, std::string end_key, std::string &value);
+        // @unsafe - one bounded transaction piece, never a terminal/EOF shortcut.
+        int fullScanPage(int table_id, const ShardingRequest& sharding,
+                         const uint8_t* payload, size_t length,
+                         std::string& response);
 
         // Self-contained non-transactional writes (docs/storage-interface.md).
         // The op runs as a one-op OCC transaction on the owning shard and
@@ -24,6 +35,9 @@ namespace mako
         // ErrorCode::SUCCESS/ERROR/TIMEOUT/SERVER_BUSY; the op's
         // Masstree-parity boolean ("newly inserted" for put/insert,
         // "existed" for remove) comes back via *op_result.
+        // Native mode: the storage boundary owns a ShardingOperation across
+        // timeout retries. Its TxnId and first owner+epoch grant are unchanged;
+        // ERROR is terminal admission failure, never a key-not-found result.
         int nontxnPut(int remote_table_id, const std::string &key,
                       const std::string &value, bool *op_result);
         int nontxnInsert(int remote_table_id, const std::string &key,
@@ -32,6 +46,10 @@ namespace mako
                       std::string &value);
         int nontxnRemove(int remote_table_id, const std::string &key,
                          bool *op_result);
+        // @unsafe - ingress forwarding retains its external ID and selected grant.
+        int forwardNontxn(const ShardingRequest& request, uint8_t kind,
+                          uint16_t legacy_table, const std::string& key,
+                          const std::string& value, bool* result, std::string* output);
 
         // Single timestamp interfaces
         int remoteGetTimestamp(uint32_t &timestamp);
@@ -39,7 +57,9 @@ namespace mako
         int remoteControl(int control, uint32_t value, uint32_t &ret_value, uint64_t set_bits);
         int remoteAbort();
         int remoteLock(int remote_table_id, std::string key, std::string &value);
-        int remoteBatchLock(vector<int> &remote_table_id_batch, vector<string> &key_batch, vector<string> &value_batch);
+        int remoteBatchLock(rusty::Vec<int>& remote_table_id_batch,
+                            rusty::Vec<string>& key_batch, rusty::Vec<string>& value_batch,
+                            rusty::Vec<uint8_t>& operation_batch);
         int remoteValidate(uint32_t &watermark);
         int remoteInstall(uint32_t timestamp);
         int remoteUnLock();
@@ -74,6 +94,7 @@ namespace mako
         /* Callbacks for hearing back from a shard for an operation. */
         void GetCallback(char *respBuf);
         void ScanCallback(char *respBuf);
+        void FullScanCallback(char* respBuf);
         void BasicCallBack(char *respBuf);
         void NontxnWriteCallback(char *respBuf);
 

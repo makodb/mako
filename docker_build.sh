@@ -805,7 +805,7 @@ case "$ACTION" in
             exit 1
         fi
         case "${CI_TEST}" in
-            compile|cleanup|simpleTransaction|simplePaxos|shardNoReplication|shard1Replication|shard2Replication|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|srpcTests|cpuThrottlingScaling|clientServer|all)
+            compile|cleanup|nativeShardingProof|nativeShardingSmoke|simpleTransaction|simplePaxos|shardNoReplication|shard1Replication|shard2Replication|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|srpcTests|cpuThrottlingScaling|clientServer|all)
                 ;;
             *)
                 echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"
@@ -821,6 +821,11 @@ case "$ACTION" in
                 # ci.sh compile/all already performs compilation; avoid redundant outer build.
                 docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
                     bash -c "${DOCKER_CORE_ULIMIT_CMD}; rm -rf build_docker && CI_MAKE_JOBS=${CI_JOBS} BUILD_DIR=build_docker ./ci/ci.sh ${CI_TEST}"
+                ;;
+            nativeShardingProof)
+                # Proof needs the pinned verifier/Rust only, not a C++ rebuild.
+                docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" -w /workspace ${IMAGE_NAME} \
+                    bash -c "${DOCKER_CORE_ULIMIT_CMD}; BUILD_DIR=build_docker ./ci/ci.sh nativeShardingProof"
                 ;;
             cleanup)
                 # cleanup should not force an expensive build first.
@@ -852,12 +857,12 @@ case "$ACTION" in
         fi
         CI_TEST=${2:-shardNoReplication}
         case "${CI_TEST}" in
-            compile|cleanup|all|srpcTests)
+            compile|cleanup|all|srpcTests|nativeShardingProof)
                 echo -e "${RED}Error: ci-quick does not support '${CI_TEST}'.${NC}"
                 echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' instead.${NC}"
                 exit 1
                 ;;
-            simpleTransaction|simplePaxos|shardNoReplication|shard1Replication|shard2Replication|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|cpuThrottlingScaling|clientServer)
+            nativeShardingSmoke|simpleTransaction|simplePaxos|shardNoReplication|shard1Replication|shard2Replication|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|cpuThrottlingScaling|clientServer)
                 ;;
             *)
                 echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"
@@ -867,6 +872,9 @@ case "$ACTION" in
         esac
         REQUIRED_BINS=("build_docker/dbtest")
         case "${CI_TEST}" in
+            nativeShardingSmoke)
+                REQUIRED_BINS=("build_docker/native_sharding_smoke" "build_docker/mako_admin")
+                ;;
             simpleTransaction)
                 REQUIRED_BINS=("build_docker/simpleTransaction")
                 ;;
