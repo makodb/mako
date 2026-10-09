@@ -279,8 +279,14 @@ jobs:
           cmake --version
           clang --version
 
+      - name: Verify native sharding and independent negative controls
+        run: ./ci/ci.sh nativeShardingProof
+
       - name: Compile
         run: ./ci/ci.sh compile
+
+      - name: Run native sharding real-engine migration smoke
+        run: ./ci/ci.sh nativeShardingSmoke
 
       - name: Run tests - SRPC unit tests
         run: ./ci/ci.sh srpcTests

@@ -1,5 +1,8 @@
 # Range-Based Sharding Task 4: C-Node RPC Interface for Sharding
 
+> Historical plan: this C++ policy graph has been retired in favor of native
+> Rust sharding. The APIs below are not available or instructions for new callers.
+
 ## Overview
 
 Add RPC interface to ConfigService for sharding policy management, allowing:

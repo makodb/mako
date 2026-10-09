@@ -1,5 +1,8 @@
 # Range-Based Sharding Task 3: C-Node Sharding Policy Storage
 
+> Historical plan: this C++ policy graph has been retired in favor of native
+> Rust sharding. The APIs below are not available or instructions for new callers.
+
 ## Overview
 
 Add sharding policy persistence to ConfigStore, allowing the C-Node to save and load user-defined sharding policies from RocksDB.

@@ -164,6 +164,17 @@ def verify_alpha_service_block(block: str) -> None:
         "// @safe\n"
         "    virtual void stream(const RpcStreamRequest& req, RpcStreamResponse& resp, srpc::DeferredReply defer) const;",
     )
+    assert_contains(block, "auto __typed_resp__ = rusty::Arc<RpcStreamResponse>::make();")
+    assert_contains(
+        block,
+        "[__typed_resp__ = __typed_resp__.clone()](srpc::BinaryWriteArchive& m) {",
+    )
+    assert_contains(
+        block,
+        "this->stream(__typed_req__, const_cast<RpcStreamResponse&>(*__typed_resp__), std::move(__defer__));",
+    )
+    if "std::make_shared" in block:
+        raise AssertionError("deferred replies must retain response ownership through rusty::Arc")
     assert_contains(
         block,
         "// @safe\n"

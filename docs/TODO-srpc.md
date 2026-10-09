@@ -1,5 +1,9 @@
 # TODO: SRPC Reliability and Correctness
 
+> References to `config_watcher.h` in the dated migration evidence below are
+> historical. The C++ watcher and sharding policy graph were retired by the
+> native Rust cutover; SRPC's own synchronization primitives remain live.
+
 Date: 2026-04-10  
 Source: `docs/dev/srpc-issues.md`
 

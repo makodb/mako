@@ -1,5 +1,9 @@
 # Plan: drive srpc's manual C++ → 0 (or to a justified floor)
 
+> Sharding examples in this dated migration record are historical:
+> `ConfigWatcher` and the C++ policy graph have been retired by the native Rust
+> cutover. Their cited source locations are not current APIs.
+
 > Method and per-class recipe: [`docs/porting-cpp-to-rust-dsl.md`](porting-cpp-to-rust-dsl.md)
 > (§2's Phase 0 matches the triage buckets used below). Current state of the
 > campaign: [`docs/dev/goal0_completion_plan.md`](dev/goal0_completion_plan.md).

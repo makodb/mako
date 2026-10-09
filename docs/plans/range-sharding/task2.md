@@ -1,5 +1,8 @@
 # Range-Based Sharding Task 2: Sharding Policy Builder API
 
+> Historical plan: this C++ policy graph has been retired in favor of native
+> Rust sharding. The APIs below are not available or instructions for new callers.
+
 ## Overview
 
 Create a fluent builder API for constructing sharding policies programmatically at system initialization time.

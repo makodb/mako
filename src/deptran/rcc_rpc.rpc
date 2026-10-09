@@ -112,4 +112,9 @@ abstract service ConfigKvService {
     // (empty value) on miss.
     defer ReadConfigKey(string key | i32 found, string value);
 }
+// Native Rust owns control, migration and retained admin outcomes. This service
+// is bound to one actual owner; payload bytes cannot select a different owner.
+abstract service NativeSharding {
+    defer Invoke(uint32_t operation, string payload | uint32_t status, string reply);
+}
 %%

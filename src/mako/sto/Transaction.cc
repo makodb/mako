@@ -239,20 +239,19 @@ void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
                 it->owner()->cleanup(*it, committed);
         }
     } else {
-        // in participant, we never invoke try_commit,
-        // and no good way to set state_ = s_committing_locked; as try_commit do
-        // so, we skip it blindly for participant
-        if ((TThread::mode() == 1 && nwriteset>0) || state_ == s_committing_locked) {
-            it = &tset_[tset_size_ / tset_chunk][tset_size_ % tset_chunk];
+        // Participants acquire locks while staging, before any try_commit state.
+        // Abort must release those locks before releasing the native lease.
+        if (TThread::mode() == 1 || state_ == s_committing_locked) {
             for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
-                it = (tidx % tset_chunk ? it - 1 : &tset_[(tidx - 1) / tset_chunk][tset_chunk - 1]);
+                const unsigned index = tidx - 1;
+                it = &tset_[index / tset_chunk][index % tset_chunk];
                 if (it->needs_unlock())
                     it->owner()->unlock(*it);
             }
         }
-        it = &tset_[tset_size_ / tset_chunk][tset_size_ % tset_chunk];
         for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
-            it = (tidx % tset_chunk ? it - 1 : &tset_[(tidx - 1) / tset_chunk][tset_chunk - 1]);
+            const unsigned index = tidx - 1;
+            it = &tset_[index / tset_chunk][index % tset_chunk];
             if (it->has_write())
                 it->owner()->cleanup(*it, committed);
         }
@@ -265,6 +264,8 @@ after_unlock:
         thr.trans_end_callback();
     // XXX should reset trans_end_callback after calling it...
     state_ = s_aborted + committed;
+    // @unsafe - native scopes outlive unlocks, cleanup, and end callbacks.
+    mako::sharding_engine_complete();
 }
 
 // @safe
@@ -363,28 +364,32 @@ void Transaction::shard_unlock(bool committed) {
     assert(TThread::id() == threadid_);
 
     TransItem* it = nullptr;
-    if (tset_size_ == 0) return;
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
+    for (unsigned remaining = tset_size_; remaining != 0; --remaining) {
+        const unsigned index = remaining - 1;
+        it = &tset_[index / tset_chunk][index % tset_chunk];
         if (it->needs_unlock()) {
             it->owner()->unlock(*it);
         }
-        if (tidx == 0) break;
     }
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
+    for (unsigned remaining = tset_size_; remaining != 0; --remaining) {
+        const unsigned index = remaining - 1;
+        it = &tset_[index / tset_chunk][index % tset_chunk];
         if (it->has_write()) {
             it->owner()->cleanup(*it, committed);
         }
-        if (tidx == 0) break;
     }
+    threadinfo_t& thr = tinfo[TThread::id()];
+    if (thr.trans_end_callback)
+        thr.trans_end_callback();
+    state_ = s_aborted + committed;
+    mako::sharding_engine_complete(); // @unsafe - after every physical cleanup
 }
 
 // @unsafe: complex commit protocol with remote operations, locking, and validation
 bool Transaction::try_commit(bool no_paxos) {
     assert(TThread::id() == threadid_);
+    // @unsafe - abort can finish the local engine before remote receipts arrive.
+    mako::ShardingOperation sharding_operation;
 #if ASSERT_TX_SIZE
     if (tset_size_ > TX_SIZE_LIMIT) {
         std::cerr << "transSet_ size at " << tset_size_
@@ -403,7 +408,8 @@ bool Transaction::try_commit(bool no_paxos) {
         TXP_INCREMENT(txp_commit_time_nonopaque);
 #if !CONSISTENCY_CHECK
     // commit immediately if read-only transaction with opacity
-    if (!any_writes_ && !any_nonopaque_) {
+    if (!any_writes_ && !any_nonopaque_
+        && TThread::readset_shard_bits == 0 && TThread::writeset_shard_bits == 0) {
         stop(true, nullptr, 0);
         return true;
     }
@@ -411,7 +417,7 @@ bool Transaction::try_commit(bool no_paxos) {
 
     state_ = s_committing;
 
-    unsigned writeset[tset_size_];
+    unsigned writeset[tset_size_ ? tset_size_ : 1];
     unsigned nwriteset = 0;
     // Single watermark timestamp instead of vector
     uint32_t watermarkTimestamp = 0;
@@ -420,16 +426,19 @@ bool Transaction::try_commit(bool no_paxos) {
     //phase1
     TransItem* it = nullptr;
 
-    std::vector<int> remote_table_id_batch;
-    std::vector<std::string> key_batch;
-    std::vector<std::string> value_batch;
+    rusty::Vec<int> remote_table_id_batch;
+    rusty::Vec<std::string> key_batch;
+    rusty::Vec<std::string> value_batch;
+    rusty::Vec<uint8_t> operation_batch;
 
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
         it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
         bool isRemote = it->owner()->get_is_remote();
         if (it->has_write() && isRemote) {
             std::string key = "", val = "";
-            if (hasInsertOp(it)) {  // key_write_value_type
+            if (hasDeleteOp(it)) {
+                key = (*it).write_value<std::string>();
+            } else if (hasInsertOp(it)) {  // key_write_value_type
                 key = (*it).write_value<std::string>();
                 versioned_str_struct *vvx = (*it).key<versioned_str_struct *>();
                 val = std::string(vvx->data(), vvx->length());
@@ -437,13 +446,14 @@ bool Transaction::try_commit(bool no_paxos) {
                 key = it->extra;
                 val = (*it).template write_value<std::string>();
             }
-            remote_table_id_batch.push_back(it->owner()->get_table_id());
-            key_batch.push_back(key);
-            value_batch.push_back(val);
+            remote_table_id_batch.push(it->owner()->get_table_id());
+            key_batch.push(std::move(key));
+            value_batch.push(std::move(val));
+            operation_batch.push(hasDeleteOp(it) ? 1 : 0);
         }
     }
 
-    if (!remote_table_id_batch.empty()) {
+    if (!remote_table_id_batch.is_empty()) {
         if (TThread::sclient == nullptr) {
             if (!no_paxos) {
                 Warning("Missing ShardClient for remoteBatchLock in paxos path; aborting transaction");
@@ -452,7 +462,8 @@ bool Transaction::try_commit(bool no_paxos) {
             // Replay/no-paxos path may not have an initialized ShardClient.
             // Skip remote lock RPCs and continue applying local effects.
         } else {
-            int ret = TThread::sclient->remoteBatchLock(remote_table_id_batch, key_batch, value_batch);
+            int ret = TThread::sclient->remoteBatchLock(
+                remote_table_id_batch, key_batch, value_batch, operation_batch);
             if (ret > 0) {
                 goto abort;
             }
@@ -549,7 +560,7 @@ bool Transaction::try_commit(bool no_paxos) {
         }
     }
 
-    if (TThread::readset_shard_bits > 0) {
+    if (TThread::readset_shard_bits > 0 || TThread::writeset_shard_bits > 0) {
         if (TThread::sclient == nullptr) {
             if (!no_paxos) {
                 Warning("Missing ShardClient for remoteValidate in paxos path; aborting transaction");
@@ -630,6 +641,11 @@ bool Transaction::try_commit(bool no_paxos) {
         }
     }
 #endif
+    // A remote read-only participant still owns leases and an engine read set.
+    // Validation above completed; abort here is terminal read-scope cleanup,
+    // not a reversal of any committed write.
+    if (nwriteset == 0 && TThread::readset_shard_bits > 0 && TThread::sclient)
+        TThread::sclient->remoteAbort(); // @unsafe - waits for native cleanup receipt
 
     if (BenchmarkConfig::getInstance().getIsReplicated()) {
         if (!no_paxos) {

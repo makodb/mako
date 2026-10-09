@@ -22,6 +22,7 @@
 #include "sto/Interface.hh"
 #include "sto/sync_util.hh"
 #include "benchmarks/benchmark_config.h"
+#include "lib/sharding_leases.h"
 
 #ifndef STO_PROFILE_COUNTERS
 #define STO_PROFILE_COUNTERS 0
@@ -474,6 +475,8 @@ private:
 
     // reset data so we can be reused for another transaction
     void start() {  // weihshen, start and init a transaction
+        // @unsafe - preserves a pinned logical operation across OCC attempts.
+        mako::sharding_engine_start();
         //Warning("the id %d and size of tinfo:%d", TThread::id(), sizeof(tinfo)/sizeof(threadinfo_t));
         threadinfo_t& thr = tinfo[TThread::id()];
         //Warning("the id-2 %d and size of tinfo:%d, addr: %p", TThread::id(), sizeof(tinfo)/sizeof(threadinfo_t), &thr);
@@ -926,20 +929,25 @@ public:
                     (TThread::mode() == 0 && TThread::txn && TThread::txn->in_progress());
     }
 
+    // @unsafe - an engine-local abort may already have stopped STO. Remote
+    // participants still require terminal acknowledgement under the same ID.
     static void abort() {
-        // Be defensive during shutdown - only abort if transaction is in progress
-        if (!in_progress()) {
+        if (!TThread::txn || TThread::txn->state_ == Transaction::s_committed)
             return;
-        }
-        TThread::txn->abort();
+        abort_without_throw();
+        throw Transaction::Abort();
     }
 
+    // @unsafe - release engine locks first, but pin native scopes and identity
+    // through every remote acknowledgement even when STO has already aborted.
     static void abort_without_throw() {
-        // Check if we need to do remote abort before aborting locally
-        bool needs_remote_abort = in_progress() &&
-            (TThread::writeset_shard_bits>0||TThread::readset_shard_bits>0);
+        if (!TThread::txn || TThread::txn->state_ == Transaction::s_committed)
+            return;
+        mako::ShardingOperation operation;
+        const bool needs_remote_abort =
+            (TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0);
         Sto::silent_abort();
-        if (needs_remote_abort)
+        if (needs_remote_abort && TThread::sclient)
             TThread::sclient->remoteAbort();
     }
 

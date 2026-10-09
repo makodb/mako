@@ -52,6 +52,10 @@ namespace mako
         case scanReqType:
             HandleScanReply(respBuf);
             break;
+        case fullScanReqType:
+            // The generic reply handler reads only the shared req_nr prefix.
+            HandleBatchLockReply(respBuf);
+            break;
         case lockReqType:
             HandleLockReply(respBuf);
             break;
@@ -124,6 +128,7 @@ namespace mako
                 sizeof(get_int_response_t)));
         reqBuf->targert_server_id = server_id;
         reqBuf->req_nr = reqId + current_term;
+        reqBuf->sharding = sharding_outgoing_request();
         blocked = true;
         transport->SendRequestToAll(this,
                                       validateReqType,
@@ -158,6 +163,7 @@ namespace mako
                 sizeof(get_int_response_t)));
         reqBuf->targert_server_id = server_id;
         reqBuf->req_nr = reqId + current_term;
+        reqBuf->sharding = sharding_outgoing_request();
         blocked = true;
         transport->SendRequestToAll(this,
                                       getTimestampReqType,
@@ -275,6 +281,7 @@ namespace mako
                 sizeof(get_int_response_t)));
         reqBuf->targert_server_id = server_id;
         reqBuf->req_nr = reqId + current_term;
+        reqBuf->sharding = sharding_outgoing_request();
         blocked = true;
         transport->SendRequestToAll(this,
                                     watermarkReqType,
@@ -310,6 +317,7 @@ namespace mako
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
         reqBuf->req_nr = reqId + current_term;
+        reqBuf->sharding = sharding_outgoing_request();
         // `cc` is a 4-byte buffer produced by encode_single_timestamp() (see
         // common.h:482 and shardClient.cc:333-335) — a single uint32_t. The
         // receiver's HandleInstallRequest() (server.cc:153-174) reads exactly
@@ -361,6 +369,7 @@ namespace mako
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
         reqBuf->req_nr = reqId + current_term;
+        reqBuf->sharding = sharding_outgoing_request();
         reqBuf->len = sizeof(uint64_t)*config.nshards;
         memcpy(reqBuf->value, cc, sizeof(uint64_t)*config.nshards);
         blocked = true;
@@ -400,6 +409,7 @@ namespace mako
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
         reqBuf->req_nr = reqId + current_term;
+        reqBuf->sharding = sharding_outgoing_request();
         blocked = true;
         transport->SendRequestToAll(this,
                                       unLockReqType,
@@ -433,6 +443,7 @@ namespace mako
 
         for (auto &it: request_batch_per_shard) {
             it.second.set_req_nr(reqId + current_term);
+            it.second.get_request_ptr()->sharding = sharding_outgoing_request();
             data_to_send[it.first] = make_pair((char*)it.second.get_request_ptr(), it.second.get_msg_len());
         }
         blocked = true;
@@ -445,6 +456,17 @@ namespace mako
             sizeof(basic_response_t),
             data_to_send
         );
+    }
+
+    // @unsafe - a timeout or failed send is an unknown outcome, never SUCCESS.
+    void Client::SendShardRequest(uint8_t kind, int shard, uint16_t server, size_t length) {
+        try {
+            if (transport->SendRequestToShard(this, kind, shard, server, length)) return;
+        } catch (int error) {
+            if (error != 1002) throw;
+        }
+        blocked = false;
+        crtReqK.error_continuation(crtReqK.request, ErrorCode{});
     }
 
     void Client::InvokeLock(uint64_t txn_nr,
@@ -478,6 +500,7 @@ namespace mako
         reqBuf->targert_server_id = server_id;
 
         reqBuf->req_nr = reqId + current_term;
+        reqBuf->sharding = sharding_outgoing_request();
         reqBuf->klen = key.size();
         memcpy(reqBuf->key_and_value, key.c_str(), key.size());
         reqBuf->vlen = value.size();
@@ -487,8 +510,7 @@ namespace mako
         blocked = true;
 
         size_t used_bytes = sizeof(lock_request_t) - max_key_length - max_value_length + key.size() + value.size();
-        transport->SendRequestToShard(this,
-                                      lockReqType,
+        SendShardRequest(lockReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       used_bytes);
@@ -524,6 +546,7 @@ namespace mako
                 sizeof(scan_response_t)));
         reqBuf->targert_server_id = server_id;
         reqBuf->req_nr = reqId + current_term;
+        reqBuf->sharding = sharding_outgoing_request();
         reqBuf->slen = start_key.size();
         memcpy(reqBuf->start_end_key, start_key.c_str(), start_key.size());
         reqBuf->elen = end_key.size();
@@ -532,11 +555,45 @@ namespace mako
         ASSERT_LT(end_key.size()+start_key.size()-1, 128);
 
         blocked = true;
-        transport->SendRequestToShard(this,
-                                      scanReqType,
+        SendShardRequest(scanReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       sizeof(scan_request_t));
+    }
+
+    // @unsafe - transport owns the request buffer until synchronous completion.
+    void Client::InvokeFullScanPage(uint64_t txn_nr, int destination,
+                                   uint16_t server_id, int table_id,
+                                   const ShardingRequest& sharding,
+                                   const uint8_t* payload, size_t length,
+                                   resp_continuation_t continuation,
+                                   error_continuation_t error_continuation) {
+        if (length > full_scan_request_capacity
+            || lastReqId.load() >= (UINT32_MAX - 9) / 10) {
+            error_continuation("", ErrorCode{});
+            return;
+        }
+        const uint32_t number = ++lastReqId * 10 + current_term;
+        crtReqK = PendingRequestK("", number, txn_nr, server_id,
+                                 continuation, error_continuation);
+        auto* request = reinterpret_cast<full_scan_request_t*>(
+            transport->GetRequestBuf(sizeof(full_scan_request_t),
+                                     sizeof(full_scan_response_t)));
+        *request = {};
+        request->targert_server_id = server_id;
+        request->req_nr = number;
+        request->sharding = sharding;
+        request->table_id = table_id;
+        request->length = static_cast<uint32_t>(length);
+        std::memcpy(request->payload, payload, length);
+        blocked = true;
+        if (!transport->SendRequestToShard(this, fullScanReqType, destination,
+            config.warehouses + 5 + server_id % TThread::get_num_rpc_server(),
+            sizeof(full_scan_request_t))) {
+            blocked = false;
+            crtReqK.req_nr = 0;
+            error_continuation("", ErrorCode{});
+        }
     }
 
     void Client::InvokeGet(uint64_t txn_nr,
@@ -571,6 +628,7 @@ namespace mako
                 sizeof(get_response_t)));
         reqBuf->targert_server_id = server_id;
         reqBuf->req_nr = reqId + current_term;
+        reqBuf->sharding = sharding_outgoing_request();
         reqBuf->len = key.size();
         ASSERT_LT(key.size(), max_key_length);
 
@@ -580,8 +638,7 @@ namespace mako
         size_t bytes_used = sizeof(get_request_t) - max_key_length + reqBuf->len;
 
         blocked = true;
-        transport->SendRequestToShard(this,
-                                      getReqType,
+        SendShardRequest(getReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       bytes_used);
@@ -594,6 +651,7 @@ namespace mako
                                    const string &key,
                                    const string &value,
                                    uint16_t table_id,
+                                   const ShardingRequest& sharding,
                                    uint8_t reqType,
                                    resp_continuation_t continuation,
                                    error_continuation_t error_continuation,
@@ -617,6 +675,7 @@ namespace mako
                 sizeof(client_kv_response_t)));
         reqBuf->targert_server_id = server_id;
         reqBuf->req_nr = reqId + current_term;
+        reqBuf->sharding = sharding;
         reqBuf->table_id = table_id;
         ASSERT_LT(key.size(), max_key_length);
         ASSERT_LT(value.size(), max_value_length);
@@ -630,8 +689,7 @@ namespace mako
             + reqBuf->klen + reqBuf->vlen;
 
         blocked = true;
-        transport->SendRequestToShard(this,
-                                      reqType,
+        SendShardRequest(reqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       bytes_used);
@@ -662,6 +720,7 @@ namespace mako
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
         reqBuf->req_nr = reqId + current_term;
+        reqBuf->sharding = sharding_outgoing_request();
         blocked = true;
         try {
             transport->SendRequestToAll(this,

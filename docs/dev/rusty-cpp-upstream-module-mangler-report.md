@@ -1,5 +1,9 @@
 # Transpiled C++20-module containers trigger an LLVM Itanium-mangler frontend crash (clang 21 & 22)
 
+> Historical report: the `shard.h` and `sharding_policy.h` consumer examples
+> below were retired by the native Rust cutover. Their compiler evidence is
+> retained here; they are not current build targets or available sharding APIs.
+
 **Repo:** shuaimu/rusty-cpp
 **Component:** transpiled module-form containers (`btree_port`, `vec_port`) + the `rusty::iter` / `deref_call` dispatcher in `include/rusty/slice.hpp`
 **Severity:** blocks any consumer that `import`s a transpiled container module and instantiates it from a C++20-module implementation unit.

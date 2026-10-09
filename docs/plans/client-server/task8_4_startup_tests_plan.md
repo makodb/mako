@@ -1,5 +1,9 @@
 # Task 8.4: Startup Tests Plan
 
+> Historical test plan for the retired C++ sharding policy/startup graph.
+> Its policy tests and APIs have been removed by the native Rust cutover;
+> this is not current test or integration guidance.
+
 ## Objective
 Add comprehensive tests for the sharding policy startup flow integration.
 

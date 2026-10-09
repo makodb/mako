@@ -3,11 +3,9 @@
 # Script to test multi-shard single process mode
 # This tests running multiple shards (0 and 1) in a single process using the -L flag
 #
-# Success criteria:
-# 1. Show "Multi-shard mode: running 2 shards in this process"
-# 2. Show "Created SiloRuntime" for each shard
-# 3. Show "Initialized ShardContext for shard" for each shard
-# 4. Show "agg_persist_throughput" keyword
+# Success requires completed positive throughput from both owners, not
+# initialization log wording. The native migration smoke separately asserts
+# owner-isolated physical data, admission and handoff behavior.
 
 # Source common utilities (includes GDB_PREFIX for debugging)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -197,89 +195,21 @@ if [ ! -f "$log_file" ]; then
     exit 1
 fi
 
-# Check 1: Multi-shard mode initialization
-if grep -q "Multi-shard mode: running 2 shards in this process" "$log_file"; then
-    echo "  ✓ Multi-shard mode initialization detected (2 shards)"
-else
-    echo "  ✗ Multi-shard mode initialization not found"
-    failed=1
-fi
+# Both owners must complete useful work.
+if ! python3 - "$log_file" <<'PY'
+import math
+import re
+import sys
+from pathlib import Path
 
-# Check 2: SiloRuntime assignment for shard 0 (shared runtime in multi-shard mode)
-if grep -q "Assigned shared SiloRuntime.*to shard 0" "$log_file"; then
-    echo "  ✓ SiloRuntime assigned to shard 0"
-    grep "Assigned shared SiloRuntime.*to shard 0" "$log_file" | head -1 | sed 's/^/    /'
-else
-    echo "  ✗ SiloRuntime for shard 0 not found"
-    failed=1
-fi
-
-# Check 3: SiloRuntime assignment for shard 1 (shared runtime in multi-shard mode)
-if grep -q "Assigned shared SiloRuntime.*to shard 1" "$log_file"; then
-    echo "  ✓ SiloRuntime assigned to shard 1"
-    grep "Assigned shared SiloRuntime.*to shard 1" "$log_file" | head -1 | sed 's/^/    /'
-else
-    echo "  ✗ SiloRuntime for shard 1 not found"
-    failed=1
-fi
-
-# Check 4: ShardContext initialization for shard 0
-if grep -q "Initialized ShardContext for shard 0" "$log_file"; then
-    echo "  ✓ ShardContext initialized for shard 0"
-else
-    echo "  ✗ ShardContext for shard 0 not initialized"
-    failed=1
-fi
-
-# Check 5: ShardContext initialization for shard 1
-if grep -q "Initialized ShardContext for shard 1" "$log_file"; then
-    echo "  ✓ ShardContext initialized for shard 1"
-else
-    echo "  ✗ ShardContext for shard 1 not initialized"
-    failed=1
-fi
-
-# Check 6: Shard listing in log
-for shard in 0 1; do
-    if grep -q "  - Shard $shard" "$log_file"; then
-        echo "  ✓ Shard $shard listed in multi-shard output"
-    else
-        echo "  ⚠ Shard $shard not listed in multi-shard output (minor)"
-    fi
-done
-
-# Check 7: Workers running in parallel for shard 0
-if grep -q "Running workers for shard 0 in thread" "$log_file"; then
-    echo "  ✓ Workers running in parallel thread for shard 0"
-else
-    echo "  ✗ Workers not running in thread for shard 0"
-    failed=1
-fi
-
-# Check 8: Workers running in parallel for shard 1
-if grep -q "Running workers for shard 1 in thread" "$log_file"; then
-    echo "  ✓ Workers running in parallel thread for shard 1"
-else
-    echo "  ✗ Workers not running in thread for shard 1"
-    failed=1
-fi
-
-# Check 9: Benchmark started (at least one shard)
-benchmark_count=$(grep -c "starting benchmark" "$log_file" 2>/dev/null || true)
-if [ "$benchmark_count" -ge 1 ]; then
-    echo "  ✓ Benchmark started ($benchmark_count shard(s))"
-else
-    echo "  ✗ Benchmark not started"
-    failed=1
-fi
-
-# Check 10: Look for throughput output (system is running)
-throughput_line=$(grep -oE "agg_persist_throughput:[[:space:]]*[0-9.]+[[:space:]]*ops/sec" "$log_file" | tail -1 || true)
-if [ -n "$throughput_line" ]; then
-    echo "  ✓ Found 'agg_persist_throughput' keyword (system running)"
-    echo "    $throughput_line"
-else
-    echo "  ✗ 'agg_persist_throughput' keyword not found"
+rates = [float(value) for value in re.findall(
+    r"agg_persist_throughput:\s*([0-9.eE+-]+)\s*ops/sec",
+    Path(sys.argv[1]).read_text(errors="replace"))]
+if len(rates) != 2 or not all(math.isfinite(rate) and rate > 0 for rate in rates):
+    raise SystemExit(f"Expected two positive completed owner throughputs, got {rates}")
+print(f"Both owners completed transactions: {rates} ops/sec")
+PY
+then
     failed=1
 fi
 

@@ -46,6 +46,14 @@ namespace mako
                             error_continuation_t error_continuation,
                             uint32_t timeout);
 
+        // @unsafe - opaque Rust-coded page; routing/identity are already captured.
+        void InvokeFullScanPage(uint64_t txn_nr, int destination,
+                                uint16_t server_id, int table_id,
+                                const ShardingRequest& sharding,
+                                const uint8_t* payload, size_t length,
+                                resp_continuation_t continuation,
+                                error_continuation_t error_continuation);
+
         // Self-contained non-transactional write (put / insert / remove,
         // selected by reqType — one of nontxnPutReqType /
         // nontxnInsertReqType / nontxnRemoveReqType). value is empty for
@@ -56,6 +64,7 @@ namespace mako
                             const string &key,
                             const string &value,
                             uint16_t table_id,
+                            const ShardingRequest& sharding,
                             uint8_t reqType,
                             resp_continuation_t continuation,
                             error_continuation_t error_continuation,
@@ -167,6 +176,8 @@ namespace mako
         void SetNumResponseWaiting(int num_response_waiting) { this->num_response_waiting = num_response_waiting; };
 
     protected:
+        // @unsafe - legacy synchronous transport failure must resolve its promise.
+        void SendShardRequest(uint8_t kind, int shard, uint16_t server, size_t length);
         struct PendingRequest
         {
             string request;

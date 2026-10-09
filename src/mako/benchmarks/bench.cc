@@ -25,6 +25,7 @@
 #include "sto/sync_util.hh"
 #include "rpc_setup.h"
 #include "cpu_throttler.h"
+#include "cluster_bootstrap.h"
 
 #ifdef USE_JEMALLOC
 #include <jemalloc/jemalloc.h>
@@ -311,6 +312,9 @@ bench_worker::run()
       retry:
         util::timer t(true);  // nano counter
         const unsigned long old_seed = r.get_seed();
+        // @unsafe - one coordinator identity outlives engine-local aborts and
+        // the workload's terminal remote cleanup, not just one OCC attempt.
+        mako::ShardingOperation sharding_operation;
         const auto ret = workload[i].fn(this);
         // if (control_mode==1){
         //   std::cout<<"one transaction2\n";
@@ -386,11 +390,13 @@ bench_runner::get_open_tables() {
 }
 
 void
-bench_runner::stop() { // invoke inside run function; stop all ShardClient instances
-  Warning("stop all rpc clients. set stop=false");
+bench_runner::stop() { // @unsafe - only this owner's already-joined clients
+  Warning("stopping drained owner RPC clients");
   auto& benchConfig = BenchmarkConfig::getInstance();
   for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
-   auto it = shardClientAll.find(par_id);
+   const int global_id = benchConfig.getShardIndex()
+       * benchConfig.getConfig()->warehouses + par_id;
+   auto it = shardClientAll.find(global_id);
    if (it != shardClientAll.end() && it->second != nullptr) {
      it->second->stop();
    } else {
@@ -465,6 +471,15 @@ bench_runner::run()
   }
   } // end of f_mode==0
 
+  // @unsafe - catalog/warehouse aliases were seeded by make_loaders(); native
+  // admission starts only after every physical loader has joined.
+  janus::BootstrapClusterConfig(db);
+  struct NativeStop {
+    uint32_t owner;
+    // @unsafe - exception paths must also join native jobs before DB teardown.
+    ~NativeStop() { janus::ShutdownClusterConfig(owner); }
+  } native_stop{static_cast<uint32_t>(BenchmarkConfig::getInstance().getShardIndex())};
+
   Warning("# of nthreads:%d",BenchmarkConfig::getInstance().getNthreads());
   map<string, size_t> table_sizes_before;
   if (BenchmarkConfig::getInstance().getVerbose()) {
@@ -502,6 +517,12 @@ bench_runner::run()
       }
     }
   }
+  // @unsafe - shared loader markers can precede the native peer handshake.
+  // Admission failures must not escape a worker's initial new_txn call.
+  if (mako_sharding_enabled()
+      && mako_sharding_wait_ready(BenchmarkConfig::getInstance().getShardIndex())
+          != MAKO_SHARD_OK)
+    throw abstract_db::abstract_abort_exception();
   const vector<bench_worker *> workers = make_workers();
   ALWAYS_ASSERT(!workers.empty());
   Transaction::clear_stats();
@@ -570,9 +591,6 @@ bench_runner::run()
     cerr << "[SHUTDOWN] Setting running=false to stop database worker threads" << endl;
     benchConfig.setRunning(false);  // stop database worker threads
   }
-  cerr << "[SHUTDOWN] Calling first stop() to stop client transports" << endl;
-  stop(); // stop rpc clients (unblocks outstanding RPCs)
-  cerr << "[SHUTDOWN] First stop() completed" << endl;
   __sync_synchronize();
 
   cerr << "[SHUTDOWN] Joining " << BenchmarkConfig::getInstance().getNthreads() << " worker threads" << endl;
@@ -582,15 +600,23 @@ bench_runner::run()
      cerr << "[SHUTDOWN] Worker " << i << " joined" << endl;
   }
   cerr << "[SHUTDOWN] All workers joined" << endl;
+  // @unsafe - all fixed owners must finish terminal data RPCs before any
+  // listener stops. Rust retains the barrier on the existing shared filesystem
+  // so the last peer never needs to query an already-stopped control service.
+  if (mako_sharding_enabled()) {
+    const auto& directory = benchConfig.getNfsSyncDir();
+    const uint32_t status = mako_sharding_quiesce(native_stop.owner,
+        {reinterpret_cast<const uint8_t*>(directory.data()), directory.size()});
+    ALWAYS_ASSERT(status == MAKO_SHARD_OK);
+  }
 
   // Stop server transports AFTER workers exit to ensure they can finish processing
   cerr << "[SHUTDOWN] Calling stop_rpc_server()" << endl;
   mako::stop_rpc_server();
   cerr << "[SHUTDOWN] stop_rpc_server() completed" << endl;
 
-  cerr << "[SHUTDOWN] Calling second stop()" << endl;
-  stop(); // ensure transports are torn down after workers exit
-  cerr << "[SHUTDOWN] Second stop() completed" << endl;
+  cerr << "[SHUTDOWN] Stopping drained client transports" << endl;
+  stop();
   const unsigned long elapsed_nosync = t_nosync.lap()-1e6; // take 1 second off due to sleep(1) within bench_worker::run()
   cerr << "[SHUTDOWN] Calling do_txn_finish()" << endl;
   db->do_txn_finish(); // waits for all worker txns to persist
@@ -821,6 +847,9 @@ bench_runner::run()
        it != open_tables.end(); ++it) {
     //it->second->print_stats();
   }
+
+  // @unsafe - stop native service/jobs before slow-exit can delete indexes.
+  janus::ShutdownClusterConfig(native_stop.owner);
 
   if (!BenchmarkConfig::getInstance().getSlowExit())
     return;

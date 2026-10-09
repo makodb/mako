@@ -1,5 +1,9 @@
 # LLVM Itanium-mangler frontend crash on C++20-module container lambdas (clang 21 *and* 22)
 
+> Historical reproducer: the C++ shard manager, shard object, and policy graph
+> referenced below were retired by the native Rust cutover. Reproduction needs
+> the earlier source revision; these files are not present in the current build.
+
 <!-- Filename is historical ("clang22-…"); the crash affects clang 21 too — see the CORRECTION below. -->
 <!-- Original title: "clang 22 Itanium-mangler frontend crash (rusty::iter dispatcher lambda)" -->
 

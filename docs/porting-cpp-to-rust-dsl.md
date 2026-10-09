@@ -4,6 +4,12 @@
 
 > **About the examples.** This guide was distilled from migrating the `srpc` RPC framework. Concrete class names (`TcpConnection`, `RequestQueue`, `Reactor`), the underscore-suffix field convention (`fd_`, `closed_`), and the prefix-based free-function naming (`tcpconn_*`, `future_*`) are **srpc conventions** — adapt them to your codebase's style. Where a transpiler feature or footgun is tied to a specific `rusty-cpp` commit, that commit is noted so you can tell whether *your* checkout has it. Patterns are general; the proper nouns are illustrative.
 
+> **Retired sharding examples.** All citations and snippets using the C++
+> `ClusterConfig`, `ConfigWatcher`, `KeyExtractor`, `RangeMapping`,
+> `TableShardingPolicy`, or `ShardingPolicySet` graph are historical conversion
+> evidence, including source-line and regeneration-census references. The native
+> Rust cutover deleted that graph; these examples are not APIs to instantiate.
+
 > **If you are reading this inside the Mako repo**, this guide is the canonical *how*; these are its companions, and where they disagree with this file, they win on policy and this file wins on mechanics:
 >
 > | Document | Role |
@@ -521,6 +527,12 @@ impl mbta_ordered_index { /* tx_get, shard_get, ... */ }
 **Exception.** §4's "the DSL targets single-trait inheritance … keep it hand-written" is **stale** for composed *traits* — it still holds for a hand-written, non-trait base. A file whose trait arrives by import must leave the regen list and have its GEN hand-maintained.
 
 #### R3. Decide copyable aggregate vs move-only before you write the impl
+
+> **Historical examples in R3–R5.** `RangeMapping`, `ShardingPolicySet`,
+> `TableShardingPolicy`, and `ClusterConfig` below illustrate earlier DSL
+> conversion behavior. Their C++ sharding implementations and cited source
+> files have been retired by the native Rust cutover. Do not instantiate them
+> in new code; the language lessons remain applicable to other value types.
 
 **Rule.** A `pub struct` + **inherent** `impl X` lowers to a copyable aggregate with no synthesized ctor and no move ctor — keep that shape for value types that must live by value in `std::map`/`std::vector` and be default-constructed-then-filled. It carries no field initializers either, so a bare `RangeMapping r;` leaves every field **indeterminate** where the old constructor zeroed them — the only default construction that stays safe is the marshal reader's, which overwrites every field immediately; every other site takes the factory (R4). Attaching a trait with `#[cpp_inherit]` makes the type move-only with a synthesized fieldwise + move ctor. **Choose the shape first; it changes every call site.**
 
