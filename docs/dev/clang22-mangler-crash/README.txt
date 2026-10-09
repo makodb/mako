@@ -1,7 +1,5 @@
 Artifacts for the clang 22.1.7 Itanium-mangler frontend crash.
 See ../clang22-mangler-crash.md for the full analysis.
-Historical artifacts: the C++ shard/policy graph is retired. Source-based
-reproduction below requires the earlier revision, not current build targets.
 
   crash-backtrace.txt              - clang's stack dump (mangler SIGSEGV)
   attempted-repro-real-headers.cppm - `for_in` over BTreeMap using the real

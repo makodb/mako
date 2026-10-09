@@ -1,9 +1,4 @@
 # Raft TODO
-
-> Historical sharding entries: the `ClusterConfig`/`ConfigWatcher` implementation
-> and tests recorded here have been retired in favor of native Rust sharding.
-> `ConfigManager` remains a metadata persistence utility, not a routing engine.
-
 <!--
 This comment block is the instructions in case you forget.
 

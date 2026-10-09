@@ -1619,9 +1619,6 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
     - **Fix**: Reduced pre-allocation in commit a41e1da3
     - **Verification**: Test passes locally on both srpc (8808 ops/sec) and erpc (45293 ops/sec) transports
   - [x] *high* Dynamic Range-Based Sharding with C-Node Management [DONE 2026-01-13]
-    - **Historical implementation record:** The C++ sharding policy/cache/builder
-      and associated tests below were retired by the native Rust cutover.
-      These completed tasks are not current API, build, or integration guidance.
     - **Goal**: Replace static table-ID-based sharding with user-defined range-based sharding policies managed by the C-node
     - **Scope**:
       - Users define sharding policies programmatically via C++ API at system initialization
@@ -1837,7 +1834,6 @@ Work on tasks defined in TODO.md. Repeat the following steps, don’t stop until
         - Created test/sharding_startup_test.cc with 12 tests
         - Tests cover: C-node first boot/reboot, policy persistence, RPC serving
         - Tests cover: Initializer sending policy, data node fetching, end-to-end flow
-        - Plan: docs/dev/task8_4_startup_tests_plan.md
     - [x] **Task 9: Testing** [~300 LOC] [DONE 2026-01-13]
       - [x] *high* 9.1 Unit tests [DONE - existing tests verified]
         - test_sharding_policy.cc: 34 tests (serialization, builder validation, key extraction)
