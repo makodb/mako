@@ -332,6 +332,158 @@ TEST_F(TimeoutRaceTest, EventStatusAfterTimeout) {
     std::cout << "Note: Events cannot be reused after reaching DONE/TIMEOUT state" << std::endl;
 }
 
+// Tests 7-10 (S4 step 3 of docs/dev/lion-runtime-plan.md): timers go through a
+// per-reactor deadline map served in deadline order, instead of a linear scan
+// of every timed wait on every pass. These run the generated C++ map; the
+// Rust lane's versions are in tests/reactor_deadline_rust.rs. Every capture is
+// shared, and every fiber finishes inside its test, so nothing outlives a
+// frame (the S4 step 0 rule).
+
+// Test 7: timers that expire before one pass resume in deadline order.
+TEST_F(TimeoutRaceTest, DeadlinesResumeInDeadlineOrder) {
+    auto reactor = Reactor::get_reactor();
+    auto order = std::make_shared<std::vector<std::string>>();
+
+    auto sleeper = create_sp_timeout_event(300000);
+    reactor->create_run_fiber([sleeper, order]() {
+        sleeper->wait();
+        order->push_back("timeout-event-300ms");
+    });
+    auto int_event = create_sp_int_event(1);
+    reactor->create_run_fiber([int_event, order]() {
+        int_event->wait_timeout(100000);
+        order->push_back("int-100ms");
+    });
+    auto never = create_sp_never_event();
+    reactor->create_run_fiber([never, order]() {
+        never->wait_timeout(200000);
+        order->push_back("never-200ms");
+    });
+    EXPECT_TRUE(order->empty());
+
+    std::this_thread::sleep_for(milliseconds(350));
+    reactor->run_loop(false, true);
+    ASSERT_EQ(order->size(), 3u);
+    EXPECT_EQ((*order)[0], "int-100ms");
+    EXPECT_EQ((*order)[1], "never-200ms");
+    EXPECT_EQ((*order)[2], "timeout-event-300ms");
+    EXPECT_EQ(int_event->status_.get(), EventStatus::TIMEOUT);
+    EXPECT_EQ(never->status_.get(), EventStatus::TIMEOUT);
+    EXPECT_EQ(sleeper->status_.get(), EventStatus::DONE);
+}
+
+// Test 8: a timed wait whose event became ready without an owner-thread
+// test() completes at its deadline, READY, and not before. One event has its
+// value written directly; the other is also marked READY, the state a
+// foreign-thread set() leaves (it queues nothing off the owner thread).
+TEST_F(TimeoutRaceTest, ReadyWithoutAnOwnerTestCompletesAtTheDeadline) {
+    auto reactor = Reactor::get_reactor();
+    auto written = create_sp_int_event(1);
+    auto marked = create_sp_int_event(1);
+    auto resumed = std::make_shared<int>(0);
+    auto early = std::make_shared<int>(0);  // resumed before its own deadline
+    auto statuses_done = std::make_shared<int>(0);
+    for (auto ev : {written, marked}) {
+        reactor->create_run_fiber([ev, resumed, early, statuses_done]() {
+            ev->wait_timeout(300000);
+            if (ev->status_.get() == EventStatus::DONE) {
+                ++*statuses_done;
+            }
+            if (Time::now(true) < ev->wakeup_time()) {
+                ++*early;
+            }
+            ++*resumed;
+        });
+    }
+    ASSERT_GT(written->wakeup_time(), 0u);
+    ASSERT_GT(marked->wakeup_time(), 0u);
+    written->value_.set(1);
+    marked->value_.set(1);
+    marked->set_status(EventStatus::READY);
+
+    const auto limit = steady_clock::now() + seconds(5);
+    while (*resumed < 2 && steady_clock::now() < limit) {
+        std::this_thread::sleep_for(milliseconds(1));
+        reactor->run_loop(false, true);
+    }
+    ASSERT_EQ(*resumed, 2);
+    EXPECT_EQ(*early, 0) << "a waiter resumed before its deadline";
+    EXPECT_EQ(*statuses_done, 2);
+}
+
+// Test 9: deletion is lazy, so a timed wait that ended early leaves an entry
+// behind. It must not end a later, untimed wait of the same event.
+TEST_F(TimeoutRaceTest, StaleDeadlineDoesNotEndALaterWait) {
+    auto reactor = Reactor::get_reactor();
+    auto ev = create_sp_int_event(1);
+    auto phase = std::make_shared<int>(0);
+    reactor->create_run_fiber([ev, phase]() {
+        ev->wait_timeout(100000);
+        *phase = 1;
+        ev->value_.set(0);
+        ev->test();  // not ready any more: DONE -> INIT
+        ev->wait();
+        *phase = 2;
+    });
+    ev->set(1);
+    reactor->run_loop(false, true);
+    ASSERT_EQ(*phase, 1);
+
+    std::this_thread::sleep_for(milliseconds(110));
+    reactor->run_loop(false, true);
+    reactor->run_loop(false, true);
+    EXPECT_EQ(*phase, 1) << "a stale deadline ended an untimed wait";
+    EXPECT_EQ(ev->status_.get(), EventStatus::WAIT);
+
+    ev->set(1);
+    reactor->run_loop(false, true);
+    EXPECT_EQ(*phase, 2);
+}
+
+// Test 10: a long timeout on a wait that ends at once does not keep a map
+// entry until the timeout; stale entries are swept.
+TEST_F(TimeoutRaceTest, EarlyEndingWaitsDoNotAccumulateDeadlines) {
+    auto reactor = Reactor::get_reactor();
+    const EventWakeReport before = event_wake_report<std::tuple<>>();
+    for (int i = 0; i < 1000; i++) {
+        auto ev = create_sp_int_event(1);
+        reactor->create_run_fiber([ev]() { ev->wait_timeout(60000000); });
+        ev->set(1);
+        reactor->run_loop(false, true);
+        ASSERT_EQ(ev->status_.get(), EventStatus::DONE);
+    }
+    const EventWakeReport after = event_wake_report<std::tuple<>>();
+    EXPECT_EQ(after.live_deadlines, before.live_deadlines);
+    EXPECT_LE(after.deadline_entries,
+              before.deadline_entries + 2 * before.live_deadlines + 65);
+}
+
+// Test 11: one pass can list an event twice, through the ready queue and
+// through its deadline. If the first dispatch resumes a waiter that re-arms
+// the event and waits on it again at once, the second entry must leave that
+// new wait alone rather than resume it (or trip the dispatch's checks).
+TEST_F(TimeoutRaceTest, SecondEntryDoesNotEndAnImmediateRewait) {
+    auto reactor = Reactor::get_reactor();
+    auto ev = create_sp_int_event(1);
+    auto phase = std::make_shared<int>(0);
+    reactor->create_run_fiber([ev, phase]() {
+        ev->wait_timeout(5000);
+        *phase = 1;
+        ev->value_.set(0);
+        ev->test();  // DONE -> INIT
+        ev->wait();
+        *phase = 2;
+    });
+    std::this_thread::sleep_for(milliseconds(10));
+    ev->set(1);
+    reactor->run_loop(false, true);
+    EXPECT_EQ(*phase, 1) << "the second wait was resumed by the first wait's entry";
+    EXPECT_EQ(ev->status_.get(), EventStatus::WAIT);
+    ev->set(1);
+    reactor->run_loop(false, true);
+    EXPECT_EQ(*phase, 2);
+}
+
 int main(int argc, char** argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

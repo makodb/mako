@@ -1478,9 +1478,15 @@ pub unsafe fn sconn_decode_request_and_dispatch(
         let svc: &dyn Service = &*sconn.ctx_.services[svc_index];
         svc.__dispatch__(rpc_id, req_box, weak_this);
     } else {
-        // Slow path — spawn a fiber so the handler can yield (e.g. for
-        // nested RPC calls). The ctx Arc clone keeps the services alive
-        // even if the connection is closed mid-flight.
+        // Slow path — spawn a fiber, so the handler can block on sRPC events
+        // and `FiberFuture`s (and fiber sleeps): those waits yield to the
+        // owner's drain, and other work on this thread runs meanwhile. An
+        // RPC `Future::wait` does not yield. It blocks the OS thread on a
+        // Condvar, so a nested RPC from this handler blocks this thread (the
+        // PollThread, over TCP) for the round trip; with the nested call's
+        // client on this same PollThread it can only end at its timeout. The
+        // ctx Arc clone keeps the services alive even if the connection is
+        // closed mid-flight.
         let ctx2: Arc<RpcServiceContext> = sconn.ctx_.clone();
         // `FnMut` (not `FnOnce`) is what `rusty::Function<void()>` models, so
         // the moved-in request and weak handle are parked in `Option` slots

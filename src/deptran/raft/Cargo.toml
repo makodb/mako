@@ -82,3 +82,16 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+
+# One Verus for the whole Raft build. srpc's runtime is Lion
+# (src/srpc/third-party/lion), whose crates take vstd from Verus's git
+# repository at rev db81a74 (0.0.0-2025-11-10-1957); raft-core pins Verus's
+# crates.io release 0.0.0-2026-08-02-0125 (core/Cargo.toml). raft-rt needs
+# both, and Cargo refuses two Verus releases in one graph: each one's
+# verus_prettyplease declares `links = "prettyplease-verus02"`. So Lion's vstd
+# is replaced by the core's here. Only this workspace sees the patch: srpc's
+# own cargo build, test and clippy gates still use Lion's pin. Lion's code is
+# unchanged and plain cargo erases its proofs; Lion checks them with its own
+# Verus upstream.
+[patch."https://github.com/verus-lang/verus"]
+vstd = "=0.0.0-2026-08-02-0125"

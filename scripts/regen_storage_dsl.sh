@@ -27,7 +27,7 @@
 # fresh checkout can produce. It must report the pin:
 #
 #   $ third-party/rusty-cpp/target/release/rusty-cpp-transpiler --build-info
-#   {"git_hash":"1689f4380c25d13455cbe1f9eb8e5ff94e49861c","git_dirty":false}
+#   {"git_hash":"7e0c201f1b0d548f0166dc9ee700f24bc18066a4","git_dirty":false}
 #
 # The committed GEN regions were NOT produced by it. They were produced
 # by a build of rusty-cpp `a4bcff5f` ("codegen: qualify cross-crate

@@ -36,8 +36,10 @@ jobs:
         with:
           submodules: recursive
 
-      # The source gates run ripgrep (src/srpc/scripts/srpc_dsl_check.sh),
-      # which the image does not ship. Do NOT mark the checkout safe for git
+      # The source gates run ripgrep (src/srpc/scripts/srpc_dsl_check.sh).
+      # apt_packages.sh installs it, but this job pulls the CI image's :latest
+      # tag, which is only rebuilt after a push to mako-dev, so install it here
+      # if the image predates that. Do NOT mark the checkout safe for git
       # globally here: the gates vouch for exactly the directories they read
       # (ownership_exception() in scripts/extract_srpc_rust.py, owned_git in
       # scripts/raft_dsl.sh), and test_bare_git_really_is_refused asserts
@@ -114,7 +116,11 @@ jobs:
             fi
           done
 
-          steady_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
+          # Each build below prints its captured output before failing: under
+          # `set -e` a failing command substitution would otherwise exit
+          # with the output still in the variable, and the log shows nothing.
+          steady_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)" \
+            || { printf '%s\n' "${steady_output}"; exit 1; }
           printf '%s\n' "${steady_output}"
           if grep -Fq 'Generating Goal-0 srpc crate C++ child modules' <<<"${steady_output}"; then
             echo 'crate generation reran without an emitter or source change' >&2
@@ -136,7 +142,8 @@ jobs:
           assert_regenerated=(bash scripts/ci/assert_crate_codegen.sh)
 
           touch "${emitter_input}"
-          changed_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
+          changed_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)" \
+            || { printf '%s\n' "${changed_output}"; exit 1; }
           printf '%s\n' "${changed_output}"
 
           # The invariant here is mako's build graph: touching an emitter input
@@ -148,13 +155,15 @@ jobs:
           "${assert_regenerated[@]}" srpc.frame_codec.cppm <<<"${changed_output}"
 
           touch "${canonical_input}"
-          canonical_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
+          canonical_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)" \
+            || { printf '%s\n' "${canonical_output}"; exit 1; }
           printf '%s\n' "${canonical_output}"
 
           "${assert_regenerated[@]}" srpc.frame_codec.cppm <<<"${canonical_output}"
 
           touch "${crate_manifest_input}"
-          manifest_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
+          manifest_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)" \
+            || { printf '%s\n' "${manifest_output}"; exit 1; }
           printf '%s\n' "${manifest_output}"
 
           "${assert_regenerated[@]}" \
@@ -167,7 +176,8 @@ jobs:
 
           for sidecar_input in "${type_map_input}" "${module_index_input}"; do
             touch "${sidecar_input}"
-            sidecar_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
+            sidecar_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)" \
+              || { printf '%s\n' "${sidecar_output}"; exit 1; }
             printf '%s\n' "${sidecar_output}"
 
             "${assert_regenerated[@]}" srpc.utils.cppm srpc.frame_codec.cppm \
@@ -230,8 +240,10 @@ jobs:
         with:
           submodules: recursive  # if you use submodules (e.g., third-party libs)
 
-      # The source gates run ripgrep (src/srpc/scripts/srpc_dsl_check.sh),
-      # which the image does not ship. Do NOT mark the checkout safe for git
+      # The source gates run ripgrep (src/srpc/scripts/srpc_dsl_check.sh).
+      # apt_packages.sh installs it, but this job pulls the CI image's :latest
+      # tag, which is only rebuilt after a push to mako-dev, so install it here
+      # if the image predates that. Do NOT mark the checkout safe for git
       # globally here: the gates vouch for exactly the directories they read
       # (ownership_exception() in scripts/extract_srpc_rust.py, owned_git in
       # scripts/raft_dsl.sh), and test_bare_git_really_is_refused asserts

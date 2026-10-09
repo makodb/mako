@@ -1793,6 +1793,8 @@ class DriverBehaviorTests(unittest.TestCase):
                 "git_dirty=false",
             ),
         ]
+        # The Verus erasure coupling runs after build-info and has its own
+        # test (test_srpc_crate_mode.py); keep it out of these cases.
         for completed, diagnostic in cases:
             with self.subTest(diagnostic=diagnostic):
                 with mock.patch.object(
@@ -1801,7 +1803,7 @@ class DriverBehaviorTests(unittest.TestCase):
                     side_effect=[gitlink, required, ""],
                 ), mock.patch.object(
                     DRIVER.subprocess, "run", return_value=completed
-                ):
+                ), mock.patch.object(DRIVER, "verify_verus_erasure_coupling"):
                     with self.assertRaisesRegex(
                         DRIVER.ExtractionError, diagnostic
                     ):
@@ -1816,7 +1818,8 @@ class DriverBehaviorTests(unittest.TestCase):
             DRIVER,
             "git_output",
             side_effect=[gitlink, required, ""],
-        ), mock.patch.object(DRIVER.subprocess, "run", return_value=good) as run:
+        ), mock.patch.object(DRIVER.subprocess, "run", return_value=good) as run, \
+                mock.patch.object(DRIVER, "verify_verus_erasure_coupling") as coupling:
             DRIVER.verify_pinned_toolchain(self.root, self.fake)
         run.assert_called_once_with(
             [str(self.fake), "--build-info"],
@@ -1826,6 +1829,8 @@ class DriverBehaviorTests(unittest.TestCase):
             stderr=DRIVER.subprocess.PIPE,
             check=False,
         )
+        # Cargo.lock is crate content: the coupling reads the vendored tree's.
+        coupling.assert_called_once_with(DRIVER.crate_root(self.root), self.fake)
 
 
 class GoalZeroConsumerSelectionTests(unittest.TestCase):

@@ -5,17 +5,37 @@ edition = "2021"
 publish = false
 
 [workspace]
-# verify/ is the Verus harness; it pulls vstd and must never enter the
-# production build or the rusty-cpp transpile, so keep it out of the workspace.
+# verify/ is the Verus harness: it builds SRPC's sources with Verus's ghost
+# cfgs and must never enter the production build or the rusty-cpp transpile,
+# so keep it out of the workspace. (Production does link vstd now, but only
+# the erased library that Lion's crates depend on; see [dependencies].)
 # bench/ is the microbenchmark harness, excluded for the same reason in the
 # other direction: the source gate runs `cargo test --workspace --all-targets`
 # under -Dwarnings, and a benchmark must not add compile time or lint surface
 # to a correctness gate.
-exclude = ["verify", "bench"]
+# third-party/lion holds the Lion path dependencies. Cargo makes every path
+# dependency under the workspace root a member unless it is excluded, and as
+# members `--workspace` would run Lion's own test suites and clippy would lint
+# Lion's code. Excluded, they are plain dependencies: still compiled with no
+# lint cap (Cargo caps only non-path dependencies), so -Dwarnings reaches them.
+exclude = ["verify", "bench", "third-party/lion"]
 resolver = "2"
 
 [lib]
 path = "src/lib.rs"
+
+[dependencies]
+# Lion's verified executor and reactor (docs/dev/lion-runtime-plan.md, S1 and
+# D5), compiled unmodified from the third-party/lion gitlink. They bring the
+# other Lion path crates (slab, timer wheel, the *-spec crates) and the erased
+# vstd library from Verus's git repository at the revision Lion names.
+# default-features = false turns off Lion's `mio` feature, so no mio, socket2 or
+# tokio enters the graph; the reactor runs on SRPC's OS backend instead
+# (SrpcEpollBackend in reactor/epoll_wrapper.rs). Never depend on lion-utility
+# or the `lion` facade: Cargo unifies features, and either one turns mio back
+# on. scripts/check_rust_independence.py enforces the exact allowlist.
+lion-reactor = { path = "third-party/lion/lion-reactor", default-features = false }
+lion-executor = { path = "third-party/lion/lion-executor", default-features = false }
 
 [dev-dependencies]
 # Property-based testing for the wire codecs (tests only; not linked into the

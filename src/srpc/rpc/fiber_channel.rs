@@ -2,9 +2,11 @@
 //!
 //! Callbacks own the synchronized frame queue and closed flag, so delivery may
 //! come from another thread and an in-flight callback may outlive the wrapper.
-//! Each recv_frame call owns its reactor event locally. The owner thread polls
-//! the shared readiness predicate and resumes the waiting fiber. Only one
-//! fiber may receive at a time. Drop detaches callbacks from the connection.
+//! Each recv_frame call owns its reactor event locally. After publishing, a
+//! callback pings the wrapper's EventPing ticket; the owner thread re-tests
+//! only the pinged receiver's predicate on its next run_loop pass and resumes
+//! the waiting fiber there, never inside the callback. Only one fiber may
+//! receive at a time. Drop detaches callbacks from the connection.
 
 #![allow(
     non_camel_case_types,
@@ -22,7 +24,7 @@ use std::sync::{Arc, Mutex};
 
 #[allow(unused_imports)]
 use crate::reactor as _;
-use crate::reactor::EventTestFn;
+use crate::reactor::{EventPing, EventTestFn};
 
 use crate::channel::{
     ChannelConnectionBase, ChannelConnectionProxy, ChannelError, ChannelFrame,
@@ -56,6 +58,10 @@ pub struct FiberChannel {
     pub ch_: ChannelConnectionProxy,
     pub queue_: Arc<Mutex<LegacyStdDeque<OwnedFrame>>>,
     pub closed_: Arc<AtomicBool>,
+    // Pinged by the callbacks after they publish (S4 step 5 of
+    // docs/dev/lion-runtime-plan.md), so the owner re-tests the parked
+    // receiver's predicate instead of re-testing it on every pass.
+    ping_: Arc<EventPing>,
     _pin: PhantomPinned,
 }
 
@@ -66,6 +72,7 @@ impl FiberChannel {
             ch_: ch,
             queue_: Arc::new(Mutex::new(Default::default())),
             closed_: Arc::new(AtomicBool::new(false)),
+            ping_: crate::reactor::event_ping_new::<()>(),
             _pin: PhantomPinned,
         }
     }
@@ -73,16 +80,23 @@ impl FiberChannel {
     /// Bind callbacks to shared receive state. An in-flight callback retains
     /// its state even when this wrapper is dropped or its callbacks are replaced.
     pub fn bind_callbacks(&mut self) {
+        // Each callback publishes first and pings after, from whatever thread
+        // delivers it. The ping only queues a ticket for the owner; it never
+        // tests the event or resumes the receiver.
         let queue: Arc<Mutex<LegacyStdDeque<OwnedFrame>>> = self.queue_.clone();
+        let frame_ping: Arc<EventPing> = self.ping_.clone();
         let frame_callback: Box<dyn Fn(&ChannelFrame) + Send + Sync> = Box::new(move |frame| {
             let copy = fiberchannel_owned_copy(frame);
             queue.lock().unwrap().push_back(copy);
+            crate::reactor::event_ping::<()>(&frame_ping);
         });
         let ch: &mut Box<LegacyChannelConnectionBase> = &mut self.ch_;
         ch.set_on_frame(OnFrameCallback::from_callable(frame_callback));
         let closed: Arc<AtomicBool> = self.closed_.clone();
+        let closed_ping: Arc<EventPing> = self.ping_.clone();
         let closed_callback: Box<dyn Fn(ChannelError) + Send + Sync> = Box::new(move |_reason| {
             closed.store(true, Ordering::Release);
+            crate::reactor::event_ping::<()>(&closed_ping);
         });
         ch.set_on_closed(OnClosedCallback::from_callable(closed_callback));
 
@@ -122,8 +136,9 @@ impl FiberChannel {
 
             let event = self.arm_waiter();
 
-            // Recheck after arming. A later delivery remains visible through
-            // the event predicate when the owner next polls its waiting events.
+            // Recheck after arming. A delivery before this point is seen
+            // here; a later one pings the armed ticket, and the owner's next
+            // pass re-tests the event's predicate and queues its waiter.
             let mut should_wait: bool = true;
             {
                 let guard = self.queue_.lock().unwrap();
@@ -134,6 +149,9 @@ impl FiberChannel {
             if should_wait {
                 event.wait();
             }
+            // Bound first: the emitter passes `&self.ping_` as a pointer.
+            let ping: &Arc<EventPing> = &self.ping_;
+            crate::reactor::event_ping_disarm::<()>(ping);
 
         }
     }
@@ -146,8 +164,11 @@ impl FiberChannel {
             closed.load(Ordering::Acquire) || !queue.lock().unwrap().is_empty()
         }));
         // Only the owner reactor touches the event. Transport callbacks
-        // publish queue/closed state through the mutex and atomic latch.
+        // publish queue/closed state through the mutex and atomic latch, then
+        // ping; arming binds the ping to this event on the owner thread.
         *event.state_.test_.borrow_mut() = predicate;
+        let ping: &Arc<EventPing> = &self.ping_;
+        crate::reactor::event_ping_arm(ping, &event);
         event
     }
 

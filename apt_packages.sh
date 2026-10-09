@@ -18,7 +18,9 @@ export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update
 
 # Build tools
-sudo apt-get --assume-yes install make automake cmake ninja-build pkg-config autoconf curl
+# ripgrep: the srpc source gate (src/srpc/scripts/srpc_dsl_check.sh) runs `rg`
+# on every build of the srpc target.
+sudo apt-get --assume-yes install make automake cmake ninja-build pkg-config autoconf curl ripgrep
 
 # Ensure CMake >= 3.30 for C++23 import std/module support.
 # Ubuntu 24.04 apt currently provides 3.28.x, which is too old for this repo.

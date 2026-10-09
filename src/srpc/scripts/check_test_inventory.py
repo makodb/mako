@@ -65,7 +65,7 @@ def check(repo: Path, inventory: dict, configured: str | None = None,
         ):
             continue
         expected_test = testing and kind in ("runtime", "docs")
-        # Support TUs may belong to a registered executable, e.g. fd-reuse tests.
+        # Support TUs may belong to a registered executable rather than own one.
         if kind == "support":
             if not any(t == target for t, _, _ in found.get(source, set())):
                 raise ValueError(f"missing configured source: {source} -> {target}")

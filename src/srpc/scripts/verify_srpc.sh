@@ -9,7 +9,9 @@
 # The verify/ package is a separate, workspace-excluded crate whose modules are
 # `#[path]` links to the REAL srpc sources -- the same bytes rustc compiles and
 # rusty-cpp translates -- so this checks the actual code in place, not a copy.
-# verify/ is the only crate that depends on vstd, keeping it out of production.
+# verify/ is the only crate that builds vstd with its specs; production links
+# only the erased vstd that the Lion crates depend on (scripts/verify_lion.sh
+# re-runs Lion's own proofs).
 #
 # Requirements:
 #   - `cargo-verus` and `verus` on PATH (a prebuilt Verus dist provides both),

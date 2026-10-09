@@ -1271,7 +1271,6 @@ class PollThread {
     static rusty::Arc<PollThread> create(); // spawns exactly one OS thread
 
     void add_proxy(PollableProxy poll) const;
-    void remove(Pollable& poll) const;
     void remove_fd(int32_t fd) const;
     void request_close(int32_t fd) const;
     void update_mode(int32_t fd, int32_t new_mode) const;
@@ -1280,12 +1279,10 @@ class PollThread {
 };
 ```
 
-`PollableProxy` is `rusty::Box<PollableBase>` from `srpc.pollable_proxy`; the `Pollable`
-that `remove` takes comes from `srpc.epoll_wrapper`, one of the modules trimmed out of the
-umbrella.
+`PollableProxy` is `rusty::Box<PollableBase>` from `srpc.pollable_proxy`.
 
 Registration, removal, close, mode-update and job methods post commands through
-an mpsc channel to the worker. They return before the worker applies the command.
+an mpsc channel to the poll thread. They return before its driver applies the command.
 If the send fails, `update_mode` logs
 `PollThread::update_mode: send failed! Channel disconnected?` at ERROR;
 the other methods discard that failure.
@@ -1632,10 +1629,11 @@ boundaries and acceptance results.
 | `rusty::Option<T>` | Optional values such as a client's current connection |
 | `rusty::Result<T, E>` | Results that require a success or failure decision |
 
-An `Arc<Client>` does not authorize simultaneous application calls from multiple
-threads. Likewise, a `const` C++ method can modify interior state. Follow the
+A `rusty::Arc<T>` does not by itself authorize simultaneous calls from multiple
+threads, and a `const` C++ method can modify interior state. Follow the
 canonical type's synchronization and lifecycle contract, rather than inferring it
-from the pointer wrapper or the method qualifier.
+from the pointer wrapper or the method qualifier. `Client` is synchronized, so
+one `rusty::Arc<Client>` may be called from several threads at once.
 
 Check optional connections before reading their metrics:
 
@@ -1802,9 +1800,10 @@ but a completed or cancelled task will not resume again.
 
 The generated reactor thread-local storage follows canonical `thread_local!`
 state. Each thread calling `Reactor::get_reactor()` gets its own scheduler.
-`PollThread` is the shared command handle; `PollThreadWorker` owns the actual
-poll loop and local reactor. `run_loop(false, true)` drives ready tasks, events,
-and deadlines on the owner thread. It does not perform socket polling by itself.
+`PollThread` is the shared command handle; its worker thread runs the Lion runtime
+whose driver task owns the poll loop and drives that thread's local reactor.
+`run_loop(false, true)` drives ready tasks, events, and deadlines on the owner thread.
+It does not perform socket polling by itself.
 
 The common scheduling details, event queues, timer limitations, and fiber reuse
 rules are in the [Rust reactor chapter](srpc-book.md#4-the-reactor-pattern).
@@ -1845,7 +1844,7 @@ mechanism for it.
 ### Polling interfaces in C++
 
 `srpc.hpp` includes reactor and pollable-proxy declarations but omits the
-`srpc.epoll_wrapper` module. Naming `Epoll`, `PollMode`, `PollReady`, or `Pollable`
+`srpc.epoll_wrapper` module. Naming `PollMode`, `PollReady`, or `SrpcEpollBackend`
 requires an explicit import. This file-scope include fragment is illustrative;
 the consumer also needs the project's configured module map and compiler flags.
 
@@ -1854,9 +1853,13 @@ the consumer also needs the project's configured module map and compiler flags.
 import srpc.epoll_wrapper;
 ```
 
-The worker stores `PollableProxy`, emitted as `rusty::Box<PollableBase>`, and
-calls its nine virtual operations. Implementing the older `Pollable` interface
-alone does not make an object a worker registration.
+A poll thread stores each `add_proxy` registration as a `PollableProxy`, emitted as
+`rusty::Box<PollableBase>`, and runs a task per registration that calls its
+`handle_read`, `handle_write`, `check_pending_write_update`, `is_closed` and `close`
+operations. It never calls `handle_error`: an error or hang-up wakes the read side,
+so `handle_read` sees it as a failed `recv` or end of file. The TCP transport does
+not register through this interface; its connections and listeners run their own
+reader, writer and accept tasks.
 
 #### Typed shared adapters
 
@@ -1868,8 +1871,8 @@ extension trait for downstream Rust implementations.
 
 The shared owner must retain its registered native descriptor. A logical close
 that drops or replaces a descriptor slot needs a separate registration lease,
-which the TCP-specific proxy factories provide. An `Arc` to the transport
-object alone does not guarantee the interior descriptor remains alive.
+as the TCP transport tasks keep one. An `Arc` to the transport object alone does
+not guarantee the interior descriptor remains alive.
 
 #### Jobs
 
@@ -1977,7 +1980,7 @@ int main() {
 
 A successful connect returns zero; common failures are 111 for refused connection, 22 for an invalid address, and 107 for other factory connection failures. The default factory is TCP. Preserve the close-before-worker-shutdown ordering from the main book.
 
-The client is a `rusty::Arc<Client>`, and `connection()` returns `rusty::Option<rusty::Arc<ClientConnection>>`. Empty options must be checked before unwrapping. A C++ handle does not enforce the native Rust client's thread restrictions, so preserve owner-thread access in application code.
+The client is a `rusty::Arc<Client>`, and `connection()` returns `rusty::Option<rusty::Arc<ClientConnection>>`. Empty options must be checked before unwrapping. The client's state is synchronized, so application threads and reply callbacks may share one handle.
 
 ### Requests and typed futures
 
@@ -2505,10 +2508,13 @@ SRPC fiber suspension; it does not make arbitrary blocking operations yield.
 | `rusty::Weak` | Non-owning references. Check `upgrade()` before using the payload. |
 | `rusty::Box<T>` | Unique ownership, including registered services and request bodies. |
 
-`Client::create` returning an `Arc` does not authorize concurrent access to
-one client handle. Its canonical Rust `Client` is not `Sync`. Keep one client
-handle per application thread. Clients may share a poll worker or use separate
-workers; the choice determines scheduling and CPU use.
+`Client::create` returns an `Arc` that may be shared across threads. The
+canonical Rust `Client` is `Send + Sync`: its connection slot is a mutex, never
+held across a call into the connection, and its staged settings and scalar
+fields are synchronized. Application threads and reply callbacks on the poll thread
+may therefore call one client at once, as rpcbench's pipeline does. Clients may
+share a poll worker or use separate workers; the choice determines scheduling
+and CPU use.
 
 Services have const-callable dispatch and must synchronize mutable shared
 state. The shared context owns boxed services and immutable routing tables.
@@ -2526,8 +2532,10 @@ srpc::sp_reactor_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
 ```
 
 Application code should not clear a live reactor's thread-local slots.
-Cross-thread stackless wakeups submit a synchronized wake ticket; completion
-still runs on the owning reactor.
+A cross-thread stackless wakeup goes through the thread's Lion runtime on a
+`PollThread` (its cross-thread queue and the epoll backend's eventfd) and
+through a synchronized wake ticket on any other thread; completion still runs
+on the owning thread.
 
 ### Shutdown and native synchronization
 
@@ -2609,9 +2617,7 @@ a configurable worker pool inside the current `PollThread` type.
 
 The Rust book describes the separate checked-in `bench/` leaf-codec
 benchmark. It does not reproduce the external Rust TCP driver used for the
-tables below. The `run_microbench.sh --compare` copy behavior can leave an
-older `bench/` active when that directory already exists at a compared ref;
-check which benchmark source each build uses.
+tables below.
 
 ### Historical C++ throughput, 2026-08-29
 
@@ -2686,7 +2692,10 @@ allocation and vector growth. A 64-byte initial serialization-sink capacity
 was reported to improve the C++ eight-thread server by 6.5% and Rust cells
 by 4% to 8%. These are observations from that revision and profiling session,
 not measured explanations for current performance. The sequential TCP result
-was attributed to the worker's roughly one-millisecond polling cadence.
+was attributed to the worker's roughly one-millisecond polling cadence. That
+cadence belonged to the pre-Lion worker loop, since deleted. The current poll
+thread is woken by each source of work; only a job whose `Ready()` is false is
+re-checked on a one-millisecond timer.
 
 A further mode comparison used eight client threads and 1,000 outstanding
 requests per thread:

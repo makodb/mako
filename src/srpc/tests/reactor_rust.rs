@@ -22,7 +22,7 @@ fn historical_export_surface_is_rust_visible() {
     let _spawn_with_result: SpawnWithResultFn =
         reactor_spawn_stackless_task_with_result::<(), fn(())>;
 
-    // The seven per-thread statics are LocalKeys now; visibility is proven
+    // The six per-thread statics are LocalKeys now; visibility is proven
     // by reading each through its closure-only accessor.
     sp_reactor_th_.with(|slot| assert!(slot.borrow().is_none()));
     sp_disk_reactor_th_.with(|slot| assert!(slot.borrow().is_none()));
@@ -30,7 +30,6 @@ fn historical_export_surface_is_rust_visible() {
     g_fiber_global_id.with(|id| assert_eq!(id.get(), 0));
     reactor_clients_th_.with(|clients| assert!(clients.borrow().is_empty()));
     reactor_prune_hwm_th_.with(|hwm| assert_eq!(hwm.get(), 64));
-    g_current_poll_worker.with(|worker| assert!(worker.get().is_null()));
 
     let dangling: QuorumDanglingVec = vec![(7u16, 11i64)];
     assert_eq!(dangling[0].0, 7u16);
@@ -250,9 +249,8 @@ fn incumbent_concrete_layouts_are_pinned() {
     check!(FiberStatus, 4, 4);
     check!(Fiber, 144, 16);
     check!(StacklessTaskEntry, 64, 16);
-    check!(Reactor, 504, 8);
+    check!(Reactor, 464, 8); // S7b: -40, timeout_events_ (measured)
     check!(PollCommand, 16, 8);
-    check!(PollThreadWorker, 200, 8);
     check!(PollThread, 104, 8);
     check!(QuorumPolicy, 4, 4);
     check!(QuorumEvent, 352, 16);

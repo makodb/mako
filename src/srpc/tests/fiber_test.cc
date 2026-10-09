@@ -404,18 +404,30 @@ TEST_F(FiberTest, FutureGetValueInFiber) {
 TEST_F(FiberTest, FutureWaitForTimeout) {
     auto promise = FiberPromise<int>::default_();
     auto future = promise.get_future();
-    bool ready = false;
     auto reactor = Reactor::get_reactor();
 
+    // The fiber owns the future and the outcome. If the drive below fails,
+    // the parked fiber then holds nothing that points into this frame.
+    // `ready` starts true, so only a false from wait_for can clear it.
+    struct Outcome {
+        bool ready = true;
+        bool finished = false;
+    };
+    auto outcome = std::make_shared<Outcome>();
+
     // Run wait_for inside a fiber context
-    Fiber::create_run([&future, &ready]() {
+    Fiber::create_run([future = std::move(future), outcome]() mutable {
         // Wait with timeout should return false if not set
-        ready = future.wait_for(1000);  // 1ms timeout
+        outcome->ready = future.wait_for(1000);  // 1ms timeout
+        outcome->finished = true;
     });
 
-    reactor->run_loop(false, true);
-
-    EXPECT_FALSE(ready);
+    // One run_loop pass returns before the 1ms deadline. Before this fix
+    // the test made one pass and checked the initial `false`, so it passed
+    // without the wait ever timing out. Drive until the wait has returned.
+    ASSERT_TRUE(DriveUntil(reactor, [&outcome] { return outcome->finished; },
+                           1000000));
+    EXPECT_FALSE(outcome->ready);
 }
 
 TEST_F(FiberTest, FutureWaitForReady) {
