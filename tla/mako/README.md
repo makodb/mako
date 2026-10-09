@@ -429,6 +429,10 @@ in the job rather than relying on a Dockerfile change having been published.
 well as the build: CI defaults to `build`, while `docker_build.sh` supplies
 `build_docker`. A runner must use the same directory as the compile step.
 
+The `multiShardSingleProcess` CI suite waits for both owners' throughput reports
+before stopping their shared process. Its result check requires exactly two
+finite, positive rates.
+
 ```bash
 # Inside the container, from the repository root:
 VERUS_PATH=/path/to/verus tla/mako/scripts/verify.sh

@@ -115,7 +115,7 @@ nohup $GDB_PREFIX $CMD > "$log_file" 2>&1 &
 PROCESS_PID=$!
 sleep 2
 
-# Wait for benchmark completion (poll for completion marker)
+# Wait for both owners to finish before stopping their shared process.
 max_wait="${MAKO_MAX_WAIT_SECONDS:-120}"
 if ! [[ "$max_wait" =~ ^[0-9]+$ ]] || [ "$max_wait" -le 0 ]; then
     echo "Warning: MAKO_MAX_WAIT_SECONDS='${max_wait}' is invalid; using default 120s"
@@ -127,7 +127,7 @@ timed_out=0
 process_exited_early=0
 echo "Waiting for benchmark completion (timeout: ${max_wait}s)..."
 while [ "$wait_count" -lt "$max_wait" ]; do
-    if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+    if [ -f "$log_file" ] && [ "$(grep -c "agg_persist_throughput:" "$log_file" 2>/dev/null)" -ge 2 ]; then
         echo "Benchmark completed after ${wait_count}s"
         benchmark_completed=1
         sleep 2
@@ -137,7 +137,7 @@ while [ "$wait_count" -lt "$max_wait" ]; do
     if ! kill -0 "$PROCESS_PID" 2>/dev/null; then
         # Process may exit immediately after writing final metrics.
         sleep 1
-        if [ -f "$log_file" ] && grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
+        if [ -f "$log_file" ] && [ "$(grep -c "agg_persist_throughput:" "$log_file" 2>/dev/null)" -ge 2 ]; then
             echo "Benchmark completed after ${wait_count}s (process exited after writing results)"
             benchmark_completed=1
             sleep 1
