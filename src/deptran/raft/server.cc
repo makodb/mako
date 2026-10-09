@@ -1649,7 +1649,7 @@ extern "C" void raft_install_rpc_stats(uint64_t* sent, uint64_t* bytes_sent,
 
 // ---------------------------------------------------------------------------
 // [M0] Per-entry stage trace (the 12-stage latency breakdown kit,
-// docs/performance/raft-latency-breakdown/README.md). Inert unless
+// docs/performance/raft-latency-breakdown/, since removed). Inert unless
 // MAKO_RAFT_TRACE_FILE is set: every entry point first reads one cached flag,
 // and raft_trace_now_us returns 0 without reading the clock, so an unset run
 // pays a relaxed load per call and nothing else. When set, one CSV row per log

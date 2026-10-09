@@ -11,7 +11,7 @@
 # comparison fails, 2 on a usage or configuration error.
 #
 # G2 is gated on a traced metric (decided after the Phase 3 checkpoint,
-# docs/verus/reports/phase-3.md §3.1): the rotation runs with the Phase 0
+# the Phase 3 report §3.1, since removed): the rotation runs with the Phase 0
 # trace kit on and scripts/verus/two_follower_rounds.py turns each run into
 # the time of its rounds that sent to both followers. G2_REPORT_ROUNDS (25)
 # untraced rounds follow in $OUT/untraced for the reported, ungated lines:

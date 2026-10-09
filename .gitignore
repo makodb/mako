@@ -119,13 +119,3 @@ cmake-build/*
 # Raft performance harness output (scripts/raft_perf/run_sweep.sh writes a
 # timestamped directory of JSON records and plots here by default).
 /raft_perf_output/
-
-# Committed Raft performance baselines are measurement DATA, not build output:
-# they are the evidence a change did or did not cost performance, so they are
-# deliberately exempt from the *.json and *.tar* rules above. Only the
-# docs/performance/raft-<arm>-<commit>/ directories are exempt -- the recorded
-# ARMS of a comparison, one directory per commit measured; ordinary sweep
-# output still lands in the ignored /raft_perf_output/.
-# See docs/performance/raft-baseline.md.
-!/docs/performance/raft-baseline-*/**
-!/docs/performance/raft-rust-*/**

@@ -171,9 +171,9 @@ least that many verified and 0 errors.
 
 ### 0.6 Where results go; quiet machine; investigating perf
 
-- Raw results: `$RESULTS/<phase>/...`, **never in git**. Commit only
-  `docs/performance/verus-<phase>/SUMMARY.md` (table, SHAs, command lines,
-  raw-results path).
+- Raw results: `$RESULTS/<phase>/...`, **never in git**, nor summaries of
+  them: the table, SHAs, command lines and raw-results path go in the reply
+  and the commit message.
 - Exact gate commands are in §6 ("Gate commands"). Tier 1 suites run
   serially (they share ports).
 - **Quiet machine**: no build, no other benchmark, no Verus job during a perf
@@ -186,7 +186,7 @@ least that many verified and 0 errors.
 ### 0.7 Stopping and reporting points
 
 Reports are plain language, concrete example first, every term defined. Anything
-longer than a screen goes to `docs/verus/reports/phase-<n>.md`; the reply gives
+longer than a screen goes to `$RESULTS/<phase>/report.md`; the reply gives
 the path and the 3-5 conclusions that matter. Stop and report:
 1. **After Phase 0**: smoke tests; the v0 count; G1-G7 baselines with paired CV,
    MDE, derived rounds and bounds; spike results (a) cargo, (b) rusty-cpp,
@@ -277,7 +277,7 @@ quiet-machine hours (about 86 h on the critical path become about 10 h).
 - **G2 is traced (user, 2026-10-04, after the Phase 3 checkpoint).** At
   G2's saturation the leader skips a follower whose reply missed the round's
   early-quorum pass, and how often that happens is a timing race that decides
-  the throughput ([reports/phase-3.md](reports/phase-3.md) §3.1). So G2 gates
+  the throughput (Phase 3 report §3.1, since removed). So G2 gates
   on the time of rounds that sent to both followers, from the Phase 0 trace
   kit, over 10 rotated rounds with a +2% bound and §6's pass rule
   (`scripts/verus/two_follower_rounds.py`, run by `gate_point.sh`). Beside
@@ -524,12 +524,12 @@ logs); from Phase 3 a recorder at `step()` enables **byte-identical replay**.
 of heartbeat acknowledgements for read-index authority
 (`src/server_cc.rs:130-470`). *ReplicationWakeGate*: the submit path's wake
 object (`src/server_h.rs:1143-1405`). *The R4 lesson*: an srpc subtree fix lost
-on a sync (`docs/performance/raft-latency-regression.md` §5). *CV*: standard
+on a sync (the since-removed `raft-latency-regression.md` §5). *CV*: standard
 deviation over mean. *MDE*: the smallest change n rounds can resolve. *Sign
 test*: how likely the split of rounds where B beat A is by chance
 (`scripts/raft_perf/paired_stats.py:36-41`). *Knee*: client count where latency
 rises steeply. *Jetpack*: the closed-loop client sweep
-(`docs/performance/jetpack-comparison/README.md`). *Tier 1-3, G1-G7*: §6.
+(`docs/performance/jetpack-comparison/`, since removed). *Tier 1-3, G1-G7*: §6.
 
 ---
 
@@ -1334,7 +1334,7 @@ port-audit.md §9.5).
 
 ### Phase 7 (optional, performance only). Wakes, not polls (3.4-4.7 days; +1-1.9 for ownership)
 **Goal.** Win latency: about 2.3 of the 2.6 ms at 4 KB is three ~1 ms waits
-(`docs/performance/raft-latency-breakdown/README.md`). Not required for the
+(`docs/performance/raft-latency-breakdown/`, since removed). Not required for the
 proof (Q1). Do it after Phase 8, or skip it. Each sub-change is landed and
 gated on its own; the core must not change (A.4 item 5).
 - **F11a replies as events.** The srpc callback (poll thread,
@@ -1346,7 +1346,7 @@ gated on its own; the core must not change (A.4 item 5).
   written only when an atomic "sleeping" flag is set. The epoll timeout stays
   the fixed 1 ms (`src/srpc/reactor/epoll_wrapper.rs:124`); the eventfd removes
   the 0-1 ms submit→poll hop
-  (`docs/performance/raft-latency-breakdown/README.md:109`, `:133-135`). Shared
+  (`docs/performance/raft-latency-breakdown/`, since removed). Shared
   subtree: re-apply list; Paxos and `srpcTests` must pass.
 - **F11c blocking apply channel** replacing `raft_thread_sleep_ms(1)`
   (`src/server_h.rs:3372`), draining up to K entries then one `Applied(n)`.
@@ -1470,7 +1470,7 @@ milestones (Phases 3, 6, 8, and 7 if done) a third arm, `build_rust_base`
 binary, 0.2/0.8), gates the **cumulative** change with the same bounds, so
 in-bound losses cannot add up (nine phases at +2% each could otherwise drift
 15-20%). Old C++ numbers are not the baseline. Reference Rust-lane figures
-(`docs/performance/raft-rust-9a361eccd/compare-vs-412c225a.txt`): 4 KB p1 at
+(`docs/performance/raft-rust-9a361eccd/`, since removed): 4 KB p1 at
 240/s p50 2.647 ms; 4 KB p1 unthrottled 37,760/s; 286 KB p6 multi at 190/s p50
 3.343 ms, unthrottled 3,132/s; 1 MiB p1 183/s.
 
@@ -1529,9 +1529,9 @@ should be smaller, **not verified** by how much.)
 B/A − 1 is past its bound in the bad direction, and (2) the two-sided sign test
 is significant (p < 0.05) in the bad direction. A smaller consistent shift is
 reported, not failed (the sign test alone flags any shift: p = 0.000 for −1.57%,
-`docs/performance/raft-rust-t4-paired/paired-4k.txt:4`). A shift past a bound in
+`docs/performance/raft-rust-t4-paired/`, since removed). A shift past a bound in
 the good direction is reported as "improved". Never gate on p1 286 KB p99
-(bimodal, `docs/performance/raft-baseline.md` Known gap 6) or on throughput at
+(bimodal, `raft-baseline.md` Known gap 6, since removed) or on throughput at
 throttled points. `paired_stats.py` exits 1 when fewer than `--min-pairs`
 rounds completed (`paired_stats.py:6-10`); that is a failed run.
 
@@ -1648,7 +1648,7 @@ for set in wan20ms loopback; do for ref in pre base; do
   $PY scripts/verus/jetpack_gate.py $RESULTS/$P/jetpack/$set --baseline $ref --candidate rust || echo "GATE FAIL jetpack $set vs $ref"; done; done
 ```
 
-(`PTS` is the point list of `docs/performance/jetpack-comparison/README.md:131-132`.
+(`PTS` is the point list of the since-removed jetpack-comparison README.
 Whether `run_sweep.sh` already writes per-arm subdirectories that `compare.py`
 accepts as given is **not verified**; adjust paths to what it writes. Phase 0
 records the sweep under `$RESULTS/p0/sweep/child`.)

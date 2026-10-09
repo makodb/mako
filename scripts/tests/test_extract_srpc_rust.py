@@ -895,7 +895,7 @@ class CheckedInCanaryTests(unittest.TestCase):
         # a Mako-local fix (7f52613fe) the subtree pull dropped. Without it
         # every timed-out event stays in waiting_events_/composite_events_ and
         # is rescanned on every reactor pass: the Raft latency regression in
-        # docs/performance/raft-latency-regression.md.
+        # the since-removed docs/performance/raft-latency-regression.md.
         # 14880 -> 14882: +2, two large-frame fixes in the Rust lane's and the
         # C++ lane's shared transport. tcp_channel.rs: send_frame appends
         # through tcpconn_append_frame (one resize, one memcpy) instead of a

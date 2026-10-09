@@ -8,7 +8,7 @@ Reads the per-entry stage traces of a TRACE=1 rotation
 (scripts/raft_perf/rotation_trial.sh: OUT_DIR/trace.r<i>.<arm>.<pid>, one CSV
 per process, from the Phase 0 trace kit, MAKO_RAFT_TRACE_FILE).
 
-Why this metric (docs/verus/reports/phase-3.md §3.1). At saturation the
+Why this metric (Phase 3 report §3.1, since removed). At saturation the
 leader skips a follower whose reply missed the round's early-quorum pass, a
 round that sends to one follower is far shorter than one that sends to two,
 and how often that happens is a timing race. G2's throughput therefore

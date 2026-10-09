@@ -18,7 +18,7 @@ verus! {
 // about 146,000 years), so no execution comes near it. Keeping indices below
 // it is what lets the index arithmetic below be proved free of overflow; the
 // shell's side of it is the host-contract assumption that no index it hands
-// the core reaches it (docs/verus/reports/phase-6.md).
+// the core reaches it (the Phase 6 report, since removed).
 pub open spec fn raft_index_limit() -> int {
     0x4000_0000_0000_0000int
 }

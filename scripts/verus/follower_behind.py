@@ -9,7 +9,7 @@ some follower's applied count (the leader's record carries
 p1_/p2_applied_total) is below the leader's when the run ends. At G2's
 saturation such a follower was skipped in rounds whose early-quorum pass its
 reply missed, and those runs are the fast ones
-(docs/verus/reports/phase-3.md §3.1), so the count is printed beside the
+(the Phase 3 report §3.1, since removed), so the count is printed beside the
 throughput it explains. Each arm after the first is compared with the first:
 the counts by Fisher's exact test, the medians of runs that ended caught up
 by a two-sided Mann-Whitney U (normal approximation, tie-corrected). Both

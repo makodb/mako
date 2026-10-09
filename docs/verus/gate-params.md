@@ -14,7 +14,7 @@ Seeded with 25 rounds and the default bounds; overwritten by the A/A run.
 | Point | Rounds | Bounds | Note |
 |---|---|---|---|
 | G1 | 10 | latency_p50_us=0.02,latency_p99_us=0.05 | default bounds hold; CV_paired latency_p50_us=0.97%, latency_p99_us=1.44% (A/A n=25) |
-| G2 | 10 | two_follower_round_us=0.02 | traced (`two_follower_rounds.py`): per run, the median time of rounds that sent to both followers; user decision after the Phase 3 checkpoint (reports/phase-3.md §3.1). Reported beside it, not gated: 25 untraced rounds' applied_per_sec and runs ending with a follower behind. Was: applied_per_sec=-0.054 at 25 rounds (CV_paired 9.56%, the skip-rate bimodality) |
+| G2 | 10 | two_follower_round_us=0.02 | traced (`two_follower_rounds.py`): per run, the median time of rounds that sent to both followers; user decision after the Phase 3 checkpoint (Phase 3 report §3.1, since removed). Reported beside it, not gated: 25 untraced rounds' applied_per_sec and runs ending with a follower behind. Was: applied_per_sec=-0.054 at 25 rounds (CV_paired 9.56%, the skip-rate bimodality) |
 | G3 | 25 | latency_p50_us=0.024,latency_p99_us=0.06 | latency_p50_us widened +0.02 -> +0.024 (25-round MDE); latency_p99_us widened +0.05 -> +0.06 (25-round MDE); CV_paired latency_p50_us=4.27%, latency_p99_us=10.70% (A/A n=25) |
 | G4 | 11 | applied_per_sec=-0.02 | default bounds hold; CV_paired applied_per_sec=2.31% (A/A n=25) |
 | G5 | 20 | latency_p50_us=0.02,latency_p99_us=0.05 | default bounds hold; CV_paired latency_p50_us=3.13%, latency_p99_us=4.70% (A/A n=25) |

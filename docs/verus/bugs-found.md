@@ -46,7 +46,7 @@ bug before the merge ("can you first fix all remaining bugs of Raft on this
 branch?"). B1, B4's remainder, B7, B8, B14, B16, B17, B18 and B19 were
 fixed as plan items F12-F19 (modification-plan.md A.2; diff-ledger.md,
 "Bug fixes after Phase 8"; the phase's gates, replay and performance
-checkpoint: [reports/bug-fixes.md](reports/bug-fixes.md)). B6 stays a trusted assumption (persistence is
+checkpoint: the bug-fix report, since removed). B6 stays a trusted assumption (persistence is
 its own project, [disk-persistence.md](disk-persistence.md)); B9, B10 and
 B13 are tooling, not Raft.
 

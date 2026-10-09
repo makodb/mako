@@ -833,7 +833,7 @@ only a second lock on one thread. The discipline rests on the single step
 wrapper, the `*Locked` names and "CALLER MUST HOLD mtx_" comments, the
 census (which measures and does not gate,
 `scripts/verus/core_access_census.py:15`) and the replay (§9); the planned
-compiler-enforced accessor was not built (docs/verus/reports/phase-6.md:174-178).
+compiler-enforced accessor was not built (the since-removed Phase 6 report).
 
 What other threads read without it (F8): the four mirrors
 (`src/server_h.rs:952-959`), written with release stores at the end of every
@@ -948,8 +948,8 @@ vacuously (`:14-17`). It is run by hand (`:7-8`), as the plan's equivalence
 check A.4 item 4 (docs/verus/modification-plan.md:1047-1050); no build
 target or script runs it. Phases 6 and 8 replayed a lab run (31,792 steps,
 every file stopping at a `T` line), a G1 run (41,361) and a G4 run (108,318)
-with no mismatch (docs/verus/reports/phase-6.md:106-110,
-reports/phase-8.md:99-103).
+with no mismatch (the since-removed Phase 6 and Phase 8 reports under
+`docs/verus/reports/`).
 
 It shows that on those runs the core's output is a function of the recorded
 events alone, that before the first `T` line the shell changed the core only
@@ -1029,4 +1029,4 @@ The largest new pieces are `event.rs` (316 lines: the events, the dispatch,
 F9), the cut heartbeat round in `heartbeat.rs` (215) and `node.rs` (271).
 
 The cost was measured: every phase's performance checkpoint compares with
-`verus-p0`, and Phase 8's passes on every point (reports/phase-8.md §4).
+`verus-p0`, and Phase 8's passes on every point (Phase 8 report, since removed).

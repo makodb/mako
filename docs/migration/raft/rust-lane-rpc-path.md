@@ -13,7 +13,7 @@ language runs and where the code is. It is wired and exercised today:
 RaftLabTest 25/25 and the four Raft replication suites pass on this lane, a
 cluster mixing Rust-lane and hybrid-lane replicas replicates correctly (12 of
 12 runs), and the full performance sweep against the C++ baseline
-(`docs/performance/raft-rust-9a361eccd`) completed all 624 runs.
+(`docs/performance/raft-rust-9a361eccd`, since removed) completed all 624 runs.
 
 Paths are under `src/deptran/raft/` unless marked. On this lane rustc
 compiles the core (`src/`) and the runtime (`rt/src/`, the `raft-rt` crate)

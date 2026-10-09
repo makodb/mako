@@ -132,7 +132,7 @@ declare -A MAX_OUTSTANDING=(
 # paced array below saturation and has a lower bound, not a measured ceiling.
 # Fixing this needs a per-(payload, group_mode) array; doing so changes what
 # the sweep produces, so it is deliberately NOT folded in here without a
-# re-run. See docs/performance/raft-baseline.md, "Known gaps".
+# re-run. See the since-removed raft-baseline.md, "Known gaps".
 # For calibration, the real TPC-C workload profiled in
 # the Mako Raft entry-size profile notes (removed; see git history) submits ~303 entries/s of ~290 KB, i.e. Mako
 # in production sits right at this ceiling.

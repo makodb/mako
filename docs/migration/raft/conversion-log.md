@@ -279,7 +279,7 @@ own replication suite had been replaying 155-368 batches where it now replays
 | commit | what it did |
 |---|---|
 | `9a361eccd` | **no payload copies on the Rust lane.** The leader encodes the `Command` straight into the request frame (`serialize_with`, through a C++ `EmitSink` that forwards to the Rust archive). The follower decodes from a slice of the frame (`AppendEntriesRequestRef`). 286 KB saturation: hybrid 380-413/s, rust 682-696/s, C++ baseline ~280. T4's paired trial (rust vs hybrid, 25 ABBA pairs): 4 KB saturation throughput +40.85%, p50 -29.0%. T3's mixed-lane clusters: 12 of 12. |
-| `2cd7f5e74` | **`MAKO_RAFT_LANE` defaults to rust** (T5). The full sweep against the C++ baseline `412c225a` ran 624 of 624 runs (`docs/performance/raft-rust-9a361eccd`). The kernel classification is now computed and checked by the build (S1). The Rust seam aborts on an off-thread `IntEvent` (S2). The lab's assertion macros became functions, because a transpiled macro becomes a `// TODO` comment and the transpiled lab had reported 25/25 while checking nothing (189 dropped checks). |
+| `2cd7f5e74` | **`MAKO_RAFT_LANE` defaults to rust** (T5). The full sweep against the C++ baseline `412c225a` ran 624 of 624 runs (`docs/performance/raft-rust-9a361eccd`, since removed). The kernel classification is now computed and checked by the build (S1). The Rust seam aborts on an off-thread `IntEvent` (S2). The lab's assertion macros became functions, because a transpiled macro becomes a `// TODO` comment and the transpiled lab had reported 25/25 while checking nothing (189 dropped checks). |
 
 ## 14. The transpiled C++ lane (09-27)
 
@@ -304,7 +304,7 @@ snapshot store is converted to Rust. hybrid and cpp keep the C++
 | `39950ea3e` | N6 | resend suppression: at most one InstallSnapshot per (term, follower, index) while a reply is outstanding. The key is cleared by the reply, a drop, a failed send, a deadline, or a term change. |
 | `a22d391cc` | N7-N8 | startup-recovery lab cases 73-74 on all three lanes. `ci.sh` derives the lab count (27) from the source. raft-rt's `cargo test` gates `raft_lane_check`. |
 | `0225bb198` `fffab9338` | N9-N13 | docs; `nm` shows no C++ snapshot classes in Rust-lane binaries; lab x10 per lane (30/30), 8 Raft suites, mixed-lane catch-up in all three mixes; `scripts/raft_perf/rotation_trial.sh` |
-| `dd3c0ca9c` | N12 | snapshot-enabled performance, 5 arms rotated, 17 points, 1,650 runs (`docs/performance/raft-rust-snapshot-fffab9338/SUMMARY.md`) |
+| `dd3c0ca9c` | N12 | snapshot-enabled performance, 5 arms rotated, 17 points, 1,650 runs (`docs/performance/raft-rust-snapshot-fffab9338/SUMMARY.md`, since removed) |
 | `000c41840` `8a5d45db8` | N12 | the pre arm's crash explained; the raw records moved to `~/raft-test-results` |
 
 What N12 showed:
@@ -323,7 +323,7 @@ What N12 showed:
 |---|---|
 | `b83630193` | `rust-lane-rpc-path.md`: the Raft project structure in four parts (Rust logic, C kernel, C++ shim, message types), and the Paxos/Raft inheritance under `TxLogServer` |
 | `5216f26b3` | local mako-dev's reactor fix R4 (`b73936735`) merged as history only. Its content was already on this branch; a duplicated `test_srpc_timeout_race` block was dropped, and the tree is unchanged. mako-dev is now an ancestor, so merging into it is a fast-forward. |
-| `91277b4ac` | the per-entry latency breakdown of the Rust lane (`docs/performance/raft-latency-breakdown/`). Below saturation, three ~1 ms waits make up most of an entry's time; unthrottled, the time is queueing behind stop-and-wait rounds. |
+| `91277b4ac` | the per-entry latency breakdown of the Rust lane (`docs/performance/raft-latency-breakdown/`, since removed). Below saturation, three ~1 ms waits make up most of an entry's time; unthrottled, the time is queueing behind stop-and-wait rounds. |
 
 ## What the numbers did
 
@@ -392,7 +392,7 @@ slower (349 vs 154 us p50 under strace) while the socket path is not, and
 throughput is untouched. Raft performs one timed wait per heartbeat round per
 replica, so the leaked set grows at the round rate.
 
-Written up with the evidence in `docs/performance/raft-latency-regression.md`.
+Written up in the since-removed `docs/performance/raft-latency-regression.md`.
 The fix is two lines, but it is a subtree file shared with Paxos and Mako and
 it regenerates srpc's C++ lane, so it is not yet claimed. (It was later made in
 `edc5db890`, phase 12: p50 back to 2.70-2.75 ms.)
