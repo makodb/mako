@@ -665,9 +665,13 @@ void run_tests(mako::IDatabase* db) {
 }
 
 // Verify data integrity for all tests
+// @unsafe - Reads the replica's physical table through legacy storage APIs.
 bool verify_data_integrity(abstract_db* db, int nshards, int nthreads) {
     mbta_sharded_ordered_index *table = db->open_sharded_index("customer_0");
-    auto records = scan_tables(db, table);
+    // Verify replayed rows here, not a distributed scan of other live owners.
+    auto* replica_table = table->shard_for_index(
+        BenchmarkConfig::getInstance().getShardIndex());
+    auto records = scan_tables(db, replica_table);
 
     printf("\n=== Database contents (%zu rows) ===\n", records.size());
     for (const auto &entry : records) {

@@ -68,6 +68,11 @@ interface they need (`OrderedIndex*` for KV consumers,
 `abstract_ordered_index*` where txn'd + 2PC roles are both required,
 e.g. `ShardReceiver::open_tables_table_id`).
 
+Replica integrity checks select `shard_for_index(local_shard)` and scan that
+physical table, as the Paxos and Raft replication examples do. Scanning the
+logical sharded wrapper instead visits other owners and requires a transaction
+client; it does not restrict verification to this replica's replayed rows.
+
 ### TPC-C warehouse handles
 
 With `MAKO_CLUSTER_CONFIG` enabled, TPC-C's governed table accessors resolve
