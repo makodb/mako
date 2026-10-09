@@ -187,7 +187,9 @@ fn run_loop_does_not_retest_a_self_notifying_event() {
     }
 
     int_ev.value_.set(1);
-    box_ev.is_set_.set(true);
+    // Mako-local: BoxEvent's flag is an AtomicBool (reactor.rs, BoxEvent), so a
+    // payload published by another thread is not a data race.
+    box_ev.is_set_.store(true, std::sync::atomic::Ordering::Release);
     assert!(int_ev.is_ready() && box_ev.is_ready());
     for _ in 0..IDLE_PASSES {
         reactor.run_loop(false, true);

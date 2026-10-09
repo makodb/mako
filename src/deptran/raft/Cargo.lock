@@ -31,6 +31,78 @@ dependencies = [
 ]
 
 [[package]]
+name = "lion-executor"
+version = "0.1.0"
+dependencies = [
+ "lion-executor-spec",
+ "lion-framework-spec",
+ "lion-reactor",
+ "lion-reactor-spec",
+ "lion-slab",
+ "lion-timer-wheel",
+ "lion-utility-spec",
+ "vstd",
+]
+
+[[package]]
+name = "lion-executor-spec"
+version = "0.1.0"
+dependencies = [
+ "lion-framework-spec",
+ "vstd",
+]
+
+[[package]]
+name = "lion-framework-spec"
+version = "0.1.0"
+dependencies = [
+ "vstd",
+]
+
+[[package]]
+name = "lion-reactor"
+version = "0.1.0"
+dependencies = [
+ "lion-framework-spec",
+ "lion-reactor-spec",
+ "lion-slab",
+ "lion-timer-wheel",
+ "lion-utility-spec",
+ "vstd",
+]
+
+[[package]]
+name = "lion-reactor-spec"
+version = "0.1.0"
+dependencies = [
+ "lion-framework-spec",
+ "lion-utility-spec",
+ "vstd",
+]
+
+[[package]]
+name = "lion-slab"
+version = "0.1.0"
+dependencies = [
+ "vstd",
+]
+
+[[package]]
+name = "lion-timer-wheel"
+version = "0.1.0"
+dependencies = [
+ "vstd",
+]
+
+[[package]]
+name = "lion-utility-spec"
+version = "0.1.0"
+dependencies = [
+ "lion-framework-spec",
+ "vstd",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -96,6 +168,10 @@ version = "0.0.0"
 [[package]]
 name = "srpc"
 version = "0.0.0"
+dependencies = [
+ "lion-executor",
+ "lion-reactor",
+]
 
 [[package]]
 name = "syn"

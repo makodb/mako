@@ -109,7 +109,7 @@
     "rpc/srpc_server.c": "all"
   },
   "consumers": {
-    "build.rs": "59fbcf64741d1107424ddb28b620cfb1faeed5b73a1e61d33ca947bf7ce2368f",
+    "build.rs": "3ae3b9d30b814957ec619276558ac89b32504ca95cefe81a6424f009efeca3c9",
     "CMakeLists.txt:native-manifest": "04b3201bdab26052c7483295287e0902c4804c4419b7f16c7e3d594ca368e29c"
   }
 }

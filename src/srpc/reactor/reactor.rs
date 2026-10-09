@@ -400,10 +400,10 @@ fn boxevent_set<Type: Clone + Default + 'static>(ev: &BoxEvent<Type>, c: &Type) 
         // or a foreign reader can observe is_set_ with a half-written slot.
         ev.is_set_.store(true, std::sync::atomic::Ordering::Release);
     }
-    // Event status, weak Fiber state and the reactor queues are
-    // owner-thread-only. A foreign setter publishes the payload and stops
-    // there; the owner's normal waiting-event scan observes readiness and
-    // performs the wakeup itself.
+    // Event status, weak Fiber state and the reactor queues are owner-thread
+    // only, so a foreign setter publishes the payload and stops there. Lion
+    // has no per-pass scan: the owner sees the payload when it next tests the
+    // event, at a timed wait's deadline, or sooner if event_ping wakes it.
     if std::thread::current().id() == ev.owner_thread_ {
         ev.test();
     }

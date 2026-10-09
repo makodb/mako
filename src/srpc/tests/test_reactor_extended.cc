@@ -401,7 +401,8 @@ TEST_F(ExtendedReactorTest, WakeOnChangeResumesOnlyInTheDrain) {
     // Direct writes are not tests: the loop does not notice them by itself.
     quorum->n_voted_yes_.set(quorum->n_voted_yes_.get() + 2);
     int_event->value_.set(1);
-    box_event->is_set_.set(true);
+    // Mako-local: BoxEvent's flag is an AtomicBool (reactor.rs, BoxEvent).
+    box_event->is_set_.store(true, rusty::sync::atomic::Ordering::Release);
     for (int i = 0; i < 16; i++) {
         reactor->run_loop(false, true);
     }
