@@ -425,6 +425,10 @@ the release archive's published SHA-256 and does not require rustup. PR checks
 consume the previously published CI image, so they upgrade an older toolchain
 in the job rather than relying on a Dockerfile change having been published.
 
+`ci/ci.sh` exports its resolved `BUILD_DIR` to the proof and smoke runners as
+well as the build: CI defaults to `build`, while `docker_build.sh` supplies
+`build_docker`. A runner must use the same directory as the compile step.
+
 ```bash
 # Inside the container, from the repository root:
 VERUS_PATH=/path/to/verus tla/mako/scripts/verify.sh

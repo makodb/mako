@@ -908,24 +908,23 @@ fn hold_poll_thread(pt: &Arc<PollThread>) -> mpsc::Sender<()> {
     release_tx
 }
 
-// A frame sent from another thread reaches the peer while the connection's
-// poll thread is busy: the sender wrote it itself.
+// The first frame on an idle connection reaches the peer while its poll
+// thread is busy: it is eligible for write-through without waiting for a task.
 #[test]
 fn a_foreign_send_goes_out_while_the_poll_thread_is_busy() {
     let _serial = serial();
     let pt = PollThread::create();
     let (proxy, mut peer) = connect_to_raw_peer(&pt);
-    // Let the tasks start and park.
-    std::thread::sleep(Duration::from_millis(5));
-    for round in 0..10usize {
-        let release = hold_poll_thread(&pt);
-        let payload = pattern(round, 64 + round);
-        assert_eq!(send(&proxy, &payload), ChannelError::None);
-        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
-        let got = read_frame(&mut peer).expect("a foreign send waited for the busy poll thread");
-        assert_eq!(got, payload);
-        drop(release);
-    }
+    // A fresh connection has no prior send inside the batching interval.
+    // Reusing it for back-to-back rounds can legitimately queue later frames
+    // for the poll thread instead of writing through.
+    let release = hold_poll_thread(&pt);
+    let payload = pattern(0, 64);
+    assert_eq!(send(&proxy, &payload), ChannelError::None);
+    peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+    let got = read_frame(&mut peer).expect("an idle foreign send waited for the busy poll thread");
+    assert_eq!(got, payload);
+    drop(release);
     proxy.close();
     pt.shutdown();
 }

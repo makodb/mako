@@ -6,7 +6,7 @@ set -e  # Exit on error
 export MAKO_NO_GDB=1
 
 # Build directory (can be overridden via environment variable)
-BUILD_DIR=${BUILD_DIR:-build}
+export BUILD_DIR="${BUILD_DIR:-build}"
 
 # Function to check for hanging processes after a test
 check_for_hanging_processes() {
