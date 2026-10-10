@@ -282,8 +282,9 @@ before `SetupInternal` (`shell/server_h.rs:1847-1972`), RPCs closed, and
 injects the image that state names, as the snapshot store is memory-only.
 The snapshot recovery (`:1898-1907`) keeps an injected store
 (`rt/src/snapshot.rs:204-216`) and loads it; its reconciliation sees an
-empty log and only sets the boundary; its term bump (`shell/server_h.rs:2195-2202`) is
-skipped in disk mode. With snapshots off it loads nothing (`:2008-2025`),
+empty log and only sets the boundary; its term bump (`shell/server_h.rs:2195-2202`)
+runs as in a memory build, harmless: `Restore` then sets term and vote from
+the store, whose term is at least the image's. With snapshots off it loads nothing (`:2008-2025`),
 so a state naming a snapshot fails closed, saying so. Between `Configure`
 (`shell/server_h.rs:1914`) and `EnterGates` (`:1933`; it passes only with S = 0 and the log
 from 1, `core/src/node.rs:317`) the shell steps a new core event,
@@ -370,7 +371,9 @@ if no base: fail closed (B6) unless this launch creates the cluster; then
 fsync the store's parent directory       // B31: a creation killed after its
                                          // rename, before this sync
 (c, state) = open the base; delete the last segment if its header is short
-    or torn (it holds no records); segs = the segments by first seq
+    or bad and nothing but zeros follows it (a rotation the crash cut short:
+    it holds no records), else fail closed (damage, or a newer format);
+    segs = the segments by first seq
 fail closed if segs is empty or a header's identity differs from the base's
 drop each segment whose successor starts at or below c + 1
 fail closed unless segs[0] starts at or below c + 1 and the rest are
@@ -379,8 +382,11 @@ fail closed unless segs[0] starts at or below c + 1 and the rest are
     fdatasync the last segment (B30: a killed process's page cache kept
     batches no sync covered, and this read saw them)
 d = the last good record (c if none); fail closed if c > d
-apply c+1..d to the base and to state; base.flush(wait); create a segment
-    at d + 1, fdatasync it, fsync the directory; delete the older segments
+fold c+1..d into state (the base catches up afterwards: the applier reads
+    c+1..d back from the segments); resume segment d + 1 if it is the last
+    one (its header alone, after the cut), else create it, fdatasync it,
+    fsync the directory -- never delete-then-create, which a crash between
+    the two leaves with no segment at all
 delete the images state does not name; if it names (S, T, f), fail closed
     if snapshots are off or f is bad, else inject a snapshot store holding f
 SetupInternal: snapshot recovery loads it; Configure; lock mtx_; step
@@ -397,13 +403,17 @@ Mako has no general storage manager that fits Raft. Three pieces come close:
 | Code | What it is | Why Raft cannot use it as is |
 |---|---|---|
 | `mako::RocksDBPersistence` (`src/mako/rocksdb_persistence.{h,cc}`) | Mako's copy of each transaction batch, beside the Raft submission; feeds Mako's disk watermark | unsynced (`sync = 0`, `src/mako/rocksdb_persistence.cc:131-133`) and never truncated; opened only by the initial leader, at a per-pid path, never read at restart (`src/mako/mako.hh:912-920`; only the offline `rocksdb_replay_app` benchmark reads it); one per process, but the lab runs five servers in one; `libmako` links Raft's library, so Raft calling it inverts the layering |
-| `LogStorage`, `RocksDBLogStorage` (`log_storage.hpp`, `rocksdb_log_storage.hpp`) | the old C++ Raft's log store | no live user (Paxos's `SetLogStorage` is never called); atomic only within one call, so hard state (`set_metadata_batch`), the cut (`remove_range`) and the entries (`put_batch`) are separate writes; its `sync()` is a memtable flush, not a log sync (`rocksdb_log_storage.hpp:756-776`); entries are C++ `LogEntry`s with Paxos fields |
+| `LogStorage`, `RocksDBLogStorage` (`log_storage.hpp`, `rocksdb_log_storage.hpp`) | the old C++ Raft's log store | no live user (Paxos's `SetLogStorage` is never called); atomic only within one call, so hard state (`set_metadata_batch`), the cut (`remove_range`) and the entries (`put_batch`) are separate writes; its `sync()` is a memtable flush, not a log sync; entries are C++ `LogEntry`s with Paxos fields. `rocksdb_log_storage.hpp` was deleted as dead code on 2026-10-10 (git history has it) |
 | `src/rocks_interface` | a RocksDB-shaped API over Masstree | no RocksDB inside; its writes replicate through Raft itself |
 
 **The WAL: a small Rust log of our own**, owned by the shell. A segment's
 header holds magic, version, site, partition, configuration fingerprint,
 command format, first sequence number and a checksum; each batch has a length
-and a checksum, so it is all or nothing and a torn last write is cut whole.
+and a checksum over its body, so it is all or nothing and a torn last write
+is cut whole. The length field is outside the checksum: a length that media
+damage makes run past the end of the file reads as a torn tail, and the
+batches after it are cut with it (`segment.rs`'s residual risk). A crash
+cannot produce that; a bit flip can.
 Payloads go through the existing codec kernels (`rt/src/seam.rs:371`,
 `rt/src/service.rs:43`): no new C++. Unit tests run in cargo, on an
 in-memory backend that drops unsynced writes; crash tests kill processes
@@ -418,8 +428,9 @@ applied batch (`rocksdb_write`, `rocksdb/c.h:484`), c inside, `DeleteRange`
 for a cut or a dropped prefix (`:844`), RocksDB's WAL disabled (`:2081`):
 legal exactly because our WAL is the log above it. The durability point is
 a flush that waits (`:701`, `:2153`); with one column family, a crash
-leaves the base as of a whole batch at or after the last such flush. Small
-write buffers, as the lab runs five servers per process; cargo unit tests
+leaves the base as of a whole batch at or after the last such flush. Write
+buffers of 64 MB, up to four a server (`store/src/rocks.rs`): the disk lab
+lane's five servers a process can hold 1.28 GB of memtables; cargo unit tests
 use an in-memory base that drops unflushed batches. Plain files would need the
 same machinery (hard state, cut, prefix, entries and c changed atomically:
 chunk files and a renamed manifest, a small LSM), and rewriting the whole
@@ -484,8 +495,17 @@ produced leaves, as the cluster proof needs each received message's send
 in its sender's ghost log: so the leader flushes before it sends. And
 persist notes are exact, as follows.
 
-**`Restore` takes the previous run's ghost log, `prev`, as a ghost
-argument** (it is not on disk) and sets the ghost log to
+**`Restore` steps aside from a ghost log that replays to the restored
+state.** As built (P9), the premise is an existential -- some ghost log
+`prev` whose replay holds the restored term, vote, log and commit
+(`restore_prev_ok`) -- and the proof takes a chosen witness, so the shell
+passes no ghost argument; the lemma holds for every such `prev`. The
+cluster composition across a restart needs the witness to be the previous
+run's prefix, which contains the sends other servers received: the trusted
+fact of [host-contract.md](host-contract.md) §1 item 5 says that prefix
+qualifies, and instantiating the lemma with it is the argument -- written
+down, not mechanized. (The plan's first form passed `prev` as a cfg'd ghost
+argument.) It sets the ghost log to
 `step_aside_log(prev)`, reusing the step-aside lemma, with the ghost match
 and next indexes of `replay(prev)` (`core/src/coupling.rs:278-298`); about
 1-2 days. `prev` is cut at the last step before the first lost record's

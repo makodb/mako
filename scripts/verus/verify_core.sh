@@ -7,10 +7,9 @@
 # decides (docs/verus/disk-persistence-plan.md §4): it exits 1 on any
 # verification error, if a function named in
 # scripts/verus/verified_functions.txt is missing or failed, or if the core
-# trusts anything (external_body or external in either attribute spelling,
-# external_fn_specification, assume_specification, assume(...), admit()) not
-# listed in scripts/verus/core_trusted.txt -- the crate's trusted surface,
-# which must only shrink. The run imports spec v1 (the manifest's tag; plan
+# trusts anything (the spellings are in verus_gate.py's docstring) not listed
+# in scripts/verus/core_trusted.txt -- the crate's trusted surface, which must
+# only shrink. The run imports spec v1 (the manifest's tag; plan
 # §4.5, spike (d) choice (i)) for the proof side (core/src/coupling.rs, Verus
 # only).
 #

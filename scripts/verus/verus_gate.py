@@ -7,12 +7,18 @@ here. The gate fails when:
   * a function named in scripts/verus/verified_functions.txt is missing from
     Verus's per-function breakdown, or failed (a function verified today stays
     verified unless a commit removes it from the list, with its reason);
-  * the core trusts anything beyond scripts/verus/core_trusted.txt. Trust is
-    any of the attribute spellings of external_body and external,
-    external_fn_specification, assume_specification, and any assume(...) or
-    admit() call (the core's own `.admit(` method does not count). This fixes
-    B26, where only `#[verifier::external_body]` followed by a lower-case
-    `fn` within four lines was seen.
+  * the core trusts anything beyond scripts/verus/core_trusted.txt, whose
+    entries are `<file>:<function>` (relative to the core's src). Trust is
+    an outer or inner attribute naming a trusted mode -- external_body,
+    external, or an external_{fn,type,trait}_specification /
+    external_trait_extension -- however spelled (`verifier::x`,
+    `verifier(x)`, inside `cfg_attr(..)`, `verus_verify(x)`); an `axiom fn`;
+    assume_specification; and any assume(...) or admit() call (the core's
+    own `.admit(` method does not count). Every .rs file under the core's
+    src is scanned, subdirectories included. This fixes B26, where only
+    `#[verifier::external_body]` followed by a lower-case `fn` within four
+    lines was seen, and the spellings a review found to pass (an axiom
+    proving false, `cfg_attr(verus_keep_ghost, verifier::external_body)`).
 
   verus_gate.py check LOG CORE_SRC_DIR LIST TRUSTED
   verus_gate.py write LOG LIST          (regenerate the list from a run)
@@ -23,7 +29,10 @@ import sys
 from pathlib import Path
 
 TRUST_ATTR = re.compile(
-    r"#\[\s*verifier\s*(?:::\s*|\(\s*)(external_body|external|external_fn_specification)\b")
+    r"#!?\[[^\]]*?\b(?:verifier\s*(?:::\s*|\(\s*)|verus_verify\s*\(\s*)"
+    r"(external_body|external_fn_specification|external_type_specification"
+    r"|external_trait_specification|external_trait_extension|external)\b")
+AXIOM = re.compile(r"\baxiom\s+fn\s+([A-Za-z_][A-Za-z0-9_]*)")
 TRUST_MACRO = re.compile(r"\bassume_specification\b")
 ASSUME = re.compile(r"(?<![.\w])assume\s*\(")
 ADMIT = re.compile(r"(?<![.\w])admit\s*\(\s*\)")
@@ -65,12 +74,16 @@ def strip_comments(line):
 
 
 def trust_sites(src_dir):
-    """[(kind, name_or_site)] for every trusted item in the core."""
+    """[(kind, site)] for every trusted item in the core; a site is
+    `<file>:<function>` where a function is named, else `<file>:<line>`."""
     sites = []
-    for path in sorted(Path(src_dir).glob("*.rs")):
+    root = Path(src_dir)
+    for path in sorted(root.rglob("*.rs")):
+        rel = path.relative_to(root).as_posix()
         lines = path.read_text().splitlines()
         for n, raw in enumerate(lines):
             line = strip_comments(raw)
+            at = f"{rel}:{n + 1}"
             m = TRUST_ATTR.search(line)
             if m:
                 name = None
@@ -79,13 +92,16 @@ def trust_sites(src_dir):
                     if f:
                         name = f.group(1)
                         break
-                sites.append((m.group(1), name or f"{path.name}:{n + 1}"))
+                sites.append((m.group(1), f"{rel}:{name}" if name else at))
+            a = AXIOM.search(line)
+            if a:
+                sites.append(("axiom", f"{rel}:{a.group(1)}"))
             if TRUST_MACRO.search(line):
-                sites.append(("assume_specification", f"{path.name}:{n + 1}"))
+                sites.append(("assume_specification", at))
             if ASSUME.search(line):
-                sites.append(("assume", f"{path.name}:{n + 1}"))
+                sites.append(("assume", at))
             if ADMIT.search(line):
-                sites.append(("admit", f"{path.name}:{n + 1}"))
+                sites.append(("admit", at))
     return sites
 
 
@@ -122,7 +138,7 @@ def check(log_path, src_dir, list_path, trusted_path):
         problems.append("trusted but not in core_trusted.txt: " + "; ".join(extra))
     new = sorted(set(funcs) - set(want))
     summary = (f"{res.get('verified')} verified, {res.get('errors')} errors; "
-               f"{len(want)} listed functions all verified" if not (missing or failed) else "")
+               f"{len(want)} listed functions all verified")
     return problems, summary, sorted(s for _, s in trusted), new
 
 

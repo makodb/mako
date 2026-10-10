@@ -60,8 +60,13 @@ As in the plan's §1.3, from the group's composition
    In a memory build none is persisted, and no replica restarts in place
    under its old id (plan §4.4.2). In a disk build (`-DMAKO_RAFT_DISK=ON`,
    [disk-persistence.md](disk-persistence.md)) a restart is the `Restore`
-   event, coupled as a step aside from the previous run's ghost log (F22,
-   `lemma_restore_ginv`), under these trusted facts: every persist note is
+   event, coupled as a step aside from a ghost log whose replay holds the
+   restored state (F22, `lemma_restore_ginv`; the premise is an existential
+   and the proof takes a chosen witness, so it holds for every such log).
+   Composing the cluster across the restart instantiates it with the
+   previous run's prefix -- the last fact below says that prefix qualifies
+   and holds every send the old incarnation made -- an argument written
+   here, not mechanized. The trusted facts: every persist note is
    exact (a step with no note changes no saved field, and a note's values
    and log suffix are the step's; checked on every recording by the replay's
    shadow, `replay/src/lib.rs`, and by the cargo tests `core/tests/persist_note.rs`,
@@ -114,6 +119,8 @@ admission itself (`coupled_checked`).
 | `TickHeartbeat` | the gate; `is_leader` is the core's role (`admits`) | `heartbeat_tick_body` reads `IsLeaderLocked()` under the same lock (`shell/server_cc.rs:85`) |
 | `RecvAppendReply` | the gate; `is_leader ==> ` the core leads (F12, bugs-found B18); a success reports no more than the leader's log | the collection loop reads `IsLeaderLocked()` under the lock (`heartbeat_collect_body`), which is `looping_ && core.is_leader_`: true only while the core leads, before and after shutdown begins; `step_checked` reads a success beyond the log as no reply (F9) |
 | `RoundEnd` | the gate | F5's `enter_gates`. Nothing about the role: PHASE 3 advances the commit index only while the core leads (F12), so a round end after a step-down or during shutdown commits nothing (bugs-found B17, B18) |
+| `ObserveTerm` | `false`: uncoupled, as the term comes in no modelled message (F20) | stepped only on the snapshot paths (an InstallSnapshot reply's higher term, `InstallSnapshotReplyAcceptedLocked`; the InstallSnapshot handler, `OnInstallSnapshotLocked`), which the verified configuration (snapshots off) never runs; a run with snapshots is outside it (the recorder's `T` lines) |
+| `Restore` | before the gate; the core neither leads nor campaigns; an empty log; some ghost log replays to the restored term, vote, log and commit (`restore_prev_ok`) | `RestoreDiskState` steps it once, after `Configure` and snapshot recovery, before `EnterGates`, on the state recovery folded from the store; that the store's state is such a replay is §1 item 5's trusted fact |
 
 Terms and indices off the wire and in the log stay below 2^62
 (`raft_index_limit`, the Phase 6 contract): a log that long would hold

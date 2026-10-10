@@ -2,9 +2,12 @@
 """Tests scripts/verus/verus_gate.py on a real Verus log (argv[1]) and scratch
 copies of the core: the gate passes as is, and fails when a listed function
 goes missing or fails, when Verus reports an error, and on each spelling of
-trust (external_body in both attribute forms and before a capitalised name,
-external, assume_specification, assume(...), admit()). Each break is checked
-alone, so each must be caught by its own rule."""
+trust (external_body in both attribute forms, under cfg_attr, through
+verus_verify and before a capitalised name; external, also as an inner
+attribute; the external specification attributes; an axiom fn;
+assume_specification, assume(...), admit()), in a subdirectory, and for an
+allowed name in another file. Each break is checked alone, so each must be
+caught by its own rule."""
 import json, shutil, sys, tempfile
 from pathlib import Path
 
@@ -68,6 +71,15 @@ def main():
         "external_body (paren)": "#[verifier(external_body)]\npub fn sneaky() {}\n",
         "external_body, capitalised name": "#[verifier::external_body]\npub fn Sneaky() {}\n",
         "external": "#[verifier::external]\npub fn sneaky() {}\n",
+        "external, inner attribute": "#![verifier::external]\npub fn sneaky() {}\n",
+        "external_body under cfg_attr":
+            "#[cfg_attr(verus_keep_ghost, verifier::external_body)]\npub proof fn sneaky()\n    ensures false\n{}\n",
+        "external_body through verus_verify": "#[verus_verify(external_body)]\npub fn sneaky() {}\n",
+        "external_type_specification": "#[verifier::external_type_specification]\npub struct ExFoo(Foo);\n",
+        "external_trait_specification":
+            "#[verifier::external_trait_specification]\npub trait ExT { type ExternalTraitSpecificationFor: T; }\n",
+        "axiom fn": "pub axiom fn sneaky()\n    ensures false;\n",
+        "the allowed name, in another file": "#[verifier::external_body]\nfn blocks_for(x: u64) -> u64 { x }\n",
         "assume_specification": "pub assume_specification[ core::cmp::max ](a: u64, b: u64) -> u64;\n",
         "assume(true)": "proof fn sneaky() { assume(true); }\n",
         "admit()": "proof fn sneaky() { admit(); }\n",
@@ -78,6 +90,12 @@ def main():
             shutil.copytree(CORE, src)
             (src / "zz_break.rs").write_text(code)
             expect(f"trust: {name}", run(log, src), True)
+    with tempfile.TemporaryDirectory() as d:
+        src = Path(d) / "src"
+        shutil.copytree(CORE, src)
+        (src / "zz_sub").mkdir()
+        (src / "zz_sub" / "zz_break.rs").write_text("#[verifier::external_body]\npub fn sneaky() {}\n")
+        expect("trust: in a subdirectory", run(log, src), True)
     # The core's own `.admit(` method and a comment mentioning assume( stay legal.
     with tempfile.TemporaryDirectory() as d:
         src = Path(d) / "src"
