@@ -64,6 +64,6 @@ pub fn report(who: &str) {
         v.sort_unstable();
         let p = |q: f64| v[((v.len() - 1) as f64 * q) as usize];
         let mean = v.iter().map(|&x| x as f64).sum::<f64>() / v.len() as f64;
-        eprintln!("[DISK-STATS] {who} {name} n={} p50={} p90={} p99={} mean={mean:.0}", v.len(), p(0.5), p(0.9), p(0.99));
+        eprintln!("[DISK-STATS] {who} (process-wide) {name} n={} p50={} p90={} p99={} mean={mean:.0}", v.len(), p(0.5), p(0.9), p(0.99));
     }
 }

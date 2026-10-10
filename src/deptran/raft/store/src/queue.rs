@@ -47,8 +47,8 @@ impl<P> RecordQueue<P> {
         seq
     }
 
-    /// The number of the last record queued (0 if none ever was): the tail
-    /// an output produced now must wait for.
+    /// The number of the last record queued (the start's d if none was
+    /// queued since): the tail an output produced now must wait for.
     pub fn last_seq(&self) -> u64 {
         let g = self.lock();
         g.first_seq + g.q.len() as u64 - 1

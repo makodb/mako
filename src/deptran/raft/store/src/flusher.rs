@@ -100,15 +100,15 @@ impl DurableState {
     }
 }
 
+/// A held reply's send.
+pub type SendReply = Box<dyn FnOnce() + Send>;
+
 /// Replies held until the WAL is durable through their tail (design §3,
 /// "What waits for the disk"; plan P4). A reply whose tail is already
 /// durable goes at once. The flusher releases the rest after each publish,
 /// in hold order. `hold` reads the durable number under the list's mutex and
 /// the flusher takes that mutex only after publishing, so a reply never
 /// waits for a later flush than the one that covers it.
-/// A held reply's send.
-pub type SendReply = Box<dyn FnOnce() + Send>;
-
 pub struct HeldReplies {
     durable: Arc<DurableState>,
     held: Mutex<Vec<(u64, SendReply)>>,
@@ -131,32 +131,17 @@ impl HeldReplies {
         }
     }
 
-    /// Sends every held reply records 1..=seq cover. The flusher calls it
-    /// after publishing `seq`.
+    /// Sends every held reply records 1..=seq cover, in hold order. The
+    /// flusher calls it after publishing `seq`.
     pub fn release(&self, seq: u64) {
-        let ready: Vec<SendReply> = {
-            let mut g = self.held.lock().unwrap_or_else(|e| e.into_inner());
-            if g.is_empty() {
-                return;
-            }
-            let mut ready = Vec::new();
-            let mut keep = Vec::with_capacity(g.len());
-            for (tail, send) in g.drain(..) {
-                if tail <= seq {
-                    ready.push(send);
-                } else {
-                    keep.push((tail, send));
-                }
-            }
-            *g = keep;
-            ready
-        };
-        for send in ready {
+        let ready: Vec<(u64, SendReply)> =
+            self.held.lock().unwrap_or_else(|e| e.into_inner()).extract_if(.., |(t, _)| *t <= seq).collect();
+        for (_, send) in ready {
             send();
         }
     }
 
-    /// How many replies wait (tests, shutdown checks).
+    /// How many replies wait (tests).
     pub fn len(&self) -> usize {
         self.held.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
@@ -177,7 +162,7 @@ pub struct FlusherConfig {
 
 /// A running flusher; [`Flusher::join`] after closing its queue.
 pub struct Flusher {
-    handle: Option<JoinHandle<()>>,
+    handle: JoinHandle<()>,
 }
 
 impl Flusher {
@@ -189,10 +174,10 @@ impl Flusher {
         queue: Arc<RecordQueue<P>>,
         codec: Arc<dyn Codec<P>>,
         durable: Arc<DurableState>,
-        start: Durable,
         cfg: FlusherConfig,
         mut on_durable: Box<dyn FnMut(Durable) + Send>,
     ) -> Flusher {
+        let start = durable.get();
         assert_eq!(wal.next_seq(), start.seq + 1, "the WAL and the durable state disagree");
         let handle = std::thread::Builder::new()
             .name("raft-flusher".into())
@@ -231,13 +216,11 @@ impl Flusher {
                 }
             })
             .expect("spawn the raft flusher");
-        Flusher { handle: Some(handle) }
+        Flusher { handle }
     }
 
     /// Waits for the thread to finish (its queue must be closed).
-    pub fn join(mut self) {
-        if let Some(h) = self.handle.take() {
-            h.join().expect("raft flusher panicked");
-        }
+    pub fn join(self) {
+        self.handle.join().expect("raft flusher panicked");
     }
 }

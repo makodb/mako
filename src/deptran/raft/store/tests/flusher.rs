@@ -26,7 +26,6 @@ fn concurrent_pushes_recover_in_queue_order() {
         queue.clone(),
         Arc::new(BytesCodec),
         durable.clone(),
-        Durable { seq: 0, last: 0, commit: 0 },
         FlusherConfig { delay: Duration::from_micros(200), tap: None },
         Box::new(move |d| p2.lock().unwrap().push(d)),
     );

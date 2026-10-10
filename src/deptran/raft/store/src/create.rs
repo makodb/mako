@@ -91,7 +91,7 @@ fn create<P>(fs: &Arc<dyn StoreFs>, store: &Path, id: Identity, opts: WalOptions
     fs.rename(&side, store).map_err(io_ctx(store))?;
     crash_point("create.rename");
     fs.sync_dir(&parent).map_err(io_ctx(&parent))?;
-    let wal = Wal::resume(fs.clone(), &store.join("wal"), id, opts, 1, 1).map_err(io_ctx(store))?;
+    let wal = Wal::resume(fs.clone(), &store.join("wal"), id, opts, 1).map_err(io_ctx(store))?;
     let base = match base_factory {
         Some(factory) => Some(factory(&store.join("base"), false).map_err(io_ctx(store))?),
         None => None,

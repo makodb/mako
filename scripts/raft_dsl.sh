@@ -645,6 +645,9 @@ done
 # never silently diverge from the blocks it came from.
 # ---------------------------------------------------------------------------
 RAFT_CRATE_DIR="${REPOSITORY_ROOT}/src/deptran/raft"
+# Cargo's output stays out of the source tree (the build passes its own
+# directory; by hand, local disk).
+RAFT_CARGO_TARGET="${CARGO_TARGET_DIR:-/var/tmp/raft-cargo-${USER:-$(id -un)}}"
 RAFT_CRATE_MANIFEST="${RAFT_CRATE_DIR}/rust-modules.toml"
 
 # The crate is the whole module graph, so only verify it when this run covers
@@ -675,7 +678,7 @@ if [[ -f "${RAFT_CRATE_MANIFEST}" && ${#FILES[@]} -eq ${#EXPECTED_INVENTORY_FILE
     #
     # See the facade-crate constraint in the Raft migration plan (removed; see git history).
     if ! output=$(cd "${RAFT_CRATE_DIR}" && \
-        RUSTFLAGS="-D warnings" CARGO_TARGET_DIR="${RAFT_CRATE_DIR}/target" \
+        RUSTFLAGS="-D warnings" CARGO_TARGET_DIR="${RAFT_CARGO_TARGET}" \
         cargo build --quiet --workspace --lib 2>&1); then
       echo "FAILED Raft crate does not compile" >&2
       sed 's/^/    /' <<<"${output}" | head -30 >&2
@@ -686,7 +689,8 @@ if [[ -f "${RAFT_CRATE_MANIFEST}" && ${#FILES[@]} -eq ${#EXPECTED_INVENTORY_FILE
     if ! command -v cargo-clippy >/dev/null 2>&1 && ! cargo clippy --version >/dev/null 2>&1; then
       echo "FAILED clippy unavailable (required for crate-level verification)" >&2
       failures=$((failures + 1))
-    elif ! output=$(cd "${RAFT_CRATE_DIR}" && cargo clippy --quiet --workspace -- -D warnings 2>&1); then
+    elif ! output=$(cd "${RAFT_CRATE_DIR}" && CARGO_TARGET_DIR="${RAFT_CARGO_TARGET}" \
+        cargo clippy --quiet --workspace -- -D warnings 2>&1); then
       echo "FAILED Raft crate clippy" >&2
       sed 's/^/    /' <<<"${output}" | head -30 >&2
       failures=$((failures + 1))

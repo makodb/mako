@@ -10,12 +10,19 @@ set -uo pipefail
 : "${VERUS_PIN:?source ~/mako-verus-env.sh first}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT/src/deptran/raft" || exit 2
+# Cargo's output stays out of the source tree (and the NFS home).
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-/var/tmp/raft-cargo-${USER:-$(id -un)}}"
 for features in "" "--features raft_test" "--features raft_disk" "--features raft_test,raft_disk"; do
   if ! out=$(cargo clippy --quiet --workspace $features -- -D warnings 2>&1); then
     echo "core_check: clippy ${features:-(default)} FAILED"; echo "$out" | head -40; exit 1
   fi
 done
 echo "core_check: clippy ok (default, raft_test, raft_disk, both)"
+# The tests the trusted note exactness rests on (host contract §1 item 5).
+if ! out=$(cargo test --quiet -p raft-core -p raft-replay 2>&1); then
+  echo "core_check: raft-core / raft-replay tests FAILED"; echo "$out" | tail -40; exit 1
+fi
+echo "core_check: raft-core and raft-replay tests ok"
 if ! out=$(python3 "$REPO_ROOT/scripts/verus/ledger_lint.py" 2>&1); then
   echo "core_check: ledger lint FAILED"; echo "$out" | tail -40; exit 1
 fi

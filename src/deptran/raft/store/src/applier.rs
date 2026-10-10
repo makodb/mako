@@ -55,13 +55,13 @@ impl ApplierTap {
 }
 
 pub struct Applier {
-    handle: Option<JoinHandle<Result<u64, String>>>,
+    handle: JoinHandle<Result<u64, String>>,
     stop: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Records folded per base write in a catch-up: the applier rechecks its
-/// stop flag and its queue between chunks, so a large backlog (a saturated
-/// run) never holds a shutdown.
+/// stop flag between chunks (and may checkpoint), so a large backlog (a
+/// saturated run) never holds a shutdown.
 const CATCH_UP_CHUNK: u64 = 1024;
 
 struct State {
@@ -80,44 +80,73 @@ struct State {
 }
 
 impl State {
+    /// Folds `records` (numbered from `first`) into the base, one write; c
+    /// and top move only once it succeeded.
     fn fold(&mut self, first: u64, records: &[Vec<u8>]) -> Result<(), String> {
         let mut ops = Vec::new();
-        for (k, bytes) in records.iter().enumerate() {
+        let (mut c, mut top, mut bytes) = (self.c, self.top, 0);
+        for (k, rec) in records.iter().enumerate() {
             let seq = first + k as u64;
-            if seq <= self.c {
+            if seq <= c {
                 continue;
             }
-            assert_eq!(seq, self.c + 1, "the applier folds records in order");
-            let rec = decode(bytes, &BytesCodec).map_err(|e| format!("record {seq}: {e}"))?;
-            ops_for(&rec, seq, &mut self.top, &mut ops);
-            self.c = seq;
-            self.bytes += bytes.len() as u64;
+            assert_eq!(seq, c + 1, "the applier folds records in order");
+            let r = decode(rec, &BytesCodec).map_err(|e| format!("record {seq}: {e}"))?;
+            ops_for(&r, seq, &mut top, &mut ops);
+            c = seq;
+            bytes += rec.len() as u64;
         }
         if ops.is_empty() {
             return Ok(());
         }
         crash_point("base.write");
-        self.base.write(&ops).map_err(|e| format!("base write: {e}"))
+        self.base.write(&ops).map_err(|e| format!("base write: {e}"))?;
+        (self.c, self.top, self.bytes) = (c, top, self.bytes + bytes);
+        Ok(())
     }
 
     fn stopping(&self) -> bool {
         self.stop.load(std::sync::atomic::Ordering::Acquire)
     }
 
+    /// Folds records c+1..=to, read back from the segments, each segment
+    /// once (one read a chunk made a long catch-up reread and checksum the
+    /// same 64 MB segments over and over: about 15k records/s, slower than a
+    /// saturated leader writes).
     fn catch_up(&mut self, to: u64) -> Result<(), String> {
-        while to > self.c && !self.stopping() {
-            let end = to.min(self.c + CATCH_UP_CHUNK);
-            let recs = wal::read_range(&*self.fs, &self.wal_dir, &self.id, self.c + 1, end)?;
-            let first = recs[0].0;
-            let bytes: Vec<Vec<u8>> = recs.into_iter().map(|r| r.1).collect();
-            self.fold(first, &bytes)?;
-            self.maybe_checkpoint(false)?;
+        if to <= self.c || self.stopping() {
+            return Ok(());
+        }
+        let (fs, dir, id) = (self.fs.clone(), self.wal_dir.clone(), self.id);
+        let mut chunk: Vec<Vec<u8>> = Vec::new();
+        let mut first = self.c + 1;
+        let stopped = "stopped";
+        let r = wal::for_each_record(&*fs, &dir, &id, self.c + 1, to, |seq, rec| {
+            chunk.push(rec.to_vec());
+            if chunk.len() as u64 == CATCH_UP_CHUNK {
+                self.fold(first, &chunk)?;
+                self.maybe_checkpoint()?;
+                chunk.clear();
+                first = seq + 1;
+                if self.stopping() {
+                    return Err(stopped.into());
+                }
+            }
+            Ok(())
+        });
+        match r {
+            Err(e) if e == stopped => return Ok(()),
+            r => r?,
+        }
+        if !chunk.is_empty() {
+            self.fold(first, &chunk)?;
+            self.maybe_checkpoint()?;
         }
         Ok(())
     }
 
-    fn maybe_checkpoint(&mut self, force: bool) -> Result<(), String> {
-        if !force && self.bytes < self.cfg.checkpoint_bytes
+    fn maybe_checkpoint(&mut self) -> Result<(), String> {
+        if self.bytes < self.cfg.checkpoint_bytes
             && self.since.elapsed() < Duration::from_secs(self.cfg.checkpoint_secs) {
             return Ok(());
         }
@@ -184,7 +213,7 @@ impl Applier {
                             // the shutdown for as long as the backlog takes.
                             Err(RecvTimeoutError::Disconnected) => return Ok(()),
                         }
-                        st.maybe_checkpoint(false)?;
+                        st.maybe_checkpoint()?;
                     }
                 };
                 match run(&mut st) {
@@ -196,14 +225,14 @@ impl Applier {
                 }
             })
             .expect("spawn the raft applier");
-        (Applier { handle: Some(handle), stop }, ApplierTap { tx })
+        (Applier { handle, stop }, ApplierTap { tx })
     }
 
     /// Waits for the applier, after every tap is dropped; its final c, or why
     /// it stopped.
-    pub fn join(mut self) -> Result<u64, String> {
+    pub fn join(self) -> Result<u64, String> {
         // Stop where the base is: the WAL holds every record after c.
         self.stop.store(true, std::sync::atomic::Ordering::Release);
-        self.handle.take().map(|h| h.join().unwrap_or_else(|_| Err("applier panicked".into()))).unwrap_or(Ok(0))
+        self.handle.join().unwrap_or_else(|_| Err("applier panicked".into()))
     }
 }

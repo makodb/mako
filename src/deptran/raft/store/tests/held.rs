@@ -47,7 +47,6 @@ fn holds_racing_the_flusher_are_never_stranded() {
     let held = Arc::new(HeldReplies::new(durable.clone()));
     let h2 = held.clone();
     let flusher = Flusher::spawn(o.wal, queue.clone(), Arc::new(BytesCodec), durable.clone(),
-                                 Durable { seq: 0, last: 0, commit: 0 },
                                  FlusherConfig { delay: Duration::from_micros(50), tap: None },
                                  Box::new(move |d: Durable| h2.release(d.seq)));
     let sent = Arc::new(AtomicU64::new(0));

@@ -5,6 +5,8 @@
 //! process. With `:powercut` it first undoes, through the registered
 //! filesystem's ledger, every write and directory change no sync covered, so
 //! a real disk is left as a power cut would leave it ([`crate::fs::RealFs`]).
+//! Not undone: an unsynced unlink (the ledger does not keep the bytes) and
+//! anything RocksDB wrote (the base is behind its own flush, which waits).
 //! The kill-test driver arms a point on one launch and checks what the
 //! restart recovers. Unarmed, a crash point is one atomic load.
 
@@ -74,6 +76,12 @@ extern "C" {
 }
 
 const SIGKILL: i32 = 9;
+
+/// Whether `MAKO_RAFT_CRASH` arms `name` (a writer that needs extra steps
+/// only so a point can fire takes them only then).
+pub fn armed(name: &str) -> bool {
+    spec().is_some_and(|s| s.point == name)
+}
 
 /// A named crash point; a no-op unless `MAKO_RAFT_CRASH` arms `name`.
 pub fn crash_point(name: &str) {

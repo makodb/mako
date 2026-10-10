@@ -2,9 +2,10 @@
 # plan P2). The write-ahead log (WAL), its crash points, the saved state a
 # replay folds, the record queue and the flusher thread.
 #
-# std only: no `rusty`, no kernel, no C++, so its tests are plain `cargo test`.
-# The shell (shell/disk.rs) supplies the payload codec; everything here is
-# generic over the payload type.
+# std only (no `rusty`, no kernel) except the RocksDB base behind the
+# `rocksdb` feature (plan P7), which binds RocksDB's C API; its tests are plain
+# `cargo test` either way. The shell (shell/disk.rs) supplies the payload
+# codec; everything here is generic over the payload type.
 [package]
 name = "raft-store"
 version = "0.0.0"
@@ -21,4 +22,4 @@ path = "src/lib.rs"
 rocksdb = []
 
 [lints.rust]
-unsafe_code = "allow"   # crc.rs (SSE4.2 intrinsics) and crash.rs (kill(2))
+unsafe_code = "allow"   # crc.rs (SSE4.2 intrinsics), crash.rs (kill(2)), rocks.rs (RocksDB's C API)

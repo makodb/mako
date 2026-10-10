@@ -17,7 +17,7 @@ use std::io;
 use std::sync::{Arc, Mutex};
 
 use crate::bytes::{put_u16, put_u32, put_u64, Reader};
-use crate::record::{Hard, Record, SnapRef};
+use crate::record::{Hard, Record};
 use crate::segment::Identity;
 use crate::state::SavedState;
 
@@ -50,10 +50,6 @@ pub fn entry_key(index: u64) -> Vec<u8> {
     k.push(b'e');
     k.extend_from_slice(&index.to_be_bytes());
     k
-}
-
-fn u64_bytes(v: u64) -> Vec<u8> {
-    v.to_le_bytes().to_vec()
 }
 
 pub fn identity_bytes(id: &Identity) -> Vec<u8> {
@@ -113,7 +109,7 @@ pub fn ops_for(rec: &Record<Vec<u8>>, seq: u64, top: &mut u64, ops: &mut Vec<Op>
             ops.push(Op::Put(entry_key(from + k as u64), v));
         }
     }
-    ops.push(Op::Put(KEY_C.to_vec(), u64_bytes(seq)));
+    ops.push(Op::Put(KEY_C.to_vec(), seq.to_le_bytes().to_vec()));
 }
 
 /// Reads the base: (c, the saved state with payloads as codec bytes). Fails
@@ -141,10 +137,9 @@ pub fn load(base: &dyn Base, id: &Identity, no_vote: u16) -> Result<(u64, SavedS
         let _keep = r.u8()?;
         let n = r.u16()? as usize;
         let name = String::from_utf8(r.take(n)?.to_vec()).map_err(|e| format!("base: image name: {e}"))?;
-        let snap = SnapRef { index, term, image: if name.is_empty() { None } else { Some(name) }, keep: true };
-        state.snap_index = snap.index;
-        state.snap_term = snap.term;
-        state.image = snap.image;
+        state.snap_index = index;
+        state.snap_term = term;
+        state.image = if name.is_empty() { None } else { Some(name) };
     }
     for (expect, (k, v)) in (state.snap_index + 1..).zip(base.scan(b"e").map_err(e)?) {
         if k.len() != 9 {

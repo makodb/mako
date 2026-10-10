@@ -48,11 +48,8 @@ pub fn write(fs: &dyn StoreFs, dir: &Path, index: u64, term: u64, bytes: &[u8]) 
     f.write_all(bytes)?;
     f.sync_data()?;
     drop(f);
-    let path = dir.join(&name);
-    if fs.exists(&path) {
-        fs.remove_file(&path)?;
-    }
-    fs.rename(&tmp, &path)?;
+    // rename replaces an existing image of the same name atomically.
+    fs.rename(&tmp, &dir.join(&name))?;
     crash_point("image.rename");
     fs.sync_dir(dir)?;
     crash_point("image.dirsync");
@@ -63,7 +60,7 @@ pub fn write(fs: &dyn StoreFs, dir: &Path, index: u64, term: u64, bytes: &[u8]) 
 pub fn read(fs: &dyn StoreFs, dir: &Path, name: &str) -> Result<Vec<u8>, String> {
     let (index, term) = parse_name(name).ok_or_else(|| format!("{name}: not an image name"))?;
     let path = dir.join(name);
-    let b = fs.read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut b = fs.read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     if b.len() < HEADER || &b[..8] != MAGIC {
         return Err(format!("{}: not an image", path.display()));
     }
@@ -73,7 +70,8 @@ pub fn read(fs: &dyn StoreFs, dir: &Path, name: &str) -> Result<Vec<u8>, String>
     if (i, t) != (index, term) || body.len() as u64 != len || crc32c(body) != crc {
         return Err(format!("{}: damaged image", path.display()));
     }
-    Ok(body.to_vec())
+    b.drain(..HEADER);
+    Ok(b)
 }
 
 /// Deletes every `.tmp` (recovery) and every image below `keep_index`.

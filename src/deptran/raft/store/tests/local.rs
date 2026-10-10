@@ -33,12 +33,12 @@ fn verdicts() {
 
 #[test]
 fn this_host() {
-    // /var/tmp is local here; the NFS home must be refused if it is NFS.
-    assert!(check_local(Path::new("/var/tmp")).is_ok());
-    if let Some(home) = std::env::var_os("HOME") {
+    // The live mountinfo reads and decides (whatever /var/tmp and the home
+    // are here: a CI container's are overlay, which the store refuses).
+    for dir in [Some("/var/tmp".into()), std::env::var_os("HOME")].into_iter().flatten() {
+        let dir = Path::new(&dir).canonicalize().unwrap();
         let info = std::fs::read_to_string("/proc/self/mountinfo").unwrap();
-        let home = Path::new(&home).canonicalize().unwrap();
-        let (_, t, _) = mount_of(&home, &info).unwrap();
-        assert_eq!(check_local(&home).is_ok(), raft_store::local::LOCAL_TYPES.contains(&t.as_str()));
+        let (_, t, _) = mount_of(&dir, &info).unwrap();
+        assert_eq!(check_local(&dir).is_ok(), raft_store::local::LOCAL_TYPES.contains(&t.as_str()), "{}", dir.display());
     }
 }

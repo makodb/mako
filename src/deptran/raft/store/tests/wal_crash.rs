@@ -151,40 +151,70 @@ fn crash_at_every_operation() {
     assert!(checked > 200, "only {checked} crash cases");
 }
 
+/// Recovers `crashed()`'s store with a crash after each operation of the
+/// recovery (every one, from its measured count, under a kill and a power
+/// cut), then recovers cleanly: always `want` records, folded.
+fn recovery_crashes_converge(crashed: &dyn Fn() -> MemFs, want: u64) {
+    let fs = crashed();
+    let before = fs.ops();
+    let clean = open(&fs, false).unwrap();
+    assert_eq!(clean.d, want);
+    let rec_ops = fs.ops() - before;
+    drop(clean);
+    for budget in 0..=rec_ops {
+        for how in [Crash::Kill, Crash::PowerCut] {
+            let fs = crashed();
+            fs.set_budget(Some(budget));
+            let _ = open(&fs, false);
+            fs.crash(how);
+            let o = open(&fs, false).unwrap_or_else(|e| panic!("budget {budget} {how:?}: {e}"));
+            assert_eq!(o.d, want, "budget {budget} {how:?}");
+            assert_eq!(o.state, fold(want), "budget {budget} {how:?}");
+        }
+    }
+}
+
 #[test]
 fn interrupted_recovery_converges() {
     // A torn crash mid-run, then a recovery crashed at each of its own
     // operations, then a clean recovery: always the same state.
-    let base = || {
+    let full = {
+        let probe = MemFs::new();
+        probe.mkdir_p(Path::new("/data/run"));
+        run(&probe);
+        probe.ops()
+    };
+    let crashed = || {
         let fs = MemFs::new();
         fs.mkdir_p(Path::new("/data/run"));
-        let full = {
-            let probe = MemFs::new();
-            probe.mkdir_p(Path::new("/data/run"));
-            run(&probe);
-            probe.ops()
-        };
         fs.set_budget(Some(full * 2 / 3));
-        let (acked, _) = run(&fs);
+        run(&fs);
         fs.crash(Crash::Torn(99));
-        (fs, acked)
+        fs
     };
-    let (fs, acked) = base();
-    let clean = open(&fs, false).unwrap();
-    let want = clean.d;
+    let want = open(&crashed(), false).unwrap().d;
+    let (acked, _) = {
+        let fs = MemFs::new();
+        fs.mkdir_p(Path::new("/data/run"));
+        fs.set_budget(Some(full * 2 / 3));
+        run(&fs)
+    };
     assert!(want >= acked);
-    let rec_ops = fs.ops();
-    drop(clean);
-    let _ = rec_ops;
-    for budget in 0..40 {
-        let (fs, _) = base();
-        fs.set_budget(Some(budget));
-        let _ = open(&fs, false);
-        fs.crash(Crash::PowerCut);
-        let o = open(&fs, false).unwrap_or_else(|e| panic!("budget {budget}: {e}"));
-        assert_eq!(o.d, want, "budget {budget}");
-        assert_eq!(o.state, fold(want), "budget {budget}");
-    }
+    recovery_crashes_converge(&crashed, want);
+}
+
+#[test]
+fn a_fresh_store_survives_a_crashed_recovery() {
+    // A store with no records holds one segment, its header alone. Recovery
+    // resumes it: a crash at any point leaves a store that opens (it used to
+    // delete and recreate it, and a crash between the two left none).
+    let fresh = || {
+        let fs = MemFs::new();
+        fs.mkdir_p(Path::new("/data/run"));
+        drop(open(&fs, true).unwrap());
+        fs
+    };
+    recovery_crashes_converge(&fresh, 0);
 }
 
 /// A finished store with records 1..=TOTAL.
@@ -217,15 +247,17 @@ fn damaged_stores_fail_closed() {
     fs.poke(&segs[1], b);
     refuses(&fs, "not the last segment");
 
-    // A corrupt batch in a segment that is not the last.
+    // A corrupt batch with batches after it, in a segment that is not the
+    // last: corruption, not a torn tail.
     let fs = full_store();
     let segs = wal_files(&fs);
-    let mut b = fs.read(&segs[1]).unwrap();
-    let n = b.len();
-    b[60] ^= 0xff;
-    b[n - 1] ^= 0xff;
-    fs.poke(&segs[1], b);
-    refuses(&fs, "segment");
+    let (k, mut b) = segs[..segs.len() - 1].iter().enumerate()
+        .map(|(k, p)| (k, fs.read(p).unwrap()))
+        .find(|(_, b)| raft_store::segment::scan(&b[raft_store::segment::HEADER_LEN..]).unwrap().batches.len() >= 2)
+        .expect("a closed segment with two batches");
+    b[raft_store::segment::HEADER_LEN + 12] ^= 0xff;
+    fs.poke(&segs[k], b);
+    refuses(&fs, "with data after it");
 
     // A missing middle segment: a gap.
     let fs = full_store();
@@ -263,6 +295,21 @@ fn damaged_stores_fail_closed() {
     o.wal.append(1, &[b]).unwrap();
     drop(o);
     refuses(&fs, "replace from 5");
+}
+
+#[test]
+fn a_bad_last_header_with_data_after_it_fails_closed() {
+    // A crash leaves a bad header only on an empty segment (the header is
+    // synced before any batch): one with data after it is damage, or a
+    // newer format, and its records must not be thrown away.
+    let fs = full_store();
+    let segs = wal_files(&fs);
+    let last = segs.last().unwrap();
+    let mut b = fs.read(last).unwrap();
+    assert!(b.len() > raft_store::segment::HEADER_LEN, "the last segment holds records");
+    b[8] = 2; // the version
+    fs.poke(last, b);
+    refuses(&fs, "with data after the header");
 }
 
 #[test]

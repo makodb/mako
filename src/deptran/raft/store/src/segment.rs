@@ -8,8 +8,9 @@
 //! batch    = len u32 | crc32c(body) u32 | body
 //! body     = first_seq u64 | count u32 | (rec_len u32 | record)*count
 //! ```
-//! All integers little-endian. A batch is all or nothing: one checksum covers
-//! it, and the flusher writes and syncs it before writing the next.
+//! All integers little-endian. A batch is all or nothing: its checksum covers
+//! the body, and the flusher writes and syncs it before writing the next. The
+//! length is outside the checksum: see [`scan`] for what that leaves.
 
 use crate::bytes::{put_u32, put_u64, Reader};
 use crate::crc::crc32c;

@@ -53,6 +53,7 @@ extern "C" {
     fn rocksdb_iter_next(it: *mut c_void);
     fn rocksdb_iter_key(it: *const c_void, kl: *mut usize) -> *const c_char;
     fn rocksdb_iter_value(it: *const c_void, vl: *mut usize) -> *const c_char;
+    fn rocksdb_iter_get_error(it: *const c_void, errptr: *mut *mut c_char);
 }
 
 fn check(err: *mut c_char) -> io::Result<()> {
@@ -166,8 +167,12 @@ impl Base for RocksBase {
         }
     }
 
+    /// The keys with `prefix`, in order. An iterator stops being valid at
+    /// the end or on an error (a read error, corruption); the error is
+    /// asked for, so a damaged base fails closed rather than loading short.
     fn scan(&self, prefix: &[u8]) -> io::Result<Vec<(Vec<u8>, Vec<u8>)>> {
         let mut out = Vec::new();
+        let mut err: *mut c_char = std::ptr::null_mut();
         // SAFETY: the iterator's key and value are valid until the next move.
         unsafe {
             let it = rocksdb_create_iterator(self.db, self.ropts);
@@ -182,8 +187,10 @@ impl Base for RocksBase {
                 out.push((k.to_vec(), v.to_vec()));
                 rocksdb_iter_next(it);
             }
+            rocksdb_iter_get_error(it, &mut err);
             rocksdb_iter_destroy(it);
         }
+        check(err)?;
         Ok(out)
     }
 }

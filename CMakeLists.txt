@@ -255,7 +255,7 @@ create_rustycpp_transpiler_build_target()
 # fresh rendering of their inline Rust DSL and that every extracted carrier is
 # accepted by real rustc.
 add_custom_target(raft_goal0_source_gate
-    COMMAND
+    COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/raft-dsl-cargo
         bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_dsl.sh"
         --check
         --transpiler "${RUSTYCPP_TRANSPILER}"
@@ -1387,24 +1387,51 @@ add_custom_command(
     VERBATIM)
 add_custom_target(raft_rt_test DEPENDS ${RAFT_RT_TEST_STAMP})
 list(APPEND RAFT_LANE_CHECK_DEPS raft_rt_test)
-# raft-store's tests (the WAL crash sweep, recovery, creation, the flusher)
-# gate the build in both modes. No feature list: raft-store has none, and
-# cargo refuses a --features it does not declare.
+# raft-store's tests (the WAL crash sweep, recovery, creation, the flusher,
+# the base's ops) gate the build in both modes; a disk build adds the RocksDB
+# base's (`--features rocksdb`, which links librocksdb as the binaries do).
+set(RAFT_STORE_TEST_FEATURES "")
+if(MAKO_RAFT_DISK)
+    set(RAFT_STORE_TEST_FEATURES --features rocksdb)
+endif()
 file(GLOB RAFT_STORE_TEST_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/tests/*.rs)
 set(RAFT_STORE_TEST_STAMP "${CMAKE_BINARY_DIR}/raft_store_test.stamp")
 add_custom_command(
     OUTPUT ${RAFT_STORE_TEST_STAMP}
-    COMMAND cargo test --release --quiet
+    COMMAND cargo test --release --quiet ${RAFT_STORE_TEST_FEATURES}
             --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/Cargo.toml
             --target-dir ${RAFT_RUST_TARGET_DIR}
     COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_STORE_TEST_STAMP}
-    DEPENDS ${RAFT_RUST_SOURCES} ${RAFT_STORE_TEST_SOURCES}
+    DEPENDS ${RAFT_STORE_TEST_SOURCES}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/build.rs
     COMMENT "cargo test: raft-store"
     VERBATIM)
 add_custom_target(raft_store_test DEPENDS ${RAFT_STORE_TEST_STAMP})
 list(APPEND RAFT_LANE_CHECK_DEPS raft_store_test)
+# raft-core's and raft-replay's tests: the evidence the host contract cites
+# for what it trusts, every persist note exact (core/tests/persist_note.rs,
+# the replay's shadow); Verus does not read the notes.
+file(GLOB RAFT_CORE_TEST_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/tests/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/tests/common/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/replay/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/replay/tests/*.rs)
+set(RAFT_CORE_TEST_STAMP "${CMAKE_BINARY_DIR}/raft_core_test.stamp")
+add_custom_command(
+    OUTPUT ${RAFT_CORE_TEST_STAMP}
+    COMMAND cargo test --release --quiet -p raft-core -p raft-replay
+            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
+            --target-dir ${RAFT_RUST_TARGET_DIR}
+    COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_CORE_TEST_STAMP}
+    DEPENDS ${RAFT_CORE_TEST_SOURCES}
+    COMMENT "cargo test: raft-core, raft-replay"
+    VERBATIM)
+add_custom_target(raft_core_test DEPENDS ${RAFT_CORE_TEST_STAMP})
+list(APPEND RAFT_LANE_CHECK_DEPS raft_core_test)
 add_custom_target(raft_lane_check ALL
     ${RAFT_LANE_CHECK_COMMANDS}
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_lane_parity.py

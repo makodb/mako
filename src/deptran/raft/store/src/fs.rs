@@ -24,7 +24,8 @@ pub trait StoreFs: Send + Sync {
     fn create_dir(&self, p: &Path) -> io::Result<()>;
     /// Creates a new, empty file; fails if it exists.
     fn create_new(&self, p: &Path) -> io::Result<Box<dyn StoreFile>>;
-    /// Opens an existing file to append to; its current bytes count as synced.
+    /// Opens an existing file to append to. RealFs's power-cut ledger counts
+    /// its current bytes as synced (a caller that cannot know syncs it).
     fn open_append(&self, p: &Path) -> io::Result<Box<dyn StoreFile>>;
     /// Takes an exclusive lock on an existing file (`flock`), held while the
     /// returned guard lives; fails at once if another process holds it.
