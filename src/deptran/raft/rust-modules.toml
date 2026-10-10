@@ -16,6 +16,11 @@ schema_version = 1
 # top-level DSL items found zero duplicate names across carriers.
 
 [[module]]
+cpp_module = "raft.commo_h"
+source = "src/deptran/raft/commo.h"
+output = "src/deptran/raft/shell/commo_h.rs"
+
+[[module]]
 cpp_module = "raft.frame_cc"
 source = "src/deptran/raft/frame.cc"
 output = "src/deptran/raft/shell/frame_cc.rs"

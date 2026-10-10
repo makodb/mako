@@ -5,8 +5,7 @@
 #include "../scheduler.h"
 #include "../tpc_command.h"
 #include "../view.h"
-#include "../communicator.h"
-#include "../replication_quorum.h"
+#include "commo.h"
 #include "raft_kernel_pods.h"
 #include "snapshot_callbacks.h"   // PreparedStateMachineSnapshotInstall   // kernel result PODs, global C declarations
 #include <deque>
@@ -29,7 +28,7 @@
 // global scope: included inside `namespace janus` it declares `janus::rusty`,
 // which then shadows ::rusty for every lookup in the file. Its own ordering
 // rule -- after the header that imports srpc.reactor -- is satisfied by
-// communicator.h above.
+// commo.h above.
 import rusty;   // rusty::Vec is a vec_port C++20 module, not a header
 #include "rust_facade_types.h"
 #include <rusty/rusty.hpp>   // rusty::to_string_view, emitted for &str parameters

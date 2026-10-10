@@ -6,6 +6,7 @@
 // provider. Production compiles the committed generated C++ next to
 // each block. See docs/stage2_current_progress.txt.
 
+pub mod commo_h;
 pub mod communicator_h;
 pub mod disk;
 pub mod frame_cc;

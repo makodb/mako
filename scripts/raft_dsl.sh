@@ -36,6 +36,7 @@ RUSTC_BIN="${RUSTC:-rustc}"
 REQUIRED_RUSTY_CPP_COMMIT="7e0c201f1b0d548f0166dc9ee700f24bc18066a4"
 FILES=()
 EXPECTED_BLOCKS=(
+  "src/deptran/raft/commo.h|raft_commo.scalar_decisions"
   "src/deptran/raft/frame.cc|raft_frame.lab_decisions"
   "src/deptran/raft/log_storage.hpp|raft_log_entry.scalar_decisions"
   "src/deptran/raft/quorum.hpp|raft_quorum.scalar_decisions"
