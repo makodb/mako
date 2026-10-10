@@ -1,9 +1,8 @@
 //! The Rust lane's snapshot store (plan phase N3/N4).
 //!
 //! One slot holding the latest snapshot's `(index, term, bytes)`, owned by
-//! Rust. The hybrid and cpp lanes keep the C++ `MemorySnapshotManager`
-//! (`snapshot_manager.hpp`, `memory_snapshot_manager.hpp`) by decision; this
-//! module is only linked into the Rust lane (raft-rt).
+//! Rust: the only snapshot store, as the Rust lane is the only lane (the C++
+//! `MemorySnapshotManager` the dropped lanes kept is deleted).
 //!
 //! The shared core holds a store through the opaque, 16-byte
 //! `rusty::RaftSnapshotManagerPtr`. On this lane word 0 is a raw

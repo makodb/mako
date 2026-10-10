@@ -97,9 +97,10 @@ def main():
 # That is safe only while every C++ site uses the BRACE form. `VoteReply{}`
 # value-initializes every member of an aggregate whether or not the members
 # have initializers of their own; `VoteReply reply;` leaves them
-# indeterminate. The places that would bite are the error paths in
-# channel_transport.hpp -- `if (r.is_err()) return VoteReply{};` -- where a
-# garbage reply would be read as a real Raft vote or append result.
+# indeterminate. The places that would bite are error paths that return a
+# default reply -- `if (r.is_err()) return VoteReply{};`, as the deleted
+# channel_transport.hpp did -- where a garbage reply would be read as a real
+# Raft vote or append result.
 #
 # So the guarantee moves here, from a transpiler attribute to a rule this
 # repository owns and can explain.

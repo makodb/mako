@@ -9,8 +9,7 @@ use vstd::prelude::*;
 
 verus! {
 
-// SCREAMING_CASE variants match the surrounding C++ enum convention and the
-// existing DSL enums in snapshot_format.hpp, which carries this same allow.
+// SCREAMING_CASE variants match the surrounding C++ enum convention.
 #[allow(non_camel_case_types)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
 #[derive(Structural)]  // [M12] ghost: `==` is equality to the verifier

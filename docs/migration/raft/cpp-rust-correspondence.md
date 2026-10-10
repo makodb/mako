@@ -13,7 +13,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
 | `raft/server.h` | 545 | `raft/shell/server_h.rs` | 4835 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1751 | `raft/shell/server_cc.rs` | 759 |  |
+| `raft/server.cc` | 1750 | `raft/shell/server_cc.rs` | 759 |  |
 | `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 204 | the Rust serves; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
 | `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1224 | the Rust sends; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
 | `communicator.h` | 567 | `raft/shell/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
@@ -187,8 +187,8 @@ defined nowhere or in two places.
 | `raft_wire_is_batch` | HOST |
 
 Not kernels at all, despite an earlier revision listing them: rocksdb and
-yaml-cpp. No kernel includes either -- `raft/rocksdb_log_storage.hpp` is a
-plain C++ storage backend the Rust never calls.
+yaml-cpp. No kernel includes either (the old C++ RocksDB log backend the Rust
+never called was deleted as dead code on 2026-10-10).
 
 ## How C++ idioms appear in Rust
 

@@ -78,7 +78,7 @@ jobs:
         run: >-
           cmake --build "${GOAL0_BUILD_DIR}"
           --parallel "${CI_MAKE_JOBS}"
-          --target srpc_goal0_dual_compile test_client_service test_arc_mutex_thread test_txn_timeout test_srpc_timeout_race test_raft_messages test_raft_quorum test_raft_channel_transport test_raft_transport_facade test_raft_dispatcher_facade test_raft_memory_snapshot_manager test_raft_test_cluster test_raft_srpc_transport_compile
+          --target srpc_goal0_dual_compile test_client_service test_arc_mutex_thread test_txn_timeout test_srpc_timeout_race test_raft_messages test_raft_quorum
           -- -k 0
 
       - name: Verify Raft inline Rust DSL provenance
@@ -193,7 +193,7 @@ jobs:
           ctest --test-dir "${GOAL0_BUILD_DIR}"
           --output-on-failure
           --no-tests=error
-          -R '^(test_client_service|test_arc_mutex_thread|test_txn_timeout|test_srpc_timeout_race|test_raft_messages|test_raft_quorum|test_raft_channel_transport|test_raft_transport_facade|test_raft_dispatcher_facade|test_raft_memory_snapshot_manager|test_raft_test_cluster|test_raft_srpc_transport_compile)$'
+          -R '^(test_client_service|test_arc_mutex_thread|test_txn_timeout|test_srpc_timeout_race|test_raft_messages|test_raft_quorum)$'
 
   build-and-test:
     runs-on: ubuntu-24.04

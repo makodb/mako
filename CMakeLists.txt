@@ -1795,13 +1795,14 @@ add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
 add_apps(basic src/mako/benchmarks/ut/basic.cc)
 add_apps(rocksdbInterfaceTest examples/rocksdbInterfaceTest.cc)
 
-# raft_bench — standalone Raft performance driver (docs/performance/raft-harness.md).
+# raft_bench — standalone Raft performance driver (docs/performance/raft-harness.md),
+# beside the scripts that drive it (scripts/raft_perf/).
 # Registered the same way as paxos_async_commit_test above: it is an ordinary
 # app that links `mako` and drives the replication helper. It is deliberately
 # NOT inside the MAKO_USE_RAFT block, because that option only gates the extra
 # Raft example executables; the Raft helper itself is always compiled into
 # `mako` via TXLOG_HELPER_SRC, so the driver measures the production build.
-add_apps(raft_bench src/deptran/raft/raft_bench.cc)
+add_apps(raft_bench scripts/raft_perf/raft_bench.cc)
 # raft_kill_node -- one Raft replica for the process-kill tests, beside the
 # driver and checker that use it (scripts/raft_kill/; disk plan P6).
 add_apps(raft_kill_node scripts/raft_kill/raft_kill_node.cc)
@@ -2160,26 +2161,7 @@ if(BUILD_TESTS)
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core)
     add_test(NAME test_legacy_raft_log COMMAND test_legacy_raft_log)
 
-    add_executable(test_raft_transport_facade tests/raft_transport_facade_test.cc)
-    target_include_directories(test_raft_transport_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_transport_facade PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_transport_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_transport_facade COMMAND test_raft_transport_facade)
 
-    add_executable(test_raft_srpc_transport_compile tests/raft_srpc_transport_compile_test.cc)
-    target_include_directories(test_raft_srpc_transport_compile PRIVATE
-        ${TEST_INCLUDE_DIRS}
-        ${GTEST_INCLUDE_DIRS}
-        # raft_srpc_transport_compile_test.cc transitively pulls in
-        # deptran headers and `__dep__.h`, which includes
-        # `yaml-cpp/yaml.h`. Neither path is propagated through `srpc`,
-        # so add both explicitly here (same pattern as
-        # `txlog_core_obj`'s PUBLIC include set).
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
-        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
-    target_compile_options(test_raft_srpc_transport_compile PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_srpc_transport_compile ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_srpc_transport_compile COMMAND test_raft_srpc_transport_compile)
 
     # Phase 8.1a — RaftQuorum<Reply> primitive (header-only template).
     # Bootstraps an srpc::Reactor on the test thread to exercise the
@@ -2190,49 +2172,17 @@ if(BUILD_TESTS)
     target_link_libraries(test_raft_quorum ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
     add_test(NAME test_raft_quorum COMMAND test_raft_quorum)
 
-    add_executable(test_raft_dispatcher_facade tests/raft_dispatcher_facade_test.cc)
-    target_include_directories(test_raft_dispatcher_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_dispatcher_facade PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_dispatcher_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_dispatcher_facade COMMAND test_raft_dispatcher_facade)
 
-    add_executable(test_raft_channel_transport tests/raft_channel_transport_test.cc)
-    target_include_directories(test_raft_channel_transport PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_channel_transport PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_channel_transport ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_channel_transport COMMAND test_raft_channel_transport)
 
-    add_executable(test_raft_memory_snapshot_manager tests/raft_memory_snapshot_manager_test.cc)
-    target_include_directories(test_raft_memory_snapshot_manager PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_memory_snapshot_manager PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_memory_snapshot_manager ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_memory_snapshot_manager COMMAND test_raft_memory_snapshot_manager)
 
-    add_executable(test_raft_test_cluster tests/raft_test_cluster_test.cc)
-    target_include_directories(test_raft_test_cluster PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_test_cluster PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_test_cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_test_cluster COMMAND test_raft_test_cluster)
 
-    add_executable(raft_lab_standalone src/deptran/raft/raft_lab_standalone.cc)
-    target_include_directories(raft_lab_standalone PRIVATE ${TEST_INCLUDE_DIRS})
-    target_compile_options(raft_lab_standalone PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(raft_lab_standalone pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
-    add_test(NAME raft_lab_standalone COMMAND raft_lab_standalone)
 
     # Every direct Raft consumer first proves that committed generated C++ is
     # the exact output of the owned inline Rust blocks. This keeps focused
     # builds from bypassing the source-provenance gate.
     set(RAFT_DSL_CONSUMER_TARGETS
         test_raft_messages
-        test_raft_transport_facade
-        test_raft_srpc_transport_compile
         test_raft_quorum
-        test_raft_dispatcher_facade
-        test_raft_channel_transport
-        test_raft_memory_snapshot_manager
-        test_raft_test_cluster
-        raft_lab_standalone
     )
     foreach(raft_dsl_consumer IN LISTS RAFT_DSL_CONSUMER_TARGETS)
         add_dependencies(${raft_dsl_consumer} raft_goal0_source_gate)

@@ -180,8 +180,8 @@ struct LogEntry {
      * Wire format byte-for-byte preserved (the new archive operators
      * for primitives + the Phase 3f-prep MarshallDeputy archive op
      * produce the same bytes as their legacy Marshal counterparts).
-     * The lone production callers in `rocksdb_log_storage.hpp` were
-     * updated; no other callers existed.
+     * Its only callers were in `rocksdb_log_storage.hpp`, since deleted
+     * as dead code.
      */
     // @unsafe - delegates to BinaryWriteArchive primitive operators
     void save(BinaryWriteArchive& ar) const {

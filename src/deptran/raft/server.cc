@@ -31,7 +31,6 @@
 #endif
 #include "rust_facade_types.h"
 #include "lane_kernels.h"
-#include "memory_snapshot_manager.hpp"
 #include "quorum.hpp"
 
 import std;

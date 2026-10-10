@@ -16,7 +16,7 @@
  * docs/performance/raft-harness.md.
  *
  * WHY THREE PROCESSES AND NOT AN IN-PROCESS CLUSTER. The in-process harness
- * (`raft_lab_standalone`, `build_raftlab/deptran_server`) is compiled with
+ * (the lab, `build_raftlab/deptran_server`) is compiled with
  * RAFT_TEST_CORO, where the leader no-op is compiled out and the heartbeat
  * interval is 100 ms against production's 5 ms. Its numbers describe a
  * different system. This binary is built by the ordinary `build/` tree and

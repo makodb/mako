@@ -16,11 +16,6 @@ schema_version = 1
 # top-level DSL items found zero duplicate names across carriers.
 
 [[module]]
-cpp_module = "raft.channel_transport_hpp"
-source = "src/deptran/raft/channel_transport.hpp"
-output = "src/deptran/raft/shell/channel_transport_hpp.rs"
-
-[[module]]
 cpp_module = "raft.commo_h"
 source = "src/deptran/raft/commo.h"
 output = "src/deptran/raft/shell/commo_h.rs"
@@ -36,16 +31,6 @@ source = "src/deptran/raft/log_storage.hpp"
 output = "src/deptran/raft/shell/log_storage_hpp.rs"
 
 [[module]]
-cpp_module = "raft.memory_log_storage_hpp"
-source = "src/deptran/raft/memory_log_storage.hpp"
-output = "src/deptran/raft/shell/memory_log_storage_hpp.rs"
-
-[[module]]
-cpp_module = "raft.memory_snapshot_manager_hpp"
-source = "src/deptran/raft/memory_snapshot_manager.hpp"
-output = "src/deptran/raft/shell/memory_snapshot_manager_hpp.rs"
-
-[[module]]
 cpp_module = "raft.messages_hpp"
 source = "src/deptran/raft/messages.hpp"
 output = "src/deptran/raft/shell/messages_hpp.rs"
@@ -59,11 +44,6 @@ output = "src/deptran/raft/shell/quorum_hpp.rs"
 cpp_module = "raft.raft_worker_cc"
 source = "src/deptran/raft/raft_worker.cc"
 output = "src/deptran/raft/shell/raft_worker_cc.rs"
-
-[[module]]
-cpp_module = "raft.rocksdb_log_storage_hpp"
-source = "src/deptran/raft/rocksdb_log_storage.hpp"
-output = "src/deptran/raft/shell/rocksdb_log_storage_hpp.rs"
 
 # Canonical Rust (F2.6): compiled by rustc, not extracted from a carrier. The
 # extractor leaves these alone and lists them in lib.rs.
@@ -110,11 +90,6 @@ output = "src/deptran/raft/shell/server_h.rs"
 [[module]]
 kind = "canonical"
 output = "src/deptran/raft/shell/server_pods_h.rs"
-
-[[module]]
-cpp_module = "raft.snapshot_format_hpp"
-source = "src/deptran/raft/snapshot_format.hpp"
-output = "src/deptran/raft/shell/snapshot_format_hpp.rs"
 
 [[module]]
 cpp_module = "raft.snapshot_manager_hpp"

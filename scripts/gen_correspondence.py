@@ -266,8 +266,8 @@ def body():
             w(f"- `{pr}`")
         w("")
     w("Not kernels at all, despite an earlier revision listing them: rocksdb and")
-    w("yaml-cpp. No kernel includes either -- `raft/rocksdb_log_storage.hpp` is a")
-    w("plain C++ storage backend the Rust never calls.")
+    w("yaml-cpp. No kernel includes either (the old C++ RocksDB log backend the Rust")
+    w("never called was deleted as dead code on 2026-10-10).")
     return o
 
 
