@@ -89,28 +89,6 @@ impl RaftRpcService {
     }
 }
 
-// Plan P6's evidence for a held reply: the handler parks what its reply shows
-// (kind, term, vote granted, last index acknowledged) on this thread -- it
-// runs inside dispatch_held, on the poll thread -- and __dispatch__ moves it
-// into the hold, which writes it just before the reply leaves.
-type Parked = (&'static str, u64, Option<u16>, Option<u64>);
-thread_local! {
-    static PARKED: std::cell::Cell<Option<Parked>> = const { std::cell::Cell::new(None) };
-}
-
-impl RaftRpcService {
-    fn park_reveal(&self, kind: &'static str, term: u64, vote: Option<u16>, last: Option<u64>) {
-        // A closed gate answers for the server without consulting it (a
-        // refused vote carries the candidate's term), so it reveals nothing.
-        if cfg!(feature = "raft_disk")
-            && self.server().disk().is_some_and(|d| d.reveals.is_some())
-            && self.server().rpc_ready_.load(std::sync::atomic::Ordering::Acquire)
-        {
-            PARKED.with(|p| p.set(Some((kind, term, vote, last))));
-        }
-    }
-}
-
 impl Service for RaftRpcService {
     fn __reg_to__(&mut self, server: &mut Server, svc_index: usize) -> i32 {
         rpc::register(server, svc_index)
@@ -124,11 +102,13 @@ impl Service for RaftRpcService {
         // durable. A memory build replies as the handler returns.
         if cfg!(feature = "raft_disk") {
             if let Some(disk) = self.server().disk() {
-                PARKED.with(|p| p.set(None));
+                // Plan P6's evidence: what the core's answer shows, parked by
+                // the shell's handler on this thread (raft::disk::Parked).
+                raft::disk::take_parked();
                 if let Some(reply) = rpc::dispatch_held(self, rpc_id, req, sconn) {
                     let tail = disk.tail();
                     let t0 = raft_store::stats::now_us();
-                    let parked = PARKED.with(|p| p.take());
+                    let parked = raft::disk::take_parked();
                     let reveals = disk.reveals.clone();
                     disk.held.hold(tail, Box::new(move || {
                         if let Some((kind, term, vote, last)) = parked {
@@ -157,8 +137,6 @@ impl RaftHandler for RaftRpcService {
         self.server().ServeVote(req.lst_log_idx, req.lst_log_term, req.site_id,
                                 req.cur_term, &raw mut resp.max_ballot,
                                 &raw mut resp.vote_granted);
-        self.park_reveal("vote", resp.max_ballot.max(0) as u64,
-                         (resp.vote_granted != 0).then_some(req.site_id), None);
         Ok(resp)
     }
 
@@ -184,8 +162,6 @@ impl RaftHandler for RaftRpcService {
             crate::trace::through(5, resp.follower_last_log_index, trace_t0);
             crate::trace::through(6, resp.follower_last_log_index, 0);
         }
-        self.park_reveal("ack", resp.follower_current_term, None,
-                         (resp.follower_append_ok != 0).then_some(resp.follower_last_log_index));
         Ok(resp)
     }
 
@@ -200,8 +176,6 @@ impl RaftHandler for RaftRpcService {
             req.leader_prev_log_term, req.leader_commit_index, &cmd, 0,
             &raw mut resp.follower_append_ok, &raw mut resp.follower_current_term,
             &raw mut resp.follower_last_log_index);
-        self.park_reveal("ack", resp.follower_current_term, None,
-                         (resp.follower_append_ok != 0).then_some(resp.follower_last_log_index));
         Ok(resp)
     }
 
@@ -225,7 +199,6 @@ impl RaftHandler for RaftRpcService {
         self.server().ServeInstallSnapshot(req.term, req.leader_id, index, term,
                                            &data, &raw mut resp.term_out);
         clear_handoff();
-        self.park_reveal("install", resp.term_out, None, None);
         Ok(resp)
     }
 }

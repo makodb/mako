@@ -68,3 +68,18 @@ fn a_minority_does_not_start() {
     assert!(!t.majority_connected());
     assert!(!t.wait_majority(Duration::from_millis(300)));
 }
+
+#[test]
+fn delete_stops_a_dial_thread() {
+    // raft_transport_delete joins the dial threads: one still trying a down
+    // peer must stop within a dial period or so, not hold the shutdown.
+    let down = CString::new(format!("127.0.0.1:{}", free_port())).unwrap();
+    let mut t = RaftTransport::new();
+    // SAFETY: the CString outlives the call.
+    assert!(unsafe { t.add_peer(1, 3, down.as_ptr()) });
+    let t = Box::into_raw(Box::new(t));
+    let start = Instant::now();
+    // SAFETY: `t` came from a Box and is not used again.
+    unsafe { raft_rt::transport::raft_transport_delete(t) };
+    assert!(start.elapsed() < Duration::from_secs(3), "delete took {:?}", start.elapsed());
+}

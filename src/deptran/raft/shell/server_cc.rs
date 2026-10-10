@@ -137,12 +137,14 @@ pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
     if tick.declined_ {
         return tick;
     }
-    if let Some(d) = server.disk() {
+    // A tick that sends nothing waits for nothing (design §3: it rides the
+    // next flush); waiting would hold the replies collect is about to read.
+    if let Some(d) = server.disk().filter(|_| !tick.sends_.is_empty()) {
         if !d.wait_durable(disk_tail, 10_000, &|| server.stopped_now()) {
             return tick;
         }
         // Plan P6's evidence: what the sends below show (term, commit).
-        if d.reveals.is_some() && !tick.sends_.is_empty() {
+        if d.reveals.is_some() {
             let commit: u64 = tick.sends_.iter().map(|s| s.commit_index_).max().unwrap_or(0);
             d.reveal(&crate::disk::reveal_line("append", tick.sends_[0].term_, None,
                                                Some(commit), None, disk_tail));
@@ -297,21 +299,18 @@ pub fn heartbeat_collect_body(server: &RaftServerBase, round_id: u64,
         }
 
         // A reply from an earlier round freed the slot of a follower the
-        // log is still ahead of: end the round now, so the tick sends to
-        // that follower, rather than at this round's deadline. A round's reply can outlast the deadline (a
-        // follower holding it for its WAL flush, ~7.6 ms at G2 on tmpfs
-        // against a 5 ms heartbeat), and the followers then fall out of step:
-        // each round waited out its deadline for one while the other sat
-        // idle, its next batch unsent. This round's remaining replies are
-        // polled by the next collects, as after a deadline. Not for a
-        // follower already caught up: an idle leader's every round would end
-        // at once, its own replies landing as an earlier round's, and the
-        // rounds would chain (lab TEST 9, 67 RPCs in an idle second).
+        // log is ahead of: end the round now, so the tick sends to it,
+        // instead of waiting out this round's deadline while it sits idle (a
+        // reply held for a WAL flush can outlast the 5 ms deadline; modification
+        // plan F11a). Not for a caught-up follower: an idle leader's rounds
+        // would chain (lab TEST 9).
         if stop_response_processing || !waiting_for_current_round
             || current_round_has_authority || released_behind
         {
             if waiting_for_current_round && current_round_has_authority {
                 collect_end = raft_store::stats::COLLECT_AUTH;
+            } else if waiting_for_current_round && released_behind {
+                collect_end = raft_store::stats::COLLECT_RELEASED;
             }
             break;
         }
@@ -349,10 +348,8 @@ pub fn heartbeat_collect_body(server: &RaftServerBase, round_id: u64,
         let slots: usize = server.append_responses().len();
         server.append_responses().reset(slots);
     } else if released_behind {
-        // A completion from an older round opened a per-follower slot after
-        // PHASE 1. Prompt another round instead of waiting a full interval --
-        // for a follower the log is ahead of: a caught-up one waits for the
-        // heartbeat, or an idle leader's rounds chain (lab TEST 9).
+        // An older round's completion freed a lagging follower's slot after
+        // PHASE 1: prompt another round rather than wait an interval.
         server.RequestReplication();
     }
 }

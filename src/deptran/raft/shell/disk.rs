@@ -247,6 +247,9 @@ pub struct DiskShell {
     /// as Mako's apply callback is chosen by role.
     pub recovered_commit: std::sync::atomic::AtomicU64,
     recovered: Mutex<Option<Recovered>>,
+    /// The filesystem the store goes through (registered for `:powercut`
+    /// crash points, so image writes are undone with the WAL's).
+    fs: Arc<dyn StoreFs>,
     /// MAKO_RAFT_KILLTEST_DIR (plan P6): `<dir>/<site>.reveal`, where each
     /// output that leaves writes what it shows just before it leaves, and
     /// recovery writes what it restored; scripts/raft_kill/check.py
@@ -278,6 +281,24 @@ pub fn reveal_line(kind: &str, term: u64, vote: Option<u16>, commit: Option<u64>
     format!("reveal {kind} {term} {} {} {} {tail}", opt(vote), opt(commit), opt(last))
 }
 
+/// What a reply the core decided shows (kind, term, vote granted, last index
+/// acknowledged), parked on the thread that handles the request -- the poll
+/// thread, inside the service's dispatch_held -- for the service to move
+/// into the held reply, which reveals it just before the reply leaves. Only
+/// a decided answer is parked: a refusal at the gate or a dropped request
+/// shows nothing of this server's state (a refused vote carries the
+/// candidate's term).
+pub type Parked = (&'static str, u64, Option<u16>, Option<u64>);
+
+thread_local! {
+    static PARKED: std::cell::Cell<Option<Parked>> = const { std::cell::Cell::new(None) };
+}
+
+/// The parked reveal, if a handler on this thread left one.
+pub fn take_parked() -> Option<Parked> {
+    PARKED.with(|c| c.take())
+}
+
 fn open_reveals(site: u16) -> Result<Option<Reveals>, String> {
     let dir = match std::env::var("MAKO_RAFT_KILLTEST_DIR") {
         Ok(d) if !d.is_empty() => PathBuf::from(d),
@@ -295,10 +316,13 @@ impl DiskShell {
     /// server and starts the flusher. Returns the shell and what recovery
     /// found (`None` for a new store). Every refusal says why.
     pub fn open(params: DiskParams, site: u16, partition: u32, members: &[u16], no_vote: u16,
-                wake: FiberWake) -> Result<(DiskShell, Option<Recovered>), String> {
+                wake: FiberWake) -> Result<DiskShell, String> {
         std::fs::create_dir_all(&params.data_dir)
             .map_err(|e| format!("{}: {e}", params.data_dir.display()))?;
         local::check_local(&params.data_dir)?;
+        // Before any thread starts: a refusal after them would leave them
+        // running on a store the server has given up.
+        let reveals = open_reveals(site)?;
         let real = RealFs::new();
         let fs: Arc<dyn StoreFs> = Arc::new(real.clone());
         crash::set_powercut_fs(fs.clone());
@@ -331,7 +355,6 @@ impl DiskShell {
             queue.clone(),
             Arc::new(ShellCodec),
             durable.clone(),
-            start,
             FlusherConfig { delay: params.delay, tap },
             Box::new(move |d: Durable| {
                 release.release(d.seq);
@@ -356,14 +379,15 @@ impl DiskShell {
             params,
             id,
             recovered_commit: std::sync::atomic::AtomicU64::new(0),
-            recovered: Mutex::new(None),
-            reveals: open_reveals(site)?,
+            recovered: Mutex::new(recovered),
+            fs,
+            reveals,
             _lock: Mutex::new(opened.lock),
         };
         if opened.created {
             shell.reveal("created");
         }
-        Ok((shell, recovered))
+        Ok(shell)
     }
 
     /// One evidence line (MAKO_RAFT_KILLTEST_DIR; nothing when unset).
@@ -426,10 +450,11 @@ impl DiskShell {
         if let Some(f) = f {
             self.queue.close();
             f.join();
-            raft_store::stats::report(&describe(&self.store));
+            raft_store::stats::report(&self.store.display().to_string());
         }
-        // The flusher held the applier's tap: the applier now drains what
-        // is durable, checkpoints and stops.
+        // The applier stops where its base is: the WAL keeps every record
+        // after c, which the next start folds (design §3); RocksDB's close
+        // flushes its memtables.
         let a = self.applier.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(a) = a {
             if let Err(why) = a.join() {
@@ -441,7 +466,7 @@ impl DiskShell {
     /// MAKO_RAFT_DISK_VERIFY: the WAL's replay against the core. Term, vote,
     /// commit, the log's bounds, and each entry's term and command bytes.
     pub fn verify(&self, core: &RaftCore) -> Result<String, String> {
-        let fs = RealFs::new();
+        let fs = &*self.fs;
         let wal_dir = self.store.join("wal");
         let no_vote = raft_core::RAFT_SERVER_INVALID_SITE_ID;
         // The base's records 1..=c, then the WAL's after them.
@@ -452,7 +477,7 @@ impl DiskShell {
             }
             None => (0, SavedState::new(no_vote)),
         };
-        let rec = raft_store::wal::recover(&fs, &wal_dir, &self.id, c)?;
+        let rec = raft_store::wal::recover(fs, &wal_dir, &self.id, c)?;
         for (seq, bytes) in rec.records.iter() {
             let r = raft_store::record::decode(bytes, &raft_store::BytesCodec)
                 .map_err(|e| format!("record {seq}: {e}"))?;
@@ -482,7 +507,7 @@ impl DiskShell {
 }
 
 struct ImageWrite<'a> {
-    fs: &'a RealFs,
+    fs: &'a dyn StoreFs,
     dir: &'a Path,
     out: Option<std::io::Result<(u64, u64, String)>>,
 }
@@ -503,9 +528,8 @@ impl DiskShell {
     /// `manager` is the server's live snapshot-manager carrier.
     pub unsafe fn write_latest_image(&self, manager: *const rusty::RaftSnapshotManagerPtr)
         -> Option<(u64, u64, String)> {
-        let fs = RealFs::new();
         let dir = self.store.join("images");
-        let mut w = ImageWrite { fs: &fs, dir: &dir, out: None };
+        let mut w = ImageWrite { fs: &*self.fs, dir: &dir, out: None };
         let found = unsafe {
             raft_snapshot_manager_with_latest(manager, &mut w as *mut ImageWrite<'_> as *mut core::ffi::c_void,
                                               write_image_emit)
@@ -523,7 +547,7 @@ impl DiskShell {
     /// Plan P8: a snapshot store holding the recovered image, for Setup's
     /// snapshot recovery to load (it keeps an injected store).
     pub fn image_store(&self, index: u64, term: u64, name: &str) -> Result<rusty::RaftSnapshotManagerPtr, String> {
-        let bytes = raft_store::images::read(&RealFs::new(), &self.store.join("images"), name)?;
+        let bytes = raft_store::images::read(&*self.fs, &self.store.join("images"), name)?;
         let mut m = rusty::RaftSnapshotManagerPtr::default();
         if !unsafe { raft_snapshot_manager_from_bytes(&mut m, index, term, bytes.as_ptr(), bytes.len()) } {
             return Err(format!("{name}: the snapshot store refused the image"));
@@ -531,9 +555,17 @@ impl DiskShell {
         Ok(m)
     }
 
-    /// Where the recovered state waits for Restore.
+    /// Where the recovered state waits for Restore (None for a new store).
     pub fn recovered_slot(&self) -> std::sync::MutexGuard<'_, Option<Recovered>> {
         self.recovered.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// Parks what a reply the core decided shows (see [`Parked`]); nothing
+    /// unless the kill test collects evidence.
+    pub fn park(&self, p: Parked) {
+        if self.reveals.is_some() {
+            PARKED.with(|c| c.set(Some(p)));
+        }
     }
 
     /// The recovered state, kept between opening the store (before snapshot
@@ -543,7 +575,3 @@ impl DiskShell {
     }
 }
 
-/// The store's directory, for log lines.
-pub fn describe(p: &Path) -> String {
-    p.display().to_string()
-}

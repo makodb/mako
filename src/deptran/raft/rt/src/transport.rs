@@ -98,9 +98,11 @@ pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(120 * 1000);
 pub const CONNECT_SLEEP: Duration = Duration::from_millis(1000);
 
 /// Disk builds (plan P5; bugs-found B22): add_peer's first try lasts this
-/// long, then a dial thread takes the site and connects a fresh Client
-/// every DIAL_EVERY, so a node starts while a peer is down; the worker then
-/// waits for a majority of each partition (raft_transport_wait_majority).
+/// long (a refused connect returns at once; one to a black-holed address
+/// takes srpc's connect timeout, 5 s), then a dial thread takes the site and
+/// connects a fresh Client every DIAL_EVERY, so a node starts while a peer is
+/// down; the worker then waits for a majority of each partition
+/// (raft_transport_wait_majority).
 pub const DISK_FIRST_DIAL: Duration = Duration::from_millis(1000);
 pub const DIAL_EVERY: Duration = Duration::from_millis(200);
 pub const MAJORITY_TIMEOUT: Duration = Duration::from_millis(120 * 1000);
@@ -124,6 +126,23 @@ pub const DISK_RECONNECT: srpc::reconnect_policy::ReconnectPolicy = srpc::reconn
     backoff_multiplier: 2.0,
     jitter_enabled: true,
 };
+
+/// One connect attempt: a Client on `poll` (the disk builds' reconnect
+/// policy on it), or None, closed, if the site did not accept.
+///
+/// # Safety
+/// `addr` is a live NUL-terminated string for the call.
+unsafe fn dial(poll: &Arc<PollThread>, addr: *const i8) -> Option<Arc<Client>> {
+    let client = Client::create(poll.clone());
+    if cfg!(feature = "raft_disk") {
+        client.set_reconnect_policy(&DISK_RECONNECT);
+    }
+    if client.connect(addr, false) == 0 {
+        return Some(client);
+    }
+    client.close();
+    None
+}
 
 /// What an append's reply wakes when collect is not waiting for it: the
 /// sending server's replication gate (None: nothing).
@@ -355,21 +374,17 @@ impl RaftTransport {
         if self.peers.contains_key(&site_id) {
             return false;
         }
-        let client = Client::create(self.poll.clone());
-        if cfg!(feature = "raft_disk") {
-            client.set_reconnect_policy(&DISK_RECONNECT);
-        }
         let start = Instant::now();
-        loop {
-            if client.connect(addr, false) == 0 {
-                break;
+        let client = loop {
+            // SAFETY: the caller's contract on `addr`.
+            if let Some(c) = unsafe { dial(&self.poll, addr) } {
+                break c;
             }
             if timeout.is_zero() || start.elapsed() >= timeout {
-                client.close();
                 return false;
             }
             std::thread::sleep(CONNECT_SLEEP.min(timeout));
-        }
+        };
         let slot: PeerSlot = Arc::new(OnceLock::new());
         let _ = slot.set(client);
         self.peers.insert(site_id, slot);
@@ -399,13 +414,11 @@ impl RaftTransport {
         let (poll, stop) = (self.poll.clone(), self.dial_stop.clone());
         self.dialers.push(std::thread::spawn(move || {
             while !stop.load(Ordering::Acquire) {
-                let client = Client::create(poll.clone());
-                client.set_reconnect_policy(&DISK_RECONNECT);
-                if client.connect(addr.as_ptr(), false) == 0 {
-                    let _ = slot.set(client);
+                // SAFETY: `addr` is owned by this thread.
+                if let Some(c) = unsafe { dial(&poll, addr.as_ptr()) } {
+                    let _ = slot.set(c);
                     return;
                 }
-                client.close();
                 std::thread::sleep(DIAL_EVERY);
             }
         }));

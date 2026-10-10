@@ -46,33 +46,57 @@ fn an_empty_state_is_restored() {
     assert_eq!(out.at(0).to(), 0);
 }
 
+/// A core whose snapshot boundary is at `s` (term `t`) and whose log is
+/// empty after it, as snapshot recovery leaves it before Restore.
+fn at_boundary(s: u64, t: i64) -> RaftCore<Cmd> {
+    let mut core = configured_ungated();
+    core.snapidx_ = s;
+    core.snapterm_ = t;
+    core.raft_log_.reset(s + 1);
+    core
+}
+
+#[test]
+fn a_state_after_a_snapshot_is_restored() {
+    let mut core = at_boundary(10, 2);
+    let (ok, out) = restore(&mut core, 5, 2, 12, vec![entry(2, 11), entry(3, 12), entry(4, 13)]);
+    assert!(ok);
+    assert_eq!((core.raft_log_.base(), core.raft_log_.last_index()), (11, 13));
+    // The apply of 11..=12 is queued, from the boundary.
+    assert_eq!((out.at(0).from(), out.at(0).to()), (10, 12));
+}
+
 #[test]
 fn states_no_step_produces_are_refused_unchanged() {
     let ok = || vec![entry(1, 1), entry(2, 2), entry(2, 3)];
-    let cases: Vec<(&str, u64, u16, u64, Vec<RaftEntry<Cmd>>)> = vec![
-        ("commit past the log", 3, 2, 4, ok()),
-        ("vote for a non-member", 3, 9, 1, ok()),
-        ("an entry without a value", 3, 2, 1,
+    let after = || vec![entry(2, 11), entry(3, 12)];
+    let none = RAFT_SERVER_INVALID_SITE_ID;
+    // (why, the core's term, its snapshot boundary (index, term, log base),
+    //  the state: term, vote, commit, entries)
+    type Case = (&'static str, u64, (u64, i64, u64), u64, u16, u64, Vec<RaftEntry<Cmd>>);
+    let cases: Vec<Case> = vec![
+        ("commit past the log", 0, (0, 0, 1), 3, 2, 4, ok()),
+        ("vote for a non-member", 0, (0, 0, 1), 3, 9, 1, ok()),
+        ("a vote at term 0", 0, (0, 0, 1), 0, 2, 0, vec![]),
+        ("an entry without a value", 0, (0, 0, 1), 3, 2, 1,
          vec![entry(1, 1), RaftEntry::new(2, Cmd(2), false, false, 0, 0)]),
-        ("an entry of term 0", 3, 2, 1, vec![entry(0, 1)]),
-        ("falling terms", 3, 2, 1, vec![entry(2, 1), entry(1, 2)]),
-        ("a last term above the term", 1, 2, 1, ok()),
-        ("a term at the ceiling", RAFT_INDEX_LIMIT, 2, 1, ok()),
+        ("an entry of term 0", 0, (0, 0, 1), 3, 2, 1, vec![entry(0, 1)]),
+        ("falling terms", 0, (0, 0, 1), 3, 2, 1, vec![entry(2, 1), entry(1, 2)]),
+        ("a last term above the term", 0, (0, 0, 1), 1, 2, 1, ok()),
+        ("a term at the ceiling", 0, (0, 0, 1), RAFT_INDEX_LIMIT, 2, 1, ok()),
+        ("a term below the current one", 4, (0, 0, 1), 3, 2, 0, vec![]),
+        ("a commit below the boundary", 0, (10, 2, 11), 5, none, 9, after()),
+        ("a first term below the boundary's", 0, (10, 3, 11), 5, none, 10, after()),
+        ("a log not starting after the boundary", 0, (10, 2, 12), 5, none, 10, after()),
     ];
-    for (why, term, vote, commit, entries) in cases {
-        let mut core = configured_ungated();
+    for (why, current, (s, t, base), term, vote, commit, entries) in cases {
+        let mut core = at_boundary(s, t);
+        core.raft_log_.reset(base);
+        core.current_term_ = current;
         let before = saved(&core);
         let (accepted, mut out) = restore(&mut core, term, vote, commit, entries);
         assert!(!accepted, "{why}: accepted");
         assert_eq!(saved(&core), before, "{why}: changed the core");
         assert!(out.is_empty() && out.take_persist().is_none(), "{why}: left output");
     }
-}
-
-#[test]
-fn a_term_below_the_current_one_is_refused() {
-    let mut core = configured_ungated();
-    core.current_term_ = 4; // as a lab case's startup bump would leave it
-    let (ok, _) = restore(&mut core, 3, 2, 0, vec![]);
-    assert!(!ok);
 }

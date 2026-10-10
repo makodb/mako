@@ -563,9 +563,10 @@ impl<C: Clone> RaftCore<C> {
     // boundary, last first. Refuses, changing nothing, a state no step
     // produces: a term at the ceiling or below the current one, a log that
     // does not start right after the boundary or would reach the ceiling, a
-    // commit outside the boundary..last, a vote for a non-member, an entry
-    // without a value or of term 0, terms that fall, start below the
-    // boundary's term or exceed the stored term. Queues the apply of
+    // commit outside the boundary..last, a vote for a non-member or at term
+    // 0 (no step votes before term 1), an entry without a value or of term
+    // 0, terms that fall, start below the boundary's term or exceed the
+    // stored term. Queues the apply of
     // boundary+1..commit; sets no persist note (step's caller sees none).
     pub fn restore(&mut self, term: u64, vote: u16, commit: u64,
                    entries_rev: Vec<RaftEntry<C>>, out: &mut CoreOutput) -> (r: bool)
@@ -609,7 +610,7 @@ impl<C: Clone> RaftCore<C> {
         if commit < s || commit > s + n {
             return false;
         }
-        if vote != RAFT_SERVER_INVALID_SITE_ID && !self.is_config_member(vote) {
+        if vote != RAFT_SERVER_INVALID_SITE_ID && (term == 0 || !self.is_config_member(vote)) {
             return false;
         }
         let mut prev: i64 = self.snapterm_;

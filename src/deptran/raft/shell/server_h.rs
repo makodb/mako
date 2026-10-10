@@ -502,30 +502,30 @@ impl ReplicationWakeGate {
     }
 }
 
-// One queued wake, as the reactor carries it: the gate's handle and which
-// wake to run. Boxed and made raw by RaftServerBase::queue_wake_job, taken
-// back and dropped by the raft_wake_job_run export (server.cc).
 /// RequestReplication through the gate alone: what a reply callback holds
 /// (F11a, second half), since a reply may outlive its server, never its gate.
 pub fn request_replication_on(gate: &rusty::sync::Arc<ReplicationWakeGate>) {
     if !gate.publish() {
         return;
     }
-    let owner: rusty::Option<rusty::RaftPollThreadPtr> = gate.reserve_wake_owner();
-    if let rusty::Some(owner) = owner {
-        let token: rusty::Box<GateWakeJob> = rusty::Box::new(GateWakeJob {
-            gate: gate.clone(),
-            shutdown: false,
-            durable: rusty::None,
-        });
-        unsafe {
-            raft_queue_wake_job(
-                &owner as *const rusty::RaftPollThreadPtr,
-                rusty::Box::into_raw(token) as *mut core::ffi::c_void);
-        }
+    if let rusty::Some(owner) = gate.reserve_wake_owner() {
+        post_gate_job(&owner, GateWakeJob { gate: gate.clone(), shutdown: false, durable: rusty::None });
     }
 }
 
+/// Queues `job` on `owner`'s poll thread, where the raft_wake_job_run export
+/// (server.cc) runs and drops it.
+pub fn post_gate_job(owner: &rusty::RaftPollThreadPtr, job: GateWakeJob) {
+    let token: rusty::Box<GateWakeJob> = rusty::Box::new(job);
+    unsafe {
+        raft_queue_wake_job(owner as *const rusty::RaftPollThreadPtr,
+                            rusty::Box::into_raw(token) as *mut core::ffi::c_void);
+    }
+}
+
+// One queued wake, as the reactor carries it: the gate's handle and which
+// wake to run. Boxed and made raw by post_gate_job, taken back and dropped by
+// the raft_wake_job_run export (server.cc).
 pub struct GateWakeJob {
     pub gate: rusty::sync::Arc<ReplicationWakeGate>,
     pub shutdown: bool,
@@ -2121,56 +2121,48 @@ impl RaftServerBase {
         let gate = self.replication_wake_gate_.clone();
         let wake: crate::disk::FiberWake = Box::new(move |event: rusty::RaftIntEventPtr| {
             if let rusty::Some(owner) = gate.owner_clone() {
-                let token: rusty::Box<GateWakeJob> = rusty::Box::new(GateWakeJob {
-                    gate: gate.clone(), shutdown: false, durable: rusty::Some(event),
-                });
-                unsafe {
-                    raft_queue_wake_job(&owner as *const rusty::RaftPollThreadPtr,
-                                        rusty::Box::into_raw(token) as *mut core::ffi::c_void);
-                }
+                post_gate_job(&owner, GateWakeJob { gate: gate.clone(), shutdown: false,
+                                                    durable: rusty::Some(event) });
             }
         });
-        let opened = crate::disk::DiskShell::open(params, self.site_id_, self.partition_id_,
-                                                  &members, RAFT_SERVER_INVALID_SITE_ID, wake);
-        let (shell, recovered) = match opened {
+        let shell = match crate::disk::DiskShell::open(params, self.site_id_, self.partition_id_,
+                                                       &members, RAFT_SERVER_INVALID_SITE_ID, wake) {
             Ok(x) => x,
             Err(why) => {
                 eprintln!("[RAFT-DISK] Site {}: {why}", self.site_id_);
                 return false;
             }
         };
-        let store = crate::disk::describe(&shell.store);
-        if let Some(r) = recovered {
+        let store = shell.store.display().to_string();
+        let refused: Option<String> = shell.recovered_slot().as_ref().and_then(|r| {
             for repair in r.repairs.iter() {
                 eprintln!("[RAFT-DISK] Site {}: recovery repaired {store}: {repair}", self.site_id_);
             }
-            if r.state.snap_index != 0 {
-                // Plan P8: the image the state names becomes the snapshot
-                // store recovery loads; snapshots off, or a missing or
-                // damaged image, fails closed.
-                let why: Option<String> = if !unsafe { raft_env_snapshots_enabled() } {
-                    Some(format!("the state names a snapshot at {} but snapshots are off (MAKO_RAFT_SNAPSHOTS)",
-                                 r.state.snap_index))
-                } else {
-                    match r.state.image.clone() {
-                        None => Some(format!("the state names a snapshot at {} without an image",
-                                             r.state.snap_index)),
-                        Some(name) => match shell.image_store(r.state.snap_index, r.state.snap_term, &name) {
-                            Ok(m) => {
-                                self.SetSnapshotManager(m);
-                                None
-                            }
-                            Err(why) => Some(why),
-                        },
-                    }
-                };
-                if let Some(why) = why {
-                    eprintln!("[RAFT-DISK] Site {}: {store}: {why}", self.site_id_);
-                    shell.stop();
-                    return false;
-                }
+            if r.state.snap_index == 0 {
+                return None;
             }
-            *shell.recovered_slot() = Some(r);
+            // Plan P8: the image the state names becomes the snapshot store
+            // recovery loads; snapshots off, or a missing or damaged image,
+            // fails closed.
+            if !unsafe { raft_env_snapshots_enabled() } {
+                return Some(format!("the state names a snapshot at {} but snapshots are off (MAKO_RAFT_SNAPSHOTS)",
+                                    r.state.snap_index));
+            }
+            let Some(name) = r.state.image.as_deref() else {
+                return Some(format!("the state names a snapshot at {} without an image", r.state.snap_index));
+            };
+            match shell.image_store(r.state.snap_index, r.state.snap_term, name) {
+                Ok(m) => {
+                    self.SetSnapshotManager(m);
+                    None
+                }
+                Err(why) => Some(why),
+            }
+        });
+        if let Some(why) = refused {
+            eprintln!("[RAFT-DISK] Site {}: {store}: {why}", self.site_id_);
+            shell.stop();
+            return false;
         }
         rusty::raft_log_info_2("[RAFT-DISK] Site {}: store {} open", self.site_id_, store);
         let _ = self.disk_.set(std::sync::Arc::new(shell));
@@ -2182,7 +2174,7 @@ impl RaftServerBase {
     fn RestoreDiskState(&self) -> bool {
         let Some(shell) = self.disk() else { return true };
         let Some(r) = shell.take_recovered() else { return true };
-        let store = crate::disk::describe(&shell.store);
+        let store = shell.store.display();
         // The entries go last first (Restore moves each in with pop); each
         // command's facts are asked once, here.
         let hard = r.state.hard;
@@ -2505,6 +2497,12 @@ impl RaftServerBase {
     pub fn InstallSnapshotReplyAccepted(&self, site_id: u16, ord: usize,
                                         snap_last_idx: u64, send_term: u64,
                                         follower_term: u64) {
+        // Disk builds: a reply landing after PrepareForShutdown closed the
+        // record queue must not step the core (a raised term would queue a
+        // record on the closed queue, and abort); the server is going.
+        if cfg!(feature = "raft_disk") && self.stopped_now() {
+            return;
+        }
         // [move, M3] The decision under mtx_, its locked actions before the
         // guard drops, the leader-change callback after ([fix, F6]).
         let mut out: CoreOutput = core_output();
@@ -3022,10 +3020,17 @@ impl RaftServerBase {
             // join cannot hang.
             if let Some(d) = self.disk() {
                 if self.is_leader_mirror_.load(rusty::sync::atomic::Ordering::Acquire) {
+                    let mut on_disk: bool = true;
                     while !d.durable.wait_last(id, std::time::Duration::from_millis(100)) {
                         if !self.apply_thread_running_.load(rusty::sync::atomic::Ordering::SeqCst) {
+                            on_disk = false;
                             break;
                         }
+                    }
+                    // Shutting down with the entry not on disk: never tell
+                    // Mako it is replicated.
+                    if !on_disk {
+                        continue;
                     }
                 }
             }
@@ -3212,9 +3217,8 @@ impl RaftServerBase {
         self.core().snapidx_ = snap_index;
         self.core().snapterm_ = snap_term;
         // Disk builds: the boundary moves and the log through it goes; the
-        // entries after it stay. (The image file is plan P8; until then a
-        // recovered state naming a snapshot fails closed.)
-        // Disk builds (P8): the image file first, then the record naming it.
+        // entries after it stay. The image file first, then the record
+        // naming it (P8).
         if let Some(d) = self.disk() {
             // SAFETY: the server's own carrier, under mtx_.
             let image = unsafe {
@@ -3268,16 +3272,8 @@ impl RaftServerBase {
     // not the server, is what the job holds, as the C++ closure used to hold
     // only the gate.
     fn queue_wake_job(&self, owner: rusty::RaftPollThreadPtr, is_shutdown: bool) {
-        let token: rusty::Box<GateWakeJob> = rusty::Box::new(GateWakeJob {
-            gate: self.replication_wake_gate_.clone(),
-            shutdown: is_shutdown,
-            durable: rusty::None,
-        });
-        unsafe {
-            raft_queue_wake_job(
-                &owner as *const rusty::RaftPollThreadPtr,
-                rusty::Box::into_raw(token) as *mut core::ffi::c_void);
-        }
+        post_gate_job(&owner, GateWakeJob { gate: self.replication_wake_gate_.clone(), shutdown: is_shutdown,
+                                            durable: rusty::None });
     }
 
     // @unsafe - Called only by HeartbeatLoop, on its bound PollThread.
@@ -4546,6 +4542,10 @@ impl RaftServerBase {
             }
             // [fix, F8] the install wrote the term, role and commit index
             self.publish_mirrors();
+            // Plan P6's evidence: the reply shows this server's term (or 0).
+            if let Some(d) = self.disk() {
+                d.park(("install", unsafe { *term_out }, None, None));
+            }
         }
         // [fix, F6] The role change's log entry and callback, both locks
         // released.
@@ -4696,6 +4696,9 @@ fn on_request_vote_locked(
             let (term, granted) = reply.into_vote();
             *reply_term = term;
             *vote_granted = granted;
+            if let Some(d) = server.disk() {
+                d.park(("vote", term.max(0) as u64, (granted != 0).then_some(can_id), None));
+            }
         }
         None => {
             // [fix, F9] Dropped: answered as an unavailable replica answers
@@ -4794,6 +4797,9 @@ fn on_append_entries_locked(
     *follower_append_ok = ok;
     *follower_current_term = term;
     *follower_last_log_index = last_log_index;
+    if let Some(d) = server.disk() {
+        d.park(("ack", term, None, (ok != 0).then_some(last_log_index)));
+    }
     server.run_locked_actions(out);  // [move, M3]
 
     if !stopped && !report.accepted() {

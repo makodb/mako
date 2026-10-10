@@ -17,9 +17,10 @@ pub const COLLECT_AUTH: usize = 8; // a collect that ended on a majority
 pub const COLLECT_DEADLINE: usize = 9; // a collect that ended at its deadline
 pub const REPLY_WOKE: usize = 10; // replies that woke a waiting collect (value 0)
 pub const REPLY_LATE: usize = 11; // replies with no collect waiting (1: woke the loop)
-const NAMES: [&str; 12] = ["queue_wait_us", "flush_us", "batch_records", "fiber_wait_us", "wake_us",
+pub const COLLECT_RELEASED: usize = 12; // a collect an earlier round's reply ended (a lagging follower freed)
+const NAMES: [&str; 13] = ["queue_wait_us", "flush_us", "batch_records", "fiber_wait_us", "wake_us",
                            "reply_hold_us", "collect_step_us", "collect_done_us", "collect_auth_us",
-                           "collect_deadline_us", "reply_woke", "reply_late"];
+                           "collect_deadline_us", "reply_woke", "reply_late", "collect_released_us"];
 
 struct Stats {
     t0: Instant,

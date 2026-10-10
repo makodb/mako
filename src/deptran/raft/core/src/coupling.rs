@@ -465,6 +465,19 @@ pub open spec fn view_frame<C>(pre: &RaftCore<C>, post: &RaftCore<C>) -> bool {
 // run's ghost log `prev`, as a step aside
 // ===========================================================================
 
+// Restore's premise: the core neither leads nor campaigns, its log is
+// empty, and some previous ghost log's replay holds the restored term, vote,
+// log and commit; the restarted core steps aside from it (LStepAside, no
+// guard). An existential: the proof takes a witness, so it holds for every
+// such log (host contract §1 item 5).
+pub open spec fn restore_premise<C>(core: &RaftCore<C>, term: u64, vote: u16, commit: u64,
+                                    rev: Seq<RaftEntry<C>>) -> bool {
+    &&& !core.is_leader_
+    &&& !core.election_in_progress_
+    &&& core.raft_log_.spec_len() == 0
+    &&& exists|prev: Seq<Entry>| #[trigger] restore_prev_ok(core, prev, term, vote, restore_log(rev), commit)
+}
+
 // Restore's entries, last first, as the log they make.
 pub open spec fn restore_log<C>(rev: Seq<RaftEntry<C>>) -> Seq<LLogEntry> {
     rev_seq(rev).map_values(|e: RaftEntry<C>| entry_view(e))
@@ -2671,16 +2684,9 @@ impl<C> RaftCore<C> {
             // [fix, F20] uncoupled: ObserveTerm's term comes in no modeled
             // message
             Event::ObserveTerm { .. } => false,
-            // [fix, F22] (disk plan P9) a restart: some previous ghost log
-            // whose replay holds the restored term, vote, log and commit; the
-            // restarted core steps aside from it (LStepAside, no guard)
-            Event::Restore { term, vote, commit, entries_rev } => {
-                &&& !self.is_leader_
-                &&& !self.election_in_progress_
-                &&& self.raft_log_.spec_len() == 0
-                &&& exists|prev: Seq<Entry>| #[trigger] restore_prev_ok(self, prev, term, vote,
-                        restore_log(entries_rev@), commit)
-            },
+            // [fix, F22] (disk plan P9) a restart (restore_premise)
+            Event::Restore { term, vote, commit, entries_rev } =>
+                restore_premise(self, term, vote, commit, entries_rev@),
             _ => true,
         }
     }

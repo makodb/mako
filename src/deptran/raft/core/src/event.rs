@@ -573,14 +573,10 @@ impl<C: Clone> RaftCore<C> {
                 let ghost rev = entries_rev@;
                 let ok: bool = self.restore(term, vote, commit, entries_rev, out);  // [fix, F22]
                 proof {
-                    // [M12] (disk plan P9) taken: the previous run's ghost log,
-                    // stepped aside; refused: nothing moved
+                    // [M12] (disk plan P9) taken: a previous ghost log the
+                    // premise provides, stepped aside; refused: nothing moved
                     let log = crate::coupling::restore_log(rev);
-                    if ok && pre.ginv() && !pre.is_leader_ && !pre.election_in_progress_
-                        && pre.raft_log_.spec_len() == 0
-                        && exists|p: Seq<glr::protocol::Raft::ghost_log::Entry>|
-                            #[trigger] crate::coupling::restore_prev_ok(&pre, p, term, vote, log, commit)
-                    {
+                    if ok && pre.ginv() && crate::coupling::restore_premise(&pre, term, vote, commit, rev) {
                         let prev = choose|p: Seq<glr::protocol::Raft::ghost_log::Entry>|
                             #[trigger] crate::coupling::restore_prev_ok(&pre, p, term, vote, log, commit);
                         pre.raft_log_.lemma_wf_bounds();
