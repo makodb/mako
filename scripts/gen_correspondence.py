@@ -15,7 +15,7 @@ import pathlib, re, sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 DOC = ROOT / "docs/migration/raft/cpp-rust-correspondence.md"
-RS = sorted((ROOT / "src/deptran/raft/src").glob("*.rs"))
+RS = sorted((ROOT / "src/deptran/raft/shell").glob("*.rs"))
 
 
 def lines(rel):
@@ -24,7 +24,7 @@ def lines(rel):
 
 
 def kernels():
-    """Distinct raft_* names declared in `extern "C"` blocks under raft/src.
+    """Distinct raft_* names declared in `extern "C"` blocks under raft/shell.
 
     The union across files, de-duplicated: five names are declared in two
     modules each, and counting per-file double-counts them."""
@@ -162,7 +162,7 @@ def catch_sites():
 def out_params():
     """Methods with a `self` receiver AND a scalar out-pointer parameter."""
     n = 0
-    for f in RS + [ROOT / "src/deptran/raft/src/scheduler_h.rs"]:
+    for f in RS + [ROOT / "src/deptran/raft/shell/scheduler_h.rs"]:
         if not f.is_file():
             continue
         for m in re.finditer(r"\bfn \w+\(\s*&(?:mut )?self\b([^)]*)\)", f.read_text(), re.S):
@@ -172,14 +172,14 @@ def out_params():
 
 
 PAIRS = [
-    ("raft/server.h", "raft/src/server_h.rs",
+    ("raft/server.h", "raft/shell/server_h.rs",
      "Rust owns it; the C++ left is kernels and a pointer-holding shim"),
-    ("raft/server.cc", "raft/src/server_cc.rs", ""),
+    ("raft/server.cc", "raft/shell/server_cc.rs", ""),
     ("raft/service.cc", "raft/rt/src/service.rs",
      "the Rust serves; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST"),
     ("raft/commo.cc", "raft/rt/src/transport.rs",
      "the Rust sends; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST"),
-    ("communicator.h", "raft/src/communicator_h.rs",
+    ("communicator.h", "raft/shell/communicator_h.rs",
      "ONE source: the Rust is transpiled into the C++ both engines link"),
 ]
 
@@ -220,7 +220,7 @@ def body():
     w(f"| C++ → Rust | prototypes in `raft/transport_exports.h` (raft_lane_rust.cc) |"
       f" {exports('src/deptran/raft/transport_exports.h')} |")
     w(f"| Rust → C++ | distinct `raft_*` kernels declared in `extern \"C\"` blocks under "
-      f"`raft/src/` | {kernels()} |")
+      f"`raft/shell/` | {kernels()} |")
     w("")
     w("## Counted facts the prose below leans on")
     w("")

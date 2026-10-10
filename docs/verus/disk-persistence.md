@@ -15,7 +15,7 @@ figures are estimates in agent-days, builds and benchmarks included.
 Every label and technical term is defined in the glossary (Appendix B).
 
 Paths follow [code-structure.md](code-structure.md): relative to
-`src/deptran/raft/` (`src/server_h.rs` is the shell, `core/src/node.rs` the
+`src/deptran/raft/` (`shell/server_h.rs` is the shell, `core/src/node.rs` the
 core), except those beginning `src/deptran/`, `src/srpc/`, `src/rusty-rustc/`,
 `src/mako/`, `scripts/`, `docs/`, `ci/`, `examples/`, `docker_build.sh` or
 `CMakeLists.txt`, which are from the repository root. `origin/mako-dev:`
@@ -282,17 +282,17 @@ them:
 | an AppendEntries refused after a higher term | term (`:1901`), vote cleared (`:1902`) | the refusal, at the new term (`:1928-1933`) |
 | a reply with a higher term (`heartbeat_apply_append_reply`) | term, vote cleared (`core/src/heartbeat.rs:1359-1360`) | nothing |
 | a campaign settled by a higher reply term (`election_settle`) | term, vote cleared (`core/src/node.rs:889-890`) | nothing |
-| a campaign start (`start_election`) | term + 1 (`:759`), vote := self (`:761`) | the RequestVote broadcast, decided at `src/server_h.rs:3173-3185`, sent at `:3220-3226` |
+| a campaign start (`start_election`) | term + 1 (`:759`), vote := self (`:761`) | the RequestVote broadcast, decided at `shell/server_h.rs:3173-3185`, sent at `:3220-3226` |
 
 One AppendEntries carries up to 256 entries or 16 MiB by default
 (`server.cc:226-240`). Three single-value steps matter as well, because what
 they send depends on the change: a heartbeat tick raises the leader's
 commit index (`core/src/heartbeat.rs:122`, via `:358`) and every send of
 that tick carries it (`:917`); a round end raises it (`:1689`) and the
-follow-up round carries it (`src/server_cc.rs:324-329`); a proposal appends
+follow-up round carries it (`shell/server_cc.rs:324-329`); a proposal appends
 (`core/src/node.rs:510`) and a later tick sends the entry. Several steps can
 also share one critical section: a won election appends the leader's no-op
-in the settlement's section (`src/server_h.rs:1543-1544` -> `:3498-3506`).
+in the settlement's section (`shell/server_h.rs:1543-1544` -> `:3498-3506`).
 
 ### 1.2 What a split write can leave on disk, and what breaks
 
@@ -621,14 +621,14 @@ between the core and its host around each Ready (§4.1).
    only on Verus's crates (`core/Cargo.toml:14-21`), and it "takes no lock,
    does no I/O, reads no clock and cannot wait"
    (`docs/verus/code-structure.md:32-37`). The shell sees whole steps
-   through one wrapper (`src/server_h.rs:1407-1443`), never single field
+   through one wrapper (`shell/server_h.rs:1407-1443`), never single field
    writes. A write at `core/src/node.rs:663` would need a
    trusted store call inside `step`. The core could make one: it already
    calls shell code during a step, through a trait with a trusted contract,
    to read a message's entries (`InboundBatch`, `core/src/node.rs:1704-1739`,
    "The host contract (unverified: the shell implements this)" at `:1718`;
    the shell's `WireBatch` implements it over C++ kernels,
-   `src/server_h.rs:3307`, `:3353-3365`). With R4 (an I/O error aborts,
+   `shell/server_h.rs:3307`, `:3353-3365`). With R4 (an I/O error aborts,
    §3.3) such a call returns nothing the core branches on, so the core stays
    a function of its events (`docs/verus/code-structure.md:63-65`). But the
    call breaks the core's design rule, puts a wait for the disk under `mtx_`
@@ -651,11 +651,11 @@ between the core and its host around each Ready (§4.1).
    only by waiting for the disk at every write, and the old C++'s sync mode
    mostly did. What it cannot do is wait once, just before the message
    leaves: that needs code that knows where messages leave, which on this
-   branch is always a critical-section boundary (`src/server_h.rs:4181-4186`,
-   `:4264-4272`, `:3173-3185` -> `:3220-3226`; `src/server_cc.rs:87-125` ->
+   branch is always a critical-section boundary (`shell/server_h.rs:4181-4186`,
+   `:4264-4272`, `:3173-3185` -> `:3220-3226`; `shell/server_cc.rs:87-125` ->
    `:139-178`). Waiting at every write costs:
    - **on the leader,** `Start` holds `mtx_` on the submit thread
-     (`src/server_h.rs:3886-3887`; the thread is created at
+     (`shell/server_h.rs:3886-3887`; the thread is created at
      `raft_worker.cc:743-753`) while `append_local` writes the entry
      (`core/src/node.rs:510`). A flush there holds `mtx_` for F per
      proposal, and meanwhile the poll thread, which runs every handler and
@@ -665,7 +665,7 @@ between the core and its host around each Ready (§4.1).
    - **on a follower,** one flush per entry plus up to four for the other
      values, on the poll thread: a full batch of 256 entries at F = 0.2 ms
      takes about 51 ms, against a 5 ms heartbeat (`server.h:169-173`) and a
-     reply deadline of min(heartbeat, 100 ms) (`src/server_cc.rs:201-210`)
+     reply deadline of min(heartbeat, 100 ms) (`shell/server_cc.rs:201-210`)
      (arithmetic);
    - **with a manager,** one flush per AppendEntries on a follower and one
      per round on the leader (group commit, §3.4).
@@ -679,13 +679,13 @@ between the core and its host around each Ready (§4.1).
    the vote check compares logs (`:1554`), the leader's payloads clone
    command handles out of the log (`core/src/heartbeat.rs:580`, `:696`,
    `:707`), and the apply hand-off reads committed entries
-   (`src/server_h.rs:3075-3144`). A log entry holds `cmd_: C`
+   (`shell/server_h.rs:3075-3144`). A log entry holds `cmd_: C`
    (`core/src/log.rs:37-48`), which in production is a 24-byte opaque
    carrier of a C++ object (`src/rusty-rustc/src/lib.rs:390-393`): its bytes
    are pointers and mean nothing after a restart. Writing an entry needs
    `raft_command_encode` (`server.cc:1414`); reading it back needs
    `raft_command_from_bytes` (`server.cc:438`) and `raft_entry_from_command`
-   (`src/server_h.rs:3446-3459`). So the disk is a write-ahead copy, read
+   (`shell/server_h.rs:3446-3459`). So the disk is a write-ahead copy, read
    only at restart. raft-rs works the same way: its `Storage` trait gives
    the core only reads (`glr:src/ports/raftrs/storage.rs:123`), and the host
    sends messages "AFTER the HardState, Entries and Snapshot are persisted"
@@ -857,16 +857,16 @@ crash state between them by the shorter-log argument of §1.3 (`:804-807`).
 
 - One place where every saved value is written: `step`
   (`core/src/event.rs:371`), reached only through the shell's wrapper
-  (`src/server_h.rs:1407-1443`).
+  (`shell/server_h.rs:1407-1443`).
 - Effects returned as data in `CoreOutput` (`core/src/output.rs:13-20`,
   `:124-133`), the natural carrier for the record.
 - Every emission at a critical-section boundary (§2.1 item 3).
 - The codec kernels (`server.cc:438`, `:1414`) and the entry builder
-  (`src/server_h.rs:3446-3459`).
-- The apply hand-off (`src/server_h.rs:3075-3144`).
-- A startup window with RPCs closed (`src/server_h.rs:1747-1748`).
+  (`shell/server_h.rs:3446-3459`).
+- The apply hand-off (`shell/server_h.rs:3075-3144`).
+- A startup window with RPCs closed (`shell/server_h.rs:1747-1748`).
 - A precedent for one line per step: the replay recorder, written from the
-  same wrapper (`src/server_h.rs:3384-3420`). It records inputs and command
+  same wrapper (`shell/server_h.rs:3384-3420`). It records inputs and command
   digests, not state, so it cannot rebuild the log.
 
 **What is new, and its size (estimates).**
@@ -875,8 +875,8 @@ crash state between them by the shorter-log argument of §1.3 (`:804-807`).
 |---|---|---|---|---|
 | the record: a field of `CoreOutput`; three last-recorded copies; `log_from` at `core/src/node.rs:510` and `:2094`; `sync` on emitting steps | `core/src/{output,node,heartbeat,event}.rs` | 80-150 | the replay check | 0.5-1.5, with `Restore` (P2) |
 | `Restore` and its checks; recorder and replayer support | `core/src/{event,node}.rs`, `replay/src/lib.rs` | 120-200 | 50-100 | (in P2) |
-| order and flush: the queue, the store lock, four barriers, the watermarks, R3, R5, the abort, the knobs | `src/server_h.rs`, `src/server_cc.rs` | 250-400 | the lab cases (P5) | 1.5-2.5, with the restore path (P3) |
-| the restore path: open, scan, decode, `step(Restore)`, the apply backlog, the campaign hold | `src/server_h.rs:1744-1869` | 120-200 | -- | (in P3) |
+| order and flush: the queue, the store lock, four barriers, the watermarks, R3, R5, the abort, the knobs | `shell/server_h.rs`, `shell/server_cc.rs` | 250-400 | the lab cases (P5) | 1.5-2.5, with the restore path (P3) |
+| the restore path: open, scan, decode, `step(Restore)`, the apply backlog, the campaign hold | `shell/server_h.rs:1744-1869` | 120-200 | -- | (in P3) |
 | the WAL crate: header; records with length and CRC32C; append, flush and injected delay; files; the recovery scan; the fault-injecting and timing-only backends | a new crate | 500-800 | 400-700 | 1.5-2.5 (P1) |
 | **total** | | **about 1,100-1,750** | **about 450-800** | **3.5-6.5**, plus 1-2 for proofs O1 and O2 (and 2-4 for the check form) |
 
@@ -898,10 +898,10 @@ RocksDB store, and §2.3 lists what those lines left out.
 | vote | `vote_for_` (`:55`) | yes | the same |
 | log | `raft_log_` (`:49`), base 1 under the gate (`:172-176`) | yes, from index 1 | an acknowledged entry must survive |
 | commit index | `commit_index_` (`:70`) | yes, in the same records | the proof needs it (§4.2); it also tells startup what to apply |
-| applied index | `execute_index_` (`:71`), `appliedIndexForWait_` (`src/server_h.rs:951`) | no | Masstree is memory-only; restarts at 0 |
+| applied index | `execute_index_` (`:71`), `appliedIndexForWait_` (`shell/server_h.rs:951`) | no | Masstree is memory-only; restarts at 0 |
 | snapshot boundary | `snapidx_`, `snapterm_` (`:73-74`) | no | snapshots stay off; disk mode is to refuse `MAKO_RAFT_SNAPSHOTS` (proposed, P3; the knob is read at `server.cc:798-802`) |
 | role, peers, round state, timers, leader hint | the rest of `RaftCore` | no | volatile in Raft; the spec's step-aside drops the role and the votes but keeps the match and next tables, which the core holds only as ghost state (`g_match_`, `g_next_`, O1) and `LBecomeLeader` resets before use (`glr@d7e04ed7:src/protocol/Raft/raft.rs:200-201`, `:226-232`; `glr:docs/ghost-log/raftrs/roadmap.md:519-520`) |
-| membership | `config_members_`, read from yaml (`src/server_h.rs:3531-3547`) | a fingerprint in the store's header | a store written under another configuration fails closed |
+| membership | `config_members_`, read from yaml (`shell/server_h.rs:3531-3547`) | a fingerprint in the store's header | a store written under another configuration fails closed |
 
 ### 3.2 Decisions in the core, I/O in the shell
 
@@ -930,7 +930,7 @@ only indexes from there on are appended (`:2125-2127`). Each site pushes
 `log_from`, as handlers push actions now. Term, vote and commit need no
 marks: comparing with the copies catches a write anywhere, the vote-only
 grant at `:685` included. The alternative, Option S, has the step wrapper
-(`src/server_h.rs:1407-1443`) diff the state around each call; it changes no
+(`shell/server_h.rs:1407-1443`) diff the state around each call; it changes no
 core code, but then the rule rests on shell code only (§2.2, §4.5).
 
 ### 3.3 The rule and the four barriers
@@ -951,14 +951,14 @@ make every crash leave the state after some whole step.
 
 | Emission | Decided in | Leaves at | Barrier |
 |---|---|---|---|
-| vote reply | `on_request_vote_body`, critical section `src/server_h.rs:4181-4186` | returned to `rt/src/service.rs:108-113`, queued by `rt/src/rpc.rs:476-491` | after `:4186`, before the return |
+| vote reply | `on_request_vote_body`, critical section `shell/server_h.rs:4181-4186` | returned to `rt/src/service.rs:108-113`, queued by `rt/src/rpc.rs:476-491` | after `:4186`, before the return |
 | AppendEntries reply, both RPC ids | `on_append_entries_body`, `:4264-4272` | `rt/src/service.rs:118-152` | after `:4272` |
 | campaign broadcast | `RequestVoteImpl`, `:3173-3185` | `raft_broadcast_vote_and_wait`, `:3220-3226` | between them |
-| AppendEntries sends | `heartbeat_tick_body`, `src/server_cc.rs:87-125` | `:139-178` | between them, when the tick has sends |
-| InstallSnapshot | `OnInstallSnapshotLocked`, `src/server_h.rs:2226` | -- | none: with snapshots off, refuse before the term write at `:2306-2307` (move the storage check at `:2402-2412` up) |
+| AppendEntries sends | `heartbeat_tick_body`, `shell/server_cc.rs:87-125` | `:139-178` | between them, when the tick has sends |
+| InstallSnapshot | `OnInstallSnapshotLocked`, `shell/server_h.rs:2226` | -- | none: with snapshots off, refuse before the term write at `:2306-2307` (move the storage check at `:2402-2412` up) |
 
 Some answers need no flush. The "not ready" answers and fix F9's drops
-(`src/server_h.rs:3928-3934`, `:3946-3952`, `:4232-4241`, `:4311-4322`)
+(`shell/server_h.rs:3928-3934`, `:3946-3952`, `:4232-4241`, `:4311-4322`)
 carry only the asker's term or zeros, and `Start`'s APPENDED
 (`:3884-3914`) promises nothing (assessment §4.4). A step that changes saved
 state but sends nothing (a reply's step-down,
@@ -971,7 +971,7 @@ a commit advance flushes at once (§3.2).
 All four Raft RPCs are fast RPCs, run inline on the transport's poll thread
 (`rt/src/rpc.rs:386-404`; `src/srpc/rpc/server.rs:1476-1479`), and the
 heartbeat and election fibers run on the same thread: the owner-thread
-startup job spawns them (`src/server_h.rs:1742`, `:1851-1867`), and a fiber
+startup job spawns them (`shell/server_h.rs:1742`, `:1851-1867`), and a fiber
 stays on the thread that created it (`rt/src/seam.rs:166-168`, `:187-211`).
 srpc only queues a reply or request; the poll loop writes it later
 (`src/srpc/rpc/server.rs:1246-1285`; `src/srpc/rpc/tcp_channel.rs:864-897`),
@@ -1009,19 +1009,19 @@ The store lock is a leaf, taken after `mtx_`. While the poll thread waits on
 the disk, `Start` and `Applied` can still take `mtx_`; in production nothing
 else emits, since every emitting step runs on the poll thread. Lab builds
 also call `ServeAppendEntries` and `ServeVote` from the harness thread
-(`src/lab.rs:508-536`; code-structure.md §7), so there a handler can wait
+(`shell/lab.rs:508-536`; code-structure.md §7), so there a handler can wait
 for the store lock under `mtx_` while the poll thread flushes: the order
 still holds, but it is a wait under `mtx_`, in the builds §3.8 uses. The lab
 either accepts that wait or routes its injections through the server's poll
 thread.
 
 Timing: the heartbeat is 5 ms (`server.h:169-173`) and replies are collected
-for min(heartbeat, 100 ms) (`src/server_cc.rs:201-210`), so when F plus the
+for min(heartbeat, 100 ms) (`shell/server_cc.rs:201-210`), so when F plus the
 round trip exceeds 5 ms every round misses its own replies; raising
-`MAKO_RAFT_HEARTBEAT_INTERVAL_US` (`src/server_h.rs:1753-1766`) raises the
+`MAKO_RAFT_HEARTBEAT_INTERVAL_US` (`shell/server_h.rs:1753-1766`) raises the
 deadline too. Election timeouts are 150-300 ms for the preferred leader and
 0.5-2 s for the others (`server.cc:165-202`); they need the "persistence
-floor" that `src/server_h.rs:1450-1452` says does not exist only if the
+floor" that `shell/server_h.rs:1450-1452` says does not exist only if the
 injected delay nears 150 ms.
 
 ### 3.5 Applying committed entries
@@ -1049,7 +1049,7 @@ is an external effect, and it must not get ahead of durability.
   acknowledge an entry durable nowhere.
 
 R3 bounds the apply thread (which polls its queue every 1 ms,
-`src/server_h.rs:2625`) by `durable_last`: no wait with two or more servers,
+`shell/server_h.rs:2625`) by `durable_last`: no wait with two or more servers,
 one flush with one (the committing step's, which `sync` requests there,
 §3.2; without that trigger nothing would flush after the election and the
 apply thread would wait for ever), and a follower waits for its own flush,
@@ -1061,13 +1061,13 @@ last completed flush. Every acknowledgement then rests on a durable commit
 and so lies inside the theorem; without it the case is argued, as glr argues
 it (`glr:docs/ghost-log/raftrs/roadmap.md:547-551`). The leader then waits
 for the next tick's flush, which a commit advance requests at once
-(`src/server_cc.rs:327-329`): about +F per commit. With one server that
+(`shell/server_cc.rs:327-329`): about +F per commit. With one server that
 tick has no sends, and the wait is for the committing step's own flush
 (§3.2).
 
 ### 3.6 Restart
 
-In `SetupInternal` (`src/server_h.rs:1744-1869`):
+In `SetupInternal` (`shell/server_h.rs:1744-1869`):
 
 1. `rpc_ready_` is false (`:1747-1748`): the handlers answer "unavailable".
    Snapshot-manager initialization (`:1795-1804`) returns early with
@@ -1078,7 +1078,7 @@ In `SetupInternal` (`src/server_h.rs:1744-1869`):
    check its header; read records to the first bad checksum, cutting a torn
    tail and failing closed if good records follow a bad one (the
    simulated-disk rule, §3.7); decode each command (`server.cc:438`) and
-   build each entry (`src/server_h.rs:3446-3459`); under `mtx_`,
+   build each entry (`shell/server_h.rs:3446-3459`); under `mtx_`,
    `step(Restore{term, vote, commit, entries})` and `run_locked_actions`;
    publish `durable_last` and `durable_commit` as the loaded last index and
    commit (all of it is durable), or R3 holds back the re-apply backlog
@@ -1096,7 +1096,7 @@ or exceed the stored term, the commit index is at most the last index, the
 term is below the index limit, and the vote is a member or none. It sets term,
 vote, log and commit, leaves a follower with applied index 0, and pushes
 `APPLY_RANGE(0, commit)`, which `EnqueueCommittedEntries`
-(`src/server_h.rs:3075-3144`) turns into the re-apply backlog. These checks
+(`shell/server_h.rs:3075-3144`) turns into the re-apply backlog. These checks
 catch a damaged or foreign store; they cannot catch a store that holds half
 a step (scenario D, §1.2), which only R1 and R2 prevent.
 
@@ -1273,7 +1273,7 @@ header or mid-file corruption fails closed, and that replica must not
 rejoin empty under its old id (B6 again); the static configuration cannot
 re-add it.
 
-**Growth.** Compaction is off (`src/server_h.rs:1342-1349`), so the log
+**Growth.** Compaction is off (`shell/server_h.rs:1342-1349`), so the log
 grows without bound: about 155 MB/s per replica at G2's rate (37,760 × 4 KB;
 inference). The whole log is loaded into memory and re-applied at restart,
 so restart time and memory grow with it.
@@ -1296,7 +1296,7 @@ the real files.
   fault-injecting store's unsynced records, replaces `core` with a fresh one
   stepped through `SetIdentity`, `Configure`, `Restore` and `EnterGates`,
   bumps the apply queue's epoch so queued entries are skipped
-  (`src/server_h.rs:2641`), and resets the mirrors, the response slots and
+  (`shell/server_h.rs:2641`), and resets the mirrors, the response slots and
   the lab learner's table for that server. It also sets
   `appliedIndexForWait_` to 0, which is not a mirror (`:1650-1664`): left as
   it was, the apply thread would skip the re-apply backlog as
@@ -1306,7 +1306,7 @@ the real files.
   avoids re-pointing every holder of the server pointer (assessment §6) but
   skips `SetupInternal`.
 - **Cases**, after MIT 6.824's persistence tests, as cases 1-11 follow its
-  earlier ones (`src/lab_cases.rs:141-549`): restart a follower, the leader, a
+  earlier ones (`shell/lab_cases.rs:141-549`): restart a follower, the leader, a
   majority, all; no second vote in a term; a crash between write and
   fdatasync with no reply carrying that state; a torn tail; mid-file
   corruption and a foreign store refused; Figure 8 with crashes; and the
@@ -1343,7 +1343,7 @@ plain words: when the leader advances its commit index at a round's end, it
 sends a follow-up round at once to announce it, and the proof needs that
 commit index on the leader's disk before the round leaves and on each
 follower's disk before it replies. In detail: a commit advanced at a round's
-end goes out at once in a follow-up round (`src/server_cc.rs:324-329`),
+end goes out at once in a follow-up round (`shell/server_cc.rs:324-329`),
 whose sends read the new commit (`core/src/heartbeat.rs:917`) and follow its
 segment in the ghost log, so the leader flushes the commit record before
 sending them, and each follower flushes its raised commit before replying
@@ -1440,7 +1440,7 @@ announcing it. In detail:
   is not used. So the raise must be durable before the reply: a flush the
   plain design skips. Likewise a leader's commit advance at a round's end
   precedes, in its ghost log, the follow-up round's sends
-  (`src/server_cc.rs:324-329`), so the leader too flushes the commit before
+  (`shell/server_cc.rs:324-329`), so the leader too flushes the commit before
   sending, even when no entry is new (§3.9).
 - **Early-send (the assessment's S3) is outside.** An entry sent before the
   leader's flush is recorded in a step a crash may discard, leaving the
@@ -1493,9 +1493,9 @@ plain estimate.
 | host-contract.md §1 item 5 (`:59-61`) | storage: none persisted; no replica restarts in place | storage trusted: a record is atomic, durable when fdatasync returns, read back as written; a crash leaves a prefix of the records |
 | host-contract.md §3, a new row | -- | `Restore`: on a core `Configure` just set up, from this server's own store, whose contents are the replay of the previous incarnation's last durable ghost log (glr B46), written under the same configuration, so that its replay's configuration is `range(0, n)` with `conf_index` 0 (glr B47) |
 | host-contract.md §7, the codec | a command's value view survives the wire codec | ...and the disk encoding (`server.cc:1414`, `:438`) |
-| fix F5's gate (`src/server_h.rs:1816-1841`) | snapshots off, failover on, static configuration | a restart is covered only in disk mode |
+| fix F5's gate (`shell/server_h.rs:1816-1841`) | snapshots off, failover on, static configuration | a restart is covered only in disk mode |
 | B6 (`docs/verus/bugs-found.md:176-189`) | a trusted assumption | retired for disk-mode runs; kept for memory-mode runs |
-| InstallSnapshot | writes term and vote outside `step`, then refuses (`src/server_h.rs:2306-2307`, `:2402-2412`) | refuses first while snapshots are off |
+| InstallSnapshot | writes term and vote outside `step`, then refuses (`shell/server_h.rs:2306-2307`, `:2402-2412`) | refuses first while snapshots are off |
 
 Still outside: a flushed write the store loses (on the simulated disk, a WAL
 bug; a real device is out of scope); a restart with another configuration
@@ -1610,25 +1610,25 @@ anyway (`sync = 1`, §3.7).
 | Assessment | What it said | On verus-raft | Evidence |
 |---|---|---|---|
 | §1.1 durable state | term, vote, log, snapshot meta; commit an optional hint | same fields, now in the core; commit becomes required for a certified restart (§4.2) | `core/src/node.rs:49`, `:55`, `:69-74` |
-| §1.2 term/vote sites | 9 sites in 2 files, no setter; T4 (a grant) logs no term change | 6 sites, all inside `step`; T4 is `core/src/node.rs:685`. Outside `step` only the snapshot paths, including the InstallSnapshot term write that runs even with snapshots off | `core/src/node.rs:663-665`, `:685`, `:759-761`, `:889-890`, `:1901-1902`; `core/src/heartbeat.rs:1359-1360`; `src/server_h.rs:2306-2307` |
+| §1.2 term/vote sites | 9 sites in 2 files, no setter; T4 (a grant) logs no term change | 6 sites, all inside `step`; T4 is `core/src/node.rs:685`. Outside `step` only the snapshot paths, including the InstallSnapshot term write that runs even with snapshots off | `core/src/node.rs:663-665`, `:685`, `:759-761`, `:889-890`, `:1901-1902`; `core/src/heartbeat.rs:1359-1360`; `shell/server_h.rs:2306-2307` |
 | §1.2 log mutators | 4 mutators, 6 sites | 3 sites in the verified configuration; compaction removes nothing under the gate | `core/src/node.rs:510`, `:2094`, `:2127`; `core/src/log.rs:314`, `:404`, `:532`, `:600` |
 | §1.3 barriers | vote reply, AppendEntries body (both ids), InstallSnapshot, candidate before broadcast, leader self-count | three of them (vote reply, AppendEntries reply, campaign broadcast) plus the leader's AppendEntries sends (the assessment's S2 flush), each at a critical-section boundary (§3.3); InstallSnapshot needs none, since it refuses first while snapshots are off; the self-count is still implicit | `core/src/heartbeat.rs:104`; `core/src/helpers.rs:326-341` |
 | §1.3, §8.12 candidate gap | persist T1 under `mtx_`, or a late write can roll back a newer term | closed by queueing records under `mtx_` in step order (§3.4) | -- |
-| §1.4 read-back | load before snapshot-manager init, with its own validation | load after `Configure` (whose premise is a fresh core, and the vote's rank needs the configuration), before `EnterGates`; `inv` and `ginv` force part of the validation (§4.3) | `src/server_h.rs:1795-1830`; `core/src/coupling.rs:2588-2591` |
-| §2 storage manager | Option C: a Rust storage trait and a log manager as the one choke point | the choke point exists: the `step` wrapper. The "log manager" reduces to the persist record, the queue and the barriers (§2.4) | `src/server_h.rs:1407-1443` |
+| §1.4 read-back | load before snapshot-manager init, with its own validation | load after `Configure` (whose premise is a fresh core, and the vote's rank needs the configuration), before `EnterGates`; `inv` and `ginv` force part of the validation (§4.3) | `shell/server_h.rs:1795-1830`; `core/src/coupling.rs:2588-2591` |
+| §2 storage manager | Option C: a Rust storage trait and a log manager as the one choke point | the choke point exists: the `step` wrapper. The "log manager" reduces to the persist record, the queue and the barriers (§2.4) | `shell/server_h.rs:1407-1443` |
 | §2 the old RocksDB store | `sync()` is a memtable flush, not an fsync, paid on every write; the removed follower wrote truncate and append as two writes | true, but every write was durable (`sync = 1`); the flush was waste, not a hole (§3.7). The two writes are confirmed; mako-dev's C++ never deletes the old tail at all (§2.3) | `d288748f5^:src/deptran/raft/rocksdb_log_storage.hpp:236`; `d288748f5^:src/deptran/raft/server.cc:840-863`; `origin/mako-dev:src/deptran/raft/server.cc:2393`, `:2408` |
 | §4.1 batching | one RPC in flight per follower; ack = min(reported, sent end, last); CONTRADICTORY; commit computed twice per round | unchanged, now in the core | `core/src/heartbeat.rs:908-911`, `:1400-1414`, `:358`, `:1689` |
 | §4.2 S1, S2, S3 | S2, with the leader counted at a durable index | S1 and S2 fit the certificate; S3 (early-send) is outside it (glr B45). Without S3 the explicit self-count is not needed (§3.5) | §4.2 |
-| §4.3, §4.4 watermarks | no durable index; "memory means durable" sites hold trivially under strict sync | unchanged; `Start` still reports APPENDED from memory | `src/server_h.rs:3884-3914` |
+| §4.3, §4.4 watermarks | no durable index; "memory means durable" sites hold trivially under strict sync | unchanged; `Start` still reports APPENDED from memory | `shell/server_h.rs:3884-3914` |
 | §5 layout | a DB per (site, partition), never under `/tmp/$USER_*`; term is u64 in state, i64 in entries | both still true; a Rust WAL is recommended instead (§3.7) | `ci/ci.sh:84`; `examples/run_rocksdb_test.sh:27`; `core/src/node.rs:69`; `core/src/log.rs:38` |
-| §6 restart tests | none; the lab only disconnects; `shardFaultTolerance` disabled; `recover_fresh` the precedent | unchanged; `recover_fresh` writes the core directly, a `T` line | `src/lab.rs:671-702`; `ci/ci.sh:615-627`; `src/lab_snapshot_cases.rs:1246-1290` |
+| §6 restart tests | none; the lab only disconnects; `shardFaultTolerance` disabled; `recover_fresh` the precedent | unchanged; `recover_fresh` writes the core directly, a `T` line | `shell/lab.rs:671-702`; `ci/ci.sh:615-627`; `shell/lab_snapshot_cases.rs:1246-1290` |
 | §6 in-process restart | rebuild the server object, re-point every holder; `PrepareForShutdown` on a fiber | a soft restart that replaces `core` avoids the re-pointing (§3.8); `PrepareForShutdown` runs on the shutdown thread | `raft_worker.cc:611`; code-structure.md:944-945 |
 | §7 items 3-4 | leader self-count and follower ack from a durable index | now changes to the verified core; item 4 also needs deferred replies or a spec change. Neither is needed under strict sync without S3 (§3.5) | `core/src/heartbeat.rs:63-135` |
-| §7 threading | handlers hold `mtx_` for the whole body; re-locking aborts | the same in substance: one critical section per handler, then the unlocked actions | `src/server_h.rs:4181-4186`, `:4264-4272`; `server.h:241-250` |
-| §8.1 blocking I/O on the reactor | which thread runs the fibers was unverified | the poll thread | `rt/src/seam.rs:166-168`, `:187-211`; `src/server_h.rs:1742`, `:1851-1867` |
-| §8.2, §8.3 apply gaps | recovery never enqueues (applied, commit]; a gap is only logged | still true; `Restore` pushes the range itself (§3.6) | `src/server_h.rs:3075-3144` |
+| §7 threading | handlers hold `mtx_` for the whole body; re-locking aborts | the same in substance: one critical section per handler, then the unlocked actions | `shell/server_h.rs:4181-4186`, `:4264-4272`; `server.h:241-250` |
+| §8.1 blocking I/O on the reactor | which thread runs the fibers was unverified | the poll thread | `rt/src/seam.rs:166-168`, `:187-211`; `shell/server_h.rs:1742`, `:1851-1867` |
+| §8.2, §8.3 apply gaps | recovery never enqueues (applied, commit]; a gap is only logged | still true; `Restore` pushes the range itself (§3.6) | `shell/server_h.rs:3075-3144` |
 | §8.4-§8.6 Mako's replay (re-apply here) | control entries not idempotent; apply depends on the role | unchanged | `raft_worker.cc:1091-1147`; `src/mako/mako.hh:198-335` |
-| §8.8-§8.10 | lanes; `raft_test` divergence; compaction needs a durable snapshot | lanes removed; the other two unchanged (compaction is skipped under the gates) | `CMakeLists.txt:465-479`; `src/server_h.rs:3499-3501`, `:1342-1349` |
+| §8.8-§8.10 | lanes; `raft_test` divergence; compaction needs a durable snapshot | lanes removed; the other two unchanged (compaction is skipped under the gates) | `CMakeLists.txt:465-479`; `shell/server_h.rs:3499-3501`, `:1342-1349` |
 | §8.14 redial | unverified whether Raft uses srpc's reconnect policy | it does (§3.6) | `src/srpc/rpc/client.rs:1586`, `:1659` |
 
 ## Appendix B. Glossary and label index

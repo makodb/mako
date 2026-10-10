@@ -1,7 +1,7 @@
 // The heartbeat round as core calls: the tick (PHASE 0 and PHASE 1's
 // decisions), each reply, and the round end (PHASE 3); the commit rule.
 //
-// [move, M1] From src/deptran/raft/src/server_cc.rs (Phase 6); the
+// [move, M1] From src/deptran/raft/shell/server_cc.rs (Phase 6); the
 // command is the type parameter C (M11) and logging is records in the
 // output (M7).
 

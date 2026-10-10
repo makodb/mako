@@ -80,7 +80,7 @@ and Verus machine time ("Schedule", end of §5).
 | Group's spec and proofs | `/home/users/zyang2/ghost-log-refinement`, `main` at `d7e04ed7`, clean | Our spec changes go on a **local branch `mako-spec`** (0.5, §4.5). |
 | Other worktrees | `/home/users/zyang2/mako`, `mako-srpc-adopt`, `mako-trace`, `mako-baseline`, `mako-devcheck` | Read only. You may use their builds as perf arms; never rebuild or commit there. |
 
-`src/server_h.rs` and `src/server_cc.rs` are canonical Rust
+`shell/server_h.rs` and `shell/server_cc.rs` are canonical Rust
 (`kind = "canonical"`, `rust-modules.toml:97-103`): edit them directly. The
 header comment of `Cargo.toml` saying they are generated is stale for them.
 Through Phase 4 the cpp and hybrid lanes transpiled the same crate with
@@ -305,7 +305,7 @@ The group's method is then applied to the core, against the group's spec with
 one small change of ours (S1, §4.2).
 
 Example. Today one heartbeat fiber sends AppendEntries (phase 1), sleeps in
-1 ms steps while replies arrive (phase 2, `src/server_cc.rs:1501-1690`, sleep
+1 ms steps while replies arrive (phase 2, `shell/server_cc.rs:1501-1690`, sleep
 at `:1676`), then advances commit (phase 3). After the change the same round is
 three kinds of core call, none of which sleeps:
 
@@ -318,7 +318,7 @@ RoundEnd               -> [ApplyRange(41..45)]
 
 (`TickHeartbeat` may return `ApplyRange` because today's phase 0 already runs
 the commit rule: `heartbeat_phase0_locked` calls `raft_commit_advance` at
-`src/server_cc.rs:767` and publishes the round's commit snapshot at `:768`; the
+`shell/server_cc.rs:767` and publishes the round's commit snapshot at `:768`; the
 caller enqueues at `:833-838`.) The shell keeps the
 1 ms polling loop and calls the core between sleeps, so timing does not change.
 Each core call closes one or more ghost-log segments, each proved to be a legal
@@ -379,7 +379,7 @@ glr/`docs/ghost-log/spec/raft-spec.md` §2; `msg_view` is defined in §2):
 **What our code relies on in addition today, and its fate:**
 - **Forged "unavailable" vote replies.** When disconnected or not RPC-ready,
   `ServeVote` answers `reply_term = can_term, vote_granted = 0`
-  (`src/server_h.rs:4704-4716`), a reply no core produced, at the candidate's
+  (`shell/server_h.rs:4704-4716`), a reply no core produced, at the candidate's
   term. `rpc_ready_` is false in production windows too: before startup is
   published, after FailStop (`:2886`), on an apply-thread failure (`:3413`),
   during shutdown (`:4570`). **Absorbed by view choice V3** (§4.3), no code
@@ -387,22 +387,22 @@ glr/`docs/ghost-log/spec/raft-spec.md` §2; `msg_view` is defined in §2):
   core as a received message, so the forged reply is never treated as
   genuine. F2 (a code fix) is kept only as a fallback. `ServeAppendEntries`'
   unavailable reply (0/0/0, `:4718-4732`) is already read as "unavailable", a
-  drop (`src/server_cc.rs:1563-1565`).
+  drop (`shell/server_cc.rs:1563-1565`).
 - **Reply attribution.** A reply must be attributed to the follower whose
   pending slot it completes (part of "truthful sender/routing"). The rest of
   pairing is not needed: a success reply carries the end index it proves,
   `follower_last_log_index = accepted_through = prev + count`
-  (`src/server_h.rs:5371`, `:5466-5469`), and the leader takes
-  `min(reported, sent_end, leader_last)` (`src/server_h.rs:276-288`). The spec's
+  (`shell/server_h.rs:5371`, `:5466-5469`), and the leader takes
+  `min(reported, sent_end, leader_last)` (`shell/server_h.rs:276-288`). The spec's
   AppendResponse is `{term, success, match_index, follower, read_ctx}`
   (glr/`src/protocol/Raft/types.rs:51`); the leader's `sent_term` and
-  `CONTRADICTORY` checks (`src/server_cc.rs:1453-1469`) are extra filters.
+  `CONTRADICTORY` checks (`shell/server_cc.rs:1453-1469`) are extra filters.
 - **Vote replies counted by number** (`rt/src/transport.rs:555-577`,
   `:625-644`): a duplicated reply counts twice. Fixed by F1 (Phase 1).
 - **Codec fidelity.** The C++ batch codec must carry the per-entry
   (term, command) list unchanged: `raft_stamped_commit`
-  (`src/server_cc.rs:999`, deep copy with the term set, `server.cc:1450-1460`)
-  on send; `raft_batch_term_at` (`src/server_h.rs:1498`) and
+  (`shell/server_cc.rs:999`, deep copy with the term set, `server.cc:1450-1460`)
+  on send; `raft_batch_term_at` (`shell/server_h.rs:1498`) and
   `raft_command_from_bytes` (`rt/src/service.rs:43`) on receive.
 
 > **"RPC correct" means exactly:** every message the shell hands to the core
@@ -479,9 +479,9 @@ carries out: `Send(peer, msg)`, `ApplyRange(i, j)`, `LeaderChanged(bool)`,
 `ResetElection`, `WakeReplication`.
 
 **Suspension point.** Where a fiber gives up the poll thread mid-action: the
-phase-2 sleep (`src/server_cc.rs:1676`), the vote wait (`rt/src/seam.rs:264-301`,
-`Fiber::sleep(200)`), `await_vote_settled` (`src/server_h.rs:4917-4930`), the
-heartbeat wait (`src/server_h.rs:3648`). A *fiber* is an srpc coroutine on the
+phase-2 sleep (`shell/server_cc.rs:1676`), the vote wait (`rt/src/seam.rs:264-301`,
+`Fiber::sleep(200)`), `await_vote_settled` (`shell/server_h.rs:4917-4930`), the
+heartbeat wait (`shell/server_h.rs:3648`). A *fiber* is an srpc coroutine on the
 poll thread.
 
 **Serialized calls (host guarantee).** `inv` means something only if no other
@@ -497,8 +497,8 @@ applied) the shell writes after each call; other threads read only mirrors.
 
 **Equivalence check / replay.** A check that a refactor did not change
 behaviour (A.4). Our lab cannot replay byte for byte today: it runs on a live
-reactor with wall-clock fibers (`rt/src/lab_runtime.rs:17-31`; `src/lab.rs:76-78`,
-`:168`) and unseeded `rand()` (`src/lab.rs:65-67`, `:566-572`). So before
+reactor with wall-clock fibers (`rt/src/lab_runtime.rs:17-31`; `shell/lab.rs:76-78`,
+`:168`) and unseeded `rand()` (`shell/lab.rs:65-67`, `:566-572`). So before
 Phase 3 it compares **modulo timing** (same leaders and terms, same committed
 logs); from Phase 3 a recorder at `step()` enables **byte-identical replay**.
 
@@ -522,8 +522,8 @@ logs); from Phase 3 a recorder at `step()` enables **byte-identical replay**.
 
 **Our own labels.** *AuthorityLedger / HeartbeatAuthority*: the leader's record
 of heartbeat acknowledgements for read-index authority
-(`src/server_cc.rs:130-470`). *ReplicationWakeGate*: the submit path's wake
-object (`src/server_h.rs:1143-1405`). *The R4 lesson*: an srpc subtree fix lost
+(`shell/server_cc.rs:130-470`). *ReplicationWakeGate*: the submit path's wake
+object (`shell/server_h.rs:1143-1405`). *The R4 lesson*: an srpc subtree fix lost
 on a sync (the since-removed `raft-latency-regression.md` §5). *CV*: standard
 deviation over mean. *MDE*: the smallest change n rounds can resolve. *Sign
 test*: how likely the split of rounds where B beat A is by chance
@@ -538,7 +538,7 @@ rises steeply. *Jetpack*: the closed-loop client sweep
 ### 3.1 Verified core vs trusted shell
 
 **The core** (crate `src/deptran/raft/core/`, Phase 6) holds:
-- the fields of `RaftConsensusState` (`src/server_h.rs:918-1014`): term, vote,
+- the fields of `RaftConsensusState` (`shell/server_h.rs:918-1014`): term, vote,
   role, leader hint, log, commit, execute index, peers' next and match;
 - config and self id (fixed at Setup), `stopped`, `pending_leader_term`;
 - the protocol half of `PendingTable` (follower, sent_term, sent_round,
@@ -561,9 +561,9 @@ Rules:
    call**: everything it needs is copied into that call's `Output` under the
    guard; an `Entries` or `ApplyRange` action carries the k entry handles and
    terms. Otherwise another call (a step-down then a different leader's append,
-   `src/server_h.rs:5434-5441`) could rewrite those slots and the shell would
+   `shell/server_h.rs:5434-5441`) could rewrite those slots and the shell would
    encode entries that differ from the logged `Send`. Today the batch is built
-   in the same lock section that chose prev (`src/server_cc.rs:1117-1222`,
+   in the same lock section that chose prev (`shell/server_cc.rs:1117-1222`,
    selection and stamping `:948-1060`); keep that property.
 2. **No suspension inside a call.** Every wait becomes a shell timer plus an
    event (`RoundEnd`, `VoteDeadline`).
@@ -583,7 +583,7 @@ Rules:
 - **Submit.** `add_log_to_nc` → `RaftWorker::Submit` (`raft_worker.cc:854`) →
   the shell clones the handle outside the lock → `with_core(|c| c.propose(cmd))`
   (role check, append at `current_term`, returns `WakeReplication`) → the shell
-  wakes the heartbeat fiber. Stays on the submit/app thread (`src/server_h.rs:4663-4697`).
+  wakes the heartbeat fiber. Stays on the submit/app thread (`shell/server_h.rs:4663-4697`).
   `propose` returns accept/reject synchronously: `Submit` returns early on
   `REJECTED`, else increments `n_tot` (`raft_worker.cc:856-862`), which
   `get_outstanding_logs` uses (`raft_main_helper.cc:977-990`). The returned
@@ -595,11 +595,11 @@ Rules:
   stamps and finalizes from the `Output` handles (`server.cc:1450-1472`, F7),
   sends, and stores the response handle.
 - **Reply.** Per completed slot, `RecvAppendResp(slot, Option<AppendReply>)`;
-  `None` = unavailable (today's 0/0/0 sentinel, `src/server_cc.rs:1563-1565`).
+  `None` = unavailable (today's 0/0/0 sentinel, `shell/server_cc.rs:1563-1565`).
 - **Commit.** `RoundEnd` runs today's `heartbeat_phase3_locked`
-  (`src/server_cc.rs:1725-1747`) and returns `ApplyRange(i, j)`.
+  (`shell/server_cc.rs:1725-1747`) and returns `ApplyRange(i, j)`.
 - **Apply.** The shell pushes `ApplyRange`'s handles to the apply queue (as
-  `EnqueueCommittedEntries`, `src/server_h.rs:3837-3905`); the apply thread pops
+  `EnqueueCommittedEntries`, `shell/server_h.rs:3837-3905`); the apply thread pops
   one entry per iteration (`:3335-3355`) and reports `Applied(n)` per entry
   (`:3429`).
 - **Follower append.** One event
@@ -608,11 +608,11 @@ Rules:
   sender), reads terms through `term_at`, validates the count, finds the first
   conflict, truncates, materializes each appended entry, advances commit, and
   returns `ApplyRange` plus the reply. This keeps today's single critical
-  section (`src/server_h.rs:5420-5460`), which the method needs: the log is a
+  section (`shell/server_h.rs:5420-5460`), which the method needs: the log is a
   marked field the spec writes in the same LFollowerAppendEntries step as
   commit and the reply (glr/`src/protocol/Raft/raft.rs:489-519`), and a marked
   write no action owns is a hard blocker (glr/`docs/ghost-log/raftrs/coupling.md:6-8`).
-  It also keeps "decode only after the gates" (`src/server_h.rs:5272-5280`).
+  It also keeps "decode only after the gates" (`shell/server_h.rs:5272-5280`).
   Materializing is one Arc clone (`server.cc:1546-1551`).
 - **Election.** `TickElection(now, timeout_sample)` increments the term, votes
   for self, returns `Send RequestVote` to every peer. Each reply becomes
@@ -632,22 +632,22 @@ Rules:
 | Mako behaviour | Handling | Spec change? |
 |---|---|---|
 | Election, vote, step-down, append accept, append reply, commit rule, leader no-op | Existing actions. `verus/commit_rule.rs` is a reduced standalone model and proof skeleton (`verus/commit_rule.rs:1-20`), not a discharged obligation; Phase 8 re-proves the rule on the core's types against `LAdvanceCommitIndex` / `commit_quorum_ok` (glr/`raft.rs:447-473`, `:806-808`). | none |
-| Vote request with higher term | `LStepDown`, then `LGrantVote` or `LRejectVote` (`src/server_h.rs:3199-3258`) | none |
+| Vote request with higher term | `LStepDown`, then `LGrantVote` or `LRejectVote` (`shell/server_h.rs:3199-3258`) | none |
 | Candidate (or same-term leader) receiving an accepted current-term append | `LStepAside` (glr/`raft.rs:223-234`), then accept (B19) | none |
 | Election win | k × `LReceiveVoteGranted`, `LBecomeLeader`, `LClientRequest` for the no-op | none |
-| Append refusals that change no state: stopped (`src/server_h.rs:5241-5246`), non-voter or unauthoritative sender (`:5255-5271`), bad payload (`:5281`, `:5349-5355`) | `LRejectAppendEntries` after **S1**, preceded where the code does so by the `LStepDown`/`LStepAside` segment of the term check (`:5320-5347`). The reply's hint reads as match 0 (B17). | **S1** |
-| Ordinary refusals: stale term, prev mismatch or prev beyond the follower's log (reply with the `last_index` hint, `src/server_h.rs:5349-5355`, which drives the leader's FAST backoff, `:762-788`), prev-0 entry-less refusal | `LRejectAppendEntries` under the **existing** guard (glr/`raft.rs:607-616`: `!prev_log_ok`, `!append_pos_ok`, fourth disjunct `ae_prev_index == 0 && !ae_has_entry`) | none |
-| Refused committed conflict (`src/server_h.rs:5414-5430`) | **V2** (§4.3): existing guard | none |
-| Entry-less append at prev 0 carrying the full commit (`src/server_cc.rs:1236`) | **V1** (§4.3) | none |
-| Phase-1 leader check outside the lock that builds the message (`src/server_cc.rs:1101` vs `:1117`) | **Code fix F3.** Covering it in the spec would need "a server may send an append of a term it no longer holds", which needs history and breaks message-term invariants: not abstract, not cheap. | none |
-| Forged unavailable vote reply (`src/server_h.rs:4704-4716`) | **View choice V3** (§4.3): vote refusals at or below the candidate's term are unmodelled input; the give-up closes `LStepAside`. Code unchanged. (A spec letting a node *send* a refusal at the candidate's term would break "a message's term ≤ its sender's term", so the spec is not the place for it.) F2 is the fallback. | none |
+| Append refusals that change no state: stopped (`shell/server_h.rs:5241-5246`), non-voter or unauthoritative sender (`:5255-5271`), bad payload (`:5281`, `:5349-5355`) | `LRejectAppendEntries` after **S1**, preceded where the code does so by the `LStepDown`/`LStepAside` segment of the term check (`:5320-5347`). The reply's hint reads as match 0 (B17). | **S1** |
+| Ordinary refusals: stale term, prev mismatch or prev beyond the follower's log (reply with the `last_index` hint, `shell/server_h.rs:5349-5355`, which drives the leader's FAST backoff, `:762-788`), prev-0 entry-less refusal | `LRejectAppendEntries` under the **existing** guard (glr/`raft.rs:607-616`: `!prev_log_ok`, `!append_pos_ok`, fourth disjunct `ae_prev_index == 0 && !ae_has_entry`) | none |
+| Refused committed conflict (`shell/server_h.rs:5414-5430`) | **V2** (§4.3): existing guard | none |
+| Entry-less append at prev 0 carrying the full commit (`shell/server_cc.rs:1236`) | **V1** (§4.3) | none |
+| Phase-1 leader check outside the lock that builds the message (`shell/server_cc.rs:1101` vs `:1117`) | **Code fix F3.** Covering it in the spec would need "a server may send an append of a term it no longer holds", which needs history and breaks message-term invariants: not abstract, not cheap. | none |
+| Forged unavailable vote reply (`shell/server_h.rs:4704-4716`) | **View choice V3** (§4.3): vote refusals at or below the candidate's term are unmodelled input; the give-up closes `LStepAside`. Code unchanged. (A spec letting a node *send* a refusal at the candidate's term would break "a message's term ≤ its sender's term", so the spec is not the place for it.) F2 is the fallback. | none |
 | Vote replies counted by number (`rt/src/transport.rs:555-577`, `:625-644`) | **Code fix F1** | none |
-| Log slot without a command (`src/server_h.rs:5385-5410`) | View invariant: every slot in [base, last] has a command | none |
-| `failover_ == false` (`src/server_h.rs:2313`) | Gate on `failover_ == true` (F5) | none |
-| Read-index authority ledger (`src/server_cc.rs:130-470`) | Unmarked; `read_ctx` reads as 0. A8 only once a read API exists. | none |
-| Snapshots, compaction, InstallSnapshot | **Gated in v1** (`MAKO_RAFT_SNAPSHOTS` unset; `src/server_h.rs:2607-2625`, checked; snapidx stays 0, base 1, the leader's snapshot branch `src/server_cc.rs:1158` unreachable). Design in §4.4.1. | v2 only |
+| Log slot without a command (`shell/server_h.rs:5385-5410`) | View invariant: every slot in [base, last] has a command | none |
+| `failover_ == false` (`shell/server_h.rs:2313`) | Gate on `failover_ == true` (F5) | none |
+| Read-index authority ledger (`shell/server_cc.rs:130-470`) | Unmarked; `read_ctx` reads as 0. A8 only once a read API exists. | none |
+| Snapshots, compaction, InstallSnapshot | **Gated in v1** (`MAKO_RAFT_SNAPSHOTS` unset; `shell/server_h.rs:2607-2625`, checked; snapidx stays 0, base 1, the leader's snapshot branch `shell/server_cc.rs:1158` unreachable). Design in §4.4.1. | v2 only |
 | Restart under the same id | **Gated in v1** as a trusted assumption. Design in §4.4.2. | v3 only |
-| Membership change | Static, fixed in `SetupInternal` (`src/server_h.rs:2479-2540`); the constructor closes one `LLoadConfig` segment (glr/`raft.rs:62-67`) | none |
+| Membership change | Static, fixed in `SetupInternal` (`shell/server_h.rs:2479-2540`); the constructor closes one `LLoadConfig` segment (glr/`raft.rs:62-67`) | none |
 | Lease reads | Out of scope; Mako does not use them | none |
 
 Net for certificate v1: **one spec change (S1), three view choices (V1-V3),
@@ -730,13 +730,13 @@ text names no Mako condition; it covers raft-rs or etcd equally.
 ### 4.3 View choices (no spec change)
 
 **V1. Prev-0 entry-less append (Q3).** Our leader puts its full commit in every
-append (`src/server_cc.rs:1236`); for an entry-less append at prev 0,
+append (`shell/server_cc.rs:1236`); for an entry-less append at prev 0,
 `LSendAppendEntries` requires `heartbeat_commit_ok`, commit ≤ the follower's
 acknowledged match (glr/`raft.rs:369`, `:683-688`).
 - *View.* For an entry-less append, `msg_view` reads `leader_commit` as
   `min(lc, prev)`; at prev 0 that is 0, satisfying `heartbeat_commit_ok`.
 - *Sound because* both ends use the same `msg_view`; the follower only uses
-  `min(lc, prev + count)` (`src/server_h.rs:5449`), and `min(min(lc, e), e) =
+  `min(lc, prev + count)` (`shell/server_h.rs:5449`), and `min(min(lc, e), e) =
   min(lc, e)`, so the follower's commit is the same under the view. The success
   reply (match = `accepted_through` = 0, `:5466`) is `LFollowerHeartbeat` with
   commit 0 (glr/`raft.rs:534-558`).
@@ -747,14 +747,14 @@ acknowledged match (glr/`raft.rs:369`, `:683-688`).
 **V2. Refused committed conflict (Q6).** The previous revision said
 `prev_log_ok` and `append_pos_ok` could both hold here. They cannot, for the
 component the refusal belongs to: the refusal fires only when the first
-conflicting index c satisfies `c ≤ old_last_log_index` (`src/server_h.rs:5408`,
+conflicting index c satisfies `c ≤ old_last_log_index` (`shell/server_h.rs:5408`,
 `:5414-5430`); under BR2 only component 0 is received, with prev = `leader_prev`
 and c ≥ prev + 1, so prev < `s.log.len()` and `append_pos_ok(s, prev, true)`
 (`prev == s.log.len()`, glr/`raft.rs:661-663`) is false. The **existing** guard
 admits the refusal (and S1 would anyway; we keep the lemma so V2 does not
 depend on S1).
 - The coupling must show the refusal precedes any marked write (check at
-  `:5414`, truncate at `src/server_h.rs:5438`); the earlier term and role updates
+  `:5414`, truncate at `shell/server_h.rs:5438`); the earlier term and role updates
   (`:5320-5347`, `:5357-5365`) are their own `LStepDown`/`LStepAside` segments.
 - The refusal stays in the code (defence against malformed input). We do not
   add raft-rs's unreachability proof (their B7): days of work for no gain.
@@ -765,11 +765,11 @@ spec tracks, so the core may hear it without the proof treating it as a
 received message.
 - *Today.* The forged unavailable reply always has `reply_term == can_term`
   (the candidate's own term) and `vote_granted == 0`
-  (`src/server_h.rs:4704-4716`). The Rust-lane tally only counts it as a "no"
+  (`shell/server_h.rs:4704-4716`). The Rust-lane tally only counts it as a "no"
   (`rt/src/transport.rs:601-624`: `no += 1`; `highest_term` changes only if the
   reply term is greater). A step-down to a higher term happens only on
   `ADVANCE_HIGHER_TERM` from `observed_response_term`
-  (`src/server_h.rs:4048-4073`), which a forged reply can never supply, because
+  (`shell/server_h.rs:4048-4073`), which a forged reply can never supply, because
   its term equals the campaign term. A "no" quorum only makes the candidate
   give up its campaign.
 - *View.* The shell hands vote replies with `granted == false` and
@@ -793,7 +793,7 @@ received message.
 #### 4.4.1 Snapshots, compaction, InstallSnapshot (spec v2, not scheduled)
 
 Gated for v1 because they are off by default and in every perf sweep
-(`src/server_h.rs:2607-2625`), the group lists A10 as to-do
+(`shell/server_h.rs:2607-2625`), the group lists A10 as to-do
 (glr/`docs/ghost-log/README.md:231`), and our snapshot path crosses C++ kernels
 (`server.cc`, `rt/src/snapshot.rs`, `snapshot_seam_cpp.cc`).
 
@@ -820,7 +820,7 @@ Design sketch (holds for any Raft with snapshots):
 
 #### 4.4.2 Restart from persisted state (spec v3, not scheduled; a real gap)
 
-- Mako's Raft is memory-only (`src/server_h.rs:2219-2221`); a grep found no
+- Mako's Raft is memory-only (`shell/server_h.rs:2219-2221`); a grep found no
   persistence of term, vote or log (**not verified** beyond the grep; with
   snapshots on, recovery restores state-machine bytes only).
 - So a replica that restarts and rejoins under its old id comes back at term 0
@@ -938,17 +938,17 @@ cut fibers, a separate crate, ghost code); the algorithm is not rewritten.
 
 | Behaviour (rule, constants, order of effects) | Where today |
 |---|---|
-| Vote grant: term, log up-to-date, one vote per term | `doVote`, `src/server_h.rs:3199-3258` |
-| Commit: majority match by rank selection, current-term entry | `raft_commit_advance`, `src/server_cc.rs:633-666`; `majority_match_index`, `src/server_h.rs:881-903` |
-| Append accept, conflict search, truncation, refused committed conflict, follower commit = min(leader_commit, prev+count) | `src/server_h.rs:5214-5460` |
-| Ack = min(reported, sent_end, leader_last) | `src/server_h.rs:276-288` |
-| Batching caps (256 entries, 16 MiB) and per-entry byte cap while selecting | `src/server_cc.rs:935-1060` |
-| Per-follower stop-and-wait: one in-flight slot, cleared on term change or leadership loss; follower order; where `pending_rpcs.place` happens | `PendingTable`, `src/server_cc.rs:38-90` |
-| Heartbeat round: phase 0 commit, 1 send, 2 collect with early-quorum exit, 3 commit + ledger settle | `src/server_cc.rs:710-1791` |
-| Preferred-leader election timeouts and startup grace | `GetElectionTimeout`, `src/server_h.rs:2223-2245` |
-| Read-index authority rounds | `src/server_cc.rs:130-470` |
-| Timers: 1 ms phase-2 poll (`src/server_cc.rs:1505`, sleep `:1676`), min(100 ms, heartbeat) round cap (`:1508-1517`), 200 µs vote poll and 1 s deadline (`rt/src/seam.rs:264-301`), 1 ms apply idle sleep (`src/server_h.rs:3366-3372`), election-timeout knobs | as listed |
-| Apply one entry per iteration, `Applied` per entry | `src/server_h.rs:3335-3355`, `:3429` |
+| Vote grant: term, log up-to-date, one vote per term | `doVote`, `shell/server_h.rs:3199-3258` |
+| Commit: majority match by rank selection, current-term entry | `raft_commit_advance`, `shell/server_cc.rs:633-666`; `majority_match_index`, `shell/server_h.rs:881-903` |
+| Append accept, conflict search, truncation, refused committed conflict, follower commit = min(leader_commit, prev+count) | `shell/server_h.rs:5214-5460` |
+| Ack = min(reported, sent_end, leader_last) | `shell/server_h.rs:276-288` |
+| Batching caps (256 entries, 16 MiB) and per-entry byte cap while selecting | `shell/server_cc.rs:935-1060` |
+| Per-follower stop-and-wait: one in-flight slot, cleared on term change or leadership loss; follower order; where `pending_rpcs.place` happens | `PendingTable`, `shell/server_cc.rs:38-90` |
+| Heartbeat round: phase 0 commit, 1 send, 2 collect with early-quorum exit, 3 commit + ledger settle | `shell/server_cc.rs:710-1791` |
+| Preferred-leader election timeouts and startup grace | `GetElectionTimeout`, `shell/server_h.rs:2223-2245` |
+| Read-index authority rounds | `shell/server_cc.rs:130-470` |
+| Timers: 1 ms phase-2 poll (`shell/server_cc.rs:1505`, sleep `:1676`), min(100 ms, heartbeat) round cap (`:1508-1517`), 200 µs vote poll and 1 s deadline (`rt/src/seam.rs:264-301`), 1 ms apply idle sleep (`shell/server_h.rs:3366-3372`), election-timeout knobs | as listed |
+| Apply one entry per iteration, `Applied` per entry | `shell/server_h.rs:3335-3355`, `:3429` |
 | Synchronous submit accept/reject | `raft_worker.cc:853-862`, `raft_main_helper.cc:977-990` |
 
 Timers stay frozen through Phase 6; Phase 7 may change only what its own
@@ -961,14 +961,14 @@ Each lands in its own commit with a lab case showing the new behaviour.
 | No. | Phase | Change | Why |
 |---|---|---|---|
 | F1 | 1 | Vote tally counts **distinct voter ids** for the campaign term (Rust lane `TallyState`, `rt/src/transport.rs:555-577`, `:625-644`; the callback knows its peer, `:559`); quorum rule unchanged; C++ lane untouched | Duplicated replies must not count twice |
-| F2 | fallback only | **Not planned**: V3 (§4.3) absorbs the forged reply. Only if the Phase 3 coupling table shows the "no" count reaches a marked field, and after stopping at 0.7 point 7: `ServeVote`'s unavailable branch (`src/server_h.rs:4704-4716`) answers with an RPC error. The Rust-lane handler can already do that: `fn vote(&self, req) -> Result<VoteResponse, i32>` (`rt/src/service.rs:108`), and the caller's callback drops `code != 0` (`rt/src/transport.rs:567-569`). `ServeVote` reports through out-parameters, so it must also signal "unavailable" (a return value) for `vote` to return `Err(code)`. Cost: a not-ready peer's "no" becomes silence, so a candidate waits for its 1 s deadline (G7) | The forged reply is not genuine |
-| F3 | 1 | Inside the phase-1 locked block (`src/server_cc.rs:1117`): `if !is_leader_ \|\| current_term_ != round.term() { break }`, and send the `commit_index_` read there, not phase 0's snapshot (`:768`, `:1236`) | LSendAppendEntries' commit clause (glr/`raft.rs:363-368`); the values agree today but Phase 7 could break that |
-| F4 | 1 | Reject term-0 entries in `AeDecodePayload` (`src/server_h.rs:4263-4288`, checked: no check today) and on the single-entry path | B16 |
+| F2 | fallback only | **Not planned**: V3 (§4.3) absorbs the forged reply. Only if the Phase 3 coupling table shows the "no" count reaches a marked field, and after stopping at 0.7 point 7: `ServeVote`'s unavailable branch (`shell/server_h.rs:4704-4716`) answers with an RPC error. The Rust-lane handler can already do that: `fn vote(&self, req) -> Result<VoteResponse, i32>` (`rt/src/service.rs:108`), and the caller's callback drops `code != 0` (`rt/src/transport.rs:567-569`). `ServeVote` reports through out-parameters, so it must also signal "unavailable" (a return value) for `vote` to return `Err(code)`. Cost: a not-ready peer's "no" becomes silence, so a candidate waits for its 1 s deadline (G7) | The forged reply is not genuine |
+| F3 | 1 | Inside the phase-1 locked block (`shell/server_cc.rs:1117`): `if !is_leader_ \|\| current_term_ != round.term() { break }`, and send the `commit_index_` read there, not phase 0's snapshot (`:768`, `:1236`) | LSendAppendEntries' commit clause (glr/`raft.rs:363-368`); the values agree today but Phase 7 could break that |
+| F4 | 1 | Reject term-0 entries in `AeDecodePayload` (`shell/server_h.rs:4263-4288`, checked: no check today) and on the single-entry path | B16 |
 | F5 | 1 | `verified_config_ok()` at the end of `SetupInternal`: snapshots off ⇒ snapidx 0, base 1; `failover_` true; static config containing self. Logs in a normal build, fail-stops in a gated build | Makes the gate explicit |
 | F6 | 2 | Leader-change callback and `raft_log_set_is_leader_entry` run after `mtx_` is released, in emitted order | Effects become actions; removes a lock-order hazard |
 | F7 | 3 | Entry stamping and finalize (`server.cc:1450-1472`) run after the guard, from `Output` handles | Same deep copy, outside the lock |
-| F8 | 4 | `CommitIndex`, `IsLeader`, `GetLeaderHint` read atomic mirrors | Removes a data race (`src/server_h.rs:4655-4657` is an unlocked read today) |
-| F9 | 6 | `step_checked` refuses (no reply) only: sender self or not a configured voter (B20), term 0, a success reply claiming more than the leader's log (B4), entry term 0 (B16), and raft-rs's prev shape (prev index 0 ⇔ prev term 0; index + count must not overflow; glr/`src/ports/raftrs/raft.rs:2999-3000`, which has **no** prev ≤ last check). A prev beyond the follower's log is **not** refused: it is ordinary log repair, answered today with a reject carrying the `last_index` hint (`src/server_h.rs:5349-5355`) that drives the leader's FAST backoff (`:762-788`), and it is `LRejectAppendEntries` under the existing guard (`!prev_log_ok`, glr/`raft.rs:612`). That path stays unchanged | Out of gate; a refusal is a drop |
+| F8 | 4 | `CommitIndex`, `IsLeader`, `GetLeaderHint` read atomic mirrors | Removes a data race (`shell/server_h.rs:4655-4657` is an unlocked read today) |
+| F9 | 6 | `step_checked` refuses (no reply) only: sender self or not a configured voter (B20), term 0, a success reply claiming more than the leader's log (B4), entry term 0 (B16), and raft-rs's prev shape (prev index 0 ⇔ prev term 0; index + count must not overflow; glr/`src/ports/raftrs/raft.rs:2999-3000`, which has **no** prev ≤ last check). A prev beyond the follower's log is **not** refused: it is ordinary log repair, answered today with a reject carrying the `last_index` hint (`shell/server_h.rs:5349-5355`) that drives the leader's FAST backoff (`:762-788`), and it is `LRejectAppendEntries` under the existing guard (`!prev_log_ok`, glr/`raft.rs:612`). That path stays unchanged | Out of gate; a refusal is a drop |
 | F10 | 5, optional | Reply echo `(follower, sent_term, sent_end)` on the Rust-lane wire; mismatch refused | Defence in depth only |
 | F11a-d | 7, optional | (a) replies as events, `RoundEnd` at quorum or deadline; (b) eventfd wake; (c) blocking apply channel with batched `Applied(n)`; (d) poll-thread ownership | Performance only |
 | F12 | fixes | The round end advances the commit index only while the core leads: `heartbeat_phase3_locked` calls `raft_commit_advance` only when `core.is_leader_` (bugs-found B17) | The commit rule is the leader's (`LAdvanceCommitIndex`'s guard) |
@@ -982,7 +982,7 @@ Each lands in its own commit with a lab case showing the new behaviour.
 
 Because of S1, the extra append refusals (stopped, non-voter, unauthoritative
 sender, bad payload) and the refused committed conflict
-(`src/server_h.rs:5240-5349`, `:5413-5429`) **stay exactly as they are**.
+(`shell/server_h.rs:5240-5349`, `:5413-5429`) **stay exactly as they are**.
 
 **Adding to the list**: a behaviour that cannot be specified abstractly and
 correctly becomes F12, F13, ... with a row as above; stop at 0.7 point 3 first.
@@ -1108,7 +1108,7 @@ code every child carries.
 - The lab comparator and the `LABCOMMIT` lines (A.4 item 1).
 - Trace the leader-change callback (`raft_worker.cc:311-330` →
   `raft_main_helper.cc:651-726`) for re-entry into Raft (needed by F6).
-- **Spikes.** Put `PeerTable::majority_match_index` (`src/server_h.rs:881`) in a
+- **Spikes.** Put `PeerTable::majority_match_index` (`shell/server_h.rs:881`) in a
   small `verus!` crate and (a) build it in the `raft_rust` cargo lane with ghost
   code erased; (b) run it through rusty-cpp (cpp/hybrid lanes); (c) match the
   Release opt-level and LTO; (d) try the two spec-import options of §4.5.
@@ -1149,19 +1149,19 @@ report (0.7 point 1).
 can read; the code-side spec mismatches are gone.
 
 **Changes:**
-- `pub struct RaftCore` in `src/server_h.rs` holding §3.1's fields; move the
-  heartbeat round state out of `HeartbeatRoundState` (`src/server_cc.rs:1805-1831`).
+- `pub struct RaftCore` in `shell/server_h.rs` holding §3.1's fields; move the
+  heartbeat round state out of `HeartbeatRoundState` (`shell/server_cc.rs:1805-1831`).
   `RaftServerBase` holds `core: RaftCore` in place of `state_` (M1/M2, about
   413 mechanical lines).
 - Pure functions take `&mut RaftCore`/`&RaftCore` with unchanged bodies:
-  `raft_commit_advance` (`src/server_cc.rs:633`), `heartbeat_apply_append_reply`
+  `raft_commit_advance` (`shell/server_cc.rs:633`), `heartbeat_apply_append_reply`
   (`:1397`), `heartbeat_phase0_locked` (`:710`), `heartbeat_phase3_locked`
-  (`:1725`), the ~40 predicates at `src/server_h.rs:101-445`.
-- `raft_on_request_vote` (`src/server_h.rs:4974`) and `raft_on_append_entries`
+  (`:1725`), the ~40 predicates at `shell/server_h.rs:101-445`.
+- `raft_on_request_vote` (`shell/server_h.rs:4974`) and `raft_on_append_entries`
   (`:5214`) are not pure (they reach `stepDown`/`setIsLeader`, FFI, clocks,
   `EnqueueCommittedEntries`) and keep `&mut RaftServerBase` until Phase 3.
 - F1, F3, F4, F5 (A.2; F2 is not done, V3 replaces it). M9: `rusty::BTreeSet`
-  in HeartbeatAuthority → sorted `Vec<u16>` (`src/server_cc.rs:130-250`).
+  in HeartbeatAuthority → sorted `Vec<u16>` (`shell/server_cc.rs:130-250`).
 - New lab cases: duplicated vote reply, stale-term vote reply, vote request to
   a server whose `rpc_ready_` is false (pins today's behaviour: the candidate
   counts a "no" and gives up on a "no" quorum without waiting for its
@@ -1176,7 +1176,7 @@ no callbacks.
 
 | Today | Becomes |
 |---|---|
-| `EnqueueCommittedEntries` (`src/server_h.rs:3837-3905`) | `ApplyRange{from, to, handles}` (M3) |
+| `EnqueueCommittedEntries` (`shell/server_h.rs:3837-3905`) | `ApplyRange{from, to, handles}` (M3) |
 | `setIsLeader`/`stepDown` (`:2281-2406`, `:4175-4194`) | pure `become_leader()`/`become_follower(hint)` returning `LeaderChanged`, `AppendNoop`, `ResetElection`, `WakeReplication`; FFI `raft_log_set_is_leader_entry` (`:2284`) and the callback move to the shell (F6) |
 | `resetTimerLocked` (`:2251-2271`), `GetElectionTimeout` (`:2223-2245`) | `now`, `timeout_sample` event parameters (M4) |
 | `AppendLeaderNoop` (`:4224`) | shell builds the handle; core appends |
@@ -1195,20 +1195,20 @@ spike crate.
 **Goal.** No core call contains a sleep or wait; timing identical.
 
 **Changes (M5):**
-- **Heartbeat** (`src/server_cc.rs:798-1791`, ~1,000 lines): phases 0-1 →
+- **Heartbeat** (`shell/server_cc.rs:798-1791`, ~1,000 lines): phases 0-1 →
   `tick_heartbeat`; each completed slot → `on_append_resp(ord, Option<AppendReply>)`
   (step-down folded in, today `:1591`); phase 3 → `round_end`. The shell keeps
   the 1 ms loop (`:1505`), the deadline (`:1508-1517`, checked `:1664-1667`) and
   the early-quorum exit (`:1658-1662`). Same follower order and
   `pending_rpcs.place` position. F7.
-- **Election:** `RequestVoteImpl` section 1 (`src/server_h.rs:3947-4005`) →
+- **Election:** `RequestVoteImpl` section 1 (`shell/server_h.rs:3947-4005`) →
   `start_election`; replies → `on_vote_resp(from, term, granted)` (raises
   `decided`); section 2 (`:4049-4170`) → `election_settle`, the only place that
   becomes leader. The shell keeps `raft_broadcast_vote_and_wait`'s 200 µs / 1 s
   loop (`rt/src/seam.rs:264-301`), polling `core.decided()`.
 - **Inbound:** `ServeVote`/`ServeAppendEntries` call `core.on_request_vote` /
   `core.on_append_entries` (§3.2); the payload enters as `WireBatch`.
-- `ElectionTimerLoop` (`src/server_h.rs:4880-4911`) calls `core.tick_election`.
+- `ElectionTimerLoop` (`shell/server_h.rs:4880-4911`) calls `core.tick_election`.
 - Replay recorder (A.4 item 3).
 - Write `docs/verus/coupling-table.md`, the path-by-path analogue of
   glr/`docs/ghost-log/raftrs/coupling.md` §3: the work list for Phase 8. It
@@ -1227,14 +1227,14 @@ spike crate.
   finds every site; 96 `mtx_` lines in `server_h.rs`).
 - F8: mirrors `commit_index`, `is_leader`, `leader_hint`, `term` published after
   each call; `CommitIndex()` (called from `raft_main_helper.cc:989`) and
-  `IsLeader`/`GetLeaderHint` (`src/server_h.rs:4600-4609`; app threads at
+  `IsLeader`/`GetLeaderHint` (`shell/server_h.rs:4600-4609`; app threads at
   `raft_main_helper.cc:1166-1167`) read them without `mtx_`.
-- `PublishAppliedIndex` (`src/server_h.rs:2089`) → `with_core(|c| c.on_applied(n))`,
+- `PublishAppliedIndex` (`shell/server_h.rs:2089`) → `with_core(|c| c.on_applied(n))`,
   still once per entry; `appliedIndexForWait_` stays a mirror (readers:
   `:2076`, `:2716`, `:2815`, `:3036`, `:3387`).
 - `SetPreferredLeader` (`raft_main_helper.cc:889`, `:918`, `:1300`) writes a
   shell atomic (only the timeout choice reads it).
-- Under the gate, `CompactLog` (`src/server_h.rs:2124`) and
+- Under the gate, `CompactLog` (`shell/server_h.rs:2124`) and
   `MaybeCreateSnapshot` (`:3718`) do nothing.
 
 **Gate.** Tier 1 run **twice**, counting first-attempt failures (a threading
@@ -1262,8 +1262,8 @@ the verified code itself: no separate port.
   `step(&mut self, ev: Event, out: &mut Output)` and `new_gated(cfg) -> Result`;
   `server_h.rs`/`server_cc.rs` keep only the shell.
 - Labelled rewrites only (A.3): M7, M8, M9, terms as a single u64
-  (`src/server_h.rs:549-557`), M11, no SipHash, no allocating `Default`.
-- `RaftLog` keeps its blocked layout (`src/server_h.rs:581-725`, chosen against
+  (`shell/server_h.rs:549-557`), M11, no SipHash, no allocating `Default`.
+- `RaftLog` keeps its blocked layout (`shell/server_h.rs:581-725`, chosen against
   reallocation stalls, `:636-639`) behind a `view(): Seq<Term>` spec.
 - F9 (`step_checked`, integer checks only).
 - Cpp and hybrid lanes: **removed** (Q9), the phase's first commit. The core
@@ -1297,10 +1297,10 @@ lint.
   (glr/`src/ports/raftrs/coupling.rs:2205-2431`).
 - **Decided (read in code): the leader updates `match_index` by `max()`.**
   `accept_through` raises `match_` only if `acknowledged_through > match_`, and
-  `next_` only moves forward (`src/server_h.rs:788-798`). The acknowledged
-  value is `min(reported, sent_end, leader_last)` (`src/server_h.rs:276-288`,
-  applied at `src/server_cc.rs:1474-1482`); a reply with
-  `reported < sent_end` is dropped as `CONTRADICTORY` (`src/server_cc.rs:1468-1469`), a genuine
+  `next_` only moves forward (`shell/server_h.rs:788-798`). The acknowledged
+  value is `min(reported, sent_end, leader_last)` (`shell/server_h.rs:276-288`,
+  applied at `shell/server_cc.rs:1474-1482`); a reply with
+  `reported < sent_end` is dropped as `CONTRADICTORY` (`shell/server_cc.rs:1468-1469`), a genuine
   follower reports exactly `accepted_through = prev + count = sent_end`, and
   `leader_last` cannot fall below `sent_end` within a term, so ack equals the
   reply's own match. `LNextAtomic` binds `nmi == rmi` (glr/`raft_refinement.rs:78-81`)
@@ -1349,7 +1349,7 @@ gated on its own; the core must not change (A.4 item 5).
   deadline (`src/srpc/reactor/epoll_wrapper.rs:146-169`) instead of the fixed
   1 ms, so the 0-1 ms submit→poll hop is gone without a Raft change.
 - **F11c blocking apply channel** replacing `raft_thread_sleep_ms(1)`
-  (`src/server_h.rs:3372`), draining up to K entries then one `Applied(n)`.
+  (`shell/server_h.rs:3372`), draining up to K entries then one `Applied(n)`.
   Review the readers of `appliedIndexForWait_`/`execute_index_` (Phase 4 list
   and the committed-conflict check `:5413-5418`) for the delay; add a lab case
   that waits on the applied index.
@@ -1369,7 +1369,7 @@ G1-G6 (+G7 for F11a); Tier 3 milestone after the last. Expected: G1 improves
 ### Phase 9 (not scheduled). Remove the gates
 - **Snapshots**: spec v2 (§4.4.1) on `mako-spec`, then events `SnapshotCreated`,
   `Compact`, `RecvInstallSnapshot` (decide → trusted install → `InstallDone`);
-  `rt/src/snapshot.rs` (628 lines) and `src/lab_snapshot_cases.rs` (1,397 lines)
+  `rt/src/snapshot.rs` (628 lines) and `shell/lab_snapshot_cases.rs` (1,397 lines)
   come into scope. Gate with the snapshot perf points (§6 Tier 3). About 1.5-2.5
   agent-weeks.
 - **Restart**: spec v3 (§4.4.2), only once Mako persists term, vote and log
@@ -1477,7 +1477,7 @@ in-bound losses cannot add up (nine phases at +2% each could otherwise drift
 **Tier 1 (every commit).** The suites in the command block below; Paxos suites
 and `srpcTests` too for any srpc change; first-attempt failures counted (the
 Raft suites retry once, `ci/ci.sh:519-540`); TEST 56 ("CreateSnapshot and
-compaction", `src/lab_snapshot_cases.rs:303-306`) is intermittently flaky on
+compaction", `shell/lab_snapshot_cases.rs:303-306`) is intermittently flaky on
 hybrid: rerun once, two failures is a failure. Every perf run must show
 `out_of_order`, `gaps`, `duplicates` and `foreign_applied` all 0. Enforced:
 `raft_bench.sh` exits 8 with `log integrity violation` in its log when any is
@@ -1696,7 +1696,7 @@ records the sweep under `$RESULTS/p0/sweep/child`.)
    vote "no" count reach a marked field on any path (V3; Phase 3 coupling
    table)?
 5. How large is the pure protocol subset of `server_h.rs`/`server_cc.rs`?
-6. Does anything outside `src/deptran/raft/src` read the authority ledger? (A
+6. Does anything outside `src/deptran/raft/shell` read the authority ledger? (A
    grep found nothing.)
 7. Paired spread per G point, and so round counts (Phase 0).
 8. Does S1 need the same rlimit under `$VERUS_PIN`? Does the spec import work

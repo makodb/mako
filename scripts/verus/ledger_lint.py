@@ -52,7 +52,10 @@ BASE = 'verus-p0'
 MOVED_FROM = '43c57e3ac'
 CORE = 'src/deptran/raft/core'
 # Where the core's code came from, at the baseline.
-CORPUS_DIRS = ['src/deptran/raft/src', 'src/deptran/raft/rt/src']
+# The shell lived at src/deptran/raft/src until it was renamed shell/
+# (2026-10-10); the baselines predate the rename, so both are read (a path
+# a revision lacks is skipped).
+CORPUS_DIRS = ['src/deptran/raft/src', 'src/deptran/raft/shell', 'src/deptran/raft/rt/src']
 
 TAG = re.compile(r'\[(move|fix),\s*[MF]\d+|\[M\d+\]|\[M\d+,|\[fix,\s*F\d+')
 COMMENT = re.compile(r'^\s*(//|/\*|\*)')

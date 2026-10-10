@@ -1,6 +1,6 @@
 // The pure decision helpers (raft_server_*) and their compile-time checks.
 //
-// [move, M1] Moved verbatim from src/deptran/raft/src/server_h.rs (Phase 6),
+// [move, M1] Moved verbatim from src/deptran/raft/shell/server_h.rs (Phase 6),
 // paths aside: the rust lane's rusty::Vec/Option are std's own.
 
 #[allow(unused_imports)]
@@ -496,7 +496,7 @@ pub const fn raft_server_leader_rpc_sender_is_authoritative(
 }
 
 // [move, M1] The two quorum helpers the authority ledger uses, copied from
-// src/deptran/raft/src/quorum_hpp.rs (whose inline-DSL block in quorum.hpp
+// src/deptran/raft/shell/quorum_hpp.rs (whose inline-DSL block in quorum.hpp
 // stays the source of the C++ copies). The core depends on no shell crate.
 #[verifier::allow_in_spec]
 pub const fn raft_quorum_majority_count(total: usize) -> usize

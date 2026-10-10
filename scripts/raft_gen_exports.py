@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the `extern "C"` export layer over RaftServerBase.
 
-Reads the `pub fn` signatures from src/deptran/raft/src/server_h.rs for the
+Reads the `pub fn` signatures from src/deptran/raft/shell/server_h.rs for the
 methods listed below and prints one `pub unsafe extern "C" fn raft_server_<snake>`
 per method, forwarding to it. `&self` -> `s: *const RaftServerBase`, `&mut self`
 -> `s: *mut RaftServerBase`, `&T` params -> `*const T` (dereferenced at the
@@ -16,7 +16,7 @@ import pathlib
 import re, sys
 
 RS = str(pathlib.Path(__file__).resolve().parent.parent /
-         'src' / 'deptran' / 'raft' / 'src' / 'server_h.rs')
+         'src' / 'deptran' / 'raft' / 'shell' / 'server_h.rs')
 INTERFACE = ['set_site_identity', 'set_commo', 'reg_learner_action', 'EnsureSetup', 'WaitForStartup',
              'PrepareForShutdown', 'IsLeader', 'GetLeaderHint', 'SetPreferredLeader',
              'RegisterLeaderChangeCallback', 'IsRpcReady', 'SiteId', 'PartitionId',
@@ -210,7 +210,7 @@ LIFECYCLE_H = ['// --- Lifetime: Rust allocates and frees; the shim holds the po
                'RaftServerBase* raft_server_new();', 'void raft_server_delete(RaftServerBase* s);']
 
 # Two groups, and only two. The lab harness reads the struct directly from
-# Rust (src/deptran/raft/src/lab*.rs), so it needs no exports of its own.
+# Rust (src/deptran/raft/shell/lab*.rs), so it needs no exports of its own.
 GROUPS = (('The replication interface: TxLogServer and RaftSpecific.', INTERFACE),
           ('What the kernels in server.cc call back into.', KERNEL_CALLED))
 

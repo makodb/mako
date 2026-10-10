@@ -1,7 +1,7 @@
 // The Rust lane's runtime seam: the reactor- and socket-facing kernels the
 // Raft core calls, implemented over the Rust srpc crate.
 //
-// WHAT THIS IS. The core (src/deptran/raft/src) never names a runtime. It
+// WHAT THIS IS. The core (src/deptran/raft/shell) never names a runtime. It
 // calls a fixed set of `extern "C"` kernels -- spawn a fiber, sleep, wait on
 // an event, queue a wake job, send an RPC -- and carries the runtime's handles
 // as opaque carriers whose bytes it never reads (src/rusty-rustc), over the

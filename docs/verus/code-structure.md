@@ -7,8 +7,8 @@ answers the questions the owner asked while learning this code. §0 gives the
 short answers; the later sections give the evidence.
 
 Paths are relative to `src/deptran/raft/`, as in
-[host-contract.md](host-contract.md): `src/server_h.rs` is
-`src/deptran/raft/src/server_h.rs`, and `core/src/node.rs` is the core
+[host-contract.md](host-contract.md): `shell/server_h.rs` is
+`src/deptran/raft/shell/server_h.rs`, and `core/src/node.rs` is the core
 crate. A path that begins with `src/deptran/` (such as
 `src/deptran/raft_main_helper.cc`), `src/srpc/`, `src/rusty-rustc/`,
 `src/mako/`, `scripts/`, `docs/` or `CMakeLists.txt` is from the repository
@@ -63,7 +63,7 @@ effect is in `src`: the lock and the action executor, the fiber loops and
 the wake gate, startup, shutdown and the apply thread, the Mako interface
 (C++ objects reached through about 80 kernel declarations), the RPC glue
 and the recorder. The whole snapshot protocol (about 950 lines) never moved
-into the core, and 23% of `src/server_h.rs` is comments. §4.
+into the core, and 23% of `shell/server_h.rs` is comments. §4.
 
 **(4) A server calls out, and other servers call back into it: how is that
 handled?** The candidate holds `mtx_` only in short critical sections that
@@ -87,7 +87,7 @@ re-runs the recorded events through a fresh core, requiring the same text.
 It shows the core is a function of its events, not that threads behave. §9.
 
 **What `mtx_` guards.** The core, by convention: it sits beside the core
-(`src/server_h.rs:871-873`), not around it, so it excludes only threads that
+(`shell/server_h.rs:871-873`), not around it, so it excludes only threads that
 also take it. Threads that only read the role or the commit index use
 atomic mirrors instead. §7.
 
@@ -165,7 +165,7 @@ src/deptran/raft/
     src/lib.rs          11
     src/lab_runtime.rs 190  LAB
     tests/ (4 files, 795 lines)  TEST, run on every build
-  src/              the shell crate `raft`
+  shell/            the shell crate `raft`
     server_h.rs       4360  RaftServerBase and nearly all shell logic (PROD; 159 lines lab)
     server_cc.rs       709  the heartbeat round driver; the generated C ABI exports (PROD)
     scheduler_h.rs      81  the TxLogServer and RaftSpecific traits (PROD)
@@ -181,15 +181,15 @@ src/deptran/raft/
   *.cc, *.h, *.hpp  C++, below
 ```
 
-The 14 small files in `src/` (`communicator_h.rs` 207 down to
+The 14 small files in `shell/` (`communicator_h.rs` 207 down to
 `snapshot_manager_hpp.rs` 3) are Rust copies of inline-DSL blocks kept in
 C++ files (`rust-modules.toml:1-66`, `:110-140`). They are compiled into the
-crate (`src/lib.rs:9-34`), but a search finds Rust references only to
+crate (`shell/lib.rs:9-34`), but a search finds Rust references only to
 `scheduler_h` and `server_pods_h`. `server_h.rs`, `server_cc.rs`,
 `server_pods_h.rs` and the lab files are canonical Rust
 (`rust-modules.toml:68-108`). Headers that call the crate a generated
-verification view (`Cargo.toml:1-16`, `src/lib.rs:1-7`) or say it is built
-into `libraft.a` (`Cargo.toml:23-26`, `src/server_h.rs:1-2`) are out of date.
+verification view (`Cargo.toml:1-16`, `shell/lib.rs:1-7`) or say it is built
+into `libraft.a` (`Cargo.toml:23-26`, `shell/server_h.rs:1-2`) are out of date.
 
 The C++ in this directory:
 
@@ -211,13 +211,13 @@ Mako transaction thread
   -> src/deptran/raft_main_helper.cc        add_log_to_nc, setup, setup2, ...
   -> raft_worker.cc                         RaftWorker: submit thread, apply callback, startup
   -> server.h:509-543                       class RaftServer, a C++ shim over a pointer
-  -> server_exports.h, src/server_cc.rs:417-709    the C ABI (generated, scripts/raft_gen_exports.py)
-  -> src/server_h.rs:864-980                RaftServerBase { mtx_, core, shell state }
-  -> src/server_h.rs:1407                   RaftServerBase::step, the recording wrapper
+  -> server_exports.h, shell/server_cc.rs:417-709    the C ABI (generated, scripts/raft_gen_exports.py)
+  -> shell/server_h.rs:864-980                RaftServerBase { mtx_, core, shell state }
+  -> shell/server_h.rs:1407                   RaftServerBase::step, the recording wrapper
   -> core/src/event.rs:371                  RaftCore::step
 
 inbound RPC:  rt/src/rpc.rs:419-472 (dispatch) -> rt/src/service.rs:107-176
-              -> src/server_h.rs:3925-3973 (Serve*) -> on_*_body -> step_checked
+              -> shell/server_h.rs:3925-3973 (Serve*) -> on_*_body -> step_checked
 outbound:     the shell calls server.cc's kernels for Mako's objects, and raft-rt's
               seam (rt/src/seam.rs) for fibers, events, waits and sends
 ```
@@ -240,24 +240,24 @@ snapshot-path steps.
 | Read-index authority | `core/src/authority.rs:438` | yes | kept by every step; not modelled by the spec (`core/src/heartbeat.rs:1678-1679`) |
 | Message admission (F9) | `core/src/event.rs:285-368` | yes | yes |
 | The decision to send a snapshot | `core/src/heartbeat.rs:959-976` | yes | snapshots are gated off |
-| Start's leader check | `src/server_h.rs:3887-3894`; the core's `append_local` has none (`core/src/node.rs:494-524`) | no | a premise (host-contract.md:98) |
-| The round end's leadership check | `src/server_cc.rs:310-316`; phase 3 advances commit regardless (`core/src/heartbeat.rs:1689`) | no | a premise that lab builds (B17) and shutdown (B18) can violate (§6) *[since: F12, in the core and proved]* |
+| Start's leader check | `shell/server_h.rs:3887-3894`; the core's `append_local` has none (`core/src/node.rs:494-524`) | no | a premise (host-contract.md:98) |
+| The round end's leadership check | `shell/server_cc.rs:310-316`; phase 3 advances commit regardless (`core/src/heartbeat.rs:1689`) | no | a premise that lab builds (B17) and shutdown (B18) can violate (§6) *[since: F12, in the core and proved]* |
 | The quorum size `n_total` | `rt/src/transport.rs:332-334`, `:562` | no | a premise (host-contract.md:100) |
 | Which voter a reply came from (F1) | `rt/src/transport.rs:580-584` | no | a premise (host-contract.md:45-48) |
-| Entry terms at least 1 in an inbound payload (F4) | `src/server_h.rs:3326-3345` | no | a trusted contract (host-contract.md:111-120) |
-| The "unavailable" answers | `src/server_h.rs:3928-3934`, `:3946-3952`, `:4232-4241`, `:4311-4322` | no | modelled as dropped messages (host-contract.md:79-85) |
-| Executing the leader's no-op | decided at `core/src/node.rs:1280`; done at `src/server_h.rs:3498-3514`, skipped in lab builds (`:3499-3501`) | decided there | yes |
-| Applying committed entries | `src/server_h.rs:3075-3144` (hand-off), `:2572-2733` (apply thread); `server.cc:893-906` | records the applied index only (`core/src/node.rs:1083-1100`) | no |
-| Snapshots: install, reply, create, compact, recover | `src/server_h.rs:2226-2510`, `:2129-2197`, `:2750-2823`, `:1309-1349`, `:1904-2122`; `rt/src/snapshot.rs`; `server.cc:848-886` | no | no: gated off (F5, `src/server_h.rs:1816-1841`) |
-| Timing: election timeouts, the timer's cadence, the vote wait, the heartbeat interval, the reply deadline | `src/server_h.rs:1453-1476`, `:1369-1375`; `server.cc:164-217`; `rt/src/seam.rs:276-284`; `server.h:169-173`; `src/server_cc.rs:198-210` | no | no: liveness is not proved (host-contract.md:30-31) |
-| Batch limits | `server.cc:219-240`, passed in at `src/server_cc.rs:93-95` | the selection is (`core/src/heartbeat.rs:519`) | the selection |
-| Membership: the static yaml configuration | read at `src/server_h.rs:3531-3547` | stored there (`Configure`) | a premise (static configuration) |
+| Entry terms at least 1 in an inbound payload (F4) | `shell/server_h.rs:3326-3345` | no | a trusted contract (host-contract.md:111-120) |
+| The "unavailable" answers | `shell/server_h.rs:3928-3934`, `:3946-3952`, `:4232-4241`, `:4311-4322` | no | modelled as dropped messages (host-contract.md:79-85) |
+| Executing the leader's no-op | decided at `core/src/node.rs:1280`; done at `shell/server_h.rs:3498-3514`, skipped in lab builds (`:3499-3501`) | decided there | yes |
+| Applying committed entries | `shell/server_h.rs:3075-3144` (hand-off), `:2572-2733` (apply thread); `server.cc:893-906` | records the applied index only (`core/src/node.rs:1083-1100`) | no |
+| Snapshots: install, reply, create, compact, recover | `shell/server_h.rs:2226-2510`, `:2129-2197`, `:2750-2823`, `:1309-1349`, `:1904-2122`; `rt/src/snapshot.rs`; `server.cc:848-886` | no | no: gated off (F5, `shell/server_h.rs:1816-1841`) |
+| Timing: election timeouts, the timer's cadence, the vote wait, the heartbeat interval, the reply deadline | `shell/server_h.rs:1453-1476`, `:1369-1375`; `server.cc:164-217`; `rt/src/seam.rs:276-284`; `server.h:169-173`; `shell/server_cc.rs:198-210` | no | no: liveness is not proved (host-contract.md:30-31) |
+| Batch limits | `server.cc:219-240`, passed in at `shell/server_cc.rs:93-95` | the selection is (`core/src/heartbeat.rs:519`) | the selection |
+| Membership: the static yaml configuration | read at `shell/server_h.rs:3531-3547` | stored there (`Configure`) | a premise (static configuration) |
 | The preferred leader (locale 0) | `src/deptran/raft_main_helper.cc:870-924` | no | no (timing only) |
 
 The snapshot half is outside the verified configuration: with
 `MAKO_RAFT_VERIFIED_GATES=1` startup fails closed when snapshots are on,
 and `CompactLog` and `MaybeCreateSnapshot` return at once
-(`src/server_h.rs:1821-1841`, `:1342-1346`, `:2952-2956`). Verification
+(`shell/server_h.rs:1821-1841`, `:1342-1346`, `:2952-2956`). Verification
 code is not protocol: `core/src/coupling.rs` is compiled only by Verus
 (`core/src/lib.rs:27-29`), and cargo erases the contracts and proofs in the
 other core files (`core/Cargo.toml:15-18`; §10).
@@ -270,7 +270,7 @@ or `step_checked` (`:327`), which first drops a malformed or foreign message
 (F9, `:285-319`) and otherwise calls `step`. `step` only dispatches: each
 arm calls one core function and wraps its result (`:398-534`). The shell
 reaches it through one wrapper, `RaftServerBase::step` / `step_checked`
-(`src/server_h.rs:1407-1443`), which also records the call when the
+(`shell/server_h.rs:1407-1443`), which also records the call when the
 recorder is on (§9).
 
 ### 3.1 The 18 events
@@ -282,30 +282,30 @@ is the transport's poll thread (§7).
 
 | Event | Core function | Sent from | Thread | `mtx_` | May push |
 |---|---|---|---|---|---|
-| SetIdentity | `core/src/node.rs:233` | `src/server_h.rs:3719` | setup thread | no | nothing |
-| Configure | `core/src/node.rs:262` | `src/server_h.rs:3545` (from `:1811`) | poll (startup job) | no | nothing |
-| EnterGates | `core/src/node.rs:310` | `src/server_h.rs:3525` | poll (startup job) | yes | nothing |
-| RebuildPeers | `core/src/node.rs:342` | `src/server_h.rs:1401` (from `:2942`) | poll (heartbeat fiber) | yes | nothing |
-| Propose | `core/src/node.rs:494` | `src/server_h.rs:3490`, from `Start` (`:3900`) and the no-op (`:3506`) | submit, Mako or shutdown thread; poll for the no-op | yes | nothing |
-| StartElection | `core/src/node.rs:702` | `src/server_h.rs:3178` | poll (election fiber) | yes | RESET_ELECTION |
-| SettleElection | `core/src/node.rs:800` | `src/server_h.rs:3264` | poll (election fiber) | yes | ROLE_SET, APPEND_NOOP, RESET_ELECTION |
-| ResetElectionTimer | `core/src/node.rs:1107` | `src/server_h.rs:1487` | poll | yes | nothing |
-| RecvRequestVote | `core/src/node.rs:1404` | `src/server_h.rs:4220` (checked) | poll (inline handler) | yes | RESET_ELECTION, ROLE_SET |
-| RecvAppendEntries | `core/src/node.rs:1749` | `src/server_h.rs:4303` (checked) | poll (inline handler) | yes | RESET_ELECTION, ROLE_SET, APPLY_RANGE |
-| TickHeartbeat | `core/src/heartbeat.rs:771` | `src/server_cc.rs:96` | poll (heartbeat fiber) | yes | APPLY_RANGE |
-| RecvAppendReply | `core/src/heartbeat.rs:1435` | `src/server_cc.rs:251` (checked) | poll (heartbeat fiber) | yes | ROLE_SET, RESET_ELECTION (step-down) |
-| AbandonRound | `core/src/heartbeat.rs:1611` | `src/server_cc.rs:297` | poll (heartbeat fiber) | yes | nothing |
-| RoundEnd | `core/src/heartbeat.rs:1712` | `src/server_cc.rs:317` | poll (heartbeat fiber) | yes | APPLY_RANGE |
-| ResetRoundState | `core/src/node.rs:328` | `src/server_cc.rs:364`, `:390` | poll (heartbeat fiber) | yes | nothing |
-| Applied | `core/src/node.rs:1083` | `src/server_h.rs:1295`, from `:2682`; with snapshots on also from `:2109` and `:2502` | apply thread; poll (snapshot recovery in the startup job, inline InstallSnapshot handler) | yes | a log line |
-| SetFollower | `core/src/node.rs:1130` | `src/server_h.rs:2332`; `:3577` (lab) | poll; constructor | yes; lab: no | ROLE_SET, RESET_ELECTION |
-| StepDown | `core/src/node.rs:1310` | `src/server_h.rs:2173`, `:2330` | poll (snapshot paths) | yes | ROLE_SET, RESET_ELECTION |
+| SetIdentity | `core/src/node.rs:233` | `shell/server_h.rs:3719` | setup thread | no | nothing |
+| Configure | `core/src/node.rs:262` | `shell/server_h.rs:3545` (from `:1811`) | poll (startup job) | no | nothing |
+| EnterGates | `core/src/node.rs:310` | `shell/server_h.rs:3525` | poll (startup job) | yes | nothing |
+| RebuildPeers | `core/src/node.rs:342` | `shell/server_h.rs:1401` (from `:2942`) | poll (heartbeat fiber) | yes | nothing |
+| Propose | `core/src/node.rs:494` | `shell/server_h.rs:3490`, from `Start` (`:3900`) and the no-op (`:3506`) | submit, Mako or shutdown thread; poll for the no-op | yes | nothing |
+| StartElection | `core/src/node.rs:702` | `shell/server_h.rs:3178` | poll (election fiber) | yes | RESET_ELECTION |
+| SettleElection | `core/src/node.rs:800` | `shell/server_h.rs:3264` | poll (election fiber) | yes | ROLE_SET, APPEND_NOOP, RESET_ELECTION |
+| ResetElectionTimer | `core/src/node.rs:1107` | `shell/server_h.rs:1487` | poll | yes | nothing |
+| RecvRequestVote | `core/src/node.rs:1404` | `shell/server_h.rs:4220` (checked) | poll (inline handler) | yes | RESET_ELECTION, ROLE_SET |
+| RecvAppendEntries | `core/src/node.rs:1749` | `shell/server_h.rs:4303` (checked) | poll (inline handler) | yes | RESET_ELECTION, ROLE_SET, APPLY_RANGE |
+| TickHeartbeat | `core/src/heartbeat.rs:771` | `shell/server_cc.rs:96` | poll (heartbeat fiber) | yes | APPLY_RANGE |
+| RecvAppendReply | `core/src/heartbeat.rs:1435` | `shell/server_cc.rs:251` (checked) | poll (heartbeat fiber) | yes | ROLE_SET, RESET_ELECTION (step-down) |
+| AbandonRound | `core/src/heartbeat.rs:1611` | `shell/server_cc.rs:297` | poll (heartbeat fiber) | yes | nothing |
+| RoundEnd | `core/src/heartbeat.rs:1712` | `shell/server_cc.rs:317` | poll (heartbeat fiber) | yes | APPLY_RANGE |
+| ResetRoundState | `core/src/node.rs:328` | `shell/server_cc.rs:364`, `:390` | poll (heartbeat fiber) | yes | nothing |
+| Applied | `core/src/node.rs:1083` | `shell/server_h.rs:1295`, from `:2682`; with snapshots on also from `:2109` and `:2502` | apply thread; poll (snapshot recovery in the startup job, inline InstallSnapshot handler) | yes | a log line |
+| SetFollower | `core/src/node.rs:1130` | `shell/server_h.rs:2332`; `:3577` (lab) | poll; constructor | yes; lab: no | ROLE_SET, RESET_ELECTION |
+| StepDown | `core/src/node.rs:1310` | `shell/server_h.rs:2173`, `:2330` | poll (snapshot paths) | yes | ROLE_SET, RESET_ELECTION |
 
 The four action kinds are `APPLY_RANGE`, `RESET_ELECTION`, `APPEND_NOOP`
 and `ROLE_SET` (`core/src/output.rs:25-39`). `CoreOutput` also carries the
 call's log records (`:126-133`); a core function never logs or calls out
 (`core/src/output.rs:15-20`, `core/src/logging.rs:1-6`). After the call the
-shell runs `run_locked_actions` (`src/server_h.rs:1516-1561`) while still
+shell runs `run_locked_actions` (`shell/server_h.rs:1516-1561`) while still
 holding `mtx_`: it prints the log lines, then per action enqueues committed
 entries for the apply thread, resets the election timer, appends the
 leader's no-op, or queues a leader-change notice, and finally publishes the
@@ -329,7 +329,7 @@ executable code has a `decreases` clause, which Verus checks. Decision Q1
 makes this the host's guarantee (docs/verus/modification-plan.md:41).
 
 1. Shell code runs inside a call through the core's type parameters: the
-   payload decoder `WireBatch` (`src/server_h.rs:3286-3371`, called at
+   payload decoder `WireBatch` (`shell/server_h.rs:3286-3371`, called at
    `core/src/node.rs:1857`, `:2127`) and the command's `Clone` and `Drop`
    (`src/rusty-rustc/src/lib.rs:399-407`, `:786-787`; clones at
    `core/src/heartbeat.rs:580`, `:696`, `:707`; drops on truncation,
@@ -338,32 +338,32 @@ makes this the host's guarantee (docs/verus/modification-plan.md:41).
    (host-contract.md:111-120).
 2. Two actions make the shell issue a further step in the same critical
    section, after the first returns: `RESET_ELECTION` becomes
-   `step(ResetElectionTimer)` (`src/server_h.rs:1527-1542` -> `:1487`) and
+   `step(ResetElectionTimer)` (`shell/server_h.rs:1527-1542` -> `:1487`) and
    `APPEND_NOOP` becomes `step(Propose)` (`:1543-1544` -> `:3498-3506`). The
    core itself calls `step` only from `step_checked` (`core/src/event.rs:364-366`).
 3. Read-only queries bypass `step`, as `core/src/event.rs:14-16` allows:
-   the timer's gather (`src/server_h.rs:1162-1167`), membership checks
+   the timer's gather (`shell/server_h.rs:1162-1167`), membership checks
    (`:2826-2828`), the term-change log line (`:1360`) and reads for log lines
    and mirrors.
 4. The snapshot paths write core fields directly: 26 writes in
    `OnInstallSnapshotLocked`, `InitializeSnapshotManagerLocked`,
    `InstallSnapshotReplyAcceptedLocked`, `CreateSnapshotLocked` and
    `CompactLogLocked`, all under `mtx_`, each after marking the recording
-   (`src/server_h.rs:2235`, `:2076`, `:2152`, `:2808`, `:1330`). With
+   (`shell/server_h.rs:2235`, `:2076`, `:2152`, `:2808`, `:1330`). With
    snapshots off on every server none of them changes the core: no leader
    sends InstallSnapshot (`core/src/heartbeat.rs:959-961`,
-   `src/server_cc.rs:90-92`), recovery and snapshot creation return before
-   writing (`src/server_h.rs:1905-1923`, `:2751-2758`), and compaction is
+   `shell/server_cc.rs:90-92`), recovery and snapshot creation return before
+   writing (`shell/server_h.rs:1905-1923`, `:2751-2758`), and compaction is
    clamped to index 0, which removes nothing (`core/src/helpers.rs:388-403`,
    `core/src/log.rs:539-541`). A server whose own snapshots are off still
    changes its core on an InstallSnapshot that passes the sender checks,
    before it reaches the storage check that refuses it: a higher term and a
    cleared vote, the leader hint, a role step (`StepDown` or
    `SetFollower`), cleared campaign flags and a timer reset
-   (`src/server_h.rs:2306-2346`, refused at `:2402-2412`). The receive path
+   (`shell/server_h.rs:2306-2346`, refused at `:2402-2412`). The receive path
    never checks `MAKO_RAFT_SNAPSHOTS` (`:3961-3973`, `server.cc:1608-1619`).
 5. Three steps run without `mtx_`, before anything else can reach the
-   server: `SetIdentity` (`src/server_h.rs:3719`, before the transport
+   server: `SetIdentity` (`shell/server_h.rs:3719`, before the transport
    exists), `Configure` (`:3545`, before the fibers and the apply thread
    start, `:1843-1866`) and the lab-only `SetFollower` (`:3577`). The
    wrapper's comment says so (`:1404-1406`), and so does host-contract.md:51-58;
@@ -389,10 +389,10 @@ reads.
 
 | Operation | Events, in order | Wait in between (shell, no lock held) | State carried across the wait |
 |---|---|---|---|
-| Election | StartElection; SettleElection | broadcast, then poll the tally every 200 us for up to 1 s (`rt/src/seam.rs:263-290`) | core: term, own vote, `election_in_progress_`, `election_term_`, `req_voting_` (`core/src/node.rs:756-774`); shell: the campaign's term and last log index and term (`src/server_h.rs:3189-3193`), the tally |
-| Replication round | TickHeartbeat; RecvAppendReply per reply; RoundEnd, or AbandonRound | send, then poll the replies every 1 ms for up to min(heartbeat, 100 ms) (`src/server_cc.rs:198-210`, `:278-290`) | core: `round_`, `pending_rpcs_`, `authority_rounds_`, `peers_` (`core/src/node.rs:79-84`, `:50`); shell: one response handle per follower (`src/server_h.rs:922-924`), the round id |
-| Proposal | Propose, then the next TickHeartbeat | a wake job starts the round (`src/server_h.rs:3912`, `:2841-2868`) | the log |
-| Apply | APPLY_RANGE (an action); Applied per entry | the apply thread polls its queue every 1 ms (`src/server_h.rs:2610-2627`) | the apply queue (`src/server_h.rs:919`) |
+| Election | StartElection; SettleElection | broadcast, then poll the tally every 200 us for up to 1 s (`rt/src/seam.rs:263-290`) | core: term, own vote, `election_in_progress_`, `election_term_`, `req_voting_` (`core/src/node.rs:756-774`); shell: the campaign's term and last log index and term (`shell/server_h.rs:3189-3193`), the tally |
+| Replication round | TickHeartbeat; RecvAppendReply per reply; RoundEnd, or AbandonRound | send, then poll the replies every 1 ms for up to min(heartbeat, 100 ms) (`shell/server_cc.rs:198-210`, `:278-290`) | core: `round_`, `pending_rpcs_`, `authority_rounds_`, `peers_` (`core/src/node.rs:79-84`, `:50`); shell: one response handle per follower (`shell/server_h.rs:922-924`), the round id |
+| Proposal | Propose, then the next TickHeartbeat | a wake job starts the round (`shell/server_h.rs:3912`, `:2841-2868`) | the log |
+| Apply | APPLY_RANGE (an action); Applied per entry | the apply thread polls its queue every 1 ms (`shell/server_h.rs:2610-2627`) | the apply queue (`shell/server_h.rs:919`) |
 | Inbound RPC | RecvRequestVote or RecvAppendEntries | none: one call, then the reply | none |
 
 ## 4. Q3: why `src` is large
@@ -401,10 +401,10 @@ reads.
 `server_cc.rs` 709, `scheduler_h.rs` 81, `server_pods_h.rs` 52, `lib.rs`
 34), 3,292 in the lab files, and 669 in the unused extracted views (§1).
 Before Phase 6 moved the core out, `server_h.rs` and `server_cc.rs` had
-8,843 lines (`git show 43c57e3ac:src/deptran/raft/src/server_h.rs`, and
+8,843 lines (`git show 43c57e3ac:src/deptran/raft/shell/server_h.rs`, and
 `server_cc.rs`); the move took about 3,800 lines out.
 
-`src/server_h.rs` by what the code does (line ranges read at this commit;
+`shell/server_h.rs` by what the code does (line ranges read at this commit;
 the boundaries are a judgement, the totals add up to the file):
 
 | What | Lines | Main ranges |
@@ -422,7 +422,7 @@ the boundaries are a judgement, the totals add up to the file):
 | Header and separators | 39 | |
 
 1,010 of its lines (23%) are comment-only and 278 are blank.
-`src/server_cc.rs` is the heartbeat round (tick `:81-180`, reply collection
+`shell/server_cc.rs` is the heartbeat round (tick `:81-180`, reply collection
 `:182-306`, round end `:308-330`, the driver `:332-402`), its kernel
 declarations (`:1-80`), and 306 generated lines of C ABI exports
 (`:404-709`).
@@ -436,13 +436,13 @@ Why so much, when the decisions are in the core:
    largest block and holds most of the direct core accesses (§3.2).
 3. Mako's commands and callbacks are C++ objects held as opaque carriers,
    so every copy, call and destruction is a kernel: 69 `extern "C"`
-   declarations in `src/server_h.rs` (`:100-105`, `:180-184`, `:484-648`)
-   and 13 in `src/server_cc.rs` (`:28-67`).
-4. Host duties that are not Raft, in `src/server_h.rs`: environment knobs
+   declarations in `shell/server_h.rs` (`:100-105`, `:180-184`, `:484-648`)
+   and 13 in `shell/server_cc.rs` (`:28-67`).
+4. Host duties that are not Raft, in `shell/server_h.rs`: environment knobs
    (`:1680-1736`), a fail-closed startup (`:1744-1869`), the apply thread
    (`:2572-2733`), shutdown (`:2533-2564`, `:3781-3813`) and the interface
    Mako calls (`:3752-4002`).
-5. Leftovers: the unused extracted views; in `src/server_h.rs`, the `Lab*`
+5. Leftovers: the unused extracted views; in `shell/server_h.rs`, the `Lab*`
    getters and a dozen lab-only methods compiled into production
    (`GetState` `:1243-1254`, `Disconnect` `:3005-3022`, others called only
    from `src/lab*.rs`), fields never read or never changed
@@ -465,10 +465,10 @@ reply. Nothing in the round holds a lock while it waits for another server.
 
 | Actor | Thread | Takes `mtx_`? |
 |---|---|---|
-| The election-timer fiber, which runs the campaign: one long-lived fiber per server (`rt/src/seam.rs:206-211`; `src/server_h.rs:1859-1866`, `:3059-3066`) | the transport's poll thread | in two short sections, plus brief reads before and after |
+| The election-timer fiber, which runs the campaign: one long-lived fiber per server (`rt/src/seam.rs:206-211`; `shell/server_h.rs:1859-1866`, `:3059-3066`) | the transport's poll thread | in two short sections, plus brief reads before and after |
 | Inbound RPC handlers, run inline without a fiber: Raft registers all four RPCs as "fast" (`rt/src/rpc.rs:386-404`; `src/srpc/rpc/server.rs:1476-1479`) | the same poll thread | once per call |
 | Vote reply callbacks, run from the client's frame handling (`src/srpc/rpc/client.rs:1038-1043`, `:2987-2991`) | the same poll thread | never; the tally has its own mutex |
-| The heartbeat fiber, which declines every tick while the server does not lead (`src/server_cc.rs:376-379`) | the same poll thread | once per tick |
+| The heartbeat fiber, which declines every tick while the server does not lead (`shell/server_cc.rs:376-379`) | the same poll thread | once per tick |
 | `Start` and `Applied` | the submit and apply threads | once per call; neither changes the role |
 
 ### 5.2 The normal round: A wins with B's vote
@@ -520,24 +520,24 @@ thread would have blocked in `lock()` until S released it.
 ### 5.3 Step by step
 
 A1. Timer. The fiber waits 2-4 heartbeat intervals on an `IntEvent` only
-shutdown sets (`src/server_h.rs:4113-4120`, `:1369-1375`), then gathers
+shutdown sets (`shell/server_h.rs:4113-4120`, `:1369-1375`), then gathers
 under `mtx_`: the clock and the read-only query `raft_election_tick`
 (`:4121`, `:1162-1167`). The timeout has fired when the server does not lead
 and the time since the last reset exceeds the sampled timeout
 (`core/src/node.rs:1365-1381`): 0.5-1 s, or 150-300 ms for the preferred
-leader, or 1-2 s for the others in the first 5 s (`src/server_h.rs:1453-1476`;
+leader, or 1-2 s for the others in the first 5 s (`shell/server_h.rs:1453-1476`;
 `server.cc:164-217`).
 
-A2. Start, under `mtx_` (`src/server_h.rs:3173-3185`). `start_election`
+A2. Start, under `mtx_` (`shell/server_h.rs:3173-3185`). `start_election`
 refuses when stopped, leading, already campaigning, or reset since the
 gather (`core/src/node.rs:725-750`); otherwise it pushes a timer reset,
 increments the term, votes for itself, sets the campaign flags (`:755-774`)
 and returns the term and last log index and term (`:775-782`). The reset
 action becomes `step(ResetElectionTimer)`; the mirrors are published
-(`src/server_h.rs:1538-1539`, `:1481-1501`, `:1560`). The clock is read
+(`shell/server_h.rs:1538-1539`, `:1481-1501`, `:1560`). The clock is read
 under the lock (`:3176-3177`), whatever `core/src/node.rs:738-741` says.
 
-A3. Broadcast, no lock (`src/server_h.rs:3220-3226`, `rt/src/seam.rs:263-275`,
+A3. Broadcast, no lock (`shell/server_h.rs:3220-3226`, `rt/src/seam.rs:263-275`,
 `rt/src/transport.rs:560-591`). The quorum size counts every site recorded
 for the partition, A included (`:332-334`). Each other peer gets one
 `vote_async`, which registers the callback and queues the frame, or writes
@@ -558,14 +558,14 @@ once]*
 B1. B's poll thread decodes the request and calls `ServeVote` inline
 (`src/srpc/rpc/server.rs:1388-1479`; `rt/src/rpc.rs:426-436`;
 `rt/src/service.rs:108-114`). A disconnected or not-yet-ready B answers "no
-at the candidate's term" without locking (`src/server_h.rs:3928-3934`);
+at the candidate's term" without locking (`shell/server_h.rs:3928-3934`);
 srpc's own admission flag (`rt/src/transport.rs:236`) is not read on this
 path (inference from a search).
 
-B2. Under B's `mtx_` (`src/server_h.rs:4174-4188`),
+B2. Under B's `mtx_` (`shell/server_h.rs:4174-4188`),
 `step_checked(RecvRequestVote)`. F9 drops a request from B itself, from a
 non-member or at term 0, answered as an unavailable server would
-(`core/src/event.rs:314-316`; `src/server_h.rs:4232-4241`). Otherwise
+(`core/src/event.rs:314-316`; `shell/server_h.rs:4232-4241`). Otherwise
 `raft_on_request_vote` refuses when stopped, malformed, from a non-voter, at
 a stale term or after voting for someone else this term
 (`core/src/node.rs:1445-1544`) and grants only to a log at least as up to
@@ -581,7 +581,7 @@ tally under the tally's mutex, crediting the peer the callback was created
 for (F1; the reply carries no voter id) (`rt/src/transport.rs:569-585`,
 `:622-637`; `rt/src/rpc.rs:79-83`). No `mtx_`, no core.
 
-A6. Settle, under `mtx_` (`src/server_h.rs:3232-3274`), with no suspension
+A6. Settle, under `mtx_` (`shell/server_h.rs:3232-3274`), with no suspension
 between the end of the wait and the lock. A reads the quorum size, the
 timeout flag and the replies (`:3235-3258`); `election_settle` counts again,
 one vote per voter (`core/src/node.rs:850-879`), and decides from the state
@@ -594,13 +594,13 @@ A7. Leader. `set_is_leader(true)` rebuilds the peer table at match 0 and
 pushes `APPEND_NOOP` and `ROLE_SET` (`core/src/node.rs:1190-1244`, `:1280`,
 `:1303-1304`). Still under `mtx_`, the shell appends the no-op with
 `step(Propose)`, queues a wake job and the leader notice, and publishes
-`is_leader = true` (`src/server_h.rs:1543-1560`, `:3498-3514`, `:2841-2868`).
+`is_leader = true` (`shell/server_h.rs:1543-1560`, `:3498-3514`, `:2841-2868`).
 After the unlock it fires Mako's callback with no lock held (`:1566-1643`).
 
 A8. `await_vote_settled` re-reads `req_voting_` under the lock every 100 ms
-until it is false (`src/server_h.rs:4147-4160`). The wake job sets the
+until it is false (`shell/server_h.rs:4147-4160`). The wake job sets the
 heartbeat fiber's `IntEvent` (`:459-465`, `:312-328`); its next tick sends
-AppendEntries carrying the no-op (`src/server_cc.rs:85-180`).
+AppendEntries carrying the no-op (`shell/server_cc.rs:85-180`).
 
 ### 5.4 When the other servers call back in
 
@@ -640,15 +640,15 @@ Every interleaving of the round, and what handles it:
 | 1 | B's RequestVote at the same term reaches A | runs inline while A's fiber sleeps; A already voted for itself, so it answers "no" and changes nothing | `core/src/node.rs:1523-1544` |
 | 2 | ... at a higher term | A adopts the term, drops its vote and both campaign flags, and may grant; A's settle then finds the campaign stale, or adopts a still higher reply term | `core/src/node.rs:652-695`, `:882-942` |
 | 3 | A new leader's AppendEntries reaches A | a higher term, or an accepted append, makes A a follower and clears both flags, so the settle ignores the stale campaign. A same-term append refused on the log check only resets the timer and sets the leader hint; the campaign then cannot reach a majority, since every voter votes once per term (inference) | `core/src/node.rs:1898-1925`, `:1947-1956` |
-| 4 | A's election timer fires again | impossible: the timer fiber is the one waiting; a second campaign would also be refused by the admission and generation checks | `src/server_h.rs:4110-4137`; `core/src/node.rs:732-750` |
+| 4 | A's election timer fires again | impossible: the timer fiber is the one waiting; a second campaign would also be refused by the admission and generation checks | `shell/server_h.rs:4110-4137`; `core/src/node.rs:732-750` |
 | 5 | A vote reply arrives after the wait, or after the settle | it lands in this campaign's own tally, which nothing reads any more; the next campaign makes a new one | `rt/src/transport.rs:563-565` |
-| 6 | A reply arrives between the end of the wait and the settle, or during the settle | impossible: same thread, no suspension point in between | `rt/src/seam.rs:278-290`; `src/server_h.rs:3226-3274` |
+| 6 | A reply arrives between the end of the wait and the settle, or during the settle | impossible: same thread, no suspension point in between | `rt/src/seam.rs:278-290`; `shell/server_h.rs:3226-3274` |
 | 7 | The same voter's reply is delivered twice | counted once, by the tally and again by the core | `rt/src/transport.rs:622-628`; `core/src/election.rs:84-86` |
-| 8 | The voter is the leader of a lower term, mid-round | its handler steps it down; its heartbeat fiber sees the mirror at its next check and abandons the round, or its next tick declines | `core/src/node.rs:669-670`; `src/server_cc.rs:221-224`, `:293-300` |
-| 9 | A's submit thread calls `Start` | `Start` takes `mtx_` on its own thread and is refused (A does not lead); if the poll thread wants `mtx_` meanwhile it blocks briefly, since `Start` waits for nothing while holding it | `src/server_h.rs:3886-3914`; `raft_worker.cc:859-863` |
-| 10 | A's apply thread records an applied index | one `Applied` step under `mtx_`; no role or term change | `src/server_h.rs:1290-1307` |
+| 8 | The voter is the leader of a lower term, mid-round | its handler steps it down; its heartbeat fiber sees the mirror at its next check and abandons the round, or its next tick declines | `core/src/node.rs:669-670`; `shell/server_cc.rs:221-224`, `:293-300` |
+| 9 | A's submit thread calls `Start` | `Start` takes `mtx_` on its own thread and is refused (A does not lead); if the poll thread wants `mtx_` meanwhile it blocks briefly, since `Start` waits for nothing while holding it | `shell/server_h.rs:3886-3914`; `raft_worker.cc:859-863` |
+| 10 | A's apply thread records an applied index | one `Applied` step under `mtx_`; no role or term change | `shell/server_h.rs:1290-1307` |
 | 11 | A would send RequestVote to itself | never: the broadcast skips self, and F9 would drop it | `rt/src/transport.rs:324`; `core/src/event.rs:315` |
-| 12 | A peer is down, disconnected or not ready | the send fails and is ignored, or the peer answers "no at the candidate's term"; either way a refusal or a missing vote | `rt/src/transport.rs:572-574`, `:586-588`; `src/server_h.rs:3928-3934` |
+| 12 | A peer is down, disconnected or not ready | the send fails and is ignored, or the peer answers "no at the candidate's term"; either way a refusal or a missing vote | `rt/src/transport.rs:572-574`, `:586-588`; `shell/server_h.rs:3928-3934` |
 | 13 | Code on a thread that holds `mtx_` tries to take it again | the owner check aborts with a message instead of hanging | `server.h:243-250`; `server.cc:106-123` |
 
 The wait ends only when the tally decides or the second passes; a campaign
@@ -661,8 +661,8 @@ Three properties break the cycle "A waits for B, B calls A, A's handler
 waits for A":
 
 1. No one holds `mtx_` while waiting. Every suspension point in Raft is
-   outside the lock's scopes: the heartbeat wait (`src/server_cc.rs:370`),
-   the reply polling (`:289`), the vote wait (`src/server_h.rs:3222`), the
+   outside the lock's scopes: the heartbeat wait (`shell/server_cc.rs:370`),
+   the reply polling (`:289`), the vote wait (`shell/server_h.rs:3222`), the
    timer wait (`:4117`), `await_vote_settled` (`:4155`) and the shutdown
    barrier (`:3803`); docs/verus/README.md:88 states the rule.
 2. Waiting gives the thread back: a fiber's wait returns to the poll loop
@@ -672,19 +672,19 @@ waits for A":
    four Raft RPCs run inline, without a fiber, so a handler cannot suspend.
    A RequestVote or AppendEntries handler holds `mtx_` for one critical
    section, one checked step plus a `ResetElectionTimer` step when it resets
-   the timer (`src/server_h.rs:1527-1542` -> `:1487`), and sends nothing but
+   the timer (`shell/server_h.rs:1527-1542` -> `:1487`), and sends nothing but
    its reply. After unlocking, if its step stepped a leader down, it runs
    Mako's leader-change callback on the poll thread (`:4187`, `:4273` ->
    `:1587`, `:1638`; `core/src/node.rs:669-670`, `:1911-1914`,
    `:1950-1951`). With snapshots on, the InstallSnapshot handler takes the
-   apply gate before `mtx_` (`src/server_h.rs:4063-4065`), so it can block
+   apply gate before `mtx_` (`shell/server_h.rs:4063-4065`), so it can block
    for as long as the apply thread runs Mako's apply callback under that
    gate (`:2636-2685`), and it runs the embedder's prepare-snapshot callback
    under both (`:2432-2438`). Vote and AppendEntries reply callbacks touch
    only their tally or reply slot (or store an error). With snapshots on,
    an InstallSnapshot reply callback takes the callback-lifetime mutex and
    then `mtx_` (`rt/src/transport.rs:507-510`, `rt/src/snapshot.rs:419`,
-   `server.cc:1376-1383` -> `src/server_h.rs:2136`). It may step the core
+   `server.cc:1376-1383` -> `shell/server_h.rs:2136`). It may step the core
    down or advance a follower's indices (`:2160-2175`, `:2191`), and it
    fires Mako's leader-change callback with the lifetime mutex still held
    (`:2142`). It runs from the poll loop, never inside a critical section
@@ -699,12 +699,12 @@ and the abort do.
 ## 6. The replication round, and B17
 
 The leader's heartbeat fiber runs `HeartbeatDriver::run`
-(`src/server_cc.rs:357-394`). Each turn:
+(`shell/server_cc.rs:357-394`). Each turn:
 
 1. Wait on the wake gate for one heartbeat interval, 5 ms by default
-   (`src/server_cc.rs:370`; `server.h:169-173`), or until a wake job ends the wait
-   (`src/server_h.rs:2841-2868`).
-2. Tick (`src/server_cc.rs:85-180`): under `mtx_`, `step(TickHeartbeat)`
+   (`shell/server_cc.rs:370`; `server.h:169-173`), or until a wake job ends the wait
+   (`shell/server_h.rs:2841-2868`).
+2. Tick (`shell/server_cc.rs:85-180`): under `mtx_`, `step(TickHeartbeat)`
    with `IsLeaderLocked()`. The core declines the round when the server
    does not lead (`core/src/heartbeat.rs:259-270`, `:835-842`); otherwise it
    picks each follower's payload, reading the commit index it sends in the
@@ -712,7 +712,7 @@ The leader's heartbeat fiber runs `HeartbeatDriver::run`
    is still in flight (`:908-911`), one it sends a snapshot instead
    (`:959-976`) and one whose previous entry is missing (`:990-997`). After
    the unlock the shell builds and sends at most one AppendEntries per
-   follower and keeps the response handles (`src/server_cc.rs:134-178`).
+   follower and keeps the response handles (`shell/server_cc.rs:134-178`).
    Only InstallSnapshot is sent under the lock (`:101-123`), and only with
    snapshots on.
 3. Collect (`:196-306`): poll the handles every 1 ms for at most
@@ -731,10 +731,10 @@ The leader's heartbeat fiber runs `HeartbeatDriver::run`
    leads]*
 
 A follower handles each AppendEntries as one `step_checked` under `mtx_`
-(`src/server_h.rs:4249-4359`), decoding the payload only after the
+(`shell/server_h.rs:4249-4359`), decoding the payload only after the
 authority gates (`core/src/node.rs:1817-1858`). `APPLY_RANGE` hands newly
 committed entries to the apply queue under `mtx_`
-(`src/server_h.rs:3075-3144`); the apply thread runs Mako's callback under
+(`shell/server_h.rs:3075-3144`); the apply thread runs Mako's callback under
 its apply gate, not `mtx_`, then records `Applied` under `mtx_`
 (`:2630-2685`).
 
@@ -746,10 +746,10 @@ B18 broke were weakened, ghost only.]*
 B17 is the example of a check made outside the lock:
 
 ```
-src/server_cc.rs:310   if !server.IsLeader() { return; }          // mirror, no lock
-src/server_cc.rs:315   let _lock = RaftLockGuard::new(&mut server.mtx_);
-src/server_cc.rs:316   let is_leader: bool = server.IsLeaderLocked();
-src/server_cc.rs:317   server.step(Event::RoundEnd { is_leader }, &mut out)
+shell/server_cc.rs:310   if !server.IsLeader() { return; }          // mirror, no lock
+shell/server_cc.rs:315   let _lock = RaftLockGuard::new(&mut server.mtx_);
+shell/server_cc.rs:316   let is_leader: bool = server.IsLeaderLocked();
+shell/server_cc.rs:317   server.step(Event::RoundEnd { is_leader }, &mut out)
 ```
 
 Phase 3 calls `raft_commit_advance` first and unconditionally
@@ -766,15 +766,15 @@ commit an entry no majority holds (docs/verus/bugs-found.md:423-524).
 
 Can the shell reach it? On this lane, inference says not in production.
 Every step that can change the role runs on the poll thread, nothing
-between `src/server_cc.rs:310` and `:315` suspends, and if `:315` waits for
+between `shell/server_cc.rs:310` and `:315` suspends, and if `:315` waits for
 another thread's `mtx_`, the whole poll thread waits, so no handler runs;
 the other threads (submit, apply, shutdown) never change the role. The
 mirror is published at the end of every critical section that can change it
-(`src/server_h.rs:1560`, `:4080`). The bug log's interleaving, the driver
+(`shell/server_h.rs:1560`, `:4080`). The bug log's interleaving, the driver
 "blocks on `mtx_` while the RPC handler takes D's messages"
 (bugs-found.md:451-452), needs a handler on another thread. Lab builds have
 one: the harness calls `ServeVote` and `ServeAppendEntries` from site 0's
-own thread (`src/lab.rs:520`, `:534`; `src/deptran/server_worker.cc:135-138`).
+own thread (`shell/lab.rs:520`, `:534`; `src/deptran/server_worker.cc:135-138`).
 The core defect stands either way; the proposed fix moves the check into
 the core (bugs-found.md:512-518). B17's entry said "nothing excludes it"
 until this document was written; its reachability now says the above
@@ -782,10 +782,10 @@ until this document was written; its reachability now says the above
 
 One premise gap does reach production, at shutdown (bugs-found B18, found
 while writing this). `IsLeaderLocked()` is false
-whenever `looping_` is (`src/server_h.rs:1236-1240`), and
+whenever `looping_` is (`shell/server_h.rs:1236-1240`), and
 `PrepareForShutdown` clears `looping_` under `mtx_` on the shutdown thread
 (`:3781-3792`). If that happens between the driver's mirror check and its
-lock (`src/server_cc.rs:221` and `:245` for a reply, `:310` and `:315` for
+lock (`shell/server_cc.rs:221` and `:245` for a reply, `:310` and `:315` for
 the round end), the step gets `is_leader = false` while the core still
 leads, which its premise excludes (`core/src/coupling.rs:2611`, `:2622`).
 The protocol is unharmed: the reply is ignored unless its higher term steps
@@ -803,11 +803,11 @@ outside the verified gates and, with snapshots on, creates snapshots.
 |---|---|---|---|
 | Transport poll thread, one per Raft server | `rt/src/transport.rs:198`; spawned at `src/srpc/reactor/reactor.rs:4262-4290` | all events except `SetIdentity`; `Applied` only on the snapshot paths (§3.1) | handlers, the heartbeat and election fibers, the startup job, wake jobs, reply callbacks (tally and reply slots only, except the InstallSnapshot reply's, which takes `mtx_`, §5.5), Mako's leader-change callback (no lock held, except the callback-lifetime mutex on the InstallSnapshot reply path) |
 | Submit thread, one per worker | `raft_worker.cc:743-753` | `Propose`, through `Start` | the submit queue |
-| Mako's transaction threads | Mako (`src/mako/sto/Transaction.cc:833`) | `Propose`, only when no submit thread runs (`src/deptran/raft_main_helper.cc:644-648`) | the mirrors (`src/deptran/raft_main_helper.cc:1166-1167`, `:988-989`); `SetPreferredLeader`, an atomic (`src/server_h.rs:3833-3842`) |
-| Apply thread, one per server | `server.cc:987-990`, from `src/server_h.rs:1843` | `Applied`; an idle-time read of the commit index (`src/server_h.rs:2614-2617`); after each entry whose index is a multiple of 5000, `CompactLog` under `mtx_`, which reads core fields and calls `raft_log_.compact_through` outside `step`, removing nothing while snapshots are off, and is skipped under `MAKO_RAFT_VERIFIED_GATES=1` (`:2720-2728`, `:1342-1349`, `:1311-1339`); with snapshots on, `MaybeCreateSnapshot` -> `CreateSnapshotLocked` under the apply gate and `mtx_`, which runs the embedder's create-snapshot callback, writes `snapidx_` and `snapterm_` and compacts (`:2701-2716`, `:2952-2970`, `:2799-2818`) | the apply queue; Mako's apply callback, under the apply gate, not `mtx_` (`src/server_h.rs:2636-2666`) |
-| Setup thread (the caller of `setup()`) | Mako | `SetIdentity`, without the lock (`raft_worker.cc:308`) | waits for startup on a condition variable (`src/server_h.rs:3763-3775`) |
-| Shutdown thread | Mako | `Propose` while draining the submit queue (`raft_worker.cc:776-778`) | sets the stop flags under `mtx_`, then waits outside it (`src/server_h.rs:3781-3813`) |
-| Lab harness thread (lab builds) | `src/deptran/server_worker.cc:135-138` | handlers and getters, called directly (`src/lab.rs:520`, `:534`) | |
+| Mako's transaction threads | Mako (`src/mako/sto/Transaction.cc:833`) | `Propose`, only when no submit thread runs (`src/deptran/raft_main_helper.cc:644-648`) | the mirrors (`src/deptran/raft_main_helper.cc:1166-1167`, `:988-989`); `SetPreferredLeader`, an atomic (`shell/server_h.rs:3833-3842`) |
+| Apply thread, one per server | `server.cc:987-990`, from `shell/server_h.rs:1843` | `Applied`; an idle-time read of the commit index (`shell/server_h.rs:2614-2617`); after each entry whose index is a multiple of 5000, `CompactLog` under `mtx_`, which reads core fields and calls `raft_log_.compact_through` outside `step`, removing nothing while snapshots are off, and is skipped under `MAKO_RAFT_VERIFIED_GATES=1` (`:2720-2728`, `:1342-1349`, `:1311-1339`); with snapshots on, `MaybeCreateSnapshot` -> `CreateSnapshotLocked` under the apply gate and `mtx_`, which runs the embedder's create-snapshot callback, writes `snapidx_` and `snapterm_` and compacts (`:2701-2716`, `:2952-2970`, `:2799-2818`) | the apply queue; Mako's apply callback, under the apply gate, not `mtx_` (`shell/server_h.rs:2636-2666`) |
+| Setup thread (the caller of `setup()`) | Mako | `SetIdentity`, without the lock (`raft_worker.cc:308`) | waits for startup on a condition variable (`shell/server_h.rs:3763-3775`) |
+| Shutdown thread | Mako | `Propose` while draining the submit queue (`raft_worker.cc:776-778`) | sets the stop flags under `mtx_`, then waits outside it (`shell/server_h.rs:3781-3813`) |
+| Lab harness thread (lab builds) | `src/deptran/server_worker.cc:135-138` | handlers and getters, called directly (`shell/lab.rs:520`, `:534`) | |
 
 There is no timer thread (timeouts are reactor waits,
 `src/srpc/reactor/reactor.rs:2332-2338`). srpc's reconnect threads
@@ -820,10 +820,10 @@ What `mtx_` is: a C++ `RaftCheckedMutex`, a `std::mutex` plus the owner's
 thread id, whose `lock()` aborts if the calling thread already holds it
 (`server.h:224-275`, `server.cc:106-123`). Rust sees a 48-byte opaque
 carrier (`src/rusty-rustc/src/lib.rs:668-670`) and locks it through
-`RaftLockGuard`, which calls two C kernels (`src/server_h.rs:100-146`).
+`RaftLockGuard`, which calls two C kernels (`shell/server_h.rs:100-146`).
 
 What it guards: the whole core, and the shell fields documented as "under
-mtx_" (`install_out_`, `src/server_h.rs:925-929`; the snapshot manager and
+mtx_" (`install_out_`, `shell/server_h.rs:925-929`; the snapshot manager and
 callbacks; the shutdown flags' transition, `:3783-3792`; the mirrors'
 writes). It does so by convention: `mtx_` and `core` are sibling fields
 (`:871-873`), every `RaftCore` field is `pub` (`core/src/node.rs:38-104`),
@@ -836,7 +836,7 @@ census (which measures and does not gate,
 compiler-enforced accessor was not built (the since-removed Phase 6 report).
 
 What other threads read without it (F8): the four mirrors
-(`src/server_h.rs:952-959`), written with release stores at the end of every
+(`shell/server_h.rs:952-959`), written with release stores at the end of every
 `run_locked_actions` and after recovery and InstallSnapshot (`:1560`,
 `:1650-1664`, `:1805-1809`, `:4080`), read with acquire loads by
 `IsLeader`, `GetLeaderHint` and `CommitIndex` (`:3817-3828`, `:3876-3878`);
@@ -856,14 +856,14 @@ Why there is no deadlock:
    (`state_machine_apply_mtx_`), then `mtx_`, then the apply queue, the
    leader-notice queue, the wake gate's owner slot or the vote tally, and
    on the snapshot paths the snapshot store's slot, the transport's
-   `installs` set and srpc's client mutexes (`src/server_h.rs:2211-2215`;
+   `installs` set and srpc's client mutexes (`shell/server_h.rs:2211-2215`;
    `server.cc:1361-1366`; `rt/src/snapshot.rs:36-40`;
-   `src/server_cc.rs:104-123`, `rt/src/transport.rs:501-502`,
+   `shell/server_cc.rs:104-123`, `rt/src/transport.rs:501-502`,
    `src/srpc/rpc/client.rs:2406-2463`, `src/srpc/rpc/tcp_channel.rs:735`);
    srpc releases its locks before it runs or drops a callback
    (`src/srpc/rpc/client.rs:2987-2991`, `:2467`, `:1244-1254`). Every path
    that takes the gate and `mtx_` takes the gate first
-   (`src/server_h.rs:1938-1940`, `:2636-2682`, `:2957-2959`, `:4063-4065`),
+   (`shell/server_h.rs:1938-1940`, `:2636-2682`, `:2957-2959`, `:4063-4065`),
    and no code takes `mtx_` while holding an inner lock (inference from
    reading each use). The new
    leader's no-op takes the owner slot under `mtx_` (`:1543-1544` ->
@@ -881,18 +881,18 @@ thread blocks in `lock()` and runs nothing (docs/verus/README.md:108-109).
 With snapshots off those sections are short and never wait for the poll
 thread; with snapshots on, the apply thread's snapshot creation holds the
 apply gate and `mtx_` for as long as the embedder's create-snapshot
-callback takes (`src/server_h.rs:2957-2959`, `:2799-2805`). One caveat
+callback takes (`shell/server_h.rs:2957-2959`, `:2799-2805`). One caveat
 (inference): every thread or fiber that reaches the server through a raw
 pointer (the C ABI, the RPC service, the fibers) makes its own
-`&mut RaftServerBase` (`src/server_cc.rs:417-709`,
+`&mut RaftServerBase` (`shell/server_cc.rs:417-709`,
 `rt/src/service.rs:88-91`). The election-timer fiber holds one across its
-suspension (`src/server_h.rs:4131`), the heartbeat driver across every
-wait of its loop (`src/server_cc.rs:358`, waits at `:370` and `:289`; both
-wake-gate waits take `&mut self`, `src/server_h.rs:2882`, `:2896`), and the
-apply thread for its whole life (`src/server_cc.rs:644-646` ->
-`src/server_h.rs:2572`); `Start` takes `&mut self` on the submit, shutdown
+suspension (`shell/server_h.rs:4131`), the heartbeat driver across every
+wait of its loop (`shell/server_cc.rs:358`, waits at `:370` and `:289`; both
+wake-gate waits take `&mut self`, `shell/server_h.rs:2882`, `:2896`), and the
+apply thread for its whole life (`shell/server_cc.rs:644-646` ->
+`shell/server_h.rs:2572`); `Start` takes `&mut self` on the submit, shutdown
 and Mako threads, and `IsLeader` and `GetLeaderHint` on any Mako thread
-(`:3884`, `:3817`, `:3826`; `src/server_cc.rs:522-531`, `:580-585`).
+(`:3884`, `:3817`, `:3826`; `shell/server_cc.rs:522-531`, `:580-585`).
 `mtx_`, the atomics and the per-field mutexes serialize the accesses that
 matter (`heartbeat_interval_us_` has none of them, B14), but the references
 alias, across threads too, which Rust's aliasing rules do not allow
@@ -912,7 +912,7 @@ They share a name and nothing else.
 | Consumed by | the reactor's run loop, which resumes the parked fiber (`src/srpc/reactor/reactor.rs:2264-2430`) | `step` or `step_checked`, which returns a `Reply` before the caller goes on |
 | Thread | only the poll thread that owns it; a set or wait elsewhere aborts (`rt/src/seam.rs:98-128`) | any thread holding `mtx_`, except `SetIdentity`, `Configure` and the lab constructor's `SetFollower`, which run without it before anything else can reach the server (§3.2 item 5) |
 | Waits? | waiting is its purpose (`src/srpc/reactor/reactor.rs:2482-2534`) | never |
-| Raft uses it for | the wake gate's two waits, the heartbeat fiber's and the timer fiber's (`src/server_h.rs:365-415`; `rt/src/seam.rs:82-85`), and every `Fiber::sleep` (the vote wait, reply polling, `await_vote_settled`) | every decision of the protocol |
+| Raft uses it for | the wake gate's two waits, the heartbeat fiber's and the timer fiber's (`shell/server_h.rs:365-415`; `rt/src/seam.rs:82-85`), and every `Fiber::sleep` (the vote wait, reply polling, `await_vote_settled`) | every decision of the protocol |
 
 Work crosses threads on a third mechanism, the poll thread's job channel
 (`src/srpc/reactor/reactor.rs:3082-3087`, run in a new fiber at
@@ -922,7 +922,7 @@ the wake job (`rt/src/seam.rs:155-164`). Core events never travel on it.
 ## 9. The replay crate
 
 With `MAKO_RAFT_REPLAY_DIR` set when a server is built
-(`src/server_h.rs:3386-3401`), each server writes `<dir>/<pid>.<n>.rec`,
+(`shell/server_h.rs:3386-3401`), each server writes `<dir>/<pid>.<n>.rec`,
 flushing every line (`:3409-3414`). The `step` and `step_checked` wrappers
 write one line per call (`:1407-1443`):
 
@@ -934,10 +934,10 @@ T <why>     a write to the core that bypassed step
 
 The event is recorded as the shell built it, clock readings included
 (`replay/src/lib.rs:144-175`); a command appears only as a 64-bit FNV-1a
-digest of its wire bytes (`src/server_h.rs:3426-3437`). The crate's header
+digest of its wire bytes (`shell/server_h.rs:3426-3437`). The crate's header
 shows four sections (`replay/src/lib.rs:5-7`); the writer and the parser use
 three (`:296-298`, `:765`). `T` lines come from the five snapshot functions
-of §3.2 and the lab's direct writes (`src/lab_snapshot_cases.rs:1259`).
+of §3.2 and the lab's direct writes (`shell/lab_snapshot_cases.rs:1259`).
 
 `replay()` (`replay/src/lib.rs:754-794`) feeds each recorded event to a
 fresh core over digest-only commands, renders the result with the same
@@ -977,12 +977,12 @@ does (`scripts/verus/verify_core.sh`).
 Other out-of-date comments: `rt/src/seam.rs:4` calls `src/` "the core";
 `server.h:197-200` gives a reason that no longer holds (`mtx_` is already
 non-recursive, `:227-228`); `server.h:213-221` says the timer loop holds a
-`c_void` (it holds a typed pointer, `src/server_h.rs:4097-4100`);
-`src/server_h.rs:3777` says `PrepareForShutdown` runs on a fiber (it runs on
+`c_void` (it holds a typed pointer, `shell/server_h.rs:4097-4100`);
+`shell/server_h.rs:3777` says `PrepareForShutdown` runs on a fiber (it runs on
 the shutdown thread, `raft_worker.cc:611`); the "wakeup" of
-`src/server_h.rs:650-657` does not exist (the wait polls);
+`shell/server_h.rs:650-657` does not exist (the wait polls);
 `core/src/heartbeat.rs:1074-1089` says the caller steps down (the core does,
-`:1507`); and `src/server_h.rs:4295` and `core/src/election.rs:144` name
+`:1507`); and `shell/server_h.rs:4295` and `core/src/election.rs:144` name
 functions that no longer exist.
 
 `scripts/verus/ledger_lint.py --stats` classifies every core line with
@@ -1012,9 +1012,9 @@ lines, and 271 more lab lines (2,068 to 2,339).
 | Layer | What | Where | In the binary? | Why |
 |---|---|---|---|---|
 | 1. Proof | `coupling.rs`; the ghost fields `g_log_`, `g_votes_`, `g_match_`, `g_next_`; every `requires`, `ensures`, `invariant`, `decreases`, `spec fn`, `proof fn`, `proof {}`, `let ghost`; `admits` | `core/` only (§10) | no | the proof (M12) |
-| 2. Reshaping, behaviour kept | the core as a crate of its own, its code moved, not rewritten (M1); one entry point, `Event` → `step` → `Reply` (M5, `core/src/event.rs`); side effects returned as actions and log lines as data (M3, M7: `core/src/output.rs`, `core/src/logging.rs`), carried out by the shell (`src/server_h.rs:1516-1589`); each fiber cut at its wait, so an election and a heartbeat round are several core calls with the waits in the shell (M5), and rt's vote tally now hands each reply over (`rt/src/transport.rs:611-624`, `rt/src/seam.rs:306-342`); clock reads and random samples passed in (M4); per-entry facts cached in `RaftEntry` instead of asked of C++ (M6); a sorted `Vec` for `BTreeSet<u16>` (M9); `runtime_assert` and explicit wrapping arithmetic (M10); the command a type parameter, the inbound payload behind `InboundBatch`, which the shell's `WireBatch` implements (`src/server_h.rs:3286`), and `div_ceil` behind the trusted `blocks_for` (M11) | `core/`, the shell, a little of `rt/` | yes | Verus checks only code it sees whole: no lock, I/O, clock, callback, closure or foreign call inside, and every effect visible as a value. Tier 1 and the replay (§9) check that behaviour did not change |
-| 3. Behaviour changes | F1 one vote per voter; F3 the leadership re-check and the commit index read in the critical section that builds the message; F4 entry terms below 1 refused; F5 the verified-configuration gate (`MAKO_RAFT_VERIFIED_GATES`, `enter_gates` at `core/src/node.rs:310`, `verified_config_ok` at `src/server_h.rs:3519`); F6 the leader-change callback after the unlock; F7 entry stamping after the lock; F8 the atomic mirrors; F9 message admission (`step_checked`) | `rt/` (F1), the shell, `core/` | yes | F1 and F8 fix bugs the work found (bugs-found B3, B2), and F4 fixes part of B4 (entry terms above the leader's are still accepted). F6 takes Mako's callback out of the lock, a lock-order hazard (fixing B11 with it); F7 moves work out of the lock. F3, F5 and F9 make the proof's assumptions true: the commit index a SendAppendEntries carries; snapshots off and a static configuration; only well-formed messages from other members |
-| 4. Instrumentation | the replay recorder (`MAKO_RAFT_REPLAY_DIR`, `src/server_h.rs:3373-3442`, written from the `step` wrapper, `:1407-1443`) and `replay/`; the trace kit (`MAKO_RAFT_TRACE_FILE`, `rt/src/trace.rs` and its hooks); the lab's commit dumps and cases 12-15; `core/tests/` | the shell, `rt/`, `replay/`, the lab | the recorder and trace kit compiled in, inert unless their variable is set; the rest no | the equivalence check (A.4 item 4) and the performance gates (M0) |
+| 2. Reshaping, behaviour kept | the core as a crate of its own, its code moved, not rewritten (M1); one entry point, `Event` → `step` → `Reply` (M5, `core/src/event.rs`); side effects returned as actions and log lines as data (M3, M7: `core/src/output.rs`, `core/src/logging.rs`), carried out by the shell (`shell/server_h.rs:1516-1589`); each fiber cut at its wait, so an election and a heartbeat round are several core calls with the waits in the shell (M5), and rt's vote tally now hands each reply over (`rt/src/transport.rs:611-624`, `rt/src/seam.rs:306-342`); clock reads and random samples passed in (M4); per-entry facts cached in `RaftEntry` instead of asked of C++ (M6); a sorted `Vec` for `BTreeSet<u16>` (M9); `runtime_assert` and explicit wrapping arithmetic (M10); the command a type parameter, the inbound payload behind `InboundBatch`, which the shell's `WireBatch` implements (`shell/server_h.rs:3286`), and `div_ceil` behind the trusted `blocks_for` (M11) | `core/`, the shell, a little of `rt/` | yes | Verus checks only code it sees whole: no lock, I/O, clock, callback, closure or foreign call inside, and every effect visible as a value. Tier 1 and the replay (§9) check that behaviour did not change |
+| 3. Behaviour changes | F1 one vote per voter; F3 the leadership re-check and the commit index read in the critical section that builds the message; F4 entry terms below 1 refused; F5 the verified-configuration gate (`MAKO_RAFT_VERIFIED_GATES`, `enter_gates` at `core/src/node.rs:310`, `verified_config_ok` at `shell/server_h.rs:3519`); F6 the leader-change callback after the unlock; F7 entry stamping after the lock; F8 the atomic mirrors; F9 message admission (`step_checked`) | `rt/` (F1), the shell, `core/` | yes | F1 and F8 fix bugs the work found (bugs-found B3, B2), and F4 fixes part of B4 (entry terms above the leader's are still accepted). F6 takes Mako's callback out of the lock, a lock-order hazard (fixing B11 with it); F7 moves work out of the lock. F3, F5 and F9 make the proof's assumptions true: the commit index a SendAppendEntries carries; snapshots off and a static configuration; only well-formed messages from other members |
+| 4. Instrumentation | the replay recorder (`MAKO_RAFT_REPLAY_DIR`, `shell/server_h.rs:3373-3442`, written from the `step` wrapper, `:1407-1443`) and `replay/`; the trace kit (`MAKO_RAFT_TRACE_FILE`, `rt/src/trace.rs` and its hooks); the lab's commit dumps and cases 12-15; `core/tests/` | the shell, `rt/`, `replay/`, the lab | the recorder and trace kit compiled in, inert unless their variable is set; the rest no | the equivalence check (A.4 item 4) and the performance gates (M0) |
 
 `rt/` changed least: F1's tally, the per-reply record M5 needed, and the
 trace hooks, +120/-28 lines in all (`git diff --stat verus-p0 HEAD`). Its

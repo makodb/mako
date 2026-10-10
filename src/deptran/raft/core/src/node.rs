@@ -1,7 +1,7 @@
 // RaftCore -- the state the protocol decides over -- and the core calls
 // made on it from the election and the inbound RPC handlers.
 //
-// [move, M1] From src/deptran/raft/src/server_h.rs (Phase 6); the
+// [move, M1] From src/deptran/raft/shell/server_h.rs (Phase 6); the
 // command is the type parameter C (M11) and logging is records in the
 // output (M7).
 

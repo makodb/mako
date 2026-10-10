@@ -248,7 +248,7 @@ block supplies the single C++ base, so pin it with
 supertrait pair in `src/deptran/scheduler.h` (`RaftSpecific: TxLogServer`) is
 the worked example.
 
-**The Raft server is Rust, compiled by rustc.** `src/deptran/raft/src/server_h.rs`
+**The Raft server is Rust, compiled by rustc.** `src/deptran/raft/shell/server_h.rs`
 and `server_cc.rs` are canonical Rust sources (edit them directly; nothing
 there is transpiled), built by cargo as `libraft.a` into the build tree and
 linked by CMake (`raft_rust`). C++ reaches the server only through

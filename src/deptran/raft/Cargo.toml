@@ -30,7 +30,7 @@ publish = false
 members = [".", "rt", "core", "replay"]
 
 [lib]
-path = "src/lib.rs"
+path = "shell/lib.rs"
 # F2 slice 1: the crate also builds as the static library the cutover links;
 # its undefined symbols are exactly the raft_* kernels, its defined exports
 # the raft_server_* ABI. `nm` on target/release/libraft.a is the check.

@@ -1,6 +1,6 @@
 // raft-core: the Raft core that Verus checks (plan Phase 6). Plain Rust in
 // the Verus subset -- no unsafe, FFI, locks, atomics, hashing, logging or
-// clock reads (plan §3.1). The shell (src/deptran/raft/src, rt/) holds the
+// clock reads (plan §3.1). The shell (src/deptran/raft/shell, rt/) holds the
 // rest and calls in.
 #![forbid(unsafe_code)]
 

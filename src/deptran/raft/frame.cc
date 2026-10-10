@@ -217,7 +217,7 @@ void RaftFrame::RustLaneLabRunIfSite0(uint32_t locale_id) {
 }
 #endif
 
-// The lab harness: src/deptran/raft/src/lab.rs, lab_cases.rs and
+// The lab harness: src/deptran/raft/shell/lab.rs, lab_cases.rs and
 // lab_snapshot_cases.rs. Runs the 25 cases and returns the verdict shape the
 // C++ RaftLabTest::Run used to return, 0 for success.
 extern "C" int raft_lab_rust_run();

@@ -28,7 +28,7 @@ class RaftFrame : public Frame {
   static map<siteid_t, RaftFrame*> frames_;
   static bool all_sites_created_s;
   // -1 until the lab fiber finishes, then the lab harness's status
-  // (raft_lab_rust_run, src/deptran/raft/src/lab.rs).
+  // (raft_lab_rust_run, src/deptran/raft/shell/lab.rs).
   static rusty::sync::atomic::AtomicI32 lab_test_result_;
   static uint16_t n_commo_created_;
   static bool is_lab_test_config_;        // True if running raft lab test (1 partition, 5 replicas)
@@ -43,7 +43,7 @@ class RaftFrame : public Frame {
   // @safe - Returns 1 only for an incomplete/failed in-process RaftLab run.
   static int RaftLabProcessExitCode();
   // RaftCommo::rpc_count_ for one replica, for the Rust lab fixture
-  // (src/deptran/raft/src/lab.rs). A member because `frames_` is private and
+  // (src/deptran/raft/shell/lab.rs). A member because `frames_` is private and
   // the extern "C" kernel that calls this cannot be one.
   // @unsafe - dynamic_cast plus the communicator's own recursive mutex.
   static uint64_t LabFrameRpcCount(uint32_t loc_id);

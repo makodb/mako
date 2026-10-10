@@ -15,7 +15,7 @@ Usage: python3 scripts/raft_field_census.py   (exit 1 if any site remains)
 import collections, os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RS = os.path.join(ROOT, 'src/deptran/raft/src/server_h.rs')
+RS = os.path.join(ROOT, 'src/deptran/raft/shell/server_h.rs')
 # RaftCore lives in the raft-core crate since the Verus plan's Phase 6.
 CORE_RS = os.path.join(ROOT, 'src/deptran/raft/core/src/node.rs')
 SERVER_RECEIVERS = re.compile(
@@ -46,7 +46,7 @@ def main():
     bare = re.compile(r'(?<![\w>.])(' + alt + r')\b')
     server_sites, other = [], collections.Counter()
     for root, _, files in os.walk(os.path.join(ROOT, 'src/deptran')):
-        if '/raft/src' in root or '/raft/core' in root:
+        if '/raft/shell' in root or '/raft/core' in root:
             continue
         for fn in files:
             if not fn.endswith(('.cc', '.h', '.hpp', '.cpp')):

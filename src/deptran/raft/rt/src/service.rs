@@ -13,7 +13,7 @@
 //
 // WHAT IS GENERATED AND WHAT IS NOT. Everything mechanical -- the wire
 // structs, the id constants, `register`, `dispatch` -- comes from
-// scripts/rpcgen_rust.py via src/deptran/raft/src/rpc.rs. What is here is the
+// scripts/rpcgen_rust.py via src/deptran/raft/shell/rpc.rs. What is here is the
 // four handler bodies, which is the same seam C++ uses between `RaftService`
 // and `RaftServiceImpl`.
 

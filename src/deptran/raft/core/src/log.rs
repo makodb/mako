@@ -1,7 +1,7 @@
 // The replicated log: entries (a command handle and the facts cached about
 // it, M6) in fixed blocks, never moved once written.
 //
-// [move, M1] From src/deptran/raft/src/server_h.rs (Phase 6); the
+// [move, M1] From src/deptran/raft/shell/server_h.rs (Phase 6); the
 // command is the type parameter C (M11) and logging is records in the
 // output (M7).
 

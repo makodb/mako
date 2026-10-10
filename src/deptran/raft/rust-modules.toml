@@ -18,109 +18,109 @@ schema_version = 1
 [[module]]
 cpp_module = "raft.channel_transport_hpp"
 source = "src/deptran/raft/channel_transport.hpp"
-output = "src/deptran/raft/src/channel_transport_hpp.rs"
+output = "src/deptran/raft/shell/channel_transport_hpp.rs"
 
 [[module]]
 cpp_module = "raft.commo_h"
 source = "src/deptran/raft/commo.h"
-output = "src/deptran/raft/src/commo_h.rs"
+output = "src/deptran/raft/shell/commo_h.rs"
 
 [[module]]
 cpp_module = "raft.frame_cc"
 source = "src/deptran/raft/frame.cc"
-output = "src/deptran/raft/src/frame_cc.rs"
+output = "src/deptran/raft/shell/frame_cc.rs"
 
 [[module]]
 cpp_module = "raft.log_storage_hpp"
 source = "src/deptran/raft/log_storage.hpp"
-output = "src/deptran/raft/src/log_storage_hpp.rs"
+output = "src/deptran/raft/shell/log_storage_hpp.rs"
 
 [[module]]
 cpp_module = "raft.memory_log_storage_hpp"
 source = "src/deptran/raft/memory_log_storage.hpp"
-output = "src/deptran/raft/src/memory_log_storage_hpp.rs"
+output = "src/deptran/raft/shell/memory_log_storage_hpp.rs"
 
 [[module]]
 cpp_module = "raft.memory_snapshot_manager_hpp"
 source = "src/deptran/raft/memory_snapshot_manager.hpp"
-output = "src/deptran/raft/src/memory_snapshot_manager_hpp.rs"
+output = "src/deptran/raft/shell/memory_snapshot_manager_hpp.rs"
 
 [[module]]
 cpp_module = "raft.messages_hpp"
 source = "src/deptran/raft/messages.hpp"
-output = "src/deptran/raft/src/messages_hpp.rs"
+output = "src/deptran/raft/shell/messages_hpp.rs"
 
 [[module]]
 cpp_module = "raft.quorum_hpp"
 source = "src/deptran/raft/quorum.hpp"
-output = "src/deptran/raft/src/quorum_hpp.rs"
+output = "src/deptran/raft/shell/quorum_hpp.rs"
 
 [[module]]
 cpp_module = "raft.raft_worker_cc"
 source = "src/deptran/raft/raft_worker.cc"
-output = "src/deptran/raft/src/raft_worker_cc.rs"
+output = "src/deptran/raft/shell/raft_worker_cc.rs"
 
 [[module]]
 cpp_module = "raft.rocksdb_log_storage_hpp"
 source = "src/deptran/raft/rocksdb_log_storage.hpp"
-output = "src/deptran/raft/src/rocksdb_log_storage_hpp.rs"
+output = "src/deptran/raft/shell/rocksdb_log_storage_hpp.rs"
 
 # Canonical Rust (F2.6): compiled by rustc, not extracted from a carrier. The
 # extractor leaves these alone and lists them in lib.rs.
 [[module]]
 kind = "canonical"
-output = "src/deptran/raft/src/lab.rs"
+output = "src/deptran/raft/shell/lab.rs"
 # Present only under the lab feature; the gate is on the `mod` line in lib.rs
 # because crate-mode transpilation rejects a whole-file `#![cfg]`.
 cfg_feature = "raft_test"
 
 [[module]]
 kind = "canonical"
-output = "src/deptran/raft/src/lab_main.rs"
+output = "src/deptran/raft/shell/lab_main.rs"
 # Present only under the lab feature; see lab.rs below.
 cfg_feature = "raft_test"
 
 [[module]]
 kind = "canonical"
-output = "src/deptran/raft/src/lab_cases.rs"
+output = "src/deptran/raft/shell/lab_cases.rs"
 # Present only under the lab feature; the gate is on the `mod` line in lib.rs
 # because crate-mode transpilation rejects a whole-file `#![cfg]`.
 cfg_feature = "raft_test"
 
 [[module]]
 kind = "canonical"
-output = "src/deptran/raft/src/lab_snapshot_cases.rs"
+output = "src/deptran/raft/shell/lab_snapshot_cases.rs"
 # Present only under the lab feature; the gate is on the `mod` line in lib.rs
 # because crate-mode transpilation rejects a whole-file `#![cfg]`.
 cfg_feature = "raft_test"
 
 [[module]]
 kind = "canonical"
-output = "src/deptran/raft/src/server_cc.rs"
+output = "src/deptran/raft/shell/server_cc.rs"
 
 [[module]]
 kind = "canonical"
-output = "src/deptran/raft/src/server_h.rs"
+output = "src/deptran/raft/shell/server_h.rs"
 
 # The kernel boundary's C types: canonical Rust bound to raft_kernel_pods.h.
 [[module]]
 kind = "canonical"
-output = "src/deptran/raft/src/server_pods_h.rs"
+output = "src/deptran/raft/shell/server_pods_h.rs"
 
 [[module]]
 cpp_module = "raft.snapshot_format_hpp"
 source = "src/deptran/raft/snapshot_format.hpp"
-output = "src/deptran/raft/src/snapshot_format_hpp.rs"
+output = "src/deptran/raft/shell/snapshot_format_hpp.rs"
 
 [[module]]
 cpp_module = "raft.snapshot_manager_hpp"
 source = "src/deptran/raft/snapshot_manager.hpp"
-output = "src/deptran/raft/src/snapshot_manager_hpp.rs"
+output = "src/deptran/raft/shell/snapshot_manager_hpp.rs"
 
 [[module]]
 cpp_module = "raft.raft_main_helper_cc"
 source = "src/deptran/raft_main_helper.cc"
-output = "src/deptran/raft/src/raft_main_helper_cc.rs"
+output = "src/deptran/raft/shell/raft_main_helper_cc.rs"
 
 # Deptran-level, not Raft-level: communicator.h holds the peer table BOTH
 # engines' communicators are built on. Carried here for the same reason
@@ -128,7 +128,7 @@ output = "src/deptran/raft/src/raft_main_helper_cc.rs"
 [[module]]
 cpp_module = "raft.communicator_h"
 source = "src/deptran/communicator.h"
-output = "src/deptran/raft/src/communicator_h.rs"
+output = "src/deptran/raft/shell/communicator_h.rs"
 
 # Not under src/deptran/raft, like raft_main_helper.cc above. scheduler.h holds
 # the TxLogServer interface, which BOTH engines implement -- it is carried by
@@ -137,4 +137,4 @@ output = "src/deptran/raft/src/communicator_h.rs"
 [[module]]
 cpp_module = "raft.scheduler_h"
 source = "src/deptran/scheduler.h"
-output = "src/deptran/raft/src/scheduler_h.rs"
+output = "src/deptran/raft/shell/scheduler_h.rs"

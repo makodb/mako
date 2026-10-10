@@ -439,7 +439,7 @@ run_2shard_replication_simple() {
 }
 
 # ============================================================================
-# Raft lab cluster suite (src/deptran/raft/src/lab*.rs)
+# Raft lab cluster suite (src/deptran/raft/shell/lab*.rs)
 # ============================================================================
 #
 # This is the ONLY cluster-level correctness suite for RaftServer itself:
@@ -486,7 +486,7 @@ run_raft_lab_test() {
     # init2(N ids of the Rust harness plus the unit cases raft-rt's
     # lab_runtime.rs runs (tests 50-52), each announced by a
     # `TEST <id>:` line.
-    expected=$(( $(grep -ohE 'init2\([0-9]+' src/deptran/raft/src/*.rs | sort -u | wc -l) + \
+    expected=$(( $(grep -ohE 'init2\([0-9]+' src/deptran/raft/shell/*.rs | sort -u | wc -l) + \
                  $(grep -ohE 'eprintln!\("TEST [0-9]+:' src/deptran/raft/rt/src/lab_runtime.rs | sort -u | wc -l) ))
     echo "raftLabTest: ${passed}/${expected} case(s) passed, deptran_server exited ${status}"
 
