@@ -4,7 +4,6 @@
 #include <deptran/communicator.h>
 #include "../frame.h"
 #include "../constants.h"
-#include "commo.h"
 #include "server.h"
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
@@ -13,7 +12,7 @@
 
 namespace janus {
 
-struct RaftTransport;  // raft-rt, MAKO_RAFT_LANE=rust
+struct RaftTransport;  // raft-rt
 
 
 // @unsafe - inherits from non-@interface Frame (individual methods are @safe)
@@ -21,9 +20,6 @@ class RaftFrame : public Frame {
  private:
 #ifdef RAFT_TEST_CORO
   static std::mutex raft_test_mutex_;
-  // raft_test_fiber_ demoted to a file-scope static in frame.cc because
-  // rusty::Rc is now module-only (no header). All references live in
-  // frame.cc; nothing outside this TU consumes the field.
   static uint16_t n_replicas_;
   static map<siteid_t, RaftFrame*> frames_;
   static bool all_sites_created_s;
@@ -42,26 +38,23 @@ class RaftFrame : public Frame {
   static int RaftLabTestResult();
   // @safe - Returns 1 only for an incomplete/failed in-process RaftLab run.
   static int RaftLabProcessExitCode();
-  // RaftCommo::rpc_count_ for one replica, for the Rust lab fixture
+  // The RPCs one replica's transport sent, for the lab fixture
   // (src/deptran/raft/shell/lab.rs). A member because `frames_` is private and
   // the extern "C" kernel that calls this cannot be one.
-  // @unsafe - dynamic_cast plus the communicator's own recursive mutex.
+  // @safe - a map lookup and the transport's counter.
   static uint64_t LabFrameRpcCount(uint32_t loc_id);
-  // MAKO_RAFT_LANE=rust: the lab bookkeeping CreateCommo does on the C++ lane,
-  // which the Rust lane never calls (it has no RaftCommo). Commo-created
-  // counts one replica's transport as connected; RunIfSite0 waits for all
-  // five, runs the harness on this thread's Rust reactor (raft_lane::RunLab)
-  // and records its verdict where RaftLabTestResult reads it.
+  // The lab's bookkeeping: CommoCreated counts one replica's transport as
+  // connected; RunIfSite0 waits for all five, runs the harness on this
+  // thread's reactor (raft_lane::RunLab) and records its verdict where
+  // RaftLabTestResult reads it.
   static void RustLaneLabCommoCreated();
   static void RustLaneLabRunIfSite0(uint32_t locale_id);
 #endif
-  // MAKO_RAFT_LANE=rust only: this replica's raft-rt transport, which is
-  // where the Rust lane's RPC count lives (LabFrameRpcCount). Borrowed; the
-  // worker owns it. Null on the C++ lanes.
+  // This replica's raft-rt transport, where the lab's RPC count lives
+  // (LabFrameRpcCount). Borrowed; the worker owns it.
   RaftTransport* rust_transport_ = nullptr;
   RaftFrame() = default;
-  ~RaftFrame();  // Destructor to clean up owned resources
-  std::unique_ptr<RaftCommo> commo_;  // @unsafe - unique_ptr kept for test file compatibility
+  ~RaftFrame();
   /* TODO: have another class for common data */
   // NON-OWNING. CreateScheduler() hands the only owning reference to the
   // worker, which deletes it (raft_worker.cc, server_worker.cc); this member
@@ -86,6 +79,9 @@ class RaftFrame : public Frame {
   // server as what it is, instead of recovering it with dynamic_cast.
   TxLogServer *CreateScheduler() override { return CreateRaftScheduler(); }
   RaftServer *CreateRaftScheduler();
+  // Frame's interface, which Paxos implements: Raft's communicator and RPC
+  // service are its transport's (raft_lane.h), so the workers never ask the
+  // frame for them, and these refuse.
   Communicator *CreateCommo(
       rusty::Option<rusty::Arc<srpc::PollThread>> poll_thread_worker =
           rusty::None) override;

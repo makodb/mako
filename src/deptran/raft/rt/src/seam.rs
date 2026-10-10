@@ -417,7 +417,7 @@ unsafe extern "C" fn emit_into_archive(ctx: *mut c_void, bytes: *const u8, len: 
 /// The send. Non-blocking: it only initiates the call. The reply lands in the
 /// Pending the carrier holds, which PHASE 2 polls through
 /// raft_append_response_read, as it polls `completed` in the C++ lane.
-/// Commands with no payload go as EmptyAppendEntries, as commo.cc:69 does.
+/// Commands with no payload go as EmptyAppendEntries, as the C++ communicator's did.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn raft_phase1_send_append(
@@ -469,7 +469,7 @@ pub unsafe extern "C" fn raft_phase1_send_append(
         let raw = out as *mut u8;
         match pending {
             // No peer, network down, or the send never left: completed and
-            // failed at once, which is what commo.cc:43-45 does.
+            // failed at once, as the C++ communicator's did.
             None => set_word(raw, 0, RESP_FAILED),
             Some(reply) => {
                 set_word(raw, 0, RESP_PENDING);

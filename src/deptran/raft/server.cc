@@ -95,8 +95,6 @@ import rusty;   // rusty::BTreeSet is a btree_port C++20 module, not a header
 //   janus::View::View: [safe, (...) -> owned]
 //   janus::View::operator=: [safe, (&'a mut, const &'a) -> &'a mut]
 //   janus::TxLogServer::DestroyTx: [safe, (&'a mut, uint64_t) -> void]
-//   janus::RaftCommo::SendAppendEntries2: [safe, (...) -> owned]
-//   janus::RaftCommo::BroadcastVote: [safe, (...) -> owned]
 // }
 
 namespace janus {
@@ -374,12 +372,6 @@ prepare_state_machine_snapshot_locked(
 // field converts, (2) when the callee converts, (3) never -- conditional
 // compilation has no Rust spelling in this dialect.
 // ===========================================================================
-// The typed communicator. commo_ is the generic Communicator* the TxLogServer
-// interface hands every engine; RaftFrame::CreateCommo built it as a
-// RaftCommo, and this is the one place that fact is recovered. It replaces the
-// RaftServer::commo() method the kernels used to downcast the SERVER to reach.
-// @unsafe - dynamic_cast on a pointer the frame owns; verify keeps the old
-// abort-if-unset behaviour.
 // Construct-in-place for the out-parameter kernels: destroy whatever the slot
 // holds, then copy- or move-construct the new value there. Under the
 // transpiler the slot is a live default-constructed object; under the runtime

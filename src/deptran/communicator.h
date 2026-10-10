@@ -91,9 +91,9 @@ namespace janus {
 // The peer table, written once in Rust and compiled twice.
 //
 // WHY IT IS HERE AND NOT IN A COMMUNICATOR SUBCLASS. `Communicator` is a
-// data-carrying base with two subclasses -- MultiPaxosCommo
-// (src/deptran/paxos/commo.h) and RaftCommo (src/deptran/raft/commo.h) -- and
-// Rust has no implementation inheritance. Flattening the base into each
+// data-carrying base whose subclasses were MultiPaxosCommo
+// (src/deptran/paxos/commo.h) and RaftCommo (deleted with Raft's C++ lane),
+// and Rust has no implementation inheritance. Flattening the base into each
 // subclass gives two definitions that can drift, and only one of the two
 // engines is being converted. So the base's DATA moves into one Rust-authored
 // value type that the base holds by composition, while the base itself stays

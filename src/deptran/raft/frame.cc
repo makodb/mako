@@ -3,17 +3,10 @@
 #include "frame.h"
 #include "raft_lane.h"
 #include "server.h"
-#include "service.h"
-#include "commo.h"
 #include "config.h"
 #include <rusty/slice.hpp>
 // #include "../kv/server.h"
 
-// rusty::Rc lives in the rusty module only (the legacy <rusty/rc.hpp>
-// header was retired). Pull it in here so the file-scope
-// raft_test_fiber_ below can name rusty::Option<rusty::Rc<Fiber>>.
-// Per libc++'s textual-then-module ordering, imports follow #includes.
-import rusty;
 
 // @external: {
 //   Log_info: [safe, (...) -> void]
@@ -143,9 +136,6 @@ RaftFrame::~RaftFrame() {
 
 #ifdef RAFT_TEST_CORO
 std::mutex RaftFrame::raft_test_mutex_;
-// File-scope rather than a class member: rusty::Rc is module-only and frame.h
-// cannot name it. Every reference is in this file.
-static rusty::Option<rusty::Rc<Fiber>> raft_test_fiber_;
 uint16_t RaftFrame::n_replicas_ = 0;
 map<siteid_t, RaftFrame*> RaftFrame::frames_ = {};
 bool RaftFrame::all_sites_created_s = false;
@@ -154,41 +144,24 @@ uint16_t RaftFrame::n_commo_created_ = 0;
 bool RaftFrame::is_lab_test_config_ = false;
 bool RaftFrame::lab_test_config_checked_ = false;
 
-// The lab's RPC counter, for the Rust fixture (lab.rs::rpc_count).
-//
-// Here rather than next to the other kernels in server.cc because
-// RaftFrame::frames_ is private and this file is a member: the alternative was
-// to widen frame.h's public surface for a test.
-//
-// Reached through the FRAME, not the server, because that is where the
-// communicator is in a lab build -- RaftServerBase::commo_ is set by
-// RaftWorker/ServerWorker::SetupService and the lab starts no worker.
-// The frame is where the communicator is, so the frame is where this reads.
-// @unsafe - dynamic_cast and a recursive_mutex around a legacy counter.
+// The lab's RPC counter, for the Rust fixture (lab.rs::rpc_count): every RPC
+// the replica's transport sent. Here rather than with the kernels in server.cc
+// because RaftFrame::frames_ is private and this file is a member; through
+// the frame because ServerWorker hands it the transport.
+// @safe - a map lookup and the transport's counter.
 uint64_t RaftFrame::LabFrameRpcCount(uint32_t loc_id) {
   auto it = RaftFrame::frames_.find(static_cast<siteid_t>(loc_id));
-  if (it == RaftFrame::frames_.end() || it->second == nullptr) {
+  if (it == RaftFrame::frames_.end() || it->second == nullptr ||
+      it->second->rust_transport_ == nullptr) {
     return 0;
   }
-#if MAKO_RAFT_LANE_RUST
-  // Every RPC the transport sent: RaftCommo::rpc_count_'s counterpart.
-  return it->second->rust_transport_ == nullptr
-             ? 0
-             : raft_lane::RpcCount(it->second->rust_transport_);
-#endif
-  auto* raft_commo = dynamic_cast<RaftCommo*>(it->second->commo_.get());
-  if (raft_commo == nullptr) {
-    return 0;
-  }
-  std::lock_guard<std::recursive_mutex> lk(raft_commo->rpc_mtx_);
-  return raft_commo->rpc_count_;
+  return raft_lane::RpcCount(it->second->rust_transport_);
 }
 
 extern "C" uint64_t raft_lab_frame_rpc_count(uint32_t loc_id) {
   return RaftFrame::LabFrameRpcCount(loc_id);
 }
 
-#if MAKO_RAFT_LANE_RUST
 void RaftFrame::RustLaneLabCommoCreated() {
   if (!IsRaftLabTestConfig()) {
     return;
@@ -202,8 +175,7 @@ void RaftFrame::RustLaneLabRunIfSite0(uint32_t locale_id) {
   if (!IsRaftLabTestConfig() || !raft_frame_should_create_test_fiber(locale_id)) {
     return;
   }
-  // Wait until all five replicas are connected and started, as the C++ lane's
-  // harness fiber does before it is resumed.
+  // Wait until all five replicas are connected and started.
   raft_test_mutex_.lock();
   while (raft_frame_more_commos_needed(n_commo_created_, 5)) {
     raft_test_mutex_.unlock();
@@ -213,14 +185,8 @@ void RaftFrame::RustLaneLabRunIfSite0(uint32_t locale_id) {
   raft_test_mutex_.unlock();
   const int test_result = raft_lane::RunLab();
   lab_test_result_.store(test_result, rusty::sync::atomic::Ordering::Release);
-  Log_info("Rust-lane lab harness finished with {}", test_result);
+  Log_info("Lab harness finished with {}", test_result);
 }
-#endif
-
-// The lab harness: src/deptran/raft/shell/lab.rs, lab_cases.rs and
-// lab_snapshot_cases.rs. Runs the 25 cases and returns the verdict shape the
-// C++ RaftLabTest::Run used to return, 0 for success.
-extern "C" int raft_lab_rust_run();
 
 // @unsafe - Serializes the shared test-config cache with the legacy test mutex.
 bool RaftFrame::IsRaftLabTestConfig() {
@@ -292,126 +258,17 @@ RaftServer *RaftFrame::CreateRaftScheduler() {
   return svr_;
 }
 
-// @unsafe - returns raw pointer to owned member, external calls marked @external [safe]
-Communicator *RaftFrame::CreateCommo(
-    rusty::Option<rusty::Arc<srpc::PollThread>> poll_thread_worker) {
-  // We only have 1 instance of RaftFrame object that is returned from
-  // GetFrame method. RaftCommo currently seems ok to share among the
-  // clients of this method.
-  Log_info("CreateCommo: Thread ID = {}", std::this_thread::get_id());
-  {
-    auto fiber = Fiber::current_fiber();
-    Log_info("CreateCommo: current fiber = {}",
-             fiber.is_some() ? static_cast<const void*>(fiber.as_ref().unwrap().get()) : nullptr);
-  }
-  if (commo_ == nullptr) {
-    Log_info("CreateCommo: Creating new RaftCommo");
-    commo_ = std::make_unique<RaftCommo>(std::move(poll_thread_worker));
-  }
-
-  #ifdef RAFT_TEST_CORO
-  // Only run test framework code if in raft lab test configuration
-  if (IsRaftLabTestConfig()) {
-    Log_info("CreateCommo: RAFT_TEST_CORO enabled (lab test mode)");
-    raft_test_mutex_.lock();
-    Log_info("CreateCommo: n_replicas_ = {}, n_commo_ = {}", n_replicas_, n_commo_created_);
-
-    // Simple verification: ensure all 5 schedulers are created
-    verify(raft_frame_all_schedulers_created(n_replicas_, 5));
-
-    // Simple counter increment: track communicator creation
-    // Find this frame in the map and increment counter
-    bool found = false;
-    for (const auto& pair : frames_) {
-      if (pair.second == this) {
-        found = true;
-        break;
-      }
-    }
-    verify(found); // This frame should exist in frames_
-
-    // Use a simple counter approach like lab solution
-    n_commo_created_++;
-    Log_info("CreateCommo: n_commo_ now = {}", n_commo_created_);
-    raft_test_mutex_.unlock();
-
-    // Only site 0 creates and manages the test fiber
-    if (raft_frame_should_create_test_fiber(site_info_->locale_id)) {
-      Log_info("CreateCommo: About to create test fiber");
-      verify(raft_test_fiber_.is_none());
-      Log_info("Creating Raft test fiber");
-
-      raft_test_fiber_ = rusty::Some(Fiber::create_run([this] () {
-        Log_info("Test fiber: Starting execution");
-        Log_info("Test fiber: Thread ID = {}", std::this_thread::get_id());
-        {
-          auto fiber = Fiber::current_fiber();
-          Log_info("Test fiber: current fiber = {}",
-                   fiber.is_some() ? static_cast<const void*>(fiber.as_ref().unwrap().get()) : nullptr);
-        }
-
-        // Yield until all 5 communicators are initialized
-        Log_info("Test fiber: About to yield");
-        auto current_fiber = Fiber::current_fiber();
-        if (current_fiber.is_some()) {
-          current_fiber.unwrap()->yield_();
-        }
-        Log_info("Test fiber: Resumed after yield");
-
-        // Run tests
-        verify(raft_frame_all_schedulers_created(n_replicas_, 5));
-        // The harness owns its own fixture: it finds the five replicas
-        // through the registry each one publishes in set_site_identity, so
-        // nothing here has to hand it the frames.
-        const int test_result = raft_lab_rust_run();
-        lab_test_result_.store(
-            test_result, rusty::sync::atomic::Ordering::Release);
-        Log_info("Test fiber: Tests completed, turning off reactor loop");
-        // Turn off Reactor loop
-        Reactor::get_reactor()->looping_.set(false);
-        return;
-      }));
-      Log_info("raft_test_fiber_ id={}",
-               raft_test_fiber_.as_ref().unwrap()->id.get());
-
-      // wait until n_commo_created_ == 5, then resume the fiber
-      raft_test_mutex_.lock();
-      while (raft_frame_more_commos_needed(n_commo_created_, 5)) {
-        raft_test_mutex_.unlock();
-        sleep(0.1);
-        raft_test_mutex_.lock();
-      }
-      raft_test_mutex_.unlock();
-      Reactor::get_reactor()->continue_fiber(raft_test_fiber_.as_ref().unwrap().clone());
-    }
-  }
-  #endif
-
-  Log_info("CreateCommo: Returning commo_ = {}", (void*)commo_.get());
-  return commo_.get();
+// @safe - unreachable: see frame.h.
+Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<srpc::PollThread>>) {
+  Log_fatal("RaftFrame::CreateCommo: Raft's communicator is its transport (raft_lane.h)");
+  return nullptr;
 }
 
-// @unsafe - external calls marked @external [safe]
-std::vector<srpc::ServiceProxy>
-RaftFrame::CreateRpcServices(uint32_t site_id,
-                                   TxLogServer *rep_sched,
-                                   rusty::Arc<srpc::PollThread> poll_thread_worker) {
-  auto config = Config::GetConfig();
-  auto result = std::vector<srpc::ServiceProxy>();
-  switch (config->replica_proto_) {
-    // The service holds the server as RaftSpecific*, fixed at construction;
-    // the poll thread is owned by the srpc::Server that registers this proxy.
-    // rep_sched is the scheduler this frame created, and svr_ is the typed
-    // back-reference to the same object, so no RTTI is needed to get there.
-    case MODE_RAFT: {
-      verify(svr_ != nullptr && rep_sched == svr_);
-      result.push_back(srpc::make_service_proxy_from_typed_box(
-          rusty::make_box<RaftServiceImpl>(svr_)));
-      break;
-    }
-    default:break;
-  }
-  return result;
+// @safe - unreachable: see frame.h.
+std::vector<srpc::ServiceProxy> RaftFrame::CreateRpcServices(uint32_t, TxLogServer*,
+                                                             rusty::Arc<srpc::PollThread>) {
+  Log_fatal("RaftFrame::CreateRpcServices: Raft's service is its transport's (raft_lane.h)");
+  return {};
 }
 
 } // namespace janus;

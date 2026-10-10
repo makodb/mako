@@ -36,13 +36,8 @@ RUSTC_BIN="${RUSTC:-rustc}"
 REQUIRED_RUSTY_CPP_COMMIT="7e0c201f1b0d548f0166dc9ee700f24bc18066a4"
 FILES=()
 EXPECTED_BLOCKS=(
-  "src/deptran/raft/commo.h|raft_commo.scalar_decisions"
   "src/deptran/raft/frame.cc|raft_frame.lab_decisions"
   "src/deptran/raft/log_storage.hpp|raft_log_entry.scalar_decisions"
-  "src/deptran/raft/messages.hpp|raft_messages.append_entries_reply"
-  "src/deptran/raft/messages.hpp|raft_messages.heartbeat"
-  "src/deptran/raft/messages.hpp|raft_messages.install_snapshot_reply"
-  "src/deptran/raft/messages.hpp|raft_messages.vote"
   "src/deptran/raft/quorum.hpp|raft_quorum.scalar_decisions"
   "src/deptran/raft/raft_worker.cc|raft_worker.scalar_decisions"
   "src/deptran/raft/snapshot_manager.hpp|raft_snapshot.metadata_decisions"

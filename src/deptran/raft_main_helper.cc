@@ -10,7 +10,6 @@
 #include "frame.h"
 #include "raft/raft_worker.h"
 #include "raft/raft_lane.h"
-#include "raft/service.h"
 #include "paxos_worker.h"  // ElectionState definition lives here
 #include <rusty/rusty.hpp>
 
@@ -72,10 +71,8 @@ constexpr RaftGroupMode kDefaultRaftGroupMode = RaftGroupMode::kPerPartitionGrou
 static RaftGroupMode raft_group_mode_g = kDefaultRaftGroupMode;
 // File-scope storage for local site infos and stub servers.
 static std::vector<Config::SiteInfo*> all_site_infos_g;
-static std::vector<srpc::Server*> stub_rpc_servers_g;
-static std::vector<rusty::Arc<PollThread>> stub_poll_threads_g;
-// MAKO_RAFT_LANE=rust: the stubs are extra listeners on the one worker's
-// transport poll thread (raft_lane::ServeStub), not servers with threads.
+// The stubs are extra listeners on the one worker's transport poll thread
+// (raft_lane::ServeStub), not servers with threads.
 static std::vector<void*> rust_stub_servers_g;
 static std::unordered_map<uint32_t, std::shared_ptr<RaftWorker>> workers_by_partition_g;
 
@@ -357,7 +354,8 @@ static constexpr uint64_t kStubRpcDrainTimeoutMs = 5000;
 
 // SINGLE-RAFT: Create stub RPC servers on extra partition ports.
 // Remote replicas' Communicators expect to connect to all partition ports.
-// Stub servers register the same RaftServiceImpl pointing to the single RaftServer.
+// Each stub serves the same Raft service over the single RaftServer, on the
+// worker's transport poll thread: a listener, not a thread.
 void create_stub_servers() {
   if (raft_group_mode_g != RaftGroupMode::kSingleGroup) {
     return;
@@ -374,9 +372,6 @@ void create_stub_servers() {
   for (size_t i = 1; i < all_site_infos_g.size(); i++) {
     auto* site_info = all_site_infos_g[i];
     std::string bind_addr = site_info->GetBindAddress();
-#if MAKO_RAFT_LANE_RUST
-    // The same one service over the same one server, as below, but on the
-    // worker's transport poll thread: a listener, not a thread.
     void* stub = raft_lane::ServeStub(worker->rust_transport_,
                                       static_cast<RaftServer*>(rep_sched),
                                       bind_addr);
@@ -386,39 +381,16 @@ void create_stub_servers() {
     rust_stub_servers_g.push_back(stub);
     Log_info("[SINGLE-RAFT] Created stub server on {} for site {} (partition {})",
              bind_addr.c_str(), site_info->id, site_info->partition_id_);
-    continue;
-#endif
-
-    // Create a PollThread for this stub
-    auto poll_thread = srpc::PollThread::create();
-    stub_poll_threads_g.push_back(poll_thread);
-
-    // Create RPC server
-    auto* rpc_server = new srpc::Server(srpc::Server::new_(rusty::Some(poll_thread.clone())));
-    rpc_server->set_admission_ready(false);
-
-    // Register RaftServiceImpl pointing to the single RaftServer
-    rpc_server->reg_service_typed(rusty::make_box<RaftServiceImpl>(rep_sched));
-
-    // Bind to the site's port
-    int ret = rpc_server->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
-    if (ret != 0) {
-      Log_fatal("[SINGLE-RAFT] Stub server failed to bind at {}", bind_addr.c_str());
-    }
-
-    stub_rpc_servers_g.push_back(rpc_server);
-    Log_info("[SINGLE-RAFT] Created stub server on {} for site {} (partition {})",
-             bind_addr.c_str(), site_info->id, site_info->partition_id_);
   }
-
-  Log_info("[SINGLE-RAFT] Created {} stub servers", stub_rpc_servers_g.size());
+  Log_info("[SINGLE-RAFT] Created {} stub servers", rust_stub_servers_g.size());
 }
 
-// SINGLE-RAFT: Shutdown and clean up stub servers
+// SINGLE-RAFT: Shutdown and clean up stub servers: close and drain every
+// stub, then drop them, while the worker's transport poll thread is still
+// alive to run their jobs. Each serves the single RaftServer, whose handlers
+// dereference it with no lifetime lease, so the drain precedes its
+// destruction by RaftWorker::ShutDown().
 void destroy_stub_servers() {
-#if MAKO_RAFT_LANE_RUST
-  // Same order as below: close and drain every stub, then drop them, while
-  // the worker's transport poll thread is still alive to run their jobs.
   for (void* stub : rust_stub_servers_g) {
     if (!raft_lane::StubDrain(stub, kStubRpcDrainTimeoutMs)) {
       Log_warn("[SINGLE-RAFT] Stub server drain timed out");
@@ -428,33 +400,6 @@ void destroy_stub_servers() {
     raft_lane::StubDestroy(stub);
   }
   rust_stub_servers_g.clear();
-#endif
-  // Each stub registers a RaftServiceImpl over the single RaftServer, whose
-  // handlers dereference a bare pointer with no lifetime lease. Close
-  // admission and drain the already-admitted requests before the service is
-  // destroyed here and the RaftServer is destroyed by RaftWorker::ShutDown().
-  for (auto* server : stub_rpc_servers_g) {
-    if (server) {
-      server->set_admission_ready(false);
-      if (!server->drain(kStubRpcDrainTimeoutMs)) {
-        Log_warn("[SINGLE-RAFT] Stub server drain timed out with {} request(s) "
-                 "still in flight",
-                 server->pending_request_count());
-      }
-    }
-  }
-  for (auto* server : stub_rpc_servers_g) {
-    if (server) {
-      delete server;
-    }
-  }
-  stub_rpc_servers_g.clear();
-
-  for (auto& pt : stub_poll_threads_g) {
-    pt->shutdown();
-  }
-  stub_poll_threads_g.clear();
-
   Log_info("[SINGLE-RAFT] Destroyed stub servers");
 }
 
@@ -517,16 +462,9 @@ bool server_launch_worker(std::vector<Config::SiteInfo>& server_sites) {
       return false;
     }
     worker->SetRpcAdmissionReady(true);
-    for (auto* stub_server : stub_rpc_servers_g) {
-      if (stub_server != nullptr) {
-        stub_server->set_admission_ready(true);
-      }
-    }
-#if MAKO_RAFT_LANE_RUST
     for (void* stub : rust_stub_servers_g) {
       raft_lane::StubSetAdmissionReady(stub, true);
     }
-#endif
 
     worker->StartSubmitThread();
     worker->SetupHeartbeat();

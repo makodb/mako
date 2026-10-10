@@ -6,7 +6,6 @@
 // provider. Production compiles the committed generated C++ next to
 // each block. See docs/stage2_current_progress.txt.
 
-pub mod commo_h;
 pub mod communicator_h;
 pub mod disk;
 pub mod frame_cc;
@@ -19,7 +18,6 @@ pub mod lab_main;
 #[cfg(feature = "raft_test")]
 pub mod lab_snapshot_cases;
 pub mod log_storage_hpp;
-pub mod messages_hpp;
 pub mod quorum_hpp;
 pub mod raft_main_helper_cc;
 pub mod raft_worker_cc;

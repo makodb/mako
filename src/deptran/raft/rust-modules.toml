@@ -16,11 +16,6 @@ schema_version = 1
 # top-level DSL items found zero duplicate names across carriers.
 
 [[module]]
-cpp_module = "raft.commo_h"
-source = "src/deptran/raft/commo.h"
-output = "src/deptran/raft/shell/commo_h.rs"
-
-[[module]]
 cpp_module = "raft.frame_cc"
 source = "src/deptran/raft/frame.cc"
 output = "src/deptran/raft/shell/frame_cc.rs"
@@ -29,11 +24,6 @@ output = "src/deptran/raft/shell/frame_cc.rs"
 cpp_module = "raft.log_storage_hpp"
 source = "src/deptran/raft/log_storage.hpp"
 output = "src/deptran/raft/shell/log_storage_hpp.rs"
-
-[[module]]
-cpp_module = "raft.messages_hpp"
-source = "src/deptran/raft/messages.hpp"
-output = "src/deptran/raft/shell/messages_hpp.rs"
 
 [[module]]
 cpp_module = "raft.quorum_hpp"

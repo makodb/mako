@@ -1,10 +1,9 @@
-// Raft's RPC service, on the Rust srpc lane.
+// Raft's RPC service, on the Rust srpc runtime.
 //
-// WHAT THIS REPLACES. src/deptran/raft/service.cc -- `RaftServiceImpl`, a C++
-// class overriding the `RaftService` that rpcgen emits into rcc_rpc.h, which
-// the C++ lane of srpc dispatches to through a vtable. This is the same four
-// handlers reached from the Rust lane instead, so the dispatch seam stops
-// being the place the two languages meet.
+// WHAT THIS REPLACED. A C++ `RaftServiceImpl` (deleted with the C++ lane)
+// overriding the `RaftService` rpcgen emits into rcc_rpc.h, which the C++
+// srpc runtime dispatched to through a vtable. These are the same four
+// handlers, so the dispatch seam is no longer where the two languages meet.
 //
 // WHY IT COMPILES AT ALL NOW. `trait Service: Send + Sync`
 // (src/srpc/rpc/server.rs:183). Until stage 3a removed `commo_`,
@@ -14,8 +13,8 @@
 // WHAT IS GENERATED AND WHAT IS NOT. Everything mechanical -- the wire
 // structs, the id constants, `register`, `dispatch` -- comes from
 // scripts/rpcgen_rust.py via src/deptran/raft/shell/rpc.rs. What is here is the
-// four handler bodies, which is the same seam C++ uses between `RaftService`
-// and `RaftServiceImpl`.
+// four handler bodies, the seam C++ had between `RaftService` and
+// `RaftServiceImpl`.
 
 use crate::snapshot::{clear_handoff, park_handoff};
 use crate::rpc::{

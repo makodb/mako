@@ -175,10 +175,6 @@ PAIRS = [
     ("raft/server.h", "raft/shell/server_h.rs",
      "Rust owns it; the C++ left is kernels and a pointer-holding shim"),
     ("raft/server.cc", "raft/shell/server_cc.rs", ""),
-    ("raft/service.cc", "raft/rt/src/service.rs",
-     "the Rust serves; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST"),
-    ("raft/commo.cc", "raft/rt/src/transport.rs",
-     "the Rust sends; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST"),
     ("communicator.h", "raft/shell/communicator_h.rs",
      "ONE source: the Rust is transpiled into the C++ both engines link"),
 ]

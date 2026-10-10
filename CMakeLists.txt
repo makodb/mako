@@ -1108,11 +1108,9 @@ set(DEPTRAN_CORE_SRC
     src/deptran/paxos/service.cc
     src/deptran/paxos_worker.cc
     src/deptran/raft/application_log.cc
-    src/deptran/raft/commo.cc
     src/deptran/raft/frame.cc
     src/deptran/raft/raft_worker.cc
     src/deptran/raft/server.cc
-    src/deptran/raft/service.cc
     src/deptran/replication_log_entry.cc
     src/deptran/scheduler.cc
     src/deptran/tpc_command.cc
@@ -2139,11 +2137,6 @@ if(BUILD_TESTS)
     # SRPC_USE_CHANNEL/SRPC_DISABLE_CHANNEL migration switch and its
     # test-only override helpers. Channel mode is unconditional now.
 
-    add_executable(test_raft_messages tests/raft_messages_test.cc)
-    target_include_directories(test_raft_messages PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_messages PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_messages ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_messages COMMAND test_raft_messages)
 
     add_executable(test_raft_application_log tests/raft_application_log_test.cc)
     target_include_directories(test_raft_application_log PRIVATE
@@ -2163,30 +2156,12 @@ if(BUILD_TESTS)
 
 
 
-    # Phase 8.1a — RaftQuorum<Reply> primitive (header-only template).
-    # Bootstraps an srpc::Reactor on the test thread to exercise the
-    # IntEvent-backed wait_until_quorum path; no heavy raft state needed.
-    add_executable(test_raft_quorum tests/raft_quorum_test.cc)
-    target_include_directories(test_raft_quorum PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_quorum PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_quorum ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_quorum COMMAND test_raft_quorum)
 
 
 
 
 
 
-    # Every direct Raft consumer first proves that committed generated C++ is
-    # the exact output of the owned inline Rust blocks. This keeps focused
-    # builds from bypassing the source-provenance gate.
-    set(RAFT_DSL_CONSUMER_TARGETS
-        test_raft_messages
-        test_raft_quorum
-    )
-    foreach(raft_dsl_consumer IN LISTS RAFT_DSL_CONSUMER_TARGETS)
-        add_dependencies(${raft_dsl_consumer} raft_goal0_source_gate)
-    endforeach()
 
     # Service proxy facade guard tests (Phase 2 leaf 1)
 

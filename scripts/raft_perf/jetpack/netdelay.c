@@ -1,6 +1,6 @@
 // netdelay.c -- LD_PRELOAD shim that injects Jetpack's WAN_DELAY_MS.
 //
-// Jetpack (src/deptran/communicator.h:15-46, raft/commo.cc:38,112,179) makes
+// Jetpack (src/deptran/communicator.h:15-46; the since-deleted C++ Raft communicator) makes
 // every outbound Raft request wait WAN_DELAY_MS before it is sent; replies
 // are not delayed. This shim reproduces that as a link delay, identically for
 // every raft_bench build, without touching their Raft or RPC code:

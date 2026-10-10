@@ -183,7 +183,7 @@ pub struct RaftTransport {
     dialers: Vec<std::thread::JoinHandle<()>>,
     dial_stop: Arc<AtomicBool>,
     network_enabled: AtomicBool,
-    // Every RPC this transport sent: RaftCommo::rpc_count_'s counterpart,
+    // Every RPC this transport sent (the C++ communicator's rpc_count_),
     // which the lab's idle-RPC ceiling (TEST 9) reads.
     rpc_count: AtomicU64,
     // InstallSnapshots outstanding per follower (N6). Shared with the reply
@@ -457,7 +457,7 @@ impl RaftTransport {
     }
 
     /// Every peer in a partition except the caller, which is who a broadcast
-    /// reaches: PeersForPartition plus the self-skip RaftCommo does.
+    /// reaches: PeersForPartition plus the self-skip the C++ communicator did.
     pub fn peers_in_partition(&self, par_id: u32, except: u16)
         -> Vec<(u16, Arc<Client>)> {
         if !self.network_enabled() {
@@ -599,7 +599,7 @@ impl RaftTransport {
     /// SendInstallSnapshot has: `done` runs exactly once, on the poll thread,
     /// with the follower's term or 0 on any failure. Returns false when the
     /// request never left, in which case `done` is NOT called -- the caller
-    /// delivers the failure itself, on its own stack, as commo.cc does.
+    /// delivers the failure itself, on its own stack, as the C++ communicator did.
     pub fn send_install_snapshot_with<F>(&self, site_id: u16,
                                          req: InstallSnapshotRequest, done: F) -> bool
     where
@@ -699,7 +699,7 @@ impl RaftTransport {
 
     /// The campaign broadcast, and its tally.
     ///
-    /// The quorum rule is the C++ lane's, exactly: RaftCommo::BroadcastVote
+    /// The quorum rule is the C++ communicator's BroadcastVote's, exactly:
     /// builds RaftVoteQuorumEvent(n, n / 2) with n the configured partition
     /// size, which counts PEER votes -- yes once peer yes votes reach n/2, no
     /// once peer no votes exceed n - n/2. The quorum comes from the
@@ -716,7 +716,7 @@ impl RaftTransport {
             let sent = proxy.vote_async(
                 req,
                 Some(Box::new(move |code, ptr, len| {
-                    // A failed RPC feeds nothing, as commo.cc's callback
+                    // A failed RPC feeds nothing, as the C++ communicator's callback
                     // returns early on an error code.
                     if code != 0 {
                         return;

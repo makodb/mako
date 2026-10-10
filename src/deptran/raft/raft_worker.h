@@ -136,12 +136,6 @@ public:
   RaftFrame* raft_frame_ = nullptr;       // rep_frame_, as the frame it is
   TxLogServer* rep_sched_ = nullptr;      // the scheduler, as every engine's worker holds it
   RaftSpecific* raft_sched_ = nullptr;    // the same object, as the interface this worker drives
-  Communicator* rep_commo_ = nullptr;
-
-  // RPC infrastructure
-  rusty::Option<rusty::Arc<PollThread>> svr_poll_thread_worker_;
-  // Services are now owned by rpc_server_ via reg_service()
-  srpc::Server* rpc_server_ = nullptr;
 
   // Heartbeat/control RPC
   rusty::Option<rusty::Arc<PollThread>> svr_hb_poll_thread_worker_g;
@@ -267,27 +261,17 @@ public:
   // `marshallable_cast<T>(md)` overload as needed.
   int Next(slotid_t slot, janus::Command md);
 
-  // @safe
-  rusty::Option<rusty::Arc<PollThread>> GetPollThreadWorker() {
-    // @unsafe
-    { // Option::clone on Arc<PollThread>
-      return svr_poll_thread_worker_.clone();
-    }
-  }
-
   // @safe - the typed pointer the worker took at creation; null before
   // SetupBase and after ShutDown.
   RaftSpecific* GetRaftServer() { return raft_sched_; }
 
-  // Run `job` once on the thread that owns Raft's fibers -- the C++ poll
-  // thread on the C++ lanes, the transport's Rust poll thread on the Rust
-  // lane -- which is where EnsureSetup must run so the fibers it spawns land
-  // on the right reactor. False if there is no such thread yet.
+  // Run `job` once on the thread that owns Raft's fibers -- the transport's
+  // poll thread -- which is where EnsureSetup must run so the fibers it
+  // spawns land on the right reactor. False if there is no such thread yet.
   bool PostToRaftPoll(std::function<void()> job);
 
-  // MAKO_RAFT_LANE=rust only: raft-rt's transport, which owns this worker's
-  // Raft poll thread, RPC server and peer clients (raft_lane.h). Null on the
-  // C++ lanes, where svr_poll_thread_worker_ / rpc_server_ / rep_commo_ are.
+  // raft-rt's transport, which owns this worker's Raft poll thread, RPC
+  // server and peer clients (raft_lane.h).
   RaftTransport* rust_transport_ = nullptr;
 
   // @unsafe - uses std::make_shared, raw pointers

@@ -9,7 +9,6 @@
 #include "raft_worker.h"
 #include "frame.h"   // RaftFrame::ReleaseScheduler at the ownership boundary (B1)
 #include "server.h"
-#include "commo.h"
 #include "raft_lane.h"
 #include "application_log.h"
 #include "../config.h"
@@ -261,17 +260,12 @@ RaftWorker::RaftWorker() = default;
 // @unsafe - cleanup operations are bounded
 RaftWorker::~RaftWorker() {
   StopSubmitThread();
-#if MAKO_RAFT_LANE_RUST
   if (rust_transport_ != nullptr) {
     raft_lane::Destroy(rust_transport_);
     rust_transport_ = nullptr;
   }
-#endif
 
-  // Shutdown PollThreadWorkers if we own them
-  if (svr_poll_thread_worker_.is_some()) {
-    svr_poll_thread_worker_.as_ref().unwrap()->shutdown();
-  }
+  // Shut the heartbeat poll thread down if this worker owns it.
   if (svr_hb_poll_thread_worker_g.is_some()) {
     svr_hb_poll_thread_worker_g.as_ref().unwrap()->shutdown();
   }
@@ -351,81 +345,26 @@ void RaftWorker::SetupBase() {
 
 // @unsafe - uses new to allocate raw pointers (manual memory management)
 void RaftWorker::SetupService() {
-  // Create RPC server and register Raft service
-  std::string bind_addr = site_info_->GetBindAddress();
-#if MAKO_RAFT_LANE_RUST
-  // The Rust lane: one raft-rt transport owns the poll thread, the server and
-  // (after SetupCommo) the peer clients. Admission starts closed, as below.
-  rust_transport_ = raft_lane::Serve(raft_frame_->svr_, bind_addr);
-  return;
-#endif
-
-  // Create poll thread worker
-  svr_poll_thread_worker_ = rusty::Some(srpc::PollThread::create());
-
-  // Use as_ref().unwrap() to borrow without consuming the Option
-  auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
-
-  // Create RPC server first (before registering services)
-  rpc_server_ = new srpc::Server(srpc::Server::new_(rusty::Some(poll_worker.clone())));
-  rpc_server_->set_admission_ready(false);
-
-  // Create and register Raft services (ownership transferred to rpc_server_)
-  if (rep_frame_ != nullptr) {
-    auto services = rep_frame_->CreateRpcServices(site_info_->id,
-                                                   rep_sched_,
-                                                   poll_worker);
-    for (auto& svc : services) {
-      rpc_server_->reg_service_proxy(std::move(svc));
-    }
-  }
-
-  // Start RPC server
-  int ret = rpc_server_->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
-  if (ret != 0) {
-    Log_fatal("Raft server launch failed at {}", bind_addr.c_str());
-  }
+  // One raft-rt transport owns the poll thread, the server and (after
+  // SetupCommo) the peer clients. Admission starts closed.
+  rust_transport_ = raft_lane::Serve(raft_frame_->svr_, site_info_->GetBindAddress());
 }
 
 // @safe - pointer dereferences are bounded, external calls marked @external
 void RaftWorker::SetupCommo() {
-  // Create Raft communicator
+  // No Communicator and no set_commo: the transport was bound to the server
+  // when it started serving; this connects its clients.
   verify(rep_frame_ != nullptr);
   verify(rep_sched_ != nullptr);
-#if MAKO_RAFT_LANE_RUST
-  // No Communicator and no set_commo on this lane: the transport was bound to
-  // the server when it started serving; this connects its clients.
   raft_lane::ConnectPeers(rust_transport_);
-  return;
-#endif
-
-  // @unsafe
-  { // rep_frame_-> pointer dereference, Option::clone
-    // Use clone() to preserve svr_poll_thread_worker_ for later use by GetPollThreadWorker()
-    rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
-  }
-
-  // @unsafe
-  { // rep_sched_-> pointer dereference
-    rep_sched_->set_commo(rep_commo_);
-  }
 }
 
 bool RaftWorker::PostToRaftPoll(std::function<void()> job) {
-#if MAKO_RAFT_LANE_RUST
   if (rust_transport_ == nullptr) {
     return false;
   }
   raft_lane::Post(rust_transport_, std::move(job));
   return true;
-#else
-  if (svr_poll_thread_worker_.is_none()) {
-    return false;
-  }
-  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_(std::move(job)));
-  svr_poll_thread_worker_.as_ref().unwrap()->add(rusty::Arc<Job>(arc_job));
-  return true;
-#endif
 }
 
 // @unsafe - synchronizes legacy std::function callbacks with Raft startup.
@@ -516,25 +455,14 @@ bool RaftWorker::WaitForStartup() {
 
 // @safe - srpc::Server owns the shared atomic admission flag.
 void RaftWorker::SetRpcAdmissionReady(bool ready) {
-#if MAKO_RAFT_LANE_RUST
   if (rust_transport_ != nullptr) {
     raft_lane::SetAdmissionReady(rust_transport_, ready);
-  }
-  return;
-#endif
-  if (rpc_server_ != nullptr) {
-    rpc_server_->set_admission_ready(ready);
   }
 }
 
 // @safe - Compatibility helper for non-orchestrated callers.
 bool RaftWorker::FinishStartup() {
-#if MAKO_RAFT_LANE_RUST
-  const bool serving = rust_transport_ != nullptr;
-#else
-  const bool serving = rpc_server_ != nullptr;
-#endif
-  if (!serving || !WaitForStartup()) {
+  if (rust_transport_ == nullptr || !WaitForStartup()) {
     return false;
   }
   SetRpcAdmissionReady(true);
@@ -581,54 +509,34 @@ void RaftWorker::ShutDown() {
   StopSubmitThread();
 
   // Close RPC admission and drain the requests already admitted BEFORE the
-  // server is quiesced. RaftServiceImpl holds a bare RaftSpecific* and its
-  // handlers dereference it without any lifetime lease, so a handler fiber
-  // that is mid-call on the server PollThread would otherwise still be
-  // running when this thread reaches `delete rep_sched_` below. srpc attaches
-  // a pending-request guard to every request for the whole life of its
-  // handler fiber, so drain() is the barrier that guarantee needs.
-#if MAKO_RAFT_LANE_RUST
+  // server is quiesced: the service's handlers dereference the server with
+  // no lifetime lease, so one mid-call on the transport's poll thread would
+  // otherwise still be running when this thread reaches `delete rep_sched_`
+  // below. srpc holds a pending-request guard for each request's whole
+  // handler, so the drain is the barrier that guarantee needs.
   if (rust_transport_ != nullptr &&
       !raft_lane::Drain(rust_transport_, kRpcDrainTimeoutMs)) {
     Log_warn("[RAFT-WORKER-SHUTDOWN] RPC drain timed out with request(s) "
              "still in flight");
   }
-#endif
-  if (rpc_server_) {
-    rpc_server_->set_admission_ready(false);
-    if (!rpc_server_->drain(kRpcDrainTimeoutMs)) {
-      Log_warn("[RAFT-WORKER-SHUTDOWN] RPC drain timed out with {} request(s) "
-               "still in flight",
-               rpc_server_->pending_request_count());
-    }
-  }
 
   // Raft's heartbeat and election fibers are owned by the server PollThread.
-  // PrepareForShutdown first closes RPC admission (RaftServiceImpl handlers
+  // PrepareForShutdown first closes RPC admission (the service's handlers
   // fail closed once the server is no longer rpc-ready), then quiesces the
   // runtime loops while their owner is still able to run the gate's shutdown
   // wake job; deleting the scheduler after stopping the PollThread would leave
-  // those fibers suspended with raw references to the server. rpc_server_,
-  // which owns the service, is deleted below before the scheduler.
+  // those fibers suspended with raw references to the server. The RPC server,
+  // which owns the service, is closed below before the scheduler goes.
   if (raft_sched_ != nullptr) {
     raft_sched_->PrepareForShutdown();
   }
 
-  // srpc::Server::~Server schedules its listener-close job on the PollThread.
-  // Keep both owner threads alive until their servers and the Raft scheduler
+  // Closing a server schedules its listener-close job on its poll thread:
+  // keep both owner threads alive until the servers and the Raft scheduler
   // have released every connection and callback.
-#if MAKO_RAFT_LANE_RUST
-  // The Rust lane's rpc_server_: dropped here, in the same place, while its
-  // poll thread is still alive to run the listener-close job.
   if (rust_transport_ != nullptr) {
-    Log_info("[RAFT-WORKER-SHUTDOWN] closing the Rust lane's RPC server");
+    Log_info("[RAFT-WORKER-SHUTDOWN] closing the RPC server");
     raft_lane::CloseServer(rust_transport_);
-  }
-#endif
-  if (rpc_server_) {
-    Log_info("[RAFT-WORKER-SHUTDOWN] deleting rpc_server_");
-    delete rpc_server_;
-    rpc_server_ = nullptr;
   }
 
   if (hb_rpc_server_) {
@@ -636,8 +544,6 @@ void RaftWorker::ShutDown() {
     hb_rpc_server_ = nullptr;
     server_status_ = rusty::None;
   }
-
-  // Services are now owned by rpc_server_ and deleted with it
 
   if (rep_sched_) {
     // Drop the frame's borrowed back-reference first; see
@@ -653,19 +559,11 @@ void RaftWorker::ShutDown() {
   // Shutdown poll threads only after every owner that can enqueue work onto
   // them has been destroyed.
   Log_info("[RAFT-WORKER-SHUTDOWN] shutting down poll threads");
-#if MAKO_RAFT_LANE_RUST
-  // Last, as the C++ lane's poll-thread shutdown is: the clients, the poll
-  // thread and the transport go only after the scheduler is gone.
+  // The clients, the poll thread and the transport go only after the
+  // scheduler is gone.
   if (rust_transport_ != nullptr) {
     raft_lane::Destroy(rust_transport_);
     rust_transport_ = nullptr;
-  }
-#endif
-  if (svr_poll_thread_worker_.is_some()) {
-    auto& poll_thread = svr_poll_thread_worker_.as_ref().unwrap();
-    Log_info("[RAFT-WORKER-SHUTDOWN] calling shutdown on svr_poll_thread_worker_={}", (void*)poll_thread.get());
-    poll_thread->shutdown();
-    Log_info("[RAFT-WORKER-SHUTDOWN] svr_poll_thread_worker_ shutdown returned");
   }
   if (svr_hb_poll_thread_worker_g.is_some()) {
     auto& poll_thread = svr_hb_poll_thread_worker_g.as_ref().unwrap();
