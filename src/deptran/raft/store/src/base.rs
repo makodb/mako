@@ -68,7 +68,14 @@ pub fn identity_bytes(id: &Identity) -> Vec<u8> {
 /// The batch that folds `rec` (numbered `seq`) into the base: the same
 /// outcome `SavedState::apply` gives, as puts and range deletes, then c.
 /// Records state values at fixed keys, so folding one twice is harmless.
-pub fn ops_for(rec: &Record<Vec<u8>>, seq: u64, ops: &mut Vec<Op>) {
+///
+/// `top` bounds the highest entry index the base may hold (`u64::MAX`:
+/// unknown) and is kept up to date. A record that replaces from past it only
+/// appends and gets no range delete: an append writes one, so a saturated
+/// run put hundreds of thousands of overlapping tombstones in each memtable,
+/// whose flush RocksDB fragments in time superlinear in their number (2
+/// minutes of a flush thread's CPU at a G2 shutdown; 1-2 s write stalls).
+pub fn ops_for(rec: &Record<Vec<u8>>, seq: u64, top: &mut u64, ops: &mut Vec<Op>) {
     if let Some(h) = &rec.hard {
         let mut v = Vec::new();
         put_u64(&mut v, h.term);
@@ -88,10 +95,17 @@ pub fn ops_for(rec: &Record<Vec<u8>>, seq: u64, ops: &mut Vec<Op>) {
         ops.push(Op::DeleteRange(entry_key(0), entry_key(s.index + 1)));
         if !s.keep {
             ops.push(Op::DeleteRange(entry_key(s.index + 1), entry_key(u64::MAX)));
+            *top = s.index;
         }
     }
     if let Some(from) = rec.replace_from {
-        ops.push(Op::DeleteRange(entry_key(from), entry_key(u64::MAX)));
+        if from <= *top {
+            ops.push(Op::DeleteRange(entry_key(from), entry_key(u64::MAX)));
+        }
+        *top = match rec.entries.len() as u64 {
+            0 => (*top).min(from.saturating_sub(1)),
+            n => from + n - 1,
+        };
         for (k, (term, payload)) in rec.entries.iter().enumerate() {
             let mut v = Vec::with_capacity(8 + payload.len());
             put_u64(&mut v, *term);

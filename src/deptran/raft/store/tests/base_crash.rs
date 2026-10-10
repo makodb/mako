@@ -71,6 +71,9 @@ fn run(fs: &MemFs, o: Opened<Vec<u8>>, n: u64, cfg: ApplierConfig) -> u64 {
     queue.close();
     let flusher_ok = std::thread::spawn(move || flusher.join()).join().is_ok();
     let published = durable.seq();
+    // The applier stops where it is when joined; give it its steady state
+    // first (its timeout catch-up and the checkpoints that bound the WAL).
+    std::thread::sleep(Duration::from_millis(400));
     let _ = applier.join();
     if flusher_ok {
         assert_eq!(published, o.d + n);

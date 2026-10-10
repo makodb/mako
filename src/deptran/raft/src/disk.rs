@@ -339,8 +339,17 @@ impl DiskShell {
     /// through its event, and `recheck_us` bounds each wait so `stop` is
     /// seen. Returns whether the tail is durable.
     pub fn wait_durable(&self, tail: u64, recheck_us: u64, stop: &dyn Fn() -> bool) -> bool {
+        let t0 = raft_store::stats::now_us();
         loop {
             if self.durable.seq() >= tail {
+                if raft_store::stats::on() {
+                    let now = raft_store::stats::now_us();
+                    raft_store::stats::add(raft_store::stats::FIBER_WAIT, now - t0);
+                    let p = self.durable.published_us.load(std::sync::atomic::Ordering::Acquire);
+                    if p > t0 {
+                        raft_store::stats::add(raft_store::stats::WAKE, now.saturating_sub(p));
+                    }
+                }
                 return true;
             }
             if stop() {
@@ -368,6 +377,7 @@ impl DiskShell {
         if let Some(f) = f {
             self.queue.close();
             f.join();
+            raft_store::stats::report(&describe(&self.store));
         }
         // The flusher held the applier's tap: the applier now drains what
         // is durable, checkpoints and stops.

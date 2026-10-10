@@ -3,7 +3,7 @@
 //! is written with RocksDB's own WAL off -- legal exactly because the Raft
 //! WAL is the log above it -- so a batch is durable only after a waiting
 //! flush, and a crash leaves the base as of a whole batch at or after the
-//! last one. Small write buffers: several servers may share a process.
+//! last one. Write buffers sized for the ingest rate (64 MB, four).
 
 use std::ffi::{c_char, c_int, c_uchar, c_void, CStr, CString};
 use std::io;
@@ -23,6 +23,7 @@ extern "C" {
     fn rocksdb_options_set_error_if_exists(o: *mut opts_t, v: c_uchar);
     fn rocksdb_options_set_write_buffer_size(o: *mut opts_t, s: usize);
     fn rocksdb_options_set_max_write_buffer_number(o: *mut opts_t, n: c_int);
+    fn rocksdb_options_set_compression(o: *mut opts_t, t: c_int);
     fn rocksdb_open(o: *const opts_t, name: *const c_char, err: *mut *mut c_char) -> *mut rocksdb_t;
     fn rocksdb_close(db: *mut rocksdb_t);
     fn rocksdb_free(p: *mut c_void);
@@ -85,8 +86,13 @@ impl RocksBase {
             let o = rocksdb_options_create();
             rocksdb_options_set_create_if_missing(o, u8::from(create));
             rocksdb_options_set_error_if_exists(o, u8::from(create));
-            rocksdb_options_set_write_buffer_size(o, 4 << 20);
-            rocksdb_options_set_max_write_buffer_number(o, 2);
+            // Sized for the ingest rate: the base takes every entry the WAL
+            // does, so small buffers stall the applier on flushes and it
+            // falls behind for good (a saturated G2 writes ~90 MB/s per
+            // replica). The values are Raft payloads: no compression.
+            rocksdb_options_set_write_buffer_size(o, 64 << 20);
+            rocksdb_options_set_max_write_buffer_number(o, 4);
+            rocksdb_options_set_compression(o, 0);
             let mut err: *mut c_char = std::ptr::null_mut();
             let db = rocksdb_open(o, name.as_ptr(), &mut err);
             rocksdb_options_destroy(o);

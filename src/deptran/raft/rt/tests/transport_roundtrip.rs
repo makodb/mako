@@ -205,7 +205,7 @@ fn empty_append_entries_is_its_own_rpc() {
         leader_prev_log_term: 2,
         leader_commit_index: 5,
     };
-    let reply = transport.send_empty_append_entries(3, &req).expect("peer 3 is recorded");
+    let reply = transport.send_empty_append_entries(3, &req, None).expect("peer 3 is recorded");
     assert!(wait_until(Duration::from_secs(10), || reply.is_ready()));
     assert_eq!(reply.peek().unwrap().unwrap().follower_last_log_index, 5);
     assert_eq!(servers[2].2.lock().unwrap().empty_appends, 1);

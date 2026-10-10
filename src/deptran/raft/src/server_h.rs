@@ -240,6 +240,11 @@ pub struct ReplicationWakeGate {
     wake_job_queued_: rusty::sync::atomic::AtomicBool,
     shutdown_job_queued_: rusty::sync::atomic::AtomicBool,
     accepting_: rusty::sync::atomic::AtomicBool,
+    // F11a: the last round's collect reached its deadline still waiting for
+    // a reply, without a majority; the first late reply takes it and wakes
+    // the loop (rt transport.rs reply_landed). Only such a round: a round
+    // that ended on a majority leaves the rest of its replies to the next.
+    stalled_round_: rusty::sync::atomic::AtomicBool,
 }
 
 // A DECISION, not a deferral, so no TODO: clippy asks for `impl Default`
@@ -260,6 +265,7 @@ impl ReplicationWakeGate {
             election_waiter_armed_: rusty::sync::atomic::AtomicBool::new(false),
             wake_job_queued_: rusty::sync::atomic::AtomicBool::new(false),
             shutdown_job_queued_: rusty::sync::atomic::AtomicBool::new(false),
+            stalled_round_: rusty::sync::atomic::AtomicBool::new(false),
             accepting_: rusty::sync::atomic::AtomicBool::new(true),
         }
     }
@@ -268,6 +274,16 @@ impl ReplicationWakeGate {
         let mut guard = self.owner_.lock().unwrap();
         *guard = rusty::Some(owner);
         self.accepting_.store(true, rusty::sync::atomic::Ordering::Release);
+    }
+
+    /// Collect gave up on a round at its deadline (stalled_round_).
+    pub fn mark_stalled_round(&self) {
+        self.stalled_round_.store(true, rusty::sync::atomic::Ordering::Release);
+    }
+
+    /// A late reply: whether its round stalled, clearing the mark.
+    pub fn take_stalled_round(&self) -> bool {
+        self.stalled_round_.swap(false, rusty::sync::atomic::Ordering::AcqRel)
     }
 
     pub fn publish(&self) -> bool {
@@ -489,6 +505,27 @@ impl ReplicationWakeGate {
 // One queued wake, as the reactor carries it: the gate's handle and which
 // wake to run. Boxed and made raw by RaftServerBase::queue_wake_job, taken
 // back and dropped by the raft_wake_job_run export (server.cc).
+/// RequestReplication through the gate alone: what a reply callback holds
+/// (F11a, second half), since a reply may outlive its server, never its gate.
+pub fn request_replication_on(gate: &rusty::sync::Arc<ReplicationWakeGate>) {
+    if !gate.publish() {
+        return;
+    }
+    let owner: rusty::Option<rusty::RaftPollThreadPtr> = gate.reserve_wake_owner();
+    if let rusty::Some(owner) = owner {
+        let token: rusty::Box<GateWakeJob> = rusty::Box::new(GateWakeJob {
+            gate: gate.clone(),
+            shutdown: false,
+            durable: rusty::None,
+        });
+        unsafe {
+            raft_queue_wake_job(
+                &owner as *const rusty::RaftPollThreadPtr,
+                rusty::Box::into_raw(token) as *mut core::ffi::c_void);
+        }
+    }
+}
+
 pub struct GateWakeJob {
     pub gate: rusty::sync::Arc<ReplicationWakeGate>,
     pub shutdown: bool,
@@ -3207,14 +3244,7 @@ impl RaftServerBase {
     // is armed and no wake is already queued, and the job the reactor runs is
     // a Rust-owned token (queue_wake_job). Only PollThread::add is a kernel.
     pub fn RequestReplication(&self) {
-        if !self.replication_wake_gate_.publish() {
-            return;
-        }
-        let owner: rusty::Option<rusty::RaftPollThreadPtr> =
-            self.replication_wake_gate_.reserve_wake_owner();
-        if let rusty::Some(owner) = owner {
-            self.queue_wake_job(owner, false);
-        }
+        request_replication_on(&self.replication_wake_gate_);
     }
 
     // The reactor job as Rust owns it: a Box<GateWakeJob> -- the gate's Arc

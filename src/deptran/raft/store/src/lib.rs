@@ -27,6 +27,7 @@ pub mod queue;
 pub mod record;
 pub mod segment;
 pub mod state;
+pub mod stats;
 pub mod wal;
 #[cfg(feature = "rocksdb")]
 pub mod rocks;

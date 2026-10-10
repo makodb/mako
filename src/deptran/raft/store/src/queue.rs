@@ -14,6 +14,8 @@ struct Inner<P> {
     /// The sequence number of `q[0]` (or of the next push, if `q` is empty).
     first_seq: u64,
     closed: bool,
+    // When the oldest queued record was pushed (stats only).
+    oldest_us: u64,
 }
 
 pub struct RecordQueue<P> {
@@ -24,7 +26,7 @@ pub struct RecordQueue<P> {
 impl<P> RecordQueue<P> {
     /// A queue whose first record will be number `next_seq`.
     pub fn new(next_seq: u64) -> Self {
-        RecordQueue { inner: Mutex::new(Inner { q: Vec::new(), first_seq: next_seq, closed: false }), cv: Condvar::new() }
+        RecordQueue { inner: Mutex::new(Inner { q: Vec::new(), first_seq: next_seq, closed: false, oldest_us: 0 }), cv: Condvar::new() }
     }
 
     fn lock(&self) -> MutexGuard<'_, Inner<P>> {
@@ -35,6 +37,9 @@ impl<P> RecordQueue<P> {
     pub fn push(&self, rec: Record<P>) -> u64 {
         let mut g = self.lock();
         assert!(!g.closed, "record pushed after the store closed");
+        if g.q.is_empty() {
+            g.oldest_us = crate::stats::now_us();
+        }
         g.q.push(rec);
         let seq = g.first_seq + g.q.len() as u64 - 1;
         drop(g);
@@ -60,6 +65,9 @@ impl<P> RecordQueue<P> {
             return None;
         }
         let first = g.first_seq;
+        if crate::stats::on() {
+            crate::stats::add(crate::stats::QUEUE_WAIT, crate::stats::now_us().saturating_sub(g.oldest_us));
+        }
         let batch = std::mem::take(&mut g.q);
         g.first_seq += batch.len() as u64;
         Some((first, batch))

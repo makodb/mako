@@ -993,6 +993,22 @@ correctly becomes F12, F13, ... with a row as above; stop at 0.7 point 3 first.
 F12-F19 were approved together by the user on 2026-10-06: "can you first fix
 all remaining bugs of Raft on this branch?" B6 (memory-only state) is not
 among them; it is the disk-persistence project ([disk-persistence.md](disk-persistence.md)).
+F11a's first half is taken (2026-10-10, disk plan §5): collect waits on an
+event the AppendEntries reply callback sets (`raft_collect_wait_us`, rt
+`seam.rs`), its step now the timeout, instead of sleeping the step; the
+round end stays where it was. Measured as a memory-mode gate in the commit
+that takes it. Two more pieces of it followed (2026-10-10), both found by the
+disk model's G2 miss: collect also ends when a reply from an earlier round
+frees a follower's slot, so the tick sends to that follower then instead of
+at the round's deadline (`server_cc.rs`, `heartbeat_collect_body`) -- only
+when the leader's log is ahead of that follower: ending early for a
+caught-up one chained an idle leader's rounds, each one's replies landing
+as an earlier round's (lab TEST 9: 67 RPCs in an idle second, limit 60);
+and a
+reply that lands after a round that ended at its deadline without a majority
+wakes the replication loop (rt `transport.rs`, `reply_landed`; the gate's
+`stalled_round_`). EmptyAppendEntries replies now wake collect as well.
+
 F20 was decided by the user on 2026-10-08 (disk plan, "The user's decisions");
 F21 and F22 with the plan, on 2026-10-09: "start implementing the plan".
 

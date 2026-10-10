@@ -56,7 +56,13 @@ impl ApplierTap {
 
 pub struct Applier {
     handle: Option<JoinHandle<Result<u64, String>>>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
 }
+
+/// Records folded per base write in a catch-up: the applier rechecks its
+/// stop flag and its queue between chunks, so a large backlog (a saturated
+/// run) never holds a shutdown.
+const CATCH_UP_CHUNK: u64 = 1024;
 
 struct State {
     base: Box<dyn Base>,
@@ -65,7 +71,10 @@ struct State {
     id: Identity,
     durable: Arc<DurableState>,
     cfg: ApplierConfig,
+    stop: Arc<std::sync::atomic::AtomicBool>,
     c: u64,
+    /// The highest entry index the base may hold (base::ops_for).
+    top: u64,
     bytes: u64,
     since: Instant,
 }
@@ -80,7 +89,7 @@ impl State {
             }
             assert_eq!(seq, self.c + 1, "the applier folds records in order");
             let rec = decode(bytes, &BytesCodec).map_err(|e| format!("record {seq}: {e}"))?;
-            ops_for(&rec, seq, &mut ops);
+            ops_for(&rec, seq, &mut self.top, &mut ops);
             self.c = seq;
             self.bytes += bytes.len() as u64;
         }
@@ -91,14 +100,20 @@ impl State {
         self.base.write(&ops).map_err(|e| format!("base write: {e}"))
     }
 
+    fn stopping(&self) -> bool {
+        self.stop.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     fn catch_up(&mut self, to: u64) -> Result<(), String> {
-        if to <= self.c {
-            return Ok(());
+        while to > self.c && !self.stopping() {
+            let end = to.min(self.c + CATCH_UP_CHUNK);
+            let recs = wal::read_range(&*self.fs, &self.wal_dir, &self.id, self.c + 1, end)?;
+            let first = recs[0].0;
+            let bytes: Vec<Vec<u8>> = recs.into_iter().map(|r| r.1).collect();
+            self.fold(first, &bytes)?;
+            self.maybe_checkpoint(false)?;
         }
-        let recs = wal::read_range(&*self.fs, &self.wal_dir, &self.id, self.c + 1, to)?;
-        let first = recs[0].0;
-        let bytes: Vec<Vec<u8>> = recs.into_iter().map(|r| r.1).collect();
-        self.fold(first, &bytes)
+        Ok(())
     }
 
     fn maybe_checkpoint(&mut self, force: bool) -> Result<(), String> {
@@ -137,16 +152,24 @@ impl Applier {
     pub fn spawn(base: Box<dyn Base>, c: u64, fs: Arc<dyn StoreFs>, wal_dir: PathBuf, id: Identity,
                  durable: Arc<DurableState>, cfg: ApplierConfig) -> (Applier, ApplierTap) {
         let (tx, rx): (SyncSender<Offer>, Receiver<Offer>) = sync_channel(cfg.queue.max(1));
-        let mut st = State { base, fs, wal_dir, id, durable, cfg, c, bytes: 0, since: Instant::now() };
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let mut st = State { base, fs, wal_dir, id, durable, cfg, stop: stop.clone(), c, top: u64::MAX, bytes: 0,
+                             since: Instant::now() };
         let handle = std::thread::Builder::new()
             .name("raft-applier".into())
             .spawn(move || -> Result<u64, String> {
                 let run = |st: &mut State| -> Result<(), String> {
                     loop {
+                        if st.stopping() {
+                            return Ok(());
+                        }
                         match rx.recv_timeout(Duration::from_millis(100)) {
                             Ok((first, records)) => {
                                 if first > st.c + 1 {
                                     st.catch_up(first - 1)?;
+                                }
+                                if st.stopping() {
+                                    return Ok(());
                                 }
                                 st.fold(first, &records)?;
                             }
@@ -154,11 +177,12 @@ impl Applier {
                                 let d = st.durable.seq();
                                 st.catch_up(d)?;
                             }
-                            Err(RecvTimeoutError::Disconnected) => {
-                                let d = st.durable.seq();
-                                st.catch_up(d)?;
-                                return st.maybe_checkpoint(true);
-                            }
+                            // Shutdown: stop where the base is. The WAL holds
+                            // every record after c, so a lagging base costs
+                            // only replay time at the next start (design §3);
+                            // folding a saturated run's backlog here would hold
+                            // the shutdown for as long as the backlog takes.
+                            Err(RecvTimeoutError::Disconnected) => return Ok(()),
                         }
                         st.maybe_checkpoint(false)?;
                     }
@@ -172,12 +196,14 @@ impl Applier {
                 }
             })
             .expect("spawn the raft applier");
-        (Applier { handle: Some(handle) }, ApplierTap { tx })
+        (Applier { handle: Some(handle), stop }, ApplierTap { tx })
     }
 
     /// Waits for the applier, after every tap is dropped; its final c, or why
     /// it stopped.
     pub fn join(mut self) -> Result<u64, String> {
+        // Stop where the base is: the WAL holds every record after c.
+        self.stop.store(true, std::sync::atomic::Ordering::Release);
         self.handle.take().map(|h| h.join().unwrap_or_else(|_| Err("applier panicked".into()))).unwrap_or(Ok(0))
     }
 }

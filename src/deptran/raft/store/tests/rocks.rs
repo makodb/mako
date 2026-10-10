@@ -27,9 +27,22 @@ fn rocks_roundtrip() {
             entries: (1..=5).map(|i| (3, vec![i as u8; 10])).collect(),
             ..Default::default()
         };
-        ops_for(&rec, 1, &mut ops);
+        let mut top = u64::MAX;
+        ops_for(&rec, 1, &mut top, &mut ops);
         let cut: Record<Vec<u8>> = Record { replace_from: Some(4), entries: vec![(4, b"x".to_vec())], ..Default::default() };
-        ops_for(&cut, 2, &mut ops);
+        ops_for(&cut, 2, &mut top, &mut ops);
+        assert_eq!(top, 4);
+        let ranges = |ops: &[Op]| ops.iter().filter(|o| matches!(o, Op::DeleteRange(..))).count();
+        assert_eq!(ranges(&ops), 2, "the first record (top unknown) and the cut delete");
+        // An append past the top deletes nothing; a cut at or below it does.
+        let mut more = Vec::new();
+        let app: Record<Vec<u8>> = Record { replace_from: Some(5), entries: vec![(4, b"y".to_vec())], ..Default::default() };
+        ops_for(&app, 3, &mut top, &mut more);
+        assert_eq!((ranges(&more), top), (0, 5));
+        let cut2: Record<Vec<u8>> = Record { replace_from: Some(5), entries: vec![], ..Default::default() };
+        ops_for(&cut2, 4, &mut top, &mut more);
+        assert_eq!((ranges(&more), top), (1, 4));
+        ops.extend(more);
         b.write(&ops).unwrap();
         b.flush().unwrap();
         assert!(b.get(&entry_key(5)).unwrap().is_none());
@@ -37,7 +50,7 @@ fn rocks_roundtrip() {
     assert!(RocksBase::open(&path, true).is_err(), "a creating open accepted an existing base");
     let b = RocksBase::open(&path, false).unwrap();
     let (c, state) = base::load(&b, &ID, u16::MAX).unwrap();
-    assert_eq!((c, state.hard.term, state.last()), (2, 3, 4));
+    assert_eq!((c, state.hard.term, state.last()), (4, 3, 4));
     assert_eq!(state.entries[3], (4, b"x".to_vec()));
     let other = Identity { site: 5, ..ID };
     assert!(base::load(&b, &other, u16::MAX).unwrap_err().contains("another server"));

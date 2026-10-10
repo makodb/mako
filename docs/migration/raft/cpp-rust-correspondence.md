@@ -12,10 +12,10 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 545 | `raft/src/server_h.rs` | 4782 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1751 | `raft/src/server_cc.rs` | 721 |  |
-| `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 189 | the Rust serves; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
-| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1079 | the Rust sends; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
+| `raft/server.h` | 545 | `raft/src/server_h.rs` | 4812 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1751 | `raft/src/server_cc.rs` | 757 |  |
+| `raft/service.cc` | 125 | `raft/rt/src/service.rs` | 195 | the Rust serves; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
+| `raft/commo.cc` | 325 | `raft/rt/src/transport.rs` | 1106 | the Rust sends; the C++ is still compiled, dead behind MAKO_RAFT_LANE_RUST |
 | `communicator.h` | 567 | `raft/src/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
 | `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 685 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
 
@@ -28,7 +28,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 |---|---|---|
 | C++ → Rust | prototypes in `raft/server_exports.h` | 32 |
 | C++ → Rust | prototypes in `raft/transport_exports.h` (raft_lane_rust.cc) | 17 |
-| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 96 |
+| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/src/` | 97 |
 
 ## Counted facts the prose below leans on
 
@@ -53,7 +53,7 @@ defined nowhere or in two places.
 | class | count |
 |---|---|
 | HOST | 86 |
-| SEAM | 41 |
+| SEAM | 42 |
 
 | kernel | class |
 |---|---|
@@ -71,6 +71,7 @@ defined nowhere or in two places.
 | `raft_bind_replication_poll` | SEAM |
 | `raft_broadcast_vote_and_wait` | SEAM |
 | `raft_clear_async_callback_owner` | HOST |
+| `raft_collect_wait_us` | SEAM |
 | `raft_command_clone_into` | HOST |
 | `raft_command_encode` | HOST |
 | `raft_command_from_bytes` | HOST |

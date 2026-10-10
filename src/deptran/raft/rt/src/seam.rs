@@ -215,6 +215,40 @@ pub extern "C" fn raft_fiber_sleep_us(micros: u64) {
     Fiber::sleep(micros.max(1));
 }
 
+// Collect's wait (modification plan F11a: replies as events). The heartbeat
+// round's collect used to sleep a fixed step between looks at its reply
+// slots; Lion rounds a fiber sleep up to whole milliseconds, so a reply
+// arriving just after a look waited 1-2 ms more. Now the fiber waits on an
+// event the AppendEntries reply callback sets: replies arrive on this same
+// poll thread (the transport owns one, for its server, its clients and the
+// Raft fibers), so set() is an owner-thread wake. The step stays the
+// timeout, so a reply delivered anywhere else is still seen, as before.
+thread_local! {
+    static COLLECT_WAITER: core::cell::RefCell<Option<Arc<IntEvent>>> =
+        const { core::cell::RefCell::new(None) };
+}
+
+#[no_mangle]
+pub extern "C" fn raft_collect_wait_us(micros: u64) {
+    let ev = create_sp_int_event(1);
+    COLLECT_WAITER.with(|w| *w.borrow_mut() = Some(ev.clone()));
+    ev.wait_timeout(micros.max(1));
+    COLLECT_WAITER.with(|w| *w.borrow_mut() = None);
+}
+
+/// A reply reached its slot: wake collect, if it waits on this thread.
+/// Whether it did.
+pub(crate) fn wake_collect() -> bool {
+    COLLECT_WAITER.with(|w| {
+        if let Some(ev) = w.borrow().as_ref() {
+            ev.set(1);
+            true
+        } else {
+            false
+        }
+    })
+}
+
 /// The shutdown barrier's yield: a fiber sleeps as a fiber; production
 /// shutdown runs on a native thread, where a short native sleep lets the
 /// poll thread drain both loop fibers.
@@ -392,6 +426,8 @@ pub unsafe extern "C" fn raft_phase1_send_append(
     commit_index: u64, cmd: *const rusty::RaftCommand, cmd_log_term: u64,
     out: *mut rusty::RaftResponsePtr) {
     let _ = partition_id;
+    // The sender's gate, for a reply that lands after its round (F11a).
+    let late = Some(unsafe { &*s }.replication_wake_gate_.clone());
     let pending = match unsafe { transport_of(s) } {
         None => None,
         Some(t) => {
@@ -412,7 +448,7 @@ pub unsafe extern "C" fn raft_phase1_send_append(
                 };
                 t.send_append_entries_with(site_id, &req, |ar| unsafe {
                     raft_command_encode(cmd, ar as *mut _ as *mut c_void, emit_into_archive);
-                })
+                }, late)
             } else {
                 let req = EmptyAppendEntriesRequest {
                     // slotid_t -1, as the C++ lane sends it, wrapped to u64.
@@ -424,7 +460,7 @@ pub unsafe extern "C" fn raft_phase1_send_append(
                     leader_prev_log_term: prev_log_term,
                     leader_commit_index: commit_index,
                 };
-                t.send_empty_append_entries(site_id, &req)
+                t.send_empty_append_entries(site_id, &req, late)
             }
         }
     };

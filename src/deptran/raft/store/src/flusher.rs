@@ -30,6 +30,8 @@ pub struct DurableState {
     seq: AtomicU64,
     last: AtomicU64,
     commit: AtomicU64,
+    /// When the last publish happened (stats only).
+    pub published_us: AtomicU64,
     m: Mutex<()>,
     cv: Condvar,
 }
@@ -40,6 +42,7 @@ impl DurableState {
             seq: AtomicU64::new(d.seq),
             last: AtomicU64::new(d.last),
             commit: AtomicU64::new(d.commit),
+            published_us: AtomicU64::new(0),
             m: Mutex::new(()),
             cv: Condvar::new(),
         }
@@ -63,6 +66,7 @@ impl DurableState {
         let _g = self.m.lock().unwrap_or_else(|e| e.into_inner());
         self.last.store(d.last, Ordering::Release);
         self.commit.store(d.commit, Ordering::Release);
+        self.published_us.store(crate::stats::now_us(), Ordering::Release);
         self.seq.store(d.seq, Ordering::Release);
         self.cv.notify_all();
     }
@@ -196,6 +200,7 @@ impl Flusher {
                 let mut last = start.last;
                 let mut commit = start.commit;
                 while let Some((first, batch)) = queue.take_all() {
+                    let t0 = crate::stats::now_us();
                     let mut encoded = Vec::with_capacity(batch.len());
                     for rec in &batch {
                         let mut b = Vec::new();
@@ -214,6 +219,10 @@ impl Flusher {
                         std::thread::sleep(cfg.delay);
                     }
                     let d = Durable { seq: first + encoded.len() as u64 - 1, last, commit };
+                    if crate::stats::on() {
+                        crate::stats::add(crate::stats::FLUSH, crate::stats::now_us() - t0);
+                        crate::stats::add(crate::stats::BATCH, encoded.len() as u64);
+                    }
                     durable.publish(d);
                     on_durable(d);
                     if let Some(tap) = &cfg.tap {

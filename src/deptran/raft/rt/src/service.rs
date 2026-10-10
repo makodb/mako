@@ -104,7 +104,13 @@ impl Service for RaftRpcService {
             if let Some(disk) = self.server().disk() {
                 if let Some(reply) = rpc::dispatch_held(self, rpc_id, req, sconn) {
                     let tail = disk.tail();
-                    disk.held.hold(tail, Box::new(move || reply.send()));
+                    let t0 = raft_store::stats::now_us();
+                    disk.held.hold(tail, Box::new(move || {
+                        reply.send();
+                        if raft_store::stats::on() {
+                            raft_store::stats::add(raft_store::stats::REPLY_HOLD, raft_store::stats::now_us() - t0);
+                        }
+                    }));
                 }
                 return;
             }

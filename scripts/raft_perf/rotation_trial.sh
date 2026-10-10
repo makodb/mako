@@ -11,7 +11,8 @@
 # scripts/raft_perf/paired_stats.py OUT_DIR ROUNDS A B.
 #
 # Point parameters come from the environment, as in paired_trial.sh: PAYLOAD
-# (4096), RATE (240, 0 = unlimited), MAXOUT (4096), DUR (8 s), PARTS (1),
+# (4096), RATE (240, 0 = unlimited), MAXOUT (4096), DUR (8 s), WARMUP (2 s,
+# the discarded prefix), PARTS (1),
 # SNAPSHOT_BYTES (0 = none; snapshots then also need MAKO_RAFT_SNAPSHOTS=1
 # and MAKO_RAFT_SNAPSHOT_INTERVAL in the environment, which the launcher
 # passes through), STALL_AT / STALL_FOR (0 = no stall), GROUP (single|multi,
@@ -24,7 +25,7 @@ ARMS=("$@")
 K=${#ARMS[@]}
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PAYLOAD="${PAYLOAD:-4096}"; RATE="${RATE:-240}"; MAXOUT="${MAXOUT:-4096}"
-DUR="${DUR:-8}"; PARTS="${PARTS:-1}"; GROUP="${GROUP:-single}"
+DUR="${DUR:-8}"; WARMUP="${WARMUP:-2}"; PARTS="${PARTS:-1}"; GROUP="${GROUP:-single}"
 SNAPSHOT_BYTES="${SNAPSHOT_BYTES:-0}"; STALL_AT="${STALL_AT:-0}"; STALL_FOR="${STALL_FOR:-0}"
 TRACE="${TRACE:-0}"
 mkdir -p "$OUT"
@@ -33,7 +34,7 @@ run() {
   (cd "$REPO_ROOT" && ${trace:+env MAKO_RAFT_TRACE_FILE="$trace"} \
      examples/raft_bench.sh --build-dir "$arm" --out "$f" \
      --partitions "$PARTS" --group-mode "$GROUP" --payload-bytes "$PAYLOAD" --rate "$RATE" \
-     --max-outstanding "$MAXOUT" --duration-sec "$DUR" \
+     --max-outstanding "$MAXOUT" --duration-sec "$DUR" --warmup-sec "$WARMUP" \
      --snapshot-bytes "$SNAPSHOT_BYTES" --stall-follower-at-sec "$STALL_AT" \
      --stall-for-sec "$STALL_FOR" >"$f.log" 2>&1)
 }

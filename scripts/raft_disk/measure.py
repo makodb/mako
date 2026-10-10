@@ -5,7 +5,7 @@ Paired rounds of a memory build and a disk build at one gate point
 (scripts/raft_perf/rotation_trial.sh, alternating arms), with the injected
 delay D and the store on tmpfs or the local disk; the memory arm's medians are
 the model's baseline, the disk arm's are compared with its estimates
-(scripts/raft_disk/model.py --compare).
+(scripts/raft_disk/model.py --compare, given its inputs).
 
   measure.py --point G1 --delay-us 1000 --fs tmpfs --rounds 5 \\
              [--mem build_rust] [--disk build_rust_disk] [--out DIR]
@@ -25,6 +25,8 @@ POINTS = {  # as scripts/verus/gate_point.sh runs them
     "G5": dict(PAYLOAD=1048576, RATE=55, MAXOUT=64, PARTS=1, GROUP="single", DUR=10),
     "G6": dict(PAYLOAD=1048576, RATE=0, MAXOUT=64, PARTS=1, GROUP="single", DUR=10),
 }
+
+STEADY_WARMUP = 20  # s: a 3-replica G2 fills this host's ~1.5 GB write cache in ~5 s
 
 
 def medians(out, arm):
@@ -48,6 +50,11 @@ def main():
     ap.add_argument("--mem", default="build_rust")
     ap.add_argument("--disk", default="build_rust_disk")
     ap.add_argument("--out")
+    # model.py's inputs (none of them from a disk run): params.rs output, and
+    # the memory build's G1 and G2 trace prefixes.
+    ap.add_argument("--params")
+    ap.add_argument("--memtrace")
+    ap.add_argument("--memtrace-sat")
     a = ap.parse_args()
     user = os.environ.get("USER", "raft")
     out = Path(a.out or Path(os.environ.get("RESULTS", "/var/tmp")) / "disk-model"
@@ -56,6 +63,11 @@ def main():
     env = dict(os.environ)
     env.update({k: str(v) for k, v in POINTS[a.point].items()})
     env["MAKO_RAFT_FLUSH_DELAY_US"] = str(a.delay_us)
+    if a.fs == "ext4" and POINTS[a.point]["RATE"] == 0:
+        # Saturated on a disk with a write cache: discard the cache's
+        # transient, so the window sees what the media sustains (the model's
+        # device bound is the steady state; model.py §2).
+        env["WARMUP"] = str(STEADY_WARMUP)
     env["MAKO_RAFT_DATA_ROOT"] = f"/dev/shm/raft-wal-{user}" if a.fs == "tmpfs" else f"/var/tmp/raft-wal-{user}"
     subprocess.run([str(ROOT / "scripts/raft_perf/rotation_trial.sh"), str(out), str(a.rounds), a.mem, a.disk],
                    cwd=ROOT, env=env, check=True)
@@ -66,8 +78,11 @@ def main():
     (out / "baseline.json").write_text(json.dumps(base))
     (out / "measured.json").write_text(json.dumps(measured))
     print(f"measure: {a.point} D={a.delay_us}us fs={a.fs}: memory {mem} disk {disk}")
-    r = subprocess.run([sys.executable, str(ROOT / "scripts/raft_disk/model.py"), "--fs", a.fs, "--baseline",
-                        str(out / "baseline.json"), "--compare", str(out / "measured.json")])
+    if not (a.params and a.memtrace and a.memtrace_sat):
+        return 0  # the data is kept; model.py --compare checks it
+    r = subprocess.run([sys.executable, str(ROOT / "scripts/raft_disk/model.py"), "--params", a.params,
+                        "--memtrace", a.memtrace, "--memtrace-sat", a.memtrace_sat,
+                        "--baseline", str(out / "baseline.json"), "--compare", str(out / "measured.json")])
     return r.returncode
 
 

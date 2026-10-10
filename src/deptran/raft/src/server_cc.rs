@@ -27,7 +27,9 @@ use crate::server_h::RaftLockGuard;
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     fn raft_monotonic_now_us() -> u64;
-    fn raft_fiber_sleep_us(micros: u64);
+    // Collect's wait: a fiber wait the AppendEntries reply callback ends
+    // early (modification plan F11a); otherwise the step.
+    fn raft_collect_wait_us(micros: u64);
     fn raft_trace_through(stage: i32, through: u64, t_us: u64);  // [M0] trace kit
     fn raft_append_response_read(response: *const rusty::RaftResponsePtr)
         -> AppendRespView;
@@ -219,8 +221,12 @@ pub fn heartbeat_collect_body(server: &RaftServerBase, round_id: u64,
         };
     let response_deadline_us: u64 =
         unsafe { raft_monotonic_now_us() } + response_round_timeout_us;
+    let collect_from: u64 = raft_store::stats::now_us();
+    let mut collect_end: usize = raft_store::stats::COLLECT_DONE;
     let mut stop_response_processing: bool = false;
     let mut retry_released_follower: bool = false;
+    // A released follower the leader's log is still ahead of: work to send.
+    let mut released_behind: bool = false;
     // The ledger changes only in the core calls below, so the round's
     // authority is whatever the last of them reported.
     let mut current_round_has_authority: bool = has_authority;
@@ -267,6 +273,12 @@ pub fn heartbeat_collect_body(server: &RaftServerBase, round_id: u64,
                     },
                     &mut out).unwrap().into_append_reply();
                 server.run_locked_actions(&out);
+                if decided.completed_previous_round_
+                    && (!resp.status_
+                        || resp.last_log_index_ < server.core().raft_log_.last_index())
+                {
+                    released_behind = true;
+                }
                 decided
             };
             server.run_unlocked_actions(&out);  // [fix, F6]
@@ -281,13 +293,30 @@ pub fn heartbeat_collect_body(server: &RaftServerBase, round_id: u64,
             pending_ord += 1;
         }
 
+        // A reply from an earlier round freed the slot of a follower the
+        // log is still ahead of: end the round now, so the tick sends to
+        // that follower, rather than at this round's deadline. A round's reply can outlast the deadline (a
+        // follower holding it for its WAL flush, ~7.6 ms at G2 on tmpfs
+        // against a 5 ms heartbeat), and the followers then fall out of step:
+        // each round waited out its deadline for one while the other sat
+        // idle, its next batch unsent. This round's remaining replies are
+        // polled by the next collects, as after a deadline. Not for a
+        // follower already caught up: an idle leader's every round would end
+        // at once, its own replies landing as an earlier round's, and the
+        // rounds would chain (lab TEST 9, 67 RPCs in an idle second).
         if stop_response_processing || !waiting_for_current_round
-            || current_round_has_authority
+            || current_round_has_authority || released_behind
         {
+            if waiting_for_current_round && current_round_has_authority {
+                collect_end = raft_store::stats::COLLECT_AUTH;
+            }
             break;
         }
         let now_us: u64 = unsafe { raft_monotonic_now_us() };
         if now_us >= response_deadline_us {
+            // Still waiting, without a majority: a late reply wakes the loop.
+            server.replication_wake_gate_.mark_stalled_round();
+            collect_end = raft_store::stats::COLLECT_DEADLINE;
             break;
         }
         let remaining_us: u64 = response_deadline_us - now_us;
@@ -296,11 +325,18 @@ pub fn heartbeat_collect_body(server: &RaftServerBase, round_id: u64,
         } else {
             RESPONSE_POLL_STEP_US
         };
+        let slept_from: u64 = raft_store::stats::now_us();
         unsafe {
-            raft_fiber_sleep_us(step_us);
+            raft_collect_wait_us(step_us);
+        }
+        if raft_store::stats::on() {
+            raft_store::stats::add(raft_store::stats::COLLECT_STEP, raft_store::stats::now_us() - slept_from);
         }
     }
 
+    if raft_store::stats::on() {
+        raft_store::stats::add(collect_end, raft_store::stats::now_us() - collect_from);
+    }
     if stop_response_processing {
         {
             let _lock = RaftLockGuard::new(server.mtx());

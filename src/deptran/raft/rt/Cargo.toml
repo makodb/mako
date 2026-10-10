@@ -36,6 +36,8 @@ raft_disk = ["raft/raft_disk"]
 
 [dependencies]
 raft = { path = ".." }
+# Disk mode's timing samples (raft-store::stats), read by the service.
+raft-store = { path = "../store" }
 rusty = { path = "../../../rusty-rustc" }
 srpc = { path = "../../../srpc" }
 

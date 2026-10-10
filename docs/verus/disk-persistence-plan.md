@@ -841,39 +841,57 @@ G4 and G6 are not traced; their B is 58 and 16 (the 16 MiB cap,
 over 1,200 entries/s at 1 MiB and 270,000 at 4 KiB; tmpfs, about 1.6 GB/s per
 writer.
 
-**Stale since the Lion merge (2026-10-09).** The low-load model hides the
-leader's flush in h's hop, which the merge removed: a flush now adds to the
-leader's side in full, plus whatever the tick's durable poll costs (a 1-2 ms
-timer at idle, P4). The memory baselines L and X predate the merge too, whose
-gate measured G1 p50 -17.8%, p99 -24.1% and G6 +11.5% against the pre-merge
-build. The table is the pre-merge model; `model.py` recomputes it, with new
-baselines, before CP1.
+**The model as measured (2026-10-10), `scripts/raft_disk/model.py`.** The
+first Lion-era check (CP1) missed: G1 at D = 1 ms +38%, on ext4 +66%. The
+trace kit and `MAKO_RAFT_DISK_STATS=1` found the wrong terms:
+- **collect's step** was a fixed-step sleep that Lion rounds to whole
+  milliseconds (1.3-1.8 ms as slept), so a reply held for a flush missed a
+  step. Fixed in code, not in the model: collect now waits on an event the
+  reply callback sets (modification plan F11a, first half), and memory mode
+  gained as well (G1 p50 2,160 -> 1,049 us);
+- **the commit's follow-up round**: a round end that raises the commit
+  starts a round to announce it, which in disk mode costs the leader's commit
+  record and the follower's, and the heartbeat loop runs one round at a time;
+  once the entry round plus its follow-up outlast the arrival gap, entries
+  queue for the loop. The model now simulates the loop (periodic arrivals,
+  each replica's flusher a queue, the entry round, the follow-up round);
+- **e**, the per-entry encoding, is about 3 us (the command serializer), not
+  0.5: a 256-entry, 1 MiB batch flushes in about 2.0 ms on tmpfs;
+- the injected sleep overshoots by about 115 us; a cross-thread hand-off
+  costs about 55 us.
 
-**The estimates** (SSE4.2 CRC32C; tail rule, sent-entries rule in brackets):
-
-| Point | Memory | D = 0 | D = 200 us | D = 1 ms |
-|---|---|---|---|---|
-| G1 p50, 4 KiB at 240/s | 2,641 us | 2,643 (+0.1%) | 2,764 (+4.7%) | 4,646 (+76%) |
-| G3 p50, 286 KB x 6 at 190/s | 3,362 us | 3,500 (+4%) | 3,665 (+9%) | 5,587 (+66%) |
-| G5 p50, 1 MiB at 55/s | 8,489 us | 10,057 (+18%) | 10,530 (+24%) | 12,130 (+43%) |
-| G2, 4 KiB | 34,112/s | 27,231 (-20%) [30,285, -11%] | 26,120 (-23%) [29,585, -13%] | 22,454 (-34%) [27,082, -21%] |
-| G4, 286 KB x 6 | 2,859/s | 2,356 (-18%) [2,583, -10%] | 2,350 (-18%) [2,580, -10%] | 2,325 (-19%) [2,564, -10%] |
-| G6, 1 MiB | 187/s | 143 (-23%) [162, -13%] | 142 (-24%) [162, -14%] | 140 (-25%) [160, -14%] |
-
-With a table CRC32C, G2 at D = 0 falls to 24,460/s (-28%) and G5 rises 32%;
-hence P2's `crc.rs` uses SSE4.2 through `std::arch` when the CPU has it. What
-the numbers say:
-- A follower's flush under about 0.9 ms hides in collect's 1 ms step, and a
-  leader's mostly in the hop that wakes the tick: G1 costs nothing at D = 0
-  and 5% at 0.2 ms. Past that a flush costs a whole step (G1 +76% at 1 ms), so
-  CP1's runs at 1 ms pay the step in full. G3's r is assumed: at 0.2 ms, an r
-  above 0.57 ms would add a step too.
-- Throughput is lost to bytes more than to D: tmpfs's write, 0.6 us/KiB, is
-  most of F_B, and D counts once per round of up to 16 MiB.
-- The tail rule costs a second flush per saturated round; the sent-entries
-  rule halves the loss. A wake descriptor (decision 6) removes only W's
-  notice term, up to 1 ms at low load; collect's own step stays.
-- Latency at saturation is queueing: about MAXOUT/X, G2 150 ms against 120.
+The user then ruled (2026-10-10) that no model input may come from a disk
+run: primitives come from `params.rs` alone, the non-disk pieces of a round
+from the memory build's trace. Rebuilt that way (CP2), the model missed on
+ext4 and on saturated tmpfs, and each miss named a term or a defect:
+- **s is measured in the structure's pattern.** A round's syncs come one at
+  a time from different replicas, a hop apart; ext4's journal batches syncs
+  that arrive together, which a three-writer benchmark measured (240-273
+  us), and a lone sync after an idle device does not get (`st`, 415 us;
+  365-400 us in place by the flusher stats). G1 ext4 +31% -> +12%.
+- **The device is a ceiling.** `/var/tmp` is a rotational RAID volume with
+  a ~1.1-1.7 GB write cache, then ~130 MB/s. Each entry reaches it
+  3 replicas x A = 3 times (WAL, memtable flush, L0 -> L1 compaction), so
+  saturated ext4 sustains bw_slow / b, about 3,500 entries/s; a 12 s run
+  mostly measures the cache, so `measure.py` gives saturated ext4 points a
+  20 s warm-up.
+- **B32** (bugs-found): every append wrote a RocksDB range delete; their
+  flush is superlinear in their number, which stalled G2 ext4 for 1-2 s and
+  held 2 of 5 shutdowns past their budget.
+- **Collect's deadline at saturation.** A held reply (~7.6 ms) outlasted
+  collect's 5 ms deadline and the followers fell out of step, each round
+  waiting out its deadline for one follower while the other sat idle (G2
+  tmpfs 21-23k/s). Fixed in code (modification plan F11a): collect ends when
+  an earlier round's reply frees a follower the log is ahead of; G2 tmpfs
+  36k/s. It moved the memory build too (CP4 gate: G1 p50 -63%, G2 +87%), so
+  the model's memory pieces are re-traced from the build that carries it.
+- **The leader's flush at saturation** is one of the newest Starts', not
+  the batch's: the batch queued for many rounds and is durable, but the
+  tick waits for every record queued so far, and the client's Starts on
+  the last commit landed just before it. X = B / (T + F(B) + F(1)).
+The check's numbers (CP4: fresh paired runs, five rounds per configuration,
+and the memory gate for the collect change) are in the commit that records
+them; `model.py`'s docstring is the worked record.
 
 **Checking the model.** CP1 runs disk G1 and G2 at D = 1 ms; CP2 adds D = 0
 (§1). A measured change off its estimate by more than a quarter of the estimate

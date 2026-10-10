@@ -113,6 +113,31 @@ pub const DISK_RECONNECT: srpc::reconnect_policy::ReconnectPolicy = srpc::reconn
     jitter_enabled: true,
 };
 
+/// What an append's reply wakes when collect is not waiting for it: the
+/// sending server's replication gate (None: nothing).
+pub type LateWake = Option<rusty::sync::Arc<raft::server_h::ReplicationWakeGate>>;
+
+/// An append reply reached its slot (F11a). Collect, if it waits on this
+/// thread, takes it. Otherwise the round it belonged to has ended -- its
+/// deadline, one heartbeat interval, passed first, as a reply held for a
+/// follower's WAL flush can make it -- and the reply would sit until a
+/// later round's collect found it, a heartbeat interval later when no
+/// Start wakes the loop (a saturated client at its outstanding cap). So the
+/// first reply after a round that stalled so wakes the replication loop, as
+/// RequestReplication does. Not after a round that ended on a majority: an
+/// idle leader's second heartbeat reply would start a round per reply.
+fn reply_landed(late: &LateWake) {
+    if crate::seam::wake_collect() {
+        raft_store::stats::add(raft_store::stats::REPLY_WOKE, 0);
+    } else if let Some(gate) = late {
+        let stalled = gate.take_stalled_round();
+        raft_store::stats::add(raft_store::stats::REPLY_LATE, u64::from(stalled));
+        if stalled {
+            raft::server_h::request_replication_on(gate);
+        }
+    }
+}
+
 pub struct RaftTransport {
     poll: Arc<PollThread>,
     // None until serve() binds. Taken explicitly on delete, before the poll
@@ -379,7 +404,7 @@ impl RaftTransport {
     // the network flag down, or a send that never left -- which is the null
     // the C++ PeerForSite returns and which callers handle as a lost RPC.
 
-    fn append_sink(pending: &AppendReply)
+    fn append_sink(pending: &AppendReply, late: LateWake)
         -> srpc::client::AsyncReplyCallback {
         let sink = pending.slot.clone();
         Some(Box::new(move |code, ptr, len| {
@@ -397,6 +422,7 @@ impl RaftTransport {
             if let Ok(mut guard) = sink.lock() {
                 *guard = Some(value);
             }
+            reply_landed(&late);
         }))
     }
 
@@ -404,7 +430,7 @@ impl RaftTransport {
         -> Option<AppendReply> {
         let client = self.peer(site_id)?;
         let pending = AppendReply::new();
-        let on_reply = Self::append_sink(&pending);
+        let on_reply = Self::append_sink(&pending, None);
         let proxy = RaftProxy { client };
         let sent = proxy.append_entries_async(req, on_reply);
         self.count_rpc();
@@ -417,13 +443,13 @@ impl RaftTransport {
     /// is ignored. The seam's send path: C++ serializes the Command directly
     /// into the frame, with no intermediate buffer on either side.
     pub fn send_append_entries_with<F>(&self, site_id: u16, req: &AppendEntriesRequest,
-                                       write_cmd: F) -> Option<AppendReply>
+                                       write_cmd: F, late: LateWake) -> Option<AppendReply>
     where
         F: FnMut(&mut srpc::serializable::BinaryWriteArchive),
     {
         let client = self.peer(site_id)?;
         let pending = AppendReply::new();
-        let on_reply = Self::append_sink(&pending);
+        let on_reply = Self::append_sink(&pending, late);
         let proxy = RaftProxy { client };
         let sent = proxy.append_entries_with_async(req, write_cmd, on_reply);
         self.count_rpc();
@@ -434,7 +460,7 @@ impl RaftTransport {
     /// EmptyAppendEntries replies with the same three fields as
     /// AppendEntries, so it lands in the same reply type.
     pub fn send_empty_append_entries(&self, site_id: u16,
-                                     req: &EmptyAppendEntriesRequest)
+                                     req: &EmptyAppendEntriesRequest, late: LateWake)
         -> Option<AppendReply> {
         let client = self.peer(site_id)?;
         let pending = AppendReply::new();
@@ -458,6 +484,7 @@ impl RaftTransport {
                 if let Ok(mut guard) = sink.lock() {
                     *guard = Some(value);
                 }
+                reply_landed(&late);
             })),
         );
         self.count_rpc();
