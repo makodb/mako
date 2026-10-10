@@ -3,7 +3,7 @@
 signature table in scripts/raft_gen_exports.py:
 
   - the `extern "C"` exports, spliced between the GENERATED EXPORTS markers in
-    src/deptran/raft/src/server_cc.rs (canonical Rust; nothing else there is
+    src/deptran/raft/shell/server_cc.rs (canonical Rust; nothing else there is
     touched),
   - src/deptran/raft/server_exports.h, the prototypes hand-written C++ uses,
   - the pointer-holding shim `class RaftServer` in src/deptran/raft/server.h.
@@ -19,7 +19,7 @@ from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 GEN = REPO / "scripts" / "raft_gen_exports.py"
-RS = REPO / "src" / "deptran" / "raft" / "src" / "server_cc.rs"
+RS = REPO / "src" / "deptran" / "raft" / "shell" / "server_cc.rs"
 HEADER = REPO / "src" / "deptran" / "raft" / "server_exports.h"
 SERVER_H = REPO / "src" / "deptran" / "raft" / "server.h"
 BEGIN = "// --- GENERATED EXPORTS BEGIN (scripts/raft_gen_exports.py; do not edit by hand) ---\n"

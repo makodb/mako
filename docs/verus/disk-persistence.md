@@ -29,9 +29,9 @@ against; `glr@40786a2b:` paths are in the ghost-log-refinement repository.
                                                              (* = new)
 ```
 
-Every thread that changes Raft state takes `mtx_` (`src/server_h.rs:913-916`)
+Every thread that changes Raft state takes `mtx_` (`shell/server_h.rs:913-916`)
 and calls a step wrapper (`step`, or `step_checked` for a message from the
-network; `src/server_h.rs:1507-1546`), which ends in `RaftCore::step`
+network; `shell/server_h.rs:1507-1546`), which ends in `RaftCore::step`
 (`core/src/event.rs:370-371`). The core does no I/O and takes no locks
 (`core/src/lib.rs:1-5`). The poll thread runs the RPC handlers, the
 heartbeat and election fibers, and startup. One section can run several
@@ -62,7 +62,7 @@ of entry S (`snapidx_`, `snapterm_`). The applied index is not saved: a
 restart loads the snapshot and re-applies S+1 through commit.
 
 Mako takes no snapshots today: only the Raft benchmark (`raft_bench.cc:1498`)
-and lab cases (`src/lab_snapshot_cases.rs:504`, `:780`) set the callbacks.
+and lab cases (`shell/lab_snapshot_cases.rs:504`, `:780`) set the callbacks.
 `snapshot_callbacks.h` defines create(applied index), which returns the image,
 and prepare(image, index), whose staged install `Commit()` makes live once Raft
 has saved the snapshot. Until Mako supplies them, S = 0 and the log starts at 1.
@@ -94,7 +94,7 @@ has saved the snapshot. Until Mako supplies them, S = 0 and the log starts at 1.
   term 5, clears its vote, cuts 6-10, appends 6'-8', raises commit to 8 and
   replies (`core/src/node.rs:1902-1903`, `:2095`, `:2128`, `:2148`).
 - **Five shell sites write saved fields outside `step`**, under `mtx_`;
-  the replay recorder taints each (`src/server_h.rs:1433`, `:2180`,
+  the replay recorder taints each (`shell/server_h.rs:1433`, `:2180`,
   `:2260`, `:2343`, `:2919`), which makes them the checklist for records.
   Two raise the term and clear the vote, then step `StepDown` or
   `SetFollower`, which leave both alone, so no persist note covers the
@@ -144,7 +144,7 @@ newer term, the shell steps a new event, `ObserveTerm { term }`, which
 raises the term, clears the vote and the leader hint, and steps down, as
 `SettleElection` does (`core/src/node.rs:887-898`). A record states
 outcomes, never rules ("snapshot (S, T, f), suffix dropped, commit S", the
-drop decided from the local term of entry S, `src/server_h.rs:2537`), so
+drop decided from the local term of entry S, `shell/server_h.rs:2537`), so
 replay decides nothing. Nothing is encoded or written under the lock.
 
 **The flusher thread** owns the WAL. It takes every queued record, encodes
@@ -183,16 +183,16 @@ output's read set ("Needs on disk") without tracking reads.
 - **The flusher wakes the waiters.** After publishing d it signals a
   condition variable, for the threads that block, and queues one job on the
   poll thread through a gate like `ReplicationWakeGate`
-  (`src/server_h.rs:224`, `:2969`). The job sends the held replies now
+  (`shell/server_h.rs:224`, `:2969`). The job sends the held replies now
   durable and sets the `IntEvent`s the heartbeat and election fibers yield
   on, as `WaitForReplicationOrHeartbeat` does (`:2993`).
 - **InstallSnapshot blocks**, inline, `mtx_` released: it holds the apply
-  gate, a C++ mutex, until the image is live (`src/server_h.rs:4217-4220`),
+  gate, a C++ mutex, until the image is live (`shell/server_h.rs:4217-4220`),
   and its zero-copy hand-off lasts one call (`rt/src/snapshot.rs:282-286`).
   It is rare and slow anyway; the flusher never takes that gate or needs
   the poll thread, so the wait ends.
 - **One exception.** The heartbeat tick sends InstallSnapshot under `mtx_`,
-  before any wait (`src/server_cc.rs:104-124`): safe, as the image is a
+  before any wait (`shell/server_cc.rs:104-124`): safe, as the image is a
   committed prefix a majority holds on disk and the leader's term was
   durable before its vote requests left; outside the proof anyway (§6).
 
@@ -255,7 +255,7 @@ deleted once the base durably names a newer one. The WAL never waits for a
 snapshot. The latest image also stays in memory, for lagging followers.
 
 **Visible before the flush**, none a send or reply. Mako reads the atomic
-copies (`publish_mirrors`, `src/server_h.rs:1753`) to route and count its
+copies (`publish_mirrors`, `shell/server_h.rs:1753`) to route and count its
 submissions (`raft_worker.cc:708`, `:871`, `:890`); with two or more servers a
 commit already means a majority saved the entries. Of the leader-change
 callbacks, "became follower" stays true after a crash, as a restart begins as
@@ -273,19 +273,19 @@ candidate, missing the entry, win.
 **Threads.** The flusher and the applier share one `Arc`'d store object
 (queue, segments, base, durable atomics, condition variable, wake gate) and
 nothing else, so neither can call `core()`, guarded only by the `mtx_`
-convention (`src/server_h.rs:1299`). Both are joinable, like the apply thread
+convention (`shell/server_h.rs:1299`). Both are joinable, like the apply thread
 (`:2627`), and stop after the poll thread stops producing records; held
 replies go before the RPC drain, which counts each (`raft_worker.cc:253`).
 
 **Startup.** Recovery (§4) merges the base and the WAL into one state
-before `SetupInternal` (`src/server_h.rs:1847-1972`), RPCs closed, and
+before `SetupInternal` (`shell/server_h.rs:1847-1972`), RPCs closed, and
 injects the image that state names, as the snapshot store is memory-only.
 The snapshot recovery (`:1898-1907`) keeps an injected store
 (`rt/src/snapshot.rs:204-216`) and loads it; its reconciliation sees an
-empty log and only sets the boundary; its term bump (`src/server_h.rs:2195-2202`) is
+empty log and only sets the boundary; its term bump (`shell/server_h.rs:2195-2202`) is
 skipped in disk mode. With snapshots off it loads nothing (`:2008-2025`),
 so a state naming a snapshot fails closed, saying so. Between `Configure`
-(`src/server_h.rs:1914`) and `EnterGates` (`:1933`; it passes only with S = 0 and the log
+(`shell/server_h.rs:1914`) and `EnterGates` (`:1933`; it passes only with S = 0 and the log
 from 1, `core/src/node.rs:317`) the shell steps a new core event,
 `Restore`, with term, vote, commit and the entries after S. It sets no
 persist note, and fails closed on a state no step produces: a gap after S,
@@ -296,7 +296,7 @@ vote for a non-member.
 ## 4. The algorithm
 
 ```text
-// The step wrappers (src/server_h.rs:1510, :1530), under mtx_ after setup;
+// The step wrappers (shell/server_h.rs:1510, :1530), under mtx_ after setup;
 // a None from step_checked changes nothing (core/src/event.rs:334).
 fn step(ev, out) -> Reply
     reply = core.step(ev, out)               // pure; may set out.persist

@@ -32,14 +32,14 @@ harness beside both) is 14-21 days.
 
 ## The user's decisions (2026-10-08)
 **Only core steps write term and vote.** The InstallSnapshot reply path writes
-`current_term_` and `vote_for_` itself (`src/server_h.rs:2268-2269`), then steps
+`current_term_` and `vote_for_` itself (`shell/server_h.rs:2268-2269`), then steps
 `StepDown` (`:2281`), which keeps both (`core/src/node.rs:1311`, `:1317`,
 `:1329`), so no persist note covers the raise; `OnInstallSnapshotLocked` does
-the same (`src/server_h.rs:2414-2415`, then `:2438` or `:2440`). P1 adds
+the same (`shell/server_h.rs:2414-2415`, then `:2438` or `:2440`). P1 adds
 `Event::ObserveTerm { term, stopped, failover }` (row F20): a newer term is
 raised, the vote and leader hint cleared, and the server steps down as
 `SettleElection` does (`core/src/node.rs:887-898`); the proven `StepDown` arm
-(`core/src/event.rs:516-533`) stays. The reply's taint (`src/server_h.rs:2260`)
+(`core/src/event.rs:516-533`) stays. The reply's taint (`shell/server_h.rs:2260`)
 narrows to its accept branch, which writes the volatile peer table outside
 `step` (`:2299-2300`): no record, but a replay stops there. The snapshot paths'
 writes (`:2561-2562`, `:2602`, `:2920-2921`) keep shell-built records.
@@ -131,16 +131,16 @@ moves and pushed to `backup`; PR #92 merges without it. **The switch.**
 and joins the feature list `RAFT_TEST` fills (`:1230-1233`) for the cargo build
 (`:1250`) and the raft-rt stamp (`:1362`); `Cargo.toml:45-55` declares
 `raft_disk`, `rt/Cargo.toml:32` forwards it. Shell code tests
-`cfg!(feature = "raft_disk")` in expressions (as `src/server_h.rs:3614` tests
+`cfg!(feature = "raft_disk")` in expressions (as `shell/server_h.rs:3614` tests
 `raft_test`), so both builds type-check the disk path; `#[cfg]` marks only
-feature-only items (as `:43-98`, `src/lib.rs:13-20`).
+feature-only items (as `:43-98`, `shell/lib.rs:13-20`).
 
-**Parameters.** `SetupInternal` reads three knobs (`src/server_h.rs:1856-1869`,
+**Parameters.** `SetupInternal` reads three knobs (`shell/server_h.rs:1856-1869`,
 `:1882-1896`, `:1924-1932`) and `InitializeSnapshotManagerLocked` one
 (`:2028-2039`), by `raft_env_u64` (`:1809-1839`) over the getenv kernel
 `raft_env_lookup` (`server.cc:929-942`); `MAKO_RAFT_SNAPSHOTS` has its own
 kernel (`:798-802`), five use `ParseEnvUint64OrDefault` (`:164-182`,
-`:226-240`), the recorder `std::env::var` (`src/server_h.rs:3501-3516`). The new
+`:226-240`), the recorder `std::env::var` (`shell/server_h.rs:3501-3516`). The new
 ones use `std::env::var` after `:1896`, `raft_env_u64`'s digits-only parse and
 `FailClosed` (`:2848`); no new kernel (`server.cc:922-928`).
 
@@ -300,7 +300,7 @@ through `append` and `truncate_from` (`core/src/log.rs:314-323`, `:404-416`);
   the spec-only `core/src/log.rs:22-24`), a commit outside S..last, a non-member
   vote (`core/src/node.rs:444-461`); else appends and pushes
   `apply_range(S, commit)` (`core/src/output.rs:85-90`).
-- `src/server_h.rs:2261-2283` -> step `ObserveTerm`; the taint (`:2260`) moves
+- `shell/server_h.rs:2261-2283` -> step `ObserveTerm`; the taint (`:2260`) moves
   to the accept branch (`:2286-2300`; see above). `:2409-2441` -> a newer term
   steps `ObserveTerm`, else `StepDown`/`SetFollower` as today; the sender's hint
   (`:2421-2424`) follows the step (`set_is_leader(false)` keeps it,
@@ -323,16 +323,16 @@ when.** All pass, Verus has 0 errors, `core_trusted.txt` and the ledger stay
 clean. **Size.** 4-6 days. **Risks.** `inv()` and `ginv()` read `raft_log_`
 (`core/src/node.rs:146-150`, `core/src/coupling.rs:305-315`): without
 `take_low_write`'s frame every arm's proof breaks. The reply path steps
-`StepDown` even when not leading (`src/server_h.rs:2281`); `ObserveTerm` picks
+`StepDown` even when not leading (`shell/server_h.rs:2281`); `ObserveTerm` picks
 as `SettleElection` (`core/src/node.rs:895-899`), a change memory builds see,
-covered by the snapshot cases (`src/lab_snapshot_cases.rs:1370-1384`).
+covered by the snapshot cases (`shell/lab_snapshot_cases.rs:1370-1384`).
 
 ### P2. `raft-store`: the WAL and the crash points
 **Today.** Raft persists no state to files; it writes only diagnostics (the
-recorder, `src/server_h.rs:3501-3529`; the trace kit, `server.cc:1685`), and its
+recorder, `shell/server_h.rs:3501-3529`; the trace kit, `server.cc:1685`), and its
 snapshot store is a memory slot (`rt/src/snapshot.rs:39-41`). `Cargo.lock` has
 no CRC, libc or RocksDB crate (the shell's CRC32 table is C++'s,
-`src/snapshot_format_hpp.rs:98-121`). The crates abort on panic
+`shell/snapshot_format_hpp.rs:98-121`). The crates abort on panic
 (`Cargo.toml:80-84`), as design Decision 14 wants. **Changes.** None outside the
 new crate. **New** (`store/src/`, std only). `crc.rs`: CRC32C by SSE4.2 through
 `std::arch` when `is_x86_feature_detected!` finds it, else a slice-by-8 table
@@ -383,16 +383,16 @@ missing directory sync shows only in a power cut (`MemFs`, P6). CI builds Rust
 1.91.0 (`Dockerfile.ubuntu24:33`); only P3 and P6 decode real commands.
 
 ### P3. The shell: records and the flusher
-**Today.** The step wrappers (`src/server_h.rs:1510-1546`) call the core and the
+**Today.** The step wrappers (`shell/server_h.rs:1510-1546`) call the core and the
 recorder; `AppendLocal` steps into a private output (`:3604-3607`). The snapshot
 paths write saved fields outside `step` (`:2919-2929`, `:2561-2610`); compaction
 drops only entries at or below S (`:1414-1442`, `core/src/helpers.rs:388-401`).
-The apply thread starts at `src/server_h.rs:1946`, joins at `:3947-3952` and
+The apply thread starts at `shell/server_h.rs:1946`, joins at `:3947-3952` and
 `:2661-2666`. **Changes.**
-- `src/server_h.rs:1510-1546` -> in disk builds a note becomes a record under
+- `shell/server_h.rs:1510-1546` -> in disk builds a note becomes a record under
   `mtx_`: hard state, `replace_from`, and each entry's term and a handle clone
   from `log_from` on (`RaftLog::get`, `core/src/log.rs:266`).
-- `src/server_h.rs:2920-2929` -> push `snapshot(S, T, image: None, keep)`;
+- `shell/server_h.rs:2920-2929` -> push `snapshot(S, T, image: None, keep)`;
   `:2602` -> push `install(S, T, keep: retain_suffix (:2537), commit: S)`.
 - `:902-1037` -> `disk_: OnceLock<Arc<DiskShell>>`, published by `rpc_ready_`
   (`:1947-1948`); in disk builds `:1896` -> parameters, `LOCK`, a new store (an
@@ -403,9 +403,9 @@ The apply thread starts at `src/server_h.rs:1946`, joins at `:3947-3952` and
   `:3541-3552`) with the core; a mismatch aborts, a match prints
   `[DISK-VERIFY] site=<s> ok records=<n>`.
 
-**New.** `src/disk.rs` (canonical: an entry beside `rust-modules.toml:97-103`,
-`src/lib.rs` regenerated by `scripts/raft_dsl.sh --rewrite`): `DiskShell`,
-`ShellCodec` (`raft_command_encode`, `src/server_h.rs:607`, into a `Vec`, as
+**New.** `shell/disk.rs` (canonical: an entry beside `rust-modules.toml:97-103`,
+`shell/lib.rs` regenerated by `scripts/raft_dsl.sh --rewrite`): `DiskShell`,
+`ShellCodec` (`raft_command_encode`, `shell/server_h.rs:607`, into a `Vec`, as
 `fnv_emit` feeds a hash, `:3554-3557`), `record_from_note`, the verify.
 **Tests.** Tier 1 (both lanes) and one disk `raft_bench` run, verify on. **Done
 when.** All pass, the lab prints five `[DISK-VERIFY]` lines and the bench three;
@@ -422,8 +422,8 @@ reads commands off the poll thread; their `save`s are `const`
 `src/srpc/rpc/server.rs:1477-1479`): `__dispatch__` lends the request to
 `dispatch`, which calls the handler and replies (`rt/src/service.rs:97-99`,
 `rt/src/rpc.rs:419-492`). The tick sends after its section
-(`src/server_cc.rs:85-176`), the campaign after `StartElection`'s
-(`src/server_h.rs:3280-3333`), the apply thread right after its pop
+(`shell/server_cc.rs:85-176`), the campaign after `StartElection`'s
+(`shell/server_h.rs:3280-3333`), the apply thread right after its pop
 (`:2697-2776`). Since the Lion merge the poll thread has no fixed 1 ms poll:
 a job another thread adds (`PollThread::add`,
 `src/srpc/reactor/reactor.rs:3082-3087`) wakes its driver at once, through
@@ -447,11 +447,11 @@ to the socket itself, under the outbound lock, and wakes the writer task only
 for what `send(2)` did not take (`tcpconn_send_frame`,
 `src/srpc/rpc/tcp_channel.rs:719-786`); no separate flush is needed. So after
 publishing d the flusher sends, in hold order, every reply d covers. The fibers
-poll the durable number with `raft_fiber_sleep_us` (`src/server_cc.rs:30`), as
+poll the durable number with `raft_fiber_sleep_us` (`shell/server_cc.rs:30`), as
 collect (`:290`) and the vote wait (`rt/src/seam.rs:283`) poll; at idle each
 poll step is a 1-2 ms timer (above), where a wake job setting their
 `IntEvent`s would be seen at once (decision 6, §3). `Start`'s wake of the
-heartbeat fiber (`src/server_h.rs:4066`) is now immediate too. Cost: half a day
+heartbeat fiber (`shell/server_h.rs:4066`) is now immediate too. Cost: half a day
 over the poll-thread list. **Changes.**
 - `scripts/rpcgen_rust.py:526-578` -> also emit `dispatch_held` (owning the
   request) and `HeldReply::send` (a header-only `Request`, reply);
@@ -460,11 +460,11 @@ over the poll-thread list. **Changes.**
 - `rt/src/service.rs:97-99` -> in disk builds `dispatch_held`, then the queue's
   `last_seq` (after the inline handler: an upper bound on its tail), then
   `disk_hold`; no `Serve*` or export change.
-- `src/server_cc.rs:124` -> in disk builds, the tick's tail; after `:130-132`
+- `shell/server_cc.rs:124` -> in disk builds, the tick's tail; after `:130-132`
   poll, then send (`:139`); InstallSnapshot stays unwaited under the lock
-  (`:101-123`). `src/server_h.rs:3289-3291` -> the campaign's tail; poll after
+  (`:101-123`). `shell/server_h.rs:3289-3291` -> the campaign's tail; poll after
   `:3293-3295`, then broadcast (`:3327-3333`).
-- `src/server_h.rs:2739-2741` -> in disk builds, for a leader, wait on the
+- `shell/server_h.rs:2739-2741` -> in disk builds, for a leader, wait on the
   store's condvar while `id` exceeds the durable last index, timing out to
   recheck `apply_thread_running_` so the join (`:3947-3952`) cannot hang. With
   two or more servers the wait never blocks (design §3): a commit needs a
@@ -473,7 +473,7 @@ over the poll-thread list. **Changes.**
   between the two reads is harmless, as its log was on disk before its vote
   requests left, and a committed entry is on a majority's disks.
 - `rt/src/transport.rs:254-262` -> in disk builds, `drain` first closes Raft's
-  gate (a new `CloseAdmissionForDrain`, as `src/server_h.rs:3922-3932`) via
+  gate (a new `CloseAdmissionForDrain`, as `shell/server_h.rs:3922-3932`) via
   `served` (`rt/src/transport.rs:106`): srpc ignores its admission flag (only
   its accessors touch it, `src/srpc/rpc/server.rs:1024-1029`; the refusal it
   documents, `:62-66`, is never sent; dispatch checks nothing, `:1437-1446`), a
@@ -481,30 +481,30 @@ over the poll-thread list. **Changes.**
   `:587-593`) could time out; its comment (`:250-252`) is rewritten.
 
 **New.** `HeldReplies`, `wait_durable`, `wait_index` in `store/src/flusher.rs`;
-in `src/disk.rs`, `disk_poll_durable` and `disk_hold`, which reads `durable_seq`
+in `shell/disk.rs`, `disk_poll_durable` and `disk_hold`, which reads `durable_seq`
 and pushes under `HeldReplies`'s mutex; the flusher takes that mutex only after
 publishing d, so no reply waits for a later flush; `store/tests/held.rs`, a hold
 racing a publish included. **Tests.** `held.rs`; `rt/tests/rpc_wire_golden.rs`
 (wire bytes unchanged); Tier 1 both lanes, the disk one at
 `MAKO_RAFT_FLUSH_DELAY_US=1000`, where replies are both held and sent at once,
-over RPC (the lab calls `Serve*` directly, `src/lab.rs:520-551`); CP1. **Done
+over RPC (the lab calls `Serve*` directly, `shell/lab.rs:520-551`); CP1. **Done
 when.** All pass and no drain times out. **Size.** 4-6 days. **Risks.** At 5 ms
 replies miss their round: the heartbeat is 5 ms (`server.h:169-173`), collect's
-limit too (`src/server_cc.rs:198-211`). The fibers' durable polls step in
+limit too (`shell/server_cc.rs:198-211`). The fibers' durable polls step in
 1-2 ms timers at idle; if CP1 shows them, the remedy is the wake job, which
 the reactor now serves at once (`src/srpc/reactor/reactor.rs:1007-1022`).
 
 ### P5. The shell: recovery
-**Today.** `SetupInternal` (`src/server_h.rs:1847-1972`) runs snapshot recovery
+**Today.** `SetupInternal` (`shell/server_h.rs:1847-1972`) runs snapshot recovery
 (`:1898-1907`; snapshots off, it fail-stops on uncovered progress,
 `:2008-2026`), `Configure` (`:1914`), `EnterGates` (`:1933`; S = 0 and a log
 from 1 only, `core/src/node.rs:317`), then threads, `rpc_ready_` and fibers
-(`src/server_h.rs:1946-1970`); campaigns start at `:1194-1198`. A server starts
+(`shell/server_h.rs:1946-1970`); campaigns start at `:1194-1198`. A server starts
 empty (B6); survivors stop re-dialling a dead peer after 15.5-46.5 s (B21;
 `rt/src/transport.rs:281`, `src/srpc/rpc/client.rs:1604`,
 `src/srpc/rpc/reconnect_policy.rs:20-29`); and a node cannot start while a
 peer is down (B22, `raft_lane_rust.cc:43-55`). **Changes.**
-- `src/server_h.rs:1896-1898` -> first the local-filesystem check (P2); no
+- `shell/server_h.rs:1896-1898` -> first the local-filesystem check (P2); no
   store: create one, atomically (P2), only under `MAKO_RAFT_CREATE=1` (which
   fails closed on an existing store, and deletes a leftover `.creating`); a
   `.creating` alone without the flag fails closed; else read the
@@ -514,10 +514,10 @@ peer is down (B22, `raft_lane_rust.cc:43-55`). **Changes.**
   closed until P8; every refusal goes through `FailClosed`.
 - `:2195-2202` -> no term bump when this server recovered a store (`disk_` set),
   as `Restore` overrides it; without one it bumps as today, which lab case 73
-  asserts in disk builds too (`src/lab_snapshot_cases.rs:1319`).
-- `src/server_h.rs:1914-1924` -> unless just created, decode the payloads
+  asserts in disk builds too (`shell/lab_snapshot_cases.rs:1319`).
+- `shell/server_h.rs:1914-1924` -> unless just created, decode the payloads
   (`raft_command_from_bytes`, `server.cc:438-450`) through
-  `raft_entry_from_command` (`src/server_h.rs:3561-3573`), step `Restore` under
+  `raft_entry_from_command` (`shell/server_h.rs:3561-3573`), step `Restore` under
   `mtx_` and run its actions (`APPLY_RANGE`, `:1625-1629`); `Restored(false)`
   fails closed. Then the durable atomics, `seq := d`, `recovered_commit`.
   `:1194-1198` -> no campaign while `GetAppliedIndex()` (`:1290-1293`) is below
@@ -566,14 +566,14 @@ roles (`examples/mako-raft-tests/simpleRaft.cc:57-65`). Neither is the node. The
 harness below is built beside P1-P5. **Changes.**
 - `CMakeLists.txt:1738` -> `add_apps(raft_kill_node ...)`; `ci/ci.sh:804-806` ->
   suites `raftKillTest`, `shard1ReplicationRaftRestart` (host only).
-- `src/disk.rs`, in disk builds under `MAKO_RAFT_KILLTEST_DIR` -> a `reveal`
+- `shell/disk.rs`, in disk builds under `MAKO_RAFT_KILLTEST_DIR` -> a `reveal`
   line just before each output leaves (kind, term, vote, index, commit, tail):
   for a reply, by whichever thread sends it, from a copy `__dispatch__` moves
   into the held entry (handlers park what they revealed in a poll-thread
   thread-local, as `rt/src/snapshot.rs:289-314` parks images); at
-  `src/server_h.rs:3327` and `src/server_cc.rs:167`; after `Restore`, a
+  `shell/server_h.rs:3327` and `shell/server_cc.rs:167`; after `Restore`, a
   `recovered` line (term, vote, commit, last, d, term runs); `write_all` per
-  line, as `src/server_h.rs:3522-3529`.
+  line, as `shell/server_h.rs:3522-3529`.
 
 **New.**
 - `raft_kill_node.cc`, C++ since processes get Raft and RPC servers only through
@@ -625,7 +625,7 @@ no-op would hang it (`:280-285`), though Raft's no-ops stop at `server.cc:897`.
 C++ `RocksDBLogStorage` (`rocksdb_log_storage.hpp:766-769`) fits (design §5).
 The WAL only grows. **Changes.** `Cargo.toml:55` ->
 `raft_disk = ["raft-store/rocksdb"]`; `CMakeLists.txt:1264` -> `rocksdb` in disk
-builds; `src/server_h.rs:1896-1898` -> recovery merges base and WAL (design §4);
+builds; `shell/server_h.rs:1896-1898` -> recovery merges base and WAL (design §4);
 `:1946`, `:3947-3952` -> the applier runs beside the flusher, which offers it
 each synced batch without blocking, on a bounded queue that drops one when full;
 `catch_up(c, d)` then reads c+1..d from the segments with recovery's reader
@@ -649,21 +649,21 @@ of 1..d); RocksDB tests by hand; `raftKillTest` with small thresholds and check
 
 ### P8. Snapshots as files
 **Today.** A snapshot is created and saved to memory under the apply gate and
-`mtx_` (`src/server_h.rs:3063-3081`, `server.cc:1007-1050`); an install holds
-both while one call prepares, saves and commits (`src/server_h.rs:4211-4241`,
+`mtx_` (`shell/server_h.rs:3063-3081`, `server.cc:1007-1050`); an install holds
+both while one call prepares, saves and commits (`shell/server_h.rs:4211-4241`,
 `server.cc:848-886`), though `Commit()` may publish only after Raft saved the
 bytes (`snapshot_callbacks.h:15-19`). **Changes.**
-- `server.cc:1007-1050`, `src/server_h.rs:2861-2934` -> in disk builds, S and T
+- `server.cc:1007-1050`, `shell/server_h.rs:2861-2934` -> in disk builds, S and T
   under `mtx_`; create and write the file (design §3) under the apply gate
   alone; then `mtx_` to save, move the boundary, compact, push the record.
 - `server.cc:848-886` -> in disk builds, prepare and commit kernels under
-  `raft_catch` (as `:822-830`); `src/server_h.rs:4211-4241` -> first write and
+  `raft_catch` (as `:822-830`); `shell/server_h.rs:4211-4241` -> first write and
   sync the file, ahead of the gate (`:4217-4220`), in the function both the
-  service (`:4125`) and the lab (`src/lab_snapshot_cases.rs:458`) call (a new
+  service (`:4125`) and the lab (`shell/lab_snapshot_cases.rs:458`) call (a new
   kernel lends Rust `data`'s bytes; `server.cc:455` only fills one); then design
   §4: `ObserveTerm`, prepare, record, release `mtx_`, wait durable, `Commit()`.
-- Recovery injects the image (as `src/lab_snapshot_cases.rs:1220-1228`, via
-  `src/server_h.rs:1266-1270`) for `:1898-1907`; `raft_kill_node.cc` gets
+- Recovery injects the image (as `shell/lab_snapshot_cases.rs:1220-1228`, via
+  `shell/server_h.rs:1266-1270`) for `:1898-1907`; `raft_kill_node.cc` gets
   snapshot callbacks (as `raft_bench.cc:1496-1501`) whose image is its applied
   (index, id) list; `Commit()` logs those as `snap` events, which check (2)
   counts as applied.
@@ -798,7 +798,7 @@ F(n, K) = s + D + c*K + e*n
 | c | per KiB: tmpfs `write` 0.60, copy 0.07, CRC32C 0.13 (SSE4.2) or 0.65 (table) | 0.80 or 1.32 us | measured |
 | e | per entry: encoding beyond the copy | 0.5 us | estimated; P3 measures |
 | h | the hop that wakes the tick after `Start`: before the Lion merge the idle poll loop's 1 ms `epoll_wait` (`src/srpc/reactor/epoll_wrapper.rs:124` at `a4b1eaa02`); since, one cross-thread wake (`src/srpc/reactor/reactor.rs:1007-1022`) | was 1000 us, a wake seen 530 us later on average; now near 0, not measured | code; measured before the merge |
-| q | collect's poll step (`src/server_cc.rs:198`) | 1000 us | code |
+| q | collect's poll step (`shell/server_cc.rs:198`) | 1000 us | code |
 | T | a saturated round, B/X: G2's 256 entries of 4 KiB to each follower | 7,505 us (traced round 7,409, median of 10 runs) | bug-fix gate |
 | L, X | memory baselines, median of rounds (bug-fix gate, `0633e1ffc`) | table below | measured |
 
@@ -896,6 +896,6 @@ them; `model.py`'s docstring is the worked record.
 **Checking the model.** CP1 runs disk G1 and G2 at D = 1 ms; CP2 adds D = 0
 (§1). A measured change off its estimate by more than a quarter of the estimate
 means a term is wrong: find it with the trace kit (`raft_trace_through`,
-`src/server_cc.rs:31`) before changing code. G3-G6 in disk mode stay estimates:
+`shell/server_cc.rs:31`) before changing code. G3-G6 in disk mode stay estimates:
 G4 writes 0.8 GB/s per replica, three replicas on one host, more than one
 local disk sustains, and without snapshots (P8) the base keeps every entry.

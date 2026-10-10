@@ -195,7 +195,7 @@ impl PeerRegistry {
     // `if is_some() { Some(as_ref().unwrap().clone()) }` is what clippy's
     // unnecessary_unwrap rejects, and `if let` is the shape the emitter
     // lowers with a dot instead of an arrow (the TODO on
-    // ReplicationWakeGate::wake_on_owner in src/deptran/raft/src/server_h.rs).
+    // ReplicationWakeGate::wake_on_owner in src/deptran/raft/shell/server_h.rs).
     pub fn poll_thread(&self)
         -> rusty::Option<rusty::Arc<rusty::ReactorPollThread>> {
         self.rpc_poll.clone()

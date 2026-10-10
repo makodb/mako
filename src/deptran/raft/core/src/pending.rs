@@ -1,6 +1,6 @@
 // The protocol half of the in-flight AppendEntries slots.
 //
-// [move, M1] Moved verbatim from src/deptran/raft/src/server_h.rs (Phase 6),
+// [move, M1] Moved verbatim from src/deptran/raft/shell/server_h.rs (Phase 6),
 // paths aside: the rust lane's rusty::Vec/Option are std's own.
 
 #[allow(unused_imports)]

@@ -18,7 +18,7 @@ pub extern "C" fn raft_rt_run_lab() -> i32 {
     let verdict = Rc::new(Cell::new(-1));
     let out = verdict.clone();
     Fiber::create_run(move || {
-        // The harness itself, in the core (src/deptran/raft/src/lab.rs).
+        // The harness itself, in the core (src/deptran/raft/shell/lab.rs).
         out.set(raft::lab_main::raft_lab_rust_run());
         Reactor::get_reactor().looping_.set(false);
     });

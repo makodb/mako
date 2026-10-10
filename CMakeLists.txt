@@ -1221,7 +1221,7 @@ set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft_rt.a")
 # directories are the ones src/srpc/rust-modules.toml names, plus the
 # generated lib.rs.
 file(GLOB RAFT_RUST_SOURCES CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/shell/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/replay/src/*.rs
@@ -1418,7 +1418,7 @@ file(GLOB RAFT_BORROW_SRC
     "src/deptran/raft/*.cpp"
 )
 # Exclude test files from raft borrow checking. The lab suite is Rust
-# (src/deptran/raft/src/lab*.rs, raft-rt's lab_runtime.rs); this filter is
+# (src/deptran/raft/shell/lab*.rs, raft-rt's lab_runtime.rs); this filter is
 # kept for any C++ test file added here.
 # NOTE: raft_main_helper.cc is also excluded because it includes third-party headers
 # (YAML, etc.) that generate 1000+ false positive violations from header code.

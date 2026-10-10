@@ -224,7 +224,6 @@ pub fn heartbeat_collect_body(server: &RaftServerBase, round_id: u64,
     let collect_from: u64 = raft_store::stats::now_us();
     let mut collect_end: usize = raft_store::stats::COLLECT_DONE;
     let mut stop_response_processing: bool = false;
-    let mut retry_released_follower: bool = false;
     // A released follower the leader's log is still ahead of: work to send.
     let mut released_behind: bool = false;
     // The ledger changes only in the core calls below, so the round's
@@ -283,8 +282,6 @@ pub fn heartbeat_collect_body(server: &RaftServerBase, round_id: u64,
             };
             server.run_unlocked_actions(&out);  // [fix, F6]
             server.append_responses().release(pending_ord);
-            retry_released_follower =
-                retry_released_follower || reply.completed_previous_round_;
             current_round_has_authority = reply.has_authority_;
             if reply.stepped_down_ {
                 stop_response_processing = true;
@@ -345,9 +342,11 @@ pub fn heartbeat_collect_body(server: &RaftServerBase, round_id: u64,
         }
         let slots: usize = server.append_responses().len();
         server.append_responses().reset(slots);
-    } else if retry_released_follower {
+    } else if released_behind {
         // A completion from an older round opened a per-follower slot after
-        // PHASE 1. Prompt another round instead of waiting a full interval.
+        // PHASE 1. Prompt another round instead of waiting a full interval --
+        // for a follower the log is ahead of: a caught-up one waits for the
+        // heartbeat, or an idle leader's rounds chain (lab TEST 9).
         server.RequestReplication();
     }
 }

@@ -2,9 +2,9 @@
 //
 // The exec functions below keep the control flow of the production code
 // line for line, with the production types reduced to what the rule reads:
-//   majority_match_index    <- src/deptran/raft/src/server_h.rs:881-903
-//   commit_index_candidate  <- src/deptran/raft/src/server_h.rs:313-325
-//   commit_advance          <- src/deptran/raft/src/server_cc.rs:633-666
+//   majority_match_index    <- src/deptran/raft/shell/server_h.rs:881-903
+//   commit_index_candidate  <- src/deptran/raft/shell/server_h.rs:313-325
+//   commit_advance          <- src/deptran/raft/shell/server_cc.rs:633-666
 // Reductions: PeerTable's progress_ is a Vec of match indexes (the only field
 // the rule reads); the log is a Vec of entry terms, entry k (1-based) at
 // terms[k - 1], so last_index() == terms.len(); the panics become

@@ -106,12 +106,12 @@ admission itself (`coupled_checked`).
 | `SetIdentity` | the core is fresh (empty ghost log): the identity before anything else; the configuration still empty | the worker sets the identity before Setup |
 | `Configure` | the core is fresh; the membership once, sorted, duplicate-free (`admits`); no member is the sentinel site 65535 | Setup's `LoadCurrentConfig`; the config kernel lists real site ids |
 | `EnterGates`, `RebuildPeers`, `AbandonRound`, `ResetRoundState`, `ResetElectionTimer`, `Applied`, `SetFollower`, `StepDown` | none beyond `admits` | -- |
-| `Propose` | the core leads; the command has a value | `Start` (`src/server_h.rs`) returns REJECTED unless `IsLeaderLocked()` under `mtx_`, and, under the same lock, refuses a command without a value before appending (F13, bugs-found B16); the no-op is `APPEND_NOOP`'s action after becoming leader |
+| `Propose` | the core leads; the command has a value | `Start` (`shell/server_h.rs`) returns REJECTED unless `IsLeaderLocked()` under `mtx_`, and, under the same lock, refuses a command without a value before appending (F13, bugs-found B16); the no-op is `APPEND_NOOP`'s action after becoming leader |
 | `StartElection` | the gate | F5's `enter_gates` |
-| `SettleElection` | the gate; failover on; `n_total` is the configuration's size; every reply from another member; a grant is at the campaign's term | `RequestVoteImpl` (`src/server_h.rs:3155`): `n_total` is the lane's quorum size; the replies are this campaign's quorum object's (F1: the callback's peer); a voter grants only at the request's term |
+| `SettleElection` | the gate; failover on; `n_total` is the configuration's size; every reply from another member; a grant is at the campaign's term | `RequestVoteImpl` (`shell/server_h.rs:3155`): `n_total` is the lane's quorum size; the replies are this campaign's quorum object's (F1: the callback's peer); a voter grants only at the request's term |
 | `RecvRequestVote` | the gate; the candidate another member | `step_checked`'s admission (F9) |
 | `RecvAppendEntries` | the gate; the sender another server | `step_checked`'s admission (F9) |
-| `TickHeartbeat` | the gate; `is_leader` is the core's role (`admits`) | `heartbeat_tick_body` reads `IsLeaderLocked()` under the same lock (`src/server_cc.rs:85`) |
+| `TickHeartbeat` | the gate; `is_leader` is the core's role (`admits`) | `heartbeat_tick_body` reads `IsLeaderLocked()` under the same lock (`shell/server_cc.rs:85`) |
 | `RecvAppendReply` | the gate; `is_leader ==> ` the core leads (F12, bugs-found B18); a success reports no more than the leader's log | the collection loop reads `IsLeaderLocked()` under the lock (`heartbeat_collect_body`), which is `looping_ && core.is_leader_`: true only while the core leads, before and after shutdown begins; `step_checked` reads a success beyond the log as no reply (F9) |
 | `RoundEnd` | the gate | F5's `enter_gates`. Nothing about the role: PHASE 3 advances the commit index only while the core leads (F12), so a round end after a step-down or during shutdown commits nothing (bugs-found B17, B18) |
 
@@ -122,7 +122,7 @@ Terms and indices off the wire and in the log stay below 2^62
 ## 4. The inbound payload (`InboundBatch`, the shell's `WireBatch`)
 
 The trait's contract (`core/src/node.rs`), trusted because the shell
-implements it (`src/server_h.rs:3307`):
+implements it (`shell/server_h.rs:3307`):
 
 - `spec_entries()` is the payload's entries as the leader encoded them;
   `has_cmd` is the flag the batch was built from; no payload is no entries.

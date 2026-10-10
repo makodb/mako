@@ -28,7 +28,7 @@ effect). "Latent" means nothing in production reaches it today.
 | B7 | metric | `get_outstanding_logs` subtracts the global commit index from a per-node submission count | read in code | fixed by F18 in `cd46bbf20` (2026-10-06) |
 | B8 | dead code | `setIsLeader`'s "stale leadership publication" check compares `current_term_` with a copy of itself, so its term half never fires | read in code | fixed by F16 in `cd46bbf20` (2026-10-06): the check removed |
 | B9 | test infra | `ci.sh`'s `cleanup_processes` kill -9s every same-user process named `dbtest`, `simpleTransactionRep`, ... and deletes the shared `/tmp/$USER_mako_rocksdb_shard*`, so a suite in one worktree kills tests running in another | read in code | worked around: `scripts/verus/tier1.sh` waits until no such process runs outside this worktree |
-| B10 | toolchain | rusty-cpp's transpiled `BTreeMap` port cannot compile `clone()` of a `BTreeMap<u32, Vec<i32>>` (no matching `push` in the internal-node clone path) | reproduced (cpp-lane lab build) | worked around in `src/lab.rs`; third-party, report only |
+| B10 | toolchain | rusty-cpp's transpiled `BTreeMap` port cannot compile `clone()` of a `BTreeMap<u32, Vec<i32>>` (no matching `push` in the internal-node clone path) | reproduced (cpp-lane lab build) | worked around in `shell/lab.rs`; third-party, report only |
 | B11 | race (latent) | `RegisterLeaderChangeCallback` writes `leader_change_cb_` with no lock while a role change reads and calls it under `mtx_` | read in code | fixed with F6 (Phase 2): registration and every read of the slot take `leader_notices_`'s lock; the callback runs from a copy |
 | B12 | dead code | `heartbeat_phase0_body` returns `true` when phase 0 declines the round (not leader), so the driver's `continue` never fires and phases 1-3 run, each exiting at its first leadership check | read in code | Phase 3: the cut heartbeat ends the round when `tick_heartbeat` declines it (no protocol-visible difference) |
 | B13 | toolchain | The transpiled C++ cannot redeclare a name in one scope: a Rust `let` that shadows a binding, or a function parameter, at the same block level is a C++ redefinition | reproduced (cpp-lane lab build, Phase 1) | worked around by renaming; a constraint on every transpiled file |
@@ -120,7 +120,7 @@ only if all four peers refused.
 
 ## B2. `CommitIndex()` is an unlocked cross-thread read
 
-**Where.** `src/server_h.rs:4654-4657`; caller `get_outstanding_logs`
+**Where.** `shell/server_h.rs:4654-4657`; caller `get_outstanding_logs`
 (repo `src/deptran/raft_main_helper.cc:977-990`). The trait comment
 (repo `src/deptran/scheduler.h:158-161`) already calls it "tolerated racy".
 
@@ -157,7 +157,7 @@ callback twice (for example around reconnect replay, repo
 
 ## B4. AppendEntries entry terms are not validated
 
-**Where.** `src/server_h.rs:4263-4287` (`AeDecodePayload`): batch terms come
+**Where.** `shell/server_h.rs:4263-4287` (`AeDecodePayload`): batch terms come
 from `raft_batch_term_at` (an `i64`), the single-entry term from
 `leader_next_log_term`; neither is checked.
 
@@ -188,7 +188,7 @@ reaches the follower's log.
 
 ## B5. Phase 1 does not re-check leadership where it builds the message (latent)
 
-**Where.** `src/server_cc.rs:1101` (`IsLeader()` takes and drops `mtx_`),
+**Where.** `shell/server_cc.rs:1101` (`IsLeader()` takes and drops `mtx_`),
 `:1117-1222` (the locked block that picks `prev` and the payload, with no
 role or term check), `:1229-1237` (send with `round.term()` and phase 0's
 `round.commit_index()`). The Rust send kernel ignores its `_is_leader`
@@ -199,8 +199,8 @@ and the locked block, it would send an append stamped with the old term,
 carrying entries read from a log that a newer leader may already have
 rewritten.
 
-**Why it is not live today.** Every step-down site (`src/server_h.rs:2858`,
-`:3007-3009`, `:3234-3248`, `:4067-4143`, `:5335-5364`; `src/server_cc.rs:1591`)
+**Why it is not live today.** Every step-down site (`shell/server_h.rs:2858`,
+`:3007-3009`, `:3234-3248`, `:4067-4143`, `:5335-5364`; `shell/server_cc.rs:1591`)
 runs on the poll thread (docs/verus/README.md line 74), and nothing between
 `:1101` and the send yields the fiber, so no step-down can interleave. Any
 change that moves replies or inbound RPCs off that fiber's schedule (plan
@@ -211,7 +211,7 @@ inside the locked block, and send the `commit_index_` read there.
 
 ## B6. Memory-only Raft state: in-place restart is unsafe
 
-**Where.** `src/server_h.rs:2219-2221` (memory-only); plan §4.4.2.
+**Where.** `shell/server_h.rs:2219-2221` (memory-only); plan §4.4.2.
 
 **What is wrong.** Term, vote and log are never persisted. A replica that
 restarts and rejoins under its old id comes back at term 0 with no vote and an
@@ -251,7 +251,7 @@ own.
 
 ## B8. `setIsLeader`'s stale-publication term check is a tautology
 
-**Where.** `src/server_h.rs:2290-2301`.
+**Where.** `shell/server_h.rs:2290-2301`.
 
 **What is wrong.**
 
@@ -271,7 +271,7 @@ to refuse a leadership won in a term that has since moved on; that would need
 the term the election was won in, captured by the caller before any yield.
 
 **Effect.** None: the only promotion, `setIsLeader(true)` at
-`src/server_h.rs:4123`, is preceded at `:4116-4121` by exactly the check this
+`shell/server_h.rs:4123`, is preceded at `:4116-4121` by exactly the check this
 guard was meant to make (`stop_ || current_term_ != term`, with `term` the
 campaign's term). The check in `setIsLeader` is dead code that reads as a
 safety net.
@@ -321,7 +321,7 @@ kept).
 
 ## B11. The leader-change callback slot is written with no lock
 
-**Where.** `src/server_h.rs`, `RegisterLeaderChangeCallback` (copies the
+**Where.** `shell/server_h.rs`, `RegisterLeaderChangeCallback` (copies the
 callback into `leader_change_cb_`, no lock: "a plain move into the
 notification slot; no lock, exactly as the C++ had it") against
 `setIsLeader`, which tests and calls `leader_change_cb_` with `mtx_` held,
@@ -345,7 +345,7 @@ there.
 
 ## B12. A declined heartbeat round still runs phases 1-3
 
-**Where.** `src/server_cc.rs`, `heartbeat_phase0_body` and
+**Where.** `shell/server_cc.rs`, `heartbeat_phase0_body` and
 `HeartbeatDriver::run`, at Phase 0 tip `c0197443f` (`:830-834`, `:1859-1861`).
 
 **What is wrong.** When phase 0 declines the round because this server is
@@ -390,7 +390,7 @@ crate, were removed (plan Q9).
 
 ## B14. The heartbeat interval is a plain field written while the loops read it
 
-**Where.** `src/server_h.rs`, `RaftServerBase::heartbeat_interval_us_` and
+**Where.** `shell/server_h.rs`, `RaftServerBase::heartbeat_interval_us_` and
 `SetHeartbeatInterval` (`:3609` at Phase 4's tip); readers `HeartbeatWait`
 (`:5192`) and the election timeout's window (`:3710`), on poll threads.
 
@@ -398,7 +398,7 @@ crate, were removed (plan Q9).
 no atomic. Production writes it only before the loops start
 (`ConstructRuntime`, the `MAKO_RAFT_HEARTBEAT_INTERVAL_US` override in
 `SetupInternal`), but lab case 67 ("heartbeat interval configurable",
-`src/lab_snapshot_cases.rs:866-886`) calls the setter on running servers, so
+`shell/lab_snapshot_cases.rs:866-886`) calls the setter on running servers, so
 the lab has a data race: undefined behaviour in both Rust's and C++'s memory
 models, a stale or torn read in practice at worst.
 
@@ -414,7 +414,7 @@ per round.
 
 ## B15. The round state was reset without `mtx_`
 
-**Where.** `src/server_cc.rs`, `HeartbeatDriver::run` (`:354` and `:376` at
+**Where.** `shell/server_cc.rs`, `HeartbeatDriver::run` (`:354` and `:376` at
 `7aa01a586`): `server.core.reset_round_state()` when the heartbeat loop
 starts and again before its epilogue, with no `RaftLockGuard`.
 
@@ -439,7 +439,7 @@ the only two made without the lock.
 (`select_payload`'s raw and batch paths: `usable = slot.is_some() &&
 slot.unwrap().has_value()`); the follower's conflict scan,
 `raft_on_append_entries` in `core/src/node.rs` (`local_exists =
-entry.has_value()`); `Start` in `src/server_h.rs`, which appends whatever
+entry.has_value()`); `Start` in `shell/server_h.rs`, which appends whatever
 command it is given.
 
 **What is wrong.** `has_value()` is whether the entry's command is
@@ -476,7 +476,7 @@ unchanged.
 
 ## B17. The round end can commit after leadership is lost (latent race)
 
-**Where.** `src/server_cc.rs`, `heartbeat_round_end_body`: `if
+**Where.** `shell/server_cc.rs`, `heartbeat_round_end_body`: `if
 !server.IsLeader() { return; }`, then `RaftLockGuard::new(&mut
 server.mtx_)` and `step(Event::RoundEnd { is_leader })` with `is_leader =
 IsLeaderLocked()`. `core/src/heartbeat.rs`, `heartbeat_phase3_locked`:
@@ -536,23 +536,23 @@ it passes, and so do the core's other tests.
 threading while writing [code-structure.md](code-structure.md) §6; corrected
 2026-10-04: this paragraph first said nothing excludes it). The interleaving
 above needs D's messages handled while A's driver sits between its check
-(`src/server_cc.rs:310`) and its lock (`:315`), and in production nothing
+(`shell/server_cc.rs:310`) and its lock (`:315`), and in production nothing
 can handle them there:
 - every step that changes the role or replaces the log's tail runs on the
   server's transport poll thread: the inline RPC handlers, the reply
   callbacks, the heartbeat and election fibers (code-structure.md §3.1, §7);
 - every critical section that changes the role publishes the mirror the
   check reads before it releases `mtx_` (`run_locked_actions` ->
-  `publish_mirrors`, `src/server_h.rs:1560`);
+  `publish_mirrors`, `shell/server_h.rs:1560`);
 - nothing between the check and the lock suspends, and `mtx_` is a plain
   `std::mutex` (`server.h:243-250`, `:273`): if another thread holds it, the whole
   poll thread waits, so no handler runs in the window;
 - the other threads that take `mtx_` (submit, apply, shutdown) never change
   the role or replace the tail.
 
-Lab builds can open the window: `src/lab.rs`'s `serve_vote` and
+Lab builds can open the window: `shell/lab.rs`'s `serve_vote` and
 `serve_append` call `ServeVote` and `ServeAppendEntries` directly from the
-harness thread (`src/lab.rs:520`, `:534`), not the replica's poll thread. So
+harness thread (`shell/lab.rs:520`, `:534`), not the replica's poll thread. So
 the defect is the core's (its round end does not check), latent in
 production behind the shell's threading; moving a handler off the poll
 thread, or adding a suspension point between the check and the lock, would
@@ -581,19 +581,19 @@ inside the certificate, and nothing commits in it.
 
 ## B18. Shutdown takes a leader outside its reply and round-end premises (proof coverage)
 
-**Where.** `src/server_h.rs:1236-1240`, `IsLeaderLocked()`: false when
+**Where.** `shell/server_h.rs:1236-1240`, `IsLeaderLocked()`: false when
 `looping_` is false, otherwise `core.is_leader_`. `looping_` is cleared by
 `PrepareForShutdown`, under `mtx_` on the shutdown thread (`:3781-3792`),
 and by `FailStop`, without the lock (`:2200-2209`; called when a startup or
 snapshot step fails). The heartbeat driver passes `IsLeaderLocked()` as
-`is_leader` to `RecvAppendReply` (`src/server_cc.rs:245-251`) and to
+`is_leader` to `RecvAppendReply` (`shell/server_cc.rs:245-251`) and to
 `RoundEnd` (`:316-317`). The coupling's premises for both ask that
 `is_leader` be the core's role (`core/src/coupling.rs:2606-2611`, `:2622`).
 Host contract (`docs/verus/host-contract.md` §3) said the collection loop's
 `IsLeaderLocked()` guarantees it.
 
 **Scenario.** A leader's heartbeat driver passes its unlocked `IsLeader()`
-check (`src/server_cc.rs:221` for a reply, `:310` for the round end), and
+check (`shell/server_cc.rs:221` for a reply, `:310` for the round end), and
 the shutdown thread runs `PrepareForShutdown`'s critical section before the
 driver takes `mtx_`. Under the lock the driver reads `is_leader = false`,
 while `core.is_leader_` is still true: the step breaks its premise.
@@ -623,19 +623,19 @@ errors. A leader that shuts down mid-round is inside the certificate.
 **Where.** The shell is reached through raw pointers, and each entry turns
 its pointer into a `&mut RaftServerBase`:
 - the C ABI exports call `&mut self` methods through `(*s)`
-  (`src/server_cc.rs:417-709`). `raft_server_apply_thread_loop` (`:644-646`)
-  runs `ApplyThreadLoop(&mut self)` (`src/server_h.rs:2572`) for the apply
+  (`shell/server_cc.rs:417-709`). `raft_server_apply_thread_loop` (`:644-646`)
+  runs `ApplyThreadLoop(&mut self)` (`shell/server_h.rs:2572`) for the apply
   thread's whole life.
 - `Start`, `IsLeader` and `GetLeaderHint` take `&mut self`
-  (`src/server_h.rs:3884`, `:3817`, `:3826`) and are called on the submit,
+  (`shell/server_h.rs:3884`, `:3817`, `:3826`) and are called on the submit,
   shutdown and Mako threads.
 - the RPC service makes `&mut *self.server.0` from `&self` for every
   handler (`rt/src/service.rs:88-91`, under
   `#[allow(clippy::mut_from_ref)]`).
 - the heartbeat driver binds one per run and keeps it across every wait
-  (`src/server_cc.rs:358`). The election-timer fiber calls
+  (`shell/server_cc.rs:358`). The election-timer fiber calls
   `RequestVoteFromElectionTimer(&mut self)` through its pointer
-  (`src/server_h.rs:4131-4133`, `:1137`), which keeps that `&mut` across
+  (`shell/server_h.rs:4131-4133`, `:1137`), which keeps that `&mut` across
   the vote wait in `RequestVoteImpl` (`:3155`, `:3222`).
 
 **What is wrong.** Two live `&mut` to one object are undefined behaviour in
@@ -770,7 +770,7 @@ goes from the heartbeat branch straight to the service lookup.
 non-heartbeat traffic is refused while the gate is closed. Raft closes it at
 startup (`rt/src/transport.rs:236`, `:257`) and before its shutdown drain
 (`raft_worker.cc:579-596`). Startup is still covered, by Raft's own
-`IsRpcReady` gate (`src/server_h.rs:4082`, `:4100`); the drain is not: a
+`IsRpcReady` gate (`shell/server_h.rs:4082`, `:4100`); the drain is not: a
 request that arrives while it runs is dispatched. Whether one can then reach
 a server being torn down was not checked.
 
@@ -790,7 +790,7 @@ used by five knobs (`:167`, `:173`, `:180`, `:228`, `:237`).
 `MAKO_RAFT_APPEND_BATCH_MAX_BYTES=-1` therefore removes the byte bound that
 keeps an AppendEntries batch under srpc's 64 MiB frame (`server.cc:219-225`):
 a lagging follower is re-sent an unsendable batch every round. The Rust
-parser rejects a sign for this reason (`src/server_h.rs:1795-1798`).
+parser rejects a sign for this reason (`shell/server_h.rs:1795-1798`).
 
 **How found.** Mapping the shell's state for the disk plan (2026-10-08).
 

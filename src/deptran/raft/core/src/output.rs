@@ -1,6 +1,6 @@
 // What a core call asks the shell to do: actions, in push order.
 //
-// [move, M1] Moved verbatim from src/deptran/raft/src/server_h.rs (Phase 6),
+// [move, M1] Moved verbatim from src/deptran/raft/shell/server_h.rs (Phase 6),
 // paths aside: the rust lane's rusty::Vec/Option are std's own.
 
 #[allow(unused_imports)]

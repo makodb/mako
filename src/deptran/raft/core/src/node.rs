@@ -1,7 +1,7 @@
 // RaftCore -- the state the protocol decides over -- and the core calls
 // made on it from the election and the inbound RPC handlers.
 //
-// [move, M1] From src/deptran/raft/src/server_h.rs (Phase 6); the
+// [move, M1] From src/deptran/raft/shell/server_h.rs (Phase 6); the
 // command is the type parameter C (M11) and logging is records in the
 // output (M7).
 
@@ -525,7 +525,7 @@ impl<C: Clone> RaftCore<C> {
 
     // [fix, F20] (whole item) A newer term seen outside a modeled message:
     // the InstallSnapshot handler's and its reply's raise, formerly written
-    // by the shell itself (src/server_h.rs), moved into a step so a persist
+    // by the shell itself (shell/server_h.rs), moved into a step so a persist
     // note covers it. As SettleElection's higher-term branch: the term
     // raised, the vote and leader hint cleared, the role dropped, the
     // campaign over. A term at or below the current one changes nothing.

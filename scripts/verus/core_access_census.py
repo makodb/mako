@@ -19,7 +19,7 @@ import re
 import sys
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-FILES = ['src/deptran/raft/src/server_h.rs', 'src/deptran/raft/src/server_cc.rs']
+FILES = ['src/deptran/raft/shell/server_h.rs', 'src/deptran/raft/shell/server_cc.rs']
 
 # Core free functions take the core as a parameter named `core` or
 # `consensus`; inside them `core.x` is the core's own access, not the shell's.
