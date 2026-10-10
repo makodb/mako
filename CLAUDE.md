@@ -267,15 +267,20 @@ wire types, third-party APIs). The one inline block left in `server.h`, the
 kernel-result PODs, is still transpiled and extracted (`server_pods_h.rs`).
 The migration plan has been removed (see git history); what was done is recorded in `docs/migration/raft/conversion-log.md`.
 
-**The snapshot store differs by lane, by decision.** On the Rust lane
-(`MAKO_RAFT_LANE=rust`) it is Rust: `SnapshotStore` in
-`src/deptran/raft/rt/src/snapshot.rs`, reached through the SEAM kernels, and
-`server.h` gives `RaftSnapshotManagerPtr` no `shared_ptr<SnapshotManager>` on
-that lane, so a `SnapshotManager` call in `server.cc` does not compile there.
-hybrid and cpp keep the C++ `MemorySnapshotManager`, whose kernels live in
-`snapshot_seam_cpp.cc`. The store is memory-only on every lane and the bytes
-are the state machine's, verbatim (plan phase N,
-the two-lane RPC plan (removed; see git history)).
+**Raft has one lane, Rust** (`MAKO_RAFT_LANE=rust`; CMake refuses any
+other). Its RPC endpoint is raft-rt's transport (`raft_lane.h`); the C++
+communicator, RPC service and lane switches were deleted. The snapshot store
+is Rust: `SnapshotStore` in `src/deptran/raft/rt/src/snapshot.rs`, reached
+through the SEAM kernels; `RaftSnapshotManagerPtr` is an opaque carrier, so
+a `SnapshotManager` call in `server.cc` does not compile. In memory the bytes
+are the state machine's, verbatim; disk builds (`-DMAKO_RAFT_DISK=ON`) also
+write them as image files (docs/verus/disk-persistence.md).
+
+**`src/deptran/raft` holds the source and what checks it**: the crates (core,
+shell, rt, store, replay), the Verus proofs, and the C++ glue the build links.
+Test programs live with their drivers: the performance driver in
+`scripts/raft_perf/` (`raft_bench.cc`), the process-kill test in
+`scripts/raft_kill/` (`raft_kill_node.cc`, `run.py`, `check.py`).
 
 **`#[cpp_inherit]` requires `use rusty::cpp_inherit;` in the same DSL
 block, and fails SILENTLY without it.** The attribute is authenticated

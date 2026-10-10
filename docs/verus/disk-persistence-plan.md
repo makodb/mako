@@ -110,7 +110,9 @@ recorded in the commits that follow them.
   `recovered` line against the `reveal` lines before it
   (`MAKO_RAFT_KILLTEST_DIR`: the tick's and the campaign's sends after their
   wait, a held reply just before it leaves, `created` on a new store); and
-  `shard1ReplicationRaftRestart` (`examples/test_1shard_replication_raft_restart.sh`).
+  `shard1ReplicationRaftRestart` (`examples/test_1shard_replication_raft.sh`
+  with `MAKO_RAFT_RESTART_P1=1`). After the code review (2026-10-10) the node
+  program lives at `scripts/raft_kill/raft_kill_node.cc`, beside its driver.
 - **P7** `store/src/{base,rocks,applier}.rs`: RocksDB through `rocksdb/c.h`
   with its WAL off, the applier fed by the flusher's offers with catch-up
   reads, checkpoints that delete covered segments and older images; crash
