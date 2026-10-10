@@ -1775,10 +1775,9 @@ add_apps(rocksdbInterfaceTest examples/rocksdbInterfaceTest.cc)
 # Raft example executables; the Raft helper itself is always compiled into
 # `mako` via TXLOG_HELPER_SRC, so the driver measures the production build.
 add_apps(raft_bench src/deptran/raft/raft_bench.cc)
-# raft_kill_node -- one Raft replica for the process-kill tests
-# (docs/verus/disk-persistence-plan.md P6, scripts/raft_kill/run.py): no Raft
-# logic, events by write(2).
-add_apps(raft_kill_node src/deptran/raft/raft_kill_node.cc)
+# raft_kill_node -- one Raft replica for the process-kill tests, beside the
+# driver and checker that use it (scripts/raft_kill/; disk plan P6).
+add_apps(raft_kill_node scripts/raft_kill/raft_kill_node.cc)
 # Provenance the record cannot otherwise obtain: neither MODE nor
 # CMAKE_BUILD_TYPE is a preprocessor macro, and a number is not interpretable
 # without knowing which build produced it.

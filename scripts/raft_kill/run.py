@@ -11,9 +11,14 @@ pauses proposals, lets the followers catch up, stops every replica cleanly
   run.py --build-dir build_rust_disk [--scenario NAME ...] [--rate HZ]
          [--delay-us US] [--segment-bytes N] [--keep]
 
-Scenarios: follower, leader, majority, all, down, points, powercut, create.
-On a pass the run directory is deleted; on a failure it is kept (and
-compressed into $RESULTS/raft_kill/ when RESULTS is set).
+Scenarios: follower, leader, majority, all, down, points, powercut, create
+(four runs: a creating launch crashed at create.files or create.rename,
+plain or :powercut, before any proposal). A replica that dies without run.py
+or its armed crash point killing it, or does not stop cleanly on SIGTERM,
+fails the scenario. On a pass the run directory is deleted; on a failure (or
+--keep) it is renamed `kept-kill-*` (no sweep takes it) and compressed into
+$RESULTS/raft_kill/ when RESULTS is set. The replicas hold the run
+directory's lock and get SIGTERM if run.py dies.
 """
 import argparse
 import fcntl
@@ -101,6 +106,8 @@ class Cluster:
             "host:\n  localhost: 127.0.0.1\n  p1: 127.0.0.1\n  p2: 127.0.0.1\n")
         self.inc = {p: -1 for p in PROCS}
         self.procs = {}
+        self.armed = {}       # proc -> the crash spec its current launch carries
+        self.unexpected = []  # deaths nothing here caused, failed stops
         self.log = open(self.dir / "run.log", "a")
 
     def note(self, msg):
@@ -133,18 +140,33 @@ class Cluster:
             env["MAKO_RAFT_CREATE"] = "1"
         if crash:
             env["MAKO_RAFT_CRASH"] = crash
+        self.armed[proc] = crash
         log = open(self.dir / "logs" / f"{proc}.{inc}.log", "w")
-        cmd = [str(self.bin), "--proc", proc, "--topology", str(self.topology),
-               "--mode", str(ROOT / "config" / "raft.yml"),
-               "--events", str(self.dir / "events" / f"{proc}.events"),
-               "--incarnation", str(inc), "--rate", str(self.args.rate),
-               "--pause-file", str(self.pause)] + (["--snapshots"] if self.args.snapshots else [])
+        cmd = [str(self.bin), proc, str(self.topology), str(self.events(proc)), str(inc),
+               str(self.args.rate), str(self.pause)] + (["snapshots"] if self.args.snapshots else [])
+        # The lock goes with the replica: no sweep takes a directory a live
+        # replica writes, even if run.py is gone.
         self.procs[proc] = subprocess.Popen(cmd, stdout=log, stderr=subprocess.STDOUT, env=env,
-                                            cwd=ROOT, start_new_session=True)
+                                            cwd=ROOT, start_new_session=True,
+                                            pass_fds=(self.lock.fileno(),))
         self.note(f"launch {proc}.{inc}" + (" create" if create else "") + (f" crash={crash}" if crash else ""))
 
+    def events(self, proc):
+        return self.dir / "events" / f"{proc}.events"
+
+    def died(self, proc):
+        """A replica that exited before run.py stopped it: its armed crash
+        point, or a failure."""
+        p, inc = self.procs[proc], self.inc[proc]
+        log = (self.dir / "logs" / f"{proc}.{inc}.log").read_text(errors="replace")
+        spec = self.armed.get(proc)
+        if spec and re.search(rf"^crash {re.escape(spec.split(':')[0])}\b", log, re.M):
+            return
+        self.unexpected.append(f"{proc}.{inc} exited with status {p.returncode} on its own"
+                               + (f" (armed {spec}, which did not fire)" if spec else ""))
+
     def lines(self, proc):
-        p = self.dir / "events" / f"{proc}.events"
+        p = self.events(proc)
         if not p.exists():
             return []
         incs = checker.incarnations(p.read_text())
@@ -190,8 +212,10 @@ class Cluster:
         p = self.procs[proc]
         if p.poll() is None:
             p.send_signal(signal.SIGKILL)
-        p.wait()
-        self.note(f"SIGKILL {proc}.{self.inc[proc]}")
+            p.wait()
+            self.note(f"SIGKILL {proc}.{self.inc[proc]}")
+        else:
+            self.died(proc)
 
     def start_all(self, create=True):
         for proc in reversed(PROCS):
@@ -206,18 +230,22 @@ class Cluster:
         for proc in PROCS:
             if self.alive(proc):
                 self.procs[proc].send_signal(signal.SIGTERM)
+            elif proc in self.procs:
+                self.died(proc)
         deadline = time.time() + 60
         for proc in PROCS:
             p = self.procs.get(proc)
             if p is None:
                 continue
             try:
-                p.wait(max(1, deadline - time.time()))
+                if p.wait(max(1, deadline - time.time())) != 0:
+                    self.unexpected.append(f"{proc}.{self.inc[proc]} exited with status {p.returncode} on SIGTERM")
             except subprocess.TimeoutExpired:
                 p.kill()
                 p.wait()
-                self.note(f"{proc} did not stop on SIGTERM; killed")
-        return checker.check(self.dir)
+                self.unexpected.append(f"{proc}.{self.inc[proc]} did not stop within 60 s of SIGTERM")
+        problems, summary = checker.check(self.dir)
+        return problems + [f"(run) {u}" for u in self.unexpected], summary
 
     def abandon(self):
         for proc in PROCS:
@@ -225,8 +253,16 @@ class Cluster:
                 self.procs[proc].kill()
                 self.procs[proc].wait()
 
+    def keep(self):
+        """Renames the run out of the `run-*` namespace sweeps take."""
+        kept = self.dir.with_name("kept-" + self.dir.name[len("run-"):])
+        self.dir.rename(kept)
+        self.dir = kept
+
 
 def scenario(c, name):
+    if name.startswith("create:"):
+        return create_scenario(c, name[len("create:"):])
     c.start_all()
     if name in ("follower", "leader", "majority", "all"):
         for _ in range(2):
@@ -276,6 +312,7 @@ def scenario(c, name):
                 c.launch(target, crash=spec)
                 try:
                     c.wait(f"{target} to die at {spec}", lambda: not c.alive(target), 30)
+                    c.died(target)  # its crash point, or a failure
                 except RuntimeError:
                     c.note(f"{spec} not reached in 30 s; killing {target}")
                     c.kill(target)
@@ -284,21 +321,36 @@ def scenario(c, name):
                 c.wait("a leader", lambda: c.leader() is not None, 60)
                 c.progress()
                 lead = c.leader()
-    elif name == "create":
-        # A creating launch killed at each creation step, then relaunched
-        # with the flag (a half-made store must not block it).
-        for point in ("create.files", "create.rename"):
-            for spec in (point, point + ":powercut"):
-                victim = random.choice(PROCS)
-                c.kill(victim)
-                shutil.rmtree(c.dir / f"{PROCS.index(victim)}-0", ignore_errors=True)
-                c.launch(victim, create=True, crash=spec)
-                c.wait(f"{victim} to die at {spec}", lambda: not c.alive(victim), 30)
-                c.launch(victim, create=True)
-                c.wait(f"{victim} ready", lambda: c.ready(victim), 60)
-                c.progress()
     else:
         raise ValueError(f"unknown scenario {name}")
+
+
+def create_scenario(c, spec):
+    """The cluster's creation, one replica's creating launch crashed at
+    `spec` before anything was proposed. Relaunched without the flag it
+    recovers (the store was finished) or refuses, saying why (a `.creating`
+    alone, or no store); relaunched with the flag it then makes the store."""
+    victim = random.choice(PROCS)
+    c.pause.touch()  # no proposals until all three are up
+    for proc in reversed(PROCS):
+        c.launch(proc, create=True, crash=spec if proc == victim else None)
+    c.wait(f"{victim} to die at {spec}", lambda: not c.alive(victim), 60)
+    c.died(victim)
+    c.launch(victim)
+    c.wait(f"{victim} to recover or refuse", lambda: c.ready(victim) or not c.alive(victim), 60)
+    if not c.ready(victim):
+        inc = c.inc[victim]
+        log = (c.dir / "logs" / f"{victim}.{inc}.log").read_text(errors="replace")
+        if not re.search(r"MAKO_RAFT_CREATE|\.creating", log):
+            c.unexpected.append(f"{victim}.{inc} exited without saying why it refused the store")
+        with open(c.events(victim), "a") as f:
+            f.write("refused\n")
+        c.note(f"{victim}.{inc} refused the half-made store, as it should")
+        c.launch(victim, create=True)
+    c.wait("all ready", lambda: all(c.ready(p) for p in PROCS), 60)
+    c.wait("a leader", lambda: c.leader() is not None, 60)
+    c.pause.unlink()
+    c.progress()
 
 
 def main():
@@ -317,21 +369,26 @@ def main():
     random.seed(seed)
     names = args.scenario or ["follower", "leader", "majority", "all", "down", "points", "powercut",
                               "create"]
+    names = [n for name in names for n in
+             ([f"create:{p}{m}" for p in ("create.files", "create.rename") for m in ("", ":powercut")]
+              if name == "create" else [name])]
     failed = []
     for name in names:
-        c = Cluster(args, name)
+        c = Cluster(args, name.replace(":", "-"))
         c.note(f"scenario {name} seed {seed} in {c.dir}")
         try:
             scenario(c, name)
             problems, summary = c.finish()
         except Exception as e:  # a hang or a refusal: keep the evidence
-            c.abandon()
             problems, summary = [f"driver: {e}"], "aborted"
+        finally:
+            c.abandon()  # no replica outlives its scenario, whatever happened
         for p in problems:
             c.note(f"FAIL {p}")
         c.note(f"{name}: {'FAIL' if problems else 'pass'}: {summary}")
         if problems or args.keep:
             failed += [name] if problems else []
+            c.keep()
             results = os.environ.get("RESULTS")
             if problems and results:
                 out = Path(results) / "raft_kill"

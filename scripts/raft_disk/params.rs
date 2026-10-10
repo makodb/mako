@@ -210,7 +210,7 @@ fn main() {
     let path = format!("{}/wal.bench", dir);
     let mut f = OpenOptions::new().create(true).write(true).truncate(true).open(&path).unwrap();
     let buf = vec![0xA5u8; 16 << 20];
-    println!("write+fdatasync on {} (tmpfs), microseconds: size  n  p50  p99  [fdatasync alone p50]", dir);
+    println!("write+fdatasync on {}, microseconds: size  n  p50  p99  [fdatasync alone p50]", dir);
     let mut written: u64 = 0;
     for &size in &[4096usize, 65536, 1 << 20, 16 << 20] {
         let n = if size >= (16 << 20) { 60 } else if size >= (1 << 20) { 400 } else { 3000 };

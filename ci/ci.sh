@@ -99,8 +99,19 @@ with_raft_store() {  # with_raft_store LABEL CMD...
         raft_store_make_run "$label" || exit 1
         echo "[raft disk] store run directory ${RAFT_RUN_DIR}"
         export MAKO_RAFT_CREATE=1 MAKO_RAFT_DISK_VERIFY=1
+        marker=$(mktemp)
         "$@"
         rc=$?
+        # Each server compares its WAL with its state at a clean stop
+        # ([DISK-VERIFY]); the suites read only their own lines, so a
+        # mismatch is caught here, in the logs this run wrote.
+        logs=$(find . -maxdepth 1 -name '*.log' -newer "$marker")
+        rm -f "$marker"
+        if [ -n "$logs" ] && grep -l 'DISK-VERIFY.*MISMATCH' $logs; then
+            echo "[raft disk] a server's WAL did not match its state (above)"
+            rc=1
+        fi
+        echo "[raft disk] $(cat $logs /dev/null | grep -c 'DISK-VERIFY.* ok') clean-stop verification(s) passed"
         raft_store_cleanup
         exit $rc
     )
@@ -667,7 +678,8 @@ run_1shard_replication_raft_restart() {
     fi
     cleanup_processes
     set +e
-    with_raft_store 1shard_replication_raft_restart bash ./examples/test_1shard_replication_raft_restart.sh
+    with_raft_store 1shard_replication_raft_restart env MAKO_RAFT_RESTART_P1=1 \
+        bash ./examples/test_1shard_replication_raft.sh
     local test_result=$?
     set -e
     check_for_hanging_processes "shard1ReplicationRaftRestart"

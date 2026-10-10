@@ -50,6 +50,8 @@ def main():
     ap.add_argument("--mem", default="build_rust")
     ap.add_argument("--disk", default="build_rust_disk")
     ap.add_argument("--out")
+    ap.add_argument("--resume", action="store_true",
+                    help="continue an interrupted measurement in --out (its finished rounds are kept)")
     # model.py's inputs (none of them from a disk run): params.rs output, and
     # the memory build's G1 and G2 trace prefixes.
     ap.add_argument("--params")
@@ -59,6 +61,11 @@ def main():
     user = os.environ.get("USER", "raft")
     out = Path(a.out or Path(os.environ.get("RESULTS", "/var/tmp")) / "disk-model"
                / f"{a.point}-D{a.delay_us}-{a.fs}")
+    # rotation_trial.sh skips rounds whose results exist and the medians read
+    # every round in the directory: a rerun into an old one measures nothing
+    # new, or mixes runs.
+    if not a.resume and any(out.glob("r*.json")):
+        raise SystemExit(f"measure: {out} holds earlier rounds; pick a new --out (or --resume)")
     out.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env.update({k: str(v) for k, v in POINTS[a.point].items()})
@@ -69,8 +76,14 @@ def main():
         # device bound is the steady state; model.py §2).
         env["WARMUP"] = str(STEADY_WARMUP)
     env["MAKO_RAFT_DATA_ROOT"] = f"/dev/shm/raft-wal-{user}" if a.fs == "tmpfs" else f"/var/tmp/raft-wal-{user}"
-    subprocess.run([str(ROOT / "scripts/raft_perf/rotation_trial.sh"), str(out), str(a.rounds), a.mem, a.disk],
-                   cwd=ROOT, env=env, check=True)
+    try:
+        subprocess.run([str(ROOT / "scripts/raft_perf/rotation_trial.sh"), str(out), str(a.rounds), a.mem,
+                        a.disk], cwd=ROOT, env=env, check=True)
+    finally:
+        # A run killed mid-way leaves its stores; on tmpfs they hold RAM
+        # until a sweep of that root, which ci.sh's (on /var/tmp) is not.
+        subprocess.run(["bash", "-c", "source scripts/raft_disk/store_dir.sh && raft_store_sweep"],
+                       cwd=ROOT, env=env, check=False)
     mem, disk = medians(out, a.mem), medians(out, a.disk)
     low = POINTS[a.point]["RATE"] != 0
     base = {f"{a.point}_p50": mem["p50"]} if low else {a.point: mem["X"]}

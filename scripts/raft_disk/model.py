@@ -155,6 +155,7 @@ import argparse
 import csv
 import glob
 import json
+import math
 import re
 import statistics
 
@@ -166,7 +167,7 @@ POINTS = {  # kind, KiB per entry, entries per saturated round B, offered rate (
     "G4": ("sat", 279.5, 58, None),
     "G6": ("sat", 1024.0, 16, None),
 }
-COPY, CRC = 0.07, 0.13   # us per KiB: memcpy 15 GB/s, CRC32C SSE4.2 8 GB/s (params.rs)
+COPY, CRC = 0.07, 0.13   # us per KiB: memcpy 15 GB/s, CRC32C SSE4.2 8 GB/s (params.rs prints both; host constants, not in its PARAMS line)
 REPLICAS = 3
 AMP = 3                  # device writes per entry per replica: WAL, memtable flush, L0 -> L1 compaction (§2)
 REC_KIB = 0.1            # a WAL record's bytes beyond the payload (frame, record header, command)
@@ -180,15 +181,30 @@ def read_params(path):
 
 
 def trace_rows(prefix):
-    rows = {}
+    """{entry: {stage: us}}: the leader's stamps -- the file that sends
+    (stage 3) -- and the earliest follower accept (stages 5, 6). Followers
+    stamp the late stages too (their own commit and apply, a round later),
+    so taking whichever file comes first made the pieces depend on glob
+    order."""
+    files = []
     for f in glob.glob(prefix + ".*"):
-        for r in csv.DictReader(open(f)):
-            cur = rows.setdefault(int(r["idx"]), {})
+        rows = list(csv.DictReader(open(f)))
+        files.append((sum(1 for r in rows if int(r["s3"])), f, rows))
+    files.sort(key=lambda x: (-x[0], x[1]))
+    out = {}
+    for k, (_, _, rows) in enumerate(files):
+        for r in rows:
+            cur = out.setdefault(int(r["idx"]), {})
             for s in range(12):
                 v = int(r[f"s{s}"])
-                if v and (s not in cur or (s in (5, 6) and v < cur[s])):
+                if not v:
+                    continue
+                if s in (5, 6):
+                    if s not in cur or v < cur[s]:
+                        cur[s] = v
+                elif k == 0:
                     cur[s] = v
-    return rows
+    return out
 
 
 def memory_pieces(prefix):
@@ -266,6 +282,8 @@ class Model:
     def estimate(self, point, D, base):
         kind, kib, B, rate = POINTS[point]
         if kind == "low":
+            if rate > self.device_bound(kib):
+                return math.inf  # offered past what the device sustains: the queue grows without bound
             return base[f"{point}_p50"] + self.simulate(rate, kib, D) - self.simulate(rate, kib, D, disk=False)
         T = B / base[point] * 1e6
         follower = self.F(kib * B, B, D, self.s_sat)  # the batch, held reply
