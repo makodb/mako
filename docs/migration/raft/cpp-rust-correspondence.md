@@ -12,7 +12,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 546 | `raft/shell/server_h.rs` | 4835 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.h` | 541 | `raft/shell/server_h.rs` | 4835 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
 | `raft/server.cc` | 1742 | `raft/shell/server_cc.rs` | 759 |  |
 | `communicator.h` | 567 | `raft/shell/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
 | `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 685 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
