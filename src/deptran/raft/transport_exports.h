@@ -39,8 +39,13 @@ int32_t raft_transport_serve(RaftTransport* t, RaftServerBase* server,
 
 // Connect to one site (retrying for up to 120 s, as Communicator does) and
 // record it in `par_id`. False means already known, or it never came up.
+// Disk builds try for 1 s, then leave the site to a dial thread (B22).
 bool raft_transport_add_peer(RaftTransport* t, uint32_t par_id,
                              uint16_t site_id, const char* addr);
+
+// After every add_peer: wait (120 s) until each partition has a majority
+// connected, this site included. Immediate in a memory build.
+bool raft_transport_wait_majority(RaftTransport* t);
 
 void raft_transport_set_network_enabled(RaftTransport* t, bool enabled);
 void raft_transport_set_admission_ready(RaftTransport* t, bool ready);

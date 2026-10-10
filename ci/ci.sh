@@ -655,6 +655,26 @@ run_raft_kill_test() {
     python3 scripts/raft_kill/run.py --build-dir "${BUILD_DIR}" ${RAFT_KILL_ARGS:-}
 }
 
+# The 1-shard Raft test with p1's dbtest killed and relaunched onto its
+# store (disk plan P6). Needs a disk tree; host only.
+run_1shard_replication_raft_restart() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh shard1ReplicationRaftRestart"
+    echo "========================================="
+    if ! raft_disk_tree; then
+        echo "ERROR: shard1ReplicationRaftRestart needs a -DMAKO_RAFT_DISK=ON tree (BUILD_DIR=${BUILD_DIR})"
+        return 1
+    fi
+    cleanup_processes
+    set +e
+    with_raft_store 1shard_replication_raft_restart bash ./examples/test_1shard_replication_raft_restart.sh
+    local test_result=$?
+    set -e
+    check_for_hanging_processes "shard1ReplicationRaftRestart"
+    local hanging_check=$?
+    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+}
+
 run_rocksdb_tests() {
     echo "========================================="
     echo "Running: ./ci/ci.sh rocksdbTests"
@@ -864,6 +884,9 @@ case "${1:-}" in
     raftKillTest)
         run_raft_kill_test
         ;;
+    shard1ReplicationRaftRestart)
+        run_1shard_replication_raft_restart
+        ;;
     rocksdbTests)
         run_rocksdb_tests
         ;;
@@ -924,7 +947,7 @@ case "${1:-}" in
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
         echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
-        echo "  raftLabTest,"
+        echo "  raftLabTest, raftKillTest, shard1ReplicationRaftRestart (disk trees),"
         echo "  rocksdbTests, multiShardSingleProcess,"
         echo "  shard2SingleProcess, shard2SingleProcessReplication,"
         echo "  srpcTests, cpuThrottlingScaling, clientServer, all"

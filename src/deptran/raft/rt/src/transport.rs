@@ -20,7 +20,7 @@
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use raft::server_h::RaftServerBase;
@@ -97,6 +97,18 @@ unsafe fn decode_reply<T: Deserialize + Default>(ptr: *const u8, len: usize)
 pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(120 * 1000);
 pub const CONNECT_SLEEP: Duration = Duration::from_millis(1000);
 
+/// Disk builds (plan P5; bugs-found B22): add_peer's first try lasts this
+/// long, then a dial thread takes the site and connects a fresh Client
+/// every DIAL_EVERY, so a node starts while a peer is down; the worker then
+/// waits for a majority of each partition (raft_transport_wait_majority).
+pub const DISK_FIRST_DIAL: Duration = Duration::from_millis(1000);
+pub const DIAL_EVERY: Duration = Duration::from_millis(200);
+pub const MAJORITY_TIMEOUT: Duration = Duration::from_millis(120 * 1000);
+
+/// A configured site's connection: set once, by add_peer or a dial thread.
+/// Empty, a send to the site fails at once, as after a close.
+type PeerSlot = Arc<OnceLock<Arc<Client>>>;
+
 /// Disk builds (docs/verus/disk-persistence-plan.md P5; bugs-found B21): a
 /// survivor re-dials a closed peer for good, from 50 ms doubling to 200 ms
 /// (25-300 ms with jitter), so a restarted replica is reached again before
@@ -145,8 +157,12 @@ pub struct RaftTransport {
     server: Option<Server>,
     // Which server serve() bound to, so delete() can unbind it.
     served: Option<*const RaftServerBase>,
-    peers: HashMap<u16, Arc<Client>>,
+    peers: HashMap<u16, PeerSlot>,
     partitions: HashMap<u32, Vec<u16>>,
+    // Disk builds: the dial threads of sites add_peer could not reach yet,
+    // stopped and joined on delete.
+    dialers: Vec<std::thread::JoinHandle<()>>,
+    dial_stop: Arc<AtomicBool>,
     network_enabled: AtomicBool,
     // Every RPC this transport sent: RaftCommo::rpc_count_'s counterpart,
     // which the lab's idle-RPC ceiling (TEST 9) reads.
@@ -233,6 +249,13 @@ impl Drop for InstallKey {
     }
 }
 
+// Dial threads stop with their transport, however it goes (delete joins).
+impl Drop for RaftTransport {
+    fn drop(&mut self) {
+        self.dial_stop.store(true, Ordering::Release);
+    }
+}
+
 impl RaftTransport {
     pub fn new() -> RaftTransport {
         RaftTransport {
@@ -241,6 +264,8 @@ impl RaftTransport {
             served: None,
             peers: HashMap::new(),
             partitions: HashMap::new(),
+            dialers: Vec::new(),
+            dial_stop: Arc::new(AtomicBool::new(false)),
             network_enabled: AtomicBool::new(true),
             rpc_count: AtomicU64::new(0),
             installs: Arc::new(Mutex::new(InstallsInFlight::default())),
@@ -291,10 +316,21 @@ impl RaftTransport {
         self.server.as_ref().map(|s| s.get_bound_port()).unwrap_or(-1)
     }
 
-    /// Close admission and let the handlers already inside finish.
+    /// Close admission and let the handlers already inside finish. Disk
+    /// builds close Raft's gate first (plan P4): srpc's admission flag is
+    /// not checked on dispatch, and a request handled now would hold its
+    /// reply for a flush.
     pub fn drain(&self, timeout_ms: u64) -> bool {
         match self.server.as_ref() {
             Some(s) => {
+                if cfg!(feature = "raft_disk") {
+                    if let Some(server) = self.served {
+                        // SAFETY: serve()'s contract: the server outlives
+                        // this transport, and the worker drains before
+                        // deleting it.
+                        unsafe { (*server).CloseAdmissionForDrain() };
+                    }
+                }
                 s.set_admission_ready(false);
                 s.drain(timeout_ms)
             }
@@ -334,7 +370,9 @@ impl RaftTransport {
             }
             std::thread::sleep(CONNECT_SLEEP.min(timeout));
         }
-        self.peers.insert(site_id, client);
+        let slot: PeerSlot = Arc::new(OnceLock::new());
+        let _ = slot.set(client);
+        self.peers.insert(site_id, slot);
         self.partitions.entry(par_id).or_default().push(site_id);
         true
     }
@@ -343,14 +381,66 @@ impl RaftTransport {
     /// As add_peer_with_timeout.
     pub unsafe fn add_peer(&mut self, par_id: u32, site_id: u16,
                            addr: *const i8) -> bool {
-        unsafe { self.add_peer_with_timeout(par_id, site_id, addr, CONNECT_TIMEOUT) }
+        if !cfg!(feature = "raft_disk") {
+            return unsafe { self.add_peer_with_timeout(par_id, site_id, addr, CONNECT_TIMEOUT) };
+        }
+        if self.peers.contains_key(&site_id) {
+            return false;
+        }
+        // SAFETY: the caller's contract on `addr`.
+        if unsafe { self.add_peer_with_timeout(par_id, site_id, addr, DISK_FIRST_DIAL) } {
+            return true;
+        }
+        // SAFETY: as above; copied, as the dial thread outlives the call.
+        let addr = unsafe { std::ffi::CStr::from_ptr(addr) }.to_owned();
+        let slot: PeerSlot = Arc::new(OnceLock::new());
+        self.peers.insert(site_id, slot.clone());
+        self.partitions.entry(par_id).or_default().push(site_id);
+        let (poll, stop) = (self.poll.clone(), self.dial_stop.clone());
+        self.dialers.push(std::thread::spawn(move || {
+            while !stop.load(Ordering::Acquire) {
+                let client = Client::create(poll.clone());
+                client.set_reconnect_policy(&DISK_RECONNECT);
+                if client.connect(addr.as_ptr(), false) == 0 {
+                    let _ = slot.set(client);
+                    return;
+                }
+                client.close();
+                std::thread::sleep(DIAL_EVERY);
+            }
+        }));
+        true
+    }
+
+    /// Whether every partition has a majority of its configured sites
+    /// connected, this one included (add_peer records them all). Always so
+    /// in a memory build, whose add_peer connects each or fails.
+    pub fn majority_connected(&self) -> bool {
+        self.partitions.values().all(|sites| {
+            let up = sites.iter()
+                .filter(|site| self.peers.get(site).is_some_and(|s| s.get().is_some()))
+                .count();
+            up > sites.len() / 2
+        })
+    }
+
+    /// Disk builds (B22): wait, up to `timeout`, for majority_connected.
+    pub fn wait_majority(&self, timeout: Duration) -> bool {
+        let start = Instant::now();
+        while !self.majority_connected() {
+            if start.elapsed() >= timeout {
+                return false;
+            }
+            std::thread::sleep(DIAL_EVERY / 4);
+        }
+        true
     }
 
     pub fn peer(&self, site_id: u16) -> Option<&Arc<Client>> {
         if !self.network_enabled() {
             return None;
         }
-        self.peers.get(&site_id)
+        self.peers.get(&site_id).and_then(|s| s.get())
     }
 
     /// Every peer in a partition except the caller, which is who a broadcast
@@ -366,7 +456,7 @@ impl RaftTransport {
         sites
             .iter()
             .filter(|site| **site != except)
-            .filter_map(|site| self.peers.get(site).map(|c| (*site, c.clone())))
+            .filter_map(|site| self.peers.get(site).and_then(|s| s.get()).map(|c| (*site, c.clone())))
             .collect()
     }
 
@@ -387,7 +477,7 @@ impl RaftTransport {
     }
 
     pub fn peer_count(&self) -> usize {
-        self.peers.len()
+        self.peers.values().filter(|s| s.get().is_some()).count()
     }
 
     pub fn rpc_count(&self) -> u64 {
@@ -916,6 +1006,17 @@ pub unsafe extern "C" fn raft_transport_add_peer(t: *mut RaftTransport,
     unsafe { (*t).add_peer(par_id, site_id, addr) }
 }
 
+/// Disk builds (B22): after every add_peer, wait for a majority of each
+/// partition (MAJORITY_TIMEOUT); false fails the start, as add_peer's
+/// timeout did. A memory build has them all.
+///
+/// # Safety
+/// `t` came from raft_transport_new.
+#[no_mangle]
+pub unsafe extern "C" fn raft_transport_wait_majority(t: *mut RaftTransport) -> bool {
+    unsafe { (*t).wait_majority(MAJORITY_TIMEOUT) }
+}
+
 /// # Safety
 /// `t` came from raft_transport_new.
 #[no_mangle]
@@ -1004,7 +1105,11 @@ pub unsafe extern "C" fn raft_transport_delete(t: *mut RaftTransport) {
     }
     drop(owned.server.take());
     owned.set_network_enabled(false);
-    for client in owned.peers.values() {
+    owned.dial_stop.store(true, Ordering::Release);
+    for dialer in owned.dialers.drain(..) {
+        let _ = dialer.join();
+    }
+    for client in owned.peers.values().filter_map(|s| s.get()) {
         client.close();
     }
     owned.peers.clear();

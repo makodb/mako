@@ -11,7 +11,7 @@ pauses proposals, lets the followers catch up, stops every replica cleanly
   run.py --build-dir build_rust_disk [--scenario NAME ...] [--rate HZ]
          [--delay-us US] [--segment-bytes N] [--keep]
 
-Scenarios: follower, leader, majority, all, points, powercut, create.
+Scenarios: follower, leader, majority, all, down, points, powercut, create.
 On a pass the run directory is deleted; on a failure it is kept (and
 compressed into $RESULTS/raft_kill/ when RESULTS is set).
 """
@@ -117,6 +117,10 @@ class Cluster:
             env.pop(k, None)
         env["MAKO_RAFT_DATA_DIR"] = str(self.dir)
         env["MAKO_RAFT_DISK_VERIFY"] = "1"
+        # check.py's evidence: the core's steps (checks 7, 8) and what each
+        # output showed against what recovery restored (check 9).
+        env["MAKO_RAFT_REPLAY_DIR"] = str(self.dir / "replay")
+        env["MAKO_RAFT_KILLTEST_DIR"] = str(self.dir / "evidence")
         env["MAKO_RAFT_FLUSH_DELAY_US"] = str(self.args.delay_us)
         env["MAKO_RAFT_SEGMENT_BYTES"] = str(self.args.segment_bytes)
         # Checkpoints often, so the base deletes segments during the run.
@@ -241,6 +245,23 @@ def scenario(c, name):
             c.wait("restarted replicas ready", lambda: all(c.ready(v) for v in victims), 60)
             c.wait("a leader", lambda: c.leader() is not None, 60)
             c.progress()
+    elif name == "down":
+        # A node starts while a peer stays down (B22): one follower is
+        # killed and kept down, the other restarted onto its store, which
+        # needs the leader alone to start; the down one rejoins last.
+        for _ in range(2):
+            lead = c.leader()
+            down, restarted = random.sample([p for p in PROCS if p != lead], 2)
+            c.kill(down)
+            c.progress()  # the leader and one follower carry on
+            c.kill(restarted)
+            c.launch(restarted)
+            c.wait(f"{restarted} ready with {down} down", lambda: c.ready(restarted), 60)
+            c.wait("a leader", lambda: c.leader() is not None, 60)
+            c.progress()
+            c.launch(down)
+            c.wait(f"{down} ready", lambda: c.ready(down), 60)
+            c.progress()
     elif name in ("points", "powercut"):
         for point in POINTS + (POINTS_SNAP if c.args.snapshots else []):
             lead = c.leader()
@@ -294,7 +315,8 @@ def main():
     args = ap.parse_args()
     seed = args.seed if args.seed is not None else random.randrange(1 << 30)
     random.seed(seed)
-    names = args.scenario or ["follower", "leader", "majority", "all", "points", "powercut", "create"]
+    names = args.scenario or ["follower", "leader", "majority", "all", "down", "points", "powercut",
+                              "create"]
     failed = []
     for name in names:
         c = Cluster(args, name)

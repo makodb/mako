@@ -16,7 +16,16 @@ launch's stderr), and requires:
      launch printed a mismatch;
   5. no store holds a `.creating` side directory after the run;
   6. each store's WAL is bounded: checkpoints deleted the segments its base
-     covers (at most 16 remain).
+     covers (at most 16 remain);
+  7. one leader per term, and 8. one granted candidate per voter and term,
+     from the core's `settle` records (<run>/replay/*.rec, every node's every
+     incarnation: a vote a restart forgot shows as a second grant);
+  9. every `recovered` line in <run>/evidence/<site>.reveal covers the
+     reveals before it (since the store's `created` line): the WAL through
+     each output's tail (d >= tail), no term behind one shown, at an equal
+     term the same vote, no commit behind one sent, and at an equal term no
+     log shorter than an index acknowledged (a newer leader may cut
+     uncommitted entries).
 
   check.py RUN_DIR   -> exit 0 and a summary, or exit 1 and the violations
 """
@@ -96,9 +105,73 @@ def check(run):
         n = len(list(wal.glob("*.seg")))
         if n > 16:
             problems.append(f"(6) {wal} holds {n} segments: the WAL is not bounded")
+    elections = check_elections(run, problems)
+    recoveries = check_reveals(run, problems)
     summary = (f"{len(sequences)} incarnation(s) of {len(last_inc)} node(s); history {len(history)} "
-               f"applies; {len(acks)} acknowledged")
+               f"applies; {len(acks)} acknowledged; {elections} election(s) settled; "
+               f"{recoveries} recover(ies) checked")
     return problems, summary
+
+
+def check_elections(run, problems):
+    """(7) and (8), from `E settle <term> <candidate> <n> <timed_out> <stopped>
+    <looping> <failover> <debug> <k> (<voter> <granted> <reply term>)*` records,
+    `R settled <won>` at the end."""
+    winners, grants, n = {}, {}, 0
+    for rec in sorted((run / "replay").glob("*.rec")):
+        for line in rec.read_text(errors="replace").splitlines():
+            if not line.startswith("E settle "):
+                continue
+            parts = line.split(" | ")
+            ev, reply = parts[0].split(), parts[-1].split()
+            term, cand, k = int(ev[2]), int(ev[3]), int(ev[10])
+            n += 1
+            for i in range(k):
+                voter, granted = int(ev[11 + 3 * i]), ev[12 + 3 * i] == "1"
+                if granted:
+                    grants.setdefault((voter, term), set()).add(cand)
+            if reply[:2] == ["R", "settled"] and reply[2] == "1":
+                winners.setdefault(term, set()).add(cand)
+    for term, cands in sorted(winners.items()):
+        if len(cands) > 1:
+            problems.append(f"(7) term {term} has {len(cands)} leaders: {sorted(cands)}")
+    for (voter, term), cands in sorted(grants.items()):
+        if len(cands) > 1:
+            problems.append(f"(8) voter {voter} granted term {term} to {sorted(cands)}")
+    return n
+
+
+def check_reveals(run, problems):
+    """(9): `reveal <kind> <term> <vote> <commit> <last> <tail>` lines (`-`:
+    not shown) against each later `recovered <term> <vote> <commit> <last> <d>`."""
+    n = 0
+    for f in sorted((run / "evidence").glob("*.reveal")):
+        site, shown = f.stem, []
+        for line in f.read_text(errors="replace").splitlines():
+            w = line.split()
+            if not w:
+                continue
+            if w[0] == "created":
+                shown = []
+            elif w[0] == "reveal" and len(w) == 7:
+                shown.append(w[1:])
+            elif w[0] == "recovered" and len(w) == 6:
+                n += 1
+                term, vote, commit, last, d = (int(x) for x in w[1:])
+                for kind, rt, rv, rc, rl, tail in shown:
+                    what = f"(9) site {site}: recovered {' '.join(w[1:])} after a {kind} reveal"
+                    rt, tail = int(rt), int(tail)
+                    if d < int(tail):
+                        problems.append(f"{what} that waited for record {tail}")
+                    if term < rt:
+                        problems.append(f"{what} at term {rt}")
+                    if rv != "-" and rt == term and int(rv) != vote:
+                        problems.append(f"{what} showing vote {rv} at term {rt}")
+                    if rc != "-" and commit < int(rc):
+                        problems.append(f"{what} sending commit {rc}")
+                    if rl != "-" and rt == term and last < int(rl):
+                        problems.append(f"{what} acknowledging {rl} at term {rt}")
+    return n
 
 
 def main():

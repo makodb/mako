@@ -94,17 +94,23 @@ recorded in the commits that follow them.
   guard, connection, body: `Send`), held in raft-store's `HeldReplies` and sent
   by the flusher. The tick and the campaign wait on an event the flusher sets
   through a job on their owner thread (no polling: Lion rounds fiber sleeps
-  to 1 ms); the leader's apply waits. Not done: `CloseAdmissionForDrain` (the
-  worker drains RPCs before the store stops, so held replies still leave).
+  to 1 ms); the leader's apply waits. `CloseAdmissionForDrain` (2026-10-10):
+  the drain closes Raft's gate first (B23).
 - **P5** `Restore` at startup, the campaign gate, B21's reconnect policy. The
   store opens before snapshot recovery (P8 injects the image there) and
-  `Restore` runs after `Configure`. Not done: B22's majority start (the
-  `down` scenario is not run).
+  `Restore` runs after `Configure`. B22's majority start (2026-10-10): dial
+  threads for the sites `add_peer` cannot reach in 1 s, and
+  `raft_transport_wait_majority` after `ConnectPeers`' loop.
 - **P6** `raft_kill_node`, `scripts/raft_kill/{run,check,test_check}.py`,
   `ci.sh raftKillTest`; checks by apply prefixes, acknowledgements, the verify
-  lines, `.creating`, a bounded WAL; `install` events for snapshots. Not done:
-  the `reveal`/`recovered` lines and the one-leader-per-term and one-vote
-  checks (they need recordings).
+  lines, `.creating`, a bounded WAL; `install` events for snapshots. Added
+  2026-10-10: the `down` scenario (B22); checks 7 and 8, one leader per term
+  and one granted candidate per voter and term, from the replay recorder's
+  `settle` records (`run.py` sets `MAKO_RAFT_REPLAY_DIR`); check 9, each
+  `recovered` line against the `reveal` lines before it
+  (`MAKO_RAFT_KILLTEST_DIR`: the tick's and the campaign's sends after their
+  wait, a held reply just before it leaves, `created` on a new store); and
+  `shard1ReplicationRaftRestart` (`examples/test_1shard_replication_raft_restart.sh`).
 - **P7** `store/src/{base,rocks,applier}.rs`: RocksDB through `rocksdb/c.h`
   with its WAL off, the applier fed by the flusher's offers with catch-up
   reads, checkpoints that delete covered segments and older images; crash

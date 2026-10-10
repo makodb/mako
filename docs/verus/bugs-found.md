@@ -38,9 +38,9 @@ effect). "Latent" means nothing in production reaches it today.
 | B17 | safety (latent race) | The round end (PHASE 3) advances the commit index without checking that this server still leads: `heartbeat_round_end_body` reads `IsLeader()` before taking `mtx_`, and `heartbeat_phase3_locked` calls `raft_commit_advance` whatever `is_leader` is. A server that lost leadership in that window, and meanwhile took a newer leader's entries over its tail, counts its old term's match indices against an entry of the new term. In production the Rust lane's threading keeps the window closed; the lab's direct handler calls can open it (Reachability, corrected 2026-10-04) | reproduced at the core: `core/tests/b17_round_end.rs` (Phase 8) | fixed by F12 in `a586a7f51` (2026-10-06): the round end advances only while the core leads |
 | B18 | proof coverage | Shutdown clears `looping_`, so `IsLeaderLocked()` reads false while the core still leads: a leader's `RecvAppendReply` or `RoundEnd` stepped after `PrepareForShutdown` (or `FailStop`) breaks its coupling premise (`is_leader` is the core's role). The core does nothing wrong then (a reply is ignored unless its term steps the core down; the round end commits as the leader the core still is and confirms no read authority), but the step is outside the certificate | read in code (while writing `code-structure.md`) | fixed with F12 in `a586a7f51` (2026-10-06): both premises weakened, ghost only |
 | B19 | race | Every thread and fiber that enters the shell through a raw pointer makes its own `&mut RaftServerBase`, and some hold it long: the apply thread for its whole life, the heartbeat driver across every wait, each RPC handler through `RaftRpcService::server(&self) -> &mut`. These `&mut` alias across threads, which is undefined behaviour in Rust's model whatever lock or atomic guards the fields | read in code (while writing `code-structure.md` §7) | fixed by F19 in `74dab7c9a` (2026-10-06): every entry takes `&RaftServerBase` |
-| B21 | liveness | When a peer's connection closes, the survivors re-dial it once and then 5 more times, over 15.5-46.5 s, and never again: the transport keeps srpc's default reconnect policy and nothing in Raft re-dials. A replica restarted after that is never sent to, and each of its campaigns deposes the leader | read in code at `a4b1eaa02` (2026-10-08, while mapping [disk-persistence-plan.md](disk-persistence-plan.md)) | open |
-| B22 | liveness | A Raft process cannot start while any configured site is down: `ConnectPeers` dials every site for 120 s and aborts on the first that never accepts, though Raft needs only a majority | read in code at `a4b1eaa02` (2026-10-08, as B21) | open |
-| B23 | race (latent) | srpc never reads its admission flag on dispatch, so `set_admission_ready(false)` refuses nothing: the shutdown drain does not keep new requests out | read in code at `a4b1eaa02` (2026-10-08, as B21) | open |
+| B21 | liveness | When a peer's connection closes, the survivors re-dial it once and then 5 more times, over 15.5-46.5 s, and never again: the transport keeps srpc's default reconnect policy and nothing in Raft re-dials. A replica restarted after that is never sent to, and each of its campaigns deposes the leader | read in code at `a4b1eaa02` (2026-10-08, while mapping [disk-persistence-plan.md](disk-persistence-plan.md)) | fixed in disk builds (`DISK_RECONNECT`, 2026-10-09); open in memory builds by decision |
+| B22 | liveness | A Raft process cannot start while any configured site is down: `ConnectPeers` dials every site for 120 s and aborts on the first that never accepts, though Raft needs only a majority | read in code at `a4b1eaa02` (2026-10-08, as B21) | fixed in disk builds (a majority start, 2026-10-10); open in memory builds by decision |
+| B23 | race (latent) | srpc never reads its admission flag on dispatch, so `set_admission_ready(false)` refuses nothing: the shutdown drain does not keep new requests out | read in code at `a4b1eaa02` (2026-10-08, as B21) | worked around in disk builds (`CloseAdmissionForDrain`, 2026-10-10); open in srpc |
 | B24 | robustness | `ParseEnvUint64OrDefault` accepts `-1` (`strtoull` wraps it to 2^64-1) for five Raft knobs; `MAKO_RAFT_APPEND_BATCH_MAX_BYTES=-1` removes the batch byte bound | read in code; `strtoull` checked through ctypes | open |
 | B25 | liveness (latent) | A Mako follower handling a no-op waits for `noops_phase_<i>` for every thread index, but only shard indices are written: with more threads than shards it spins forever | read in code | open; no Raft path logs a no-op |
 | B26 | proof coverage (latent) | `verify_core.sh` counts trust only as `#[verifier::external_body]` with a lower-case `fn` name within four lines, so `assume`, `#[verifier::external]` or a capitalised name would add trust silently | read in code; none exists today | fix planned (disk plan P0) |
@@ -729,12 +729,14 @@ restarts legal.
 [disk-persistence-plan.md](disk-persistence-plan.md) (2026-10-08);
 confirmed by reading the code above.
 
-**Fate.** Open. The plan's P6 gives each peer client an unlimited policy in
-disk builds (`ReconnectPolicy::aggressive()`,
-`src/srpc/rpc/reconnect_policy.rs:31-41`, set through
-`Client::set_reconnect_policy`, `src/srpc/rpc/client.rs:1837-1842`). Its
-waits grow to 5 s, longer than the election timeout, so the cap should be
-set lower, or a restarted replica still campaigns before the first re-dial.
+**Fate.** Fixed in disk builds (plan P5, 2026-10-09): each peer client gets
+`DISK_RECONNECT` (`rt/src/transport.rs`), unlimited retries waiting 50 ms
+doubling to 200 ms, below the shortest non-preferred election timeout (0.5
+s), set through `Client::set_reconnect_policy`
+(`src/srpc/rpc/client.rs:1837-1842`). `aggressive()` was not used: its waits
+grow to 5 s, time for several campaigns. Memory builds keep srpc's default:
+the plan's decision 3 keeps them unchanged, and they cannot restart a
+replica anyway (B6).
 
 ## B22. A down peer blocks a replica's startup (liveness)
 
@@ -754,10 +756,15 @@ C stays down. A and B are a majority, but B aborts after 120 s.
 
 **How found.** As B21.
 
-**Fate.** Open. The fix belongs in the transport: start once each
-partition's majority accepts, and keep dialling the rest in the background.
-The plan's P6 restarts every killed process within 100 s, so its tests stay
-inside the 120 s.
+**Fate.** Fixed in disk builds (plan P5, 2026-10-10), in the transport: in a
+disk build `add_peer` dials for 1 s, then leaves the site to a dial thread
+that connects a fresh `Client` every 200 ms and fills the site's slot (a
+send to an empty slot fails at once, as after a close), and `ConnectPeers`
+then waits (120 s) until each partition has a majority connected, itself
+included (`raft_transport_wait_majority`). `rt/tests/dial.rs` covers a down
+peer dialled until it comes up and a minority that does not start; the kill
+harness's `down` scenario restarts a replica while another stays down.
+Memory builds are unchanged (decision 3).
 
 ## B23. srpc refuses nothing when admission is closed (latent race)
 
@@ -777,8 +784,11 @@ a server being torn down was not checked.
 **How found.** As B21; the check existed in the parent srpc before merge
 `7ace54e1f` (the mapper's reading, not re-checked).
 
-**Fate.** Open. The disk plan's P4 has the drain close Raft's own gate first
-(a new `CloseAdmissionForDrain`), so it does not rely on srpc's flag.
+**Fate.** Open in srpc. Disk builds no longer rely on its flag (plan P4,
+2026-10-10): `RaftTransport::drain` first calls `CloseAdmissionForDrain`,
+which closes Raft's own gate under `mtx_` as `PrepareForShutdown` does, so a
+request arriving during the drain is refused by the `Serve*` gate instead of
+handled and held for a flush. Memory builds still rely on srpc's flag.
 
 ## B24. A negative Raft knob wraps to the largest value (robustness)
 

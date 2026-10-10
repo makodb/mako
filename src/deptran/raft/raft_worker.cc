@@ -249,7 +249,10 @@ static_assert(!raft_worker_should_buffer_unreplayed(6, 7, 1));
 
 // Bound on the shutdown wait for RPC handlers that were already admitted when
 // teardown began. Every Raft handler is a short, non-yielding critical section,
-// so this is a diagnostic ceiling rather than an expected wait.
+// so this is a diagnostic ceiling rather than an expected wait. In disk builds
+// a request's reply is held until its records are durable; the flusher still
+// runs during the drain, so a held reply waits one flush, and the drain closes
+// Raft's gate first (CloseAdmissionForDrain) so nothing new is held.
 static constexpr uint64_t kRpcDrainTimeoutMs = 5000;
 
 // @safe

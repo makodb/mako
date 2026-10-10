@@ -141,6 +141,12 @@ pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
         if !d.wait_durable(disk_tail, 10_000, &|| server.stopped_now()) {
             return tick;
         }
+        // Plan P6's evidence: what the sends below show (term, commit).
+        if d.reveals.is_some() && !tick.sends_.is_empty() {
+            let commit: u64 = tick.sends_.iter().map(|s| s.commit_index_).max().unwrap_or(0);
+            d.reveal(&crate::disk::reveal_line("append", tick.sends_[0].term_, None,
+                                               Some(commit), None, disk_tail));
+        }
     }
 
     // [fix, F7] Each payload is built from the handles the core copied out

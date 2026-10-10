@@ -247,7 +247,47 @@ pub struct DiskShell {
     /// as Mako's apply callback is chosen by role.
     pub recovered_commit: std::sync::atomic::AtomicU64,
     recovered: Mutex<Option<Recovered>>,
+    /// MAKO_RAFT_KILLTEST_DIR (plan P6): `<dir>/<site>.reveal`, where each
+    /// output that leaves writes what it shows just before it leaves, and
+    /// recovery writes what it restored; scripts/raft_kill/check.py
+    /// requires every `recovered` line to cover the reveals before it.
+    pub reveals: Option<Reveals>,
     _lock: Mutex<Box<dyn Any + Send>>,
+}
+
+/// The kill test's evidence file, shared with the held replies' sends.
+pub type Reveals = Arc<std::fs::File>;
+
+/// One evidence line, written through at once (SIGKILL loses no line that
+/// returned). A failed write only loses evidence.
+pub fn reveal_to(file: &Option<Reveals>, line: &str) {
+    use std::io::Write;
+    if let Some(f) = file {
+        let _ = (&**f).write_all(format!("{line}\n").as_bytes());
+    }
+}
+
+/// `reveal <kind> <term> <vote> <commit> <last> <tail>`: what an output
+/// shows of the sender's state (`-` where it shows nothing), and the WAL
+/// sequence it waited for.
+pub fn reveal_line(kind: &str, term: u64, vote: Option<u16>, commit: Option<u64>,
+                   last: Option<u64>, tail: u64) -> String {
+    fn opt<T: ToString>(x: Option<T>) -> String {
+        x.map_or_else(|| "-".to_string(), |v| v.to_string())
+    }
+    format!("reveal {kind} {term} {} {} {} {tail}", opt(vote), opt(commit), opt(last))
+}
+
+fn open_reveals(site: u16) -> Result<Option<Reveals>, String> {
+    let dir = match std::env::var("MAKO_RAFT_KILLTEST_DIR") {
+        Ok(d) if !d.is_empty() => PathBuf::from(d),
+        _ => return Ok(None),
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let path = dir.join(format!("{site}.reveal"));
+    let f = std::fs::OpenOptions::new().create(true).append(true).open(&path)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(Some(Arc::new(f)))
 }
 
 impl DiskShell {
@@ -317,9 +357,18 @@ impl DiskShell {
             id,
             recovered_commit: std::sync::atomic::AtomicU64::new(0),
             recovered: Mutex::new(None),
+            reveals: open_reveals(site)?,
             _lock: Mutex::new(opened.lock),
         };
+        if opened.created {
+            shell.reveal("created");
+        }
         Ok((shell, recovered))
+    }
+
+    /// One evidence line (MAKO_RAFT_KILLTEST_DIR; nothing when unset).
+    pub fn reveal(&self, line: &str) {
+        reveal_to(&self.reveals, line);
     }
 
     /// Queues one step's note; returns the record's sequence number. Under

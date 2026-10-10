@@ -52,6 +52,10 @@ void ConnectPeers(RaftTransport* t) {
       verify(connected);
     }
   }
+  // Disk builds start with a peer down (B22): add_peer left it to a dial
+  // thread, and a majority suffices.
+  const bool majority = raft_transport_wait_majority(t);
+  verify(majority);
 }
 
 void Post(RaftTransport* t, std::function<void()> job) {

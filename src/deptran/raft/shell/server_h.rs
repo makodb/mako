@@ -1355,6 +1355,17 @@ impl RaftServerBase {
             .load(rusty::sync::atomic::Ordering::Acquire)
     }
 
+    // Disk builds (plan P4): the worker's drain closes Raft's gate first, as
+    // PrepareForShutdown does, under mtx_. srpc's own admission flag is never
+    // checked on dispatch, so without this a request arriving during the
+    // drain is handled and its reply held for a flush, keeping the drain
+    // open; with it, it is refused at once (the Serve* gate).
+    pub fn CloseAdmissionForDrain(&self) {
+        let _admission_lock = RaftLockGuard::new(self.mtx());
+        self.rpc_ready_
+            .store(false, rusty::sync::atomic::Ordering::Release);
+    }
+
     // [fix, F19] The core. CALLER MUST HOLD mtx_, or run before the server is
     // shared (setup), and keep no other reference into the core while it
     // uses this one: mtx_ is what makes this the only `&mut RaftCore`.
@@ -2201,6 +2212,9 @@ impl RaftServerBase {
             return false;
         }
         shell.recovered_commit.store(hard.commit, std::sync::atomic::Ordering::Release);
+        // Plan P6's evidence: `recovered <term> <vote> <commit> <last> <d>`.
+        shell.reveal(&format!("recovered {} {} {} {} {}", hard.term, hard.vote, hard.commit,
+                              snap + n, r.d));
         eprintln!("[RAFT-DISK] Site {}: recovered {store}: {} records, term {}, vote {}, commit {}, snapshot {snap}, last {}",
                   self.site_id_, r.d, hard.term, hard.vote, hard.commit, snap + n);
         true
@@ -3587,6 +3601,9 @@ impl RaftServerBase {
             if !d.wait_durable(disk_tail, 10_000, &|| self.stopped_now()) {
                 return false;
             }
+            // Plan P6's evidence: the requests show term + 1 and the self-vote.
+            d.reveal(&crate::disk::reveal_line("campaign", campaign.term_, Some(self.site_id_),
+                                               None, None, disk_tail));
         }
         let prev_term: u64 = campaign.prev_term_;
         let prev_vote_for: u16 = campaign.prev_vote_for_;
