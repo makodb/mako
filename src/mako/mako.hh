@@ -903,12 +903,6 @@ static abstract_db * init_env() {
     int ret2 = setup2(0, benchConfig.getShardIndex());
     sleep(3); // ensure that all get started
 
-    // Wire the cluster-config read path (shard-0 config service +
-    // per-node ConfigWatcher into the routing cache). No-op unless
-    // MAKO_CLUSTER_CONFIG=1 and the cluster has >1 shard.
-    // @unsafe { RPC I/O, storage index open, background thread }
-    janus::BootstrapClusterConfig(db);
-
 #ifndef DISABLE_DISK
     // Initialize RocksDB persistence layer ONLY on the leader
     // Followers and learners don't need RocksDB since they only replay, not generate logs
@@ -975,6 +969,8 @@ static void send_end_signal() {
 
 static void db_close() {
   auto& benchConfig = BenchmarkConfig::getInstance();
+  // @unsafe - no native queue, deferred reply, or watcher may outlive the DB.
+  janus::ShutdownClusterConfig();
   if (benchConfig.getLeaderConfig() && benchConfig.getIsReplicated()) {
     send_end_signal();
     // Give followers/learners time to receive and process the end signal

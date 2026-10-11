@@ -222,8 +222,21 @@ public:
     }
   }
 
+  // @unsafe - stages only a proxy intent; the remote engine decides row existence.
+  // Unlike local insert-then-delete, this is valid with READ_MY_WRITES disabled.
+  template <typename K>
+  void transDeleteRemote(const K& key, threadinfo_type& ti = mythreadinfo) {
+    assert(get_is_remote());
+    // Keep a fully encoded carrier, including zeroed timestamp/Node metadata.
+    // The bytes are copied only when a new carrier is actually needed.
+    static constexpr char payload[1 + mako::EXTRA_BITS_FOR_VALUE] = {'B'};
+    trans_write</*INSERT*/true, /*SET*/true, /*DELETE*/true>(
+        key, Str(payload, sizeof(payload)), nullptr, ti);
+  }
+
 private:
-  template <bool INSERT, bool SET, typename StringType, typename ValueType>
+  // @unsafe - shares cursor insertion/OCC bookkeeping for puts and proxy intents.
+  template <bool INSERT, bool SET, bool DELETE = false, typename StringType, typename ValueType>
   bool trans_write(const StringType& key, const ValueType& value, bool(*compar)(const std::string& newValue,const std::string& oldValue), threadinfo_type& ti = mythreadinfo) {
     // optimization to do an unlocked lookup first
     if (SET) {
@@ -236,7 +249,10 @@ private:
             return false;
           }
         }
-        return handlePutFound<INSERT, SET>(lp.value(), key, value);
+        if constexpr (DELETE)
+          return stageRemoteDelete(lp.value(), key);
+        else
+          return handlePutFound<INSERT, SET>(lp.value(), key, value);
       } else {
         if (!INSERT) {
           ensureNotFound(lp.node(), lp.full_version_value());
@@ -256,7 +272,10 @@ private:
         }
       }
       lp.finish(0, *ti.ti);
-      return handlePutFound<INSERT, SET>(e, key, value);
+      if constexpr (DELETE)
+        return stageRemoteDelete(e, key);
+      else
+        return handlePutFound<INSERT, SET>(e, key, value);
     } else {
       //      auto p = ti.ti->allocate(sizeof(versioned_value), memtag_value);
       versioned_value* val = (versioned_value*)versioned_value::make(value, invalid_bit);  // malloc customer::value 
@@ -290,7 +309,8 @@ private:
       }
       // TransItem::key_ is actuall value, TransItem::wdata_ or rdata_ is actual key in write-set and read-set, respectively
       auto item = Sto::new_item(this, val);
-      item.template add_write<key_write_value_type>(key).add_flags(insert_bit);
+      item.template add_write<key_write_value_type>(key)
+          .add_flags(insert_bit | (DELETE ? delete_bit : 0));
       return found;
     }
   }
@@ -335,11 +355,11 @@ public:
   }
 
   // range queries
-  void transQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo) {
+  // @unsafe - legacy Masstree cursor; exclusive starts implement binary paging.
+  void transQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo, bool begin_inclusive = true) {
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
       this->ensureNotFound(node, version);
     };
-    int deleted_cnt=0;
     auto value_callback = [&] (Str key, versioned_value* e) {
       // TODO: this needs to read my writes
       auto item = this->t_read_only_item(e);
@@ -377,23 +397,20 @@ public:
       if (ret){
         return callback(key, val);
       }else {
-        deleted_cnt++;
-        if (deleted_cnt>10){
-          return false; // TODO, it's better to keep new_order id for taking over
-        }
-        return true;//skip the deleted items
+        // Deleted MVCC versions do not certify exhaustion of the key range.
+        return true;
       }
     };
 
     range_scanner<decltype(node_callback), decltype(value_callback)> scanner(end, node_callback, value_callback);
-    table_.scan(begin, true, scanner, *ti.ti);
+    table_.scan(begin, begin_inclusive, scanner, *ti.ti);
   }
 
-  void transRQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo) {
+  // @unsafe - inclusive lower bound is used by normalized half-open scan pages.
+  void transRQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo, bool begin_inclusive = true, bool end_inclusive = false) {
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
       this->ensureNotFound(node, version);
     };
-    int deleted_cnt=0;
     auto value_callback = [&] (Str key, versioned_value* e) {
       auto item = this->t_read_only_item(e);
       // not sure of a better way to do this
@@ -428,16 +445,13 @@ public:
       if (ret)
         return callback(key, val);
       else {
-        deleted_cnt++;
-        if (deleted_cnt>10){
-          return false; // TODO, it's better to keep new_order id for taking over
-        }
-        return true;//skip the deleted items
+        // Continue to the actual boundary even across long deleted runs.
+        return true;
       }
     };
 
-    range_scanner<decltype(node_callback), decltype(value_callback), true> scanner(end, node_callback, value_callback);
-    table_.rscan(begin, true, scanner, *ti.ti);
+    range_scanner<decltype(node_callback), decltype(value_callback), true> scanner(end, node_callback, value_callback, end_inclusive);
+    table_.rscan(begin, begin_inclusive, scanner, *ti.ti);
   }
 
 #if READ_MY_WRITES
@@ -455,8 +469,12 @@ protected:
   template <typename Nodecallback, typename Valuecallback, bool Reverse = false>
   class range_scanner {
   public:
-    range_scanner(Str upper, Nodecallback nodecallback, Valuecallback valuecallback) : boundary_(upper), boundary_compar_(false),
-                                                                                       nodecallback_(nodecallback), valuecallback_(valuecallback) {}
+    // @unsafe - boundary comparison precedes reading the excluded value.
+    range_scanner(Str upper, Nodecallback nodecallback, Valuecallback valuecallback,
+                  bool boundary_inclusive = false)
+        : boundary_(upper), boundary_compar_(false),
+          boundary_inclusive_(boundary_inclusive),
+          nodecallback_(nodecallback), valuecallback_(valuecallback) {}
 
     template <typename ITER, typename KEY>
     void check(const ITER& iter,
@@ -487,7 +505,8 @@ protected:
     bool visit_value(const Masstree::key<uint64_t>& key, versioned_value *value, threadinfo&) {
       if (this->boundary_compar_) {
         if ((!Reverse && boundary_ <= key.full_string()) ||
-            ( Reverse && boundary_ >= key.full_string()))
+            ( Reverse && (boundary_ > key.full_string() ||
+                          (!boundary_inclusive_ && boundary_ == key.full_string()))))
           return false;
       }
       
@@ -496,6 +515,7 @@ protected:
 
     Str boundary_;
     bool boundary_compar_;
+    bool boundary_inclusive_;
     Nodecallback nodecallback_;
     Valuecallback valuecallback_;
   };
@@ -609,7 +629,8 @@ public:
       if (!isInsert) {
         size_count_--;
       }
-      if (!TThread::is_multiversion()) {
+      // Proxies carry intents, never authoritative multiversion history.
+      if (!TThread::is_multiversion() || get_is_remote()) {
         if (!isInsert) { // update
           assert(!(e->version() & invalid_bit));
           e->version() |= invalid_bit;
@@ -691,6 +712,25 @@ public:
   }
 
 protected:
+  // @unsafe - a proxy's own invalid insert is a carrier, not a local absent row.
+  // Preserve insert_bit so abort cleanup removes it and commit has zero size delta.
+  template <typename K>
+  bool stageRemoteDelete(versioned_value* e, const K& key) {
+    auto item = t_item(e);
+    Version v = e->version();
+    fence();
+    if ((v & invalid_bit) && !has_insert(item)) {
+      Sto::abort();
+      return false;
+    }
+    if (!has_insert(item))
+      item.observe(tversion_type(v));
+    // Replace any preceding update payload with the delete key; the existing
+    // operation byte in remoteBatchLock is selected from delete_bit.
+    item.template add_write<key_write_value_type>(key).add_flags(delete_bit);
+    return true;
+  }
+
   // called once we've checked our own writes for a found put()
   template <typename ValueType>
   void reallyHandlePutFound(TransProxy& item, versioned_value *e, Str key, const ValueType& value) {

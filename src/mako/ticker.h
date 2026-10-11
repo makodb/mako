@@ -224,7 +224,7 @@ private:
                   thread_cur_tick == cur_tick);
         if (thread_cur_tick == cur_tick)
           continue;
-        lock_guard<spinlock> lg(ti.lock_);
+        ::lock_guard<spinlock> lg(ti.lock_);
         ti.current_tick_.store(cur_tick, std::memory_order_release);
       }
 

@@ -1881,8 +1881,14 @@ Four entries that used to sit on this list are **retracted as of 2026-09-16**. E
 
 - **Templates, including template *methods*.** Generic free functions and generic structs lower straight to C++ templates (§8.9); `src/srpc` carries 48 generic `pub fn` sites today (excluding the `rusty-rustc` facade), and a generic *method* is ordinary — `pub fn reg_service_typed<T: Service + 'static>` sits inside `impl Server` (`src/srpc/rpc/server.rs:1180`). Generic structs likewise: `CallbackWrapper<F>` (`src/srpc/base/callback_wrapper.rs:5`) and `SerializableEnvelope<PayloadSet>` (`src/srpc/misc/serializable_envelope.rs:30`) are canonical Rust, and both files were once named as the permanent class-template floor (§8.24, whose framing §8.44 marks historical).
 - **Operator overloading.** Member `operator<<`/`>>` families convert as free operators (§8.4), and an overload family is spelled as a trait with one impl per type (§8.40) — live at `src/srpc/misc/serializable.rs:242` (`pub trait Serialize`, then `impl Serialize for i32`, `for i8`, …).
-- **Custom destructors.** `impl Drop for T` emits a real destructor — `impl Drop for Server` (`src/srpc/rpc/server.rs:788`); for the generated C++ side, see `ConfigWatcher::~ConfigWatcher()` at `src/cluster/config_watcher.h:260`, emitted inside the GEN block from the `impl Drop` at `:136`.
-- **`impl Trait for Type` not producing inheritance.** A *plain* impl still yields only an adapter wrapper — no is-a relationship, no upcast — but mark it `#[cpp_inherit]` and the emitter writes `struct Type : public Trait` with the base ctor prepended to each init-list: `#[cpp_inherit] impl<T: Service> Service for ServiceBoxShim<T>` (`src/srpc/rpc/server.rs:234`), or `src/mako/storage/masstree_ordered_index.hh:167`, whose GEN block emits `struct masstree_ordered_index : public OrderedIndex {` at `:219`. What the DSL does not target is multiple inheritance or a hand-written non-trait base (§4).
+- **Custom destructors.** `impl Drop for T` emits a real destructor — `impl Drop for Server` (`src/srpc/rpc/server.rs:788`). Historical generated-C++ evidence also came from `ConfigWatcher::~ConfigWatcher()`; that watcher was retired with the C++ sharding graph.
+- **`impl Trait for Type` not producing inheritance.** A plain impl yields an
+  adapter rather than an is-a relationship. The authenticated `cpp_inherit`
+  marker emits direct trait inheritance. Storage carriers use its compiler-owned
+  inert spelling, `#[cfg_attr(any(), cpp_inherit)]`, without a Cargo facade;
+  `masstree_ordered_index.hh` emits `struct masstree_ordered_index : public OrderedIndex`.
+  See [the storage regeneration contract](storage-interface.md#authoring--regenerating-the-dsl-blocks)
+  for the current marker, pinned compiler and ODR post-pass.
 
 The `tools/srpc-inventory.py` script scans `src/srpc` and produces a
 per-decl bucket (trivial / trivial-blocked / refactor-then-dsl /

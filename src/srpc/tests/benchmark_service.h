@@ -754,15 +754,16 @@ private:
                 srpc::reject_malformed_request(*req, weak_sconn);
                 return;
             }
-            auto __typed_resp__ = std::make_shared<RpcDeferredEchoResponse>();
+            auto __typed_resp__ = rusty::Arc<RpcDeferredEchoResponse>::make();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](srpc::BinaryWriteArchive& m) {
+                [__typed_resp__ = __typed_resp__.clone()](srpc::BinaryWriteArchive& m) {
                     srpc::Serialize_::serialize(__typed_resp__->result, m);
                 },
                 []() {});
-            this->deferred_echo(__typed_req__, *__typed_resp__, std::move(__defer__));
+            // @unsafe - the handler owns mutation until it fires the deferred reply.
+            this->deferred_echo(__typed_req__, const_cast<RpcDeferredEchoResponse&>(*__typed_resp__), std::move(__defer__));
         }
     }
 };

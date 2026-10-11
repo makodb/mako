@@ -2,6 +2,7 @@
 #define _LIB_COMMON_H_
 
 #include "lib/timestamp.h"
+#include "lib/sharding_leases.h"
 
 #include <iostream>
 #include <cstdio>
@@ -15,6 +16,7 @@
 #include <chrono>
 #include <ctime>
 #include <string>
+#include <string_view>
 #include <sstream>
 #include <iomanip>
 #include <random>
@@ -134,8 +136,8 @@ namespace mako
     const int BITS_OF_NODE = sizeof(struct Node);
     const int BITS_OF_TT = sizeof(uint32_t);
 
-    // Helper function to encode values with required metadata padding
-    inline std::string Encode(const std::string& value) {
+    // @unsafe - legacy encoded engine layout; accepts borrowed wire spans.
+    inline std::string Encode(std::string_view value) {
         // Create string with exact size needed - single allocation
         std::string encoded_value;
         encoded_value.resize(value.size() + EXTRA_BITS_FOR_VALUE, '\0');
@@ -199,6 +201,27 @@ namespace mako
     const uint8_t nontxnRemoveReqType = 16;
     const uint8_t nontxnGetReqType = 17;
 
+    // Full ordered scans are transaction pieces, not the legacy median RPC.
+    const uint8_t fullScanReqType = 18;
+    const size_t full_scan_request_capacity = 1024;
+    const size_t full_scan_page_capacity = 8176;
+    struct full_scan_request_t {
+        uint16_t targert_server_id;
+        uint32_t req_nr;
+        ShardingRequest sharding;
+        int32_t table_id;
+        uint32_t length;
+        uint8_t payload[full_scan_request_capacity];
+    };
+    struct full_scan_response_t {
+        uint32_t req_nr;
+        int status;
+        uint32_t length;
+        uint8_t payload[full_scan_page_capacity];
+    };
+    static_assert(sizeof(full_scan_response_t) <= 8192,
+                  "full scan response exceeds the transport helper buffer");
+
     // --------------------------- Remote client API (for decoupled clients)
     // These message types enable clients to run on different servers
     const uint8_t clientBeginTxnReqType = 20;
@@ -208,6 +231,8 @@ namespace mako
     const uint8_t clientGetReqType = 24;
     const uint8_t clientDeleteReqType = 25;
     const uint8_t clientServerBusyType = 26;  // Server busy rejection response
+    const uint8_t clientRouteReqType = 27;
+    const uint8_t clientInsertReqType = 28;
 
     // Maximum message length for server busy response
     const size_t max_busy_message_length = 64;
@@ -247,6 +272,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ShardingRequest sharding;
         uint16_t len;
         char value[max_vector_int_length];
     };
@@ -255,6 +281,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ShardingRequest sharding;
         uint16_t table_id;
         uint16_t len;
         char key[max_key_length];
@@ -264,6 +291,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ShardingRequest sharding;
         uint16_t table_id;
         uint16_t slen;
         uint16_t elen;
@@ -305,6 +333,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-65,535) <= warehouses * shards
         uint32_t req_nr;
+        ShardingRequest sharding;
         uint16_t table_id;
         uint16_t klen;
         uint16_t vlen;
@@ -314,9 +343,12 @@ namespace mako
     struct batch_lock_request_t {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ShardingRequest sharding;
         uint16_t batch_size;
         char data[
             sizeof(uint16_t) * max_batch_size // the table_id sequence
+            + sizeof(ShardingRequest) * max_batch_size // exact per-piece address/grant
+            + sizeof(uint8_t) * max_batch_size // operation: put or delete
             + (sizeof(uint16_t) + max_key_length) * max_batch_size // the (klen, kdata) sequence
             + (sizeof(uint16_t) + max_value_length) * max_batch_size // the (vlen, vdata) sequence
         ];
@@ -346,13 +378,20 @@ namespace mako
         }
 
         // Note the string copy in this step could be avoided
-        void add_request(std::string &key, std::string& value, uint16_t table_id, uint16_t server_id) {
+        // @unsafe - serializes the captured sender grant with its row.
+        void add_request(std::string &key, std::string& value, uint16_t table_id,
+                         uint16_t server_id, const ShardingRequest& sharding,
+                         uint8_t operation) {
             request->batch_size ++;
             request->targert_server_id = server_id;
             uint16_t klen = key.size(), vlen = value.size();
             char *ptr = request->data + msg_len;
             auto bytes_shift = sizeof(uint16_t);
 
+            memcpy(ptr, &sharding, sizeof(sharding));
+            ptr += sizeof(sharding), msg_len += sizeof(sharding);
+            memcpy(ptr, &operation, sizeof(operation));
+            ptr += sizeof(operation), msg_len += sizeof(operation);
             memcpy(ptr, &table_id, bytes_shift);
             ptr += bytes_shift, msg_len += bytes_shift;
             memcpy(ptr, &klen, bytes_shift);
@@ -381,7 +420,15 @@ namespace mako
             return num_request_handled == request->batch_size;
         }
 
-        void read_one_request(char **key, uint16_t *klen, char **value, uint16_t *vlen, uint16_t *table_id) {
+        // @unsafe - deserializes a borrowed row and its original route grant.
+        void read_one_request(char **key, uint16_t *klen, char **value,
+                              uint16_t *vlen, uint16_t *table_id, uint8_t* operation) {
+            ShardingRequest sharding;
+            memcpy(&sharding, data_ptr, sizeof(sharding));
+            data_ptr += sizeof(sharding);
+            sharding_set_request(sharding);
+            memcpy(operation, data_ptr, sizeof(*operation));
+            data_ptr += sizeof(*operation);
             auto bytes_shift = sizeof(uint16_t);
             memcpy((char*)table_id, data_ptr, bytes_shift);
             data_ptr += bytes_shift;
@@ -393,6 +440,9 @@ namespace mako
             data_ptr += bytes_shift;
             *value = data_ptr;
             data_ptr += *vlen;
+            const int physical = sharding_request_table(sharding, *table_id);
+            if (physical <= 0 || physical > UINT16_MAX) std::abort();
+            *table_id = static_cast<uint16_t>(physical);
 
             num_request_handled += 1;
         }
@@ -424,35 +474,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
-    };
-
-    // --------------------------- Remote client API structures
-    // Used for decoupled client-server communication
-
-    // Request to begin a new transaction on the server
-    struct client_begin_txn_request_t
-    {
-        uint32_t req_nr;
-        uint64_t client_id;         // Unique client identifier
-    };
-
-    // Response to begin transaction - contains server-assigned txn_id
-    struct client_begin_txn_response_t
-    {
-        uint32_t req_nr;
-        uint64_t txn_id;            // Server-assigned transaction ID
-        int status;
-    };
-
-    // Request for Put/Get/Delete operations
-    struct client_kv_request_t
-    {
-        uint32_t req_nr;
-        uint64_t txn_id;            // Transaction ID from begin_txn
-        uint16_t table_id;          // Target table
-        uint16_t klen;              // Key length
-        uint16_t vlen;              // Value length (0 for Get/Delete)
-        char key_and_value[max_key_length + max_value_length];
+        ShardingRequest sharding;
     };
 
     // Request for the self-contained non-txn ops (types 14-17;
@@ -464,6 +486,7 @@ namespace mako
     {
         uint16_t targert_server_id; // requesting client's global warehouse id
         uint32_t req_nr;
+        ShardingRequest sharding;
         uint16_t table_id;          // target table
         uint16_t klen;              // key length
         uint16_t vlen;              // value length (0 for remove)
@@ -479,28 +502,15 @@ namespace mako
         char value[max_value_length];
     };
 
-    // Request to commit a transaction
-    struct client_commit_request_t
-    {
-        uint32_t req_nr;
-        uint64_t txn_id;            // Transaction ID to commit
-    };
-
-    // Response to commit/rollback
-    struct client_commit_response_t
-    {
-        uint32_t req_nr;
-        int status;
-    };
-
     class ErrorCode
     {
     public:
-        static const int SUCCESS = 0;
-        static const int TIMEOUT = 1;
-        static const int ERROR = 2;
-        static const int ABORT = 3;
-        static const int SERVER_BUSY = 4;  // All workers occupied
+        static constexpr int SUCCESS = 0;
+        static constexpr int TIMEOUT = 1;
+        static constexpr int ERROR = 2;
+        static constexpr int ABORT = 3;
+        static constexpr int SERVER_BUSY = 4;  // All workers occupied
+        static constexpr int NOT_FOUND = 5; // successful absent-key transactional read
     };
 
     using resp_continuation_t =

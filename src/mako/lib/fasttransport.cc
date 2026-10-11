@@ -55,7 +55,7 @@ FastTransport::FastTransport(std::string file,
                              uint8_t phy_port,
                              uint8_t numa_node,
                              int shardIdx,
-                             uint16_t id)
+                             uint16_t id, bool ephemeral_client)
     : config_(file),
       shard_idx_(shardIdx),
       id_(id),
@@ -107,7 +107,8 @@ FastTransport::FastTransport(std::string file,
 
     // Initialize the backend
     int port = std::atoi(config_.shard(shardIdx, mako::convertCluster(cluster)).port.c_str());
-    std::string local_uri = ip + ":" + std::to_string(port + id);
+    // @unsafe - gateway clients use an OS-assigned listener, not a worker port.
+    std::string local_uri = ip + ":" + std::to_string(ephemeral_client ? 0 : port + id);
 
     int ret = backend_->Initialize(local_uri, numa_node, phy_port,
                                     st_nr_req_types, end_nr_req_types);

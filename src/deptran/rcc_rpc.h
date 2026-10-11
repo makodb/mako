@@ -204,16 +204,17 @@ private:
                 srpc::reject_malformed_request(*req, weak_sconn);
                 return;
             }
-            auto __typed_resp__ = std::make_shared<RpcForwardToLearnerServerResponse>();
+            auto __typed_resp__ = rusty::Arc<RpcForwardToLearnerServerResponse>::make();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](srpc::BinaryWriteArchive& m) {
+                [__typed_resp__ = __typed_resp__.clone()](srpc::BinaryWriteArchive& m) {
                     srpc::Serialize_::serialize(__typed_resp__->ret_slot, m);
                     srpc::Serialize_::serialize(__typed_resp__->ret_ballot, m);
                 },
                 []() {});
-            this->ForwardToLearnerServer(__typed_req__, *__typed_resp__, std::move(__defer__));
+            // @unsafe - the handler owns mutation until it fires the deferred reply.
+            this->ForwardToLearnerServer(__typed_req__, const_cast<RpcForwardToLearnerServerResponse&>(*__typed_resp__), std::move(__defer__));
         }
     }
     // @safe
@@ -227,16 +228,17 @@ private:
                 srpc::reject_malformed_request(*req, weak_sconn);
                 return;
             }
-            auto __typed_resp__ = std::make_shared<RpcBulkAcceptResponse>();
+            auto __typed_resp__ = rusty::Arc<RpcBulkAcceptResponse>::make();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](srpc::BinaryWriteArchive& m) {
+                [__typed_resp__ = __typed_resp__.clone()](srpc::BinaryWriteArchive& m) {
                     srpc::Serialize_::serialize(__typed_resp__->ballot, m);
                     srpc::Serialize_::serialize(__typed_resp__->val, m);
                 },
                 []() {});
-            this->BulkAccept(__typed_req__, *__typed_resp__, std::move(__defer__));
+            // @unsafe - the handler owns mutation until it fires the deferred reply.
+            this->BulkAccept(__typed_req__, const_cast<RpcBulkAcceptResponse&>(*__typed_resp__), std::move(__defer__));
         }
     }
     // @safe
@@ -250,17 +252,18 @@ private:
                 srpc::reject_malformed_request(*req, weak_sconn);
                 return;
             }
-            auto __typed_resp__ = std::make_shared<RpcSyncLogResponse>();
+            auto __typed_resp__ = rusty::Arc<RpcSyncLogResponse>::make();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](srpc::BinaryWriteArchive& m) {
+                [__typed_resp__ = __typed_resp__.clone()](srpc::BinaryWriteArchive& m) {
                     srpc::Serialize_::serialize(__typed_resp__->ballot, m);
                     srpc::Serialize_::serialize(__typed_resp__->val, m);
                     srpc::Serialize_::serialize(__typed_resp__->ret, m);
                 },
                 []() {});
-            this->SyncLog(__typed_req__, *__typed_resp__, std::move(__defer__));
+            // @unsafe - the handler owns mutation until it fires the deferred reply.
+            this->SyncLog(__typed_req__, const_cast<RpcSyncLogResponse&>(*__typed_resp__), std::move(__defer__));
         }
     }
     // @safe
@@ -274,16 +277,17 @@ private:
                 srpc::reject_malformed_request(*req, weak_sconn);
                 return;
             }
-            auto __typed_resp__ = std::make_shared<RpcBulkDecideResponse>();
+            auto __typed_resp__ = rusty::Arc<RpcBulkDecideResponse>::make();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](srpc::BinaryWriteArchive& m) {
+                [__typed_resp__ = __typed_resp__.clone()](srpc::BinaryWriteArchive& m) {
                     srpc::Serialize_::serialize(__typed_resp__->ballot, m);
                     srpc::Serialize_::serialize(__typed_resp__->val, m);
                 },
                 []() {});
-            this->BulkDecide(__typed_req__, *__typed_resp__, std::move(__defer__));
+            // @unsafe - the handler owns mutation until it fires the deferred reply.
+            this->BulkDecide(__typed_req__, const_cast<RpcBulkDecideResponse&>(*__typed_resp__), std::move(__defer__));
         }
     }
 };
@@ -1939,14 +1943,15 @@ private:
         // @unsafe
         {
             RpcServerShutdownRequest __typed_req__;
-            auto __typed_resp__ = std::make_shared<RpcServerShutdownResponse>();
+            auto __typed_resp__ = rusty::Arc<RpcServerShutdownResponse>::make();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](srpc::BinaryWriteArchive& m) {
+                [__typed_resp__ = __typed_resp__.clone()](srpc::BinaryWriteArchive& m) {
                 },
                 []() {});
-            this->server_shutdown(__typed_req__, *__typed_resp__, std::move(__defer__));
+            // @unsafe - the handler owns mutation until it fires the deferred reply.
+            this->server_shutdown(__typed_req__, const_cast<RpcServerShutdownResponse&>(*__typed_resp__), std::move(__defer__));
         }
     }
     // @safe
@@ -1954,15 +1959,16 @@ private:
         // @unsafe
         {
             RpcServerReadyRequest __typed_req__;
-            auto __typed_resp__ = std::make_shared<RpcServerReadyResponse>();
+            auto __typed_resp__ = rusty::Arc<RpcServerReadyResponse>::make();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](srpc::BinaryWriteArchive& m) {
+                [__typed_resp__ = __typed_resp__.clone()](srpc::BinaryWriteArchive& m) {
                     srpc::Serialize_::serialize(__typed_resp__->res, m);
                 },
                 []() {});
-            this->server_ready(__typed_req__, *__typed_resp__, std::move(__defer__));
+            // @unsafe - the handler owns mutation until it fires the deferred reply.
+            this->server_ready(__typed_req__, const_cast<RpcServerReadyResponse&>(*__typed_resp__), std::move(__defer__));
         }
     }
     // @safe
@@ -1970,14 +1976,15 @@ private:
         // @unsafe
         {
             RpcServerHeartBeatRequest __typed_req__;
-            auto __typed_resp__ = std::make_shared<RpcServerHeartBeatResponse>();
+            auto __typed_resp__ = rusty::Arc<RpcServerHeartBeatResponse>::make();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](srpc::BinaryWriteArchive& m) {
+                [__typed_resp__ = __typed_resp__.clone()](srpc::BinaryWriteArchive& m) {
                 },
                 []() {});
-            this->server_heart_beat(__typed_req__, *__typed_resp__, std::move(__defer__));
+            // @unsafe - the handler owns mutation until it fires the deferred reply.
+            this->server_heart_beat(__typed_req__, const_cast<RpcServerHeartBeatResponse&>(*__typed_resp__), std::move(__defer__));
         }
     }
 };
@@ -2191,16 +2198,17 @@ private:
                 srpc::reject_malformed_request(*req, weak_sconn);
                 return;
             }
-            auto __typed_resp__ = std::make_shared<RpcReadConfigKeyResponse>();
+            auto __typed_resp__ = rusty::Arc<RpcReadConfigKeyResponse>::make();
             auto __defer__ = srpc::DeferredReply::new_(
                 std::move(req),
                 weak_sconn,
-                [__typed_resp__](srpc::BinaryWriteArchive& m) {
+                [__typed_resp__ = __typed_resp__.clone()](srpc::BinaryWriteArchive& m) {
                     srpc::Serialize_::serialize(__typed_resp__->found, m);
                     srpc::Serialize_::serialize(__typed_resp__->value, m);
                 },
                 []() {});
-            this->ReadConfigKey(__typed_req__, *__typed_resp__, std::move(__defer__));
+            // @unsafe - the handler owns mutation until it fires the deferred reply.
+            this->ReadConfigKey(__typed_req__, const_cast<RpcReadConfigKeyResponse&>(*__typed_resp__), std::move(__defer__));
         }
     }
 };
@@ -2256,6 +2264,151 @@ public:
         auto __typed_fu_result__ = this->async_ReadConfigKey(req);
         if (__typed_fu_result__.is_err()) {
             return rusty::Result<RpcReadConfigKeyResponse, srpc::i32>::Err(__typed_fu_result__.unwrap_err());
+        }
+        return __typed_fu_result__.unwrap().resolve();
+    }
+};
+
+class NativeShardingService {
+public:
+    // Typed request/response scaffolding generated from RPC signature lists.
+    struct RpcInvokeRequest {
+        uint32_t operation;
+        std::string payload;
+    };
+    friend inline void serialize(const RpcInvokeRequest& o, srpc::BinaryWriteArchive& ar) {
+        srpc::Serialize_::serialize(o.operation, ar);
+        srpc::Serialize_::serialize(o.payload, ar);
+    }
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcInvokeRequest& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcInvokeRequest& o, srpc::BinaryReadArchive& ar) {
+        srpc::Deserialize_::deserialize(o.operation, ar);
+        srpc::Deserialize_::deserialize(o.payload, ar);
+    }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcInvokeRequest& o) { deserialize(o, ar); return ar; }
+
+    struct RpcInvokeResponse {
+        uint32_t status;
+        std::string reply;
+    };
+    friend inline void serialize(const RpcInvokeResponse& o, srpc::BinaryWriteArchive& ar) {
+        srpc::Serialize_::serialize(o.status, ar);
+        srpc::Serialize_::serialize(o.reply, ar);
+    }
+    friend inline srpc::BinaryWriteArchive& operator <<(srpc::BinaryWriteArchive& ar, const RpcInvokeResponse& o) { serialize(o, ar); return ar; }
+    friend inline void deserialize(RpcInvokeResponse& o, srpc::BinaryReadArchive& ar) {
+        srpc::Deserialize_::deserialize(o.status, ar);
+        srpc::Deserialize_::deserialize(o.reply, ar);
+    }
+    friend inline srpc::BinaryReadArchive& operator >>(srpc::BinaryReadArchive& ar, RpcInvokeResponse& o) { deserialize(o, ar); return ar; }
+
+    enum {
+        INVOKE = 0x2cadee4c,
+    };
+    // Registers RPC IDs with server using service index
+    // @unsafe - calls srpc::Server::reg_rpc / unreg (not borrow-checked)
+    int __reg_to__(srpc::Server& svr, size_t svc_index) {
+        int ret = 0;
+        if ((ret = svr.reg_rpc(INVOKE, svc_index)) != 0) {
+            goto err;
+        }
+        return 0;
+    err:
+        svr.unreg(INVOKE);
+        return ret;
+    }
+    // @safe - Dispatch for RPC requests
+    void __dispatch__(srpc::i32 rpc_id, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
+        switch (rpc_id) {
+        case INVOKE: __Invoke__wrapper__(std::move(req), weak_sconn); break;
+        default: break;  // Unknown RPC ID, ignore
+        }
+    }
+    // typed service signatures
+    // @safe
+    virtual void Invoke(const RpcInvokeRequest& req, RpcInvokeResponse& resp, srpc::DeferredReply defer) const = 0;
+    // these RPC handler functions need to be implemented by user
+    // for 'raw' handlers, req is rusty::Box (auto-cleaned); weak_sconn requires lock() before use
+private:
+    // @safe
+    void __Invoke__wrapper__(rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn) const {
+        // @unsafe
+        {
+            RpcInvokeRequest __typed_req__;
+            srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));
+            srpc::Deserialize_::deserialize(__typed_req__.operation, __req_ar__);
+            srpc::Deserialize_::deserialize(__typed_req__.payload, __req_ar__);
+            if (__req_ar__.failed()) {
+                srpc::reject_malformed_request(*req, weak_sconn);
+                return;
+            }
+            auto __typed_resp__ = rusty::Arc<RpcInvokeResponse>::make();
+            auto __defer__ = srpc::DeferredReply::new_(
+                std::move(req),
+                weak_sconn,
+                [__typed_resp__ = __typed_resp__.clone()](srpc::BinaryWriteArchive& m) {
+                    srpc::Serialize_::serialize(__typed_resp__->status, m);
+                    srpc::Serialize_::serialize(__typed_resp__->reply, m);
+                },
+                []() {});
+            // @unsafe - the handler owns mutation until it fires the deferred reply.
+            this->Invoke(__typed_req__, const_cast<RpcInvokeResponse&>(*__typed_resp__), std::move(__defer__));
+        }
+    }
+};
+
+class NativeShardingProxy {
+protected:
+    srpc::Client* __cl__;
+public:
+    NativeShardingProxy(srpc::Client* cl): __cl__(cl) { }
+    // Alias typed request/response structs from the sibling Service class.
+    using RpcInvokeRequest = NativeShardingService::RpcInvokeRequest;
+    using RpcInvokeResponse = NativeShardingService::RpcInvokeResponse;
+    class InvokeTypedFuture {
+    private:
+        rusty::Arc<srpc::Future> __fu__;
+    public:
+        explicit InvokeTypedFuture(rusty::Arc<srpc::Future> fu): __fu__(std::move(fu)) { }
+        bool ready() const {
+            return __fu__->ready();
+        }
+        void wait() const {
+            __fu__->wait();
+        }
+        srpc::i32 get_error_code() const {
+            return __fu__->get_error_code();
+        }
+        rusty::Arc<srpc::Future> raw_future() const {
+            return __fu__;
+        }
+        rusty::Result<RpcInvokeResponse, srpc::i32> resolve() const {
+            srpc::i32 __ret__ = __fu__->get_error_code();
+            if (__ret__ != 0) {
+                return rusty::Result<RpcInvokeResponse, srpc::i32>::Err(__ret__);
+            }
+            RpcInvokeResponse __typed_resp__;
+            auto __reply_guard__ = __fu__->get_reply();
+            srpc::BinaryReadArchive __reply_ar__(srpc::make_source_proxy_buffer(&__reply_guard__->src));
+            srpc::Deserialize_::deserialize(__typed_resp__.status, __reply_ar__);
+            srpc::Deserialize_::deserialize(__typed_resp__.reply, __reply_ar__);
+            return rusty::Result<RpcInvokeResponse, srpc::i32>::Ok(__typed_resp__);
+        }
+    };
+    rusty::Result<InvokeTypedFuture, srpc::i32> async_Invoke(const RpcInvokeRequest& req, const srpc::FutureAttr& __fu_attr__ = srpc::FutureAttr()) {
+        auto __fu_result__ = __cl__->request(NativeShardingService::INVOKE, __fu_attr__, [&](srpc::BinaryWriteArchive& __m__) {
+            srpc::Serialize_::serialize(req.operation, __m__);
+            srpc::Serialize_::serialize(req.payload, __m__);
+        });
+        if (__fu_result__.is_err()) {
+            return rusty::Result<InvokeTypedFuture, srpc::i32>::Err(__fu_result__.unwrap_err());
+        }
+        return rusty::Result<InvokeTypedFuture, srpc::i32>::Ok(InvokeTypedFuture(__fu_result__.unwrap()));
+    }
+    rusty::Result<RpcInvokeResponse, srpc::i32> Invoke(const RpcInvokeRequest& req) {
+        auto __typed_fu_result__ = this->async_Invoke(req);
+        if (__typed_fu_result__.is_err()) {
+            return rusty::Result<RpcInvokeResponse, srpc::i32>::Err(__typed_fu_result__.unwrap_err());
         }
         return __typed_fu_result__.unwrap().resolve();
     }
