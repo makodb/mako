@@ -503,9 +503,12 @@ static void run_on_poll_thread(const shared_ptr<PaxosWorker>& pw, std::function<
 // and applies each through its partition's replay callback on that
 // partition's thread, where forwarded entries are applied. Replay writes a
 // key only over an older version, so entries it already has, or entries
-// applied out of order, leave the same state. Returns the highest
-// committed slot seen per partition.
-static std::vector<slotid_t> catch_up_learner(int epoch) {
+// applied out of order, leave the same state. Slots it has applied already
+// are skipped, since the replay callback is not idempotent. Returns the
+// highest committed slot seen per partition. If an acceptor rejects the
+// request because it is in a later epoch, *higher_epoch is set to that
+// epoch: another replica has taken over.
+static std::vector<slotid_t> catch_up_learner(int epoch, ballot_t* higher_epoch) {
   constexpr int64_t kCatchUpReplyBytes = 16 * 1024 * 1024;
   const size_t n = pxs_workers_g.size();
   std::vector<slotid_t> next(n), high(n);
@@ -527,11 +530,18 @@ static std::vector<slotid_t> catch_up_learner(int epoch) {
     req->max_reply_bytes = kCatchUpReplyBytes;
     map<pair<int, slotid_t>, rusty::Arc<janus::Command>> got;
     bool ok = false;
+    ballot_t rejected = 0;
     run_on_poll_thread(pxs_workers_g.back(), [&] {
-      ok = pxs_workers_g.back()->FetchCommitted(req, &got);
+      ok = pxs_workers_g.back()->FetchCommitted(req, &got, &rejected);
     });
     if (!ok) {
-      Log_warn("learner catch-up: the acceptors did not answer; taking over with what was forwarded");
+      if (rejected > epoch) {
+        *higher_epoch = rejected;
+        Log_warn("learner catch-up: an acceptor is in epoch {}, past this learner's {}",
+                 rejected, epoch);
+      } else {
+        Log_warn("learner catch-up: the acceptors did not answer; taking over with what was forwarded");
+      }
       break;
     }
     // The map is ordered by (partition, slot), so each partition's entries
@@ -548,16 +558,21 @@ static std::vector<slotid_t> catch_up_learner(int epoch) {
       if (per[i].empty()) continue;
       auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
       auto& entries = per[i];
-      run_on_poll_thread(pxs_workers_g[i], [ps, &entries] {
+      size_t applied_here = 0;
+      run_on_poll_thread(pxs_workers_g[i], [ps, &entries, &applied_here] {
         std::lock_guard<std::recursive_mutex> lock(ps->mtx_);
         for (auto& e : entries) {
+          if (ps->LearnerHasApplied(e.first)) {
+            continue;
+          }
           ps->app_next_(static_cast<int>(e.first), *e.second);
           ps->NoteLearnerApplied(e.first);
+          applied_here++;
         }
       });
       next[i] = entries.back().first + 1;
       high[i] = std::max(high[i], entries.back().first);
-      applied += entries.size();
+      applied += applied_here;
       progress = true;
     }
     rounds++;
@@ -571,7 +586,14 @@ static std::vector<slotid_t> catch_up_learner(int epoch) {
 void stuff_todo_learner_upgrade(){
   // Still a follower of the old epoch here: the replay callbacks are the
   // follower ones, which write entries into the tables.
-  const std::vector<slotid_t> committed_high = catch_up_learner(es->get_epoch());
+  ballot_t higher_epoch = 0;
+  const std::vector<slotid_t> committed_high = catch_up_learner(es->get_epoch(), &higher_epoch);
+  if (higher_epoch > 0) {
+    // Another replica already leads in a later epoch; this one stays a
+    // learner rather than take over without the acceptors.
+    Log_warn("learner takeover: not taking over, the acceptors are in epoch {}", higher_epoch);
+    return;
+  }
   Config::GetConfig()->UpgradeFromLearnerToLeader();
   es->state_lock();
   es->set_state(1);

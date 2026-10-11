@@ -49,6 +49,10 @@ class PaxosServer : public TxLogServer {
   slotid_t learner_applied_prefix_ = 0;
   std::set<slotid_t> learner_applied_above_{};
   // Call with mtx_ held.
+  bool LearnerHasApplied(slotid_t slot) const {
+    return slot <= learner_applied_prefix_ || learner_applied_above_.count(slot) > 0;
+  }
+  // Call with mtx_ held.
   void NoteLearnerApplied(slotid_t slot) {
     if (slot <= learner_applied_prefix_) return;
     learner_applied_above_.insert(slot);

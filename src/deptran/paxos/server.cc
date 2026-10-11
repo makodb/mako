@@ -306,6 +306,13 @@ void PaxosServer::OnForwardToLearner(const srpc::i32& par_id,
   if (static_cast<slotid_t>(slot) > max_committed_slot_learner_) {
     max_committed_slot_learner_ = slot;
   }
+  // A takeover's catch-up may have applied this slot already, and the
+  // replay callback is not idempotent (markers start threads, no-ops and
+  // end signals are counted).
+  if (LearnerHasApplied(static_cast<slotid_t>(slot))) {
+    cb();
+    return;
+  }
   // app_next_ takes janus::Command directly.
   int status=app_next_(slot,cmd);
   NoteLearnerApplied(static_cast<slotid_t>(slot));
