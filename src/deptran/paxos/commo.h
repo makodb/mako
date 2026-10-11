@@ -86,6 +86,11 @@ class MultiPaxosCommo : public Communicator {
   // to drain before it starts more rounds (PaxosWorker::_Submit).
   size_t MaxQueuedBytes();
 
+  // srpc refuses a frame over 64 MiB with an error the client also reports
+  // as CLIENT_ERR_IO, so a message carrying more log than this can never be
+  // sent. PaxosWorker::Submit refuses such an entry before it takes a slot.
+  static constexpr size_t kMaxLogBytesPerMessage = 60u << 20;
+
  private:
   // The messages for one peer that wait behind one the channel refused.
   struct PeerSendQueue {

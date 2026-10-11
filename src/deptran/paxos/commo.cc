@@ -27,19 +27,20 @@ MultiPaxosCommo::MultiPaxosCommo(
 // peer is gone) is dropped, as before.
 namespace {
 
-// srpc refuses a frame over 64 MiB with an error the client also reports as
-// CLIENT_ERR_IO, so a message carrying more log than this could never be
-// sent, and retrying it would block every later message to that peer.
-constexpr size_t kMaxFrameLogBytes = 60u << 20;
 // What a queued message counts against its peer's backlog besides its log.
 constexpr size_t kMessageOverheadBytes = 64;
 // p1's backlog to the learner. The learner does not vote, so past this p1
-// drops large entries rather than holding them; the learner records the
-// hole and fetches those entries from the acceptors when it takes over
-// (catch_up_learner). Entries up to kAlwaysForwardBytes (benchmark markers,
-// no-ops, the end signal) are always kept.
+// drops entries rather than holding them; the learner records the hole and
+// fetches those entries from the acceptors when it takes over
+// (catch_up_learner).
 constexpr size_t kMaxLearnerBacklogBytes = 256u << 20;
-constexpr size_t kAlwaysForwardBytes = 4096;
+// Entries of at most kMaxControlEntryBytes are control records (Mako's end
+// signal is empty, its benchmark marker 2 bytes, a no-op 8 bytes; a
+// transaction entry is at least 18). They count against the backlog too,
+// but are dropped only past an extra reserve, so a full queue drops data
+// before them.
+constexpr size_t kMaxControlEntryBytes = 8;
+constexpr size_t kControlReserveBytes = 16u << 20;
 
 // Bytes of log carried by a BulkPaxosCmd, for the warnings.
 size_t LogBytes(const janus::Command& cmd) {
@@ -63,7 +64,8 @@ void MultiPaxosCommo::SendInOrder(const std::shared_ptr<RpcPeer>& peer,
                                   std::function<int32_t(srpc::Client*)> send,
                                   std::function<void()> before_queue,
                                   size_t max_backlog_bytes) {
-  if (log_bytes > kMaxFrameLogBytes) {
+  if (log_bytes > kMaxLogBytesPerMessage) {
+    // Submit refuses such entries, so this only guards other callers.
     Log_error("{} to site {} (partition {}) carries {} log bytes, more than one RPC frame "
               "holds; not sent", what, peer->site_id(), par_id, log_bytes);
     return;
@@ -247,7 +249,9 @@ void MultiPaxosCommo::ForwardToLearner(
                     req->cmd = janus::Command(rusty::Arc<LogEntry>::make(*entry.unwrap()));
                   }
                 },
-                entry_bytes > kAlwaysForwardBytes ? kMaxLearnerBacklogBytes : 0);
+                entry_bytes <= kMaxControlEntryBytes
+                    ? kMaxLearnerBacklogBytes + kControlReserveBytes
+                    : kMaxLearnerBacklogBytes);
   }
 }
 
