@@ -44,12 +44,13 @@ effect). "Latent" means nothing in production reaches it today.
 | B24 | robustness | `ParseEnvUint64OrDefault` accepts `-1` (`strtoull` wraps it to 2^64-1) for five Raft knobs; `MAKO_RAFT_APPEND_BATCH_MAX_BYTES=-1` removes the batch byte bound | read in code; `strtoull` checked through ctypes | open |
 | B25 | liveness (latent) | A Mako follower handling a no-op waits for `noops_phase_<i>` for every thread index, but only shard indices are written: with more threads than shards it spins forever | read in code | open; no Raft path logs a no-op |
 | B26 | proof coverage (latent) | `verify_core.sh` counts trust only as `#[verifier::external_body]` with a lower-case `fn` name within four lines, so `assume`, `#[verifier::external]` or a capitalised name would add trust silently | read in code; none exists today | fix planned (disk plan P0) |
-| B27 | test infra | CMake's cargo rule omits `replay/` from its inputs although `raft` depends on `raft-replay`, so an edit there does not rebuild `libraft.a` | read in code | open |
-| B28 | doc | `replay/src/lib.rs:6` documents a fourth ` \| R <reply>` section; a line has three, with `R` inside the third | read in code | open |
+| B27 | test infra | CMake's cargo rule omits `replay/` from its inputs although `raft` depends on `raft-replay`, so an edit there does not rebuild `libraft.a` | read in code | fixed by the disk plan's P0 |
+| B28 | doc | `replay/src/lib.rs:6` documents a fourth ` \| R <reply>` section; a line has three, with `R` inside the third | read in code | fixed (2026-10-11) |
 | B29 | test infra | GitHub CI never runs `ci.sh raftLabTest`, the only cluster-level Raft suite | read in code | open |
 | B30 | safety (design) | Disk design §4: recovery trusts the WAL bytes it reads, but after a process kill the page cache still holds unsynced batches. A restart that builds on them (new records in a new segment) and then loses power keeps the new records and drops the old ones: a gap under acknowledged state | found by `store/tests/wal_crash.rs` (crash at every operation, kill then power cut) before any code shipped | fixed in `raft-store` (plan P2): recovery syncs the last segment it read; design §4 updated |
 | B31 | safety (design) | Disk design §4: a creation killed between the side directory's rename and the parent's `fsync` leaves a store a kill keeps and a power cut erases; a restart that opens it acknowledges writes the next power cut deletes with the whole store | found by `store/tests/wal_crash.rs`, as B30 | fixed in `raft-store` (plan P2): opening a store syncs its parent directory first; design §4 updated |
 | B32 | performance, liveness (disk) | `raft-store` `base::ops_for` wrote a range delete `[from, ∞)` for every record that replaces from `from`, appends included, so a saturated run put hundreds of thousands of overlapping range tombstones in each RocksDB memtable. RocksDB fragments them at flush in time superlinear in their number: 1-2 s write stalls in G2 on ext4, and a shutdown that waited on a flush thread at 2 minutes of CPU (2 of 5 G2 ext4 runs exceeded their budget) | found 2026-10-10 by the cost model's miss on G2 ext4: `/proc/<pid>/task/*/stat` showed the `rocksdb:high` thread busy while the applier waited | fixed in `raft-store`: the applier tracks an upper bound on the base's last entry index, and a record that only appends past it gets no range delete (`store/tests/rocks.rs` checks both cases) |
+| B33 | test infra | A firing crash point printed `crash <point>` in three `write(2)` calls; another thread's log line on the shared descriptor could split it, and the kill driver reported the self-kill as an unexpected death | reproduced (powercut scenario, 2026-10-10) | fixed: one `write_all` (2026-10-11) |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
 
@@ -854,8 +855,8 @@ an edit there links a stale recorder.
 
 **How found.** Checking the disk plan's citations (2026-10-08).
 
-**Fate.** Open; the disk plan's P0 adds the inputs, with the new `store/`
-crate's.
+**Fate.** Fixed by the disk plan's P0: the replay crate's sources and
+manifest are among the rule's inputs, with the `store/` crate's.
 
 ## B28. The replay format comment shows four sections (doc)
 
@@ -868,7 +869,8 @@ crate's.
 
 **How found.** Mapping the core for the disk plan (2026-10-08).
 
-**Fate.** Open; documentation only.
+**Fate.** Fixed (2026-10-11): the comment shows the three sections, `R`
+in the third.
 
 ## B29. GitHub CI never runs the Raft lab (test infra)
 
@@ -884,3 +886,20 @@ GitHub it is not. The comment's "25 cases" is also stale: the suite now counts
 **How found.** Mapping the tests for the disk plan (2026-10-08).
 
 **Fate.** Open. The lab runs by hand (Tier 1).
+
+## B33. Another thread's log line can split the `crash` line (test infra)
+
+**Where.** `store/src/crash.rs:97` at `02b17cf6a`.
+
+**What is wrong.** A crash point that fires prints `crash <point>` with
+`eprintln!`, which issues three `write(2)` calls: `crash `, the name, and the
+newline. The node's stdout and stderr share one descriptor with the C++
+logger, so a log line from another thread can land between them. The kill
+driver then misses `^crash <point>` and reports the self-kill as an unexpected
+death.
+
+**How found.** The powercut scenario failed twice in one run (2026-10-10):
+`crash D [...] Raft applied log at slot 155 ...` was followed by
+`wal.write.half` on a line of its own.
+
+**Fate.** Fixed: the line is formatted first and written in one `write_all`.

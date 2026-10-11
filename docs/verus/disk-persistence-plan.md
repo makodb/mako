@@ -899,7 +899,10 @@ ext4 and on saturated tmpfs, and each miss named a term or a defect:
   the last commit landed just before it. X = B / (T + F(B) + F(1)).
 The check's numbers (CP4: fresh paired runs, five rounds per configuration,
 and the memory gate for the collect change) are in the commit that records
-them; `model.py`'s docstring is the worked record.
+them; `model.py`'s docstring is the worked record. The latest, CP7
+(2026-10-10, after the review fixes and the cleanup): all six points within a
+quarter of the estimate, the largest miss -17% (G1 tmpfs, D = 1 ms); the
+memory gate against `build_rust_predisk`, G1 p50 -49% and G2 +79%.
 
 **Checking the model.** CP1 runs disk G1 and G2 at D = 1 ms; CP2 adds D = 0
 (§1). A measured change off its estimate by more than a quarter of the estimate

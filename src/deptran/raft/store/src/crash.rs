@@ -94,7 +94,10 @@ pub fn crash_point(name: &str) {
             let _ = fs.powercut();
         }
     }
-    eprintln!("crash {name}");
+    // One write(2): the C++ logger shares the descriptor, and eprintln!
+    // writes "crash ", the name and the newline separately, so a log line
+    // from another thread could land inside the line the driver looks for.
+    let _ = std::io::Write::write_all(&mut std::io::stderr(), format!("crash {name}\n").as_bytes());
     // SAFETY: kill(2) on our own pid; it does not return.
     unsafe {
         kill(getpid(), SIGKILL);

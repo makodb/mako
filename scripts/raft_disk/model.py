@@ -150,6 +150,11 @@ first seconds measure the cache, so the saturated ext4 points discard them
     delete, and their flush is superlinear in their number (bugs-found B32;
     1-2 s stalls, shutdowns past their budget). The model said "too slow by
     this much"; the stats said where.
+  - CP7 (2026-10-10): the tick now waits for the WAL only when it sends,
+    and the memory pieces were re-traced. Against the estimates: G1 -6%,
+    -17%, +10% (tmpfs D = 0, 1 ms; ext4), G2 -16%, -13%, -6%. Measured G2
+    tmpfs moved only +1% and +5% from CP5, as it should: saturated, every
+    tick sends. The smaller G2 misses came mostly from the re-traced inputs.
 """
 import argparse
 import csv

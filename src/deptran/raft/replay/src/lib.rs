@@ -3,7 +3,7 @@
 //! One record per `RaftCore::step`, one line each:
 //!
 //! ```text
-//! E <event> | <log level> | <actions and log lines> | R <reply>
+//! E <event> | <log level> | <actions and log lines> R <reply>
 //! ```
 //!
 //! The shell's recorder (env-gated, `MAKO_RAFT_REPLAY_DIR`) writes the event
