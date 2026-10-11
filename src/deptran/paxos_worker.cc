@@ -290,14 +290,23 @@ inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
 
 bool PaxosWorker::FetchCommitted(
     shared_ptr<SyncLogRequest> req,
-    map<pair<int, slotid_t>, rusty::Arc<janus::Command>>* out) {
+    map<pair<int, slotid_t>, rusty::Arc<janus::Command>>* out,
+    ballot_t* higher_epoch) {
   auto callback_state = std::make_shared<SyncLogCallbackState>();
+  auto rejected_epoch = std::make_shared<std::atomic<ballot_t>>(0);
   // @unsafe { boundary copy: shared_ptr<SyncLogRequest> param -> Arc envelope }
   auto sp_quorum = rep_commo_->BroadcastSyncLog(
       site_info_->partition_id_,
       rusty::Arc<SyncLogRequest>::make(*req),
-      [callback_state](shared_ptr<janus::Command> md, ballot_t, int resp_type) {
-    if (!resp_type || md == nullptr) {
+      [callback_state, rejected_epoch](shared_ptr<janus::Command> md, ballot_t ballot,
+                                       int resp_type) {
+    if (!resp_type) {
+      ballot_t seen = rejected_epoch->load();
+      while (ballot > seen && !rejected_epoch->compare_exchange_weak(seen, ballot)) {
+      }
+      return;
+    }
+    if (md == nullptr) {
       return;
     }
     auto response = marshallable_cast<SyncLogResponse>(*md);
@@ -316,6 +325,7 @@ bool PaxosWorker::FetchCommitted(
     callback_state->accepting_responses = false;
     responses = std::move(callback_state->responses);
   }
+  *higher_epoch = rejected_epoch->load();
   if (!sp_quorum->yes()) {
     return false;
   }
@@ -579,11 +589,18 @@ inline void PaxosWorker::_Submit(const janus::Command& sp_m) {
   bool counted = false;
   if (stop_flag != true) {
     std::unique_lock<std::mutex> lock(inflight_mu_);
-    if (inflight_rounds_ >= kMaxInFlightRounds) {
+    auto has_room = [this] {
+      return stop_flag ||
+             (inflight_rounds_ < kMaxInFlightRounds &&
+              (rep_commo_ == nullptr || rep_commo_->MaxQueuedBytes() < kMaxPeerBacklogBytes));
+    };
+    if (!has_room()) {
       inflight_waits_++;
-      inflight_cv_.wait(lock, [this] {
-        return inflight_rounds_ < kMaxInFlightRounds || stop_flag;
-      });
+      // A finishing round notifies inflight_cv_; a draining peer queue does
+      // not, so look again every millisecond.
+      while (!has_room()) {
+        inflight_cv_.wait_for(lock, std::chrono::milliseconds(1));
+      }
     }
     inflight_rounds_++;
     counted = true;

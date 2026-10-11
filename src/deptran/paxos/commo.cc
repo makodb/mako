@@ -27,6 +27,20 @@ MultiPaxosCommo::MultiPaxosCommo(
 // peer is gone) is dropped, as before.
 namespace {
 
+// srpc refuses a frame over 64 MiB with an error the client also reports as
+// CLIENT_ERR_IO, so a message carrying more log than this could never be
+// sent, and retrying it would block every later message to that peer.
+constexpr size_t kMaxFrameLogBytes = 60u << 20;
+// What a queued message counts against its peer's backlog besides its log.
+constexpr size_t kMessageOverheadBytes = 64;
+// p1's backlog to the learner. The learner does not vote, so past this p1
+// drops large entries rather than holding them; the learner records the
+// hole and fetches those entries from the acceptors when it takes over
+// (catch_up_learner). Entries up to kAlwaysForwardBytes (benchmark markers,
+// no-ops, the end signal) are always kept.
+constexpr size_t kMaxLearnerBacklogBytes = 256u << 20;
+constexpr size_t kAlwaysForwardBytes = 4096;
+
 // Bytes of log carried by a BulkPaxosCmd, for the warnings.
 size_t LogBytes(const janus::Command& cmd) {
   size_t bytes = 0;
@@ -47,7 +61,13 @@ void MultiPaxosCommo::SendInOrder(const std::shared_ptr<RpcPeer>& peer,
                                   const char* what,
                                   size_t log_bytes,
                                   std::function<int32_t(srpc::Client*)> send,
-                                  std::function<void()> before_queue) {
+                                  std::function<void()> before_queue,
+                                  size_t max_backlog_bytes) {
+  if (log_bytes > kMaxFrameLogBytes) {
+    Log_error("{} to site {} (partition {}) carries {} log bytes, more than one RPC frame "
+              "holds; not sent", what, peer->site_id(), par_id, log_bytes);
+    return;
+  }
   std::shared_ptr<PeerSendQueue> queue;
   {
     std::lock_guard<std::mutex> lock(send_queues_mu_);
@@ -70,10 +90,20 @@ void MultiPaxosCommo::SendInOrder(const std::shared_ptr<RpcPeer>& peer,
       return;
     }
   }
+  const size_t bytes = log_bytes + kMessageOverheadBytes;
+  if (max_backlog_bytes > 0 && queue->queued_bytes.load() + bytes > max_backlog_bytes) {
+    if (queue->dropped++ % 1000 == 0) {
+      Log_warn("{} to site {} (partition {}) dropped: {} bytes already wait for that peer "
+               "({} dropped so far)", what, peer->site_id(), par_id,
+               queue->queued_bytes.load(), queue->dropped);
+    }
+    return;
+  }
   if (before_queue) {
     before_queue();
   }
-  queue->pending.push_back(PeerSendQueue::Message{what, log_bytes, std::move(send)});
+  queue->pending.push_back(PeerSendQueue::Message{what, log_bytes, bytes, std::move(send)});
+  queue->queued_bytes += bytes;
   if (queue->draining) {
     return;
   }
@@ -134,9 +164,19 @@ void MultiPaxosCommo::DrainSendQueue(std::shared_ptr<RpcPeer> peer,
       Log_warn("{} to site {} (partition {}, {} log bytes) not sent: error {}", what,
                peer->site_id(), par_id, log_bytes, err);
     }
+    queue->queued_bytes -= queue->pending.front().bytes;
     queue->pending.pop_front();
     waited_us = 0;
   }
+}
+
+size_t MultiPaxosCommo::MaxQueuedBytes() {
+  std::lock_guard<std::mutex> lock(send_queues_mu_);
+  size_t most = 0;
+  for (const auto& kv : send_queues_) {
+    most = std::max(most, kv.second->queued_bytes.load());
+  }
+  return most;
 }
 
 shared_ptr<PaxosAcceptQuorumEvent> MultiPaxosCommo::BroadcastAccept(
@@ -186,7 +226,9 @@ void MultiPaxosCommo::ForwardToLearner(
     req->ballot = ballot;
     req->cmd = cmd;
     auto shared_attr = std::make_shared<FutureAttr>(std::move(attr));
-    SendInOrder(peer, par_id, "ForwardToLearner", 0,
+    const auto entry = marshallable_cast<LogEntry>(cmd);
+    const size_t entry_bytes = entry.is_some() ? entry.unwrap()->length : 0;
+    SendInOrder(peer, par_id, "ForwardToLearner", entry_bytes,
                 [req, shared_attr](srpc::Client* client) -> int32_t {
                   MultiPaxosProxy proxy(client);
                   auto result = proxy.async_ForwardToLearnerServer(*req, *shared_attr);
@@ -204,7 +246,8 @@ void MultiPaxosCommo::ForwardToLearner(
                   if (entry.is_some()) {
                     req->cmd = janus::Command(rusty::Arc<LogEntry>::make(*entry.unwrap()));
                   }
-                });
+                },
+                entry_bytes > kAlwaysForwardBytes ? kMaxLearnerBacklogBytes : 0);
   }
 }
 
