@@ -504,66 +504,93 @@ This differs from Paxos (where workers only run on the leader node). The preferr
 
 ## 11. Log Persistence
 
+Raft's state is memory-only by default. A build configured with
+`-DMAKO_RAFT_DISK=ON` (disk mode) keeps each server's term, vote, commit
+index, log and latest snapshot on the local disk, and recovers them when the
+server restarts. Only the build switch turns it on; the environment variables
+below tune a disk build. The design, as built, is
+[docs/verus/disk-persistence.md](verus/disk-persistence.md), whose §8 lists
+every setting, the store layout and the checks.
+
+In a memory build a replica must not restart in place under its old id: it
+could vote twice in a term, and restarting a majority loses committed entries
+([bugs-found.md](verus/bugs-found.md) B6).
+
 ### Configuration
 
 ```bash
-MAKO_RAFT_PERSISTENCE=1              # Enable disk persistence
-MAKO_RAFT_ASYNC_PERSISTENCE=1        # Async mode (persist in background)
-MAKO_RAFT_PERSISTENCE_PATH=/var/raft # Storage path (default: /tmp)
+cmake -S . -B build_disk -DCMAKE_BUILD_TYPE=Release -DMAKO_USE_RAFT=ON -DMAKO_RAFT_DISK=ON
+MAKO_RAFT_DATA_DIR=/var/tmp/raft-wal-$USER  # where the stores live (the default); local filesystems only
+MAKO_RAFT_CREATE=1                          # this launch creates the cluster, so missing stores are made
 ```
+
+The other settings tune or test a disk build: `MAKO_RAFT_FLUSH_DELAY_US`,
+`MAKO_RAFT_SEGMENT_BYTES`, `MAKO_RAFT_CHECKPOINT_BYTES`,
+`MAKO_RAFT_CHECKPOINT_SECS`, `MAKO_RAFT_DISK_VERIFY`, `MAKO_RAFT_DISK_STATS`,
+`MAKO_RAFT_CRASH` and `MAKO_RAFT_KILLTEST_DIR` (design §8).
 
 ### What is Persisted
 
-| State | Criticality | When |
-|-------|-------------|------|
-| `currentTerm` | CRITICAL | On every term change |
-| `vote_for_` | CRITICAL | Before responding to RequestVote |
-| Log entries | CRITICAL | After appending (sync or async) |
-| `commitIndex` | HIGH | After advancing |
-| `specCommitIndex_` | HIGH | After speculative commit index advances, on leadership transitions |
-| `securedLogIndex_` | HIGH | After secured log index advances, on leadership transitions |
+Each step that changes saved state writes one record to the write-ahead log
+(WAL), in step order:
 
-### Metadata Keys
+| State | In the record |
+|-------|---------------|
+| term, vote, commit index | its hard state, when the step changes any of them |
+| log entries | the entries the step wrote (term and command bytes), and the index from which they replace the log |
+| snapshot | the index and term of an image file, which is synced before the record |
 
-| Key | Constant | Value |
-|-----|----------|-------|
-| `"currentTerm"` | `META_TERM` | Current term number |
-| `"vote_for"` | `META_VOTE_FOR` | Voted-for candidate (site ID) |
-| `"commitIndex"` | `META_COMMIT_INDEX` | Highest committed log index |
-| `"specCommitIndex"` | `META_SPEC_COMMIT_INDEX` | Highest speculatively committed log index |
-| `"securedLogIndex"` | `META_SECURED_LOG_INDEX` | Highest durably committed log index |
+The applied index is not saved: a restart loads the latest snapshot and
+applies the committed entries after it again.
 
-### Integration Points
+### Storage
 
-1. **OnRequestVote**: `PersistTermAndVote()` before responding
-2. **OnAppendEntries**: `PersistLogEntries()` after appending
-3. **SetLocalAppend**: `PersistLogEntry()` after leader appends
-4. **Constructor**: `RecoverFromStorage()` on restart
-5. **specCommitIndex advancement**: `PersistSpeculativeIndicesToLogStorage()` after memory ack quorum
-6. **securedLogIndex advancement**: `PersistSpeculativeIndicesToLogStorage()` after durable ack quorum
-7. **ResetSpeculativeState**: `PersistSpeculativeIndicesToLogStorage()` on leadership transitions
-8. **PersistCommitIndexToLogStorage**: Also persists speculative indices alongside commitIndex
+One store per server, `<site>-<partition>/` in `MAKO_RAFT_DATA_DIR`:
 
-### Recovery Invariant
-
-On recovery, the system enforces: `securedLogIndex_ <= specCommitIndex_ <= lastLogIndex`. If persisted values violate this (e.g., due to log truncation), they are clamped to valid values with a warning log.
-
-### Async Persistence
-
-In async mode, entries are persisted in a background thread:
-
-```cpp
-async_threads_.push_back({
-    std::thread([this, entries]() {
-        log_storage_->put(entries);   // fsync to disk
-        SendDurableAck();             // Notify leader
-        completion_flag->store(true); // Signal done
-    }),
-    completion_flag
-});
+```
+LOCK                  flock()ed: a second process opening the store fails
+wal/<first seq>.seg   WAL segments (64 MiB by default)
+base/                 RocksDB, its own WAL off
+images/<S>-<T>.img    snapshot images
 ```
 
-The destructor joins all async threads to ensure clean shutdown.
+A flusher thread writes the queued records as one batch and `fdatasync`s it.
+An applier thread folds durable batches into the base, and checkpoints (every
+256 MiB of WAL or 10 s, by default) delete the segments the base covers.
+
+### The Durability Rule
+
+Nothing a step produces leaves the server before the step's record is
+durable. RPC replies are held until then (rpcgen's `dispatch_held`), the
+heartbeat and election fibers wait before they send, and a leader applies an
+entry only once it is durable. A restart therefore never forgets anything
+another server has seen.
+
+### Recovery
+
+At startup the server merges the base with the WAL after it and gives the
+result to the core in one `Restore` step, before it serves requests. A store
+is created only by a launch with `MAKO_RAFT_CREATE=1`, atomically (built in
+`<store>.creating/`, synced, then renamed). Otherwise a missing or damaged
+store fails closed. Nothing repairs a store: wiping one makes the server
+forget its vote and log, which Raft forbids, so an operator decides whether
+to wipe it and rejoin as a new member or to restore its files.
+
+Disk builds also re-dial a restarted peer, start once a majority of peers is
+up, and close Raft's request gate before the shutdown drain
+([bugs-found.md](verus/bugs-found.md) B21-B23).
+
+### Testing
+
+```bash
+cargo test --release -p raft-store                            # in src/deptran/raft: crash tests on in-memory backends
+BUILD_DIR=build_disk ./ci/ci.sh raftKillTest                  # three replicas killed and restarted, nine checks
+BUILD_DIR=build_disk ./ci/ci.sh shard1ReplicationRaftRestart  # Mako's 1-shard test, one replica restarted
+```
+
+In a disk tree, every Raft suite of `ci/ci.sh` runs on fresh stores, with
+`MAKO_RAFT_DISK_VERIFY=1` comparing each cleanly stopped server's WAL with
+its state.
 
 ---
 
@@ -780,9 +807,8 @@ For multi-shard deployments:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MAKO_RAFT_HEARTBEAT_INTERVAL_US` | `5000` (prod) / `100000` (test) | Heartbeat interval in microseconds. Overrides the compile-time default at `Setup()` time. Also controls the election-timeout sleep range (`2x`--`4x` the interval). |
-| `MAKO_RAFT_PERSISTENCE` | (unset) | Set to `1` or `true` to enable log persistence |
-| `MAKO_RAFT_ASYNC_PERSISTENCE` | (unset) | Set to `1` or `true` for async disk persistence |
-| `MAKO_RAFT_PERSISTENCE_PATH` | `/tmp` | Base directory for persistence files |
+| `MAKO_RAFT_DATA_DIR` | `/var/tmp/raft-wal-$USER` | Disk builds only: the directory holding the Raft stores, on a local filesystem. The other disk settings are in [§11](#11-log-persistence) |
+| `MAKO_RAFT_CREATE` | (unset) | Disk builds only: `1` when this launch creates the cluster, so missing stores are made |
 | `MAKO_RAFT_SNAPSHOTS` | (unset) | Set to `1` to enable snapshot manager |
 | `MAKO_RAFT_SNAPSHOT_INTERVAL` | `10000` | Entries between snapshots |
 | `MAKO_RAFT_LOG_RETENTION_WINDOW` | `5000` | Number of log entries to retain after compaction. Compaction is also coordinated with snapshots: entries beyond the latest snapshot index are never removed. |
@@ -814,6 +840,7 @@ uint64_t window = server->GetLogRetentionWindow();
 |------|---------|--------|
 | `MAKO_USE_RAFT` | OFF | Use `raft_main_helper.cc`, build Raft executables |
 | `RAFT_TEST` | OFF | Enable `RAFT_TEST_CORO=1` for lab test fibers |
+| `MAKO_RAFT_DISK` | OFF | Raft disk mode: a write-ahead log and recovery ([§11](#11-log-persistence)) |
 
 ### Output Binaries
 
@@ -998,9 +1025,8 @@ Result: Safe — entry 5 only discarded if leader was isolated
 ### Environment Variables
 
 ```bash
-MAKO_RAFT_PERSISTENCE=1          # Enable persistence
-MAKO_RAFT_ASYNC_PERSISTENCE=1    # Async persistence
-MAKO_RAFT_PERSISTENCE_PATH=/tmp  # Storage path
+MAKO_RAFT_DISK_VERIFY=1          # Disk builds: at a clean stop, compare the WAL with the state ([DISK-VERIFY])
+MAKO_RAFT_DISK_STATS=1           # Disk builds: flush, held-reply and wake counters
 MAKO_RAFT_SNAPSHOTS=1            # Enable snapshots
 MAKO_RAFT_SNAPSHOT_INTERVAL=10000 # Entries between snapshots
 MAKO_DISABLE_JETPACK=1           # Keep legacy Jetpack recovery disabled

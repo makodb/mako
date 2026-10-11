@@ -487,12 +487,15 @@ run_2shard_replication_simple() {
 # ============================================================================
 #
 # This is the ONLY cluster-level correctness suite for RaftServer itself:
-# 25 cases, five embedded replicas in one process, 27 Disconnect calls' worth
-# of leadership flap, snapshot install and a high-frequency apply stress.
+# five embedded replicas in one process, leadership flap from repeated
+# disconnects, snapshot install and a high-frequency apply stress, plus
+# raft-rt's snapshot-store unit cases. How many cases a run must pass is
+# counted from the source below, not written here.
 # Until this function existed it was on no CI path at all, because the binary
 # that hosts it needs -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON and no script in the
 # repository set either one. A suite nobody builds is worse than no suite: it
-# reads as coverage.
+# reads as coverage. `all` runs it; the GitHub workflow does not yet
+# (docs/verus/bugs-found.md B29).
 #
 # It needs its OWN build directory. -DRAFT_TEST=ON defines RAFT_TEST_CORO,
 # which changes RaftServer's behaviour, so the flags must not be folded into
