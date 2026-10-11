@@ -22,7 +22,6 @@
 #include "application_log.h"       // EncodeApplicationLog, for the lab Start payload
 #endif
 #include "rust_facade_types.h"
-#include "lane_kernels.h"
 
 import std;
 
@@ -1544,6 +1543,6 @@ extern "C" void raft_trace_through(int32_t stage, uint64_t through, uint64_t t_u
 // The clock for a stamp taken before its index is known; 0 (no clock read)
 // when tracing is off.
 extern "C" uint64_t raft_trace_now_us() { return trace_on() ? trace_clock_us() : 0; }
-// Whether MAKO_RAFT_TRACE_FILE is set; raft_lane_rust.cc installs the Rust
-// lane's hooks (rt/src/trace.rs) only then.
+// Whether MAKO_RAFT_TRACE_FILE is set; raft_transport.cc installs raft-rt's
+// hooks (rt/src/trace.rs) only then.
 extern "C" bool raft_trace_enabled() { return trace_on(); }

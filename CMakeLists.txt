@@ -268,14 +268,13 @@ add_dependencies(raft_goal0_source_gate build_rusty_cpp_transpiler)
 
 # The generated C++/Rust correspondence (docs/migration/raft/
 # cpp-rust-correspondence.md) and its kernel classification. --check fails
-# when the document is stale, when a SEAM kernel is defined by one lane's
-# runtime but not the other's, or when a kernel is defined twice -- the
-# source-level half of "exactly one runtime is linked". Before this target
-# nothing ran it, so the document could go stale unnoticed.
+# when the document is stale, or when a kernel is defined nowhere or twice --
+# the source-level half of raft_kernel_check. Before this target nothing ran
+# it, so the document could go stale unnoticed.
 add_custom_target(raft_correspondence_check
     COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_correspondence.py" --check
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMENT "Checking the Raft C++/Rust correspondence and kernel lanes"
+    COMMENT "Checking the Raft C++/Rust correspondence and kernel classes"
     VERBATIM
 )
 add_dependencies(raft_goal0_source_gate raft_correspondence_check)
@@ -466,20 +465,6 @@ option(RAFT_TEST "Enable Raft lab testing fiber" OFF)
 # compiled out; ON turns on the raft crates' cargo feature `raft_disk`.
 option(MAKO_RAFT_DISK "Build the Raft write-ahead log and recovery (disk mode)" OFF)
 option(SINGLE_RAFT_INSTANCE "Default runtime Raft group mode (ON=single group, OFF=one group per partition)" ON)
-# Which runtime the Raft core runs on. On this branch (verus-raft) there is
-# one: rust, the core plus raft-rt (src/deptran/raft/rt) compiled by rustc into
-# libraft_rt.a over the Rust srpc runtime. The hybrid and cpp lanes, which ran
-# the same core through rusty-cpp or over C++ seam kernels, were removed for
-# the Verus work (docs/verus/modification-plan.md, Q9): the core is written
-# for rustc and Verus alone. The variable stays so a stale cache or script
-# that sets it fails loudly instead of silently building something else.
-set(MAKO_RAFT_LANE "rust" CACHE STRING "Raft runtime lane: rust (the only one on this branch)")
-set_property(CACHE MAKO_RAFT_LANE PROPERTY STRINGS rust)
-if(NOT MAKO_RAFT_LANE STREQUAL "rust")
-  message(FATAL_ERROR "MAKO_RAFT_LANE=${MAKO_RAFT_LANE}: this branch builds the rust lane only "
-                      "(the hybrid and cpp lanes were removed; docs/verus/modification-plan.md, Q9)")
-endif()
-message(STATUS "Raft lane: rust (raft-rt over the Rust srpc runtime)")
 
 if(MAKO_USE_RAFT)
   add_compile_definitions(MAKO_USE_RAFT=1)
@@ -1108,6 +1093,7 @@ set(DEPTRAN_CORE_SRC
     src/deptran/paxos_worker.cc
     src/deptran/raft/application_log.cc
     src/deptran/raft/frame.cc
+    src/deptran/raft/raft_transport.cc
     src/deptran/raft/raft_worker.cc
     src/deptran/raft/server.cc
     src/deptran/replication_log_entry.cc
@@ -1116,10 +1102,6 @@ set(DEPTRAN_CORE_SRC
     src/deptran/tpcc_sharding.cc
     src/deptran/view_data.cc
 )
-# The runtime seam: the kernels the Raft core calls for fibers, events, the
-# poll thread, the wire and the snapshot store (plan N4) are raft-rt's; this
-# file installs its hooks.
-list(APPEND DEPTRAN_CORE_SRC src/deptran/raft/raft_lane_rust.cc)
 
 # Runtime replication switching: compile BOTH Paxos and Raft helpers
 # The replication_helper.cc dispatcher routes calls based on runtime configuration
@@ -1353,18 +1335,18 @@ set(TXLOG_BUILD_DEPS
     txlog_core ${RAFT_CORE_DEPS}
 )
 
-# Plan phase L4's exactly-once check (scripts/raft_lane_parity.py), on every
+# The kernel ABI's exactly-once check (scripts/raft_kernel_check.py), on every
 # build: each raft_* symbol the core imports is defined exactly once by the
 # host archive, and nothing the core defines (raft-rt's seam) is defined by
 # the host as well.
-set(RAFT_LANE_CHECK_COMMANDS
-    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_lane_parity.py
+set(RAFT_KERNEL_CHECK_COMMANDS
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_kernel_check.py
             --once "${RAFT_RUST_LIB}" "$<TARGET_FILE:txlog_core>")
-set(RAFT_LANE_CHECK_DEPS txlog_core ${RAFT_CORE_DEPS})
-# Plan N8: raft-rt's own tests (the snapshot store's unit
+set(RAFT_KERNEL_CHECK_DEPS txlog_core ${RAFT_CORE_DEPS})
+# raft-rt's own tests (the snapshot store's unit
 # tests, the transport round trips, resend suppression, the frame cap) gate
 # the build too. A stamp keeps them from rerunning when nothing they cover
-# changed; the lane's feature set is passed so the tests see the lab or
+# changed; this tree's feature set is passed so the tests see the lab or
 # production crate this tree links.
 file(GLOB RAFT_RT_TEST_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/tests/*.rs)
@@ -1383,7 +1365,7 @@ add_custom_command(
     COMMENT "cargo test: raft-rt"
     VERBATIM)
 add_custom_target(raft_rt_test DEPENDS ${RAFT_RT_TEST_STAMP})
-list(APPEND RAFT_LANE_CHECK_DEPS raft_rt_test)
+list(APPEND RAFT_KERNEL_CHECK_DEPS raft_rt_test)
 # raft-store's tests (the WAL crash sweep, recovery, creation, the flusher,
 # the base's ops) gate the build in both modes; a disk build adds the RocksDB
 # base's (`--features rocksdb`, which links librocksdb as the binaries do).
@@ -1407,7 +1389,7 @@ add_custom_command(
     COMMENT "cargo test: raft-store"
     VERBATIM)
 add_custom_target(raft_store_test DEPENDS ${RAFT_STORE_TEST_STAMP})
-list(APPEND RAFT_LANE_CHECK_DEPS raft_store_test)
+list(APPEND RAFT_KERNEL_CHECK_DEPS raft_store_test)
 # raft-core's and raft-replay's tests: the evidence the host contract cites
 # for what it trusts, every persist note exact (core/tests/persist_note.rs,
 # the replay's shadow); Verus does not read the notes.
@@ -1428,13 +1410,13 @@ add_custom_command(
     COMMENT "cargo test: raft-core, raft-replay"
     VERBATIM)
 add_custom_target(raft_core_test DEPENDS ${RAFT_CORE_TEST_STAMP})
-list(APPEND RAFT_LANE_CHECK_DEPS raft_core_test)
-add_custom_target(raft_lane_check ALL
-    ${RAFT_LANE_CHECK_COMMANDS}
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_lane_parity.py
+list(APPEND RAFT_KERNEL_CHECK_DEPS raft_core_test)
+add_custom_target(raft_kernel_check ALL
+    ${RAFT_KERNEL_CHECK_COMMANDS}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_kernel_check.py
     COMMENT "Checking the Raft kernel ABI (exactly-once)"
     VERBATIM)
-add_dependencies(raft_lane_check ${RAFT_LANE_CHECK_DEPS})
+add_dependencies(raft_kernel_check ${RAFT_KERNEL_CHECK_DEPS})
 
 # Temporary Raft-only target for borrow checking
 file(GLOB RAFT_BORROW_SRC

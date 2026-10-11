@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep the Raft kernel ABI honest (plan phase L4), over real archives, via `nm`:
+"""Keep the Raft kernel ABI honest, over real archives, via `nm`:
 
   --once CORE INPUT...
                    Exactly-once. Every `raft_*` symbol the core (raft-rt's

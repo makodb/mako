@@ -12,8 +12,8 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 540 | `raft/shell/server_h.rs` | 4834 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1549 | `raft/shell/server_cc.rs` | 759 |  |
+| `raft/server.h` | 553 | `raft/shell/server_h.rs` | 4834 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1548 | `raft/shell/server_cc.rs` | 759 |  |
 | `communicator.h` | 567 | `raft/shell/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
 | `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 685 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
 
@@ -25,7 +25,7 @@ wolf gets switched off. `--check` is the freshness guarantee.
 | direction | mechanism | count |
 |---|---|---|
 | C++ → Rust | prototypes in `raft/server_exports.h` | 32 |
-| C++ → Rust | prototypes in `raft/transport_exports.h` (raft_lane_rust.cc) | 18 |
+| C++ → Rust | prototypes in `raft/raft_transport.h` | 18 |
 | Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/shell/` | 97 |
 
 ## Counted facts the prose below leans on
@@ -40,8 +40,9 @@ the other direction -- and most are C++ because of WHERE THE BOUNDARY SITS
 today, not because Rust cannot express them. An earlier revision of this
 file said kernels exist for "the reactor, threads"; both were wrong.
 
-Every kernel the core or the rustc facade imports, CLASSIFIED BY WHERE IT
-IS DEFINED (plan S1): **SEAM** -- defined by raft-rt's runtime seam
+Every kernel that crosses between the Rust crates and host C++ (imported
+by the shell, raft-rt or the rustc facade, or declared in `raft/server.h`),
+CLASSIFIED BY WHERE IT IS DEFINED: **SEAM** -- defined by raft-rt's runtime seam
 (`raft/rt/src/seam.rs`, the snapshot store, the lab kernels); **HOST** --
 defined once in host C++ (Mako's objects: the Command payload, embedder
 callbacks). A HOST kernel marked *CORE candidate* is C++ only by position
@@ -68,6 +69,7 @@ defined nowhere or in two places.
 | `raft_bind_commo` | SEAM |
 | `raft_bind_replication_poll` | SEAM |
 | `raft_broadcast_vote_and_wait` | SEAM |
+| `raft_byte_string_from_bytes` | HOST |
 | `raft_clear_async_callback_owner` | HOST |
 | `raft_collect_wait_us` | SEAM |
 | `raft_command_clone_into` | HOST |
@@ -107,7 +109,6 @@ defined nowhere or in two places.
 | `raft_initialize_snapshot_manager` | HOST |
 | `raft_install_rpc_note_received` | HOST |
 | `raft_install_rpc_note_sent` | HOST |
-| `raft_install_rpc_stats` | HOST |
 | `raft_install_snapshot_guarded` | HOST |
 | `raft_install_snapshot_payload` | HOST |
 | `raft_int_event_clone_into` | SEAM |
@@ -227,7 +228,7 @@ one-line forwards.
 as `libraft_rt.a`, over the Rust srpc crate: `rt/src/seam.rs` (the SEAM
 kernels), `rt/src/transport.rs` (poll thread, server, peer clients),
 `rt/src/service.rs`, the generated `rt/src/rpc.rs`. The workers reach it
-through `raft/raft_lane.h`, defined in `raft/raft_lane_rust.cc`.
+through `raft/raft_transport.h` (its C++ helpers: `raft/raft_transport.cc`).
 `raft/server.cc` is HOST: Mako's objects. Disk builds (`-DMAKO_RAFT_DISK=ON`)
 add `raft/store` (crate `raft-store`: the WAL, the RocksDB base, snapshot
 image files).
@@ -254,10 +255,10 @@ image files).
 | this file | `python3 scripts/gen_correspondence.py`, checked by the build |
 
 **"Where do the languages meet?"** C++ -> Rust: `raft/server_exports.h` (the
-server) and `raft/transport_exports.h` (the transport, included only by
-`raft_lane_rust.cc`). Rust -> C++: the shell's `extern "C"` blocks, resolved
-by HOST C++ or by the runtime's seam -- the table above. Between host and
-seam: `raft/lane_kernels.h`.
+server), `raft/raft_transport.h` (the transport) and the snapshot store's
+accessors in `raft/server.h`. Rust -> C++: the shell's and raft-rt's
+`extern "C"` blocks, resolved by HOST C++ or by the runtime's seam -- the
+table above.
 
 **Commands that answer most questions.**
 

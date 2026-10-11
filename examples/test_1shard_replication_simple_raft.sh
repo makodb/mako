@@ -20,10 +20,8 @@ export MAKO_RAFT_PREFERRED_GRACE_US="${MAKO_RAFT_PREFERRED_GRACE_US:-30000000}"
 export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US:-5000000}"
 export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US:-10000000}"
 binary_path="./${BUILD_DIR:-build}/simpleTransactionRep"
-# One binary per replica, each defaulting to BUILD_DIR's. Setting them to
-# binaries from different MAKO_RAFT_LANE builds runs a MIXED-LANE cluster --
-# the test that the C++ and Rust Raft lanes speak the same wire (plan
-# revision 5, T3), e.g.
+# One binary per replica, each defaulting to BUILD_DIR's; setting them to
+# binaries from different builds runs a mixed cluster, e.g.
 #   BIN_LOCALHOST=./build/simpleTransactionRep \
 #   BIN_P2=./build_rust/simpleTransactionRep BIN_P1=./build_rust/simpleTransactionRep \
 #   bash examples/test_1shard_replication_simple_raft.sh

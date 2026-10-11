@@ -2,7 +2,7 @@
 // server, one set of peer clients.
 //
 // WHY ONE TYPE. Inbound and outbound share one poll thread, as they did in
-// the C++ lane; a server apart from its clients would give Raft a second
+// the old C++ runtime; a server apart from its clients would give Raft a second
 // poll thread. This owns both ends.
 //
 // WHY IT IS NOT Send. srpc::client::Client holds one RefCell and eight Cell
@@ -42,7 +42,7 @@ use crate::service::RaftRpcService;
 /// One outstanding reply, as the sender reads it back. Arc<Mutex<..>> because
 /// the reply lands in a client callback while the heartbeat fiber reads it
 /// later -- the shape srpc's own Future uses, and the counterpart of the C++
-/// lane's shared_ptr<AppendEntriesResponse> whose `completed` field is polled.
+/// runtime's shared_ptr<AppendEntriesResponse>, whose `completed` field was polled.
 pub struct Pending<T> {
     slot: Arc<Mutex<Option<Result<T, i32>>>>,
 }
@@ -307,8 +307,8 @@ impl RaftTransport {
     }
 
     /// Bind and start serving Raft's four RPCs for `server`, with admission
-    /// CLOSED: the worker opens it once startup has recovered, as the C++
-    /// lane does (raft_worker.cc SetupService). srpc's Rust server starts
+    /// CLOSED: the worker opens it once startup has recovered
+    /// (RaftWorker::SetRpcAdmissionReady). srpc's Rust server starts
     /// with admission open (rpc/server.rs), so this closes it before start.
     ///
     /// # Safety
@@ -594,7 +594,7 @@ impl RaftTransport {
         Some(pending)
     }
 
-    /// InstallSnapshot with a completion callback, the shape the C++ lane's
+    /// InstallSnapshot with a completion callback, the shape the old C++ runtime's
     /// SendInstallSnapshot had: `done` runs exactly once, on the poll thread,
     /// with the follower's term or 0 on any failure. Returns false when the
     /// request never left, in which case `done` is NOT called -- the caller
@@ -846,7 +846,7 @@ impl VoteTally {
 
     /// The six scalars the C++ event reports, field for field. The core
     /// counts a campaign itself now (RaftCore::election_settle); this stays
-    /// for the tally's own tests, which pin lane parity.
+    /// for the tally's own tests, which pin parity with the C++ event.
     pub fn outcome(&self, timed_out: bool) -> RaftVoteOutcome {
         let Ok(s) = self.state.lock() else {
             return RaftVoteOutcome {
@@ -940,7 +940,7 @@ pub unsafe fn transport_of(server: *const RaftServerBase)
 }
 
 // ===========================================================================
-// The C ABI, for the worker that owns a transport (transport_exports.h).
+// The C ABI, for the worker that owns a transport (raft_transport.h).
 // ===========================================================================
 
 /// # Safety

@@ -1,7 +1,7 @@
 #include "../__dep__.h"
 #include "../constants.h"
 #include "frame.h"
-#include "raft_lane.h"
+#include "raft_transport.h"
 #include "server.h"
 #include "config.h"
 #include <rusty/slice.hpp>
@@ -135,14 +135,14 @@ uint64_t RaftFrame::LabFrameRpcCount(uint32_t loc_id) {
       it->second->rust_transport_ == nullptr) {
     return 0;
   }
-  return raft_lane::RpcCount(it->second->rust_transport_);
+  return raft_transport_rpc_count(it->second->rust_transport_);
 }
 
 extern "C" uint64_t raft_lab_frame_rpc_count(uint32_t loc_id) {
   return RaftFrame::LabFrameRpcCount(loc_id);
 }
 
-void RaftFrame::RustLaneLabCommoCreated() {
+void RaftFrame::LabCommoCreated() {
   if (!IsRaftLabTestConfig()) {
     return;
   }
@@ -151,7 +151,7 @@ void RaftFrame::RustLaneLabCommoCreated() {
   n_commo_created_++;
 }
 
-void RaftFrame::RustLaneLabRunIfSite0(uint32_t locale_id) {
+void RaftFrame::LabRunIfSite0(uint32_t locale_id) {
   if (!IsRaftLabTestConfig() || !raft_frame_should_create_test_fiber(locale_id)) {
     return;
   }
@@ -163,7 +163,7 @@ void RaftFrame::RustLaneLabRunIfSite0(uint32_t locale_id) {
     raft_test_mutex_.lock();
   }
   raft_test_mutex_.unlock();
-  const int test_result = raft_lane::RunLab();
+  const int test_result = raft_rt_run_lab();
   lab_test_result_.store(test_result, rusty::sync::atomic::Ordering::Release);
   Log_info("Lab harness finished with {}", test_result);
 }
@@ -240,14 +240,14 @@ RaftServer *RaftFrame::CreateRaftScheduler() {
 
 // @safe - unreachable: see frame.h.
 Communicator *RaftFrame::CreateCommo(rusty::Option<rusty::Arc<srpc::PollThread>>) {
-  Log_fatal("RaftFrame::CreateCommo: Raft's communicator is its transport (raft_lane.h)");
+  Log_fatal("RaftFrame::CreateCommo: Raft's communicator is its transport (raft_transport.h)");
   return nullptr;
 }
 
 // @safe - unreachable: see frame.h.
 std::vector<srpc::ServiceProxy> RaftFrame::CreateRpcServices(uint32_t, TxLogServer*,
                                                              rusty::Arc<srpc::PollThread>) {
-  Log_fatal("RaftFrame::CreateRpcServices: Raft's service is its transport's (raft_lane.h)");
+  Log_fatal("RaftFrame::CreateRpcServices: Raft's service is its transport's (raft_transport.h)");
   return {};
 }
 

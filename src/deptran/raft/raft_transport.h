@@ -1,9 +1,12 @@
 #pragma once
 
-// The C ABI over RaftTransport -- Raft's RPC transport, over the Rust srpc
-// runtime. The definitions are Rust, in src/deptran/raft/rt/src/transport.rs
-// (and raft_rt_run_lab in rt/src/lab_runtime.rs). Included only by
-// raft_lane_rust.cc.
+// Raft's RPC transport, from C++: raft-rt's RaftTransport, which owns Raft's
+// poll thread, its RPC server and its peer clients
+// (src/deptran/raft/rt/src/transport.rs). The workers (RaftWorker,
+// ServerWorker, raft_main_helper's stubs) and RaftFrame reach it only through
+// this header: the C ABI below, defined in Rust (raft_rt_run_lab in
+// rt/src/lab_runtime.rs, raft_rt_install_trace in rt/src/trace.rs), and the
+// three helpers at the end, which need Mako's C++ (raft_transport.cc).
 //
 // Hand-written, unlike server_exports.h: that header is generated from the
 // signature table in scripts/raft_gen_exports.py, whose subject is methods of
@@ -16,9 +19,12 @@
 // channel send).
 
 #include <cstdint>
+#include <functional>
+#include <string>
 
 namespace janus {
 
+class RaftServer;
 struct RaftServerBase;
 struct RaftTransport;
 // srpc::server::Server, a kSingleGroup stub listener (raft_transport_serve_stub).
@@ -73,8 +79,29 @@ void raft_stub_server_set_admission_ready(RaftStubServer* s, bool ready);
 bool raft_stub_server_drain(RaftStubServer* s, uint64_t timeout_ms);
 void raft_stub_server_delete(RaftStubServer* s);
 
-// The RaftLab harness on this thread's Rust reactor (RAFT_TEST builds).
+// The RaftLab harness on this thread's Rust reactor. Defined only when
+// raft-rt is built with raft_test, which CMake turns on exactly when
+// RAFT_TEST_CORO is defined.
 int32_t raft_rt_run_lab();
 
 }  // extern "C"
+
+namespace raft_transport {
+
+// Bind and serve Raft's RPCs for `server` on `bind_addr`, admission closed,
+// with the trace kit's hooks installed first when tracing is on. Aborts the
+// process on a bind failure (Log_fatal).
+RaftTransport* Serve(RaftServer* server, const std::string& bind_addr);
+
+// Connect to every site of every partition in the config, this one
+// included, exactly as Communicator's constructor does, so a partition's
+// recorded size is its configured size; then wait for a majority of each.
+void ConnectPeers(RaftTransport* t);
+
+// Run `job` once on the transport's poll thread. The Raft fibers EnsureSetup
+// spawns belong to whichever reactor runs it, so this is how they end up on
+// the Rust one.
+void Post(RaftTransport* t, std::function<void()> job);
+
+}  // namespace raft_transport
 }  // namespace janus

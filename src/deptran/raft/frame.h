@@ -45,10 +45,10 @@ class RaftFrame : public Frame {
   static uint64_t LabFrameRpcCount(uint32_t loc_id);
   // The lab's bookkeeping: CommoCreated counts one replica's transport as
   // connected; RunIfSite0 waits for all five, runs the harness on this
-  // thread's reactor (raft_lane::RunLab) and records its verdict where
+  // thread's reactor (raft_rt_run_lab) and records its verdict where
   // RaftLabTestResult reads it.
-  static void RustLaneLabCommoCreated();
-  static void RustLaneLabRunIfSite0(uint32_t locale_id);
+  static void LabCommoCreated();
+  static void LabRunIfSite0(uint32_t locale_id);
 #endif
   // This replica's raft-rt transport, where the lab's RPC count lives
   // (LabFrameRpcCount). Borrowed; the worker owns it.
@@ -80,7 +80,7 @@ class RaftFrame : public Frame {
   TxLogServer *CreateScheduler() override { return CreateRaftScheduler(); }
   RaftServer *CreateRaftScheduler();
   // Frame's interface, which Paxos implements: Raft's communicator and RPC
-  // service are its transport's (raft_lane.h), so the workers never ask the
+  // service are its transport's (raft_transport.h), so the workers never ask the
   // frame for them, and these refuse.
   Communicator *CreateCommo(
       rusty::Option<rusty::Arc<srpc::PollThread>> poll_thread_worker =

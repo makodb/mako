@@ -25,7 +25,7 @@ class ServerWorker {
   Config::SiteInfo *site_info_ = nullptr;
   RaftServer *rep_sched_ = nullptr;
 
-  // raft-rt's transport (raft/raft_lane.h): the poll thread, the RPC server
+  // raft-rt's transport (raft/raft_transport.h): the poll thread, the RPC server
   // and the peer clients.
   RaftTransport *rust_transport_ = nullptr;
 

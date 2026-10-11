@@ -35,13 +35,14 @@ def kernels():
     return len(names)
 
 
-# The runtime seam: raft-rt's kernels, its snapshot store (plan N4) and its
-# lab kernels included. The C++ seam of the hybrid and cpp lanes went with
-# those lanes (docs/verus/modification-plan.md, Q9).
+# The runtime seam: raft-rt's kernels, its snapshot store and its lab
+# kernels.
 RT_SEAM = [ROOT / "src/deptran/raft/rt/src" / f
            for f in ("seam.rs", "snapshot.rs", "lab_runtime.rs")]
 FACADE = ROOT / "src/rusty-rustc/src/lib.rs"
-LANE_KERNELS = ROOT / "src/deptran/raft/lane_kernels.h"
+# raft-rt's own imports from host C++, and server.h's C declarations.
+RT_SRC = sorted((ROOT / "src/deptran/raft/rt/src").glob("*.rs"))
+SERVER_H = ROOT / "src/deptran/raft/server.h"
 CPP_HOST = [p for p in (ROOT / "src/deptran").rglob("*.cc")
             if "/raft/rt/" not in str(p)]
 
@@ -59,26 +60,23 @@ CORE_CANDIDATES = {
 }
 
 
-def lane_kernel_entries():
-    """The kernels lane_kernels.h declares, with the class its comment gives:
-    each declaration takes the most recent `// LANE:` or `// HOST:` marker."""
-    entries, current = {}, None
-    for line in LANE_KERNELS.read_text().split("\n"):
-        m = re.match(r"\s*//\s*(LANE|HOST):", line)
-        if m:
-            current = m.group(1)
-            continue
-        for name in re.findall(r"\b(raft_\w+)\s*\(", line):
-            if current and not line.lstrip().startswith("//"):
-                entries[name] = current
-    return entries
+def server_h_kernels():
+    """raft_* functions server.h declares with C linkage, one per
+    `extern "C"` line: HOST kernels it shares with the shell, and the
+    snapshot store's accessors server.cc calls."""
+    out = set()
+    for m in re.finditer(r'^\s*extern "C"\s+([^;{]*);', SERVER_H.read_text(), re.M):
+        n = re.search(r"\b(raft_\w+)\s*\(", m.group(1))
+        if n:
+            out.add(n.group(1))
+    return out
 
 
 def declared_kernels():
-    """raft_* names the core crate and the rustc facade declare as imports,
-    and those lane_kernels.h declares for HOST <-> seam calls."""
-    names = set(lane_kernel_entries())
-    for f in RS + [FACADE]:
+    """raft_* names the shell, raft-rt and the rustc facade declare as
+    imports, and those server.h declares with C linkage."""
+    names = server_h_kernels()
+    for f in RS + RT_SRC + [FACADE]:
         text = f.read_text()
         for block in re.finditer(r'(?:unsafe )?extern "C" \{(.*?)\n\s*\}', text, re.S):
             names |= set(re.findall(r"\bfn (raft_\w+)", block.group(1)))
@@ -123,7 +121,6 @@ def classify():
     is defined exactly once, by raft-rt's seam or by host C++."""
     declared = declared_kernels()
     rt = set().union(*(rust_defined(p) for p in RT_SEAM))
-    marked = lane_kernel_entries()
     host = {}
     for f in CPP_HOST:
         for n in cpp_defined(f):
@@ -138,18 +135,18 @@ def classify():
         else:
             cls = "?"
             problems.append(f"{n}: rt={in_rt} host={host.get(n)}")
-        want = {"LANE": "SEAM", "HOST": "HOST"}.get(marked.get(n))
-        if want and not cls.startswith(want):
-            problems.append(f"{n}: lane_kernels.h marks it {marked[n]} but it classifies {cls}")
         rows.append((n, cls))
     return rows, problems
 
 
 def exports(header):
-    """Prototypes in a C ABI header -- one per non-comment line ending in ');'."""
-    text = (ROOT / header).read_text()
-    return len([l for l in text.split("\n")
-                if l.rstrip().endswith(");") and not l.lstrip().startswith("//")])
+    """Prototypes in a C ABI header's `extern "C"` block -- one per
+    non-comment line ending in ');'."""
+    n = 0
+    for block in re.finditer(r'extern "C" \{(.*?)\n\}', (ROOT / header).read_text(), re.S):
+        n += len([l for l in block.group(1).split("\n")
+                  if l.rstrip().endswith(");") and not l.lstrip().startswith("//")])
+    return n
 
 
 def catch_sites():
@@ -213,8 +210,8 @@ def body():
     w("|---|---|---|")
     w(f"| C++ → Rust | prototypes in `raft/server_exports.h` | "
       f"{exports('src/deptran/raft/server_exports.h')} |")
-    w(f"| C++ → Rust | prototypes in `raft/transport_exports.h` (raft_lane_rust.cc) |"
-      f" {exports('src/deptran/raft/transport_exports.h')} |")
+    w(f"| C++ → Rust | prototypes in `raft/raft_transport.h` |"
+      f" {exports('src/deptran/raft/raft_transport.h')} |")
     w(f"| Rust → C++ | distinct `raft_*` kernels declared in `extern \"C\"` blocks under "
       f"`raft/shell/` | {kernels()} |")
     w("")
@@ -237,8 +234,9 @@ def body():
     counts = {}
     for _, cls in rows:
         counts[cls.split(" ")[0]] = counts.get(cls.split(" ")[0], 0) + 1
-    w("Every kernel the core or the rustc facade imports, CLASSIFIED BY WHERE IT")
-    w("IS DEFINED (plan S1): **SEAM** -- defined by raft-rt's runtime seam")
+    w("Every kernel that crosses between the Rust crates and host C++ (imported")
+    w("by the shell, raft-rt or the rustc facade, or declared in `raft/server.h`),")
+    w("CLASSIFIED BY WHERE IT IS DEFINED: **SEAM** -- defined by raft-rt's runtime seam")
     w("(`raft/rt/src/seam.rs`, the snapshot store, the lab kernels); **HOST** --")
     w("defined once in host C++ (Mako's objects: the Command payload, embedder")
     w("callbacks). A HOST kernel marked *CORE candidate* is C++ only by position")

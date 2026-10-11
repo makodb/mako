@@ -497,12 +497,9 @@ run_2shard_replication_simple() {
 # It needs its OWN build directory. -DRAFT_TEST=ON defines RAFT_TEST_CORO,
 # which changes RaftServer's behaviour, so the flags must not be folded into
 # the build every other suite measures and tests.
-# On this branch Raft has one lane, rust; the hybrid and cpp lanes were
-# removed for the Verus work (docs/verus/modification-plan.md, Q9).
 run_raft_lab_test() {
-    local lane="rust"
     echo "========================================="
-    echo "Running: ./ci/ci.sh raftLabTest (lane ${lane})"
+    echo "Running: ./ci/ci.sh raftLabTest"
     echo "========================================="
     local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-32}}"
     local generator="${CMAKE_GENERATOR:-Ninja}"
@@ -516,10 +513,10 @@ run_raft_lab_test() {
         disk="ON"
     fi
 
-    echo "Configuring ${lab_build_dir} with MAKO_USE_RAFT=ON RAFT_TEST=ON MAKO_RAFT_LANE=${lane} MAKO_RAFT_DISK=${disk}"
+    echo "Configuring ${lab_build_dir} with MAKO_USE_RAFT=ON RAFT_TEST=ON MAKO_RAFT_DISK=${disk}"
     cmake -S . -B "${lab_build_dir}" -G "${generator}" \
         -DCMAKE_BUILD_TYPE="${build_type}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-        -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON -DMAKO_RAFT_LANE="${lane}" -DMAKO_RAFT_DISK="${disk}"
+        -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON -DMAKO_RAFT_DISK="${disk}"
     cmake --build "${lab_build_dir}" --parallel "${jobs}" --target deptran_server
 
     local log

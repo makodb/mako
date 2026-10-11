@@ -1,7 +1,6 @@
-# The Raft RPC path on the Rust lane
+# The Raft RPC path
 
-On the Rust lane (`MAKO_RAFT_LANE=rust`, the default since plan step T5),
-every Raft RPC runs on the **Rust srpc runtime**. The Rust srpc client and
+Every Raft RPC runs on the **Rust srpc runtime**. The Rust srpc client and
 server send it, the Rust `PollThread` carries it, and Raft's own Rust message
 types (generated into `rt/src/rpc.rs`) encode it. The C++ srpc runtime is not
 on Raft's path. It still runs in the same process, because Mako and Paxos use
@@ -9,15 +8,12 @@ it.
 
 This file follows one AppendEntries end to end: the leader sends it, the
 follower answers, and the leader reads the reply. At every step it shows which
-language runs and where the code is. It is wired and exercised today:
-RaftLabTest 25/25 and the four Raft replication suites pass on this lane, a
-cluster mixing Rust-lane and hybrid-lane replicas replicates correctly (12 of
-12 runs), and the full performance sweep against the C++ baseline
-(`docs/performance/raft-rust-9a361eccd`, since removed) completed all 624 runs.
+language runs and where the code is. RaftLabTest and the Raft replication
+suites exercise it.
 
-Paths are under `src/deptran/raft/` unless marked. On this lane rustc
-compiles the core (`src/`) and the runtime (`rt/src/`, the `raft-rt` crate)
-into one archive, `libraft_rt.a`. **C++ kernel** means hand-written C++ in
+Paths are under `src/deptran/raft/` unless marked. rustc compiles the shell
+(`shell/`), the core (`core/`) and the runtime (`rt/src/`, the `raft-rt`
+crate) into one archive, `libraft_rt.a`. **C++ kernel** means hand-written C++ in
 `server.cc` that the Rust calls out to. Line numbers are as of this revision;
 the function names are the durable reference.
 
@@ -26,10 +22,10 @@ the function names are the durable reference.
 ## 1. Setup: the worker starts the Rust transport
 
 ```
-RaftWorker (raft_worker.cc:352)                  C++ embedder
-  │  raft_lane::Serve(server, bind_addr)
+RaftWorker (raft_worker.cc, SetupService)        C++ embedder
+  │  raft_transport::Serve(server, bind_addr), then ConnectPeers
   ▼
-raft_lane_rust.cc                                thin C++ bridge
+raft_transport.cc                                the C++ helpers
   │  raft_transport_new, raft_transport_serve, raft_transport_add_peer
   ▼
 RaftTransport::serve (rt/src/transport.rs)       Rust
@@ -210,7 +206,6 @@ Four parts. Paths are under `src/deptran/raft/` unless shown otherwise.
 2. C Raft kernel                          the C ABI between the Rust logic and Mako's C++ objects
    server.cc                                HOST kernels: janus::Command encode/decode/clone,
                                             embedder snapshot callbacks, log storage, counters
-   lane_kernels.h                           kernels called from C++ on both sides, marked LANE or HOST
    raft_kernel_pods.h                       the C structs kernels return by value
                                             (defined in Rust: shell/server_pods_h.rs)
    commo.h                                  the vote quorum event and the append's response slot
@@ -220,8 +215,8 @@ Four parts. Paths are under `src/deptran/raft/` unless shown otherwise.
    server.h                                 class RaftServer: a pointer to RaftServerBase,
                                             every method forwarded to the C exports
    server_exports.h                         generated: the C exports RaftServer forwards to
-   transport_exports.h                      the C exports of RaftTransport (rt/src/transport.rs)
-   raft_lane.h, raft_lane_rust.cc           the workers' RPC endpoint
+   raft_transport.h, raft_transport.cc      the workers' RPC endpoint: RaftTransport's C exports
+                                            (rt/src/transport.rs) and the helpers that need Mako's C++
    raft_worker.h, raft_worker.cc            RaftWorker: submit, apply callback, setup
    frame.h, frame.cc                        RaftFrame: creates servers and workers
    application_log.h, application_log.cc    Mako's bytes and partition in a log entry
@@ -273,14 +268,14 @@ it changes:
 | `cpp` | rusty-cpp → C++20 modules (`libraft_cpp_core.a`) | `server_seam_cpp.cc` | C++ srpc |
 
 Every lane links exactly one set of seam kernels. The build checks this with
-`raft_lane_check` (`scripts/raft_lane_parity.py`).
+`raft_kernel_check` (`scripts/raft_kernel_check.py`).
 
 ## How to check this is still true
 
 ```
 cargo test --manifest-path src/deptran/raft/rt/Cargo.toml   # wire and transport tests
 python3 scripts/gen_correspondence.py --check               # every seam kernel in both runtimes
-ninja -C <build> raft_lane_check                            # each kernel defined exactly once
+ninja -C <build> raft_kernel_check                          # each kernel defined exactly once
 ./ci/ci.sh raftLabTest                                      # RaftLabTest on this lane
 ```
 

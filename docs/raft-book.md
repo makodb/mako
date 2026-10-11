@@ -580,34 +580,26 @@ MAKO_RAFT_SNAPSHOT_INTERVAL=10000    # Entries between snapshots (default: 10000
 
 ### Storage
 
-The snapshot store is **memory-only on every lane**: it holds the latest
-snapshot's `(index, term, bytes)` and nothing is written to disk, so after a
-process restart it is empty unless an embedder injected one before `Setup()`.
-
-| Lane | Store | File |
-|------|-------|------|
-| rust (`MAKO_RAFT_LANE=rust`) | `SnapshotStore`, one `Arc<Snapshot>` slot | `src/deptran/raft/rt/src/snapshot.rs` |
-| hybrid, cpp | `MemorySnapshotManager` behind the `SnapshotManager` interface | `src/deptran/raft/memory_snapshot_manager.hpp`, `snapshot_manager.hpp` |
-
-The core reaches either one only through the SEAM kernels
-(`raft_snapshot_manager_latest`, `_load`, `raft_snapshot_store_save`, ...;
-`src/deptran/raft/snapshot_seam_cpp.cc` on the C++ lanes), holding it in the
-opaque 16-byte `RaftSnapshotManagerPtr`. Keeping the C++ manager on
-hybrid/cpp is a decision, not a gap (plan phase N,
-the two-lane RPC plan (removed; see git history)).
+The snapshot store is Rust: `SnapshotStore`
+(`src/deptran/raft/rt/src/snapshot.rs`), one `Arc<Snapshot>` slot holding the
+latest snapshot's `(index, term, bytes)`. The core reaches it only through
+the SEAM kernels (`raft_snapshot_manager_latest`, `_load`,
+`raft_snapshot_store_save`, ...), holding it in the opaque 16-byte
+`RaftSnapshotManagerPtr`. A memory build writes nothing to disk, so after a
+process restart the store is empty unless an embedder injected one before
+`Setup()`; a disk build (`-DMAKO_RAFT_DISK=ON`) also writes each snapshot as
+an image file and recovers it at startup
+([verus/disk-persistence.md](verus/disk-persistence.md)).
 
 ### Snapshot bytes on the wire
 
 The store keeps the state machine's bytes verbatim and InstallSnapshot ships
-them verbatim, on every lane: no header, no checksum, no framing. That is
-what keeps a mixed-lane cluster wire-compatible. `snapshot_format.hpp`
-(`SnapshotFormat`, a CRC-framed format) is still compiled for the C++ unit
-tests but is used by no production path.
+them verbatim: no header, no checksum, no framing.
 
-One InstallSnapshot is one frame, and every lane caps a frame at 64 MiB
-(`kMaxFramePayloadSize`, `src/srpc/rpc/frame_codec.rs:86`). The Rust lane
-refuses, and logs once, a snapshot whose frame would exceed it. On the Rust
-lane an InstallSnapshot to a follower is also not resent while the same
+One InstallSnapshot is one frame, capped at 64 MiB
+(`kMaxFramePayloadSize`, `src/srpc/rpc/frame_codec.rs:86`). Raft refuses,
+and logs once, a snapshot whose frame would exceed it. An InstallSnapshot
+to a follower is also not resent while the same
 `(term, follower, index)` is outstanding, up to a deadline
 (`RaftTransport::send_install_snapshot_once`).
 

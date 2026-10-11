@@ -268,9 +268,10 @@ wire types, third-party APIs). The one inline block left in `server.h`, the
 kernel-result PODs, is still transpiled and extracted (`server_pods_h.rs`).
 The migration plan has been removed (see git history); what was done is recorded in `docs/migration/raft/conversion-log.md`.
 
-**Raft has one lane, Rust** (`MAKO_RAFT_LANE=rust`; CMake refuses any
-other). Its RPC endpoint is raft-rt's transport (`raft_lane.h`); the C++
-communicator, RPC service and lane switches were deleted. The snapshot store
+**Raft's runtime is Rust.** Its RPC endpoint is raft-rt's transport
+(`raft_transport.h`); the C++ communicator and RPC service were deleted, as
+were the C++ and hybrid runtimes ("lanes", once chosen by `MAKO_RAFT_LANE`)
+and their switch. The snapshot store
 is Rust: `SnapshotStore` in `src/deptran/raft/rt/src/snapshot.rs`, reached
 through the SEAM kernels; `RaftSnapshotManagerPtr` is an opaque carrier, so
 a `SnapshotManager` call in `server.cc` does not compile. In memory the bytes

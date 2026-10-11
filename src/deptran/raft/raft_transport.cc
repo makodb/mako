@@ -1,15 +1,15 @@
-// The workers' Raft plumbing: raft_lane.h over raft-rt's C ABI
-// (transport_exports.h).
+// raft_transport.h's helpers: the steps of starting Raft's transport that
+// need Mako's C++ -- its config, its logger, std::function. Every other call
+// goes straight to the C ABI.
 
-#include "raft_lane.h"
+#include "raft_transport.h"
 
 #include "../__dep__.h"
 #include "../config.h"
 #include "server.h"
-#include "transport_exports.h"
 
 namespace janus {
-namespace raft_lane {
+namespace raft_transport {
 
 namespace {
 
@@ -63,47 +63,5 @@ void Post(RaftTransport* t, std::function<void()> job) {
                       new std::function<void()>(std::move(job)));
 }
 
-void SetAdmissionReady(RaftTransport* t, bool ready) {
-  raft_transport_set_admission_ready(t, ready);
-}
-
-bool Drain(RaftTransport* t, uint64_t timeout_ms) {
-  return raft_transport_drain(t, timeout_ms);
-}
-
-void CloseServer(RaftTransport* t) { raft_transport_close_server(t); }
-
-void Destroy(RaftTransport* t) { raft_transport_delete(t); }
-
-uint64_t RpcCount(const RaftTransport* t) { return raft_transport_rpc_count(t); }
-
-void* ServeStub(RaftTransport* t, RaftServer* server,
-                const std::string& bind_addr) {
-  return raft_transport_serve_stub(t, server->impl(), bind_addr.c_str());
-}
-
-void StubSetAdmissionReady(void* stub, bool ready) {
-  raft_stub_server_set_admission_ready(static_cast<RaftStubServer*>(stub), ready);
-}
-
-bool StubDrain(void* stub, uint64_t timeout_ms) {
-  return raft_stub_server_drain(static_cast<RaftStubServer*>(stub), timeout_ms);
-}
-
-void StubDestroy(void* stub) {
-  raft_stub_server_delete(static_cast<RaftStubServer*>(stub));
-}
-
-#ifdef RAFT_TEST_CORO
-// raft_rt_run_lab exists only when raft-rt is built with raft_test, which
-// CMake turns on exactly when RAFT_TEST_CORO is defined.
-int RunLab() { return raft_rt_run_lab(); }
-#else
-int RunLab() {
-  Log_fatal("raft_lane::RunLab: not a RAFT_TEST build");
-  return -1;
-}
-#endif
-
-}  // namespace raft_lane
+}  // namespace raft_transport
 }  // namespace janus

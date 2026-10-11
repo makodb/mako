@@ -1,7 +1,7 @@
-// [M0] The trace kit's hooks on the Rust lane (docs/verus/modification-plan.md
+// [M0] The trace kit's hooks in raft-rt (docs/verus/modification-plan.md
 // §5 Phase 0; the kit itself is server.cc's raft_trace_* kernels).
 //
-// Two function-pointer slots, null by default. raft_lane_rust.cc's Serve
+// Two function-pointer slots, null by default. raft_transport.cc's Serve
 // fills them through raft_rt_install_trace only when MAKO_RAFT_TRACE_FILE is
 // set, so an untraced run pays one relaxed load per hook and calls nothing.
 // raft-rt cannot name the C++ kernels directly: its standalone cargo tests
@@ -15,7 +15,7 @@ type NowFn = extern "C" fn() -> u64;
 static THROUGH: AtomicUsize = AtomicUsize::new(0);
 static NOW: AtomicUsize = AtomicUsize::new(0);
 
-/// Installed by raft_lane_rust.cc; see the module note.
+/// Installed by raft_transport.cc; see the module note.
 #[no_mangle]
 pub extern "C" fn raft_rt_install_trace(through: ThroughFn, now: NowFn) {
     THROUGH.store(through as usize, Ordering::Release);

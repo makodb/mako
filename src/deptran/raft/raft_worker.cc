@@ -9,7 +9,7 @@
 #include "raft_worker.h"
 #include "frame.h"   // RaftFrame::ReleaseScheduler at the ownership boundary (B1)
 #include "server.h"
-#include "raft_lane.h"
+#include "raft_transport.h"
 #include "application_log.h"
 #include "../config.h"
 #include "../legacy_raft_log_payload.h"
@@ -261,7 +261,7 @@ RaftWorker::RaftWorker() = default;
 RaftWorker::~RaftWorker() {
   StopSubmitThread();
   if (rust_transport_ != nullptr) {
-    raft_lane::Destroy(rust_transport_);
+    raft_transport_delete(rust_transport_);
     rust_transport_ = nullptr;
   }
 
@@ -347,7 +347,7 @@ void RaftWorker::SetupBase() {
 void RaftWorker::SetupService() {
   // One raft-rt transport owns the poll thread, the server and (after
   // SetupCommo) the peer clients. Admission starts closed.
-  rust_transport_ = raft_lane::Serve(raft_frame_->svr_, site_info_->GetBindAddress());
+  rust_transport_ = raft_transport::Serve(raft_frame_->svr_, site_info_->GetBindAddress());
 }
 
 // @safe - pointer dereferences are bounded, external calls marked @external
@@ -356,14 +356,14 @@ void RaftWorker::SetupCommo() {
   // when it started serving; this connects its clients.
   verify(rep_frame_ != nullptr);
   verify(rep_sched_ != nullptr);
-  raft_lane::ConnectPeers(rust_transport_);
+  raft_transport::ConnectPeers(rust_transport_);
 }
 
 bool RaftWorker::PostToRaftPoll(std::function<void()> job) {
   if (rust_transport_ == nullptr) {
     return false;
   }
-  raft_lane::Post(rust_transport_, std::move(job));
+  raft_transport::Post(rust_transport_, std::move(job));
   return true;
 }
 
@@ -456,7 +456,7 @@ bool RaftWorker::WaitForStartup() {
 // @safe - srpc::Server owns the shared atomic admission flag.
 void RaftWorker::SetRpcAdmissionReady(bool ready) {
   if (rust_transport_ != nullptr) {
-    raft_lane::SetAdmissionReady(rust_transport_, ready);
+    raft_transport_set_admission_ready(rust_transport_, ready);
   }
 }
 
@@ -515,7 +515,7 @@ void RaftWorker::ShutDown() {
   // below. srpc holds a pending-request guard for each request's whole
   // handler, so the drain is the barrier that guarantee needs.
   if (rust_transport_ != nullptr &&
-      !raft_lane::Drain(rust_transport_, kRpcDrainTimeoutMs)) {
+      !raft_transport_drain(rust_transport_, kRpcDrainTimeoutMs)) {
     Log_warn("[RAFT-WORKER-SHUTDOWN] RPC drain timed out with request(s) "
              "still in flight");
   }
@@ -536,7 +536,7 @@ void RaftWorker::ShutDown() {
   // have released every connection and callback.
   if (rust_transport_ != nullptr) {
     Log_info("[RAFT-WORKER-SHUTDOWN] closing the RPC server");
-    raft_lane::CloseServer(rust_transport_);
+    raft_transport_close_server(rust_transport_);
   }
 
   if (hb_rpc_server_) {
@@ -562,7 +562,7 @@ void RaftWorker::ShutDown() {
   // The clients, the poll thread and the transport go only after the
   // scheduler is gone.
   if (rust_transport_ != nullptr) {
-    raft_lane::Destroy(rust_transport_);
+    raft_transport_delete(rust_transport_);
     rust_transport_ = nullptr;
   }
   if (svr_hb_poll_thread_worker_g.is_some()) {

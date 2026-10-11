@@ -5,12 +5,12 @@
 // fixture, these reach into one replica: its snapshot boundary, its log base,
 // its retention window, its state-machine callbacks.
 //
-// Three of the fourteen are not here. testSnapshotMetadataCreation,
-// testSnapshotFormatRoundTrip and testSnapshotManagerSaveLoad construct a
-// SnapshotMetadata, call SnapshotFormat's statics and exercise a
-// MemorySnapshotManager on the stack. They are unit tests of C++ classes and
-// touch no RaftServer, so they live with the snapshot store in raft-rt
-// (rt/src/lab_runtime.rs) and this suite calls them through one kernel.
+// Three of the fourteen are not here. Tests 50-52 (an index-0 save refused,
+// a byte-exact round trip, save, load, overwrite and clear) are unit tests
+// of the snapshot store and touch no RaftServer, so they live with the
+// store in raft-rt (rt/src/lab_runtime.rs) and this suite calls them
+// through one kernel. They once tested C++ classes the removed C++ runtime
+// used (SnapshotFormat, MemorySnapshotManager).
 
 #![allow(non_snake_case)]
 
@@ -482,7 +482,7 @@ fn test_install_snapshot_basic(_st: &mut LabState) -> i32 {
         let _lock = RaftLockGuard::new(svr.LabMutex());
         // Plain u64::max, not `[..].into_iter().max()`: rusty::iter_max copies
         // an owning iterator into a local and returns a reference into it,
-        // so under the C++ lane that read a dead temporary.
+        // so under the old C++ runtime that read a dead temporary.
         let local_progress = svr.LabCommitIndex()
             .max(svr.LabExecuteIndex())
             .max(svr.GetAppliedIndex())
@@ -1200,7 +1200,7 @@ fn test_high_frequency_apply(_st: &mut LabState) -> i32 {
 // before Setup would, and run Setup's recovery step through its HOST catch
 // wrapper -- the store's latest/load, the metadata cross-check, the
 // state-machine load, the boundary, the commit clamp and the term raise --
-// on whichever store the lane links.
+// on raft-rt's snapshot store.
 
 /// The lab state machine's image: the 16-byte (index, term) marker the lab
 /// prepare path checks (server.cc, RAFT_TEST_CORO), little-endian.
@@ -1359,9 +1359,9 @@ fn test_recovery_fail_stops(_st: &mut LabState) -> i32 {
 // half of RaftLabTest::Run.
 
 fn run_snapshot_cases(st: &mut LabState) -> i32 {
-    // Tests 50, 51 and 52 -- unit tests of SnapshotMetadata, SnapshotFormat
-    // and MemorySnapshotManager, which are C++ classes and touch no
-    // RaftServer. See the note at the top of this file.
+    // Tests 50, 51 and 52 -- unit tests of raft-rt's snapshot store
+    // (rt/src/lab_runtime.rs), which touch no RaftServer. See the note at
+    // the top of this file.
     // SAFETY: the kernel runs them and returns their combined verdict.
     if unsafe { raft_lab_snapshot_unit_tests() } != 0 {
         return 1;

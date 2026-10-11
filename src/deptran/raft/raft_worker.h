@@ -37,7 +37,7 @@
 
 namespace janus {
 
-struct RaftTransport;  // raft-rt (raft_lane.h)
+struct RaftTransport;  // raft-rt (raft_transport.h)
 
 
 // Runtime replication switching - always declare raft functions
@@ -271,7 +271,7 @@ public:
   bool PostToRaftPoll(std::function<void()> job);
 
   // raft-rt's transport, which owns this worker's Raft poll thread, RPC
-  // server and peer clients (raft_lane.h).
+  // server and peer clients (raft_transport.h).
   RaftTransport* rust_transport_ = nullptr;
 
   // @unsafe - uses std::make_shared, raw pointers

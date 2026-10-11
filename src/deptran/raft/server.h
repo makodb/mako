@@ -316,11 +316,11 @@ namespace rusty {
 using RaftCheckedMutex = ::janus::RaftCheckedMutex;
 using RaftAsyncCallbackLifetimePtr =
     ::std::shared_ptr<::janus::AsyncCallbackLifetime>;
-// The guard (plan N1/N4). The carrier holds an
+// The snapshot store's carrier. It holds an
 // Arc<SnapshotStore> (raft-rt, rt/src/snapshot.rs), not a shared_ptr, so it is
 // an opaque, copy-deleted 16-byte struct here: HOST C++ that dereferenced or
 // copied it as a shared_ptr fails to compile instead of misreading an Arc.
-// Every access goes through the SEAM kernels in lane_kernels.h; destruction
+// Every access goes through the store's kernels (declared below); destruction
 // through raft_destroy_snapshot_manager_ptr, which leaves it all-zero.
 struct RaftRustSnapshotStorePtr;
 }  // namespace rusty
@@ -416,7 +416,19 @@ extern "C" void raft_std_mutex_unlock(std::mutex* mutex);
 // microsecond-resolution flag every Raft call site already passes.
 extern "C" uint64_t raft_time_now_us();
 
-// raft_snapshot_manager_is_set: lane_kernels.h (a SEAM kernel since plan N4).
+// The snapshot store's accessors, defined in raft-rt over the Rust store
+// (rt/src/snapshot.rs); server.cc calls them.
+extern "C" bool raft_snapshot_manager_is_set(const rusty::RaftSnapshotManagerPtr* manager);
+extern "C" void raft_snapshot_manager_ptr_clone_into(const rusty::RaftSnapshotManagerPtr* src,
+                                                     rusty::RaftSnapshotManagerPtr* dst);
+extern "C" bool raft_snapshot_manager_latest(const rusty::RaftSnapshotManagerPtr* manager,
+                                             uint64_t* index, uint64_t* term);
+extern "C" bool raft_snapshot_manager_load(const rusty::RaftSnapshotManagerPtr* manager,
+                                           rusty::RaftByteString* data, uint64_t* index,
+                                           uint64_t* term, uint64_t* size_bytes);
+extern "C" bool raft_snapshot_store_save(const rusty::RaftSnapshotManagerPtr* manager,
+                                         uint64_t index, uint64_t term,
+                                         const uint8_t* data, size_t len);
 
 // @unsafe - RandomGenerator is external.
 extern "C" uint64_t raft_random_range_us(uint64_t low, uint64_t high);
@@ -528,9 +540,10 @@ class RaftServer : public RaftSpecific {
   void ServeInstallSnapshot(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString& data, uint64_t* term_out) const override { raft_server_serve_install_snapshot(impl_, term, leader_id, last_included_index, last_included_term, &data, term_out); }
   uint64_t SetStateMachineSnapshotCallbacks(const rusty::RaftCreateSnapshotCb& create_cb, const rusty::RaftPrepareSnapshotCb& prepare_cb) const override { return raft_server_set_state_machine_snapshot_callbacks(impl_, &create_cb, &prepare_cb); }
 
-  // The Rust object itself, for the one caller that must hand it to
-  // Rust rather than forward a method: the Rust lane's transport binds
-  // to it (raft_lane_rust.cc). Not part of RaftSpecific.
+  // The Rust object itself, for the callers that must hand it to Rust
+  // rather than forward a method: the transport and its stub listeners
+  // bind to it (raft_transport.cc, raft_main_helper.cc). Not part of
+  // RaftSpecific.
   RaftServerBase* impl() const { return impl_; }
 
  private:
