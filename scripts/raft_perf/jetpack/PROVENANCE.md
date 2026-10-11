@@ -21,7 +21,7 @@ results root, site name, host names) are module attributes, which
 
 ## Written here, reproducing Jetpack's code
 
-- `../../../src/deptran/raft/raft_bench_jetpack.h`: Jetpack's `ZipfDist`, its
+- `../raft_bench_jetpack.h`: Jetpack's `ZipfDist`, its
   `Distribution` statistics, the open-loop client loop, the latency window
   and the `.res`/CSV output, as a mode of `raft_bench` (`JETPACK_N`). Its
   header comment lists the source lines and what differs.
