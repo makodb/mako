@@ -1,7 +1,8 @@
 #pragma once
 
 #include "../__dep__.h"
-#include <set>
+#include <iterator>
+#include <map>
 #include "../constants.h"
 #include "../distribution.h"
 #include "../scheduler.h"
@@ -43,23 +44,39 @@ class PaxosServer : public TxLogServer {
   // for learner for the later on takeover
   slotid_t max_committed_slot_learner_ = 0;
   // Learner: every slot up to learner_applied_prefix_ has been applied, and
-  // learner_applied_above_ holds the applied slots past it. p1 skips a
-  // forward while its connection to the learner is not up yet, so the last
-  // slot forwarded can be far past a hole.
+  // learner_applied_runs_ maps the first slot of each applied run past it to
+  // the run's last slot. p1 skips a forward while its connection to the
+  // learner is not up, and drops some when the learner falls far behind, so
+  // the last slot forwarded can be far past a hole; a hole costs one entry
+  // here, not one per later slot. Runs never touch, and none starts at
+  // learner_applied_prefix_ + 1.
   slotid_t learner_applied_prefix_ = 0;
-  std::set<slotid_t> learner_applied_above_{};
+  std::map<slotid_t, slotid_t> learner_applied_runs_{};
   // Call with mtx_ held.
   bool LearnerHasApplied(slotid_t slot) const {
-    return slot <= learner_applied_prefix_ || learner_applied_above_.count(slot) > 0;
+    if (slot <= learner_applied_prefix_) return true;
+    auto it = learner_applied_runs_.upper_bound(slot);
+    if (it == learner_applied_runs_.begin()) return false;
+    return slot <= std::prev(it)->second;
   }
   // Call with mtx_ held.
   void NoteLearnerApplied(slotid_t slot) {
-    if (slot <= learner_applied_prefix_) return;
-    learner_applied_above_.insert(slot);
-    while (!learner_applied_above_.empty() &&
-           *learner_applied_above_.begin() == learner_applied_prefix_ + 1) {
-      learner_applied_prefix_++;
-      learner_applied_above_.erase(learner_applied_above_.begin());
+    if (LearnerHasApplied(slot)) return;
+    slotid_t first = slot, last = slot;
+    auto after = learner_applied_runs_.find(slot + 1);
+    if (after != learner_applied_runs_.end()) {
+      last = after->second;
+      learner_applied_runs_.erase(after);
+    }
+    auto it = learner_applied_runs_.lower_bound(slot);
+    if (it != learner_applied_runs_.begin() && std::prev(it)->second + 1 == slot) {
+      first = std::prev(it)->first;
+      learner_applied_runs_.erase(std::prev(it));
+    }
+    if (first == learner_applied_prefix_ + 1) {
+      learner_applied_prefix_ = last;
+    } else {
+      learner_applied_runs_[first] = last;
     }
   }
 
