@@ -419,7 +419,7 @@ pub proof fn completed_terminal(c:p::Constants,before:&Participant,after:&Partic
         crate::storage::complete(current,initial,Map::empty(),plan.range),
         forall|k:int| keys.to_set().contains(k) ==> s.physical.contains_key((before.owner_view() as int,k))
             && before.command_at(plan,command,before.drained_view(plan.range),labels[k].1.0)
-            && s.plans[plan.generation as nat].old[k].epoch == crate::directory::route(plan.old@,labels[k].1.0).epoch,
+            && s.plans[plan.generation as nat].old[k].ownership_version == crate::directory::route(plan.old@,labels[k].1.0).ownership_version,
     ensures out.valid(c,s),out.after(s).certificates.contains((plan.generation as nat,
         if before.owner_view() == plan.source { p::Certificate::SourceDone } else { p::Certificate::DestinationDone })),
         transfer::local_coupling(after,plan,out.after(s),labels),

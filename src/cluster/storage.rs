@@ -47,7 +47,7 @@ pub(crate) fn plans_match(a: &MigrationPlan, b: &MigrationPlan) -> (yes: bool)
     {
         if compare(&a.old[i].start,&b.old[i].start) != 0
             || a.old[i].grant.owner != b.old[i].grant.owner
-            || a.old[i].grant.epoch != b.old[i].grant.epoch { return false; }
+            || a.old[i].grant.ownership_version != b.old[i].grant.ownership_version { return false; }
         i += 1;
     }
     true
@@ -87,6 +87,25 @@ impl<'a> CompletedCleanup<'a> {
         self.owner == owner && (owner == plan.source || owner == plan.destination)
             && self.terminal && plans_match(self.plan,plan)
     }
+}
+
+/// Recovery can restore a native completion capability only through the private
+/// durable participant replay token, tied to a committed completion record.
+pub(crate) fn recover_copy<'a>(plan:&'a MigrationPlan,owner:u32,receipt:&crate::durable_participant::ReplayCompletion)
+    ->(out:Option<CompletedCopy<'a>>)
+    requires receipt.wf(),
+    ensures out is Some ==> out->Some_0.matches_spec(*plan,owner),
+{
+    if owner!=plan.destination || !receipt.matches(plan,owner,false){return None;}
+    Some(CompletedCopy{plan,owner,round:1})
+}
+pub(crate) fn recover_cleanup<'a>(plan:&'a MigrationPlan,owner:u32,receipt:&crate::durable_participant::ReplayCompletion)
+    ->(out:Option<CompletedCleanup<'a>>)
+    requires receipt.wf(),
+    ensures out is Some ==> out->Some_0.matches_spec(*plan,owner),
+{
+    if (owner!=plan.source && owner!=plan.destination) || !receipt.matches(plan,owner,true){return None;}
+    Some(CompletedCleanup{plan,owner,terminal:true})
 }
 
 /// Logical identity includes both routing coordinate and physical row key.

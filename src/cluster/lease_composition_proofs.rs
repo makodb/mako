@@ -197,13 +197,13 @@ proof fn two_owner_registry(id:TxnId,addresses:expansion::Addresses,owner:u32) -
     requires owner<2,addresses.dom()==Set::empty().insert(0int).insert(1int),addresses[0int]!=addresses[1int],
     ensures out==Map::<u64,SessionView>::empty().insert(id.client,SessionView {
         sequence:id.sequence,terminal:false,
-        holds:seq![native::point_scope(addresses[owner as int].0,addresses[owner as int].1,Grant { owner,epoch:0 })] }),
+        holds:seq![native::point_scope(addresses[owner as int].0,addresses[owner as int].1,Grant { owner,ownership_version:0 })] }),
         out[id.client].wf(),
-        held_image(out[id.client],addresses)==Map::empty().insert(owner as int,p::Grant { owner:owner as int,epoch:0 }),
+        held_image(out[id.client],addresses)==Map::empty().insert(owner as int,p::Grant { owner:owner as int,ownership_version:0 }),
 {
     let key=owner as int;
     let address=addresses[key];
-    let grant=Grant { owner,epoch:0 };
+    let grant=Grant { owner,ownership_version:0 };
     let before=Map::<u64,SessionView>::empty().insert(id.client,SessionView {
         sequence:id.sequence,terminal:false,holds:Seq::empty() });
     let out=before.insert(id.client,SessionView { sequence:id.sequence,terminal:false,
@@ -217,7 +217,7 @@ proof fn two_owner_registry(id:TxnId,addresses:expansion::Addresses,owner:u32) -
         assert forall|i:int| 0<=i<out[id.client].holds.len() implies
             !out[id.client].holds[i].contains(addresses[other].0,addresses[other].1) by { assert(i==0); }
     }
-    assert(held_image(out[id.client],addresses) =~= Map::empty().insert(key,p::Grant { owner:owner as int,epoch:0 }));
+    assert(held_image(out[id.client],addresses) =~= Map::empty().insert(key,p::Grant { owner:owner as int,ownership_version:0 }));
     out
 }
 
@@ -226,10 +226,10 @@ proof fn two_owner_release(c:p::Constants,both:p::State,id:TxnId,
     tracked execution:Execution) -> (done:p::State)
     requires p::constants_ok(c),execution.closed(c,both),
         both.sessions.dom()==Set::empty().insert(transaction(id)),!both.sessions[transaction(id)].resolved,
-        both.sessions[transaction(id)].held==Map::empty().insert(0int,p::Grant { owner:0,epoch:0 }).insert(1int,p::Grant { owner:1,epoch:0 }),
+        both.sessions[transaction(id)].held==Map::empty().insert(0int,p::Grant { owner:0,ownership_version:0 }).insert(1int,p::Grant { owner:1,ownership_version:0 }),
         session_observed(local0,both,id,addresses,0),session_observed(local1,both,id,addresses,1),
-        held_image(local0[id.client],addresses)==Map::empty().insert(0int,p::Grant { owner:0,epoch:0 }),
-        held_image(local1[id.client],addresses)==Map::empty().insert(1int,p::Grant { owner:1,epoch:0 }),
+        held_image(local0[id.client],addresses)==Map::empty().insert(0int,p::Grant { owner:0,ownership_version:0 }),
+        held_image(local1[id.client],addresses)==Map::empty().insert(1int,p::Grant { owner:1,ownership_version:0 }),
     ensures done.sessions.contains_key(transaction(id)),done.sessions[transaction(id)].resolved,
         done.sessions[transaction(id)].held == Map::<int,p::Grant>::empty(),
         p::drained(done,Set::empty().insert(0int).insert(1int)),
@@ -304,7 +304,7 @@ pub proof fn two_owner_lifecycle() -> (s:p::State)
     let tracked execution = execution.append(c,initial,begin);
     let tracked acquire0 = lease_execution::acquire_keys(c,first,t,seq![0int],held_image(local0[id.client],addresses));
     let held0 = acquire0.after(first);
-    assert(held0.sessions[t].held =~= Map::empty().insert(0int,p::Grant { owner:0,epoch:0 }));
+    assert(held0.sessions[t].held =~= Map::empty().insert(0int,p::Grant { owner:0,ownership_version:0 }));
     let tracked execution = execution.append(c,first,acquire0);
     assert(owned_holds(held0.sessions[t].held,1) =~= Map::<int,p::Grant>::empty());
     let tracked join1 = second_owner_admission(c,held0,id,addresses,1);
@@ -314,9 +314,9 @@ pub proof fn two_owner_lifecycle() -> (s:p::State)
     let both = acquire1.after(joined);
     let tracked execution = execution.append(c,joined,acquire1);
     assert(both.sessions.dom()==Set::empty().insert(t));
-    assert(both.sessions[t].held =~= Map::empty().insert(0int,p::Grant { owner:0,epoch:0 }).insert(1int,p::Grant { owner:1,epoch:0 }));
-    assert(owned_holds(both.sessions[t].held,0) =~= Map::empty().insert(0int,p::Grant { owner:0,epoch:0 }));
-    assert(owned_holds(both.sessions[t].held,1) =~= Map::empty().insert(1int,p::Grant { owner:1,epoch:0 }));
+    assert(both.sessions[t].held =~= Map::empty().insert(0int,p::Grant { owner:0,ownership_version:0 }).insert(1int,p::Grant { owner:1,ownership_version:0 }));
+    assert(owned_holds(both.sessions[t].held,0) =~= Map::empty().insert(0int,p::Grant { owner:0,ownership_version:0 }));
+    assert(owned_holds(both.sessions[t].held,1) =~= Map::empty().insert(1int,p::Grant { owner:1,ownership_version:0 }));
     assert(session_observed(local0,both,id,addresses,0));
     assert(session_observed(local1,both,id,addresses,1));
     two_owner_release(c,both,id,addresses,local0,local1,execution)

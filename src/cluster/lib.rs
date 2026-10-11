@@ -12,10 +12,24 @@ pub mod storage;
 pub mod transfer;
 pub mod routing;
 pub mod routing_codec;
+pub mod coordinator_publication;
 pub mod warehouse;
 pub mod gateway;
 pub mod full_scan_core;
 pub mod full_scan;
+pub mod durable_kv;
+pub mod durable_codec;
+pub mod durable_coordinator;
+pub mod durable_coordinator_codec;
+pub mod durable_engine;
+pub mod durable_participant;
+
+#[cfg(not(verus_keep_ghost))]
+pub mod rocks_metadata;
+#[cfg(not(verus_keep_ghost))]
+pub mod metadata;
+#[cfg(not(verus_keep_ghost))]
+pub mod metadata_coordinator;
 
 #[cfg(not(verus_keep_ghost))]
 pub mod host;
@@ -58,6 +72,8 @@ pub mod execution_refinement;
 #[cfg(verus_keep_ghost)]
 pub mod routing_proofs;
 #[cfg(verus_keep_ghost)]
+pub mod snapshot_admission_composition;
+#[cfg(verus_keep_ghost)]
 pub mod routing_codec_proofs;
 #[cfg(verus_keep_ghost)]
 pub mod full_scan_proofs;
@@ -69,3 +85,21 @@ pub mod transfer_progress;
 #[cfg(verus_keep_ghost)]
 #[path = "../../tla/mako/src/sharding_bytes.rs"]
 pub mod sharding_bytes;
+#[cfg(verus_keep_ghost)]
+#[path = "../../tla/mako/src/sharding_recovery.rs"]
+pub mod sharding_recovery;
+#[cfg(verus_keep_ghost)]
+pub mod durable_coordinator_proofs;
+#[cfg(verus_keep_ghost)]
+pub mod durable_recovery_refinement;
+#[cfg(verus_keep_ghost)]
+pub mod durable_metadata_refinement;
+#[cfg(verus_keep_ghost)]
+pub mod durable_engine_refinement;
+
+#[cfg(all(test, not(verus_keep_ghost)))]
+#[path = "durable_recovery_tests.rs"]
+mod durable_recovery_tests;
+
+#[cfg(all(test, not(verus_keep_ghost)))]
+mod metadata_tests;

@@ -19,6 +19,7 @@ typedef struct MakoScanBounds {
 typedef struct MakoScanIdentity {
     MakoShardTxn transaction;
     MakoShardGrant grant;
+    uint64_t snapshot_version;
     uint64_t table;
     uint32_t fixed_coordinate;
     MakoShardBytes coordinate;
@@ -27,7 +28,7 @@ typedef struct MakoScanIdentity {
  * The visitor may block/reenter: no cache/participant mutex may remain held.
  * Visitor: 0 continue, 1 stop, 2 error. Bounds are borrowed during the call. */
 typedef uint32_t (*MakoScanSegmentCallback)(void*, MakoShardBytes, uint32_t,
-                                           MakoShardBytes, MakoShardGrant);
+                                           MakoShardBytes, MakoShardRoute);
 uint32_t mako_sharding_scan_segments(uint64_t table, MakoShardBytes lo,
                                       uint32_t has_hi, MakoShardBytes hi,
                                       uint32_t reverse,

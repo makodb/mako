@@ -182,7 +182,7 @@ pub proof fn cleanup_stutter(c: p::Constants,s: p::State,node: &Participant,plan
 
 /// Raw terminal record uses actual native metadata, not command_replica.
 pub open spec fn terminal_record(m:crate::types::ReplicaMeta,old:p::Replica) -> p::Replica {
-    p::Replica { cell:p::empty_cell(),role:metadata::role(m.role),epoch:m.epoch as nat,
+    p::Replica { cell:p::empty_cell(),role:metadata::role(m.role),ownership_version:m.ownership_version as nat,
         fence:m.fence as nat,terminal:m.terminal,round:m.round as nat,covered:old.covered }
 }
 pub open spec fn terminal_writes(owner:int,keys:Seq<int>,records:Map<int,p::Replica>) -> Seq<log::Write>

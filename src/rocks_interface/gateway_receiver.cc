@@ -17,6 +17,7 @@ void ShardReceiver::ClientRoute(const MakoGatewayRequest& req, MakoGatewayRespon
     resp = {};
     resp.client = req.client;
     resp.sequence = req.sequence;
+    resp.snapshot_version = req.snapshot_version;
     resp.status = ErrorCode::ERROR;
     resp.outcome = MAKO_GATEWAY_REJECTED;
     if (req.version != MAKO_GATEWAY_VERSION || req.name_length > sizeof(req.name)
@@ -48,12 +49,13 @@ void ShardReceiver::ClientRoute(const MakoGatewayRequest& req, MakoGatewayRespon
         resp.coordinate_length = static_cast<uint32_t>(length);
         if (length) std::memcpy(resp.coordinate, coordinate, length);
         if (b.kind == 0) {
-            MakoShardGrant grant{};
+            MakoShardRoute route{};
             if (mako_sharding_route(b.table,
-                {reinterpret_cast<const uint8_t*>(coordinate), length}, &grant)
+                {reinterpret_cast<const uint8_t*>(coordinate), length}, &route)
                 != MAKO_SHARD_OK) return;
-            resp.owner = grant.owner;
-            resp.epoch = grant.epoch;
+            resp.owner = route.grant.owner;
+            resp.ownership_version = route.grant.ownership_version;
+            resp.snapshot_version = route.snapshot_version;
         } else {
             const int owner = compute_shard_for_key(table,
                 std::string(reinterpret_cast<const char*>(req.key), req.key_length));
@@ -67,7 +69,10 @@ void ShardReceiver::ClientRoute(const MakoGatewayRequest& req, MakoGatewayRespon
         resp.owner = static_cast<uint32_t>(owner);
         if (owner == TThread::get_shard_index() && !table_for(table)) return;
     }
-    if (resp.owner >= static_cast<uint32_t>(TThread::get_nshards())) return;
+    if (resp.owner >= static_cast<uint32_t>(TThread::get_nshards())) {
+        resp.snapshot_version = req.snapshot_version;
+        return;
+    }
     resp.status = ErrorCode::SUCCESS;
     resp.outcome = MAKO_GATEWAY_COMMITTED;
 }
@@ -90,7 +95,11 @@ void ShardReceiver::ExecuteClientOperation(void* context, const MakoGatewayReque
     ShardingRequest sharding{};
     sharding.transaction = {req->client, req->sequence};
     sharding.table = req->table;
-    sharding.grant = {req->owner, req->epoch};
+    sharding.grant = {req->owner, req->ownership_version};
+    // The public gateway tuple is a client claim, not trusted worker capture
+    // provenance. Keep it in SDK/reply identity, but require exact admission at
+    // either the local participant or the forwarded worker destination.
+    sharding.snapshot_version = MAKO_SHARD_NO_SNAPSHOT;
     sharding.fixed_coordinate = req->fixed_coordinate != 0;
     sharding.coordinate_length = static_cast<uint16_t>(req->coordinate_length);
     if (req->coordinate_length)

@@ -49,7 +49,7 @@ pub open spec fn background_packet() -> p::Packet {
 }
 pub open spec fn prepared_base() -> p::State {
     let s = seeded_placement();
-    let stage = p::Replica { cell:p::empty_cell(),role:p::Role::Stage,epoch:1,
+    let stage = p::Replica { cell:p::empty_cell(),role:p::Role::Stage,ownership_version:1,
         fence:1,terminal:false,round:0,covered:false };
     p::State { active:Some(1nat),next_generation:2,
         plans:Map::empty().insert(1nat,p::Plan { nonce:100,src:0,dst:1,table:0,lo:0,hi:Some(2int),

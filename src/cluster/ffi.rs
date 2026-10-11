@@ -6,7 +6,7 @@ use std::ffi::c_void;
 use crate::catalog::{Coordinates, TableKind};
 use crate::host::{self, AdminRpc, Bytes, Completion, Host, HostAbi, Opener, ReplySink, WarehouseOpen};
 use crate::runtime::runtime;
-use crate::types::{Grant, Status, TxnId};
+use crate::types::{Grant, RoutedGrant, Status, TxnId};
 use crate::warehouse::HandleKey;
 use crate::wire::{self, checked};
 
@@ -44,22 +44,22 @@ pub unsafe extern "C" fn mako_sharding_quiesce(owner: u32, directory: Bytes) -> 
     })())
 }
 #[no_mangle]
-pub unsafe extern "C" fn mako_sharding_route(table: u64, coordinate: Bytes, grant: *mut Grant) -> u32 {
-    code((|| {if grant.is_null() {return Err(Status::Invalid);}
+pub unsafe extern "C" fn mako_sharding_route(table: u64, coordinate: Bytes, route: *mut RoutedGrant) -> u32 {
+    code((|| {if route.is_null() {return Err(Status::Invalid);}
         let value = runtime().route(table,unsafe {coordinate.slice()?})?;
-        unsafe {output(grant,value)} })())
+        unsafe {output(route,value)} })())
 }
 #[no_mangle]
 pub extern "C" fn mako_sharding_lease_begin(owner: u32, id: TxnId) -> u32 {
     code(runtime().node(owner).and_then(|node|checked(node.lease_begin(id))))
 }
 #[no_mangle]
-pub unsafe extern "C" fn mako_sharding_lease_acquire(owner: u32, id: TxnId, table: u64, coordinate: Bytes, grant: Grant) -> u32 {
-    code((|| checked(runtime().node(owner)?.lease_acquire(id,table,unsafe {coordinate.slice()?},grant)))())
+pub unsafe extern "C" fn mako_sharding_lease_acquire(owner: u32, id: TxnId, table: u64, coordinate: Bytes, route: RoutedGrant) -> u32 {
+    code((|| checked(runtime().node(owner)?.lease_acquire(id,table,unsafe {coordinate.slice()?},route)))())
 }
 #[no_mangle]
-pub unsafe extern "C" fn mako_sharding_lease_acquire_range(owner: u32, id: TxnId, table: u64, lo: Bytes, has_hi: u32, hi: Bytes, grant: Grant) -> u32 {
-    code((|| checked(runtime().node(owner)?.lease_range(id,table,unsafe {lo.slice()?},unsafe {upper(has_hi,hi)?},grant)))())
+pub unsafe extern "C" fn mako_sharding_lease_acquire_range(owner: u32, id: TxnId, table: u64, lo: Bytes, has_hi: u32, hi: Bytes, route: RoutedGrant) -> u32 {
+    code((|| checked(runtime().node(owner)?.lease_range(id,table,unsafe {lo.slice()?},unsafe {upper(has_hi,hi)?},route)))())
 }
 #[no_mangle]
 pub extern "C" fn mako_sharding_lease_finish(owner: u32, id: TxnId) -> u32 {
@@ -158,7 +158,7 @@ pub unsafe extern "C" fn mako_sharding_dispatch(owner: u32, operation: u32, payl
         runtime().dispatch(owner,operation,unsafe {payload.slice()?}.to_vec(),completion)
     })())
 }
-type SegmentCallback = unsafe extern "C" fn(*mut c_void,Bytes,u32,Bytes,Grant) -> u32;
+type SegmentCallback = unsafe extern "C" fn(*mut c_void,Bytes,u32,Bytes,RoutedGrant) -> u32;
 #[no_mangle]
 pub unsafe extern "C" fn mako_sharding_scan_segments(table: u64, lo: Bytes, has_hi: u32, hi: Bytes, reverse: u32,
                                                      callback: Option<SegmentCallback>, context: *mut c_void) -> u32 {
@@ -170,7 +170,8 @@ pub unsafe extern "C" fn mako_sharding_scan_segments(table: u64, lo: Bytes, has_
         let snapshot = runtime().snapshot()?;
         let visit = |segment: crate::routing::ScanSegment<'_>| -> Result<bool,Status> {
             match unsafe {callback(context,Bytes::from_slice(segment.lo),u32::from(segment.hi.is_some()),
-                Bytes::from_slice(segment.hi.unwrap_or(&[])),segment.grant)} {
+                Bytes::from_slice(segment.hi.unwrap_or(&[])),
+                RoutedGrant { grant: segment.grant, snapshot_version: snapshot.version })} {
                 0=>Ok(true),1=>Ok(false),_=>Err(Status::Retry),
             }
         };

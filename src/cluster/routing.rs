@@ -6,11 +6,11 @@
 //! generations; stale versions return Retry, equal identical versions stutter,
 //! and conflicting equal versions return Invalid. The first accepted snapshot
 //! seals the logical table catalog. Each later install must retain all its IDs.
-//! Half-open scans are split at full owner/epoch boundaries, not owner alone;
+//! Half-open scans are split at full owner/ownership_version boundaries, not owner alone;
 //! forward and reverse iterators retain return-migration incarnation boundaries.
 use vstd::prelude::*;
 use std::sync::Arc;
-use crate::types::{Grant, Status};
+use crate::types::{Grant, RoutedGrant, Status};
 use crate::bytes::compare;
 use crate::directory::RouteTable;
 #[cfg(verus_keep_ghost)]
@@ -27,7 +27,7 @@ pub struct Snapshot { pub version: u64, pub tables: Vec<RouteTable> }
 pub open spec fn table_valid(t: RouteTable, nodes: Seq<u32>, version: u64) -> bool {
     wellformed(t.boundaries@) && canonical(t.boundaries@)
     && forall|i: int| 0 <= i < t.boundaries.len() ==>
-        nodes.contains(t.boundaries@[i].grant.owner) && t.boundaries@[i].grant.epoch <= version
+        nodes.contains(t.boundaries@[i].grant.owner) && t.boundaries@[i].grant.ownership_version <= version
 }
 pub open spec fn snapshot_valid(s: Snapshot, nodes: Seq<u32>) -> bool {
     (forall|i: int| 0 <= i < s.tables.len() ==> table_valid(s.tables@[i],nodes,s.version))
@@ -49,6 +49,13 @@ pub open spec fn snapshot_lookup(s: Snapshot,table: u64,key: Seq<u8>) -> Option<
         let i = choose|i: int| 0 <= i < s.tables.len() && s.tables@[i].table == table;
         Some(route(s.tables@[i].boundaries@,key))
     } else { None }
+}
+pub open spec fn captured(s: Snapshot,table: u64,key: Seq<u8>,r: RoutedGrant) -> bool {
+    r.snapshot_version == s.version && snapshot_lookup(s,table,key) == Some(r.grant)
+}
+pub open spec fn captured_range(s: Snapshot,table: u64,lo: Seq<u8>,hi: Option<Seq<u8>>,r: RoutedGrant) -> bool {
+    r.snapshot_version == s.version && proper(lo,hi)
+        && forall|key: Seq<u8>| inside(key,lo,hi) ==> snapshot_lookup(s,table,key) == Some(r.grant)
 }
 
 pub fn member(nodes: &[u32],owner: u32) -> (yes: bool)
@@ -74,16 +81,16 @@ pub fn validate_table(t: &RouteTable,nodes: &[u32],version: u64) -> (yes: bool)
         invariant i <= t.boundaries.len(), t.boundaries.len() > 0,
             t.boundaries@[0].start@ == Seq::<u8>::empty(),
             forall|j: int| 0 <= j < i ==> nodes@.contains(t.boundaries@[j].grant.owner)
-                && t.boundaries@[j].grant.epoch <= version,
+                && t.boundaries@[j].grant.ownership_version <= version,
             forall|j: int,k: int| 0 <= j < k < i ==> cmp_spec(t.boundaries@[j].start@,t.boundaries@[k].start@) < 0,
             forall|j: int| 0 < j < i ==> #[trigger] t.boundaries@[j].grant != t.boundaries@[j-1].grant,
         decreases t.boundaries.len()-i,
     {
         let b = &t.boundaries[i];
-        if !member(nodes,b.grant.owner) || b.grant.epoch > version { return false; }
+        if !member(nodes,b.grant.owner) || b.grant.ownership_version > version { return false; }
         if i > 0 {
             if compare(&t.boundaries[i-1].start,&b.start) >= 0
-                || (t.boundaries[i-1].grant.owner == b.grant.owner && t.boundaries[i-1].grant.epoch == b.grant.epoch) { return false; }
+                || (t.boundaries[i-1].grant.owner == b.grant.owner && t.boundaries[i-1].grant.ownership_version == b.grant.ownership_version) { return false; }
             proof {
                 assert forall|j: int| 0 <= j < i implies cmp_spec(t.boundaries@[j].start@,b.start@) < 0 by {
                     if j < i-1 { cmp_trans(t.boundaries@[j].start@,t.boundaries@[i as int-1].start@,b.start@); }
@@ -135,6 +142,24 @@ impl Snapshot {
         }
         None
     }
+    pub fn capture(&self,table: u64,key: &[u8]) -> (out: Option<RoutedGrant>)
+        requires exists|nodes: Seq<u32>| snapshot_valid(*self,nodes),
+        ensures match out {
+            Some(r) => captured(*self,table,key@,r),
+            None => snapshot_lookup(*self,table,key@) is None,
+        },
+    {
+        match self.table(table) {
+            Some(t) => {
+                proof {
+                    let nodes = choose|nodes: Seq<u32>| snapshot_valid(*self,nodes);
+                    found_table(*self,*t,table,key@,nodes);
+                }
+                Some(RoutedGrant {grant: t.lookup(key),snapshot_version: self.version})
+            },
+            None => None,
+        }
+    }
     fn contains_catalog(&self,other: &Self) -> (yes: bool)
         ensures yes == contains_catalog(*self,*other),
     {
@@ -161,6 +186,21 @@ impl Snapshot {
         let t = match self.table(table) { Some(t) => t, None => return Err(Status::NotFound) };
         let index = lower_boundary(t,lo);
         Ok(ScanSegments { table: t, index, cursor: Some(lo), hi })
+    }
+    /// Capture only a homogeneous interval; crossing a full-grant boundary fails.
+    pub fn capture_range(&self,table: u64,lo: &[u8],hi: Option<&[u8]>) -> (out: Option<RoutedGrant>)
+        requires exists|nodes: Seq<u32>| snapshot_valid(*self,nodes),
+        ensures match out {
+            Some(r) => captured_range(*self,table,lo@,hi_view(hi),r),
+            None => true,
+        },
+    {
+        let ghost nodes = choose|nodes: Seq<u32>| snapshot_valid(*self,nodes);
+        let mut segments = match self.segments(table,lo,hi) {Ok(it) => it,Err(_) => return None};
+        let segment = match segments.next() {Some(segment) => segment,None => return None};
+        if segments.cursor.is_some() { return None; }
+        proof { segment_capture(*self,segments.table(),segment,nodes); }
+        Some(RoutedGrant {grant:segment.grant,snapshot_version:self.version})
     }
     pub fn reverse_segments<'a>(&'a self,table: u64,lo: &'a [u8],hi: Option<&'a [u8]>) -> (out: Result<ReverseScanSegments<'a>,Status>)
         requires forall|i: int| 0 <= i < self.tables.len() ==> wellformed(self.tables@[i].boundaries@) && canonical(self.tables@[i].boundaries@),
@@ -210,7 +250,7 @@ fn same_table(a: &RouteTable,b: &RouteTable) -> (yes: bool)
                 && a.boundaries@[k].grant == b.boundaries@[k].grant,
         decreases a.boundaries.len()-j,
     {
-        if a.boundaries[j].grant.owner != b.boundaries[j].grant.owner || a.boundaries[j].grant.epoch != b.boundaries[j].grant.epoch
+        if a.boundaries[j].grant.owner != b.boundaries[j].grant.owner || a.boundaries[j].grant.ownership_version != b.boundaries[j].grant.ownership_version
             || compare(&a.boundaries[j].start,&b.boundaries[j].start) != 0 { return false; }
         j += 1;
     }
@@ -266,15 +306,17 @@ impl RoutingCache {
         self.current = Some(Arc::new(snapshot));
         Status::Ok
     }
-    pub fn lookup(&self,table: u64,key: &[u8]) -> (out: Option<Grant>)
+    pub fn capture(&self,table: u64,key: &[u8]) -> (out: Option<RoutedGrant>)
         requires self.wf(),
-        ensures out == match self.observation() { Some(s) => snapshot_lookup(s,table,key@), None => None },
+        ensures match out {
+            Some(r) => self.observation() is Some
+                && captured(self.observation().unwrap(),table,key@,r),
+            None => self.observation() is None
+                || snapshot_lookup(self.observation().unwrap(),table,key@) is None,
+        },
     {
         match &self.current {
-            Some(s) => match s.table(table) {
-                Some(t) => { let snapshot: &Snapshot = s; proof { found_table(*snapshot,*t,table,key@,self.nodes@); } Some(t.lookup(key)) },
-                None => None,
-            },
+            Some(s) => s.capture(table,key),
             None => None,
         }
     }
@@ -376,7 +418,7 @@ impl<'a> ReverseScanSegments<'a> {
         Some(ScanSegment { lo: self.lo,hi,grant })
     }
 }
-/// Locate the existing directory cell, preserving its full owner/epoch grant.
+/// Locate the existing directory cell, preserving its full owner/ownership_version grant.
 fn lower_boundary(t: &RouteTable,key: &[u8]) -> (index: usize)
     requires wellformed(t.boundaries@),
     ensures index < t.boundaries.len(), cmp_spec(t.boundaries@[index as int].start@,key@) <= 0,
@@ -409,3 +451,47 @@ fn lower_boundary(t: &RouteTable,key: &[u8]) -> (index: usize)
     lower-1
 }
 } // verus!
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::Boundary;
+
+    fn snapshot(version: u64, upper_owner: u32) -> Snapshot {
+        Snapshot {version,tables:vec![RouteTable {table:7,boundaries:vec![
+            Boundary {start:vec![],grant:Grant {owner:0,ownership_version:0}},
+            Boundary {start:b"m".to_vec(),grant:Grant {owner:upper_owner,ownership_version:version}},
+        ]}]}
+    }
+
+    #[test]
+    fn retained_snapshot_capture_never_relabels_old_grant() {
+        let mut cache = RoutingCache::new(vec![0,1]).ok().unwrap();
+        assert!(cache.capture(7,b"a").is_none());
+        assert_eq!(cache.install(snapshot(1,1)),Status::Ok);
+        let retained = cache.snapshot_arc().unwrap();
+        let old = retained.capture(7,b"z").unwrap();
+        assert_eq!(old.snapshot_version,1);
+        assert_eq!(old.grant.owner,1);
+        assert_eq!(cache.install(snapshot(2,0)),Status::Ok);
+        assert!(retained.capture(7,b"z") == Some(old));
+        let fresh = cache.capture(7,b"z").unwrap();
+        assert_eq!(fresh.snapshot_version,2);
+        assert!(fresh.grant == Grant {owner:0,ownership_version:2});
+        let unchanged = cache.capture(7,b"a").unwrap();
+        assert_eq!(unchanged.snapshot_version,2);
+        assert!(unchanged.grant == retained.capture(7,b"a").unwrap().grant);
+        assert!(cache.capture(8,b"a").is_none());
+        assert!(retained.capture_range(7,b"m",None) == Some(old));
+        assert!(retained.capture_range(7,b"",Some(b"m")).unwrap().grant ==
+            retained.capture(7,b"a").unwrap().grant);
+        assert!(retained.capture_range(7,b"a",Some(b"z")).is_none());
+        assert!(retained.capture_range(7,b"z",Some(b"a")).is_none());
+        assert!(retained.capture_range(8,b"",None).is_none());
+        let mut segments = retained.segments(7,b"",None).ok().unwrap();
+        assert!(segments.next().unwrap().grant == retained.capture(7,b"a").unwrap().grant);
+        assert!(segments.next().unwrap().grant == old.grant);
+        assert!(segments.next().is_none());
+        assert_eq!(retained.version,1);
+    }
+}

@@ -3,6 +3,7 @@
 use std::collections::{HashMap, hash_map::Entry};
 use vstd::prelude::*;
 use crate::bytes;
+use crate::types::NO_SNAPSHOT;
 
 verus! {
 pub const BEGIN: u32 = 20;
@@ -21,14 +22,14 @@ pub const IN_FLIGHT: u32 = 4;
 
 pub struct RequestView {
     pub kind: u32, pub client: u64, pub sequence: u64, pub session: u64,
-    pub table: u64, pub epoch: u64, pub owner: u32, pub physical_table: u32,
+    pub table: u64, pub ownership_version: u64, pub snapshot_version: u64, pub owner: u32, pub physical_table: u32,
     pub route_known: bool, pub fixed_coordinate: bool,
     pub coordinate: Seq<u8>, pub key: Seq<u8>, pub name: Seq<u8>, pub value: Seq<u8>,
 }
 #[derive(Debug, PartialEq, Eq)]
 pub struct Request {
     pub kind: u32, pub client: u64, pub sequence: u64, pub session: u64,
-    pub table: u64, pub epoch: u64, pub owner: u32, pub physical_table: u32,
+    pub table: u64, pub ownership_version: u64, pub snapshot_version: u64, pub owner: u32, pub physical_table: u32,
     pub route_known: bool, pub fixed_coordinate: bool,
     pub coordinate: Vec<u8>, pub key: Vec<u8>, pub name: Vec<u8>, pub value: Vec<u8>,
 }
@@ -36,7 +37,8 @@ impl View for Request {
     type V = RequestView;
     open spec fn view(&self) -> RequestView {
         RequestView { kind: self.kind, client: self.client, sequence: self.sequence,
-            session: self.session, table: self.table, epoch: self.epoch,
+            session: self.session, table: self.table, ownership_version: self.ownership_version,
+            snapshot_version: self.snapshot_version,
             owner: self.owner, physical_table: self.physical_table,
             route_known: self.route_known, fixed_coordinate: self.fixed_coordinate,
             coordinate: self.coordinate@, key: self.key@, name: self.name@, value: self.value@ }
@@ -47,7 +49,8 @@ impl Clone for Request {
         ensures out@ == self@,
     {
         Self { kind: self.kind, client: self.client, sequence: self.sequence,
-            session: self.session, table: self.table, epoch: self.epoch,
+            session: self.session, table: self.table, ownership_version: self.ownership_version,
+            snapshot_version: self.snapshot_version,
             owner: self.owner, physical_table: self.physical_table,
             route_known: self.route_known, fixed_coordinate: self.fixed_coordinate,
             coordinate: bytes::copy_bytes(self.coordinate.as_slice()),
@@ -90,7 +93,8 @@ impl Request {
         ensures out == (self@ == other@),
     {
         self.kind == other.kind && self.client == other.client && self.sequence == other.sequence
-            && self.session == other.session && self.table == other.table && self.epoch == other.epoch
+            && self.session == other.session && self.table == other.table && self.ownership_version == other.ownership_version
+            && self.snapshot_version == other.snapshot_version
             && self.owner == other.owner && self.physical_table == other.physical_table
             && self.route_known == other.route_known && self.fixed_coordinate == other.fixed_coordinate
             && equal_bytes(&self.coordinate, &other.coordinate) && equal_bytes(&self.key, &other.key)
@@ -468,6 +472,7 @@ pub open spec fn prepare_effect(before: ClientView, after: ClientView, intent: R
         ok && after == ClientView { pending: Some(RequestView {
             client: before.client, sequence: before.next.unwrap(),
             session: if intent.kind == BEGIN { before.next.unwrap() } else { intent.session },
+            snapshot_version: if intent.route_known {intent.snapshot_version} else {NO_SNAPSHOT},
             ..intent }), ..before }
     }
 }
@@ -475,9 +480,10 @@ pub open spec fn terminal(outcome: u32) -> bool {
     outcome == COMMITTED || outcome == ABORTED || outcome == REJECTED
 }
 pub open spec fn completion_effect(before: ClientView, after: ClientView,
-                                   client: u64, sequence: u64, outcome: u32, ok: bool) -> bool {
+                                   client: u64, sequence: u64, snapshot_version: u64, outcome: u32, ok: bool) -> bool {
     ok == (before.pending.is_some() && before.pending.unwrap().client == client
-        && before.pending.unwrap().sequence == sequence && terminal(outcome))
+        && before.pending.unwrap().sequence == sequence
+        && before.pending.unwrap().snapshot_version == snapshot_version && terminal(outcome))
         && (!ok ==> after == before)
         && (ok ==> after == ClientView { client: before.client, pending: None,
             next: if sequence == u64::MAX { None } else { Some((sequence + 1) as u64) } })
@@ -488,8 +494,8 @@ pub proof fn pending_client_request_retained(before: ClientView, after: ClientVi
     ensures after == before,
 {}
 pub proof fn unresolved_client_reply_retained(before: ClientView, after: ClientView,
-                                              client: u64, sequence: u64, outcome: u32, ok: bool)
-    requires completion_effect(before, after, client, sequence, outcome, ok), !terminal(outcome),
+                                              client: u64, sequence: u64, snapshot_version: u64, outcome: u32, ok: bool)
+    requires completion_effect(before, after, client, sequence, snapshot_version, outcome, ok), !terminal(outcome),
     ensures !ok, after == before,
 {}
 impl Client {
@@ -520,11 +526,12 @@ impl Client {
             let sequence = match self.next { Some(sequence) => sequence, None => return Err(()) };
             intent.client = self.client; intent.sequence = sequence;
             if intent.kind == BEGIN { intent.session = sequence; }
+            if !intent.route_known { intent.snapshot_version = NO_SNAPSHOT; }
             self.pending = Some(intent);
         }
         match &self.pending { Some(request) => Ok(request), None => Err(()) }
     }
-    pub fn set_route(&mut self, client: u64, sequence: u64, table: u64, epoch: u64,
+    pub fn set_route(&mut self, client: u64, sequence: u64, table: u64, ownership_version: u64, snapshot_version: u64,
                      owner: u32, physical_table: u32, fixed: bool,
                      coordinate: Vec<u8>) -> (out: Result<&Request, ()>)
         requires old(self).wf(),
@@ -535,7 +542,7 @@ impl Client {
                 && storage(old(self)@.pending.unwrap().kind) && !old(self)@.pending.unwrap().route_known),
             !out.is_ok() ==> final(self)@ == old(self)@,
             out.is_ok() ==> final(self)@ == (ClientView { pending: Some(RequestView {
-                table, epoch, owner, physical_table, fixed_coordinate: fixed,
+                table, ownership_version, snapshot_version, owner, physical_table, fixed_coordinate: fixed,
                 coordinate: coordinate@, route_known: true, ..old(self)@.pending.unwrap() }), ..old(self)@ }),
             out.is_ok() ==> final(self)@.pending == Some(out.unwrap()@),
     {
@@ -544,20 +551,22 @@ impl Client {
             Some(request) => {
                 if request.client != client || request.sequence != sequence || !request.storage()
                     || request.route_known { return Err(()); }
-                request.table = table; request.epoch = epoch; request.owner = owner;
+                request.table = table; request.ownership_version = ownership_version; request.owner = owner;
+                request.snapshot_version = snapshot_version;
                 request.physical_table = physical_table; request.fixed_coordinate = fixed;
                 request.coordinate = coordinate; request.route_known = true;
                 Ok(request)
             }
         }
     }
-    pub fn complete(&mut self, client: u64, sequence: u64, outcome: u32) -> (out: bool)
+    pub fn complete(&mut self, client: u64, sequence: u64, snapshot_version: u64, outcome: u32) -> (out: bool)
         requires old(self).wf(),
         ensures final(self).wf(),
-            completion_effect(old(self)@, final(self)@, client, sequence, outcome, out),
+            completion_effect(old(self)@, final(self)@, client, sequence, snapshot_version, outcome, out),
     {
         let pending = match &self.pending { Some(pending) => pending, None => return false };
-        if pending.client != client || pending.sequence != sequence { return false; }
+        if pending.client != client || pending.sequence != sequence
+            || pending.snapshot_version != snapshot_version { return false; }
         if matches!(outcome, COMMITTED | ABORTED | REJECTED) {
             self.next = if sequence == u64::MAX { None } else { Some(sequence + 1) };
             self.pending = None;
@@ -571,7 +580,7 @@ impl Client {
 mod tests {
     use super::*;
     fn request(sequence: u64, kind: u32) -> Request {
-        Request { kind, client: 1u64 << 63, sequence, session: 0, table: 1, epoch: 9,
+        Request { kind, client: 1u64 << 63, sequence, session: 0, table: 1, ownership_version: 9, snapshot_version: 12,
             owner: 1, physical_table: 7, route_known: true, fixed_coordinate: false,
             coordinate: b"k".to_vec(), key: b"k".to_vec(), name: b"t".to_vec(),
             value: b"v".to_vec() }
@@ -596,9 +605,24 @@ mod tests {
         assert!(matches!(gateway.admit(put.clone()), Admission::Execute));
         assert!(matches!(gateway.admit(put.clone()), Admission::Reply(r) if r.outcome == IN_FLIGHT));
         let mut changed = put;
-        changed.epoch += 1;
+        changed.ownership_version += 1;
         assert!(matches!(gateway.admit(changed), Admission::Reply(r) if r.outcome == REJECTED));
         assert!(matches!(gateway.admit(request(2, PUT)), Admission::Reply(r) if r.outcome == REJECTED));
+    }
+    #[test]
+    fn snapshot_relabeling_cannot_resume_or_replay() {
+        let put = request(1, PUT);
+        let mut gateway = Gateway::new(0);
+        assert!(matches!(gateway.admit(put.clone()), Admission::Execute));
+        gateway.finish(put.client, put.sequence,
+            Reply {status: 1,outcome: UNKNOWN,op_result: false,value: vec![]});
+        let mut changed = put.clone();
+        changed.snapshot_version += 1;
+        assert!(matches!(gateway.admit(changed.clone()), Admission::Reply(r) if r.outcome == REJECTED));
+        assert!(matches!(gateway.admit(put.clone()), Admission::Execute));
+        gateway.finish(put.client, put.sequence, Reply::success());
+        assert!(matches!(gateway.admit(changed), Admission::Reply(r) if r.outcome == REJECTED));
+        assert!(matches!(gateway.admit(put), Admission::Reply(r) if r.outcome == COMMITTED));
     }
     #[test]
     fn sdk_timeout_keeps_identity_and_exhaustion_never_wraps() {
@@ -606,10 +630,32 @@ mod tests {
         let intent = request(0, PUT);
         let first = client.prepare(intent.clone()).unwrap().clone();
         assert_eq!(client.prepare(intent).unwrap(), &first);
+        let mut refreshed = request(0,PUT);
+        refreshed.snapshot_version += 1;
+        refreshed.ownership_version += 1;
+        refreshed.owner += 1;
+        assert_eq!(client.prepare(refreshed).unwrap(), &first);
         assert!(client.prepare(request(0, DELETE)).is_err());
-        assert!(!client.complete(first.client, first.sequence, UNKNOWN));
-        assert!(client.complete(first.client, first.sequence, COMMITTED));
+        assert!(!client.complete(first.client, first.sequence, first.snapshot_version, UNKNOWN));
+        assert!(!client.complete(first.client, first.sequence, first.snapshot_version+1, COMMITTED));
+        assert_eq!(client.prepare(request(0,PUT)).unwrap(),&first);
+        assert!(client.complete(first.client, first.sequence, first.snapshot_version, COMMITTED));
         assert!(client.prepare(request(0, PUT)).is_err());
+    }
+    #[test]
+    fn discovery_binds_route_pair_once_and_never_invents_provenance() {
+        let mut client = Client::new(1u64 << 63,1).unwrap();
+        let mut intent = request(0,PUT);
+        intent.route_known = false;
+        let pending = client.prepare(intent.clone()).unwrap().clone();
+        assert_eq!(pending.snapshot_version,NO_SNAPSHOT);
+        let routed = client.set_route(pending.client,pending.sequence,7,19,23,2,9,false,vec![])
+            .unwrap().clone();
+        assert_eq!(routed.snapshot_version,23);
+        assert_eq!(routed.ownership_version,19);
+        assert_eq!(client.prepare(intent).unwrap(),&routed);
+        assert!(client.set_route(pending.client,pending.sequence,7,20,24,3,9,false,vec![]).is_err());
+        assert_eq!(client.prepare(request(0,PUT)).unwrap(),&routed);
     }
     #[test]
     fn session_control_replays_and_never_undoes_operations() {

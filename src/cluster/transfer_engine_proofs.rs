@@ -299,7 +299,7 @@ pub proof fn gateway_engine_committed(c:p::Constants,s:p::State,participant:u32,
         labels.contains_key(key),labels[key] == (request.table,(request.coordinate,request.key)),
         p::live_lease(s,master::nonce(TxnId { client:request.client,sequence:request.sequence }),key),
         s.sessions[master::nonce(TxnId { client:request.client,sequence:request.sequence })].held[key] ==
-            (p::Grant { owner:request.owner as int,epoch:request.epoch as nat }),
+            (p::Grant { owner:request.owner as int,ownership_version:request.ownership_version as nat }),
         atomic_bytes(s,master::nonce(TxnId { client:request.client,sequence:request.sequence }),before,after,labels,request_writes(request,reply,key)),
         s.logical.contains_key(key),s.physical.contains_key((request.owner as int,key)),
         engine_observed(s,before,labels),

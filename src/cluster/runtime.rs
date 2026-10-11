@@ -1,6 +1,6 @@
 //! Native orchestration. Checked actors own all ownership/lease transitions;
 //! this layer owns threads, fixed-peer transport and actual engine lifetimes.
-//! Live handoff is deliberately unavailable with replication or node restart.
+//! Optional metadata persistence permits inspection, never data serving, on restart.
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock, mpsc};
 use parking_lot::{Mutex, RwLock};
@@ -10,7 +10,11 @@ use std::time::Duration;
 use crate::catalog::{Catalog, Coordinates, TableKind, warehouse_coordinate};
 use crate::directory::RouteTable;
 use crate::host::{Completion, Host, Opener};
-use crate::migration::Coordinator;
+use crate::migration::Request;
+use crate::durable_coordinator::{Operation, Response};
+use crate::coordinator_publication::encode_publication;
+use crate::metadata::{Configuration as MetadataConfiguration, Event as MetadataEvent, ParticipantLog};
+use crate::metadata_coordinator::CoordinatorState;
 use crate::participant::{Cleanup, ControlResult, Participant};
 use crate::routing::{RoutingCache, Snapshot};
 use crate::routing_codec::{self, Writer};
@@ -20,15 +24,17 @@ use crate::types::*;
 use crate::warehouse::{HandleKey, WarehouseDirectory};
 use crate::wire::{self, checked};
 
-type Nonce = (u64,u64);
 type RawHandle = (u64,u32,bool);
-struct AdminRecord { generation: u64, request: Vec<u8> }
-struct Master { actor: Coordinator, requests: HashMap<Nonce,AdminRecord> }
+struct Master { actor: CoordinatorState }
 struct Local {
     participant: Participant,
+    // Retain the newest installed view for re-certification after local controls.
+    // One Arc per participant; no snapshot copy or certification on data requests.
+    snapshot: Arc<Snapshot>,
     store: EngineStore,
     plans: HashMap<u64,Vec<u8>>,
     ready: HashSet<u64>,
+    metadata: ParticipantLog,
 }
 struct Job { operation: u32, payload: Vec<u8>, completion: Completion }
 pub struct Node {
@@ -39,6 +45,8 @@ pub struct Node {
     data_ready: std::sync::atomic::AtomicU32,
     shutdown: Mutex<Option<(std::path::PathBuf,String)>>,
     quiescing: AtomicBool,
+    metadata_recovered: bool,
+    metadata_fenced: AtomicBool,
 }
 pub struct Runtime {
     pub catalog: RwLock<Catalog>,
@@ -146,7 +154,7 @@ impl Runtime {
     }
     pub fn warehouse_resolve(&self, table: u64, warehouse: u32, participant: u32) -> Result<(usize,Grant),Status> {
         self.handle_live(participant)?;
-        let grant = self.route(table,&warehouse_coordinate(warehouse))?;
+        let grant = self.route(table,&warehouse_coordinate(warehouse))?.grant;
         let mut directory = self.warehouses.lock();
         let d = directory.as_mut().ok_or(Status::NotFound)?;
         let selection = d.select(table,warehouse,participant,grant)?;
@@ -200,9 +208,9 @@ impl Runtime {
         }
         self.raw_handle(table,origin,true,self.node(origin)?.host)
     }
-    pub fn route(&self, table: u64, coordinate: &[u8]) -> Result<Grant,Status> {
+    pub fn route(&self, table: u64, coordinate: &[u8]) -> Result<RoutedGrant,Status> {
         if let Some(cache) = &*self.cache.lock() {
-            return cache.lookup(table,coordinate).ok_or(Status::NotFound);
+            return cache.capture(table,coordinate).ok_or(Status::NotFound);
         }
         // Bootstrap loading only. Once a cache exists it never falls back here.
         let catalog = self.catalog.read();
@@ -215,14 +223,31 @@ impl Runtime {
             if warehouse == 0 || warehouse > total { return Err(Status::Invalid); }
             (warehouse-1)/per_shard
         } else { t.initial_owner };
-        Ok(Grant { owner, epoch: 0 })
+        Ok(RoutedGrant { grant: Grant { owner, ownership_version: 0 }, snapshot_version: NO_SNAPSHOT })
     }
     pub fn snapshot(&self) -> Result<Arc<Snapshot>,Status> {
         self.cache.lock().as_ref().and_then(RoutingCache::snapshot_arc).ok_or(Status::NotFound)
     }
     fn install(&self, bytes: &[u8]) -> Result<(),Status> {
         let snapshot = routing_codec::decode(bytes,&self.members.read())?;
-        checked(self.cache.lock().as_mut().ok_or(Status::NotFound)?.install(snapshot))
+        let published = {
+            let mut cache = self.cache.lock();
+            let cache = cache.as_mut().ok_or(Status::NotFound)?;
+            let previous = cache.snapshot().map(|s|s.version);
+            let version = snapshot.version;
+            checked(cache.install(snapshot))?;
+            if previous == Some(version) { return Ok(()); }
+            cache.snapshot_arc().ok_or(Status::NotFound)?
+        };
+        // No cache or node-map guard crosses a participant wait: storage host
+        // callbacks can reenter node lookup, including while shutdown waits
+        // for the map's write lock. Fixed member IDs are dense from zero.
+        // The retained participant view prevents out-of-order installation.
+        let count = self.members.read().len() as u32;
+        for owner in 0..count {
+            if let Ok(node) = self.node(owner) { node.install_snapshot(&published); }
+        }
+        Ok(())
     }
     fn initial_tables(&self, nodes: u32) -> Result<Vec<RouteTable>,Status> {
         let catalog = self.catalog.read();
@@ -244,11 +269,12 @@ impl Runtime {
         }
         Ok(tables)
     }
-    fn hello(&self, nodes: u32, migration: bool) -> Result<Vec<u8>,Status> {
+    fn deployment_identity(&self, nodes: u32, migration: bool, metadata: bool) -> Result<Vec<u8>,Status> {
         let catalog = self.catalog.read();
         let dimensions = self.warehouses.lock().as_ref().map_or((0,0),WarehouseDirectory::dimensions);
         let mut w = Writer::new();
-        checked(w.write_u32(1))?; checked(w.write_u32(nodes))?; checked(w.write_u32(u32::from(migration)))?;
+        checked(w.write_u32(2))?; checked(w.write_u32(nodes))?; checked(w.write_u32(u32::from(migration)))?;
+        checked(w.write_u32(u32::from(metadata)))?;
         checked(w.write_u32(dimensions.0))?; checked(w.write_u32(dimensions.1))?;
         checked(w.write_u64(catalog.len() as u64))?;
         for i in 0..catalog.len() {
@@ -293,17 +319,31 @@ impl Runtime {
                 *cache = Some(initial);
             }
         }
+        let metadata = MetadataConfiguration::load(owner)?;
+        let identity = self.deployment_identity(count,migration,metadata.directory.is_some())?;
         let participant = Participant::new(owner,self.initial_tables(count)?)?;
+        let participant_log = ParticipantLog::new(owner,count,&identity,
+            metadata.path("participant").as_deref(),metadata.initialize)?;
         let master = if owner == 0 && count > 1 {
-            Some(Mutex::new(Master { actor: Coordinator::new(members,self.initial_tables(count)?)?, requests: HashMap::new() }))
+            Some(Mutex::new(Master { actor: CoordinatorState::new(members,self.initial_tables(count)?,
+                metadata.path("coordinator").as_deref(),metadata.initialize,&identity)? }))
         } else { None };
+        let metadata_recovered = participant_log.recovered()
+            || master.as_ref().is_some_and(|master|master.lock().actor.recovered());
+        // Persistent identity format stays unchanged. The live handshake also
+        // binds the new paired-routing request ABI, rejecting mixed old peers.
+        let mut hello = identity;
+        hello.extend_from_slice(&3u32.to_le_bytes());
         let (tx,rx) = mpsc::channel();
         let (migration_tx,migration_rx) = mpsc::channel();
-        let node = Arc::new(Node { owner, nodes: count, migration, host, hello: self.hello(count,migration)?,
-            local: Mutex::new(Local { participant,store: EngineStore {owner,host},plans: HashMap::new(),ready: HashSet::new() }),
+        let node = Arc::new(Node { owner, nodes: count, migration, host, hello,
+            local: Mutex::new(Local { participant,snapshot: self.snapshot()?,
+                store: EngineStore {owner,host},plans: HashMap::new(),
+                ready: HashSet::new(),metadata: participant_log }),
             master, queue: Mutex::new(Some(tx)), migrations: Mutex::new(Some(migration_tx)),
             threads: Mutex::new(Vec::new()), stopping: AtomicBool::new(false),
             shutdown: Mutex::new(None), quiescing: AtomicBool::new(false),
+            metadata_recovered, metadata_fenced: AtomicBool::new(false),
             data_ready: std::sync::atomic::AtomicU32::new(Status::Retry as u32) });
         let (ready_tx,ready_rx) = mpsc::sync_channel(1);
         let worker = Arc::clone(&node);
@@ -323,11 +363,21 @@ impl Runtime {
         match ready_rx.recv() { Ok(Ok(())) => {}, Ok(Err(e)) => { node.stop(); return Err(e); }, Err(_) => {node.stop();return Err(Status::Io);} }
         let running = Arc::clone(&node);
         let background = thread::Builder::new().name(format!("shard-control-{owner}")).spawn(move || {
+            if running.metadata_recovered {
+                eprintln!("Native sharding owner {owner}: retained metadata is inspection-only; primary rows and TP are not recovered");
+                return;
+            }
             // HELLO denotes completed local loading, not peer data readiness:
             // requiring ready in HELLO would make all peers wait on each other.
             if let Err(status) = running.await_loaders() {
                 running.data_ready.store(status as u32,Ordering::Release);
                 return;
+            }
+            if running.metadata_fenced.load(Ordering::Acquire) { return; }
+            {
+                let mut local = running.local.lock();
+                if running.metadata_gate().is_err() { return; }
+                Node::certify_local(&mut local);
             }
             running.data_ready.store(Status::Ok as u32,Ordering::Release);
             if running.master.is_some() {
@@ -361,15 +411,55 @@ impl Runtime {
     }
 }
 impl Node {
+    fn certify_local(local: &mut Local) {
+        let Local { participant,snapshot,.. } = local;
+        participant.certify_snapshot(snapshot);
+    }
+    fn install_snapshot(&self, snapshot: &Arc<Snapshot>) {
+        let mut local = self.local.lock();
+        if self.metadata_gate().is_err() || snapshot.version < local.snapshot.version { return; }
+        local.snapshot = Arc::clone(snapshot);
+        Self::certify_local(&mut local);
+    }
+    fn metadata_gate(&self) -> Result<(),Status> {
+        if self.metadata_fenced.load(Ordering::Acquire) { return Err(Status::Io); }
+        if self.metadata_recovered { return Err(Status::Retry); }
+        Ok(())
+    }
+    fn fence_metadata(&self) {
+        self.metadata_fenced.store(true,Ordering::Release);
+        self.data_ready.store(Status::Io as u32,Ordering::Release);
+    }
+    fn record(&self, local: &mut Local, event: MetadataEvent<'_>) -> Result<(),Status> {
+        let result = local.metadata.record(event);
+        if local.metadata.failed() {
+            local.participant.invalidate_snapshot();
+            self.fence_metadata();
+        }
+        result
+    }
+    fn execute_master(&self, master: &mut Master, operation: Operation) -> Result<Response,Status> {
+        let result = master.actor.execute(operation);
+        if master.actor.failed() { self.fence_metadata(); }
+        result
+    }
+    fn request(&self, request: Request) -> Result<(),Status> {
+        self.metadata_gate()?;
+        let mut master = self.master.as_ref().ok_or(Status::Invalid)?.lock();
+        self.execute_master(&mut master,Operation::Request(request)).map(|_|())
+    }
     fn stop(&self) {
         self.stopping.store(true,Ordering::Release);
         self.queue.lock().take(); self.migrations.lock().take();
         let threads = std::mem::take(&mut *self.threads.lock());
         for thread in threads { let _ = thread.join(); }
     }
-    pub fn ready(&self) -> bool { self.data_ready.load(Ordering::Acquire) == Status::Ok as u32 }
+    pub fn ready(&self) -> bool {
+        self.metadata_gate().is_ok() && self.data_ready.load(Ordering::Acquire) == Status::Ok as u32
+    }
     pub fn wait_ready(&self) -> Result<(),Status> {
         loop {
+            self.metadata_gate()?;
             if self.stopping.load(Ordering::Acquire) {return Err(Status::Retry);}
             let status = wire::status(self.data_ready.load(Ordering::Acquire));
             if status != Status::Retry {return checked(status);}
@@ -393,22 +483,50 @@ impl Node {
         }
     }
     pub fn lease_begin(&self, id: TxnId) -> Status {
+        if let Err(status) = self.metadata_gate() { return status; }
         let status = wire::status(self.data_ready.load(Ordering::Acquire));
         if status != Status::Ok {return status;}
-        self.local.lock().participant.begin(id)
+        let mut local = self.local.lock();
+        if let Err(status) = self.metadata_gate() { return status; }
+        let retained = local.metadata.enabled() && local.participant.needs_settlement(id);
+        let status = local.participant.begin(id);
+        if status != Status::Ok || retained { return status; }
+        self.record(&mut local,MetadataEvent::Begin(id)).err().unwrap_or(Status::Ok)
     }
-    pub fn lease_acquire(&self, id: TxnId, table: u64, coordinate: &[u8], grant: Grant) -> Status {
-        self.local.lock().participant.acquire(id,table,coordinate,grant)
+    pub fn lease_acquire(&self, id: TxnId, table: u64, coordinate: &[u8], route: RoutedGrant) -> Status {
+        if let Err(status) = self.metadata_gate() { return status; }
+        let mut local = self.local.lock();
+        if let Err(status) = self.metadata_gate() { return status; }
+        let grant = route.grant;
+        let retained = local.metadata.enabled() && local.participant.held(id,table,coordinate) == Some(grant);
+        let status = local.participant.acquire_routed(id,table,coordinate,route);
+        if status != Status::Ok || retained { return status; }
+        self.record(&mut local,MetadataEvent::Acquire {id,table,coordinate,grant}).err().unwrap_or(Status::Ok)
     }
-    pub fn lease_range(&self, id: TxnId, table: u64, lo: &[u8], hi: Option<&[u8]>, grant: Grant) -> Status {
-        self.local.lock().participant.acquire_range(id,table,lo,hi,grant)
+    pub fn lease_range(&self, id: TxnId, table: u64, lo: &[u8], hi: Option<&[u8]>, route: RoutedGrant) -> Status {
+        if let Err(status) = self.metadata_gate() { return status; }
+        let mut local = self.local.lock();
+        if let Err(status) = self.metadata_gate() { return status; }
+        let grant = route.grant;
+        let status = local.participant.acquire_range_routed(id,table,lo,hi,route);
+        if status != Status::Ok { return status; }
+        self.record(&mut local,MetadataEvent::Range {id,table,lo,hi,grant}).err().unwrap_or(Status::Ok)
     }
-    pub fn lease_finish(&self, id: TxnId) -> Status { self.local.lock().participant.finish(id) }
+    pub fn lease_finish(&self, id: TxnId) -> Status {
+        if let Err(status) = self.metadata_gate() { return status; }
+        let mut local = self.local.lock();
+        if let Err(status) = self.metadata_gate() { return status; }
+        let unchanged = local.metadata.enabled() && !local.participant.needs_settlement(id);
+        let status = local.participant.finish(id);
+        if status != Status::Ok || unchanged { return status; }
+        self.record(&mut local,MetadataEvent::Finish(id)).err().unwrap_or(Status::Ok)
+    }
     /// Called only after this owner's ordinary coordinators joined, with their
     /// terminal RPCs acknowledged. The existing benchmark shared filesystem
     /// retains receipts after a peer closes its control service. These files
     /// are lifecycle evidence, never ownership or migration authorization.
     pub fn quiesce(&self, directory: &str) -> Result<(),Status> {
+        self.metadata_gate()?;
         let root = std::path::Path::new(directory);
         if directory.is_empty() {return Err(Status::Invalid);}
         self.quiescing.store(true,Ordering::Release);
@@ -468,26 +586,34 @@ impl Node {
             // Native transfer jobs may still hold physical engine/peer borrows.
             // Close new admin admission, then let existing terminal decisions
             // collect both receipts while every data/control service is alive.
-            while self.master.as_ref().is_some_and(|master|master.lock().actor.active_plan().is_some()) {
+            while self.master.as_ref().is_some_and(|master|
+                master.lock().actor.actor().is_ok_and(|actor|actor.active_plan().is_some())) {
+                self.metadata_gate()?;
                 thread::sleep(Duration::from_millis(20));
             }
+            self.metadata_gate()?;
             std::fs::File::create(&control_done).map_err(|_|Status::Io)?;
         }
         wait_for_shutdown_marker(&control_done)
     }
     fn handle(&self, operation: u32, payload: Vec<u8>) -> Result<Vec<u8>,Status> {
-        if operation == wire::HELLO { return if payload.is_empty() {Ok(self.hello.clone())} else {Err(Status::Invalid)}; }
+        if operation == wire::HELLO {
+            self.metadata_gate()?;
+            return if payload.is_empty() {Ok(self.hello.clone())} else {Err(Status::Invalid)};
+        }
         if operation == wire::SHUTDOWN_TOKEN {
             if self.owner != 0 || !payload.is_empty() {return Err(Status::Invalid);}
             return self.shutdown.lock().as_ref().map(|(_,token)|token.as_bytes().to_vec())
                 .ok_or(Status::Retry);
         }
         if operation == wire::SNAPSHOT {
+            self.metadata_gate()?;
             if !payload.is_empty() || self.owner != 0 { return Err(Status::Invalid); }
-            return if let Some(master) = &self.master { wire::snapshot(&master.lock().actor) }
+            return if let Some(master) = &self.master { encode_publication(master.lock().actor.actor()?) }
                 else { routing_codec::encode(&*runtime().snapshot()?) };
         }
         if matches!(operation,wire::ADMIN_BEGIN | wire::ADMIN_POLL | wire::ADMIN_ABORT) { return self.admin(operation,payload); }
+        self.metadata_gate()?;
         if !self.migration { return Err(Status::Invalid); }
         if operation == wire::CAPTURE {
             let (plan,after,encoded) = wire::decode_capture(&payload,self.nodes)?;
@@ -518,82 +644,121 @@ impl Node {
             if local.ready.contains(&plan.generation) {
                 ControlResult { status: Status::Ok, certificate: Some(Certificate::Ready),cleanup: Cleanup::None }
             } else {
+                self.record(&mut local,MetadataEvent::Transfer {plan:&payload,cleanup:false,result:None})?;
                 let source = RemoteSource::new(self.host,&payload);
                 let Local {participant,store,..} = &mut *local;
-                transfer::execute_final(participant,store,&plan,&source)
+                let result = transfer::execute_final(participant,store,&plan,&source);
+                self.record(&mut local,MetadataEvent::Transfer {plan:&payload,cleanup:false,result:Some(&result)})?;
+                result
             }
         } else { return Err(Status::Invalid); };
         if result.status == Status::Ok {
-            local.plans.entry(plan.generation).or_insert(payload);
+            if operation != wire::FINAL_COPY {
+                self.record(&mut local,MetadataEvent::Control {operation,plan:&payload,result:&result})?;
+            }
             if result.certificate == Some(Certificate::Ready) {local.ready.insert(plan.generation);}
             if result.cleanup != Cleanup::None {
                 // Delivery already changed metadata. An I/O failure here is NOT
                 // a whole-handler stutter; its retained cleanup is resumed later.
+                self.record(&mut local,MetadataEvent::Transfer {plan:&payload,cleanup:true,result:None})?;
                 let Local {participant,store,..} = &mut *local;
                 result = transfer::execute_cleanup(participant,store,&plan);
+                self.record(&mut local,MetadataEvent::Transfer {plan:&payload,cleanup:true,result:Some(&result)})?;
             }
+            local.plans.entry(plan.generation).or_insert(payload);
         }
+        self.metadata_gate()?;
+        if operation != wire::DRAIN { Self::certify_local(&mut local); }
         checked(result.status)?;
         wire::encode_control(plan.generation,&result)
+    }
+    fn admin_result(&self, master: &mut Master, generation: u64, nonce: TxnId) -> Result<Vec<u8>,Status> {
+        // Terminal replies still require both live cleanup/activation receipts.
+        // On restart this is metadata inspection, not availability of those rows.
+        let active = master.actor.actor()?.active_plan().is_some_and(|p|p.generation == generation);
+        let outcome = if active {None} else {
+            match self.execute_master(master,Operation::Reply(nonce)) {
+                Ok(Response::Replied(outcome)) => Some(outcome),
+                Err(Status::Retry) => None,
+                Err(error) => return Err(error),
+                _ => return Err(Status::Invalid),
+            }
+        };
+        wire::encode_outcome(generation,outcome)
     }
     fn admin(&self, operation: u32, payload: Vec<u8>) -> Result<Vec<u8>,Status> {
         let master = self.master.as_ref().ok_or(Status::Invalid)?;
         if operation == wire::ADMIN_BEGIN {
             if !self.migration { return Err(Status::Invalid); }
             let request = wire::decode_begin(&payload)?;
-            let nonce = (request.nonce.client,request.nonce.sequence);
+            let table = {
+                let catalog = runtime().catalog.read();
+                catalog.by_name(&request.table_name).map(|table|(table.id,table.kind == TableKind::Governed))
+            };
             {
                 let mut master = master.lock();
-                if let Some(record) = master.requests.get(&nonce) {
-                    if record.request != payload {return Err(Status::Invalid);}
-                    let generation = record.generation;
-                    return admin_result(&mut master,generation,request.nonce);
+                if let Some(plan) = master.actor.actor()?.plan_for_nonce(request.nonce) {
+                    if plan.source != request.source || plan.destination != request.destination
+                        || table != Some((plan.range.table,true)) || plan.range.lo != request.lo || plan.range.hi != request.hi {
+                        return Err(Status::Invalid);
+                    }
+                    let generation = plan.generation;
+                    return self.admin_result(&mut master,generation,request.nonce);
                 }
-                if master.actor.active_plan().is_some() {return Err(Status::Busy);}
+                self.metadata_gate()?;
+                if master.actor.actor()?.active_plan().is_some() {return Err(Status::Busy);}
             }
-            // No self RPC on this worker. Every other fixed peer must have
-            // completed its real load and published the identical catalog.
+            let (table,governed) = table.ok_or(Status::NotFound)?;
+            if !governed { return Err(Status::Invalid); }
+            // Every other fixed peer must have completed its real load and
+            // agreed on the catalog and metadata mode. Recovery is not HELLO-ready.
             for owner in 1..self.nodes {
                 if self.host.peer(owner,wire::HELLO,&[])? != self.hello {return Err(Status::Invalid);}
             }
-            let table = {
-                let catalog = runtime().catalog.read();
-                let table = catalog.by_name(&request.table_name).ok_or(Status::NotFound)?;
-                if table.kind != TableKind::Governed {return Err(Status::Invalid);}
-                table.id
-            };
             let mut master = master.lock();
+            self.metadata_gate()?;
             if self.quiescing.load(Ordering::Acquire) {return Err(Status::Retry);}
-            let generation = master.actor.begin(request.nonce,request.source,request.destination,
-                KeyRange {table,lo:request.lo,hi:request.hi})?;
-            master.requests.insert(nonce,AdminRecord {generation,request:payload});
+            let generation = match self.execute_master(&mut master,Operation::Begin {
+                nonce:request.nonce,source:request.source,destination:request.destination,
+                range:KeyRange {table,lo:request.lo,hi:request.hi},
+            })? {
+                Response::Begun(generation) => generation,
+                _ => return Err(Status::Invalid),
+            };
             self.migrations.lock().as_ref().ok_or(Status::Retry)?.send(generation).map_err(|_|Status::Retry)?;
-            admin_result(&mut master,generation,request.nonce)
+            self.admin_result(&mut master,generation,request.nonce)
         } else {
             let nonce = wire::decode_nonce(&payload)?;
             let mut master = master.lock();
-            let generation = master.requests.get(&(nonce.client,nonce.sequence)).ok_or(Status::NotFound)?.generation;
-            if operation == wire::ADMIN_ABORT && master.actor.active_plan().is_some_and(|p|p.generation == generation)
-                && !matches!(master.actor.current_phase(),Some(Phase::Committed | Phase::Aborted)) {
-                checked(master.actor.abort())?;
+            let generation = master.actor.actor()?.plan_for_nonce(nonce).ok_or(Status::NotFound)?.generation;
+            if operation == wire::ADMIN_ABORT {
+                self.metadata_gate()?;
+                let actor = master.actor.actor()?;
+                if actor.active_plan().is_some_and(|p|p.generation == generation)
+                    && !matches!(actor.current_phase(),Some(Phase::Committed | Phase::Aborted)) {
+                    self.execute_master(&mut master,Operation::Request(Request::Abort))?;
+                }
             }
-            admin_result(&mut master,generation,nonce)
+            self.admin_result(&mut master,generation,nonce)
         }
     }
     fn abort_requested(&self) -> bool {
-        self.stopping.load(Ordering::Acquire) || self.master.as_ref().is_some_and(|m|
-            matches!(m.lock().actor.current_phase(),Some(Phase::Aborted)))
+        self.stopping.load(Ordering::Acquire) || self.metadata_gate().is_err()
+            || self.master.as_ref().is_some_and(|m|
+                m.lock().actor.actor().map_or(true,|actor|matches!(actor.current_phase(),Some(Phase::Aborted))))
     }
     fn control(&self, generation: u64, owner: u32, command: Command, operation: u32,
                encoded: &[u8], expected: Option<Certificate>) -> Result<(),Status> {
-        if !self.master.as_ref().ok_or(Status::Invalid)?.lock().actor.command_issued(generation,command) {
+        self.metadata_gate()?;
+        if !self.master.as_ref().ok_or(Status::Invalid)?.lock().actor.actor()?.command_issued(generation,command) {
             return Err(Status::Invalid);
         }
         let reply = self.host.peer(owner,operation,encoded)?;
         let certificate = wire::decode_certificate(&reply,generation)?;
         if certificate != expected {return Err(Status::Invalid);}
         if let Some(certificate) = certificate {
-            checked(self.master.as_ref().ok_or(Status::Invalid)?.lock().actor.receive(generation,owner,certificate))?;
+            let mut master = self.master.as_ref().ok_or(Status::Invalid)?.lock();
+            self.execute_master(&mut master,Operation::Receive {generation,owner,certificate})?;
         }
         Ok(())
     }
@@ -601,7 +766,7 @@ impl Node {
         let master = self.master.as_ref().ok_or(Status::Invalid)?;
         if self.abort_requested() {return Err(Status::Retry);}
         self.control(generation,destination,Command::Start,wire::command_operation(Command::Start),encoded,None)?;
-        checked(master.lock().actor.request_freeze())?;
+        self.request(Request::Freeze)?;
         self.control(generation,source,Command::Freeze,wire::command_operation(Command::Freeze),encoded,None)?;
         loop {
             if self.abort_requested() {return Err(Status::Retry);}
@@ -611,30 +776,34 @@ impl Node {
                 Err(error) => return Err(error),
             }
         }
-        checked(master.lock().actor.request_final())?;
+        self.request(Request::Final)?;
         self.control(generation,destination,Command::Final,wire::command_operation(Command::Final),encoded,None)?;
         self.control(generation,destination,Command::Final,wire::FINAL_COPY,encoded,Some(Certificate::Ready))?;
-        checked(master.lock().actor.request_retire())?;
+        self.request(Request::Retire)?;
         self.control(generation,source,Command::Retire,wire::command_operation(Command::Retire),encoded,Some(Certificate::Retired))?;
         let mut master = master.lock();
-        checked(master.actor.commit())?;
-        runtime().install(&wire::snapshot(&master.actor)?)
+        self.execute_master(&mut master,Operation::Request(Request::Commit))?;
+        runtime().install(&encode_publication(master.actor.actor()?)?)
     }
     fn drive(&self, generation: u64) {
         let Some(master) = &self.master else {return;};
         let prepared = (|| {
             let master = master.lock();
-            let plan = master.actor.plan(generation).ok_or(Status::NotFound)?;
+            let plan = master.actor.actor()?.plan(generation).ok_or(Status::NotFound)?;
             Ok::<_,Status>((plan.source,plan.destination,wire::encode_plan(plan)?))
         })();
         let Ok((source,destination,encoded)) = prepared else {return;};
         let result = self.drive_before_commit(generation,source,destination,&encoded);
+        // An uncertain metadata append is never converted into an Abort.
+        if self.metadata_gate().is_err() { return; }
         let command = {
             let mut master = master.lock();
-            if matches!(master.actor.current_phase(),Some(Phase::Committed)) {Command::Commit}
+            let Ok(actor) = master.actor.actor() else { return; };
+            if matches!(actor.current_phase(),Some(Phase::Committed)) {Command::Commit}
             else {
-                if result.is_err() && !matches!(master.actor.current_phase(),Some(Phase::Aborted)) {
-                    if master.actor.abort() != Status::Ok {return;}
+                if result.is_err() && !matches!(actor.current_phase(),Some(Phase::Aborted))
+                    && self.execute_master(&mut master,Operation::Request(Request::Abort)).is_err() {
+                    return;
                 }
                 Command::Abort
             }
@@ -642,13 +811,13 @@ impl Node {
         // Both decisions are retained. Abort source first to invalidate frozen
         // capture, then destination; commit never rolls back after publication.
         for (owner,certificate) in [(source,Certificate::SourceDone),(destination,Certificate::DestinationDone)] {
-            while !self.stopping.load(Ordering::Acquire) {
+            while !self.stopping.load(Ordering::Acquire) && self.metadata_gate().is_ok() {
                 if self.control(generation,owner,command,wire::command_operation(command),&encoded,Some(certificate)).is_ok() {break;}
                 thread::sleep(Duration::from_millis(20));
             }
-            if self.stopping.load(Ordering::Acquire) {return;}
+            if self.stopping.load(Ordering::Acquire) || self.metadata_gate().is_err() {return;}
         }
-        let _ = master.lock().actor.finish();
+        let _ = self.request(Request::Finish);
     }
 }
 fn wait_for_shutdown_marker(path: &std::path::Path) -> Result<(),Status> {
@@ -662,12 +831,6 @@ fn wait_for_shutdown_marker(path: &std::path::Path) -> Result<(),Status> {
         }
     }
 }
-fn admin_result(master: &mut Master, generation: u64, nonce: TxnId) -> Result<Vec<u8>,Status> {
-    // Report terminal completion only after both real cleanup/activation receipts.
-    let active = master.actor.active_plan().is_some_and(|p|p.generation == generation);
-    let outcome = if active {None} else {master.actor.reply(nonce)};
-    wire::encode_outcome(generation,outcome)
-}
 struct EngineStore { owner: u32, host: Host }
 impl EngineStore {
     fn materialize(&self, table: u64) -> Result<(),Status> {
@@ -680,6 +843,7 @@ impl EngineStore {
 // premise. Authority checks are NOT trusted here: transfer::GuardedStore owns
 // them and holds the same participant borrow throughout every physical effect.
 impl RawStore for EngineStore {
+    type Context = ();
     fn scan(&self, range: &KeyRange, after: Option<&Row>) -> Result<Option<Row>,Status> {
         self.materialize(range.table)?;
         self.host.scan(range,after)

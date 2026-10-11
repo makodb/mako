@@ -1,7 +1,7 @@
 //! Concrete install/iterator effects and their immutable model observations.
 #![cfg(verus_keep_ghost)]
 use vstd::prelude::*;
-use crate::types::{Boundary,Grant,Status};
+use crate::types::{Boundary,Grant,RoutedGrant,Status};
 use crate::bytes::{cmp_spec,cmp_laws,cmp_trans};
 use crate::directory::{RouteTable,wellformed,canonical,route,inside,proper,hi_view};
 use crate::directory_proofs::{equivalent_routes,selected_route};
@@ -21,6 +21,55 @@ pub proof fn cache_no_regression(before: Option<Snapshot>,after: Option<Snapshot
         before is Some && after is Some && before.unwrap().version == after.unwrap().version ==> before == after,
         status != Status::Ok ==> before == after,
 {}
+/// Accepted publications only: equal-version stutters never append an entry.
+pub open spec fn publication_history(history: Seq<Snapshot>) -> bool {
+    forall|i: int,j: int| 0 <= i < j < history.len() ==>
+        history[i].version < history[j].version
+}
+pub open spec fn captured_in_history(history: Seq<Snapshot>,table: u64,key: Seq<u8>,r: RoutedGrant) -> bool {
+    exists|i: int| 0 <= i < history.len() && captured(history[i],table,key,r)
+}
+pub open spec fn range_captured_in_history(history: Seq<Snapshot>,table: u64,lo: Seq<u8>,hi: Option<Seq<u8>>,r: RoutedGrant) -> bool {
+    exists|i: int| 0 <= i < history.len() && captured_range(history[i],table,lo,hi,r)
+}
+pub proof fn publication_append(history: Seq<Snapshot>,before: Option<Snapshot>,after: Option<Snapshot>,incoming: Snapshot,status: Status)
+    requires publication_history(history),
+        before == if history.len() == 0 {None} else {Some(history.last())},
+        install_effect(before,after,incoming,status), after != before,
+    ensures after == Some(incoming), publication_history(history.push(incoming)),
+{
+    assert forall|i: int,j: int| 0 <= i < j < history.push(incoming).len() implies
+        history.push(incoming)[i].version < history.push(incoming)[j].version by {
+        if j == history.len() {
+            if i < history.len()-1 { assert(history[i].version < history.last().version); }
+        } else { assert(history[i].version < history[j].version); }
+    }
+}
+pub proof fn equal_version_publication(history: Seq<Snapshot>,a: Snapshot,b: Snapshot)
+    requires publication_history(history), history.contains(a), history.contains(b), a.version == b.version,
+    ensures a == b,
+{
+    let i = choose|i: int| 0 <= i < history.len() && history[i] == a;
+    let j = choose|j: int| 0 <= j < history.len() && history[j] == b;
+    if i < j { assert(history[i].version < history[j].version); }
+    if j < i { assert(history[j].version < history[i].version); }
+}
+pub proof fn captured_at_equal_version(history: Seq<Snapshot>,certified: Snapshot,table: u64,key: Seq<u8>,r: RoutedGrant)
+    requires publication_history(history), history.contains(certified),
+        captured_in_history(history,table,key,r), r.snapshot_version == certified.version,
+    ensures captured(certified,table,key,r),
+{
+    let i = choose|i: int| 0 <= i < history.len() && captured(history[i],table,key,r);
+    equal_version_publication(history,history[i],certified);
+}
+pub proof fn range_captured_at_equal_version(history: Seq<Snapshot>,certified: Snapshot,table: u64,lo: Seq<u8>,hi: Option<Seq<u8>>,r: RoutedGrant)
+    requires publication_history(history), history.contains(certified),
+        range_captured_in_history(history,table,lo,hi,r), r.snapshot_version == certified.version,
+    ensures captured_range(certified,table,lo,hi,r),
+{
+    let i = choose|i: int| 0 <= i < history.len() && captured_range(history[i],table,lo,hi,r);
+    equal_version_publication(history,history[i],certified);
+}
 pub proof fn found_table(s: Snapshot,t: RouteTable,id: u64,key: Seq<u8>,nodes: Seq<u32>)
     requires snapshot_valid(s,nodes), t.table == id,
         exists|i: int| 0 <= i < s.tables.len() && t == s.tables@[i],
@@ -29,6 +78,20 @@ pub proof fn found_table(s: Snapshot,t: RouteTable,id: u64,key: Seq<u8>,nodes: S
     let i = choose|i: int| 0 <= i < s.tables.len() && t == s.tables@[i];
     let j = choose|j: int| 0 <= j < s.tables.len() && s.tables@[j].table == id;
     if i != j { assert(s.tables@[i].table != s.tables@[j].table); }
+}
+/// The iterator's actual full-cell route fact supplies every key in the range.
+pub proof fn segment_capture(s: Snapshot,t: RouteTable,segment: ScanSegment,nodes: Seq<u32>)
+    requires snapshot_valid(s,nodes),
+        exists|i: int| 0 <= i < s.tables.len() && t == s.tables@[i],
+        proper(segment.lo@,hi_view(segment.hi)),
+        forall|key: Seq<u8>| inside(key,segment.lo@,hi_view(segment.hi)) ==> route(t.boundaries@,key) == segment.grant,
+    ensures captured_range(s,t.table,segment.lo@,hi_view(segment.hi),
+        RoutedGrant {grant:segment.grant,snapshot_version:s.version}),
+{
+    assert forall|key: Seq<u8>| inside(key,segment.lo@,hi_view(segment.hi)) implies
+        snapshot_lookup(s,t.table,key) == Some(segment.grant) by {
+        found_table(s,t,t.table,key,nodes);
+    }
 }
 pub proof fn identical_observations(a: Snapshot,b: Snapshot,table: u64,key: Seq<u8>)
     requires same_snapshot(a,b),
@@ -52,7 +115,7 @@ pub proof fn identical_validity(a: Snapshot,b: Snapshot,nodes: Seq<u32>)
         let y = b.tables@[i].boundaries@;
         crate::directory_proofs::equivalent_shape(y,x);
         assert(y[0].start@ == x[0].start@);
-        assert forall|j: int| 0 <= j < y.len() implies nodes.contains(y[j].grant.owner) && y[j].grant.epoch <= b.version by {
+        assert forall|j: int| 0 <= j < y.len() implies nodes.contains(y[j].grant.owner) && y[j].grant.ownership_version <= b.version by {
             assert(y[j].grant == x[j].grant);
         }
     }
@@ -198,7 +261,7 @@ pub open spec fn observed(s: Snapshot,model: p::State,index: nat,
     index < model.directory.len() && tables.dom() == coordinates.dom()
     && model.directory[index as int].dom() == tables.dom()
     && forall|k: int| tables.contains_key(k) ==> match snapshot_lookup(s,tables[k],coordinates[k]) {
-        Some(grant) => model.directory[index as int][k] == (p::Grant { owner: grant.owner as int,epoch: grant.epoch as nat }),
+        Some(grant) => model.directory[index as int][k] == (p::Grant { owner: grant.owner as int,ownership_version: grant.ownership_version as nat }),
         None => false,
     }
 }
@@ -212,6 +275,6 @@ pub proof fn cache_install_refines(c: p::Constants,model: p::State,client: int,i
         after == Some(incoming),
         forall|k: int| tables.contains_key(k) ==> snapshot_lookup(after.unwrap(),tables[k],coordinates[k])
             == Some(Grant { owner: model.directory[index as int][k].owner as u32,
-                epoch: model.directory[index as int][k].epoch as u64 }),
+                ownership_version: model.directory[index as int][k].ownership_version as u64 }),
 {}
 } // verus!

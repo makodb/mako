@@ -33,7 +33,7 @@ impl AdmissionRecord {
                         && (status==Status::Ok && !b.open_hold(id,table,coordinate,g) ==>
                             b.local_meta(table,coordinate).is_some()
                                 && b.local_meta(table,coordinate).unwrap().role is Serving
-                                && b.local_meta(table,coordinate).unwrap().epoch==g.epoch)
+                                && b.local_meta(table,coordinate).unwrap().ownership_version==g.ownership_version)
                 },
                 AdmissionCall::Range { table,lo,hi } => {
                     (status==Status::Ok ==> z.lease_view()==b.lease_view()
@@ -43,7 +43,7 @@ impl AdmissionRecord {
                             forall|coordinate:Seq<u8>| crate::directory::inside(coordinate,lo,hi) ==>
                                 b.local_meta(table,coordinate).is_some()
                                     && b.local_meta(table,coordinate).unwrap().role is Serving
-                                    && b.local_meta(table,coordinate).unwrap().epoch==g.epoch)
+                                    && b.local_meta(table,coordinate).unwrap().ownership_version==g.ownership_version)
                 },
             }
     }

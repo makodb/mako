@@ -29,6 +29,7 @@ pub mod sharding_mirror;
 
 // Corrected handoff at an explicit successful-transaction engine boundary.
 pub mod sharding_placement;
+pub mod sharding_fast_path;
 pub mod sharding_transactions;
 pub mod sharding_witness;
 pub mod sharding_return_witness;

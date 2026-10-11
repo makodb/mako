@@ -22,7 +22,7 @@ namespace {
 struct CapturedRoute {
     uint64_t table;
     std::string coordinate;
-    MakoShardGrant grant;
+    MakoShardRoute route;
 };
 struct LeaseContext {
     MakoShardTxn transaction{};
@@ -60,6 +60,7 @@ void begin_local() {
             | uint64_t(uint32_t(TThread::id())),
         ++context.sequence};
     context.outgoing = {};
+    context.outgoing.snapshot_version = MAKO_SHARD_NO_SNAPSHOT;
     context.outgoing.transaction = context.transaction;
     context.received = false;
     context.routes.clear();
@@ -87,18 +88,28 @@ MakoShardBytes coordinate(const NativeTableBinding& b, const char* key, size_t n
     }
     return bytes(key, n);
 }
-// @unsafe - request caching retains the first full incarnation through reply retries.
-MakoShardGrant capture(uint64_t table, MakoShardBytes c) {
+// @unsafe - retains one snapshot/grant pair for the same canonical request.
+MakoShardRoute capture(uint64_t table, MakoShardBytes c) {
     for (const auto& route : context.routes) {
         if (route.table == table && route.coordinate.size() == c.len
             && (c.len == 0 || std::memcmp(route.coordinate.data(), c.data, c.len) == 0))
-            return route.grant;
+            return route.route;
     }
-    MakoShardGrant grant{};
-    require(mako_sharding_route(table, c, &grant));
+    MakoShardRoute route{};
+    require(mako_sharding_route(table, c, &route));
     context.routes.push(CapturedRoute{table,
-        std::string(reinterpret_cast<const char*>(c.data), c.len), grant});
-    return grant;
+        std::string(reinterpret_cast<const char*>(c.data), c.len), route});
+    return route;
+}
+// @unsafe - binds a transported capture to the actual native point operation.
+MakoShardRoute received_route(uint64_t table, MakoShardBytes c) {
+    if (c.len > sizeof(context.incoming.coordinate))
+        throw abstract_db::abstract_abort_exception();
+    if (context.incoming.table != table
+        || context.incoming.coordinate_length != c.len
+        || (c.len && std::memcmp(context.incoming.coordinate, c.data, c.len)))
+        throw abstract_db::abstract_abort_exception();
+    return {context.incoming.grant, context.incoming.snapshot_version};
 }
 }
 
@@ -141,16 +152,16 @@ MakoShardTxn sharding_transaction() { return context.transaction; }
 ShardingRequest sharding_outgoing_request() {
     return context.outgoing;
 }
-// @unsafe - exact local native registration and Serving/epoch check share one lock.
+// @unsafe - exact local native registration and Serving/ownership-version check share one lock.
 void sharding_require_point(int table, const char* key, size_t length) {
     if (!sharding_leases_enabled()) return;
     if (!context.open) begin_local();
     auto b = binding(table);
     if (b->kind != 0) return; // explicitly catalogued replicated/static table
     auto c = coordinate(*b, key, length);
-    auto grant = context.received ? context.incoming.grant : capture(b->table, c);
+    const auto route = context.received ? received_route(b->table, c) : capture(b->table, c);
     require(mako_sharding_lease_acquire(TThread::get_shard_index(), context.transaction,
-                                         b->table, c, grant));
+                                         b->table, c, route));
 }
 // @unsafe - protect the entire scan, including absent keys and ownership gaps.
 void sharding_require_scan(int table, const std::string& start,
@@ -177,15 +188,18 @@ void sharding_require_scan(int table, const std::string& start,
         hi = bytes(upper.data(), upper.size());
         has_hi = true;
     }
-    auto grant = context.received ? context.incoming.grant : capture(b->table, lo);
+    // A lower-endpoint point capture is not a homogeneous interval certificate.
+    // Full scans use sharding_require_interval with verified snapshot segments.
+    const auto grant = context.received ? context.incoming.grant : capture(b->table, lo).grant;
     require(mako_sharding_lease_acquire_range(TThread::get_shard_index(),
                                              context.transaction, b->table,
-                                             lo, has_hi, hi, grant));
+                                             lo, has_hi, hi, {grant, MAKO_SHARD_NO_SNAPSHOT}));
 }
 // @unsafe - disabled deployments retain legacy routing; native mode fails closed.
 int sharding_route_request(int table, const std::string& key, ShardingRequest& request) {
     if (!sharding_leases_enabled()) {
         request = {};
+        request.snapshot_version = MAKO_SHARD_NO_SNAPSHOT;
         context.outgoing = request;
         return compute_shard_for_key(table, key);
     }
@@ -195,17 +209,12 @@ int sharding_route_request(int table, const std::string& key, ShardingRequest& r
         auto c = coordinate(*b, key.data(), key.size());
         if (c.len > sizeof(request.coordinate)) return -1;
         request = {};
+        request.snapshot_version = MAKO_SHARD_NO_SNAPSHOT;
         request.transaction = context.transaction;
         if (b->kind == 0) {
-            if (context.received) {
-                if (context.incoming.table != b->table
-                    || context.incoming.coordinate_length != c.len
-                    || (c.len && std::memcmp(context.incoming.coordinate, c.data, c.len)))
-                    return -1;
-                request.grant = context.incoming.grant;
-            } else {
-                request.grant = capture(b->table, c);
-            }
+            const auto route = context.received ? received_route(b->table, c) : capture(b->table, c);
+            request.grant = route.grant;
+            request.snapshot_version = route.snapshot_version;
         } else {
             const int owner = compute_shard_for_key(table, key);
             if (owner < 0) return -1;
@@ -246,7 +255,7 @@ FullOrderedIndex* sharding_point_handle(int table, const char* key, size_t lengt
         MakoShardGrant ignored{};
         require(mako_sharding_warehouse_resolve(b->table, warehouse,
             TThread::get_shard_index(), &handle, &ignored));
-        if (ignored.owner != request.grant.owner || ignored.epoch != request.grant.epoch)
+        if (ignored.owner != request.grant.owner || ignored.ownership_version != request.grant.ownership_version)
             throw abstract_db::abstract_abort_exception();
     } else {
         require(mako_sharding_raw_proxy(b->table, TThread::get_shard_index(), &handle));
@@ -256,9 +265,10 @@ FullOrderedIndex* sharding_point_handle(int table, const char* key, size_t lengt
 }
 
 // @unsafe - serializes the exact snapshot segment, with no new route lookup.
-ShardingRequest sharding_request_with_grant(int table, const std::string& key,
-                                            MakoShardGrant grant) {
+ShardingRequest sharding_request_with_route(int table, const std::string& key,
+                                            MakoShardRoute route) {
     ShardingRequest request{};
+    request.snapshot_version = MAKO_SHARD_NO_SNAPSHOT;
     if (!sharding_leases_enabled()) return request;
     if (!context.open) begin_local();
     auto b = binding(table);
@@ -266,7 +276,8 @@ ShardingRequest sharding_request_with_grant(int table, const std::string& key,
     if (c.len > sizeof(request.coordinate))
         throw abstract_db::abstract_abort_exception();
     request.transaction = context.transaction;
-    request.grant = grant;
+    request.grant = route.grant;
+    request.snapshot_version = route.snapshot_version;
     request.table = b->table;
     request.fixed_coordinate = b->fixed_coordinate.is_some();
     request.coordinate_length = static_cast<uint16_t>(c.len);
@@ -283,18 +294,18 @@ void sharding_use_outgoing_request(const ShardingRequest& request) {
 }
 // @unsafe - interval registration is an atomic Rust participant operation.
 void sharding_require_interval(int table, const std::string& lo,
-                               const std::string* hi, MakoShardGrant grant) {
+                               const std::string* hi, MakoShardRoute route) {
     if (!sharding_leases_enabled()) return;
     if (!context.open) begin_local();
     auto b = binding(table);
     if (b->kind != 0) return;
     if (b->fixed_coordinate.is_some()) {
         require(mako_sharding_lease_acquire(TThread::get_shard_index(),
-            context.transaction, b->table, coordinate(*b, lo.data(), lo.size()), grant));
+            context.transaction, b->table, coordinate(*b, lo.data(), lo.size()), route));
     } else {
         require(mako_sharding_lease_acquire_range(TThread::get_shard_index(),
             context.transaction, b->table, bytes(lo.data(), lo.size()), hi != nullptr,
-            hi ? bytes(hi->data(), hi->size()) : MakoShardBytes{}, grant));
+            hi ? bytes(hi->data(), hi->size()) : MakoShardBytes{}, route));
     }
 }
 // @unsafe - dispatch owns the engine; refuse to replace a still-live transaction.

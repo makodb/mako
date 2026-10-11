@@ -13,7 +13,7 @@ pub use proofs::*;
 verus! {
 
 pub struct Cell { pub value: Option<int>, pub writer: int }
-pub struct Grant { pub owner: int, pub epoch: nat }
+pub struct Grant { pub owner: int, pub ownership_version: nat }
 pub struct Session { pub held: Map<int, Grant>, pub resolved: bool }
 pub struct Constants {
     pub keys: Set<int>, pub shards: Set<int>,
@@ -22,7 +22,7 @@ pub struct Constants {
 }
 pub enum Role { Empty, Serving, Frozen, Retired, Stage, Ready }
 pub struct Replica {
-    pub cell: Cell, pub role: Role, pub epoch: nat, pub fence: nat,
+    pub cell: Cell, pub role: Role, pub ownership_version: nat, pub fence: nat,
     pub terminal: bool, pub round: nat, pub covered: bool,
 }
 pub struct Plan {
@@ -76,8 +76,8 @@ pub open spec fn initial(c: Constants) -> State {
         physical: IMap::new(|p: (int,int)| c.shards.contains(p.0) && c.keys.contains(p.1),
             |p: (int,int)| Replica { cell: empty_cell(),
                 role: if c.owners[p.1] == p.0 { Role::Serving } else { Role::Empty },
-                epoch: 0, fence: 0, terminal: true, round: 0, covered: false }),
-        directory: seq![Map::new(c.keys, |k: int| Grant { owner: c.owners[k], epoch: 0 })],
+                ownership_version: 0, fence: 0, terminal: true, round: 0, covered: false }),
+        directory: seq![Map::new(c.keys, |k: int| Grant { owner: c.owners[k], ownership_version: 0 })],
         views: Map::empty(), next_generation: 1, active: None,
         plans: Map::empty(), phases: Map::empty(), commands: Set::empty(),
         certificates: Set::empty(), received: Set::empty(), packets: Set::empty(),
@@ -109,7 +109,7 @@ pub open spec fn admission(s: State, txn: int, key: int, grant: Grant) -> bool {
     s.sessions.contains_key(txn) && !s.sessions[txn].resolved
         && s.physical.contains_key((grant.owner,key))
         && replica(s,grant.owner,key).role is Serving
-        && replica(s,grant.owner,key).epoch == grant.epoch
+        && replica(s,grant.owner,key).ownership_version == grant.ownership_version
         && !s.sessions[txn].held.contains_key(key)
 }
 /// Local checks only: no participant consults the master's current decision.
@@ -119,7 +119,7 @@ pub open spec fn local_guard(s: State, g: nat, cmd: Command, owner: int) -> bool
         let r = replica(s,owner,k);
         match cmd {
             Command::Start => owner == p.dst && r.role is Empty && r.fence < g,
-            Command::Freeze => owner == p.src && r.role is Serving && r.epoch == p.old[k].epoch && r.fence < g,
+            Command::Freeze => owner == p.src && r.role is Serving && r.ownership_version == p.old[k].ownership_version && r.fence < g,
             Command::Final => owner == p.dst && r.role is Stage && r.fence == g && !r.terminal && r.round == 0,
             Command::Retire => owner == p.src && r.role is Frozen && r.fence == g && !r.terminal
                 && drained(s,p.keys),
@@ -132,7 +132,7 @@ pub open spec fn local_guard(s: State, g: nat, cmd: Command, owner: int) -> bool
 }
 pub open spec fn command_replica(r: Replica, g: nat, cmd: Command, source: bool) -> Replica {
     match cmd {
-        Command::Start => Replica { cell: empty_cell(), role: Role::Stage, epoch: g,
+        Command::Start => Replica { cell: empty_cell(), role: Role::Stage, ownership_version: g,
             fence: g, terminal: false, round: 0, covered: false },
         Command::Freeze => Replica { role: Role::Frozen, fence: g, terminal: false, ..r },
         Command::Final => Replica { round: 1, covered: false, ..r },
@@ -240,7 +240,7 @@ pub open spec fn apply(c: Constants, s: State, a: Action) -> State {
             State { phases: s.phases.insert(g,Phase::Committed), commands: s.commands.insert((g,Command::Commit)),
                 outcomes: s.outcomes.insert(p.nonce,Outcome { generation: g, committed: true }),
                 directory: s.directory.push(Map::new(directory(s).dom(), |k: int|
-                    if p.keys.contains(k) { Grant { owner: p.dst, epoch: g } } else { directory(s)[k] })), ..s }
+                    if p.keys.contains(k) { Grant { owner: p.dst, ownership_version: g } } else { directory(s)[k] })), ..s }
         },
         Action::Abort => { let g = s.active.unwrap(); State {
             phases: s.phases.insert(g,Phase::Aborted), commands: s.commands.insert((g,Command::Abort)),

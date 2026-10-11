@@ -159,7 +159,7 @@ impl WarehouseDirectory {
     }
 
     /// Select using the caller's current immutable route snapshot. The grant is
-    /// returned unchanged, including epoch; no owner-only cache is consulted.
+    /// returned unchanged, including ownership_version; no owner-only cache is consulted.
     pub fn select(&self, table: u64, warehouse: u32, participant: u32,
                   grant: Grant) -> (out: Result<Selection, Status>)
         ensures match out {

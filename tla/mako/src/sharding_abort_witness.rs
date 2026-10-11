@@ -27,7 +27,7 @@ pub open spec fn prepared() -> p::State {
         commands:Set::empty().insert((1nat,p::Command::Start)),
         packets:Set::empty().insert(old_packet()),
         physical:s.physical.insert((1int,0int),p::Replica { cell:old_packet().cell,
-            role:p::Role::Stage,epoch:1,fence:1,terminal:false,round:0,covered:true }),..s }
+            role:p::Role::Stage,ownership_version:1,fence:1,terminal:false,round:0,covered:true }),..s }
 }
 pub proof fn prepare(e: Execution) -> (z: Execution)
     requires valid(e),last(e).placement == seeded_placement()
@@ -179,7 +179,7 @@ pub open spec fn fresh() -> p::State {
     p::State { active:Some(2nat),next_generation:3,plans:s.plans.insert(2nat,plan(201)),
         phases:s.phases.insert(2nat,p::Phase::Copy),commands:s.commands.insert((2nat,p::Command::Start)),
         physical:s.physical.insert((1int,0int),p::Replica { cell:p::empty_cell(),
-            role:p::Role::Stage,epoch:2,fence:2,terminal:false,round:0,covered:false }),..s }
+            role:p::Role::Stage,ownership_version:2,fence:2,terminal:false,round:0,covered:false }),..s }
 }
 pub proof fn fresh_attempt(e: Execution) -> (z: Execution)
     requires valid(e),last(e).placement == read_complete()

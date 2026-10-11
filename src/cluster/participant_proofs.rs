@@ -17,7 +17,7 @@ pub open spec fn command(c: Command) -> p::Command {
         Command::Commit => p::Command::Commit, Command::Abort => p::Command::Abort }
 }
 pub open spec fn metadata(m: ReplicaMeta, r: p::Replica) -> bool {
-    r.role == role(m.role) && r.epoch == m.epoch && r.fence == m.fence
+    r.role == role(m.role) && r.ownership_version == m.ownership_version && r.fence == m.fence
         && r.terminal == m.terminal && r.round == m.round
 }
 
@@ -33,9 +33,9 @@ pub proof fn guard_matches(s: p::State, g: u64, c: Command, owner: int,
     requires
         forall|k: int| s.plans[g as nat].keys.contains(k) ==> metadata(local(k),p::replica(s,owner,k)),
         forall|k: int| s.plans[g as nat].keys.contains(k) ==> guard_spec(local(k),
-            s.plans[g as nat].old[k].epoch as u64,g,c,owner == s.plans[g as nat].src,
+            s.plans[g as nat].old[k].ownership_version as u64,g,c,owner == s.plans[g as nat].src,
             owner == s.plans[g as nat].dst,p::drained(s,s.plans[g as nat].keys)),
-        forall|k: int| s.plans[g as nat].keys.contains(k) ==> s.plans[g as nat].old[k].epoch <= u64::MAX,
+        forall|k: int| s.plans[g as nat].keys.contains(k) ==> s.plans[g as nat].old[k].ownership_version <= u64::MAX,
     ensures p::local_guard(s,g as nat,command(c),owner),
 {
     assert forall|k: int| s.plans[g as nat].keys.contains(k) implies {
@@ -43,7 +43,7 @@ pub proof fn guard_matches(s: p::State, g: u64, c: Command, owner: int,
         match command(c) {
             p::Command::Start => owner == s.plans[g as nat].dst && r.role is Empty && r.fence < g,
             p::Command::Freeze => owner == s.plans[g as nat].src && r.role is Serving
-                && r.epoch == s.plans[g as nat].old[k].epoch && r.fence < g,
+                && r.ownership_version == s.plans[g as nat].old[k].ownership_version && r.fence < g,
             p::Command::Final => owner == s.plans[g as nat].dst && r.role is Stage
                 && r.fence == g && !r.terminal && r.round == 0,
             p::Command::Retire => owner == s.plans[g as nat].src && r.role is Frozen
@@ -58,7 +58,7 @@ pub proof fn guard_matches(s: p::State, g: u64, c: Command, owner: int,
 
 pub open spec fn metadata_writes(owner: int, key: int, m: ReplicaMeta) -> Seq<log::Write> {
     seq![log::Write::ReplicaRole { owner,key,role:role(m.role) },
-        log::Write::ReplicaEpoch { owner,key,epoch:m.epoch as nat },
+        log::Write::ReplicaOwnershipVersion { owner,key,ownership_version:m.ownership_version as nat },
         log::Write::ReplicaFence { owner,key,fence:m.fence as nat },
         log::Write::ReplicaTerminal { owner,key,terminal:m.terminal },
         log::Write::ReplicaRound { owner,key,round:m.round as nat }]
@@ -91,14 +91,14 @@ pub proof fn native_guard_matches(actor: &crate::participant::Participant,
         forall|k: int| s.plans[plan.generation as nat].keys.contains(k) ==>
             metadata(actor.local_meta(plan.range.table,coordinates(k)).unwrap(),p::replica(s,actor.owner_view() as int,k)),
         forall|k: int| s.plans[plan.generation as nat].keys.contains(k) ==>
-            s.plans[plan.generation as nat].old[k].epoch == crate::directory::route(plan.old@,coordinates(k)).epoch,
+            s.plans[plan.generation as nat].old[k].ownership_version == crate::directory::route(plan.old@,coordinates(k)).ownership_version,
     ensures p::local_guard(s,plan.generation as nat,command(c),actor.owner_view() as int),
 {
     let local = |k: int| actor.local_meta(plan.range.table,coordinates(k)).unwrap();
     // Drain gates retirement only. New-owner transactions may already hold the
     // range during old-owner Commit cleanup; Abort may retain unresolved holders.
     assert forall|k:int| s.plans[plan.generation as nat].keys.contains(k) implies
-        guard_spec(local(k),s.plans[plan.generation as nat].old[k].epoch as u64,
+        guard_spec(local(k),s.plans[plan.generation as nat].old[k].ownership_version as u64,
             plan.generation,c,actor.owner_view() == plan.source,
             actor.owner_view() == plan.destination,p::drained(s,s.plans[plan.generation as nat].keys)) by {
         match c {

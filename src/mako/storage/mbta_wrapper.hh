@@ -240,7 +240,7 @@ inline void oi_mbta_scan_require(uint32_t status) {
 inline MakoScanIdentity oi_mbta_scan_identity(const mako::ShardingRequest& request) {
   if (request.coordinate_length > sizeof(request.coordinate))
     throw abstract_db::abstract_abort_exception();
-  return {request.transaction, request.grant, request.table,
+  return {request.transaction, request.grant, request.snapshot_version, request.table,
           uint32_t(request.fixed_coordinate),
           {request.coordinate, request.coordinate_length}};
 }
@@ -281,7 +281,8 @@ inline void oi_mbta_full_scan_page(mbta_table* table,
   const std::string lo(reinterpret_cast<const char*>(bounds.lo.data), bounds.lo.len);
   const std::string hi(reinterpret_cast<const char*>(bounds.hi.data), bounds.hi.len);
   mako::sharding_require_interval(table->get_table_id(), lo,
-                                  bounds.has_hi ? &hi : nullptr, request.grant);
+                                  bounds.has_hi ? &hi : nullptr,
+                                  {request.grant, request.snapshot_version});
   const auto start = bounds.has_cursor ? bounds.cursor
       : (bounds.reverse ? bounds.hi : bounds.lo);
   const mbta_table::Str begin(reinterpret_cast<const char*>(start.data), start.len);
@@ -378,17 +379,18 @@ struct oi_mbta_scan_dispatch {
   // @unsafe - one immutable native snapshot calls this bridge for each segment.
   static uint32_t segment(void* opaque, MakoShardBytes segment_lo,
                           uint32_t has_hi, MakoShardBytes segment_hi,
-                          MakoShardGrant grant) {
+                          MakoShardRoute route) {
     auto& self = *static_cast<oi_mbta_scan_dispatch*>(opaque);
     try {
       const auto low = self.fixed ? oi_mbta_scan_bytes(self.lo) : segment_lo;
       const auto high = self.fixed
           ? (self.hi ? oi_mbta_scan_bytes(*self.hi) : MakoShardBytes{}) : segment_hi;
       const uint32_t bounded = self.fixed ? self.hi != nullptr : has_hi;
-      auto request = mako::sharding_request_with_grant(
-          self.table->get_table_id(), std::string(), grant);
+      auto request = mako::sharding_request_with_route(
+          self.table->get_table_id(), std::string(), route);
       // Disabled routing still needs the physical destination on the wire.
-      request.grant = grant;
+      request.grant = route.grant;
+      request.snapshot_version = route.snapshot_version;
       const auto identity = oi_mbta_scan_identity(request);
       oi_mbta_scan_state state;
       oi_mbta_scan_require(mako_full_scan_new(
@@ -400,7 +402,7 @@ struct oi_mbta_scan_dispatch {
         size_t length = 0;
         oi_mbta_scan_require(mako_full_scan_request(state.scan, input,
                                                     sizeof(input), &length));
-        if (grant.owner == uint32_t(TThread::get_shard_index())) {
+        if (route.grant.owner == uint32_t(TThread::get_shard_index())) {
           mbta_table* local = oi_mbta_scan_local_table(self.table, request);
           response.resize(mako::full_scan_page_capacity);
           size_t response_length = 0;
@@ -474,7 +476,7 @@ inline void oi_mbta_full_scan(mbta_table* table, const std::string& start,
       : TThread::get_shard_index();
   if (owner < 0) throw abstract_db::abstract_abort_exception();
   status = oi_mbta_scan_dispatch::segment(&dispatch, oi_mbta_scan_bytes(lower),
-      has_upper, oi_mbta_scan_bytes(upper), {uint32_t(owner), 0});
+      has_upper, oi_mbta_scan_bytes(upper), {{uint32_t(owner), 0}, MAKO_SHARD_NO_SNAPSHOT});
   if (dispatch.exception) std::rethrow_exception(dispatch.exception);
   if (status == 2) throw abstract_db::abstract_abort_exception();
 }

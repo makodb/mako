@@ -2,7 +2,7 @@
 //!
 //! The retained session is also its client's non-wrapping sequence fence. A
 //! terminal empty session may be replaced, but its sequence may never be reused.
-//! The registry does not authorize Serving/epoch admission: the participant
+//! The registry does not authorize Serving/ownership_version admission: the participant
 //! checks that and registers under the same range lock. Existing open holders
 //! remain usable while the participant is Frozen. Reads and writes share this
 //! registry; resolving is terminal and releasing before resolution is forbidden.
@@ -10,7 +10,7 @@
 //! Every scope protects all logical rows at its table/coordinates, including
 //! absent rows and distinct warehouse aliases. Range endpoints are exact byte
 //! coordinates, with no hashed buckets or deadlines. Overlapping registrations
-//! in a session must agree on the full owner/epoch grant. Repeated contained
+//! in a session must agree on the full owner/ownership_version grant. Repeated contained
 //! acquisitions allocate nothing. Point release removes only an explicit point
 //! registration; an independently registered scan still protects that point.
 //! Finish resolves and clears all scopes while retaining the sequence fence.
@@ -237,6 +237,36 @@ impl SessionView {
             !self.holds[i].overlaps_range(range.table,range.lo@,range_hi(range))
     }
 }
+pub proof fn point_grant_unique(s:SessionView,table:u64,key:Seq<u8>,a:Grant,b:Grant)
+    requires s.wf(),s.has(table,key,a),s.has(table,key,b),
+    ensures a==b,
+{
+    let i=choose|i:int|0<=i<s.holds.len() && s.holds[i].contains(table,key) && s.holds[i].grant==a;
+    let j=choose|j:int|0<=j<s.holds.len() && s.holds[j].contains(table,key) && s.holds[j].grant==b;
+    common_point_overlaps(s.holds[i],s.holds[j],table,key);
+    if j<i{overlap_symmetric(s.holds[i],s.holds[j]);}
+}
+pub proof fn covered_range_contains_first(scope:ScopeView,table:u64,lo:Seq<u8>,hi:Option<Seq<u8>>)
+    requires scope.covers_range(table,lo,hi),
+    ensures scope.contains(table,lo),
+{
+    if let ScopeEndView::Range(Some(upper))=scope.end{
+        if let Some(inner)=hi{bytes::cmp_trans(lo,inner,upper);}
+    }
+}
+pub proof fn range_grant_unique(s:SessionView,table:u64,lo:Seq<u8>,hi:Option<Seq<u8>>,a:Grant,b:Grant)
+    requires s.wf(),s.has_range(table,lo,hi,a),s.has_range(table,lo,hi,b),
+    ensures a==b,
+{
+    bytes::cmp_laws(lo,lo);
+    let i=choose|i:int|0<=i<s.holds.len() && s.holds[i].covers_range(table,lo,hi) && s.holds[i].grant==a;
+    let j=choose|j:int|0<=j<s.holds.len() && s.holds[j].covers_range(table,lo,hi) && s.holds[j].grant==b;
+    covered_range_contains_first(s.holds[i],table,lo,hi);
+    covered_range_contains_first(s.holds[j],table,lo,hi);
+    assert(s.holds[i].contains(table,lo));assert(s.holds[j].contains(table,lo));
+    assert(s.has(table,lo,a));assert(s.has(table,lo,b));
+    point_grant_unique(s,table,lo,a,b);
+}
 
 enum ScopeEnd {
     Point,
@@ -439,7 +469,7 @@ impl Session {
         let ghost wanted = point_scope(table,coordinate@,grant);
         if let Some(i) = self.find(table,coordinate) {
             let h = &self.holds[i];
-            if h.grant.owner != grant.owner || h.grant.epoch != grant.epoch { return Status::Invalid; }
+            if h.grant.owner != grant.owner || h.grant.ownership_version != grant.ownership_version { return Status::Invalid; }
             proof {
                 assert forall|j: int| 0 <= j < before.holds.len() && before.holds[j].overlaps(wanted)
                     implies before.holds[j].grant == grant by {
@@ -478,7 +508,7 @@ impl Session {
             let h = &self.holds[i];
             proof { assert(before.holds[i as int] == h@); }
             if h.overlaps_range(table,lo,hi)
-                && (h.grant.owner != grant.owner || h.grant.epoch != grant.epoch) {
+                && (h.grant.owner != grant.owner || h.grant.ownership_version != grant.ownership_version) {
                 return Status::Invalid;
             }
             if h.covers_range(table,lo,hi) { covered = true; }
@@ -555,8 +585,11 @@ pub open spec fn point_release(before: SessionView, after: SessionView,
         && (status == Status::Ok <==> before.point_scoped(table,coordinate))
         && (status == Status::Ok || status == Status::NotFound)
         && (status != Status::Ok ==> after == before)
-        && forall|h: ScopeView| after.holds.contains(h) <==> before.holds.contains(h)
-            && !(h.table == table && h.coordinate == coordinate && h.end is Point)
+        && (forall|h: ScopeView| after.holds.contains(h) <==> before.holds.contains(h)
+            && !(h.table == table && h.coordinate == coordinate && h.end is Point))
+        && (status==Status::Ok ==> exists|i:int|0<=i<before.holds.len()
+            && before.holds[i].table==table && before.holds[i].coordinate==coordinate && before.holds[i].end is Point
+            && after.holds==before.holds.update(i,before.holds.last()).drop_last())
 }
 
 /// Swap-removal preserves every other registration, including overlapping
@@ -647,6 +680,15 @@ impl LeaseRegistry {
         ensures out.wf(), out@ == Map::<u64, SessionView>::empty(),
     {
         Self { sessions: HashMap::new() }
+    }
+    pub fn needs_settlement(&self,id:TxnId)->(yes:bool)
+        ensures yes==(self@.contains_key(id.client) && self@[id.client].sequence==id.sequence
+            && (!self@[id.client].terminal || self@[id.client].holds.len()>0)),
+    {
+        match self.sessions.get(&id.client){
+            Some(s)=>s.sequence==id.sequence && (!s.terminal || !s.holds.is_empty()),
+            None=>false,
+        }
     }
 
     pub fn begin(&mut self, id: TxnId) -> (out: Status)

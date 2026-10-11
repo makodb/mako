@@ -141,7 +141,7 @@ pub proof fn rank_order(s: Seq<Seq<u8>>, a: Seq<u8>, b: Seq<u8>)
 }
 /// A scalar shard names the complete grant, not only its owner. Equal encoded
 /// shards are therefore exactly the grants which native coalescing may merge.
-pub open spec fn grant_id(g: Grant) -> int { g.owner as int * 18446744073709551616 + g.epoch as int }
+pub open spec fn grant_id(g: Grant) -> int { g.owner as int * 18446744073709551616 + g.ownership_version as int }
 pub proof fn grant_id_injective(a: Grant,b: Grant)
     ensures grant_id(a) >= 0, (grant_id(a) == grant_id(b)) == (a == b),
 {
@@ -189,7 +189,7 @@ pub open spec fn image_hi(s: Seq<Seq<u8>>, hi: Option<Seq<u8>>) -> Option<int> {
 /// The executable move_range postcondition supplies the final premise. Any
 /// finite observation support can be extended with the old/new boundaries,
 /// endpoints and query by finite_support; no global byte-to-integer codec exists
-/// in this refinement. Epochs remain distinguished by grant_id.
+/// in this refinement. Ownership versions remain distinguished by grant_id.
 pub proof fn replacement_refines(p: Seq<Boundary>, q: Seq<Boundary>, s: Seq<Seq<u8>>,
     lo: Seq<u8>, hi: Option<Seq<u8>>, dst: Grant, k: Seq<u8>)
     requires wellformed(p), represented(p,s), represented(q,s), s.contains(lo), s.contains(k),

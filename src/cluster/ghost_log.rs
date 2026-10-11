@@ -24,7 +24,7 @@ pub enum Write {
     Replica { owner: int, key: int, value: p::Replica },
     ReplicaCell { owner: int, key: int, cell: p::Cell },
     ReplicaRole { owner: int, key: int, role: p::Role },
-    ReplicaEpoch { owner: int, key: int, epoch: nat },
+    ReplicaOwnershipVersion { owner: int, key: int, ownership_version: nat },
     ReplicaFence { owner: int, key: int, fence: nat },
     ReplicaTerminal { owner: int, key: int, terminal: bool },
     ReplicaRound { owner: int, key: int, round: nat },
@@ -60,7 +60,7 @@ pub open spec fn address(w: Write) -> Address {
     match w {
         Write::Logical { key, .. } => Address::Logical(key),
         Write::Replica { owner, key, .. } | Write::ReplicaCell { owner, key, .. }
-        | Write::ReplicaRole { owner, key, .. } | Write::ReplicaEpoch { owner, key, .. }
+        | Write::ReplicaRole { owner, key, .. } | Write::ReplicaOwnershipVersion { owner, key, .. }
         | Write::ReplicaFence { owner, key, .. } | Write::ReplicaTerminal { owner, key, .. }
         | Write::ReplicaRound { owner, key, .. } | Write::ReplicaCovered { owner, key, .. }
             => Address::Replica(owner, key),
@@ -114,7 +114,7 @@ pub open spec fn same_at(s: p::State, z: p::State, a: Address) -> bool {
 pub open spec fn writable(s: p::State, w: Write) -> bool {
     match w {
         Write::ReplicaCell { owner, key, .. } | Write::ReplicaRole { owner, key, .. }
-        | Write::ReplicaEpoch { owner, key, .. } | Write::ReplicaFence { owner, key, .. }
+        | Write::ReplicaOwnershipVersion { owner, key, .. } | Write::ReplicaFence { owner, key, .. }
         | Write::ReplicaTerminal { owner, key, .. } | Write::ReplicaRound { owner, key, .. }
         | Write::ReplicaCovered { owner, key, .. } => s.physical.contains_key((owner,key)),
         Write::Held { txn, .. } | Write::Release { txn, .. }
@@ -131,8 +131,8 @@ pub open spec fn apply_write(s: p::State, w: Write) -> p::State {
             p::Replica { cell, ..s.physical[(owner,key)] }), ..s },
         Write::ReplicaRole { owner, key, role } => p::State { physical: s.physical.insert((owner,key),
             p::Replica { role, ..s.physical[(owner,key)] }), ..s },
-        Write::ReplicaEpoch { owner, key, epoch } => p::State { physical: s.physical.insert((owner,key),
-            p::Replica { epoch, ..s.physical[(owner,key)] }), ..s },
+        Write::ReplicaOwnershipVersion { owner, key, ownership_version } => p::State { physical: s.physical.insert((owner,key),
+            p::Replica { ownership_version, ..s.physical[(owner,key)] }), ..s },
         Write::ReplicaFence { owner, key, fence } => p::State { physical: s.physical.insert((owner,key),
             p::Replica { fence, ..s.physical[(owner,key)] }), ..s },
         Write::ReplicaTerminal { owner, key, terminal } => p::State { physical: s.physical.insert((owner,key),

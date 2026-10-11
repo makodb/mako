@@ -50,3 +50,8 @@ python3 tla/mako/scripts/verify_controls.py --native
 python3 tla/mako/scripts/verify_controls.py
 cargo test --locked --manifest-path src/cluster/Cargo.toml \
     --target-dir "${BUILD_DIR:-build_docker}/native-sharding"
+# The conditional durable interface is exercised with real file persistence and
+# SIGKILL. This is not a claim that the unchanged production MBTA is durable.
+cargo run --locked --manifest-path src/cluster/Cargo.toml \
+    --target-dir "${BUILD_DIR:-build_docker}/native-sharding" \
+    --example durable_recovery

@@ -293,7 +293,7 @@ pub open spec fn interrupted_result(c: p::Constants, w: Interrupted, dst: int) -
     && dispatch(c,w.destination_recovered,Action::Commit { envelope: w.start }) == w.destination_recovered
     && forall|k: int| w.destination_recovered.core.placement.plans[1].keys.contains(k) ==> {
         let r = recovered_participant(w.destination_recovered,dst).replicas[k];
-        r.role is Stage && r.fence == 1 && r.epoch == 1 && !r.terminal
+        r.role is Stage && r.fence == 1 && r.ownership_version == 1 && !r.terminal
     }
 }
 pub proof fn initial_handoff_shape(c: p::Constants, nonce: int, src: int, dst: int, table: int, lo: int, hi: Option<int>)
@@ -310,7 +310,7 @@ pub proof fn initial_handoff_shape(c: p::Constants, nonce: int, src: int, dst: i
             && staged.active == Some(1) && staged.phases[1] is Copy
             && forall|k: int| staged.plans[1].keys.contains(k) ==> {
                 let r = p::replica(staged,dst,k);
-                r.role is Stage && r.fence == 1 && r.epoch == 1 && !r.terminal
+                r.role is Stage && r.fence == 1 && r.ownership_version == 1 && !r.terminal
             }
     },
 {
@@ -382,12 +382,12 @@ pub proof fn interrupted_from_ready_witness(c: p::Constants, ready: State,
     assert(w.destination_recovered.core.placement == staged);
     assert forall|k: int| w.destination_recovered.core.placement.plans[1].keys.contains(k) implies {
         let r = recovered_participant(w.destination_recovered,dst).replicas[k];
-        r.role is Stage && r.fence == 1 && r.epoch == 1 && !r.terminal
+        r.role is Stage && r.fence == 1 && r.ownership_version == 1 && !r.terminal
     } by {
         recovered_active_replica(c,w.destination_recovered,1,dst,k);
         assert(p::replica(staged,dst,k).role is Stage
             && p::replica(staged,dst,k).fence == 1
-            && p::replica(staged,dst,k).epoch == 1
+            && p::replica(staged,dst,k).ownership_version == 1
             && !p::replica(staged,dst,k).terminal);
     }
 }

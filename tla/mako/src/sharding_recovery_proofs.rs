@@ -723,13 +723,13 @@ pub proof fn theorem_durable_decision(c: p::Constants, s: State, g: nat)
         s.core.placement.active == Some(g) ==> {
             p::directory(s.core.placement).dom() == c.keys
             && forall|k: int| s.core.placement.plans[g].keys.contains(k) ==>
-                p::directory(s.core.placement)[k] == (p::Grant { owner: s.core.placement.plans[g].dst,epoch: g })
+                p::directory(s.core.placement)[k] == (p::Grant { owner: s.core.placement.plans[g].dst,ownership_version: g })
         }
 {
     authority_facts(c,s,Authority::Coordinator);
     assert(p::plan_inv(c,s.core.placement,g));
     assert forall|k: int| s.core.placement.plans[g].keys.contains(k) && s.core.placement.active == Some(g) implies
-        p::directory(s.core.placement)[k] == (p::Grant { owner: s.core.placement.plans[g].dst,epoch: g }) by {
+        p::directory(s.core.placement)[k] == (p::Grant { owner: s.core.placement.plans[g].dst,ownership_version: g }) by {
         assert(p::key_inv(c,s.core.placement,k));
     }
 }

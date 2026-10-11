@@ -1081,7 +1081,7 @@ add_library(mako_sharding_native STATIC IMPORTED GLOBAL)
 set_target_properties(mako_sharding_native PROPERTIES
     IMPORTED_LOCATION "${MAKO_SHARDING_ARCHIVE}"
     INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src"
-    INTERFACE_LINK_LIBRARIES "pthread;${CMAKE_DL_LIBS};m;rt;util")
+    INTERFACE_LINK_LIBRARIES "rocksdb;pthread;${CMAKE_DL_LIBS};m;rt;util")
 add_dependencies(mako_sharding_native mako_sharding_rust_build)
 
 # Explicit Docker-only proof gate; it verifies the production crate, not a

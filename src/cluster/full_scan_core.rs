@@ -12,8 +12,8 @@ verus! {
 pub const REQUEST_CAPACITY: usize = 1024;
 pub const PAGE_CAPACITY: usize = 8176;
 pub const PAGE_ROWS: usize = 64;
-pub const REQUEST_TAG: u32 = 0x3251534d;
-pub const PAGE_TAG: u32 = 0x3150534d;
+pub const REQUEST_TAG: u32 = 0x3351534d;
+pub const PAGE_TAG: u32 = 0x3250534d;
 
 pub struct Request {
     pub lo: Vec<u8>,
@@ -195,14 +195,14 @@ pub fn read_blob<'a>(reader: &mut Reader<'a>) -> (out: Result<&'a [u8],Status>)
     Ok(bytes)
 }
 impl Request {
-    pub fn validate_page<'a>(&self, bytes: &'a [u8]) -> (out: Result<PageSummary<'a>,Status>)
+    pub fn validate_page<'a>(&self, bytes: &'a [u8],snapshot_version: u64) -> (out: Result<PageSummary<'a>,Status>)
         requires self.wf(),
         ensures match out {
             Ok(page) => page.count <= PAGE_ROWS && (page.count == 0 ==> page.eof)
                 && bytes.len() <= PAGE_CAPACITY
                 && page.count == page.rows@.len() && ordered(self,page.rows@)
                 && bytes@ == word32(PAGE_TAG)+word32(page.count as u32)
-                    +word32(if page.eof {1u32} else {0u32})+rows_wire(page.rows@)
+                    +word32(if page.eof {1u32} else {0u32})+word64(snapshot_version)+rows_wire(page.rows@)
                 && match page.last {
                     Some(last) => page.count > 0 && last@ == page.rows@.last().key,
                     None => page.count == 0,
@@ -211,21 +211,26 @@ impl Request {
         },
     {
         hide(word32);
+        hide(word64);
         hide(blob);
         hide(cmp_spec);
-        if bytes.len() < 12 || bytes.len() > PAGE_CAPACITY { return Err(Status::Invalid); }
+        if bytes.len() < 20 || bytes.len() > PAGE_CAPACITY { return Err(Status::Invalid); }
         let mut reader = Reader::new(bytes);
         let tag = match reader.read_u32() { Ok(v) => v, Err(e) => return Err(e) };
         if tag != PAGE_TAG { return Err(Status::Invalid); }
         let count = match reader.read_u32() { Ok(v) => v as usize, Err(e) => return Err(e) };
         let eof = match reader.read_u32() { Ok(v) => v, Err(e) => return Err(e) };
+        let captured_version = match reader.read_u64() { Ok(v) => v, Err(e) => return Err(e) };
+        if captured_version != snapshot_version { return Err(Status::Invalid); }
         if count > PAGE_ROWS || eof > 1 || (count == 0 && eof == 0) { return Err(Status::Invalid); }
-        let ghost header = word32(PAGE_TAG)+word32(count as u32)+word32(eof);
+        let ghost header = word32(PAGE_TAG)+word32(count as u32)+word32(eof)+word64(snapshot_version);
         proof {
             crate::routing_codec_proofs::join_wire(bytes@,0,4,8,word32(tag),word32(count as u32));
             crate::routing_codec_proofs::join_wire(bytes@,0,8,12,
                 word32(tag)+word32(count as u32),word32(eof));
-            assert(bytes@.take(12) =~= header);
+            crate::routing_codec_proofs::join_wire(bytes@,0,12,20,
+                word32(tag)+word32(count as u32)+word32(eof),word64(snapshot_version));
+            assert(bytes@.take(20) =~= header);
         }
         let ghost mut rows: Seq<WireRow> = Seq::empty();
         let mut last: Option<&'a [u8]> = None;
@@ -233,9 +238,9 @@ impl Request {
         while i < count
             invariant reader.wf(), reader.data() == bytes@,
                 i <= count <= PAGE_ROWS, eof <= 1, count == 0 ==> eof == 1,
-                header == word32(PAGE_TAG)+word32(count as u32)+word32(eof),
+                header == word32(PAGE_TAG)+word32(count as u32)+word32(eof)+word64(snapshot_version),
                 rows.len() == i, ordered(self,rows), self.wf(),
-                reader.position() >= 12,
+                reader.position() >= 20,
                 bytes@.take(reader.position() as int) == header+rows_wire(rows),
                 match last { Some(key) => i > 0 && key@ == rows.last().key, None => i == 0 },
             decreases count-i,
@@ -281,12 +286,12 @@ impl Request {
 pub struct PageBudget { pub count: usize, pub used: usize, pub more: bool }
 impl PageBudget {
     pub open spec fn wf(&self) -> bool {
-        self.count <= PAGE_ROWS && 12 <= self.used <= PAGE_CAPACITY
+        self.count <= PAGE_ROWS && 20 <= self.used <= PAGE_CAPACITY
         && (self.more ==> self.count > 0)
     }
     pub fn new() -> (out: Self)
-        ensures out.wf(), out.count == 0, out.used == 12, !out.more,
-    { Self {count: 0,used: 12,more: false} }
+        ensures out.wf(), out.count == 0, out.used == 20, !out.more,
+    { Self {count: 0,used: 20,more: false} }
     // NotFound means a real lookahead row did not fit, never end of range.
     pub fn reserve(&mut self,key: usize,value: usize) -> (status: Status)
         requires old(self).wf(),
@@ -329,24 +334,27 @@ impl Completion {
 pub struct ScanIdentity {
     pub transaction: TxnId,
     pub grant: Grant,
+    pub snapshot_version: u64,
     pub table: u64,
     pub fixed_coordinate: bool,
     pub coordinate: Vec<u8>,
 }
 pub open spec fn same_identity(a: ScanIdentity,b: ScanIdentity) -> bool {
     a.transaction == b.transaction && a.grant == b.grant && a.table == b.table
+    && a.snapshot_version == b.snapshot_version
     && a.fixed_coordinate == b.fixed_coordinate && a.coordinate@ == b.coordinate@
 }
 impl ScanIdentity {
     pub open spec fn wf(&self) -> bool {
         self.coordinate.len() <= 64 && (self.fixed_coordinate || self.coordinate.len() == 0)
     }
-    pub fn matches(&self,transaction: TxnId,grant: Grant,table: u64,fixed: bool,coordinate: &[u8]) -> (yes: bool)
+    pub fn matches(&self,transaction: TxnId,grant: Grant,snapshot_version: u64,table: u64,fixed: bool,coordinate: &[u8]) -> (yes: bool)
         ensures yes == (self.transaction == transaction && self.grant == grant && self.table == table
-            && self.fixed_coordinate == fixed && self.coordinate@ == coordinate@),
+            && self.snapshot_version == snapshot_version && self.fixed_coordinate == fixed && self.coordinate@ == coordinate@),
     {
         self.transaction.client == transaction.client && self.transaction.sequence == transaction.sequence
-        && self.grant.owner == grant.owner && self.grant.epoch == grant.epoch && self.table == table
+        && self.grant.owner == grant.owner && self.grant.ownership_version == grant.ownership_version && self.table == table
+        && self.snapshot_version == snapshot_version
         && self.fixed_coordinate == fixed && compare(&self.coordinate,coordinate) == 0
     }
 }
@@ -367,7 +375,8 @@ pub open spec fn request_flags(r: BoundRequest) -> u32 {
 pub open spec fn request_wire(r: BoundRequest) -> Seq<u8> {
     word32(REQUEST_TAG)+word32(request_flags(r))
     +word64(r.identity.transaction.client)+word64(r.identity.transaction.sequence)
-    +word32(r.identity.grant.owner)+word64(r.identity.grant.epoch)+word64(r.identity.table)
+    +word32(r.identity.grant.owner)+word64(r.identity.grant.ownership_version)+word64(r.identity.table)
+    +word64(r.identity.snapshot_version)
     +blob(r.identity.coordinate@)+blob(r.bounds.lo@)
     +blob(option_payload(r.bounds.hi))+blob(option_payload(r.bounds.cursor))
 }
@@ -379,12 +388,13 @@ pub proof fn request_wire_sizes(r: BoundRequest)
         word64(r.identity.transaction.client).len() == 8,
         word64(r.identity.transaction.sequence).len() == 8,
         word32(r.identity.grant.owner).len() == 4,
-        word64(r.identity.grant.epoch).len() == 8, word64(r.identity.table).len() == 8,
+        word64(r.identity.grant.ownership_version).len() == 8, word64(r.identity.table).len() == 8,
+        word64(r.identity.snapshot_version).len() == 8,
         blob(r.identity.coordinate@).len() == 8+r.identity.coordinate.len(),
         blob(r.bounds.lo@).len() == 8+r.bounds.lo.len(),
         blob(option_payload(r.bounds.hi)).len() == 8+option_payload(r.bounds.hi).len(),
         blob(option_payload(r.bounds.cursor)).len() == 8+option_payload(r.bounds.cursor).len(),
-        request_wire(r).len() == 76+r.identity.coordinate.len()+r.bounds.lo.len()
+        request_wire(r).len() == 84+r.identity.coordinate.len()+r.bounds.lo.len()
             +option_payload(r.bounds.hi).len()+option_payload(r.bounds.cursor).len(),
 {}
 pub proof fn request_wire_layout(r: BoundRequest)
@@ -394,12 +404,13 @@ pub proof fn request_wire_layout(r: BoundRequest)
         crate::routing_codec_proofs::wire_prefix(request_wire(r),8,word64(r.identity.transaction.client)),
         crate::routing_codec_proofs::wire_prefix(request_wire(r),16,word64(r.identity.transaction.sequence)),
         crate::routing_codec_proofs::wire_prefix(request_wire(r),24,word32(r.identity.grant.owner)),
-        crate::routing_codec_proofs::wire_prefix(request_wire(r),28,word64(r.identity.grant.epoch)),
+        crate::routing_codec_proofs::wire_prefix(request_wire(r),28,word64(r.identity.grant.ownership_version)),
         crate::routing_codec_proofs::wire_prefix(request_wire(r),36,word64(r.identity.table)),
-        crate::routing_codec_proofs::wire_prefix(request_wire(r),44,blob(r.identity.coordinate@)),
-        crate::routing_codec_proofs::wire_prefix(request_wire(r),(52+r.identity.coordinate.len()) as nat,blob(r.bounds.lo@)),
-        crate::routing_codec_proofs::wire_prefix(request_wire(r),(60+r.identity.coordinate.len()+r.bounds.lo.len()) as nat,blob(option_payload(r.bounds.hi))),
-        crate::routing_codec_proofs::wire_prefix(request_wire(r),(68+r.identity.coordinate.len()+r.bounds.lo.len()+option_payload(r.bounds.hi).len()) as nat,blob(option_payload(r.bounds.cursor))),
+        crate::routing_codec_proofs::wire_prefix(request_wire(r),44,word64(r.identity.snapshot_version)),
+        crate::routing_codec_proofs::wire_prefix(request_wire(r),52,blob(r.identity.coordinate@)),
+        crate::routing_codec_proofs::wire_prefix(request_wire(r),(60+r.identity.coordinate.len()) as nat,blob(r.bounds.lo@)),
+        crate::routing_codec_proofs::wire_prefix(request_wire(r),(68+r.identity.coordinate.len()+r.bounds.lo.len()) as nat,blob(option_payload(r.bounds.hi))),
+        crate::routing_codec_proofs::wire_prefix(request_wire(r),(76+r.identity.coordinate.len()+r.bounds.lo.len()+option_payload(r.bounds.hi).len()) as nat,blob(option_payload(r.bounds.cursor))),
 {
     hide(word32); hide(word64); hide(blob);
     request_wire_sizes(r);
@@ -409,26 +420,28 @@ pub proof fn request_wire_layout(r: BoundRequest)
     assert(wire.subrange(8,16) =~= word64(r.identity.transaction.client));
     assert(wire.subrange(16,24) =~= word64(r.identity.transaction.sequence));
     assert(wire.subrange(24,28) =~= word32(r.identity.grant.owner));
-    assert(wire.subrange(28,36) =~= word64(r.identity.grant.epoch));
+    assert(wire.subrange(28,36) =~= word64(r.identity.grant.ownership_version));
     assert(wire.subrange(36,44) =~= word64(r.identity.table));
-    let lo = 52+r.identity.coordinate.len();
+    assert(wire.subrange(44,52) =~= word64(r.identity.snapshot_version));
+    let lo = 60+r.identity.coordinate.len();
     let hi = lo+8+r.bounds.lo.len();
     let cursor = hi+8+option_payload(r.bounds.hi).len();
-    assert(wire.subrange(44,lo) =~= blob(r.identity.coordinate@));
+    assert(wire.subrange(52,lo) =~= blob(r.identity.coordinate@));
     assert(wire.subrange(lo,hi) =~= blob(r.bounds.lo@));
     assert(wire.subrange(hi,cursor) =~= blob(option_payload(r.bounds.hi)));
     assert(wire.subrange(cursor,wire.len() as int) =~= blob(option_payload(r.bounds.cursor)));
 }
 pub proof fn request_from_slices(r: BoundRequest,data: Seq<u8>,lo: nat,hi: nat,cursor: nat)
-    requires 44 <= lo <= hi <= cursor <= data.len(),
+    requires 52 <= lo <= hi <= cursor <= data.len(),
         data.subrange(0,4) == word32(REQUEST_TAG),
         data.subrange(4,8) == word32(request_flags(r)),
         data.subrange(8,16) == word64(r.identity.transaction.client),
         data.subrange(16,24) == word64(r.identity.transaction.sequence),
         data.subrange(24,28) == word32(r.identity.grant.owner),
-        data.subrange(28,36) == word64(r.identity.grant.epoch),
+        data.subrange(28,36) == word64(r.identity.grant.ownership_version),
         data.subrange(36,44) == word64(r.identity.table),
-        data.subrange(44,lo as int) == blob(r.identity.coordinate@),
+        data.subrange(44,52) == word64(r.identity.snapshot_version),
+        data.subrange(52,lo as int) == blob(r.identity.coordinate@),
         data.subrange(lo as int,hi as int) == blob(r.bounds.lo@),
         data.subrange(hi as int,cursor as int) == blob(option_payload(r.bounds.hi)),
         data.subrange(cursor as int,data.len() as int) == blob(option_payload(r.bounds.cursor)),
@@ -443,11 +456,13 @@ pub proof fn request_from_slices(r: BoundRequest,data: Seq<u8>,lo: nat,hi: nat,c
     let prefix = prefix+word64(r.identity.transaction.sequence);
     crate::routing_codec_proofs::join_wire(data,0,24,28,prefix,word32(r.identity.grant.owner));
     let prefix = prefix+word32(r.identity.grant.owner);
-    crate::routing_codec_proofs::join_wire(data,0,28,36,prefix,word64(r.identity.grant.epoch));
-    let prefix = prefix+word64(r.identity.grant.epoch);
+    crate::routing_codec_proofs::join_wire(data,0,28,36,prefix,word64(r.identity.grant.ownership_version));
+    let prefix = prefix+word64(r.identity.grant.ownership_version);
     crate::routing_codec_proofs::join_wire(data,0,36,44,prefix,word64(r.identity.table));
     let prefix = prefix+word64(r.identity.table);
-    crate::routing_codec_proofs::join_wire(data,0,44,lo,prefix,blob(r.identity.coordinate@));
+    crate::routing_codec_proofs::join_wire(data,0,44,52,prefix,word64(r.identity.snapshot_version));
+    let prefix = prefix+word64(r.identity.snapshot_version);
+    crate::routing_codec_proofs::join_wire(data,0,52,lo,prefix,blob(r.identity.coordinate@));
     let prefix = prefix+blob(r.identity.coordinate@);
     crate::routing_codec_proofs::join_wire(data,0,lo,hi,prefix,blob(r.bounds.lo@));
     let prefix = prefix+blob(r.bounds.lo@);
@@ -536,7 +551,7 @@ impl BoundRequest {
             || (!self.identity.fixed_coordinate && self.identity.coordinate.len() != 0) {
             return Err(Status::Invalid);
         }
-        let mut length = 76usize+self.identity.coordinate.len();
+        let mut length = 84usize+self.identity.coordinate.len();
         if self.bounds.lo.len() > REQUEST_CAPACITY-length {return Err(Status::Exhausted);}
         length += self.bounds.lo.len();
         if hi.len() > REQUEST_CAPACITY-length {return Err(Status::Exhausted);}
@@ -554,9 +569,10 @@ impl BoundRequest {
         put64(output,8,self.identity.transaction.client);
         put64(output,16,self.identity.transaction.sequence);
         put32(output,24,self.identity.grant.owner);
-        put64(output,28,self.identity.grant.epoch);
+        put64(output,28,self.identity.grant.ownership_version);
         put64(output,36,self.identity.table);
-        let offset = put_blob(output,44,&self.identity.coordinate);
+        put64(output,44,self.identity.snapshot_version);
+        let offset = put_blob(output,52,&self.identity.coordinate);
         let offset = put_blob(output,offset,&self.bounds.lo);
         let offset = put_blob(output,offset,hi);
         let offset = put_blob(output,offset,cursor);
@@ -617,9 +633,9 @@ impl BoundRequest {
         proof {reader.position_bound(); assert(reader.position() == 28);}
         proof { if has_expected {
             let expected = expected.unwrap();
-            assert(crate::routing_codec_proofs::wire_prefix(bytes@,reader.position(),word64(expected.identity.grant.epoch)));
+            assert(crate::routing_codec_proofs::wire_prefix(bytes@,reader.position(),word64(expected.identity.grant.ownership_version)));
         } }
-        let epoch = match reader.read_u64() {Ok(v) => v,Err(e) => return Err(e)};
+        let ownership_version = match reader.read_u64() {Ok(v) => v,Err(e) => return Err(e)};
         proof {reader.position_bound(); assert(reader.position() == 36);}
         proof { if has_expected {
             let expected = expected.unwrap();
@@ -627,6 +643,12 @@ impl BoundRequest {
         } }
         let table = match reader.read_u64() {Ok(v) => v,Err(e) => return Err(e)};
         proof {reader.position_bound(); assert(reader.position() == 44);}
+        proof { if has_expected {
+            let expected = expected.unwrap();
+            assert(crate::routing_codec_proofs::wire_prefix(bytes@,reader.position(),word64(expected.identity.snapshot_version)));
+        } }
+        let snapshot_version = match reader.read_u64() {Ok(v) => v,Err(e) => return Err(e)};
+        proof {reader.position_bound(); assert(reader.position() == 52);}
         proof { if has_expected {
             let expected = expected.unwrap();
             assert(crate::routing_codec_proofs::wire_prefix(bytes@,reader.position(),blob(expected.identity.coordinate@)));
@@ -637,7 +659,7 @@ impl BoundRequest {
         proof { if has_expected {
             let expected = expected.unwrap();
             assert(coordinate@ == expected.identity.coordinate@);
-            assert(lo_position == 52+expected.identity.coordinate.len());
+            assert(lo_position == 60+expected.identity.coordinate.len());
             assert(crate::routing_codec_proofs::wire_prefix(bytes@,reader.position(),blob(expected.bounds.lo@)));
         } }
         let lo = match reader.read_bytes() {Ok(v) => v,Err(e) => return Err(e)};
@@ -646,7 +668,7 @@ impl BoundRequest {
         proof { if has_expected {
             let expected = expected.unwrap();
             assert(lo@ == expected.bounds.lo@);
-            assert(hi_position == 60+expected.identity.coordinate.len()+expected.bounds.lo.len());
+            assert(hi_position == 68+expected.identity.coordinate.len()+expected.bounds.lo.len());
             assert(crate::routing_codec_proofs::wire_prefix(bytes@,reader.position(),blob(option_payload(expected.bounds.hi))));
         } }
         let hi = match reader.read_bytes() {Ok(v) => v,Err(e) => return Err(e)};
@@ -655,12 +677,12 @@ impl BoundRequest {
         proof { if has_expected {
             let expected = expected.unwrap();
             assert(hi@ == option_payload(expected.bounds.hi));
-            assert(cursor_position == 68+expected.identity.coordinate.len()+expected.bounds.lo.len()
+            assert(cursor_position == 76+expected.identity.coordinate.len()+expected.bounds.lo.len()
                 +option_payload(expected.bounds.hi).len());
             assert(crate::routing_codec_proofs::wire_prefix(bytes@,reader.position(),blob(option_payload(expected.bounds.cursor))));
         } }
         let cursor = match reader.read_bytes() {Ok(v) => v,Err(e) => return Err(e)};
-        proof {reader.position_bound(); assert(44 <= lo_position <= hi_position <= cursor_position <= reader.position());}
+        proof {reader.position_bound(); assert(52 <= lo_position <= hi_position <= cursor_position <= reader.position());}
         proof { if has_expected {
             let expected = expected.unwrap();
             assert(cursor@ == option_payload(expected.bounds.cursor));
@@ -689,7 +711,7 @@ impl BoundRequest {
         let ghost cursor_payload = cursor@;
         let out = Self {
             identity: ScanIdentity {transaction: TxnId {client,sequence},
-                grant: Grant {owner,epoch},table,fixed_coordinate: fixed,coordinate},
+                grant: Grant {owner,ownership_version},snapshot_version,table,fixed_coordinate: fixed,coordinate},
             bounds: Request {lo,hi: if has_hi {Some(hi)} else {None},
                 cursor: if has_cursor {Some(cursor)} else {None},reverse},
         };
@@ -776,17 +798,20 @@ pub struct PageCursor<'a> {
     index: usize,
     stopped: bool,
     query: Ghost<Request>,
+    snapshot_version: u64,
     expected: Ghost<Seq<WireRow>>,
     taken: Ghost<Seq<WireRow>>,
 }
 pub struct PageCursorView {
     pub count: usize, pub eof: bool, pub index: usize, pub stopped: bool,
+    pub snapshot_version: u64,
     pub query: Ghost<Request>, pub expected: Ghost<Seq<WireRow>>, pub taken: Ghost<Seq<WireRow>>,
 }
 impl<'a> View for PageCursor<'a> {
     type V = PageCursorView;
     closed spec fn view(&self) -> PageCursorView {
         PageCursorView {count:self.count,eof:self.eof,index:self.index,stopped:self.stopped,
+            snapshot_version:self.snapshot_version,
             query:self.query,expected:self.expected,taken:self.taken}
     }
 }
@@ -810,6 +835,7 @@ impl<'a> PageCursor<'a> {
         requires old(self).wf(),
         ensures out is Ok ==> final(self).wf(),
             final(self)@.query == old(self)@.query, final(self)@.expected == old(self)@.expected,
+            final(self)@.snapshot_version == old(self)@.snapshot_version,
             final(self)@.stopped == old(self)@.stopped, final(self)@.eof == old(self)@.eof,
             match out {
                 Ok(Some((k,v))) => !old(self)@.stopped && old(self)@.index < old(self)@.count
@@ -846,6 +872,7 @@ impl<'a> PageCursor<'a> {
         requires old(self).wf(), old(self).consumed() > 0,
         ensures final(self).wf(), final(self).is_stopped(), final(self)@.taken == old(self)@.taken,
             final(self)@.query == old(self)@.query, final(self)@.expected == old(self)@.expected,
+            final(self)@.snapshot_version == old(self)@.snapshot_version,
             final(self).is_eof() == old(self).is_eof(), final(self).consumed() == old(self).consumed(),
     { self.stopped = true; }
 }
@@ -865,21 +892,23 @@ impl FullScan {
         ensures match out {
             Ok(p) => !self.completion.done && p.wf() && !p.is_stopped() && p.consumed() == 0
                 && p@.query@ == self.request.bounds && p@.taken@ == Seq::<WireRow>::empty()
+                && p@.snapshot_version == self.request.identity.snapshot_version
                 && bytes@ == word32(PAGE_TAG)+word32(p@.expected@.len() as u32)
-                    +word32(if p.is_eof() {1u32} else {0u32})+rows_wire(p@.expected@),
+                    +word32(if p.is_eof() {1u32} else {0u32})+word64(self.request.identity.snapshot_version)+rows_wire(p@.expected@),
             Err(_) => true,
         },
     {
         hide(cmp_spec); hide(word32); hide(word64); hide(blob);
         if self.completion.done {return Err(Status::Invalid);}
-        let summary = match self.request.bounds.validate_page(bytes) {Ok(p) => p,Err(e) => return Err(e)};
+        let summary = match self.request.bounds.validate_page(bytes,self.request.identity.snapshot_version) {Ok(p) => p,Err(e) => return Err(e)};
         let mut reader = Reader::new(bytes);
-        match reader.read_slice(12) {Ok(_) => {},Err(e) => return Err(e)}
+        match reader.read_slice(20) {Ok(_) => {},Err(e) => return Err(e)}
         proof {
             wire_sizes(PAGE_TAG,0,Seq::empty());
             wire_sizes(summary.count as u32,0,Seq::empty());
             wire_sizes(if summary.eof {1u32} else {0u32},0,Seq::empty());
-            assert(reader.data().skip(12) =~= rows_wire(summary.rows@));
+            wire_sizes(0,self.request.identity.snapshot_version,Seq::empty());
+            assert(reader.data().skip(20) =~= rows_wire(summary.rows@));
             assert(summary.rows@.skip(0) =~= summary.rows@);
             assert(summary.rows@.take(0) =~= Seq::<WireRow>::empty());
             assert forall|i: int| 0 <= i < summary.rows@.len() implies
@@ -888,6 +917,7 @@ impl FullScan {
             }
         }
         Ok(PageCursor {reader,count:summary.count,eof:summary.eof,last:summary.last,index:0,stopped:false,
+            snapshot_version:self.request.identity.snapshot_version,
             query:Ghost(self.request.bounds),expected:summary.rows,taken:Ghost(Seq::empty())})
     }
     pub fn finish_page(&mut self,page: &PageCursor) -> (out: Result<bool,Status>)
@@ -900,6 +930,7 @@ impl FullScan {
             final(self).request.bounds.reverse == old(self).request.bounds.reverse,
             match out {
                 Ok(done) => !old(self).completion.done && done == final(self).completion.done
+                    && page@.snapshot_version == old(self).request.identity.snapshot_version
                     && done == (page.is_eof() || page.is_stopped())
                     && (page.is_stopped() || page@.taken@ == page@.expected@)
                     && final(self).delivered@ == old(self).delivered@+page@.taken@
@@ -911,7 +942,8 @@ impl FullScan {
     {
         hide(cmp_spec); hide(rows_wire); hide(blob); hide(word32); hide(word64);
         let ghost before = *self;
-        if self.completion.done || (!page.stopped && page.index != page.count) {return Err(Status::Invalid);}
+        if self.completion.done || page.snapshot_version != self.request.identity.snapshot_version
+            || (!page.stopped && page.index != page.count) {return Err(Status::Invalid);}
         if !page.stopped {
             proof {assert(page.expected@.take(page.index as int) =~= page.expected@);}
             if let Some(last) = page.last {
@@ -931,8 +963,8 @@ impl FullScan {
     }
 }
 
-pub open spec fn page_wire(rows: Seq<WireRow>,eof: bool) -> Seq<u8> {
-    word32(PAGE_TAG)+word32(rows.len() as u32)+word32(if eof {1u32} else {0u32})+rows_wire(rows)
+pub open spec fn page_wire(rows: Seq<WireRow>,eof: bool,snapshot_version: u64) -> Seq<u8> {
+    word32(PAGE_TAG)+word32(rows.len() as u32)+word32(if eof {1u32} else {0u32})+word64(snapshot_version)+rows_wire(rows)
 }
 /// Same-source engine callback serializer. Its proof records only callbacks
 /// actually supplied by the engine; engine completeness is a separate premise.
@@ -960,7 +992,7 @@ impl Page {
     pub closed spec fn wf(&self) -> bool {
         self.request.bounds.wf() && self.budget.wf() && self.maximum.wf()
         && self.budget.count == self.rows@.len() && ordered(&self.request.bounds,self.rows@)
-        && self.bytes.view() == word32(PAGE_TAG)+word32(0)+word32(0)+rows_wire(self.rows@)
+        && self.bytes.view() == word32(PAGE_TAG)+word32(0)+word32(0)+word64(self.request.identity.snapshot_version)+rows_wire(self.rows@)
         && self.bytes.view().len() == self.budget.used
         && (self.rows@.len() > 0 ==> self.last_offset+self.last_length <= self.bytes.view().len()
             && self.bytes.view().subrange(self.last_offset as int,(self.last_offset+self.last_length) as int)
@@ -971,7 +1003,7 @@ impl Page {
         ensures self@.request.bounds.wf(), self@.budget.wf(),
             self@.budget.count == self@.rows@.len(),
             ordered(&self@.request.bounds,self@.rows@),
-            rows_wire(self@.rows@).len()+12 == self@.budget.used,
+            rows_wire(self@.rows@).len()+20 == self@.budget.used,
     {}
     pub fn new(request: BoundRequest) -> (out: Result<Self,Status>)
         requires request.bounds.wf(),
@@ -984,7 +1016,8 @@ impl Page {
         let a = bytes.write_u32(PAGE_TAG);
         let b = bytes.write_u32(0);
         let c = bytes.write_u32(0);
-        proof {assert(a == Status::Ok && b == Status::Ok && c == Status::Ok);}
+        let d = bytes.write_u64(request.identity.snapshot_version);
+        proof {assert(a == Status::Ok && b == Status::Ok && c == Status::Ok && d == Status::Ok);}
         Ok(Self {request,bytes,last_offset:0,last_length:0,budget:PageBudget::new(),
             error:None,maximum:Maximum::new(),rows:Ghost(Seq::empty())})
     }
@@ -1029,7 +1062,7 @@ impl Page {
             self.rows@ = before.push(WireRow {key:key@,value:value@});
             assert(self.rows@.drop_last() == before);
             assert(self.rows@.last().key == key@ && self.rows@.last().value == value@);
-            assert(self.bytes.view() =~= word32(PAGE_TAG)+word32(0)+word32(0)+rows_wire(self.rows@));
+            assert(self.bytes.view() =~= word32(PAGE_TAG)+word32(0)+word32(0)+word64(self.request.identity.snapshot_version)+rows_wire(self.rows@));
             assert(self.bytes.view().len() == self.budget.used);
             append_blob_payload(old_bytes,key@,blob(value@));
             assert(self.bytes.view().subrange(self.last_offset as int,(self.last_offset+self.last_length) as int) =~= key@);
@@ -1040,7 +1073,7 @@ impl Page {
         requires self.wf(),
         ensures final(output).len() == old(output).len(),
             match out {Ok(n) => self@.error is None && n <= PAGE_CAPACITY && n <= final(output).len()
-                && final(output)@.take(n as int) == page_wire(self@.rows@,!self@.budget.more),
+                && final(output)@.take(n as int) == page_wire(self@.rows@,!self@.budget.more,self@.request.identity.snapshot_version),
                 Err(_) => true},
     {
         hide(cmp_spec); hide(ordered); hide(word32); hide(word64); hide(blob); hide(rows_wire);
@@ -1055,7 +1088,7 @@ impl Page {
         copy_into(output,0,self.bytes.as_bytes());
         put32(output,4,self.budget.count as u32);
         put32(output,8,if self.budget.more {0u32} else {1u32});
-        proof {assert(output@.take(self.bytes.view().len() as int) =~= page_wire(self.rows@,!self.budget.more));}
+        proof {assert(output@.take(self.bytes.view().len() as int) =~= page_wire(self.rows@,!self.budget.more,self.request.identity.snapshot_version));}
         Ok(self.bytes.len())
     }
 }

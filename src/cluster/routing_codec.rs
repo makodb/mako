@@ -2,9 +2,9 @@
 //! counts are u64. Parsing never allocates from an unchecked wire length.
 //! Layout: u64 SNAPSHOT_TAG, u64 committed version, u64 table count, then each
 //! table's u64 ID, u64 boundary count, and boundaries (u64 start length, bytes,
-//! u32 owner, u64 epoch). There is no checksum authority or optional suffix.
+//! u32 owner, u64 ownership_version). There is no checksum authority or optional suffix.
 //! Decode rejects truncation, trailing bytes, duplicate tables, empty/misordered
-//! partitions, noncanonical adjacent full grants, unknown owners and epochs
+//! partitions, noncanonical adjacent full grants, unknown owners and ownership versions
 //! newer than the snapshot. Encode preserves the supplied native table order.
 //! Reusable Reader/Writer primitives use exactly these integer/blob conventions.
 use vstd::prelude::*;
@@ -41,6 +41,7 @@ impl<'a> Reader<'a> {
     pub fn read_slice(&mut self,length: usize) -> (out: Result<&'a [u8],Status>)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).data() == old(self).data(),
+            old(self).position() <= final(self).position() <= final(self).data().len(),
             (out is Ok) == (old(self).position()+length <= old(self).data().len()),
             match out {
                 Ok(bytes) => final(self).position() == old(self).position()+length
@@ -60,6 +61,7 @@ impl<'a> Reader<'a> {
     pub fn read_u64(&mut self) -> (out: Result<u64,Status>)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).data() == old(self).data(),
+            old(self).position() <= final(self).position() <= final(self).data().len(),
             forall|v: u64| wire_prefix(old(self).data(),old(self).position(),word64(v)) ==> out == Ok(v),
             match out { Ok(v) => final(self).position() == old(self).position()+8
                 && final(self).data().subrange(old(self).position() as int,final(self).position() as int) == word64(v),
@@ -81,6 +83,7 @@ impl<'a> Reader<'a> {
     pub fn read_u32(&mut self) -> (out: Result<u32,Status>)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).data() == old(self).data(),
+            old(self).position() <= final(self).position() <= final(self).data().len(),
             forall|v: u32| wire_prefix(old(self).data(),old(self).position(),word32(v)) ==> out == Ok(v),
             match out { Ok(v) => final(self).position() == old(self).position()+4
                 && final(self).data().subrange(old(self).position() as int,final(self).position() as int) == word32(v),
@@ -100,6 +103,7 @@ impl<'a> Reader<'a> {
     pub fn read_bytes(&mut self) -> (out: Result<Vec<u8>,Status>)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).data() == old(self).data(),
+            final(self).position() <= final(self).data().len(),
             final(self).position() >= old(self).position(),
             forall|bytes: Seq<u8>| wire_prefix(old(self).data(),old(self).position(),blob(bytes)) ==>
                 out is Ok && out->Ok_0@ == bytes,
@@ -129,6 +133,7 @@ impl<'a> Reader<'a> {
     fn read_boundary(&mut self) -> (out: Result<Boundary,Status>)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).data() == old(self).data(),
+            final(self).position() <= final(self).data().len(),
             final(self).position() >= old(self).position(),
             match out { Ok(b) => final(self).data().subrange(old(self).position() as int,final(self).position() as int) == boundary_wire(b), Err(_) => true },
             forall|b: Boundary| wire_prefix(old(self).data(),old(self).position(),boundary_wire(b)) ==>
@@ -138,16 +143,16 @@ impl<'a> Reader<'a> {
         let ghost has_expected = exists|b: Boundary| wire_prefix(self.data(),self.position(),boundary_wire(b));
         let ghost expected = choose|b: Boundary| has_expected ==> wire_prefix(self.data(),self.position(),boundary_wire(b));
         proof { if has_expected {
-            assert(boundary_wire(expected) =~= blob(expected.start@)+(word32(expected.grant.owner)+word64(expected.grant.epoch)));
-            prefix_split(self.data(),begin,blob(expected.start@),word32(expected.grant.owner)+word64(expected.grant.epoch));
+            assert(boundary_wire(expected) =~= blob(expected.start@)+(word32(expected.grant.owner)+word64(expected.grant.ownership_version)));
+            prefix_split(self.data(),begin,blob(expected.start@),word32(expected.grant.owner)+word64(expected.grant.ownership_version));
         } }
         let start = match self.read_bytes() { Ok(v) => v, Err(e) => return Err(e) };
         proof { if has_expected {
-            prefix_split(self.data(),self.position(),word32(expected.grant.owner),word64(expected.grant.epoch));
+            prefix_split(self.data(),self.position(),word32(expected.grant.owner),word64(expected.grant.ownership_version));
         } }
         let owner = match self.read_u32() { Ok(v) => v, Err(e) => return Err(e) };
-        let epoch = match self.read_u64() { Ok(v) => v, Err(e) => return Err(e) };
-        let b = Boundary { start,grant: Grant { owner,epoch } };
+        let ownership_version = match self.read_u64() { Ok(v) => v, Err(e) => return Err(e) };
+        let b = Boundary { start,grant: Grant { owner,ownership_version } };
         proof { assert(self.data().subrange(begin as int,self.position() as int) =~= boundary_wire(b)); }
         proof {
             assert forall|expected: Boundary| wire_prefix(self.data(),begin,boundary_wire(expected))
@@ -160,13 +165,15 @@ impl<'a> Reader<'a> {
         }
         Ok(b)
     }
-    fn read_table(&mut self) -> (out: Result<RouteTable,Status>)
+    pub fn read_table(&mut self) -> (out: Result<RouteTable,Status>)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).data() == old(self).data(),
+            final(self).position() <= final(self).data().len(),
             final(self).position() >= old(self).position(),
             match out { Ok(t) => final(self).data().subrange(old(self).position() as int,final(self).position() as int) == table_wire(t), Err(_) => true },
             forall|t: RouteTable| t.boundaries.len() > 0 && wire_prefix(old(self).data(),old(self).position(),table_wire(t)) ==>
-                out is Ok && table_wire(out->Ok_0) == table_wire(t),
+                out is Ok && table_wire(out->Ok_0) == table_wire(t)
+                    && final(self).position()==old(self).position()+table_wire(t).len(),
     {
         hide(word64); hide(word32);
         let ghost begin = self.position();
@@ -176,7 +183,7 @@ impl<'a> Reader<'a> {
         let table = match self.read_u64() { Ok(v) => v, Err(e) => return Err(e) };
         proof { if has_expected { boundaries_size(expected.boundaries@); } }
         let count = match self.read_u64() { Ok(v) => v, Err(e) => return Err(e) };
-        // A boundary needs length, owner, epoch even when its start is empty.
+        // A boundary needs length, owner, ownership_version even when its start is empty.
         if count == 0 || count > (self.remaining()/20) as u64 { return Err(Status::Invalid); }
         let ghost base = self.position();
         let mut boundaries = Vec::new();
@@ -296,7 +303,7 @@ impl Writer {
             let b = &t.boundaries[i];
             let status = self.write_bytes(&b.start); if !matches!(status,Status::Ok) { return status; }
             let status = self.write_u32(b.grant.owner); if !matches!(status,Status::Ok) { return status; }
-            let status = self.write_u64(b.grant.epoch); if !matches!(status,Status::Ok) { return status; }
+            let status = self.write_u64(b.grant.ownership_version); if !matches!(status,Status::Ok) { return status; }
             i += 1;
             proof { assert(t.boundaries@.take(i as int).drop_last() == t.boundaries@.take(i as int-1));
                 assert(self.view() =~= old(self).view()+word64(t.table)+word64(t.boundaries.len() as u64)+boundaries_wire(t.boundaries@.take(i as int))); }

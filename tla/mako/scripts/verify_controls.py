@@ -54,6 +54,50 @@ NATIVE_CONTROLS = [
         "&& self.packet.0==self.plan.generation",
         ("execution_refinement::source_execution::causality", "private_copy_origin"),
     ),
+    (
+        "durable system keys alias different shard owners",
+        "src/cluster/durable_kv.rs",
+        "word64(KEY_TAG) + word32(ns.owner)",
+        "word64(KEY_TAG) + word32(0)",
+        ("durable_kv", "key_injective"),
+    ),
+    (
+        "unknown durable batch permits a partial or unrelated effect",
+        "src/cluster/durable_kv.rs",
+        "Some(batch) => after == before || after == apply_batch(before,batch)",
+        "Some(batch) => true",
+        ("durable_kv", "batch_settlement"),
+    ),
+    (
+        "native authority delivery retains its fast certificate",
+        "src/cluster/participant.rs",
+        "self.invalidate_snapshot();\n        if !self.envelope(plan) {",
+        "if !self.envelope(plan) {",
+        ("participant", "Participant::deliver"),
+    ),
+    (
+        "native snapshot certification skips local interval validation",
+        "src/cluster/participant_admission.rs",
+        "if !local.serving_range(&boundary.start,hi,boundary.grant.ownership_version) { return false; }",
+        "",
+        ("participant::admission", "Participant::certify_snapshot"),
+    ),
+    (
+        "native point admission treats a stale version as certified",
+        "src/cluster/participant_admission.rs",
+        "if self.fast_version != Some(r.snapshot_version) || r.snapshot_version == NO_SNAPSHOT {\n"
+        "            return self.acquire(id,table,coordinate,r.grant);",
+        "if r.snapshot_version == NO_SNAPSHOT {\n"
+        "            return self.acquire(id,table,coordinate,r.grant);",
+        ("participant::admission", "Participant::acquire_routed"),
+    ),
+    (
+        "native commit reuses a published version for changed routes",
+        "src/cluster/migration.rs",
+        "published_version: if r is Commit { b.records[i as int].plan.generation } else { b.published_version },",
+        "published_version: b.published_version,",
+        ("migration_invariants", "request_preserves"),
+    ),
 ]
 
 CONTROLS = [
@@ -163,6 +207,27 @@ CONTROLS = [
         "&& true",
         ("sharding_retention", "theorem_no_active_or_checkpoint_collection"),
     ),
+    (
+        "authority mutation retains a matching fast certificate",
+        "sharding_fast_path.rs",
+        "let certified = if changes_authority(a) { Map::empty() } else { s.certified };",
+        "let certified = s.certified;",
+        ("sharding_fast_path::proofs", "placement_preserves_certificate"),
+    ),
+    (
+        "receiver certifies without checking local Serving authority",
+        "sharding_fast_path.rs",
+        "certified: if certifiable(c,s.placement,owner,snapshot) {",
+        "certified: if true {",
+        ("sharding_fast_path::proofs", "certify_preserves_authority"),
+    ),
+    (
+        "capture relabels the current grant with an older snapshot",
+        "sharding_fast_path.rs",
+        "grant: s.placement.directory[version as int][representative], snapshot: Some(version)",
+        "grant: p::directory(s.placement)[representative], snapshot: Some(version)",
+        ("sharding_fast_path::proofs", "capture_preserves_pair"),
+    ),
 ]
 
 # A mutation failure is evidence only if the unchanged complete crate passes.
@@ -215,6 +280,7 @@ for name, filename, before, after, (module, function) in (NATIVE_CONTROLS if NAT
         summary = re.search(r"verification results:: (\d+) verified, (\d+) errors", output)
         proof_failure = any(message in output for message in (
             "assertion failed", "postcondition not satisfied", "precondition not satisfied",
+            "invariant not satisfied",
         ))
         invalid_run = any(message in output for message in (
             "error[E", "Resource limit", "resource limit", "internal compiler error",

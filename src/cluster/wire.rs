@@ -1,9 +1,8 @@
 //! Native control messages use the checked snapshot codec primitives. SRPC
 //! supplies request/response correlation and non-Byzantine sender provenance.
 use crate::bytes::compare;
-use crate::migration::Coordinator;
 use crate::participant::{Cleanup, ControlResult};
-use crate::routing_codec::{Reader, Writer, SNAPSHOT_TAG};
+use crate::routing_codec::{Reader, Writer};
 use crate::types::*;
 
 pub const SNAPSHOT: u32 = 1;
@@ -59,7 +58,7 @@ pub fn encode_plan(plan: &MigrationPlan) -> Result<Vec<u8>, Status> {
     for boundary in &plan.old {
         checked(w.write_bytes(&boundary.start))?;
         checked(w.write_u32(boundary.grant.owner))?;
-        checked(w.write_u64(boundary.grant.epoch))?;
+        checked(w.write_u64(boundary.grant.ownership_version))?;
     }
     Ok(w.into_bytes())
 }
@@ -80,8 +79,8 @@ pub fn decode_plan(data: &[u8], nodes: u32) -> Result<MigrationPlan, Status> {
     let mut old: Vec<Boundary> = Vec::with_capacity(count);
     for _ in 0..count {
         let start = r.read_bytes()?;
-        let grant = Grant { owner: r.read_u32()?, epoch: r.read_u64()? };
-        if grant.owner >= nodes || grant.epoch >= generation { return Err(Status::Invalid); }
+        let grant = Grant { owner: r.read_u32()?, ownership_version: r.read_u64()? };
+        if grant.owner >= nodes || grant.ownership_version >= generation { return Err(Status::Invalid); }
         if let Some(previous) = old.last() {
             if compare(&previous.start,&start) >= 0 || previous.grant == grant { return Err(Status::Invalid); }
         } else if !start.is_empty() { return Err(Status::Invalid); }
@@ -109,16 +108,6 @@ pub fn decode_certificate(data: &[u8], generation: u64) -> Result<Option<Certifi
 }
 pub fn failure(status: Status) -> ControlResult {
     ControlResult { status, certificate: None, cleanup: Cleanup::None }
-}
-pub fn snapshot(coordinator: &Coordinator) -> Result<Vec<u8>, Status> {
-    let mut w = Writer::new();
-    checked(w.write_u64(SNAPSHOT_TAG))?;
-    checked(w.write_u64(coordinator.published_version()))?;
-    checked(w.write_u64(coordinator.table_count() as u64))?;
-    for i in 0..coordinator.table_count() {
-        checked(w.write_table(coordinator.table_at(i).ok_or(Status::Invalid)?))?;
-    }
-    Ok(w.into_bytes())
 }
 
 pub fn capture_request(plan: &[u8], after: Option<&Row>) -> Result<Vec<u8>, Status> {

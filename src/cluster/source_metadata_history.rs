@@ -32,7 +32,7 @@ impl MetadataRecord {
                     && v.commands.contains((plan.generation as nat,crate::participant_proofs::command(command)))
                     && (forall|k:int| self.keys.to_set().contains(k) ==>
                         v.physical.contains_key((b.owner_view() as int,k))
-                            && v.plans[plan.generation as nat].old[k].epoch==crate::directory::route(plan.old@,labels[k].1.0).epoch)
+                            && v.plans[plan.generation as nat].old[k].ownership_version==crate::directory::route(plan.old@,labels[k].1.0).ownership_version)
             }
     }
     pub open spec fn image(&self,ctx:SourceContext,s:SourceState) -> SourceState {

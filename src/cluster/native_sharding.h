@@ -21,8 +21,19 @@ typedef struct MakoShardTxn {
 
 typedef struct MakoShardGrant {
     uint32_t owner;
-    uint64_t epoch;
+    /* Range ownership incarnation; independent of transaction/snapshot versions. */
+    uint64_t ownership_version;
 } MakoShardGrant;
+
+/* Paired by one immutable route lookup, never refreshed separately on retry.
+ * Point callers bind the original table/coordinate; range callers require a
+ * homogeneous snapshot segment, not merely a route for its lower endpoint.
+ * Untrusted or uncaptured grants must use NO_SNAPSHOT and exact validation. */
+#define MAKO_SHARD_NO_SNAPSHOT UINT64_MAX
+typedef struct MakoShardRoute {
+    MakoShardGrant grant;
+    uint64_t snapshot_version;
+} MakoShardRoute;
 
 enum MakoShardStatus {
     MAKO_SHARD_OK = 0,
@@ -42,7 +53,7 @@ enum MakoShardStatus {
  * the terminal finish call. All engine reads, including scan scopes, pin leases.
  */
 uint32_t mako_sharding_route(uint64_t table, MakoShardBytes coordinate,
-                             MakoShardGrant* grant);
+                             MakoShardRoute* route);
 uint32_t mako_sharding_enabled(void);
 uint32_t mako_sharding_active(uint32_t participant);
 /* Separate from local activation: true only after every fixed peer loaded the
@@ -64,11 +75,11 @@ uint32_t mako_sharding_quiesce(uint32_t participant, MakoShardBytes sync_directo
 uint32_t mako_sharding_lease_begin(uint32_t participant, MakoShardTxn transaction);
 uint32_t mako_sharding_lease_acquire(uint32_t participant, MakoShardTxn transaction,
                                      uint64_t table, MakoShardBytes coordinate,
-                                     MakoShardGrant grant);
+                                     MakoShardRoute route);
 uint32_t mako_sharding_lease_acquire_range(uint32_t participant, MakoShardTxn transaction,
                                            uint64_t table, MakoShardBytes lo,
                                            uint32_t has_hi, MakoShardBytes hi,
-                                           MakoShardGrant grant);
+                                           MakoShardRoute route);
 uint32_t mako_sharding_lease_finish(uint32_t participant, MakoShardTxn transaction);
 
 /* Catalog construction precedes loading/activation. Identity and table kind

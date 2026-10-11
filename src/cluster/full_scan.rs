@@ -49,6 +49,7 @@ mod ffi {
     pub struct Identity {
         transaction: crate::types::TxnId,
         grant: crate::types::Grant,
+        snapshot_version: u64,
         table: u64,
         fixed_coordinate: u32,
         coordinate: Bytes,
@@ -59,6 +60,7 @@ mod ffi {
                 || (self.fixed_coordinate == 0 && self.coordinate.len != 0) { return Err(Status::Invalid); }
             let coordinate = self.coordinate.slice()?;
             Ok(ScanIdentity {transaction:self.transaction,grant:self.grant,table:self.table,
+                snapshot_version:self.snapshot_version,
                 fixed_coordinate:self.fixed_coordinate != 0,coordinate:coordinate.to_vec()})
         }
     }
@@ -139,7 +141,7 @@ mod ffi {
             let identity = identity.as_ref().ok_or(Status::Invalid)?;
             if identity.fixed_coordinate > 1 || identity.coordinate.len > 64
                 || (identity.fixed_coordinate == 0 && identity.coordinate.len != 0) { return Err(Status::Invalid); }
-            let matches = page.request.identity.matches(identity.transaction,identity.grant,identity.table,
+            let matches = page.request.identity.matches(identity.transaction,identity.grant,identity.snapshot_version,identity.table,
                 identity.fixed_coordinate != 0,identity.coordinate.slice()?);
             if matches { Ok(()) } else { Err(Status::Invalid) }
         })())
@@ -194,7 +196,7 @@ mod tests {
     }
     fn identity() -> ScanIdentity {
         ScanIdentity {transaction:crate::types::TxnId {client:7,sequence:9},
-            grant:crate::types::Grant {owner:2,epoch:11},table:13,
+            grant:crate::types::Grant {owner:2,ownership_version:11},snapshot_version:17,table:13,
             fixed_coordinate:false,coordinate:vec![]}
     }
     #[test]
@@ -309,7 +311,7 @@ mod tests {
     fn byte_full_page_and_callback_stop_are_terminal_without_replay() {
         let unbounded = || BoundRequest {identity:identity(),bounds:Request { lo: vec![],hi: None,cursor: None,reverse: false }};
         let mut page = Page::new(unbounded()).ok().unwrap();
-        assert!(page.add(b"",&vec![0; PAGE_CAPACITY-28]).ok().unwrap());
+        assert!(page.add(b"",&vec![0; PAGE_CAPACITY-36]).ok().unwrap());
         assert!(!page.add(b"a",b"").ok().unwrap());
         let mut bytes = [0; PAGE_CAPACITY];
         let n = page.finish(&mut bytes).ok().unwrap();
@@ -329,18 +331,20 @@ mod tests {
         let mut bytes = [0; REQUEST_CAPACITY];
         let n = r.encode(&mut bytes).ok().unwrap();
         let decoded = BoundRequest::decode(&bytes[..n]).ok().unwrap();
-        assert!(decoded.identity.matches(r.identity.transaction,r.identity.grant,r.identity.table,
+        assert!(decoded.identity.matches(r.identity.transaction,r.identity.grant,r.identity.snapshot_version,r.identity.table,
             true,&[0,255,0]));
-        assert!(!decoded.identity.matches(r.identity.transaction,r.identity.grant,r.identity.table+1,
+        assert!(!decoded.identity.matches(r.identity.transaction,r.identity.grant,r.identity.snapshot_version,r.identity.table+1,
             true,&[0,255,0]));
         assert!(!decoded.identity.matches(r.identity.transaction,
-            crate::types::Grant {epoch:r.identity.grant.epoch+1,..r.identity.grant},
+            crate::types::Grant {ownership_version:r.identity.grant.ownership_version+1,..r.identity.grant},
+            r.identity.snapshot_version,r.identity.table,true,&[0,255,0]));
+        assert!(!decoded.identity.matches(r.identity.transaction,r.identity.grant,r.identity.snapshot_version+1,
             r.identity.table,true,&[0,255,0]));
         r.identity.coordinate.clear();
         let n = r.encode(&mut bytes).ok().unwrap();
         let decoded = BoundRequest::decode(&bytes[..n]).ok().unwrap();
         assert!(decoded.identity.fixed_coordinate);
-        assert!(!decoded.identity.matches(r.identity.transaction,r.identity.grant,r.identity.table,false,&[]));
+        assert!(!decoded.identity.matches(r.identity.transaction,r.identity.grant,r.identity.snapshot_version,r.identity.table,false,&[]));
     }
     #[test]
     fn raw_identity_does_not_bound_raw_keys_to_coordinate_capacity() {
@@ -353,5 +357,25 @@ mod tests {
         assert_eq!(decoded.bounds.lo,r.bounds.lo);
         assert!(!decoded.identity.fixed_coordinate);
         assert!(decoded.identity.coordinate.is_empty());
+    }
+    #[test]
+    fn wrong_snapshot_page_is_rejected_before_callbacks() {
+        let mut wrong = request(false);
+        wrong.identity.snapshot_version += 1;
+        let mut page = Page::new(wrong).ok().unwrap();
+        assert!(page.add(b"k",b"v").ok().unwrap());
+        let mut bytes = [0; PAGE_CAPACITY];
+        let n = page.finish(&mut bytes).ok().unwrap();
+        let mut scan = FullScan::new(request(false));
+        assert!(scan.consume(&bytes[..n],|_,_| panic!("wrong snapshot reached callback")).is_err());
+        assert_eq!(scan.request.identity.snapshot_version,17);
+        assert!(scan.request.bounds.cursor.is_none());
+        assert!(!scan.completion.done);
+        let mut correct = Page::new(request(false)).ok().unwrap();
+        assert!(correct.add(b"k",b"v").ok().unwrap());
+        let n = correct.finish(&mut bytes).ok().unwrap();
+        let mut count = 0;
+        assert!(scan.consume(&bytes[..n],|_,_| {count += 1; true}).ok().unwrap());
+        assert_eq!(count,1);
     }
 }

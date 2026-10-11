@@ -406,6 +406,7 @@ TEST_F(MakoNontxnDistributed, GatewayRetainsActualTerminalReplies) {
     receiver.Register(g_db, tables);
     MakoGatewayRequest request{};
     request.version = MAKO_GATEWAY_VERSION;
+    request.snapshot_version = MAKO_GATEWAY_NO_SNAPSHOT;
     request.kind = MAKO_GATEWAY_INSERT;
     request.client = UINT64_C(0x8000000000000310);
     request.sequence = 1;
@@ -421,6 +422,7 @@ TEST_F(MakoNontxnDistributed, GatewayRetainsActualTerminalReplies) {
     mako::ShardingRequest forwarded{};
     forwarded.transaction = {request.client, request.sequence};
     forwarded.grant = {kServerShard, 0};
+    forwarded.snapshot_version = MAKO_SHARD_NO_SNAPSHOT;
     mako::ShardClient sender(config_path(), "localhost", kClientShard, 0, true);
     bool inserted = false;
     ASSERT_EQ(sender.forwardNontxn(forwarded, mako::nontxnInsertReqType,

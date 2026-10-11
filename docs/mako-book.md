@@ -329,6 +329,10 @@ For expected cross-shard ratios under TPC-C (the canonical benchmark), see `docs
 
 ### Data Migration Protocol (Live Native Sharding)
 
+For the reviewable end-to-end design, including the separate conditional durable
+path and its exact transaction/storage dependencies, start with
+[Sharding and range migration](architecture/sharding-migration.md).
+
 `src/cluster/` owns the protocol in native Rust; C++ supplies narrow storage,
 RPC and lifetime callbacks. Owner 0 coordinates one active range move among
 fixed, live, non-replicated owners. The service retains caller nonces, plans,
@@ -346,8 +350,8 @@ its existing generation/outcome; it does not allocate another attempt.
    rows. EOF is explicit; an error or short nonempty page is not EOF. Destination
    readiness requires complete exact coverage, not a checksum.
 4. **Retire and publish.** Fence the old source incarnation before publishing
-   an immutable complete owner/epoch directory snapshot. Unrelated intervals
-   retain their routes. A returned owner receives a new epoch, so an old grant
+   an immutable complete `(owner, ownership_version)` directory snapshot. Unrelated
+   intervals retain their routes. A returned owner receives a new ownership version, so an old grant
    cannot become valid merely because its owner number matches again.
 5. **Finish both participants.** Report a terminal outcome only after the
    required source/destination completion receipts. A storage cleanup failure
@@ -361,6 +365,22 @@ after the decision, retries complete that decision. Generation, copy-round and
 terminal fences reject delayed authentic controls from older attempts. No timeout
 is interpreted as proof that an effect did not happen.
 
+Ordinary native requests capture the routing snapshot version and range
+ownership grant together. A receiver with a locally certified matching snapshot
+can register the lease without looking up the range metadata. Migration controls
+invalidate that certificate before changing local authority; receiving a new
+snapshot does not by itself authorize a frozen or not-yet-activated range.
+Absent/mismatching certificates fall back to exact ownership validation, so an
+old snapshot can still access an unchanged range. Retries and scan pages retain
+their original paired identity. Untrusted gateway claims use exact validation,
+not the trusted worker shortcut. This optimization does not change lease drain,
+transaction completion, or inspection-only recovery requirements.
+
+Native peer handshakes bind the paired-request ABI; gateway requests use version
+2 and bound scan requests use version 3. Upgrade communicating binaries together.
+The persistent metadata deployment identity and journal encodings are unchanged;
+opening retained metadata still does not restore rows or permit serving.
+
 TPC-C routes its first eleven canonical tables by four-byte big-endian global
 warehouse coordinates; row keys keep their existing encoding. The immutable
 `item` table is explicitly replicated/static, not assigned a fictitious mutable
@@ -370,7 +390,7 @@ cross-owner access still uses the real participant RPC and lease path.
 
 The old C++ policy/cache/migration graph, checksum cutover and write-only drain
 are removed. There is no replicated `reshard/*` journal, live membership
-change, automatic rebalance or crash-recovery guarantee. Configuration CRUD
+change, automatic rebalance or primary-row/TP crash recovery. Configuration CRUD
 does not perform migration.
 
 The executable Rust actors and source histories construct a refinement of the
@@ -384,12 +404,57 @@ callback lifetimes remain explicit trusted boundaries.
 
 Separate sharding protocols establish per-authority crash reconstruction,
 admission/membership fencing, conditional progress from primitive fairness,
-and safe administrative compaction. The current native adapter does not
-implement their durable recovery interfaces. Administrative compaction does
-not collect participant journals, receipt dictionaries or outstanding copy work.
+and safe administrative compaction. The native production integration provides
+the metadata-only mode below, not durable primary-row/TP recovery. Administrative
+compaction does not collect participant journals, receipt dictionaries or
+outstanding copy work.
 See [the trusted interface contract](../tla/mako/README.md#trusted-recovery-and-progress-interfaces).
 Run `./docker_build.sh ci nativeShardingProof` and
 `./docker_build.sh ci nativeShardingSmoke` for the separate proof and real-engine gates.
+
+#### Optional durable migration metadata
+
+Enable metadata persistence on every native owner using a stable storage root.
+For the **first initialization only**, set:
+
+```bash
+export MAKO_SHARD_METADATA_DIR=/var/lib/mako/sharding-metadata
+export MAKO_SHARD_METADATA_INIT=1
+```
+
+Then start the owners using their normal native-sharding configuration
+(`MAKO_CLUSTER_CONFIG=1`). Each owner uses `owner-N/participant`; owner 0 also
+uses `owner-0/coordinator` in a multi-owner deployment. Initializing an existing
+or partially initialized role directory is rejected rather than replacing it.
+Without `MAKO_SHARD_METADATA_DIR`, the existing live-only mode remains available.
+Peers must agree on metadata mode and catalog identity.
+
+For a retained startup, keep the same directory and **unset**
+`MAKO_SHARD_METADATA_INIT` (or set it to `0`). Missing/corrupt state, a different
+catalog, or a competing writer causes failure; there is no genesis fallback.
+The backend uses WAL-enabled synchronous RocksDB batches and retains an
+exclusive writer lock across settlement/reopen. Uncertain persistence fences
+the running candidate rather than acknowledging success.
+
+**Retained startup is inspection-only.** The native admin service can return
+historical nonce outcomes through Poll or an identical Begin retry, but readiness
+and lease begin/acquire/range/finish return Retry. New Begin, Abort, capture,
+control, copy, and cleanup are rejected. A retained pending migration stays
+pending. The normal workload readiness wait also fails closed; a successful
+historical admin reply does not mean the data is available.
+
+Primary MBTA rows, ordinary TP outcomes, and transaction IDs have not acquired
+restart recovery. Workload loaders are not a recovered post-migration image.
+There is no force-resume, automatic wipe, or recovered-lease release operation.
+Metadata histories remain append-only. The same restriction applies after a
+clean shutdown. Each metadata-changing acknowledgement incurs synchronous
+persistence; this mode adds write latency and storage growth.
+
+The Docker smoke covers committed and held-lease-pending SIGKILL/reopen in both
+process layouts, plus rejection of authentic old Start/Final/Commit controls at
+a restarted destination. It does not establish power-loss durability; that
+depends on RocksDB and the filesystem/device honoring synchronization.
+
 
 ### Speculation Recovery (Epoch-Based)
 

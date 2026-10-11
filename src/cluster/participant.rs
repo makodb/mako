@@ -9,12 +9,18 @@ use crate::directory::RouteTable;
 use crate::leases::LeaseRegistry;
 use crate::types::*;
 use crate::storage::{CompletedCopy, CompletedCleanup};
+use crate::routing::Snapshot;
 #[path = "participant_metadata.rs"]
 mod metadata;
 pub use metadata::*;
 #[cfg(verus_keep_ghost)]
 #[path = "participant_control_proofs.rs"]
 mod control_proofs;
+#[path = "participant_admission.rs"]
+mod admission;
+#[cfg(all(test, not(verus_keep_ghost)))]
+#[path = "participant_admission_tests.rs"]
+mod admission_tests;
 
 verus! {
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -55,19 +61,130 @@ fn bit(command: Command) -> (out: u8)
 #[derive(Clone, Copy)]
 struct Receipt { applied: u8, cleanup: Cleanup, complete: bool, ready: bool }
 
+/// Semantic durable receipt value, independent of HashMap layout.
+pub type ReceiptView = (u8,Cleanup,bool,bool);
+pub open spec fn applied_receipt(before:Map<u64,ReceiptView>,generation:u64,command:Command,source:bool)->Map<u64,ReceiptView> {
+    let r=if before.contains_key(generation){before[generation]}else{(0u8,Cleanup::None,false,false)};
+    let cleanup=if command==Command::Commit && source{Cleanup::Source}
+        else if command==Command::Abort && !source{Cleanup::Destination}else{r.1};
+    before.insert(generation,(r.0 | command_bit(command),cleanup,r.2,r.3))
+}
+pub open spec fn initial_meta(boundaries:Seq<Boundary>,owner:u32,key:Seq<u8>)->Option<ReplicaMeta>
+    decreases boundaries.len(),
+{
+    if boundaries.len()==0{None}else if crate::bytes::cmp_spec(boundaries.last().start@,key)<=0{
+        Some(ReplicaMeta{ownership_version:0,fence:0,terminal:true,role:if boundaries.last().grant.owner==owner{Role::Serving}else{Role::Empty},round:0})
+    }else{initial_meta(boundaries.drop_last(),owner,key)}
+}
+
 pub struct Participant {
     owner: u32,
     tables: HashMap<u64, MetaTable>,
     leases: LeaseRegistry,
     receipts: HashMap<u64, Receipt>,
+    fast_version: Option<u64>,
+    certified: Ghost<Option<crate::routing::Snapshot>>,
 }
 
 impl Participant {
+    pub closed spec fn certified_snapshot(&self) -> Option<Snapshot> { self.certified@ }
+    pub closed spec fn certification_wf(&self) -> bool {
+        match self.fast_version {
+            None => self.certified@ == None,
+            Some(v) => v != NO_SNAPSHOT && self.certified@.is_some()
+                && self.certified@.unwrap().version == v
+                && self.snapshot_authority(self.certified@.unwrap()),
+        }
+    }
     pub closed spec fn wf(&self) -> bool {
-        self.leases.wf() && forall|table: u64| self.tables@.contains_key(table) ==> meta_wf(self.tables@[table].boundaries@)
+        self.leases.wf() && self.certification_wf()
+            && forall|table: u64| self.tables@.contains_key(table) ==> meta_wf(self.tables@[table].boundaries@)
     }
     pub closed spec fn lease_view(&self) -> Map<u64,crate::leases::SessionView> { self.leases@ }
     pub closed spec fn owner_view(&self) -> u32 { self.owner }
+    pub closed spec fn table_ids(&self)->Set<u64>{self.tables@.dom()}
+    pub closed spec fn receipt_view(&self)->Map<u64,ReceiptView>{
+        Map::new(self.receipts@.dom(),|g:u64|{let r=self.receipts@[g];(r.applied,r.cleanup,r.complete,r.ready)})
+    }
+    pub open spec fn semantic_eq(&self,other:Self)->bool {
+        self.owner_view()==other.owner_view() && self.table_ids()==other.table_ids()
+            && self.receipt_view()==other.receipt_view() && self.lease_view()==other.lease_view()
+            && forall|table:u64,key:Seq<u8>|self.local_meta(table,key)==other.local_meta(table,key)
+    }
+    pub open spec fn bootstrap_view(&self,owner:u32,tables:Seq<RouteTable>)->bool {
+        self.wf() && self.owner_view()==owner && self.lease_view()==Map::<u64,crate::leases::SessionView>::empty()
+            && self.receipt_view()==Map::<u64,ReceiptView>::empty()
+            && self.table_ids()==Seq::new(tables.len(),|i:int|tables[i].table).to_set()
+            && (forall|i:int|0<=i<tables.len() ==> #[trigger] tables[i].boundaries.len()>0)
+            && forall|i:int,key:Seq<u8>|0<=i<tables.len() ==>
+                self.local_meta(tables[i].table,key)==initial_meta(tables[i].boundaries@,owner,key)
+    }
+    pub proof fn metadata_observations(&self,before:Self)
+        requires self.same_metadata(before),
+        ensures self.owner_view()==before.owner_view(),self.table_ids()==before.table_ids(),
+            self.receipt_view()==before.receipt_view(),
+            forall|table:u64,key:Seq<u8>|self.local_meta(table,key)==before.local_meta(table,key),
+    {}
+    pub proof fn semantic_roles(&self,other:Self,a:MigrationPlan,b:MigrationPlan,role:Role,round:Option<u64>,terminal:bool)
+        requires self.semantic_eq(other),crate::storage::same_plan(a,b),
+        ensures self.range_role(a,role,round,terminal)==other.range_role(b,role,round,terminal),
+    {
+        hide(crate::bytes::cmp_spec);
+        assert forall|key:Seq<u8>|crate::bytes::contains_spec(a.range,a.range.table,key)
+            ==crate::bytes::contains_spec(b.range,b.range.table,key) by {};
+        assert forall|key:Seq<u8>|crate::bytes::contains_spec(b.range,b.range.table,key) && self.range_role(a,role,round,terminal)
+            implies other.local_meta(b.range.table,key).is_some()
+                && role_spec(other.local_meta(b.range.table,key).unwrap(),b.generation,role,round,terminal) by {
+            assert(self.local_meta(a.range.table,key)==other.local_meta(b.range.table,key));
+        }
+        assert forall|key:Seq<u8>|crate::bytes::contains_spec(a.range,a.range.table,key) && other.range_role(b,role,round,terminal)
+            implies self.local_meta(a.range.table,key).is_some()
+                && role_spec(self.local_meta(a.range.table,key).unwrap(),a.generation,role,round,terminal) by {
+            assert(self.local_meta(a.range.table,key)==other.local_meta(b.range.table,key));
+        }
+    }
+    pub proof fn semantic_guards(&self,other:Self,a:MigrationPlan,b:MigrationPlan,command:Command)
+        requires self.wf(),other.wf(),self.semantic_eq(other),crate::storage::same_plan(a,b),
+        ensures self.envelope_view(a)==other.envelope_view(b),
+            self.delivery_authorized(a,command)==other.delivery_authorized(b,command),
+            self.can_seal(a)==other.can_seal(b),self.can_complete_cleanup(a)==other.can_complete_cleanup(b),
+            self.command_seen(a.generation,command)==other.command_seen(b.generation,command),
+            self.ready_seen(a.generation)==other.ready_seen(b.generation),
+            self.cleanup_done(a.generation)==other.cleanup_done(b.generation),
+            self.drained_view(a.range)==other.drained_view(b.range),
+    {
+        hide(crate::bytes::cmp_spec);
+        assert(self.receipts@.dom()==other.receipts@.dom());
+        assert forall|g:u64|self.receipts@.contains_key(g) implies self.receipts@[g]==other.receipts@[g] by {
+            assert(self.receipt_view()[g]==other.receipt_view()[g]);
+        }
+        assert(self.receipts@ =~= other.receipts@);
+        self.drained_lease_view(a.range);other.drained_lease_view(b.range);
+        assert forall|key:Seq<u8>|crate::directory::route(a.old@,key)==crate::directory::route(b.old@,key) by {
+            crate::directory_proofs::equivalent_routes(a.old@,b.old@,key);
+        }
+        assert forall|key:Seq<u8>|self.command_at(a,command,self.drained_view(a.range),key)
+            ==other.command_at(b,command,other.drained_view(b.range),key) by {};
+        assert forall|key:Seq<u8>|crate::bytes::contains_spec(a.range,a.range.table,key)
+            ==crate::bytes::contains_spec(b.range,b.range.table,key) by {};
+        assert forall|key:Seq<u8>|crate::bytes::contains_spec(b.range,b.range.table,key)
+            && (forall|k:Seq<u8>|crate::bytes::contains_spec(a.range,a.range.table,k) ==> self.command_at(a,command,self.drained_view(a.range),k))
+            implies other.command_at(b,command,other.drained_view(b.range),key) by {};
+        assert forall|key:Seq<u8>|crate::bytes::contains_spec(a.range,a.range.table,key)
+            && (forall|k:Seq<u8>|crate::bytes::contains_spec(b.range,b.range.table,k) ==> other.command_at(b,command,other.drained_view(b.range),k))
+            implies self.command_at(a,command,self.drained_view(a.range),key) by {};
+        self.semantic_roles(other,a,b,Role::Stage,Some(1),false);
+        self.semantic_roles(other,a,b,Role::Empty,None,true);
+    }
+    pub proof fn semantic_lease_guards(&self,other:Self,id:TxnId,table:u64,key:Seq<u8>,hi:Option<Seq<u8>>,grant:Grant)
+        requires self.semantic_eq(other),
+        ensures self.open_hold(id,table,key,grant)==other.open_hold(id,table,key,grant),
+            self.open_range(id,table,key,hi,grant)==other.open_range(id,table,key,hi,grant),
+    {}
+    pub proof fn metadata_absent(&self,table:u64)
+        requires !self.table_ids().contains(table),
+        ensures forall|key:Seq<u8>|self.local_meta(table,key)==None,
+    {}
     pub closed spec fn same_metadata(&self, before: Self) -> bool {
         self.owner == before.owner && self.tables@ == before.tables@ && self.receipts@ == before.receipts@
     }
@@ -86,7 +203,9 @@ impl Participant {
 
     pub fn new(owner: u32, tables: Vec<RouteTable>) -> (out: Result<Self,Status>)
         ensures match out { Ok(p) => p.wf() && p.owner_view()==owner
+            && p.certified_snapshot() == None
             && p.lease_view()==Map::<u64,crate::leases::SessionView>::empty()
+            && p.bootstrap_view(owner,tables@)
             && forall|g:u64| !p.has_receipt(g), Err(_) => true },
     {
         let mut local: HashMap<u64,MetaTable> = HashMap::new();
@@ -94,6 +213,11 @@ impl Participant {
         while t < tables.len()
             invariant t <= tables.len(),
                 forall|table: u64| local@.contains_key(table) ==> meta_wf(local@[table].boundaries@),
+                local@.dom()==Seq::new(t as nat,|i:int|tables@[i].table).to_set(),
+                forall|i:int|0<=i<t ==> local@.contains_key(tables@[i].table),
+                forall|i:int|0<=i<t ==> tables@[i].boundaries.len()>0,
+                forall|i:int,key:Seq<u8>|0<=i<t ==> meta_route(local@[tables@[i].table].boundaries@,key)
+                    ==initial_meta(tables@[i].boundaries@,owner,key),
             decreases tables.len() - t,
         {
             let table = &tables[t];
@@ -106,26 +230,61 @@ impl Participant {
                     table.boundaries.len() > 0, table.boundaries@[0].start@ == Seq::<u8>::empty(),
                     (boundaries.len() == 0 <==> i == 0), meta_ordered(boundaries@),
                     boundaries.len() > 0 ==> meta_wf(boundaries@),
+                    forall|key:Seq<u8>|meta_route(boundaries@,key)==initial_meta(table.boundaries@.take(i as int),owner,key),
                     i > 0 ==> forall|j: int| 0 <= j < boundaries.len() ==>
                         crate::bytes::cmp_spec(boundaries@[j].start@,table.boundaries@[i as int-1].start@) <= 0,
                 decreases table.boundaries.len() - i,
             {
                 let b = &table.boundaries[i];
-                if b.grant.epoch != 0 { return Err(Status::Invalid); }
+                if b.grant.ownership_version != 0 { return Err(Status::Invalid); }
                 if i > 0 && compare(&table.boundaries[i-1].start,&b.start) >= 0 { return Err(Status::Invalid); }
                 proof {
                     assert forall|j: int| 0 <= j < boundaries.len() implies crate::bytes::cmp_spec(boundaries@[j].start@,b.start@) < 0 by {
                         crate::bytes::cmp_trans(boundaries@[j].start@,table.boundaries@[i as int-1].start@,b.start@);
                     }
                 }
-                MetaTable::push(&mut boundaries,&b.start,ReplicaMeta { epoch: 0, fence: 0,
+                MetaTable::push(&mut boundaries,&b.start,ReplicaMeta { ownership_version: 0, fence: 0,
                     terminal: true, role: if b.grant.owner == owner { Role::Serving } else { Role::Empty }, round: 0 });
+                proof{
+                    assert(table.boundaries@.take(i as int+1).drop_last()==table.boundaries@.take(i as int));
+                    assert(table.boundaries@.take(i as int+1).last()==table.boundaries@[i as int]);
+                }
                 i += 1;
+            }
+            let ghost previous=local@;
+            let ghost ids=Seq::new(t as nat,|j:int|tables@[j].table);
+            let ghost name=table.table;
+            proof{
+                assert(table.boundaries@.take(table.boundaries.len() as int)==table.boundaries@);
+                assert forall|j:int|0<=j<t implies tables@[j].table!=name by{
+                    assert(previous.contains_key(tables@[j].table));
+                }
             }
             local.insert(table.table,MetaTable { boundaries });
             t += 1;
+            proof{
+                assert(Seq::new(t as nat,|j:int|tables@[j].table) =~= ids.push(name));
+                ids.lemma_push_to_set_commute(name);
+                assert forall|j:int,key:Seq<u8>|0<=j<t implies local@.contains_key(tables@[j].table)
+                    && meta_route(local@[tables@[j].table].boundaries@,key)==initial_meta(tables@[j].boundaries@,owner,key) by{
+                    if j==t-1{assert(tables@[j].table==name);}
+                    else{assert(local@[tables@[j].table]==previous[tables@[j].table]);}
+                }
+            }
         }
-        Ok(Self { owner, tables: local, leases: LeaseRegistry::new(), receipts: HashMap::new() })
+        let p=Self { owner, tables: local, leases: LeaseRegistry::new(), receipts: HashMap::new(),
+            fast_version: None, certified: Ghost(None) };
+        proof{
+            assert(p.wf());
+            assert(p.receipt_view() =~= Map::<u64,ReceiptView>::empty());
+            assert(p.table_ids()==Seq::new(tables@.len(),|i:int|tables@[i].table).to_set());
+            assert forall|i:int,key:Seq<u8>|0<=i<tables.len() implies
+                p.local_meta(tables@[i].table,key)==initial_meta(tables@[i].boundaries@,owner,key) by {
+                assert(p.tables@.contains_key(tables@[i].table));
+            }
+            assert(p.bootstrap_view(owner,tables@));
+        }
+        Ok(p)
     }
 
     pub closed spec fn table_wf(&self, table: u64) -> bool {
@@ -175,6 +334,13 @@ impl Participant {
         ensures final(self).wf(), crate::leases::finish_effect(old(self).lease_view(),final(self).lease_view(),id,out),
             final(self).same_metadata(*old(self)),
     { self.leases.finish(id) }
+    pub open spec fn recovery_pending(&self,id:TxnId)->bool {
+        self.lease_view().contains_key(id.client) && self.lease_view()[id.client].sequence==id.sequence
+            && (!self.lease_view()[id.client].terminal || self.lease_view()[id.client].holds.len()>0)
+    }
+    pub fn needs_settlement(&self,id:TxnId)->(yes:bool)
+        ensures yes==self.recovery_pending(id),
+    {self.leases.needs_settlement(id)}
     pub fn release(&mut self, id: TxnId, table: u64, coordinate: &[u8]) -> (out: Status)
         requires old(self).wf(), ensures final(self).wf(), final(self).same_metadata(*old(self)),
             crate::leases::release_effect(old(self).lease_view(),final(self).lease_view(),id,table,coordinate@,out),
@@ -183,17 +349,42 @@ impl Participant {
         requires self.wf(),
         ensures match out { Some(g) => self.open_hold(id,table,coordinate@,g), None => true },
     { self.leases.held(id,table,coordinate) }
+    pub open spec fn point_acquire_effect(&self,after:Self,id:TxnId,table:u64,key:Seq<u8>,grant:Grant,status:Status)->bool {
+        if grant.owner!=self.owner_view(){status==Status::Retry && after.lease_view()==self.lease_view()}
+        else if exists|g:Grant|self.open_hold(id,table,key,g){
+            status==(if self.open_hold(id,table,key,grant){Status::Ok}else{Status::Retry})
+                && after.lease_view()==self.lease_view()
+        }else{match self.local_meta(table,key){
+            None=>status==Status::NotFound && after.lease_view()==self.lease_view(),
+            Some(m)=>if m.role==Role::Serving && m.ownership_version==grant.ownership_version{
+                crate::leases::acquire_effect(self.lease_view(),after.lease_view(),id,table,key,grant,status)
+            }else{status==Status::Retry && after.lease_view()==self.lease_view()},
+        }}
+    }
+    pub open spec fn range_acquire_effect(&self,after:Self,id:TxnId,table:u64,lo:Seq<u8>,hi:Option<Seq<u8>>,grant:Grant,status:Status)->bool {
+        if !crate::directory::proper(lo,hi){status==Status::Invalid && after.lease_view()==self.lease_view()}
+        else if grant.owner!=self.owner_view(){status==Status::Retry && after.lease_view()==self.lease_view()}
+        else if exists|g:Grant|self.open_range(id,table,lo,hi,g){
+            status==(if self.open_range(id,table,lo,hi,grant){Status::Ok}else{Status::Retry})
+                && after.lease_view()==self.lease_view()
+        }else if !self.table_ids().contains(table){status==Status::NotFound && after.lease_view()==self.lease_view()}
+        else if forall|key:Seq<u8>|crate::directory::inside(key,lo,hi) ==> self.local_meta(table,key).is_some()
+            && self.local_meta(table,key).unwrap().role==Role::Serving && self.local_meta(table,key).unwrap().ownership_version==grant.ownership_version{
+            crate::leases::acquire_range_effect(self.lease_view(),after.lease_view(),id,table,lo,hi,grant,status)
+        }else{status==Status::Retry && after.lease_view()==self.lease_view()}
+    }
 
     /// Registration and local admission share this exclusive borrow. Existing
     /// open holds are not readmitted and remain usable while the range is Frozen.
     pub fn acquire(&mut self, id: TxnId, table: u64, coordinate: &[u8], grant: Grant) -> (out: Status)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).same_metadata(*old(self)),
+            old(self).point_acquire_effect(*final(self),id,table,coordinate@,grant,out),
             out == Status::Ok ==> final(self).open_hold(id,table,coordinate@,grant) && grant.owner == old(self).owner_view(),
             out == Status::Ok && !old(self).open_hold(id,table,coordinate@,grant) && old(self).table_wf(table) ==>
                 old(self).local_meta(table,coordinate@).is_some()
                 && old(self).local_meta(table,coordinate@).unwrap().role is Serving
-                && old(self).local_meta(table,coordinate@).unwrap().epoch == grant.epoch,
+                && old(self).local_meta(table,coordinate@).unwrap().ownership_version == grant.ownership_version,
             out != Status::Ok ==> final(self).lease_view() == old(self).lease_view(),
             out == Status::Ok ==> final(self).lease_view() == old(self).lease_view()
                 || crate::leases::acquire_effect(old(self).lease_view(),final(self).lease_view(),id,table,coordinate@,grant,out),
@@ -201,11 +392,20 @@ impl Participant {
     {
         if grant.owner != self.owner { return Status::Retry; }
         if let Some(held) = self.leases.held(id,table,coordinate) {
-            return if held.owner == grant.owner && held.epoch == grant.epoch { Status::Ok } else { Status::Retry };
+            proof{
+                self.lease_facts();
+                assert(self.open_hold(id,table,coordinate@,held));
+                assert(exists|g:Grant|self.open_hold(id,table,coordinate@,g));
+                if self.open_hold(id,table,coordinate@,grant){
+                    crate::leases::point_grant_unique(self.lease_view()[id.client],table,coordinate@,held,grant);
+                }
+                assert((held==grant)==self.open_hold(id,table,coordinate@,grant));
+            }
+            return if held.owner == grant.owner && held.ownership_version == grant.ownership_version { Status::Ok } else { Status::Retry };
         }
         match self.meta(table,coordinate) {
             Some(m) => {
-                if !matches!(m.role,Role::Serving) || m.epoch != grant.epoch { return Status::Retry; }
+                if !matches!(m.role,Role::Serving) || m.ownership_version != grant.ownership_version { return Status::Retry; }
                 self.leases.acquire(id,table,coordinate,grant)
             }
             None => Status::NotFound,
@@ -217,13 +417,14 @@ impl Participant {
     pub fn acquire_range(&mut self, id: TxnId, table: u64, lo: &[u8], hi: Option<&[u8]>, grant: Grant) -> (out: Status)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).same_metadata(*old(self)),
+            old(self).range_acquire_effect(*final(self),id,table,lo@,crate::directory::hi_view(hi),grant,out),
             out == Status::Ok ==> final(self).open_range(id,table,lo@,crate::directory::hi_view(hi),grant)
                 && grant.owner == old(self).owner_view(),
             out == Status::Ok && !old(self).open_range(id,table,lo@,crate::directory::hi_view(hi),grant) ==>
                 forall|k: Seq<u8>| crate::directory::inside(k,lo@,crate::directory::hi_view(hi)) ==>
                     old(self).local_meta(table,k).is_some()
                     && old(self).local_meta(table,k).unwrap().role is Serving
-                    && old(self).local_meta(table,k).unwrap().epoch == grant.epoch,
+                    && old(self).local_meta(table,k).unwrap().ownership_version == grant.ownership_version,
             out != Status::Ok ==> final(self).lease_view() == old(self).lease_view(),
             out == Status::Ok ==> final(self).lease_view() == old(self).lease_view()
                 || crate::leases::acquire_range_effect(old(self).lease_view(),final(self).lease_view(),id,table,lo@,crate::directory::hi_view(hi),grant,out),
@@ -232,10 +433,19 @@ impl Participant {
         if let Some(h) = hi { if compare(lo,h) >= 0 { return Status::Invalid; } }
         if grant.owner != self.owner { return Status::Retry; }
         if let Some(held) = self.leases.held_range(id,table,lo,hi) {
-            return if held.owner == grant.owner && held.epoch == grant.epoch { Status::Ok } else { Status::Retry };
+            proof{
+                self.lease_facts();
+                assert(self.open_range(id,table,lo@,crate::directory::hi_view(hi),held));
+                assert(exists|g:Grant|self.open_range(id,table,lo@,crate::directory::hi_view(hi),g));
+                if self.open_range(id,table,lo@,crate::directory::hi_view(hi),grant){
+                    crate::leases::range_grant_unique(self.lease_view()[id.client],table,lo@,crate::directory::hi_view(hi),held,grant);
+                }
+                assert((held==grant)==self.open_range(id,table,lo@,crate::directory::hi_view(hi),grant));
+            }
+            return if held.owner == grant.owner && held.ownership_version == grant.ownership_version { Status::Ok } else { Status::Retry };
         }
         let local = match self.tables.get(&table) { Some(t) => t, None => return Status::NotFound };
-        if !local.serving_range(lo,hi,grant.epoch) { return Status::Retry; }
+        if !local.serving_range(lo,hi,grant.ownership_version) { return Status::Retry; }
         self.leases.acquire_range(id,table,lo,hi,grant)
     }
 
@@ -329,7 +539,7 @@ impl Participant {
     pub open spec fn command_at(&self, plan: MigrationPlan, command: Command, drained: bool, coordinate: Seq<u8>) -> bool {
         let m = self.local_meta(plan.range.table,coordinate);
         let old = crate::directory::route(plan.old@,coordinate);
-        m.is_some() && old.owner == plan.source && guard_spec(m.unwrap(),old.epoch,plan.generation,command,
+        m.is_some() && old.owner == plan.source && guard_spec(m.unwrap(),old.ownership_version,plan.generation,command,
             self.owner_view() == plan.source,self.owner_view() == plan.destination,drained)
     }
     fn point_guard(&self, plan: &MigrationPlan, command: Command, coordinate: &[u8], drained: bool) -> (yes: bool)
@@ -337,7 +547,7 @@ impl Participant {
         ensures yes == self.command_at(*plan,command,drained,coordinate@),
     {
         match (self.meta(plan.range.table,coordinate), Self::old_grant(plan,coordinate)) {
-            (Some(m),Some(old)) => old.owner == plan.source && command_guard(m,old.epoch,plan.generation,
+            (Some(m),Some(old)) => old.owner == plan.source && command_guard(m,old.ownership_version,plan.generation,
                 command,self.owner == plan.source,self.owner == plan.destination,drained),
             _ => false,
         }
@@ -366,7 +576,7 @@ impl Participant {
                 i += 1;
             }
         } else { return false; }
-        // Freeze's old epoch may change within one local metadata segment.
+        // Freeze's old ownership version may change within one local metadata segment.
         let mut i = 0usize;
         while i < plan.old.len()
             invariant i <= plan.old.len(), self.wf(), crate::directory::wellformed(plan.old@),
@@ -384,7 +594,7 @@ impl Participant {
             i += 1;
         }
         proof {
-            let predicate: spec_fn(ReplicaMeta,Grant)->bool = |m: ReplicaMeta,g: Grant| g.owner == plan.source && guard_spec(m,g.epoch,plan.generation,command,
+            let predicate: spec_fn(ReplicaMeta,Grant)->bool = |m: ReplicaMeta,g: Grant| g.owner == plan.source && guard_spec(m,g.ownership_version,plan.generation,command,
                 self.owner == plan.source,self.owner == plan.destination,drained);
             let upper: Option<Seq<u8>> = match &plan.range.hi { Some(h) => Some(h@), None => None };
             control_proofs::joint_uniform(self.tables@[plan.range.table].boundaries@,plan.old@,
@@ -466,7 +676,12 @@ impl Participant {
     pub fn deliver(&mut self, plan: &MigrationPlan, command: Command) -> (out: ControlResult)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).lease_view() == old(self).lease_view(),
+            final(self).certified_snapshot() == None,
             final(self).owner_view() == old(self).owner_view(),
+            final(self).table_ids()==old(self).table_ids(),
+            final(self).receipt_view()==if out.status==Status::Ok && !old(self).command_seen(plan.generation,command){
+                applied_receipt(old(self).receipt_view(),plan.generation,command,old(self).owner_view()==plan.source)
+            }else{old(self).receipt_view()},
             final(self).retains_receipts(*old(self)),
             out.status == Status::Ok <==> old(self).delivery_authorized(*plan,command),
             out.status == Status::Ok ==> final(self).command_seen(plan.generation,command)
@@ -490,6 +705,7 @@ impl Participant {
                 && (forall|k: Seq<u8>| crate::bytes::contains_spec(plan.range,plan.range.table,k) ==>
                     old(self).command_at(*plan,command,old(self).drained_view(plan.range),k)),
     {
+        self.invalidate_snapshot();
         if !self.envelope(plan) { return ControlResult::status(Status::Invalid); }
         let mask = bit(command);
         let mut receipt = match self.receipts.get(&plan.generation) {
@@ -642,6 +858,14 @@ impl Participant {
         else { self.owner_view() == plan.destination && !self.ready_seen(plan.generation)
             && self.range_role(plan,Role::Stage,Some(1),false) }
     }
+    pub proof fn matching_transfer(&self,a:MigrationPlan,b:MigrationPlan,cleanup:bool)
+        requires crate::storage::same_plan(a,b),
+        ensures self.transfer_authorized(a,cleanup)==self.transfer_authorized(b,cleanup),
+    {
+        assert(self.semantic_eq(*self));
+        if cleanup { self.semantic_roles(*self,a,b,Role::Empty,None,true); }
+        else { self.semantic_roles(*self,a,b,Role::Stage,Some(1),false); }
+    }
     /// Called once while constructing the checked adapter. Its immutable borrow
     /// is retained through every engine effect, not exported as an unlocked flag.
     pub(crate) fn authorize_transfer(&self, plan: &MigrationPlan, cleanup: bool) -> (status: Status)
@@ -717,7 +941,14 @@ impl Participant {
     pub(crate) fn seal(&mut self, plan: &MigrationPlan, completed: &CompletedCopy) -> (out: ControlResult)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).lease_view() == old(self).lease_view(),
+            final(self).certified_snapshot() == None,
             final(self).owner_view() == old(self).owner_view(),
+            final(self).table_ids()==old(self).table_ids(),
+            out.cleanup==Cleanup::None,
+            final(self).receipt_view()==if out.status==Status::Ok{
+                let r=old(self).receipt_view()[plan.generation];
+                old(self).receipt_view().insert(plan.generation,(r.0,r.1,r.2,true))
+            }else{old(self).receipt_view()},
             final(self).retains_receipts(*old(self)),
             out.status == Status::Ok <==> old(self).can_seal(*plan)
                 && completed.matches_spec(*plan,old(self).owner_view()),
@@ -732,6 +963,7 @@ impl Participant {
                     old(self).local_meta(plan.range.table,k).is_some()
                     && role_spec(old(self).local_meta(plan.range.table,k).unwrap(),plan.generation,Role::Stage,Some(1),false)),
     {
+        self.invalidate_snapshot();
         if !self.envelope(plan) || self.owner != plan.destination || !completed.matches(plan,self.owner) {
             return ControlResult::status(Status::Invalid);
         }
@@ -761,6 +993,13 @@ impl Participant {
     pub(crate) fn complete_cleanup(&mut self, plan: &MigrationPlan, completed: CompletedCleanup) -> (out: ControlResult)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).lease_view() == old(self).lease_view(), final(self).local_unchanged(*old(self)),
+            final(self).certified_snapshot() == None,
+            final(self).table_ids()==old(self).table_ids(),
+            out.cleanup==Cleanup::None,
+            final(self).receipt_view()==if out.status==Status::Ok{
+                let r=old(self).receipt_view()[plan.generation];
+                old(self).receipt_view().insert(plan.generation,(r.0,r.1,true,r.3))
+            }else{old(self).receipt_view()},
             final(self).retains_receipts(*old(self)),
             out.status == Status::Ok <==> old(self).can_complete_cleanup(*plan)
                 && completed.matches_spec(*plan,old(self).owner_view()),
@@ -774,6 +1013,7 @@ impl Participant {
                     old(self).local_meta(plan.range.table,k).is_some()
                     && role_spec(old(self).local_meta(plan.range.table,k).unwrap(),plan.generation,Role::Empty,None,true),
     {
+        self.invalidate_snapshot();
         if !self.envelope(plan) || !completed.matches(plan,self.owner) { return ControlResult::status(Status::Invalid); }
         let mut receipt = match self.receipts.get(&plan.generation) { Some(r) => *r, None => return ControlResult::status(Status::Retry) };
         if matches!(receipt.cleanup,Cleanup::None) { return ControlResult::status(Status::Invalid); }

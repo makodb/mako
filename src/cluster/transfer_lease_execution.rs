@@ -128,7 +128,7 @@ pub(super) proof fn acquire_keys(c:p::Constants,s:p::State,t:int,work:Seq<int>,t
     requires s.sessions.contains_key(t),!s.sessions[t].resolved,work.no_duplicates(),
         work.to_set().subset_of(target.dom()),work.to_set().disjoint(s.sessions[t].held.dom()),
         forall|k:int| work.to_set().contains(k) ==> s.physical.contains_key((target[k].owner,k))
-            && p::replica(s,target[k].owner,k).role is Serving && p::replica(s,target[k].owner,k).epoch == target[k].epoch,
+            && p::replica(s,target[k].owner,k).role is Serving && p::replica(s,target[k].owner,k).ownership_version == target[k].ownership_version,
     ensures out.valid(c,s),out.after(s) == (p::State { sessions:s.sessions.insert(t,p::Session {
         held:overlay(s.sessions[t].held,target,work.to_set()),resolved:false }),..s }),
     decreases work.len(),
@@ -144,7 +144,7 @@ pub(super) proof fn acquire_keys(c:p::Constants,s:p::State,t:int,work:Seq<int>,t
         assert forall|k:int| work.drop_last().to_set().contains(k) implies
             s.physical.contains_key((target[k].owner,k))
                 && p::replica(s,target[k].owner,k).role is Serving
-                && p::replica(s,target[k].owner,k).epoch == target[k].epoch by {
+                && p::replica(s,target[k].owner,k).ownership_version == target[k].ownership_version by {
             assert(work.to_set().contains(k));
         }
         let tracked prefix = acquire_keys(c,s,t,work.drop_last(),target);
@@ -172,7 +172,7 @@ pub(super) proof fn acquire_keys(c:p::Constants,s:p::State,t:int,work:Seq<int>,t
 }
 
 /// This adapter lemma consumes the exact registration accounting established by
-/// the registry source body and the native participant's Serving/epoch check.
+/// the registry source body and the native participant's Serving/ownership_version check.
 proof fn registered(c:p::Constants,s:p::State,before:Map<u64,SessionView>,after:Map<u64,SessionView>,id:TxnId,
     scope:native::ScopeView,node:&Participant,addresses:expansion::Addresses)
     -> (tracked out:ClosedTransfer)
@@ -186,7 +186,7 @@ proof fn registered(c:p::Constants,s:p::State,before:Map<u64,SessionView>,after:
             && !expansion::expanded(before[id.client],addresses).contains_key(k) ==>
                 node.local_meta(addresses[k].0,addresses[k].1).is_some()
                 && node.local_meta(addresses[k].0,addresses[k].1).unwrap().role == crate::types::Role::Serving
-                && node.local_meta(addresses[k].0,addresses[k].1).unwrap().epoch == scope.grant.epoch,
+                && node.local_meta(addresses[k].0,addresses[k].1).unwrap().ownership_version == scope.grant.ownership_version,
         scope.grant.owner == node.owner_view(),
         forall|k:int| addresses.contains_key(k) ==> s.physical.contains_key((node.owner_view() as int,k))
             && node.local_meta(addresses[k].0,addresses[k].1).is_some()
@@ -236,7 +236,7 @@ proof fn registered(c:p::Constants,s:p::State,before:Map<u64,SessionView>,after:
     }
     assert(added.disjoint(s.sessions[transaction(id)].held.dom()));
     assert forall|k:int| work.to_set().contains(k) implies s.physical.contains_key((target[k].owner,k))
-        && p::replica(s,target[k].owner,k).role is Serving && p::replica(s,target[k].owner,k).epoch == target[k].epoch by {
+        && p::replica(s,target[k].owner,k).role is Serving && p::replica(s,target[k].owner,k).ownership_version == target[k].ownership_version by {
         assert(added.contains(k));
         assert(crate::participant_proofs::metadata(node.local_meta(addresses[k].0,addresses[k].1).unwrap(),p::replica(s,node.owner_view() as int,k)));
     }
@@ -287,7 +287,7 @@ pub proof fn native_point_admission(c:p::Constants,s:p::State,before:&Participan
         status == Status::Ok ==> grant.owner == before.owner_view(),
         status == Status::Ok && !before.open_hold(id,table,coordinate,grant) ==>
             before.local_meta(table,coordinate).is_some() && before.local_meta(table,coordinate).unwrap().role == crate::types::Role::Serving
-                && before.local_meta(table,coordinate).unwrap().epoch == grant.epoch,
+                && before.local_meta(table,coordinate).unwrap().ownership_version == grant.ownership_version,
         after.lease_view() != before.lease_view() ==> !s.sessions[transaction(id)].resolved,
         forall|k:int| addresses.contains_key(k) ==> s.physical.contains_key((before.owner_view() as int,k))
             && before.local_meta(addresses[k].0,addresses[k].1).is_some()
@@ -323,7 +323,7 @@ pub proof fn native_range_admission(c:p::Constants,s:p::State,before:&Participan
         status == Status::Ok && !before.open_range(id,table,lo,hi,grant) ==>
             forall|coordinate:Seq<u8>| crate::directory::inside(coordinate,lo,hi) ==>
                 before.local_meta(table,coordinate).is_some() && before.local_meta(table,coordinate).unwrap().role == crate::types::Role::Serving
-                    && before.local_meta(table,coordinate).unwrap().epoch == grant.epoch,
+                    && before.local_meta(table,coordinate).unwrap().ownership_version == grant.ownership_version,
         after.lease_view() != before.lease_view() ==> !s.sessions[transaction(id)].resolved,
         forall|k:int| addresses.contains_key(k) ==> s.physical.contains_key((before.owner_view() as int,k))
             && before.local_meta(addresses[k].0,addresses[k].1).is_some()
@@ -349,7 +349,7 @@ pub proof fn native_range_admission(c:p::Constants,s:p::State,before:&Participan
             && !expansion::expanded(b[id.client],addresses).contains_key(k) implies
                 before.local_meta(addresses[k].0,addresses[k].1).is_some()
                 && before.local_meta(addresses[k].0,addresses[k].1).unwrap().role == crate::types::Role::Serving
-                && before.local_meta(addresses[k].0,addresses[k].1).unwrap().epoch == grant.epoch by {
+                && before.local_meta(addresses[k].0,addresses[k].1).unwrap().ownership_version == grant.ownership_version by {
             let coordinate = addresses[k].1;
             assert(addresses[k].0 == table);
             crate::bytes::cmp_laws(lo,coordinate);
@@ -358,7 +358,7 @@ pub proof fn native_range_admission(c:p::Constants,s:p::State,before:&Participan
             assert(!before.open_range(id,table,lo,hi,grant));
             assert(before.local_meta(table,coordinate).is_some()
                 && before.local_meta(table,coordinate).unwrap().role == crate::types::Role::Serving
-                && before.local_meta(table,coordinate).unwrap().epoch == grant.epoch);
+                && before.local_meta(table,coordinate).unwrap().ownership_version == grant.ownership_version);
         }
         registered(c,s,b,z,id,native::range_scope(table,lo,hi,grant),before,addresses)
     }

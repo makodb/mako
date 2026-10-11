@@ -9,6 +9,15 @@ use crate::storage::{self, Source, Store};
 use crate::storage::{Image, first, identity, in_range, row_cell};
 
 verus! {
+/// Erased borrow scope. None permits any window; Some binds a durable adapter
+/// to the range whose physical byte/version frames it retains.
+pub open spec fn scope_allows(scope:Option<KeyRange>,range:KeyRange)->bool {
+    match scope {
+        None=>true,
+        Some(window)=>window.table==range.table && window.lo@==range.lo@
+            && match (window.hi,range.hi) { (None,None)=>true,(Some(a),Some(b))=>a@==b@,_=>false },
+    }
+}
 /// A selected-range engine projection, not a global snapshot. The native host
 /// guarantees exact ordered scan and atomic successful one-key effects, with
 /// errors leaving the window unchanged. Each physical effect additionally
@@ -16,27 +25,33 @@ verus! {
 /// stop. Admission + exact selected-range drain + nonreplicated migration are
 /// the environmental premises which make this borrowed window exclusive.
 pub trait RawStore {
+    type Context;
+    #[verifier::prophetic]
+    spec fn context(&self) -> Self::Context;
     spec fn image(&self, range: KeyRange) -> Image;
+    spec fn scope(&self) -> Option<KeyRange>;
     spec fn wf(&self) -> bool;
     /// Proof-only stabilized I/O boundary; every primitive succeeds while this
     /// borrowed range remains available. Production exposes no stability claim.
     spec fn available(&self,range: KeyRange) -> bool;
     fn scan(&self, range: &KeyRange, after: Option<&Row>) -> (result: Result<Option<Row>,Status>)
-        requires self.wf(),
+        requires self.wf(),scope_allows(self.scope(),*range),
         ensures result is Ok ==> first(self.image(*range),*range,
             match after { None => None, Some(r) => Some(identity(*r)) },result->Ok_0),
             self.available(*range) ==> result is Ok;
     fn put(&mut self, range: &KeyRange, row: &Row) -> (status: Status)
-        requires old(self).wf(), in_range(*range,row_cell(range.table,*row)),
-        ensures final(self).wf(),
+        requires old(self).wf(),scope_allows(old(self).scope(),*range),in_range(*range,row_cell(range.table,*row)),
+        ensures final(self).wf(),final(self).scope()==old(self).scope(),
+            final(self).context()==old(self).context(),
             final(self).available(*range) == old(self).available(*range),
             old(self).available(*range) ==> status == Status::Ok,
             status == Status::Ok ==> final(self).image(*range)
                 == old(self).image(*range).insert(row_cell(range.table,*row),row.value@),
             status != Status::Ok ==> final(self).image(*range) == old(self).image(*range);
     fn delete(&mut self, range: &KeyRange, row: &Row) -> (status: Status)
-        requires old(self).wf(), in_range(*range,row_cell(range.table,*row)),
-        ensures final(self).wf(),
+        requires old(self).wf(),scope_allows(old(self).scope(),*range),in_range(*range,row_cell(range.table,*row)),
+        ensures final(self).wf(),final(self).scope()==old(self).scope(),
+            final(self).context()==old(self).context(),
             final(self).available(*range) == old(self).available(*range),
             old(self).available(*range) ==> status == Status::Ok,
             status == Status::Ok ==> final(self).image(*range)
@@ -53,12 +68,13 @@ struct GuardedStore<'a, K: RawStore> {
     cleanup: bool,
 }
 impl<'a,K: RawStore> Store for GuardedStore<'a,K> {
-    type Context = (&'a Participant, &'a MigrationPlan, bool, K);
+    type Context = (&'a Participant, &'a MigrationPlan, bool, K, K::Context, Option<KeyRange>);
     #[verifier::prophetic]
-    closed spec fn context(&self) -> Self::Context { (self.participant,self.plan,self.cleanup,*final(self.raw)) }
+    closed spec fn context(&self) -> Self::Context { (self.participant,self.plan,self.cleanup,*final(self.raw),self.raw.context(),self.raw.scope()) }
     closed spec fn image(&self) -> Image { self.raw.image(self.plan.range) }
     closed spec fn wf(&self) -> bool {
         self.raw.wf() && self.participant.wf()
+            && scope_allows(self.raw.scope(),self.plan.range)
             && self.participant.transfer_authorized(*self.plan,self.cleanup)
     }
     closed spec fn authorized(&self,plan: MigrationPlan,owner: u32,cleanup: bool) -> bool {
@@ -99,7 +115,7 @@ fn rejected(status: Status) -> (result: ControlResult)
 /// participant borrow. EOF is a proof of all remaining absences, never an error.
 pub fn capture<K: RawStore>(node: &Participant,store: &K,plan: &MigrationPlan,after: Option<&Row>)
     -> (result: Result<Option<Row>,Status>)
-    requires node.wf(), store.wf(),
+    requires node.wf(), store.wf(),scope_allows(store.scope(),plan.range),
     ensures result is Ok ==> node.capture_authorized(*plan)
         && first(store.image(plan.range),plan.range,
             match after { None => None, Some(r) => Some(identity(*r)) },result->Ok_0),
@@ -115,10 +131,17 @@ pub fn capture<K: RawStore>(node: &Participant,store: &K,plan: &MigrationPlan,af
 /// inseparable under the caller's one mutable participant borrow/mutex.
 pub fn execute_final<K: RawStore,S: Source>(node: &mut Participant,store: &mut K,
     plan: &MigrationPlan,source: &S) -> (result: ControlResult)
-    requires old(node).wf(), old(store).wf(), source.wf(),
-    ensures final(node).wf(), final(store).wf(),
+    requires old(node).wf(),old(store).wf(),scope_allows(old(store).scope(),plan.range),source.wf(),
+    ensures final(node).wf(),final(store).wf(),final(store).scope()==old(store).scope(),
+        final(store).context()==old(store).context(),
         final(node).lease_view() == old(node).lease_view(),
         final(node).owner_view() == old(node).owner_view(),
+        final(node).table_ids()==old(node).table_ids(),
+        result.cleanup==crate::participant::Cleanup::None,
+        result.certificate.is_some() ==> final(node).receipt_view()=={
+            let r=old(node).receipt_view()[plan.generation];
+            old(node).receipt_view().insert(plan.generation,(r.0,r.1,r.2,true))
+        },
         result.certificate.is_some() ==> result.certificate == Some(Certificate::Ready)
             && result.status == Status::Ok
             && storage::complete(final(store).image(plan.range),old(store).image(plan.range),source.image(),plan.range)
@@ -157,9 +180,16 @@ pub fn execute_final<K: RawStore,S: Source>(node: &mut Participant,store: &mut K
 /// until every selected byte is absent and the private capability is consumed.
 pub fn execute_cleanup<K: RawStore>(node: &mut Participant,store: &mut K,plan: &MigrationPlan)
     -> (result: ControlResult)
-    requires old(node).wf(), old(store).wf(),
-    ensures final(node).wf(), final(store).wf(),
+    requires old(node).wf(),old(store).wf(),scope_allows(old(store).scope(),plan.range),
+    ensures final(node).wf(),final(store).wf(),final(store).scope()==old(store).scope(),
+        final(store).context()==old(store).context(),
         final(node).lease_view() == old(node).lease_view(), final(node).local_unchanged(*old(node)),
+        final(node).table_ids()==old(node).table_ids(),
+        result.cleanup==crate::participant::Cleanup::None,
+        result.certificate.is_some() ==> final(node).receipt_view()=={
+            let r=old(node).receipt_view()[plan.generation];
+            old(node).receipt_view().insert(plan.generation,(r.0,r.1,true,r.3))
+        },
         result.certificate.is_some() ==> result.status == Status::Ok
             && result.certificate == Some(if old(node).owner_view() == plan.source { Certificate::SourceDone } else { Certificate::DestinationDone })
             && final(node).cleanup_done(plan.generation)

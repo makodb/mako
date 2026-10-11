@@ -294,7 +294,7 @@ pub proof fn freeze_delivery(c: p::Constants, s: p::State, g: nat)
     if sh::source_pre(s,g) {
         assert(p::local_guard(s,g,p::Command::Freeze,s.plans[g].src)) by {
             assert forall|q: int| s.plans[g].keys.contains(q) implies
-                p::replica(s,s.plans[g].src,q).epoch == s.plans[g].old[q].epoch by {
+                p::replica(s,s.plans[g].src,q).ownership_version == s.plans[g].old[q].ownership_version by {
                 sh::selected_key(c,s,g,q);
             }
         }

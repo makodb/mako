@@ -23,7 +23,7 @@ pub open spec fn constants() -> p::Constants {
 }
 pub open spec fn valid(e: Execution) -> bool { t::behavior(constants(),e.states,e.actions) }
 pub open spec fn last(e: Execution) -> t::State { e.states.last() }
-pub open spec fn grant(owner: int, epoch: nat) -> p::Grant { p::Grant { owner, epoch } }
+pub open spec fn grant(owner: int, ownership_version: nat) -> p::Grant { p::Grant { owner, ownership_version } }
 pub proof fn start() -> (e: Execution)
     ensures valid(e), last(e) == t::initial(constants()), p::constants_ok(constants())
 {

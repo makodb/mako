@@ -11,10 +11,11 @@ class FullOrderedIndex;
 namespace mako {
 // @unsafe - only a newly allocated, unused MBTA handle may become a proxy.
 void sharding_mark_proxy(FullOrderedIndex* index);
-// Transport-owned POD; never substitute a receiver's current route for this grant.
+// Transport-owned POD; preserve the sender's paired snapshot and ownership grant.
 struct ShardingRequest {
     MakoShardTxn transaction;
     MakoShardGrant grant;
+    uint64_t snapshot_version;
     uint64_t table;
     uint16_t coordinate_length;
     bool fixed_coordinate;
@@ -42,12 +43,12 @@ int sharding_route_request(int table, const std::string& key, ShardingRequest& r
 // @unsafe - selects a borrowed canonical physical handle or this origin's proxy.
 // Returns nullptr only for explicitly static/immutable or disabled routing.
 FullOrderedIndex* sharding_point_handle(int table, const char* key, size_t length);
-// @unsafe - scan snapshots supply the original segment grant without rerouting.
-ShardingRequest sharding_request_with_grant(int table, const std::string& key,
-                                            MakoShardGrant grant);
+// @unsafe - scan snapshots supply the original complete segment route.
+ShardingRequest sharding_request_with_route(int table, const std::string& key,
+                                            MakoShardRoute route);
 void sharding_use_outgoing_request(const ShardingRequest& request);
 void sharding_require_interval(int table, const std::string& lo,
-                               const std::string* hi, MakoShardGrant grant);
+                               const std::string* hi, MakoShardRoute route);
 // @unsafe - binds a received identity; no fresh grant is computed at the receiver.
 bool sharding_bind_request(const ShardingRequest& request);
 void sharding_set_request(const ShardingRequest& request);

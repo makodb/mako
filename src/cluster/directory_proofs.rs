@@ -174,7 +174,7 @@ pub fn append(out: &mut Vec<Boundary>, start: &[u8], grant: Grant)
     let ghost before = out@;
     if out.len() > 0 {
         let last = &out[out.len()-1];
-        if last.grant.owner == grant.owner && last.grant.epoch == grant.epoch {
+        if last.grant.owner == grant.owner && last.grant.ownership_version == grant.ownership_version {
             proof {
                 assert(last.grant == grant);
                 assert forall|k: Seq<u8>| route(out@,k) ==

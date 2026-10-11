@@ -26,7 +26,7 @@ pub open spec fn base_ok(b: p::State, g: nat, src: int, dst: int, hi: int) -> bo
     &&& forall|k:int| keys(hi).contains(k) ==> {
         let a = p::replica(b,src,k); let d = p::replica(b,dst,k);
         &&& p::directory(b)[k].owner == src
-        &&& a.role is Serving && a.epoch == p::directory(b)[k].epoch
+        &&& a.role is Serving && a.ownership_version == p::directory(b)[k].ownership_version
         &&& a.cell == prefix::seeded_cells()[k] && a.fence < g
         &&& d.role is Empty && d.fence < g
     }
@@ -67,7 +67,7 @@ pub open spec fn checkpoint(b:p::State,g:nat,src:int,dst:int,hi:int,n:nat) -> p:
             } else if selected.contains(q.1) && q.0 == dst {
                 p::Replica { cell:if n >= 3 { prefix::seeded_cells()[q.1] } else { p::empty_cell() },
                     role:if n >= 6 { p::Role::Serving } else if n >= 3 { p::Role::Ready } else { p::Role::Stage },
-                    epoch:g,fence:g,terminal:n>=6,round:if n>=2 { 1nat } else { 0nat },covered:n>=3 }
+                    ownership_version:g,fence:g,terminal:n>=6,round:if n>=2 { 1nat } else { 0nat },covered:n>=3 }
             } else { r }
         }),..b
     }
@@ -279,8 +279,8 @@ proof fn rejected(e:Execution,a:t::Action) -> (z:Execution)
 proof fn split_read(e:Execution) -> (z:Execution)
     requires valid(e),!last(e).txns.contains_key(1),!last(e).placement.sessions.contains_key(1),
         last(e).placement.physical.contains_key((0,0)),last(e).placement.physical.contains_key((1,1)),
-        p::replica(last(e).placement,0,0).role is Serving,p::replica(last(e).placement,0,0).epoch == 2,
-        p::replica(last(e).placement,1,1).role is Serving,p::replica(last(e).placement,1,1).epoch == 1
+        p::replica(last(e).placement,0,0).role is Serving,p::replica(last(e).placement,0,0).ownership_version == 2,
+        p::replica(last(e).placement,1,1).role is Serving,p::replica(last(e).placement,1,1).ownership_version == 1
     ensures valid(z),
         last(z).placement == (p::State { sessions:last(e).placement.sessions.insert(1,prefix::resolved()),..last(e).placement }),
         last(z).txns[1].reads[0] == p::replica(last(e).placement,0,0).cell,
@@ -311,7 +311,7 @@ proof fn split_read(e:Execution) -> (z:Execution)
 }
 
 /// Both moves finish; old messages are delivered at return staging and serving.
-/// The fresh read rejects epoch zero despite owner zero, then reads across owners
+/// The fresh read rejects ownership version zero despite owner zero, then reads across owners
 /// zero and one with the returned and retained grants, commits, and replies.
 pub proof fn witness_partial_return_and_fenced_read() -> (e:Execution)
     ensures valid(e),

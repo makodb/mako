@@ -8,7 +8,19 @@ verus! {
 #[repr(C)]
 pub struct Grant {
     pub owner: u32,
-    pub epoch: u64,
+    /// This range's ownership incarnation, not a transaction or snapshot version.
+    pub ownership_version: u64,
+}
+
+/// No checked immutable routing capture accompanies this grant.
+pub const NO_SNAPSHOT: u64 = u64::MAX;
+
+/// The grant and version captured together from one immutable routing snapshot.
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(C)]
+pub struct RoutedGrant {
+    pub grant: Grant,
+    pub snapshot_version: u64,
 }
 
 /// One sequential transaction stream per originating worker. Sequence numbers
@@ -64,7 +76,7 @@ pub struct Outcome {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct ReplicaMeta {
-    pub epoch: u64,
+    pub ownership_version: u64,
     pub fence: u64,
     pub terminal: bool,
     pub role: Role,

@@ -616,7 +616,7 @@ pub proof fn theorem_capacity_fail_closed(c: Config, s: State, id: RequestId, pa
 {}
 pub proof fn theorem_incarnation_boundary(d: Durable, client: nat, key: int, other: int)
     requires d.routes.contains_key(key), d.routes.contains_key(other),
-        d.routes[key].epoch != d.routes[other].epoch
+        d.routes[key].ownership_version != d.routes[other].ownership_version
     ensures apply_disk(d,Action::Compact { client }).routes[key] !=
         apply_disk(d,Action::Compact { client }).routes[other],
         apply_disk(d,Action::Renew { client }).routes[key] == d.routes[key],

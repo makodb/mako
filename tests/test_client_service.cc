@@ -17,6 +17,7 @@ protected:
     static MakoGatewayRequest Intent(uint32_t kind, uint64_t session = 0) {
         MakoGatewayRequest request{};
         request.version = MAKO_GATEWAY_VERSION;
+        request.snapshot_version = MAKO_GATEWAY_NO_SNAPSHOT;
         request.kind = kind;
         request.session = session;
         return request;
@@ -51,11 +52,13 @@ TEST_F(GatewayClientTest, UnknownWriteKeepsGrantAndCannotBecomeDifferentOperatio
     ASSERT_EQ(mako_gateway_prepare(client, &intent, &request), 0u);
     MakoGatewayResponse route{};
     route.client = request.client; route.sequence = request.sequence;
-    route.table = 100; route.owner = 3; route.epoch = 99;
+    route.table = 100; route.owner = 3; route.ownership_version = 99;
+    route.snapshot_version = 104;
     route.physical_table = 7; route.coordinate_length = 1; route.coordinate[0] = 'k';
     ASSERT_EQ(mako_gateway_set_route(client, &route, &request), 0u);
     ASSERT_EQ(mako_gateway_prepare(client, &intent, &retry), 0u);
-    EXPECT_EQ(retry.epoch, 99u);
+    EXPECT_EQ(retry.ownership_version, 99u);
+    EXPECT_EQ(retry.snapshot_version, 104u);
     EXPECT_EQ(retry.owner, 3u);
     EXPECT_EQ(retry.table, 100u);
     EXPECT_EQ(std::memcmp(&request, &retry, sizeof(request)), 0);
@@ -63,7 +66,7 @@ TEST_F(GatewayClientTest, UnknownWriteKeepsGrantAndCannotBecomeDifferentOperatio
     EXPECT_NE(mako_gateway_complete(client, &route), 0u);
     intent.kind = MAKO_GATEWAY_DELETE;
     EXPECT_NE(mako_gateway_prepare(client, &intent, &retry), 0u);
-    route.epoch = 100;
+    route.ownership_version = 100;
     EXPECT_NE(mako_gateway_set_route(client, &route, &retry), 0u);
 }
 
@@ -75,6 +78,7 @@ TEST_F(GatewayClientTest, BeginPutCommitHaveSeparateSequentialIdentities) {
     const auto session = request.session;
     MakoGatewayResponse response{};
     response.client = kClient; response.sequence = request.sequence;
+    response.snapshot_version = request.snapshot_version;
     response.outcome = MAKO_GATEWAY_COMMITTED;
     ASSERT_EQ(mako_gateway_complete(client, &response), 0u);
     auto put = Intent(MAKO_GATEWAY_PUT, session);
@@ -95,10 +99,12 @@ TEST(GatewayNamespace, SequenceExhaustionFailsClosed) {
     ASSERT_NE(client, nullptr);
     MakoGatewayRequest intent{}, request{};
     intent.version = MAKO_GATEWAY_VERSION;
+    intent.snapshot_version = MAKO_GATEWAY_NO_SNAPSHOT;
     intent.kind = MAKO_GATEWAY_BEGIN;
     ASSERT_EQ(mako_gateway_prepare(client, &intent, &request), 0u);
     MakoGatewayResponse reply{};
     reply.client = request.client; reply.sequence = request.sequence;
+    reply.snapshot_version = request.snapshot_version;
     reply.outcome = MAKO_GATEWAY_COMMITTED;
     ASSERT_EQ(mako_gateway_complete(client, &reply), 0u);
     EXPECT_NE(mako_gateway_prepare(client, &intent, &request), 0u);

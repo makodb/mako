@@ -191,7 +191,7 @@ impl Bootstrap {
         hide(bootstrap_cell);
         let s = self.state;
         let t = bootstrap_id(self.events.len());
-        let target = Map::new(event.writes.dom(),|k:int| p::Grant { owner:c.owners[k],epoch:0 });
+        let target = Map::new(event.writes.dom(),|k:int| p::Grant { owner:c.owners[k],ownership_version:0 });
         let work = event.writes.dom().to_seq();
         lease_execution::lease_keys(event.writes.dom());
         assert(!s.sessions.contains_key(t));
@@ -203,7 +203,7 @@ impl Bootstrap {
             writes:seq![write],states:seq![s,opened],actions:seq![p::Action::Open { txn:t }] } };
         assert forall|k:int| work.to_set().contains(k) implies opened.physical.contains_key((target[k].owner,k))
             && p::replica(opened,target[k].owner,k).role is Serving
-            && p::replica(opened,target[k].owner,k).epoch == target[k].epoch by {
+            && p::replica(opened,target[k].owner,k).ownership_version == target[k].ownership_version by {
             assert(c.keys.contains(k));
             assert(c.shards.contains(c.owners[k]));
         }
@@ -337,7 +337,7 @@ impl BootstrapCertificate {
             s.logical[key] == p::replica(s,c.owners[key],key).cell,
             s.logical[key].value == crate::sharding_bytes::value_option(crate::storage::value(images[c.owners[key]],labels[key])),
             p::replica(s,c.owners[key],key).role is Serving,
-            p::replica(s,c.owners[key],key).epoch == 0,
+            p::replica(s,c.owners[key],key).ownership_version == 0,
             p::drained(s,c.keys),p::inv(c,s),
             exists|states:Seq<p::State>| p::behavior(c,states) && states.last() == s,
     {

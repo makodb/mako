@@ -100,14 +100,22 @@ pub proof fn precedes_trans(reverse: bool,a: Seq<u8>,b: Seq<u8>,c: Seq<u8>)
     hide(cmp_spec);
     if reverse { cmp_trans(c,b,a); } else { cmp_trans(a,b,c); }
 }
+proof fn ordered_adjacent(q: &Request,rows: Seq<WireRow>,j: int)
+    requires ordered(q,rows), 0 < j < rows.len(),
+    ensures precedes(q.reverse,rows[j-1].key,rows[j].key),
+{
+    hide(cmp_spec);
+    hide(Request::contains_spec);
+    assert(q.follows_spec(rows[j].key,Some(rows[j-1].key)));
+    cmp_symmetry(rows[j].key,rows[j-1].key);
+}
 pub proof fn ordered_pair(q: &Request,rows: Seq<WireRow>,i: int,j: int)
     requires ordered(q,rows), 0 <= i < j < rows.len(),
     ensures precedes(q.reverse,rows[i].key,rows[j].key),
     decreases j-i,
 {
-    hide(cmp_spec);
-    cmp_symmetry(rows[j].key,rows[j-1].key);
-    assert(q.follows_spec(rows[j].key,Some(rows[j-1].key)));
+    hide(ordered); hide(precedes);
+    ordered_adjacent(q,rows,j);
     if i < j-1 {
         ordered_pair(q,rows,i,j-1);
         precedes_trans(q.reverse,rows[i].key,rows[j-1].key,rows[j].key);
@@ -262,16 +270,17 @@ pub proof fn tail_membership(q: &Request,next: &Request,image: SnapshotRows,
 
 /// Source connection: these are exactly the successful validate_page outputs.
 /// Wire validity supplies ordering and bounded counts, NEVER truthful EOF.
-pub open spec fn decoded(q: &Request,bytes: Seq<u8>,page: PageSummary) -> bool {
+pub open spec fn decoded(q: &Request,bytes: Seq<u8>,page: PageSummary,snapshot_version: u64) -> bool {
     page.count <= PAGE_ROWS && (page.count == 0 ==> page.eof)
     && page.count == page.rows@.len() && ordered(q,page.rows@)
     && bytes == crate::routing_codec_proofs::word32(crate::full_scan_core::PAGE_TAG)
         +crate::routing_codec_proofs::word32(page.count as u32)
         +crate::routing_codec_proofs::word32(if page.eof {1u32} else {0u32})
+        +crate::routing_codec_proofs::word64(snapshot_version)
         +crate::full_scan_core::rows_wire(page.rows@)
 }
-pub proof fn decoded_order(q: &Request,bytes: Seq<u8>,page: PageSummary)
-    requires decoded(q,bytes,page),
+pub proof fn decoded_order(q: &Request,bytes: Seq<u8>,page: PageSummary,snapshot_version: u64)
+    requires decoded(q,bytes,page,snapshot_version),
     ensures sorted(q.reverse,page.rows@),
 { ordered_all(q,page.rows@); }
 
@@ -467,7 +476,7 @@ pub open spec fn admission(before: crate::participant::Participant,
     && (status == Status::Ok && !before.open_range(id,table,lo,hi,grant) ==>
         forall|k: Seq<u8>| inside(k,lo,hi) ==> before.local_meta(table,k) is Some
             && before.local_meta(table,k).unwrap().role is Serving
-            && before.local_meta(table,k).unwrap().epoch == grant.epoch)
+            && before.local_meta(table,k).unwrap().ownership_version == grant.ownership_version)
     && (status != Status::Ok ==> after.lease_view() == before.lease_view())
 }
 pub proof fn stale_unheld_rejected(before: crate::participant::Participant,
@@ -477,7 +486,7 @@ pub proof fn stale_unheld_rejected(before: crate::participant::Participant,
         !before.open_range(id,table,lo,hi,grant), inside(k,lo,hi),
         grant.owner != before.owner_view() || before.local_meta(table,k) is None
             || !(before.local_meta(table,k).unwrap().role is Serving)
-            || before.local_meta(table,k).unwrap().epoch != grant.epoch,
+            || before.local_meta(table,k).unwrap().ownership_version != grant.ownership_version,
     ensures status != Status::Ok, after.lease_view() == before.lease_view(),
 {}
 
@@ -577,14 +586,10 @@ pub proof fn singleton_engine_page(q: &Request,k: Seq<u8>,v: Seq<u8>)
     }
 }
 
-/// Injectivity of the ONE production request codec, including every native
-/// identity field. A payload cannot be relabeled to another transaction,
-/// owner/incarnation, logical table, fixed address, bounds, or cursor.
-pub proof fn request_roundtrip(a: crate::full_scan_core::BoundRequest,b: crate::full_scan_core::BoundRequest)
-    requires crate::full_scan_core::request_wire(a) == crate::full_scan_core::request_wire(b),
-        crate::full_scan_core::request_wire(a).len() <= crate::full_scan_core::REQUEST_CAPACITY,
-    ensures crate::full_scan_core::same_identity(a.identity,b.identity),
-        crate::full_scan_core::same_bounds(a.bounds,b.bounds),
+// Keep fixed-width and variable-width injectivity in separate solver queries.
+proof fn request_transaction_roundtrip(a: crate::full_scan_core::BoundRequest,b: crate::full_scan_core::BoundRequest)
+    requires request_wire(a) == request_wire(b),
+    ensures request_flags(a) == request_flags(b), a.identity.transaction == b.identity.transaction,
 {
     hide(cmp_spec); hide(word32); hide(word64); hide(blob);
     crate::full_scan_core::request_wire_sizes(a);
@@ -598,19 +603,44 @@ pub proof fn request_roundtrip(a: crate::full_scan_core::BoundRequest,b: crate::
     assert(request_wire(a).subrange(16,24) =~= word64(a.identity.transaction.sequence));
     assert(request_wire(b).subrange(16,24) =~= word64(b.identity.transaction.sequence));
     word64_injective(a.identity.transaction.sequence,b.identity.transaction.sequence);
+}
+
+proof fn request_route_roundtrip(a: crate::full_scan_core::BoundRequest,b: crate::full_scan_core::BoundRequest)
+    requires request_wire(a) == request_wire(b),
+    ensures a.identity.grant == b.identity.grant, a.identity.table == b.identity.table,
+        a.identity.snapshot_version == b.identity.snapshot_version,
+{
+    hide(cmp_spec); hide(word32); hide(word64); hide(blob);
+    crate::full_scan_core::request_wire_sizes(a);
+    crate::full_scan_core::request_wire_sizes(b);
     assert(request_wire(a).subrange(24,28) =~= word32(a.identity.grant.owner));
     assert(request_wire(b).subrange(24,28) =~= word32(b.identity.grant.owner));
     word32_injective(a.identity.grant.owner,b.identity.grant.owner);
-    assert(request_wire(a).subrange(28,36) =~= word64(a.identity.grant.epoch));
-    assert(request_wire(b).subrange(28,36) =~= word64(b.identity.grant.epoch));
-    word64_injective(a.identity.grant.epoch,b.identity.grant.epoch);
+    assert(request_wire(a).subrange(28,36) =~= word64(a.identity.grant.ownership_version));
+    assert(request_wire(b).subrange(28,36) =~= word64(b.identity.grant.ownership_version));
+    word64_injective(a.identity.grant.ownership_version,b.identity.grant.ownership_version);
     assert(request_wire(a).subrange(36,44) =~= word64(a.identity.table));
     assert(request_wire(b).subrange(36,44) =~= word64(b.identity.table));
     word64_injective(a.identity.table,b.identity.table);
+    assert(request_wire(a).subrange(44,52) =~= word64(a.identity.snapshot_version));
+    assert(request_wire(b).subrange(44,52) =~= word64(b.identity.snapshot_version));
+    word64_injective(a.identity.snapshot_version,b.identity.snapshot_version);
+}
+
+proof fn request_payload_roundtrip(a: crate::full_scan_core::BoundRequest,b: crate::full_scan_core::BoundRequest)
+    requires request_wire(a) == request_wire(b),
+        request_wire(a).len() <= crate::full_scan_core::REQUEST_CAPACITY,
+    ensures a.identity.coordinate@ == b.identity.coordinate@, a.bounds.lo@ == b.bounds.lo@,
+        option_payload(a.bounds.hi) == option_payload(b.bounds.hi),
+        option_payload(a.bounds.cursor) == option_payload(b.bounds.cursor),
+{
+    hide(cmp_spec); hide(word32); hide(word64); hide(blob);
+    crate::full_scan_core::request_wire_sizes(a);
+    crate::full_scan_core::request_wire_sizes(b);
     let ax = blob(a.bounds.lo@)+blob(option_payload(a.bounds.hi))+blob(option_payload(a.bounds.cursor));
     let bx = blob(b.bounds.lo@)+blob(option_payload(b.bounds.hi))+blob(option_payload(b.bounds.cursor));
-    assert(request_wire(a).skip(44) =~= blob(a.identity.coordinate@)+ax);
-    assert(request_wire(b).skip(44) =~= blob(b.identity.coordinate@)+bx);
+    assert(request_wire(a).skip(52) =~= blob(a.identity.coordinate@)+ax);
+    assert(request_wire(b).skip(52) =~= blob(b.identity.coordinate@)+bx);
     blob_prefix_unique(a.identity.coordinate@,b.identity.coordinate@,ax,bx);
     assert(ax =~= blob(a.bounds.lo@)+(blob(option_payload(a.bounds.hi))+blob(option_payload(a.bounds.cursor))));
     assert(bx =~= blob(b.bounds.lo@)+(blob(option_payload(b.bounds.hi))+blob(option_payload(b.bounds.cursor))));
@@ -622,6 +652,21 @@ pub proof fn request_roundtrip(a: crate::full_scan_core::BoundRequest,b: crate::
     assert(blob(option_payload(a.bounds.cursor))+Seq::<u8>::empty() =~= blob(option_payload(a.bounds.cursor)));
     assert(blob(option_payload(b.bounds.cursor))+Seq::<u8>::empty() =~= blob(option_payload(b.bounds.cursor)));
     blob_prefix_unique(option_payload(a.bounds.cursor),option_payload(b.bounds.cursor),Seq::empty(),Seq::empty());
+}
+
+/// Injectivity of the ONE production request codec, including every native
+/// identity field. A payload cannot be relabeled to another transaction,
+/// owner/incarnation, logical table, fixed address, bounds, or cursor.
+pub proof fn request_roundtrip(a: crate::full_scan_core::BoundRequest,b: crate::full_scan_core::BoundRequest)
+    requires crate::full_scan_core::request_wire(a) == crate::full_scan_core::request_wire(b),
+        crate::full_scan_core::request_wire(a).len() <= crate::full_scan_core::REQUEST_CAPACITY,
+    ensures crate::full_scan_core::same_identity(a.identity,b.identity),
+        crate::full_scan_core::same_bounds(a.bounds,b.bounds),
+{
+    hide(cmp_spec); hide(word32); hide(word64); hide(blob); hide(request_wire);
+    request_transaction_roundtrip(a,b);
+    request_route_roundtrip(a,b);
+    request_payload_roundtrip(a,b);
 }
 
 pub proof fn rows_wire_unique(a: Seq<WireRow>,b: Seq<WireRow>)
@@ -648,20 +693,23 @@ pub proof fn rows_wire_unique(a: Seq<WireRow>,b: Seq<WireRow>)
         assert(a =~= b);
     } else {assert(a =~= b);}
 }
-pub proof fn page_wire_unique(a: Seq<WireRow>,aeof: bool,b: Seq<WireRow>,beof: bool)
-    requires crate::full_scan_core::page_wire(a,aeof) == crate::full_scan_core::page_wire(b,beof),
+pub proof fn page_wire_unique(a: Seq<WireRow>,aeof: bool,aversion: u64,b: Seq<WireRow>,beof: bool,bversion: u64)
+    requires crate::full_scan_core::page_wire(a,aeof,aversion) == crate::full_scan_core::page_wire(b,beof,bversion),
         a.len() <= PAGE_ROWS, b.len() <= PAGE_ROWS,
-        crate::full_scan_core::page_wire(a,aeof).len() <= crate::full_scan_core::PAGE_CAPACITY,
-    ensures a == b, aeof == beof,
+        crate::full_scan_core::page_wire(a,aeof,aversion).len() <= crate::full_scan_core::PAGE_CAPACITY,
+    ensures a == b, aeof == beof, aversion == bversion,
 {
-    assert(page_wire(a,aeof).subrange(4,8) =~= word32(a.len() as u32));
-    assert(page_wire(b,beof).subrange(4,8) =~= word32(b.len() as u32));
+    assert(page_wire(a,aeof,aversion).subrange(4,8) =~= word32(a.len() as u32));
+    assert(page_wire(b,beof,bversion).subrange(4,8) =~= word32(b.len() as u32));
     word32_injective(a.len() as u32,b.len() as u32);
-    assert(page_wire(a,aeof).subrange(8,12) =~= word32(if aeof {1u32} else {0u32}));
-    assert(page_wire(b,beof).subrange(8,12) =~= word32(if beof {1u32} else {0u32}));
+    assert(page_wire(a,aeof,aversion).subrange(8,12) =~= word32(if aeof {1u32} else {0u32}));
+    assert(page_wire(b,beof,bversion).subrange(8,12) =~= word32(if beof {1u32} else {0u32}));
     word32_injective(if aeof {1u32} else {0u32},if beof {1u32} else {0u32});
-    assert(page_wire(a,aeof).skip(12) =~= rows_wire(a));
-    assert(page_wire(b,beof).skip(12) =~= rows_wire(b));
+    assert(page_wire(a,aeof,aversion).subrange(12,20) =~= word64(aversion));
+    assert(page_wire(b,beof,bversion).subrange(12,20) =~= word64(bversion));
+    word64_injective(aversion,bversion);
+    assert(page_wire(a,aeof,aversion).skip(20) =~= rows_wire(a));
+    assert(page_wire(b,beof,bversion).skip(20) =~= rows_wire(b));
     rows_wire_unique(a,b);
 }
 
@@ -783,8 +831,8 @@ pub open spec fn exchange(e: Exchange,views: EngineViews) -> bool {
     && assembly(e.initial_builder,e.callbacks) && e.producer == assembled(e.initial_builder,e.callbacks)
     && !(e.engine_exit is Error)
     && trusted_transaction_scan(views,e.decoded,e.raw_engine_rows,e.callbacks,e.engine_exit)
-    && e.reply_bytes == crate::full_scan_core::page_wire(e.producer@.rows@,!e.producer@.budget.more)
-    && e.reply_bytes == crate::full_scan_core::page_wire(e.validated,e.eof)
+    && e.reply_bytes == crate::full_scan_core::page_wire(e.producer@.rows@,!e.producer@.budget.more,e.producer@.request.identity.snapshot_version)
+    && e.reply_bytes == crate::full_scan_core::page_wire(e.validated,e.eof,e.before.request.identity.snapshot_version)
     && e.reply_bytes.len() <= crate::full_scan_core::PAGE_CAPACITY && e.validated.len() <= PAGE_ROWS
     && ordered(&e.before.request.bounds,e.validated)
     && consume_effect(e.before,e.after,e.validated,e.consumed,e.eof,e.stopped,e.outcome)
@@ -805,7 +853,8 @@ pub proof fn exchange_exact(e: Exchange,views: EngineViews)
 {
     request_roundtrip(e.before.request,e.decoded);
     e.producer.facts();
-    page_wire_unique(e.producer@.rows@,!e.producer@.budget.more,e.validated,e.eof);
+    page_wire_unique(e.producer@.rows@,!e.producer@.budget.more,e.producer@.request.identity.snapshot_version,
+        e.validated,e.eof,e.before.request.identity.snapshot_version);
     participant_admission_evidence(e.participant,e.decoded);
     assembled_engine_page(views,e.decoded,e.raw_engine_rows,e.callbacks,e.engine_exit,e.initial_builder);
 }
@@ -890,7 +939,7 @@ pub open spec fn hold_embedding(s: crate::sharding_placement::State,txn: int,
         && inside(labels[k].1.1,request.bounds.lo@,opt_bytes(request.bounds.hi)) ==>
         s.sessions[txn].held.contains_key(k)
         && s.sessions[txn].held[k] == (crate::sharding_placement::Grant {
-            owner:request.identity.grant.owner as int,epoch:request.identity.grant.epoch as nat})
+            owner:request.identity.grant.owner as int,ownership_version:request.identity.grant.ownership_version as nat})
 }
 pub proof fn admitted_snapshot_matches_logical(c: crate::sharding_placement::Constants,s: crate::sharding_placement::State,
     txn: int,labels: Map<int,crate::storage::Cell>,logical: Image,views: EngineViews,
@@ -994,7 +1043,7 @@ pub open spec fn lease_embedding(s: crate::sharding_placement::State,txn: int,
     && leases.contains_key(id.client) && leases[id.client].sequence == id.sequence
     && forall|k: int,g: Grant| labels.contains_key(k) && leases[id.client].has(labels[k].0,labels[k].1.0,g) ==>
         s.sessions[txn].held.contains_key(k) && s.sessions[txn].held[k] ==
-            (crate::sharding_placement::Grant {owner:g.owner as int,epoch:g.epoch as nat})
+            (crate::sharding_placement::Grant {owner:g.owner as int,ownership_version:g.ownership_version as nat})
 }
 pub proof fn admission_to_model_hold(s: crate::sharding_placement::State,txn: int,
     labels: Map<int,crate::storage::Cell>,request: crate::full_scan_core::BoundRequest,leases: Map<u64,SessionView>)
@@ -1007,7 +1056,7 @@ pub proof fn admission_to_model_hold(s: crate::sharding_placement::State,txn: in
         && inside(labels[k].1.1,request.bounds.lo@,opt_bytes(request.bounds.hi)) implies
         s.sessions[txn].held.contains_key(k)
         && s.sessions[txn].held[k] == (crate::sharding_placement::Grant {
-            owner:request.identity.grant.owner as int,epoch:request.identity.grant.epoch as nat}) by {
+            owner:request.identity.grant.owner as int,ownership_version:request.identity.grant.ownership_version as nat}) by {
         if !request.identity.fixed_coordinate {
             let i = choose|i: int| 0 <= i < session.holds.len()
                 && session.holds[i].covers_range(request.identity.table,request.bounds.lo@,opt_bytes(request.bounds.hi))

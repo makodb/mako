@@ -77,7 +77,7 @@ client; it does not restrict verification to this replica's replayed rows.
 
 With `MAKO_CLUSTER_CONFIG` enabled, TPC-C's governed table accessors resolve
 `(canonical logical table, global warehouse)` through the current native
-owner **and epoch**, rather than retaining the startup local/remote pointer.
+owner **and ownership version**, rather than retaining the startup local/remote pointer.
 `src/cluster/warehouse.rs` owns the handle cache and selection. The narrow
 `src/mako/benchmarks/tpcc_warehouse_bridge.h` callback only opens an engine
 index, registers its immutable canonical binding, and returns a borrowed
@@ -109,13 +109,25 @@ the existing static vectors and single-process table wiring remain in use.
 
 ### Governed point operations and terminal leases
 
-Raw and transactional point entrypoints capture the full canonical owner/epoch
-grant before selecting the actual local physical table or origin-owned proxy.
-An ownership return reuses that owner's physical table, not the startup wrapper.
-The captured grant survives OCC and RPC retries; receivers retain the sender's
-envelope rather than consulting a newer route. Shared proxy flags never change.
+Raw and transactional point entrypoints capture
+`(snapshot_version, owner, ownership_version)` in one native lookup before
+selecting the actual local physical table or origin-owned proxy. An ownership
+return reuses that owner's physical table, not the startup wrapper. The complete
+captured pair survives OCC and RPC retries; receivers bind its canonical address
+to the actual point operation rather than refreshing the snapshot version.
+Shared proxy flags never change.
 Explicit static/immutable tables and disabled deployments retain their existing
 dispatch behavior.
+
+Receiver admission compares the request version with a locally **certified**
+snapshot version. A match skips the metadata range lookup; otherwise the
+original local `Serving`/ownership-version check runs. Certification checks
+whole assigned intervals at update time and is invalidated before migration
+authority changes, including Freeze before publication. Both paths register
+the same leases under the control/admission mutex. `NO_SNAPSHOT` means an
+uncaptured/untrusted grant and forces exact validation; public gateway claims
+cannot opt themselves into the trusted worker fast path. Recovery never restores
+a certificate or bypasses the metadata-only inspection fence.
 
 Transactional lock batches carry a distinct put/delete operation byte per row.
 A remote delete stages `MassTrans::transDelete` at the participant, including
@@ -158,13 +170,21 @@ runtime and releases its transaction state before worker exit.
 
 ### Governed range scans
 
-The V2 scan request binds the complete transaction identity, owner/epoch grant,
-logical table, and raw-versus-fixed warehouse coordinate. The C++ receiver
+The V3 scan request binds the complete transaction identity,
+`(snapshot_version, owner, ownership_version)` tuple, logical table, and
+raw-versus-fixed warehouse coordinate. Each V2 page echoes the retained snapshot
+version and is rejected before callbacks if it differs. The C++ receiver
 compares that embedded identity with the outer `ShardingRequest` before lease
 admission or engine access. `mako_full_scan_new` takes `MakoScanIdentity`;
 `mako_scan_page_identity_matches` validates it without allocating a coordinate
 copy. Raw scans carry no fixed coordinate, so long raw keys are not constrained
 by the warehouse-coordinate buffer.
+
+The segment visitor retains one immutable snapshot and passes a `MakoShardRoute`
+for every homogeneous interval. It never combines segment ownership with a
+fresh global version. Only that full-interval provenance authorizes the range
+fast path; a generic local scan with only a lower-endpoint point capture uses
+exact range validation, including absent keys and ownership gaps.
 
 `full_scan_core.rs` owns checked request encoding/decoding, raw callback page
 assembly and cursor consumption. `full_scan_proofs.rs` derives forward/reverse
@@ -177,20 +197,109 @@ remain foreign contracts, not verified C++ bodies.
 
 ### Recovery and progress scope
 
-The Verus sharding recovery protocol requires committed per-authority
-checkpoints, durable engine suffixes/outcomes and pending-work records,
-enumerable transaction namespaces, persisted admission/membership fences,
-immutable copy versions and generation-scoped deletion completion. Native
-source histories now chain actual participant snapshots and derive retained
-Final receipts; raw traversal and callbacks have conditional progress proofs
-under primitive availability and eventual transaction settlement.
+Start with the [end-to-end sharding/migration design](architecture/sharding-migration.md)
+for the algorithm and its separation from application transactions. This section
+specifies the concrete persistence and integration contracts.
 
-Those requirements are not implemented by the current native migration
-persistence adapter: live migration still uses fixed owners and the
-non-replicated path. Metadata-only restoration is insufficient. Administrative
-retention separately bounds acknowledged, checkpoint-covered request records;
-it does not reclaim participant recovery logs, receipt tables or outstanding
-copy/cleanup work. See [the proof scopes and interfaces](../tla/mako/README.md).
+The production `runtime.rs` / `HostAbi` primary-row boundary is still the live
+MBTA/STO adapter: rows are in memory, raw migration uses `try_commit_no_paxos`,
+and replicated migration is rejected. Primary storage and application TP remain
+unchanged. Existing row-log components do not supply the authoritative durable
+row image and exact distributed-transaction settlement required for full recovery.
+
+An optional **metadata-only** production path now uses `rocks_metadata.rs`,
+`metadata_coordinator.rs`, and `metadata.rs`. The real RocksDB backend supplies
+exact reads, synchronous WAL-enabled atomic batches, an exclusive writer lock
+held across reopen, and fail-closed uncertain-I/O settlement. Creation is explicit;
+retained open never recreates missing state. The coordinator uses the checked
+`DurableCoordinator` replay. The participant uses a separately tagged live
+bookkeeping journal, not a counterfeit `DurableEngine`: it records leases,
+controls, and transfer intent/results, with no claim that Ready/Done rows survive.
+Reopening validates that prefix but leaves the participant and data admission
+closed. Historical admin outcomes remain inspectable; pending migrations and
+old leases cannot be finished or automatically resumed.
+See [configuration and restart behavior](mako-book.md#optional-durable-migration-metadata).
+
+`durable_kv.rs`, `durable_coordinator.rs`, `durable_participant.rs`, and
+`durable_engine.rs` also provide the stronger conditional durable-interface path.
+They reuse the native actors and ordered transfer loops. Production reuses its
+KV/coordinator pieces; the full participant/engine/TP recovery adapter remains
+unimplemented. The following replay, settlement, and data-before-completion
+requirements describe that stronger path, not metadata-only restart.
+
+The system-record encoding is concrete. A 32-byte little-endian key contains
+`KEY_TAG:u64`, `owner:u32`, `authority:u32` (participant 0, coordinator 1),
+`kind:u64` (head 0, operation 1) and `index:u64`. A head stores
+`HEAD_TAG`, admission incarnation and record count; an operation stores
+`RECORD_TAG`, a u64 byte length and the encoded native input. Record zero is
+bootstrap. Appending atomically writes the operation and its new head; replay
+runs those decoded inputs through the actual native transition bodies.
+Decision/publication, retained nonces, controls, leases and completion receipts
+are reconstructed from that committed prefix, not a caller-supplied actor.
+Protocol replay semantics are part of the versioned format.
+
+After activation, `next_recovery_transaction(kv, admission, 0)` discovers an
+unfinished old-incarnation identity from committed Begin records and the
+reconstructed lease registry. Continue with the returned cursor and settle each
+identity through `finish`; already-finished entries are excluded. A restarted
+driver needs no retained client-ID list, and an unknown settlement never clears
+the lease.
+
+The backend contract is deliberately narrower than migration correctness:
+
+- `DurableKv` supplies exact byte reads, atomic durable batches, and a barrier
+  that resolves or excludes **every** old accepted submission. Unknown is not
+  failure or success. There must be one serialized live writer per namespace;
+  `&mut K` is not a distributed CAS. A Raft adapter must fence old writers at
+  application time, not merely when an RPC is received.
+- `DurableEngine` restores authoritative canonical row bytes and versions,
+  settles old raw submissions, and atomically settles exact transaction effects
+  and terminal outcomes. Returning a known outcome must exclude later effects
+  from surviving peers and queued RPCs. An absent transaction may release a
+  restored lease only after a durable empty-abort identity fence, never from
+  absence or elapsed time alone. Global transaction IDs must retain their TP
+  identity across all participants and restarts, not be recycled by a restarted
+  worker. A receiver admission fences requests; it does not allocate global IDs.
+  The engine facade is exclusively borrowed during a transfer call. Its
+  successful admission check exposes matching working/durable state with no
+  pending raw effect. A production adapter must provide that coherent view;
+  wrapping independently mutating primary storage is not sufficient.
+- Begin and lease acquisition must run under TP's global enrollment/lifecycle
+  authorization, held or fenced through the metadata operation. A transaction
+  already settled elsewhere cannot enroll at a previously uninvolved owner.
+  The owner-local journal cannot establish this from absence; these APIs do not
+  query global TP state themselves. Dispatch must enforce this ordinary TP
+  lifecycle contract, not pass a stale boolean. Local `resolve` is not an engine
+  outcome and cannot replace global settlement.
+- Reservations precede copy/deletion I/O. Durable complete copy precedes the
+  Ready record; durable deletion precedes Done. Failed or unknown writes fence
+  the candidate actor. Recovery settles I/O, replays records and persists a fresh
+  admission before exposing serving APIs. RPCs must retain their captured
+  namespace/incarnation rather than being relabeled with the receiver's new one.
+  The checked adapter exposes complete canonical row images and retains an
+  erased range/context frame through the actual transfer loop, so outside-range
+  byte/version preservation is not vacuous over a range-filtered image.
+- Canonical table/coordinate/key bindings must survive reopening. Mutable
+  handles, cursors, actor caches and scheduler state are not recovery inputs.
+  The journal is append-only; this path does not compact participant history,
+  reclaim transaction fences or implement dynamic membership.
+
+The Docker proof gate also runs `examples/durable_recovery.rs`: a real
+file-backed reference KV/engine, SIGKILL during an accepted unknown deletion,
+fresh byte-only replay, phase resumption and ownership return. A second SIGKILL
+case discovers an orphaned lease solely from its journal, persists an
+empty-abort identity fence, rejects a late old write and resumes migration. Its fixture
+transactions are single-owner and enforce an owner-specific identity domain;
+it is neither a distributed TP simulator nor evidence of production MBTA
+durability. The real-MBTA smoke separately checks live migration and four
+metadata-only SIGKILL/reopen cases, including refusal of data admission,
+destructive old controls, and recovered lease release. The RocksDB foreign
+kernel and filesystem synchronization remain trusted, unverified boundaries.
+The recovery regressions also complete a destination copy after the coordinator
+has aborted but before the destination receives Abort. Reopening retains the
+abort decision and private Ready state; resumption deletes that private copy
+without changing source ownership or the retained nonce outcome.
+See [the proof scopes and interfaces](../tla/mako/README.md).
 
 
 ## Authoring & regenerating the DSL blocks

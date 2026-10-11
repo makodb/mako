@@ -11,6 +11,7 @@
 #include "benchmarks/benchmark_config.h"
 #include "storage/mbta_wrapper.hh"
 #include "lib/table_registry.h"
+#include "lib/server.h"
 
 namespace {
 constexpr uint64_t raw_id = 1001;
@@ -155,7 +156,7 @@ void begin_capture(unsigned source, bool drop_reply) {
     state->issued.clear();
 }
 // @unsafe - replay traverses the original real srpc callback, not the fault hook.
-void replay_controls(bool aborted) {
+void replay_controls(bool aborted, int fenced_target = -1) {
     rusty::Vec<IssuedControl> issued;
     {
         auto state = faults.lock().unwrap();
@@ -164,17 +165,29 @@ void replay_controls(bool aborted) {
     }
     unsigned operations = 0, terminal_targets = 0;
     for (const auto& record : issued) {
+        if (fenced_target >= 0 && record.target != unsigned(fenced_target)) continue;
         CapturedReply reply;
-        const auto status = mako::native_sharding_peer_call(record.host, record.target,
-            record.operation, bytes(record.payload), CapturedReply::receive, &reply);
+        uint32_t status = MAKO_SHARD_IO;
+        for (unsigned attempt = 0; attempt < 100; ++attempt) {
+            reply = {};
+            status = mako::native_sharding_peer_call(record.host, record.target,
+                record.operation, bytes(record.payload), CapturedReply::receive, &reply);
+            if (status == MAKO_SHARD_OK && reply.calls == 1 && reply.copied) break;
+            usleep(50000);
+        }
         require(status == MAKO_SHARD_OK && reply.calls == 1 && reply.copied,
                 "old message replay must reach actual production handler");
-        require(reply.status == MAKO_SHARD_OK || reply.status == MAKO_SHARD_RETRY
-                || reply.status == MAKO_SHARD_INVALID, "unexpected old message application status");
+        if (fenced_target >= 0)
+            require(reply.status == MAKO_SHARD_RETRY,
+                    "retained metadata admitted an old control, including terminal cleanup");
+        else
+            require(reply.status == MAKO_SHARD_OK || reply.status == MAKO_SHARD_RETRY
+                    || reply.status == MAKO_SHARD_INVALID, "unexpected old message application status");
         operations |= 1u << (record.operation - 10);
         if (record.operation == (aborted ? 15u : 14u)) terminal_targets |= 1u << record.target;
     }
-    require(terminal_targets == 3, "old terminal message was not issued and replayed to both peers");
+    require(terminal_targets == (fenced_target < 0 ? 3u : 1u << fenced_target),
+            "old terminal message was not issued and replayed to every requested peer");
     if (!aborted)
         require((operations & 21u) == 21u, "missing actual old Start/Final/Commit messages");
 }
@@ -384,6 +397,10 @@ int main(int argc, char** argv) {
         std::cout << "SMOKE READY" << std::endl;
         std::string line;
         uint64_t lease_sequence = 0;
+        MakoShardRoute remembered[2]{};
+        uint64_t remembered_table[2]{};
+        MakoShardRoute unmoved_route{};
+        bool unmoved_remembered = false;
         while (std::getline(std::cin, line)) {
             std::istringstream input(line);
             std::string command, table;
@@ -415,6 +432,26 @@ int main(int argc, char** argv) {
             }
             const uint64_t id = table == "raw" ? raw_id : warehouse_id;
             const auto point = table == "raw" ? key(0) : coordinate(1);
+            if (command == "metadata-fenced") {
+                // @unsafe - probes real native entrypoints; fixture genesis rows
+                // are not recovered data and must never make this owner ready.
+                require(owner >= first && owner < limit, "fence probe targets nonlocal owner");
+                const MakoShardTxn txn{0x484f4c44ULL + owner, 1};
+                require(!mako_sharding_ready(owner), "retained metadata became data-ready");
+                require(mako_sharding_wait_ready(owner) == MAKO_SHARD_RETRY,
+                        "retained metadata wait_ready did not fail closed");
+                require(mako_sharding_lease_begin(owner, txn) == MAKO_SHARD_RETRY,
+                        "retained metadata admitted lease begin");
+                require(mako_sharding_lease_acquire(owner, txn, id, bytes(point), {{owner, 0}, 0})
+                            == MAKO_SHARD_RETRY, "retained metadata admitted lease acquire");
+                require(mako_sharding_lease_acquire_range(owner, txn, id, bytes(point),
+                            0, {}, {{owner, 0}, 0}) == MAKO_SHARD_RETRY,
+                        "retained metadata admitted lease range");
+                require(mako_sharding_lease_finish(owner, txn) == MAKO_SHARD_RETRY,
+                        "retained metadata released a pre-death lease");
+                std::cout << "SMOKE OK metadata retained; rows not recovered; all access fenced" << std::endl;
+                continue;
+            }
             if (command == "fault-arm" || command == "capture") {
                 begin_capture(owner, command == "fault-arm");
                 std::cout << "SMOKE OK" << std::endl;
@@ -435,26 +472,135 @@ int main(int argc, char** argv) {
                 std::cout << "SMOKE OK" << std::endl;
                 continue;
             }
+            if (command == "replay-target-fenced") {
+                unsigned target = 0;
+                input >> target;
+                require(bool(input) && target < 2, "invalid fenced replay target");
+                replay_controls(false, int(target));
+                std::cout << "SMOKE OK captured Start/Final/Commit rejected by retained target" << std::endl;
+                continue;
+            }
             if (command == "route") {
                 uint64_t minimum = 0;
                 input >> minimum;
-                MakoShardGrant grant{};
+                MakoShardRoute route{};
                 bool matched = false;
                 for (unsigned attempt = 0; attempt < 200; ++attempt) {
-                    const auto status = mako_sharding_route(id, bytes(point), &grant);
-                    if (status == MAKO_SHARD_OK && grant.owner == owner && grant.epoch >= minimum) {
+                    const auto status = mako_sharding_route(id, bytes(point), &route);
+                    if (status == MAKO_SHARD_OK && route.grant.owner == owner
+                        && route.grant.ownership_version >= minimum) {
                         matched = true;
                         break;
                     }
                     usleep(50000);
                 }
-                require(matched, "route owner/epoch mismatch after snapshot refresh");
-                std::cout << "SMOKE OK " << grant.epoch << std::endl;
+                require(matched, "route owner/ownership-version mismatch after snapshot refresh");
+                std::cout << "SMOKE OK " << route.grant.ownership_version << std::endl;
                 continue;
             }
             require(owner >= first && owner < limit, "command targets nonlocal owner");
             select_owner(owner);
             auto* index = table == "raw" ? raw[owner] : physical_warehouse[owner][0];
+            if (command == "gateway-forged") {
+                require(owner == 0 && table == "raw", "gateway probe scope");
+                MakoShardRoute route{};
+                require(mako_sharding_route(raw_id, bytes("a"), &route) == MAKO_SHARD_OK
+                        && route.grant.owner == owner && route.grant.ownership_version == 0
+                        && route.snapshot_version > 0, "gateway probe needs changed snapshot");
+                const auto physical = mako::get_table_registry().get_table_id("smoke_raw");
+                require(physical.is_some(), "gateway physical table absent");
+                mako::ShardReceiver receiver(argv[1]);
+                // @unsafe - Register's legacy map signature is the engine boundary.
+                receiver.Register(&db, {{physical.unwrap(), raw[owner]}});
+                MakoGatewayRequest request{};
+                request.version = MAKO_GATEWAY_VERSION;
+                request.kind = MAKO_GATEWAY_GET;
+                request.client = UINT64_C(0x80000000cafe0000) + owner;
+                request.sequence = 1;
+                request.table = raw_id;
+                request.physical_table = physical.unwrap();
+                request.owner = owner;
+                request.ownership_version = 1; // wrong, but <= current snapshot
+                request.snapshot_version = route.snapshot_version;
+                request.route_known = 1;
+                request.key[0] = 'a'; request.key_length = 1;
+                request.coordinate[0] = 'a'; request.coordinate_length = 1;
+                MakoGatewayResponse response{};
+                receiver.ClientOperation(request, response);
+                require(response.status != mako::ErrorCode::SUCCESS
+                        && response.outcome == MAKO_GATEWAY_ABORTED,
+                        "public current-version claim bypassed ownership validation");
+                request.sequence = 2;
+                request.ownership_version = route.grant.ownership_version;
+                receiver.ClientOperation(request, response);
+                const std::string expected = "unmoved-left";
+                require(response.status == mako::ErrorCode::SUCCESS
+                        && response.value_length == expected.size()
+                        && std::memcmp(response.value, expected.data(), expected.size()) == 0
+                        && response.snapshot_version == request.snapshot_version,
+                        "legitimate gateway request/reply lost captured routing identity");
+                std::cout << "SMOKE OK untrusted snapshot claim rejected; exact gateway read preserved" << std::endl;
+                continue;
+            }
+            if (command == "remember") {
+                require(mako_sharding_route(id, bytes(point), &remembered[owner]) == MAKO_SHARD_OK
+                        && remembered[owner].grant.owner == owner, "remember actual routed request");
+                remembered_table[owner] = id;
+                std::cout << "SMOKE OK" << std::endl;
+                continue;
+            }
+            if (command == "remember-unmoved") {
+                require(owner == 0 && table == "raw", "unmoved probe scope");
+                require(mako_sharding_route(raw_id, bytes("a"), &unmoved_route) == MAKO_SHARD_OK
+                        && unmoved_route.grant.owner == owner, "remember unaffected request");
+                unmoved_remembered = true;
+                std::cout << "SMOKE OK" << std::endl;
+                continue;
+            }
+            if (command == "probe-unmoved") {
+                MakoShardRoute current{};
+                require(owner == 0 && table == "raw" && unmoved_remembered, "unmoved request absent");
+                require(mako_sharding_route(raw_id, bytes("a"), &current) == MAKO_SHARD_OK
+                        && current.snapshot_version > unmoved_route.snapshot_version
+                        && current.grant.owner == unmoved_route.grant.owner
+                        && current.grant.ownership_version == unmoved_route.grant.ownership_version,
+                        "probe did not retain an older snapshot for unchanged ownership");
+                const MakoShardTxn txn{0x534d4f4b45ULL + owner, ++lease_sequence};
+                require(mako_sharding_lease_begin(owner, txn) == MAKO_SHARD_OK, "fallback begin");
+                require(mako_sharding_lease_acquire(owner, txn, raw_id, bytes("a"), unmoved_route)
+                        == MAKO_SHARD_OK, "older snapshot rejected unchanged ownership");
+                require(mako_sharding_lease_finish(owner, txn) == MAKO_SHARD_OK, "fallback finish");
+                std::cout << "SMOKE OK old snapshot fallback" << std::endl;
+                continue;
+            }
+            if (command == "probe-stale" || command == "probe-frozen") {
+                require(remembered_table[owner] == id, "no captured request for probe");
+                bool refused = false;
+                for (unsigned attempt = 0; attempt < 200; ++attempt) {
+                    const MakoShardTxn txn{0x534d4f4b45ULL + owner, ++lease_sequence};
+                    require(mako_sharding_lease_begin(owner, txn) == MAKO_SHARD_OK, "captured probe begin");
+                    const auto status = mako_sharding_lease_acquire(owner, txn, id, bytes(point), remembered[owner]);
+                    require(mako_sharding_lease_finish(owner, txn) == MAKO_SHARD_OK, "captured probe finish");
+                    if (status == MAKO_SHARD_RETRY) { refused = true; break; }
+                    require(status == MAKO_SHARD_OK && command == "probe-frozen",
+                            "stale captured request admitted or unexpected admission failure");
+                    usleep(50000);
+                }
+                require(refused, "frozen range kept admitting matching-snapshot requests");
+                if (command == "probe-frozen") {
+                    MakoShardRoute current{};
+                    require(mako_sharding_route(id, bytes(point), &current) == MAKO_SHARD_OK
+                            && current.snapshot_version == remembered[owner].snapshot_version
+                            && current.grant.owner == remembered[owner].grant.owner
+                            && current.grant.ownership_version == remembered[owner].grant.ownership_version,
+                            "freeze probe did not exercise matching snapshot/ownership versions");
+                    require(mako_sharding_lease_acquire(owner, {0x484f4c44ULL + owner, 1},
+                            id, bytes(point), remembered[owner]) == MAKO_SHARD_OK,
+                            "freeze revoked an already-held lease");
+                }
+                std::cout << "SMOKE OK captured request fenced" << std::endl;
+                continue;
+            }
             if (command == "check") {
                 input >> changed;
                 check_rows(index, changed);
@@ -474,24 +620,25 @@ int main(int argc, char** argv) {
                 require(raw[owner]->get(lcdf::Str("z"), actual, SIZE_MAX) && actual == "unmoved-right",
                         "right unaffected row changed");
             } else if (command == "hold") {
-                MakoShardGrant grant{};
+                MakoShardRoute route{};
                 const MakoShardTxn txn{0x484f4c44ULL + owner, 1};
-                require(mako_sharding_route(id, bytes(point), &grant) == MAKO_SHARD_OK
-                        && grant.owner == owner, "hold current grant");
+                require(mako_sharding_route(id, bytes(point), &route) == MAKO_SHARD_OK
+                        && route.grant.owner == owner, "hold current route");
                 require(mako_sharding_lease_begin(owner, txn) == MAKO_SHARD_OK, "hold begin");
-                require(mako_sharding_lease_acquire(owner, txn, id, bytes(point), grant)
+                require(mako_sharding_lease_acquire(owner, txn, id, bytes(point), route)
                         == MAKO_SHARD_OK, "hold acquire");
             } else if (command == "release") {
                 require(mako_sharding_lease_finish(owner, {0x484f4c44ULL + owner, 1})
                         == MAKO_SHARD_OK, "hold release");
             } else if (command == "stale") {
-                uint64_t epoch = 0;
-                input >> epoch;
+                uint64_t ownership_version = 0;
+                input >> ownership_version;
                 const MakoShardTxn txn{0x534d4f4b45ULL + owner, ++lease_sequence};
                 require(mako_sharding_lease_begin(owner, txn) == MAKO_SHARD_OK, "begin stale probe");
-                const auto status = mako_sharding_lease_acquire(owner, txn, id, bytes(point), {owner, epoch});
+                const auto status = mako_sharding_lease_acquire(owner, txn, id, bytes(point),
+                    {{owner, ownership_version}, MAKO_SHARD_NO_SNAPSHOT});
                 require(mako_sharding_lease_finish(owner, txn) == MAKO_SHARD_OK, "finish stale probe");
-                require(status != MAKO_SHARD_OK, "old owner/epoch admitted");
+                require(status != MAKO_SHARD_OK, "old owner/ownership-version admitted");
             } else {
                 throw std::runtime_error("unknown fixture command");
             }

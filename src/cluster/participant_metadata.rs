@@ -80,13 +80,13 @@ pub proof fn uniform_meta(p: Seq<MetaBoundary>, range: KeyRange, predicate: spec
 
 /// These scalar guards are the guards used by the real interval walk below.
 /// Authentic command issuance and the immutable envelope are transport premises.
-pub fn command_guard(m: ReplicaMeta, old_epoch: u64, generation: u64,
+pub fn command_guard(m: ReplicaMeta, old_ownership_version: u64, generation: u64,
     command: Command, source: bool, destination: bool, drained: bool) -> (yes: bool)
-    ensures yes == guard_spec(m,old_epoch,generation,command,source,destination,drained),
+    ensures yes == guard_spec(m,old_ownership_version,generation,command,source,destination,drained),
 {
     match command {
         Command::Start => destination && matches!(m.role,Role::Empty) && m.fence < generation,
-        Command::Freeze => source && matches!(m.role,Role::Serving) && m.epoch == old_epoch && m.fence < generation,
+        Command::Freeze => source && matches!(m.role,Role::Serving) && m.ownership_version == old_ownership_version && m.fence < generation,
         Command::Final => destination && matches!(m.role,Role::Stage) && m.fence == generation && !m.terminal && m.round == 0,
         Command::Retire => source && matches!(m.role,Role::Frozen) && m.fence == generation && !m.terminal && drained,
         Command::Commit => ((destination && matches!(m.role,Role::Ready)) || (source && matches!(m.role,Role::Retired)))
@@ -95,11 +95,11 @@ pub fn command_guard(m: ReplicaMeta, old_epoch: u64, generation: u64,
     }
 }
 
-pub open spec fn guard_spec(m: ReplicaMeta, old_epoch: u64, generation: u64,
+pub open spec fn guard_spec(m: ReplicaMeta, old_ownership_version: u64, generation: u64,
     command: Command, source: bool, destination: bool, drained: bool) -> bool {
     match command {
         Command::Start => destination && m.role is Empty && m.fence < generation,
-        Command::Freeze => source && m.role is Serving && m.epoch == old_epoch && m.fence < generation,
+        Command::Freeze => source && m.role is Serving && m.ownership_version == old_ownership_version && m.fence < generation,
         Command::Final => destination && m.role is Stage && m.fence == generation && !m.terminal && m.round == 0,
         Command::Retire => source && m.role is Frozen && m.fence == generation && !m.terminal && drained,
         Command::Commit => ((destination && m.role is Ready) || (source && m.role is Retired))
@@ -110,7 +110,7 @@ pub open spec fn guard_spec(m: ReplicaMeta, old_epoch: u64, generation: u64,
 
 pub open spec fn effect_spec(m: ReplicaMeta, generation: u64, command: Command, source: bool) -> ReplicaMeta {
     match command {
-        Command::Start => ReplicaMeta { epoch: generation, fence: generation, terminal: false, role: Role::Stage, round: 0 },
+        Command::Start => ReplicaMeta { ownership_version: generation, fence: generation, terminal: false, role: Role::Stage, round: 0 },
         Command::Freeze => ReplicaMeta { role: Role::Frozen, fence: generation, terminal: false, ..m },
         Command::Final => ReplicaMeta { round: 1, ..m },
         Command::Retire => ReplicaMeta { role: Role::Retired, ..m },
@@ -123,7 +123,7 @@ pub fn command_effect(m: ReplicaMeta, generation: u64, command: Command, source:
     ensures out == effect_spec(m,generation,command,source),
 {
     match command {
-        Command::Start => ReplicaMeta { epoch: generation, fence: generation, terminal: false, role: Role::Stage, round: 0 },
+        Command::Start => ReplicaMeta { ownership_version: generation, fence: generation, terminal: false, role: Role::Stage, round: 0 },
         Command::Freeze => ReplicaMeta { role: Role::Frozen, fence: generation, terminal: false, ..m },
         Command::Final => ReplicaMeta { round: 1, ..m },
         Command::Retire => ReplicaMeta { role: Role::Retired, ..m },
@@ -149,7 +149,7 @@ pub fn role_equal(a: Role, b: Role) -> (yes: bool)
 fn meta_equal(a: ReplicaMeta, b: ReplicaMeta) -> (yes: bool)
     ensures yes == (a == b),
 {
-    a.epoch == b.epoch && a.fence == b.fence && a.terminal == b.terminal && a.round == b.round && role_equal(a.role,b.role)
+    a.ownership_version == b.ownership_version && a.fence == b.fence && a.terminal == b.terminal && a.round == b.round && role_equal(a.role,b.role)
 }
 fn below_hi(k: &[u8], hi: &Option<Vec<u8>>) -> (yes: bool)
     ensures yes == match *hi { Some(h) => crate::bytes::cmp_spec(k@,h@) < 0, None => true },
@@ -162,21 +162,39 @@ fn below_slice(k: &[u8], hi: Option<&[u8]>) -> (yes: bool)
     match hi { Some(h) => compare(k,h) < 0, None => true }
 }
 impl MetaTable {
-    pub(super) fn serving_range(&self, lo: &[u8], hi: Option<&[u8]>, epoch: u64) -> (yes: bool)
+    pub(super) fn serving_range(&self, lo: &[u8], hi: Option<&[u8]>, ownership_version: u64) -> (yes: bool)
         ensures yes && meta_wf(self.boundaries@) ==> forall|k: Seq<u8>|
             crate::directory::inside(k,lo@,crate::directory::hi_view(hi)) ==>
                 meta_route(self.boundaries@,k).is_some()
                 && meta_route(self.boundaries@,k).unwrap().role is Serving
-                && meta_route(self.boundaries@,k).unwrap().epoch == epoch,
+                && meta_route(self.boundaries@,k).unwrap().ownership_version == ownership_version,
+            meta_wf(self.boundaries@) && crate::directory::proper(lo@,crate::directory::hi_view(hi))
+                && (forall|k:Seq<u8>|crate::directory::inside(k,lo@,crate::directory::hi_view(hi)) ==>
+                    meta_route(self.boundaries@,k).is_some() && meta_route(self.boundaries@,k).unwrap().role is Serving
+                        && meta_route(self.boundaries@,k).unwrap().ownership_version==ownership_version) ==> yes,
     {
+        hide(crate::bytes::cmp_spec);
+        hide(meta_route);
+        proof{crate::bytes::cmp_laws(lo@,lo@);}
         let at = match self.index(lo) { Some(i) => i, None => return false };
         let first = self.boundaries[at].meta;
-        if !matches!(first.role,Role::Serving) || first.epoch != epoch { return false; }
+        if !matches!(first.role,Role::Serving) || first.ownership_version != ownership_version {
+            proof{
+                if meta_wf(self.boundaries@) && crate::directory::proper(lo@,crate::directory::hi_view(hi)){
+                    assert(crate::directory::inside(lo@,lo@,crate::directory::hi_view(hi)));
+                    assert(meta_route(self.boundaries@,lo@)==Some(first));
+                    assert(!(forall|k:Seq<u8>|crate::directory::inside(k,lo@,crate::directory::hi_view(hi)) ==>
+                        meta_route(self.boundaries@,k).is_some() && meta_route(self.boundaries@,k).unwrap().role is Serving
+                            && meta_route(self.boundaries@,k).unwrap().ownership_version==ownership_version));
+                }
+            }
+            return false;
+        }
         let mut i = at + 1;
         proof {
             if meta_wf(self.boundaries@) {
                 assert forall|j: int| 0 <= j < i && crate::directory::inside(self.boundaries@[j].start@,lo@,crate::directory::hi_view(hi)) implies
-                    self.boundaries@[j].meta.role is Serving && self.boundaries@[j].meta.epoch == epoch by {
+                    self.boundaries@[j].meta.role is Serving && self.boundaries@[j].meta.ownership_version == ownership_version by {
                     if j < at {
                         crate::bytes::cmp_trans(self.boundaries@[j].start@,self.boundaries@[at as int].start@,lo@);
                         crate::bytes::cmp_laws(self.boundaries@[j].start@,lo@);
@@ -186,23 +204,49 @@ impl MetaTable {
         }
         while i < self.boundaries.len() && below_slice(&self.boundaries[i].start,hi)
             invariant i <= self.boundaries.len(),
+                at<i,
+                meta_wf(self.boundaries@) ==> forall|j:int|at<j<self.boundaries.len() ==>
+                    crate::bytes::cmp_spec(self.boundaries@[j].start@,lo@)>0,
                 meta_wf(self.boundaries@) ==> meta_route(self.boundaries@,lo@).is_some()
                     && meta_route(self.boundaries@,lo@).unwrap().role is Serving
-                    && meta_route(self.boundaries@,lo@).unwrap().epoch == epoch,
+                    && meta_route(self.boundaries@,lo@).unwrap().ownership_version == ownership_version,
                 meta_wf(self.boundaries@) ==> forall|j: int| 0 <= j < i &&
                     crate::directory::inside(self.boundaries@[j].start@,lo@,crate::directory::hi_view(hi)) ==>
-                        self.boundaries@[j].meta.role is Serving && self.boundaries@[j].meta.epoch == epoch,
+                        self.boundaries@[j].meta.role is Serving && self.boundaries@[j].meta.ownership_version == ownership_version,
             decreases self.boundaries.len()-i,
         {
             let m = self.boundaries[i].meta;
-            if !matches!(m.role,Role::Serving) || m.epoch != epoch { return false; }
+            proof{
+                if meta_wf(self.boundaries@) {
+                    crate::bytes::cmp_laws(self.boundaries@[i as int].start@,self.boundaries@[i as int].start@);
+                    assert forall|j:int|i<j<self.boundaries.len() implies
+                        crate::bytes::cmp_spec(self.boundaries@[j].start@,self.boundaries@[i as int].start@)>0 by {
+                        crate::bytes::cmp_laws(self.boundaries@[j].start@,self.boundaries@[i as int].start@);
+                    }
+                    selected_meta(self.boundaries@,i as int,self.boundaries@[i as int].start@);
+                    crate::bytes::cmp_laws(self.boundaries@[i as int].start@,lo@);
+                }
+            }
+            if !matches!(m.role,Role::Serving) || m.ownership_version != ownership_version {
+                proof{
+                    if meta_wf(self.boundaries@){
+                        let key=self.boundaries@[i as int].start@;
+                        assert(crate::directory::inside(key,lo@,crate::directory::hi_view(hi)));
+                        assert(meta_route(self.boundaries@,key)==Some(m));
+                        assert(!(forall|k:Seq<u8>|crate::directory::inside(k,lo@,crate::directory::hi_view(hi)) ==>
+                            meta_route(self.boundaries@,k).is_some() && meta_route(self.boundaries@,k).unwrap().role is Serving
+                                && meta_route(self.boundaries@,k).unwrap().ownership_version==ownership_version));
+                    }
+                }
+                return false;
+            }
             i += 1;
         }
         proof {
             if meta_wf(self.boundaries@) {
                 assert forall|j: int| 0 <= j < self.boundaries.len() &&
                     crate::directory::inside(self.boundaries@[j].start@,lo@,crate::directory::hi_view(hi)) implies
-                        self.boundaries@[j].meta.role is Serving && self.boundaries@[j].meta.epoch == epoch by {
+                        self.boundaries@[j].meta.role is Serving && self.boundaries@[j].meta.ownership_version == ownership_version by {
                     if j >= i {
                         if let Some(h) = hi {
                             crate::bytes::cmp_laws(self.boundaries@[i as int].start@,h@);
@@ -212,7 +256,7 @@ impl MetaTable {
                     }
                 }
                 intervals::uniform_bounds(self.boundaries@,lo@,crate::directory::hi_view(hi),
-                    |m: ReplicaMeta| m.role is Serving && m.epoch == epoch);
+                    |m: ReplicaMeta| m.role is Serving && m.ownership_version == ownership_version);
             }
         }
         true
@@ -346,6 +390,7 @@ impl MetaTable {
                     meta_route(old(out)@,k)
                 } else { meta_route(self.boundaries@,k) }),
     {
+        hide(crate::bytes::cmp_spec);
         let ghost p = self.boundaries@;
         let ghost before = out@;
         let ghost good = meta_wf(p) && meta_wf(before)
@@ -406,6 +451,7 @@ impl MetaTable {
                         match meta_route(self.boundaries@,k) { Some(m) => Some(intervals::transformed(m,generation,command,source)), None => None }
                     } else { meta_route(self.boundaries@,k) }),
     {
+        hide(crate::bytes::cmp_spec);
         let ghost p = self.boundaries@;
         let ghost good = meta_wf(p) && crate::directory::proper(range.lo@,match &range.hi { Some(h) => Some(h@), None => None });
         let at = match self.index(&range.lo) { Some(i) => i, None => return Vec::new() };

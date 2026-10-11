@@ -20,7 +20,7 @@ pub open spec fn canonical(p: Seq<Boundary>) -> bool {
 pub open spec fn route(p: Seq<Boundary>, k: Seq<u8>) -> Grant
     decreases p.len(),
 {
-    if p.len() == 0 { Grant { owner: 0, epoch: 0 } }
+    if p.len() == 0 { Grant { owner: 0, ownership_version: 0 } }
     else if cmp_spec(p.last().start@,k) <= 0 { p.last().grant }
     else { route(p.drop_last(),k) }
 }
@@ -39,11 +39,11 @@ pub open spec fn hi_view(hi: Option<&[u8]>) -> Option<Seq<u8>> {
 impl RouteTable {
     pub fn new(table: u64, owner: u32) -> (r: Self)
         ensures r.table == table, wellformed(r.boundaries@), canonical(r.boundaries@),
-            forall|k: Seq<u8>| #[trigger] route(r.boundaries@,k) == (Grant { owner, epoch: 0 }),
+            forall|k: Seq<u8>| #[trigger] route(r.boundaries@,k) == (Grant { owner, ownership_version: 0 }),
     {
         let mut boundaries = Vec::new();
-        boundaries.push(Boundary { start: Vec::new(), grant: Grant { owner, epoch: 0 } });
-        proof { assert forall|k: Seq<u8>| route(boundaries@,k) == (Grant { owner, epoch: 0 }) by { cmp_laws(Seq::empty(),k); } }
+        boundaries.push(Boundary { start: Vec::new(), grant: Grant { owner, ownership_version: 0 } });
+        proof { assert forall|k: Seq<u8>| route(boundaries@,k) == (Grant { owner, ownership_version: 0 }) by { cmp_laws(Seq::empty(),k); } }
         Self { table, boundaries }
     }
     pub fn lookup(&self, key: &[u8]) -> (g: Grant)
@@ -84,28 +84,28 @@ impl RouteTable {
         proof { selected_route(self.boundaries@,lower as int - 1,key@); }
         self.boundaries[lower - 1].grant
     }
-    pub fn move_range(&self, lo: &[u8], hi: Option<&[u8]>, src: u32, dst: u32, epoch: u64) -> (r: Result<Self,Status>)
+    pub fn move_range(&self, lo: &[u8], hi: Option<&[u8]>, src: u32, dst: u32, ownership_version: u64) -> (r: Result<Self,Status>)
         requires wellformed(self.boundaries@), canonical(self.boundaries@),
         ensures
             r.is_ok() == (src != dst && proper(lo@,hi_view(hi)) && source_owned(self.boundaries@,lo@,hi_view(hi),src)),
             match r {
                 Ok(q) => q.table == self.table && wellformed(q.boundaries@) && canonical(q.boundaries@)
                     && forall|k: Seq<u8>| #[trigger] route(q.boundaries@,k) ==
-                        if inside(k,lo@,hi_view(hi)) { Grant { owner: dst, epoch } } else { route(self.boundaries@,k) },
+                        if inside(k,lo@,hi_view(hi)) { Grant { owner: dst, ownership_version } } else { route(self.boundaries@,k) },
                 Err(_) => true,
             },
     {
         if src == dst { return Err(Status::Invalid); }
         if let Some(h) = hi { if compare(lo,h) >= 0 { return Err(Status::Invalid); } }
         if !self.owns_range(lo,hi,src) { return Err(Status::Retry); }
-        let mut out = self.prefix_replacement(lo,Grant { owner: dst, epoch });
+        let mut out = self.prefix_replacement(lo,Grant { owner: dst, ownership_version });
         if let Some(h) = hi {
             proof { all_starts_below(out@,lo@,h@); }
             self.restore_suffix(&mut out,h);
         }
         proof {
             assert forall|k: Seq<u8>| route(out@,k) ==
-                if inside(k,lo@,hi_view(hi)) { Grant { owner: dst, epoch } } else { route(self.boundaries@,k) } by {
+                if inside(k,lo@,hi_view(hi)) { Grant { owner: dst, ownership_version } } else { route(self.boundaries@,k) } by {
                 if let Some(h) = hi {
                     if cmp_spec(k,h@) >= 0 { cmp_laws(k,h@); crate::bytes::cmp_trans(lo@,h@,k); }
                 }

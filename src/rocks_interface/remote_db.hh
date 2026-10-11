@@ -279,6 +279,7 @@ private:
             return state->last_status = Status::InvalidArgument("gateway field too large");
         MakoGatewayRequest intent{};
         intent.version = MAKO_GATEWAY_VERSION;
+        intent.snapshot_version = MAKO_GATEWAY_NO_SNAPSHOT;
         intent.kind = kind; intent.session = session; intent.physical_table = table;
         intent.key_length = uint32_t(key.size());
         intent.value_length = uint32_t(value.size());
@@ -304,7 +305,7 @@ private:
             if (mako_gateway_set_route(state->client, &response, &request) != 0)
                 return state->last_status = Status::IOError("invalid gateway route response");
         }
-        // One reconnect/retry uses the SAME retained request and selected epoch.
+        // One reconnect/retry retains the SAME snapshot/ownership pair.
         auto status = RoundTrip(*state, request, response);
         if (!status.ok()) status = RoundTrip(*state, request, response);
         if (!status.ok()) return state->last_status = status;

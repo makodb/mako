@@ -37,7 +37,7 @@ pub proof fn write_frame(s: p::State, w: Write, a: Address)
     match w {
         Write::Logical { .. } => {}, Write::Replica { .. } => {},
         Write::ReplicaCell { .. } => {}, Write::ReplicaRole { .. } => {},
-        Write::ReplicaEpoch { .. } => {}, Write::ReplicaFence { .. } => {},
+        Write::ReplicaOwnershipVersion { .. } => {}, Write::ReplicaFence { .. } => {},
         Write::ReplicaTerminal { .. } => {}, Write::ReplicaRound { .. } => {},
         Write::ReplicaCovered { .. } => {}, Write::Session { .. } => {},
         Write::Held { .. } => {}, Write::Release { .. } => {}, Write::Resolved { .. } => {},

@@ -18,7 +18,8 @@ enum MakoGatewayOutcome : uint32_t {
     MAKO_GATEWAY_ABORTED = 2, MAKO_GATEWAY_REJECTED = 3,
     MAKO_GATEWAY_IN_FLIGHT = 4
 };
-static constexpr uint32_t MAKO_GATEWAY_VERSION = 1;
+static constexpr uint32_t MAKO_GATEWAY_VERSION = 2;
+static constexpr uint64_t MAKO_GATEWAY_NO_SNAPSHOT = UINT64_MAX;
 static constexpr size_t MAKO_GATEWAY_VALUE_LIMIT = 8000;
 struct MakoGatewayRequest {
     uint32_t version;
@@ -27,7 +28,8 @@ struct MakoGatewayRequest {
     uint64_t sequence;
     uint64_t session;
     uint64_t table;
-    uint64_t epoch;
+    uint64_t ownership_version;
+    uint64_t snapshot_version;
     uint32_t owner;
     uint32_t physical_table;
     uint32_t route_known;
@@ -45,7 +47,8 @@ struct MakoGatewayResponse {
     uint64_t client;
     uint64_t sequence;
     uint64_t table;
-    uint64_t epoch;
+    uint64_t ownership_version;
+    uint64_t snapshot_version;
     uint32_t owner;
     uint32_t physical_table;
     uint32_t fixed_coordinate;
@@ -57,8 +60,8 @@ struct MakoGatewayResponse {
     uint8_t coordinate[64];
     uint8_t value[MAKO_GATEWAY_VALUE_LIMIT];
 };
-static_assert(offsetof(MakoGatewayRequest, value) == 336);
-static_assert(offsetof(MakoGatewayResponse, value) == 128);
+static_assert(offsetof(MakoGatewayRequest, value) == 344);
+static_assert(offsetof(MakoGatewayResponse, value) == 136);
 
 extern "C" {
 struct MakoGatewayClient;

@@ -65,7 +65,7 @@ pub struct Control {
     pub outcome: Option<Outcome>,
     pub replied: bool,
 }
-/// Retained immutable metadata. The original routing grants include epochs.
+/// Retained immutable metadata. The original routing grants include ownership versions.
 pub struct Record {
     pub plan: MigrationPlan,
     pub previous: usize,
@@ -473,6 +473,23 @@ impl Coordinator {
         ensures match (out,self@.active) { (Some(p),Some(i)) => *p == self@.records[i as int].plan,
             (None,None) => true, _ => false },
     { match self.active { Some(i) => Some(&self.records[i].plan), None => None } }
+    /// Immutable retained nonce binding; recovery callers must not recreate plans.
+    pub fn plan_for_nonce(&self, nonce: TxnId) -> (out: Option<&MigrationPlan>)
+        requires self.wf(),
+        ensures match out {
+            Some(p) => exists|i: int| 0 <= i < self@.records.len()
+                && *p == self@.records[i].plan && same_nonce(p.nonce,nonce),
+            None => forall|i: int| 0 <= i < self@.records.len()
+                ==> !same_nonce(self@.records[i].plan.nonce,nonce),
+        },
+    { match self.find_nonce(nonce) { Some(i) => Some(&self.records[i].plan), None => None } }
+    /// Snapshot of the actual issued commands and authenticated receipts.
+    pub fn active_control(&self) -> (out: Option<Control>)
+        requires self.wf(),
+        ensures out == match self@.active {
+            Some(i) => Some(self@.controls[i as int]), None => None,
+        },
+    { match self.active { Some(i) => Some(self.controls[i]), None => None } }
     pub fn current_phase(&self) -> (out: Option<Phase>)
         requires self.wf(),
         ensures out == match self@.active { Some(i) => Some(self@.controls[i as int].phase), None => None },
@@ -507,7 +524,7 @@ impl Coordinator {
 
 pub open spec fn valid_initial_table(t: RouteTable, nodes: Seq<u32>) -> bool {
     wellformed(t.boundaries@) && canonical(t.boundaries@)
-        && forall|i: int| 0 <= i < t.boundaries.len() ==> t.boundaries@[i].grant.epoch == 0 && nodes.contains(t.boundaries@[i].grant.owner)
+        && forall|i: int| 0 <= i < t.boundaries.len() ==> t.boundaries@[i].grant.ownership_version == 0 && nodes.contains(t.boundaries@[i].grant.owner)
 }
 pub open spec fn bootstrap(nodes: Seq<u32>, tables: Seq<RouteTable>) -> bool {
     nodes.len() >= 2 && (forall|i: int,j: int| 0 <= i < j < nodes.len() ==> nodes[i] != nodes[j])
@@ -536,11 +553,11 @@ fn validate_table(t: &RouteTable, nodes: &Vec<u32>) -> (yes: bool)
         invariant i <= t.boundaries.len(), t.boundaries.len() > 0, t.boundaries@[0].start@ == Seq::<u8>::empty(),
             forall|a: int,b: int| 0 <= a < b < i ==> cmp_spec(t.boundaries@[a].start@,t.boundaries@[b].start@) < 0,
             forall|a: int| 0 < a < i ==> #[trigger] t.boundaries@[a].grant != t.boundaries@[a-1].grant,
-            forall|a: int| 0 <= a < i ==> t.boundaries@[a].grant.epoch == 0 && nodes@.contains(t.boundaries@[a].grant.owner),
+            forall|a: int| 0 <= a < i ==> t.boundaries@[a].grant.ownership_version == 0 && nodes@.contains(t.boundaries@[a].grant.owner),
         decreases t.boundaries.len()-i,
     {
         let b = &t.boundaries[i];
-        if b.grant.epoch != 0 || !node_exists(nodes,b.grant.owner) { return false; }
+        if b.grant.ownership_version != 0 || !node_exists(nodes,b.grant.owner) { return false; }
         if i > 0 {
             let previous = &t.boundaries[i-1];
             if compare(&previous.start,&b.start) >= 0 || previous.grant.owner == b.grant.owner { return false; }
@@ -612,7 +629,7 @@ pub open spec fn begin_effect(b: Native,z: Native,nonce: TxnId,src: u32,dst: u32
             && proper(r.lo@,upper(r)) && source_owned(b.snapshots[rec.previous as int].boundaries@,r.lo@,upper(r),src)
             && z.snapshots.len() == b.snapshots.len()+1 && z.snapshots.drop_last() == b.snapshots
             && z.snapshots.last().table == r.table
-            && (forall|k: Seq<u8>| route(z.snapshots.last().boundaries@,k) == if inside(k,r.lo@,upper(r)) { Grant { owner: dst, epoch: g } } else { route(b.snapshots[rec.previous as int].boundaries@,k) })
+            && (forall|k: Seq<u8>| route(z.snapshots.last().boundaries@,k) == if inside(k,r.lo@,upper(r)) { Grant { owner: dst, ownership_version: g } } else { route(b.snapshots[rec.previous as int].boundaries@,k) })
             && z == (Native { snapshots: z.snapshots, records: b.records.push(rec), controls: b.controls.push(initial_control()), active: Some(i as usize), next_generation: (g+1) as u64, ..b })
         }
     }

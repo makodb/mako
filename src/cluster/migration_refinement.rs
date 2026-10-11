@@ -26,7 +26,7 @@ pub proof fn nonce_injective(a: TxnId,b: TxnId)
     if a.client < b.client { assert(nonce(a) < nonce(b)); }
     if b.client < a.client { assert(nonce(b) < nonce(a)); }
 }
-pub open spec fn grant(g: Grant) -> p::Grant { p::Grant { owner: g.owner as int, epoch: g.epoch as nat } }
+pub open spec fn grant(g: Grant) -> p::Grant { p::Grant { owner: g.owner as int, ownership_version: g.ownership_version as nat } }
 pub open spec fn phase(q: Phase) -> p::Phase {
     match q { Phase::Copy => p::Phase::Copy, Phase::Freezing => p::Phase::Freezing,
         Phase::Final => p::Phase::Final, Phase::Retiring => p::Phase::Retiring,
@@ -123,7 +123,7 @@ pub open spec fn prepared(v: n::Native,i: int) -> bool {
     && proper(r.lo@,n::upper(r))
     && crate::directory_proofs::equivalent(rec.plan.old@,v.snapshots[rec.previous as int].boundaries@)
     && (forall|k: Seq<u8>| route(v.snapshots[rec.proposal as int].boundaries@,k) ==
-        if inside(k,r.lo@,n::upper(r)) { Grant { owner: rec.plan.destination, epoch: rec.plan.generation } }
+        if inside(k,r.lo@,n::upper(r)) { Grant { owner: rec.plan.destination, ownership_version: rec.plan.generation } }
         else { route(v.snapshots[rec.previous as int].boundaries@,k) })
 }
 pub proof fn begin_prepares(b: n::Native,z: n::Native,id: TxnId,src: u32,dst: u32,r: crate::types::KeyRange,g: u64)
@@ -142,12 +142,12 @@ pub proof fn proposal_observation(v: n::Native,i: int,k: Seq<u8>)
         let support = d::support(d::observation_keys(old,new,r.lo@,n::upper(r),k));
         partition::route(d::image(new,support),d::rank(support,k)) == partition::route(
             partition::reassign(d::image(old,support),d::rank(support,r.lo@),d::image_hi(support,n::upper(r)),
-                d::grant_id(Grant { owner: rec.plan.destination, epoch: rec.plan.generation })),d::rank(support,k))
+                d::grant_id(Grant { owner: rec.plan.destination, ownership_version: rec.plan.generation })),d::rank(support,k))
     }),
 {
     let rec = v.records[i]; let r = rec.plan.range;
     d::replacement_observation(v.snapshots[rec.previous as int].boundaries@,v.snapshots[rec.proposal as int].boundaries@,
-        r.lo@,n::upper(r),Grant { owner: rec.plan.destination, epoch: rec.plan.generation },k);
+        r.lo@,n::upper(r),Grant { owner: rec.plan.destination, ownership_version: rec.plan.generation },k);
 }
 
 pub open spec fn transition_writes(b: n::Native,z: n::Native,r: n::Request,snapshot: Map<int,p::Grant>,status: Status) -> Seq<log::Write> {
@@ -269,7 +269,7 @@ pub proof fn transition_guard(b: n::Native,z: n::Native,s: p::State,c: p::Consta
 pub proof fn transition_replay(b: n::Native,z: n::Native,s: p::State,c: p::Constants,r: n::Request,status: Status,snapshot: Map<int,p::Grant>)
     requires n::layout(b), master(b,s), n::transition_effect(b,z,r,status),
         r is Commit && status == Status::Ok ==> snapshot == Map::new(p::directory(s).dom(),|k: int|
-            if s.plans[s.active.unwrap()].keys.contains(k) { p::Grant { owner:s.plans[s.active.unwrap()].dst,epoch:s.active.unwrap() } } else { p::directory(s)[k] }),
+            if s.plans[s.active.unwrap()].keys.contains(k) { p::Grant { owner:s.plans[s.active.unwrap()].dst,ownership_version:s.active.unwrap() } } else { p::directory(s)[k] }),
     ensures log::writes_ok(s,transition_writes(b,z,r,snapshot,status)),
         log::apply_writes(s,transition_writes(b,z,r,snapshot,status)) == p::dispatch(c,s,action(r)),
 {
@@ -298,11 +298,11 @@ pub proof fn publication_observation(c: p::Constants,b: n::Native,z: n::Native,o
         forall|k: int| c.keys.contains(k) ==>
             (c.table[k] == b.records[b.active.unwrap() as int].plan.range.table) == (o.slots[k] == b.records[b.active.unwrap() as int].slot),
     ensures directory(c,z,o) == Map::new(p::directory(s).dom(),|k: int|
-        if s.plans[s.active.unwrap()].keys.contains(k) { p::Grant { owner:s.plans[s.active.unwrap()].dst,epoch:s.active.unwrap() } } else { p::directory(s)[k] }),
+        if s.plans[s.active.unwrap()].keys.contains(k) { p::Grant { owner:s.plans[s.active.unwrap()].dst,ownership_version:s.active.unwrap() } } else { p::directory(s)[k] }),
 {
     let i = b.active.unwrap() as int; let rec = b.records[i]; let r = rec.plan.range;
     assert forall|k: int| c.keys.contains(k) implies directory(c,z,o)[k] ==
-        if s.plans[s.active.unwrap()].keys.contains(k) { p::Grant { owner:s.plans[s.active.unwrap()].dst,epoch:s.active.unwrap() } }
+        if s.plans[s.active.unwrap()].keys.contains(k) { p::Grant { owner:s.plans[s.active.unwrap()].dst,ownership_version:s.active.unwrap() } }
         else { p::directory(s)[k] } by {
         range_observation(c,b,o,r,k);
         if o.slots[k] == rec.slot {
@@ -311,7 +311,7 @@ pub proof fn publication_observation(c: p::Constants,b: n::Native,z: n::Native,o
         } else { assert(z.current[o.slots[k] as int] == b.current[o.slots[k] as int]); }
     }
     assert(directory(c,z,o) =~= Map::new(p::directory(s).dom(),|k: int|
-        if s.plans[s.active.unwrap()].keys.contains(k) { p::Grant { owner:s.plans[s.active.unwrap()].dst,epoch:s.active.unwrap() } } else { p::directory(s)[k] }));
+        if s.plans[s.active.unwrap()].keys.contains(k) { p::Grant { owner:s.plans[s.active.unwrap()].dst,ownership_version:s.active.unwrap() } } else { p::directory(s)[k] }));
 }
 
 /// Authentic issuance is the one receipt premise: a participant already emitted

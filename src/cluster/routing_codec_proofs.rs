@@ -51,7 +51,7 @@ pub proof fn word32_injective(a: u32,b: u32)
         requires a as u8 == b as u8, (a>>8) as u8 == (b>>8) as u8, (a>>16) as u8 == (b>>16) as u8, (a>>24) as u8 == (b>>24) as u8;
 }
 pub open spec fn blob(bytes: Seq<u8>) -> Seq<u8> { word64(bytes.len() as u64)+bytes }
-pub open spec fn boundary_wire(b: Boundary) -> Seq<u8> { blob(b.start@)+word32(b.grant.owner)+word64(b.grant.epoch) }
+pub open spec fn boundary_wire(b: Boundary) -> Seq<u8> { blob(b.start@)+word32(b.grant.owner)+word64(b.grant.ownership_version) }
 pub open spec fn boundaries_wire(p: Seq<Boundary>) -> Seq<u8>
     decreases p.len(),
 { if p.len() == 0 { Seq::empty() } else { boundaries_wire(p.drop_last())+boundary_wire(p.last()) } }
@@ -166,11 +166,11 @@ pub proof fn boundary_prefix_unique(a: Boundary,b: Boundary,x: Seq<u8>,y: Seq<u8
         assert((boundary_wire(b)+y).subrange(8+n,12+n) == word32(b.grant.owner));
     }
     word32_injective(a.grant.owner,b.grant.owner);
-    assert(word64(a.grant.epoch) == word64(b.grant.epoch)) by {
-        assert((boundary_wire(a)+x).subrange(12+n,20+n) == word64(a.grant.epoch));
-        assert((boundary_wire(b)+y).subrange(12+n,20+n) == word64(b.grant.epoch));
+    assert(word64(a.grant.ownership_version) == word64(b.grant.ownership_version)) by {
+        assert((boundary_wire(a)+x).subrange(12+n,20+n) == word64(a.grant.ownership_version));
+        assert((boundary_wire(b)+y).subrange(12+n,20+n) == word64(b.grant.ownership_version));
     }
-    word64_injective(a.grant.epoch,b.grant.epoch);
+    word64_injective(a.grant.ownership_version,b.grant.ownership_version);
     assert(x == y) by {
         assert((boundary_wire(a)+x).skip(20+n) == x);
         assert((boundary_wire(b)+y).skip(20+n) == y);

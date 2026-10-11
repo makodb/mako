@@ -12,7 +12,7 @@ pub open spec fn maintenance(a: Action) -> bool { !(a is Open || a is Resolve) }
 pub open spec fn stable_replica(s: State, n: int, k: int) -> bool {
     let r = replica(s,n,k);
     r.terminal && if directory(s)[k].owner == n {
-        r.role is Serving && r.epoch == directory(s)[k].epoch
+        r.role is Serving && r.ownership_version == directory(s)[k].ownership_version
     } else { r.role is Empty }
 }
 pub open spec fn source_frozen(s: State, g: nat) -> bool {
@@ -23,29 +23,29 @@ pub open spec fn source_frozen(s: State, g: nat) -> bool {
 }
 pub open spec fn key_inv(c: Constants, s: State, k: int) -> bool {
     let d = directory(s)[k];
-    &&& c.shards.contains(d.owner) && d.epoch < s.next_generation
+    &&& c.shards.contains(d.owner) && d.ownership_version < s.next_generation
     &&& replica(s,d.owner,k).cell == s.logical[k]
-    &&& replica(s,d.owner,k).epoch == d.epoch
+    &&& replica(s,d.owner,k).ownership_version == d.ownership_version
     &&& !(replica(s,d.owner,k).role is Empty || replica(s,d.owner,k).role is Stage)
     &&& forall|n: int| c.shards.contains(n) ==> {
         let r = replica(s,n,k);
         &&& r.fence < s.next_generation && r.round <= 1
-        &&& (r.role is Serving || r.role is Frozen ==> n == d.owner && r.epoch == d.epoch)
+        &&& (r.role is Serving || r.role is Frozen ==> n == d.owner && r.ownership_version == d.ownership_version)
         &&& if s.active is Some && s.plans[s.active.unwrap()].keys.contains(k) {
             let g = s.active.unwrap(); let p = s.plans[g]; let phase = s.phases[g];
             if n != p.src && n != p.dst { stable_replica(s,n,k) }
             else if phase is Committed {
-                &&& d == (Grant { owner: p.dst, epoch: g })
+                &&& d == (Grant { owner: p.dst, ownership_version: g })
                 &&& r.fence == g
                 &&& if n == p.src {
                     r.role is Retired && !r.terminal || r.role is Empty && r.terminal
                 } else {
-                    r.epoch == g && (r.role is Ready && !r.terminal || r.role is Serving && r.terminal)
+                    r.ownership_version == g && (r.role is Ready && !r.terminal || r.role is Serving && r.terminal)
                 }
             } else {
                 &&& d == p.old[k]
                 &&& if n == p.src {
-                    &&& r.epoch == p.old[k].epoch
+                    &&& r.ownership_version == p.old[k].ownership_version
                     &&& (r.role is Serving && r.terminal && r.fence <= g
                         || (r.role is Frozen || r.role is Retired) && !r.terminal && r.fence == g)
                     &&& (before_decision(s,g) && r.role is Serving ==> r.fence < g)
@@ -55,7 +55,7 @@ pub open spec fn key_inv(c: Constants, s: State, k: int) -> bool {
                     &&& (phase is Retiring ==> r.role is Frozen || r.role is Retired)
                 } else {
                     &&& (r.role is Empty && r.terminal && r.fence <= g
-                        || (r.role is Stage || r.role is Ready) && !r.terminal && r.fence == g && r.epoch == g)
+                        || (r.role is Stage || r.role is Ready) && !r.terminal && r.fence == g && r.ownership_version == g)
                     &&& (before_decision(s,g) && r.role is Empty ==> r.fence < g)
                     &&& r.round <= 1
                     &&& (phase is Copy || phase is Freezing ==> !(r.role is Ready)
@@ -75,7 +75,7 @@ pub open spec fn plan_inv(c: Constants, s: State, g: nat) -> bool {
     &&& partition::valid_range(p.lo,p.hi)
     &&& p.keys == selected(c,p.table,p.lo,p.hi) && p.keys != Set::<int>::empty()
     &&& p.old.dom() == c.keys
-    &&& forall|k: int| p.keys.contains(k) ==> p.old[k].owner == p.src && p.old[k].epoch < g
+    &&& forall|k: int| p.keys.contains(k) ==> p.old[k].owner == p.src && p.old[k].ownership_version < g
     &&& (!current(s,g) ==> terminal(phase))
     &&& (terminal(phase) <==> s.outcomes.contains_key(p.nonce))
     &&& (terminal(phase) ==> s.outcomes[p.nonce] == (Outcome { generation: g, committed: phase is Committed }))
@@ -134,7 +134,7 @@ pub open spec fn inv(c: Constants, s: State) -> bool {
     &&& s.directory.len() > 0
     &&& forall|i: int| 0 <= i < s.directory.len() ==> s.directory[i].dom() == c.keys
         && forall|k: int| c.keys.contains(k) ==> c.shards.contains(s.directory[i][k].owner)
-            && s.directory[i][k].epoch < s.next_generation
+            && s.directory[i][k].ownership_version < s.next_generation
     &&& forall|k: int| c.keys.contains(k) ==> key_inv(c,s,k)
     &&& forall|t: int| s.sessions.contains_key(t) ==> session_inv(c,s,t)
     &&& s.plans.dom() == s.phases.dom()
@@ -610,7 +610,7 @@ pub open spec fn partition_represents(c: Constants, s: State, table: int, p: Seq
 pub proof fn theorem_commit_partition(c: Constants, s: State, p: Seq<partition::Segment>, decode: spec_fn(int) -> Grant, label: int)
     requires inv(c,s), enabled(c,s,Action::Commit),
         partition_represents(c,s,s.plans[s.active.unwrap()].table,p,decode), label >= 0,
-        decode(label) == (Grant { owner: s.plans[s.active.unwrap()].dst, epoch: s.active.unwrap() })
+        decode(label) == (Grant { owner: s.plans[s.active.unwrap()].dst, ownership_version: s.active.unwrap() })
     ensures partition_represents(c,apply(c,s,Action::Commit),s.plans[s.active.unwrap()].table,
         partition::reassign(p,s.plans[s.active.unwrap()].lo,s.plans[s.active.unwrap()].hi,label),decode)
 {

@@ -18,7 +18,7 @@ verus! {
 pub open spec fn delivered_record(m: ReplicaMeta, old: p::Replica, command: Command) -> p::Replica {
     p::Replica {
         cell: if command is Start || m.role is Empty { p::empty_cell() } else { old.cell },
-        role: metadata::role(m.role), epoch: m.epoch as nat, fence: m.fence as nat,
+        role: metadata::role(m.role), ownership_version: m.ownership_version as nat, fence: m.fence as nat,
         terminal: m.terminal, round: m.round as nat,
         covered: if command is Start || command is Final { false } else { old.covered },
     }
@@ -110,7 +110,7 @@ pub proof fn metadata_delivered(c: p::Constants, before: &Participant, after: &P
         s.commands.contains((plan.generation as nat,metadata::command(command))),
         forall|k: int| keys.to_set().contains(k) ==>
             s.physical.contains_key((before.owner_view() as int,k))
-            && s.plans[plan.generation as nat].old[k].epoch == crate::directory::route(plan.old@,labels[k].1.0).epoch,
+            && s.plans[plan.generation as nat].old[k].ownership_version == crate::directory::route(plan.old@,labels[k].1.0).ownership_version,
     ensures
         out.valid(c,s),
         out.after(s) == p::delivered(s,plan.generation as nat,metadata::command(command),before.owner_view() as int),
@@ -130,7 +130,7 @@ pub proof fn metadata_delivered(c: p::Constants, before: &Participant, after: &P
     assert forall|k: int| s.plans[g].keys.contains(k) implies
         before.command_at(plan,command,before.drained_view(plan.range),coordinates(k))
         && metadata::metadata(before.local_meta(plan.range.table,coordinates(k)).unwrap(),p::replica(s,owner,k))
-        && s.plans[g].old[k].epoch == crate::directory::route(plan.old@,coordinates(k)).epoch by {
+        && s.plans[g].old[k].ownership_version == crate::directory::route(plan.old@,coordinates(k)).ownership_version by {
         assert(crate::storage::in_range(plan.range,labels[k]));
     }
     metadata::native_guard_matches(before,plan,command,s,coordinates);

@@ -167,6 +167,7 @@ pub fn cleanup_with_receipt<K:crate::transfer::RawStore>(node:&mut Participant,s
     Ghost(c):Ghost<p::Constants>,Ghost(s):Ghost<p::State>,Ghost(keys):Ghost<Seq<int>>,Ghost(labels):Ghost<Map<int,Cell>>)
     -> (out:(ControlResult,Tracked<(ClosedTransfer,EmittedCertificate)>))
     requires old(node).wf(),old(store).wf(),old(store).available(plan.range),
+        crate::transfer::scope_allows(old(store).scope(),plan.range),
         old(node).envelope_view(*plan),old(node).transfer_authorized(*plan,true),
         transfer::labels_cover(*plan,s,keys,labels),transfer::local_coupling(old(node),*plan,s,labels),
         s.certificates.contains((plan.generation as nat,
@@ -219,6 +220,7 @@ pub fn final_from_source<K:crate::transfer::RawStore,S:storage::Source>(
     Ghost(states):Ghost<Seq<execution::SourceState>>,Ghost(events):Ghost<Seq<execution::SourceEvent>>,
     Ghost(at):Ghost<nat>,Ghost(record):Ghost<execution::MetadataRecord>)->(result:ControlResult)
     requires old(node).wf(),old(store).wf(),source.wf(),
+        crate::transfer::scope_allows(old(store).scope(),plan.range),
         old(node).envelope_view(*plan),old(node).transfer_authorized(*plan,false),
         old(store).available(plan.range),source.available(*plan),
         states.last().images.contains_key(plan.destination as int),

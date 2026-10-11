@@ -2,6 +2,7 @@
 //! engine atomicity are explicit boundary contracts, not handler refinement.
 #![allow(unsafe_code)]
 use crate::gateway::{self, Admission, Client, Gateway, Reply, Request};
+use crate::types::NO_SNAPSHOT;
 use std::collections::BTreeMap;
 use std::ffi::c_void;
 use std::sync::LazyLock;
@@ -10,28 +11,30 @@ use parking_lot::Mutex;
 #[repr(C)]
 pub struct WireRequest {
     version: u32, kind: u32, client: u64, sequence: u64, session: u64,
-    table: u64, epoch: u64, owner: u32, physical_table: u32,
+    table: u64, ownership_version: u64, snapshot_version: u64, owner: u32, physical_table: u32,
     route_known: u32, fixed_coordinate: u32, coordinate_length: u32,
     key_length: u32, value_length: u32, name_length: u32,
     coordinate: [u8; 64], key: [u8; 64], name: [u8; 128], value: [u8; 8000],
 }
 #[repr(C)]
 pub struct WireResponse {
-    client: u64, sequence: u64, table: u64, epoch: u64,
+    client: u64, sequence: u64, table: u64, ownership_version: u64, snapshot_version: u64,
     owner: u32, physical_table: u32, fixed_coordinate: u32, coordinate_length: u32,
     status: i32, outcome: u32, op_result: u32, value_length: u32,
     coordinate: [u8; 64], value: [u8; 8000],
 }
-const _: () = assert!(std::mem::offset_of!(WireRequest, value) == 336);
-const _: () = assert!(std::mem::offset_of!(WireResponse, value) == 128);
+const _: () = assert!(std::mem::offset_of!(WireRequest, value) == 344);
+const _: () = assert!(std::mem::offset_of!(WireResponse, value) == 136);
 impl WireRequest {
     fn decode(&self) -> Option<Request> {
-        if self.version != 1 || self.coordinate_length > 64 || self.key_length > 64
+        if self.version != 2 || self.coordinate_length > 64 || self.key_length > 64
             || self.name_length > 128 || self.value_length > 8000
-            || self.route_known > 1 || self.fixed_coordinate > 1 { return None; }
+            || self.route_known > 1 || self.fixed_coordinate > 1
+            || (self.route_known == 0 && self.snapshot_version != NO_SNAPSHOT) { return None; }
         Some(Request {
             kind: self.kind, client: self.client, sequence: self.sequence,
-            session: self.session, table: self.table, epoch: self.epoch,
+            session: self.session, table: self.table, ownership_version: self.ownership_version,
+            snapshot_version: self.snapshot_version,
             owner: self.owner, physical_table: self.physical_table,
             route_known: self.route_known != 0, fixed_coordinate: self.fixed_coordinate != 0,
             coordinate: self.coordinate[..self.coordinate_length as usize].to_vec(),
@@ -41,9 +44,10 @@ impl WireRequest {
         })
     }
     fn encode(request: &Request) -> Self {
-        let mut wire = Self { version: 1, kind: request.kind, client: request.client,
+        let mut wire = Self { version: 2, kind: request.kind, client: request.client,
             sequence: request.sequence, session: request.session, table: request.table,
-            epoch: request.epoch, owner: request.owner, physical_table: request.physical_table,
+            ownership_version: request.ownership_version, owner: request.owner, physical_table: request.physical_table,
+            snapshot_version: request.snapshot_version,
             route_known: u32::from(request.route_known), fixed_coordinate: u32::from(request.fixed_coordinate),
             coordinate_length: request.coordinate.len() as u32, key_length: request.key.len() as u32,
             value_length: request.value.len() as u32, name_length: request.name.len() as u32,
@@ -57,7 +61,7 @@ impl WireRequest {
 }
 impl WireResponse {
     fn reply(client: u64, sequence: u64, reply: &Reply) -> Self {
-        let mut wire = Self { client, sequence, table: 0, epoch: 0, owner: 0, physical_table: 0,
+        let mut wire = Self { client, sequence, table: 0, ownership_version: 0, snapshot_version: NO_SNAPSHOT, owner: 0, physical_table: 0,
             fixed_coordinate: 0, coordinate_length: 0, status: reply.status, outcome: reply.outcome,
             op_result: u32::from(reply.op_result), value_length: reply.value.len() as u32,
             coordinate: [0; 64], value: [0; 8000] };
@@ -106,7 +110,7 @@ pub unsafe extern "C" fn mako_gateway_set_route(client: *mut Client, route: *con
     if route.status != 0 || route.coordinate_length > 64 || route.fixed_coordinate > 1 {
         return 3;
     }
-    match client.set_route(route.client, route.sequence, route.table, route.epoch,
+    match client.set_route(route.client, route.sequence, route.table, route.ownership_version, route.snapshot_version,
                           route.owner, route.physical_table, route.fixed_coordinate != 0,
                           route.coordinate[..route.coordinate_length as usize].to_vec()) {
         Ok(pending) => { *request = WireRequest::encode(pending); 0 }
@@ -120,7 +124,7 @@ pub unsafe extern "C" fn mako_gateway_complete(client: *mut Client,
                                                response: *const WireResponse) -> u32 {
     let (Some(client), Some(response)) = (unsafe { client.as_mut() }, unsafe { response.as_ref() })
         else { return 3; };
-    if client.complete(response.client, response.sequence, response.outcome) { 0 } else { 4 }
+    if client.complete(response.client, response.sequence, response.snapshot_version, response.outcome) { 0 } else { 4 }
 }
 /// # Safety
 /// The request/output/context live across the call. `execute` is the actual
@@ -162,4 +166,39 @@ pub unsafe extern "C" fn mako_gateway_execute(participant: u32, request: *const 
         }
     };
     *response = WireResponse::reply(wire.client, wire.sequence, &reply);
+    response.table = wire.table;
+    response.ownership_version = wire.ownership_version;
+    response.snapshot_version = wire.snapshot_version;
+    response.owner = wire.owner;
+    response.physical_table = wire.physical_table;
+    response.fixed_coordinate = wire.fixed_coordinate;
+    response.coordinate_length = wire.coordinate_length;
+    response.coordinate = wire.coordinate;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn versioned_wire_preserves_pair_and_rejects_unknown_provenance() {
+        let request = Request {
+            kind:gateway::PUT,client:1u64<<63,sequence:1,session:0,
+            table:7,ownership_version:11,snapshot_version:19,owner:2,physical_table:3,
+            route_known:true,fixed_coordinate:false,coordinate:vec![],
+            key:b"k".to_vec(),name:b"t".to_vec(),value:b"v".to_vec(),
+        };
+        let mut wire = WireRequest::encode(&request);
+        assert_eq!(wire.version,2);
+        assert_eq!(wire.decode().unwrap(),request);
+        wire.version = 1;
+        assert!(wire.decode().is_none());
+        wire.version = 2;
+        wire.route_known = 0;
+        assert!(wire.decode().is_none());
+        wire.snapshot_version = NO_SNAPSHOT;
+        let unknown = wire.decode().unwrap();
+        assert!(!unknown.route_known);
+        assert_eq!(unknown.snapshot_version,NO_SNAPSHOT);
+    }
 }
