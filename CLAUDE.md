@@ -250,8 +250,9 @@ the worked example.
 
 **The Raft server is Rust, compiled by rustc.** `src/deptran/raft/shell/server_h.rs`
 and `server_cc.rs` are canonical Rust sources (edit them directly; nothing
-there is transpiled), built by cargo as `libraft.a` into the build tree and
-linked by CMake (`raft_rust`). C++ reaches the server only through
+there is transpiled), built by cargo into `libraft_rt.a` (raft-rt, which
+contains them) in the build tree and linked by CMake (`raft_rust`). C++
+reaches the server only through
 `src/deptran/raft/server_exports.h` -- `extern "C"` functions defined in
 `server_cc.rs` -- and holds it only as `class RaftServer`, a pointer-holding
 shim over a forward-declared `struct RaftServerBase`. Do not add a method

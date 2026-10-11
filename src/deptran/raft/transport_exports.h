@@ -1,9 +1,9 @@
 #pragma once
 
-// The C ABI over RaftTransport -- Raft's RPC transport on the Rust srpc lane.
-// The definitions are Rust, in src/deptran/raft/rt/src/transport.rs (and
-// raft_rt_run_lab in rt/src/lab_runtime.rs). Included only by
-// raft_lane_rust.cc, which is compiled only for MAKO_RAFT_LANE=rust.
+// The C ABI over RaftTransport -- Raft's RPC transport, over the Rust srpc
+// runtime. The definitions are Rust, in src/deptran/raft/rt/src/transport.rs
+// (and raft_rt_run_lab in rt/src/lab_runtime.rs). Included only by
+// raft_lane_rust.cc.
 //
 // Hand-written, unlike server_exports.h: that header is generated from the
 // signature table in scripts/raft_gen_exports.py, whose subject is methods of

@@ -39,7 +39,6 @@ EXPECTED_BLOCKS=(
   "src/deptran/raft/commo.h|raft_commo.scalar_decisions"
   "src/deptran/raft/frame.cc|raft_frame.lab_decisions"
   "src/deptran/raft/log_storage.hpp|raft_log_entry.scalar_decisions"
-  "src/deptran/raft/quorum.hpp|raft_quorum.scalar_decisions"
   "src/deptran/raft/raft_worker.cc|raft_worker.scalar_decisions"
   "src/deptran/raft/snapshot_manager.hpp|raft_snapshot.metadata_decisions"
   "src/deptran/raft_main_helper.cc|raft_main.argument_casefold"

@@ -479,7 +479,6 @@ if(NOT MAKO_RAFT_LANE STREQUAL "rust")
   message(FATAL_ERROR "MAKO_RAFT_LANE=${MAKO_RAFT_LANE}: this branch builds the rust lane only "
                       "(the hybrid and cpp lanes were removed; docs/verus/modification-plan.md, Q9)")
 endif()
-add_compile_definitions(MAKO_RAFT_LANE_RUST=1)
 message(STATUS "Raft lane: rust (raft-rt over the Rust srpc runtime)")
 
 if(MAKO_USE_RAFT)
@@ -1208,13 +1207,13 @@ add_custom_command(
     VERBATIM)
 
 set(RAFT_RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/raft-cargo")
-# The linked artifact is raft-rt (libraft_rt.a), which contains the core
-# crate (src/deptran/raft) as an rlib.
+# The linked artifact is raft-rt (libraft_rt.a), which contains the shell
+# crate (src/deptran/raft) and the core as rlibs.
 set(RAFT_RUST_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml")
 set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft_rt.a")
-# The srpc crate is in here because the Raft crate depends on it -- commo.rs
+# The srpc crate is in here because raft-rt depends on it -- transport.rs
 # names srpc::client::Client. Without these, editing a canonical srpc .rs
-# leaves libraft.a stale: ninja sees no changed dependency, never re-invokes
+# leaves libraft_rt.a stale: ninja sees no changed dependency, never re-invokes
 # cargo, and cargo therefore never gets the chance to notice. The four module
 # directories are the ones src/srpc/rust-modules.toml names, plus the
 # generated lib.rs.
@@ -1621,7 +1620,7 @@ target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 # Inherit srpc module BMI paths from txlog_core_obj.
 # A static library gets no objects from txlog_core_obj, only usage requirements;
 # executables that link mako alone (the gtest binaries) therefore need the
-# kernels' archive next to libraft.a, in the same rescan group.
+# kernels' archive next to libraft_rt.a, in the same rescan group.
 target_link_libraries(mako PUBLIC txlog_core_obj masstree "$<LINK_GROUP:RESCAN,txlog_core,${RAFT_CORE_TARGET}>")
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")

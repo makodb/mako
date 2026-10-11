@@ -37,7 +37,7 @@
 
 namespace janus {
 
-struct RaftTransport;  // raft-rt, MAKO_RAFT_LANE=rust (raft_lane.h)
+struct RaftTransport;  // raft-rt (raft_lane.h)
 
 
 // Runtime replication switching - always declare raft functions

@@ -167,41 +167,43 @@ wire. On this lane those are all rustc-compiled Rust: the srpc crate from
 
 ## Raft project structure
 
-Four parts, as built for `MAKO_RAFT_LANE=rust`. Paths are under
-`src/deptran/raft/` unless shown otherwise.
+Four parts. Paths are under `src/deptran/raft/` unless shown otherwise.
 
 ```
-1. Rust Raft logic                        rustc; one crate for the core, one for its runtime
-   src/                                   core crate (raft): the same source on every lane
+1. Rust Raft logic                        rustc; five crates
+   core/src/                                raft-core: the Raft state machine (node, election, log,
+                                            progress, commit authority), in the Verus subset
+   shell/                                   raft: the server around the core
    ├── server_h.rs                          RaftServerBase: state, election, replication, commit,
    │                                        apply thread, snapshot create/install/recovery
    ├── server_cc.rs                         heartbeat and election loops; the C exports (generated block)
+   ├── disk.rs                              disk builds: the store, recovery, the evidence lines
    ├── scheduler_h.rs                       RaftSpecific trait, submission types
-   ├── quorum_hpp.rs                        vote and commit quorums
-   ├── communicator_h.rs                    partition membership
-   ├── frame_cc.rs, raft_worker_cc.rs,      worker-side logic
-   │   raft_main_helper_cc.rs
-   ├── log_storage_hpp.rs,                  log storage interface and implementations
-   │   memory_log_storage_hpp.rs,
-   │   rocksdb_log_storage_hpp.rs
-   ├── snapshot_manager_hpp.rs,             the C++ snapshot manager's Rust twins
-   │   memory_snapshot_manager_hpp.rs,      (hybrid/cpp use the manager; not linked into
-   │   snapshot_format_hpp.rs               this lane's snapshot path)
-   ├── channel_transport_hpp.rs, commo_h.rs
+   ├── server_pods_h.rs                     the kernel-result PODs (extracted from server.h)
+   ├── commo_h.rs, communicator_h.rs,       Rust copies of the inline DSL blocks in the C++
+   │   frame_cc.rs, log_storage_hpp.rs,     files they are named after; the C++ uses the
+   │   raft_main_helper_cc.rs,              transpiled twins, rustc checks these
+   │   raft_worker_cc.rs, snapshot_manager_hpp.rs
    ├── lab.rs, lab_cases.rs,                RaftLab suite (RAFT_TEST builds)
    │   lab_snapshot_cases.rs, lab_main.rs
    └── lib.rs                               generated module list
-   rt/src/                                  runtime crate (raft-rt): this lane only
+   rt/src/                                  raft-rt: the runtime
    ├── snapshot.rs                          snapshot store (SnapshotStore), InstallSnapshot send
    │                                        and the follower's hand-off
-   ├── transport.rs                         RaftTransport: peers, sends, vote tally, resend suppression
+   ├── transport.rs                         RaftTransport: peers and their dialling, sends, vote
+   │                                        tally, resend suppression
    ├── service.rs                           RPC handlers: the follower side of every Raft RPC
    ├── seam.rs                              runtime kernels: fibers, events, poll thread, wire
+   ├── trace.rs                             the trace kit's hooks (MAKO_RAFT_TRACE_FILE)
    ├── rpc.rs                               generated: see part 4
    ├── lab_runtime.rs                       lab kernels and tests 50-52
    └── lib.rs
-   rt/tests/                                transport_roundtrip.rs, rpc_wire_golden.rs,
+   rt/tests/                                transport_roundtrip.rs, rpc_wire_golden.rs, dial.rs,
                                             service_is_a_service.rs, large_frame_bench.rs
+   store/src/                               raft-store, disk builds: WAL, flusher, RocksDB base and
+                                            applier, snapshot image files, crash points
+   replay/src/                              raft-replay: the core's history as text, and its replay
+   verus/                                   Verus proofs over the core
    src/srpc/                                the Rust srpc crate underneath (reactor, fibers,
                                             client, server, TCP, serialisation)
 
@@ -211,37 +213,35 @@ Four parts, as built for `MAKO_RAFT_LANE=rust`. Paths are under
    lane_kernels.h                           kernels called from C++ on both sides, marked LANE or HOST
    raft_kernel_pods.h                       the C structs kernels return by value
                                             (defined in Rust: shell/server_pods_h.rs)
-   server_seam_cpp.cc,                      the same runtime and snapshot kernels in C++,
-   snapshot_seam_cpp.cc                     for hybrid/cpp; not linked on this lane
+   commo.h                                  the vote quorum event and the append's response slot
+                                            the transport fills
 
 3. C++ Raft shim                          what the rest of Mako includes and calls
    server.h                                 class RaftServer: a pointer to RaftServerBase,
                                             every method forwarded to the C exports
    server_exports.h                         generated: the C exports RaftServer forwards to
    transport_exports.h                      the C exports of RaftTransport (rt/src/transport.rs)
-   raft_lane.h, raft_lane_rust.cc           the workers' RPC endpoint on this lane
+   raft_lane.h, raft_lane_rust.cc           the workers' RPC endpoint
    raft_worker.h, raft_worker.cc            RaftWorker: submit, apply callback, setup
    frame.h, frame.cc                        RaftFrame: creates servers and workers
+   application_log.h, application_log.cc    Mako's bytes and partition in a log entry
    snapshot_callbacks.h                     the state-machine snapshot callback types an embedder registers
    src/deptran/raft_main_helper.cc,         Mako's entry points into Raft
    src/deptran/server_worker.cc
 
-4. Message types                          one definition, generated per runtime
+4. Message types                          one definition
    src/deptran/rcc_rpc.rpc                  service Raft: Vote, AppendEntries, EmptyAppendEntries,
                                             InstallSnapshot
    rpc_ids.txt                              the frozen wire ids
    rt/src/rpc.rs                            generated by scripts/rpcgen_rust.py: request/response
                                             structs, borrowed writers, proxies, dispatch
-   src/deptran/rcc_rpc.h                    generated by bin/rpcgen: the C++ side, for hybrid/cpp
-   messages.hpp, shell/messages_hpp.rs        transport-neutral payload structs
 ```
 
 Built by `CMakeLists.txt`: cargo builds `rt/` into `libraft_rt.a` (which
-contains the core crate), and the C++ in parts 2 and 3 links against it.
-`commo.cc`, `service.cc`, and the C++ snapshot manager headers
-(`snapshot_manager.hpp`, `memory_snapshot_manager.hpp`, `snapshot_format.hpp`)
-are the hybrid/cpp lanes' RPC and snapshot path. They are still compiled
-on every lane, but this lane's Raft does not call them.
+contains the shell and core crates), and the C++ in parts 2 and 3 links
+against it. `snapshot_manager.hpp` and `log_storage.hpp` stay in this
+directory for Paxos, which includes them; Raft's snapshots go through
+`rt/src/snapshot.rs`.
 
 ### Paxos and Raft inheritance
 

@@ -1,11 +1,10 @@
 #pragma once
 
 // The kernels that cross between server.cc (HOST: Mako's objects -- the
-// Command payload, the snapshot manager, embedder callbacks; linked in every
-// lane) and the runtime seam (raft-rt's src/seam.rs; the C++ lanes' seam went
-// with those lanes, docs/verus/modification-plan.md Q9). Every other kernel goes from the
-// Rust core to one side or the other and is declared in the core's extern
-// blocks; these are called by C++ on both sides, so they need a header.
+// Command payload, the snapshot manager, embedder callbacks) and the runtime
+// (LANE: raft-rt, rt/src). Every other kernel goes from the Rust shell to one
+// side or the other and is declared in the shell's extern blocks; these are
+// called by C++ on both sides, so they need a header.
 
 #include <cstddef>
 #include <cstdint>
@@ -32,8 +31,8 @@ bool raft_snapshot_store_save(const rusty::RaftSnapshotManagerPtr* manager,
                               uint64_t index, uint64_t term,
                               const uint8_t* data, size_t len);
 
-// HOST: the reply context each lane's raft_phase1_load_and_send_snapshot
-// hands its send, and the reply side. The context is delivered to at most
+// HOST: the reply context raft_phase1_load_and_send_snapshot hands its send,
+// and the reply side. The context is delivered to at most
 // once (0 on any failure, inline when there is no peer) and freed through
 // raft_snapshot_reply_free exactly once.
 void* raft_snapshot_reply_ctx_new(const rusty::RaftAsyncCallbackLifetimePtr* lifetime,
@@ -42,7 +41,7 @@ void* raft_snapshot_reply_ctx_new(const rusty::RaftAsyncCallbackLifetimePtr* lif
 void raft_snapshot_reply_deliver(void* ctx, uint64_t follower_term);
 void raft_snapshot_reply_free(void* ctx);
 
-// HOST: InstallSnapshot RPC counters, bumped by every lane's send path and
+// HOST: InstallSnapshot RPC counters, bumped by the send path and the
 // receive handler and read by raft_bench (phase N0).
 void raft_install_rpc_note_sent(uint64_t bytes);
 void raft_install_rpc_note_received();

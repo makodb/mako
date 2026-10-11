@@ -31,11 +31,6 @@ source = "src/deptran/raft/log_storage.hpp"
 output = "src/deptran/raft/shell/log_storage_hpp.rs"
 
 [[module]]
-cpp_module = "raft.quorum_hpp"
-source = "src/deptran/raft/quorum.hpp"
-output = "src/deptran/raft/shell/quorum_hpp.rs"
-
-[[module]]
 cpp_module = "raft.raft_worker_cc"
 source = "src/deptran/raft/raft_worker.cc"
 output = "src/deptran/raft/shell/raft_worker_cc.rs"

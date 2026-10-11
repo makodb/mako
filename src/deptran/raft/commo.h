@@ -30,31 +30,15 @@
 
 namespace janus {
 
-// Pure decisions over copied scalar values (the quorum event uses the last).
+// A pure decision over copied scalar values, for the quorum event below.
 #if RUSTYCPP_RUST
-pub const fn commo_append_entries_empty_from_cmd(has_cmd: bool) -> bool {
-    !has_cmd
-}
-
-pub const fn commo_future_failed(error_code: i32) -> bool {
-    error_code != 0
-}
-
 pub const fn commo_quorum_should_advance_term(candidate_term: i64,
                                                highest_term: i64) -> bool {
     candidate_term > highest_term
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_commo.scalar_decisions version=1 rust_sha256=57830c51585f92868c121248232256bb04c6114353bdb3e90c0bab230ad1f876*/
-constexpr bool commo_append_entries_empty_from_cmd(bool has_cmd);
-constexpr bool commo_future_failed(int32_t error_code);
+/*RUSTYCPP:GEN-BEGIN id=raft_commo.scalar_decisions version=1 rust_sha256=452b4753cf237be62aaffbb4df8095b148fe35cead6582c032a630b4db530366*/
 constexpr bool commo_quorum_should_advance_term(int64_t candidate_term, int64_t highest_term);
-constexpr bool commo_append_entries_empty_from_cmd(bool has_cmd) {
-    return !has_cmd;
-}
-constexpr bool commo_future_failed(int32_t error_code) {
-    return rusty::detail::deref_if_pointer_like(error_code) != static_cast<int32_t>(0);
-}
 constexpr bool commo_quorum_should_advance_term(int64_t candidate_term, int64_t highest_term) {
     return rusty::detail::deref_if_pointer_like(candidate_term) > rusty::detail::deref_if_pointer_like(highest_term);
 }

@@ -1,11 +1,3 @@
-pub const fn raft_frame_has_single_partition(num_partitions: u32) -> bool {
-    num_partitions == 1
-}
-
-pub const fn raft_frame_has_expected_partition_size(partition_size: i32) -> bool {
-    partition_size == 5
-}
-
 pub const fn raft_frame_can_register_lab_scheduler(n_replicas: u16,
                                                    expected_replicas: u16) -> bool {
     n_replicas < expected_replicas

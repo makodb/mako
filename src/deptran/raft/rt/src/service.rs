@@ -28,7 +28,7 @@ use srpc::server::{Request, Server, Service, WeakServerConnection};
 
 /// srpc's reply code for a request that fails to decode -- the value
 /// `reject_malformed_request` sends (src/srpc/rpc/server.rs), which is private
-/// there. EINVAL, so it matches the C++ lane's generated decoder byte for byte.
+/// there. EINVAL, the code the C++ lane's generated decoder sent.
 const SERVER_ERR_INVALID_ARGUMENT: i32 = 22;
 
 unsafe extern "C" {
@@ -38,7 +38,7 @@ unsafe extern "C" {
     // (stage 2c) and the envelope is C++'s to interpret, so the reconstruction
     // is a kernel. Writes into a default-constructed slot the caller owns.
     // False on a malformed frame (server.cc), which the handler rejects the
-    // way the C++ lane's generated decoder does: SERVER_ERR_INVALID_ARGUMENT.
+    // way the C++ lane's generated decoder did: SERVER_ERR_INVALID_ARGUMENT.
     fn raft_command_from_bytes(bytes: *const u8, len: usize,
                                out: *mut rusty::RaftCommand) -> bool;
     // Same shape, for the snapshot payload: ServeInstallSnapshot takes a

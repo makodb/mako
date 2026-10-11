@@ -24,14 +24,6 @@ namespace janus {
 // RAFT_TEST_CORO scalar thresholds. Test fibers, locks, maps, and reactor
 // scheduling remain in the hand-written C++ path.
 #if RUSTYCPP_RUST
-pub const fn raft_frame_has_single_partition(num_partitions: u32) -> bool {
-    num_partitions == 1
-}
-
-pub const fn raft_frame_has_expected_partition_size(partition_size: i32) -> bool {
-    partition_size == 5
-}
-
 pub const fn raft_frame_can_register_lab_scheduler(n_replicas: u16,
                                                    expected_replicas: u16) -> bool {
     n_replicas < expected_replicas
@@ -71,21 +63,13 @@ pub const fn raft_frame_lab_process_exit_code(is_lab_config: bool,
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=raft_frame.lab_decisions version=1 rust_sha256=7563957a599c4f80f1732b50ab0fe15fb4b26e3360aa0883e659e9467439c5ba*/
-constexpr bool raft_frame_has_single_partition(uint32_t num_partitions);
-constexpr bool raft_frame_has_expected_partition_size(int32_t partition_size);
+/*RUSTYCPP:GEN-BEGIN id=raft_frame.lab_decisions version=1 rust_sha256=aa7bd3adb48ade91885f8d9fdbf1edb8344fae868e921f90223ff003538f2051*/
 constexpr bool raft_frame_can_register_lab_scheduler(uint16_t n_replicas, uint16_t expected_replicas);
 constexpr bool raft_frame_all_schedulers_created(uint16_t n_replicas, uint16_t expected_replicas);
 constexpr bool raft_frame_should_create_test_fiber(uint32_t site_id);
 constexpr bool raft_frame_more_commos_needed(uint16_t n_commos, uint16_t expected_replicas);
 constexpr bool raft_frame_is_lab_config(int32_t replica_protocol, int32_t raft_protocol, uint32_t num_partitions, int32_t partition_size, size_t local_server_count);
 constexpr int32_t raft_frame_lab_process_exit_code(bool is_lab_config, int32_t test_result);
-constexpr bool raft_frame_has_single_partition(uint32_t num_partitions) {
-    return rusty::detail::deref_if_pointer_like(num_partitions) == static_cast<uint32_t>(1);
-}
-constexpr bool raft_frame_has_expected_partition_size(int32_t partition_size) {
-    return rusty::detail::deref_if_pointer_like(partition_size) == static_cast<int32_t>(5);
-}
 constexpr bool raft_frame_can_register_lab_scheduler(uint16_t n_replicas, uint16_t expected_replicas) {
     return rusty::detail::deref_if_pointer_like(n_replicas) < rusty::detail::deref_if_pointer_like(expected_replicas);
 }
@@ -110,10 +94,6 @@ constexpr int32_t raft_frame_lab_process_exit_code(bool is_lab_config, int32_t t
 }
 /*RUSTYCPP:GEN-END id=raft_frame.lab_decisions*/
 
-static_assert(raft_frame_has_single_partition(1));
-static_assert(!raft_frame_has_single_partition(2));
-static_assert(raft_frame_has_expected_partition_size(5));
-static_assert(!raft_frame_has_expected_partition_size(4));
 static_assert(raft_frame_can_register_lab_scheduler(4, 5));
 static_assert(!raft_frame_can_register_lab_scheduler(5, 5));
 static_assert(raft_frame_all_schedulers_created(5, 5));

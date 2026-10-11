@@ -12,8 +12,8 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 540 | `raft/shell/server_h.rs` | 4835 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1742 | `raft/shell/server_cc.rs` | 759 |  |
+| `raft/server.h` | 540 | `raft/shell/server_h.rs` | 4834 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1549 | `raft/shell/server_cc.rs` | 759 |  |
 | `communicator.h` | 567 | `raft/shell/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
 | `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 685 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
 
@@ -198,7 +198,7 @@ never called was deleted as dead code on 2026-10-10).
 | `void f(uint64_t* out)` | `fn f(&mut self, out: *mut u64)` — see the counted facts above | **transliterated** — Rust would return a value |
 | `OnRequestVote`, `IsLeader` | same names under `#[allow(non_snake_case)]` | **transliterated** |
 | `shared_ptr<T>` handed to Rust | opaque carrier: `#[repr(C)]` byte array + destructor kernel | yes, by necessity |
-| `std::map<K,V>` in a two-lane type | `rusty::Vec` scanned linearly | no — a replica group is a handful of sites |
+| `std::map<K,V>` in a shared type | `rusty::Vec` scanned linearly | no — a replica group is a handful of sites |
 | quorum event you `wait_timeout` on | `VoteTally` you poll; same six-scalar outcome | no, deliberately |
 | `shared_ptr<Response>` with a `completed` flag | `Pending<T>` = `Arc<Mutex<Option<Result<T, i32>>>>` | shape kept, mechanism changed |
 
@@ -213,52 +213,55 @@ Paths below are relative to `src/deptran/` unless they start with `scripts/`.
 Counts live in the generated tables above; this part is prose on purpose and
 names no number that can rot.
 
-**"I want to change Raft's behaviour."** The core crate: `raft/src/server_h.rs`
-(the state -- `RaftServerBase`, `RaftConsensusState` -- and most methods) and
-`raft/src/server_cc.rs` (inbound RPC bodies, heartbeat phases, the C ABI). It
-is ONE source for both lanes: it names no srpc type and reaches the runtime
-only through the SEAM kernels in the table above. No C++ holds its state --
-`python3 scripts/raft_field_census.py` exits 0. `class RaftServer`
-(`raft/server.h`) is a pointer-holding shim of one-line forwards.
+**"I want to change Raft's behaviour."** The protocol is the core crate,
+`raft/core/` (raft-core, checked by Verus: `raft/verus/`, `scripts/verus/`).
+The server around it is the shell crate, `raft/shell/`: `server_h.rs` (the
+state -- `RaftServerBase` -- and most methods), `server_cc.rs` (inbound RPC
+bodies, heartbeat phases, the C ABI) and, in disk builds, `disk.rs`. The shell
+names no srpc type and reaches the runtime only through the SEAM kernels in the
+table above. No C++ holds its state -- `python3 scripts/raft_field_census.py`
+exits 0. `class RaftServer` (`raft/server.h`) is a pointer-holding shim of
+one-line forwards.
 
-**"Which runtime am I on?"** `-DMAKO_RAFT_LANE`:
-- `hybrid` (default) -- the core as `libraft.a`, over `raft/server_seam_cpp.cc`
-  and the C++ srpc runtime (`raft/commo.cc`, `raft/service.cc`, `rcc_rpc.h`).
-- `rust` -- the core plus `raft/rt` (crate `raft-rt`) as `libraft_rt.a`, over
-  the Rust srpc crate: `rt/src/seam.rs` (the SEAM kernels), `rt/src/transport.rs`
-  (poll thread, server, peer clients), `rt/src/service.rs`, the generated
-  `rt/src/rpc.rs`. The workers reach it through `raft/raft_lane.h`, defined in
-  `raft/raft_lane_rust.cc`, via one-line `#if MAKO_RAFT_LANE_RUST` hooks.
-- `raft/server.cc` is HOST: Mako's objects, linked in every lane.
+**"Which runtime am I on?"** One: the shell plus `raft/rt` (crate `raft-rt`)
+as `libraft_rt.a`, over the Rust srpc crate: `rt/src/seam.rs` (the SEAM
+kernels), `rt/src/transport.rs` (poll thread, server, peer clients),
+`rt/src/service.rs`, the generated `rt/src/rpc.rs`. The workers reach it
+through `raft/raft_lane.h`, defined in `raft/raft_lane_rust.cc`.
+`raft/server.cc` is HOST: Mako's objects. Disk builds (`-DMAKO_RAFT_DISK=ON`)
+add `raft/store` (crate `raft-store`: the WAL, the RocksDB base, snapshot
+image files).
 
-**"Which kind of file is this?"** `raft/rust-modules.toml` indexes the core crate:
+**"Which kind of file is this?"** `raft/rust-modules.toml` indexes the shell crate:
 - **Canonical Rust** -- `kind = "canonical"`: `server_h.rs`, `server_cc.rs`,
-  `lab*.rs`. Edit directly; `_h`/`_cc` in the names are historical.
+  `disk.rs`, `server_pods_h.rs`, `lab*.rs`. Edit directly; `_h`/`_cc` in the
+  names are historical.
 - **Carrier** -- has `source =`: an `#if RUSTYCPP_RUST ... #endif` Rust block
   followed by its `/*RUSTYCPP:GEN-BEGIN ...*/ ... /*RUSTYCPP:GEN-END*/` C++. The
-  Rust is the source; the extracted twin is `raft/src/<carrier>_hpp.rs` etc.
-- `raft/rt/` is its own crate in the same cargo workspace, not in the toml.
-- **Plain C++** -- the workers, the frame, the C++ lane's commo and service.
+  Rust is the source; the extracted twin is `raft/shell/<carrier>_hpp.rs` etc.
+- `raft/core/`, `raft/rt/`, `raft/store/` and `raft/replay/` are their own
+  crates in the same cargo workspace, not in the toml.
+- **Plain C++** -- the workers, the frame, the kernels (`server.cc`).
 
 **"What must I not hand-edit?"**
 
 | generated | regenerate with |
 |---|---|
-| GEN regions in carriers; extracted `raft/src/*_hpp.rs`; `raft/src/lib.rs` | `bash scripts/raft_dsl.sh --rewrite` |
+| GEN regions in carriers; extracted `raft/shell/*_hpp.rs` etc.; `raft/shell/lib.rs` | `bash scripts/raft_dsl.sh --rewrite` |
 | `raft/server_exports.h`; the exports block in `server_cc.rs`; the `RaftServer` shim | `python3 scripts/raft_regen_exports.py` |
 | `raft/rt/src/rpc.rs` | `scripts/rpcgen_rust.py`, run by the build |
 | `rcc_rpc.h` | `bin/rpcgen --cpp src/deptran/rcc_rpc.rpc` |
 | this file | `python3 scripts/gen_correspondence.py`, checked by the build |
 
 **"Where do the languages meet?"** C++ -> Rust: `raft/server_exports.h` (the
-server, both lanes) and `raft/transport_exports.h` (the Rust lane's transport,
-included only by `raft_lane_rust.cc`). Rust -> C++: the core's `extern "C"`
-blocks, resolved by HOST C++ or by the linked lane's seam -- the table above.
-Between host and seam: `raft/lane_kernels.h`.
+server) and `raft/transport_exports.h` (the transport, included only by
+`raft_lane_rust.cc`). Rust -> C++: the shell's `extern "C"` blocks, resolved
+by HOST C++ or by the runtime's seam -- the table above. Between host and
+seam: `raft/lane_kernels.h`.
 
 **Commands that answer most questions.**
 
-    python3 scripts/gen_correspondence.py --check   # this file; kernel lanes
+    python3 scripts/gen_correspondence.py --check   # this file; kernel sides
     python3 scripts/raft_field_census.py             # any C++ touching server state?
     bash scripts/raft_dsl.sh --check                 # carriers fresh; workspace builds; clippy
     python3 scripts/raft_regen_exports.py            # after changing an exported signature

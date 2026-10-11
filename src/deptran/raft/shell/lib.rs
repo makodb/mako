@@ -19,7 +19,6 @@ pub mod lab_main;
 #[cfg(feature = "raft_test")]
 pub mod lab_snapshot_cases;
 pub mod log_storage_hpp;
-pub mod quorum_hpp;
 pub mod raft_main_helper_cc;
 pub mod raft_worker_cc;
 pub mod scheduler_h;

@@ -1,7 +1,6 @@
 // The RaftLab suite's driver and its C entry point. A module of its own,
 // above lab, lab_cases and lab_snapshot_cases, so every edge between the lab
-// modules points one way: the transpiled C++ lane builds each module as a
-// C++20 module unit, and a module graph may not be cyclic.
+// modules points one way.
 
 use crate::lab::{reset, rpc_total, set_learner_action, shutdown, start_netctl, NSERVERS};
 use crate::lab_cases::{run_basic, LabState};

@@ -495,9 +495,9 @@ pub const fn raft_server_leader_rpc_sender_is_authoritative(
            (!has_known_leader || known_leader_matches_sender))))
 }
 
-// [move, M1] The two quorum helpers the authority ledger uses, copied from
-// src/deptran/raft/shell/quorum_hpp.rs (whose inline-DSL block in quorum.hpp
-// stays the source of the C++ copies). The core depends on no shell crate.
+// [move, M1] The two quorum helpers the authority ledger uses, first copied
+// from the shell's quorum carrier (quorum.hpp, since deleted with the C++
+// lane). The core depends on no shell crate.
 #[verifier::allow_in_spec]
 pub const fn raft_quorum_majority_count(total: usize) -> usize
     returns ((total / 2) + 1) as usize,
@@ -517,9 +517,9 @@ pub const fn raft_quorum_count_reached(count: usize, quorum: usize) -> bool
 // Compile-time checks of the helpers above (outside verus!: they are
 // rustc's, not Verus's).
 // The predicates' tests, one `const` assert each, in the order the C++
-// static_asserts had them. The emitter lowers each to a static_assert, so
-// the transpiled build checks them exactly as before; rustc checks them at
-// every gate. Numeric literals take the predicate's parameter types.
+// static_asserts had them. rustc checks them at every build, as the C++
+// compiler checked the static_asserts; a failing one fails the build.
+// Numeric literals take the predicate's parameter types.
 const _: () = assert!(raft_server_site_is_preferred_leader(7, 7));
 // A site that is itself the sentinel is not the preferred leader, because
 // the sentinel means "no preferred leader configured".

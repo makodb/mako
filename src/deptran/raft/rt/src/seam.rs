@@ -80,7 +80,7 @@ pub(crate) unsafe fn arc_drop<T>(p: *mut u8) {
 
 #[no_mangle]
 pub unsafe extern "C" fn raft_create_int_event_into(out: *mut rusty::RaftIntEventPtr) {
-    // The same factory and target the C++ lane uses: create_sp_int_event(1).
+    // The same factory and target the C++ lane used: create_sp_int_event(1).
     unsafe { arc_into(out as *mut u8, create_sp_int_event(1)) }
 }
 
@@ -163,9 +163,8 @@ pub unsafe extern "C" fn raft_queue_wake_job(owner: *const rusty::RaftPollThread
     poll.add(Arc::new(job) as Arc<dyn Job>);
 }
 
-/// Binds the wake gate to the transport's poll thread. The C++ lane binds the
-/// communicator's; the Rust lane's owner is the one poll thread the transport
-/// created, which is also where the heartbeat fiber runs.
+/// Binds the wake gate to the transport's poll thread: the one poll thread
+/// the transport created, which is also where the heartbeat fiber runs.
 #[no_mangle]
 pub unsafe extern "C" fn raft_bind_replication_poll(s: *mut RaftServerBase) -> bool {
     let Some(t) = (unsafe { transport_of(s) }) else {
@@ -265,9 +264,9 @@ pub extern "C" fn raft_shutdown_barrier_yield() {
 // The communicator's operations
 // ---------------------------------------------------------------------------
 
-/// The C++ lane validates and binds a communicator here. The Rust lane has no
-/// communicator: the transport is bound by raft_transport_serve, and the
-/// worker never calls set_commo. Reaching this is a wiring bug.
+/// There is no communicator to bind: the transport is bound by
+/// raft_transport_serve, and the worker never calls set_commo. Reaching this
+/// is a wiring bug.
 #[no_mangle]
 pub unsafe extern "C" fn raft_bind_commo(_s: *mut RaftServerBase, _commo: *mut c_void) {
     eprintln!("raft-rt: set_commo called on the Rust lane; the transport is bound by raft_transport_serve");
@@ -416,7 +415,7 @@ unsafe extern "C" fn emit_into_archive(ctx: *mut c_void, bytes: *const u8, len: 
 
 /// The send. Non-blocking: it only initiates the call. The reply lands in the
 /// Pending the carrier holds, which PHASE 2 polls through
-/// raft_append_response_read, as it polls `completed` in the C++ lane.
+/// raft_append_response_read.
 /// Commands with no payload go as EmptyAppendEntries, as the C++ communicator's did.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
@@ -433,7 +432,7 @@ pub unsafe extern "C" fn raft_phase1_send_append(
         Some(t) => {
             if unsafe { raft_command_has_value(cmd) } {
                 let req = AppendEntriesRequest {
-                    // slotid_t -1, as the C++ lane sends it, wrapped to u64.
+                    // slotid_t -1, as the C++ lane sent it, wrapped to u64.
                     slot: u64::MAX,
                     ballot: -1,
                     leader_current_term: term,
@@ -451,7 +450,7 @@ pub unsafe extern "C" fn raft_phase1_send_append(
                 }, late)
             } else {
                 let req = EmptyAppendEntriesRequest {
-                    // slotid_t -1, as the C++ lane sends it, wrapped to u64.
+                    // slotid_t -1, as the C++ lane sent it, wrapped to u64.
                     slot: u64::MAX,
                     ballot: -1,
                     leader_current_term: term,
@@ -497,8 +496,8 @@ pub unsafe extern "C" fn raft_append_response_read(r: *const rusty::RaftResponse
                 }
             }
         }
-        // Failed, or never sent: completed with status 0, the C++ lane's
-        // default-initialised response.
+        // Failed, or never sent: completed with status 0, as a
+        // default-initialised response reads.
         _ => view.completed_ = true,
     }
     view

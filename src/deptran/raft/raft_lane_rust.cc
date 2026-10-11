@@ -1,5 +1,5 @@
-// The Rust lane's worker plumbing: raft_lane.h over raft-rt's C ABI
-// (transport_exports.h). Compiled only when MAKO_RAFT_LANE=rust.
+// The workers' Raft plumbing: raft_lane.h over raft-rt's C ABI
+// (transport_exports.h).
 
 #include "raft_lane.h"
 

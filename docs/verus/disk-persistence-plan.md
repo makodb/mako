@@ -1,5 +1,5 @@
 # Disk persistence for the Rust Raft: the work plan
-**Status.** A plan; nothing is built. It implements
+**Status.** Built; see the implementation status below. It implements
 [disk-persistence.md](disk-persistence.md) ("the design", §3-§7). Code is cited
 at `44d07a3ee` as `path:line`, under `src/deptran/raft/` unless a path starts
 with `src/deptran/`, `src/mako/`, `src/srpc/`, `src/rusty-rustc/`, `bash/`,

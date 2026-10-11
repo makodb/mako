@@ -1,5 +1,5 @@
 // The Raft server's second half: the C ABI exports, the inbound RPC bodies
-// and the heartbeat phases. rustc compiles this into libraft.a; nothing here
+// and the heartbeat phases. rustc compiles this into libraft_rt.a; nothing here
 // is transpiled, so edit it directly.
 
 #[allow(dead_code, non_snake_case)]

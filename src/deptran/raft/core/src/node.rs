@@ -1500,7 +1500,7 @@ pub fn raft_election_tick<C>(core: &RaftCore<C>, now: u64) -> ElectionTick {
 // The inbound RPC bodies live here rather than in server_cc.rs, next to the
 // OnRequestVote / OnAppendEntries methods that call them: server_cc imports
 // this module, and a C++20 module graph may not be cyclic, so the transpiled
-// C++ lane needs the callee on this side of the edge.
+// C++ lane needed the callee on this side of the edge.
 // ==========================================================================
 // INBOUND RequestVote
 // ==========================================================================

@@ -1,10 +1,9 @@
-// Raft's RPC transport on the Rust srpc lane: one poll thread, one server,
-// one set of peer clients.
+// Raft's RPC transport over the Rust srpc runtime: one poll thread, one
+// server, one set of peer clients.
 //
-// WHY ONE TYPE. Inbound and outbound share one poll thread in the C++ lane
-// (raft_worker.cc SetupService/SetupCommo), so moving the server without the
-// clients would give Raft a second poll thread -- adding a thread rather than
-// swapping one. This owns both ends, so the lane is one change.
+// WHY ONE TYPE. Inbound and outbound share one poll thread, as they did in
+// the C++ lane; a server apart from its clients would give Raft a second
+// poll thread. This owns both ends.
 //
 // WHY IT IS NOT Send. srpc::client::Client holds one RefCell and eight Cell
 // fields (src/srpc/rpc/client.rs): Send but !Sync, so Arc<Client> is neither.
@@ -596,7 +595,7 @@ impl RaftTransport {
     }
 
     /// InstallSnapshot with a completion callback, the shape the C++ lane's
-    /// SendInstallSnapshot has: `done` runs exactly once, on the poll thread,
+    /// SendInstallSnapshot had: `done` runs exactly once, on the poll thread,
     /// with the follower's term or 0 on any failure. Returns false when the
     /// request never left, in which case `done` is NOT called -- the caller
     /// delivers the failure itself, on its own stack, as the C++ communicator did.
@@ -1092,7 +1091,7 @@ pub unsafe extern "C" fn raft_transport_drain(t: *mut RaftTransport,
 
 /// Drop the RPC server (its listener-close job runs on the still-live poll
 /// thread) and unbind, leaving the poll thread and clients. The worker calls
-/// this where the C++ lane deletes rpc_server_, before the Raft server goes.
+/// this before the Raft server goes.
 ///
 /// # Safety
 /// `t` came from raft_transport_new.
@@ -1106,7 +1105,7 @@ pub unsafe extern "C" fn raft_transport_close_server(t: *mut RaftTransport) {
 }
 
 /// Close the clients, shut the poll thread down and free the transport. The
-/// worker calls this last, where the C++ lane shuts its poll thread down.
+/// worker calls this last.
 ///
 /// # Safety
 /// `t` came from raft_transport_new and is not used afterwards.

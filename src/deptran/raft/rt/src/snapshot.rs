@@ -11,8 +11,8 @@
 //! kernels below are the only code that looks inside the carrier here.
 //!
 //! No streaming reader/writer, no pruning, no format: production calls none
-//! of them, and InstallSnapshot ships the state machine's bytes verbatim on
-//! every lane (plan N2), so a mixed-lane cluster stays wire-compatible.
+//! of them, and InstallSnapshot ships the state machine's bytes verbatim
+//! (plan N2).
 
 use core::ffi::c_void;
 use std::collections::HashSet;
@@ -200,8 +200,9 @@ pub unsafe extern "C" fn raft_destroy_snapshot_manager_ptr(p: *mut rusty::RaftSn
     unsafe { release(p) }
 }
 
-/// Memory-only on every lane: keep a store injected before Setup, otherwise
-/// start from an empty one.
+/// The store is in memory: keep one injected before Setup, otherwise start
+/// from an empty one. (Disk builds also write its latest snapshot as an image
+/// file, shell/disk.rs.)
 ///
 /// # Safety
 /// Every carrier pointer is a live `RaftSnapshotManagerPtr` of this
@@ -371,8 +372,8 @@ unsafe extern "C" {
 /// Owns the host's reply context: delivers at most once, frees exactly once
 /// on drop, whether or not it delivered. The host context outlives any number
 /// of deliveries (at most one happens), and the drop is also what happens,
-/// with no delivery, when the send never left: the C++ lane's commo drops its
-/// std::function uncalled in that case too.
+/// with no delivery, when the send never left, as the C++ lane's commo
+/// dropped its std::function uncalled.
 struct ReplyCtx(usize);
 // SAFETY: the context is only touched on the poll thread, where the send's
 // callback runs, and by its single Drop.
@@ -452,7 +453,7 @@ pub unsafe extern "C" fn raft_phase1_load_and_send_snapshot(
     // The callback owns the context: it delivers at most once and frees on
     // drop, whether or not it ever ran. A send that never left, or one
     // suppressed because the same install is outstanding (N6), frees it
-    // without a delivery, as the C++ lane's commo does for a failed send.
+    // without a delivery, as the C++ lane's commo did for a failed send.
     let sent = t.send_install_snapshot_once(site_id, &req, deadline, move |follower_term| {
         ctx.deliver(follower_term);
     });

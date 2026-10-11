@@ -1,20 +1,14 @@
-# raft-rt: the Rust lane's runtime for the Raft core (src/deptran/raft).
+# raft-rt: the runtime under the Raft shell (src/deptran/raft).
 #
-# The core crate (`raft`, one directory up) is Rust source with no runtime of
-# its own: it reaches fibers, events, the poll thread and the wire only
-# through extern "C" kernels, so that the same source can also be transpiled
-# into a C++ lane that runs on the C++ srpc runtime. This crate is the OTHER
-# half: those kernels over the Rust srpc crate (src/seam.rs), the transport
-# that owns Raft's poll thread, server and peer clients (src/transport.rs),
-# the RPC service (src/service.rs), and the generated wire code (src/rpc.rs).
+# The shell crate (`raft`, one directory up) reaches fibers, events, the poll
+# thread and the wire only through extern "C" kernels. This crate defines
+# them over the Rust srpc crate (src/seam.rs), with the transport that owns
+# Raft's poll thread, server and peer clients (src/transport.rs), the RPC
+# service (src/service.rs), the snapshot store (src/snapshot.rs) and the
+# generated wire code (src/rpc.rs).
 #
-# It is a separate crate, not a feature of the core, because the transpiler
-# walks every file under a crate's src/ regardless of #[cfg], and refuses a
-# crate whose local dependency (srpc) carries source-owned C++ contracts --
-# both measured, the two-lane RPC plan (removed; see git history) revision 5.
-#
-# Built only for -DMAKO_RAFT_LANE=rust, into libraft_rt.a, which then links in
-# place of libraft.a (it contains the core as an rlib).
+# CMake builds it into libraft_rt.a, the archive Mako links; it contains the
+# shell and the core as rlibs.
 [package]
 name = "raft-rt"
 version = "0.0.0"

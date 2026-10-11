@@ -1,10 +1,8 @@
-// The RaftLab harness on the Rust lane.
+// The RaftLab harness's runtime.
 //
-// In the C++ lane the harness fiber is a C++ srpc fiber that site 0's
-// ServerWorker creates (raft/frame.cc CreateCommo) and runs on its thread's
-// C++ reactor. Here it is a Rust srpc fiber on the calling thread's Rust
-// reactor, because the harness sleeps through raft_fiber_sleep_us, which on
-// this lane is the Rust Fiber::sleep and needs a Rust reactor to yield to.
+// The harness fiber is a Rust srpc fiber on the calling thread's Rust
+// reactor, because the harness sleeps through raft_fiber_sleep_us, the Rust
+// Fiber::sleep, which needs a Rust reactor to yield to.
 
 use std::cell::Cell;
 use std::rc::Rc;

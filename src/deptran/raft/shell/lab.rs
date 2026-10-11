@@ -13,12 +13,12 @@
 //   raft_lab_commit_tx_id          read that tx_id back out
 //   raft_lab_make_learner_action   wrap a Rust fn as the std::function apply
 //   raft_lab_make_leader_change_cb wrap a Rust fn as the leader-change callback
-//   raft_lab_frame_rpc_count       RaftCommo::rpc_count_ under its own mutex
+//   raft_lab_frame_rpc_count       a replica's RPC count, from its frame's transport
 //
 // The first three exist for one reason: a payload's identity lives in the C++
 // registry -- PayloadMember<MakoCommands, T>::KIND plus
 // SerializableRegistry::reg<T> -- so Rust can hold a janus::Command but cannot
-// be a member of the set. The fourth is the communicator, which is C++.
+// be a member of the set. The fourth goes through the frame, which is C++.
 
 #![allow(non_snake_case)]
 
@@ -281,10 +281,8 @@ pub fn dump_commit_log() {
         return;
     }
     for entry in lab_entries() {
-        // This replica's row, copied element by element under the table's
-        // lock (not BTreeMap::clone, which the C++ lane's btree port cannot
-        // compile for a Vec value), so the lock is not held while the
-        // replica's own mutex is taken below.
+        // This replica's row, copied under the table's lock, so the lock is
+        // not held while the replica's own mutex is taken below.
         let mut commands: Vec<i32> = Vec::new();
         {
             let committed = COMMITTED.lock().unwrap();

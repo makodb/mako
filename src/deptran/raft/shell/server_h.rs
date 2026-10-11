@@ -1,4 +1,4 @@
-// The Raft server. rustc compiles this into libraft.a; nothing here is
+// The Raft server. rustc compiles this into libraft_rt.a; nothing here is
 // transpiled, so edit it directly.
 
 use crate::server_pods_h::{RaftElectionTimeouts, RaftServerHandle};
@@ -38,8 +38,8 @@ pub type Reply = raft_core::Reply<rusty::RaftCommand>;
 // process, the worker owns every server and tears them down only after the
 // suite has finished, and the harness runs on a fiber in that same process.
 // Nothing outside a `raft_test` build can reach these items.
-// Flat items rather than a `lab_registry` module: a nested module cannot be
-// imported by the transpiled C++ lane (a C++ `using` cannot name a namespace).
+// Flat items rather than a `lab_registry` module, from when the transpiled
+// C++ lane imported them (a C++ `using` cannot name a namespace).
 #[cfg(feature = "raft_test")]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct LabEntry {
@@ -663,9 +663,9 @@ unsafe extern "C" {
                          payload_bytes: *mut u64);
     fn raft_apply_thread_join(thread: *mut rusty::RaftStdThread);
     fn raft_commo_set_network_enabled(server: *mut RaftServerHandle, enabled: bool);
-    // The communicator binding: a dynamic_cast, which Rust cannot spell, plus
-    // the insert into the server -> RaftCommo table the kernels resolve
-    // through. See set_commo below for why the pointer is not a field.
+    // The communicator binding TxLogServer requires. Raft binds none: the
+    // runtime's kernel (rt/src/seam.rs) aborts if reached, as the worker never
+    // calls set_commo.
     fn raft_bind_commo(server: *mut RaftServerHandle,
                        commo: *mut rusty::Communicator);
     // The reactor's PollThread::add, for the wake job: `owner` is the gate's
@@ -943,9 +943,8 @@ pub fn print_core_logs(out: &CoreOutput) {
     }
 }
 
-// appliedIndexForWait_ keeps its C++ spelling: it is read by name from
-// test.cc and from the C++ bodies that have not converted yet, and renaming
-// it is a mechanical change that belongs in its own commit.
+// appliedIndexForWait_ keeps its C++ spelling, from when C++ read it by
+// name; renaming it is a mechanical change that belongs in its own commit.
 #[allow(non_snake_case)]
 #[repr(C)]
 pub struct RaftServerBase {
@@ -1089,9 +1088,9 @@ pub struct RaftServerBase {
     pub n_commit_: i32,
 }
 
-// Method names keep their C++ spelling: every one of them is called by name
-// from bodies that have not converted yet, and from test.cc. Renaming them to
-// snake_case is a mechanical change for after the conversion, not during it.
+// Method names keep their C++ spelling, from when C++ bodies and the C++ lab
+// called them by name. Renaming them to snake_case is a mechanical change
+// that belongs in its own commit.
 #[allow(non_snake_case)]
 impl RaftServerBase {
     // The address a kernel receives: kernels are declared over the opaque
@@ -3419,8 +3418,8 @@ impl RaftServerBase {
             self.disconnected_.load(rusty::sync::atomic::Ordering::Acquire)
                 != disconnect);  // [move, M10]
         unsafe {
-            // A seam kernel: each lane's runtime owns its own network flag
-            // (the C++ lane's RaftCommo, the Rust lane's RaftTransport).
+            // A seam kernel: the runtime's RaftTransport owns the network
+            // flag.
             raft_commo_set_network_enabled(self.handle(), !disconnect);  // [fix, F19]
         }
         self.disconnected_
@@ -3616,7 +3615,7 @@ impl RaftServerBase {
 
         // The candidate id on the wire is a GLOBAL site id, not the
         // per-partition locale id. Everything downstream treats it that way:
-        // RaftCommo skips itself by comparing peer->site_id(), the receiver
+        // the broadcast skips the caller by site id (peers_in_partition), the receiver
         // admits a candidate only if current_config_ contains it and
         // current_config_ is filled from Config::SitesByPartitionId()'s
         // site.id, and this candidate just recorded vote_for_ = site_id_,
@@ -4006,9 +4005,9 @@ impl RaftServerBase {
 
 // RaftLab inspection: read-only views of the state the 25-case suite asserts
 // on, plus the two mutexes it takes and the one method it drives. Every one
-// is a getter, so test.cc and testconf.cc hold the layout of nothing --
-// this replaces the C++ shim's LabAccess, which named the fields directly.
-// Emitted unconditionally because the DSL has no cfg; they are inline reads.
+// is a getter, so the harness holds the layout of nothing (they replaced the
+// C++ shim's LabAccess, which named the fields directly). Compiled in every
+// build; they are inline reads.
 // CALLER MUST HOLD LabMutex() for the core reads, as the tests always did.
 #[allow(non_snake_case)]
 impl RaftServerBase {
@@ -4064,7 +4063,7 @@ impl RaftServerBase {
         // SAFETY: the lab reads it between steps, with no writer running.
         unsafe { &*self.snapshot_manager_.as_ptr() }  // [fix, F19]
     }
-    // The lab suite's log fingerprint (test.cc RaftLogFingerprint), one
+    // The lab suite's log fingerprint (the C++ lab's RaftLogFingerprint), one
     // element per call so the harness never holds a pointer into the log:
     // element 0 is the base, 1 the length, 2+i the term of entry base+i, or
     // 0 where there is none. is_some()/unwrap() rather than `if let`, for the
@@ -4479,8 +4478,8 @@ impl RaftServerBase {
     }
 
     // not_unsafe_ptr_arg_deref: the out-parameters are fields of the reply
-    // struct the caller owns for the whole call -- RpcVoteResponse and its
-    // siblings in service.cc, or a stack slot in the lab cases. These were
+    // struct the caller owns for the whole call -- the response in
+    // rt/src/service.rs, or a stack slot in the lab cases. These were
     // exempt from the lint as trait-impl methods; the contract did not change
     // with the impl block.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]

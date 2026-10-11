@@ -3,14 +3,15 @@
 // WHY THESE AND NOT A ROUND-TRIP TEST. A round-trip proves the encoder and
 // decoder agree with each other, but there the implementation is its own
 // oracle: both halves can drift together, stay self-consistent, and still be
-// wire-incompatible with the C++ peers this must interoperate with. Golden
-// vectors pin the exact bytes instead.
+// wire-incompatible with replicas built before the change. Golden vectors pin
+// the exact bytes instead.
 //
-// WHY PINNING RUST ALSO PINS C++. The C++ lane's srpc::Serialize_ is
-// TRANSPILED from the same src/srpc/misc/serializable.rs these structs call,
-// so a change that alters the wire alters both lanes together and is caught
-// here. This is the argument src/srpc/tests/wire_golden_rust.rs makes for its
-// own vectors, applied to the Raft slice.
+// WHY PINNING RUST ALSO PINS C++. The C++ srpc::Serialize_, which writes the
+// Command envelope (server.cc raft_command_encode), is TRANSPILED from the
+// same src/srpc/misc/serializable.rs these structs call, so a change that
+// alters the wire alters both together and is caught here. This is the
+// argument src/srpc/tests/wire_golden_rust.rs makes for its own vectors,
+// applied to the Raft slice.
 //
 // THE EXPECTED BYTES ARE DERIVED, NOT CAPTURED. Each scalar impl in
 // serializable.rs copies the value's own bytes with no byte-order
@@ -137,10 +138,10 @@ fn install_snapshot_request_length_prefixes_its_string() {
 #[test]
 fn append_entries_writes_its_payload_raw_between_the_fixed_fields() {
     // `cmd` is the janus::Command envelope, opaque to Rust and UNFRAMED on the
-    // wire: the C++ lane writes the envelope's own bytes with no length
-    // prefix, and from_body bounds it by arithmetic -- offset 50 to len - 8.
-    // A v64 length prefix here (what serializing the Vec<u8> would add)
-    // shifted every byte after it and misparsed on both lanes.
+    // wire: raft_command_encode writes the envelope's own bytes with no
+    // length prefix, and from_body bounds it by arithmetic -- offset 50 to
+    // len - 8. A v64 length prefix here (what serializing the Vec<u8> would
+    // add) shifted every byte after it and misparsed.
     let cmd: Vec<u8> = vec![0xde, 0xad, 0xbe, 0xef, 0x00, 0x7f, 0x80];
     let req = AppendEntriesRequest {
         slot: u64::MAX,

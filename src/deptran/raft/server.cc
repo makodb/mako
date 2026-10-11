@@ -8,16 +8,8 @@
 #include <unistd.h>   // [M0] trace kit: getpid for the dump file name
 #include <atomic>
 #include <mutex>
-#include <unordered_map>
-#include <rusty/rusty.hpp>   // rusty::addr_of_temp for the by-reference DSL args
-#include <rusty/array.hpp>
-#include <rusty/winnow_stream.hpp>   // rusty::contains for BTreeSet, per the compiler diagnostic   // rusty::len over the authority's BTreeSets
-#include <rusty/slice.hpp>
-#include <rusty/mutex.hpp>
-// rusty::clone, which the generated ReplicationWakeGate methods call to copy an
-// Option<Arc<...>> out from under its mutex guard.
+#include <rusty/rusty.hpp>   // rusty::Arc, rusty::Box
 #include <rusty/move.hpp>
-#include <rusty/sync/atomic.hpp>
 
 #include "server.h"
 #include "frame.h"
@@ -31,10 +23,8 @@
 #endif
 #include "rust_facade_types.h"
 #include "lane_kernels.h"
-#include "quorum.hpp"
 
 import std;
-import rusty;   // rusty::BTreeSet is a btree_port C++20 module, not a header
 
 // @external: {
 //   srpc::RandomGenerator::rand_double: [safe, (double, double) -> double]
@@ -347,37 +337,24 @@ prepare_state_machine_snapshot_locked(
 }
 
 
-// ============================================================================
-
 // ===========================================================================
 // THE KERNEL BRIDGE
 //
-// RaftServerBase (server.h) is a DSL struct, so its method bodies are Rust.
-// Three things such a body cannot do, and this is where each one lands:
+// RaftServerBase is Rust (shell/server_h.rs). Its bodies call into C++ for
+// three things, and this is where each one lands:
 //
-//   1. Look inside an opaque C++ field. peer_sites_ is a std::vector and
-//      current_config_ a std::set; Rust can hold and move them but not
-//      iterate them.
-//   2. Call a RaftServer method that has not converted yet. These kernels
-//      take RaftServerBase* and static_cast down. That is well defined here
-//      and not a widening of any contract: RaftServerBase is never
-//      instantiated on its own, so every such pointer really does point at a
-//      RaftServer. It is the same downcast the existing raft_* trampolines
-//      already do from void*, spelled with one less erasure.
-//   3. Compile conditionally. #[cfg] is DROPPED SILENTLY inside a DSL block
-//      (scripts/raft_dsl.sh rejects one for that reason), so anything behind
-//      an #ifdef has to keep its preprocessor guard on this side.
-//
-// Every kernel here is expected to disappear as its reason does: (1) when the
-// field converts, (2) when the callee converts, (3) never -- conditional
-// compilation has no Rust spelling in this dialect.
+//   1. Open a C++ object Rust holds only as an opaque carrier
+//      (rust_facade_types.h): a std::function, a janus::Command, a thread.
+//   2. Reach Mako: decode its commands, invoke its callbacks.
+//   3. Read a compile-time switch or the environment. RAFT_BATCH_OPTIMIZATION,
+//      RAFT_TEST_CORO and the like are C++ definitions the cargo build does
+//      not see, so each reaches Rust as a kernel.
 // ===========================================================================
 // Construct-in-place for the out-parameter kernels: destroy whatever the slot
-// holds, then copy- or move-construct the new value there. Under the
-// transpiler the slot is a live default-constructed object; under the runtime
-// it is the zero bytes Rust default-constructs, or a value from an earlier
-// round. Both are handled by the same two lines, which is why the kernels
-// never plain-assign into a slot.
+// holds, then copy- or move-construct the new value there. The slot is the
+// zero bytes Rust default-constructs, or a value from an earlier round; both
+// are handled by the same two lines, which is why the kernels never
+// plain-assign into a slot.
 template <typename T, typename V>
 static void construct_into(T* dst, V&& value) {
   std::destroy_at(dst);
@@ -416,16 +393,13 @@ void raft_apply_thread_join(rusty::RaftStdThread* thread) {
   }
 }
 
-// (2) more downcalls into RaftServer methods that have not converted
+// (2) Mako's commands
 
-// (3e) The payload, rebuilt from the bytes the wire carried.
-//
-// The C++ service never needed this: rpcgen's generated Deserialize_ decoded
-// `Command cmd` inside the request struct before the handler ever ran. On the
-// Rust lane the request holds the bytes instead (stage 2c -- Rust computes the
-// payload's extent by arithmetic and does not interpret it), so the decode is
-// a kernel. Returns false on a malformed frame rather than constructing a
-// half-decoded Command; the caller rejects the request.
+// The payload, rebuilt from the bytes the wire carried. The request holds the
+// bytes (stage 2c -- Rust computes the payload's extent by arithmetic and does
+// not interpret it), so the decode is a kernel. Returns false on a malformed
+// frame rather than constructing a half-decoded Command; the caller rejects
+// the request.
 bool raft_command_from_bytes(const uint8_t* bytes, size_t len,
                              rusty::RaftCommand* out) {
   srpc::BufferSource source = srpc::BufferSource::new_(bytes, len);
@@ -576,13 +550,11 @@ std::atomic<bool> lab_reject_prepare_called{false};
 // Test 60's oracle: a prepared install whose Commit succeeds only once the
 // EXACT incoming snapshot is readable from the manager. That makes the
 // Prepare -> TakeSnapshot -> Commit ordering a witnessed fact rather than an
-// assumption. Anonymous-namespace, so it does not collide with test.cc's own
-// copy while both harnesses exist.
+// assumption.
 class LabPublicationProbe final : public PreparedStateMachineSnapshotInstall {
  public:
-  // `manager` is copied through the carrier's clone kernel: the probe runs
-  // unchanged against the C++ manager (hybrid, cpp) and the Rust store (Rust
-  // lane), reaching either only through the SEAM kernels (plan N4).
+  // `manager` is copied through the carrier's clone kernel: the probe reaches
+  // the Rust store only through the SEAM kernels (plan N4).
   LabPublicationProbe(const rusty::RaftSnapshotManagerPtr* manager,
                       uint64_t expected_index, uint64_t expected_term,
                       std::string expected_data,
@@ -731,7 +703,7 @@ uint32_t raft_lab_probe_flags() {
 
 void raft_lab_probe_release() {
   // Reset through the clone kernel: an empty carrier copied in releases the
-  // held store on every lane without destroying the static itself.
+  // held store without destroying the static itself.
   rusty::RaftSnapshotManagerPtr empty{};
   raft_snapshot_manager_ptr_clone_into(&empty, &lab_probe_state.manager);
 }
@@ -849,8 +821,8 @@ int raft_install_snapshot_payload(
     return 0;
   }
 
-  // The store line, SEAM: the C++ manager on hybrid/cpp, the Rust store on
-  // the Rust lane (plan N4). Prepare above and Commit below stay here.
+  // The store line, SEAM: the Rust store (rt/src/snapshot.rs, plan N4).
+  // Prepare above and Commit below stay here.
   const bool saved = raft_snapshot_store_save(
       snapshot_manager, last_included_index, last_included_term,
       reinterpret_cast<const uint8_t*>(data->data()), data->size());
@@ -1084,14 +1056,11 @@ void raft_log_set_is_leader_entry(uint16_t site_id, uint32_t loc_id,
 }
 
 
-// ConstructRuntime's three kernels: what the C++ constructor did that the
-// generated constructor could not -- see RaftServerBase::ConstructRuntime.
 // The Rust logger's two kernels. The runtime facade formats the
 // line itself and asks two things of srpc's logger (module srpc.logging, the
 // transpiled src/srpc/base/logging.rs): is the level on, and here is a line.
 // Levels are srpc's: ERROR 1, WARN 2, INFO 3, DEBUG 4. Line 0 and a null file,
-// as srpc_log.h's Log_* templates pass. Unused by the transpiled build, whose
-// Rust bodies log through the C++ templates in rust_log_shims.h.
+// as srpc_log.h's Log_* templates pass.
 bool raft_log_enabled(int32_t level) { return level <= srpc::Log::level_now(); }
 void raft_log_line(int32_t level, const uint8_t* text, size_t len) {
   srpc::log_line(level, 0, nullptr,
@@ -1128,8 +1097,6 @@ bool raft_election_debug_enabled() {
 // place. On a default-constructed carrier -- all zero bytes, the empty state
 // of every one of these types -- each is a no-op, which is what lets Rust
 // default-construct a slot for an _into kernel and drop it unconditionally.
-// Unused by the transpiled build; they are the runtime's, and they compile
-// against the real types here so a drift is caught now.
 void raft_destroy_command(rusty::RaftCommand* p) { std::destroy_at(p); }
 void raft_destroy_checked_mutex(rusty::RaftCheckedMutex* p) { std::destroy_at(p); }
 void raft_destroy_async_callback_lifetime_ptr(rusty::RaftAsyncCallbackLifetimePtr* p) {
@@ -1160,158 +1127,16 @@ void raft_ensure_legacy_payload_registered() {
 
 }  // extern "C"
 
-
-
-
-// @unsafe - external calls marked @external [safe], core replication loop
-// TODO: Revisit borrow checker errors in this function.
-// The checker reports "use after move" for loop-local variables (matchedIndices,
-// batch_buffer_, batch_cmd, cmd) due to 2-iteration loop simulation. These variables
-// are declared fresh each iteration, but the checker may not be resetting state
-// correctly for loop-local declarations. Additionally, SendAppendEntries2 takes
-// shared_ptr<Marshallable> by value (moves), which compounds the issue.
-// Potential fixes: (1) Change SendAppendEntries2 to take const shared_ptr&,
-// (2) Investigate checker's loop-local variable handling.
-// ============================================================================
-// PARALLEL HEARTBEAT FIX
-// ============================================================================
-// This struct holds context for each pending AppendEntries RPC.
-// Used to send RPCs in parallel and process responses without blocking.
-// The response field uses shared_ptr to ensure memory validity when callback fires.
-// The in-flight AppendEntries table, owned by Rust.
-//
-// FIRST OPAQUE CARRY OF WIRE TYPES. PendingAppend holds the RPC's
-// shared_ptr<AppendEntriesResponse> and its janus::Command, neither of which
-// has a DSL spelling. Rust holds both and hands them back; it cannot construct
-// or dereference either, because the rustc facade models them as zero-sized
-// opaque structs (rusty-rustc/src/lib.rs). "Carried, never followed" is
-// therefore checkable rather than a convention.
-//
-// ONE SLOT PER FOLLOWER, indexed by the same ordinal PeerTable uses. The
-// invariant that at most one AppendEntries is in flight per follower used to
-// be emergent -- one entry in a std::map keyed by site -- and is now
-// structural: there is one slot and it is either occupied or not.
-//
-// A NOTE ON Option AND unwrap(), which is a live hazard in this runtime.
-// rusty::Option has two unwrap overloads: `const T& unwrap() const` returns a
-// reference, while the non-const `T unwrap()` MOVES OUT and clears the Option
-// (option.hpp:293-314). A `match` inside a `&mut self` method would bind the
-// second and silently empty the slot on what reads like an inspection. Every
-// read below is `&self`, so the emitter reaches for std::as_const and gets the
-// reference overload; mutation is whole-slot assignment only, never
-// match-and-modify. Keep it that way.
-
-// Heartbeat quorum evidence belongs to the exact generation and membership
-// snapshot that produced it. Slow synchronous followers may reply after the
-// HeartbeatLoop has advanced to a later generation, so retain each generation
-// until its launched RPCs have either completed or proved a quorum.
-//
-// The EVIDENCE -- who has voted, who is still outstanding, for which term and
-// against how large a config -- is a DSL-owned type. The membership snapshot
-// stays C++: it is compared against current_config_, a std::set, which a
-// rusty::BTreeSet cannot be compared with. The quorum predicates stay where
-// they are in quorum.hpp and are called on this type's accessors, rather than
-// being duplicated into it.
-
-}  // namespace janus
-
-// Cross-carrier DSL calls, inline-mode shims.
-//
-// A DSL body that says `use crate::quorum_hpp::raft_quorum_majority_count`
-// emits `using ::quorum_hpp::raft_quorum_majority_count` -- the emitter turns
-// the crate module path into a C++ namespace path, and inline mode has no
-// type map to rewrite it. These two namespaces supply the names it reaches
-// for, exactly as rust_facade_types.h supplies the rusty:: reactor names.
-// Aliases only; the definitions stay where they are.
-namespace quorum_hpp {
-using janus::raft::raft_quorum_majority_count;
-using janus::raft::raft_quorum_count_reached;
-}  // namespace quorum_hpp
-
-
-namespace janus {
-
-// PHASE 2 binds one of these per slot per poll pass, so the loop body names
-// fields rather than indexing. It borrows: the carried Command reference is
-// owned by the table's slot, which outlives the pass because only this loop
-// releases slots and it does so after its last use.
-struct PendingView {
-  siteid_t follower_id;
-  uint64_t sent_term;
-  uint64_t sent_round;
-  uint64_t sent_end_index;
-  const janus::Command& cmd;
-};
-
-// The read-index authority ledger, owned by Rust.
-//
-// A rusty::Vec with the round id as a field, not a map keyed by round id. A
-// map would buy nothing: the generations are few (bounded by rounds with
-// replies still outstanding), they are created in ascending round order and
-// scanned in that order, and every lookup has a round id the caller already
-// holds. PeerTable is a Vec for the same reason, plus one more: rusty::BTreeMap's
-// rustc model is not a faithful map.
-//
-// The membership snapshot is now a rusty::BTreeSet<u16> rather than a
-// std::set, which is what lets the whole type be DSL. Its comparison against
-// the current membership keeps FULL strength -- it is set equality, not a size
-// check -- but it is expressed as length plus containment over a sorted slice
-// rather than with `==`. That is deliberate: the rustc facade models BTreeSet
-// as a Vec (rusty-rustc/src/lib.rs:817), so a derived `==` there would be
-// ORDER-sensitive while the real C++ btree_port `==` is set equality. Using
-// only len() and contains(), which are faithful on both sides, keeps the gate
-// checking what production does. Same reason the config is admitted member by
-// member instead of cloned: the facade's BTreeSet implements neither Clone nor
-// PartialEq, and adding them would be adding unfaithful ones.
-
-// ============================================================================
-// THE HEARTBEAT LOOP
-//
-// All of it: the round scope, the commit rule, the four phases, the state
-// they carry between them, and the driver that sequences them. The C++ that
-// remains is the fiber spawn in raft_spawn_heartbeat_loop and the kernels
-// each phase calls for work with no DSL spelling -- RPC sends, marshalling,
-// the snapshot manager.
-//
-// Read it in protocol order: the round scope and the commit rule both PHASE 0
-// and PHASE 3 apply, then PHASE 0 through PHASE 3, then the driver, then the
-// two inbound RPC bodies.
-// ============================================================================
-
-// The round scope, owned by Rust: the values that outlive a phase but not a
-// round. PHASE 0 establishes all of them; PHASE 1, 2 and 3 read them.
-//
-// Every read and write goes through a method, so the C++ phases cannot poke a
-// field. The `&mut self` on those methods is a true exclusivity claim rather
-// than a formality, because the round state (RaftCore::round_ and its
-// siblings, formerly the driver's HeartbeatRoundState) is touched only by
-// the heartbeat fiber -- SendAppendEntries2's completion callback
-// captures [response, site_id] and nothing else (commo.cc:50), the
-// InstallSnapshot callback aliases RaftServer rather than the round, and
-// PHASE 2's pending_rpcs iterator closes before the only suspension point --
-// so exclusive mutable access is genuinely exclusive, and a borrow check over
-// it is checking something real.
-//
-// There is deliberately no nservers field: it would only ever equal
-// round_config.size(), so nservers() derives it and the two cannot
-// disagree.
-
 // ==========================================================================
-// PHASE 1's two unspellable regions.
+// THE HEARTBEAT'S HOST HALF
 //
-// The loop around them is heartbeat_phase1_body, in Rust. These two are
-// not: the first sends an InstallSnapshot whose completion callback is a
-// C++ lambda that re-enters the server, and the second selects the
-// AppendEntries payload under #ifdef RAFT_BATCH_OPTIMIZATION -- conditional
-// compilation, which has no DSL spelling.
+// The loop is Rust (shell/server_cc.rs). What it needs from here: the
+// InstallSnapshot reply's context, which holds C++ objects, and the
+// command kernels, which read a Marshallable the Rust side cannot.
 // ==========================================================================
 extern "C" {
 
-// The follower is behind the log's base, so send it a snapshot instead.
-// Returns true in both outcomes -- sent, or failed to load -- because either
-// way the normal AppendEntries for this follower is skipped.
-// CALLER MUST HOLD mtx_.
-// The InstallSnapshot reply, host side. The lane's send calls
+// The InstallSnapshot reply, host side. The send calls
 // raft_snapshot_reply_deliver at most once -- with the follower's term, or 0 on
 // any failure, and inline on the caller's stack when there is no peer -- and
 // raft_snapshot_reply_free exactly once, whether or not it delivered.
@@ -1324,8 +1149,8 @@ struct SnapshotReplyCtx {
   uint64_t send_term;
 };
 
-// The reply context both lanes' raft_phase1_load_and_send_snapshot hand to
-// their send: everything the completion needs, freed exactly once by
+// The reply context raft_phase1_load_and_send_snapshot (rt/src/snapshot.rs)
+// hands to its send: everything the completion needs, freed exactly once by
 // raft_snapshot_reply_free.
 void* raft_snapshot_reply_ctx_new(const rusty::RaftAsyncCallbackLifetimePtr* lifetime,
                                   uint16_t site_id, uint16_t self_site_id, size_t ord,
@@ -1340,9 +1165,9 @@ void raft_snapshot_reply_deliver(void* raw, uint64_t follower_term) {
   // different reasons.
   //
   // This runs in TWO contexts. Normally the reactor invokes it when the reply
-  // lands, with mtx_ not held. But the lane invokes it INLINE, on the caller's
-  // stack, when there is no peer (commo.cc's SendInstallSnapshot; seam.rs on
-  // the Rust lane) -- and that caller is PHASE 1, which holds mtx_.
+  // lands, with mtx_ not held. But the send invokes it INLINE, on the
+  // caller's stack, when there is no peer (rt/src/snapshot.rs) -- and that
+  // caller is PHASE 1, which holds mtx_.
   //
   // mtx_: a recursive_mutex tolerated the re-entry; a plain std::mutex would
   // self-deadlock. Everything past this check is Rust
@@ -1380,8 +1205,8 @@ void raft_snapshot_reply_free(void* raw) {
 
 }  // extern "C"
 
-// A serialization sink that forwards every write to a C callback -- the Rust
-// lane's archive -- so the Command is encoded directly into the request frame.
+// A serialization sink that forwards every write to a C callback -- the
+// request's archive -- so the Command is encoded directly into the frame.
 class EmitSink final : public srpc::SinkBase {
  public:
   EmitSink(void* ctx, void (*emit)(void*, const uint8_t*, size_t))
@@ -1400,12 +1225,11 @@ class EmitSink final : public srpc::SinkBase {
 extern "C" {
 
 // The payload's wire bytes: exactly what rcc_rpc.h's AppendEntries writes for
-// `Command cmd` -- the envelope, unframed. The Rust lane's send path carries
-// these bytes; the C++ lane never calls this, it hands the Command to rpcgen.
+// `Command cmd` -- the envelope, unframed. The send path carries these bytes.
 void raft_command_encode(const rusty::RaftCommand* cmd, void* ctx,
                          void (*emit)(void*, const uint8_t*, size_t)) {
-  // Every write goes straight to `emit`, which is the Rust lane's request
-  // archive: no buffer here, so the payload is copied once, into the frame.
+  // Every write goes straight to `emit`, which is the request's archive: no
+  // buffer here, so the payload is copied once, into the frame.
   srpc::BinaryWriteArchive writer(
       // Box's explicit pointer constructor, not new_: new_ takes its value by
       // copy, and a SinkBase is non-copyable. The Box<EmitSink> converts to
@@ -1507,34 +1331,18 @@ void raft_batch_finalize(rusty::RaftTpcCommitPtr* entries, size_t count,
 
 }  // extern "C"
 
-// AppendRespView is generated by the block above, so this kernel has to sit
-// below it rather than with the rest of the bridge.
-extern "C" {
-}  // extern "C"
-
-// The three loop-carried locals, which outlive a round but not the loop. They
-// stay C++ because unique_ptr<PendingAppendEntries> and the wire types inside
-// PendingHeartbeatAuthority have no DSL spelling; the Rust driver carries this
-// object as an opaque handle and never looks inside it.
-
-
 // ============================================================================
 // THE RPC ENTRY POINTS' C++ HALF
 //
 // OnRequestVote, OnAppendEntries, OnInstallSnapshot and Start are RaftSpecific
 // methods on RaftServerBase, Rust in server_h.rs; the first two reach their
-// bodies in server_cc.rs directly. What is left here is OnInstallSnapshot's
-// std::mutex and its catch -- the one place an embedder throw becomes
-// FailStop -- which are C++ by nature.
+// bodies in server_cc.rs directly. What is left here is the AppendEntries
+// payload's decoding and OnInstallSnapshot's catch -- the one place an
+// embedder throw becomes FailStop -- which are C++ by nature.
 // ============================================================================
 
-/* NOTE: same as ReceiveAppend */
-/* NOTE: broadcast send to all of the host even to its own server
- * should we exclude the execution of this function for leader? */
-// @unsafe - external calls marked @external [safe], output pointer writes in @unsafe blocks
-// The three kernels raft_on_append_entries still needs. None is a forwarder:
-// all three decode or build the wire payload, which is a Marshallable
-// hierarchy with no Rust spelling.
+// The kernels raft_on_append_entries needs. None is a forwarder: each reads
+// the wire payload, a Marshallable hierarchy with no Rust spelling.
 extern "C" {
 
 // The AppendEntries payload, read per entry for RaftServerBase::
@@ -1612,9 +1420,8 @@ extern "C" bool raft_install_snapshot_guarded(RaftServerBase* self, uint16_t sit
 } // namespace janus
 
 // ---------------------------------------------------------------------------
-// InstallSnapshot RPC counters (phase N0). HOST, one definition for every
-// lane: each lane's send path and receive handler bumps them, and raft_bench
-// reads them into its record. They count RPCs on the wire, which a resend
+// InstallSnapshot RPC counters (phase N0). HOST: the send path and the
+// receive handler bump them, and raft_bench reads them into its record. They count RPCs on the wire, which a resend
 // storm shows and the prepare/commit callbacks do not (a repeated install at
 // the same index is acknowledged before prepare).
 // ---------------------------------------------------------------------------

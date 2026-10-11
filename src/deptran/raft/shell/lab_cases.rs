@@ -38,10 +38,10 @@ pub fn passed() {
 }
 
 // ---------------------------------------------------------------------------
-// The assertion helpers. Each was a macro_rules! macro; they are functions
-// because the C++ lane transpiles this harness, and the transpiler lowers a
-// custom macro invocation to a `// TODO` comment -- 189 of them, which made
-// the transpiled lab report 25/25 while checking nothing (plan L2). Each
+// The assertion helpers. Each was a macro_rules! macro; they became
+// functions when the C++ lane transpiled this harness, because the transpiler
+// lowered a custom macro invocation to a `// TODO` comment -- 189 of them,
+// which made the transpiled lab report 25/25 while checking nothing (plan L2). Each
 // returns false when the check fails, and the caller returns 1, exactly the
 // early exit the macro performed.
 

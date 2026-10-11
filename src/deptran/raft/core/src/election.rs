@@ -21,11 +21,11 @@ pub struct VoteOutcome {
     pub timeouted_: bool,
 }
 
-// [move, M5] One campaign's votes, counted by the core with the rule both
-// lanes' tallies use (RaftVoteQuorumEvent, raft-rt's TallyState): yes once
+// [move, M5] One campaign's votes, counted by the core with the rule the
+// runtime's tallies use (RaftVoteQuorumEvent, raft-rt's TallyState): yes once
 // the peer yes votes reach n/2, no once the peer no votes exceed n - n/2
-// (the off-by-one bugs-found B1 records, kept for lane parity). Each voter
-// counts once ([fix, F1], now on every lane), and a reply term that is
+// (the off-by-one bugs-found B1 records, kept for parity). Each voter
+// counts once ([fix, F1]), and a reply term that is
 // non-negative and higher than any seen is kept, as FeedResponse did.
 pub struct VoteSet {
     voters_: SiteSet,

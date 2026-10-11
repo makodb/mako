@@ -3,11 +3,10 @@
 // The C types of the Raft kernel boundary: what kernels return BY VALUE, and
 // the opaque handle through which the core passes itself to a kernel.
 //
-// Rust owns the definitions (src/server_pods_h.rs, canonical); each is
+// Rust owns the definitions (shell/server_pods_h.rs, canonical); each is
 // `#[repr(C)]` and bound to the name below with `cpp_native_type`, so the
 // host (server.h, server.cc) uses THESE declarations. They are global-scope
-// C declarations on purpose (they once also served the transpiled cpp lane,
-// whose global kernel declarations could name only global types).
+// C declarations, as kernel declarations are.
 //
 // No imports and no namespaces: this header is included from C++20 module
 // global fragments.
