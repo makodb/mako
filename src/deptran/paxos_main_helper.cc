@@ -339,15 +339,10 @@ void submit(const char* log, int len, uint32_t par_id) {
         // `SetupBase`), so this verify would have always fired had
         // this branch ever been reached.  Field + class deleted in
         // this phase.
-        string log_str;
-        std::copy(log, log + len, std::back_inserter(log_str));
+        // Submit on the caller's thread: it can wait for a free accept
+        // round, and rounds finish on the poll thread.
         worker->IncSubmit();
-
-        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([&worker,log_str,len,par_id] () {
-            worker->Submit(log_str.data(),len, par_id);
-        }));
-        auto arc_job_base = rusty::Arc<Job>(arc_job);
-        worker->GetPollThread()->add(arc_job_base);
+        worker->Submit(log, len, par_id);
         submit_tot++;
     }
 }
