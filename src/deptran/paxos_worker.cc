@@ -536,7 +536,15 @@ PaxosWorker::PaxosWorker() {
 
 PaxosWorker::~PaxosWorker() {
   Log_info("Ending worker with n_tot {} and n_current {}", (int)n_tot, (int)n_current);
-  stop_flag = true;
+  if (inflight_waits_ > 0) {
+    Log_info("partition {}: Submit waited for a free accept round {} times",
+             site_info_ != nullptr ? (int)site_info_->partition_id_ : -1, inflight_waits_);
+  }
+  {
+    std::lock_guard<std::mutex> lock(inflight_mu_);
+    stop_flag = true;
+  }
+  inflight_cv_.notify_all();
   // removed `stop_replay_flag = true;` —
   // the field went away with the dead `StartReplayRead`.
 
@@ -558,8 +566,28 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { /
   _Submit(rusty::Arc<LogEntry>::make(std::move(cmd)));
 }
 
+void PaxosWorker::ReleaseInFlightRound() {
+  {
+    std::lock_guard<std::mutex> lock(inflight_mu_);
+    inflight_rounds_--;
+  }
+  inflight_cv_.notify_one();
+}
+
 inline void PaxosWorker::_Submit(const janus::Command& sp_m) {
   verify(rep_frame_ != nullptr);
+  bool counted = false;
+  if (stop_flag != true) {
+    std::unique_lock<std::mutex> lock(inflight_mu_);
+    if (inflight_rounds_ >= kMaxInFlightRounds) {
+      inflight_waits_++;
+      inflight_cv_.wait(lock, [this] {
+        return inflight_rounds_ < kMaxInFlightRounds || stop_flag;
+      });
+    }
+    inflight_rounds_++;
+    counted = true;
+  }
   auto coord = rep_frame_->CreateCoordinator();
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
@@ -572,11 +600,15 @@ inline void PaxosWorker::_Submit(const janus::Command& sp_m) {
     vector<shared_ptr<Coordinator>> curr2;
     curr2.push_back(sp_coo);
     auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([this, curr2]() {
-      this->BulkSubmit(curr2);
+      this->BulkSubmit(curr2);  // returns once the round is decided or given up
+      this->ReleaseInFlightRound();
     }));
     auto arc_job_base = rusty::Arc<Job>(arc_job);
     submitJob(arc_job_base);
   } else{
+    if (counted) {
+      ReleaseInFlightRound();
+    }
     coord->Submit(sp_m);
   }
 }

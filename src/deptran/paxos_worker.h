@@ -337,6 +337,20 @@ private:
 
   std::mutex finish_mutex{};
   std::condition_variable finish_cond{};
+  // Leader: accept rounds started on this partition and not finished.
+  // Each one holds a fiber, with 1 MiB of stack address space, until a
+  // quorum answers, so a leader that commits faster than its followers
+  // answer would add rounds without bound. _Submit waits while
+  // kMaxInFlightRounds are out, which slows the caller to the rate the
+  // followers accept. It runs on the caller's thread, never on this
+  // partition's poll thread, where rounds finish. A leader whose
+  // followers keep up has a few rounds out per partition.
+  static constexpr int kMaxInFlightRounds = 64;
+  std::mutex inflight_mu_{};
+  std::condition_variable inflight_cv_{};
+  int inflight_rounds_ = 0;
+  uint64_t inflight_waits_ = 0;  // times _Submit waited for a free round
+  void ReleaseInFlightRound();
   bool noops_received=false;
   std::function<void(const char*, int)> callback_ = nullptr;
   std::function<void(const char*&, int, int)> callback_par_id_ = nullptr;
