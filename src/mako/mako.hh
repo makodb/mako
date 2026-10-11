@@ -272,8 +272,10 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
     }
 
     // wait for vectorized watermark computed from other partition servers
+    // (one key per other shard; with more threads than shards, counting
+    // threads here waited forever for shards that do not exist)
     if (noops) {
-      for (int i=0; i<benchConfig.getNthreads(); i++) {
+      for (int i=0; i<benchConfig.getNshards(); i++) {
         if (i!=benchConfig.getShardIndex() && par_id==0) {
           mako::NFSSync::wait_for_key("noops_phase_"+std::to_string(i), 
                                           benchConfig.getConfig()->shard(0, benchConfig.getClusterRole()).host.c_str(), benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);

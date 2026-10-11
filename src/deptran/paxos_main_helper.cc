@@ -612,9 +612,12 @@ void stuff_todo_learner_upgrade(){
     pxs_workers_g[i]->election_state_lock.unlock();
     auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
-    // New slots start past every slot the acceptors committed, not only
-    // past the last one forwarded to this learner.
-    ps->max_committed_slot_ = std::max(ps->max_committed_slot_learner_, committed_high[i])+100;
+    // New slots start right after every slot the acceptors committed. The
+    // old +100 guessed at how far p1 had run past its forwards; catch-up
+    // now knows, and the followers apply in order, so a gap would leave
+    // them waiting for slots nobody will send (BroadcastSyncCommit sends
+    // nothing), and they would never apply this leader's entries.
+    ps->max_committed_slot_ = std::max(ps->max_committed_slot_learner_, committed_high[i]);
     ps->max_executed_slot_ = ps->max_committed_slot_;
     ps->cur_open_slot_ = ps->max_committed_slot_+1;
     ps->cur_epoch = es->get_epoch();
