@@ -233,7 +233,8 @@ BENIGN_GENERATED_IDENTIFIERS = ("rusty::io::Error::Kind::Unsupported",)
 # Raw entries: epoll_wrapper 56 -> 47 (Pollable's two destructor aliases
 # gone), reactor 449 -> 425, tcp_channel 236 -> 181 (four shim constructor
 # aliases gone).
-EXPECTED_TOTAL_PROVIDER_SYMBOLS = 2107
+# Mako-local: +5 over upstream (admission gate 4, tcpconn_append_frame 1).
+EXPECTED_TOTAL_PROVIDER_SYMBOLS = 2112
 
 # ---------------------------------------------------------------------------
 # srpc.reactor: surviving historical additions plus current canonical helpers.
@@ -4407,6 +4408,10 @@ ABI_SPECS = {
             ('R', 'srpc::SERVER_ERR_ALREADY_EXISTS@srpc.server'),
             ('R', 'srpc::SERVER_ERR_INVALID_ARGUMENT@srpc.server'),
             ('R', 'srpc::SERVER_ERR_NO_ENTRY@srpc.server'),
+            ('R', 'srpc::SERVER_ERR_TRY_AGAIN@srpc.server'),
+            ('T', 'srpc::RpcServiceContext@srpc.server::new_with_admission(std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::port::vec::Vec@vec_port.vec<rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>, rusty::alloc::Global>, rusty::String, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long)'),
+            ('T', 'srpc::Server@srpc.server::admission_ready() const'),
+            ('T', 'srpc::Server@srpc.server::set_admission_ready(bool) const'),
             ('R', 'srpc::kDefaultDrainTimeoutMs@srpc.server'),
             ('R', 'srpc::kReplySinkInitialCapacity@srpc.server'),
             ('R', 'typeinfo name for srpc::Service@srpc.server'),
@@ -4426,7 +4431,7 @@ ABI_SPECS = {
             ('T', 'srpc::PendingRequestGuard@srpc.server::~PendingRequestGuard()'),
             ('T', 'srpc::Request@srpc.server::attach_pending_guard(rusty::Arc<rusty::sync::atomic::detail::Atomic<int>> const&)'),
             ('T', 'srpc::RpcServiceContext@srpc.server::new_(std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::port::vec::Vec@vec_port.vec<rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>, rusty::alloc::Global>, rusty::String, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long)'),
-            ('T', 'srpc::Server@srpc.server::Server(rusty::port::vec::Vec@vec_port.vec<rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>, rusty::alloc::Global>, std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::Option<rusty::Arc<srpc::RpcServiceContext@srpc.server>>, rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, rusty::Mutex<srpc::ShutdownState@srpc.server>, rusty::Box<rusty::Condvar, rusty::alloc::Global>, rusty::Cell<srpc::ShutdownPhase@srpc.server>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Function<void ()>, rusty::alloc::Global>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long, rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>, rusty::Option<rusty::Box<srpc::ChannelListenerBase@srpc.channel, rusty::alloc::Global>>, rusty::Arc<rusty::Mutex<srpc::ChannelSconns@srpc.server>>)'),
+            ('T', 'srpc::Server@srpc.server::Server(rusty::port::vec::Vec@vec_port.vec<rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>, rusty::alloc::Global>, std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::Option<rusty::Arc<srpc::RpcServiceContext@srpc.server>>, rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, rusty::Mutex<srpc::ShutdownState@srpc.server>, rusty::Box<rusty::Condvar, rusty::alloc::Global>, rusty::Cell<srpc::ShutdownPhase@srpc.server>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Function<void ()>, rusty::alloc::Global>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long, rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>, rusty::Option<rusty::Box<srpc::ChannelListenerBase@srpc.channel, rusty::alloc::Global>>, rusty::Arc<rusty::Mutex<srpc::ChannelSconns@srpc.server>>)'),
             ('T', 'srpc::Server@srpc.server::Server(srpc::Server@srpc.server&&)'),
             ('T', 'srpc::Server@srpc.server::add_shutdown_hook(rusty::Function<void ()>) const'),
             ('T', 'srpc::Server@srpc.server::addr() const'),
@@ -4620,6 +4625,7 @@ ABI_SPECS = {
             ('T', 'srpc::tcpconn_scratch@srpc.tcp_channel()'),
             ('T', 'srpc::tcpconn_send_bytes@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, unsigned long)'),
             ('T', 'srpc::tcpconn_send_frame@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, srpc::ChannelFrame@srpc.channel const&)'),
+            ('T', 'srpc::tcpconn_append_frame@srpc.tcp_channel(std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, int, unsigned char const*, unsigned long)'),
             ('T', 'srpc::tcpconn_trim_sent@srpc.tcp_channel(std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, unsigned long)'),
             ('T', 'srpc::tcplistener_accept_step@srpc.tcp_channel(srpc::TcpListener@srpc.tcp_channel const&, srpc::AcceptStep@srpc.tcp_channel*)'),
             ('T', 'srpc::tcplistener_accept_step_new@srpc.tcp_channel()'),
@@ -5044,7 +5050,7 @@ RAW_ABI_ALIASES = {
         ),
         (
             'T',
-            'srpc::Server@srpc.server::Server(rusty::port::vec::Vec@vec_port.vec<rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>, rusty::alloc::Global>, std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::Option<rusty::Arc<srpc::RpcServiceContext@srpc.server>>, rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, rusty::Mutex<srpc::ShutdownState@srpc.server>, rusty::Box<rusty::Condvar, rusty::alloc::Global>, rusty::Cell<srpc::ShutdownPhase@srpc.server>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Function<void ()>, rusty::alloc::Global>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long, rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>, rusty::Option<rusty::Box<srpc::ChannelListenerBase@srpc.channel, rusty::alloc::Global>>, rusty::Arc<rusty::Mutex<srpc::ChannelSconns@srpc.server>>)',
+            'srpc::Server@srpc.server::Server(rusty::port::vec::Vec@vec_port.vec<rusty::Box<srpc::Service@srpc.server, rusty::alloc::Global>, rusty::alloc::Global>, std_port::collections::hash::map::HashMap@std_port<int, unsigned long, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, std_port::collections::hash::set::HashSet@std_port<int, std_port::hash::compat::DefaultHasher@std_port, rusty::alloc::Global>, rusty::Option<rusty::Arc<srpc::RpcServiceContext@srpc.server>>, rusty::Option<rusty::Arc<srpc::PollThread@srpc.reactor>>, rusty::Mutex<srpc::ShutdownState@srpc.server>, rusty::Box<rusty::Condvar, rusty::alloc::Global>, rusty::Cell<srpc::ShutdownPhase@srpc.server>, rusty::Mutex<rusty::port::vec::Vec@vec_port.vec<rusty::Function<void ()>, rusty::alloc::Global>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<int>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, rusty::Arc<rusty::sync::atomic::detail::Atomic<bool>>, unsigned long, rusty::Option<rusty::Box<srpc::ChannelFactoryBase@srpc.channel, rusty::alloc::Global>>, rusty::Option<rusty::Box<srpc::ChannelListenerBase@srpc.channel, rusty::alloc::Global>>, rusty::Arc<rusty::Mutex<srpc::ChannelSconns@srpc.server>>)',
         ),
         (
             'T',

@@ -37,6 +37,9 @@
 
 namespace janus {
 
+struct RaftTransport;  // raft-rt (raft_lane.h)
+
+
 // Runtime replication switching - always declare raft functions
 extern std::function<void(int)> leader_callback_;
 // @unsafe - uses raw global std::function, unbounded callback invocation
@@ -49,11 +52,26 @@ using watermark_callback_t = std::function<int(const char*&, int, int, int,
     std::queue<std::tuple<int, int, int, int, const char*>>&)>;
 
 // @unsafe - class contains raw pointers and manual memory management
+class RaftFrame;  // raft/frame.h; the worker holds its frame typed (raft_frame_)
+
 class RaftWorker {
 private:
   // Callbacks for log application
   std::function<void(const char*, int)> callback_ = nullptr;
   std::function<void(const char*&, int, int)> callback_par_id_ = nullptr;
+
+  // The public helper API registers callbacks before Raft starts and expects
+  // them to remain associated with their requested role across elections.
+  // Keep those callbacks per partition; the two fields above remain the
+  // role-neutral compatibility path for direct RaftWorker callers.
+  std::map<uint32_t, std::function<void(const char*, int)>>
+      leader_apply_callbacks_by_partition_;
+  std::map<uint32_t, std::function<void(const char*, int)>>
+      follower_apply_callbacks_by_partition_;
+  std::map<uint32_t, std::function<void(const char*&, int, int)>>
+      leader_partition_apply_callbacks_by_partition_;
+  std::map<uint32_t, std::function<void(const char*&, int, int)>>
+      follower_partition_apply_callbacks_by_partition_;
 
   // RAFT CHANGE: Store separate callbacks for leader and follower roles
   // The Next() method will choose which to call based on current leadership
@@ -68,6 +86,8 @@ private:
   std::map<uint32_t, watermark_callback_t> leader_callbacks_by_partition_;
   std::map<uint32_t, watermark_callback_t> follower_callbacks_by_partition_;
   std::map<uint32_t, std::queue<std::tuple<int, int, int, int, const char*>>> un_replay_logs_by_partition_;
+  mutable std::mutex callback_registry_mutex_;
+  bool learner_callback_bound_{false};
 
   std::mutex finish_mutex_{};
   std::condition_variable finish_cond_{};
@@ -75,11 +95,17 @@ private:
   struct PendingLog {
     std::string payload;
     uint32_t par_id;
+    uint64_t enq_us = 0;  // [M0] trace kit: enqueue stamp, 0 when off
   };
   std::deque<PendingLog> submit_queue_;
   std::mutex submit_mutex_;
   std::condition_variable submit_cv_;
   std::atomic<bool> submit_thread_stop_{false};
+  // [fix, F18] The log indices of this worker's own accepted submissions not
+  // yet known to be committed, oldest first. Pruned against the commit index
+  // at every push and read, so it holds only the uncommitted ones.
+  std::deque<uint64_t> own_uncommitted_;
+  std::mutex own_uncommitted_mutex_;
   bool submit_thread_started_{false};
   std::thread submit_thread_;
   int batch_limit_ = 1;
@@ -96,6 +122,10 @@ public:
   // alongside its PaxosWorker counterpart.
   int tot_num = 0;
 
+  // [fix, F18] How many of this worker's own accepted submissions are still
+  // above the commit index (bugs-found B7); -1 without a Raft server.
+  int OutstandingOwnLogs();
+
   // Configuration
   Config::SiteInfo* site_info_ = nullptr;
   // When true, this worker accepts and serves all partitions.
@@ -103,13 +133,9 @@ public:
 
   // Raft protocol components
   Frame* rep_frame_ = nullptr;
-  TxLogServer* rep_sched_ = nullptr;      // Points to RaftServer
-  Communicator* rep_commo_ = nullptr;
-
-  // RPC infrastructure
-  rusty::Option<rusty::Arc<PollThread>> svr_poll_thread_worker_;
-  // Services are now owned by rpc_server_ via reg_service()
-  srpc::Server* rpc_server_ = nullptr;
+  RaftFrame* raft_frame_ = nullptr;       // rep_frame_, as the frame it is
+  TxLogServer* rep_sched_ = nullptr;      // the scheduler, as every engine's worker holds it
+  RaftSpecific* raft_sched_ = nullptr;    // the same object, as the interface this worker drives
 
   // Heartbeat/control RPC
   rusty::Option<rusty::Arc<PollThread>> svr_hb_poll_thread_worker_g;
@@ -140,6 +166,16 @@ public:
   void SetupService();
   // @unsafe - uses raw pointers
   void SetupCommo();
+  // Verify that every partition has real callbacks for both Raft roles, then
+  // bind the learner trampoline exactly once. Must run before EnsureSetup().
+  bool PrepareForStartup(const std::vector<uint32_t>& partition_ids);
+  // Wait without changing listener admission; raft_main_helper uses this to
+  // form one all-workers startup barrier.
+  bool WaitForStartup();
+  // Open or close this worker's shared application-RPC admission gate.
+  void SetRpcAdmissionReady(bool ready);
+  // Wait for the owner-thread Raft startup job, then open the shared RPC listener.
+  bool FinishStartup();
   // @unsafe - uses new, raw pointers
   void SetupHeartbeat();
 
@@ -179,6 +215,19 @@ public:
   // @safe - stores callback for later invocation
   void register_apply_callback_par_id(std::function<void(const char*&, int, int)> cb);
 
+  // Role-aware forms used by raft_main_helper. Unlike the legacy methods,
+  // these remain valid when leadership changes after registration.
+  void register_leader_apply_callback_for_partition(
+      uint32_t par_id, std::function<void(const char*, int)> cb);
+  void register_follower_apply_callback_for_partition(
+      uint32_t par_id, std::function<void(const char*, int)> cb);
+  void register_leader_partition_apply_callback_for_partition(
+      uint32_t par_id,
+      std::function<void(const char*&, int, int)> cb);
+  void register_follower_partition_apply_callback_for_partition(
+      uint32_t par_id,
+      std::function<void(const char*&, int, int)> cb);
+
   // RAFT CHANGE: Separate registration for leader and follower callbacks
   // @safe - stores callback for later invocation
   void register_leader_callback_par_id_return(
@@ -207,23 +256,23 @@ public:
 
   // Application callback (called from RaftServer::applyLogs)
   // @unsafe - uses shared_ptr, dynamic_pointer_cast, raw pointers, malloc/memcpy
-  // take janus::Command (matches RegLearnerAction
+  // take janus::Command (matches reg_learner_action
   // signature in deptran/scheduler.h).  Body unwraps via `md.inner()` /
   // `marshallable_cast<T>(md)` overload as needed.
-  int Next(int slot, janus::Command md);
+  int Next(slotid_t slot, janus::Command md);
 
-  // @safe
-  rusty::Option<rusty::Arc<PollThread>> GetPollThreadWorker() {
-    // @unsafe
-    { // Option::clone on Arc<PollThread>
-      return svr_poll_thread_worker_.clone();
-    }
-  }
+  // @safe - the typed pointer the worker took at creation; null before
+  // SetupBase and after ShutDown.
+  RaftSpecific* GetRaftServer() { return raft_sched_; }
 
-  // @unsafe - uses dynamic_cast, returns raw pointer
-  RaftServer* GetRaftServer() {
-    return dynamic_cast<RaftServer*>(rep_sched_);
-  }
+  // Run `job` once on the thread that owns Raft's fibers -- the transport's
+  // poll thread -- which is where EnsureSetup must run so the fibers it
+  // spawns land on the right reactor. False if there is no such thread yet.
+  bool PostToRaftPoll(std::function<void()> job);
+
+  // raft-rt's transport, which owns this worker's Raft poll thread, RPC
+  // server and peer clients (raft_lane.h).
+  RaftTransport* rust_transport_ = nullptr;
 
   // @unsafe - uses std::make_shared, raw pointers
   rusty::Arc<TpcCommitCommand> CreateRaftLogCommand(

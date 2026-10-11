@@ -308,8 +308,8 @@ When a leader steps down, `NotifyRollback(StepDownReason)` differentiates rollba
 
 | StepDownReason | Rollback Range | Rationale |
 |----------------|---------------|-----------|
-| `UnsecuredFailure` | `(commitIndex, lastLogIndex]` | Lost speculative quorum while unsecured. All current-term entries are suspect since no durable quorum was ever achieved. |
-| `SecuredFailure` | `(securedLogIndex_, specCommitIndex_]` | Lost quorum but was secured leader. Entries up to `securedLogIndex_` are durably committed and safe. Only unsecured entries above that are suspect. |
+| `UnsecuredFailure` | `(securedLogIndex_, lastLogIndex]` | Lost speculative quorum while unsecured. Entries above the last durably secured index are suspect, including locally appended entries still waiting for memory quorum. |
+| `SecuredFailure` | `(securedLogIndex_, lastLogIndex]` | Lost quorum after becoming secured. Entries up to `securedLogIndex_` are durably committed and safe; every pending local entry above it needs a terminal notification. |
 | `HigherTerm` | None (no rollback sent) | Saw higher term from another server. Entries may still be valid under the new leader, so no premature rollback notification is sent. |
 
 After notification, all pending callbacks are cleared and notification tracking indices are reset, regardless of reason (the server is no longer leader).
@@ -575,32 +575,41 @@ Raft logs grow unboundedly without compaction. Snapshotting captures the state m
 
 ```bash
 MAKO_RAFT_SNAPSHOTS=1                # Enable snapshot support
-MAKO_RAFT_SNAPSHOT_PATH=/var/raft    # Custom snapshot storage path
 MAKO_RAFT_SNAPSHOT_INTERVAL=10000    # Entries between snapshots (default: 10000)
 ```
 
-### Storage Architecture
+### Storage
 
-Three layers in `src/srpc/rpc/`:
+The snapshot store is **memory-only on every lane**: it holds the latest
+snapshot's `(index, term, bytes)` and nothing is written to disk, so after a
+process restart it is empty unless an embedder injected one before `Setup()`.
 
-| Layer | File | Purpose |
-|-------|------|---------|
-| `SnapshotManager` | `snapshot_manager.hpp` | Abstract interface for snapshot CRUD |
-| `FileSnapshotManager` | `file_snapshot_manager.hpp` | File-based implementation with retention policy |
-| `SnapshotFormat` | `snapshot_format.hpp` | Binary serialization with CRC32 checksums |
+| Lane | Store | File |
+|------|-------|------|
+| rust (`MAKO_RAFT_LANE=rust`) | `SnapshotStore`, one `Arc<Snapshot>` slot | `src/deptran/raft/rt/src/snapshot.rs` |
+| hybrid, cpp | `MemorySnapshotManager` behind the `SnapshotManager` interface | `src/deptran/raft/memory_snapshot_manager.hpp`, `snapshot_manager.hpp` |
 
-### Binary Wire Format
+The core reaches either one only through the SEAM kernels
+(`raft_snapshot_manager_latest`, `_load`, `raft_snapshot_store_save`, ...;
+`src/deptran/raft/snapshot_seam_cpp.cc` on the C++ lanes), holding it in the
+opaque 16-byte `RaftSnapshotManagerPtr`. Keeping the C++ manager on
+hybrid/cpp is a decision, not a gap (plan phase N,
+the two-lane RPC plan (removed; see git history)).
 
-```
-Magic (4B) | Version (4B) | Header Size (4B) | Data Size (8B) |
-Compression (1B) | Checksum Type (1B) | Last Index (8B) | Last Term (8B) |
-Timestamp (8B) | Header CRC (4B) | Padding (2B) | Data... | Data CRC (4B)
-```
+### Snapshot bytes on the wire
 
-- **Magic**: `0x504E4153` ("SNAP" in little-endian)
-- **CRC32 checksums** on both header and data for corruption detection
-- **52-byte fixed header** (8-byte aligned)
-- File naming: `snapshot_<index>_<term>.snap` with `.tmp` suffix during writes (atomic rename on finalize)
+The store keeps the state machine's bytes verbatim and InstallSnapshot ships
+them verbatim, on every lane: no header, no checksum, no framing. That is
+what keeps a mixed-lane cluster wire-compatible. `snapshot_format.hpp`
+(`SnapshotFormat`, a CRC-framed format) is still compiled for the C++ unit
+tests but is used by no production path.
+
+One InstallSnapshot is one frame, and every lane caps a frame at 64 MiB
+(`kMaxFramePayloadSize`, `src/srpc/rpc/frame_codec.rs:86`). The Rust lane
+refuses, and logs once, a snapshot whose frame would exceed it. On the Rust
+lane an InstallSnapshot to a follower is also not resent while the same
+`(term, follower, index)` is outstanding, up to a deadline
+(`RaftTransport::send_install_snapshot_once`).
 
 ### RaftServer Integration
 
@@ -615,11 +624,11 @@ uint64_t GetSnapshotTerm() const;  // Term of last snapshotted entry (snapterm_)
 size_t CompactLog(uint64_t up_to_index); // Discard entries before index
 ```
 
-On initialization, if a prior snapshot exists on disk, `snapidx_` and `snapterm_` are loaded from it. These fields are used by `RequestVote` and `AppendEntries` for log consistency checks.
+On initialization, if the store holds a snapshot (one injected before `Setup()`; the store is memory-only), `snapidx_` and `snapterm_` are restored from it. These fields are used by `RequestVote` and `AppendEntries` for log consistency checks.
 
 ### Snapshot Recovery on Startup
 
-After loading snapshot metadata, `InitializeSnapshotManager()` advances the server's state to reflect the snapshot. Since `InitializeSnapshotManager()` runs after `RecoverFromStorage()` in `Setup()`, log-recovered values may already be set. The recovery logic only advances values (using `>` checks), never goes backwards:
+After `RecoverFromStorage()` stages and validates the durable log, `InitializeSnapshotManager()` verifies the snapshot bytes and restores the state machine before opening RPC admission. A recovered suffix is retained only when its entry at the snapshot boundary has the same term, or when the durable range starts exactly at `snapshot_index + 1`; otherwise the suffix is discarded and reconciled durably. A compacted or progress-bearing log without its covering snapshot fails startup.
 
 - `executeIndex` is set to `max(executeIndex, snapidx_)` -- the snapshot represents already-applied state
 - `commitIndex` is set to `max(commitIndex, snapidx_)` and persisted via `PersistCommitIndexToLogStorage()`
@@ -632,18 +641,19 @@ This ensures a server that restarts with a snapshot but no log entries does not 
 
 `CreateSnapshot()` is called automatically from `applyLogs()` when `executeIndex - snapidx_ > snapshot_threshold_`. It serializes the state machine data, persists via `snapshot_manager_->TakeSnapshot()`, updates `snapidx_`/`snapterm_`, and calls `CompactLog()` to discard old entries and advance `min_active_slot_`. The threshold is configurable via `MAKO_RAFT_SNAPSHOT_INTERVAL` env var or `SetSnapshotThreshold()`.
 
-**State machine snapshot hooks**: If `create_sm_snapshot_cb_` is registered (e.g., by `ReplicatedDB`), `CreateSnapshot()` calls it to produce the snapshot data instead of the default 16-byte placeholder (executeIndex + term). Similarly, `OnInstallSnapshot()` calls `load_sm_snapshot_cb_` (if set) to load the received snapshot data into the state machine.
+**State machine snapshot hooks**: If `create_sm_snapshot_cb_` is registered (e.g., by `ReplicatedDB`), `CreateSnapshot()` passes the exact `executeIndex` boundary to it. The application must return a checkpoint for that boundary; `ReplicatedDB` validates the applied index embedded in the checkpoint before Raft persists it or compacts the log. Similarly, `OnInstallSnapshot()` calls `load_sm_snapshot_cb_` with the expected boundary and accepts only an exact match.
 
 ```cpp
 // RaftServer callback registration
-void SetStateMachineSnapshotCallbacks(
-    std::function<std::string()> create_cb,
-    std::function<void(const std::string&)> load_cb);
+uint64_t SetStateMachineSnapshotCallbacks(
+    std::function<std::string(uint64_t expected_applied_index)> create_cb,
+    std::function<bool(const std::string&,
+                       uint64_t expected_applied_index)> load_cb);
 ```
 
 **ReplicatedDB integration**: `ReplicatedDB` registers these callbacks in its constructor. `CreateStateMachineSnapshot()` uses `rocksdb_checkpoint_create()` to produce a consistent checkpoint, serializes all files into a binary blob (format: `num_files(4) + [name_len(4) + name + file_size(8) + file_data]*`), and cleans up the temporary checkpoint directory. `LoadStateMachineSnapshot()` deserializes the blob, closes the current RocksDB, destroys the old data directory, writes the checkpoint files, reopens the database, and reloads `last_applied_index_` from the snapshot's metadata.
 
-**Startup wiring**: When the `MAKO_REPLICATED_DB=1` environment variable is set, `RaftServer::Setup()` automatically creates a `ReplicatedDB` instance after `InitializeSnapshotManager()` completes. It registers the `ApplyEntry` method as the `app_next_` callback via `RegLearnerAction`, so committed Raft entries are applied to local RocksDB. The DB path defaults to `/tmp/mako_replicated_db_<site_id>` but can be overridden with `MAKO_REPLICATED_DB_PATH`. The instance is accessible via `GetReplicatedDB()`. Initialization order: `RecoverFromStorage()` -> `InitializeSnapshotManager()` -> ReplicatedDB creation -> membership config -> heartbeat loops.
+**Startup wiring**: When the `MAKO_REPLICATED_DB=1` environment variable is set, `RaftServer::Setup()` creates `ReplicatedDB` and registers its loader before snapshot discovery. It then restores the snapshot, synchronously replays the committed suffix, starts apply infrastructure, and only then opens RPC admission and starts runtime loops. The DB path defaults to `/tmp/mako_replicated_db_<site_id>` but can be overridden with `MAKO_REPLICATED_DB_PATH`. The instance is accessible via `GetReplicatedDB()`.
 
 ### InstallSnapshot RPC
 
@@ -782,7 +792,7 @@ For multi-shard deployments:
 | `MAKO_RAFT_ASYNC_PERSISTENCE` | (unset) | Set to `1` or `true` for async disk persistence |
 | `MAKO_RAFT_PERSISTENCE_PATH` | `/tmp` | Base directory for persistence files |
 | `MAKO_RAFT_SNAPSHOTS` | (unset) | Set to `1` to enable snapshot manager |
-| `MAKO_RAFT_SNAPSHOT_PATH` | `/tmp` | Base directory for snapshot files |
+| `MAKO_RAFT_SNAPSHOT_INTERVAL` | `10000` | Entries between snapshots |
 | `MAKO_RAFT_LOG_RETENTION_WINDOW` | `5000` | Number of log entries to retain after compaction. Compaction is also coordinated with snapshots: entries beyond the latest snapshot index are never removed. |
 
 The heartbeat interval and log retention window can also be changed at runtime via the C++ API:
@@ -1000,7 +1010,6 @@ MAKO_RAFT_PERSISTENCE=1          # Enable persistence
 MAKO_RAFT_ASYNC_PERSISTENCE=1    # Async persistence
 MAKO_RAFT_PERSISTENCE_PATH=/tmp  # Storage path
 MAKO_RAFT_SNAPSHOTS=1            # Enable snapshots
-MAKO_RAFT_SNAPSHOT_PATH=/tmp     # Snapshot storage path
 MAKO_RAFT_SNAPSHOT_INTERVAL=10000 # Entries between snapshots
 MAKO_DISABLE_JETPACK=1           # Keep legacy Jetpack recovery disabled
 ```
@@ -1110,4 +1119,4 @@ See `docs/dev/raft_membership_change_design.md` for the full protocol design.
 
 ---
 
-*This document consolidates the Raft implementation documentation from across the Mako project. For detailed phase implementation plans, see `docs/migration/raft/` and `docs/plans/log-persistence/`. For the Mako integration layer, see `docs/migration/raft/architecture-analysis.md` and `docs/migration/raft/mako-explained.md`.*
+*This document consolidates the Raft implementation documentation from across the Mako project. For the C++-to-Rust conversion, see `docs/migration/raft/conversion-log.md` (what was done) and the Raft migration plan (removed; see git history) (what remains); for log persistence, `docs/plans/log-persistence/`.*

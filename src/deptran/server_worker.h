@@ -8,7 +8,8 @@
 
 namespace janus {
 
-class Communicator;
+struct RaftTransport;  // raft-rt
+
 class RaftFrame;
 class RaftServer;
 
@@ -16,10 +17,6 @@ class RaftServer;
 // executable. Production Mako creates RaftWorker/PaxosWorker directly.
 class ServerWorker {
  public:
-  rusty::Option<rusty::Arc<srpc::PollThread>> svr_poll_thread_worker_;
-  // Services are now owned by rpc_server_ via reg_service()
-  srpc::Server *rpc_server_ = nullptr;
-
   rusty::Option<rusty::Arc<srpc::PollThread>> svr_hb_poll_thread_worker_g;
   rusty::Option<rusty::Arc<ServerStatus>> server_status_;
   srpc::Server *hb_rpc_server_ = nullptr;
@@ -28,7 +25,9 @@ class ServerWorker {
   Config::SiteInfo *site_info_ = nullptr;
   RaftServer *rep_sched_ = nullptr;
 
-  Communicator *rep_commo_ = nullptr;
+  // raft-rt's transport (raft/raft_lane.h): the poll thread, the RPC server
+  // and the peer clients.
+  RaftTransport *rust_transport_ = nullptr;
 
   bool launched_{false};
 

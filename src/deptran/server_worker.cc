@@ -3,6 +3,7 @@
 #include "frame.h"
 #include "communicator.h"
 #include "raft/frame.h"
+#include "raft/raft_lane.h"
 
 namespace janus {
 
@@ -10,7 +11,7 @@ void ServerWorker::SetupHeartbeat() {
   bool hb = Config::GetConfig()->do_heart_beat();
   if (!hb) return;
   auto timeout = Config::GetConfig()->get_ctrl_timeout();
-  svr_hb_poll_thread_worker_g = svr_poll_thread_worker_.clone();
+  svr_hb_poll_thread_worker_g = rusty::Some(PollThread::create());
   hb_rpc_server_ = new srpc::Server(srpc::Server::new_(rusty::Some(svr_hb_poll_thread_worker_g.as_ref().unwrap().clone())));
 
   // Create shared status and pass clone to service
@@ -37,53 +38,29 @@ void ServerWorker::SetupBase() {
   rep_frame_ = dynamic_cast<RaftFrame*>(Frame::GetFrame(config->replica_proto_));
   verify(rep_frame_ != nullptr);
   rep_frame_->site_info_ = site_info_;
-  rep_sched_ = dynamic_cast<RaftServer*>(rep_frame_->CreateScheduler());
+  rep_sched_ = rep_frame_->CreateRaftScheduler();
   verify(rep_sched_ != nullptr);
-  rep_sched_->partition_id_ = site_info_->partition_id_;
-  rep_sched_->loc_id_ = site_info_->locale_id;
-  rep_sched_->site_id_ = site_info_->id;
+  // One interface call rather than three field writes, as RaftWorker does.
+  rep_sched_->set_site_identity(site_info_->locale_id, site_info_->id,
+                                site_info_->partition_id_);
+
+  // RaftLab installs its agreement oracle only after all communicators exist.
+  // Keep recovery fail-closed in the meantime: an unexpected replay must stop
+  // startup instead of invoking an empty std::function.
+  rep_sched_->reg_learner_action(
+      [](slotid_t, janus::Command) -> int {
+        throw std::runtime_error(
+            "RaftLab learner callback not installed yet");
+      });
 }
 
 void ServerWorker::SetupService() {
-  Log_info("enter {} for {} @ {}", __FUNCTION__,
-           this->site_info_->name.c_str(),
-           site_info_->GetBindAddress().c_str());
-
-  int ret;
+  // raft-rt's transport serves Raft on its own poll thread, admission closed
+  // until startup.
   std::string bind_addr = site_info_->GetBindAddress();
-
-  // init srpc::PollThread
-  svr_poll_thread_worker_ = rusty::Some(PollThread::create());
-//  svr_thread_pool_ = new srpc::ThreadPool(1);
-
-  // Use as_ref().unwrap() to borrow without consuming the Option
-  auto& poll_worker = svr_poll_thread_worker_.as_ref().unwrap();
-
-  // init srpc::Server first (before registering services)
-  rpc_server_ = new srpc::Server(srpc::Server::new_(rusty::Some(poll_worker.clone())));
-
-  // Create and register replication services (ownership transferred to
-  // rpc_server_).
-  if (rep_frame_ != nullptr) {
-    auto services = rep_frame_->CreateRpcServices(site_info_->id,
-                                                   rep_sched_,
-                                                   poll_worker);
-    for (auto& svc : services) {
-      rpc_server_->reg_service_proxy(std::move(svc));
-    }
-  }
-
-  // start rpc server
-  Log_debug("starting server at {}", bind_addr.c_str());
-  ret = rpc_server_->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
-  if (ret != 0) {
-    Log_fatal("server launch failed.");
-  }
-
-  Log_info("Server {} ready at {}",
-           site_info_->name.c_str(),
-           bind_addr.c_str());
-
+  rust_transport_ = raft_lane::Serve(rep_sched_, bind_addr);
+  rep_frame_->rust_transport_ = rust_transport_;
+  Log_info("Server {} ready at {}", site_info_->name.c_str(), bind_addr.c_str());
 }
 
 void ServerWorker::WaitForShutdown() {
@@ -98,66 +75,71 @@ void ServerWorker::WaitForShutdown() {
 }
 
 void ServerWorker::SetupCommo() {
-  verify(svr_poll_thread_worker_.is_some());
-  if (rep_frame_) {
-    rep_commo_ = rep_frame_->CreateCommo(svr_poll_thread_worker_.clone());
-    verify(rep_commo_ != nullptr);
-    rep_sched_->commo_ = rep_commo_;
-    verify(rep_sched_->commo_ != nullptr);
+  raft_lane::ConnectPeers(rust_transport_);
+#ifdef RAFT_TEST_CORO
+  RaftFrame::RustLaneLabCommoCreated();
+#endif
+  auto* sched = rep_sched_;
+  raft_lane::Post(rust_transport_, [sched]() { sched->EnsureSetup(); });
+  if (!rep_sched_->WaitForStartup()) {
+    Log_error("[RAFT-STARTUP] Site {} failed startup; RPC admission remains closed",
+              site_info_->id);
+    return;
   }
-
-  Reactor::get_reactor()->server_id_.set(site_info_->id);
-//  svr_thread_pool_ = new srpc::ThreadPool(1);
-  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_(
-    [this]() {
-      if (rep_sched_) {
-        rep_sched_->EnsureSetup();
-      }
-    }
-  ));
-  // Cast OneTimeJob to Job base class for PollThread
-  auto arc_job_base = rusty::Arc<Job>(arc_job);
-  svr_poll_thread_worker_.as_ref().unwrap()->add(arc_job_base);
-
-  // Keep the coroutine scheduler alive for the embedded lab cluster.
-  if (rep_sched_->site_id_ == 0) {
-    Reactor::get_reactor()->run_loop(true, true);
-  }
+  raft_lane::SetAdmissionReady(rust_transport_, true);
+#ifdef RAFT_TEST_CORO
+  // Site 0 runs the lab harness on this thread's reactor.
+  RaftFrame::RustLaneLabRunIfSite0(site_info_->locale_id);
+#endif
 }
 
 void ServerWorker::ShutDown() {
-  Log_debug("deleting rpc_server_ (services owned by server)");
-
-  // Services are now owned by rpc_server_ and will be deleted with it
-  delete rpc_server_;
-  rpc_server_ = nullptr;
-
-  // Stop worker poll threads during explicit shutdown so test-mode runs don't
-  // leave background reconnect/election activity alive until global destructors.
-  if (svr_poll_thread_worker_.is_some()) {
-    Log_info("Shutting down server poll thread in ServerWorker::ShutDown()");
-    svr_poll_thread_worker_.as_ref().unwrap()->shutdown();
-    svr_poll_thread_worker_ = rusty::None;
+  // Close admission and drain, then drop the server, before the scheduler
+  // goes.
+  if (rust_transport_ != nullptr) {
+    raft_lane::Drain(rust_transport_, 5000);
+    if (rep_sched_ != nullptr) {
+      rep_sched_->PrepareForShutdown();
+    }
+    raft_lane::CloseServer(rust_transport_);
+    if (rep_frame_ != nullptr) {
+      rep_frame_->rust_transport_ = nullptr;
+    }
   }
+
+  // Stop the heartbeat poll thread during explicit shutdown so test-mode runs
+  // don't leave background activity alive until global destructors.
   if (svr_hb_poll_thread_worker_g.is_some()) {
     Log_info("Shutting down heartbeat poll thread in ServerWorker::ShutDown()");
     svr_hb_poll_thread_worker_g.as_ref().unwrap()->shutdown();
     svr_hb_poll_thread_worker_g = rusty::None;
   }
 
-  // RaftTestConfig::Kill/Restart can replace/delete server objects
-  // independently of ServerWorker, so rep_sched_ may be stale here. Skip
-  // manual deletion to avoid double-free/use-after-free on shutdown.
-  Log_info("Skipping replication scheduler delete in RAFT_TEST_CORO shutdown");
-  rep_sched_ = nullptr;
+  // The worker is the SOLE owner of the scheduler CreateScheduler() returned:
+  // RaftFrame::svr_ is a borrowed back-reference, not a unique_ptr, so this
+  // delete is the only one. Matches PaxosWorker (paxos_worker.cc:240) and
+  // RaftWorker (raft_worker.cc:564).
+  if (rep_sched_ != nullptr) {
+    Log_info("Deleting replication scheduler in RAFT_TEST_CORO shutdown");
+    // Drop the frame's borrowed back-reference first; see
+    // RaftFrame::ReleaseScheduler.
+    if (rep_frame_ != nullptr) {
+      rep_frame_->ReleaseScheduler();
+    }
+    // @unsafe { raw delete of an owned pointer at the ownership boundary }
+    delete rep_sched_;
+    rep_sched_ = nullptr;
+  }
+  // The poll thread and clients last, after the scheduler is gone.
+  if (rust_transport_ != nullptr) {
+    raft_lane::Destroy(rust_transport_);
+    rust_transport_ = nullptr;
+  }
   Log_info("ServerWorker shutdown complete.");
 }
 
 ServerWorker::~ServerWorker() {
-  // Shutdown PollThreads if we own them
-  if (svr_poll_thread_worker_.is_some()) {
-    svr_poll_thread_worker_.as_ref().unwrap()->shutdown();
-  }
+  // Shut the heartbeat poll thread down if this worker owns it.
   if (svr_hb_poll_thread_worker_g.is_some()) {
     svr_hb_poll_thread_worker_g.as_ref().unwrap()->shutdown();
   }

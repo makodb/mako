@@ -32,7 +32,7 @@ localhost_pid=$!
 
 echo "Waiting for completion..."
 # Wait for test to complete
-# - 5s for leader election and transfer
+# - 5s for leader election
 # - ~1.5s for log submission (300 logs * 5ms = 1500ms)
 # - Time for replication across 3 partitions
 # - Shutdown time

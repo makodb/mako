@@ -1,0 +1,109 @@
+// The workers' Raft plumbing: raft_lane.h over raft-rt's C ABI
+// (transport_exports.h).
+
+#include "raft_lane.h"
+
+#include "../__dep__.h"
+#include "../config.h"
+#include "server.h"
+#include "transport_exports.h"
+
+namespace janus {
+namespace raft_lane {
+
+namespace {
+
+// A std::function carried across the C ABI and run once on the poll thread.
+void RunBoxedJob(void* ctx) {
+  auto* job = static_cast<std::function<void()>*>(ctx);
+  (*job)();
+  delete job;
+}
+
+}  // namespace
+
+// [M0] trace kit kernels (server.cc).
+extern "C" void raft_trace_through(int32_t stage, uint64_t through, uint64_t t_us);
+extern "C" uint64_t raft_trace_now_us();
+extern "C" bool raft_trace_enabled();
+
+RaftTransport* Serve(RaftServer* server, const std::string& bind_addr) {
+  if (raft_trace_enabled()) {  // [M0] trace kit: hooks only when tracing
+    raft_rt_install_trace(&raft_trace_through, &raft_trace_now_us);
+  }
+  RaftTransport* t = raft_transport_new();
+  const int32_t ret =
+      raft_transport_serve(t, server->impl(), bind_addr.c_str());
+  if (ret != 0) {
+    Log_fatal("Raft server launch failed at {}", bind_addr.c_str());
+  }
+  return t;
+}
+
+void ConnectPeers(RaftTransport* t) {
+  auto config = Config::GetConfig();
+  verify(config != nullptr);
+  for (const auto par_id : config->GetAllPartitionIds()) {
+    for (auto& site : config->SitesByPartitionId(par_id)) {
+      const std::string addr = site.GetHostAddr();
+      // Bound to a local: `verify` must not be handed a side-effecting call.
+      const bool connected =
+          raft_transport_add_peer(t, par_id, site.id, addr.c_str());
+      verify(connected);
+    }
+  }
+  // Disk builds start with a peer down (B22): add_peer left it to a dial
+  // thread, and a majority suffices.
+  const bool majority = raft_transport_wait_majority(t);
+  verify(majority);
+}
+
+void Post(RaftTransport* t, std::function<void()> job) {
+  raft_transport_post(t, &RunBoxedJob,
+                      new std::function<void()>(std::move(job)));
+}
+
+void SetAdmissionReady(RaftTransport* t, bool ready) {
+  raft_transport_set_admission_ready(t, ready);
+}
+
+bool Drain(RaftTransport* t, uint64_t timeout_ms) {
+  return raft_transport_drain(t, timeout_ms);
+}
+
+void CloseServer(RaftTransport* t) { raft_transport_close_server(t); }
+
+void Destroy(RaftTransport* t) { raft_transport_delete(t); }
+
+uint64_t RpcCount(const RaftTransport* t) { return raft_transport_rpc_count(t); }
+
+void* ServeStub(RaftTransport* t, RaftServer* server,
+                const std::string& bind_addr) {
+  return raft_transport_serve_stub(t, server->impl(), bind_addr.c_str());
+}
+
+void StubSetAdmissionReady(void* stub, bool ready) {
+  raft_stub_server_set_admission_ready(static_cast<RaftStubServer*>(stub), ready);
+}
+
+bool StubDrain(void* stub, uint64_t timeout_ms) {
+  return raft_stub_server_drain(static_cast<RaftStubServer*>(stub), timeout_ms);
+}
+
+void StubDestroy(void* stub) {
+  raft_stub_server_delete(static_cast<RaftStubServer*>(stub));
+}
+
+#ifdef RAFT_TEST_CORO
+// raft_rt_run_lab exists only when raft-rt is built with raft_test, which
+// CMake turns on exactly when RAFT_TEST_CORO is defined.
+int RunLab() { return raft_rt_run_lab(); }
+#else
+int RunLab() {
+  Log_fatal("raft_lane::RunLab: not a RAFT_TEST build");
+  return -1;
+}
+#endif
+
+}  // namespace raft_lane
+}  // namespace janus

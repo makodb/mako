@@ -22,8 +22,8 @@
 # WHICH TRANSPILER (measured 2026-09-17)
 # --------------------------------------
 # The default is the pinned submodule binary, the same one
-# scripts/rrr_dsl_check.sh:25, scripts/extract_rrr_rust.py:30 and
-# scripts/check_rrr_crate_mode.py:23 default to, and the only one a
+# scripts/srpc_dsl_check.sh:25, scripts/extract_srpc_rust.py:30 and
+# scripts/check_srpc_crate_mode.py:23 default to, and the only one a
 # fresh checkout can produce. It must report the pin:
 #
 #   $ third-party/rusty-cpp/target/release/rusty-cpp-transpiler --build-info
@@ -181,7 +181,7 @@ for f in "${FILES[@]}"; do
     cp "$f" "$tmp"
     # Report and keep going rather than aborting the sweep on the first
     # failure: a drift guard that stops at file 2 under-reports (same
-    # reasoning as scripts/rrr_dsl_check.sh).
+    # reasoning as scripts/srpc_dsl_check.sh).
     if ! "$TRANSPILER" inline-rust --rewrite --files "$tmp" >/dev/null; then
       echo "TRANSPILE-FAIL: $f (see the transpiler message above)" >&2
       status=1

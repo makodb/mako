@@ -68,6 +68,13 @@ make -j32
 ./docker_build.sh ci shard1ReplicationSimpleRaft
 ./docker_build.sh ci shard2ReplicationSimpleRaft
 
+# RaftLabTest: the Raft cluster correctness suite (Docker; ci.sh derives the
+# expected case count from the init2/UnitInit ids in the source)
+# Configures its OWN build directory with -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON,
+# because RAFT_TEST defines RAFT_TEST_CORO and changes RaftServer's behaviour;
+# it must not be folded into the build the other suites use.
+./docker_build.sh ci raftLabTest
+
 # RocksDB persistence and partitioned queues tests (Docker)
 ./docker_build.sh ci rocksdbTests
 
@@ -162,7 +169,11 @@ is `SrpcRequestHandle`.
 
 ### Key Classes and Components
 - `Coordinator`: Coordinates distributed transactions across shards (protocol-specific subclasses like `CoordinatorMultiPaxos`)
-- `TxLogServer`: Shared base for the Paxos and Raft replication servers
+- `TxLogServer`: The replication-engine INTERFACE implemented by the Paxos and
+  Raft servers (`src/deptran/scheduler.h`). It holds no state: it was six
+  shared data members until the Tranche 6 work recorded in
+  `docs/migration/raft/conversion-log.md` moved them down into the two
+  concrete servers, because implementation inheritance has no Rust spelling.
 - `Communicator`: Manages RPC communication between nodes
 - `Frame`: Protocol-specific transaction processing logic
 - `Masstree`: High-performance in-memory index structure (Mako)
@@ -226,6 +237,63 @@ and switch call sites — note C++20 paren-aggregate-init compiles but
 misfills, so this is mandatory, not cosmetic), and struct fields whose
 names are Rust keywords (e.g. `type`) must be renamed or that type stays
 C++.
+
+**A trait impl WITHOUT `#[cpp_inherit]` lowers through `TraitAdapter<Self>`**
+and emits a by-value adapter specialization; for a move-only struct (anything
+holding a mutex, or inheriting a `pub trait` interface, whose copy/move are
+deleted) that is a hard compile error in every TU that includes the header.
+Put `#[cpp_inherit]` on EVERY trait impl of such a struct; the last one in the
+block supplies the single C++ base, so pin it with
+`static_assert(std::is_base_of_v<Base, Struct>)` next to the struct. The
+supertrait pair in `src/deptran/scheduler.h` (`RaftSpecific: TxLogServer`) is
+the worked example.
+
+**The Raft server is Rust, compiled by rustc.** `src/deptran/raft/shell/server_h.rs`
+and `server_cc.rs` are canonical Rust sources (edit them directly; nothing
+there is transpiled), built by cargo into `libraft_rt.a` (raft-rt, which
+contains them) in the build tree and linked by CMake (`raft_rust`). C++
+reaches the server only through
+`src/deptran/raft/server_exports.h` -- `extern "C"` functions defined in
+`server_cc.rs` -- and holds it only as `class RaftServer`, a pointer-holding
+shim over a forward-declared `struct RaftServerBase`. Do not add a method
+call, a field access, a cast or a derivation on the struct in C++; add an
+export instead: the exports (spliced between the markers in `server_cc.rs`),
+the header and the shim are all generated from one signature table by
+`scripts/raft_gen_exports.py` -- run `python3 scripts/raft_regen_exports.py`
+to regenerate all three -- and `scripts/raft_field_census.py` must keep
+exiting 0. The Rust side calls C++
+only through the kernels declared `extern "C"` in `server_h.rs` and defined
+in `server.cc`; a kernel is C++ that has a reason to be (reactor, threads,
+wire types, third-party APIs). The one inline block left in `server.h`, the
+kernel-result PODs, is still transpiled and extracted (`server_pods_h.rs`).
+The migration plan has been removed (see git history); what was done is recorded in `docs/migration/raft/conversion-log.md`.
+
+**Raft has one lane, Rust** (`MAKO_RAFT_LANE=rust`; CMake refuses any
+other). Its RPC endpoint is raft-rt's transport (`raft_lane.h`); the C++
+communicator, RPC service and lane switches were deleted. The snapshot store
+is Rust: `SnapshotStore` in `src/deptran/raft/rt/src/snapshot.rs`, reached
+through the SEAM kernels; `RaftSnapshotManagerPtr` is an opaque carrier, so
+a `SnapshotManager` call in `server.cc` does not compile. In memory the bytes
+are the state machine's, verbatim; disk builds (`-DMAKO_RAFT_DISK=ON`) also
+write them as image files (docs/verus/disk-persistence.md).
+
+**`src/deptran/raft` holds the source and what checks it**: the crates (core,
+shell, rt, store, replay), the Verus proofs, and the C++ glue the build links.
+Test programs live with their drivers: the performance driver in
+`scripts/raft_perf/` (`raft_bench.cc`), the process-kill test in
+`scripts/raft_kill/` (`raft_kill_node.cc`, `run.py`, `check.py`).
+
+**`#[cpp_inherit]` requires `use rusty::cpp_inherit;` in the same DSL
+block, and fails SILENTLY without it.** The attribute is authenticated
+through the marker crate (`transpiler/src/codegen/predicates.rs:921-936`).
+Unauthenticated, inline mode emits the struct with NO base class and no
+diagnostic, and crate mode emits adapter classes instead of direct
+inheritance. Both compile; the type simply stops implementing its
+interface. `src/mako/storage/mbta_wrapper.hh` predates this requirement
+and carries no import, so it must keep being regenerated with the
+`a4bcff5f` transpiler `scripts/regen_storage_dsl.sh` pins, NOT the
+`7e0c201f` pin the Raft and srpc gates enforce, or it silently loses
+`: public FullOrderedIndex`.
 
 Everything below still applies — to the C++ that remains (bridges,
 kernels, and not-yet-converted files):

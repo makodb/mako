@@ -1,0 +1,28 @@
+client:
+    type: open
+    rate: 1000
+    # DEPRECATED for v2 sweep (set 2026-05-05): use client_open_<protocol>.yml.
+    # The v2 orchestrator's derive_client_open() in run.sh dispatches every
+    # protocol to its own per-protocol yml file with a fail-fast `*)`
+    # default. If you are seeing this comment in a fresh v2 sweep, your
+    # run.sh is out of date — update derive_client_open() per the
+    # uniform-yml rule.
+    #
+    # KEPT for OSDI bisect Phase 1 (set 2026-05-05): the OSDI commit
+    # predates the uniform-yml rule, so its orchestrator hardcodes
+    # `client_open` (no per-protocol dispatch). Phase 1 rebuilds OSDI
+    # code and reruns it on current AWS — it will load THIS file.
+    #
+    # Phase 1 operator MUST pick one of:
+    #   max_undone: 200  — 2026-05-02 sized cap (cluster cap 12k).
+    #                      Apples-to-apples with the 04-30 / 05-02 baseline
+    #                      that the bisect compares against.
+    #   max_undone: 300  — v2 sized cap (cluster cap 18k). Apples-to-apples
+    #                      with the v2 sweep numbers. Use this if Phase 1
+    #                      result needs to be directly compared to v2
+    #                      datapoints rather than the 04-30/05-02 baseline.
+    # OSDI's original max_undone (~1000) would give 60k cluster cap on
+    # AWS — queue-blowup territory, hides the actual code-throughput peak.
+    # Either 200 or 300 keeps the cap honest while still letting OSDI's
+    # known peaks reproduce if the code is unchanged.
+    max_undone: 200

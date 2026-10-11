@@ -5,6 +5,10 @@
 # 1. Show "agg_persist_throughput" keyword
 # 2. Have NewOrder_remote_abort_ratio < 20%
 # 3. Followers replay at least 1000 batches
+# With MAKO_RAFT_RESTART_P1=1 (disk builds; ci.sh shard1ReplicationRaftRestart,
+# docs/verus/disk-persistence.md §8), p1's dbtest is SIGKILLed mid-run
+# and relaunched onto its Raft store without MAKO_RAFT_CREATE: it must
+# recover the store and replay past the point it was killed at.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/simple_transaction_rep_port_utils.sh"
@@ -41,6 +45,26 @@ sleep 1
 nohup bash bash/shard.sh 1 0 $trd p1 0 1 raft > $script_name\_shard0-p1-$trd.log 2>&1 &
 SHARD0_PID=$!
 sleep 2
+
+if [ -n "${MAKO_RAFT_RESTART_P1:-}" ]; then
+    # Once p1 has replayed some batches, SIGKILL its dbtest (this test's
+    # only: the child of its shard.sh) and relaunch it onto its store.
+    log_p1_first="${script_name}_shard0-p1-$trd.log"
+    for ((i = 0; i < 60; i++)); do
+        rb=$(grep "replay_batch:" "$log_p1_first" 2>/dev/null | tail -1 | sed -n 's/.*replay_batch:\([0-9]*\).*/\1/p')
+        [ -n "$rb" ] && [ "$rb" -ge "${MAKO_RESTART_AFTER_BATCHES:-50}" ] && break
+        sleep 1
+    done
+    killed_at=${rb:-0}
+    echo "SIGKILL p1 at replay_batch=$killed_at"
+    pkill -9 -P "$SHARD0_PID" -x dbtest 2>/dev/null || true
+    wait $SHARD0_PID 2>/dev/null || true
+    mv "$log_p1_first" "${script_name}_shard0-p1-$trd.first.log"
+    sleep 1
+    echo "Relaunching p1 onto its store..."
+    env -u MAKO_RAFT_CREATE nohup bash bash/shard.sh 1 0 $trd p1 0 1 raft > $script_name\_shard0-p1-$trd.log 2>&1 &
+    SHARD0_PID=$!
+fi
 
 # Wait for benchmark to complete (poll for completion marker)
 echo "Waiting for benchmark to complete..."
@@ -177,9 +201,23 @@ failed=0
     fi
 }
 
+log_p1="${script_name}_shard0-p1-$trd.log"
+if [ -n "${MAKO_RAFT_RESTART_P1:-}" ]; then
+    echo ""
+    echo "Checking the restart:"
+    echo "-----------------"
+    if grep -q "\[RAFT-DISK\] Site [0-9]*: recovered" "$log_p1" 2>/dev/null; then
+        echo "  ✓ p1 recovered its store (killed at replay_batch $killed_at)"
+    else
+        echo "  ✗ p1's relaunch did not recover its store"
+        failed=1
+    fi
+    # Past the kill point: the relaunch re-applies its store, then goes on.
+    replay_min=$(( killed_at > ${replay_min:-200} ? killed_at : ${replay_min:-200} ))
+fi
+
 # Check replay_batch counter in shard0-p1.log
 echo ""
-log_p1="${script_name}_shard0-p1-$trd.log"
 echo "Checking $log_p1:"
 echo "-----------------"
 

@@ -1,5 +1,6 @@
 #include "__dep__.h"
 #include "server_worker.h"
+#include "raft/frame.h"
 
 using namespace janus;
 
@@ -146,8 +147,19 @@ int main(int argc, char* argv[]) {
   RunServers(server_sites);
   ShutdownServers();
 
+  // The lab fiber's verdict, as the process's exit status.
+  //
+  // RaftFrame::RaftLabProcessExitCode() -- and the DSL predicate behind it,
+  // raft_frame_lab_process_exit_code -- existed with ZERO callers, so a
+  // RaftLabTest run that printed "TESTS FAILED" still exited 0 and any CI
+  // wiring would have had to trust a grep. It returns 1 only for a lab
+  // configuration whose test result is not 0, which includes the -1 the
+  // counter starts at: a run whose fiber never reached its verdict is a
+  // failure, not a pass.
+  const int lab_exit = RaftFrame::RaftLabProcessExitCode();
+
   RandomGenerator::destroy();
   Config::DestroyConfig();
-  Log_info("Raft lab process finished");
-  return SUCCESS;
+  Log_info("Raft lab process finished with exit code {}", lab_exit);
+  return lab_exit;
 }

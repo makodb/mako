@@ -75,6 +75,48 @@ is_ancestor_pid() {
     return 1
 }
 
+# Raft disk mode (docs/verus/disk-persistence.md §8): a tree configured
+# with -DMAKO_RAFT_DISK=ON. Each run of a Raft suite in one gets a fresh,
+# locked store run directory on the local disk, MAKO_RAFT_CREATE=1 (every
+# launch in these suites creates its cluster) and MAKO_RAFT_DISK_VERIFY=1
+# (a cleanly stopped server compares its WAL with its state), deleted after
+# the run; a run killed outright is deleted by the next sweep. Memory trees
+# run the command as is.
+raft_disk_tree() {
+    grep -qs '^MAKO_RAFT_DISK:BOOL=ON' "${1:-${BUILD_DIR}}/CMakeCache.txt"
+}
+
+with_raft_store() {  # with_raft_store LABEL CMD...
+    local label=$1
+    shift
+    if ! raft_disk_tree; then
+        "$@"
+        return $?
+    fi
+    (
+        # shellcheck source=../scripts/raft_disk/store_dir.sh
+        source ./scripts/raft_disk/store_dir.sh
+        raft_store_make_run "$label" || exit 1
+        echo "[raft disk] store run directory ${RAFT_RUN_DIR}"
+        export MAKO_RAFT_CREATE=1 MAKO_RAFT_DISK_VERIFY=1
+        marker=$(mktemp)
+        "$@"
+        rc=$?
+        # Each server compares its WAL with its state at a clean stop
+        # ([DISK-VERIFY]); the suites read only their own lines, so a
+        # mismatch is caught here, in the logs this run wrote.
+        logs=$(find . -maxdepth 1 -name '*.log' -newer "$marker")
+        rm -f "$marker"
+        if [ -n "$logs" ] && grep -l 'DISK-VERIFY.*MISMATCH' $logs; then
+            echo "[raft disk] a server's WAL did not match its state (above)"
+            rc=1
+        fi
+        echo "[raft disk] $(cat $logs /dev/null | grep -c 'DISK-VERIFY.* ok') clean-stop verification(s) passed"
+        raft_store_cleanup
+        exit $rc
+    )
+}
+
 cleanup_processes() {
     result=ci_results_${RUN_NUM}_${RUN_INDEX}
     mkdir -p ~/results/$result
@@ -82,6 +124,8 @@ cleanup_processes() {
     # Clean up RocksDB data from previous runs
     local user_name=${USER:-$(whoami)}
     rm -rf /tmp/${user_name}_mako_rocksdb_shard*
+    # Raft store run directories no live process holds (killed runs).
+    ( source ./scripts/raft_disk/store_dir.sh && raft_store_sweep )
     echo "Cleaning up any lingering test processes..."
 
     for proc in simpleTransactionRep dbtest simplePaxos simpleTransaction simpleRaft; do
@@ -439,6 +483,81 @@ run_2shard_replication_simple() {
 }
 
 # ============================================================================
+# Raft lab cluster suite (src/deptran/raft/shell/lab*.rs)
+# ============================================================================
+#
+# This is the ONLY cluster-level correctness suite for RaftServer itself:
+# 25 cases, five embedded replicas in one process, 27 Disconnect calls' worth
+# of leadership flap, snapshot install and a high-frequency apply stress.
+# Until this function existed it was on no CI path at all, because the binary
+# that hosts it needs -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON and no script in the
+# repository set either one. A suite nobody builds is worse than no suite: it
+# reads as coverage.
+#
+# It needs its OWN build directory. -DRAFT_TEST=ON defines RAFT_TEST_CORO,
+# which changes RaftServer's behaviour, so the flags must not be folded into
+# the build every other suite measures and tests.
+# On this branch Raft has one lane, rust; the hybrid and cpp lanes were
+# removed for the Verus work (docs/verus/modification-plan.md, Q9).
+run_raft_lab_test() {
+    local lane="rust"
+    echo "========================================="
+    echo "Running: ./ci/ci.sh raftLabTest (lane ${lane})"
+    echo "========================================="
+    local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-32}}"
+    local generator="${CMAKE_GENERATOR:-Ninja}"
+    local build_type="${CMAKE_BUILD_TYPE:-Release}"
+    local lab_build_dir="${RAFT_LAB_BUILD_DIR:-${BUILD_DIR}_raftlab}"
+    # A disk-mode tree (-DMAKO_RAFT_DISK=ON, docs/verus/disk-persistence.md
+    # §8) gets a disk-mode lab; the lab tree is named from BUILD_DIR, so only
+    # this cache read keeps a disk lab off the memory tree's lab, and back.
+    local disk="OFF"
+    if grep -qs '^MAKO_RAFT_DISK:BOOL=ON' "${BUILD_DIR}/CMakeCache.txt"; then
+        disk="ON"
+    fi
+
+    echo "Configuring ${lab_build_dir} with MAKO_USE_RAFT=ON RAFT_TEST=ON MAKO_RAFT_LANE=${lane} MAKO_RAFT_DISK=${disk}"
+    cmake -S . -B "${lab_build_dir}" -G "${generator}" \
+        -DCMAKE_BUILD_TYPE="${build_type}" -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON -DMAKO_RAFT_LANE="${lane}" -DMAKO_RAFT_DISK="${disk}"
+    cmake --build "${lab_build_dir}" --parallel "${jobs}" --target deptran_server
+
+    local log
+    log="$(mktemp /tmp/raft_lab_test_XXXX.log)"
+    echo "Running the lab suite (log: ${log})"
+    set +e
+    with_raft_store lab timeout 1800 "./${lab_build_dir}/deptran_server" \
+        -f config/raft_lab_test.yml -P localhost > "${log}" 2>&1
+    local status=$?
+    set -e
+
+    local passed expected
+    passed=$(grep -c '^TEST [0-9]* Passed' "${log}" || true)
+    # The case count, derived from the source rather than written down: the
+    # init2(N ids of the Rust harness plus the unit cases raft-rt's
+    # lab_runtime.rs runs (tests 50-52), each announced by a
+    # `TEST <id>:` line.
+    expected=$(( $(grep -ohE 'init2\([0-9]+' src/deptran/raft/shell/*.rs | sort -u | wc -l) + \
+                 $(grep -ohE 'eprintln!\("TEST [0-9]+:' src/deptran/raft/rt/src/lab_runtime.rs | sort -u | wc -l) ))
+    echo "raftLabTest: ${passed}/${expected} case(s) passed, deptran_server exited ${status}"
+
+    # Three conditions, deliberately. The exit status is the verdict
+    # (src/deptran/s_main.cc returns RaftFrame::RaftLabProcessExitCode()), the
+    # marker proves the fiber reached its verdict rather than the process
+    # exiting 0 having run nothing, and the count proves no case was silently
+    # skipped -- which a half-ported harness would do.
+    if [ "$status" -ne 0 ] || ! grep -q 'ALL TESTS PASSED' "${log}" || \
+       [ "${passed}" -ne "${expected}" ]; then
+        echo "ERROR: RaftLabTest failed (exit ${status}, ${passed}/${expected})"
+        echo "--- last 60 lines of ${log} ---"
+        tail -n 60 "${log}"
+        return 1
+    fi
+    rm -f "${log}"
+    return 0
+}
+
+# ============================================================================
 # Raft Replication Tests
 # ============================================================================
 
@@ -452,7 +571,7 @@ run_1shard_replication_raft() {
         cleanup_processes
         # Run test and capture exit code (set +e to prevent immediate exit)
         set +e
-        bash ./examples/test_1shard_replication_raft.sh
+        with_raft_store 1shard_replication_raft bash ./examples/test_1shard_replication_raft.sh
         local test_result=$?
         set -e
         # Always check for hanging processes, even if test failed
@@ -479,7 +598,7 @@ run_2shard_replication_raft() {
         cleanup_processes
         # Run test and capture exit code (set +e to prevent immediate exit)
         set +e
-        bash ./examples/test_2shard_replication_raft.sh
+        with_raft_store 2shard_replication_raft bash ./examples/test_2shard_replication_raft.sh
         local test_result=$?
         set -e
         # Always check for hanging processes, even if test failed
@@ -503,7 +622,7 @@ run_1shard_replication_simple_raft() {
     cleanup_processes
     # Run test and capture exit code (set +e to prevent immediate exit)
     set +e
-    bash ./examples/test_1shard_replication_simple_raft.sh
+    with_raft_store 1shard_replication_simple_raft bash ./examples/test_1shard_replication_simple_raft.sh
     local test_result=$?
     set -e
     # Always check for hanging processes, even if test failed
@@ -520,13 +639,51 @@ run_2shard_replication_simple_raft() {
     cleanup_processes
     # Run test and capture exit code (set +e to prevent immediate exit)
     set +e
-    bash ./examples/test_2shard_replication_simple_raft.sh
+    with_raft_store 2shard_replication_simple_raft bash ./examples/test_2shard_replication_simple_raft.sh
     local test_result=$?
     set -e
     # Always check for hanging processes, even if test failed
     check_for_hanging_processes "shard2ReplicationSimpleRaft"
     local hanging_check=$?
     # Return failure if either check failed
+    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
+}
+
+# Raft disk persistence's process-kill tests (docs/verus/disk-persistence.md
+# §5, §8): three raft_kill_node replicas SIGKILLed and restarted onto their stores,
+# at random and at crash points, then checked (scripts/raft_kill/check.py).
+# Host only: a -DMAKO_RAFT_DISK=ON tree.
+run_raft_kill_test() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh raftKillTest"
+    echo "========================================="
+    if ! raft_disk_tree; then
+        echo "ERROR: raftKillTest needs a -DMAKO_RAFT_DISK=ON tree (BUILD_DIR=${BUILD_DIR})"
+        return 1
+    fi
+    cleanup_processes
+    python3 scripts/raft_kill/test_check.py || return 1
+    python3 scripts/raft_kill/run.py --build-dir "${BUILD_DIR}" ${RAFT_KILL_ARGS:-}
+}
+
+# The 1-shard Raft test with p1's dbtest killed and relaunched onto its
+# store (disk design §8). Needs a disk tree; host only.
+run_1shard_replication_raft_restart() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh shard1ReplicationRaftRestart"
+    echo "========================================="
+    if ! raft_disk_tree; then
+        echo "ERROR: shard1ReplicationRaftRestart needs a -DMAKO_RAFT_DISK=ON tree (BUILD_DIR=${BUILD_DIR})"
+        return 1
+    fi
+    cleanup_processes
+    set +e
+    with_raft_store 1shard_replication_raft_restart env MAKO_RAFT_RESTART_P1=1 \
+        bash ./examples/test_1shard_replication_raft.sh
+    local test_result=$?
+    set -e
+    check_for_hanging_processes "shard1ReplicationRaftRestart"
+    local hanging_check=$?
     [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
 }
 
@@ -733,6 +890,15 @@ case "${1:-}" in
     shard2ReplicationSimpleRaft)
         run_2shard_replication_simple_raft
         ;;
+    raftLabTest)
+        run_raft_lab_test
+        ;;
+    raftKillTest)
+        run_raft_kill_test
+        ;;
+    shard1ReplicationRaftRestart)
+        run_1shard_replication_raft_restart
+        ;;
     rocksdbTests)
         run_rocksdb_tests
         ;;
@@ -775,6 +941,7 @@ case "${1:-}" in
         run_2shard_replication_raft
         run_1shard_replication_simple_raft
         run_2shard_replication_simple_raft
+        run_raft_lab_test
         run_rocksdb_tests
         # run_shard_fault_tolerance  # DISABLED: test script not implemented
         run_multi_shard_single_process
@@ -792,6 +959,7 @@ case "${1:-}" in
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
         echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
+        echo "  raftLabTest, raftKillTest, shard1ReplicationRaftRestart (disk trees),"
         echo "  rocksdbTests, multiShardSingleProcess,"
         echo "  shard2SingleProcess, shard2SingleProcessReplication,"
         echo "  srpcTests, cpuThrottlingScaling, clientServer, all"

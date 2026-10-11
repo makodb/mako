@@ -4,7 +4,6 @@
 #include <gtest/gtest.h>
 #include "../srpc.hpp"
 #include "deptran/tpc_command.h"
-#include "deptran/raft/replicated_db.h"
 #include "deptran/paxos_worker.h"
 #include "deptran/replication_log_entry.h"
 
@@ -38,6 +37,9 @@ static_assert(static_cast<int32_t>(janus::MakoCommandKind::VecPieceData) == 4);
 static_assert(static_cast<int32_t>(janus::MakoCommandKind::VecRecData) == 15);
 static_assert(static_cast<int32_t>(janus::MakoCommandKind::SimpleRWCommand) == 17);
 static_assert(static_cast<int32_t>(janus::MakoCommandKind::KeyCmdBatchData) == 18);
+// Kind 19 stays reserved for the retired ReplicatedDBCommand payload; the
+// class itself is gone with memory-only Raft, so only the enum value is pinned.
+static_assert(static_cast<int32_t>(janus::MakoCommandKind::ReplicatedDBCommand) == 19);
 
 #define ASSERT_MAKO_PAYLOAD_KIND(TypeName, KindValue)                         \
   static_assert(srpc::PayloadMember<janus::MakoCommands,                      \
@@ -63,7 +65,6 @@ ASSERT_MAKO_PAYLOAD_KIND(TpcEmptyCommand, 12);
 ASSERT_MAKO_PAYLOAD_KIND(TpcNoopCommand, 13);
 ASSERT_MAKO_PAYLOAD_KIND(TpcBatchCommand, 14);
 ASSERT_MAKO_PAYLOAD_KIND(ViewData, 16);
-ASSERT_MAKO_PAYLOAD_KIND(ReplicatedDBCommand, 19);
 
 #undef ASSERT_MAKO_PAYLOAD_KIND
 
@@ -163,7 +164,7 @@ TEST(MakoCommandKindTest, AllExplicitDiscriminantsAreOneByteV32) {
   ExpectMakoKindWireByte<janus::ViewData>(16);
   ExpectRawMakoKindWireByte(17);
   ExpectRawMakoKindWireByte(18);
-  ExpectMakoKindWireByte<janus::ReplicatedDBCommand>(19);
+  ExpectRawMakoKindWireByte(19);
 }
 
 TEST(MakoCommandKindTest, ExplicitMappingControlsExactEnvelopeWireBytes) {
@@ -320,31 +321,6 @@ TEST(MarshallableProxyFacadeTest, DeptranTpcBatchAndNoopEmptyUseTypedAdapter) {
   janus::Command noop_envelope = janus::Command::pack(*noop_cmd);
   EXPECT_EQ(noop_envelope.kind_, janus::TpcNoopCommand::static_kind());
   ASSERT_NE(noop_envelope.unpack<janus::TpcNoopCommand>(), nullptr);
-}
-
-TEST(MarshallableProxyFacadeTest,
-     ReplicatedDbCommandRoundTripUsesTypedAdapter) {
-  auto put_cmd = janus::ReplicatedDBCommand::CreatePut("k1", "v1");
-  ASSERT_TRUE(put_cmd.get() != nullptr);
-
-  janus::Command outgoing{put_cmd};
-  EXPECT_EQ(outgoing.kind_, janus::ReplicatedDBCommand::static_kind());
-
-  srpc::BufferSink sink;
-  srpc::BinaryWriteArchive war(srpc::make_sink_proxy_buffer(&sink));
-  srpc::Serialize_::serialize(outgoing, war);
-
-  janus::Command incoming;
-  srpc::BufferSource src(sink.bytes.data(), sink.bytes.len());
-  srpc::BinaryReadArchive rar(srpc::make_source_proxy_buffer(&src));
-  srpc::Deserialize_::deserialize(incoming, rar);
-  EXPECT_EQ(incoming.kind_, janus::ReplicatedDBCommand::static_kind());
-
-  const auto decoded = marshallable_cast<janus::ReplicatedDBCommand>(incoming);
-  ASSERT_TRUE(decoded.is_some());
-  EXPECT_EQ(decoded.unwrap()->op_, janus::ReplicatedDBOp::PUT);
-  EXPECT_EQ(decoded.unwrap()->key_, "k1");
-  EXPECT_EQ(decoded.unwrap()->value_, "v1");
 }
 
 TEST(MarshallableProxyFacadeTest,

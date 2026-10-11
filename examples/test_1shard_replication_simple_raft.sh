@@ -20,6 +20,16 @@ export MAKO_RAFT_PREFERRED_GRACE_US="${MAKO_RAFT_PREFERRED_GRACE_US:-30000000}"
 export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MIN_US:-5000000}"
 export MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US="${MAKO_RAFT_NONPREFERRED_GRACE_ELECTION_MAX_US:-10000000}"
 binary_path="./${BUILD_DIR:-build}/simpleTransactionRep"
+# One binary per replica, each defaulting to BUILD_DIR's. Setting them to
+# binaries from different MAKO_RAFT_LANE builds runs a MIXED-LANE cluster --
+# the test that the C++ and Rust Raft lanes speak the same wire (plan
+# revision 5, T3), e.g.
+#   BIN_LOCALHOST=./build/simpleTransactionRep \
+#   BIN_P2=./build_rust/simpleTransactionRep BIN_P1=./build_rust/simpleTransactionRep \
+#   bash examples/test_1shard_replication_simple_raft.sh
+BIN_LOCALHOST="${BIN_LOCALHOST:-$binary_path}"
+BIN_P2="${BIN_P2:-$binary_path}"
+BIN_P1="${BIN_P1:-$binary_path}"
 log_localhost="simple-shard0-localhost.log"
 log_p2="simple-shard0-p2.log"
 log_p1="simple-shard0-p1.log"
@@ -30,11 +40,14 @@ PID_P2=""
 PID_P1=""
 CLEANUP_DONE=0
 
-if [ ! -x "$binary_path" ]; then
-    echo "Error: simpleTransactionRep binary not found or not executable at '$binary_path'"
-    echo "Build it first (for Docker: ./docker_build.sh build), then retry."
-    exit 1
-fi
+for replica_binary in "$BIN_LOCALHOST" "$BIN_P2" "$BIN_P1"; do
+    if [ ! -x "$replica_binary" ]; then
+        echo "Error: simpleTransactionRep binary not found or not executable at '$replica_binary'"
+        echo "Build it first (for Docker: ./docker_build.sh build), then retry."
+        exit 1
+    fi
+done
+echo "replicas: localhost=$BIN_LOCALHOST p2=$BIN_P2 p1=$BIN_P1"
 
 # Kill only target worker processes by executable name.
 # Avoid grep/xargs patterns that can match wrapper shells containing process names in argv.
@@ -116,12 +129,12 @@ trap handle_interrupt INT TERM
 
 # Start shard 0 in background with RAFT replication (3 replicas, no learner) - capture ALL PIDs
 echo "Starting shard 0 with Raft..."
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 "$trd" localhost 1 raft > "$log_localhost" 2>&1 &
+nohup $GDB_PREFIX "$BIN_LOCALHOST" 1 0 "$trd" localhost 1 raft > "$log_localhost" 2>&1 &
 PID_LOCALHOST=$!
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 "$trd" p2 1 raft > "$log_p2" 2>&1 &
+nohup $GDB_PREFIX "$BIN_P2" 1 0 "$trd" p2 1 raft > "$log_p2" 2>&1 &
 PID_P2=$!
 sleep 1
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 1 0 "$trd" p1 1 raft > "$log_p1" 2>&1 &
+nohup $GDB_PREFIX "$BIN_P1" 1 0 "$trd" p1 1 raft > "$log_p1" 2>&1 &
 PID_P1=$!
 sleep 2
 
