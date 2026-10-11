@@ -1,5 +1,9 @@
 #include "commo.h"
 
+#include <algorithm>
+#include <chrono>
+
+#include "../paxos_worker.h"   // BulkPaxosCmd
 #include "../rcc_rpc.h"
 
 namespace janus {
@@ -7,6 +11,133 @@ namespace janus {
 MultiPaxosCommo::MultiPaxosCommo(
     rusty::Option<rusty::Arc<srpc::PollThread>> poll)
     : Communicator(std::move(poll)) {}
+
+// A Paxos message has to reach every live replica: a dropped accept leaves
+// its slot short of a quorum, and a dropped decide leaves it uncommitted on
+// that replica; since a replica applies a partition's slots in order,
+// either one stalls the partition there for good. The channel refuses a
+// frame while its outbound buffer is past its high-water mark (4 MiB by
+// default), which one large log entry (the TPC-C loader writes tens of MB
+// at a time) is enough to reach, and the client reports that as
+// CLIENT_ERR_IO without sending. So a refused message is queued, every
+// later message to that peer queues behind it (a replica needs a
+// partition's slots in order, and an accept must not be overtaken by its
+// decide), and one job on this communicator's poll thread sends the queue
+// in order as the buffer drains. A message that fails some other way (the
+// peer is gone) is dropped, as before.
+namespace {
+
+// Bytes of log carried by a BulkPaxosCmd, for the warnings.
+size_t LogBytes(const janus::Command& cmd) {
+  size_t bytes = 0;
+  const auto bp = marshallable_cast<BulkPaxosCmd>(cmd);
+  if (bp.is_some()) {
+    for (const auto& c : bp.unwrap()->cmds) {
+      const auto le = marshallable_cast<LogEntry>(*c);
+      if (le.is_some()) bytes += le.unwrap()->length;
+    }
+  }
+  return bytes;
+}
+
+}  // namespace
+
+void MultiPaxosCommo::SendInOrder(const std::shared_ptr<RpcPeer>& peer,
+                                  parid_t par_id,
+                                  const char* what,
+                                  size_t log_bytes,
+                                  std::function<int32_t(srpc::Client*)> send,
+                                  std::function<void()> before_queue) {
+  std::shared_ptr<PeerSendQueue> queue;
+  {
+    std::lock_guard<std::mutex> lock(send_queues_mu_);
+    auto& slot = send_queues_[peer->site_id()];
+    if (!slot) {
+      slot = std::make_shared<PeerSendQueue>();
+    }
+    queue = slot;
+  }
+  std::lock_guard<std::mutex> lock(queue->mu);
+  if (queue->pending.empty()) {
+    int32_t err = 0;
+    peer->WithClient([&](srpc::Client* client) { err = send(client); });
+    if (err == 0) {
+      return;
+    }
+    if (err != srpc::CLIENT_ERR_IO) {
+      Log_warn("{} to site {} (partition {}, {} log bytes) not sent: error {}", what,
+               peer->site_id(), par_id, log_bytes, err);
+      return;
+    }
+  }
+  if (before_queue) {
+    before_queue();
+  }
+  queue->pending.push_back(PeerSendQueue::Message{what, log_bytes, std::move(send)});
+  if (queue->draining) {
+    return;
+  }
+  queue->draining = true;
+  auto poll = PollThread();
+  verify(poll.is_some());
+  auto self = this;
+  auto job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([self, peer, par_id, queue]() {
+    self->DrainSendQueue(peer, par_id, queue);
+  }));
+  poll.unwrap()->add(rusty::Arc<Job>(job));
+}
+
+void MultiPaxosCommo::DrainSendQueue(std::shared_ptr<RpcPeer> peer,
+                                     parid_t par_id,
+                                     std::shared_ptr<PeerSendQueue> queue) {
+  // A loopback or LAN socket drains megabytes per millisecond, so a small
+  // message is retried every millisecond; a longer backoff would leave the
+  // connection idle while thousands of small entries wait behind a large one.
+  // The client serializes the whole request before the channel refuses it,
+  // though, and this poll thread also writes the buffer out, so a refused
+  // multi-MB entry waits several times as long as the refused attempt took.
+  // Otherwise the thread spends its time re-serializing the entry instead of
+  // draining the buffer it waits for.
+  constexpr uint64_t kMinRetryUs = 1000;
+  constexpr uint64_t kRetryCostFactor = 4;
+  uint64_t waited_us = 0;
+  for (;;) {
+    std::unique_lock<std::mutex> lock(queue->mu);
+    if (queue->pending.empty()) {
+      queue->draining = false;
+      return;
+    }
+    const char* what = queue->pending.front().what;
+    const size_t log_bytes = queue->pending.front().log_bytes;
+    int32_t err = 0;
+    const auto attempt_start = std::chrono::steady_clock::now();
+    peer->WithClient([&](srpc::Client* client) { err = queue->pending.front().send(client); });
+    if (err == srpc::CLIENT_ERR_IO) {
+      const uint64_t attempt_us = static_cast<uint64_t>(
+          std::chrono::duration_cast<std::chrono::microseconds>(
+              std::chrono::steady_clock::now() - attempt_start).count());
+      const size_t queued = queue->pending.size();
+      lock.unlock();
+      // Wait the way a quorum wait does, so this poll thread's reactor keeps
+      // running and drains the buffer.
+      const uint64_t wait_us = std::max(kMinRetryUs, kRetryCostFactor * attempt_us);
+      srpc::create_sp_timeout_event(wait_us)->wait();
+      waited_us += wait_us;
+      if (waited_us >= 10 * 1000 * 1000) {
+        Log_warn("{} to site {} (partition {}, {} log bytes) still waits for its connection "
+                 "to drain; {} messages queued", what, peer->site_id(), par_id, log_bytes, queued);
+        waited_us = 0;
+      }
+      continue;
+    }
+    if (err != 0) {
+      Log_warn("{} to site {} (partition {}, {} log bytes) not sent: error {}", what,
+               peer->site_id(), par_id, log_bytes, err);
+    }
+    queue->pending.pop_front();
+    waited_us = 0;
+  }
+}
 
 shared_ptr<PaxosAcceptQuorumEvent> MultiPaxosCommo::BroadcastAccept(
     parid_t par_id,
@@ -49,18 +180,31 @@ void MultiPaxosCommo::ForwardToLearner(
           cb(returned_slot, returned_ballot);
         });
 
-    MultiPaxosProxy::RpcForwardToLearnerServerRequest req;
-    req.par_id = par_id;
-    req.slot = slot;
-    req.ballot = ballot;
-    req.cmd = cmd;
-    peer->WithClient([&](srpc::Client* client) {
-      MultiPaxosProxy proxy(client);
-      auto result = proxy.async_ForwardToLearnerServer(req, attr);
-      if (result.is_ok()) {
-        Future::safe_release(result.unwrap().raw_future());
-      }
-    });
+    auto req = std::make_shared<MultiPaxosProxy::RpcForwardToLearnerServerRequest>();
+    req->par_id = par_id;
+    req->slot = slot;
+    req->ballot = ballot;
+    req->cmd = cmd;
+    auto shared_attr = std::make_shared<FutureAttr>(std::move(attr));
+    SendInOrder(peer, par_id, "ForwardToLearner", 0,
+                [req, shared_attr](srpc::Client* client) -> int32_t {
+                  MultiPaxosProxy proxy(client);
+                  auto result = proxy.async_ForwardToLearnerServer(*req, *shared_attr);
+                  if (result.is_err()) return result.unwrap_err();
+                  Future::safe_release(result.unwrap().raw_future());
+                  return 0;
+                },
+                [req]() {
+                  // cmd shares p1's log entry, and p1 replays it right after
+                  // forwarding it; the replay edits the bytes in place (it
+                  // clears a delete's flag bit in the table id). A forward
+                  // that waits is serialized later, so it keeps a copy of
+                  // the entry as it is now.
+                  const auto entry = marshallable_cast<LogEntry>(req->cmd);
+                  if (entry.is_some()) {
+                    req->cmd = janus::Command(rusty::Arc<LogEntry>::make(*entry.unwrap()));
+                  }
+                });
   }
 }
 
@@ -167,15 +311,17 @@ shared_ptr<PaxosAcceptQuorumEvent> MultiPaxosCommo::BroadcastBulkAccept(
         });
 
     verify(cmd.has_value());
-    MultiPaxosProxy::RpcBulkAcceptRequest req;
-    req.cmd = cmd;
-    peer->WithClient([&](srpc::Client* client) {
-      MultiPaxosProxy proxy(client);
-      auto result = proxy.async_BulkAccept(req, attr);
-      if (result.is_ok()) {
-        Future::safe_release(result.unwrap().raw_future());
-      }
-    });
+    auto req = std::make_shared<MultiPaxosProxy::RpcBulkAcceptRequest>();
+    req->cmd = cmd;
+    auto shared_attr = std::make_shared<FutureAttr>(std::move(attr));
+    SendInOrder(peer, par_id, "BulkAccept", LogBytes(cmd),
+                [req, shared_attr](srpc::Client* client) -> int32_t {
+                  MultiPaxosProxy proxy(client);
+                  auto result = proxy.async_BulkAccept(*req, *shared_attr);
+                  if (result.is_err()) return result.unwrap_err();
+                  Future::safe_release(result.unwrap().raw_future());
+                  return 0;
+                });
   }
   return event;
 }
@@ -208,15 +354,17 @@ shared_ptr<PaxosAcceptQuorumEvent> MultiPaxosCommo::BroadcastBulkDecide(
           event->FeedResponse(valid);
         });
 
-    MultiPaxosProxy::RpcBulkDecideRequest req;
-    req.cmd = cmd;
-    peer->WithClient([&](srpc::Client* client) {
-      MultiPaxosProxy proxy(client);
-      auto result = proxy.async_BulkDecide(req, attr);
-      if (result.is_ok()) {
-        Future::safe_release(result.unwrap().raw_future());
-      }
-    });
+    auto req = std::make_shared<MultiPaxosProxy::RpcBulkDecideRequest>();
+    req->cmd = cmd;
+    auto shared_attr = std::make_shared<FutureAttr>(std::move(attr));
+    SendInOrder(peer, par_id, "BulkDecide", 0,
+                [req, shared_attr](srpc::Client* client) -> int32_t {
+                  MultiPaxosProxy proxy(client);
+                  auto result = proxy.async_BulkDecide(*req, *shared_attr);
+                  if (result.is_err()) return result.unwrap_err();
+                  Future::safe_release(result.unwrap().raw_future());
+                  return 0;
+                });
   }
   return event;
 }
