@@ -284,6 +284,49 @@ inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
 // handlers are also dead now but left for a follow-up sweep that
 // also clears the rcc_rpc.proto definitions.
 
+bool PaxosWorker::FetchCommitted(
+    shared_ptr<SyncLogRequest> req,
+    map<pair<int, slotid_t>, rusty::Arc<janus::Command>>* out) {
+  auto callback_state = std::make_shared<SyncLogCallbackState>();
+  // @unsafe { boundary copy: shared_ptr<SyncLogRequest> param -> Arc envelope }
+  auto sp_quorum = rep_commo_->BroadcastSyncLog(
+      site_info_->partition_id_,
+      rusty::Arc<SyncLogRequest>::make(*req),
+      [callback_state](shared_ptr<janus::Command> md, ballot_t, int resp_type) {
+    if (!resp_type || md == nullptr) {
+      return;
+    }
+    auto response = marshallable_cast<SyncLogResponse>(*md);
+    if (response.is_none()) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(callback_state->mutex);
+    if (callback_state->accepting_responses) {
+      callback_state->responses.emplace_back(response.unwrap());
+    }
+  });
+  sp_quorum->wait();
+  vector<rusty::Arc<SyncLogResponse>> responses;
+  {
+    std::lock_guard<std::mutex> lock(callback_state->mutex);
+    callback_state->accepting_responses = false;
+    responses = std::move(callback_state->responses);
+  }
+  if (!sp_quorum->yes()) {
+    return false;
+  }
+  for (const auto& response : responses) {
+    for (int j = 0; j < response->sync_data.size(); j++) {
+      const auto bp_cmd = marshallable_cast<BulkPaxosCmd>(*response->sync_data[j]);
+      for (int k = 0; k < bp_cmd.unwrap()->slots.size(); k++) {
+        out->insert_or_assign(make_pair(j, bp_cmd.unwrap()->slots[k]),
+                              bp_cmd.unwrap()->cmds[k].clone());
+      }
+    }
+  }
+  return true;
+}
+
 int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   auto es_pww = es_pw;
   auto callback_state = std::make_shared<SyncLogCallbackState>();

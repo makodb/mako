@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <rusty/arc.hpp>
 
 #include "../__dep__.h"
@@ -79,6 +80,36 @@ class MultiPaxosCommo : public Communicator {
       parid_t par_id,
       const janus::Command& cmd,
       const std::function<void(ballot_t, int)>& cb);
+
+ private:
+  // The messages for one peer that wait behind one the channel refused.
+  struct PeerSendQueue {
+    std::mutex mu;
+    struct Message {
+      const char* what;
+      size_t log_bytes;   // the log entries it carries, for the warnings
+      std::function<int32_t(srpc::Client*)> send;
+    };
+    std::deque<Message> pending;
+    bool draining = false;   // a DrainSendQueue job is sending them
+  };
+
+  // Send one message to peer now, or queue it behind earlier ones; send
+  // returns 0 once the message is queued on the connection, or the client's
+  // error code. before_queue, if set, runs when the message has to wait, so
+  // it can stop sharing data the caller goes on to change.
+  void SendInOrder(const std::shared_ptr<RpcPeer>& peer,
+                   parid_t par_id,
+                   const char* what,
+                   size_t log_bytes,
+                   std::function<int32_t(srpc::Client*)> send,
+                   std::function<void()> before_queue = nullptr);
+  void DrainSendQueue(std::shared_ptr<RpcPeer> peer,
+                      parid_t par_id,
+                      std::shared_ptr<PeerSendQueue> queue);
+
+  std::mutex send_queues_mu_;
+  std::map<siteid_t, std::shared_ptr<PeerSendQueue>> send_queues_;
 };
 
 }  // namespace janus

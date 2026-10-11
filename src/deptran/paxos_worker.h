@@ -137,6 +137,10 @@ class SyncLogRequest
     int leader_id;
     ballot_t epoch;
     vector<slotid_t> sync_commit_slot;
+    // Upper bound on the log bytes one reply carries, 0 for no bound. A
+    // learner catching up before it leads can be far behind, and one reply
+    // must stay under the RPC frame limit.
+    int64_t max_reply_bytes = 0;
     SyncLogRequest() = default;
 
     void save(BinaryWriteArchive& ar) const {
@@ -146,6 +150,7 @@ class SyncLogRequest
       for (size_t i = 0; i < sync_commit_slot.size(); i++) {
         srpc::Serialize_::serialize(sync_commit_slot[i], ar);
       }
+      srpc::Serialize_::serialize(max_reply_bytes, ar);
     }
 
     void load(BinaryReadArchive& ar) {
@@ -158,6 +163,7 @@ class SyncLogRequest
         srpc::Deserialize_::deserialize(x, ar);
         sync_commit_slot.push_back(x);
       }
+      srpc::Deserialize_::deserialize(max_reply_bytes, ar);
     }
 };
 
@@ -413,6 +419,11 @@ public:
   // `SendSyncNoOpLog` declarations — definitions deleted; see
   // paxos_worker.cc retirement comments.
   int SendSyncLog(shared_ptr<SyncLogRequest>);
+  // The entries the acceptors have committed from the request's
+  // sync_commit_slot on, keyed by (partition, slot). False when they did
+  // not both answer.
+  bool FetchCommitted(shared_ptr<SyncLogRequest>,
+                      map<pair<int, slotid_t>, rusty::Arc<janus::Command>>*);
   static void* StartReadAccept(void*);
   PaxosWorker();
   ~PaxosWorker();
