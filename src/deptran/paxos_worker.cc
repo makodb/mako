@@ -318,7 +318,13 @@ bool PaxosWorker::FetchCommitted(
       callback_state->responses.emplace_back(response.unwrap());
     }
   });
-  sp_quorum->wait();
+  // The event counts the dead leader among its voters, but only p1 and p2
+  // are asked, so one acceptor rejecting the request as stale leaves it
+  // short of both its yes and its no threshold. A stale reply settles the
+  // question on its own (another replica leads), so stop waiting on it.
+  while (!sp_quorum->yes() && !sp_quorum->no() && rejected_epoch->load() == 0) {
+    srpc::create_sp_timeout_event(1000)->wait();
+  }
   vector<rusty::Arc<SyncLogResponse>> responses;
   {
     std::lock_guard<std::mutex> lock(callback_state->mutex);
@@ -326,6 +332,9 @@ bool PaxosWorker::FetchCommitted(
     responses = std::move(callback_state->responses);
   }
   *higher_epoch = rejected_epoch->load();
+  if (*higher_epoch > 0) {
+    return false;
+  }
   if (!sp_quorum->yes()) {
     return false;
   }
@@ -568,6 +577,15 @@ PaxosWorker::~PaxosWorker() {
 }
 
 void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { // this is the starting point on the client side
+  if (static_cast<size_t>(length) > MultiPaxosCommo::kMaxLogBytesPerMessage) {
+    // It could never be sent to the replicas, and a slot given to it would
+    // never be decided, stalling every later slot of the partition.
+    Log_error("partition {}: a {}-byte log entry is larger than one RPC frame can replicate; "
+              "not submitted", site_info_ != nullptr ? (int)site_info_->partition_id_ : -1, length);
+    n_current += 1;
+    if (n_current >= n_tot) finish_cond.notify_all();
+    return;
+  }
   // Fill-then-wrap: build the entry locally, wrap once complete.
   LogEntry cmd;
   // Use std::string for payload to avoid mismatched allocation/deallocation

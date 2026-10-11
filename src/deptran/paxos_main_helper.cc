@@ -524,8 +524,8 @@ static std::vector<slotid_t> catch_up_learner(int epoch, ballot_t* higher_epoch)
     std::lock_guard<std::recursive_mutex> lock(ps->mtx_);
     high[i] = ps->max_committed_slot_learner_;
     next[i] = ps->learner_applied_prefix_ + 1;
-    Log_info("learner catch-up: partition {} applied every slot up to {}, {} more up to {}",
-             i, ps->learner_applied_prefix_, ps->learner_applied_above_.size(), high[i]);
+    Log_info("learner catch-up: partition {} applied every slot up to {}, {} more runs up to {}",
+             i, ps->learner_applied_prefix_, ps->learner_applied_runs_.size(), high[i]);
   }
   size_t applied = 0;
   int rounds = 0;
