@@ -344,8 +344,12 @@ private:
   // kMaxInFlightRounds are out, which slows the caller to the rate the
   // followers accept. It runs on the caller's thread, never on this
   // partition's poll thread, where rounds finish. A leader whose
-  // followers keep up has a few rounds out per partition.
+  // followers keep up has a few rounds out per partition. It also waits
+  // while kMaxPeerBacklogBytes wait to be sent to one replica: a quorum
+  // can go on without a slow replica, whose queue would otherwise grow
+  // without bound.
   static constexpr int kMaxInFlightRounds = 64;
+  static constexpr size_t kMaxPeerBacklogBytes = 256u << 20;
   std::mutex inflight_mu_{};
   std::condition_variable inflight_cv_{};
   int inflight_rounds_ = 0;
@@ -435,9 +439,11 @@ public:
   int SendSyncLog(shared_ptr<SyncLogRequest>);
   // The entries the acceptors have committed from the request's
   // sync_commit_slot on, keyed by (partition, slot). False when they did
-  // not both answer.
+  // not both answer; *higher_epoch is then the epoch of an acceptor that
+  // rejected the request as stale, or 0.
   bool FetchCommitted(shared_ptr<SyncLogRequest>,
-                      map<pair<int, slotid_t>, rusty::Arc<janus::Command>>*);
+                      map<pair<int, slotid_t>, rusty::Arc<janus::Command>>*,
+                      ballot_t* higher_epoch);
   static void* StartReadAccept(void*);
   PaxosWorker();
   ~PaxosWorker();
