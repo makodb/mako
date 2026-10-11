@@ -1,4 +1,4 @@
-//! Held replies (plan P4): a reply goes only once the WAL is durable through
+//! Held replies (design §3): a reply goes only once the WAL is durable through
 //! its tail, never waits for a later flush than the one that covers it (a
 //! hold racing a publish included), and keeps hold order.
 

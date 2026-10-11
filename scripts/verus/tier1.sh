@@ -5,7 +5,7 @@
 # logging to $RESULTS/PHASE/tier1/, then the first-attempt failure count.
 # rust (default): the lab plus the four replication suites; rustlab: the lab
 # alone; rustdisk: the lab and the four suites on build_rust_disk, the
-# -DMAKO_RAFT_DISK=ON tree (docs/verus/disk-persistence-plan.md P0), which
+# -DMAKO_RAFT_DISK=ON tree (docs/verus/disk-persistence.md §8), which
 # refuses to start with under 8 GB free where the stores live. Raft has no
 # other lane on this branch (the plan, Q9).
 #

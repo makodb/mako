@@ -49,7 +49,7 @@ crate-type = ["rlib", "staticlib"]
 # rejects one for that reason -- which is why the lab predicate had to be a
 # C++ kernel (`raft_lab_mode`) read across the ABI.
 raft_test = []
-# Raft disk persistence (docs/verus/disk-persistence-plan.md): CMake turns it
+# Raft disk persistence (docs/verus/disk-persistence.md): CMake turns it
 # on exactly when -DMAKO_RAFT_DISK=ON. Off, the disk path is compiled but
 # never taken (the shell tests `cfg!(feature = "raft_disk")`, a constant).
 raft_disk = ["raft-store/rocksdb"]
@@ -67,7 +67,7 @@ raft-core = { path = "core" }
 # [M0] The replay recorder's format (plan A.4): the writer the shell's
 # recorder uses; the replay itself is that crate's test.
 raft-replay = { path = "replay" }
-# The write-ahead log, its recovery and the flusher (plan P2). Linked in both
+# The write-ahead log, its recovery and the flusher (disk design §3-§5). Linked in both
 # modes, called only in disk builds.
 raft-store = { path = "store" }
 # NO srpc dependency: everything srpc-facing lives in rt/.

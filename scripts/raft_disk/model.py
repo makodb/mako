@@ -45,7 +45,8 @@ Low load, one entry per round (G1, G3, G5). The heartbeat loop runs ONE
 round at a time (shell/server_cc.rs, HeartbeatDriver::run):
   a. Start appends the entry and queues its record; the tick wakes and waits
      until the leader's WAL holds every record queued so far, then a fiber
-     wake w, then sends (P4: nothing leaves before its records are durable).
+     wake w, then sends (disk design §3: nothing leaves before its records
+     are durable).
   b. The follower appends, queues its record, and holds its reply until its
      WAL holds it, then the flusher sends the reply (q).
   c. Collect wakes on the reply (F11a) and the round end raises the commit:
@@ -89,7 +90,7 @@ first seconds measure the cache, so the saturated ext4 points discard them
   model.py ... --compare MEASURED.json --baseline BASE.json
       each measured value against its estimate; a miss over a quarter of the
       estimate means a primitive or the structure is wrong: find which with
-      the trace kit before changing anything (plan §5).
+      the trace kit before changing anything (disk design §8).
 
 ----------------------------------------------------------------------------
 4. WHAT THE MISSES TAUGHT (2026-10-09/10)
@@ -150,11 +151,12 @@ first seconds measure the cache, so the saturated ext4 points discard them
     delete, and their flush is superlinear in their number (bugs-found B32;
     1-2 s stalls, shutdowns past their budget). The model said "too slow by
     this much"; the stats said where.
-  - CP7 (2026-10-10): the tick now waits for the WAL only when it sends,
+  - 2026-10-10: the tick now waits for the WAL only when it sends,
     and the memory pieces were re-traced. Against the estimates: G1 -6%,
     -17%, +10% (tmpfs D = 0, 1 ms; ext4), G2 -16%, -13%, -6%. Measured G2
-    tmpfs moved only +1% and +5% from CP5, as it should: saturated, every
-    tick sends. The smaller G2 misses came mostly from the re-traced inputs.
+    tmpfs moved only +1% and +5% from the run before, as it should: every
+    saturated tick sends. The smaller G2 misses came mostly from the
+    re-traced inputs.
 """
 import argparse
 import csv

@@ -1,7 +1,7 @@
 # Functions Verus verifies in the Raft core (src/deptran/raft/core), from
 # `verify_core.sh` with --output-json --time-expanded; the gate in
 # scripts/verus/verus_gate.py fails if one goes missing or fails. A commit
-# that removes a name says why (docs/verus/disk-persistence-plan.md §4).
+# that removes a name says why (docs/verus/disk-persistence.md §8).
 lib::authority::AuthorityGeneration::all_completed
 lib::authority::AuthorityGeneration::config_matches
 lib::authority::AuthorityGeneration::config_size

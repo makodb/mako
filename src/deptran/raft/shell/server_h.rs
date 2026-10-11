@@ -1075,7 +1075,7 @@ pub struct RaftServerBase {
     // is set.
     // [fix, F19] Under mtx_ (the step wrapper).
     pub recorder_: ShellCell<CoreRecorder>,
-    // Disk persistence (docs/verus/disk-persistence-plan.md P3): the store,
+    // Disk persistence (docs/verus/disk-persistence.md §3): the store,
     // set once by SetupInternal in disk builds (never in memory builds), and
     // read by the step wrappers under mtx_ and at shutdown.
     pub disk_: std::sync::OnceLock<std::sync::Arc<crate::disk::DiskShell>>,
@@ -1247,7 +1247,7 @@ impl RaftServerBase {
     pub fn RequestVoteFromElectionTimer(&self, expected_generation: u64)
         -> bool
     {
-        // Disk builds (plan P5): a restarted server campaigns only once its
+        // Disk builds (disk design §4): a restarted server campaigns only once its
         // state machine has re-applied what recovery found committed; Mako's
         // apply callback is chosen by role, and a leader's would not replay.
         if let Some(d) = self.disk() {
@@ -1354,7 +1354,7 @@ impl RaftServerBase {
             .load(rusty::sync::atomic::Ordering::Acquire)
     }
 
-    // Disk builds (plan P4): the worker's drain closes Raft's gate first, as
+    // Disk builds (disk design §3): the worker's drain closes Raft's gate first, as
     // PrepareForShutdown does, under mtx_. srpc's own admission flag is never
     // checked on dispatch, so without this a request arriving during the
     // drain is handled and its reply held for a flush, keeping the drain
@@ -2008,7 +2008,7 @@ impl RaftServerBase {
         }
 
         // Disk builds: the store opens before snapshot recovery, so a
-        // recovered snapshot image is the store that recovery loads (P8).
+        // recovered snapshot image is the store recovery loads (disk design §3).
         if cfg!(feature = "raft_disk") && !self.OpenDiskStore() {
             self.FailClosed();
             return false;
@@ -2095,9 +2095,9 @@ impl RaftServerBase {
         true
     }
 
-    // Disk builds (plan P3): opens or creates this server's store and starts
-    // its flusher. A recovered store is plan P5's; until then it fails
-    // closed with the reason, as every refusal here does.
+    // Disk builds (disk design §3-§4): opens or creates this server's store,
+    // taking over what recovery found, and starts its flusher. Every refusal
+    // fails closed with the reason.
     fn OpenDiskStore(&self) -> bool {
         let params = match crate::disk::DiskParams::from_env() {
             Ok(p) => p,
@@ -2140,7 +2140,7 @@ impl RaftServerBase {
             if r.state.snap_index == 0 {
                 return None;
             }
-            // Plan P8: the image the state names becomes the snapshot store
+            // Disk design §4: the image the state names becomes the snapshot store
             // recovery loads; snapshots off, or a missing or damaged image,
             // fails closed.
             if !unsafe { raft_env_snapshots_enabled() } {
@@ -2168,7 +2168,7 @@ impl RaftServerBase {
         true
     }
 
-    // Disk builds (plan P5): the recovered state enters the core as one
+    // Disk builds (disk design §3): the recovered state enters the core as one
     // event, after Configure and snapshot recovery, before EnterGates.
     fn RestoreDiskState(&self) -> bool {
         let Some(shell) = self.disk() else { return true };
@@ -2203,7 +2203,7 @@ impl RaftServerBase {
             return false;
         }
         shell.recovered_commit.store(hard.commit, std::sync::atomic::Ordering::Release);
-        // Plan P6's evidence: `recovered <term> <vote> <commit> <last> <d>`.
+        // Kill-test evidence: `recovered <term> <vote> <commit> <last> <d>`.
         shell.reveal(&format!("recovered {} {} {} {} {}", hard.term, hard.vote, hard.commit,
                               snap + n, r.d));
         eprintln!("[RAFT-DISK] Site {}: recovered {store}: {} records, term {}, vote {}, commit {}, snapshot {snap}, last {}",
@@ -3009,7 +3009,7 @@ impl RaftServerBase {
                 continue;
             }
 
-            // Disk builds (plan P4): a leader's apply tells Mako the entry is
+            // Disk builds (disk design §3): a leader's apply tells Mako the entry is
             // replicated, so the entry must be on this server's disk first; a
             // leader never cuts its log, so a durable last index at or above
             // id means it is. With two or more servers this never blocks (a
@@ -3217,7 +3217,7 @@ impl RaftServerBase {
         self.core().snapterm_ = snap_term;
         // Disk builds: the boundary moves and the log through it goes; the
         // entries after it stay. The image file first, then the record
-        // naming it (P8).
+        // naming it (disk design §3).
         if let Some(d) = self.disk() {
             // SAFETY: the server's own carrier, under mtx_.
             let image = unsafe {
@@ -3590,13 +3590,13 @@ impl RaftServerBase {
         if !campaign.started_ {
             return false;
         }
-        // Disk builds (plan P4): the vote requests carry term + 1 and imply
+        // Disk builds (disk design §3): the vote requests carry term + 1 and imply
         // the self-vote, so they leave only once the WAL holds both.
         if let Some(d) = self.disk() {
             if !d.wait_durable(disk_tail, 10_000, &|| self.stopped_now()) {
                 return false;
             }
-            // Plan P6's evidence: the requests show term + 1 and the self-vote.
+            // Kill-test evidence: the requests show term + 1 and the self-vote.
             d.reveal(&crate::disk::reveal_line("campaign", campaign.term_, Some(self.site_id_),
                                                None, None, disk_tail));
         }
@@ -4541,7 +4541,7 @@ impl RaftServerBase {
             }
             // [fix, F8] the install wrote the term, role and commit index
             self.publish_mirrors();
-            // Plan P6's evidence: the reply shows this server's term (or 0).
+            // Kill-test evidence: the reply shows this server's term (or 0).
             if let Some(d) = self.disk() {
                 d.park(("install", unsafe { *term_out }, None, None));
             }

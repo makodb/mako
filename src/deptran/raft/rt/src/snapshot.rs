@@ -279,7 +279,7 @@ pub unsafe extern "C" fn raft_snapshot_store_save(
 }
 
 // ---------------------------------------------------------------------------
-// Disk builds (docs/verus/disk-persistence-plan.md P8): the shell writes the
+// Disk builds (docs/verus/disk-persistence.md §3-§4): the shell writes the
 // latest image to a file, and recovery builds a store from a file's bytes.
 // ---------------------------------------------------------------------------
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""The Verus gate over the Raft core (docs/verus/disk-persistence-plan.md §4).
+"""The Verus gate over the Raft core (docs/verus/disk-persistence.md §8).
 
 verify_core.sh runs Verus with --output-json --time-expanded and hands the log
 here. The gate fails when:
@@ -153,7 +153,7 @@ def main(argv):
         header = ("# Functions Verus verifies in the Raft core (src/deptran/raft/core), from\n"
                   "# `verify_core.sh` with --output-json --time-expanded; the gate in\n"
                   "# scripts/verus/verus_gate.py fails if one goes missing or fails. A commit\n"
-                  "# that removes a name says why (docs/verus/disk-persistence-plan.md §4).\n")
+                  "# that removes a name says why (docs/verus/disk-persistence.md §8).\n")
         Path(argv[3]).write_text(header + "".join(f"{f}\n" for f in sorted(funcs)))
         print(f"verus_gate: wrote {len(funcs)} functions to {argv[3]}")
         return 0

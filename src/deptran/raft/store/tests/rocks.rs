@@ -1,4 +1,4 @@
-//! The RocksDB base (plan P7; `--features rocksdb`): batches with RocksDB's
+//! The RocksDB base (design §5; `--features rocksdb`): batches with RocksDB's
 //! WAL off, a waiting flush, reopening, range deletes; a missing base is
 //! refused, never created on an ordinary open.
 #![cfg(feature = "rocksdb")]

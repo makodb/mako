@@ -75,7 +75,7 @@ is_ancestor_pid() {
     return 1
 }
 
-# Raft disk mode (docs/verus/disk-persistence-plan.md P0): a tree configured
+# Raft disk mode (docs/verus/disk-persistence.md §8): a tree configured
 # with -DMAKO_RAFT_DISK=ON. Each run of a Raft suite in one gets a fresh,
 # locked store run directory on the local disk, MAKO_RAFT_CREATE=1 (every
 # launch in these suites creates its cluster) and MAKO_RAFT_DISK_VERIFY=1
@@ -508,8 +508,8 @@ run_raft_lab_test() {
     local generator="${CMAKE_GENERATOR:-Ninja}"
     local build_type="${CMAKE_BUILD_TYPE:-Release}"
     local lab_build_dir="${RAFT_LAB_BUILD_DIR:-${BUILD_DIR}_raftlab}"
-    # A disk-mode tree (-DMAKO_RAFT_DISK=ON, docs/verus/disk-persistence-plan.md
-    # P0) gets a disk-mode lab; the lab tree is named from BUILD_DIR, so only
+    # A disk-mode tree (-DMAKO_RAFT_DISK=ON, docs/verus/disk-persistence.md
+    # §8) gets a disk-mode lab; the lab tree is named from BUILD_DIR, so only
     # this cache read keeps a disk lab off the memory tree's lab, and back.
     local disk="OFF"
     if grep -qs '^MAKO_RAFT_DISK:BOOL=ON' "${BUILD_DIR}/CMakeCache.txt"; then
@@ -649,8 +649,8 @@ run_2shard_replication_simple_raft() {
     [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
 }
 
-# Raft disk persistence's process-kill tests (docs/verus/disk-persistence-plan.md
-# P6): three raft_kill_node replicas SIGKILLed and restarted onto their stores,
+# Raft disk persistence's process-kill tests (docs/verus/disk-persistence.md
+# §5, §8): three raft_kill_node replicas SIGKILLed and restarted onto their stores,
 # at random and at crash points, then checked (scripts/raft_kill/check.py).
 # Host only: a -DMAKO_RAFT_DISK=ON tree.
 run_raft_kill_test() {
@@ -667,7 +667,7 @@ run_raft_kill_test() {
 }
 
 # The 1-shard Raft test with p1's dbtest killed and relaunched onto its
-# store (disk plan P6). Needs a disk tree; host only.
+# store (disk design §8). Needs a disk tree; host only.
 run_1shard_replication_raft_restart() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard1ReplicationRaftRestart"

@@ -96,7 +96,7 @@ unsafe fn decode_reply<T: Deserialize + Default>(ptr: *const u8, len: usize)
 pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(120 * 1000);
 pub const CONNECT_SLEEP: Duration = Duration::from_millis(1000);
 
-/// Disk builds (plan P5; bugs-found B22): add_peer's first try lasts this
+/// Disk builds (disk design §3; bugs-found B22): add_peer's first try lasts this
 /// long (a refused connect returns at once; one to a black-holed address
 /// takes srpc's connect timeout, 5 s), then a dial thread takes the site and
 /// connects a fresh Client every DIAL_EVERY, so a node starts while a peer is
@@ -110,7 +110,7 @@ pub const MAJORITY_TIMEOUT: Duration = Duration::from_millis(120 * 1000);
 /// Empty, a send to the site fails at once, as after a close.
 type PeerSlot = Arc<OnceLock<Arc<Client>>>;
 
-/// Disk builds (docs/verus/disk-persistence-plan.md P5; bugs-found B21): a
+/// Disk builds (docs/verus/disk-persistence.md §3; bugs-found B21): a
 /// survivor re-dials a closed peer for good, from 50 ms doubling to 200 ms
 /// (25-300 ms with jitter), so a restarted replica is reached again before
 /// its first campaign (the shortest non-preferred election timeout is
@@ -335,7 +335,7 @@ impl RaftTransport {
     }
 
     /// Close admission and let the handlers already inside finish. Disk
-    /// builds close Raft's gate first (plan P4): srpc's admission flag is
+    /// builds close Raft's gate first (disk design §3): srpc's admission flag is
     /// not checked on dispatch, and a request handled now would hold its
     /// reply for a flush.
     pub fn drain(&self, timeout_ms: u64) -> bool {

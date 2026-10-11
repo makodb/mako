@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""raft_kill: process-kill tests for Raft disk mode (docs/verus/disk-persistence-plan.md P6).
+"""raft_kill: process-kill tests for Raft disk mode (docs/verus/disk-persistence.md §5, §8).
 
 Three raft_kill_node processes, one Raft replica each, on fresh stores in a
 locked run directory under /var/tmp/raft-wal-$USER (MAKO_RAFT_DATA_ROOT moves
@@ -363,7 +363,7 @@ def main():
     ap.add_argument("--keep", action="store_true")
     ap.add_argument("--seed", type=int)
     ap.add_argument("--snapshots", action="store_true",
-                    help="snapshot images (plan P8): callbacks on, a small interval")
+                    help="snapshot images (disk design §3): callbacks on, a small interval")
     args = ap.parse_args()
     seed = args.seed if args.seed is not None else random.randrange(1 << 30)
     random.seed(seed)

@@ -1,4 +1,4 @@
-//! The RocksDB base (design §5; plan P7), through `rocksdb/c.h`, which Mako
+//! The RocksDB base (design §5), through `rocksdb/c.h`, which Mako
 //! already links. One instance per server, one column family. Every batch
 //! is written with RocksDB's own WAL off -- legal exactly because the Raft
 //! WAL is the log above it -- so a batch is durable only after a waiting
@@ -79,7 +79,7 @@ unsafe impl Send for RocksBase {}
 impl RocksBase {
     /// Opens the base at `path`. `create`: make a new one (only inside a
     /// store being created); otherwise a missing or damaged base is an error,
-    /// never repaired or recreated (plan P7).
+    /// never repaired or recreated (design Decision 10).
     pub fn open(path: &Path, create: bool) -> io::Result<RocksBase> {
         let name = CString::new(path.to_string_lossy().as_bytes()).map_err(io::Error::other)?;
         // SAFETY: plain C API calls on handles created here.

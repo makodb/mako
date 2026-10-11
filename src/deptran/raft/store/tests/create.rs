@@ -1,4 +1,4 @@
-//! Store creation's decisions (2026-10-09 decision; plan P2, P5): only a
+//! Store creation's decisions (design Decision 10): only a
 //! creating launch starts empty; a crash while creating leaves nothing that
 //! blocks a creating relaunch; every refusal says why.
 

@@ -1,8 +1,8 @@
 //! A crash at every filesystem operation of a run (store creation, three
 //! segment rotations, mid-header and mid-batch included), under a process
 //! kill, a power cut and a torn power cut. The restart must recover a prefix
-//! of what was written that holds every batch the WAL acknowledged (plan P2),
-//! and a recovery that is itself interrupted must converge when rerun (P5).
+//! of what was written that holds every batch the WAL acknowledged (design
+//! §4), and a recovery that is itself interrupted must converge when rerun.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

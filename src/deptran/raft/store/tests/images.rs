@@ -1,4 +1,4 @@
-//! Snapshot image files (plan P8): written whole before they are named, a
+//! Snapshot image files (design §3): written whole before they are named, a
 //! damaged or mismatched one refused, a crash before the directory sync
 //! leaves no image, cleanup keeps the named one and newer.
 

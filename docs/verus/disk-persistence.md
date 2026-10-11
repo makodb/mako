@@ -1,10 +1,11 @@
 # Disk persistence for the Rust Raft: a design
 
-**Status.** Built on branch `raft-disk` (2026-10-09) as
-[disk-persistence-plan.md](disk-persistence-plan.md) records; a memory build
-is unchanged, and its Raft state stays memory-only
-([bugs-found.md](bugs-found.md) B6). The disk is simulated: tmpfs plus an
-injected delay per flush. Code is cited at `44d07a3ee`, under
+**Status.** Built (2026-10-09/10), behind the build switch
+`-DMAKO_RAFT_DISK=ON` (§5); §8 gives its settings, its store layout and its
+checks. A memory build is unchanged, and its Raft state stays memory-only
+([bugs-found.md](bugs-found.md) B6). Stores live on the local disk; an
+injected delay per flush can model a slower device (§5). Code is cited at
+`44d07a3ee`, before the build (new code is named by file), under
 `src/deptran/raft/` unless a path starts `src/mako/`, `src/srpc/`,
 `src/rocks_interface/`, `src/rusty-rustc/`, `docs/`, `ci/`, `examples/` or
 `CMakeLists.txt`. `rocksdb/c.h` is the RocksDB 9.11.2 header Mako builds
@@ -166,7 +167,7 @@ output's read set ("Needs on disk") without tracking reads.
 |---|---|---|---|
 | vote reply | poll, inline handler | term, vote | held until durable |
 | append reply (with or without entries) | poll, inline handler | term, vote, the log through the acknowledged index, commit | held until durable |
-| install reply, and making the staged image live | poll, inline handler | term, vote, the install's record (its file synced first), commit | blocks on the flusher's condition variable, apply gate held, `mtx_` released |
+| install reply | poll, inline handler | term, vote, the install's record (its image file synced first), commit | held until durable |
 | a campaign's vote requests | election fiber | term + 1, the self-vote | yields between `StartElection`'s section and the broadcast |
 | the leader's AppendEntries | heartbeat fiber | the entries sent, the commit they carry | yields between the tick's section and the sends |
 | a leader's apply | apply thread | that entry | blocks before Mako's apply callback |
@@ -176,21 +177,24 @@ output's read set ("Needs on disk") without tracking reads.
   the generated dispatch replies as the handler returns
   (`rt/src/rpc.rs:377-382`, `:476-492`). srpc's `DeferredReply`
   (`src/srpc/rpc/server.rs:443-522`) has the shape but not the type: no
-  Rust handler gets one, and it is not `Send` (`:145-150`, `:303`). So
-  `__dispatch__`, which owns the `Box<Request>` (`rt/src/service.rs:97-99`),
-  replies at once if the tail is durable, else keeps (request, connection,
-  reply, tail) on a held list only the poll thread touches.
+  Rust handler gets one, and it is not `Send` (`:145-150`, `:303`). So a
+  disk build generates a second dispatch, `dispatch_held`
+  (`scripts/rpcgen_rust.py`), which runs the handler and returns the reply
+  instead of sending it: the request's xid, the drain's pending guard, the
+  connection and the reply's serializer, all `Send`. `__dispatch__`
+  (`rt/src/service.rs`) sends it at once if the tail is durable, else hands
+  it to the store's held list (`HeldReplies`).
 - **The flusher wakes the waiters.** After publishing d it signals a
-  condition variable, for the threads that block, and queues one job on the
-  poll thread through a gate like `ReplicationWakeGate`
-  (`shell/server_h.rs:224`, `:2969`). The job sends the held replies now
-  durable and sets the `IntEvent`s the heartbeat and election fibers yield
-  on, as `WaitForReplicationOrHeartbeat` does (`:2993`).
-- **InstallSnapshot blocks**, inline, `mtx_` released: it holds the apply
-  gate, a C++ mutex, until the image is live (`shell/server_h.rs:4217-4220`),
-  and its zero-copy hand-off lasts one call (`rt/src/snapshot.rs:282-286`).
-  It is rare and slow anyway; the flusher never takes that gate or needs
-  the poll thread, so the wait ends.
+  condition variable, for the threads that block, sends the held replies
+  now durable, and posts a job to the fibers' thread that sets the
+  `IntEvent`s the heartbeat and election fibers wait on (`FiberWaiters`,
+  `shell/disk.rs`).
+- **InstallSnapshot does not block.** Under the apply gate and `mtx_`, its
+  handler makes the image live, writes and syncs the image file and queues
+  the record naming it (§4); its reply is held like the others. A crash
+  before the record is durable loses an install no output revealed: the
+  restart recovers the state before it, and the leader sends the snapshot
+  again.
 - **One exception.** The heartbeat tick sends InstallSnapshot under `mtx_`,
   before any wait (`shell/server_cc.rs:104-124`): safe, as the image is a
   committed prefix a majority holds on disk and the leader's term was
@@ -246,13 +250,14 @@ term 5 (record 11), the vote reply waits for 11: a crash between them loses
 only a vote that never left. Each output must be fixed in its own section,
 and records exact (Decision 4).
 
-**Snapshots: the file, then the record.** An image is written outside
-`mtx_`, to a file of its own (a temporary name, `fdatasync`, rename,
-`fsync` of the directory); only then does the snapshot path queue a record
-naming it, so a crash in between leaves the previous snapshot and the
-longer log. The applier drops the base's entries through S; an image is
-deleted once the base durably names a newer one. The WAL never waits for a
-snapshot. The latest image also stays in memory, for lagging followers.
+**Snapshots: the file, then the record.** An image is written to a
+checksummed file of its own (a temporary name, `fdatasync`, rename, `fsync`
+of the directory; `store/src/images.rs`), under `mtx_` on both snapshot
+paths; only then does the path queue a record naming it, so a crash in
+between leaves the previous snapshot and the longer log. The applier drops
+the base's entries through S; an image is deleted once the base durably
+names a newer one. The WAL never waits for a snapshot. The latest image
+also stays in memory, for lagging followers.
 
 **Visible before the flush**, none a send or reply. Mako reads the atomic
 copies (`publish_mirrors`, `shell/server_h.rs:1753`) to route and count its
@@ -274,8 +279,11 @@ candidate, missing the entry, win.
 (queue, segments, base, durable atomics, condition variable, wake gate) and
 nothing else, so neither can call `core()`, guarded only by the `mtx_`
 convention (`shell/server_h.rs:1299`). Both are joinable, like the apply thread
-(`:2627`), and stop after the poll thread stops producing records; held
-replies go before the RPC drain, which counts each (`raft_worker.cc:253`).
+(`:2627`), and stop after the poll thread stops producing records. The
+worker's drain first closes Raft's own gate (`CloseAdmissionForDrain`, as
+srpc ignores its admission flag: B23), then waits for the replies still
+owed; a held reply carries the drain's pending guard, so it counts until it
+leaves (`raft_worker.cc:253`).
 
 **Startup.** Recovery (§4) merges the base and the WAL into one state
 before `SetupInternal` (`shell/server_h.rs:1847-1972`), RPCs closed, and
@@ -292,7 +300,10 @@ from 1, `core/src/node.rs:317`) the shell steps a new core event,
 persist note, and fails closed on a state no step produces: a gap after S,
 an entry without a value or of term 0, terms that decrease, start below the
 snapshot's term or exceed the stored term, commit outside S to last, or a
-vote for a non-member.
+vote for a non-member. A disk build's transport (`rt/src/transport.rs`)
+keeps re-dialling a peer whose connection closed (B21) and starts once a
+majority of each partition is connected, dialling the rest in the
+background (B22); memory builds keep srpc's defaults.
 
 ## 4. The algorithm
 
@@ -310,7 +321,7 @@ fn step(ev, out) -> Reply
 { lock mtx_; r = step(..); run_locked_actions(out); tail = queue.last_seq }
 run_unlocked_actions(out)
 if durable_seq >= tail: reply or send r     // nothing leaves before this
-else if an RPC handler: held.push((req, conn, r, tail))   // poll thread
+else if an RPC handler: held.push((xid, guard, conn, r, tail))  // §3
 else: yield on the fiber's IntEvent until durable_seq >= tail; send r
 // A leader's apply of entry i waits on the condvar while i > durable_last.
 
@@ -322,10 +333,10 @@ loop
         batch.first.seq), fdatasynced; fsync the directory; close the old
     seg.write(bytes); seg.fdatasync(); sleep(delay)   // an error aborts
     publish durable_last, durable_commit, durable_seq = batch.last.seq
-    condvar.notify_all(); queue the wake job on the poll thread
+    condvar.notify_all(); send each held reply with tail <= durable_seq
+    post a job to the fibers' thread: set the IntEvent of each fiber
+        waiting with tail <= durable_seq
     applier.offer(bytes)                     // bounded; when full, drop it
-// The wake job: reply to each held entry with tail <= durable_seq; set
-// the heartbeat and election fibers' IntEvents.
 
 // The applier thread. Holds no Raft lock.
 loop
@@ -343,24 +354,22 @@ fn apply(wb, rec)                            // recovery's too
         if not keep: delete_range(S+1..)
     if rec.replace_from = i: delete_range(i..); put the entries from i
 
-// Taking a snapshot: the apply thread, holding the apply gate.
-S = applied index; image = create(S)         // Mako's callback
+// Taking a snapshot: the apply thread, holding the apply gate and mtx_.
+S = applied index; T = term of entry S; image = create(S)  // Mako's callback
+snapshot := (S, T); drop entries <= S
 f = write image to a new file; fdatasync; rename; fsync the directory
-lock mtx_: T = term of entry S; snapshot := (S, T); drop entries <= S;
-    queue.push(Record { snapshot: (S, T, f, keep: true) })  // no wait
+queue.push(Record { snapshot: (S, T, f, keep: true) })     // no wait
 
-// InstallSnapshot from the leader: the poll thread, inline. Blocks.
-f = write image to a new file; fdatasync; rename; fsync the directory
-lock apply gate                              // until the image is live
-{ lock mtx_; if term is newer: step ObserveTerm{term}   // a persist note
-  if not stale and (staged = prepare(image, S)) succeeds:
-      keep = (term of entry S == T); snapshot := (S, T); commit := S
-      keep or drop the log after S, as keep says
-  queue one record of the outcome; tail = queue.last_seq }
-wait on the condvar until durable_seq >= tail     // mtx_ released
-if staged: staged.Commit() (fail stop on error); publish applied = S
-else: delete f
-unlock apply gate; reply
+// InstallSnapshot from the leader: the poll thread, inline.
+lock apply gate; lock mtx_
+if term is newer: step ObserveTerm{term}      // a persist note
+if not stale and prepare(image, S), then Commit(), succeed:  // image live
+    keep = (term of entry S == T); snapshot := (S, T); commit := S
+    keep or drop the log after S, as keep says
+    f = write image to a new file; fdatasync; rename; fsync the directory
+    queue one record of the outcome; publish applied = S
+tail = queue.last_seq; unlock both
+hold the reply until durable_seq >= tail      // as every reply
 
 // Recovery: before SetupInternal, RPCs closed.
 fail closed unless the directory is on a local filesystem (not NFS)
@@ -453,7 +462,7 @@ base at each checkpoint is quadratic without snapshots.
   which `examples/run_rocksdb_test.sh:27` deletes whole and `ci/ci.sh:84` in
   part. The store opens only on a local filesystem type, so it can never land
   in the NFS home. Each run's directory is locked by its launcher, deleted at
-  exit, and swept by the next launcher if a kill left it behind (plan §1).
+  exit, and swept by the next launcher if a kill left it behind (§8).
 - **Cost.** On the local disk (`/var/tmp`, ext4) write plus `fdatasync`
   takes about 180 µs for 4 KiB and 1.6 ms for 1 MiB (p50, zoo-003,
   2026-10-09): a real sync, to which the injected delay, slept on the
@@ -496,7 +505,7 @@ in its sender's ghost log: so the leader flushes before it sends. And
 persist notes are exact, as follows.
 
 **`Restore` steps aside from a ghost log that replays to the restored
-state.** As built (P9), the premise is an existential -- some ghost log
+state.** As built, the premise is an existential -- some ghost log
 `prev` whose replay holds the restored term, vote, log and commit
 (`restore_prev_ok`) -- and the proof takes a chosen witness, so the shell
 passes no ghost argument; the lemma holds for every such `prev`. The
@@ -504,7 +513,7 @@ cluster composition across a restart needs the witness to be the previous
 run's prefix, which contains the sends other servers received: the trusted
 fact of [host-contract.md](host-contract.md) §1 item 5 says that prefix
 qualifies, and instantiating the lemma with it is the argument -- written
-down, not mechanized. (The plan's first form passed `prev` as a cfg'd ghost
+down, not mechanized. (A first design passed `prev` as a cfg'd ghost
 argument.) It sets the ghost log to
 `step_aside_log(prev)`, reusing the step-aside lemma, with the ghost match
 and next indexes of `replay(prev)` (`core/src/coupling.rs:278-298`); about
@@ -537,16 +546,16 @@ the base engine (a crash leaves a whole-batch prefix at or after the last
 waiting flush); the applier (durable records only, whole, in order, gapless,
 c in the same batch); segment deletion (after that flush, records at or
 below c); the merge at recovery; the images and Mako's two callbacks; the
-queue, held replies and waits; decoding; the abort on error. Once built,
-this changes §1 items 4-5 (item 5: "none persisted"), §3 and §6's closing
-paragraph of [host-contract.md](host-contract.md); B6 retires in disk mode.
+queue, held replies and waits; decoding; the abort on error.
+[host-contract.md](host-contract.md) §1 item 5 gives a disk build's trusted
+facts; B6 retires in disk mode.
 
 ## 7. Decisions
 
 | # | Decision | Recommended |
 |---|---|---|
 | 1 | Stay inside what the proof covers: commit saved, whole steps, exact persist notes, no send before its flush | Yes. The price: one flush on each side of a round that only announces a new commit, off the commit's latency path. |
-| 2 | Where the flush runs | A flusher thread, from the start: the 5 ms delay to sweep equals the 5 ms heartbeat (`server.h:169-173`). Replies are held, fibers yield, the apply thread and InstallSnapshot block (§3). |
+| 2 | Where the flush runs | A flusher thread, from the start: the 5 ms delay to sweep equals the 5 ms heartbeat (`server.h:169-173`). Replies are held, InstallSnapshot's too; fibers yield; the apply thread blocks (§3). |
 | 3 | Engine | WAL: our own Rust segments. Base: RocksDB through its C API, called from Rust, its WAL off, one column family, c in every batch, a waiting flush as the durability point. |
 | 4 | Who builds the persist note | The core, proved exact (or trusted, §6): it already knows where a cut begins (`first_write_index`). Not a before-and-after diff in the shell: a cut followed by an append of the same length leaves the log's length unchanged, so only an entry-by-entry scan under `mtx_` would find where the cut began. The two snapshot paths build theirs by hand; term and vote change only in core steps (`ObserveTerm` for the InstallSnapshot paths, §3). |
 | 5 | How far the apply thread may go | A leader's durable last index, free with two or more servers; a follower's apply is memory a restart rebuilds. The durable commit index only if Mako's acknowledgements must be inside the proof (one more flush per commit). |
@@ -562,3 +571,103 @@ paragraph of [host-contract.md](host-contract.md); B6 retires in disk mode.
 | 14 | A base error | Stop the applier, and so truncation: the WAL still holds every record. A WAL error aborts. |
 | 15 | How disk mode is chosen | A build switch, `-DMAKO_RAFT_DISK=ON` (the Cargo feature `raft_disk`). Off is today's memory-mode binary, the disk code compiled out; the core is the same in both. Environment variables only tune a disk build. |
 | 16 | How persistence is tested | By killing processes, each one Raft server with its RPC server, with SIGKILL at random and at crash points, some simulating a power cut, then restarting them; the recovered state must cover every output a node logged before sending it. Not in the lab. Cargo unit tests over in-memory backends check the same orders. |
+
+## 8. Settings, stores and checks
+
+**The switch.** `-DMAKO_RAFT_DISK=ON` turns on the Cargo feature `raft_disk`
+of the shell crate (`src/deptran/raft/Cargo.toml`; `rt/Cargo.toml` forwards
+it). The shell tests `cfg!(feature = "raft_disk")` in expressions, so both
+builds type-check the disk path; `#[cfg]` marks only items that disk builds
+alone have. The core has no feature.
+
+**Settings**, read at startup (`DiskParams::from_env` in `shell/disk.rs`
+reads the first six and refuses a malformed value):
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `MAKO_RAFT_DATA_DIR` | the directory holding the stores; must be on a local filesystem | `/var/tmp/raft-wal-${USER}` |
+| `MAKO_RAFT_FLUSH_DELAY_US` | a sleep after each `fdatasync`, to model a slower device | 0 |
+| `MAKO_RAFT_SEGMENT_BYTES` | the WAL segment size, at least 4096 | 64 MiB |
+| `MAKO_RAFT_CHECKPOINT_BYTES`, `_SECS` | the applier's checkpoint thresholds; the bytes must exceed the segment size (Decision 13) | 256 MiB, 10 |
+| `MAKO_RAFT_CREATE` | `1`: this launch creates the cluster, so a missing store is made (Decision 10) | unset |
+| `MAKO_RAFT_DISK_VERIFY` | `1`: at a clean stop, replay the WAL and compare it with the core (`[DISK-VERIFY]`) | unset |
+| `MAKO_RAFT_DISK_STATS` | `1`: the store's counters for flushes, held replies and wakes (`store/src/stats.rs`) | unset |
+| `MAKO_RAFT_CRASH` | `<point>[:<n>][:powercut]`: kill the process at the n-th pass of a named crash point, first undoing what no sync covered if `powercut` (`store/src/crash.rs`) | unset |
+| `MAKO_RAFT_KILLTEST_DIR` | where each server writes the kill test's evidence lines | unset |
+
+**Stores.** One per server, `<site>-<partition>/` in `MAKO_RAFT_DATA_DIR`.
+Launchers give every run a directory of its own through
+`scripts/raft_disk/store_dir.sh` (sourced; `scripts/raft_kill/run.py` has
+its Python twin), under `MAKO_RAFT_DATA_ROOT` (default
+`/var/tmp/raft-wal-${USER}`):
+```
+run-<label>.XXXXXX/              the launcher's run directory: MAKO_RAFT_DATA_DIR
+  RUN.lock                       flock()ed by the launcher and its servers
+  <site>-<partition>/
+    LOCK                         flock()ed: a second opener fails closed
+    wal/<first seq>.seg          20 digits
+    base/                        RocksDB
+    images/<S>-<T>.img           snapshot images; .tmp while written
+  <site>-<partition>.creating/   only while being created; never opened
+```
+A launcher first sweeps the run directories whose `RUN.lock` no process
+holds (the lock dies with the last process holding it, so a killed run's
+directory goes to the next sweep), refuses to start with under 8 GB free,
+and deletes its own directory at exit; `ci/ci.sh`'s cleanup sweeps too. A
+launcher sets `MAKO_RAFT_CREATE=1` on each server's first launch in a run.
+Recovery fails closed on a store it cannot trust (§4), and nothing repairs
+one: wiping it makes the server forget its vote and log, which Raft
+forbids, so an operator decides, to wipe it and rejoin as a new member or
+to restore the files.
+
+**Checks.**
+- `cargo test --release -p raft-core -p raft-replay -p raft-store` in
+  `src/deptran/raft` (the build runs them as `raft_core_test` and
+  `raft_store_test`): the core's new events (`core/tests/persist_note.rs`,
+  `observe_term.rs`, `restore.rs`), and the store's crash orders on
+  backends that drop what no sync covered (`MemFs`, an in-memory base).
+- The process-kill tests (§5, "Tests kill processes"):
+  `BUILD_DIR=<disk tree> ./ci/ci.sh raftKillTest` runs
+  `scripts/raft_kill/run.py` over three `raft_kill_node` replicas
+  (`scripts/raft_kill/raft_kill_node.cc`), and `check.py` checks each run;
+  the scripts' docstrings list the scenarios and the nine checks. Under
+  `MAKO_RAFT_KILLTEST_DIR` each output writes what it shows just before it
+  leaves (its tail, and the term, vote, commit or acknowledged index it
+  carries) and each recovery what it restored; check 9 requires every
+  recovered state to cover what was shown before it, which tests the WAL
+  rule itself.
+- `ci/ci.sh shard1ReplicationRaftRestart`: Mako's one-shard replication test
+  with p1's `dbtest` killed mid-run and relaunched onto its store
+  (`MAKO_RAFT_RESTART_P1=1`).
+- The lab and the replication suites run in disk builds as regression
+  checks (`scripts/verus/tier1.sh PHASE rustdisk`); no restart enters the
+  lab. In a disk tree, `ci/ci.sh` gives each run a fresh run directory with
+  `MAKO_RAFT_CREATE=1` and `MAKO_RAFT_DISK_VERIFY=1`.
+
+**What stays verified.** `scripts/verus/core_check.sh` runs clippy with and
+without `raft_disk`, the ledger lint, the correspondence check and Verus. A
+function Verus verifies stays verified: `scripts/verus/verus_gate.py` fails
+when a name in `scripts/verus/verified_functions.txt` is missing from
+Verus's output or failed, and a commit that removes a name says why. The
+trusted list (`scripts/verus/core_trusted.txt`) only shrinks, and the gate
+finds trust however it is spelled (B26). New core code (the persist note,
+`ObserveTerm`, `Restore`, `lemma_restore_ginv`) is verified, not trusted.
+The shell, `rt/` and `store/` stay outside the proof; the kill tests are
+their evidence.
+
+**Performance.** With the switch off, a build differs from one without disk
+mode only in the core: each step copies term, vote and commit before its
+match and compares them after, and the log's writers lower a mark, about
+ten instructions a step; `ObserveTerm` replaces direct writes only on the
+InstallSnapshot paths. Everything else tests `cfg!(feature = "raft_disk")`,
+a constant the compiler folds, or exists in disk builds alone; `raft-store`
+is linked but not called. Memory mode is gated against the build before
+disk mode with `scripts/verus/gate_point.sh` (bounds in
+[gate-params.md](gate-params.md)). Disk mode's cost model is
+`scripts/raft_disk/model.py`, whose docstring derives it: its primitives
+come from `scripts/raft_disk/params.rs` and the rest of a round from a
+memory build's trace, never from a disk run. `scripts/raft_disk/measure.py`
+runs a memory and a disk build in paired rounds and compares each disk
+measurement with its estimate; a miss of more than a quarter of the
+estimate means a term is wrong, to be found with the trace kit
+(`raft_trace_through`) before code changes.

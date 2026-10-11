@@ -1,4 +1,4 @@
-//! The local-filesystem check (plan P2): mountinfo samples give the right
+//! The local-filesystem check (design §5): mountinfo samples give the right
 //! verdict, and this host's data directories do too.
 
 use std::path::Path;

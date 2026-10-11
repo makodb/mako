@@ -106,7 +106,7 @@ pub enum Event<'a, C, W> {
     SetFollower { stopped: bool, failover: bool },
     StepDown { stopped: bool, failover: bool },
 
-    // ---- Disk persistence (docs/verus/disk-persistence-plan.md P1) ----
+    // ---- Disk persistence (docs/verus/disk-persistence.md §3) ----
     // [fix, F20] A newer term seen outside a modeled message (InstallSnapshot
     // and its reply): raised, the vote cleared, and the server steps down.
     ObserveTerm { term: u64, stopped: bool, failover: bool },
@@ -573,7 +573,7 @@ impl<C: Clone> RaftCore<C> {
                 let ghost rev = entries_rev@;
                 let ok: bool = self.restore(term, vote, commit, entries_rev, out);  // [fix, F22]
                 proof {
-                    // [M12] (disk plan P9) taken: a previous ghost log the
+                    // [M12] (disk design §6) taken: a previous ghost log the
                     // premise provides, stepped aside; refused: nothing moved
                     let log = crate::coupling::restore_log(rev);
                     if ok && pre.ginv() && crate::coupling::restore_premise(&pre, term, vote, commit, rev) {

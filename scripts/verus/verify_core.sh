@@ -4,7 +4,7 @@
 # Verus over the Raft core crate (src/deptran/raft/core, plan Phase 6) with
 # the pinned binary ($VERUS_PIN, docs/verus/modification-plan.md §0.3). The
 # run uses --output-json --time-expanded, and scripts/verus/verus_gate.py
-# decides (docs/verus/disk-persistence-plan.md §4): it exits 1 on any
+# decides (docs/verus/disk-persistence.md §8): it exits 1 on any
 # verification error, if a function named in
 # scripts/verus/verified_functions.txt is missing or failed, or if the core
 # trusts anything (the spellings are in verus_gate.py's docstring) not listed

@@ -1,6 +1,6 @@
-//! The saved state a replay of records folds into (plan P5's
-//! `SavedState::apply`, shared by recovery, the shutdown verify and, in P7,
-//! the applier).
+//! The saved state a replay of records folds into (design §4's `apply`:
+//! `SavedState::apply`, shared by recovery, the shutdown verify and the
+//! applier).
 
 use crate::record::{Hard, Record};
 

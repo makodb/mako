@@ -1,4 +1,4 @@
-// [fix, F21] The persist note (docs/verus/disk-persistence-plan.md P1): every
+// [fix, F21] The persist note (docs/verus/disk-persistence.md §3): every
 // step's note, applied to the saved state before it, gives the saved state
 // after it, through elections, proposals, appends with conflicts, votes and
 // commits; a step that changes nothing saved leaves none.

@@ -4,7 +4,7 @@
 //! page cache (what a killed process leaves) apart from what was synced (what
 //! a power cut leaves), and directory entries apart from the directory syncs
 //! that make them durable. Both keep a ledger of what a power cut would undo:
-//! `RealFs` so a crash point can simulate one on a real disk (plan P2, P6).
+//! `RealFs` so a crash point can simulate one on a real disk (design §5).
 
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File, OpenOptions};

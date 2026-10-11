@@ -1,4 +1,4 @@
-// [fix, F20] ObserveTerm (docs/verus/disk-persistence-plan.md P1): a newer
+// [fix, F20] ObserveTerm (docs/verus/disk-persistence.md §3): a newer
 // term raises the term, clears the vote, drops the role and ends a campaign,
 // with a persist note; an equal or older one changes nothing.
 

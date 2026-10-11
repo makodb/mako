@@ -318,7 +318,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
-# Raft disk mode (docs/verus/disk-persistence-plan.md P0): a -DMAKO_RAFT_DISK=ON
+# Raft disk mode (docs/verus/disk-persistence.md §8): a -DMAKO_RAFT_DISK=ON
 # tree gets a fresh, locked store run directory on the local disk, each
 # replica creates its store (MAKO_RAFT_CREATE=1), and the directory goes when
 # this script exits; a run killed outright is swept by the next launcher.

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measures disk mode against the cost model (docs/verus/disk-persistence-plan.md §5).
+"""Measures disk mode against the cost model (scripts/raft_disk/model.py).
 
 Paired rounds of a memory build and a disk build at one gate point
 (scripts/raft_perf/rotation_trial.sh, alternating arms), with the injected

@@ -1,9 +1,9 @@
-# raft-store: the Rust Raft's on-disk store (docs/verus/disk-persistence.md,
-# plan P2). The write-ahead log (WAL), its crash points, the saved state a
+# raft-store: the Rust Raft's on-disk store (docs/verus/disk-persistence.md
+# §3-§5). The write-ahead log (WAL), its crash points, the saved state a
 # replay folds, the record queue and the flusher thread.
 #
 # std only (no `rusty`, no kernel) except the RocksDB base behind the
-# `rocksdb` feature (plan P7), which binds RocksDB's C API; its tests are plain
+# `rocksdb` feature (design §5), which binds RocksDB's C API; its tests are plain
 # `cargo test` either way. The shell (shell/disk.rs) supplies the payload
 # codec; everything here is generic over the payload type.
 [package]
@@ -17,7 +17,7 @@ name = "raft_store"
 path = "src/lib.rs"
 
 [features]
-# The RocksDB base (plan P7): links librocksdb, which the Raft binaries link
+# The RocksDB base (design §5): links librocksdb, which the Raft binaries link
 # already. Off, the crate is std only and its tests need no C++.
 rocksdb = []
 

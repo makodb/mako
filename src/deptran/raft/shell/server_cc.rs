@@ -123,7 +123,7 @@ pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
             }
             i += 1;
         }
-        // Disk builds (plan P4): nothing this section produced leaves before
+        // Disk builds (disk design §3): nothing this section produced leaves before
         // the WAL holds every record queued so far, the entries sent and the
         // commit they carry included. The InstallSnapshot above is the one
         // exception (design §3): its image is a committed prefix.
@@ -143,7 +143,7 @@ pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
         if !d.wait_durable(disk_tail, 10_000, &|| server.stopped_now()) {
             return tick;
         }
-        // Plan P6's evidence: what the sends below show (term, commit).
+        // Kill-test evidence: what the sends below show (term, commit).
         if d.reveals.is_some() {
             let commit: u64 = tick.sends_.iter().map(|s| s.commit_index_).max().unwrap_or(0);
             d.reveal(&crate::disk::reveal_line("append", tick.sends_[0].term_, None,

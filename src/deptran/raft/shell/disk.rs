@@ -1,5 +1,5 @@
-// Raft disk persistence, the shell's half (docs/verus/disk-persistence.md §3;
-// docs/verus/disk-persistence-plan.md P3-P5).
+// Raft disk persistence, the shell's half (docs/verus/disk-persistence.md
+// §3-§4, its settings §8).
 //
 // Compiled in every build and used only in disk builds: the server holds a
 // DiskShell only when `cfg!(feature = "raft_disk")` (a constant the compiler
@@ -82,7 +82,7 @@ impl Codec<Payload> for ShellCodec {
     }
 }
 
-/// The disk build's settings, from the environment (plan §1).
+/// The disk build's settings, from the environment (disk design §8).
 #[derive(Clone, Debug)]
 pub struct DiskParams {
     pub data_dir: PathBuf,
@@ -90,7 +90,7 @@ pub struct DiskParams {
     pub segment_bytes: u64,
     pub create: bool,
     pub verify: bool,
-    /// The applier's checkpoint thresholds (plan P7; design Decision 13).
+    /// The applier's checkpoint thresholds (design §3, Decision 13).
     pub checkpoint_bytes: u64,
     pub checkpoint_secs: u64,
 }
@@ -208,7 +208,7 @@ impl FiberWaiters {
     }
 }
 
-/// The base every disk build keeps (plan P7): RocksDB, at `<store>/base`.
+/// The base every disk build keeps (design §3, §5): RocksDB, at `<store>/base`.
 #[cfg(feature = "raft_disk")]
 fn base_factory() -> Option<Box<BaseFactory>> {
     Some(Box::new(|p: &Path, create: bool| {
@@ -221,7 +221,7 @@ fn base_factory() -> Option<Box<BaseFactory>> {
     None
 }
 
-/// What recovery found, for the shell's Restore (P5).
+/// What recovery found, for the shell's Restore (design §3-§4).
 pub struct Recovered {
     pub state: SavedState<Payload>,
     pub d: u64,
@@ -233,7 +233,7 @@ pub struct Recovered {
 pub struct DiskShell {
     pub queue: Arc<RecordQueue<Payload>>,
     pub durable: Arc<DurableState>,
-    /// Replies waiting for their records (plan P4); the flusher sends them.
+    /// Replies waiting for their records (design §3); the flusher sends them.
     pub held: Arc<HeldReplies>,
     /// Fibers waiting for their records (the tick, the campaign).
     waiters: Arc<FiberWaiters>,
@@ -243,14 +243,14 @@ pub struct DiskShell {
     pub params: DiskParams,
     pub id: Identity,
     /// The commit index recovery restored (0 for a new store): no campaign
-    /// starts until the state machine has re-applied through it (plan P5),
+    /// starts until the state machine has re-applied through it (design §4),
     /// as Mako's apply callback is chosen by role.
     pub recovered_commit: std::sync::atomic::AtomicU64,
     recovered: Mutex<Option<Recovered>>,
     /// The filesystem the store goes through (registered for `:powercut`
     /// crash points, so image writes are undone with the WAL's).
     fs: Arc<dyn StoreFs>,
-    /// MAKO_RAFT_KILLTEST_DIR (plan P6): `<dir>/<site>.reveal`, where each
+    /// MAKO_RAFT_KILLTEST_DIR (design §8): `<dir>/<site>.reveal`, where each
     /// output that leaves writes what it shows just before it leaves, and
     /// recovery writes what it restored; scripts/raft_kill/check.py
     /// requires every `recovered` line to cover the reveals before it.
@@ -520,7 +520,7 @@ unsafe extern "C" fn write_image_emit(ctx: *mut core::ffi::c_void, index: u64, t
 }
 
 impl DiskShell {
-    /// Plan P8: the snapshot store's latest image, written durably to
+    /// Design §3: the snapshot store's latest image, written durably to
     /// `<store>/images` before the record naming it is queued. An I/O error
     /// aborts, as a WAL error does (design Decision 14).
     ///
@@ -544,7 +544,7 @@ impl DiskShell {
         }
     }
 
-    /// Plan P8: a snapshot store holding the recovered image, for Setup's
+    /// Design §4: a snapshot store holding the recovered image, for Setup's
     /// snapshot recovery to load (it keeps an injected store).
     pub fn image_store(&self, index: u64, term: u64, name: &str) -> Result<rusty::RaftSnapshotManagerPtr, String> {
         let bytes = raft_store::images::read(&*self.fs, &self.store.join("images"), name)?;

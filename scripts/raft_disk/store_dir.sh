@@ -1,5 +1,5 @@
-# Run directories for Raft disk-mode stores (docs/verus/disk-persistence-plan.md
-# §1, "Run directories"). Source it, then:
+# Run directories for Raft disk-mode stores (docs/verus/disk-persistence.md
+# §8, "Stores"). Source it, then:
 #
 #   raft_store_make_run <label>    sweep, make and lock a fresh run directory,
 #                                  export MAKO_RAFT_DATA_DIR to it

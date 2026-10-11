@@ -1,4 +1,4 @@
-//! The applier thread (design §3-§4 "The base and the applier"; plan P7).
+//! The applier thread (design §3-§4 "The base and the applier").
 //!
 //! The flusher offers each synced batch (its first number and encoded
 //! records) on a bounded queue and drops it when the queue is full; the
@@ -160,7 +160,7 @@ impl State {
         if !doomed.is_empty() {
             self.fs.sync_dir(&self.wal_dir).map_err(|e| e.to_string())?;
         }
-        // Images older than the one the base now durably names (plan P8).
+        // Images older than the one the base now durably names (design §3).
         if let Some(images) = self.wal_dir.parent().map(|p| p.join("images")) {
             if let Some(b) = self.base.get(crate::base::KEY_SNAP).map_err(|e| e.to_string())? {
                 if b.len() >= 8 && self.fs.exists(&images) {

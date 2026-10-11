@@ -1,4 +1,4 @@
-//! The base and the applier (plan P7): with checkpoints deleting segments,
+//! The base and the applier (design §3): with checkpoints deleting segments,
 //! with a one-slot offer queue (catch-up reads), and with failures injected
 //! into the base and the filesystem, a recovery is always the fold of
 //! records 1..=d with d covering every published record, and the WAL stays

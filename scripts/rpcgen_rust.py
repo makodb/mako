@@ -579,7 +579,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("}")
     w("")
 
-    # Disk builds (docs/verus/disk-persistence-plan.md P4): the same routing,
+    # Disk builds (docs/verus/disk-persistence.md §3): the same routing,
     # but the reply comes back to the caller instead of going out, so it can
     # wait until the WAL holds what the handler changed. The request itself
     # is not Send (its BufferSource is a raw pointer); the reply needs only

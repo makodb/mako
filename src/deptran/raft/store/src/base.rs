@@ -1,5 +1,5 @@
 //! The base: the saved state as of WAL record c (design §3 "The base and the
-//! applier", §5; plan P7).
+//! applier", §5).
 //!
 //! The applier folds durable records into it in one atomic batch each, c
 //! included, so the base is always the replay of records 1..=c. A checkpoint

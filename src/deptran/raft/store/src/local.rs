@@ -1,4 +1,4 @@
-//! The local-filesystem check (2026-10-09 decision; plan P2).
+//! The local-filesystem check (design §5 "Where", Decision 17).
 //!
 //! A store opens only on a filesystem type in [`LOCAL_TYPES`]. The mount
 //! holding the data directory is found in `/proc/self/mountinfo` (std only:

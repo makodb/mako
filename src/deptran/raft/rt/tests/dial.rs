@@ -1,4 +1,4 @@
-//! Disk builds (plan P5, bugs-found B22): a node starts while a peer is down.
+//! Disk builds (disk design §3, bugs-found B22): a node starts while a peer is down.
 //! add_peer leaves an unreachable site to a dial thread, a majority suffices
 //! to start, and the site's slot fills once the peer comes up.
 #![cfg(feature = "raft_disk")]

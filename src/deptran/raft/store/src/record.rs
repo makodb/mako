@@ -18,8 +18,8 @@ pub struct Hard {
 
 /// A snapshot at index `index` of term `term`. `keep`: the entries after
 /// `index` were kept (the local entry `index` had term `term`); otherwise
-/// the whole log was dropped. `image` names the image file (P8); `None`
-/// while snapshots are memory-only.
+/// the whole log was dropped. `image` names the image file (design §3);
+/// `None` if no image was written, a state recovery refuses.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapRef {
     pub index: u64,
@@ -61,7 +61,7 @@ impl<P> Record<P> {
 }
 
 /// Encodes and decodes an entry's payload. The shell's codec writes a Raft
-/// command with the existing codec kernels (plan P3).
+/// command with the existing codec kernels (design §5).
 pub trait Codec<P>: Send + Sync {
     fn encode(&self, p: &P, out: &mut Vec<u8>);
     fn decode(&self, bytes: &[u8]) -> Result<P, String>;

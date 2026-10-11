@@ -94,14 +94,14 @@ impl Service for RaftRpcService {
     }
 
     fn __dispatch__(&self, rpc_id: i32, req: Box<Request>, sconn: WeakServerConnection) {
-        // Disk builds (docs/verus/disk-persistence-plan.md P4): the handler
+        // Disk builds (docs/verus/disk-persistence.md §3): the handler
         // runs now and its reply waits until the WAL is durable through the
         // last record queued after it (an upper bound on its own section's
         // tail); the flusher sends it then, or it goes at once if already
         // durable. A memory build replies as the handler returns.
         if cfg!(feature = "raft_disk") {
             if let Some(disk) = self.server().disk() {
-                // Plan P6's evidence: what the core's answer shows, parked by
+                // Kill-test evidence: what the core's answer shows, parked by
                 // the shell's handler on this thread (raft::disk::Parked).
                 raft::disk::take_parked();
                 if let Some(reply) = rpc::dispatch_held(self, rpc_id, req, sconn) {

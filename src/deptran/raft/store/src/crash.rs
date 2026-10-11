@@ -1,4 +1,4 @@
-//! Named crash points (plan P2, P6).
+//! Named crash points (design §5 "Tests kill processes", §8).
 //!
 //! `MAKO_RAFT_CRASH=<point>[:<n>][:powercut]` arms one point: its n-th pass
 //! (default the first) prints `crash <point>` to stderr and SIGKILLs the

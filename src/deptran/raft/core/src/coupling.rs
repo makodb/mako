@@ -461,7 +461,7 @@ pub open spec fn view_frame<C>(pre: &RaftCore<C>, post: &RaftCore<C>) -> bool {
 }
 
 // ===========================================================================
-// Restore ([fix, F22], disk plan P9): a restart resumes from the previous
+// Restore ([fix, F22], disk design §6): a restart resumes from the previous
 // run's ghost log `prev`, as a step aside
 // ===========================================================================
 
@@ -2684,7 +2684,7 @@ impl<C> RaftCore<C> {
             // [fix, F20] uncoupled: ObserveTerm's term comes in no modeled
             // message
             Event::ObserveTerm { .. } => false,
-            // [fix, F22] (disk plan P9) a restart (restore_premise)
+            // [fix, F22] (disk design §6) a restart (restore_premise)
             Event::Restore { term, vote, commit, entries_rev } =>
                 restore_premise(self, term, vote, commit, entries_rev@),
             _ => true,

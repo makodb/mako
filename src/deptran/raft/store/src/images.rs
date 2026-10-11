@@ -1,5 +1,5 @@
 //! Snapshot images as files (design §3 "Snapshots: the file, then the
-//! record"; plan P8).
+//! record").
 //!
 //! An image is written to `<S>-<T>.img.tmp`, synced, renamed to `<S>-<T>.img`
 //! and its directory synced; only then is the record that names it queued,

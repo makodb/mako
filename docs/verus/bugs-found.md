@@ -24,7 +24,7 @@ effect). "Latent" means nothing in production reaches it today.
 | B3 | robustness | Vote replies are counted by number, so a duplicated reply counts twice | read in code; whether srpc can duplicate is open | Rust lane: fixed by F1 in `b75f285e2` (Phase 1); C++ lanes: by the core's own count (Phase 3) |
 | B4 | robustness | Decoded AppendEntries entry terms are never checked (0, negative, above the leader's term) | read in code | 0 and negative: fixed by F4 in `a38c5012e` (Phase 1); above the leader's term: fixed by F14 in `21c287832` (2026-10-06) |
 | B5 | latent | Phase 1 sends with the round's term and never re-checks leadership under the lock that builds the message; the Rust send kernel ignores its `is_leader` argument | read in code; not reachable today | fixed by F3 in `372b73e6f` (Phase 1) |
-| B6 | safety (assumed away) | Raft state is memory-only: a replica restarted under its old id can vote twice in a term, and a majority restart loses committed entries | read in code (plan §4.4.2) | memory builds: v1 trusted assumption; disk builds (`-DMAKO_RAFT_DISK=ON`, 2026-10-09): fixed by the WAL, the base and `Restore` (disk plan P0-P9), restarts proved as a step aside under host-contract §1 item 5 |
+| B6 | safety (assumed away) | Raft state is memory-only: a replica restarted under its old id can vote twice in a term, and a majority restart loses committed entries | read in code (plan §4.4.2) | memory builds: v1 trusted assumption; disk builds (`-DMAKO_RAFT_DISK=ON`, 2026-10-09): fixed by the WAL, the base and `Restore` ([disk-persistence.md](disk-persistence.md)), restarts proved as a step aside under host-contract §1 item 5 |
 | B7 | metric | `get_outstanding_logs` subtracts the global commit index from a per-node submission count | read in code | fixed by F18 in `cd46bbf20` (2026-10-06) |
 | B8 | dead code | `setIsLeader`'s "stale leadership publication" check compares `current_term_` with a copy of itself, so its term half never fires | read in code | fixed by F16 in `cd46bbf20` (2026-10-06): the check removed |
 | B9 | test infra | `ci.sh`'s `cleanup_processes` kill -9s every same-user process named `dbtest`, `simpleTransactionRep`, ... and deletes the shared `/tmp/$USER_mako_rocksdb_shard*`, so a suite in one worktree kills tests running in another | read in code | worked around: `scripts/verus/tier1.sh` waits until no such process runs outside this worktree |
@@ -38,17 +38,17 @@ effect). "Latent" means nothing in production reaches it today.
 | B17 | safety (latent race) | The round end (PHASE 3) advances the commit index without checking that this server still leads: `heartbeat_round_end_body` reads `IsLeader()` before taking `mtx_`, and `heartbeat_phase3_locked` calls `raft_commit_advance` whatever `is_leader` is. A server that lost leadership in that window, and meanwhile took a newer leader's entries over its tail, counts its old term's match indices against an entry of the new term. In production the Rust lane's threading keeps the window closed; the lab's direct handler calls can open it (Reachability, corrected 2026-10-04) | reproduced at the core: `core/tests/b17_round_end.rs` (Phase 8) | fixed by F12 in `a586a7f51` (2026-10-06): the round end advances only while the core leads |
 | B18 | proof coverage | Shutdown clears `looping_`, so `IsLeaderLocked()` reads false while the core still leads: a leader's `RecvAppendReply` or `RoundEnd` stepped after `PrepareForShutdown` (or `FailStop`) breaks its coupling premise (`is_leader` is the core's role). The core does nothing wrong then (a reply is ignored unless its term steps the core down; the round end commits as the leader the core still is and confirms no read authority), but the step is outside the certificate | read in code (while writing `code-structure.md`) | fixed with F12 in `a586a7f51` (2026-10-06): both premises weakened, ghost only |
 | B19 | race | Every thread and fiber that enters the shell through a raw pointer makes its own `&mut RaftServerBase`, and some hold it long: the apply thread for its whole life, the heartbeat driver across every wait, each RPC handler through `RaftRpcService::server(&self) -> &mut`. These `&mut` alias across threads, which is undefined behaviour in Rust's model whatever lock or atomic guards the fields | read in code (while writing `code-structure.md` §7) | fixed by F19 in `74dab7c9a` (2026-10-06): every entry takes `&RaftServerBase` |
-| B21 | liveness | When a peer's connection closes, the survivors re-dial it once and then 5 more times, over 15.5-46.5 s, and never again: the transport keeps srpc's default reconnect policy and nothing in Raft re-dials. A replica restarted after that is never sent to, and each of its campaigns deposes the leader | read in code at `a4b1eaa02` (2026-10-08, while mapping [disk-persistence-plan.md](disk-persistence-plan.md)) | fixed in disk builds (`DISK_RECONNECT`, 2026-10-09); open in memory builds by decision |
+| B21 | liveness | When a peer's connection closes, the survivors re-dial it once and then 5 more times, over 15.5-46.5 s, and never again: the transport keeps srpc's default reconnect policy and nothing in Raft re-dials. A replica restarted after that is never sent to, and each of its campaigns deposes the leader | read in code at `a4b1eaa02` (2026-10-08, while planning disk persistence) | fixed in disk builds (`DISK_RECONNECT`, 2026-10-09); open in memory builds by decision |
 | B22 | liveness | A Raft process cannot start while any configured site is down: `ConnectPeers` dials every site for 120 s and aborts on the first that never accepts, though Raft needs only a majority | read in code at `a4b1eaa02` (2026-10-08, as B21) | fixed in disk builds (a majority start, 2026-10-10); open in memory builds by decision |
 | B23 | race (latent) | srpc never reads its admission flag on dispatch, so `set_admission_ready(false)` refuses nothing: the shutdown drain does not keep new requests out | read in code at `a4b1eaa02` (2026-10-08, as B21) | worked around in disk builds (`CloseAdmissionForDrain`, 2026-10-10); open in srpc |
 | B24 | robustness | `ParseEnvUint64OrDefault` accepts `-1` (`strtoull` wraps it to 2^64-1) for five Raft knobs; `MAKO_RAFT_APPEND_BATCH_MAX_BYTES=-1` removes the batch byte bound | read in code; `strtoull` checked through ctypes | open |
 | B25 | liveness (latent) | A Mako follower handling a no-op waits for `noops_phase_<i>` for every thread index, but only shard indices are written: with more threads than shards it spins forever | read in code | open; no Raft path logs a no-op |
-| B26 | proof coverage (latent) | `verify_core.sh` counts trust only as `#[verifier::external_body]` with a lower-case `fn` name within four lines, so `assume`, `#[verifier::external]` or a capitalised name would add trust silently | read in code; none exists today | fix planned (disk plan P0) |
-| B27 | test infra | CMake's cargo rule omits `replay/` from its inputs although `raft` depends on `raft-replay`, so an edit there does not rebuild `libraft.a` | read in code | fixed by the disk plan's P0 |
+| B26 | proof coverage (latent) | `verify_core.sh` counts trust only as `#[verifier::external_body]` with a lower-case `fn` name within four lines, so `assume`, `#[verifier::external]` or a capitalised name would add trust silently | read in code; none exists today | fixed (2026-10-09): `verus_gate.py` sees every form, and verified functions must stay verified |
+| B27 | test infra | CMake's cargo rule omits `replay/` from its inputs although `raft` depends on `raft-replay`, so an edit there does not rebuild `libraft.a` | read in code | fixed (2026-10-09) |
 | B28 | doc | `replay/src/lib.rs:6` documents a fourth ` \| R <reply>` section; a line has three, with `R` inside the third | read in code | fixed (2026-10-11) |
 | B29 | test infra | GitHub CI never runs `ci.sh raftLabTest`, the only cluster-level Raft suite | read in code | open |
-| B30 | safety (design) | Disk design §4: recovery trusts the WAL bytes it reads, but after a process kill the page cache still holds unsynced batches. A restart that builds on them (new records in a new segment) and then loses power keeps the new records and drops the old ones: a gap under acknowledged state | found by `store/tests/wal_crash.rs` (crash at every operation, kill then power cut) before any code shipped | fixed in `raft-store` (plan P2): recovery syncs the last segment it read; design §4 updated |
-| B31 | safety (design) | Disk design §4: a creation killed between the side directory's rename and the parent's `fsync` leaves a store a kill keeps and a power cut erases; a restart that opens it acknowledges writes the next power cut deletes with the whole store | found by `store/tests/wal_crash.rs`, as B30 | fixed in `raft-store` (plan P2): opening a store syncs its parent directory first; design §4 updated |
+| B30 | safety (design) | Disk design §4: recovery trusts the WAL bytes it reads, but after a process kill the page cache still holds unsynced batches. A restart that builds on them (new records in a new segment) and then loses power keeps the new records and drops the old ones: a gap under acknowledged state | found by `store/tests/wal_crash.rs` (crash at every operation, kill then power cut) before any code shipped | fixed in `raft-store`: recovery syncs the last segment it read; design §4 updated |
+| B31 | safety (design) | Disk design §4: a creation killed between the side directory's rename and the parent's `fsync` leaves a store a kill keeps and a power cut erases; a restart that opens it acknowledges writes the next power cut deletes with the whole store | found by `store/tests/wal_crash.rs`, as B30 | fixed in `raft-store`: opening a store syncs its parent directory first; design §4 updated |
 | B32 | performance, liveness (disk) | `raft-store` `base::ops_for` wrote a range delete `[from, ∞)` for every record that replaces from `from`, appends included, so a saturated run put hundreds of thousands of overlapping range tombstones in each RocksDB memtable. RocksDB fragments them at flush in time superlinear in their number: 1-2 s write stalls in G2 on ext4, and a shutdown that waited on a flush thread at 2 minutes of CPU (2 of 5 G2 ext4 runs exceeded their budget) | found 2026-10-10 by the cost model's miss on G2 ext4: `/proc/<pid>/task/*/stat` showed the `rocksdb:high` thread busy while the applier waited | fixed in `raft-store`: the applier tracks an upper bound on the base's last entry index, and a record that only appends past it gets no range delete (`store/tests/rocks.rs` checks both cases) |
 | B33 | test infra | A firing crash point printed `crash <point>` in three `write(2)` calls; another thread's log line on the shared descriptor could split it, and the kill driver reported the self-kill as an unexpected death | reproduced (powercut scenario, 2026-10-10) | fixed: one `write_all` (2026-10-11) |
 
@@ -726,18 +726,16 @@ In-place restart is unsafe in memory mode (B6), so no production path
 restarts a replica today. The defect matters once disk persistence makes
 restarts legal.
 
-**How found.** Mapping the process-kill tests for
-[disk-persistence-plan.md](disk-persistence-plan.md) (2026-10-08);
+**How found.** Planning disk persistence's process-kill tests (2026-10-08);
 confirmed by reading the code above.
 
-**Fate.** Fixed in disk builds (plan P5, 2026-10-09): each peer client gets
+**Fate.** Fixed in disk builds (2026-10-09): each peer client gets
 `DISK_RECONNECT` (`rt/src/transport.rs`), unlimited retries waiting 50 ms
 doubling to 200 ms, below the shortest non-preferred election timeout (0.5
 s), set through `Client::set_reconnect_policy`
 (`src/srpc/rpc/client.rs:1837-1842`). `aggressive()` was not used: its waits
 grow to 5 s, time for several campaigns. Memory builds keep srpc's default:
-the plan's decision 3 keeps them unchanged, and they cannot restart a
-replica anyway (B6).
+they are not to change, and they cannot restart a replica anyway (B6).
 
 ## B22. A down peer blocks a replica's startup (liveness)
 
@@ -757,7 +755,7 @@ C stays down. A and B are a majority, but B aborts after 120 s.
 
 **How found.** As B21.
 
-**Fate.** Fixed in disk builds (plan P5, 2026-10-10), in the transport: in a
+**Fate.** Fixed in disk builds (2026-10-10), in the transport: in a
 disk build `add_peer` dials for 1 s, then leaves the site to a dial thread
 that connects a fresh `Client` every 200 ms and fills the site's slot (a
 send to an empty slot fails at once, as after a close), and `ConnectPeers`
@@ -765,7 +763,7 @@ then waits (120 s) until each partition has a majority connected, itself
 included (`raft_transport_wait_majority`). `rt/tests/dial.rs` covers a down
 peer dialled until it comes up and a minority that does not start; the kill
 harness's `down` scenario restarts a replica while another stays down.
-Memory builds are unchanged (decision 3).
+Memory builds are unchanged, as for B21.
 
 ## B23. srpc refuses nothing when admission is closed (latent race)
 
@@ -785,8 +783,8 @@ a server being torn down was not checked.
 **How found.** As B21; the check existed in the parent srpc before merge
 `7ace54e1f` (the mapper's reading, not re-checked).
 
-**Fate.** Open in srpc. Disk builds no longer rely on its flag (plan P4,
-2026-10-10): `RaftTransport::drain` first calls `CloseAdmissionForDrain`,
+**Fate.** Open in srpc. Disk builds no longer rely on its flag
+(2026-10-10): `RaftTransport::drain` first calls `CloseAdmissionForDrain`,
 which closes Raft's own gate under `mtx_` as `PrepareForShutdown` does, so a
 request arriving during the drain is refused by the `Serve*` gate instead of
 handled and held for a flush. Memory builds still rely on srpc's flag.
@@ -803,7 +801,8 @@ keeps an AppendEntries batch under srpc's 64 MiB frame (`server.cc:219-225`):
 a lagging follower is re-sent an unsendable batch every round. The Rust
 parser rejects a sign for this reason (`shell/server_h.rs:1795-1798`).
 
-**How found.** Mapping the shell's state for the disk plan (2026-10-08).
+**How found.** Mapping the shell's state while planning disk persistence
+(2026-10-08).
 
 **Fate.** Open. Only a malformed environment triggers it.
 
@@ -837,11 +836,14 @@ wait never ends.
 capital letter would add trust without failing the gate or growing
 `core_trusted.txt`. None exists in `core/src` today.
 
-**How found.** Mapping the core for the disk plan (2026-10-08).
+**How found.** Mapping the core while planning disk persistence (2026-10-08).
 
-**Fate.** Open; the disk plan's P0 widens the scan to every form above and adds
-a per-function check: each of the 349 functions Verus verifies today must stay
-verified (`docs/verus/disk-persistence-plan.md` §4).
+**Fate.** Fixed (2026-10-09; widened 2026-10-10 after a review found an
+`axiom fn` and a `cfg_attr`-wrapped `external_body` passing):
+`scripts/verus/verus_gate.py`, run by `verify_core.sh`, finds trust in
+every form above, however spelled, and fails when a function listed in
+`scripts/verus/verified_functions.txt` stops verifying
+([disk-persistence.md](disk-persistence.md) §8).
 
 ## B27. Editing the replay crate does not rebuild `libraft.a` (test infra)
 
@@ -853,10 +855,12 @@ cargo rule's `DEPENDS`) at `44d07a3ee`.
 `replay/Cargo.toml` is among the rule's inputs, so an incremental build after
 an edit there links a stale recorder.
 
-**How found.** Checking the disk plan's citations (2026-10-08).
+**How found.** Checking code citations while planning disk persistence
+(2026-10-08).
 
-**Fate.** Fixed by the disk plan's P0: the replay crate's sources and
-manifest are among the rule's inputs, with the `store/` crate's.
+**Fate.** Fixed (2026-10-09, with disk mode's build switch): the replay
+crate's sources and manifest are among the rule's inputs, with the `store/`
+crate's.
 
 ## B28. The replay format comment shows four sections (doc)
 
@@ -867,7 +871,7 @@ manifest are among the rule's inputs, with the `store/` crate's.
 `record_line` writes three sections with `R` inside the third
 (`:296-311`), and `replay` splits on two separators (`:765`).
 
-**How found.** Mapping the core for the disk plan (2026-10-08).
+**How found.** Mapping the core while planning disk persistence (2026-10-08).
 
 **Fate.** Fixed (2026-10-11): the comment shows the three sections, `R`
 in the third.
@@ -883,7 +887,7 @@ this function existed it was on no CI path at all" reads as if it now is; on
 GitHub it is not. The comment's "25 cases" is also stale: the suite now counts
 32.
 
-**How found.** Mapping the tests for the disk plan (2026-10-08).
+**How found.** Mapping the tests while planning disk persistence (2026-10-08).
 
 **Fate.** Open. The lab runs by hand (Tier 1).
 

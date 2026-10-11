@@ -1,5 +1,5 @@
 //! Opening a server's store: atomic creation, the lock, recovery (design §4
-//! "Recovery", Decision 10; plan P2, P5).
+//! "Recovery", Decision 10).
 //!
 //! ```text
 //! <root>/<site>-<partition>/            the store
@@ -44,7 +44,7 @@ pub type BaseFactory = dyn Fn(&Path, bool) -> io::Result<Box<dyn Base>>;
 /// An open store: the WAL writer, the state its records fold to, and the
 /// lock that keeps a second server off it.
 pub struct Opened<P> {
-    /// The base, with records 1..=c in it (plan P7); `None` without one.
+    /// The base, with records 1..=c in it (design §3); `None` without one.
     pub base: Option<Box<dyn Base>>,
     pub c: u64,
     pub wal: Wal,
@@ -123,7 +123,7 @@ fn recover<P>(
     // before this server acknowledges anything it writes.
     fs.sync_dir(&parent).map_err(io_ctx(&parent))?;
     let wal_dir = store.join("wal");
-    // The base holds records 1..=c (plan P7); the WAL the rest. A base that
+    // The base holds records 1..=c (design §3); the WAL the rest. A base that
     // does not open fails closed with RocksDB's reason: never repaired,
     // never recreated empty.
     let (base, c, mut state) = match base_factory {
@@ -151,7 +151,7 @@ fn recover<P>(
         let r = record::decode(&bytes, codec).map_err(|why| format!("{}: record {seq}: {why}", wal_dir.display()))?;
         state.apply(r).map_err(|why| format!("{}: record {seq}: {why}", wal_dir.display()))?;
     }
-    // Snapshot images (plan P8): a `.tmp` names no record, and an image
+    // Snapshot images (design §3-§4): a `.tmp` names no record, and an image
     // below the state's snapshot is superseded.
     let images = store.join("images");
     if !fs.exists(&images) {
@@ -184,7 +184,7 @@ pub fn open_store<P>(
     open_store_with_base(fs, store, id, opts, create_new, codec, no_vote, None)
 }
 
-/// [`open_store`], with a base (plan P7).
+/// [`open_store`], with a base (design §3).
 #[allow(clippy::too_many_arguments)]
 pub fn open_store_with_base<P>(
     fs: Arc<dyn StoreFs>,

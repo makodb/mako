@@ -461,7 +461,7 @@ option(CHECK_INVARIANTS "Enable invariant checking" OFF)
 option(COCO "Enable COCO" OFF)
 option(MAKO_USE_RAFT "Build Mako with the Raft replication helper" OFF)
 option(RAFT_TEST "Enable Raft lab testing fiber" OFF)
-# Raft disk persistence (docs/verus/disk-persistence-plan.md): a build switch,
+# Raft disk persistence (docs/verus/disk-persistence.md): a build switch,
 # not a run-time one. OFF is the memory-mode binary with the disk code
 # compiled out; ON turns on the raft crates' cargo feature `raft_disk`.
 option(MAKO_RAFT_DISK "Build the Raft write-ahead log and recovery (disk mode)" OFF)
@@ -1801,7 +1801,7 @@ add_apps(rocksdbInterfaceTest examples/rocksdbInterfaceTest.cc)
 # `mako` via TXLOG_HELPER_SRC, so the driver measures the production build.
 add_apps(raft_bench scripts/raft_perf/raft_bench.cc)
 # raft_kill_node -- one Raft replica for the process-kill tests, beside the
-# driver and checker that use it (scripts/raft_kill/; disk plan P6).
+# driver and checker that use it (scripts/raft_kill/; disk design §8).
 add_apps(raft_kill_node scripts/raft_kill/raft_kill_node.cc)
 # Provenance the record cannot otherwise obtain: neither MODE nor
 # CMAKE_BUILD_TYPE is a preprocessor macro, and a number is not interpretable

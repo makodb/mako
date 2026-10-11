@@ -1,5 +1,5 @@
-//! The Rust Raft's on-disk store (docs/verus/disk-persistence.md §3-§5;
-//! docs/verus/disk-persistence-plan.md P2).
+//! The Rust Raft's on-disk store (docs/verus/disk-persistence.md §3-§5,
+//! its settings and layout §8).
 //!
 //! Every Raft step that changes saved state becomes one [`Record`], numbered
 //! in step order by the [`RecordQueue`] under the server's `mtx_`. The
