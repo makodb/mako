@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../__dep__.h"
+#include <set>
 #include "../constants.h"
 #include "../distribution.h"
 #include "../scheduler.h"
@@ -21,6 +22,9 @@ struct PaxosData {
   bool is_no_op = false;
   Command accepted_cmd_{};
   Command committed_cmd_{};
+  // A decide for this slot has arrived. If it came before the accept, the
+  // accept commits the value when it arrives.
+  bool decided_ = false;
 };
 
 class PaxosServer : public TxLogServer {
@@ -46,6 +50,22 @@ class PaxosServer : public TxLogServer {
   ballot_t cur_epoch;
   // for learner for the later on takeover
   slotid_t max_committed_slot_learner_ = 0;
+  // Learner: every slot up to learner_applied_prefix_ has been applied, and
+  // learner_applied_above_ holds the applied slots past it. p1 skips a
+  // forward while its connection to the learner is not up yet, so the last
+  // slot forwarded can be far past a hole.
+  slotid_t learner_applied_prefix_ = 0;
+  std::set<slotid_t> learner_applied_above_{};
+  // Call with mtx_ held.
+  void NoteLearnerApplied(slotid_t slot) {
+    if (slot <= learner_applied_prefix_) return;
+    learner_applied_above_.insert(slot);
+    while (!learner_applied_above_.empty() &&
+           *learner_applied_above_.begin() == learner_applied_prefix_ + 1) {
+      learner_applied_prefix_++;
+      learner_applied_above_.erase(learner_applied_above_.begin());
+    }
+  }
 
   int n_accept_ = 0;
   int n_commit_ = 0;
@@ -151,6 +171,9 @@ class PaxosServer : public TxLogServer {
                     i32 *valid,
                     rusty::Function<void()> cb);
 
+  // Apply the committed slots that follow the last applied one, in order,
+  // up to the first that is not committed yet.
+  void ExecuteCommitted();
   void OnBulkCommit(const janus::Command& cmd,
                     i32* ballot,
                     i32 *valid,
