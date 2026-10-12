@@ -5,10 +5,16 @@
 
 namespace janus {
 std::vector<ServerControlServiceImpl *> ServerControlServiceImpl::scsi_s{};
+std::atomic<bool> ServerControlServiceImpl::closing_{false};
 
 void ServerControlServiceImpl::shutdown_wrapper(int sig) {
+  if (closing_.load()) {
+    return;
+  }
   for (auto s : scsi_s) {
-    s->do_shutdown();
+    if (s != nullptr) {
+      s->do_shutdown();
+    }
   }
 }
 
@@ -51,7 +57,9 @@ void ServerControlServiceImpl::server_heart_beat(
   (void)rpc_req;
   (void)rpc_resp;
   std::call_once(sig_handler_once_, [this] { set_sig_handler(); });
-  alarm(timeout_);
+  if (!closing_.load()) {
+    alarm(timeout_);
+  }
   defer.reply();
 }
 
@@ -65,7 +73,20 @@ ServerControlServiceImpl::ServerControlServiceImpl(rusty::Arc<ServerStatus> stat
   scsi_s.push_back(this);
 }
 
+// Each heartbeat re-arms an alarm whose handler calls do_shutdown on every
+// registered service. Services are destroyed as the workers shut down, and
+// the alarm the last heartbeat armed went off after that, on a destroyed
+// service, crashing the process on its way out. So the first destructor
+// cancels the alarm and keeps heartbeats from arming it again, and each
+// takes itself off the list (in place, as the handler may be reading it).
 ServerControlServiceImpl::~ServerControlServiceImpl() {
+  closing_.store(true);
+  alarm(0);
+  for (auto& s : scsi_s) {
+    if (s == this) {
+      s = nullptr;
+    }
+  }
 }
 
 bool operator<(const struct timespec &lhs, const struct timespec &rhs) {
