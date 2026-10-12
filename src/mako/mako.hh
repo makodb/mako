@@ -986,7 +986,14 @@ static void db_close() {
     std::this_thread::sleep_for(std::chrono::seconds(3));
   }
 
-  mako::stop_helper();
+  // A learner started its helper threads at boot (start_workers_tpcc) so
+  // that, if it takes over, it can serve the other shards' remote reads;
+  // stopping them before wait_for_termination left them gone by then, and
+  // every remote request to the new leader timed out. Non-leaders stop
+  // them once the run is over.
+  if (benchConfig.getLeaderConfig()) {
+    mako::stop_helper();
+  }
 
   // Stop multi-shard transports if running
   stopMultiShardTransports();
@@ -994,6 +1001,7 @@ static void db_close() {
   // Wait for termination if not a leader
   if (!benchConfig.getLeaderConfig()) {
     wait_for_termination();
+    mako::stop_helper();
   }
 
   // Cleanup and shutdown
