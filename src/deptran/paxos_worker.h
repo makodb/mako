@@ -367,7 +367,7 @@ private:
   // take const janus::Command&;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
-  inline void _Submit(const janus::Command&);
+  inline void _Submit(const janus::Command&, slotid_t slot = kNextOpenSlot);
   inline void _BulkSubmit(const janus::Command&, int);
 
   std::mutex finish_mutex{};
@@ -492,7 +492,11 @@ public:
   bool IsLeader(uint32_t);
   bool IsPartition(uint32_t);
 
-  void Submit(const char*, int, uint32_t);
+  // Submit's default slot: the next open one. slotid_t is unsigned.
+  static constexpr slotid_t kNextOpenSlot = static_cast<slotid_t>(-1);
+  // A slot other than kNextOpenSlot proposes the entry at that slot (a new
+  // leader re-proposing the values it adopted at takeover).
+  void Submit(const char*, int, uint32_t, slotid_t slot = kNextOpenSlot);
   void register_apply_callback(std::function<void(const char*, int)>);
   void register_apply_callback_par_id(std::function<void(const char*&, int, int)>);
   void register_apply_callback_par_id_return(std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char *>> &)>);

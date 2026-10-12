@@ -579,7 +579,7 @@ PaxosWorker::~PaxosWorker() {
   }
 }
 
-void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { // this is the starting point on the client side
+void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id, slotid_t slot) { // this is the starting point on the client side
   if (static_cast<size_t>(length) > MultiPaxosCommo::kMaxLogBytesPerMessage) {
     // It could never be sent to the replicas, and a slot given to it would
     // never be decided, stalling every later slot of the partition.
@@ -594,7 +594,7 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { /
   // Use std::string for payload to avoid mismatched allocation/deallocation
   cmd.log_entry = std::string(log_entry, length);
   cmd.length = length;
-  _Submit(rusty::Arc<LogEntry>::make(std::move(cmd)));
+  _Submit(rusty::Arc<LogEntry>::make(std::move(cmd)), slot);
 }
 
 void PaxosWorker::ReleaseInFlightRound() {
@@ -605,7 +605,7 @@ void PaxosWorker::ReleaseInFlightRound() {
   inflight_cv_.notify_one();
 }
 
-inline void PaxosWorker::_Submit(const janus::Command& sp_m) {
+inline void PaxosWorker::_Submit(const janus::Command& sp_m, slotid_t slot) {
   verify(rep_frame_ != nullptr);
   bool counted = false;
   if (stop_flag != true) {
@@ -630,7 +630,13 @@ inline void PaxosWorker::_Submit(const janus::Command& sp_m) {
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
-  slotid_t x = ((PaxosServer*)rep_sched_)->get_open_slot();
+  auto ps = (PaxosServer*)rep_sched_;
+  slotid_t x = slot;
+  if (x == kNextOpenSlot) {
+    x = ps->get_open_slot();
+  } else if (ps->cur_open_slot_ <= x) {
+    ps->cur_open_slot_ = x + 1;
+  }
   coord->SetSlot(x);
   if(stop_flag != true) {
     coord->SetCommand(sp_m);

@@ -765,7 +765,10 @@ void stuff_todo_learner_upgrade(){
     // nothing), and they would never apply this leader's entries.
     ps->max_committed_slot_ = std::max(ps->max_committed_slot_learner_, committed_high[i]);
     ps->max_executed_slot_ = ps->max_committed_slot_;
-    ps->cur_open_slot_ = ps->max_committed_slot_+1;
+    // The adopted values keep their slots (proposed again below); this
+    // leader's own entries start after them.
+    ps->cur_open_slot_ = std::max(ps->max_committed_slot_,
+                                  adopted[i].empty() ? slotid_t{0} : adopted[i].back().first) + 1;
     ps->cur_epoch = es->get_epoch();
     ps->mtx_.unlock();
   }
@@ -774,15 +777,29 @@ void stuff_todo_learner_upgrade(){
   send_sync_logs(epoch);
   //send_no_ops_to_all_workers(epoch);
   sync_callbacks_for_new_leader(); // switch from follower_callback_ to leader_callback_
-  // Propose the adopted values again in this epoch, in order, from the
-  // first slot past the committed ones, so the acceptors commit them ahead
-  // of this leader's own entries.
+  // Propose the adopted values again in this epoch, each at the slot it was
+  // accepted at, ahead of this leader's own entries, so the acceptors commit
+  // them. Each gets its slot explicitly rather than the next open one: a
+  // decide the old leader sent before it died can still reach p1 during
+  // recovery and be forwarded here, moving max_committed_slot_learner_ into
+  // these slots, and the next open slot would then shift every value onto
+  // another value's slot. A value already committed at its slot is proposed
+  // again unchanged.
   for (size_t i = 0; i < adopted.size(); i++) {
+    if (adopted[i].empty()) continue;
+    auto& pw = pxs_workers_g[i];
     for (auto& e : adopted[i]) {
       const auto entry = marshallable_cast<LogEntry>(*e.second);
       verify(entry.is_some());
-      add_log_to_nc(entry.unwrap()->log_entry.data(), entry.unwrap()->length, i, 0);
+      std::unique_lock<std::mutex> lock(pw->condition_mutex);
+      pw->IncSubmit();
+      pw->Submit(entry.unwrap()->log_entry.data(), entry.unwrap()->length,
+                 pw->site_info_->partition_id_, e.first);
     }
+    auto ps = dynamic_cast<PaxosServer*>(pw->rep_sched_);
+    Log_info("learner takeover: partition {} proposes its {} adopted values again in slots {}-{}; "
+             "its own entries start at slot {}",
+             i, adopted[i].size(), adopted[i].front().first, adopted[i].back().first, ps->cur_open_slot_);
   }
   send_no_ops_for_mark(epoch);
   vector<thread> threads;
