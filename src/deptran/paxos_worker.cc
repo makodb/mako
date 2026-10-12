@@ -284,9 +284,9 @@ inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
 // handlers are also dead now but left for a follow-up sweep that
 // also clears the rcc_rpc.proto definitions.
 
-bool PaxosWorker::FetchCommitted(
+bool PaxosWorker::FetchSyncLog(
     shared_ptr<SyncLogRequest> req,
-    map<pair<int, slotid_t>, rusty::Arc<janus::Command>>* out,
+    vector<rusty::Arc<SyncLogResponse>>* out,
     ballot_t* higher_epoch) {
   auto callback_state = std::make_shared<SyncLogCallbackState>();
   auto rejected_epoch = std::make_shared<std::atomic<ballot_t>>(0);
@@ -321,17 +321,24 @@ bool PaxosWorker::FetchCommitted(
   while (!sp_quorum->yes() && !sp_quorum->no() && rejected_epoch->load() == 0) {
     srpc::create_sp_timeout_event(1000)->wait();
   }
-  vector<rusty::Arc<SyncLogResponse>> responses;
   {
     std::lock_guard<std::mutex> lock(callback_state->mutex);
     callback_state->accepting_responses = false;
-    responses = std::move(callback_state->responses);
+    *out = std::move(callback_state->responses);
   }
   *higher_epoch = rejected_epoch->load();
   if (*higher_epoch > 0) {
     return false;
   }
-  if (!sp_quorum->yes()) {
+  return sp_quorum->yes();
+}
+
+bool PaxosWorker::FetchCommitted(
+    shared_ptr<SyncLogRequest> req,
+    map<pair<int, slotid_t>, rusty::Arc<janus::Command>>* out,
+    ballot_t* higher_epoch) {
+  vector<rusty::Arc<SyncLogResponse>> responses;
+  if (!FetchSyncLog(req, &responses, higher_epoch)) {
     return false;
   }
   for (const auto& response : responses) {

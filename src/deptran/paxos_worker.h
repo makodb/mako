@@ -141,6 +141,9 @@ class SyncLogRequest
     // learner catching up before it leads can be far behind, and one reply
     // must stay under the RPC frame limit.
     int64_t max_reply_bytes = 0;
+    // A learner about to lead also asks for the slots accepted but not
+    // known to be committed (SyncLogResponse::accepted_data).
+    int32_t include_accepted = 0;
     SyncLogRequest() = default;
 
     void save(BinaryWriteArchive& ar) const {
@@ -151,6 +154,7 @@ class SyncLogRequest
         srpc::Serialize_::serialize(sync_commit_slot[i], ar);
       }
       srpc::Serialize_::serialize(max_reply_bytes, ar);
+      srpc::Serialize_::serialize(include_accepted, ar);
     }
 
     void load(BinaryReadArchive& ar) {
@@ -164,6 +168,7 @@ class SyncLogRequest
         sync_commit_slot.push_back(x);
       }
       srpc::Deserialize_::deserialize(max_reply_bytes, ar);
+      srpc::Deserialize_::deserialize(include_accepted, ar);
     }
 };
 
@@ -172,6 +177,8 @@ class SyncLogRequest
 //   int32_t sync_data.size() | N x MarshallDeputy bytes
 //   int32_t missing_slots.size()
 //   per missing_slots row: int32_t inner.size() | M x slotid_t
+//   int32_t accepted_data.size() | K x MarshallDeputy bytes
+//   int32_t complete.size() | L x int32_t
 // The nested `vector<shared_ptr<janus::Command>>` field uses the
 // prep `operator<<` / `operator>>` overloads for
 // MarshallDeputy on BinaryWriteArchive / BinaryReadArchive — same byte
@@ -182,6 +189,13 @@ class SyncLogResponse
   public:
     vector<rusty::Arc<janus::Command>> sync_data;
     vector<vector<slotid_t>> missing_slots;
+    // Only for a request with include_accepted, one per partition: the
+    // slots from the requested one on that hold a value accepted but not
+    // committed, each with the ballot it was accepted at, and whether the
+    // reply holds every slot the acceptor has from the requested one on (1)
+    // or stopped at the byte bound (0).
+    vector<rusty::Arc<janus::Command>> accepted_data;
+    vector<int32_t> complete;
     SyncLogResponse() = default;
 
     void save(BinaryWriteArchive& ar) const {
@@ -195,6 +209,14 @@ class SyncLogResponse
         for (size_t j = 0; j < missing_slots[i].size(); j++) {
           srpc::Serialize_::serialize(missing_slots[i][j], ar);
         }
+      }
+      srpc::Serialize_::serialize(static_cast<int32_t>(accepted_data.size()), ar);
+      for (size_t i = 0; i < accepted_data.size(); i++) {
+        srpc::Serialize_::serialize(*accepted_data[i], ar);
+      }
+      srpc::Serialize_::serialize(static_cast<int32_t>(complete.size()), ar);
+      for (size_t i = 0; i < complete.size(); i++) {
+        srpc::Serialize_::serialize(complete[i], ar);
       }
     }
 
@@ -218,6 +240,19 @@ class SyncLogResponse
           cur.push_back(x);
         }
         missing_slots.push_back(std::move(cur));
+      }
+      srpc::Deserialize_::deserialize(sz, ar);
+      for (int i = 0; i < sz; i++) {
+        auto x = rusty::Arc<janus::Command>::make();
+        // @unsafe - unique-owner mutation window (factory-fresh Arc).
+        srpc::Deserialize_::deserialize(x.get_mut().unwrap(), ar);
+        accepted_data.push_back(std::move(x));
+      }
+      srpc::Deserialize_::deserialize(sz, ar);
+      for (int i = 0; i < sz; i++) {
+        int32_t x;
+        srpc::Deserialize_::deserialize(x, ar);
+        complete.push_back(x);
       }
     }
 };
@@ -437,10 +472,14 @@ public:
   // `SendSyncNoOpLog` declarations — definitions deleted; see
   // paxos_worker.cc retirement comments.
   int SendSyncLog(shared_ptr<SyncLogRequest>);
+  // Sends the request to the acceptors and returns their replies. False
+  // when they did not both answer; *higher_epoch is then the epoch of an
+  // acceptor that rejected the request as stale, or 0.
+  bool FetchSyncLog(shared_ptr<SyncLogRequest>,
+                    vector<rusty::Arc<SyncLogResponse>>*,
+                    ballot_t* higher_epoch);
   // The entries the acceptors have committed from the request's
-  // sync_commit_slot on, keyed by (partition, slot). False when they did
-  // not both answer; *higher_epoch is then the epoch of an acceptor that
-  // rejected the request as stale, or 0.
+  // sync_commit_slot on, keyed by (partition, slot). Fails as FetchSyncLog.
   bool FetchCommitted(shared_ptr<SyncLogRequest>,
                       map<pair<int, slotid_t>, rusty::Arc<janus::Command>>*,
                       ballot_t* higher_epoch);
