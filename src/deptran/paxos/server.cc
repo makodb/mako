@@ -31,40 +31,63 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
   // it (but carries at least one), and later partitions get nothing this
   // time; the caller asks again from where the reply ended.
   const int64_t max_bytes = bcmd.unwrap()->max_reply_bytes;
+  const bool include_accepted = bcmd.unwrap()->include_accepted != 0;
   int64_t reply_bytes = 0;
   bool reply_full = false;
+  // Whether the reply has room for cmd; counts its bytes if so.
+  auto fits = [&](const janus::Command& cmd) {
+    if (max_bytes <= 0) return true;
+    const auto entry = marshallable_cast<LogEntry>(cmd);
+    const int64_t entry_bytes = entry.is_some() ? entry.unwrap()->length : 64;
+    if (reply_bytes > 0 && reply_bytes + entry_bytes > max_bytes) {
+      reply_full = true;
+      return false;
+    }
+    reply_bytes += entry_bytes;
+    return true;
+  };
+  auto add = [](BulkPaxosCmd& to, slotid_t slot, ballot_t ballot, const janus::Command& cmd) {
+    to.slots.push_back(slot);
+    to.ballots.push_back(ballot);
+    to.cmds.push_back(rusty::Arc<janus::Command>::make(cmd));
+  };
   for(int i = 0; i < pxs_workers_g.size(); i++){
     ret_cmd.missing_slots.push_back(vector<slotid_t>{});
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     BulkPaxosCmd bp_cmd;
+    BulkPaxosCmd accepted_cmd;
     ps->mtx_.lock();
 
     // A learner catching up can ask from slot 1; slots below
     // min_active_slot_ are gone (a recovered log starts later) and
     // GetInstance must not be asked for them.
     const slotid_t first = std::max<slotid_t>(bcmd.unwrap()->sync_commit_slot[i], ps->min_active_slot_);
-    for(slotid_t j = first; !reply_full && j <= ps->max_committed_slot_; j++){
-      auto inst = ps->GetInstance(j);
-      // committed_cmd_ is Command; the temp_cmd
-      // copy + janus::Command(Command) wrapping below relies on
-      // Command's copy ctor.
-      if(inst->committed_cmd_.has_value()){
-        if (max_bytes > 0) {
-          const auto entry = marshallable_cast<LogEntry>(inst->committed_cmd_);
-          const int64_t entry_bytes = entry.is_some() ? entry.unwrap()->length : 64;
-          if (reply_bytes > 0 && reply_bytes + entry_bytes > max_bytes) {
-            reply_full = true;
-            break;
-          }
-          reply_bytes += entry_bytes;
+    if (!include_accepted) {
+      for(slotid_t j = first; !reply_full && j <= ps->max_committed_slot_; j++){
+        auto inst = ps->GetInstance(j);
+        if(inst->committed_cmd_.has_value()){
+          if (!fits(inst->committed_cmd_)) break;
+          add(bp_cmd, j, inst->max_ballot_accepted_, inst->committed_cmd_);
         }
-        bp_cmd.slots.push_back(j);
-        bp_cmd.ballots.push_back(inst->max_ballot_accepted_);
-        auto temp_cmd = inst->committed_cmd_;
-      	janus::Command md(temp_cmd);
-      	auto shrd_ptr = rusty::Arc<janus::Command>::make(md);
-        bp_cmd.cmds.push_back(std::move(shrd_ptr));
       }
+    } else {
+      // Every slot this acceptor holds from first on: committed values as
+      // above, and values only accepted, with the ballot each was accepted
+      // at, for the next leader to adopt.
+      for (auto it = ps->logs_.lower_bound(first); !reply_full && it != ps->logs_.end(); ++it) {
+        const auto& inst = it->second;
+        if (!inst) continue;
+        if (inst->committed_cmd_.has_value()) {
+          if (!fits(inst->committed_cmd_)) break;
+          add(bp_cmd, it->first, inst->max_ballot_accepted_, inst->committed_cmd_);
+        } else if (inst->accepted_cmd_.has_value()) {
+          if (!fits(inst->accepted_cmd_)) break;
+          add(accepted_cmd, it->first, inst->max_ballot_accepted_, inst->accepted_cmd_);
+        }
+      }
+      ret_cmd.accepted_data.push_back(rusty::Arc<janus::Command>::make(
+          rusty::Arc<BulkPaxosCmd>::make(std::move(accepted_cmd))));
+      ret_cmd.complete.push_back(reply_full ? 0 : 1);
     }
     //Log_info("The partition {}, sync commit is {}; max executed-committed slot is [{}-{}] on follower", i, bcmd->sync_commit_slot[i], ps->max_executed_slot_, ps->max_committed_slot_);
     for(int j = ps->max_executed_slot_; j < bcmd.unwrap()->sync_commit_slot[i]; j++){
