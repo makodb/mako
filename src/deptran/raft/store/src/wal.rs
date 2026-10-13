@@ -3,10 +3,12 @@
 //!
 //! A segment is named by its first sequence number. The writer rotates when
 //! the open segment has reached `segment_bytes`: the new segment's header is
-//! synced, and then its directory entry, before any batch goes into it.
+//! synced, and then its directory entry, before any batch goes into it; then
+//! the rotation is published ([`Rotated`]) for the checkpoint.
 
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
 use crate::crash::{armed, crash_point};
@@ -34,6 +36,31 @@ pub struct Wal {
     cur: Box<dyn StoreFile>,
     cur_len: u64,
     next_seq: u64,
+    rotated: Rotated,
+}
+
+/// The first record of the newest segment whose creation is durable: its
+/// header synced, then its directory entry. The writer publishes it after
+/// each rotation, and a checkpoint deletes a segment only once its successor
+/// is at or below it ([`covered_segments`]). The successor's name alone is
+/// no sign: it is in the directory from its `create_new` on, before either
+/// sync, and a crash then leaves a header-less segment that recovery deletes
+/// -- with its predecessor already gone, no segment at all (bugs-found B37).
+#[derive(Clone)]
+pub struct Rotated(Arc<AtomicU64>);
+
+impl Rotated {
+    fn new(first: u64) -> Rotated {
+        Rotated(Arc::new(AtomicU64::new(first)))
+    }
+
+    pub fn get(&self) -> u64 {
+        self.0.load(Ordering::Acquire)
+    }
+
+    fn publish(&self, first: u64) {
+        self.0.store(first, Ordering::Release);
+    }
 }
 
 fn at(p: &Path) -> impl Fn(io::Error) -> String + Copy + '_ {
@@ -92,17 +119,24 @@ impl Wal {
         // make them durable before anything is acknowledged from it.
         cur.sync_data()?;
         fs.sync_dir(dir)?;
-        Ok(Wal { fs, dir: dir.to_path_buf(), id, opts, cur, cur_len: HEADER_LEN as u64, next_seq: first_seq })
+        Ok(Wal { fs, dir: dir.to_path_buf(), id, opts, cur, cur_len: HEADER_LEN as u64, next_seq: first_seq,
+                 rotated: Rotated::new(first_seq) })
     }
 
     fn start_at(fs: Arc<dyn StoreFs>, dir: &Path, id: Identity, opts: WalOptions, first: u64) -> io::Result<Wal> {
         let cur = new_segment(&*fs, dir, &id, first)?;
-        Ok(Wal { fs, dir: dir.to_path_buf(), id, opts, cur, cur_len: HEADER_LEN as u64, next_seq: first })
+        Ok(Wal { fs, dir: dir.to_path_buf(), id, opts, cur, cur_len: HEADER_LEN as u64, next_seq: first,
+                 rotated: Rotated::new(first) })
     }
 
     /// The sequence number the next batch must start at.
     pub fn next_seq(&self) -> u64 {
         self.next_seq
+    }
+
+    /// The published rotation, for the checkpoint that deletes segments.
+    pub fn rotated(&self) -> Rotated {
+        self.rotated.clone()
     }
 
     /// Appends one batch of encoded records numbered from `first_seq`, and
@@ -113,6 +147,7 @@ impl Wal {
         if self.cur_len >= self.opts.segment_bytes {
             self.cur = new_segment(&*self.fs, &self.dir, &self.id, first_seq)?;
             self.cur_len = HEADER_LEN as u64;
+            self.rotated.publish(first_seq);
         }
         let bytes = segment::frame(first_seq, records);
         if armed("wal.write.half") {
@@ -293,12 +328,13 @@ where
 
 /// The closed segments whose records all lie at or below `c`: those a base
 /// holding records 1..=c makes redundant. The last segment (the open one)
-/// is never listed.
-pub fn covered_segments(fs: &dyn StoreFs, dir: &Path, c: u64) -> io::Result<Vec<PathBuf>> {
+/// is never listed, nor one whose successor starts past `rotated`
+/// ([`Rotated::get`]): that successor's creation may not be durable yet.
+pub fn covered_segments(fs: &dyn StoreFs, dir: &Path, c: u64, rotated: u64) -> io::Result<Vec<PathBuf>> {
     let segs = segment_firsts(fs, dir)?;
     let mut out = Vec::new();
     for w in segs.windows(2) {
-        if w[1] <= c + 1 {
+        if w[1] <= c + 1 && w[1] <= rotated {
             out.push(dir.join(segment::name(w[0])));
         }
     }

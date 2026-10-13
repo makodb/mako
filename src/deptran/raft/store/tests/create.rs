@@ -81,3 +81,62 @@ fn crash_at_every_creation_step() {
         }
     }
 }
+
+/// Record 1 of a fresh store, encoded: entry 1 (term 1).
+fn record_one() -> Vec<u8> {
+    let r: raft_store::Record<Vec<u8>> = raft_store::Record { replace_from: Some(1), entries: vec![(1, vec![7])], ..Default::default() };
+    let mut b = Vec::new();
+    raft_store::record::encode(&r, &BytesCodec, &mut b);
+    b
+}
+
+/// The store's directories above `/d`, created and never synced: `/d` does
+/// not durably hold `run` (the launch's `create_dir_all`, or a killed one's).
+fn unsynced_data_dir() -> MemFs {
+    let fs = MemFs::new();
+    fs.mkdir_p(Path::new("/d"));
+    fs.create_dir(Path::new("/d/run")).unwrap();
+    fs
+}
+
+/// A new data directory is made durable before anything is acknowledged in
+/// the store inside it: a power cut after an acknowledged append keeps the
+/// store, not just its entry in a directory the cut takes away (B35).
+#[test]
+fn a_new_data_directory_survives_a_power_cut() {
+    let fs = unsynced_data_dir();
+    let mut o = open(&fs, true).unwrap();
+    o.wal.append(1, &[record_one()]).unwrap();
+    drop(o);
+    fs.crash(Crash::PowerCut);
+    let o = open(&fs, false).unwrap_or_else(|why| panic!("the acknowledged store was lost: {why}"));
+    assert_eq!(o.d, 1);
+    assert_eq!(o.state.entries, vec![(1, vec![7])]);
+}
+
+/// Whatever a killed creation left, a store recovery opens keeps what this
+/// launch then acknowledged across a power cut: recovery makes the whole path
+/// durable first, a data directory nobody synced included (B31, B35).
+#[test]
+fn what_recovery_acknowledges_survives_a_power_cut() {
+    let probe = unsynced_data_dir();
+    let before = probe.ops();
+    drop(open(&probe, true).unwrap());
+    let steps = probe.ops() - before;
+    let mut recovered = 0;
+    for budget in 0..=steps {
+        let fs = unsynced_data_dir();
+        fs.set_budget(Some(budget));
+        let _ = open(&fs, true);
+        fs.crash(Crash::Kill);
+        let Ok(mut o) = open(&fs, false) else { continue };
+        recovered += 1;
+        assert_eq!(o.d, 0, "budget {budget}");
+        o.wal.append(1, &[record_one()]).unwrap();
+        drop(o);
+        fs.crash(Crash::PowerCut);
+        let o = open(&fs, false).unwrap_or_else(|why| panic!("budget {budget}: the acknowledged store was lost: {why}"));
+        assert_eq!(o.d, 1, "budget {budget}");
+    }
+    assert!(recovered > 0, "no budget left a store to recover");
+}

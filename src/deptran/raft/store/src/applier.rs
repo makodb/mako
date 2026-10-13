@@ -68,6 +68,9 @@ struct State {
     base: Box<dyn Base>,
     fs: Arc<dyn StoreFs>,
     wal_dir: PathBuf,
+    /// The WAL writer's published rotation: no segment goes before its
+    /// successor's creation is durable (bugs-found B37).
+    rotated: wal::Rotated,
     id: Identity,
     durable: Arc<DurableState>,
     cfg: ApplierConfig,
@@ -152,7 +155,8 @@ impl State {
         }
         crash_point("base.flush");
         self.base.flush().map_err(|e| format!("base flush: {e}"))?;
-        let doomed = wal::covered_segments(&*self.fs, &self.wal_dir, self.c).map_err(|e| e.to_string())?;
+        let doomed = wal::covered_segments(&*self.fs, &self.wal_dir, self.c, self.rotated.get())
+            .map_err(|e| e.to_string())?;
         for p in &doomed {
             crash_point("base.delete");
             self.fs.remove_file(p).map_err(|e| format!("{}: {e}", p.display()))?;
@@ -176,14 +180,16 @@ impl State {
 }
 
 impl Applier {
-    /// Starts the applier over `base`, which holds records 1..=c. Returns it
-    /// and the tap the flusher offers batches through.
-    pub fn spawn(base: Box<dyn Base>, c: u64, fs: Arc<dyn StoreFs>, wal_dir: PathBuf, id: Identity,
-                 durable: Arc<DurableState>, cfg: ApplierConfig) -> (Applier, ApplierTap) {
+    /// Starts the applier over `base`, which holds records 1..=c, and the
+    /// WAL in `wal_dir`, whose writer publishes `rotated` ([`wal::Wal::rotated`]).
+    /// Returns it and the tap the flusher offers batches through.
+    #[allow(clippy::too_many_arguments)]
+    pub fn spawn(base: Box<dyn Base>, c: u64, fs: Arc<dyn StoreFs>, wal_dir: PathBuf, rotated: wal::Rotated,
+                 id: Identity, durable: Arc<DurableState>, cfg: ApplierConfig) -> (Applier, ApplierTap) {
         let (tx, rx): (SyncSender<Offer>, Receiver<Offer>) = sync_channel(cfg.queue.max(1));
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let mut st = State { base, fs, wal_dir, id, durable, cfg, stop: stop.clone(), c, top: u64::MAX, bytes: 0,
-                             since: Instant::now() };
+        let mut st = State { base, fs, wal_dir, rotated, id, durable, cfg, stop: stop.clone(), c, top: u64::MAX,
+                             bytes: 0, since: Instant::now() };
         let handle = std::thread::Builder::new()
             .name("raft-applier".into())
             .spawn(move || -> Result<u64, String> {

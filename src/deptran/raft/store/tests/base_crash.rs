@@ -96,8 +96,8 @@ fn open(fs: &MemFs, base: &MemBase, create: bool) -> Result<Opened<Vec<u8>>, Str
 fn run(fs: &MemFs, o: Opened<Vec<u8>>, n: u64, cfg: ApplierConfig) -> u64 {
     let start = Durable { seq: o.d, last: o.state.last(), commit: o.state.hard.commit };
     let durable = Arc::new(DurableState::new(start));
-    let (applier, tap) = Applier::spawn(o.base.unwrap(), o.c, Arc::new(fs.clone()), store().join("wal"), ID,
-                                        durable.clone(), cfg);
+    let (applier, tap) = Applier::spawn(o.base.unwrap(), o.c, Arc::new(fs.clone()), store().join("wal"),
+                                        o.wal.rotated(), ID, durable.clone(), cfg);
     let queue = Arc::new(RecordQueue::new(o.d + 1));
     let flusher = Flusher::spawn(o.wal, queue.clone(), Arc::new(BytesCodec), durable.clone(),
                                  FlusherConfig { delay: Duration::ZERO, tap: Some(tap) }, Box::new(|_| {}));

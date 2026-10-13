@@ -317,6 +317,8 @@ impl DiskShell {
     /// found (`None` for a new store). Every refusal says why.
     pub fn open(params: DiskParams, site: u16, partition: u32, members: &[u16], no_vote: u16,
                 wake: FiberWake) -> Result<DiskShell, String> {
+        // Not synced here: opening the store syncs every directory above it,
+        // these included, before anything is acknowledged (bugs-found B35).
         std::fs::create_dir_all(&params.data_dir)
             .map_err(|e| format!("{}: {e}", params.data_dir.display()))?;
         local::check_local(&params.data_dir)?;
@@ -339,7 +341,8 @@ impl DiskShell {
         let held = Arc::new(HeldReplies::new(durable.clone()));
         let (applier, tap) = match opened.base.take() {
             Some(b) => {
-                let (a, t) = Applier::spawn(b, opened.c, fs.clone(), store.join("wal"), id, durable.clone(),
+                let (a, t) = Applier::spawn(b, opened.c, fs.clone(), store.join("wal"), opened.wal.rotated(), id,
+                                            durable.clone(),
                                             ApplierConfig { checkpoint_bytes: params.checkpoint_bytes,
                                                             checkpoint_secs: params.checkpoint_secs,
                                                             queue: 64 });

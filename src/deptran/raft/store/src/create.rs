@@ -62,6 +62,19 @@ fn io_ctx(p: &Path) -> impl Fn(io::Error) -> String + '_ {
     move |e| format!("{}: {e}", p.display())
 }
 
+/// Syncs every directory above `store`: its parent, which keeps the store's
+/// own entry, then each one up to the root (or `.`, for a relative path),
+/// which keeps the entry of the one below. The data directory may be new --
+/// this launch made it, or a killed launch made it and never synced its
+/// parent -- and a power cut would take it, store and all (bugs-found B35).
+fn sync_ancestors(fs: &dyn StoreFs, store: &Path) -> Result<(), String> {
+    for dir in store.ancestors().skip(1) {
+        let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
+        fs.sync_dir(dir).map_err(io_ctx(dir))?;
+    }
+    Ok(())
+}
+
 fn create<P>(fs: &Arc<dyn StoreFs>, store: &Path, id: Identity, opts: WalOptions, no_vote: u16,
              base_factory: Option<&BaseFactory>) -> Result<Opened<P>, String> {
     let side = side_path(store);
@@ -90,7 +103,7 @@ fn create<P>(fs: &Arc<dyn StoreFs>, store: &Path, id: Identity, opts: WalOptions
     crash_point("create.files");
     fs.rename(&side, store).map_err(io_ctx(store))?;
     crash_point("create.rename");
-    fs.sync_dir(&parent).map_err(io_ctx(&parent))?;
+    sync_ancestors(&**fs, store)?;
     let wal = Wal::resume(fs.clone(), &store.join("wal"), id, opts, 1).map_err(io_ctx(store))?;
     let base = match base_factory {
         Some(factory) => Some(factory(&store.join("base"), false).map_err(io_ctx(store))?),
@@ -111,17 +124,17 @@ fn recover<P>(
     let e = io_ctx(store);
     let lock = fs.lock(&store.join("LOCK")).map_err(&e)?;
     let side = side_path(store);
-    let parent = store.parent().unwrap_or(Path::new("/")).to_path_buf();
     let mut repairs = Vec::new();
     if fs.exists(&side) {
         // Both exist only if creation was retried around a finished store.
         fs.remove_dir_all(&side).map_err(io_ctx(&side))?;
         repairs.push(format!("deleted the leftover {}", side.display()));
     }
-    // A creation killed between its rename and the parent's sync leaves a
-    // store a process kill keeps but a power cut loses. Make it durable
-    // before this server acknowledges anything it writes.
-    fs.sync_dir(&parent).map_err(io_ctx(&parent))?;
+    // A creation killed between its rename and the syncs after it leaves a
+    // store a process kill keeps but a power cut loses: its own entry, or
+    // the data directory's, not yet durable. Make the path durable before
+    // this server acknowledges anything it writes.
+    sync_ancestors(&**fs, store)?;
     let wal_dir = store.join("wal");
     // The base holds records 1..=c (design §3); the WAL the rest. A base that
     // does not open fails closed with RocksDB's reason: never repaired,

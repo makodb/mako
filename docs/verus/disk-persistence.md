@@ -223,7 +223,11 @@ with recovery's parser, so the base is a replay by construction, of durable
 records only (c <= d). Every 256 MB of WAL (more than a segment: the open
 one is never deleted) or 10 s it checkpoints: it makes the base durable
 through c (§5), then deletes the closed segments whose records are all at or
-below c, and the images older than the one it names.
+below c, and the images older than the one it names. A segment goes only once
+its successor's rotation is durable (header and directory entry synced), which
+the flusher publishes: a successor's name appears in the directory before
+that, and deleting the last good segment for one whose header a crash then
+loses leaves recovery no segment at all (B37).
 
 **Why a lagging base is safe.** A record is computed from memory, so
 replaying it reproduces its step only on the state that step began from.
@@ -345,7 +349,8 @@ loop
     base.write(wb + put(c))                  // one atomic WriteBatch
     if WAL > 256 MB or 10 s since the last checkpoint:
         base.flush(wait)                     // durable through c
-        delete closed segments whose records are all <= c
+        delete closed segments whose records are all <= c and whose
+            successor the flusher has published as durably rotated (B37)
         delete the images older than the one the base names
 
 fn apply(wb, rec)                            // recovery's too
@@ -375,10 +380,11 @@ hold the reply until durable_seq >= tail      // as every reply
 fail closed unless the directory is on a local filesystem (not NFS)
 if no base: fail closed (B6) unless this launch creates the cluster; then
     delete any leftover <store>.creating; in it write the base (header,
-    c = 0) and segment 1, sync; rename it to <store>; fsync the parent;
-    start empty                 // a .creating alone, no flag: fail closed
-fsync the store's parent directory       // B31: a creation killed after its
-                                         // rename, before this sync
+    c = 0) and segment 1, sync; rename it to <store>; fsync every directory
+    above it, parent first, up to the root (B35: the data directory may be
+    new); start empty           // a .creating alone, no flag: fail closed
+fsync every directory above the store    // B31, B35: a creation killed after
+                                         // its rename, before these syncs
 (c, state) = open the base; delete the last segment if its header is short
     or bad and nothing but zeros follows it (a rotation the crash cut short:
     it holds no records), else fail closed (damage, or a newer format);

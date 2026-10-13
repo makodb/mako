@@ -325,3 +325,55 @@ fn a_last_segment_without_a_header_is_deleted() {
     assert_eq!(o.state, fold(o.d));
 }
 
+
+/// Segments that rotate after every batch.
+const TINY: WalOptions = WalOptions { segment_bytes: 64 };
+
+fn open_tiny(fs: &MemFs, create: bool) -> Result<Opened<Vec<u8>>, String> {
+    open_store(Arc::new(fs.clone()) as Arc<dyn StoreFs>, &store(), ID, TINY, create, &BytesCodec, NO_VOTE)
+}
+
+/// A checkpoint that runs while a rotation is between its create and its
+/// syncs keeps the segment before it. The successor's name is listed from
+/// its create on, but its header may not survive a power cut, and recovery
+/// deletes a header-less last segment: had the checkpoint deleted the one
+/// before it, nothing would be left (bugs-found B37).
+#[test]
+fn a_checkpoint_mid_rotation_keeps_the_last_good_segment() {
+    let fs = MemFs::new();
+    fs.mkdir_p(Path::new("/data/run"));
+    let wal = store().join("wal");
+    let mut o = open_tiny(&fs, true).unwrap();
+    o.wal.append(1, &[encode(1)]).unwrap();
+    // A base holding record 1 (c = 1) covers segment 1. The flusher's next
+    // rotation has created segment 2 and not yet synced its header.
+    drop(fs.create_new(&wal.join(raft_store::segment::name(2))).unwrap());
+    let doomed = raft_store::wal::covered_segments(&fs, &wal, 1, o.wal.rotated().get()).unwrap();
+    assert!(doomed.is_empty(), "offered for deletion before its successor is durable: {doomed:?}");
+    // The checkpoint's deletions and directory sync, which makes segment 2's
+    // entry durable, though not its header.
+    for p in &doomed {
+        fs.remove_file(p).unwrap();
+    }
+    fs.sync_dir(&wal).unwrap();
+    drop(o);
+    fs.crash(Crash::PowerCut);
+    let o = open_tiny(&fs, false).unwrap_or_else(|why| panic!("recovery failed: {why}"));
+    assert_eq!(o.d, 1);
+    assert_eq!(o.state, fold(1));
+}
+
+/// Once the rotation is durable and published, the segment it covers goes.
+#[test]
+fn a_published_rotation_frees_the_segment_before_it() {
+    let fs = MemFs::new();
+    fs.mkdir_p(Path::new("/data/run"));
+    let wal = store().join("wal");
+    let mut o = open_tiny(&fs, true).unwrap();
+    o.wal.append(1, &[encode(1)]).unwrap();
+    assert_eq!(o.wal.rotated().get(), 1);
+    o.wal.append(2, &[encode(2)]).unwrap();
+    assert_eq!(o.wal.rotated().get(), 2, "the second batch should have rotated to segment 2");
+    let doomed = raft_store::wal::covered_segments(&fs, &wal, 1, o.wal.rotated().get()).unwrap();
+    assert_eq!(doomed, vec![wal.join(raft_store::segment::name(1))]);
+}
