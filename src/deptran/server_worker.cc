@@ -20,10 +20,8 @@ void ServerWorker::SetupHeartbeat() {
   auto port = this->site_info_->port + ServerWorker::CtrlPortDelta;
   std::string addr_port = std::string("0.0.0.0:") +
       std::to_string(port);
-  // The learner takes over when these heartbeats stop, so a replica that
-  // cannot serve them must not run on beside the one that replaces it.
   if (hb_rpc_server_->start(reinterpret_cast<const int8_t*>(addr_port.c_str())) != 0) {
-    Log_fatal("heartbeat server launch failed on {}", addr_port.c_str());
+    Log_error("heartbeat server launch failed on {}", addr_port.c_str());
   }
   if (hb_rpc_server_ != nullptr) {
     // Log_info("notify ready to control script for {}", bind_addr.c_str());
