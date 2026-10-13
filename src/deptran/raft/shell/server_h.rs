@@ -581,7 +581,9 @@ unsafe extern "C" {
     // The kernel bridge (server.cc). Each takes the base and, where it has
     // to reach a method that has not converted, casts down to RaftServer.
     fn raft_leader_change_cb_is_set(cb: *const rusty::RaftLeaderChangeCb) -> bool;
-    fn raft_fire_leader_change(cb: *const rusty::RaftLeaderChangeCb, is_leader: bool);
+    // False: the callback threw (caught in the kernel, bugs-found B39).
+    fn raft_fire_leader_change(cb: *const rusty::RaftLeaderChangeCb, site_id: u16,
+                               is_leader: bool) -> bool;
     // The env-tunable election-timeout knobs, read in one shot. They were
     // four separate calls; a boundary crossing should be a verb that does a
     // unit of work rather than a getter, and GetElectionTimeout wants the
@@ -1849,10 +1851,14 @@ impl RaftServerBase {
                         "[LEADER_CALLBACK] Site {}: Firing leader_change_cb_(false) - became follower",
                         self.site_id_);
                 }
-                unsafe {
+                // A throwing callback fails the server stop, as a throwing
+                // apply callback does (bugs-found B39).
+                if !unsafe {
                     raft_fire_leader_change(
-                        &cb as *const rusty::RaftLeaderChangeCb, became_leader)
-                };
+                        &cb as *const rusty::RaftLeaderChangeCb, self.site_id_, became_leader)
+                } {
+                    self.FailStop();
+                }
             }
         }
     }
@@ -4520,8 +4526,10 @@ impl RaftServerBase {
                          last_included_index: u64, last_included_term: u64,
                          data: &rusty::RaftByteString, term_out: *mut u64) {
         // Lock order: the state-machine apply gate, then mtx_ -- the order
-        // the C++ handler took. Only the catch around the locked body is
-        // still C++ (raft_install_snapshot_guarded); false is the throw.
+        // the C++ handler took. The locked body is entered through a C++
+        // kernel (raft_install_snapshot_guarded); false is a throw it caught.
+        // The embedder's snapshot callbacks are caught in the kernels that
+        // call them, below these Rust frames (bugs-found B38).
         {
             let _apply_lock =
                 RaftStdLockGuard::new(self.state_machine_apply_mtx_.as_ptr());

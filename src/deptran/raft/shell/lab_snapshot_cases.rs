@@ -62,6 +62,19 @@ unsafe extern "C" {
                                prepare_out: *mut rusty::RaftPrepareSnapshotCb);
     fn raft_lab_probe_flags() -> u32;
     fn raft_lab_probe_release();
+    fn raft_lab_make_throwing_commit_cbs(
+        create_out: *mut rusty::RaftCreateSnapshotCb,
+        prepare_out: *mut rusty::RaftPrepareSnapshotCb);
+    fn raft_lab_throwing_commit_called() -> bool;
+    fn raft_lab_make_throwing_leader_change_cb(out: *mut rusty::RaftLeaderChangeCb);
+    // Test 75's kernels under test, as server_h.rs declares them.
+    fn raft_install_snapshot_payload(
+        prepare_cb: *const rusty::RaftPrepareSnapshotCb,
+        snapshot_manager: *const rusty::RaftSnapshotManagerPtr, site_id: u16,
+        last_included_index: u64, last_included_term: u64,
+        data: *const rusty::RaftByteString) -> i32;
+    fn raft_fire_leader_change(cb: *const rusty::RaftLeaderChangeCb, site_id: u16,
+                               is_leader: bool) -> bool;
     /// Tests 50-52: the snapshot store's unit tests (rt/src/lab_runtime.rs).
     /// 0 on success.
     fn raft_lab_snapshot_unit_tests() -> i32;
@@ -1355,6 +1368,49 @@ fn test_recovery_fail_stops(_st: &mut LabState) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
+// Test 75 -- embedder callbacks that throw (bugs-found B38, B39)
+//
+// The kernels are called directly, outside the cluster, so no replica is
+// failed stop: what is tested is that each kernel catches its callback's
+// throw. Before the fix the exception unwound into this frame, which is
+// Rust, and the process died.
+
+fn test_throwing_callbacks_fail_their_call(_st: &mut LabState) -> i32 {
+    init2(75, "A throwing embedder callback fails its call, not the process");
+
+    // Commit throws after the snapshot is saved: the install reports a
+    // failed commit (2, on which OnInstallSnapshotLocked fails the server
+    // stop and replies 0).
+    let mut create_cb: rusty::RaftCreateSnapshotCb = Default::default();
+    let mut prepare_cb: rusty::RaftPrepareSnapshotCb = Default::default();
+    // SAFETY: the kernel constructs both std::functions into the slots.
+    unsafe { raft_lab_make_throwing_commit_cbs(&raw mut create_cb, &raw mut prepare_cb) };
+    let manager = new_manager();
+    let data = lab::byte_string("snapshot_whose_commit_throws");
+    // SAFETY: every carrier is live for the call; no server is involved, so
+    // the kernel's lock precondition (a server's apply gate and mtx_) is
+    // vacuous.
+    let code = unsafe {
+        raft_install_snapshot_payload(&prepare_cb as *const _, &manager as *const _, 0, 5, 1,
+                                      &data as *const _)
+    };
+    // SAFETY: a plain atomic read of the kernel's flag.
+    if !check_msg(unsafe { raft_lab_throwing_commit_called() }, "the throwing Commit never ran") { return 1; }
+    if !check_msg(code == 2, &format!("a throwing Commit must fail the install with 2, got {code}")) { return 1; }
+
+    // A leader-change callback that throws: the kernel reports it, and the
+    // shell fails the server stop.
+    let mut cb: rusty::RaftLeaderChangeCb = Default::default();
+    // SAFETY: the kernel constructs the callable into the slot.
+    unsafe { raft_lab_make_throwing_leader_change_cb(&raw mut cb) };
+    // SAFETY: the callable is live for the call.
+    let fired = unsafe { raft_fire_leader_change(&cb as *const _, 0, true) };
+    if !check_msg(!fired, "a throwing leader-change callback must report false") { return 1; }
+    passed();
+    0
+}
+
+// ---------------------------------------------------------------------------
 // The driver. Same order and the same short-circuit structure as the second
 // half of RaftLabTest::Run.
 
@@ -1382,6 +1438,7 @@ fn run_snapshot_cases(st: &mut LabState) -> i32 {
         test_high_frequency_apply,
         test_recovery_restores_injected_snapshot,
         test_recovery_fail_stops,
+        test_throwing_callbacks_fail_their_call,
     ];
     for case in cases {
         if case(st) != 0 {

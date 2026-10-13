@@ -405,16 +405,26 @@ pub fn register(server: &mut Server, svc_index: usize) -> i32 {
 }
 
 /// Route one request to `handler`. Call this from `Service::__dispatch__`.
-/// A request's ARGUMENT bytes: what the streaming decoders read through
-/// `req.src`, which starts after the frame header. `req.body` holds that
-/// header too, so an opaque field bounded by arithmetic must be measured
-/// from here, not from `body[0]` -- measuring from the body put every
-/// field five bytes off and misparsed every AppendEntries over TCP.
+/// A request's ARGUMENT bytes: `req.src` from its cursor on, past the frame
+/// header. `req.body` holds that header too, so an opaque field bounded by
+/// arithmetic must be measured from here, not from `body[0]` -- measuring
+/// from the body put every field five bytes off and misparsed every
+/// AppendEntries over TCP. The streaming decoders read these bytes through
+/// a cursor of their own (`arg_source`): `req` is borrowed shared, and an
+/// archive advances the cursor it reads (bugs-found B36).
 fn args_of(req: &Request) -> &[u8] {
     let src = &req.src;
     // SAFETY: src describes a live buffer (req.body) of len_ bytes, and
     // pos_ <= len_; the slice borrows it for req's lifetime.
     unsafe { core::slice::from_raw_parts(src.data_.add(src.pos_), src.len_ - src.pos_) }
+}
+
+/// A cursor over `req`'s argument bytes, owned by the decoder that reads
+/// it. `req.src` itself is not written: a pointer derived from `&req.src`
+/// grants no write, and the archive's reads move the cursor.
+fn arg_source(req: &Request) -> BufferSource {
+    let args = args_of(req);
+    BufferSource::new(args.as_ptr(), args.len())
 }
 
 pub fn dispatch<H: RaftHandler>(
@@ -426,8 +436,9 @@ pub fn dispatch<H: RaftHandler>(
     match rpc_id {
         rpc_id::VOTE => {
             let mut typed = VoteRequest::default();
+            let mut src = arg_source(req);
             let mut ar = BinaryReadArchive::new(unsafe {
-                make_source_proxy_buffer(&req.src as *const _ as *mut _)
+                make_source_proxy_buffer(&raw mut src)
             });
             typed.deserialize(&mut ar);
             if ar.failed() {
@@ -445,8 +456,9 @@ pub fn dispatch<H: RaftHandler>(
         }
         rpc_id::EMPTYAPPENDENTRIES => {
             let mut typed = EmptyAppendEntriesRequest::default();
+            let mut src = arg_source(req);
             let mut ar = BinaryReadArchive::new(unsafe {
-                make_source_proxy_buffer(&req.src as *const _ as *mut _)
+                make_source_proxy_buffer(&raw mut src)
             });
             typed.deserialize(&mut ar);
             if ar.failed() {
@@ -457,8 +469,9 @@ pub fn dispatch<H: RaftHandler>(
         }
         rpc_id::INSTALLSNAPSHOT => {
             let mut typed = InstallSnapshotRequest::default();
+            let mut src = arg_source(req);
             let mut ar = BinaryReadArchive::new(unsafe {
-                make_source_proxy_buffer(&req.src as *const _ as *mut _)
+                make_source_proxy_buffer(&raw mut src)
             });
             typed.deserialize(&mut ar);
             if ar.failed() {
@@ -548,8 +561,9 @@ pub fn dispatch_held<H: RaftHandler>(
     let (code, body) = match rpc_id {
         rpc_id::VOTE => {
             let mut typed = VoteRequest::default();
+            let mut src = arg_source(&req);
             let mut ar = BinaryReadArchive::new(unsafe {
-                make_source_proxy_buffer(&req.src as *const _ as *mut _)
+                make_source_proxy_buffer(&raw mut src)
             });
             typed.deserialize(&mut ar);
             if ar.failed() {
@@ -567,8 +581,9 @@ pub fn dispatch_held<H: RaftHandler>(
         }
         rpc_id::EMPTYAPPENDENTRIES => {
             let mut typed = EmptyAppendEntriesRequest::default();
+            let mut src = arg_source(&req);
             let mut ar = BinaryReadArchive::new(unsafe {
-                make_source_proxy_buffer(&req.src as *const _ as *mut _)
+                make_source_proxy_buffer(&raw mut src)
             });
             typed.deserialize(&mut ar);
             if ar.failed() {
@@ -579,8 +594,9 @@ pub fn dispatch_held<H: RaftHandler>(
         }
         rpc_id::INSTALLSNAPSHOT => {
             let mut typed = InstallSnapshotRequest::default();
+            let mut src = arg_source(&req);
             let mut ar = BinaryReadArchive::new(unsafe {
-                make_source_proxy_buffer(&req.src as *const _ as *mut _)
+                make_source_proxy_buffer(&raw mut src)
             });
             typed.deserialize(&mut ar);
             if ar.failed() {

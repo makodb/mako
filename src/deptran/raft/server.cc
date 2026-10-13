@@ -8,6 +8,7 @@
 #include <unistd.h>   // [M0] trace kit: getpid for the dump file name
 #include <atomic>
 #include <mutex>
+#include <stdexcept>         // std::runtime_error, the lab's throwing callbacks
 #include <rusty/rusty.hpp>   // rusty::Arc, rusty::Box
 #include <rusty/move.hpp>
 
@@ -371,9 +372,14 @@ extern "C" {
 bool raft_leader_change_cb_is_set(const rusty::RaftLeaderChangeCb* cb) {
   return static_cast<bool>(*cb);
 }
-void raft_fire_leader_change(const rusty::RaftLeaderChangeCb* cb,
-                             bool is_leader) {
-  (*cb)(is_leader);
+// The callback is the embedder's and may throw; the caller is Rust, which an
+// exception must not unwind through, so it is caught here (bugs-found B39).
+// False: it threw, and the caller fails the server stop, as for a throwing
+// apply callback.
+bool raft_fire_leader_change(const rusty::RaftLeaderChangeCb* cb,
+                             uint16_t site_id, bool is_leader) {
+  return raft_catch(site_id, "leader-change callback",
+                    [&] { (*cb)(is_leader); });
 }
 
 
@@ -639,6 +645,48 @@ bool raft_lab_reject_prepare_called() {
   return lab_reject_prepare_called.load(std::memory_order_acquire);
 }
 
+// Test 75: embedder callbacks that throw. Each kernel Rust calls must catch
+// its callback's throw itself: a Commit that throws fails the install with
+// code 2, and a leader-change callback that throws reports false (bugs-found
+// B38, B39). Before, either throw unwound into the Rust frames that called
+// the kernel.
+namespace {
+
+std::atomic<bool> lab_throwing_commit_called{false};
+
+class LabThrowingCommit final : public PreparedStateMachineSnapshotInstall {
+ public:
+  // @safe - throws by design (test 75)
+  bool Commit() override {
+    lab_throwing_commit_called.store(true, std::memory_order_release);
+    throw std::runtime_error("RaftLab: Commit throws");
+  }
+};
+
+}  // namespace
+
+void raft_lab_make_throwing_commit_cbs(
+    rusty::RaftCreateSnapshotCb* create_out,
+    rusty::RaftPrepareSnapshotCb* prepare_out) {
+  lab_throwing_commit_called.store(false, std::memory_order_release);
+  construct_into(create_out, [](uint64_t) { return std::string(); });
+  construct_into(prepare_out,
+      [](const std::string&, uint64_t)
+          -> std::unique_ptr<PreparedStateMachineSnapshotInstall> {
+        return std::make_unique<LabThrowingCommit>();
+      });
+}
+
+bool raft_lab_throwing_commit_called() {
+  return lab_throwing_commit_called.load(std::memory_order_acquire);
+}
+
+void raft_lab_make_throwing_leader_change_cb(rusty::RaftLeaderChangeCb* out) {
+  construct_into(out, rusty::RaftLeaderChangeCb([](bool) {
+    throw std::runtime_error("RaftLab: the leader-change callback throws");
+  }));
+}
+
 // Test 60: the publication-ordering oracle. Commit succeeds only once the
 // exact incoming snapshot is readable from the manager, so the flags below
 // witness Prepare -> TakeSnapshot -> Commit rather than assuming it.
@@ -835,7 +883,15 @@ int raft_install_snapshot_payload(
   Log_info("[INSTALL-SNAPSHOT] Site {}: Snapshot saved at index={} term={}",
            site_id, last_included_index, last_included_term);
 
-  if (!prepared_state_machine->Commit()) {
+  // Commit is the embedder's and may throw. Caught here: Rust frames sit
+  // between this kernel and raft_install_snapshot_guarded's catch, and an
+  // exception must not unwind through them (bugs-found B38). A throw is a
+  // failed commit.
+  bool committed = false;
+  if (!raft_catch(site_id, "state-machine snapshot commit", [&] {
+        committed = prepared_state_machine->Commit();
+      }) ||
+      !committed) {
     Log_error("[INSTALL-SNAPSHOT] Site {}: Failed to commit prepared state "
               "machine snapshot at index={} term={}; failing stop",
               site_id, last_included_index, last_included_term);
@@ -1399,10 +1455,14 @@ void raft_wire_command_clone_into(const rusty::ffi::c_void* cmd_handle,
 
 
 
-// @unsafe - the InstallSnapshot exception boundary. The two locks it used to
-// take are Rust's now (RaftServerBase::OnInstallSnapshot holds them across
-// this call); what is left is raft_catch, the one place an embedder throw
-// from the snapshot callbacks becomes a false return -- and FailStop, in Rust.
+// @unsafe - InstallSnapshot's locked body, called from Rust. The two locks it
+// used to take are Rust's now (RaftServerBase::OnInstallSnapshot holds them
+// across this call). Its raft_catch is not the boundary for the embedder's
+// snapshot callbacks: Rust frames lie between it and them, and an exception
+// must not unwind through Rust, so each kernel that calls one catches the
+// throw itself and reports a failure (prepare_state_machine_snapshot_locked,
+// raft_install_snapshot_payload; bugs-found B38). False -- a throw from this
+// frame's own C++ -- is answered with FailStop, in Rust.
 extern "C" bool raft_install_snapshot_guarded(RaftServerBase* self, uint16_t site_id,
                                    uint64_t term, uint64_t leader_id,
                                    uint64_t last_included_index,

@@ -12,10 +12,10 @@ wolf gets switched off. `--check` is the freshness guarantee.
 
 | C++ | lines | Rust | lines | state |
 |---|---|---|---|---|
-| `raft/server.h` | 553 | `raft/shell/server_h.rs` | 4834 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
-| `raft/server.cc` | 1548 | `raft/shell/server_cc.rs` | 759 |  |
+| `raft/server.h` | 553 | `raft/shell/server_h.rs` | 4842 | Rust owns it; the C++ left is kernels and a pointer-holding shim |
+| `raft/server.cc` | 1608 | `raft/shell/server_cc.rs` | 759 |  |
 | `communicator.h` | 567 | `raft/shell/communicator_h.rs` | 207 | ONE source: the Rust is transpiled into the C++ both engines link |
-| `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 685 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
+| `rcc_rpc.h` (Raft slice) | — | `raft/rt/src/rpc.rs` | 701 | generated from `rcc_rpc.rpc`; ids frozen in `raft/rpc_ids.txt` |
 
 `communicator_h.rs` is extracted from the HEADER, not the `.cc` --
 `raft/rust-modules.toml` names `src/deptran/communicator.h` as its source.
@@ -26,14 +26,14 @@ wolf gets switched off. `--check` is the freshness guarantee.
 |---|---|---|
 | C++ → Rust | prototypes in `raft/server_exports.h` | 32 |
 | C++ → Rust | prototypes in `raft/raft_transport.h` | 18 |
-| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/shell/` | 97 |
+| Rust → C++ | distinct `raft_*` kernels declared in `extern "C"` blocks under `raft/shell/` | 100 |
 
 ## Counted facts the prose below leans on
 
 | fact | count | counting rule |
 |---|---|---|
 | out-parameter methods | 17 | a `self` receiver AND a `*mut` scalar parameter. NOT a grep for `*mut u64`, which counts kernel declarations and locals too |
-| `raft_catch` sites | 7 | CALL sites in `raft/server.cc`; `grep -c` also counts the template definition |
+| `raft_catch` sites | 9 | CALL sites in `raft/server.cc`; `grep -c` also counts the template definition |
 
 An export is a method of the Rust server the C++ shim calls. A kernel is
 the other direction -- and most are C++ because of WHERE THE BOUNDARY SITS
@@ -51,7 +51,7 @@ defined nowhere or in two places.
 
 | class | count |
 |---|---|
-| HOST | 86 |
+| HOST | 89 |
 | SEAM | 42 |
 
 | kernel | class |
@@ -123,6 +123,8 @@ defined nowhere or in two places.
 | `raft_lab_make_learner_action` | HOST |
 | `raft_lab_make_probe_cbs` | HOST |
 | `raft_lab_make_reject_prepare_cbs` | HOST |
+| `raft_lab_make_throwing_commit_cbs` | HOST |
+| `raft_lab_make_throwing_leader_change_cb` | HOST |
 | `raft_lab_new_snapshot_manager` | SEAM |
 | `raft_lab_probe_flags` | HOST |
 | `raft_lab_probe_release` | HOST |
@@ -131,6 +133,7 @@ defined nowhere or in two places.
 | `raft_lab_snapshot_delete_all` | SEAM |
 | `raft_lab_snapshot_probe` | SEAM |
 | `raft_lab_snapshot_unit_tests` | SEAM |
+| `raft_lab_throwing_commit_called` | HOST |
 | `raft_leader_change_cb_clone_into` | HOST |
 | `raft_leader_change_cb_is_set` | HOST |
 | `raft_learner_action_clone_into` | HOST |
