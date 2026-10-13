@@ -25,57 +25,74 @@ void RpcPeer::Close() {
   client_->close();
 }
 
-Communicator::Communicator(
-    rusty::Option<rusty::Arc<srpc::PollThread>> poll_thread_worker) {
-  Log_info("setup replication communicator");
-  if (poll_thread_worker.is_none()) {
-    rpc_poll_ = rusty::Some(srpc::PollThread::create());
-    owns_poll_thread_ = true;
-  } else {
-    rpc_poll_ = rusty::Some(
-        poll_thread_worker.as_ref().unwrap().clone());
+namespace {
+
+// The poll thread the registry will own: the caller's if it gave one,
+// otherwise a fresh one this communicator is then responsible for shutting
+// down. A free function because it has to run before the member initialiser
+// list reaches registry_, which has no default constructor.
+// @unsafe - srpc::PollThread::create is reactor API.
+rusty::Option<rusty::Arc<srpc::PollThread>> ResolvePollThread(
+    const rusty::Option<rusty::Arc<srpc::PollThread>>& given) {
+  if (given.is_none()) {
+    return rusty::Some(srpc::PollThread::create());
   }
+  return rusty::Some(given.as_ref().unwrap().clone());
+}
+
+}  // namespace
+
+// @unsafe - Config walk and ConnectToAddress; the table itself is Rust's.
+Communicator::Communicator(
+    rusty::Option<rusty::Arc<srpc::PollThread>> poll_thread_worker)
+    : registry_(PeerRegistry::new_(ResolvePollThread(poll_thread_worker),
+                                   poll_thread_worker.is_none())) {
+  Log_info("setup replication communicator");
 
   auto config = Config::GetConfig();
   verify(config != nullptr);
   for (const auto par_id : config->GetAllPartitionIds()) {
-    Peers partition;
+    // Bound to a local first: `verify` must not be handed a side-effecting
+    // call, or a build that compiles it out silently skips the insert.
+    const bool partition_is_new = registry_.begin_partition(par_id);
+    verify(partition_is_new);
     for (auto& site : config->SitesByPartitionId(par_id)) {
       auto connected = ConnectToAddress(
           site.GetHostAddr(), std::chrono::milliseconds(CONNECT_TIMEOUT_MS));
       verify(connected.is_some());
       auto peer = std::make_shared<RpcPeer>(
           site.id, site.GetHostAddr(), connected.unwrap());
-      const auto inserted = peers_.emplace(site.id, peer);
-      verify(inserted.second);
-      partition.push_back(std::move(peer));
+      const bool site_is_new =
+          registry_.add_peer(par_id, site.id, std::move(peer));
+      verify(site_is_new);
     }
-    const auto inserted = partition_peers_.emplace(
-        par_id, std::move(partition));
-    verify(inserted.second);
   }
 }
 
+// @unsafe - client teardown and poll-thread shutdown.
 Communicator::~Communicator() {
   SetNetworkEnabled(false);
-  for (auto& [site_id, peer] : peers_) {
-    (void)site_id;
-    peer->Close();
+  const size_t peer_count = registry_.peer_count();
+  for (size_t i = 0; i < peer_count; i++) {
+    registry_.peer_at(i)->Close();
   }
-  partition_peers_.clear();
-  peers_.clear();
+  registry_.clear();
 
-  if (rpc_poll_.is_some() && owns_poll_thread_) {
+  auto poll = registry_.poll_thread();
+  if (poll.is_some() && registry_.owns_poll_thread()) {
     Log_info("[COMMUNICATOR] Shutting down owned poll thread");
-    rpc_poll_.as_ref().unwrap()->shutdown();
+    poll.as_ref().unwrap()->shutdown();
   }
 }
 
+// @unsafe - srpc::Client connect/close, chrono and sleep. A kernel: this is
+// the one operation in this file the DSL genuinely cannot express.
 rusty::Option<rusty::Arc<srpc::Client>> Communicator::ConnectToAddress(
     const std::string& address,
     std::chrono::milliseconds timeout) const {
-  verify(rpc_poll_.is_some());
-  auto client = srpc::Client::create(rpc_poll_.as_ref().unwrap());
+  auto poll = registry_.poll_thread();
+  verify(poll.is_some());
+  auto client = srpc::Client::create(poll.as_ref().unwrap());
   const auto start = std::chrono::steady_clock::now();
   int attempt = 0;
 
@@ -99,61 +116,34 @@ rusty::Option<rusty::Arc<srpc::Client>> Communicator::ConnectToAddress(
   return rusty::None;
 }
 
-Communicator::Peers Communicator::PeersForPartition(parid_t par_id) const {
-  if (!NetworkEnabled()) {
-    return {};
-  }
-  const auto it = partition_peers_.find(par_id);
-  if (it == partition_peers_.end()) {
-    return {};
-  }
-  return it->second;
-}
-
+// @safe - one registry lookup; the null convention the callers test is
+// restored here from the Option the registry returns.
 Communicator::Peer Communicator::PeerForSite(
     parid_t par_id, siteid_t site_id) const {
-  if (!NetworkEnabled()) {
+  auto found = registry_.peer_for_site(par_id, site_id);
+  if (found.is_none()) {
     return nullptr;
   }
-  const auto partition_it = partition_peers_.find(par_id);
-  if (partition_it == partition_peers_.end()) {
-    return nullptr;
-  }
-  const auto it = peers_.find(site_id);
-  if (it == peers_.end()) {
-    return nullptr;
-  }
-  const auto belongs_to_partition = std::any_of(
-      partition_it->second.begin(), partition_it->second.end(),
-      [site_id](const Peer& peer) { return peer->site_id() == site_id; });
-  if (!belongs_to_partition) {
-    return nullptr;
-  }
-  return it->second;
+  return found.unwrap();
 }
 
+// @unsafe - takes the peer's reconnect mutex and reconnects.
 bool Communicator::ReconnectToSite(siteid_t site_id, parid_t par_id) {
-  const auto partition_it = partition_peers_.find(par_id);
-  if (partition_it == partition_peers_.end()) {
+  if (!registry_.has_partition(par_id)) {
     Log_error("[RECONNECT] Unknown partition {} for site {}", par_id, site_id);
     return false;
   }
 
-  const auto peer_it = peers_.find(site_id);
-  if (peer_it == peers_.end()) {
+  auto found = registry_.peer_by_site(site_id);
+  if (found.is_none()) {
     Log_error("[RECONNECT] Unknown site {} for partition {}", site_id, par_id);
     return false;
   }
-  const auto& peer = peer_it->second;
-  const auto belongs_to_partition = std::find_if(
-      partition_it->second.begin(), partition_it->second.end(),
-      [site_id](const Peer& candidate) {
-        return candidate->site_id() == site_id;
-      });
-  if (belongs_to_partition == partition_it->second.end()) {
+  if (!registry_.site_in_partition(par_id, site_id)) {
     Log_error("[RECONNECT] Site {} is not in partition {}", site_id, par_id);
     return false;
   }
+  const auto peer = found.unwrap();
 
   // Only one replacement attempt per peer. The request mutex is deliberately
   // not held while connect retries, so existing traffic can keep using the old
@@ -179,13 +169,6 @@ bool Communicator::ReconnectToSite(siteid_t site_id, parid_t par_id) {
   peer->ReplaceClient(connected.unwrap());
   Log_info("[RECONNECT] Successfully reconnected to site {}", site_id);
   return true;
-}
-
-rusty::Option<rusty::Arc<srpc::PollThread>> Communicator::PollThread() const {
-  if (rpc_poll_.is_none()) {
-    return rusty::None;
-  }
-  return rusty::Some(rpc_poll_.as_ref().unwrap().clone());
 }
 
 }  // namespace janus

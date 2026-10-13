@@ -1,0 +1,64 @@
+C++ -> RUST TRANSLATION-READINESS ASPECTS
+
+1. OBJECT LIFECYCLE
+  LIF-01  Factory functions (new_()) instead of constructors; fallible construction returns expected<T, E>
+  LIF-02  No two-phase initialization (init()/setup() after construction)
+  LIF-03  No implicit copies; copy ctor/assignment deleted, explicit clone()
+  LIF-04  Moves treated as destructive; no use after std::move
+  LIF-05  Simple, noexcept destructors; no reliance on destruction order
+  LIF-06  Every variable initialized at declaration
+  LIF-07  No placement new or manual lifetime management
+
+2. OWNERSHIP AND ALIASING
+  OWN-01  Ownership encoded in types (unique_ptr, shared_ptr, weak_ptr, optional); no owning raw pointers, no new/delete
+  OWN-02  Aliasing XOR mutability; no possibly-aliasing mutable references, no mutation while other references are live
+  OWN-03  No iterator/reference invalidation; no container modification while iterating or holding references into it
+  OWN-04  No cyclic or back-pointer graphs via raw pointers; use arenas with integer handles or weak_ptr
+  OWN-05  No reference or non-owning pointer members in classes
+  OWN-06  Strict const-correctness; every mutable member and const_cast justified
+  OWN-07  No pointer arithmetic or type punning; use span and string_view
+  OWN-08  No returning references to locals, temporaries, or data the caller doesn't outlive
+  OWN-09  Clear parameter-passing conventions (read-only, mutated, ownership transfer); no output parameters
+
+3. TYPE SYSTEM
+  TYP-01  No implementation inheritance; only pure abstract interfaces plus composition
+  TYP-02  Closed polymorphism via std::variant + std::visit; no dynamic_cast or typeid
+  TYP-03  No function overloading
+  TYP-04  No default arguments
+  TYP-05  Operator overloading limited to operators with Rust trait equivalents; no conversion operators
+  TYP-06  No implicit conversions; explicit constructors, enum class, explicit numeric casts
+  TYP-07  Fixed-width integers; no reliance on overflow or wraparound
+  TYP-08  Templates constrained by concepts; no SFINAE, specialization, or heavy metaprogramming
+  TYP-09  No friend
+  TYP-10  No C-style unions
+  TYP-11  No implicit bool/int/pointer truthiness
+  TYP-12  Diamond inheritance: interface-only diamonds allowed (-> supertraits); no non-virtual diamonds (duplicated base subobjects), no data in virtual bases, no same-named methods from different branches, no virtual-base initialization by most-derived class
+
+4. ERROR HANDLING AND CONTROL FLOW
+  ERR-01  No exceptions; expected<T, E> for recoverable errors, abort for bugs
+  ERR-02  No sentinel values or errno for errors
+  ERR-03  No goto; no implicit switch fallthrough; exhaustive switches over enums
+  ERR-04  No side-effect-heavy expressions or reliance on evaluation order
+  ERR-05  Minimal preprocessor use; no function-like macros
+  ERR-06  No mutable globals or static initialization order dependencies
+  ERR-07  No C varargs or setjmp/longjmp
+
+5. CONCURRENCY
+  CON-01  Mutex owns the data it protects (Guarded<T> pattern); no protected references escaping the lock
+  CON-02  Threads own what they use; capture by value/move, or structured join for borrowed data
+  CON-03  Thread-safety of shared types is explicit (Send/Sync equivalents)
+  CON-04  Atomics use explicit memory ordering; no volatile for synchronization
+  CON-05  Lock discipline statically checkable (-Wthread-safety, RAII guards, consistent lock order)
+  CON-06  Async code and callbacks isolated; no captured references or raw this with unclear lifetime
+  CON-07  Message passing encapsulated in channel-like abstractions
+
+6. LIBRARIES AND DATA
+  LIB-01  Containers with direct Rust equivalents; flag std::list, intrusive containers, custom allocators
+  LIB-02  Bytes and text separated (UTF-8 strings vs byte buffers)
+  LIB-03  No C string APIs
+  LIB-04  Third-party dependencies mapped to Rust counterparts or isolated
+  LIB-05  FFI and system calls confined to a small, clearly marked module
+
+7. TESTABILITY AND VERIFICATION
+  TST-01  Tests usable for differential testing; non-determinism (time, randomness, network) injectable
+  TST-02  Clean under sanitizers (ASan, UBSan, TSan), clang-tidy, and strict compiler warnings

@@ -15,27 +15,42 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #include <rusty/option.hpp>
+#include <rusty/slice.hpp>
 
 #include "srpc/srpc.hpp"
+#include "../constants.h"   // slotid_t / ballot_t -- the single definition
 
 namespace janus {
 namespace raft {
 
-// Type aliases matching existing codebase
-// Use preprocessor guards to avoid conflict with macro definitions in constants.h
-#ifndef slotid_t
-using slotid_t = uint64_t;
-#endif
-#ifndef ballot_t
-using ballot_t = uint64_t;
-#endif
+// slotid_t / ballot_t come from ../constants.h above; see the note in
+// log_storage.hpp. The former #ifndef-guarded unsigned redeclarations made
+// the type depend on include order.
 
 /**
  * Metadata about a snapshot.
  */
+#if RUSTYCPP_RUST
+pub const fn snapshot_metadata_is_valid(last_included_index: u64) -> bool {
+    last_included_index > 0
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=raft_snapshot.metadata_decisions version=1 rust_sha256=3013f5d760a2b6533f8c599a53bd99c9b3ca0d582e606b7bfdcc3a9616a45ab3*/
+constexpr bool snapshot_metadata_is_valid(uint64_t last_included_index);
+constexpr bool snapshot_metadata_is_valid(uint64_t last_included_index) {
+    return rusty::detail::deref_if_pointer_like(last_included_index) > 0;
+}
+/*RUSTYCPP:GEN-END id=raft_snapshot.metadata_decisions*/
+
+static_assert(!snapshot_metadata_is_valid(0));
+static_assert(snapshot_metadata_is_valid(1));
+static_assert(snapshot_metadata_is_valid(UINT64_MAX));
+
 // @safe - POD struct
 struct SnapshotMetadata {
   slotid_t last_included_index{0};  // Last log entry included in snapshot
@@ -46,7 +61,7 @@ struct SnapshotMetadata {
 
   // @safe - Check if metadata is valid
   bool is_valid() const {
-    return last_included_index > 0;
+    return snapshot_metadata_is_valid(last_included_index);
   }
 
   // @unsafe - String formatting
@@ -236,7 +251,7 @@ class SnapshotManager {
    * @param keep_after_index Keep snapshots with last_included_index >= this
    * @return Number of snapshots deleted
    */
-  // @unsafe - Deletes files
+  // @unsafe - Mutates manager-owned snapshot storage
   virtual size_t PruneSnapshots(slotid_t keep_after_index) = 0;
 
   /**
@@ -244,52 +259,8 @@ class SnapshotManager {
    * Used for testing or forced fresh start.
    * @return Number of snapshots deleted
    */
-  // @unsafe - Deletes files
+  // @unsafe - Mutates manager-owned snapshot storage
   virtual size_t DeleteAllSnapshots() = 0;
-
-  // ========================================================================
-  // Configuration
-  // ========================================================================
-
-  /**
-   * Get the storage path for snapshots.
-   */
-  // @lifetime: (&'a) -> &'a
-  virtual const std::string& GetStoragePath() const = 0;
-};
-
-/**
- * Configuration for snapshot behavior.
- */
-// @safe - POD struct
-struct SnapshotConfig {
-  std::string storage_path;           // Path for snapshot files
-  size_t snapshot_interval{10000};    // Take snapshot every N log entries
-  size_t max_snapshots{3};            // Maximum snapshots to keep
-  bool verify_on_load{true};          // Verify checksum when loading
-  size_t chunk_size{64 * 1024};       // Chunk size for streaming (64KB)
-
-  // @unsafe - Returns struct by value
-  static SnapshotConfig defaults() {
-    return SnapshotConfig{};
-  }
-
-  // @unsafe - Uses getenv and string operations
-  static SnapshotConfig for_replica(uint32_t partition_id, uint32_t locale_id) {
-    SnapshotConfig config;
-    // Use username prefix to avoid conflicts between users
-    std::string username;
-    auto user = std::getenv("USER");  // @unsafe
-    if (user) {
-      username = user;
-    } else {
-      username = "unknown";
-    }
-    config.storage_path = "/tmp/" + username + "_mako_snapshot_shard" +
-                         std::to_string(partition_id) + "_replica" +
-                         std::to_string(locale_id);
-    return config;
-  }
 };
 
 }  // namespace raft

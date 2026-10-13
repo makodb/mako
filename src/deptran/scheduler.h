@@ -1,36 +1,305 @@
 #pragma once
 
+#include <cstdint>
 #include <functional>
-#include <mutex>
+#include <memory>
+#include <string>
 #include <utility>
 
 #include "constants.h"
 #include "mako_commands.h"
+#include "raft/snapshot_callbacks.h"
 
 namespace janus {
 
 class Communicator;
 
-// Common state shared by the two replication engines. Transaction execution,
-// MemDB ownership, epoch management, and the retired Jetpack recovery plane do
-// not belong in the replication server hierarchy.
-class TxLogServer {
- public:
-  using LearnerAction = std::function<int(int, Command)>;
+// The replication engine interface.
+//
+// WHAT THIS USED TO BE, and why it changed. Until the Tranche 6 work
+// (docs/migration/raft/conversion-log.md section 1), TxLogServer was not an interface
+// at all: it was six public data members (loc_id_, site_id_, app_next_,
+// commo_, partition_id_, mtx_), one non-virtual method that assigned one of
+// them, and a virtual destructor -- ZERO behavioural virtuals. RaftServer and
+// PaxosServer inherited those fields and read them as their own.
+//
+// That is implementation inheritance, and implementation inheritance has no
+// Rust spelling (precheck B7, gate G4). It is the reason RaftServer could not
+// be moved into the DSL at all: `#[cpp_inherit]` lets a DSL-owned type inherit
+// a C++ BASE, but only an interface-shaped one -- it cannot absorb a base's
+// data members.
+//
+// So the data moved down into the two concrete servers, which now declare the
+// same five fields under the same names (so no body anywhere had to change),
+// and what remains here is a genuine interface: pure virtuals covering exactly
+// what a worker does through a base pointer, and nothing else.
+//
+// THE MUTEX WAS NOT A MISTAKE, so do not read its removal as a correction of
+// one. It was added in April 2016 (6651e5b78, "lock guard in multipaxos sched")
+// to a base that was genuinely stateful -- it owned dtxns_, mdb_txns_,
+// executors_, mdb_txn_mgr_, mode_ and recorder_ -- alongside the lock_guards
+// that commit added to MultiPaxosSched's handlers. The lock lived with the data
+// it protected, in the class that owned it. Correct.
+//
+// What changed is everything around it: transaction execution, MemDB ownership,
+// epoch management and the retired Jetpack plane all left this hierarchy, and
+// the mutex outlived every member it was introduced to guard. By then it was a
+// lock in a class with no state, shared by declaration between two derived
+// types whose state is mutually unrelated.
+//
+// The recursion is residue of the same decay: recursive_mutex supports a
+// handler locking on entry and then calling other locking methods, which is
+// what Raft's 24 nested re-acquisitions still are. With the lock owned by the
+// type whose state it guards, a plain non-recursive Mutex<RaftState> becomes
+// feasible.
+//
+// THE MUTEX IS GONE FROM HERE TOO, deliberately. `mtx_` was a
+// std::recursive_mutex shared by both engines by inheritance -- 48 acquisitions
+// in Raft, 4 in Paxos. Each server now owns its own, which is what lets Raft
+// replace its recursive mutex with a single Mutex<RaftState> without touching
+// Paxos (Tranche 5).
+//
+// The learner callback, at namespace scope rather than as a member typedef of
+// TxLogServer: a DSL `pub trait` cannot declare a nested type, and nothing
+// outside this header ever spelled it `TxLogServer::LearnerAction`.
+using LearnerAction = std::function<int(int, Command)>;
 
-  locid_t loc_id_ = static_cast<locid_t>(-1);
-  siteid_t site_id_ = static_cast<siteid_t>(-1);
-  LearnerAction app_next_{};
-  Communicator* commo_ = nullptr;
-  parid_t partition_id_ = 0;
-  std::recursive_mutex mtx_{};
+}  // namespace janus
 
-  TxLogServer() = default;
-  virtual ~TxLogServer();
+// Inline-mode type map for the interface below, the same mechanism
+// src/deptran/raft/rust_facade_types.h uses and for the same reason: the
+// emitter carries a Rust path into C++ verbatim, and inline mode has no
+// `--type-map` to rewrite it. The canonical Rust names these two as
+// `rusty::Communicator` and `rusty::LearnerAction` (modelled opaquely in
+// src/srpc/rusty-rustc/src/lib.rs); these aliases are the C++ half.
+//
+// Aliases, deliberately, rather than a `use rusty::*;` glob in the DSL block.
+// The glob emits `using namespace rusty;` INSIDE `namespace janus`, and this
+// header is included by every replication translation unit -- pulling all of
+// rusty into janus name lookup that widely is not worth saving two lines.
+namespace rusty {
+using Communicator = ::janus::Communicator;
+using LearnerAction = ::janus::LearnerAction;
+// Named by RaftSpecific's signatures below. They are Raft's, and they sit in
+// the shared header only because RaftSpecific does (see the DSL block for
+// why); the Rust side models them as opaque carriers in
+// src/srpc/rusty-rustc/src/lib.rs, with the layout pinned in raft/server.h.
+using RaftCommand = ::janus::Command;
+using RaftLeaderChangeCb = ::std::function<void(bool)>;
+using RaftByteString = ::std::string;
+// The snapshot callbacks RaftSpecific::SetStateMachineSnapshotCallbacks takes
+// (raft/snapshot_callbacks.h); raft/server.h pins these carriers' layout.
+using RaftCreateSnapshotCb = ::janus::RaftCreateSnapshotFn;
+using RaftPrepareSnapshotCb = ::janus::RaftPrepareSnapshotFn;
+}  // namespace rusty
 
-  void RegLearnerAction(LearnerAction learner_action) {
-    app_next_ = std::move(learner_action);
-  }
+namespace janus {
+
+// @interface - pure virtuals and a virtual destructor only; no state.
+//
+// TxLogServer's three methods are the ONLY things a worker does through a
+// base pointer common to both engines, enumerated from the call sites rather
+// than guessed: raft_worker.cc:288-290, 374,444 and paxos_worker.cc:50-51,
+// 180,553.
+//
+// RaftSpecific is what the Raft workers and the Raft RPC service reach beyond
+// that. It is declared HERE, in the engine-shared header, and not in
+// raft/server.h, for one reason: the transpiler emits a supertrait as a C++
+// base (`class RaftSpecific : public TxLogServer`) only when both traits are
+// declared in the same carrier. RaftServerBase implements it with
+// `#[cpp_inherit]`, so the struct's one C++ base is RaftSpecific and, through
+// it, TxLogServer.
+//
+// locid_t/parid_t/siteid_t/slotid_t/ballot_t/bool_t are #defines for
+// uint32_t/uint32_t/uint16_t/uint64_t/int64_t/int8_t (constants.h), so the
+// fixed-width types below are byte-identical, after preprocessing, to the
+// hand-written signatures they replaced.
+#if RUSTYCPP_RUST
+pub trait TxLogServer {
+    fn set_site_identity(&mut self, loc_id: u32, site_id: u16, partition_id: u32);
+    fn set_commo(&mut self, commo: *mut rusty::Communicator);
+    // By reference, never by value: a std::function is not bitwise-relocatable
+    // (libc++ keeps a small callable inside the object and points at it), so
+    // the implementation copies it in place, into its final slot.
+    fn reg_learner_action(&mut self, learner_action: &rusty::LearnerAction);
+}
+
+// Submission admission result for the RaftWorker interface.  Memory-only Raft
+// either rejects a command (not leader) or appends it; there is no durable
+// append whose outcome could be unknown.
+#[allow(non_camel_case_types)]
+#[cfg_attr(not(any()), derive(Clone, Copy, Debug, Eq, PartialEq))]
+#[repr(i32)]
+pub enum RaftStartResult {
+    REJECTED = 0,
+    APPENDED = 1,
+}
+
+// Method names are the C++ names the workers, the service and the lab tests
+// already call; renaming them to snake_case is a mechanical follow-up once
+// nothing hand-written calls them.
+//
+// Every method takes `&self` (bugs-found B19): the worker, the RPC service,
+// the fibers and the apply thread call these concurrently on one server, so
+// none of them may hold it as `&mut`. What serialises them is the server's
+// own mtx_ and atomics. TxLogServer above keeps `&mut self`: PaxosServer
+// implements it too, so the Raft server's C ABI reaches set_commo and
+// reg_learner_action through `&self` twins (raft_gen_exports.py
+// SHARED_TWINS).
+#[allow(non_snake_case)]
+#[allow(clippy::too_many_arguments)]
+pub trait RaftSpecific: TxLogServer {
+    // Lifecycle, as the worker drives it.
+    fn EnsureSetup(&self);
+    fn WaitForStartup(&self) -> bool;
+    fn PrepareForShutdown(&self);
+    // Leadership.
+    fn IsLeader(&self) -> bool;
+    fn GetLeaderHint(&self) -> u16;
+    fn SetPreferredLeader(&self, site_id: u16);
+    // By reference, for the reason given on reg_learner_action.
+    fn RegisterLeaderChangeCallback(&self, cb: &rusty::RaftLeaderChangeCb);
+    // Admission. The service no longer asks: ServeVote and friends below
+    // apply the gate themselves, inside the one call. What is left here is
+    // the worker's readiness probe (raft_worker.cc, ServerStatus::set_ready).
+    fn IsRpcReady(&self) -> bool;
+    // Identity and progress, read-only: the three facts the main helper used
+    // to read as fields through the concrete type. CommitIndex is the
+    // pre-existing unlocked cross-thread read behind get_outstanding_logs --
+    // a metric polled from the transaction path, tolerated racy since before
+    // the conversion; step C gives it an atomic mirror.
+    fn SiteId(&self) -> u16;
+    fn PartitionId(&self) -> u32;
+    fn CommitIndex(&self) -> u64;
+    // Replication entry: the worker's "replicate this command".
+    fn Start(&self, cmd: &rusty::RaftCommand, index: *mut u64,
+             term: *mut u64) -> RaftStartResult;
+    // Inbound RPC, as the service hands it over: ONE call per request, gate
+    // included. The C++ service used to ask IsDisconnected and IsRpcReady
+    // across the ABI before every handler and fill the unavailable reply
+    // itself, so each inbound RPC cost three virtual-plus-FFI round trips
+    // where it now costs one; the unavailable replies are unchanged, they
+    // are just written on this side (RaftServerBase::ServeVote and friends).
+    //
+    // EmptyAppendEntries has no method of its own: the service calls
+    // ServeAppendEntries with an empty Command and leader_next_log_term 0,
+    // exactly as it called OnAppendEntries before.
+    fn ServeVote(&self, lst_log_idx: u64, lst_log_term: i64,
+                 can_id: u16, can_term: i64, reply_term: *mut i64,
+                 vote_granted: *mut i8);
+    fn ServeAppendEntries(&self, leader_current_term: u64,
+                          leader_site_id: u16, leader_prev_log_index: u64,
+                          leader_prev_log_term: u64, leader_commit_index: u64,
+                          cmd: &rusty::RaftCommand, leader_next_log_term: u64,
+                          follower_append_ok: *mut u64,
+                          follower_current_term: *mut u64,
+                          follower_last_log_index: *mut u64);
+    fn ServeInstallSnapshot(&self, term: u64, leader_id: u64,
+                            last_included_index: u64, last_included_term: u64,
+                            data: &rusty::RaftByteString, term_out: *mut u64);
+    // The embedder's state-machine snapshot callbacks. By reference, as
+    // RegisterLeaderChangeCallback: std::function is not bitwise-relocatable.
+    // Returns the owner token ClearStateMachineSnapshotCallbacks takes.
+    fn SetStateMachineSnapshotCallbacks(&self,
+                                        create_cb: &rusty::RaftCreateSnapshotCb,
+                                        prepare_cb: &rusty::RaftPrepareSnapshotCb) -> u64;
+}
+#endif
+/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=d04755016a9c260600b98d9dd4894cd1ea825a7adec51686d7b7ad740cf188cb*/
+enum class RaftStartResult : int32_t;
+constexpr RaftStartResult RaftStartResult_REJECTED();
+constexpr RaftStartResult RaftStartResult_APPENDED();
+class TxLogServer;
+class RaftSpecific;
+
+enum class RaftStartResult : int32_t {
+    REJECTED = 0,
+    APPENDED = 1
 };
+inline constexpr RaftStartResult RaftStartResult_REJECTED() { return RaftStartResult::REJECTED; }
+inline constexpr RaftStartResult RaftStartResult_APPENDED() { return RaftStartResult::APPENDED; }
+
+class TxLogServer {
+public:
+    virtual ~TxLogServer() noexcept(false) {}
+    virtual void set_site_identity(uint32_t loc_id, uint16_t site_id, uint32_t partition_id) = 0;
+    virtual void set_commo(rusty::Communicator* commo) = 0;
+    virtual void reg_learner_action(const rusty::LearnerAction& learner_action) = 0;
+    TxLogServer(const TxLogServer&) = delete;
+    TxLogServer& operator=(const TxLogServer&) = delete;
+    TxLogServer(TxLogServer&&) = delete;
+    TxLogServer& operator=(TxLogServer&&) = delete;
+protected:
+    TxLogServer() = default;
+};
+
+template <class U> class TxLogServerAdapter;
+template <class U> class TxLogServerAdapterRef;
+template <class U> class TxLogServerAdapterRefMut;
+
+class RaftSpecific : public TxLogServer {
+public:
+    virtual ~RaftSpecific() noexcept(false) {}
+    virtual void EnsureSetup() const = 0;
+    virtual bool WaitForStartup() const = 0;
+    virtual void PrepareForShutdown() const = 0;
+    virtual bool IsLeader() const = 0;
+    virtual uint16_t GetLeaderHint() const = 0;
+    virtual void SetPreferredLeader(uint16_t site_id) const = 0;
+    virtual void RegisterLeaderChangeCallback(const rusty::RaftLeaderChangeCb& cb) const = 0;
+    virtual bool IsRpcReady() const = 0;
+    virtual uint16_t SiteId() const = 0;
+    virtual uint32_t PartitionId() const = 0;
+    virtual uint64_t CommitIndex() const = 0;
+    virtual RaftStartResult Start(const rusty::RaftCommand& cmd, uint64_t* index, uint64_t* term) const = 0;
+    virtual void ServeVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted) const = 0;
+    virtual void ServeAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index) const = 0;
+    virtual void ServeInstallSnapshot(uint64_t term, uint64_t leader_id, uint64_t last_included_index, uint64_t last_included_term, const rusty::RaftByteString& data, uint64_t* term_out) const = 0;
+    virtual uint64_t SetStateMachineSnapshotCallbacks(const rusty::RaftCreateSnapshotCb& create_cb, const rusty::RaftPrepareSnapshotCb& prepare_cb) const = 0;
+    RaftSpecific(const RaftSpecific&) = delete;
+    RaftSpecific& operator=(const RaftSpecific&) = delete;
+    RaftSpecific(RaftSpecific&&) = delete;
+    RaftSpecific& operator=(RaftSpecific&&) = delete;
+protected:
+    RaftSpecific() = default;
+};
+
+template <class U> class RaftSpecificAdapter;
+template <class U> class RaftSpecificAdapterRef;
+template <class U> class RaftSpecificAdapterRefMut;
+/*RUSTYCPP:GEN-END id=deptran_scheduler.tx_log_server*/
+
+// The five fields that used to sit in TxLogServer, as a macro rather than a
+// base class or a member struct.
+//
+// A member struct would have been cleaner C++, but it would have renamed every
+// use: 164 `site_id_`, 20 `partition_id_`, 10 `loc_id_` and 6 `app_next_` in
+// Raft alone would all have become `site_.site_id_` and so on -- ~200 edits
+// whose only purpose is to satisfy a scoping rule, in the same change that
+// moves ownership and locking. Flattening keeps every body byte-identical and
+// leaves the fields as plain members of the concrete type, which is also the
+// shape the DSL wants: a DSL-owned struct has fields, not an embedded base.
+//
+// The trade, stated plainly: this is a macro, and a macro is worse to read
+// than a struct. It is confined to these two lines and two call sites.
+#define TXLOG_SERVER_SITE_FIELDS()                       \
+  locid_t loc_id_ = static_cast<locid_t>(-1);            \
+  siteid_t site_id_ = static_cast<siteid_t>(-1);         \
+  LearnerAction app_next_{};                             \
+  Communicator* commo_ = nullptr;                        \
+  parid_t partition_id_ = 0;
+
+// The bodies of the three interface methods, identical in both engines.
+#define TXLOG_SERVER_SITE_METHODS()                                  \
+  void set_site_identity(locid_t loc_id, siteid_t site_id,             \
+                       parid_t partition_id) override {              \
+    loc_id_ = loc_id;                                                \
+    site_id_ = site_id;                                              \
+    partition_id_ = partition_id;                                    \
+  }                                                                  \
+  void set_commo(Communicator* commo) override { commo_ = commo; }    \
+  void reg_learner_action(const LearnerAction& learner_action) override {     \
+    app_next_ = learner_action;                           \
+  }
 
 }  // namespace janus

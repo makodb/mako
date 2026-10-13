@@ -1,12 +1,13 @@
 /**
  * testPreferredReplicaStartup.cc
  *
- * TEST 1: Preferred Replica Startup Test (with TimeoutNow Leadership Transfer)
+ * TEST 1: Preferred Replica Startup Test (election-timer bias)
  *
  * Purpose:
- * - Verify that the preferred replica becomes leader via TimeoutNow protocol
- * - Verify that non-preferred replicas transfer leadership to preferred
- * - Observe leadership behavior without bias
+ * - Verify that the preferred replica becomes leader through the
+ *   preferred-leader election-timer bias
+ * - Verify that non-preferred replicas do not win the initial election
+ * - Observe leadership behavior
  *
  * Test Setup:
  * - 5-node Raft cluster: localhost (preferred), p1, p2, p3, p4
@@ -242,7 +243,7 @@ int main(int argc, char **argv) {
         if (final_became == 0) {
             safe_print("[" + proc_name + "]   ✅ Non-preferred replica never became leader (ideal)");
         } else if (final_became == 1) {
-            safe_print("[" + proc_name + "]   ✅ Non-preferred replica transferred leadership (became leader once)");
+            safe_print("[" + proc_name + "]   ⚠️  Non-preferred replica became leader once (lost it to a later election)");
         } else {
             safe_print("[" + proc_name + "]   ⚠️  Non-preferred replica became leader " +
                       to_string(final_became) + " times (election instability)");

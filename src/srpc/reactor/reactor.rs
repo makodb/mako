@@ -35,7 +35,7 @@ use std::rc::Rc;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, Wake, Waker};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64};
 
 use crate::basetypes::Time;
@@ -299,8 +299,11 @@ pub struct BoxEvent<Type> {
     pub state_: EventState,
     pub prunable_: Cell<bool>,
     pub self_: Weak<dyn EventPollable>,
-    pub content_: RefCell<Type>,
-    pub is_set_: Cell<bool>,
+    // Mako-local: a Mutex, not a RefCell. A BoxEvent's payload is published
+    // by a FOREIGN thread (an RPC completion running on the connection's poll
+    // thread) and read by the owner. RefCell/Cell would be a data race.
+    pub content_: Mutex<Type>,
+    pub is_set_: AtomicBool,
 }
 
 impl<Type: Clone + Default + 'static> BoxEvent<Type> {
@@ -336,7 +339,7 @@ impl<Type: Clone + Default + 'static> EventPollable for BoxEvent<Type> {
         event_test_impl(self)
     }
     fn is_ready(&self) -> bool {
-        self.is_set_.get()
+        self.is_set_.load(std::sync::atomic::Ordering::Acquire)
     }
     fn log(&self) {}
     fn status(&self) -> EventStatus {
@@ -376,31 +379,39 @@ fn boxevent_make<Type: Clone + Default + 'static>() -> Arc<BoxEvent<Type>> {
         state_: EventState::new(),
         prunable_: Cell::new(true),
         self_: Weak::<BoxEvent<Type>>::new(),
-        content_: RefCell::new(Default::default()),
-        is_set_: Cell::new(false),
+        content_: Mutex::new(Default::default()),
+        is_set_: AtomicBool::new(false),
     });
     event_state_seed(&sp.state_);
     sp
 }
 
-// Returns the slot payload by value (copy out of the RefCell).
+// Returns the slot payload by value while serializing with a foreign setter.
 fn boxevent_get<Type: Clone>(ev: &BoxEvent<Type>) -> Type {
-    let g = ev.content_.borrow();
+    let g = ev.content_.lock().unwrap();
     (*g).clone()
 }
 
 fn boxevent_set<Type: Clone + Default + 'static>(ev: &BoxEvent<Type>, c: &Type) {
-    ev.is_set_.set(true);
     {
-        let mut g = ev.content_.borrow_mut();
+        let mut g = ev.content_.lock().unwrap();
         *g = c.clone();
+        // Publish readiness only AFTER the protected payload is complete,
+        // or a foreign reader can observe is_set_ with a half-written slot.
+        ev.is_set_.store(true, std::sync::atomic::Ordering::Release);
     }
-    ev.test();
+    // Event status, weak Fiber state and the reactor queues are owner-thread
+    // only, so a foreign setter publishes the payload and stops there. Lion
+    // has no per-pass scan: the owner sees the payload when it next tests the
+    // event, at a timed wait's deadline, or sooner if event_ping wakes it.
+    if std::thread::current().id() == ev.owner_thread_ {
+        ev.test();
+    }
 }
 
 fn boxevent_clear<Type: Default>(ev: &BoxEvent<Type>) {
-    ev.is_set_.set(false);
-    let mut g = ev.content_.borrow_mut();
+    let mut g = ev.content_.lock().unwrap();
+    ev.is_set_.store(false, std::sync::atomic::Ordering::Release);
     let _old = core::mem::take(&mut *g);
 }
 
@@ -741,7 +752,7 @@ impl WaitAll {
         // The child tells this parent when it becomes ready (S4 step 4).
         event_parent_link::<()>(&x, &self.self_);
         // Bind the guard, then deref — chaining `.borrow_mut().push(x)`
-        // mis-lowers to push(Vec::from_iter(x)). See §8.33.
+        // mis-lowers to push(Vec::from_iter(x)). See §7.33.
         let mut g = self.events_.borrow_mut();
         (*g).push(x);
     }
@@ -5330,7 +5341,13 @@ fn fiber_yield_invoke(y: &mut fiber_yield_t) {
 /// the C fiber engine for this fiber, and the pointee must still be alive --
 /// i.e. this may only be called by the engine, on that fiber's own stack,
 /// before `fiber_task_t` is destroyed.  It is never called from Rust or C++.
-#[no_mangle]
+///
+/// No `#[no_mangle]`: the engine receives this as a FUNCTION POINTER from
+/// `fiber_engine_start` below and no C or C++ translation unit names the
+/// symbol, so exporting it bought nothing -- and it made the symbol a hard
+/// multiple definition when both the transpiled lane (libsrpc.a) and the
+/// rustc lane (libsrpc.rlib) are linked into one process, which is exactly
+/// what mako's Raft work needs to do.
 pub unsafe extern "C" fn fiber_task_entry_thunk(arg: *mut core::ffi::c_void) {
     let task: *mut fiber_task_t = arg as *mut fiber_task_t;
     unsafe { fiber_task_body_invoke(&mut (*task).fn_, &mut (*task).yield_); }
