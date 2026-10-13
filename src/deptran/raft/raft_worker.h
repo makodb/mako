@@ -182,6 +182,10 @@ public:
   // Shutdown
   // @unsafe - uses delete on raw pointers (manual memory management)
   void ShutDown();
+  // @safe - A drain of another server sharing this worker's Raft server (a
+  // single-group stub) timed out: one of its handlers may still be using the
+  // server, so ShutDown must not delete it (bugs-found B34).
+  void KeepServerOnShutDown() { keep_server_on_shutdown_ = true; }
   // @safe - bounded pointer dereferences
   void WaitForShutdown();
   // @safe - std::thread creation is bounded
@@ -273,6 +277,10 @@ public:
   // raft-rt's transport, which owns this worker's Raft poll thread, RPC
   // server and peer clients (raft_transport.h).
   RaftTransport* rust_transport_ = nullptr;
+
+  // KeepServerOnShutDown's flag; ShutDown sets it too when its own drain
+  // times out.
+  bool keep_server_on_shutdown_ = false;
 
   // @unsafe - uses std::make_shared, raw pointers
   rusty::Arc<TpcCommitCommand> CreateRaftLogCommand(

@@ -334,10 +334,14 @@ impl RaftTransport {
         self.server.as_ref().map(|s| s.get_bound_port()).unwrap_or(-1)
     }
 
-    /// Close admission and let the handlers already inside finish. Disk
-    /// builds close Raft's gate first (disk design §3): srpc's admission flag is
-    /// not checked on dispatch, and a request handled now would hold its
-    /// reply for a flush.
+    /// Close admission and wait for the requests already admitted. True is a
+    /// barrier: srpc refuses every request the closed gate did not let
+    /// through, and the count each admitted one holds lasts until its reply
+    /// is sent (a held reply included), after its handler's last use of the
+    /// server (bugs-found B23). False (the timeout): one may still be using
+    /// the server, which must then outlive it. Disk builds close Raft's gate
+    /// first (disk design §3), so a request admitted before the close is
+    /// refused rather than handled and held for a flush.
     pub fn drain(&self, timeout_ms: u64) -> bool {
         match self.server.as_ref() {
             Some(s) => {

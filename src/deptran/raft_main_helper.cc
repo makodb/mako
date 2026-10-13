@@ -389,11 +389,15 @@ void create_stub_servers() {
 // stub, then drop them, while the worker's transport poll thread is still
 // alive to run their jobs. Each serves the single RaftServer, whose handlers
 // dereference it with no lifetime lease, so the drain precedes its
-// destruction by RaftWorker::ShutDown().
-void destroy_stub_servers() {
+// destruction by RaftWorker::ShutDown(). False: a drain timed out, and one of
+// its handlers may still be using that server, which must then be kept
+// (bugs-found B34).
+bool destroy_stub_servers() {
+  bool drained = true;
   for (RaftStubServer* stub : rust_stub_servers_g) {
     if (!raft_stub_server_drain(stub, kStubRpcDrainTimeoutMs)) {
-      Log_warn("[SINGLE-RAFT] Stub server drain timed out");
+      Log_error("[SINGLE-RAFT] Stub server drain timed out");
+      drained = false;
     }
   }
   for (RaftStubServer* stub : rust_stub_servers_g) {
@@ -401,6 +405,7 @@ void destroy_stub_servers() {
   }
   rust_stub_servers_g.clear();
   Log_info("[SINGLE-RAFT] Destroyed stub servers");
+  return drained;
 }
 
 // server_launch_worker finishes wiring RPC/commo threads and starts batching loops.
@@ -936,8 +941,13 @@ int shutdown_paxos() {
     }
   }
 
-  if (raft_group_mode_g == RaftGroupMode::kSingleGroup) {
-    destroy_stub_servers();
+  if (raft_group_mode_g == RaftGroupMode::kSingleGroup &&
+      !destroy_stub_servers()) {
+    for (auto& worker : raft_workers_g) {
+      if (worker) {
+        worker->KeepServerOnShutDown();
+      }
+    }
   }
 
   for (auto& worker : raft_workers_g) {

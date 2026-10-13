@@ -512,12 +512,20 @@ void RaftWorker::ShutDown() {
   // server is quiesced: the service's handlers dereference the server with
   // no lifetime lease, so one mid-call on the transport's poll thread would
   // otherwise still be running when this thread reaches `delete rep_sched_`
-  // below. srpc holds a pending-request guard for each request's whole
-  // handler, so the drain is the barrier that guarantee needs.
+  // below. srpc refuses every request the closed gate did not admit, and
+  // counts each admitted one until its reply is sent, so a drain that
+  // completes is the barrier that guarantee needs (bugs-found B23). One that
+  // times out is not: a handler may still be using the server, so the server
+  // is kept rather than deleted under it (B34).
   if (rust_transport_ != nullptr &&
       !raft_transport_drain(rust_transport_, kRpcDrainTimeoutMs)) {
-    Log_warn("[RAFT-WORKER-SHUTDOWN] RPC drain timed out with request(s) "
-             "still in flight");
+    keep_server_on_shutdown_ = true;
+    Log_error("[RAFT-WORKER-SHUTDOWN] RPC drain timed out with request(s) "
+              "still in flight");
+  }
+  if (keep_server_on_shutdown_) {
+    Log_error("[RAFT-WORKER-SHUTDOWN] an RPC handler may still be using the "
+              "Raft server: it is left allocated, not deleted");
   }
 
   // Raft's heartbeat and election fibers are owned by the server PollThread.
@@ -551,7 +559,9 @@ void RaftWorker::ShutDown() {
     if (raft_frame_ != nullptr) {
       raft_frame_->ReleaseScheduler();
     }
-    delete rep_sched_;
+    if (!keep_server_on_shutdown_) {
+      delete rep_sched_;
+    }
     rep_sched_ = nullptr;
     raft_sched_ = nullptr;
   }

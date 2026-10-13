@@ -136,7 +136,9 @@ pub struct PendingRequestGuard {
 impl Drop for PendingRequestGuard {
     fn drop(&mut self) {
         if let Some(counter) = &self.pending_counter {
-            counter.fetch_sub(1i32, Ordering::Relaxed);
+            // Mako-local: SeqCst (a release at least), so a drain that reads
+            // the count it leaves sees everything the request's handler did.
+            counter.fetch_sub(1i32, Ordering::SeqCst);
         }
     }
 }
@@ -153,7 +155,9 @@ impl Request {
     pub fn attach_pending_guard(&mut self, counter: &NullablePendingCounter) {
         if self.pending_guard.is_none() {
             if let Some(counter) = counter.as_ref() {
-                counter.fetch_add(1i32, Ordering::Relaxed);
+                // Mako-local: SeqCst, one half of the admission handshake
+                // (see sconn_decode_request_and_dispatch).
+                counter.fetch_add(1i32, Ordering::SeqCst);
                 self.pending_guard = Some(Box::new(PendingRequestGuard {
                     pending_counter: Some(counter.clone()),
                 }));
@@ -654,7 +658,7 @@ pub fn server_drain_impl(
         );
         // SAFETY: the file pointer is null.
         unsafe { log_line(4, 0, core::ptr::null(), &message) };
-        return pending.load(Ordering::Relaxed) == 0i32;
+        return pending.load(Ordering::SeqCst) == 0i32;
     }
     let entering: String = format!(
         "Server::drain: transitioning to DRAINING, pending={}",
@@ -665,7 +669,10 @@ pub fn server_drain_impl(
     phase.set(ShutdownPhase::DRAINING);
     let start_us = crate::basetypes::Time::now(true);
     let timeout_us = timeout_ms * 1000u64;
-    while pending.load(Ordering::Relaxed) > 0i32 {
+    // Mako-local: SeqCst, the other half of the admission handshake (see
+    // sconn_decode_request_and_dispatch); reading zero also acquires every
+    // drained handler's effects.
+    while pending.load(Ordering::SeqCst) > 0i32 {
         let elapsed_us = crate::basetypes::Time::now(true) - start_us;
         if elapsed_us >= timeout_us {
             let expired: String = format!(
@@ -1021,12 +1028,15 @@ impl Server {
     /// listener. Mako-local: Raft holds this shut while durable recovery and
     /// committed replay establish a safe service boundary, and closes it again
     /// on shutdown to drain in-flight handlers before the server is destroyed.
+    /// The gate is checked on dispatch, after the request is counted, and
+    /// closing it is SeqCst, so a `drain` after a close waits for every
+    /// request the gate let through (see sconn_decode_request_and_dispatch).
     pub fn set_admission_ready(&self, ready: bool) {
-        self.admission_ready_field.store(ready, Ordering::Release);
+        self.admission_ready_field.store(ready, Ordering::SeqCst);
     }
 
     pub fn admission_ready(&self) -> bool {
-        self.admission_ready_field.load(Ordering::Acquire)
+        self.admission_ready_field.load(Ordering::SeqCst)
     }
 
     /// Freeze the pending registrations into an immutable
@@ -1440,6 +1450,18 @@ pub unsafe fn sconn_decode_request_and_dispatch(
             let empty_fn2: ServerReplyFn = None;
             sconn_reply(sconn, &req_box, 0i32, empty_fn2);
         }
+        return;
+    }
+
+    // Mako-local: the admission gate (Server::set_admission_ready). This
+    // request was counted above (attach_pending_guard) before the gate is
+    // read, and a closer stores the gate before its drain reads the count,
+    // all SeqCst: so a request either sees the gate closed, or is counted
+    // by the drain that closed it. A drain that reads zero after a close is
+    // therefore a barrier: nothing reaches a service after it.
+    if !sconn.ctx_.admission_ready.load(Ordering::SeqCst) {
+        let empty_fn_closed: ServerReplyFn = None;
+        sconn_reply(sconn, &req_box, SERVER_ERR_TRY_AGAIN, empty_fn_closed);
         return;
     }
 
