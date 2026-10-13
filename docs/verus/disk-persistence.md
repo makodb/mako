@@ -602,6 +602,9 @@ reads the first six and refuses a malformed value):
 | `MAKO_RAFT_KILLTEST_DIR` | where each server writes the kill test's evidence lines | unset |
 
 **Stores.** One per server, `<site>-<partition>/` in `MAKO_RAFT_DATA_DIR`.
+Sites are numbered within a shard, so servers of different shards on one
+host need different directories: the 2-shard suites give each shard
+`$MAKO_RAFT_DATA_DIR/shard<N>` (B40).
 Launchers give every run a directory of its own through
 `scripts/raft_disk/store_dir.sh` (sourced; `scripts/raft_kill/run.py` has
 its Python twin), under `MAKO_RAFT_DATA_ROOT` (default

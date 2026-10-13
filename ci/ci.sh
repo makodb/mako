@@ -111,6 +111,13 @@ with_raft_store() {  # with_raft_store LABEL CMD...
             echo "[raft disk] a server's WAL did not match its state (above)"
             rc=1
         fi
+        # A server whose Raft never started (its store refused, say) can
+        # leave a suite that checks the other servers passing (bugs-found
+        # B40).
+        if [ -n "$logs" ] && grep -l -E 'RAFT-STARTUP\] Site [0-9]+ failed|Raft startup failed' $logs; then
+            echo "[raft disk] a server's Raft startup failed (above)"
+            rc=1
+        fi
         echo "[raft disk] $(cat $logs /dev/null | grep -c 'DISK-VERIFY.* ok') clean-stop verification(s) passed"
         raft_store_cleanup
         exit $rc

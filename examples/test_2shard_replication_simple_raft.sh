@@ -130,32 +130,43 @@ handle_interrupt() {
 trap cleanup_processes EXIT
 trap handle_interrupt INT TERM
 
+# Disk builds: a store directory per shard. A store is named by its site and
+# partition (<site>-<partition>), and both shards number their sites 0-2, so
+# one MAKO_RAFT_DATA_DIR would put two servers on each store and the second
+# would be refused (bugs-found B40).
+store_env_s0=()
+store_env_s1=()
+if [ -n "${MAKO_RAFT_DATA_DIR:-}" ]; then
+    store_env_s0=(MAKO_RAFT_DATA_DIR="$MAKO_RAFT_DATA_DIR/shard0")
+    store_env_s1=(MAKO_RAFT_DATA_DIR="$MAKO_RAFT_DATA_DIR/shard1")
+fi
+
 # Start BOTH shards simultaneously to avoid timing issues where shard 0 tries
 # to connect to shard 1 before shard 1 is ready
 echo "Starting shard 0 and shard 1 simultaneously with Raft..."
 
 # Start shard 0 followers first (3 replicas total: localhost, p1, p2)
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 "$trd" p2 1 raft > "$log_s0_p2" 2>&1 &
+nohup env "${store_env_s0[@]}" $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 "$trd" p2 1 raft > "$log_s0_p2" 2>&1 &
 PID_S0_P2=$!
 
 # Start shard 1 followers simultaneously
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 "$trd" p2 1 raft > "$log_s1_p2" 2>&1 &
+nohup env "${store_env_s1[@]}" $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 "$trd" p2 1 raft > "$log_s1_p2" 2>&1 &
 PID_S1_P2=$!
 
 sleep 2
 
 # Start p1 followers
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 "$trd" p1 1 raft > "$log_s0_p1" 2>&1 &
+nohup env "${store_env_s0[@]}" $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 "$trd" p1 1 raft > "$log_s0_p1" 2>&1 &
 PID_S0_P1=$!
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 "$trd" p1 1 raft > "$log_s1_p1" 2>&1 &
+nohup env "${store_env_s1[@]}" $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 "$trd" p1 1 raft > "$log_s1_p1" 2>&1 &
 PID_S1_P1=$!
 
 sleep 3
 
 # Start leaders simultaneously - they wait 5s for setup before starting tests
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 "$trd" localhost 1 raft > "$log_s0_localhost" 2>&1 &
+nohup env "${store_env_s0[@]}" $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 0 "$trd" localhost 1 raft > "$log_s0_localhost" 2>&1 &
 PID_S0_LOCALHOST=$!
-nohup $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 "$trd" localhost 1 raft > "$log_s1_localhost" 2>&1 &
+nohup env "${store_env_s1[@]}" $GDB_PREFIX ./${BUILD_DIR:-build}/simpleTransactionRep 2 1 "$trd" localhost 1 raft > "$log_s1_localhost" 2>&1 &
 PID_S1_LOCALHOST=$!
 
 # Wait for experiments to complete (includes setup + verification in simpleTransactionRep)
