@@ -626,7 +626,10 @@ static std::vector<slotid_t> catch_up_learner(int epoch, ballot_t* higher_epoch)
 // value they accepted past the committed slots and adopts, per slot, the
 // one accepted at the highest ballot, as a Paxos prepare phase does. A
 // value only one acceptor accepted may not have been chosen; choosing it
-// now is safe. Replies stop at kRecoveryReplyBytes, so a slot is settled
+// now is safe. Each acceptor first promises lead_epoch, the epoch the
+// learner will lead in, and rejects lower ballots from then on, so the old
+// leader, if it was only paused, cannot get a value accepted after it was
+// read here. Replies stop at kRecoveryReplyBytes, so a slot is settled
 // only once both acceptors have reported every slot up to it. The adopted
 // values are proposed again at the slots they were accepted at, which
 // follow the committed ones without a gap: the leader sends each acceptor
@@ -635,7 +638,7 @@ static std::vector<slotid_t> catch_up_learner(int epoch, ballot_t* higher_epoch)
 // stops at the gap and the slots past it go to new entries. Returns the
 // adopted values per partition, in slot order; *higher_epoch as in
 // catch_up_learner.
-static std::vector<SlotEntries> recover_accepted(int epoch,
+static std::vector<SlotEntries> recover_accepted(int epoch, ballot_t lead_epoch,
                                                  const std::vector<slotid_t>& committed_high,
                                                  ballot_t* higher_epoch) {
   constexpr int64_t kRecoveryReplyBytes = 16 * 1024 * 1024;
@@ -655,6 +658,7 @@ static std::vector<SlotEntries> recover_accepted(int epoch,
     req->sync_commit_slot = next;
     req->max_reply_bytes = kRecoveryReplyBytes;
     req->include_accepted = 1;
+    req->promise_epoch = lead_epoch;
     vector<rusty::Arc<SyncLogResponse>> responses;
     bool ok = false;
     ballot_t rejected = 0;
@@ -744,8 +748,10 @@ void stuff_todo_learner_upgrade(){
   ballot_t higher_epoch = 0;
   const std::vector<slotid_t> committed_high = catch_up_learner(es->get_epoch(), &higher_epoch);
   std::vector<SlotEntries> adopted;
+  // The epoch this learner will lead in (es->set_epoch() below adds one).
+  const ballot_t lead_epoch = es->get_epoch() + 1;
   if (higher_epoch == 0) {
-    adopted = recover_accepted(es->get_epoch(), committed_high, &higher_epoch);
+    adopted = recover_accepted(es->get_epoch(), lead_epoch, committed_high, &higher_epoch);
   }
   if (higher_epoch > 0) {
     // Another replica already leads in a later epoch; this one stays a
@@ -758,6 +764,10 @@ void stuff_todo_learner_upgrade(){
   es->state_lock();
   es->set_state(1);
   es->set_epoch(); // increase the epoch number for failover
+  if (es->get_epoch() != lead_epoch) {
+    Log_warn("learner takeover: leading in epoch {}, but the acceptors were promised {}",
+             es->get_epoch(), lead_epoch);
+  }
   for(int i = 0; i < pxs_workers_g.size(); i++){
     pxs_workers_g[i]->election_state_lock.lock();
     pxs_workers_g[i]->cur_epoch = es->get_epoch();
