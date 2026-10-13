@@ -144,6 +144,11 @@ class SyncLogRequest
     // A learner about to lead also asks for the slots accepted but not
     // known to be committed (SyncLogResponse::accepted_data).
     int32_t include_accepted = 0;
+    // With include_accepted: the epoch the learner is about to lead in. An
+    // acceptor rejects lower ballots from then on, as a Paxos promise, so a
+    // leader that was only paused cannot get more values accepted after the
+    // learner has read what was accepted.
+    ballot_t promise_epoch = 0;
     SyncLogRequest() = default;
 
     void save(BinaryWriteArchive& ar) const {
@@ -155,6 +160,7 @@ class SyncLogRequest
       }
       srpc::Serialize_::serialize(max_reply_bytes, ar);
       srpc::Serialize_::serialize(include_accepted, ar);
+      srpc::Serialize_::serialize(promise_epoch, ar);
     }
 
     void load(BinaryReadArchive& ar) {
@@ -169,6 +175,7 @@ class SyncLogRequest
       }
       srpc::Deserialize_::deserialize(max_reply_bytes, ar);
       srpc::Deserialize_::deserialize(include_accepted, ar);
+      srpc::Deserialize_::deserialize(promise_epoch, ar);
     }
 };
 
