@@ -40,7 +40,7 @@ effect). "Latent" means nothing in production reaches it today.
 | B19 | race | Every thread and fiber that enters the shell through a raw pointer makes its own `&mut RaftServerBase`, and some hold it long: the apply thread for its whole life, the heartbeat driver across every wait, each RPC handler through `RaftRpcService::server(&self) -> &mut`. These `&mut` alias across threads, which is undefined behaviour in Rust's model whatever lock or atomic guards the fields | read in code (while writing `code-structure.md` §7) | fixed by F19 in `74dab7c9a` (2026-10-06): every entry takes `&RaftServerBase` |
 | B21 | liveness | When a peer's connection closes, the survivors re-dial it once and then 5 more times, over 15.5-46.5 s, and never again: the transport keeps srpc's default reconnect policy and nothing in Raft re-dials. A replica restarted after that is never sent to, and each of its campaigns deposes the leader | read in code at `a4b1eaa02` (2026-10-08, while planning disk persistence) | fixed in disk builds (`DISK_RECONNECT`, 2026-10-09); open in memory builds by decision |
 | B22 | liveness | A Raft process cannot start while any configured site is down: `ConnectPeers` dials every site for 120 s and aborts on the first that never accepts, though Raft needs only a majority | read in code at `a4b1eaa02` (2026-10-08, as B21) | fixed in disk builds (a majority start, 2026-10-10); open in memory builds by decision |
-| B23 | race (latent) | srpc never reads its admission flag on dispatch, so `set_admission_ready(false)` refuses nothing: the shutdown drain does not keep new requests out | read in code at `a4b1eaa02` (2026-10-08, as B21) | worked around in disk builds (`CloseAdmissionForDrain`, 2026-10-10); open in srpc |
+| B23 | race (latent) | srpc never reads its admission flag on dispatch, so `set_admission_ready(false)` refuses nothing: the shutdown drain does not keep new requests out, and a request let in after it can run a handler on the server `RaftWorker::ShutDown` then deletes | read in code at `a4b1eaa02` (2026-10-08, as B21); reproduced over TCP by the PR #92 review (2026-10-12) | fixed (2026-10-12): srpc refuses on dispatch again, and the gate and the pending count form a SeqCst handshake, so a drain that completes is a barrier (`rt/tests/admission_drain.rs`) |
 | B24 | robustness | `ParseEnvUint64OrDefault` accepts `-1` (`strtoull` wraps it to 2^64-1) for five Raft knobs; `MAKO_RAFT_APPEND_BATCH_MAX_BYTES=-1` removes the batch byte bound | read in code; `strtoull` checked through ctypes | open |
 | B25 | liveness (latent) | A Mako follower handling a no-op waits for `noops_phase_<i>` for every thread index, but only shard indices are written: with more threads than shards it spins forever | read in code | open; no Raft path logs a no-op |
 | B26 | proof coverage (latent) | `verify_core.sh` counts trust only as `#[verifier::external_body]` with a lower-case `fn` name within four lines, so `assume`, `#[verifier::external]` or a capitalised name would add trust silently | read in code; none exists today | fixed (2026-10-09): `verus_gate.py` sees every form, and verified functions must stay verified |
@@ -51,6 +51,13 @@ effect). "Latent" means nothing in production reaches it today.
 | B31 | safety (design) | Disk design §4: a creation killed between the side directory's rename and the parent's `fsync` leaves a store a kill keeps and a power cut erases; a restart that opens it acknowledges writes the next power cut deletes with the whole store | found by `store/tests/wal_crash.rs`, as B30 | fixed in `raft-store`: opening a store syncs its parent directory first; design §4 updated |
 | B32 | performance, liveness (disk) | `raft-store` `base::ops_for` wrote a range delete `[from, ∞)` for every record that replaces from `from`, appends included, so a saturated run put hundreds of thousands of overlapping range tombstones in each RocksDB memtable. RocksDB fragments them at flush in time superlinear in their number: 1-2 s write stalls in G2 on ext4, and a shutdown that waited on a flush thread at 2 minutes of CPU (2 of 5 G2 ext4 runs exceeded their budget) | found 2026-10-10 by the cost model's miss on G2 ext4: `/proc/<pid>/task/*/stat` showed the `rocksdb:high` thread busy while the applier waited | fixed in `raft-store`: the applier tracks an upper bound on the base's last entry index, and a record that only appends past it gets no range delete (`store/tests/rocks.rs` checks both cases) |
 | B33 | test infra | A firing crash point printed `crash <point>` in three `write(2)` calls; another thread's log line on the shared descriptor could split it, and the kill driver reported the self-kill as an unexpected death | reproduced (powercut scenario, 2026-10-10) | fixed: one `write_all` (2026-10-11) |
+| B34 | race (latent) | A shutdown whose RPC drain times out deletes the Raft server anyway, though a handler may still be using it; a single-group stub's timed-out drain likewise | read in code (PR #92 review, 2026-10-12) | fixed (2026-10-12): the server is left allocated |
+| B35 | safety (disk) | The data directory a launch creates is never made durable: a power cut after the first acknowledged write takes the directory, store and all, and the restart refuses ("no store") | reproduced in the `MemFs` model by the PR #92 review (2026-10-12) | fixed (2026-10-12): creation and recovery sync every directory above the store |
+| B36 | race | The generated RPC decoders write through a pointer derived from `&req.src` (a shared reference): the archive advances its cursor, which is undefined behaviour | reproduced with Miri by the PR #92 review (2026-10-12) | fixed (2026-10-12): the decoders read through a cursor of their own |
+| B37 | liveness (disk) | A checkpoint can delete the last good WAL segment while a rotation is between its create and its syncs; a power cut then leaves recovery no segment, and it refuses the store though the base holds the committed state | reproduced in the `MemFs` model by the PR #92 review (2026-10-12) | fixed (2026-10-12): a segment goes only once the writer has published its successor's rotation as durable |
+| B38 | race (latent) | A snapshot `Commit()` that throws unwinds through the Rust frames between the kernel that called it and the C++ catch meant for it | read in code (PR #92 review, 2026-10-12) | fixed (2026-10-12): caught in the kernel, a failed commit (lab case 75) |
+| B39 | race (latent) | A leader-change callback that throws unwinds into the Rust code that fired it | read in code (while fixing B38, 2026-10-12) | fixed (2026-10-12): caught in the kernel, which reports it; the shell fails the server stop (lab case 75) |
+| B40 | test infra | The 2-shard Raft suites on a disk tree gave both shards one store directory; both number their sites 0-2, so each store was claimed twice and shard 1's servers were refused. `shard2ReplicationRaft` passed anyway, its checks never seeing shard 1 | reproduced (tier1 rustdisk, 2026-10-13) | fixed (2026-10-13): a store directory per shard; `ci.sh` fails a disk run in which a server's Raft startup failed |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
 
@@ -62,6 +69,11 @@ fixed as plan items F12-F19 (modification-plan.md A.2; diff-ledger.md,
 checkpoint: the bug-fix report, since removed). B6 stays a trusted assumption (persistence is
 its own project, [disk-persistence.md](disk-persistence.md)); B9, B10 and
 B13 are tooling, not Raft.
+
+**The PR #92 review (2026-10-12).** A review of `4eec61324` reported five
+findings, all confirmed in the code: B23's consequence (with B34), B35,
+B36, B37 and B38. Fixing B38 found B39, the same defect in a sibling kernel,
+and validating the fixes on the disk tree found B40 in the test scripts.
 
 ---
 
@@ -783,11 +795,30 @@ a server being torn down was not checked.
 **How found.** As B21; the check existed in the parent srpc before merge
 `7ace54e1f` (the mapper's reading, not re-checked).
 
-**Fate.** Open in srpc. Disk builds no longer rely on its flag
-(2026-10-10): `RaftTransport::drain` first calls `CloseAdmissionForDrain`,
-which closes Raft's own gate under `mtx_` as `PrepareForShutdown` does, so a
-request arriving during the drain is refused by the `Serve*` gate instead of
-handled and held for a flush. Memory builds still rely on srpc's flag.
+**Fate.** Worked around in disk builds (2026-10-10):
+`RaftTransport::drain` first calls `CloseAdmissionForDrain`, which closes
+Raft's own gate under `mtx_` as `PrepareForShutdown` does, so a request
+arriving during the drain is refused by the `Serve*` gate instead of handled
+and held for a flush. That was no lifetime barrier: checking Raft's gate
+reads the server too.
+
+The PR #92 review (2026-10-12) reproduced the gap over TCP (a Vote sent after
+a successful drain was handled) and traced the consequence: `ShutDown` deletes
+the server after the drain while the transport's poll thread, joined later,
+can still be running a handler on it. The admission check was in the srpc
+Mako carried before the subtree import (`src/rrr/rpc/server.rs:1447` at
+`7ace54e1f^1`); the import dropped it.
+
+Fixed (2026-10-12) in `src/srpc/rpc/server.rs`: the dispatch refuses a
+non-heartbeat request with `SERVER_ERR_TRY_AGAIN` while the gate is closed,
+after the request is counted (`attach_pending_guard`). Counting, closing the
+gate and the drain's reads of the count are all SeqCst, so a request either
+sees the gate closed or is counted by the drain that closed it, and a drain
+that reads zero after a close is a barrier. The count lasts until the reply
+is sent (a disk build's held reply included), after the handler's last use of
+the server. `rt/tests/admission_drain.rs` sends after a drain, under load
+from four clients, and holds a handler across a drain; without the check its
+two refusal cases fail. A drain that times out is B34.
 
 ## B24. A negative Raft knob wraps to the largest value (robustness)
 
@@ -907,3 +938,159 @@ death.
 `wal.write.half` on a line of its own.
 
 **Fate.** Fixed: the line is formatted first and written in one `write_all`.
+
+## B34. A timed-out shutdown drain deletes the server anyway (latent race)
+
+**Where.** `raft_worker.cc:511-554` (`RaftWorker::ShutDown`) and
+`raft_main_helper.cc:393-404` (`destroy_stub_servers`) at `4eec61324`.
+
+**What is wrong.** `ShutDown` drains the RPC server with a 5 s bound and,
+when the drain times out, logs a warning and goes on to `delete rep_sched_`.
+A timed-out drain means a request still holds its count: its handler may
+still be using the server. A single-group stub serves the same server, and a
+stub whose drain timed out was deleted and its server freed the same way.
+
+**How found.** The PR #92 review (2026-10-12), with B23.
+
+**Fate.** Fixed (2026-10-12): a timed-out drain, the worker's own or a
+stub's (`KeepServerOnShutDown`), leaves the Raft server allocated, with an
+error in the log. The leak is the price of a handler that outlives 5 s; a
+handler is a short critical section, so it is not expected.
+
+## B35. A new data directory is never made durable (safety, disk builds)
+
+**Where.** `shell/disk.rs:320-321` (`DiskShell::open`) and
+`store/src/create.rs:93`, `:124` at `4eec61324`.
+
+**What is wrong.** `DiskShell::open` creates `MAKO_RAFT_DATA_DIR` with
+`create_dir_all`, the default directory included on a first launch, and
+nothing syncs its parent. Store creation syncs the store's parent, which is
+the data directory itself: that keeps the store's entry in it, not the data
+directory's entry in its own parent.
+
+**Scenario.** A first launch creates `/var/tmp/raft-wal-$USER`, creates the
+store in it and acknowledges a write. A power cut takes the unsynced
+directory entry, and the store with it; the restart refuses ("no store",
+B6's rule), and the acknowledged state is gone.
+
+**How found.** The PR #92 review (2026-10-12), reproduced in the `MemFs`
+power-cut model. The creation tests began with `MemFs::mkdir_p`, which
+creates the whole path durably, so they never exercised it.
+
+**Fate.** Fixed (2026-10-12): creation (after its rename) and recovery
+(before anything else) sync every directory above the store, parent first,
+up to the root. Recovery's sync covers a directory a killed launch created
+and never synced. `store/tests/create.rs`
+`a_new_data_directory_survives_a_power_cut` and
+`what_recovery_acknowledges_survives_a_power_cut` start from an unsynced data
+directory; both fail without the fix.
+
+## B36. The generated RPC decoders write through a shared reference (race)
+
+**Where.** `scripts/rpcgen_rust.py:546`, `:652`, and so
+`rt/src/rpc.rs:430`, `:449`, `:461`, `:552`, `:571`, `:583` at `4eec61324`.
+
+**What is wrong.** `dispatch` and `dispatch_held` decoded Vote,
+EmptyAppendEntries and InstallSnapshot through
+`make_source_proxy_buffer(&req.src as *const _ as *mut _)`. The archive's
+reads advance the `BufferSource`'s cursor, a plain field: a write through a
+pointer derived from a shared reference, which is undefined behaviour in
+Rust's aliasing model. `dispatch_held`'s `Box` did not help, since the
+pointer still came from `&req.src`.
+
+**How found.** The PR #92 review (2026-10-12): Miri on the checked-in
+decoder reported the retag error at `rt/src/rpc.rs:430`. Not rerun here (no
+Miri on this host).
+
+**Fate.** Fixed (2026-10-12) in the generator: each decoder reads through a
+cursor of its own over the argument bytes (`arg_source`), as
+`AppendEntriesRequestRef::from_body` already did; `rt/src/rpc.rs`
+regenerated. The wire tests (`rt/tests/rpc_wire_golden.rs`,
+`transport_roundtrip.rs`) pass.
+
+## B37. A checkpoint can delete the last good WAL segment (liveness, disk builds)
+
+**Where.** `store/src/wal.rs:297-306` (`covered_segments`) and `:51-59`
+(`new_segment`) at `4eec61324`.
+
+**What is wrong.** A checkpoint deleted a segment once the directory listed
+a successor starting at or below c + 1. A rotation's segment is listed from
+its `create_new` on, before its header is synced and before its directory
+entry is, and the flusher and the applier run independently.
+
+**Scenario.** Segment 1 holds the last durable record and the base has folded
+it (c = 1). The flusher creates segment 2 and has not synced its header. The
+applier checkpoints: it deletes segment 1 and syncs the WAL directory, which
+makes segment 2's entry durable but not its header. A power cut: recovery
+deletes the header-less segment 2 as an interrupted rotation, finds no segment,
+and refuses the store, though the base holds the committed state.
+
+**How found.** The PR #92 review (2026-10-12), reproduced with the store's
+APIs over `MemFs` and `MemBase`.
+
+**Fate.** Fixed (2026-10-12): the writer publishes, after each rotation's
+syncs, the first record of the newest durably created segment
+(`wal::Rotated`), and a checkpoint deletes a segment only when its successor
+is at or below it. `store/tests/wal_crash.rs`
+`a_checkpoint_mid_rotation_keeps_the_last_good_segment` sets up a rotation cut
+between its create and its syncs, runs the checkpoint's step and a power cut,
+and recovers; it fails without the fix.
+
+## B38. A throwing snapshot `Commit()` unwinds through Rust (latent race)
+
+**Where.** `server.cc:838` (`raft_install_snapshot_payload`) at `4eec61324`.
+
+**What is wrong.** `PreparedStateMachineSnapshotInstall::Commit()` is the
+embedder's and not `noexcept`. A false return was handled; a throw was not.
+The catch meant for it, `raft_install_snapshot_guarded`'s `raft_catch`, is
+above two Rust frames (`raft_server_on_install_snapshot_locked`,
+`OnInstallSnapshotLocked`), and an exception unwinding through Rust's
+`extern "C"` frames is undefined behaviour.
+
+**How found.** The PR #92 review (2026-10-12), traced in the source.
+
+**Fate.** Fixed (2026-10-12): the kernel catches `Commit`'s throw itself, as
+`raft_load_state_machine_snapshot` already did, and returns 2 (commit
+failed), on which the shell fails the server stop and replies 0. Lab case 75
+calls the kernel with a `Commit` that throws and checks the 2.
+
+## B39. A throwing leader-change callback unwinds into Rust (latent race)
+
+**Where.** `server.cc:374-377` (`raft_fire_leader_change`) at `4eec61324`.
+
+**What is wrong.** The kernel the shell fires the embedder's leader-change
+callback through called it with no catch, so a throw unwound into the Rust
+that called the kernel, as in B38.
+
+**How found.** Looking for B38's pattern in the other kernels that call an
+embedder callback (2026-10-12); the rest catch (`raft_apply_invoke`, the
+snapshot create and prepare callbacks).
+
+**Fate.** Fixed (2026-10-12): the kernel catches and returns false, and the
+shell fails the server stop, as for a throwing apply callback. Lab case 75
+calls it with a callback that throws.
+
+## B40. The 2-shard suites put both shards' servers on one store (test infra)
+
+**Where.** `examples/test_2shard_replication_raft.sh:122-139` and
+`examples/test_2shard_replication_simple_raft.sh:138-158` at `4eec61324`,
+under `ci/ci.sh`'s `with_raft_store`.
+
+**What is wrong.** `with_raft_store` exports one `MAKO_RAFT_DATA_DIR` for a
+run, and the scripts start both shards' servers with it. A store is named by
+its site and partition (`<site>-<partition>`), and each shard numbers its
+sites 0-2, so the two shards' servers claim the same three stores. The store
+fails closed: the second opener is refused ("locked by another process"), or
+a concurrent creation loses its half-made `.creating` directory. Shard 1's
+Raft never starts. `shard2ReplicationRaft` passed regardless, since nothing it
+checks needs shard 1's replication; `shard2ReplicationSimpleRaft` failed, its
+cross-shard transactions all aborting.
+
+**How found.** The first tier1 `rustdisk` run of the 2-shard suites
+(2026-10-13, validating the PR #92 review fixes); no kept log shows them run
+on a disk tree before.
+
+**Fate.** Fixed (2026-10-13): both scripts give each shard a store directory
+of its own (`$MAKO_RAFT_DATA_DIR/shard<N>`, disk builds only), and
+`with_raft_store` fails a run whose logs show a Raft startup failure, so a
+suite that does not look at every server can no longer pass with one down.
