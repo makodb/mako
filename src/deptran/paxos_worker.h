@@ -186,6 +186,7 @@ class SyncLogRequest
 //   per missing_slots row: int32_t inner.size() | M x slotid_t
 //   int32_t accepted_data.size() | K x MarshallDeputy bytes
 //   int32_t complete.size() | L x int32_t
+//   int32_t executed.size() | P x slotid_t
 // The nested `vector<shared_ptr<janus::Command>>` field uses the
 // prep `operator<<` / `operator>>` overloads for
 // MarshallDeputy on BinaryWriteArchive / BinaryReadArchive — same byte
@@ -203,6 +204,9 @@ class SyncLogResponse
     // or stopped at the byte bound (0).
     vector<rusty::Arc<janus::Command>> accepted_data;
     vector<int32_t> complete;
+    // One per partition: the last slot this acceptor has applied, so a
+    // learner taking over can find an acceptor that fell behind.
+    vector<slotid_t> executed;
     SyncLogResponse() = default;
 
     void save(BinaryWriteArchive& ar) const {
@@ -224,6 +228,10 @@ class SyncLogResponse
       srpc::Serialize_::serialize(static_cast<int32_t>(complete.size()), ar);
       for (size_t i = 0; i < complete.size(); i++) {
         srpc::Serialize_::serialize(complete[i], ar);
+      }
+      srpc::Serialize_::serialize(static_cast<int32_t>(executed.size()), ar);
+      for (size_t i = 0; i < executed.size(); i++) {
+        srpc::Serialize_::serialize(executed[i], ar);
       }
     }
 
@@ -260,6 +268,12 @@ class SyncLogResponse
         int32_t x;
         srpc::Deserialize_::deserialize(x, ar);
         complete.push_back(x);
+      }
+      srpc::Deserialize_::deserialize(sz, ar);
+      for (int i = 0; i < sz; i++) {
+        slotid_t x;
+        srpc::Deserialize_::deserialize(x, ar);
+        executed.push_back(x);
       }
     }
 };

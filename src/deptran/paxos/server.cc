@@ -57,6 +57,7 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
     BulkPaxosCmd bp_cmd;
     BulkPaxosCmd accepted_cmd;
     ps->mtx_.lock();
+    ret_cmd.executed.push_back(ps->max_executed_slot_);
 
     // A learner catching up can ask from slot 1; slots below
     // min_active_slot_ are gone (a recovered log starts later) and
@@ -185,6 +186,12 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
         // es->state_lock();
         // es->set_leader(req_leader);
         // es->state_unlock();
+        if (slot_id < min_active_slot_) {
+          // Applied and freed here already. A new leader proposes such a slot
+          // again only with the value chosen for it, to repair an acceptor
+          // that fell behind (stuff_todo_learner_upgrade).
+          continue;
+        }
         auto instance = GetInstance(slot_id);
         //Log_info("InAccept insert an instance, par_id:{}, epoch:{}, slot_id:{}",partition_id_, cur_epoch, slot_id);
         //verify(instance->max_ballot_accepted_ < ballot_id);
@@ -277,6 +284,9 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
         // es->set_leader(req_leader);
         // es->state_unlock();
 
+        if (slot_id < min_active_slot_) {
+          continue;  // applied and freed here already, as in OnBulkAccept
+        }
         auto instance = GetInstance(slot_id);
         if (instance->max_ballot_accepted_ != ballot_id){
           Log_info("max_ballot_accepted_: {}, recevied: {}", instance->max_ballot_accepted_, ballot_id);
