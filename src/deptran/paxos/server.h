@@ -48,7 +48,7 @@ class PaxosServer : public TxLogServer {
   slotid_t max_touched_slot = 0;
   int leader_id;
   map<slotid_t, shared_ptr<PaxosData>> logs_{}; // the committed values
-  ballot_t cur_epoch;
+  ballot_t cur_epoch = 0;  // acceptors reject lower ballots
   // for learner for the later on takeover
   slotid_t max_committed_slot_learner_ = 0;
   // Learner: every slot up to learner_applied_prefix_ has been applied, and

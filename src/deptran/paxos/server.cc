@@ -71,6 +71,12 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
         }
       }
     } else {
+      // The promise comes first, under the same lock as the report, so no
+      // accept of a lower ballot lands between them.
+      if (bcmd.unwrap()->promise_epoch > ps->cur_epoch) {
+        ps->cur_epoch = bcmd.unwrap()->promise_epoch;
+        ps->PersistEpoch();
+      }
       // Every slot this acceptor holds from first on: committed values as
       // above, and values only accepted, with the ballot each was accepted
       // at, for the next leader to adopt.
@@ -110,6 +116,9 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
   // marshallable_cast works on Command directly.
   const auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd_env);
   verify(bcmd.is_some());
+  // OnSyncLog reads this partition's log, and raises cur_epoch, from
+  // another partition's thread.
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
   // Defensive: reject an empty or incoherent batch instead of indexing
   // ballots[0] into it. A malformed BulkAccept is broadcast to every acceptor,
   // so an unchecked deref here takes down the whole replica group at once —
@@ -210,6 +219,7 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
   // marshallable_cast works on Command directly.
   const auto bcmd = marshallable_cast<PaxosPrepCmd>(cmd_env);
   verify(bcmd.is_some());
+  std::lock_guard<std::recursive_mutex> lock(mtx_);  // as in OnBulkAccept
   // Defensive: same malformed-batch blast door as OnBulkAccept.
   if (bcmd.unwrap()->slots.empty() ||
       bcmd.unwrap()->ballots.size() != bcmd.unwrap()->slots.size()) {
