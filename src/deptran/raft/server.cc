@@ -170,6 +170,27 @@ uint64_t GetAppendEntriesBatchMaxBytes() {
   return max_bytes;
 }
 
+// The log bytes of a Raft entry's command, for capping a batch. Entries
+// written now carry a LogEntry; ones recovered from before the MemDB plane
+// was removed carry the legacy kind-4 pieces, whose string values hold the
+// same application log. Anything else counts as unknown_bytes.
+uint64_t EntryLogBytes(const Command& cmd, uint64_t unknown_bytes) {
+  if (const auto entry = marshallable_cast<LogEntry>(cmd); entry.is_some()) {
+    return static_cast<uint64_t>(entry.unwrap()->length);
+  }
+  if (cmd.has_value() && cmd.kind_ == LegacyVecPieceData::static_kind()) {
+    if (const auto legacy = marshallable_cast<LegacyVecPieceData>(cmd); legacy.is_some()) {
+      uint64_t bytes = 0;
+      for (const auto& piece : legacy.unwrap()->pieces) {
+        for (const auto& kv : piece.input_values) bytes += kv.second.string_value.size();
+        for (const auto& kv : piece.output_values) bytes += kv.second.string_value.size();
+      }
+      return bytes;
+    }
+  }
+  return unknown_bytes;
+}
+
 bool IsPreferredLeaderConfigured(siteid_t preferred_leader_site_id) {
   return preferred_leader_site_id != INVALID_SITEID;
 }
@@ -1538,8 +1559,8 @@ void RaftServer::HeartbeatLoop() {
                   cmd = curInstance->log_;
                   break;
                 }
-                const auto entry = marshallable_cast<LogEntry>(curCmd.as_ref().unwrap()->cmd_);
-                const uint64_t entry_bytes = entry.is_some() ? static_cast<uint64_t>(entry.unwrap()->length) : 0;
+                // An entry of unknown shape counts as a whole batch, so it goes alone.
+                const uint64_t entry_bytes = EntryLogBytes(curCmd.as_ref().unwrap()->cmd_, max_batch_bytes);
                 if (!batch_buffer_.empty() && batch_bytes + entry_bytes > max_batch_bytes) {
                   break;
                 }
