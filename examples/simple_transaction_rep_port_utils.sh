@@ -143,36 +143,79 @@ make_simple_txn_rep_config() {
 # The replication config uses a contiguous range per shard:
 #   shard i ports = base + i*1000 + cluster*100 + partition
 # where cluster ∈ {0=localhost, 1=p1, 2=p2, 3=learner} and partition ∈ [0, nthreads).
-# Probe leader port of each cluster on each shard (so 4 * nshards bind attempts).
-# Keeps the range out of the simpleTransaction band (20000-31699). NOTE: unlike
-# that band, this one sits INSIDE the Linux default ephemeral range
-# (32768-60999) — it cannot fit below 32768 because the +10000 heartbeat ports
-# would land in the simpleTransaction band. Bind-probing only proves a port is
-# free at PICK time; a later outbound connect() can still steal it as its
-# source port. In CI the container reserves these bands from the ephemeral
-# allocator (net.ipv4.ip_local_reserved_ports, see .github/workflows/ci.yml);
-# elsewhere the srpc self-connect guard removes the worst failure mode.
+# Probes every port the run binds, and skips the ports of the dbtest config in
+# $MAKO_CONFIG, which the wrappers write before calling this but bind later.
+# Bind-probing only proves a port is free at PICK time; a later outbound
+# connect() can still take it as its source port, so the band sits below the
+# Linux ephemeral range when the shards fit (see LOW_MAX below).
 pick_paxos_replication_port_base() {
     local nshards="${1:-2}"
     local nthreads="${2:-3}"
     python3 - <<'PY' "$nshards" "$nthreads"
+import os
 import random
 import socket
 import sys
+import yaml
 
 NSHARDS = int(sys.argv[1])
 NTHREADS = int(sys.argv[2])
-# Each site spawns a paxos listener at `port` AND a heartbeat listener at
-# `port + 10000` (PaxosWorker::CtrlPortDelta in deptran/paxos_worker.h).
-# Both must fit in the valid TCP port range; cap BASE_MAX accordingly.
+# Each site listens at `port` (shard sh, cluster c, partition p sits at
+# base + sh*1000 + c*100 + p) and at `port + 10000` for heartbeats
+# (CtrlPortDelta in deptran/paxos_worker.h, raft/raft_worker.h,
+# server_worker.h). With MAKO_CLUSTER_CONFIG=1, shard 0's first leader
+# also serves the config store at `port + 20000` (cluster_bootstrap.cc).
 CTRL_PORT_DELTA = 10000
+CONFIG_KV_PORT_DELTA = 20000
+CLUSTERS = (0, 100, 200, 300)
 PORT_MAX = 65535
-# Lower bound: stay above simpleTransaction's 20000-31699 range and the Linux
-# ephemeral floor (32768 by default).
-BASE_MIN = 40000
-# Per shard we use a 1000-port window (4 cluster decades * 100 + nthreads spread).
-# Reserve 400 ports per shard for the cluster offsets + per-partition spread.
-BASE_MAX = PORT_MAX - CTRL_PORT_DELTA - (NSHARDS * 1000 + 400)
+SPAN = (NSHARDS - 1) * 1000 + CLUSTERS[-1] + NTHREADS  # site ports used past base
+# dbtest listens at each node port in its config plus a few dozen ids past it
+# (the window pick_simple_transaction_port_base probes).
+TRANSPORT_WINDOW = 40
+
+def ephemeral_floor():
+    try:
+        with open("/proc/sys/net/ipv4/ip_local_port_range") as f:
+            return int(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return 32768
+
+# Listen below the ephemeral range: the kernel hands those ports to outgoing
+# connections, including the ones the processes started first open to each
+# other, so a port that probed free can be taken before a later process binds
+# it. Site ports and their heartbeat ports stay below simpleTransaction's
+# 20000-31699 range as well. Fall back to the old range above it when the
+# shards do not fit.
+LOW_MIN = 2000
+LOW_MAX = min(20000, ephemeral_floor()) - CTRL_PORT_DELTA - SPAN - 1
+if LOW_MAX >= LOW_MIN:
+    BASE_MIN, BASE_MAX = LOW_MIN, LOW_MAX
+else:
+    BASE_MIN = 40000
+    BASE_MAX = min(PORT_MAX - CTRL_PORT_DELTA - SPAN, PORT_MAX - CONFIG_KV_PORT_DELTA)
+
+def transport_ports():
+    # The dbtest config's ports. Nothing listens on them yet, so a bind probe
+    # passes them, and in the low band the config store port (base + 20000)
+    # lands among them.
+    path = os.environ.get("MAKO_CONFIG")
+    if not path:
+        return set()
+    try:
+        with open(path) as f:
+            data = yaml.safe_load(f) or {}
+    except (OSError, yaml.YAMLError):
+        return set()
+    ports = set()
+    for group in ("localhost", "p1", "p2", "learner"):
+        for node in data.get(group) or []:
+            if "port" in node:
+                first = int(node["port"])
+                ports.update(range(first, first + TRANSPORT_WINDOW))
+    return ports
+
+TAKEN = transport_ports()
 
 def port_free(port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -185,18 +228,19 @@ def port_free(port):
         s.close()
     return True
 
+def usable(port):
+    return port <= PORT_MAX and port not in TAKEN and port_free(port)
+
 def probe(base):
-    # Probe the leader port of each cluster on each shard, plus the matching
-    # heartbeat port (paxos + 10000). Catches both the listen-port collision
-    # AND the heartbeat-port collision in one pass.
+    # Every port the run will bind: each site's listener and heartbeat port,
+    # and the config store port (MAKO_CLUSTER_CONFIG=1).
     for sh in range(NSHARDS):
-        for cl in (0, 100, 200, 300):
-            p = base + sh * 1000 + cl
-            if not port_free(p):
-                return False
-            if not port_free(p + CTRL_PORT_DELTA):
-                return False
-    return True
+        for cl in CLUSTERS:
+            for p in range(NTHREADS):
+                site = base + sh * 1000 + cl + p
+                if not usable(site) or not usable(site + CTRL_PORT_DELTA):
+                    return False
+    return usable(base + CONFIG_KV_PORT_DELTA)
 
 for _ in range(2000):
     base = random.randint(BASE_MIN, BASE_MAX)
