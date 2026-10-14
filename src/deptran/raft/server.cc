@@ -9,6 +9,7 @@
 #include "frame.h"
 #include "../legacy_raft_log_payload.h"
 #include "../tpc_command.h"
+#include "../replication_log_entry.h"
 #include "file_snapshot_manager.hpp"
 #include "replicated_db.h"
 
@@ -155,6 +156,18 @@ uint64_t GetAppendEntriesBatchMaxEntries() {
   static uint64_t max_entries = ParseEnvUint64OrDefault(
       "MAKO_RAFT_APPEND_BATCH_MAX_ENTRIES", kDefaultMaxEntries);
   return max_entries;
+}
+
+uint64_t GetAppendEntriesBatchMaxBytes() {
+  // A batch goes out as one RPC frame, which srpc refuses past 64 MiB, and
+  // the TPC-C loader writes log entries of 12-25 MB, so a batch of 256 of
+  // them is refused every time it is sent and the follower never catches
+  // up. Cap the batch's log bytes as well; an entry larger than the cap
+  // still goes, alone.
+  constexpr uint64_t kDefaultMaxBytes = 16ULL << 20;
+  static uint64_t max_bytes = ParseEnvUint64OrDefault(
+      "MAKO_RAFT_APPEND_BATCH_MAX_BYTES", kDefaultMaxBytes);
+  return max_bytes;
 }
 
 bool IsPreferredLeaderConfigured(siteid_t preferred_leader_site_id) {
@@ -1501,6 +1514,8 @@ void RaftServer::HeartbeatLoop() {
 #ifdef RAFT_BATCH_OPTIMIZATION
               vector<rusty::Arc<TpcCommitCommand>> batch_buffer_;
               const uint64_t max_batch_entries = GetAppendEntriesBatchMaxEntries();
+              const uint64_t max_batch_bytes = GetAppendEntriesBatchMaxBytes();
+              uint64_t batch_bytes = 0;
               const uint64_t batch_start_idx = std::max<uint64_t>(it->second, min_active_slot_);
               Log_debug("[BATCH_CHECK] site={} follower={} next_index={} min_active_slot_={} lastLogIndex={}",
                        site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
@@ -1523,6 +1538,12 @@ void RaftServer::HeartbeatLoop() {
                   cmd = curInstance->log_;
                   break;
                 }
+                const auto entry = marshallable_cast<LogEntry>(curCmd.as_ref().unwrap()->cmd_);
+                const uint64_t entry_bytes = entry.is_some() ? static_cast<uint64_t>(entry.unwrap()->length) : 0;
+                if (!batch_buffer_.empty() && batch_bytes + entry_bytes > max_batch_bytes) {
+                  break;
+                }
+                batch_bytes += entry_bytes;
                 // @unsafe { sanctioned writeback through the shared payload — see server_atomic_* precedent }
                 { auto& mut_cmd = *const_cast<TpcCommitCommand*>(curCmd.as_ref().unwrap().get()); mut_cmd.term = curInstance->term; }
                 batch_buffer_.push_back(curCmd.unwrap());
