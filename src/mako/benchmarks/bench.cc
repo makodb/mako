@@ -44,6 +44,17 @@ using namespace util;
 std::unordered_map<int, mako::ShardClient*> shardClientAll;
 // par_id ==> txn
 std::unordered_map<int, Transaction*> shardTxnAll;
+// Workers add themselves to both maps from their own threads, all at once
+// at startup (every local shard's workers, with -L), and the control
+// callback looks clients up while they run.
+static std::mutex shard_maps_mu;
+
+// The client the worker for par_id registered, or nullptr.
+static mako::ShardClient* shard_client_for(int par_id) {
+  std::lock_guard<std::mutex> lock(shard_maps_mu);
+  auto it = shardClientAll.find(par_id);
+  return it == shardClientAll.end() ? nullptr : it->second;
+}
 
 
 static void arr2str(vector<uint64_t> arr) {
@@ -164,9 +175,9 @@ bench_worker::run()
 
         // Unpaused previous blocked threads if any
         for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
-           auto it = shardClientAll.find(par_id);
-           if (it != shardClientAll.end() && it->second != nullptr) {
-             it->second->setBlocking(false);
+           mako::ShardClient* client = shard_client_for(par_id);
+           if (client != nullptr) {
+             client->setBlocking(false);
            } else {
              Warning("ShardClient for par_id=%d is nullptr in setBlocking, skipping", par_id);
            }
@@ -277,7 +288,10 @@ bench_worker::run()
   }
   scoped_db_thread_ctx ctx(db, false);
   on_run_setup();
-  shardClientAll[TThread::getGlobalPartitionID()]=TThread::sclient;
+  {
+    std::lock_guard<std::mutex> lock(shard_maps_mu);
+    shardClientAll[TThread::getGlobalPartitionID()]=TThread::sclient;
+  }
 
   const workload_desc_vec workload = get_workload();
   //    i (0-5): local commits: A
@@ -370,7 +384,10 @@ bench_worker::run()
     throttler.end_work();  // End work timing, may sleep if budget exhausted
   }
 #if defined(COCO)
-  shardTxnAll[TThread::getGlobalPartitionID()]=TThread::txn;
+  {
+    std::lock_guard<std::mutex> lock(shard_maps_mu);
+    shardTxnAll[TThread::getGlobalPartitionID()]=TThread::txn;
+  }
 #endif
   // clockid_t cid;
   // int s;
@@ -390,9 +407,9 @@ bench_runner::stop() { // invoke inside run function; stop all ShardClient insta
   Warning("stop all rpc clients. set stop=false");
   auto& benchConfig = BenchmarkConfig::getInstance();
   for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
-   auto it = shardClientAll.find(par_id);
-   if (it != shardClientAll.end() && it->second != nullptr) {
-     it->second->stop();
+   mako::ShardClient* client = shard_client_for(par_id);
+   if (client != nullptr) {
+     client->stop();
    } else {
      Warning("ShardClient for par_id=%d is nullptr, skipping stop()", par_id);
    }
