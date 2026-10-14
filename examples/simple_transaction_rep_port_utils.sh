@@ -162,17 +162,37 @@ import sys
 
 NSHARDS = int(sys.argv[1])
 NTHREADS = int(sys.argv[2])
-# Each site spawns a paxos listener at `port` AND a heartbeat listener at
-# `port + 10000` (PaxosWorker::CtrlPortDelta in deptran/paxos_worker.h).
-# Both must fit in the valid TCP port range; cap BASE_MAX accordingly.
+# Each site listens at `port` (shard sh, cluster c, partition p sits at
+# base + sh*1000 + c*100 + p) and at `port + 10000` for heartbeats
+# (CtrlPortDelta in deptran/paxos_worker.h, raft/raft_worker.h,
+# server_worker.h). With MAKO_CLUSTER_CONFIG=1, shard 0's first leader
+# also serves the config store at `port + 20000` (cluster_bootstrap.cc).
 CTRL_PORT_DELTA = 10000
+CONFIG_KV_PORT_DELTA = 20000
+CLUSTERS = (0, 100, 200, 300)
 PORT_MAX = 65535
-# Lower bound: stay above simpleTransaction's 20000-31699 range and the Linux
-# ephemeral floor (32768 by default).
-BASE_MIN = 40000
-# Per shard we use a 1000-port window (4 cluster decades * 100 + nthreads spread).
-# Reserve 400 ports per shard for the cluster offsets + per-partition spread.
-BASE_MAX = PORT_MAX - CTRL_PORT_DELTA - (NSHARDS * 1000 + 400)
+SPAN = (NSHARDS - 1) * 1000 + CLUSTERS[-1] + NTHREADS  # site ports used past base
+
+def ephemeral_floor():
+    try:
+        with open("/proc/sys/net/ipv4/ip_local_port_range") as f:
+            return int(f.read().split()[0])
+    except (OSError, ValueError, IndexError):
+        return 32768
+
+# Listen below the ephemeral range: the kernel hands those ports to outgoing
+# connections, including the ones the processes started first open to each
+# other, so a port that probed free can be taken before a later process binds
+# it. Site ports and their heartbeat ports stay below simpleTransaction's
+# 20000-31699 range as well. Fall back to the old range above it when the
+# shards do not fit.
+LOW_MIN = 2000
+LOW_MAX = min(20000, ephemeral_floor()) - CTRL_PORT_DELTA - SPAN - 1
+if LOW_MAX >= LOW_MIN:
+    BASE_MIN, BASE_MAX = LOW_MIN, LOW_MAX
+else:
+    BASE_MIN = 40000
+    BASE_MAX = PORT_MAX - CTRL_PORT_DELTA - SPAN
 
 def port_free(port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -186,17 +206,16 @@ def port_free(port):
     return True
 
 def probe(base):
-    # Probe the leader port of each cluster on each shard, plus the matching
-    # heartbeat port (paxos + 10000). Catches both the listen-port collision
-    # AND the heartbeat-port collision in one pass.
+    # Every port the run will bind: each site's listener and heartbeat port,
+    # and the config store port when it fits.
     for sh in range(NSHARDS):
-        for cl in (0, 100, 200, 300):
-            p = base + sh * 1000 + cl
-            if not port_free(p):
-                return False
-            if not port_free(p + CTRL_PORT_DELTA):
-                return False
-    return True
+        for cl in CLUSTERS:
+            for p in range(NTHREADS):
+                site = base + sh * 1000 + cl + p
+                if not port_free(site) or not port_free(site + CTRL_PORT_DELTA):
+                    return False
+    kv = base + CONFIG_KV_PORT_DELTA
+    return kv > PORT_MAX or port_free(kv)
 
 for _ in range(2000):
     base = random.randint(BASE_MIN, BASE_MAX)
