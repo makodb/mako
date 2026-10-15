@@ -43,6 +43,10 @@ class PaxosServer : public TxLogServer {
   ballot_t cur_epoch = 0;  // acceptors reject lower ballots
   // for learner for the later on takeover
   slotid_t max_committed_slot_learner_ = 0;
+  // Set when this learner takes over (under mtx_). p1 keeps forwarding what
+  // it applies to the learner's address, which is now the leader's, and the
+  // leader already runs every slot it commits through its own callback.
+  bool took_over_ = false;
   // Learner: every slot up to learner_applied_prefix_ has been applied, and
   // learner_applied_runs_ maps the first slot of each applied run past it to
   // the run's last slot. p1 skips a forward while its connection to the
