@@ -57,6 +57,16 @@ static mako::ShardClient* shard_client_for(int par_id) {
   return it == shardClientAll.end() ? nullptr : it->second;
 }
 
+// Every client registered so far, from every local shard.
+static std::vector<mako::ShardClient*> all_shard_clients() {
+  std::lock_guard<std::mutex> lock(shard_maps_mu);
+  std::vector<mako::ShardClient*> clients;
+  for (const auto& kv : shardClientAll) {
+    if (kv.second != nullptr) clients.push_back(kv.second);
+  }
+  return clients;
+}
+
 
 static void arr2str(vector<uint64_t> arr) {
   cerr << "[";
@@ -174,14 +184,10 @@ bench_worker::run()
         set_epoch();
         benchConfig.setRuntimePlus(benchConfig.getRuntime()); // another runtime
 
-        // Unpaused previous blocked threads if any
-        for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
-           mako::ShardClient* client = shard_client_for(par_id);
-           if (client != nullptr) {
-             client->setBlocking(false);
-           } else {
-             Warning("ShardClient for par_id=%d is nullptr in setBlocking, skipping", par_id);
-           }
+        // Unpaused previous blocked threads if any. Clients are keyed by
+        // global partition id, so a shard other than 0 has none at 0..n-1.
+        for (mako::ShardClient* client : all_shard_clients()) {
+          client->setBlocking(false);
         }
         break;
       }
@@ -293,6 +299,7 @@ bench_worker::run()
     std::lock_guard<std::mutex> lock(shard_maps_mu);
     shardClientAll[TThread::getGlobalPartitionID()]=TThread::sclient;
   }
+  client_key_.store(TThread::getGlobalPartitionID(), std::memory_order_release);
 
   const workload_desc_vec workload = get_workload();
   //    i (0-5): local commits: A
@@ -404,16 +411,18 @@ bench_runner::get_open_tables() {
 }
 
 void
-bench_runner::stop() { // invoke inside run function; stop all ShardClient instances
+bench_runner::stop(const vector<bench_worker *> &workers) { // invoke inside run function
   Warning("stop all rpc clients. set stop=false");
-  auto& benchConfig = BenchmarkConfig::getInstance();
-  for (int par_id=0;par_id<benchConfig.getNthreads();par_id++){
-   mako::ShardClient* client = shard_client_for(par_id);
-   if (client != nullptr) {
-     client->stop();
-   } else {
-     Warning("ShardClient for par_id=%d is nullptr, skipping stop()", par_id);
-   }
+  // Each worker's client is under its global partition id; looking up
+  // 0..nthreads-1 found only shard 0's, so other shards' never stopped.
+  for (size_t i = 0; i < workers.size(); i++) {
+    const int key = workers[i]->client_key();
+    mako::ShardClient* client = shard_client_for(key);
+    if (client != nullptr) {
+      client->stop();
+    } else {
+      Warning("ShardClient for par_id=%d (key %d) is nullptr, skipping stop()", (int)i, key);
+    }
   }
 }
 
@@ -589,7 +598,7 @@ bench_runner::run()
     benchConfig.setRunning(false);  // stop database worker threads
   }
   cerr << "[SHUTDOWN] Calling first stop() to stop client transports" << endl;
-  stop(); // stop rpc clients (unblocks outstanding RPCs)
+  stop(workers); // stop rpc clients (unblocks outstanding RPCs)
   cerr << "[SHUTDOWN] First stop() completed" << endl;
   __sync_synchronize();
 
@@ -607,7 +616,7 @@ bench_runner::run()
   cerr << "[SHUTDOWN] stop_rpc_server() completed" << endl;
 
   cerr << "[SHUTDOWN] Calling second stop()" << endl;
-  stop(); // ensure transports are torn down after workers exit
+  stop(workers); // ensure transports are torn down after workers exit
   cerr << "[SHUTDOWN] Second stop() completed" << endl;
   const unsigned long elapsed_nosync = t_nosync.lap()-1e6; // take 1 second off due to sleep(1) within bench_worker::run()
   cerr << "[SHUTDOWN] Calling do_txn_finish()" << endl;

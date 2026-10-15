@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 
+#include <atomic>
 #include <map>
 #include <vector>
 #include <utility>
@@ -148,6 +149,10 @@ public:
   // Get the shard index for this worker
   int get_shard_index() const { return shard_index_; }
 
+  // The key this worker registered its ShardClient under in shardClientAll
+  // (its global partition id), or -1 before it registers.
+  int client_key() const { return client_key_.load(std::memory_order_acquire); }
+
   virtual ~bench_worker() {}
 
   // returns [did_commit?, size_increase_bytes*10+{is_local}?0:1]
@@ -214,6 +219,7 @@ protected:
   spin_barrier *const barrier_a;
   spin_barrier *const barrier_b;
   int shard_index_;  // Shard index for multi-shard mode (-1 = use default)
+  std::atomic<int> client_key_{-1};
 
 private:
   size_t ntxn_commits;
@@ -255,7 +261,8 @@ public:
 
   virtual ~bench_runner() {}
   void run();
-  void stop();
+  // Stops the ShardClients of these workers, this runner's.
+  void stop(const std::vector<bench_worker*>& workers);
   int f_mode;  // failure mode: default 0, 1 => without load phase(failover)
 
   // Get shard index for this runner
