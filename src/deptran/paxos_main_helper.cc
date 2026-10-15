@@ -781,12 +781,15 @@ void stuff_todo_learner_upgrade(){
     // them waiting for slots nobody will send (BroadcastSyncCommit sends
     // nothing), and they would never apply this leader's entries.
     ps->max_committed_slot_ = std::max(ps->max_committed_slot_learner_, committed_high[i]);
-    ps->max_executed_slot_ = ps->max_committed_slot_;
+    // The adopted values were applied above as a learner applies them, so
+    // when their proposals below commit they are not executed again.
+    const slotid_t last_adopted = adopted[i].empty() ? slotid_t{0} : adopted[i].back().first;
+    ps->max_executed_slot_ = std::max(ps->max_committed_slot_, last_adopted);
     // The adopted values keep their slots (proposed again below); this
     // leader's own entries start after them.
-    ps->cur_open_slot_ = std::max(ps->max_committed_slot_,
-                                  adopted[i].empty() ? slotid_t{0} : adopted[i].back().first) + 1;
+    ps->cur_open_slot_ = ps->max_executed_slot_ + 1;
     ps->cur_epoch = es->get_epoch();
+    ps->took_over_ = true;
     ps->mtx_.unlock();
   }
   int epoch = es->get_epoch();

@@ -334,6 +334,14 @@ void PaxosServer::OnForwardToLearner(const srpc::i32& par_id,
                                     rusty::Function<void()> cb) {
   //Log_info("received slot:{}",slot);
   std::lock_guard<std::recursive_mutex> lock(mtx_);
+  if (took_over_) {
+    // Catch-up applied every slot up to the takeover, and later slots are
+    // this leader's own; applying p1's copy would run the leader callback a
+    // second time (moving local timestamps back, resetting the watermark on
+    // a repeated no-op, counting an end signal twice).
+    cb();
+    return;
+  }
   // Forwards can arrive after a takeover's catch-up has applied later
   // slots, so the learner's position only moves forward.
   if (static_cast<slotid_t>(slot) > max_committed_slot_learner_) {
