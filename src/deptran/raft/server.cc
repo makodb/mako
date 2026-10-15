@@ -164,9 +164,20 @@ uint64_t GetAppendEntriesBatchMaxBytes() {
   // them is refused every time it is sent and the follower never catches
   // up. Cap the batch's log bytes as well; an entry larger than the cap
   // still goes, alone.
-  constexpr uint64_t kDefaultMaxBytes = 16ULL << 20;
-  static uint64_t max_bytes = ParseEnvUint64OrDefault(
-      "MAKO_RAFT_APPEND_BATCH_MAX_BYTES", kDefaultMaxBytes);
+  static constexpr uint64_t kDefaultMaxBytes = 16ULL << 20;
+  // A setting past what a frame holds would bring the refusals back, and
+  // "-1" parses as the largest value.
+  static constexpr uint64_t kMostBytes = 60ULL << 20;
+  static uint64_t max_bytes = [] {
+    uint64_t bytes = ParseEnvUint64OrDefault(
+        "MAKO_RAFT_APPEND_BATCH_MAX_BYTES", kDefaultMaxBytes);
+    if (bytes > kMostBytes) {
+      Log_warn("MAKO_RAFT_APPEND_BATCH_MAX_BYTES={} is more than one RPC frame holds; using {}",
+               bytes, kMostBytes);
+      bytes = kMostBytes;
+    }
+    return bytes;
+  }();
   return max_bytes;
 }
 
@@ -176,7 +187,8 @@ uint64_t GetAppendEntriesBatchMaxBytes() {
 // same application log. Anything else counts as unknown_bytes.
 uint64_t EntryLogBytes(const Command& cmd, uint64_t unknown_bytes) {
   if (const auto entry = marshallable_cast<LogEntry>(cmd); entry.is_some()) {
-    return static_cast<uint64_t>(entry.unwrap()->length);
+    // The bytes that go on the wire; length is a separate int field.
+    return static_cast<uint64_t>(entry.unwrap()->log_entry.size());
   }
   if (cmd.has_value() && cmd.kind_ == LegacyVecPieceData::static_kind()) {
     if (const auto legacy = marshallable_cast<LegacyVecPieceData>(cmd); legacy.is_some()) {
