@@ -44,12 +44,13 @@ using namespace util;
 std::unordered_map<int, mako::ShardClient*> shardClientAll;
 // par_id ==> txn
 std::unordered_map<int, Transaction*> shardTxnAll;
-// Workers add themselves to both maps from their own threads, all at once
-// at startup (every local shard's workers, with -L), and the control
-// callback looks clients up while they run.
+// Workers add themselves to these maps from their own threads, keyed by
+// global partition id: to shardClientAll all at once as they start (every
+// local shard's workers, with -L), to shardTxnAll as they finish. The
+// control callback looks clients up while workers run.
 static std::mutex shard_maps_mu;
 
-// The client the worker for par_id registered, or nullptr.
+// The client registered under global partition id par_id, or nullptr.
 static mako::ShardClient* shard_client_for(int par_id) {
   std::lock_guard<std::mutex> lock(shard_maps_mu);
   auto it = shardClientAll.find(par_id);
