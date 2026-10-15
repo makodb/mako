@@ -423,8 +423,11 @@ public:
   // is initialized via `Config::get_tot_req()` at worker construction
   // and a follow-up sweep can chase the Config wiring.
   int tot_num = 0;
-  int cur_epoch;
-  int is_leader;
+  // The ballot this worker's accepts carry (BulkSubmit), and whether it may
+  // propose (add_log_to_nc). setup2 marks the first leader; nothing set the
+  // epoch, so acceptors fencing an old leader relied on it being 0.
+  int cur_epoch = 0;
+  int is_leader = 0;
   // removed `int bulk_writer = 0;` and
   // `int bulk_reader = 0;` — only used inside the now-deleted
   // `AddAcceptNc` / `StartReadAcceptNc` NC-batching pair.
@@ -638,6 +641,13 @@ public:
     return (double)send_prep_anyway_timeout < diff.count();
   }
 
+  // An acceptor turned this node's request down because it promised a later
+  // epoch to a new leader. The workers stop proposing and keep their own
+  // epoch: BulkSubmit uses it as the ballot, so anything still on its way out
+  // stays below the promise and is refused. Taking the acceptor's epoch, as
+  // this used to with is_leader left set, gave this node the new leader's
+  // ballot, and the acceptors took its accepts for slots the new leader was
+  // filling.
   void step_down(int epoch){
     state_lock();
     if(cur_epoch > epoch){
@@ -649,8 +659,7 @@ public:
     set_epoch(epoch);
     for(int i = 0 ; i < pxs_workers_g.size(); i++){
       pxs_workers_g[i]->election_state_lock.lock();
-      pxs_workers_g[i]->cur_epoch = epoch;
-      pxs_workers_g[i]->is_leader = 1;
+      pxs_workers_g[i]->is_leader = 0;
       pxs_workers_g[i]->election_state_lock.unlock();
     }
     state_unlock();
