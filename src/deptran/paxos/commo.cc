@@ -87,8 +87,12 @@ void MultiPaxosCommo::SendInOrder(const std::shared_ptr<RpcPeer>& peer,
       return;
     }
     if (err != srpc::CLIENT_ERR_IO) {
-      Log_warn("{} to site {} (partition {}, {} log bytes) not sent: error {}", what,
-               peer->site_id(), par_id, log_bytes, err);
+      // A peer that is down refuses every message, thousands a second.
+      if (queue->not_sent++ % 1000 == 0) {
+        Log_warn("{} to site {} (partition {}, {} log bytes) not sent: error {} "
+                 "({} not sent so far)", what, peer->site_id(), par_id, log_bytes, err,
+                 queue->not_sent);
+      }
       return;
     }
   }
@@ -162,9 +166,10 @@ void MultiPaxosCommo::DrainSendQueue(std::shared_ptr<RpcPeer> peer,
       }
       continue;
     }
-    if (err != 0) {
-      Log_warn("{} to site {} (partition {}, {} log bytes) not sent: error {}", what,
-               peer->site_id(), par_id, log_bytes, err);
+    if (err != 0 && queue->not_sent++ % 1000 == 0) {
+      Log_warn("{} to site {} (partition {}, {} log bytes) not sent: error {} "
+               "({} not sent so far)", what, peer->site_id(), par_id, log_bytes, err,
+               queue->not_sent);
     }
     queue->queued_bytes -= queue->pending.front().bytes;
     queue->pending.pop_front();

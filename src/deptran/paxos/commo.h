@@ -104,6 +104,7 @@ class MultiPaxosCommo : public Communicator {
     std::deque<Message> pending;
     std::atomic<size_t> queued_bytes{0};
     uint64_t dropped = 0;    // messages refused for a full backlog
+    uint64_t not_sent = 0;   // messages the client refused (peer down)
     bool draining = false;   // a DrainSendQueue job is sending them
   };
 
