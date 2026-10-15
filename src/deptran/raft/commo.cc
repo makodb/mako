@@ -39,6 +39,9 @@ shared_ptr<AppendEntriesResponse> RaftCommo::SendAppendEntries2(
         if (future->get_error_code() != 0) {
           Log_debug("[APPEND_RPC] Error response from site {}, error_code={}",
                     site_id, future->get_error_code());
+          // An empty response is a failed RPC to the leader; firing the event
+          // ends its wait now rather than at its timeout.
+          response->event.as_ref().unwrap()->set(1);
           return;
         }
         srpc::deserialize_from(future->get_reply(), response->status);
@@ -69,6 +72,7 @@ shared_ptr<AppendEntriesResponse> RaftCommo::SendAppendEntries2(
       auto result = proxy.async_EmptyAppendEntries(req, attr);
       _RPC_COUNT();
       if (result.is_ok()) {
+        response->sent = true;
         Future::safe_release(result.unwrap().raw_future());
       }
     } else {
@@ -87,6 +91,7 @@ shared_ptr<AppendEntriesResponse> RaftCommo::SendAppendEntries2(
       auto result = proxy.async_AppendEntries(req, attr);
       _RPC_COUNT();
       if (result.is_ok()) {
+        response->sent = true;
         Future::safe_release(result.unwrap().raw_future());
       }
     }

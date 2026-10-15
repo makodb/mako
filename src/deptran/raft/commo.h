@@ -120,6 +120,9 @@ struct AppendEntriesResponse {
   uint64_t term = 0;
   uint64_t last_log_index = 0;
   uint64_t ack_type = 0;  // 0=Memory, 1=Durable (see AckType enum)
+  // SendAppendEntries2: whether the client queued the request. A refused one
+  // never gets a reply.
+  bool sent = false;
 };
 
 
