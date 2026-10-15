@@ -178,6 +178,10 @@ void PaxosWorker::SetupCommo() {
     rep_commo_ = dynamic_cast<MultiPaxosCommo*>(communicator);
     verify(rep_commo_ != nullptr);
     rep_sched_->commo_ = rep_commo_;
+    rep_commo_->SetSelf(site_info_->id);
+    rep_commo_->SetRepair([this](siteid_t site, slotid_t from, slotid_t to) {
+      RepairPeer(site, from, to);
+    });
   }
   // removed commented-out
   // `submit_pool = new SubmitPool();` — `SubmitPool` class deleted.
@@ -606,6 +610,66 @@ void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id, slo
   _Submit(rusty::Arc<LogEntry>::make(std::move(cmd)), slot);
 }
 
+void PaxosWorker::RepairPeer(siteid_t site, slotid_t from, slotid_t to) {
+  ballot_t ballot = 0;
+  election_state_lock.lock();
+  const bool leading = is_leader;
+  ballot = cur_epoch;
+  election_state_lock.unlock();
+  if (!leading || rep_commo_ == nullptr) {
+    return;
+  }
+  auto ps = dynamic_cast<PaxosServer*>(rep_sched_);
+  const parid_t par_id = site_info_->partition_id_;
+  slotid_t next = from;
+  size_t sent = 0;
+  // Each slot dropped for that acceptor was chosen by a quorum without it,
+  // so this leader holds the chosen value. A slot it has not committed yet
+  // (still in a round) waits for the next repair.
+  while (next <= to && sent < kRepairCallBytes) {
+    BulkPaxosCmd accept;
+    PaxosPrepCmd decide;
+    size_t bytes = 0;
+    {
+      std::lock_guard<std::recursive_mutex> lock(ps->mtx_);
+      for (; next <= to && (accept.slots.empty() || bytes < kRepairMessageBytes); next++) {
+        const auto it = ps->logs_.find(next);
+        if (it == ps->logs_.end() || !it->second->committed_cmd_.has_value()) {
+          break;
+        }
+        const auto& value = it->second->committed_cmd_;
+        if (const auto entry = marshallable_cast<LogEntry>(value); entry.is_some()) {
+          bytes += entry.unwrap()->log_entry.size();
+        }
+        accept.slots.push_back(next);
+        accept.ballots.push_back(ballot);
+        accept.cmds.push_back(rusty::Arc<janus::Command>::make(value));
+        decide.slots.push_back(next);
+        decide.ballots.push_back(ballot);
+      }
+    }
+    if (accept.slots.empty()) {
+      break;
+    }
+    accept.leader_id = es_pw->machine_id;
+    decide.leader_id = es_pw->machine_id;
+    const slotid_t first = accept.slots.front();
+    const slotid_t last = accept.slots.back();
+    rep_commo_->SendRepair(par_id, site,
+                           janus::Command(rusty::Arc<BulkPaxosCmd>::make(std::move(accept))),
+                           janus::Command(rusty::Arc<PaxosPrepCmd>::make(std::move(decide))),
+                           bytes, first, last);
+    sent += bytes;
+  }
+  if (next <= to) {
+    rep_commo_->MarkBehind(site, next, to);
+  }
+  if (next > from) {
+    Log_info("partition {}: sent site {} slots {}-{} it missed{}", par_id, site, from, next - 1,
+             next <= to ? " (more to come)" : "");
+  }
+}
+
 void PaxosWorker::ReleaseInFlightRound() {
   {
     std::lock_guard<std::mutex> lock(inflight_mu_);
@@ -619,10 +683,12 @@ inline void PaxosWorker::_Submit(const janus::Command& sp_m, slotid_t slot) {
   bool counted = false;
   if (stop_flag != true) {
     std::unique_lock<std::mutex> lock(inflight_mu_);
-    auto has_room = [this] {
+    const parid_t par_id = site_info_->partition_id_;
+    auto has_room = [this, par_id] {
       return stop_flag ||
              (inflight_rounds_ < kMaxInFlightRounds &&
-              (rep_commo_ == nullptr || rep_commo_->MaxQueuedBytes() < kMaxPeerBacklogBytes));
+              (rep_commo_ == nullptr ||
+               rep_commo_->PeersWithRoom(par_id) >= MultiPaxosCommo::Quorum(par_id)));
     };
     if (!has_room()) {
       inflight_waits_++;
