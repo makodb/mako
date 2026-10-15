@@ -9,6 +9,7 @@
 #include "frame.h"
 #include "../legacy_raft_log_payload.h"
 #include "../tpc_command.h"
+#include "../replication_log_entry.h"
 #include "file_snapshot_manager.hpp"
 #include "replicated_db.h"
 
@@ -155,6 +156,51 @@ uint64_t GetAppendEntriesBatchMaxEntries() {
   static uint64_t max_entries = ParseEnvUint64OrDefault(
       "MAKO_RAFT_APPEND_BATCH_MAX_ENTRIES", kDefaultMaxEntries);
   return max_entries;
+}
+
+uint64_t GetAppendEntriesBatchMaxBytes() {
+  // A batch goes out as one RPC frame, which srpc refuses past 64 MiB, and
+  // the TPC-C loader writes log entries of 12-25 MB, so a batch of 256 of
+  // them is refused every time it is sent and the follower never catches
+  // up. Cap the batch's log bytes as well; an entry larger than the cap
+  // still goes, alone.
+  static constexpr uint64_t kDefaultMaxBytes = 16ULL << 20;
+  // A setting past what a frame holds would bring the refusals back, and
+  // "-1" parses as the largest value.
+  static constexpr uint64_t kMostBytes = 60ULL << 20;
+  static uint64_t max_bytes = [] {
+    uint64_t bytes = ParseEnvUint64OrDefault(
+        "MAKO_RAFT_APPEND_BATCH_MAX_BYTES", kDefaultMaxBytes);
+    if (bytes > kMostBytes) {
+      Log_warn("MAKO_RAFT_APPEND_BATCH_MAX_BYTES={} is more than one RPC frame holds; using {}",
+               bytes, kMostBytes);
+      bytes = kMostBytes;
+    }
+    return bytes;
+  }();
+  return max_bytes;
+}
+
+// The log bytes of a Raft entry's command, for capping a batch. Entries
+// written now carry a LogEntry; ones recovered from before the MemDB plane
+// was removed carry the legacy kind-4 pieces, whose string values hold the
+// same application log. Anything else counts as unknown_bytes.
+uint64_t EntryLogBytes(const Command& cmd, uint64_t unknown_bytes) {
+  if (const auto entry = marshallable_cast<LogEntry>(cmd); entry.is_some()) {
+    // The bytes that go on the wire; length is a separate int field.
+    return static_cast<uint64_t>(entry.unwrap()->log_entry.size());
+  }
+  if (cmd.has_value() && cmd.kind_ == LegacyVecPieceData::static_kind()) {
+    if (const auto legacy = marshallable_cast<LegacyVecPieceData>(cmd); legacy.is_some()) {
+      uint64_t bytes = 0;
+      for (const auto& piece : legacy.unwrap()->pieces) {
+        for (const auto& kv : piece.input_values) bytes += kv.second.string_value.size();
+        for (const auto& kv : piece.output_values) bytes += kv.second.string_value.size();
+      }
+      return bytes;
+    }
+  }
+  return unknown_bytes;
 }
 
 bool IsPreferredLeaderConfigured(siteid_t preferred_leader_site_id) {
@@ -1284,6 +1330,7 @@ struct PendingAppendEntries {
   // (has_value() == false) signals heartbeat.
   janus::Command cmd;
   uint64_t sent_term;  // term when RPC was sent
+  std::chrono::steady_clock::time_point sent_at{};
 };
 
 // @unsafe - Heartbeat loop mutates shared state, performs RPCs, and uses raw pointers.
@@ -1310,6 +1357,15 @@ void RaftServer::HeartbeatLoop() {
   verify(next_index_.size() == expected);
 
   Log_debug("heartbeat loop init from site: {}", site_id_);
+  // A batch whose reply misses a round's wait stays here until the reply
+  // comes, and its follower gets no new batch meanwhile. Dropping it sent the
+  // same batch again every round, and a follower whose link cannot carry a
+  // batch and its reply within the wait never advanced. Heartbeats are not
+  // kept; they go every round as before.
+  std::map<siteid_t, std::unique_ptr<PendingAppendEntries>> batches_in_flight;
+  // A reply lost without the RPC failing would hold its follower back; after
+  // this long the batch is sent again.
+  constexpr auto kGiveUpOnBatch = std::chrono::seconds(5);
   looping_ = true;
   while(looping_) {
     uint64_t term = 0;
@@ -1328,6 +1384,7 @@ void RaftServer::HeartbeatLoop() {
       // Log_info("heartbeat loop at loc {}", loc_id_);
       if (!IsLeader()) {
         // Log_info("heartbeat loop at loc {} skip since not leader", loc_id_);
+        batches_in_flight.clear();
         continue;
       }
 
@@ -1369,6 +1426,116 @@ void RaftServer::HeartbeatLoop() {
         current_last_log_index = lastLogIndex;
       }
 
+      // Applies a follower's reply to its next and match index; true if it
+      // made this server step down.
+      auto process_reply = [&](PendingAppendEntries& pending) -> bool {
+        auto& resp = *pending.response;
+        bool stepped_down = false;
+        {
+          std::lock_guard<std::recursive_mutex> lock(mtx_);
+          auto& next_index = next_index_[pending.follower_id];
+          auto& match_index = match_index_[pending.follower_id];
+
+          if (resp.status == false && resp.term == 0 && resp.last_log_index == 0) {
+            // RPC failed or no response - do nothing
+          } else if (currentTerm > pending.sent_term) {
+            // Stale response from old term - ignore
+          } else if (resp.status == 0 && resp.term > pending.sent_term) {
+            // case 1: AppendEntries rejected because leader's term is expired
+            if (currentTerm == pending.sent_term) {
+              Log_info("[STEPDOWN] Site {}: Stepping down due to higher term from follower {} (my_term={}, follower_term={})",
+                       site_id_, pending.follower_id, pending.sent_term, resp.term);
+              currentTerm = resp.term;
+              stepDown(StepDownReason::HigherTerm);
+              stepped_down = true;
+            }
+          } else if (resp.status == 0) {
+            // case 2: AppendEntries rejected - log inconsistency
+            if (resp.last_log_index > 0 && (resp.last_log_index + 1) < next_index) {
+              uint64_t old_next = next_index;
+              next_index = resp.last_log_index + 1;
+              Log_info("[LOG-RECONCILE] Site {}: Fast backoff for follower {}: next_index {} -> {} (gap: {}, follower reported last: {})",
+                       site_id_, pending.follower_id, old_next, next_index, old_next - next_index, resp.last_log_index);
+            } else if (resp.last_log_index > 0 && (resp.last_log_index + 1) == next_index && next_index > 1) {
+              // Follower has prevLogIndex but still rejected, which indicates a term conflict.
+              // Step one slot further back so the next AppendEntries can overwrite conflict.
+              uint64_t old_next = next_index;
+              next_index--;
+              Log_info("[LOG-RECONCILE] Site {}: Term-conflict backoff for follower {}: next_index {} -> {}",
+                       site_id_, pending.follower_id, old_next, next_index);
+            } else if (next_index > 10) {
+              uint64_t old_next = next_index;
+              next_index = next_index / 2;
+              Log_info("[LOG-RECONCILE] Site {}: Exponential backoff for follower {}: next_index {} -> {} (halved)",
+                       site_id_, pending.follower_id, old_next, next_index);
+            } else if (next_index > 1) {
+              next_index--;
+              Log_debug("[LOG-RECONCILE] Site {}: Linear backoff for follower {}: next_index {} -> {}",
+                        site_id_, pending.follower_id, next_index + 1, next_index);
+            } else {
+              next_index = 1;
+            }
+          } else {
+            // case 3: AppendEntries accepted
+            verify(resp.status == true);
+
+            // ==================================================================
+            // SPECULATIVE REPLICATION: Track memory acks
+            // ack_type=0 means Memory ack (immediate response before fsync)
+            // ack_type=1 means Durable ack (handled via AppendEntriesDurable RPC)
+            // ==================================================================
+            if (resp.ack_type == 0) {  // Memory ack
+              // Add follower to memoryAcks for all indices up to last_log_index
+              for (uint64_t idx = 1; idx <= resp.last_log_index; ++idx) {
+                memoryAcks_[idx].insert(pending.follower_id);
+              }
+              Log_debug("[SPEC-RAFT] Memory ack from follower {} for index {}",
+                        pending.follower_id, resp.last_log_index);
+            }
+
+            if (!pending.cmd.has_value()) {
+              Log_debug("case 3A: AppendEntries accepted for heartbeat msg");
+              if (resp.last_log_index > match_index) {
+                match_index = resp.last_log_index;
+                if (match_index > lastLogIndex) {
+                  match_index = lastLogIndex;
+                }
+                Log_debug("heartbeat updated match_index for site {}: match_index={}", pending.follower_id, match_index);
+              }
+              if (resp.last_log_index >= next_index) {
+                if (next_index <= lastLogIndex) {
+                  next_index++;
+                  Log_debug("empty heartbeat incrementing next_index for site: {}, next_index: {}", pending.follower_id, next_index);
+                }
+              }
+            } else {
+              Log_debug("case 3B: AppendEntries accepted for non-empty msg");
+              if (resp.last_log_index < next_index) {
+                next_index = resp.last_log_index + 1;
+                match_index = resp.last_log_index;
+              } else {
+                Log_debug("loc {} followerLastLogIndex={} followerNextIndex={} followerMatchedIndex={}",
+                    pending.follower_id, resp.last_log_index, next_index, match_index);
+#ifndef RAFT_BATCH_OPTIMIZATION
+                match_index = next_index;
+                next_index++;
+#endif
+#ifdef RAFT_BATCH_OPTIMIZATION
+                match_index = resp.last_log_index;
+                next_index = resp.last_log_index + 1;
+#endif
+                if (match_index > lastLogIndex) {
+                  match_index = lastLogIndex;
+                }
+                Log_debug("leader site {} receiving site {} followerLastLogIndex={} followerNextIndex={} followerMatchedIndex={}",
+                    site_id_, pending.follower_id, resp.last_log_index, next_index, match_index);
+              }
+            }
+          }
+        }
+        return stepped_down;
+      };
+
       // ========================================================================
       // PHASE 1: Send all AppendEntries RPCs in PARALLEL (non-blocking)
       // ========================================================================
@@ -1384,6 +1551,20 @@ void RaftServer::HeartbeatLoop() {
         }
         if (!IsLeader()) {
           break;  // Stop sending if we lost leadership
+        }
+        if (auto kept = batches_in_flight.find(site_id); kept != batches_in_flight.end()) {
+          if (kept->second->response->event.as_ref().unwrap()->get() >= 1) {
+            // Its reply came after the round that sent it.
+            const bool stepped_down = process_reply(*kept->second);
+            batches_in_flight.erase(kept);
+            if (stepped_down) {
+              break;
+            }
+          } else if (std::chrono::steady_clock::now() - kept->second->sent_at < kGiveUpOnBatch) {
+            continue;  // still on its way; another batch would only queue behind it
+          } else {
+            batches_in_flight.erase(kept);
+          }
         }
 
         uint64_t prevLogIndex = 0;
@@ -1501,6 +1682,8 @@ void RaftServer::HeartbeatLoop() {
 #ifdef RAFT_BATCH_OPTIMIZATION
               vector<rusty::Arc<TpcCommitCommand>> batch_buffer_;
               const uint64_t max_batch_entries = GetAppendEntriesBatchMaxEntries();
+              const uint64_t max_batch_bytes = GetAppendEntriesBatchMaxBytes();
+              uint64_t batch_bytes = 0;
               const uint64_t batch_start_idx = std::max<uint64_t>(it->second, min_active_slot_);
               Log_debug("[BATCH_CHECK] site={} follower={} next_index={} min_active_slot_={} lastLogIndex={}",
                        site_id_, site_id, it->second, min_active_slot_, lastLogIndex);
@@ -1523,6 +1706,12 @@ void RaftServer::HeartbeatLoop() {
                   cmd = curInstance->log_;
                   break;
                 }
+                // An entry of unknown shape counts as a whole batch, so it goes alone.
+                const uint64_t entry_bytes = EntryLogBytes(curCmd.as_ref().unwrap()->cmd_, max_batch_bytes);
+                if (!batch_buffer_.empty() && batch_bytes + entry_bytes > max_batch_bytes) {
+                  break;
+                }
+                batch_bytes += entry_bytes;
                 // @unsafe { sanctioned writeback through the shared payload — see server_atomic_* precedent }
                 { auto& mut_cmd = *const_cast<TpcCommitCommand*>(curCmd.as_ref().unwrap().get()); mut_cmd.term = curInstance->term; }
                 batch_buffer_.push_back(curCmd.unwrap());
@@ -1554,6 +1743,7 @@ void RaftServer::HeartbeatLoop() {
         pending->follower_id = site_id;
         pending->cmd = cmd;
         pending->sent_term = term;
+        pending->sent_at = std::chrono::steady_clock::now();
 
         // Send RPC (non-blocking - just initiates the async call)
         // Response is allocated with shared_ptr - callback captures it to ensure memory validity
@@ -1592,113 +1782,13 @@ void RaftServer::HeartbeatLoop() {
 
         if (resp.event.as_ref().unwrap()->status_.get() == EventStatus::TIMEOUT) {
           Log_debug("[PARALLEL-HB] Timeout waiting for follower {}", pending.follower_id);
-          continue;  // Skip this follower, try again next round
-        }
-
-        bool stepped_down = false;
-        {
-          std::lock_guard<std::recursive_mutex> lock(mtx_);
-          auto& next_index = next_index_[pending.follower_id];
-          auto& match_index = match_index_[pending.follower_id];
-
-          if (resp.status == false && resp.term == 0 && resp.last_log_index == 0) {
-            // RPC failed or no response - do nothing
-          } else if (currentTerm > pending.sent_term) {
-            // Stale response from old term - ignore
-          } else if (resp.status == 0 && resp.term > pending.sent_term) {
-            // case 1: AppendEntries rejected because leader's term is expired
-            if (currentTerm == pending.sent_term) {
-              Log_info("[STEPDOWN] Site {}: Stepping down due to higher term from follower {} (my_term={}, follower_term={})",
-                       site_id_, pending.follower_id, pending.sent_term, resp.term);
-              currentTerm = resp.term;
-              stepDown(StepDownReason::HigherTerm);
-              stepped_down = true;
-            }
-          } else if (resp.status == 0) {
-            // case 2: AppendEntries rejected - log inconsistency
-            if (resp.last_log_index > 0 && (resp.last_log_index + 1) < next_index) {
-              uint64_t old_next = next_index;
-              next_index = resp.last_log_index + 1;
-              Log_info("[LOG-RECONCILE] Site {}: Fast backoff for follower {}: next_index {} -> {} (gap: {}, follower reported last: {})",
-                       site_id_, pending.follower_id, old_next, next_index, old_next - next_index, resp.last_log_index);
-            } else if (resp.last_log_index > 0 && (resp.last_log_index + 1) == next_index && next_index > 1) {
-              // Follower has prevLogIndex but still rejected, which indicates a term conflict.
-              // Step one slot further back so the next AppendEntries can overwrite conflict.
-              uint64_t old_next = next_index;
-              next_index--;
-              Log_info("[LOG-RECONCILE] Site {}: Term-conflict backoff for follower {}: next_index {} -> {}",
-                       site_id_, pending.follower_id, old_next, next_index);
-            } else if (next_index > 10) {
-              uint64_t old_next = next_index;
-              next_index = next_index / 2;
-              Log_info("[LOG-RECONCILE] Site {}: Exponential backoff for follower {}: next_index {} -> {} (halved)",
-                       site_id_, pending.follower_id, old_next, next_index);
-            } else if (next_index > 1) {
-              next_index--;
-              Log_debug("[LOG-RECONCILE] Site {}: Linear backoff for follower {}: next_index {} -> {}",
-                        site_id_, pending.follower_id, next_index + 1, next_index);
-            } else {
-              next_index = 1;
-            }
-          } else {
-            // case 3: AppendEntries accepted
-            verify(resp.status == true);
-
-            // ==================================================================
-            // SPECULATIVE REPLICATION: Track memory acks
-            // ack_type=0 means Memory ack (immediate response before fsync)
-            // ack_type=1 means Durable ack (handled via AppendEntriesDurable RPC)
-            // ==================================================================
-            if (resp.ack_type == 0) {  // Memory ack
-              // Add follower to memoryAcks for all indices up to last_log_index
-              for (uint64_t idx = 1; idx <= resp.last_log_index; ++idx) {
-                memoryAcks_[idx].insert(pending.follower_id);
-              }
-              Log_debug("[SPEC-RAFT] Memory ack from follower {} for index {}",
-                        pending.follower_id, resp.last_log_index);
-            }
-
-            if (!pending.cmd.has_value()) {
-              Log_debug("case 3A: AppendEntries accepted for heartbeat msg");
-              if (resp.last_log_index > match_index) {
-                match_index = resp.last_log_index;
-                if (match_index > lastLogIndex) {
-                  match_index = lastLogIndex;
-                }
-                Log_debug("heartbeat updated match_index for site {}: match_index={}", pending.follower_id, match_index);
-              }
-              if (resp.last_log_index >= next_index) {
-                if (next_index <= lastLogIndex) {
-                  next_index++;
-                  Log_debug("empty heartbeat incrementing next_index for site: {}, next_index: {}", pending.follower_id, next_index);
-                }
-              }
-            } else {
-              Log_debug("case 3B: AppendEntries accepted for non-empty msg");
-              if (resp.last_log_index < next_index) {
-                next_index = resp.last_log_index + 1;
-                match_index = resp.last_log_index;
-              } else {
-                Log_debug("loc {} followerLastLogIndex={} followerNextIndex={} followerMatchedIndex={}",
-                    pending.follower_id, resp.last_log_index, next_index, match_index);
-#ifndef RAFT_BATCH_OPTIMIZATION
-                match_index = next_index;
-                next_index++;
-#endif
-#ifdef RAFT_BATCH_OPTIMIZATION
-                match_index = resp.last_log_index;
-                next_index = resp.last_log_index + 1;
-#endif
-                if (match_index > lastLogIndex) {
-                  match_index = lastLogIndex;
-                }
-                Log_debug("leader site {} receiving site {} followerLastLogIndex={} followerNextIndex={} followerMatchedIndex={}",
-                    site_id_, pending.follower_id, resp.last_log_index, next_index, match_index);
-              }
-            }
+          if (pending.cmd.has_value() && resp.sent) {
+            batches_in_flight[pending.follower_id] = std::move(pending_ptr);
           }
+          continue;  // its reply, if it comes, is used in a later round
         }
-        if (stepped_down) {
+
+        if (process_reply(pending)) {
           break;  // Stop processing - we're no longer leader
         }
       }
