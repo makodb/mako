@@ -3408,18 +3408,11 @@ fn event_wait_impl<W: EventCore>(ev: &W, timeout: u64) {
             reactor_rc.composite_events_.borrow_mut().push_back(ev.core_self().upgrade().unwrap());
         }
 
-        // A timed wait registers its deadline with this thread's deadline
-        // map, which check_timeout drains in deadline order (S4 step 3).
         // wakeup_time_ names the deadline of this wait, and 0 for an untimed
         // one: an entry left by an earlier wait of the same event no longer
         // matches it, and is dropped unserved (see EventDeadline).
-        if timeout > 0 {
-            let now = Time::now(true);
-            ev.core_state().wakeup_time_.set(now + timeout);
-            event_deadline_push(ev, now + timeout, false);
-        } else {
-            ev.core_state().wakeup_time_.set(0u64);
-        }
+        let deadline: u64 = if timeout > 0 { Time::now(true) + timeout } else { 0u64 };
+        ev.core_state().wakeup_time_.set(deadline);
 
         // Transpiled Weak has no implicit Rc→Weak conversion; use the static
         // Rc::downgrade(rc) factory (mirrors std::rc::Rc::downgrade). `fiber` is
@@ -3427,6 +3420,17 @@ fn event_wait_impl<W: EventCore>(ev: &W, timeout: u64) {
         // original `fiber` stays live for the checks below.
         *ev.core_state().wp_fiber_.borrow_mut() = Rc::<Fiber>::downgrade(&fiber);
         ev.core_status().set(EventStatus::WAIT);
+
+        // A timed wait registers its deadline with this thread's deadline
+        // map, which check_timeout drains in deadline order (S4 step 3). Only
+        // once the event is WAIT: the push may sweep the map, and the sweep
+        // keeps only WAIT and READY entries, so a push made before WAIT swept
+        // this wait's own entry and left it with no deadline -- a never-set
+        // event's waiter was then never resumed
+        // (tests/reactor_deadline_rust.rs, the push-sweeps test).
+        if timeout > 0 {
+            event_deadline_push(ev, deadline, false);
+        }
         let fiber_status = fiber.status_.get();
         reactor_verify(fiber_status != FiberStatus::FINISHED && fiber_status != FiberStatus::RECYCLED);
         (*fiber).yield_();
