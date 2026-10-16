@@ -401,22 +401,16 @@ private:
   // followers accept. It runs on the caller's thread, never on this
   // partition's poll thread, where rounds finish. A leader whose
   // followers keep up has a few rounds out per partition. It also waits
-  // while fewer than a quorum of sites have room in their send queues
-  // (MultiPaxosCommo::PeersWithRoom). One slow acceptor does not stop it:
-  // once its queue reaches MultiPaxosCommo::kDropBacklogBytes its messages
-  // are dropped, and RepairPeer sends it the slots once it catches up.
+  // while kMaxPeerBacklogBytes wait to be sent to one replica: a quorum
+  // can go on without a slow replica, whose queue would otherwise grow
+  // without bound.
   static constexpr int kMaxInFlightRounds = 64;
-  // RepairPeer sends at most this much log per message, and per call.
-  static constexpr size_t kRepairMessageBytes = 8u << 20;
-  static constexpr size_t kRepairCallBytes = 128u << 20;
+  static constexpr size_t kMaxPeerBacklogBytes = 256u << 20;
   std::mutex inflight_mu_{};
   std::condition_variable inflight_cv_{};
   int inflight_rounds_ = 0;
   uint64_t inflight_waits_ = 0;  // times _Submit waited for a free round
   void ReleaseInFlightRound();
-  // Leader: sends an acceptor whose full queue dropped slots from..to the
-  // accept and decide for each, from this leader's log (MultiPaxosCommo).
-  void RepairPeer(siteid_t site, slotid_t from, slotid_t to);
   bool noops_received=false;
   std::function<void(const char*, int)> callback_ = nullptr;
   std::function<void(const char*&, int, int)> callback_par_id_ = nullptr;
