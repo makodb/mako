@@ -13,6 +13,7 @@
 #include <iostream>
 #include <atomic>
 #include <chrono>
+#include <cstdio>
 #include <fstream>
 #include <thread>
 #include "benchmarks/benchmark_config.h"
@@ -75,14 +76,32 @@ public:
             std::cout << "wait_for_all_up setup finish!" << std::endl;
         }
 
+        // Readers wait for the key's file to exist and then read it whole, so
+        // the value goes into a temporary file that is renamed into place: a
+        // file opened for writing exists, still empty, before its value is
+        // written, and a reader that got there first parsed "" (stoull threw
+        // on the surviving shard's learner during a failover).
         static int set_key(std::string kk, const char *value, const char*host, int port) {
+            static std::atomic<unsigned> seq{0};
             std::string filename = std::string("nfs_sync_") + host + "_" + std::to_string(port) + "_" + kk;
-            std::ofstream outfile(filename);
-            if (!outfile) {
-                std::cerr << "Failed to open file for writing: " << filename << std::endl;
+            std::string tmp = filename + ".tmp." + std::to_string(getpid()) + "." + std::to_string(seq++);
+            {
+                std::ofstream outfile(tmp);
+                if (!outfile) {
+                    std::cerr << "Failed to open file for writing: " << tmp << std::endl;
+                    return 1;
+                }
+                outfile << value;
+                if (!outfile.flush()) {
+                    std::cerr << "Failed to write: " << tmp << std::endl;
+                    return 1;
+                }
+            }
+            if (std::rename(tmp.c_str(), filename.c_str()) != 0) {
+                std::cerr << "Failed to rename " << tmp << " to " << filename << std::endl;
+                std::remove(tmp.c_str());
                 return 1;
             }
-            outfile << value;
             return 0;
         }
 

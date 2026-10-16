@@ -277,8 +277,10 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
     }
 
     // wait for vectorized watermark computed from other partition servers
+    // (one key per other shard; with more threads than shards, counting
+    // threads here waited forever for shards that do not exist)
     if (noops) {
-      for (int i=0; i<benchConfig.getNthreads(); i++) {
+      for (int i=0; i<benchConfig.getNshards(); i++) {
         if (i!=benchConfig.getShardIndex() && par_id==0) {
           mako::NFSSync::wait_for_key("noops_phase_"+std::to_string(i), 
                                           benchConfig.getConfig()->shard(0, benchConfig.getClusterRole()).host.c_str(), benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
@@ -984,7 +986,14 @@ static void db_close() {
     std::this_thread::sleep_for(std::chrono::seconds(3));
   }
 
-  mako::stop_helper();
+  // A learner started its helper threads at boot (start_workers_tpcc) so
+  // that, if it takes over, it can serve the other shards' remote reads;
+  // stopping them before wait_for_termination left them gone by then, and
+  // every remote request to the new leader timed out. Non-leaders stop
+  // them once the run is over.
+  if (benchConfig.getLeaderConfig()) {
+    mako::stop_helper();
+  }
 
   // Stop multi-shard transports if running
   stopMultiShardTransports();
@@ -992,6 +1001,7 @@ static void db_close() {
   // Wait for termination if not a leader
   if (!benchConfig.getLeaderConfig()) {
     wait_for_termination();
+    mako::stop_helper();
   }
 
   // Cleanup and shutdown

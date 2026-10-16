@@ -321,10 +321,10 @@ public:
 
 
   // Returns an approximate count of keys in the table (local shard only).
-  // Updated at commit time under lock; may be stale for recently aborted transactions.
+  // Updated at commit time; may be stale for recently aborted transactions.
   size_t approx_size() const {
-    // @safe - returns count updated at commit time (under lock); no atomics needed.
-    return size_count_;
+    // @safe - relaxed atomic load of the commit-time count.
+    return size_count_.load(std::memory_order_relaxed);
   }
 
   using RangeCallback = rusty::Function<bool(Str, value_type&)>;
@@ -604,10 +604,11 @@ public:
     bool isInsert = has_insert(item), isDelete = has_delete(item);
 
     if (isDelete) { // delete
-      // Update count at commit time (under lock), so no atomics needed.
+      // Update count at commit time. The row lock covers only this row, and
+      // commits of other rows update the count concurrently, so it is atomic.
       // insert-then-delete cancels out (net change = 0); plain delete decrements.
       if (!isInsert) {
-        size_count_--;
+        size_count_.fetch_sub(1, std::memory_order_relaxed);
       }
       if (!TThread::is_multiversion()) {
         if (!isInsert) { // update
@@ -649,7 +650,7 @@ public:
     if (Opacity)  // false
       TransactionTid::set_version(e->version(), t.commit_tid());
     else if (isInsert) {  // insert
-      size_count_++;
+      size_count_.fetch_add(1, std::memory_order_relaxed);
       Version v = e->version() & ~invalid_bit;
       fence();
       e->version() = v;
@@ -946,8 +947,9 @@ protected:
   }
 
   table_type table_;
-  // @safe - approximate key count; updated at commit time (under lock), so no atomics needed.
-  size_t size_count_{0};
+  // @safe - approximate key count, updated at commit time. Commits of different rows
+  // hold different row locks, so the count is atomic.
+  std::atomic<size_t> size_count_{0};
 };
 
 template <typename V, typename Box, bool Opacity>

@@ -184,8 +184,14 @@ void BulkCoordinatorMultiPaxos::Accept() {
       return;
     }
     auto ess_cc = es_cc;
+    // Acceptors refuse an accept only below the epoch they promised a new
+    // leader, so this node is no longer the leader.
     auto sp_quorum = commo()->BroadcastBulkAccept(
-        par_id_, cmd_, [](ballot_t, int) {});
+        par_id_, cmd_, [ess_cc](ballot_t ballot, int valid) {
+          if (!valid) {
+            ess_cc->step_down(ballot);
+          }
+        });
     
   // auto strt = std::chrono::high_resolution_clock::now();
   // auto endt2 = std::chrono::high_resolution_clock::now();

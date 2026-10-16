@@ -8,6 +8,7 @@
 #include <rusty/arc.hpp>
 
 #include <time.h>
+#include <atomic>
 #include <mutex>
 #include <vector>
 #include <sys/time.h>
@@ -31,6 +32,9 @@ class ServerControlServiceImpl: public ServerControlService {
   mutable std::once_flag sig_handler_once_;
 
   static std::vector<ServerControlServiceImpl*> scsi_s;
+  // Set once a service is destroyed, at process shutdown: heartbeats stop
+  // arming the alarm and its handler does nothing.
+  static std::atomic<bool> closing_;
 
   static void shutdown_wrapper(int sig);
 

@@ -138,6 +138,17 @@ namespace mako
         // store layer
         abstract_db *db;
         map<int, abstract_ordered_index *> open_tables_table_id;
+        // UpdateTableEntry adds tables from the thread that creates them
+        // while this receiver's helper thread serves requests.
+        std::mutex tables_mu_;
+        // The table registered under table_id. A request can name a table
+        // this receiver does not have (a learner that took over during
+        // startup); it then aborts with abstract_abort_exception, as when a
+        // key cannot be locked. operator[] inserted a null entry instead,
+        // and the caller dereferenced it.
+        abstract_ordered_index *table_for(int table_id);
+        // The same lookup, returning nullptr for a table it does not have.
+        abstract_ordered_index *table_or_null(int table_id);
         // map<string, vector<abstract_ordered_index *>> partitions;
         // map<string, vector<abstract_ordered_index *>> remote_partitions;
 
