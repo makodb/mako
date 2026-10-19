@@ -1,0 +1,105 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: zyang2 <zyang2@zoo-003.maas>
+Date: Mon, 19 Oct 2026 01:56:43 +0000
+Subject: [PATCH 4/4] Raft: the certificate instance at the protocol level
+
+CertProtocol for RaftP lived only in the raft-rs port (src/ports/raftrs/certs.rs),
+which Mako's export compiles out (patch 0003). This adds the same instance in
+src/protocol/Raft/ghost_log_certs_raft.rs over protocol-level copies of the
+port's HardState (LHardState) and rank (id_rank), so a port without src/ports
+can use the persistence certificates. Additive: no existing statement changes.
+A crate that also compiles the raft-rs port must move the port onto this
+instance, since two impls of the trait for RaftP conflict.
+
+Verified: whole crate (ports compiled out) 1917 verified, 0 errors on Verus
+0.2026.08.02.b677dd5.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/protocol/Raft/ghost_log_certs_raft.rs | 64 +++++++++++++++++++++++
+ src/protocol/Raft/mod.rs                  |  1 +
+ 2 files changed, 65 insertions(+)
+ create mode 100644 src/protocol/Raft/ghost_log_certs_raft.rs
+
+diff --git a/src/protocol/Raft/ghost_log_certs_raft.rs b/src/protocol/Raft/ghost_log_certs_raft.rs
+new file mode 100644
+index 00000000..c24ea60b
+--- /dev/null
++++ b/src/protocol/Raft/ghost_log_certs_raft.rs
+@@ -0,0 +1,64 @@
++//! [A11, A14 H2] Raft as an instance of the library's certificates
++//! (`protocol::ghost_log_certs`), at the protocol level, so that a port whose
++//! crate does not compile `src/ports` can use the persistence certificates.
++//! A `Ready` mark carries the Ready's number and the durable summary (term,
++//! vote, commit); a `Persisted` mark the number the host reports persisted.
++//! The Raft-specific conditions on a certificate are the log's shape (`wf`,
++//! `routed`) and the agreement of the replayed state with the summary. The
++//! same instance as the raft-rs port's (`src/ports/raftrs/certs.rs`), over
++//! protocol-level copies of its `HardState` and `rank`; the two would
++//! conflict if both were compiled, which a crate that keeps the ports must
++//! resolve by moving the port onto this one.
++
++use vstd::prelude::*;
++use crate::protocol::Raft::types::*;
++use crate::protocol::Raft::ghost_log::{Entry as GEntry, LMark, RaftP, wf as log_wf, routed, lemma_routed_empty};
++use crate::protocol::ghost_log_certs as core;
++
++verus! {
++
++/// The durable summary a `Ready` carries: the term, the vote (0 for none,
++/// otherwise an id of the universe the certificate is judged in) and the
++/// commit index.
++pub struct LHardState {
++    pub term: u64,
++    pub vote: u64,
++    pub commit: u64,
++}
++
++/// An id's index in a universe of ids: how many ids of the universe are below it.
++pub open spec fn id_rank(u: Set<u64>, id: u64) -> int {
++    u.filter(|x: u64| x < id).len() as int
++}
++
++impl core::CertProtocol for RaftP {
++    type Durable = LHardState;
++    type Ctx = Set<u64>;
++
++    open spec fn ready_mark(m: LMark) -> Option<(u64, LHardState)> {
++        match m {
++            LMark::Ready { number, term, vote, commit } => Some((number, LHardState { term, vote, commit })),
++            _ => None,
++        }
++    }
++    open spec fn persisted_mark(m: LMark) -> Option<u64> {
++        match m {
++            LMark::Persisted(n) => Some(n),
++            _ => None,
++        }
++    }
++    open spec fn init_durable() -> LHardState { LHardState { term: 0, vote: 0, commit: 0 } }
++    open spec fn cert_local_ok(log: Seq<GEntry>, view: LState, hs: LHardState, c: LConstants, u: Set<u64>) -> bool {
++        &&& log_wf(log)
++        &&& routed(log)
++        &&& view.current_term == hs.term as int
++        &&& view.commit_index == hs.commit as int
++        &&& view.has_voted == (hs.vote != 0)
++        &&& view.voted_for == (if hs.vote == 0 { 0int } else { id_rank(u, hs.vote) })
++    }
++    proof fn lemma_cert_local_empty(c: LConstants, u: Set<u64>) {
++        lemma_routed_empty();
++    }
++}
++
++} // verus!
+diff --git a/src/protocol/Raft/mod.rs b/src/protocol/Raft/mod.rs
+index d53ca7b7..c3669429 100644
+--- a/src/protocol/Raft/mod.rs
++++ b/src/protocol/Raft/mod.rs
+@@ -1,6 +1,7 @@
+ pub mod ghost_log;
+ pub mod ghost_log_fields; // [A14 T2] generated from ghost_log_schema.json
+ pub mod ghost_log_compose;
++pub mod ghost_log_certs_raft; // the certificate instance at the protocol level (Mako patch)
+ pub mod raft;
+ pub mod read_index;
+ pub mod membership;

@@ -18,15 +18,23 @@ import shutil
 import subprocess
 import sys
 
-BASE = "d7e04ed7"
+BASE = "1bb2f142"  # spec v2 (2026-10-19): A10 snapshots, A11/A14 persistence; v0-v1 were on d7e04ed7
 BRANCH = "mako-spec"
 RAFT = "src/protocol/Raft/"
+PROTO = "src/protocol/"
 # The atomic spec, the method layer, and the safety property with its guard
-# copy (plan §4.5). Each file defines part of what the certificate says.
+# copy (plan §4.5). Each file defines part of what the certificate says. Since
+# v2 the method layer is the protocol-independent library (A14), so its
+# modules and Raft's field instance are hashed too -- the same 17 files as the
+# group's Mako case study at this base (glr src/ports/mako/spec/SPEC_VERSION.toml).
 HASHED = [RAFT + f for f in (
     "types.rs", "raft.rs", "raft_composite.rs", "raft_refinement.rs", "read_index.rs",
     "membership.rs", "ghost_log.rs", "ghost_log_compose.rs",
-    "refinement_proof/invariants.rs", "refinement_proof/state_machine.rs")]
+    "refinement_proof/invariants.rs", "refinement_proof/state_machine.rs")] + [
+    PROTO + f for f in (
+        "ghost_log_core.rs", "ghost_log_local.rs", "ghost_log_node.rs", "ghost_log_certs.rs",
+        "ghost_log_wire.rs", "ghost_log_outputs.rs")] + [RAFT + "ghost_log_fields.rs"] + [
+    RAFT + "ghost_log_certs_raft.rs"]  # v3: the certificate instance (patch 0004)
 
 
 def main():

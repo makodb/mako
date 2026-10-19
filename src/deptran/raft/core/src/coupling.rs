@@ -293,6 +293,7 @@ impl<C> RaftCore<C> {
             pending_reads: Seq::<LReadReq>::empty(),
             served_ctxs: Set::<int>::empty(),
             config: Set::<int>::range(0, self.n_view()),
+            outgoing: Set::<int>::empty(),  // [M12] spec v2: no joint configuration under the gate (A9-2's field)
             conf_index: 0int,
         }
     }
@@ -503,6 +504,7 @@ pub open spec fn restore_prev_ok<C>(core: &RaftCore<C>, prev: Seq<Entry>, term: 
     &&& s.log == log
     &&& s.commit_index == commit as int
     &&& s.config == Set::<int>::range(0, core.n_view())
+    &&& s.outgoing == Set::<int>::empty()  // [M12] spec v2: no joint configuration under the gate
     &&& s.conf_index == 0int
 }
 
@@ -2381,7 +2383,14 @@ pub proof fn lemma_commit_quorum<C>(core: &RaftCore<C>, idx: u64)
     vstd::set_lib::lemma_len_subset(q, rep);
     vstd::set_lib::lemma_int_range(0, nn);
     assert(q.len() == count_ge(ms, idx, n) + 1);
+    // [M12] spec v2: the replicators are a set (replicator_set), and the
+    // quorum is quorum_ok over the configuration and its outgoing half,
+    // which is empty under the gate (stable): a majority of the
+    // configuration, of which the replicators are a subset.
+    assert(rep =~= replicator_set(s, c, idx as int));
     assert(replicator_count(s, c, idx as int) == rep.len());
+    assert(rep.intersect(s.config) =~= rep);
+    assert(stable(s.outgoing));
 }
 
 pub open spec fn advance_log(l: Seq<Entry>, idx: int) -> Seq<Entry> {

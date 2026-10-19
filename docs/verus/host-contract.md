@@ -8,7 +8,7 @@ core itself cannot check, with who or what guarantees it today. Paths are
 
 ## 0. What is proved, and from what
 
-Verus checks, over the core crate (`core/`) and the frozen spec v1
+Verus checks, over the core crate (`core/`) and the frozen spec v3 (v1 until 2026-10-19; v2 and v3 in spec-changes.md)
 (`verus/spec/SPEC_VERSION.toml`), with `scripts/verus/verify_core.sh`:
 
 - **The coupling invariant** (`RaftCore::ginv`, `core/src/coupling.rs`): the
@@ -122,7 +122,7 @@ admission itself (`coupled_checked`).
 | `RecvAppendReply` | the gate; `is_leader ==> ` the core leads (F12, bugs-found B18); a success reports no more than the leader's log | the collection loop reads `IsLeaderLocked()` under the lock (`heartbeat_collect_body`), which is `looping_ && core.is_leader_`: true only while the core leads, before and after shutdown begins; `step_checked` reads a success beyond the log as no reply (F9) |
 | `RoundEnd` | the gate | F5's `enter_gates`. Nothing about the role: PHASE 3 advances the commit index only while the core leads (F12), so a round end after a step-down or during shutdown commits nothing (bugs-found B17, B18) |
 | `ObserveTerm` | `false`: uncoupled, as the term comes in no modelled message (F20) | stepped only on the snapshot paths (an InstallSnapshot reply's higher term, `InstallSnapshotReplyAcceptedLocked`; the InstallSnapshot handler, `OnInstallSnapshotLocked`), which the verified configuration (snapshots off) never runs; a run with snapshots is outside it (the recorder's `T` lines) |
-| `Restore` | before the gate; the core neither leads nor campaigns; an empty log; some ghost log replays to the restored term, vote, log and commit (`restore_prev_ok`) | `RestoreDiskState` steps it once, after `Configure` and snapshot recovery, before `EnterGates`, on the state recovery folded from the store; that the store's state is such a replay is §1 item 5's trusted fact |
+| `Restore` | before the gate; the core neither leads nor campaigns; an empty log; some ghost log replays to the restored term, vote, log and commit, with no outgoing configuration (`restore_prev_ok`; the last conjunct since spec v2, which added the field: under the gate the configuration is static) | `RestoreDiskState` steps it once, after `Configure` and snapshot recovery, before `EnterGates`, on the state recovery folded from the store; that the store's state is such a replay is §1 item 5's trusted fact |
 
 Terms and indices off the wire and in the log stay below 2^62
 (`raft_index_limit`, the Phase 6 contract): a log that long would hold

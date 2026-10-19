@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: zyang2 <zyang2@zoo-003.maas>
 Date: Sat, 3 Oct 2026 04:04:36 +0000
-Subject: [PATCH 1/2] Raft spec: a follower may refuse any AppendEntries (S1)
+Subject: [PATCH 1/4] Raft spec: a follower may refuse any AppendEntries (S1)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -36,10 +36,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
  3 files changed, 29 insertions(+), 17 deletions(-)
 
 diff --git a/docs/ghost-log/spec/raft-spec.md b/docs/ghost-log/spec/raft-spec.md
-index 826a7b93..b5f81de9 100644
+index 22147133..76e2c20c 100644
 --- a/docs/ghost-log/spec/raft-spec.md
 +++ b/docs/ghost-log/spec/raft-spec.md
-@@ -19,7 +19,7 @@
+@@ -20,7 +20,7 @@
  | BecomeLeader | `LBecomeLeader` | raft.tla initializes nextIndex = Len+1 and matchIndex = 0; we set empty maps (in A3, next_index is an unmarked shadow field) |
  | ClientRequest | `LClientRequest` | Same; the empty entry raft-rs appends on election also closes here (value_view reads the empty payload) |
  | AppendEntries (send) | `LSendAppendEntries` | raft.tla also sends at most one entry per message. For the commit upper bound, raft.tla uses min(commit, lastEntry); we use the leader's commit plus the acked bound on heartbeats (`heartbeat_commit_ok`), and the follower then caps it at the end of the payload, with the same effect. The message may also carry the context of one pending read (`read_ctx`, A8; raft.tla has no ReadIndex) |
@@ -48,7 +48,7 @@ index 826a7b93..b5f81de9 100644
  | HandleAppendEntriesResponse | `LHandleAppendResponse` / `LHandleAppendReject` | The success path matches (and counts only in the leader's current term, H8). On failure raft.tla uses max(next−1, 1), while we allow any target in [1, len+1] (raft-rs's hint), a superset |
  | AdvanceCommitIndex | `LAdvanceCommitIndex` | Same, including the quorum-replication guard and committing only current-term entries |
  | UpdateTerm | `LStepDown` | Same; each handler also folds in its own copy, `step_down_if_needed` |
-@@ -138,6 +138,18 @@ and every push onto `msgs` must be attributed to an action, and anything unattri
+@@ -144,6 +144,18 @@ and every push onto `msgs` must be attributed to an action, and anything unattri
  Over the three rounds we added 9 actions and changed 4 message types, and the last round rebuilt the
  safety proof.
  
@@ -68,10 +68,10 @@ index 826a7b93..b5f81de9 100644
  (`candidate_log_ok`), prev-log consistency for AppendEntries (`prev_log_ok` + `append_pos_ok`), and
  AppendEntriesResponse with success=FALSE (new action `LRejectAppendEntries`; the impl used to drop it
 diff --git a/src/protocol/Raft/raft.rs b/src/protocol/Raft/raft.rs
-index d79a099b..c730b07f 100644
+index ac979ce9..df7d76fd 100644
 --- a/src/protocol/Raft/raft.rs
 +++ b/src/protocol/Raft/raft.rs
-@@ -590,12 +590,16 @@ verus! {
+@@ -701,12 +701,16 @@ verus! {
          }]
      }
  
@@ -94,7 +94,7 @@ index d79a099b..c730b07f 100644
      // Refinement-target only (not transpiled): this action exists for the
      // ghost-log refinement and the atomic safety proof; no host code is
      // generated from it, so it carries no @automan directive.
-@@ -604,16 +608,9 @@ verus! {
+@@ -715,16 +719,9 @@ verus! {
          ae_term: int, ae_prev_index: int, ae_prev_term: int, ae_has_entry: bool,
          sent_packets: Seq<LRaftMessage>,
      ) -> bool {
@@ -115,10 +115,10 @@ index d79a099b..c730b07f 100644
          &&& sent_packets == seq![LRaftMessage::AppendResponse {
              term: s.current_term,
 diff --git a/src/protocol/Raft/refinement_proof/log_induction_commit.rs b/src/protocol/Raft/refinement_proof/log_induction_commit.rs
-index 1f56d68b..f0c4301e 100644
+index b1ba0327..76674057 100644
 --- a/src/protocol/Raft/refinement_proof/log_induction_commit.rs
 +++ b/src/protocol/Raft/refinement_proof/log_induction_commit.rs
-@@ -1099,6 +1099,9 @@ verus! {
+@@ -1238,6 +1238,9 @@ verus! {
          let pkt = kind_pkt(st.kind).unwrap();
          let m = pkt.msg;
          let heartbeat = st.kind is FollowerHeartbeat;

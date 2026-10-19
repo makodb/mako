@@ -5,7 +5,11 @@ The path-by-path work list for Phase 8, the analogue of the group's
 Written at Phase 3 (plan §5), against the core calls that phase introduced,
 for the verified configuration (snapshots off and a whole log, failover on, a
 static configuration: F5's gate). Spec: v1 (`raft-spec-v1`, upstream
-`d7e04ed7` + S1), the actions of glr `src/protocol/Raft/raft.rs`.
+`d7e04ed7` + S1), the actions of glr `src/protocol/Raft/raft.rs`. Since
+2026-10-19 the proof imports v3 (`raft-spec-v3-export`, upstream `1bb2f142`;
+[spec-changes.md](spec-changes.md)); of the actions in this table only the
+commit quorum changed form (`quorum_ok` over the configuration and an empty
+outgoing half).
 
 The criterion is the group's closure lens: every write to a **marked** field
 and every message sent must be attributed to a spec action; a write that no
