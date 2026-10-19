@@ -1,5 +1,5 @@
-//! A recording with the disk events (Restore, ObserveTerm) and the persist
-//! notes' `P` lines replays cleanly, and the shadow catches a `P` line that
+//! A recording with the disk events (Restore, an InstallSnapshot's raise,
+//! a snapshot's install) and the persist notes' `P` lines replays cleanly, and the shadow catches a `P` line that
 //! was tampered with or dropped: the replay is the evidence the host
 //! contract cites for every note being exact.
 
@@ -47,9 +47,13 @@ fn restore_observe_term_and_notes_replay() {
     let mut rev = vec![RaftEntry::new(1, ReplayCmd(11), true, false, 0, 8),
                        RaftEntry::new(2, ReplayCmd(12), true, false, 0, 8)];
     rev.reverse();
-    assert!(rec(&mut core, Event::Restore { term: 3, vote: 2, commit: 1, entries_rev: rev }, &mut t).into_restored());
+    assert!(rec(&mut core, Event::Restore { term: 3, vote: 2, commit: 1, d: 7, snap_index: 0, snap_term: 0, entries_rev: rev }, &mut t).into_restored());
+    // [fix, F27] a newer term from an InstallSnapshot's contact (formerly
+    // ObserveTerm), before the gate, which refuses snapshots
+    rec(&mut core, Event::RecvInstallSnapshot { term: 5, leader_site_id: 2, last_included_index: 0,
+                                                last_included_term: 0, applied: 0, stopped: false,
+                                                failover: true }, &mut t);
     rec(&mut core, Event::EnterGates { snapshots_enabled: false, failover: true }, &mut t);
-    rec(&mut core, Event::ObserveTerm { term: 5, stopped: false, failover: true }, &mut t);
     let c = rec(&mut core, Event::StartElection { timer_guarded: false, expected_generation: 0, now: 1,
                                                   stopped: false }, &mut t).into_campaign();
     rec(&mut core, Event::SettleElection { term: c.term_, loc_id: 0, voters: &[2], granted: &[true],
@@ -69,4 +73,30 @@ fn restore_observe_term_and_notes_replay() {
     let mut dropped = t.clone();
     dropped.replace_range(i..end + 1, "");
     assert!(replay(&dropped).is_err(), "a dropped P line replayed");
+}
+
+// [fix, F25, F27] A snapshot's install: the note carries the boundary
+// (`S <index> <term> <keep>`), the shadow folds it, and a tampered boundary
+// does not replay.
+#[test]
+fn snapshot_notes_replay() {
+    let mut core: RaftCore<ReplayCmd> = RaftCore::new();
+    let mut t = String::new();
+    rec(&mut core, Event::SetIdentity { loc_id: 0, site_id: 1, partition_id: 0 }, &mut t);
+    rec(&mut core, Event::Configure { members: &[1, 2, 3] }, &mut t);
+    let mut rev = vec![RaftEntry::new(1, ReplayCmd(11), true, false, 0, 8),
+                       RaftEntry::new(2, ReplayCmd(12), true, false, 0, 8),
+                       RaftEntry::new(2, ReplayCmd(13), true, false, 0, 8)];
+    rev.reverse();
+    assert!(rec(&mut core, Event::Restore { term: 2, vote: 2, commit: 1, d: 0, snap_index: 0, snap_term: 0, entries_rev: rev }, &mut t).into_restored());
+    let (_, _, install) = rec(&mut core, Event::RecvInstallSnapshot {
+        term: 3, leader_site_id: 2, last_included_index: 2, last_included_term: 2, applied: 0,
+        stopped: false, failover: true }, &mut t).into_install_contact();
+    assert!(install);
+    let (taken, kept) = rec(&mut core, Event::InstallSnapshot { index: 2, term: 2 }, &mut t).into_installed();
+    assert!(taken && kept);
+    assert!(t.contains(" S 2 2 1\n"), "the install's note carries its boundary: {t}");
+    replay(&t).unwrap_or_else(|m| panic!("line {}: {} | {} | {}", m.line, m.event, m.recorded, m.replayed));
+    let tampered = t.replace(" S 2 2 1\n", " S 2 2 0\n");
+    assert!(replay(&tampered).is_err(), "a tampered boundary replayed");
 }

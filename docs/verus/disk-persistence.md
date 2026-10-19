@@ -74,7 +74,7 @@ has saved the snapshot. Until Mako supplies them, S = 0 and the log starts at 1.
 | `RecvRequestVote`, newer term (poll) | the candidate's | cleared; then the candidate, if granted | - | - | vote reply |
 | `RecvRequestVote`, same term, granted (poll) | - | the candidate | - | - | vote reply |
 | `SettleElection` or `RecvAppendReply` seeing a newer term (fibers) | the one seen | cleared | - | - | nothing |
-| InstallSnapshot reply seeing a newer term (poll, leader; `ObserveTerm`, new) | the one seen | cleared | - | - | nothing |
+| `RecvSnapshotReply` seeing a newer term (poll, leader; F28, formerly `ObserveTerm`) | the one seen | cleared | - | - | nothing |
 | `SettleElection`, won (election fiber) | - | - | the no-op, by a second step in the same section | - | nothing yet |
 | `Propose`, from `Start` (submit thread) | - | - | one entry at currentTerm | - | nothing yet |
 | `RecvAppendEntries`, newer term, accepted (poll) | the leader's | cleared | cut at the first conflict, appended | may rise | append reply |
@@ -82,8 +82,8 @@ has saved the snapshot. Until Mako supplies them, S = 0 and the log starts at 1.
 | `RecvAppendEntries`, same term, accepted (poll) | - | - | cut, appended | may rise | append reply |
 | `TickHeartbeat` (heartbeat fiber) | - | - | - | may rise (leader) | this tick's AppendEntries: the entries, and the commit just raised |
 | `RoundEnd` (heartbeat fiber) | - | - | - | may rise (leader) | nothing; the next round's AppendEntries carry it |
-| `MaybeCreateSnapshot` (apply thread; shell code) | - | - | snapshot at S = the applied index; entries through S dropped | - | nothing |
-| `OnInstallSnapshot` (poll; shell code, the term by `ObserveTerm`) | the leader's, if newer | cleared, if newer | the leader's snapshot at S; the entries after S kept if entry S matches, else all dropped | S | install reply |
+| `CreateSnapshot` (apply thread, from `MaybeCreateSnapshot`; F25) | - | - | snapshot at S = the applied index; entries through S dropped | - | nothing |
+| `RecvInstallSnapshot`, then `InstallSnapshot` (poll; F27) | the leader's, if newer | cleared, if newer | the leader's snapshot at S; the entries after S kept if entry S matches, else all dropped | S | install reply |
 | `Applied`, `StepDown`, `SetFollower`, timer, round and setup events | - | - | - | - | - |
 
 - **The term never changes alone**: a vote write, cleared or self, follows
@@ -107,6 +107,14 @@ has saved the snapshot. Until Mako supplies them, S = 0 and the log starts at 1.
   and commit. Startup's snapshot recovery (`:2180`) runs before `Restore`,
   which overwrites it. Compaction (`:1414-1442`) drops only entries at or
   below S (`core/src/helpers.rs:388-391`), outside the saved state.
+- **Since 2026-10-19 (F25-F30) none of the five remains.** Creation and
+  compaction are core events (`CreateSnapshot`, `Compact`), the install is two
+  (`RecvInstallSnapshot`, `InstallSnapshot`), its reply one
+  (`RecvSnapshotReply`, which replaced `ObserveTerm`), and startup's snapshot
+  recovery enters the core in `Restore` after Configure (`snap_index`,
+  `snap_term`). The persist note carries a snapshot (`PersistNote::snap_`:
+  index, term, whether the log after it stays), and the shell writes the image
+  before the record that names it: no record is built by hand.
 
 **Why one ordered record per step keeps a crash safe.** Each step becomes
 one record, all or nothing, and records reach the disk in step order, so a
@@ -195,10 +203,13 @@ output's read set ("Needs on disk") without tracking reads.
   before the record is durable loses an install no output revealed: the
   restart recovers the state before it, and the leader sends the snapshot
   again.
-- **One exception.** The heartbeat tick sends InstallSnapshot under `mtx_`,
-  before any wait (`shell/server_cc.rs:104-124`): safe, as the image is a
-  committed prefix a majority holds on disk and the leader's term was
-  durable before its vote requests left; outside the proof anyway (§6).
+- **No exception (F26, 2026-10-19).** Until F26 the heartbeat tick sent
+  InstallSnapshot under `mtx_`, before any wait, on the argument that the
+  image is a committed prefix a majority holds on disk. But the message also
+  carries the leader's term, and the record naming the image is queued in the
+  same section, so the tick now waits for them like any other output and
+  sends the snapshot afterwards, under `mtx_` again. The kernel checks that
+  the store's image is still the boundary the core decided on.
 
 Nothing else waits: `Start` returns once its entry is queued; a step that
 sends nothing rides the next flush; a follower's apply is memory a restart
@@ -404,9 +415,10 @@ fold c+1..d into state (the base catches up afterwards: the applier reads
     the two leaves with no segment at all
 delete the images state does not name; if it names (S, T, f), fail closed
     if snapshots are off or f is bad, else inject a snapshot store holding f
-SetupInternal: snapshot recovery loads it; Configure; lock mtx_; step
-    Restore{state.term, state.vote, state.commit, entries after S}, whose
-    actions queue APPLY_RANGE(S, commit); durable_* := state, d; seq := d
+SetupInternal: snapshot recovery loads it (the state machine; the
+    boundary is kept for Restore, F30); Configure; lock mtx_; step
+    Restore{state.term, state.vote, state.commit, S, T, entries after S},
+    whose actions queue APPLY_RANGE(S, commit); durable_* := state, d; seq := d
 continue: EnterGates, apply thread, flusher, applier, RPCs, fibers
 no campaign until applied >= state.commit   // Mako's callback is by role
 ```
@@ -536,15 +548,15 @@ cheap: a spec function applying a record, and the fold lemma (c+1 to d
 over the replay of 1 to c is the replay of 1 to d), make §3's argument a
 theorem.
 
-**Snapshots stay outside the proof**: the spec does not model them, the
-invariant requires `snapterm_ == 0` (`core/src/coupling.rs:309`), and
-`MAKO_RAFT_VERIFIED_GATES=1` turns them off. Bringing them in takes spec
-moves for compaction and InstallSnapshot, and both paths moved into `step`.
-`ObserveTerm` stays outside too: the spec's step-down move needs a modeled
-message carrying the term (`core/src/coupling.rs:614`, `:636`), and
-InstallSnapshot is not one, so the event's coupling premise is false
-(`core/src/coupling.rs:2585-2613`) and Verus checks only the core's
-invariant for it; with snapshots off it never steps.
+**Snapshots stay outside the proof**: the invariant requires
+`snapterm_ == 0` (`core/src/coupling.rs:309`), and
+`MAKO_RAFT_VERIFIED_GATES=1` turns them off. Spec v2 models them (glr A10),
+and both paths have moved into `step` (F25-F30, 2026-10-19), refused inside
+the gate; what remains is the coupling,
+coupling-design-persistence-snapshots.md Part B.
+`ObserveTerm` is gone (F28): the raises it made are inside
+`RecvInstallSnapshot` and `RecvSnapshotReply`, which refuse inside the gate,
+and which Part B couples through spec v2's InstallSnapshot messages.
 
 **Still trusted:** the WAL (a batch is all or nothing, durable once
 `fdatasync` returns, its segment's header and directory entry synced first);

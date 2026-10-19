@@ -2690,12 +2690,22 @@ impl<C> RaftCore<C> {
                 &&& (status ==> last_log_index as int <= self.raft_log_.spec_last_index())
             },
             Event::RoundEnd { .. } => self.gated_,
-            // [fix, F20] uncoupled: ObserveTerm's term comes in no modeled
-            // message
-            Event::ObserveTerm { .. } => false,
             // [fix, F22] (disk design §6) a restart (restore_premise)
-            Event::Restore { term, vote, commit, entries_rev } =>
-                restore_premise(self, term, vote, commit, entries_rev@),
+            // [fix, F30] without a snapshot boundary: one is uncoupled until
+            // the snapshot coupling (design Part B)
+            Event::Restore { term, vote, commit, snap_index, entries_rev, .. } =>
+                snap_index == 0 && restore_premise(self, term, vote, commit, entries_rev@),
+            // [fix, F25] refused (unchanged) inside the gate; uncoupled
+            // outside it until the snapshot coupling (design Part B)
+            Event::CreateSnapshot { .. } => self.gated_,
+            Event::Compact { .. } => self.gated_,
+            // [fix, F27, fix, F28] the same for the install and its reply
+            // (bugs-found B55: refused inside the gate)
+            Event::RecvInstallSnapshot { .. } => self.gated_,
+            Event::InstallSnapshot { .. } => self.gated_,
+            Event::RecvSnapshotReply { .. } => self.gated_,
+            // [fix, F29] leaving the verified configuration ends the coupling
+            Event::LeaveGates => false,
             _ => true,
         }
     }

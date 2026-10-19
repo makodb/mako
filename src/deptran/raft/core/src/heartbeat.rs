@@ -475,12 +475,16 @@ impl<C> AppendSend<C> {
 }
 
 /// An InstallSnapshot heartbeat_tick asked for: the follower is behind the
-/// log's base. The shell runs the kernel before the guard drops, where the
-/// per-follower section ran it.
+/// log's base. The shell sends it after the durability wait, with the
+/// AppendEntries ([fix, F26]).
 pub struct SnapshotSend {
     pub ord_: usize,
     pub site_id_: u16,
     pub term_: u64,
+    // [fix, F26] The snapshot decided on: the core's boundary. The kernel
+    // sends the store's image only when it is this one.
+    pub index_: u64,  // [fix, F26]
+    pub snap_term_: i64,  // [fix, F26]
 }
 
 /// What heartbeat_tick decided.
@@ -1005,6 +1009,8 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
                 ord_: ord,
                 site_id_: peer,
                 term_: core.current_term_,
+                index_: core.snapidx_,  // [fix, F26]
+                snap_term_: core.snapterm_,  // [fix, F26]
             });
             skip_follower = true;
         } else {

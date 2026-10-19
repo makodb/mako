@@ -1255,7 +1255,8 @@ struct Recovered {
 }
 
 /// Build a server, give it `commit`/`term` as recovered progress and the
-/// store (if any), run recovery, read the outcome, delete the server.
+/// store (if any), run recovery and its Restore, read the outcome, delete
+/// the server.
 fn recover_fresh(store: &rusty::RaftSnapshotManagerPtr, inject: bool, commit: u64,
                  term: u64) -> Recovered {
     // What raft_server_new does, spelled out: the server lives in a Box so
@@ -1275,8 +1276,10 @@ fn recover_fresh(store: &rusty::RaftSnapshotManagerPtr, inject: bool, commit: u6
         svr.core().commit_index_ = commit;
         svr.core().current_term_ = term;
     }
-    // SAFETY: the server is live; recovery takes its own locks.
-    let ok = unsafe { raft_initialize_snapshot_manager(svr.handle(), 0) };
+    // SAFETY: the server is live; recovery takes its own locks. [fix, F30]
+    // Then the Restore SetupInternal steps after Configure.
+    let ok = unsafe { raft_initialize_snapshot_manager(svr.handle(), 0) }
+        && svr.RestoreRecoveredSnapshot();
     let stopped = svr.stop_.load(rusty::sync::atomic::Ordering::Acquire);
     let applied = svr.GetAppliedIndex();
     let has_snapshot = svr.HasSnapshot();

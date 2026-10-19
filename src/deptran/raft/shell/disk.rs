@@ -166,8 +166,14 @@ pub fn identity(site: u16, partition: u32, members: &[u16]) -> Identity {
 /// A note, as the record the WAL stores: the hard state if it changed, and
 /// the log from the note's lowest write on (each entry's term and a handle
 /// clone). Called under mtx_, right after the step that left the note.
-pub fn record_from_note(note: &PersistNote, log: &RaftLog) -> Record<Payload> {
+pub fn record_from_note(note: &PersistNote, log: &RaftLog, image: Option<String>) -> Record<Payload> {
     let mut rec = Record::default();
+    // [fix, F25] a boundary move: the record names the image file the shell
+    // wrote just before it (disk design §3)
+    if let Some(s) = note.snap_ {
+        rec.snapshot = Some(raft_store::SnapRef { index: s.index_, term: s.term_ as u64, image,
+                                                  keep: s.keep_ });
+    }
     if note.hard_ {
         rec.hard = Some(Hard { term: note.term_, vote: note.vote_, commit: note.commit_ });
     }
@@ -406,8 +412,8 @@ impl DiskShell {
 
     /// Queues one step's note; returns the record's sequence number. Under
     /// mtx_.
-    pub fn push_note(&self, note: &PersistNote, log: &RaftLog) -> u64 {
-        self.queue.push(record_from_note(note, log))
+    pub fn push_note(&self, note: &PersistNote, log: &RaftLog, image: Option<String>) -> u64 {
+        self.queue.push(record_from_note(note, log, image))
     }
 
     /// The tail an output produced now must wait for: the last record

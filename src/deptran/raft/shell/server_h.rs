@@ -1031,6 +1031,9 @@ pub struct RaftServerBase {
     // and by that one caller.
     // [fix, F19] Under mtx_.
     pub install_out_: ShellCell<CoreOutput>,
+    // [fix, F30] The snapshot (index, term) startup recovery loaded, until
+    // Restore takes it into the core after Configure. Under mtx_.
+    pub recovered_snapshot_: ShellCell<Option<(u64, u64)>>,
     // The command the apply thread popped and is about to hand to the
     // learner. A staging field rather than a local because Command is opaque
     // to Rust: the pop kernel moves it here and the invoke kernel reads it,
@@ -1166,6 +1169,7 @@ impl RaftServerBase {
             leader_notices_: rusty::Mutex::new(LeaderNotices::new()),  // [fix, F6]
             append_responses_: ShellCell::new(AppendResponses::new()),  // [move, M5] [fix, F19]
             install_out_: ShellCell::new(core_output()),  // [move, M3] [fix, F19]
+            recovered_snapshot_: ShellCell::new(None),  // [fix, F30]
             pending_apply_command_: ShellCell::new(Default::default()),
             batch_buffer_: ShellCell::new(rusty::Vec::new()),  // [fix, F19]
             appliedIndexForWait_: rusty::sync::atomic::AtomicU64::new(0),
@@ -1325,6 +1329,24 @@ impl RaftServerBase {
             unsafe { raft_snapshot_manager_is_set(self.snapshot_manager_.as_ptr()) };
         self.snapshot_manager_configured_
             .store(configured, rusty::sync::atomic::Ordering::Release);
+        // [fix, F29] A manager configured after the gates passed leaves the
+        // verified configuration, whose "snapshots off" no longer holds
+        // (bugs-found B56); with MAKO_RAFT_VERIFIED_GATES=1 that fails closed.
+        if configured && self.core().gated_ {
+            if self.verified_gates_.load(rusty::sync::atomic::Ordering::Relaxed) {
+                rusty::raft_log_error_1(
+                    "[RAFT-GATES] Site {}: a snapshot manager configured inside the verified configuration; stopping",
+                    self.site_id_);
+                self.FailStop();
+                return;
+            }
+            rusty::raft_log_warn_1(
+                "[RAFT-GATES] Site {}: a snapshot manager configured after setup; leaving the verified configuration",
+                self.site_id_);
+            let mut out: CoreOutput = core_output();
+            self.step(Event::LeaveGates, &mut out).into_done();
+            self.run_locked_actions(&out);
+        }
     }
 
     // @unsafe - takes mtx_.
@@ -1393,6 +1415,13 @@ impl RaftServerBase {
     pub fn install_out(&self) -> &mut CoreOutput {
         // SAFETY: under mtx_, like the core.
         unsafe { self.install_out_.get() }
+    }
+
+    // [fix, F30] The snapshot startup recovery loaded. CALLER MUST HOLD mtx_.
+    #[allow(clippy::mut_from_ref)]
+    pub fn recovered_snapshot(&self) -> &mut Option<(u64, u64)> {
+        // SAFETY: under mtx_, like the core.
+        unsafe { self.recovered_snapshot_.get() }
     }
 
     // [fix, F19] The response slots. Only the heartbeat fiber calls this.
@@ -1504,11 +1533,11 @@ impl RaftServerBase {
             return 0;
         }
 
-        if safe_index >= self.core().raft_log_.base() {
-            self.recorder().taint("CompactLogLocked");  // [M0]
-        }
+        // [fix, F25] the core compacts (E2), clamped as above
+        let mut out: CoreOutput = core_output();
         let removed_memory: usize =
-            self.core().raft_log_.compact_through(safe_index);
+            self.step(Event::Compact { up_to: up_to_index }, &mut out).into_compacted() as usize;
+        self.run_locked_actions(&out);
 
         rusty::raft_log_info_3(
             "[RAFT-COMPACT] Site {}: Compacted in-memory entries through {} (memory={})",
@@ -1619,7 +1648,18 @@ impl RaftServerBase {
     fn disk_note(&self, out: &mut CoreOutput) {
         if let Some(d) = self.disk() {
             if let Some(note) = out.take_persist() {
-                d.push_note(&note, &self.core().raft_log_);
+                // [fix, F25] a boundary move: the image file first, then the
+                // record naming it (disk design §3)
+                let image: Option<String> = if note.snap_.is_some() {
+                    // SAFETY: the server's own carrier, under mtx_.
+                    unsafe {
+                        d.write_latest_image(self.snapshot_manager_.as_ptr()
+                            as *const rusty::RaftSnapshotManagerPtr)
+                    }.map(|(_, _, name)| name)
+                } else {
+                    None
+                };
+                d.push_note(&note, &self.core().raft_log_, image);
             }
         }
     }
@@ -2045,6 +2085,11 @@ impl RaftServerBase {
             self.FailClosed();
             return false;
         }
+        // [fix, F30] a snapshot recovery loaded that no store restored
+        if !self.RestoreRecoveredSnapshot() {
+            self.FailClosed();
+            return false;
+        }
 
         // [fix, F5] The configuration the verification covers
         // (docs/verus/modification-plan.md §4.1). Outside it a normal run
@@ -2191,15 +2236,32 @@ impl RaftServerBase {
         let n: u64 = entries_rev.len() as u64;
         let restored: bool = {
             let _lock = RaftLockGuard::new(self.mtx());
+            // [fix, F30] the image recovery loaded is the state's (OpenDiskStore
+            // handed it that image); taken here, so nothing is restored twice
+            let loaded: Option<(u64, u64)> = self.recovered_snapshot().take();
+            let named: Option<(u64, u64)> = if snap != 0 { Some((snap, r.state.snap_term)) } else { None };
+            if loaded != named {
+                eprintln!("[RAFT-DISK] Site {}: {store} names snapshot {named:?}, but recovery loaded {loaded:?}",
+                          self.site_id_);
+            }
             let mut out: CoreOutput = core_output();
-            let ok: bool = self.step(
-                Event::Restore { term: hard.term, vote: hard.vote, commit: hard.commit, entries_rev },
+            let ok: bool = loaded == named && self.step(
+                Event::Restore { term: hard.term, vote: hard.vote, commit: hard.commit, d: r.d,  // [fix, F24]
+                                 snap_index: snap, snap_term: r.state.snap_term as i64,  // [fix, F30]
+                                 entries_rev },
                 &mut out).into_restored();
             if ok {
                 // APPLY_RANGE(S, commit): the committed suffix goes back on
                 // the apply queue, for the apply thread to re-apply.
                 self.run_locked_actions(&out);
                 self.publish_mirrors();
+                if snap != 0 {  // [fix, F30] as RestoreRecoveredSnapshot
+                    self.snapshot_trigger_index_
+                        .store(snap, rusty::sync::atomic::Ordering::Release);
+                    if snap > self.GetAppliedIndex() {
+                        self.PublishAppliedIndexLocked(snap);
+                    }
+                }
             }
             ok
         };
@@ -2244,6 +2306,55 @@ impl RaftServerBase {
             reason);
         self.FailStop();
         false
+    }
+
+    // [fix, F30] A snapshot startup recovery loaded and no store restored
+    // (a memory build, or a lab server): it enters the core as a Restore of
+    // an empty log after Configure, with what InitializeSnapshotManagerLocked
+    // wrote directly before F30 -- the boundary, commit clamped to it, and a
+    // term raised to the boundary's (the vote cleared) when below it -- then
+    // the state machine is published as applied through it. True when there
+    // is nothing to restore or Restore took it. Takes the apply gate, then
+    // mtx_.
+    pub fn RestoreRecoveredSnapshot(&self) -> bool {
+        let _apply_lock =
+            RaftStdLockGuard::new(self.state_machine_apply_mtx_.as_ptr());
+        let _lock = RaftLockGuard::new(self.mtx());
+        let Some((index, snap_term)) = self.recovered_snapshot().take() else { return true };
+        let (term, vote): (u64, u16) = if self.core().current_term_ < snap_term {
+            rusty::raft_log_warn_3(
+                "[RAFT-SNAPSHOT] Site {} advancing recovered term {} -> {} to cover snapshot boundary",
+                self.site_id_, self.core().current_term_, snap_term);
+            (snap_term, RAFT_SERVER_INVALID_SITE_ID)
+        } else {
+            (self.core().current_term_, self.core().vote_for_)
+        };
+        let commit: u64 =
+            raft_server_snapshot_progress_clamp(self.core().commit_index_, index, index);
+        let mut out: CoreOutput = core_output();
+        let ok: bool = self.step(
+            Event::Restore { term, vote, commit, d: 0, snap_index: index,
+                             snap_term: snap_term as i64, entries_rev: Vec::new() },
+            &mut out).into_restored();
+        if !ok {
+            rusty::raft_log_error_3(
+                "[RAFT-SNAPSHOT] Site {}: the core refused the recovered snapshot ({}, {})",
+                self.site_id_, index, snap_term);
+            return false;
+        }
+        self.run_locked_actions(&out);
+        self.publish_mirrors();
+        self.snapshot_trigger_index_
+            .store(index, rusty::sync::atomic::Ordering::Release);
+        if index > self.GetAppliedIndex() {
+            self.PublishAppliedIndexLocked(index);
+        }
+        rusty::raft_log_info_6(
+            "[RAFT-SNAPSHOT] Restored snapshot for site {}: index={} term={} commit={} last={} min_active={}",
+            self.site_id_, self.core().snapidx_, self.core().snapterm_,
+            self.core().commit_index_, self.core().raft_log_.last_index(),
+            self.core().raft_log_.base());
+        true
     }
 
     // @safe - the two shapes of recovered progress that no snapshot covers.
@@ -2385,51 +2496,11 @@ impl RaftServerBase {
                 "refusing to rewind a live state machine to an older snapshot");
         }
 
-        let previous_snapshot_index: u64 = self.core().snapidx_;
-        let previous_snapshot_term: u64 = self.core().snapterm_ as u64;
-        let previous_last_log_index: u64 = self.core().raft_log_.last_index();
-        let previous_min_active_slot: u64 = self.core().raft_log_.base();
-
-        // Reconstruct Figure 13's suffix decision from the old boundary when
-        // it is still present. A live reinitialisation would use its exact
-        // existing snapshot tuple as the same proof; that proof is
-        // unreachable today because Setup is the only caller and snapidx_ is
-        // still 0 there.
-        let boundary = self.core().raft_log_.get(recovered_snapshot_index);
-        #[allow(clippy::unnecessary_unwrap)]
-        let has_boundary: bool = boundary.is_some()
-            && boundary.unwrap().has_value();  // [move, M6]
-        let local_boundary_term: u64 = if has_boundary {
-            boundary.unwrap().term() as u64
-        } else {
-            0
-        };
-        let boundary_matches: bool = raft_server_snapshot_boundary_matches(
-            has_boundary, local_boundary_term, recovered_snapshot_term);
-        let has_recovered_suffix: bool = raft_server_log_index_above(
-            previous_last_log_index, recovered_snapshot_index);
-        let live_snapshot_proves_suffix: bool =
-            previous_snapshot_index == recovered_snapshot_index
-                && previous_snapshot_term == recovered_snapshot_term
-                && previous_min_active_slot == recovered_snapshot_index + 1;
-        let retain_suffix: bool =
-            raft_server_snapshot_recovery_retains_suffix(
-                has_recovered_suffix, has_boundary, boundary_matches,
-                live_snapshot_proves_suffix);
-
-        if raft_server_snapshot_recovery_has_unproven_gap(
-            has_recovered_suffix, has_boundary, live_snapshot_proves_suffix)
-        {
-            return self.FailSnapshotRecovery(
-                "recovered suffix has no snapshot boundary or live-snapshot proof");
-        }
-        if has_recovered_suffix && has_boundary && !boundary_matches {
-            rusty::raft_log_warn_5(
-                "[RAFT-SNAPSHOT] Site {} discarding recovered suffix after snapshot boundary term mismatch: local=({}, {}) snapshot=({}, {})",
-                self.site_id_, recovered_snapshot_index, local_boundary_term,
-                recovered_snapshot_index, recovered_snapshot_term);
-        }
-
+        // [fix, F30] Setup is the only caller, so the core's log is empty here
+        // (a disk build's state is restored after Configure): the boundary
+        // can keep no recovered suffix and leaves no gap, which is what the
+        // retention analysis that stood here concluded. The log restarts
+        // after the boundary when Restore takes it.
         if !unsafe {
             raft_load_state_machine_snapshot(
                 self.prepare_sm_snapshot_cb_.as_ptr()
@@ -2442,52 +2513,20 @@ impl RaftServerBase {
                 "state-machine snapshot validation/load failed");
         }
 
-        self.recorder().taint("InitializeSnapshotManagerLocked");  // [M0]
-        self.core().snapidx_ = recovered_snapshot_index;
-        self.core().snapterm_ = recovered_snapshot_term as i64;
-        // [fix, F19] One core reference for the receiver and its argument:
-        // two core() calls in one call would overlap two `&mut RaftCore`.
-        let core: &mut RaftCore = self.core();
-        if retain_suffix {
-            core.raft_log_.compact_through(core.snapidx_);
-        } else {
-            core.raft_log_.reset(core.snapidx_ + 1);
-        }
-        self.core().commit_index_ = raft_server_snapshot_progress_clamp(
-            self.core().commit_index_, self.core().snapidx_,
-            self.core().raft_log_.last_index());
-
-        if self.core().current_term_ < self.core().snapterm_ as u64 {
-            rusty::raft_log_warn_3(
-                "[RAFT-SNAPSHOT] Site {} advancing recovered term {} -> {} to cover snapshot boundary",
-                self.site_id_, self.core().current_term_,
-                self.core().snapterm_);
-            self.core().current_term_ = self.core().snapterm_ as u64;
-            self.core().vote_for_ = RAFT_SERVER_INVALID_SITE_ID;
-        }
-
-        assert!(
-            self.core().commit_index_
-                <= self.core().raft_log_.last_index());  // [move, M10]
+        // [fix, F30] The boundary, commit at it and a term raised to it enter
+        // the core with the recovered state, as one Restore after Configure
+        // (RestoreDiskState, or RestoreRecoveredSnapshot), not written here.
+        *self.recovered_snapshot() = Some((recovered_snapshot_index, recovered_snapshot_term));
 
         // SAFETY: under mtx_, the manager's lock.
         unsafe { *self.snapshot_manager_.get() = manager };  // [fix, F19]
         self.snapshot_manager_configured_
             .store(true, rusty::sync::atomic::Ordering::Release);
-        self.snapshot_trigger_index_
-            .store(self.core().snapidx_,
-                   rusty::sync::atomic::Ordering::Release);
 
-        if self.core().snapidx_ > self.GetAppliedIndex() {
-            self.PublishAppliedIndexLocked(self.core().snapidx_);
-        }
-
-        rusty::raft_log_info_8(
-            "[RAFT-SNAPSHOT] Restored snapshot for site {}: index={} term={} size={} commit={} last={} min_active={} retain_suffix={}",
-            self.site_id_, self.core().snapidx_, self.core().snapterm_,
-            snapshot_size_bytes, self.core().commit_index_,
-            self.core().raft_log_.last_index(),
-            self.core().raft_log_.base(), retain_suffix);
+        rusty::raft_log_info_4(
+            "[RAFT-SNAPSHOT] Loaded snapshot for site {}: index={} term={} size={}",
+            self.site_id_, recovered_snapshot_index, recovered_snapshot_term,
+            snapshot_size_bytes);
         rusty::raft_log_info_3(
             "[RAFT-SNAPSHOT] Initialized for site {} partition {}: interval={}",
             self.site_id_, self.partition_id_, snapshot_interval);
@@ -2528,43 +2567,14 @@ impl RaftServerBase {
                                               send_term: u64,
                                               follower_term: u64,
                                               out: &mut CoreOutput) {
-        if raft_server_observed_higher_term(follower_term,
-                                            self.core().current_term_) {
-            rusty::raft_log_info_4(
-                "[HEARTBEAT-SNAPSHOT] Site {}: Follower {} has higher term {} > {}, stepping down",
-                self.site_id_, site_id, follower_term,
-                self.core().current_term_);
-            // [fix, F20] The raise is a core step, so a persist note covers
-            // it: the term raised, the vote and the leader hint cleared (a
-            // follower's higher term does not identify that term's leader),
-            // the role dropped, the campaign over.
-            let stopped: bool = self.stopped_now();
-            let failover: bool = self.failover_;
-            self.step(Event::ObserveTerm { term: follower_term, stopped, failover },
-                      out).into_done();
-            return;
-        }
-        // [M0] the accept branch writes the volatile peer table outside step
-        self.recorder().taint("InstallSnapshotReplyAcceptedLocked");
-        if self.core().current_term_ != send_term {
-            rusty::raft_log_info_1(
-                "[HEARTBEAT-SNAPSHOT] Site {}: Term changed since snapshot send, ignoring response",
-                self.site_id_);
-            return;
-        }
-        let has_successor: bool =
-            raft_server_log_index_has_successor(snap_last_idx);
-        let next_index: u64 = if has_successor {
-            raft_server_follower_next_index(snap_last_idx)
-        } else {
-            snap_last_idx
-        };
-        self.core().peers_.accept_through(ord, snap_last_idx, has_successor,
-                                          next_index);
-        rusty::raft_log_info_4(
-            "[HEARTBEAT-SNAPSHOT] Site {}: Updated follower {}: next_index={} match_index={}",
-            self.site_id_, site_id, self.core().peers_.next_index(ord),
-            self.core().peers_.match_index(ord));
+        // [fix, F28] The reply is the core's (E6): a higher term deposes this
+        // server; otherwise the follower is credited only while the reply
+        // still belongs to this leadership and this follower.
+        let stopped: bool = self.stopped_now();
+        let failover: bool = self.failover_;
+        self.step(Event::RecvSnapshotReply { ord, site_id, snap_last_idx, send_term,
+                                             follower_term, stopped, failover },
+                  out).into_snapshot_reply();
     }
 
     // @safe - the fail-stop every unrecoverable snapshot path performs.
@@ -2603,7 +2613,6 @@ impl RaftServerBase {
             *term_out = 0;
         }
 
-        self.recorder().taint("OnInstallSnapshotLocked");  // [M0]
         // Edge case 0: the server is shutting down.
         if self.stop_.load(rusty::sync::atomic::Ordering::Acquire) {
             rusty::raft_log_info_1(
@@ -2612,165 +2621,40 @@ impl RaftServerBase {
             return;
         }
 
-        // Edge case 1: a stale term is rejected.
-        if term < self.core().current_term_ {
-            rusty::raft_log_info_4(
-                "[INSTALL-SNAPSHOT] Site {}: Rejecting InstallSnapshot from leader {} (leader_term={} < my_term={})",
-                self.site_id_, leader_id, term, self.core().current_term_);
-            unsafe {
-                *term_out = self.core().current_term_;
-            }
-            return;
-        }
-
-        // A term at the index ceiling is outside ObserveTerm's premise and
-        // could never be left (bugs-found B42): refused like a malformed
-        // boundary, with the unavailable sentinel.
-        if term >= RAFT_INDEX_LIMIT {
-            rusty::raft_log_error_3(
-                "[INSTALL-SNAPSHOT] Site {}: Rejecting term {} from leader {} at or above the term ceiling",
-                self.site_id_, term, leader_id);
-            return;
-        }
-
-        // A leader cannot have committed an entry from a term that has not
-        // happened yet. That is a malformed boundary, not usable leader
-        // evidence: reject it with the unavailable sentinel BEFORE
-        // authenticating the sender, stepping down, resetting the timer, or
-        // touching payload state.
-        if !raft_server_snapshot_term_is_valid(last_included_term, term) {
-            rusty::raft_log_error_4(
-                "[INSTALL-SNAPSHOT] Site {}: Rejecting impossible snapshot boundary term {} from leader {} in term {}",
-                self.site_id_, last_included_term, leader_id, term);
-            return;
-        }
-
-        if leader_id > RAFT_SERVER_INVALID_SITE_ID as u64 {
-            rusty::raft_log_warn_3(
-                "[INSTALL-SNAPSHOT] Site {} rejected unrepresentable leader identity {} in term {}",
-                self.site_id_, leader_id, term);
-            return;
-        }
-        let leader_site: u16 = leader_id as u16;
-        let sender_is_current_voter: bool =
-            leader_site != RAFT_SERVER_INVALID_SITE_ID
-                && leader_site != self.site_id_
-                && self.IsConfigMember(leader_site);
-        let leader_has_higher_term: bool =
-            raft_server_observed_higher_term(term, self.core().current_term_);
-        let sender_is_self: bool = leader_site == self.site_id_;
-        let has_known_leader: bool =
-            self.core().current_leader_id_ != RAFT_SERVER_INVALID_SITE_ID;
-        let known_leader_matches_sender: bool =
-            self.core().current_leader_id_ == leader_site;
-        if !sender_is_current_voter
-            || !raft_server_leader_rpc_sender_is_authoritative(
-                leader_has_higher_term, self.core().is_leader_,
-                sender_is_self, has_known_leader,
-                known_leader_matches_sender)
-        {
-            rusty::raft_log_warn_7(
-                "[INSTALL-SNAPSHOT] Site {} rejected unauthoritative leader {} in term {} (local_term={} leader={} known_leader={} voter={})",
-                self.site_id_, leader_id, term, self.core().current_term_,
-                self.core().is_leader_, self.core().current_leader_id_,
-                sender_is_current_voter);
-            return;
-        }
-
-        // Edge case 2: a higher or equal term is accepted as a legitimate
-        // leader.
+        // [fix, F27] The leader contact is the core's (E4): the stale term,
+        // the ceiling, the boundary's term, the sender's authority, the raise,
+        // the role, and whether the snapshot is to be installed. A leader id
+        // that fits no site id names no voter: the core refuses it as an
+        // unauthoritative sender.
+        let leader_site: u16 = if leader_id > RAFT_SERVER_INVALID_SITE_ID as u64 {
+            RAFT_SERVER_INVALID_SITE_ID
+        } else {
+            leader_id as u16
+        };
         let mut out: CoreOutput = core_output();
         let stopped: bool = self.stopped_now();
         let failover: bool = self.failover_;
-        if leader_has_higher_term {
-            rusty::raft_log_info_4(
-                "[INSTALL-SNAPSHOT] Site {}: Leader {} has higher term ({} > {}) - updating",
-                self.site_id_, leader_id, term, self.core().current_term_);
-            // [fix, F20] the raise is a core step (the term, the vote, the
-            // role), so a persist note covers it
-            self.step(Event::ObserveTerm { term, stopped, failover }, &mut out).into_done();
-        }
-
-        // InstallSnapshot comes from a known leader. Publish its identity
-        // before a possible leader-to-follower callback observes the role
-        // transition.
-        self.core().current_leader_id_ =
-            raft_server_leader_hint_after_transition(false, true,
-                                                     self.site_id_,
-                                                     leader_site);
-
-        // Any accepted leader RPC, including one in our current term,
-        // establishes follower state. Cancel the outstanding election as
-        // well as leadership; RequestVote's delayed-success path
-        // revalidates this ownership before it can promote again.
+        let applied: u64 = self.GetAppliedIndex();
+        let (reply_term, contact, install): (u64, bool, bool) = self.step(
+            Event::RecvInstallSnapshot { term, leader_site_id: leader_site, last_included_index,
+                                         last_included_term, applied, stopped, failover },
+            &mut out).into_install_contact();
         // [move, M3] The locked actions run here, where stepDown and
         // setIsLeader ran them, so the timer resets keep their place ahead of
         // the install below; the leader-change callback waits in install_out_
         // until OnInstallSnapshot has released mtx_ ([fix, F6]).
-        if self.core().is_leader_ {
-            self.step(Event::StepDown { stopped, failover }, &mut out).into_done();
-        } else {
-            self.step(Event::SetFollower { stopped, failover }, &mut out).into_done();
-        }
         self.run_locked_actions(&out);
         *self.install_out() = out;  // [fix, F19]
-        self.core().req_voting_ = false;
-        self.core().election_in_progress_ = false;
-
-        // Legitimate leader contact.
-        self.resetTimerLocked("received InstallSnapshot");
-        // From here current_term_ denotes an accepted current-term leader
-        // contact; individual install failures overwrite it with zero.
+        if contact {
+            // Legitimate leader contact.
+            self.resetTimerLocked("received InstallSnapshot");
+        }
+        // An accepted contact answers with the current term; every
+        // individual install failure below overwrites it with zero.
         unsafe {
-            *term_out = self.core().current_term_;
+            *term_out = reply_term;
         }
-
-        // A current-term leader may retry a snapshot after this follower has
-        // already committed, applied or snapshotted through its boundary.
-        // Acknowledge the contact, but roll no local state backward and do
-        // not install the stale payload.
-        let mut local_progress_index: u64 = self.core().commit_index_;
-        if self.core().execute_index_ > local_progress_index {
-            local_progress_index = self.core().execute_index_;
-        }
-        let applied: u64 = self.GetAppliedIndex();
-        if applied > local_progress_index {
-            local_progress_index = applied;
-        }
-        if self.core().snapidx_ > local_progress_index {
-            local_progress_index = self.core().snapidx_;
-        }
-        if last_included_index == self.core().snapidx_
-            && self.core().snapidx_ != 0
-            && last_included_term != self.core().snapterm_ as u64
-        {
-            rusty::raft_log_error_5(
-                "[INSTALL-SNAPSHOT] Site {}: rejecting snapshot boundary ({}, {}) that conflicts with local snapshot ({}, {})",
-                self.site_id_, last_included_index, last_included_term,
-                self.core().snapidx_, self.core().snapterm_);
-            unsafe {
-                *term_out = 0;
-            }
-            return;
-        }
-        if raft_server_snapshot_is_stale(last_included_index,
-                                         local_progress_index) {
-            rusty::raft_log_info_6(
-                "[INSTALL-SNAPSHOT] Site {}: Snapshot index {} is already covered (commit={} execute={} applied={} snapidx={}); acknowledging no-op",
-                self.site_id_, last_included_index,
-                self.core().commit_index_, self.core().execute_index_,
-                self.GetAppliedIndex(), self.core().snapidx_);
-            return;
-        }
-        if !raft_server_log_index_has_successor(last_included_index) {
-            // The log's base requires S + 1. Reaching UINT64_MAX exhausts
-            // the index space, so reject rather than wrap.
-            rusty::raft_log_error_2(
-                "[INSTALL-SNAPSHOT] Site {}: Cannot install terminal snapshot index {}; no successor index is representable",
-                self.site_id_, last_included_index);
-            unsafe {
-                *term_out = 0;
-            }
+        if !install {
             return;
         }
 
@@ -2785,24 +2669,6 @@ impl RaftServerBase {
             }
             return;
         }
-
-        // Complete every fallible observation the retention decision uses
-        // BEFORE the application loader can replace external state. A
-        // decoded command is required, so a synthesized empty RaftEntry can
-        // never prove the snapshot boundary.
-        let boundary = self.core().raft_log_.get(last_included_index);
-        #[allow(clippy::unnecessary_unwrap)]
-        let has_boundary: bool = boundary.is_some()
-            && boundary.unwrap().has_value();  // [move, M6]
-        // The entry's term is ballot_t (int64_t) and the predicate takes
-        // u64; the C++ converted implicitly at the call.
-        let local_boundary_term: u64 = if has_boundary {
-            boundary.unwrap().term() as u64
-        } else {
-            0
-        };
-        let retain_suffix: bool = raft_server_snapshot_boundary_matches(
-            has_boundary, local_boundary_term, last_included_term);
 
         let install: i32 = unsafe {
             raft_install_snapshot_payload(
@@ -2825,18 +2691,33 @@ impl RaftServerBase {
             return;
         }
 
-        self.core().snapidx_ = last_included_index;
-        self.core().snapterm_ = last_included_term as i64;
+        // [fix, F27] The install's outcome is the core's (E5), in this mtx_
+        // hold: the boundary, the log kept after it when this server holds
+        // the boundary entry (decided from the log, which the loader above
+        // does not touch), commit, and the note (disk builds: the image,
+        // then one record naming it, with the hard state). Refused only
+        // where no admitted install reaches; the state machine then holds a
+        // snapshot Raft does not, so the server stops.
+        let mut installed: CoreOutput = core_output();
+        let (taken, retain_suffix): (bool, bool) = self.step(
+            Event::InstallSnapshot { index: last_included_index, term: last_included_term },
+            &mut installed).into_installed();
+        self.run_locked_actions(&installed);
+        if !taken {
+            rusty::raft_log_error_2(
+                "[INSTALL-SNAPSHOT] Site {}: the core refused the loaded snapshot at index {}; stopping",
+                self.site_id_, last_included_index);
+            self.FailStop();
+            unsafe {
+                *term_out = 0;
+            }
+            return;
+        }
         self.snapshot_trigger_index_
             .store(self.core().snapidx_,
                    rusty::sync::atomic::Ordering::Release);
 
-        // Reconcile the in-memory log and the queued application work.
-        if retain_suffix {
-            self.core().raft_log_.compact_through(last_included_index);
-        } else {
-            self.core().raft_log_.reset(last_included_index + 1);
-        }
+        // Reconcile the queued application work.
         let mut purged_apply_entries: u64 = 0;
         {
             let mut queue = self.apply_queue_.lock().unwrap();
@@ -2866,29 +2747,9 @@ impl RaftServerBase {
             }
         }
 
-        self.core().commit_index_ = last_included_index;
         assert!(
             self.core().commit_index_
                 <= self.core().raft_log_.last_index());  // [move, M10]
-        // Disk builds: the install's outcome, as one record (disk design §3:
-        // outcomes, never rules): the boundary, whether the suffix stayed,
-        // and the commit at the boundary.
-        if let Some(d) = self.disk() {
-            // SAFETY: the server's own carrier, under mtx_.
-            let image = unsafe {
-                d.write_latest_image(self.snapshot_manager_.as_ptr()
-                    as *const rusty::RaftSnapshotManagerPtr)
-            }.map(|(_, _, name)| name);
-            d.queue.push(raft_store::Record {
-                hard: Some(raft_store::Hard { term: self.core().current_term_,
-                                              vote: self.core().vote_for_,
-                                              commit: last_included_index }),
-                snapshot: Some(raft_store::SnapRef { index: last_included_index,
-                                                     term: last_included_term,
-                                                     image, keep: retain_suffix }),
-                ..Default::default()
-            });
-        }
 
         // Publish application only after the state machine has finished
         // loading. Acquire waiters must never observe the covered indices
@@ -3194,29 +3055,16 @@ impl RaftServerBase {
             return false;
         }
 
-        let snap_term: i64;
-        if raft_server_snapshot_term_uses_boundary(snap_index,
-                                                   self.core().snapidx_) {
-            // The boundary entry is intentionally absent after compaction.
-            // Its term is carried by snapshot metadata; do not recreate the
-            // entry or rewind the log's base by appending it again.
-            snap_term = self.core().snapterm_;
-        } else {
-            let instance = self.core().raft_log_.get(snap_index);
-            if instance.is_some() {
-                snap_term = instance.unwrap().term();
-            } else {
-                // A missing historical term cannot be inferred from
-                // current_term_: doing so would forge the snapshot boundary
-                // tuple and could make a follower retain a conflicting
-                // suffix. Preserve the existing state and wait for a
-                // trustworthy boundary.
-                rusty::raft_log_error_2(
-                    "[RAFT-SNAPSHOT] Site {}: Cannot determine term at applied index {}; aborting snapshot creation",
-                    self.site_id_, snap_index);
-                return false;
-            }
+        // [fix, F25] the point (index and its term) is the core's
+        // (snapshot_point): a term is never guessed for a compacted entry
+        let point: Option<(u64, i64)> = self.core().snapshot_point();
+        if point.is_none() {
+            rusty::raft_log_error_2(
+                "[RAFT-SNAPSHOT] Site {}: Cannot determine term at applied index {}; aborting snapshot creation",
+                self.site_id_, snap_index);
+            return false;
         }
+        let snap_term: i64 = point.unwrap().1;
 
         if !unsafe {
             raft_snapshot_serialize_and_save(
@@ -3228,23 +3076,17 @@ impl RaftServerBase {
         }
 
         let old_snapidx: u64 = self.core().snapidx_;
-        self.recorder().taint("CreateSnapshotLocked");  // [M0]
-        self.core().snapidx_ = snap_index;
-        self.core().snapterm_ = snap_term;
-        // Disk builds: the boundary moves and the log through it goes; the
-        // entries after it stay. The image file first, then the record
-        // naming it (disk design §3).
-        if let Some(d) = self.disk() {
-            // SAFETY: the server's own carrier, under mtx_.
-            let image = unsafe {
-                d.write_latest_image(self.snapshot_manager_.as_ptr()
-                    as *const rusty::RaftSnapshotManagerPtr)
-            }.map(|(_, _, name)| name);
-            d.queue.push(raft_store::Record {
-                snapshot: Some(raft_store::SnapRef { index: snap_index, term: snap_term as u64,
-                                                     image, keep: true }),
-                ..Default::default()
-            });
+        // [fix, F25] the core moves the boundary and compacts through it
+        // (E1); its persist note makes the disk record, image first
+        let mut out: CoreOutput = core_output();
+        let created: bool = self.step(
+            Event::CreateSnapshot { index: snap_index, term: snap_term }, &mut out).into_created();
+        self.run_locked_actions(&out);
+        if !created {
+            rusty::raft_log_error_2(
+                "[RAFT-SNAPSHOT] Site {}: the core refused the snapshot at index {}",
+                self.site_id_, snap_index);
+            return false;
         }
         self.snapshot_trigger_index_
             .store(self.core().snapidx_,
@@ -3253,10 +3095,6 @@ impl RaftServerBase {
             "[RAFT-SNAPSHOT] Site {}: Snapshot saved at index={} term={} (prev snapidx={})",
             self.site_id_, snap_index, snap_term, old_snapidx);
 
-        let compacted: usize = self.CompactLogLocked(snap_index);
-        rusty::raft_log_info_3(
-            "[RAFT-SNAPSHOT] Site {}: Compacted {} entries up to index={}",
-            self.site_id_, compacted, snap_index);
         true
     }
 

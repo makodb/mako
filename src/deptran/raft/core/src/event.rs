@@ -106,18 +106,35 @@ pub enum Event<'a, C, W> {
     // ---- The apply thread ----
     Applied { index: u64, published: u64 },
 
-    // ---- Role changes the shell makes itself: the lab's construction, and
-    // the InstallSnapshot paths (outside the verified configuration) ----
+    // ---- Role changes the shell makes itself: the lab's construction ----
     SetFollower { stopped: bool, failover: bool },
     StepDown { stopped: bool, failover: bool },
 
     // ---- Disk persistence (docs/verus/disk-persistence.md §3) ----
-    // [fix, F20] A newer term seen outside a modeled message (InstallSnapshot
-    // and its reply): raised, the vote cleared, and the server steps down.
-    ObserveTerm { term: u64, stopped: bool, failover: bool },
     // [fix, F22] A recovered state, before EnterGates: term, vote, commit and
-    // the entries after the snapshot boundary, last first.
-    Restore { term: u64, vote: u16, commit: u64, entries_rev: Vec<RaftEntry<C>> },
+    // the entries after the snapshot boundary, last first. [fix, F24] `d`: the
+    // store's last durable record number, which the persistence coupling
+    // numbers the restored node's records from (unused at run time).
+    // [fix, F30] `snap_index`, `snap_term`: the recovered snapshot's
+    // boundary (0: none), which the log restarts after.
+    Restore { term: u64, vote: u16, commit: u64, d: u64, snap_index: u64, snap_term: i64,  // [fix, F30]
+              entries_rev: Vec<RaftEntry<C>> },  // [fix, F24]
+    // [fix, F25] E1: the snapshot the shell just saved at snapshot_point();
+    // E2: CompactLog's compaction (coupling-design-persistence-snapshots.md B3)
+    CreateSnapshot { index: u64, term: i64 },  // [fix, F25]
+    Compact { up_to: u64 },  // [fix, F25]
+    // [fix, F29] a snapshot manager configured after the gates passed
+    LeaveGates,  // [fix, F29]
+    // [fix, F27] E4: an InstallSnapshot's leader contact (the wire's leader
+    // id, RAFT_SERVER_INVALID_SITE_ID when it fits no site id) with the
+    // shell's applied index; E5: the snapshot its payload kernel then loaded
+    RecvInstallSnapshot { term: u64, leader_site_id: u16, last_included_index: u64,  // [fix, F27]
+                          last_included_term: u64, applied: u64, stopped: bool,  // [fix, F27]
+                          failover: bool },  // [fix, F27]
+    InstallSnapshot { index: u64, term: u64 },  // [fix, F27]
+    // [fix, F28] E6: an InstallSnapshot's reply, as its send recorded it
+    RecvSnapshotReply { ord: usize, site_id: u16, snap_last_idx: u64, send_term: u64,  // [fix, F28]
+                        follower_term: u64, stopped: bool, failover: bool },  // [fix, F28]
 }
 
 pub enum Reply<C> {
@@ -139,6 +156,16 @@ pub enum Reply<C> {
     Applied(bool),
     // [fix, F22] whether Restore took the state (false: refused, unchanged)
     Restored(bool),
+    // [fix, F25] whether CreateSnapshot moved the boundary; what Compact dropped
+    Created(bool),  // [fix, F25]
+    Compacted(u64),  // [fix, F25]
+    // [fix, F27] RecvInstallSnapshot's: the answer's term (0: unavailable),
+    // whether the leader contact was accepted, whether to install;
+    // InstallSnapshot's: whether it was taken, and the log after it kept
+    InstallContact { reply_term: u64, contact: bool, install: bool },  // [fix, F27]
+    Installed { taken: bool, retain: bool },  // [fix, F27]
+    // [fix, F28] whether the follower was credited through the snapshot
+    SnapshotReply(bool),  // [fix, F28]
 }
 
 impl<C> Reply<C> {
@@ -257,6 +284,55 @@ impl<C> Reply<C> {
             _ => vstd::pervasive::unreached(),
         }
     }
+    // [fix, F25] (whole item)
+    pub fn into_created(self) -> bool
+        requires self is Created,
+    {
+        match self {
+            Reply::Created(ok) => ok,
+            _ => vstd::pervasive::unreached(),
+        }
+    }
+
+    // [fix, F25] (whole item)
+    pub fn into_compacted(self) -> u64
+        requires self is Compacted,
+    {
+        match self {
+            Reply::Compacted(n) => n,
+            _ => vstd::pervasive::unreached(),
+        }
+    }
+
+    // [fix, F27] (whole item)
+    pub fn into_install_contact(self) -> (u64, bool, bool)
+        requires self is InstallContact,
+    {
+        match self {
+            Reply::InstallContact { reply_term, contact, install } => (reply_term, contact, install),
+            _ => vstd::pervasive::unreached(),
+        }
+    }
+
+    // [fix, F27] (whole item)
+    pub fn into_installed(self) -> (bool, bool)
+        requires self is Installed,
+    {
+        match self {
+            Reply::Installed { taken, retain } => (taken, retain),
+            _ => vstd::pervasive::unreached(),
+        }
+    }
+
+    // [fix, F28] (whole item)
+    pub fn into_snapshot_reply(self) -> bool
+        requires self is SnapshotReply,
+    {
+        match self {
+            Reply::SnapshotReply(credited) => credited,
+            _ => vstd::pervasive::unreached(),
+        }
+    }
 }
 
 impl<C: Clone> RaftCore<C> {
@@ -295,9 +371,8 @@ impl<C: Clone> RaftCore<C> {
                 &&& self.round_.spec_nservers() > 0
                 &&& self.config_members_@.contains(self.site_id_)
             },
-            // [fix, F20, F22] the term below the ceiling; a restore into an
-            // empty, ungated core (the host contract: before EnterGates)
-            Event::ObserveTerm { term, .. } => (term as int) < raft_index_limit(),
+            // [fix, F22] a restore into an empty, ungated core (the host
+            // contract: before EnterGates)
             Event::Restore { .. } => !self.gated_ && self.raft_log_.spec_len() == 0,
             _ => true,
         }
@@ -410,7 +485,8 @@ impl<C: Clone> RaftCore<C> {
                 Event::SetIdentity { .. } | Event::Configure { .. }
                 | Event::RebuildPeers { .. } | Event::AbandonRound
                 | Event::ResetRoundState | Event::SetFollower { .. }
-                | Event::StepDown { .. } => r is Done,
+                | Event::StepDown { .. }
+                | Event::LeaveGates => r is Done,  // [fix, F29]
                 Event::EnterGates { .. } => r is Gates,
                 Event::Propose { .. } => r is Proposed,
                 Event::StartElection { .. } => r is Campaign,
@@ -422,8 +498,12 @@ impl<C: Clone> RaftCore<C> {
                 Event::RecvAppendReply { .. } => r is AppendReply,
                 Event::RoundEnd { .. } => r is RoundEnd,
                 Event::Applied { .. } => r is Applied,
-                Event::ObserveTerm { .. } => r is Done,  // [fix, F20]
                 Event::Restore { .. } => r is Restored,  // [fix, F22]
+                Event::CreateSnapshot { .. } => r is Created,  // [fix, F25]
+                Event::Compact { .. } => r is Compacted,  // [fix, F25]
+                Event::RecvInstallSnapshot { .. } => r is InstallContact,  // [fix, F27]
+                Event::InstallSnapshot { .. } => r is Installed,  // [fix, F27]
+                Event::RecvSnapshotReply { .. } => r is SnapshotReply,  // [fix, F28]
             },
     {
         // [fix, F21] the saved fields before the arm, for the persist note
@@ -570,19 +650,17 @@ impl<C: Clone> RaftCore<C> {
                 }
                 Reply::Done
             },
-            Event::ObserveTerm { term, stopped, failover } => {
-                self.observe_term(term, stopped, failover, out);  // [fix, F20]
-                Reply::Done
-            },
-            Event::Restore { term, vote, commit, entries_rev } => {
+            Event::Restore { term, vote, commit, d: _, snap_index, snap_term, entries_rev } => {  // [fix, F24] d is ghost-only [fix, F30]
                 let ghost pre = *self;
                 let ghost rev = entries_rev@;
-                let ok: bool = self.restore(term, vote, commit, entries_rev, out);  // [fix, F22]
+                let ok: bool = self.restore(term, vote, commit, snap_index, snap_term,  // [fix, F22] [fix, F30]
+                                            entries_rev, out);
                 proof {
                     // [M12] (disk design §6) taken: a previous ghost log the
                     // premise provides, stepped aside; refused: nothing moved
                     let log = crate::coupling::restore_log(rev);
-                    if ok && pre.ginv() && crate::coupling::restore_premise(&pre, term, vote, commit, rev) {
+                    if ok && pre.ginv() && snap_index == 0
+                        && crate::coupling::restore_premise(&pre, term, vote, commit, rev) {
                         let prev = choose|p: Seq<glr::protocol::Raft::ghost_log::Entry>|
                             #[trigger] crate::coupling::restore_prev_ok(&pre, p, term, vote, log, commit);
                         pre.raft_log_.lemma_wf_bounds();
@@ -598,6 +676,30 @@ impl<C: Clone> RaftCore<C> {
                     }
                 }
                 Reply::Restored(ok)
+            },
+            Event::CreateSnapshot { index, term } => {  // [fix, F25]
+                Reply::Created(self.create_snapshot(index, term, out))  // [fix, F25]
+            },
+            Event::Compact { up_to } => Reply::Compacted(self.compact(up_to)),  // [fix, F25]
+            Event::LeaveGates => {  // [fix, F29]
+                self.leave_gates();  // [fix, F29]
+                Reply::Done
+            },
+            Event::RecvInstallSnapshot { term, leader_site_id, last_included_index,  // [fix, F27]
+                                         last_included_term, applied, stopped, failover } => {  // [fix, F27]
+                let (reply_term, contact, install) = self.recv_install_snapshot(  // [fix, F27]
+                    term, leader_site_id, last_included_index, last_included_term, applied,
+                    stopped, failover, out);
+                Reply::InstallContact { reply_term, contact, install }  // [fix, F27]
+            },
+            Event::InstallSnapshot { index, term } => {  // [fix, F27]
+                let (taken, retain) = self.install_snapshot(index, term, out);  // [fix, F27]
+                Reply::Installed { taken, retain }  // [fix, F27]
+            },
+            Event::RecvSnapshotReply { ord, site_id, snap_last_idx, send_term, follower_term,  // [fix, F28]
+                                       stopped, failover } => {  // [fix, F28]
+                Reply::SnapshotReply(self.on_snapshot_reply(ord, site_id, snap_last_idx,  // [fix, F28]
+                    send_term, follower_term, stopped, failover, out))
             },
         };
         // [fix, F21] the note: the hard state if it moved, the log's lowest

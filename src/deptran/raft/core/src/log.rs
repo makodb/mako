@@ -591,6 +591,12 @@ impl<C> RaftLog<C> {
             index as int + 1 + old(self).spec_len() <= raft_index_limit(),
         ensures
             final(self).wf(),
+            // [fix, F25] where the base lands, and an index inside the log
+            // keeps its tail
+            final(self).spec_base() == (if (index as int) < old(self).spec_base() {
+                old(self).spec_base() } else { index as int + 1 }),
+            (index as int) <= old(self).spec_last_index()
+                ==> final(self).spec_last_index() == old(self).spec_last_index(),
     {
         if index < self.base_ {
             return 0;
@@ -606,8 +612,12 @@ impl<C> RaftLog<C> {
         // vector did: the log empties and the index space restarts above the
         // compaction point rather than at the old tail.
         self.base_ = index + 1;
+        let ghost base1 = self.base_;  // [fix, F25]
+        let ghost len1 = self.len_;  // [fix, F25]
         while self.head_ >= 4096 && !self.blocks_.is_empty()
             invariant
+                self.base_ == base1,  // [fix, F25]
+                self.len_ == len1,  // [fix, F25]
                 1 <= self.base_,
                 self.base_ as int + (self.len_ as int) <= raft_index_limit(),
                 self.blocks_@.len() == 0 ==> self.head_ as int + self.len_ as int == 0

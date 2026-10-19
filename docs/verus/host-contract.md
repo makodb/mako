@@ -49,7 +49,13 @@ As in the plan's §1.3, from the group's composition
    each response handle in the slot the core chose, `AppendSend::slot_`;
    since F23 a follower has a window of slots).
 3. **A static configuration shared by all servers**, containing each of them
-   (the gate, F5).
+   (the gate, F5). Snapshots need no premise here any more: a gated core
+   refuses every snapshot event (F25, F27, F28: an InstallSnapshot is answered
+   only when its term is stale, and changes nothing), and a gated server never
+   holds a snapshot manager (F29 steps `LeaveGates` when one is configured).
+   This was an interim premise, bugs-found B55. The snapshot coupling,
+   coupling-design-persistence-snapshots.md Part B, admits snapshots into the
+   gate.
 4. **Segments are atomic and globally ordered.** Each core call runs to
    completion under `mtx_` (decision Q1; `RaftLockGuard` around every
    `step` but the three made before anything else can reach the server:
@@ -121,8 +127,9 @@ admission itself (`coupled_checked`).
 | `TickHeartbeat` | the gate; `is_leader` is the core's role (`admits`) | `heartbeat_tick_body` reads `IsLeaderLocked()` under the same lock (`shell/server_cc.rs:85`) |
 | `RecvAppendReply` | the gate; `is_leader ==> ` the core leads (F12, bugs-found B18); a success reports no more than the leader's log | the collection loop reads `IsLeaderLocked()` under the lock (`heartbeat_collect_body`), which is `looping_ && core.is_leader_`: true only while the core leads, before and after shutdown begins; `step_checked` reads a success beyond the log as no reply (F9) |
 | `RoundEnd` | the gate | F5's `enter_gates`. Nothing about the role: PHASE 3 advances the commit index only while the core leads (F12), so a round end after a step-down or during shutdown commits nothing (bugs-found B17, B18) |
-| `ObserveTerm` | `false`: uncoupled, as the term comes in no modelled message (F20) | stepped only on the snapshot paths (an InstallSnapshot reply's higher term, `InstallSnapshotReplyAcceptedLocked`; the InstallSnapshot handler, `OnInstallSnapshotLocked`), which the verified configuration (snapshots off) never runs; a run with snapshots is outside it (the recorder's `T` lines) |
-| `Restore` | before the gate; the core neither leads nor campaigns; an empty log; some ghost log replays to the restored term, vote, log and commit, with no outgoing configuration (`restore_prev_ok`; the last conjunct since spec v2, which added the field: under the gate the configuration is static) | `RestoreDiskState` steps it once, after `Configure` and snapshot recovery, before `EnterGates`, on the state recovery folded from the store; that the store's state is such a replay is §1 item 5's trusted fact |
+| `CreateSnapshot`, `Compact`, `RecvInstallSnapshot`, `InstallSnapshot`, `RecvSnapshotReply` | the gate: each refuses inside it, changing nothing (F25, F27, F28), so the premise holds by refusal; outside it they are uncoupled until Part B | -- (the core enforces it) |
+| `LeaveGates` | `false`: leaving the verified configuration ends the coupling (F29) | `SetSnapshotManagerLocked` steps it when a manager is configured on a gated server; production configures managers only before `EnterGates` (bugs-found B56) |
+| `Restore` | before the gate; the core neither leads nor campaigns; an empty log; no snapshot boundary (`snap_index == 0`, F30: a boundary is uncoupled until Part B); some ghost log replays to the restored term, vote, log and commit, with no outgoing configuration (`restore_prev_ok`; the last conjunct since spec v2, which added the field: under the gate the configuration is static) | `RestoreDiskState` steps it once, after `Configure` and snapshot recovery, before `EnterGates`, on the state recovery folded from the store; that the store's state is such a replay is §1 item 5's trusted fact. A memory build steps it only for a snapshot startup recovery loaded (`RestoreRecoveredSnapshot`, F30), which then has a boundary and so is uncoupled |
 
 Terms and indices off the wire and in the log stay below 2^62
 (`raft_index_limit`, the Phase 6 contract): a log that long would hold
@@ -130,7 +137,8 @@ Terms and indices off the wire and in the log stay below 2^62
 B42): a RequestVote or AppendEntries whose term reaches the ceiling is
 dropped before `step_checked`, an InstallSnapshot is refused, and a reply
 carrying one is decoded as no reply (`rt/src/transport.rs`, `decode_reply`),
-so `SettleElection`, `RecvAppendReply` and `ObserveTerm` never see one; entry
+so `SettleElection` and `RecvAppendReply` never see one (an InstallSnapshot's
+reply carrying one is refused by `RecvSnapshotReply` itself, F28); entry
 terms are bounded by their AppendEntries' own (F14).
 
 ## 4. The inbound payload (`InboundBatch`, the shell's `WireBatch`)

@@ -266,17 +266,51 @@ pub fn write_event<C: Clone, W: InboundBatch<C>>(s: &mut String, ev: &Event<'_, 
             put(s, b(*stopped));
             put(s, b(*failover));
         }
-        Event::ObserveTerm { term, stopped, failover } => {
-            put(s, "observe_term");
+        Event::CreateSnapshot { index, term } => {  // [fix, F25]
+            put(s, "snapshot");
+            put_u(s, *index);
+            put_i(s, *term);
+        }
+        Event::Compact { up_to } => {  // [fix, F25]
+            put(s, "compact");
+            put_u(s, *up_to);
+        }
+        Event::RecvInstallSnapshot { term, leader_site_id, last_included_index,  // [fix, F27]
+                                     last_included_term, applied, stopped, failover } => {
+            put(s, "install_contact");
             put_u(s, *term);
+            put_u(s, *leader_site_id as u64);
+            put_u(s, *last_included_index);
+            put_u(s, *last_included_term);
+            put_u(s, *applied);
             put(s, b(*stopped));
             put(s, b(*failover));
         }
-        Event::Restore { term, vote, commit, entries_rev } => {
+        Event::InstallSnapshot { index, term } => {  // [fix, F27]
+            put(s, "install");
+            put_u(s, *index);
+            put_u(s, *term);
+        }
+        Event::RecvSnapshotReply { ord, site_id, snap_last_idx, send_term, follower_term,  // [fix, F28]
+                                   stopped, failover } => {
+            put(s, "snapshot_reply");
+            put_u(s, *ord as u64);
+            put_u(s, *site_id as u64);
+            put_u(s, *snap_last_idx);
+            put_u(s, *send_term);
+            put_u(s, *follower_term);
+            put(s, b(*stopped));
+            put(s, b(*failover));
+        }
+        Event::LeaveGates => put(s, "leave_gates"),  // [fix, F29]
+        Event::Restore { term, vote, commit, d, snap_index, snap_term, entries_rev } => {
             put(s, "restore");
             put_u(s, *term);
             put_u(s, *vote as u64);
             put_u(s, *commit);
+            put_u(s, *d);
+            put_u(s, *snap_index);  // [fix, F30]
+            put_i(s, *snap_term);  // [fix, F30]
             put_u(s, entries_rev.len() as u64);
             for e in entries_rev.iter() {
                 put_i(s, e.term());
@@ -291,9 +325,15 @@ pub fn write_event<C: Clone, W: InboundBatch<C>>(s: &mut String, ev: &Event<'_, 
 }
 
 /// A step's persist note ([fix, F21]): `P <hard> <term> <vote> <commit>
-/// <log_from>`, on its own line after the step's record.
+/// <log_from>`, then `S <index> <term> <keep>` when it carries a snapshot
+/// ([fix, F25]), on its own line after the step's record.
 pub fn persist_line(note: &PersistNote) -> String {
-    format!("P {} {} {} {} {}", b(note.hard_), note.term_, note.vote_, note.commit_, note.log_from_)
+    let mut line = format!("P {} {} {} {} {}", b(note.hard_), note.term_, note.vote_, note.commit_,
+                           note.log_from_);
+    if let Some(snap) = &note.snap_ {  // [fix, F25]
+        line.push_str(&format!(" S {} {} {}", snap.index_, snap.term_, b(snap.keep_)));
+    }
+    line
 }
 
 /// A message handed to `step_checked` ([fix, F9]): `C <name> <fields>...`.
@@ -437,6 +477,8 @@ fn write_reply<C>(s: &mut String, reply: &Reply<C>, digest: Digest<'_, C>) {
                 put_u(s, snap.ord_ as u64);
                 put_u(s, snap.site_id_ as u64);
                 put_u(s, snap.term_);
+                put_u(s, snap.index_);  // [fix, F26]
+                put_i(s, snap.snap_term_);  // [fix, F26]
             }
             put_u(s, t.sends_.len() as u64);
             for send in t.sends_.iter() {
@@ -477,6 +519,29 @@ fn write_reply<C>(s: &mut String, reply: &Reply<C>, digest: Digest<'_, C>) {
         Reply::Restored(ok) => {
             put(s, "restored");
             put(s, b(*ok));
+        }
+        Reply::Created(ok) => {  // [fix, F25]
+            put(s, "created");
+            put(s, b(*ok));
+        }
+        Reply::Compacted(n) => {  // [fix, F25]
+            put(s, "compacted");
+            put_u(s, *n);
+        }
+        Reply::InstallContact { reply_term, contact, install } => {  // [fix, F27]
+            put(s, "install_contact");
+            put_u(s, *reply_term);
+            put(s, b(*contact));
+            put(s, b(*install));
+        }
+        Reply::Installed { taken, retain } => {  // [fix, F27]
+            put(s, "installed");
+            put(s, b(*taken));
+            put(s, b(*retain));
+        }
+        Reply::SnapshotReply(credited) => {  // [fix, F28]
+            put(s, "snapshot_reply");
+            put(s, b(*credited));
         }
     }
 }
@@ -545,10 +610,18 @@ pub enum OwnedEvent {
     Applied { index: u64, published: u64 },
     SetFollower { stopped: bool, failover: bool },
     StepDown { stopped: bool, failover: bool },
-    ObserveTerm { term: u64, stopped: bool, failover: bool },
     // entries last first, as Event::Restore takes them: (term, has_value,
     // is_tpc_commit, kind, payload_bytes, digest)
-    Restore { term: u64, vote: u16, commit: u64, entries_rev: Vec<(i64, bool, bool, i32, u64, u64)> },
+    Restore { term: u64, vote: u16, commit: u64, d: u64, snap_index: u64, snap_term: i64,  // [fix, F30]
+              entries_rev: Vec<(i64, bool, bool, i32, u64, u64)> },
+    CreateSnapshot { index: u64, term: i64 },  // [fix, F25]
+    Compact { up_to: u64 },  // [fix, F25]
+    RecvInstallSnapshot { term: u64, leader_site_id: u16, last_included_index: u64,  // [fix, F27]
+                          last_included_term: u64, applied: u64, stopped: bool, failover: bool },
+    InstallSnapshot { index: u64, term: u64 },  // [fix, F27]
+    RecvSnapshotReply { ord: usize, site_id: u16, snap_last_idx: u64, send_term: u64,  // [fix, F28]
+                        follower_term: u64, stopped: bool, failover: bool },
+    LeaveGates,  // [fix, F29]
 }
 
 impl OwnedEvent {
@@ -629,15 +702,36 @@ impl OwnedEvent {
             OwnedEvent::StepDown { stopped, failover } => Event::StepDown {
                 stopped: *stopped, failover: *failover,
             },
-            OwnedEvent::ObserveTerm { term, stopped, failover } => Event::ObserveTerm {
-                term: *term, stopped: *stopped, failover: *failover,
-            },
-            OwnedEvent::Restore { term, vote, commit, entries_rev } => Event::Restore {
-                term: *term, vote: *vote, commit: *commit,
+            OwnedEvent::Restore { term, vote, commit, d, snap_index, snap_term, entries_rev } => Event::Restore {
+                term: *term, vote: *vote, commit: *commit, d: *d,
+                snap_index: *snap_index, snap_term: *snap_term,  // [fix, F30]
                 entries_rev: entries_rev.iter().map(|&(t, v, tpc, kind, bytes, d)| {
                     RaftEntry::new(t, ReplayCmd(d), v, tpc, kind, bytes)
                 }).collect(),
             },
+            OwnedEvent::CreateSnapshot { index, term } => Event::CreateSnapshot {  // [fix, F25]
+                index: *index, term: *term,
+            },
+            OwnedEvent::Compact { up_to } => Event::Compact { up_to: *up_to },  // [fix, F25]
+            OwnedEvent::RecvInstallSnapshot { term, leader_site_id, last_included_index,  // [fix, F27]
+                                              last_included_term, applied, stopped, failover } => {
+                Event::RecvInstallSnapshot {
+                    term: *term, leader_site_id: *leader_site_id,
+                    last_included_index: *last_included_index,
+                    last_included_term: *last_included_term, applied: *applied,
+                    stopped: *stopped, failover: *failover,
+                }
+            }
+            OwnedEvent::InstallSnapshot { index, term } => Event::InstallSnapshot {  // [fix, F27]
+                index: *index, term: *term,
+            },
+            OwnedEvent::RecvSnapshotReply { ord, site_id, snap_last_idx, send_term, follower_term,  // [fix, F28]
+                                            stopped, failover } => Event::RecvSnapshotReply {
+                ord: *ord, site_id: *site_id, snap_last_idx: *snap_last_idx,
+                send_term: *send_term, follower_term: *follower_term, stopped: *stopped,
+                failover: *failover,
+            },
+            OwnedEvent::LeaveGates => Event::LeaveGates,  // [fix, F29]
         }
     }
 }
@@ -769,18 +863,32 @@ pub fn parse_event(text: &str) -> Result<(bool, OwnedEvent), String> {
         "applied" => OwnedEvent::Applied { index: t.u()?, published: t.u()? },
         "follower" => OwnedEvent::SetFollower { stopped: t.b()?, failover: t.b()? },
         "step_down" => OwnedEvent::StepDown { stopped: t.b()?, failover: t.b()? },
-        "observe_term" => OwnedEvent::ObserveTerm { term: t.u()?, stopped: t.b()?, failover: t.b()? },
         "restore" => {
             let term = t.u()?;
             let vote = t.u()? as u16;
             let commit = t.u()?;
+            let d = t.u()?;
+            let snap_index = t.u()?;  // [fix, F30]
+            let snap_term = t.i()?;  // [fix, F30]
             let n = t.u()?;
             let mut entries_rev = Vec::new();
             for _ in 0..n {
                 entries_rev.push((t.i()?, t.b()?, t.b()?, t.i()? as i32, t.u()?, t.u()?));
             }
-            OwnedEvent::Restore { term, vote, commit, entries_rev }
+            OwnedEvent::Restore { term, vote, commit, d, snap_index, snap_term, entries_rev }
         }
+        "snapshot" => OwnedEvent::CreateSnapshot { index: t.u()?, term: t.i()? },  // [fix, F25]
+        "compact" => OwnedEvent::Compact { up_to: t.u()? },  // [fix, F25]
+        "install_contact" => OwnedEvent::RecvInstallSnapshot {  // [fix, F27]
+            term: t.u()?, leader_site_id: t.u()? as u16, last_included_index: t.u()?,
+            last_included_term: t.u()?, applied: t.u()?, stopped: t.b()?, failover: t.b()?,
+        },
+        "install" => OwnedEvent::InstallSnapshot { index: t.u()?, term: t.u()? },  // [fix, F27]
+        "snapshot_reply" => OwnedEvent::RecvSnapshotReply {  // [fix, F28]
+            ord: t.u()? as usize, site_id: t.u()? as u16, snap_last_idx: t.u()?,
+            send_term: t.u()?, follower_term: t.u()?, stopped: t.b()?, failover: t.b()?,
+        },
+        "leave_gates" => OwnedEvent::LeaveGates,  // [fix, F29]
         other => return Err(format!("unknown event {other}")),
     };
     if let Some(extra) = t.it.next() {
@@ -823,6 +931,8 @@ struct Shadow {
     // (term, digest) for each index from `base`
     base: u64,
     log: Vec<(i64, u64)>,
+    // [fix, F25] the snapshot boundary
+    snap: (u64, i64),
 }
 
 fn core_entry(core: &RaftCore<ReplayCmd>, index: u64) -> (i64, u64) {
@@ -840,6 +950,7 @@ impl Shadow {
             commit: core.commit_index_,
             base,
             log: (base..=last).map(|i| core_entry(core, i)).collect(),
+            snap: (core.snapidx_, core.snapterm_),  // [fix, F25]
         }
     }
 
@@ -848,6 +959,23 @@ impl Shadow {
             self.term = note.term_;
             self.vote = note.vote_;
             self.commit = note.commit_;
+        }
+        // [fix, F25] the snapshot before the log, as the store folds a record
+        if let Some(snap) = &note.snap_ {
+            let last = self.base + self.log.len() as u64 - 1;
+            if snap.index_ + 1 < self.base {
+                return Err(format!("snapshot at {} behind the log's base {}", snap.index_, self.base));
+            }
+            if snap.keep_ {
+                if snap.index_ > last {
+                    return Err(format!("snapshot at {} keeps a log that ends at {last}", snap.index_));
+                }
+                self.log.drain(..(snap.index_ + 1 - self.base) as usize);
+            } else {
+                self.log.clear();
+            }
+            self.base = snap.index_ + 1;
+            self.snap = (snap.index_, snap.term_);
         }
         if note.log_from_ != 0 {
             let from = note.log_from_;
@@ -876,6 +1004,10 @@ impl Shadow {
         if core.raft_log_.base() != self.base || last != mine {
             return Err(format!("persist notes: log {}..={mine}, the core has {}..={last}",
                                self.base, core.raft_log_.base()));
+        }
+        if self.snap != (core.snapidx_, core.snapterm_) {  // [fix, F25]
+            return Err(format!("persist notes: snapshot {:?}, the core has {:?}", self.snap,
+                               (core.snapidx_, core.snapterm_)));
         }
         let from = if full { self.base } else { last.saturating_sub(1).max(self.base) };
         for i in from..=last {

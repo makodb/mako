@@ -133,6 +133,19 @@ pub struct PersistNote {
     pub vote_: u16,
     pub commit_: u64,
     pub log_from_: u64,
+    pub snap_: Option<SnapNote>,  // [fix, F25]
+}
+
+// [fix, F25] (whole item) A step that moved the snapshot boundary: the new
+// boundary's index and term, and whether the log after it stays (a snapshot
+// taken here, or an install whose boundary matches the local log) or goes (an
+// install that supersedes the log). The shell writes the image file, then the
+// record that names it (disk design §3).
+#[derive(Clone, Copy)]
+pub struct SnapNote {
+    pub index_: u64,
+    pub term_: i64,
+    pub keep_: bool,
 }
 
 // The actions of one critical section, in push order.
@@ -148,12 +161,13 @@ pub struct CoreOutput {
     // last finished step's note
     log_from_: u64,  // [fix, F21]
     persist_: Option<PersistNote>,  // [fix, F21]
+    snap_: Option<SnapNote>,  // [fix, F25] the step in progress's boundary move
 }
 
 impl CoreOutput {
     pub fn new() -> CoreOutput {
         CoreOutput { actions_: Vec::new(), logs_: Vec::new(), log_level_: RAFT_LOG_DEBUG,  // [move, M7]
-                     log_from_: 0, persist_: None }  // [fix, F21]
+                     log_from_: 0, persist_: None, snap_: None }  // [fix, F21, fix, F25]
     }
 
     // [fix, F21] (whole item) A log writer marks the lowest index it wrote.
@@ -163,16 +177,24 @@ impl CoreOutput {
         }
     }
 
+    // [fix, F25] (whole item) A step that moved the snapshot boundary marks it.
+    pub fn note_snapshot(&mut self, index: u64, term: i64, keep: bool) {
+        self.snap_ = Some(SnapNote { index_: index, term_: term, keep_: keep });
+    }
+
     // [fix, F21] (whole item) step's end: the note, if the step changed the
-    // saved state; a step that changed nothing leaves none.
+    // saved state; a step that changed nothing leaves none. [fix, F25] A
+    // boundary move is a change of the saved state.
     pub fn finish_persist(&mut self, hard: bool, term: u64, vote: u16, commit: u64) {
-        if hard || self.log_from_ != 0 {
+        if hard || self.log_from_ != 0 || self.snap_.is_some() {
             self.persist_ = Some(PersistNote { hard_: hard, term_: term, vote_: vote,
-                                               commit_: commit, log_from_: self.log_from_ });
+                                               commit_: commit, log_from_: self.log_from_,
+                                               snap_: self.snap_ });
         } else {
             self.persist_ = None;
         }
         self.log_from_ = 0;
+        self.snap_ = None;
     }
 
     // [fix, F21] (whole item) The last step's note, left in place (the

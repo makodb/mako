@@ -11,7 +11,7 @@ fn restore(core: &mut RaftCore<Cmd>, term: u64, vote: u16, commit: u64, entries:
     let mut rev = entries;
     rev.reverse();
     let mut out = CoreOutput::new();
-    let ok = core.step::<Batch>(Event::Restore { term, vote, commit, entries_rev: rev }, &mut out)
+    let ok = core.step::<Batch>(Event::Restore { term, vote, commit, d: 0, snap_index: 0, snap_term: 0, entries_rev: rev }, &mut out)
         .into_restored();
     (ok, out)
 }

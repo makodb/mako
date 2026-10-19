@@ -323,6 +323,20 @@ impl<C: Clone> RaftCore<C> {
         ok
     }
 
+    // [fix, F29] (whole item) Leaving the verified configuration: a snapshot
+    // manager configured after EnterGates passed (bugs-found B56), which the
+    // gate's "snapshots off" no longer describes. From here no event is
+    // coupled (every coupled premise asks for the gate) and the snapshot
+    // paths run.
+    pub fn leave_gates(&mut self)
+        requires old(self).inv(),
+        ensures
+            final(self).inv(),
+            !final(self).gated_,
+    {
+        self.gated_ = false;
+    }
+
     // [move, M1] What a fresh HeartbeatDriver used to start with: each run of
     // the heartbeat loop begins with an empty round state, as before.
     pub fn reset_round_state(&mut self)
@@ -526,7 +540,7 @@ impl<C: Clone> RaftCore<C> {
     // [fix, F20] (whole item) A newer term seen outside a modeled message:
     // the InstallSnapshot handler's and its reply's raise, formerly written
     // by the shell itself (shell/server_h.rs), moved into a step so a persist
-    // note covers it. As SettleElection's higher-term branch: the term
+    // note covers it; since F27 and F28 inside those messages' own steps. As SettleElection's higher-term branch: the term
     // raised, the vote and leader hint cleared, the role dropped, the
     // campaign over. A term at or below the current one changes nothing.
     pub fn observe_term(&mut self, term: u64, stopped: bool, failover: bool,
@@ -568,7 +582,9 @@ impl<C: Clone> RaftCore<C> {
     // 0, terms that fall, start below the boundary's term or exceed the
     // stored term. Queues the apply of
     // boundary+1..commit; sets no persist note (step's caller sees none).
+    #[allow(clippy::too_many_arguments)]
     pub fn restore(&mut self, term: u64, vote: u16, commit: u64,
+                   snap_index: u64, snap_term: i64,  // [fix, F30]
                    entries_rev: Vec<RaftEntry<C>>, out: &mut CoreOutput) -> (r: bool)
         requires
             old(self).inv(),
@@ -588,7 +604,11 @@ impl<C: Clone> RaftCore<C> {
             r ==> (final(self).is_leader_ == old(self).is_leader_),
             r ==> (final(self).election_in_progress_ == old(self).election_in_progress_),
             r ==> (final(self).election_term_ == old(self).election_term_),
-            r ==> (final(self).snapterm_ == old(self).snapterm_),
+            // [fix, F30] the boundary: the recovered one, or as it was
+            r && snap_index == 0 ==> (final(self).snapterm_ == old(self).snapterm_),
+            r && snap_index == 0 ==> (final(self).snapidx_ == old(self).snapidx_),
+            r && snap_index != 0 ==> (final(self).snapterm_ == snap_term),
+            r && snap_index != 0 ==> (final(self).snapidx_ == snap_index),
             r ==> (final(self).peers_ == old(self).peers_),
             r ==> (final(self).peer_sites_ == old(self).peer_sites_),
             r ==> (final(self).g_log_ == old(self).g_log_),
@@ -596,7 +616,10 @@ impl<C: Clone> RaftCore<C> {
             r ==> (final(self).g_match_ == old(self).g_match_),
             r ==> (final(self).g_next_ == old(self).g_next_),
     {
-        let s: u64 = self.snapidx_;
+        // [fix, F30] a recovered snapshot's boundary replaces the core's
+        // (none at setup): the log restarts after it
+        let s: u64 = if snap_index != 0 { snap_index } else { self.snapidx_ };  // [fix, F30]
+        let s_term: i64 = if snap_index != 0 { snap_term } else { self.snapterm_ };  // [fix, F30]
         let n: u64 = entries_rev.len() as u64;
         if term >= RAFT_INDEX_LIMIT || term < self.current_term_ {
             return false;
@@ -604,7 +627,12 @@ impl<C: Clone> RaftCore<C> {
         if s >= RAFT_INDEX_LIMIT || n >= RAFT_INDEX_LIMIT - s - 1 {
             return false;
         }
-        if self.raft_log_.base() != s + 1 {
+        if snap_index == 0 && self.raft_log_.base() != s + 1 {  // [fix, F30]
+            return false;
+        }
+        // [fix, F30] a boundary never moves back, and its term is a term no
+        // later than the restored one
+        if snap_index != 0 && (snap_index < self.snapidx_ || s_term < 0 || s_term as u64 > term) {
             return false;
         }
         if commit < s || commit > s + n {
@@ -613,7 +641,7 @@ impl<C: Clone> RaftCore<C> {
         if vote != RAFT_SERVER_INVALID_SITE_ID && (term == 0 || !self.is_config_member(vote)) {
             return false;
         }
-        let mut prev: i64 = self.snapterm_;
+        let mut prev: i64 = s_term;  // [fix, F30]
         let mut k: usize = entries_rev.len();
         while k > 0
             invariant
@@ -631,11 +659,366 @@ impl<C: Clone> RaftCore<C> {
             }
             prev = t;
         }
+        if snap_index != 0 {  // [fix, F30]
+            proof {
+                // the log is empty (the premise), so the reset keeps its view
+                self.raft_log_.lemma_wf_bounds();
+                assert(self.raft_log_.view() =~= Seq::<RaftEntry<C>>::empty());
+            }
+            self.snapidx_ = snap_index;  // [fix, F30]
+            self.snapterm_ = snap_term;  // [fix, F30]
+            self.raft_log_.reset(snap_index + 1);  // [fix, F30]
+        }
         self.current_term_ = term;
         self.vote_for_ = vote;
         self.raft_log_.append_rev(entries_rev);
         self.commit_index_ = commit;
         out.push(CoreAction::apply_range(s, commit));
+        true
+    }
+
+    // [fix, F25] (whole item) The snapshot the server would take now: at the
+    // applied index, with its term (the boundary's when the index is the
+    // boundary, else its entry's). None when nothing is applied, the index has
+    // no successor, or its entry was compacted away: a term is never guessed,
+    // which would forge the boundary (CreateSnapshotLocked's rule).
+    pub fn snapshot_point(&self) -> (r: Option<(u64, i64)>)
+        requires self.inv(),
+    {
+        let index: u64 = self.execute_index_;
+        if index == 0 || !raft_server_log_index_has_successor(index) {
+            return None;
+        }
+        if raft_server_snapshot_term_uses_boundary(index, self.snapidx_) {
+            return Some((index, self.snapterm_));
+        }
+        if let Some(e) = self.raft_log_.get(index) {
+            return Some((index, e.term()));
+        }
+        None
+    }
+
+    // [fix, F25] (whole item) CreateSnapshot (E1): the shell saved the image
+    // at `snapshot_point()` and steps this in the same mtx_ hold. The boundary
+    // moves there and the log through it goes (through the commit index and
+    // the boundary, as CompactLog clamps). Refused, changing nothing: inside
+    // the verified configuration (the log stays whole until the snapshot
+    // coupling admits snapshots), for a point that is not the core's own, or
+    // one that would move the boundary back or past the commit index.
+    pub fn create_snapshot(&mut self, index: u64, term: i64, out: &mut CoreOutput) -> (r: bool)
+        requires old(self).inv(),
+        ensures
+            final(self).inv(),
+            !r ==> *final(self) == *old(self),
+            old(self).gated_ ==> !r,
+    {
+        if self.gated_ {
+            return false;
+        }
+        match self.snapshot_point() {
+            Some((i, t)) => {
+                if i != index || t != term {
+                    return false;
+                }
+            },
+            None => {
+                return false;
+            },
+        }
+        if index < self.snapidx_ || index > self.commit_index_ {
+            return false;
+        }
+        let len: u64 = self.raft_log_.len() as u64;
+        if index >= RAFT_INDEX_LIMIT || len >= RAFT_INDEX_LIMIT - index - 1 {
+            return false;
+        }
+        self.snapidx_ = index;
+        self.snapterm_ = term;
+        let _removed: usize = self.raft_log_.compact_through(index);
+        out.note_snapshot(index, term, true);
+        true
+    }
+
+    // [fix, F25] (whole item) Compact (E2): CompactLog's in-memory compaction,
+    // clamped to the commit index and the boundary. Nothing goes inside the
+    // verified configuration. No persist note: what goes, a snapshot already
+    // covers. Returns how many entries went.
+    pub fn compact(&mut self, up_to: u64) -> (r: u64)
+        requires old(self).inv(),
+        ensures
+            final(self).inv(),
+            old(self).gated_ ==> *final(self) == *old(self),
+    {
+        if self.gated_ {
+            return 0;
+        }
+        let safe: u64 = raft_server_compaction_safe_index(up_to, self.commit_index_, self.snapidx_);
+        if !raft_server_log_index_has_successor(safe) {
+            return 0;
+        }
+        let len: u64 = self.raft_log_.len() as u64;
+        if safe >= RAFT_INDEX_LIMIT || len >= RAFT_INDEX_LIMIT - safe - 1 {
+            return 0;
+        }
+        self.raft_log_.compact_through(safe) as u64
+    }
+
+    // [fix, F27] (whole item) RecvInstallSnapshot (E4): the leader contact an
+    // InstallSnapshot makes, which OnInstallSnapshotLocked decided itself
+    // before F27 (coupling-design-persistence-snapshots.md B3), in its order.
+    // A stale term is answered with this server's; a term at the ceiling, an
+    // impossible boundary term or an unauthoritative sender is refused (0,
+    // the unavailable answer). A sender with a higher term raises it; the
+    // sender becomes the known leader and this server a follower. Then the
+    // snapshot is judged: one that conflicts with this server's own boundary
+    // or has no successor index is refused, one this server's progress
+    // already covers is acknowledged without an install. The reply: (the
+    // answer's term, the contact accepted, install). Inside the verified
+    // configuration it is refused after the checks that change nothing,
+    // changing nothing (bugs-found B55): the snapshot coupling (design Part
+    // B) has not admitted snapshots yet.
+    #[allow(clippy::too_many_arguments)]
+    pub fn recv_install_snapshot(&mut self, term: u64, leader_site_id: u16,
+                                 last_included_index: u64, last_included_term: u64,
+                                 applied: u64, stopped: bool, failover: bool,
+                                 out: &mut CoreOutput) -> (r: (u64, bool, bool))
+        requires old(self).inv(),
+        ensures
+            final(self).inv(),
+            old(self).gated_ ==> *final(self) == *old(self),
+    {
+        // Edge case 1: a stale term is rejected.
+        if term < self.current_term_ {
+            out.log(RAFT_LOG_INFO,
+                "[INSTALL-SNAPSHOT] Site {}: Rejecting InstallSnapshot from leader {} (leader_term={} < my_term={})",
+                &[(self.site_id_).arg(),
+                 (leader_site_id).arg(),
+                 (term).arg(),
+                 (self.current_term_).arg()]);
+            return (self.current_term_, false, false);
+        }
+        // A term at the index ceiling could never be left (bugs-found B42).
+        if term >= RAFT_INDEX_LIMIT {
+            out.log(RAFT_LOG_ERROR,
+                "[INSTALL-SNAPSHOT] Site {}: Rejecting term {} from leader {} at or above the term ceiling",
+                &[(self.site_id_).arg(),
+                 (term).arg(),
+                 (leader_site_id).arg()]);
+            return (0, false, false);
+        }
+        // A leader cannot have committed an entry from a term that has not
+        // happened yet: a malformed boundary, not usable leader evidence.
+        if !raft_server_snapshot_term_is_valid(last_included_term, term) {
+            out.log(RAFT_LOG_ERROR,
+                "[INSTALL-SNAPSHOT] Site {}: Rejecting impossible snapshot boundary term {} from leader {} in term {}",
+                &[(self.site_id_).arg(),
+                 (last_included_term).arg(),
+                 (leader_site_id).arg(),
+                 (term).arg()]);
+            return (0, false, false);
+        }
+        if self.gated_ {
+            return (0, false, false);
+        }
+        let sender_is_current_voter: bool = leader_site_id != RAFT_SERVER_INVALID_SITE_ID
+            && leader_site_id != self.site_id_
+            && self.is_config_member(leader_site_id);
+        let leader_has_higher_term: bool =
+            raft_server_observed_higher_term(term, self.current_term_);
+        let sender_is_self: bool = leader_site_id == self.site_id_;
+        let has_known_leader: bool = self.current_leader_id_ != RAFT_SERVER_INVALID_SITE_ID;
+        let known_leader_matches_sender: bool = self.current_leader_id_ == leader_site_id;
+        if !sender_is_current_voter
+            || !raft_server_leader_rpc_sender_is_authoritative(
+                leader_has_higher_term, self.is_leader_, sender_is_self, has_known_leader,
+                known_leader_matches_sender)
+        {
+            out.log(RAFT_LOG_WARN,
+                "[INSTALL-SNAPSHOT] Site {} rejected unauthoritative leader {} in term {} (local_term={} leader={} known_leader={} voter={})",
+                &[(self.site_id_).arg(),
+                 (leader_site_id).arg(),
+                 (term).arg(),
+                 (self.current_term_).arg(),
+                 (self.is_leader_).arg(),
+                 (self.current_leader_id_).arg(),
+                 (sender_is_current_voter).arg()]);
+            return (0, false, false);
+        }
+        // Edge case 2: a higher or equal term is accepted as a legitimate
+        // leader. The raise first (F20's), then the sender's identity before
+        // the role change a leader-change callback observes.
+        if leader_has_higher_term {
+            out.log(RAFT_LOG_INFO,
+                "[INSTALL-SNAPSHOT] Site {}: Leader {} has higher term ({} > {}) - updating",
+                &[(self.site_id_).arg(),
+                 (leader_site_id).arg(),
+                 (term).arg(),
+                 (self.current_term_).arg()]);
+            self.observe_term(term, stopped, failover, out);
+        }
+        self.current_leader_id_ = raft_server_leader_hint_after_transition(
+            false, true, self.site_id_, leader_site_id);
+        if self.is_leader_ {
+            self.step_down(stopped, failover, out);
+        } else {
+            self.set_is_leader(false, stopped, failover, out);
+        }
+        self.req_voting_ = false;
+        self.election_in_progress_ = false;
+        let reply_term: u64 = self.current_term_;
+
+        // A current-term leader may retry a snapshot after this follower has
+        // already committed, applied or snapshotted through its boundary:
+        // acknowledged, rolling nothing back.
+        let mut local_progress_index: u64 = self.commit_index_;
+        if self.execute_index_ > local_progress_index {
+            local_progress_index = self.execute_index_;
+        }
+        if applied > local_progress_index {
+            local_progress_index = applied;
+        }
+        if self.snapidx_ > local_progress_index {
+            local_progress_index = self.snapidx_;
+        }
+        if last_included_index == self.snapidx_ && self.snapidx_ != 0
+            && last_included_term != self.snapterm_ as u64
+        {
+            out.log(RAFT_LOG_ERROR,
+                "[INSTALL-SNAPSHOT] Site {}: rejecting snapshot boundary ({}, {}) that conflicts with local snapshot ({}, {})",
+                &[(self.site_id_).arg(),
+                 (last_included_index).arg(),
+                 (last_included_term).arg(),
+                 (self.snapidx_).arg(),
+                 (self.snapterm_).arg()]);
+            return (0, true, false);
+        }
+        if raft_server_snapshot_is_stale(last_included_index, local_progress_index) {
+            out.log(RAFT_LOG_INFO,
+                "[INSTALL-SNAPSHOT] Site {}: Snapshot index {} is already covered (commit={} execute={} applied={} snapidx={}); acknowledging no-op",
+                &[(self.site_id_).arg(),
+                 (last_included_index).arg(),
+                 (self.commit_index_).arg(),
+                 (self.execute_index_).arg(),
+                 (applied).arg(),
+                 (self.snapidx_).arg()]);
+            return (reply_term, true, false);
+        }
+        if !raft_server_log_index_has_successor(last_included_index) {
+            // The log's base requires S + 1: reject rather than wrap.
+            out.log(RAFT_LOG_ERROR,
+                "[INSTALL-SNAPSHOT] Site {}: Cannot install terminal snapshot index {}; no successor index is representable",
+                &[(self.site_id_).arg(),
+                 (last_included_index).arg()]);
+            return (0, true, false);
+        }
+        (reply_term, true, true)
+    }
+
+    // [fix, F27] (whole item) InstallSnapshot (E5): the snapshot the shell's
+    // payload kernel just loaded, in the mtx_ hold of the RecvInstallSnapshot
+    // that admitted it. The boundary moves to it and so does commit; the log
+    // after it stays when this server holds the boundary entry, with a value
+    // and the snapshot's term (Figure 13), and goes otherwise. The note
+    // carries the boundary and the hard state: the install's outcome as one
+    // record (disk design §3). Refused, changing nothing, where no admitted
+    // install reaches: inside the verified configuration, while leading, a
+    // boundary at or below commit or at the index limit, a term above the
+    // current one, or a kept log too long to index. The reply: (taken, kept).
+    pub fn install_snapshot(&mut self, index: u64, term: u64,
+                            out: &mut CoreOutput) -> (r: (bool, bool))
+        requires old(self).inv(),
+        ensures
+            final(self).inv(),
+            !r.0 ==> *final(self) == *old(self),
+            old(self).gated_ ==> !r.0,
+    {
+        if self.gated_ || self.is_leader_ || index <= self.commit_index_
+            || index >= RAFT_INDEX_LIMIT || term > self.current_term_
+        {
+            return (false, false);
+        }
+        let mut has_boundary: bool = false;
+        let mut local_boundary_term: u64 = 0;
+        if let Some(e) = self.raft_log_.get(index) {
+            if e.has_value() {  // [move, M6]
+                has_boundary = true;
+                local_boundary_term = e.term() as u64;
+            }
+        }
+        let retain: bool =
+            raft_server_snapshot_boundary_matches(has_boundary, local_boundary_term, term);
+        let len: u64 = self.raft_log_.len() as u64;
+        if retain && len >= RAFT_INDEX_LIMIT - index - 1 {
+            return (false, false);
+        }
+        self.snapidx_ = index;
+        self.snapterm_ = term as i64;
+        if retain {
+            self.raft_log_.compact_through(index);
+        } else {
+            self.raft_log_.reset(index + 1);
+        }
+        self.commit_index_ = index;
+        out.note_snapshot(index, term as i64, retain);
+        (true, retain)
+    }
+
+    // [fix, F28] (whole item) RecvSnapshotReply (E6): an InstallSnapshot's
+    // reply, which InstallSnapshotReplyAcceptedLocked decided itself before
+    // F28 (design B3). A higher term deposes this server (F20's raise, now
+    // inside this step). Otherwise the follower is credited through the
+    // snapshot only while the reply still belongs to this leadership and
+    // this follower -- the term it was sent in is the current one, this
+    // server still leads, the index is within its log, the ordinal still
+    // names the site -- the runtime checks F9 makes of an append reply.
+    // Inside the verified configuration it is refused, changing nothing.
+    // The reply: whether the follower was credited.
+    #[allow(clippy::too_many_arguments)]
+    pub fn on_snapshot_reply(&mut self, ord: usize, site_id: u16, snap_last_idx: u64,
+                             send_term: u64, follower_term: u64, stopped: bool,
+                             failover: bool, out: &mut CoreOutput) -> (r: bool)
+        requires old(self).inv(),
+        ensures
+            final(self).inv(),
+            old(self).gated_ ==> *final(self) == *old(self),
+    {
+        if self.gated_ || follower_term >= RAFT_INDEX_LIMIT {
+            return false;
+        }
+        if raft_server_observed_higher_term(follower_term, self.current_term_) {
+            out.log(RAFT_LOG_INFO,
+                "[HEARTBEAT-SNAPSHOT] Site {}: Follower {} has higher term {} > {}, stepping down",
+                &[(self.site_id_).arg(),
+                 (site_id).arg(),
+                 (follower_term).arg(),
+                 (self.current_term_).arg()]);
+            self.observe_term(follower_term, stopped, failover, out);
+            return false;
+        }
+        if self.current_term_ != send_term {
+            out.log(RAFT_LOG_INFO,
+                "[HEARTBEAT-SNAPSHOT] Site {}: Term changed since snapshot send, ignoring response",
+                &[(self.site_id_).arg()]);
+            return false;
+        }
+        if !self.is_leader_ || snap_last_idx > self.raft_log_.last_index()
+            || ord >= self.peer_sites_.len() || self.peer_sites_[ord] != site_id
+        {
+            return false;
+        }
+        let has_successor: bool = raft_server_log_index_has_successor(snap_last_idx);
+        let next_index: u64 = if has_successor {
+            raft_server_follower_next_index(snap_last_idx)
+        } else {
+            snap_last_idx
+        };
+        self.peers_.accept_through(ord, snap_last_idx, has_successor, next_index);
+        out.log(RAFT_LOG_INFO,
+            "[HEARTBEAT-SNAPSHOT] Site {}: Updated follower {}: next_index={} match_index={}",
+            &[(self.site_id_).arg(),
+             (site_id).arg(),
+             (self.peers_.next_index(ord)).arg(),
+             (self.peers_.match_index(ord)).arg()]);
         true
     }
 

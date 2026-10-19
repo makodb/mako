@@ -1,4 +1,4 @@
-// Shared by the disk-persistence tests (persist_note.rs, observe_term.rs,
+// Shared by the disk-persistence tests (persist_note.rs, snapshot_events.rs,
 // restore.rs; docs/verus/disk-persistence.md §3): a core driven through
 // Setup's events, an inbound batch with entries, and the exactness check of
 // a step's persist note.
@@ -51,13 +51,14 @@ pub fn configured() -> RaftCore<Cmd> {
     core
 }
 
-/// The saved state: term, vote, commit, and (term, cmd) per index from the
-/// log's base.
+/// The saved state: term, vote, commit, the snapshot boundary, and (term,
+/// cmd) per index from the log's base.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Saved {
     pub term: u64,
     pub vote: u16,
     pub commit: u64,
+    pub snap: (u64, i64),
     pub base: u64,
     pub log: Vec<(i64, u64)>,
 }
@@ -69,6 +70,7 @@ pub fn saved(core: &RaftCore<Cmd>) -> Saved {
         term: core.current_term_,
         vote: core.vote_for_,
         commit: core.commit_index_,
+        snap: (core.snapidx_, core.snapterm_),
         base,
         log: (base..=last).map(|i| {
             let e = core.raft_log_.get(i).unwrap();
@@ -85,6 +87,18 @@ pub fn applied(before: &Saved, note: &Option<PersistNote>, after: &Saved) -> Sav
             s.term = n.term_;
             s.vote = n.vote_;
             s.commit = n.commit_;
+        }
+        // the snapshot before the log, as the store folds a record
+        if let Some(snap) = &n.snap_ {
+            if snap.keep_ {
+                let drop = (snap.index_ + 1).saturating_sub(s.base) as usize;
+                assert!(drop <= s.log.len(), "a kept snapshot past the log's end");
+                s.log.drain(..drop);
+            } else {
+                s.log.clear();
+            }
+            s.base = snap.index_ + 1;
+            s.snap = (snap.index_, snap.term_);
         }
         if n.log_from_ != 0 {
             assert!(n.log_from_ >= s.base && n.log_from_ <= s.base + s.log.len() as u64,

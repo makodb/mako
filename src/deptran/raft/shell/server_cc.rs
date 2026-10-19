@@ -43,7 +43,8 @@ unsafe extern "C" {
         snapshot_manager: *const rusty::RaftSnapshotManagerPtr,
         lifetime: *const rusty::RaftAsyncCallbackLifetimePtr,
         self_site_id: u16, partition_id: u32, send_term: u64,
-        site_id: u16, ord: usize) -> bool;
+        site_id: u16, ord: usize,
+        index: u64, term: i64) -> bool;  // [fix, F26]
     fn raft_batch_optimization_enabled() -> bool;
     fn raft_append_entries_batch_max() -> u64;
     fn raft_append_entries_batch_max_bytes() -> u64;
@@ -97,9 +98,10 @@ fn pipeline_after_us(server: &RaftServerBase) -> u64 {
 }
 
 // [move, M5] PHASE 0 and PHASE 1 around their core call: the decision under
-// mtx_ and its actions (with any InstallSnapshot kernel) before the guard
-// drops, then each AppendEntries built and sent in follower order
-// ([fix, F7]). Returns the tick for the rest of the round.
+// mtx_ and its actions before the guard drops, then, once the WAL holds what
+// the decision queued, each InstallSnapshot ([fix, F26]) and each
+// AppendEntries built and sent in follower order ([fix, F7]). Returns the
+// tick for the rest of the round.
 pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
     let mut out: CoreOutput = core_output();
     let (tick, disk_tail): (HeartbeatTick, u64) = {
@@ -120,33 +122,10 @@ pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
                                    now_us, pipeline_after_us },
             &mut out).into_tick();
         server.run_locked_actions(&out);
-        // The InstallSnapshot kernel keeps its place under the guard. Its
-        // completion callback takes the SAME mutex, which is why PHASE 1
-        // reaches followers by ordinal and never holds a reference across it.
-        let mut i: usize = 0;
-        while i < decided.snapshots_.len() {
-            let snapshot: &SnapshotSend = &decided.snapshots_[i];
-            let sent: bool = unsafe {
-                raft_phase1_load_and_send_snapshot(
-                    server.handle(),
-                    server.snapshot_manager_.as_ptr()
-                        as *const rusty::RaftSnapshotManagerPtr,
-                    server.async_callback_lifetime_.as_ptr()
-                        as *const rusty::RaftAsyncCallbackLifetimePtr,
-                    server.site_id_, server.partition_id_, snapshot.term_,
-                    snapshot.site_id_, snapshot.ord_)
-            };
-            if !sent {
-                rusty::raft_log_warn_2(
-                    "[HEARTBEAT-SNAPSHOT] Site {}: Failed to load snapshot for follower {}, skipping",
-                    server.site_id_, snapshot.site_id_);
-            }
-            i += 1;
-        }
         // Disk builds (disk design §3): nothing this section produced leaves before
         // the WAL holds every record queued so far, the entries sent and the
-        // commit they carry included. The InstallSnapshot above is the one
-        // exception (design §3): its image is a committed prefix.
+        // commit they carry included, and so does an InstallSnapshot: its
+        // term, and the record that names its image ([fix, F26]).
         let disk_tail: u64 = server.disk().map_or(0, |d| d.tail());
         (decided, disk_tail)
     };
@@ -159,15 +138,53 @@ pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
     }
     // A tick that sends nothing waits for nothing (design §3: it rides the
     // next flush); waiting would hold the replies collect is about to read.
-    if let Some(d) = server.disk().filter(|_| !tick.sends_.is_empty()) {
+    let sends_anything: bool = !tick.sends_.is_empty() || !tick.snapshots_.is_empty();  // [fix, F26]
+    if let Some(d) = server.disk().filter(|_| sends_anything) {
         if !d.wait_durable(disk_tail, 10_000, &|| server.stopped_now()) {
             return tick;
         }
         // Kill-test evidence: what the sends below show (term, commit).
         if d.reveals.is_some() {
             let commit: u64 = tick.sends_.iter().map(|s| s.commit_index_).max().unwrap_or(0);
-            d.reveal(&crate::disk::reveal_line("append", tick.sends_[0].term_, None,
-                                               Some(commit), None, disk_tail));
+            if !tick.sends_.is_empty() {  // [fix, F26] a tick may send only snapshots
+                d.reveal(&crate::disk::reveal_line("append", tick.sends_[0].term_, None,
+                                                   Some(commit), None, disk_tail));
+            }
+            // [fix, F26] an image shows its index committed
+            if let Some(snap) = tick.snapshots_.iter().max_by_key(|s| s.index_) {
+                d.reveal(&crate::disk::reveal_line("install", snap.term_, None,
+                                                   Some(snap.index_), None, disk_tail));
+            }
+        }
+    }
+
+    // [fix, F26] Each InstallSnapshot, under the guard again: the kernel reads
+    // the store's image under mtx_, and its completion callback takes the SAME
+    // mutex, which is why PHASE 1 reaches followers by ordinal and never holds
+    // a reference across it. Sent only when the store's image is still the
+    // one decided on.
+    if !tick.snapshots_.is_empty() {
+        let _lock = RaftLockGuard::new(server.mtx());
+        let mut i: usize = 0;
+        while i < tick.snapshots_.len() {
+            let snapshot: &SnapshotSend = &tick.snapshots_[i];
+            let sent: bool = unsafe {
+                raft_phase1_load_and_send_snapshot(
+                    server.handle(),
+                    server.snapshot_manager_.as_ptr()
+                        as *const rusty::RaftSnapshotManagerPtr,
+                    server.async_callback_lifetime_.as_ptr()
+                        as *const rusty::RaftAsyncCallbackLifetimePtr,
+                    server.site_id_, server.partition_id_, snapshot.term_,
+                    snapshot.site_id_, snapshot.ord_,
+                    snapshot.index_, snapshot.snap_term_)
+            };
+            if !sent {
+                rusty::raft_log_warn_4(
+                    "[HEARTBEAT-SNAPSHOT] Site {}: No sendable image at snapshot {} (term {}) for follower {}, skipping",
+                    server.site_id_, snapshot.index_, snapshot.snap_term_, snapshot.site_id_);
+            }
+            i += 1;
         }
     }
 

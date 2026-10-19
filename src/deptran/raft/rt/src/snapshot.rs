@@ -418,18 +418,27 @@ fn refuse_once(partition_id: u32, self_site_id: u16, term: u64, site_id: u16, in
     }
 }
 
+/// Sends the stored image, if it is the snapshot `(index, term)` the core
+/// decided on ([fix, F26]): a save between the decision and the send (the
+/// tick waits for the WAL in between) makes the image another one, and the
+/// next round decides again. False when nothing is sent.
+///
 /// # Safety
 /// `s` is a live server bound to a transport or not; the carrier pointers are
 /// live for the call; the caller holds the server's mtx_.
 #[no_mangle]
+#[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn raft_phase1_load_and_send_snapshot(
     s: *mut RaftServerBase, snapshot_manager: *const rusty::RaftSnapshotManagerPtr,
     lifetime: *const rusty::RaftAsyncCallbackLifetimePtr, self_site_id: u16,
-    partition_id: u32, send_term: u64, site_id: u16, ord: usize) -> bool {
-    let _ = partition_id;
+    partition_id: u32, send_term: u64, site_id: u16, ord: usize,
+    index: u64, term: i64) -> bool {
     let Some(image) = (unsafe { store_of(snapshot_manager) }).and_then(|st| st.latest()) else {
         return false;
     };
+    if image.index != index || image.term as i64 != term {
+        return false;
+    }
     if !install_fits_one_frame(image.bytes.len()) {
         refuse_once(partition_id, self_site_id, send_term, site_id, image.index, image.bytes.len());
         return false;
