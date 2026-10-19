@@ -173,11 +173,7 @@ impl<C> RaftCore<C> {
         &&& (self.election_in_progress_ ==> (self.pending_leader_term_ matches Some(t) ==> t < self.current_term_))
         // the gate (F5): inside the verified configuration the log is whole
         // and the configuration contains this server
-        &&& (self.gated_ ==> {
-            &&& self.config_members_@.contains(self.site_id_)
-            &&& self.snapidx_ == 0
-            &&& self.raft_log_.spec_base() == 1
-        })
+        &&& (self.gated_ ==> self.config_members_@.contains(self.site_id_))
     }
 }
 
@@ -391,6 +387,7 @@ impl<C: Clone> RaftCore<C> {
             final(self).vote_for_ == old(self).vote_for_,
             final(self).election_term_ == old(self).election_term_,
             final(self).snapterm_ == old(self).snapterm_,
+            final(self).snapidx_ == old(self).snapidx_,  // [Part B]
             final(self).gated_ == old(self).gated_,
             forall|o: int| 0 <= o < final(self).peers_.spec_len()
                 ==> #[trigger] final(self).peers_.spec_match(o) == 0,  // [M12]
@@ -1076,7 +1073,8 @@ impl<C: Clone> RaftCore<C> {
         ensures
             // [M12] under the gate: the last entry's term, or the boundary's
             // when the log is empty
-            self.gated_ ==> r as int == crate::coupling::last_term_of(self),
+            self.raft_log_.wf() && self.prefix_ok() && self.snap_ok()
+                ==> r as int == crate::coupling::last_term_of(self),
     {
         proof { self.raft_log_.lemma_wf_bounds(); }
         let last_index: u64 = self.raft_log_.last_index();
@@ -1084,7 +1082,22 @@ impl<C: Clone> RaftCore<C> {
         if raft_server_election_last_log_uses_snapshot(
             last_index, self.snapidx_)
         {
+            proof {
+                // [Part B] the live log is empty: the view is the prefix,
+                // whose last term is the boundary's
+                if self.raft_log_.wf() && self.prefix_ok() && self.snap_ok() {
+                    crate::coupling::lemma_view_len(self);
+                    if self.snapidx_ > 0 {
+                        assert(self.log_view() =~= self.raft_log_.spec_prefix());
+                    }
+                }
+            }
             return self.snapterm_;
+        }
+        proof {
+            if self.raft_log_.wf() && self.prefix_ok() && self.snap_ok() {  // [Part B]
+                crate::coupling::lemma_view_at(self, last_index as int);
+            }
         }
         // The C++ went through FindRaftInstance, which flattened the Option
         // to a raw pointer and then verified it non-null. Asking the log
@@ -1139,6 +1152,7 @@ impl<C: Clone> RaftCore<C> {
             final(self).config_members_ == old(self).config_members_,
             final(self).site_id_ == old(self).site_id_,
             final(self).snapterm_ == old(self).snapterm_,
+            final(self).snapidx_ == old(self).snapidx_,  // [Part B]
             final(self).gated_ == old(self).gated_,
             final(self).g_log_ == old(self).g_log_,
             final(self).g_votes_ == old(self).g_votes_,
@@ -1681,6 +1695,7 @@ impl<C: Clone> RaftCore<C> {
             !is_leader ==> final(self).peers_ == old(self).peers_,
             !is_leader ==> final(self).peer_sites_ == old(self).peer_sites_,
             final(self).snapterm_ == old(self).snapterm_,
+            final(self).snapidx_ == old(self).snapidx_,  // [Part B]
             final(self).gated_ == old(self).gated_,
             final(self).g_log_ == old(self).g_log_,  // [M12]
             final(self).g_votes_ == old(self).g_votes_,  // [M12]
@@ -1854,6 +1869,7 @@ impl<C: Clone> RaftCore<C> {
             final(self).peers_ == old(self).peers_,
             final(self).peer_sites_ == old(self).peer_sites_,
             final(self).snapterm_ == old(self).snapterm_,
+            final(self).snapidx_ == old(self).snapidx_,  // [Part B]
             final(self).gated_ == old(self).gated_,
             final(self).g_log_ == old(self).g_log_,  // [M12]
             final(self).g_votes_ == old(self).g_votes_,  // [M12]
@@ -2269,7 +2285,7 @@ pub trait InboundBatch<C> {
 // better Rust and it transpiles, but the emitter renders the binding with a
 // dot where the C++ needs an arrow, and an inferred binding COPIES the entry.
 #[allow(clippy::too_many_arguments, clippy::unnecessary_unwrap)]
-#[verifier::rlimit(40)]  // [M12] the handler and its proof, one query
+#[verifier::rlimit(120)]  // [M12] the handler and its proof, one query
 pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     core: &mut RaftCore<C>,
     wire: &W,  // [move, M5] [move, M11]
@@ -2511,6 +2527,8 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
             forall|j: int| 0 <= j < decoded_count ==> #[trigger] core.decoded_terms_@[j] >= 1,
             pre.ginv() ==> forall|j: int| 0 <= j < i ==> #[trigger] core.decoded_terms_@[j]
                 == pre.raft_log_.view()[leader_prev_log_index as int + j + 1 - pre.raft_log_.spec_base()].spec_term(),
+            // [Part B] a slot passed is held: the first is at or past the base
+            pre.ginv() && i > 0 ==> leader_prev_log_index as int + 1 >= pre.raft_log_.spec_base(),
         ensures
             !have_first_write ==> leader_prev_log_index as int + decoded_count <= old_last_log_index,
             !have_first_write ==> !truncate_suffix,
@@ -2566,6 +2584,7 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
                 pre.raft_log_.lemma_wf_bounds();
                 let q = index as int - pre.raft_log_.spec_base();
                 assert(0 <= q < pre.raft_log_.view().len());
+                assert(leader_prev_log_index as int + 1 >= pre.raft_log_.spec_base());  // [Part B]
                 assert(pre.raft_log_.view()[q].spec_term() >= 0);
                 assert(local_term >= 0);
                 assert(local_term == incoming_term);
@@ -2695,33 +2714,62 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
             let f0: int = if have_first_write { first_write_index as int - pv - 1 } else { m };
             let ov = pre.raft_log_.view();
             pre.raft_log_.lemma_wf_bounds();
-            // the payload and the scan, in view positions (base 1)
+            // [Part B] live positions: view index i is ov[i - b]; with entries,
+            // the accepted prev is at or past the boundary b - 1 (prev 0 below
+            // a compacted base conflicts at the committed slot 1, refused)
+            let b = pre.raft_log_.spec_base();
+            let pl = pv - (b - 1);
+            let lv = pre.log_view();
+            crate::coupling::lemma_view_len(&pre);
             assert(count as int == m);
-            assert forall|p: int| pv <= p < pv + f0 implies #[trigger] ov[p].spec_term() == es[p - pv].spec_term() by {
-                assert(core.decoded_terms_@[p - pv] == es[p - pv].spec_term());
+            if m > 0 {
+                assert(pl >= 0);
+                assert forall|p: int| pl <= p < pl + f0 implies #[trigger] ov[p].spec_term() == es[p - pl].spec_term() by {
+                    assert(core.decoded_terms_@[p - pl] == es[p - pl].spec_term());
+                }
+                if have_first_write && pl + f0 < ov.len() {
+                    assert(ov[pl + f0].spec_has_value());
+                }
+                // the log after: unchanged, or cut and refilled
+                if have_first_write {
+                    assert(trunc =~= ov.subrange(0, pl + f0));
+                }
+                crate::coupling::lemma_ae_result(ov, core.raft_log_.view(), es, pl, f0);
+                // the whole view: the prefix stays in front
+                if b != 1 {
+                    crate::coupling::lemma_comp_logs_shift(pre.raft_log_.spec_prefix(),
+                        ov.map_values(|e: RaftEntry<C>| crate::coupling::entry_view(e)), pl, es, m);
+                }
+                // the scan's facts on the whole view
+                assert forall|p: int| pv <= p < pv + f0 implies #[trigger] lv[p].term == es[p - pv].spec_term() as int by {
+                    crate::coupling::lemma_view_at(&pre, p + 1);
+                    assert(ov[p - (b - 1)].spec_term() == es[p - pv].spec_term());
+                }
+                if f0 < m && pv + f0 < lv.len() {
+                    crate::coupling::lemma_view_at(&pre, pv + f0 + 1);
+                }
+            } else {
+                assert(core.raft_log_.view() =~= ov);
             }
-            if have_first_write && pv + f0 < ov.len() {
-                assert(ov[pv + f0].spec_has_value());
-            }
-            // the log after: unchanged, or cut and refilled
-            if have_first_write {
-                assert(trunc =~= ov.subrange(0, pv + f0));
-            }
-            crate::coupling::lemma_ae_result(ov, core.raft_log_.view(), es, pv, f0);
             // every entry still has a value and a term
             let nv = core.raft_log_.view();
             assert forall|q: int| 0 <= q < nv.len()
                 implies (#[trigger] nv[q]).spec_has_value() && nv[q].spec_term() >= 0 by {
-                if have_first_write && q >= pv + f0 {
-                    assert(nv[q] == es[f0 + (q - (pv + f0))]);
-                    assert(core.decoded_terms_@[f0 + (q - (pv + f0))] >= 1);
+                if m > 0 && have_first_write && q >= pl + f0 {
+                    assert(nv[q] == es[f0 + (q - (pl + f0))]);
+                    assert(core.decoded_terms_@[f0 + (q - (pl + f0))] >= 1);
                 } else {
                     assert(nv[q] == ov[q]);
                 }
             }
-            // the prev entry, as the handler checked it
+            // the prev entry, as the handler checked it: live, or the boundary
             if pv > 0 {
-                assert(ov[pv - 1].spec_term() >= 0);
+                if pv >= b {
+                    crate::coupling::lemma_view_at(&pre, pv);
+                    assert(ov[pv - b].spec_term() >= 0);
+                } else {
+                    assert(lv[pv - 1] == pre.raft_log_.spec_prefix()[pv - 1]);
+                }
             }
             core.g_log_@ = crate::coupling::ae_log(pre.g_log_@, x, stepped, false, true, pre.log_view(),
                 pre.commit_index_ as int, *follower_current_term as int);

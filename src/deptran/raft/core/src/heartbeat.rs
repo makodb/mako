@@ -251,6 +251,7 @@ pub fn heartbeat_phase0_locked<C: Clone>(
         final(core).peers_ == old(core).peers_,
         final(core).peer_sites_ == old(core).peer_sites_,
         final(core).snapterm_ == old(core).snapterm_,
+        final(core).snapidx_ == old(core).snapidx_,  // [Part B]
         final(core).gated_ == old(core).gated_,
         final(core).g_votes_ == old(core).g_votes_,
         final(core).g_match_ == old(core).g_match_,
@@ -1096,13 +1097,26 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
                 crate::coupling::lemma_my_rank(&mid);
                 crate::coupling::lemma_rank_bounds(cfg, sv.site_id_);
                 mid.raft_log_.lemma_wf_bounds();
+                // [Part B] the view is the prefix, then the live entries
+                let b = mid.raft_log_.spec_base();
+                crate::coupling::lemma_view_len(&mid);
                 assert forall|j: int| 0 <= j < log.len()
                     implies (#[trigger] log[j]).change == glr::protocol::Raft::types::LConfChange::NoChange by {
-                    assert(log[j] == crate::coupling::entry_view(mid.raft_log_.view()[j]));
+                    if b == 1 {
+                        assert(log[j] == crate::coupling::entry_view(mid.raft_log_.view()[j]));
+                    } else if j >= b - 1 {
+                        assert(log[j] == crate::coupling::entry_view(mid.raft_log_.view()[j - (b - 1)]));
+                    }
                 }
                 if sv.prev_log_index_ > 0 {
-                    assert(mid.raft_log_.view()[sv.prev_log_index_ - 1].spec_term() >= 0);
-                    assert(log[sv.prev_log_index_ - 1] == crate::coupling::entry_view(mid.raft_log_.view()[sv.prev_log_index_ - 1]));
+                    let pv = sv.prev_log_index_ as int;
+                    if pv >= b {
+                        crate::coupling::lemma_view_at(&mid, pv);
+                        assert(mid.raft_log_.view()[pv - b].spec_term() >= 0);
+                    } else {
+                        // the boundary (a compacted prev is sent only there)
+                        assert(log[pv - 1] == mid.raft_log_.spec_prefix()[pv - 1]);
+                    }
                 }
                 crate::coupling::lemma_send_segs(lb, mid.c_view(), log, me, f, sv.term_ as int,
                     sv.prev_log_index_ as int, sv.prev_log_term_ as int, sv.commit_index_ as int,
@@ -1410,6 +1424,7 @@ pub fn heartbeat_apply_append_reply<C: Clone>(
         final(core).config_members_ == old(core).config_members_,
         final(core).site_id_ == old(core).site_id_,
         final(core).snapterm_ == old(core).snapterm_,
+        final(core).snapidx_ == old(core).snapidx_,  // [Part B]
         final(core).peer_sites_ == old(core).peer_sites_,
         final(core).gated_ == old(core).gated_,
         final(core).g_log_ == old(core).g_log_,

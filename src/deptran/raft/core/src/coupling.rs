@@ -312,6 +312,16 @@ impl<C> RaftCore<C> {
         }
     }
 
+    // [Part B] the snapshot boundary is the base's predecessor, and its term
+    // the prefix's last (0 with no boundary)
+    pub open spec fn snap_ok(&self) -> bool {
+        &&& self.raft_log_.spec_base() == self.snapidx_ as int + 1
+        &&& self.snapterm_ >= 0
+        &&& (self.snapidx_ == 0 ==> self.snapterm_ == 0)
+        &&& (self.snapidx_ > 0 ==> self.raft_log_.spec_prefix().len() == self.snapidx_
+                && self.raft_log_.spec_prefix()[self.snapidx_ - 1].term == self.snapterm_ as int)
+    }
+
     // [Part B] the prefix stands for the entries below the base, none of
     // them a configuration change (the leader's prefix is a Mako log's view)
     pub open spec fn prefix_ok(&self) -> bool {
@@ -352,7 +362,7 @@ impl<C> RaftCore<C> {
         &&& log_ok(self.g_log_@, self.c_view())
         &&& fully_closed(self.g_log_@)
         &&& replay(self.g_log_@) == self.state_view()
-        &&& self.snapterm_ == 0
+        &&& self.snap_ok()  // [Part B] (was snapterm_ == 0)
         &&& self.prefix_ok()  // [Part B]
         &&& !self.config_members_@.contains(RAFT_SERVER_INVALID_SITE_ID)
         &&& (!(self.role_view() is Follower) ==> self.vote_for_ == self.site_id_)
@@ -392,6 +402,7 @@ impl<C> RaftCore<C> {
         &&& self.raft_log_.view().len() == 0
         &&& self.raft_log_.spec_base() == 1  // [Part B]
         &&& self.raft_log_.spec_prefix() == Seq::<LLogEntry>::empty()  // [Part B]
+        &&& self.snapidx_ == 0  // [Part B]
         &&& self.commit_index_ == 0
         &&& self.g_votes_@ == Set::<int>::empty()
         &&& self.g_match_@ == Map::<u64, u64>::empty()
@@ -453,6 +464,7 @@ pub proof fn lemma_load_config<C>(pre: &RaftCore<C>, post: &RaftCore<C>)
         post.g_match_ == pre.g_match_,
         post.g_next_ == pre.g_next_,
         post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,  // [Part B]
         // the host contract: no configured site is the sentinel
         !post.config_members_@.contains(RAFT_SERVER_INVALID_SITE_ID),
     ensures post.ginv(),
@@ -507,6 +519,7 @@ pub open spec fn view_frame<C>(pre: &RaftCore<C>, post: &RaftCore<C>) -> bool {
     &&& post.g_match_ == pre.g_match_
     &&& post.g_next_ == pre.g_next_
     &&& post.snapterm_ == pre.snapterm_
+    &&& post.snapidx_ == pre.snapidx_  // [Part B]
     &&& post.peers_ == pre.peers_
     &&& post.peer_sites_ == pre.peer_sites_
 }
@@ -569,6 +582,7 @@ pub proof fn lemma_restore_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, prev: 
         post.config_members_ == pre.config_members_,
         post.site_id_ == pre.site_id_,
         post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,  // [Part B]
         !post.is_leader_,
         !post.election_in_progress_,
         post.log_entries_ok(),
@@ -680,6 +694,27 @@ pub open spec fn client_request_log(l: Seq<Entry>, new_log: Seq<LLogEntry>, valu
         .push(Entry::Close(ActionLabel::ClientRequest { value }))
 }
 
+// [Part B] The view's length is the last index, and at a live index it is
+// the live entry's view.
+pub proof fn lemma_view_at<C>(core: &RaftCore<C>, i: int)
+    requires
+        core.raft_log_.wf(),
+        core.prefix_ok(),
+        core.raft_log_.spec_base() <= i <= core.raft_log_.spec_last_index(),
+    ensures
+        core.log_view().len() == core.raft_log_.spec_last_index(),
+        core.log_view()[i - 1] == entry_view(core.raft_log_.view()[i - core.raft_log_.spec_base()]),
+{
+    core.raft_log_.lemma_wf_bounds();
+}
+
+pub proof fn lemma_view_len<C>(core: &RaftCore<C>)
+    requires core.raft_log_.wf(), core.prefix_ok(),
+    ensures core.log_view().len() == core.raft_log_.spec_last_index(),
+{
+    core.raft_log_.lemma_wf_bounds();
+}
+
 // The log view grows by the appended entry's view.
 pub proof fn lemma_log_view_push<C>(pre: &RaftCore<C>, post: &RaftCore<C>, e: RaftEntry<C>)
     requires
@@ -709,6 +744,7 @@ pub proof fn lemma_client_request_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>,
         post.g_match_ == pre.g_match_,
         post.g_next_ == pre.g_next_,
         post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,  // [Part B]
         post.peers_ == pre.peers_,
         post.peer_sites_ == pre.peer_sites_,
         e.spec_has_value(),
@@ -867,11 +903,12 @@ pub open spec fn vote_steps(stopped: bool, voter_ok: bool, can_term: i64, lst_lo
 
 // The term of the last entry, or the boundary's when the log is empty: what
 // election_last_log_term reads under the gate.
+// [Part B] the spec's last log term, of the whole view (prefix included)
 pub open spec fn last_term_of<C>(core: &RaftCore<C>) -> int {
-    if core.raft_log_.view().len() == 0 {
-        core.snapterm_ as int
+    if core.log_view().len() == 0 {
+        0int
     } else {
-        core.raft_log_.view().last().spec_term() as int
+        core.log_view()[core.log_view().len() - 1].term
     }
 }
 
@@ -918,6 +955,7 @@ pub proof fn lemma_vote_group<C>(pre: &RaftCore<C>, post: &RaftCore<C>, can_id: 
         post.config_members_ == pre.config_members_,
         post.site_id_ == pre.site_id_,
         post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,  // [Part B]
         post.peers_ == pre.peers_,
         post.peer_sites_ == pre.peer_sites_,
         post.g_votes_@ == (if stepped { Set::<int>::empty() } else { pre.g_votes_@ }),
@@ -1084,6 +1122,7 @@ pub proof fn lemma_timeout_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, r: Cam
         post.config_members_ == pre.config_members_,
         post.site_id_ == pre.site_id_,
         post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,  // [Part B]
         post.g_match_ == pre.g_match_,
         post.g_next_ == pre.g_next_,
         post.g_log_@ == timeout_log(pre.g_log_@, pre.my_rank(), campaign_msg(pre.my_rank(), r)),
@@ -1135,9 +1174,6 @@ pub proof fn lemma_timeout_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, r: Cam
         votes_granted: Set::<int>::empty().insert(me),
         ..s0
     });
-    if s0.log.len() > 0 {
-        assert(s0.log[s0.log.len() - 1] == entry_view(pre.raft_log_.view().last()));
-    }
     assert(LTimeout(s0, s7, c, seg_sends(l7)));
     lemma_g_close(l7, ActionLabel::Timeout, me, c);
     assert(post.g_log_@ =~= l7.push(Entry::Close(ActionLabel::Timeout)));
@@ -1424,6 +1460,7 @@ pub proof fn lemma_settle_step_down<C>(pre: &RaftCore<C>, post: &RaftCore<C>, vo
         post.config_members_ == pre.config_members_,
         post.site_id_ == pre.site_id_,
         post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,  // [Part B]
         post.g_votes_@ == Set::<int>::empty(),
         post.g_match_ == pre.g_match_,
         post.g_next_ == pre.g_next_,
@@ -1492,6 +1529,7 @@ pub proof fn lemma_settle_won<C>(pre: &RaftCore<C>, post: &RaftCore<C>, voters: 
         post.config_members_ == pre.config_members_,
         post.site_id_ == pre.site_id_,
         post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,  // [Part B]
         post.g_votes_@ == (if rollback { Set::<int>::empty() } else {
             pre.g_votes_@.union(granted_ranks(pre.config_members_@, voters, granted, voters.len() as int)) }),
         post.g_match_@ == Map::<u64, u64>::empty(),
@@ -1747,6 +1785,37 @@ pub proof fn lemma_ae_result<C>(old_v: Seq<RaftEntry<C>>, new_v: Seq<RaftEntry<C
     if f0 < es.len() {
         assert(new_v.map_values(|e: RaftEntry<C>| entry_view(e))
             =~= log0.take(prev + f0) + entries_view(es.subrange(f0, es.len() as int)));
+    }
+}
+
+// [Part B] comp_logs over a log with a prefix in front, from a prev at or
+// past the prefix's end, keeps the prefix: the follower's compacted entries
+// are below every position an accepted AppendEntries writes.
+pub proof fn lemma_comp_logs_shift<C>(pre: Seq<LLogEntry>, l: Seq<LLogEntry>, q: int,
+                                      es: Seq<RaftEntry<C>>, i: int)
+    requires 0 <= q <= l.len(),
+    ensures
+        comp_logs(pre + l, pre.len() + q, es, i) == pre + comp_logs(l, q, es, i),
+        comp_logs(l, q, es, i).len() >= q + (if i > 0 { i } else { 0 }),
+    decreases i,
+{
+    if i > 0 {
+        lemma_comp_logs_shift(pre, l, q, es, i - 1);
+        let l1 = comp_logs(l, q, es, i - 1);
+        let p = q + i - 1;
+        let e = entry_view(es[i - 1]);
+        let big = comp_logs(pre + l, pre.len() + q, es, i - 1);
+        assert(big == pre + l1);
+        if p == l1.len() {
+            assert((pre + l1).push(e) =~= pre + l1.push(e));
+        } else {
+            assert(big[pre.len() + p] == l1[p]);
+            if l1[p].term != e.term {
+                assert((pre + l1).take(pre.len() + p).push(e) =~= pre + l1.take(p).push(e));
+            }
+        }
+    } else {
+        assert(comp_logs(pre + l, pre.len() + q, es, i) == pre + l);
     }
 }
 
@@ -2043,6 +2112,7 @@ pub proof fn lemma_append_entries<C>(pre: &RaftCore<C>, post: &RaftCore<C>, x: A
         post.config_members_ == pre.config_members_,
         post.site_id_ == pre.site_id_,
         post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,  // [Part B]
         post.g_votes_@ == (if stepped || aside { Set::<int>::empty() } else { pre.g_votes_@ }),
         post.g_match_ == pre.g_match_,
         post.g_next_ == pre.g_next_,
@@ -2215,6 +2285,7 @@ pub proof fn lemma_recv_step_down<C>(pre: &RaftCore<C>, post: &RaftCore<C>, src:
         post.config_members_ == pre.config_members_,
         post.site_id_ == pre.site_id_,
         post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,  // [Part B]
         post.g_votes_@ == Set::<int>::empty(),
         post.g_match_ == pre.g_match_,
         post.g_next_ == pre.g_next_,
@@ -2253,6 +2324,7 @@ pub proof fn lemma_har_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, o: int, te
         post.config_members_ == pre.config_members_,
         post.site_id_ == pre.site_id_,
         post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,  // [Part B]
         post.peer_sites_ == pre.peer_sites_,
         post.g_votes_ == pre.g_votes_,
         post.peers_.spec_len() == pre.peers_.spec_len(),
@@ -2326,6 +2398,7 @@ pub proof fn lemma_reply_stutter<C>(pre: &RaftCore<C>, post: &RaftCore<C>, accep
         post.config_members_ == pre.config_members_,
         post.site_id_ == pre.site_id_,
         post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,  // [Part B]
         post.peer_sites_ == pre.peer_sites_,
         post.g_log_ == pre.g_log_,
         post.g_votes_ == pre.g_votes_,
@@ -2475,7 +2548,8 @@ pub proof fn lemma_advance_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, idx: u
         pre.is_leader_,
         idx > pre.commit_index_,
         idx as int <= pre.raft_log_.spec_last_index(),
-        pre.raft_log_.view()[idx - 1].spec_term() as u64 == pre.current_term_,
+        pre.raft_log_.spec_base() <= idx,  // [Part B] the entry is live
+        pre.raft_log_.view()[idx - pre.raft_log_.spec_base()].spec_term() as u64 == pre.current_term_,
         count_ge(pre.peers_.spec_matches(), idx, pre.peers_.spec_len())
             >= pre.peers_.spec_len() - (pre.config_members_@.len() - 1) / 2,
         // only the commit index moves
@@ -2489,6 +2563,7 @@ pub proof fn lemma_advance_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, idx: u
         post.config_members_ == pre.config_members_,
         post.site_id_ == pre.site_id_,
         post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,  // [Part B]
         post.peers_ == pre.peers_,
         post.peer_sites_ == pre.peer_sites_,
         post.g_votes_ == pre.g_votes_,
@@ -2503,8 +2578,10 @@ pub proof fn lemma_advance_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, idx: u
     pre.raft_log_.lemma_wf_bounds();
     lemma_commit_quorum(pre, idx);
     // the entry is of the current term (terms are non-negative)
-    assert(pre.raft_log_.view()[idx - 1].spec_term() >= 0);
-    assert(s0.log[idx - 1] == entry_view(pre.raft_log_.view()[idx - 1]));
+    let b = pre.raft_log_.spec_base();
+    assert(pre.raft_log_.view()[idx - b].spec_term() >= 0);
+    lemma_view_at(pre, idx as int);
+    assert(s0.log[idx - 1] == entry_view(pre.raft_log_.view()[idx - b]));
     lemma_g_open(l0, Entry::Tick, c);
     let l1 = l0.push(Entry::Tick);
     lemma_g_set(l1, LogField::CommitIndex, LogValue::VInt(idx as int), c);
@@ -2688,6 +2765,7 @@ pub open spec fn spec_fields_same<C>(a: &RaftCore<C>, b: &RaftCore<C>) -> bool {
     &&& a.config_members_ == b.config_members_
     &&& a.site_id_ == b.site_id_
     &&& a.snapterm_ == b.snapterm_
+    &&& a.snapidx_ == b.snapidx_  // [Part B]
     &&& a.peer_sites_ == b.peer_sites_
     &&& a.gated_ == b.gated_
     &&& a.g_votes_ == b.g_votes_
@@ -2806,6 +2884,7 @@ pub proof fn lemma_rebuild_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>)
         post.config_members_ == pre.config_members_,
         post.site_id_ == pre.site_id_,
         post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,  // [Part B]
         post.g_log_ == pre.g_log_,
         post.g_votes_ == pre.g_votes_,
         post.g_match_ == pre.g_match_,
