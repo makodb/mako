@@ -223,6 +223,7 @@ pub fn write_event<C: Clone, W: InboundBatch<C>>(s: &mut String, ev: &Event<'_, 
         }
         Event::TickHeartbeat {
             is_leader, snapshot_configured, batching, max_batch_entries, max_batch_bytes,
+            now_us, pipeline_after_us,
         } => {
             put(s, "tick");
             put(s, b(*is_leader));
@@ -230,6 +231,9 @@ pub fn write_event<C: Clone, W: InboundBatch<C>>(s: &mut String, ev: &Event<'_, 
             put(s, b(*batching));
             put_u(s, *max_batch_entries);
             put_u(s, *max_batch_bytes);
+            // F23: the clock and interval pipelining paces by
+            put_u(s, *now_us);
+            put_u(s, *pipeline_after_us);
         }
         Event::RecvAppendReply { ord, status, term, last_log_index, is_leader, stopped, failover } => {
             put(s, "reply");
@@ -529,7 +533,7 @@ pub enum OwnedEvent {
     },
     TickHeartbeat {
         is_leader: bool, snapshot_configured: bool, batching: bool, max_batch_entries: u64,
-        max_batch_bytes: u64,
+        max_batch_bytes: u64, now_us: u64, pipeline_after_us: u64,
     },
     RecvAppendReply {
         ord: usize, status: bool, term: u64, last_log_index: u64, is_leader: bool,
@@ -600,10 +604,12 @@ impl OwnedEvent {
             },
             OwnedEvent::TickHeartbeat {
                 is_leader, snapshot_configured, batching, max_batch_entries, max_batch_bytes,
+                now_us, pipeline_after_us,
             } => Event::TickHeartbeat {
                 is_leader: *is_leader, snapshot_configured: *snapshot_configured,
                 batching: *batching, max_batch_entries: *max_batch_entries,
-                max_batch_bytes: *max_batch_bytes,
+                max_batch_bytes: *max_batch_bytes, now_us: *now_us,
+                pipeline_after_us: *pipeline_after_us,
             },
             OwnedEvent::RecvAppendReply { ord, status, term, last_log_index, is_leader, stopped, failover } => {
                 Event::RecvAppendReply {
@@ -750,7 +756,8 @@ pub fn parse_event(text: &str) -> Result<(bool, OwnedEvent), String> {
         }
         "tick" => OwnedEvent::TickHeartbeat {
             is_leader: t.b()?, snapshot_configured: t.b()?, batching: t.b()?,
-            max_batch_entries: t.u()?, max_batch_bytes: t.u()?,
+            max_batch_entries: t.u()?, max_batch_bytes: t.u()?, now_us: t.u()?,
+            pipeline_after_us: t.u()?,
         },
         "reply" => OwnedEvent::RecvAppendReply {
             ord: t.u()? as usize, status: t.b()?, term: t.u()?, last_log_index: t.u()?,
@@ -1027,7 +1034,8 @@ mod tests {
         }, &mut text);
         record(&mut core, Event::TickHeartbeat {
             is_leader: true, snapshot_configured: false, batching: false,
-            max_batch_entries: 256, max_batch_bytes: 1 << 24,
+            max_batch_entries: 256, max_batch_bytes: 1 << 24, now_us: 0,
+            pipeline_after_us: 0,
         }, &mut text);
         record(&mut core, Event::RecvAppendReply {
             ord: 0, status: true, term: c.term_, last_log_index: 1, is_leader: true,

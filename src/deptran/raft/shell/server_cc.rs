@@ -80,6 +80,22 @@ fn raft_command_handle_clone(cmd: &rusty::RaftCommand) -> rusty::RaftCommand {
     copy
 }
 
+// [fix, F23] How long a follower's newest AppendEntries must have been in
+// flight before the tick sends it another batch: one heartbeat interval,
+// clamped as collect clamps its round deadline. A reply that slow is a long
+// round trip (a WAN link, a slow fsync), not a busy round, so on a fast link
+// nothing changes. 0, which turns pipelining off, when MAKO_RAFT_PIPELINE=0.
+fn pipeline_after_us(server: &RaftServerBase) -> u64 {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let enabled: bool = *ENABLED.get_or_init(|| {
+        std::env::var("MAKO_RAFT_PIPELINE").map_or(true, |v| v != "0")
+    });
+    if !enabled {
+        return 0;
+    }
+    server.GetHeartbeatInterval().clamp(1, 100_000)
+}
+
 // [move, M5] PHASE 0 and PHASE 1 around their core call: the decision under
 // mtx_ and its actions (with any InstallSnapshot kernel) before the guard
 // drops, then each AppendEntries built and sent in follower order
@@ -95,9 +111,13 @@ pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
         let batching: bool = unsafe { raft_batch_optimization_enabled() };
         let max_batch_entries: u64 = unsafe { raft_append_entries_batch_max() };
         let max_batch_bytes: u64 = unsafe { raft_append_entries_batch_max_bytes() };
+        // [fix, F23] The clock pipelining paces by, and its interval.
+        let now_us: u64 = unsafe { raft_monotonic_now_us() };
+        let pipeline_after_us: u64 = pipeline_after_us(server);
         let decided: HeartbeatTick = server.step(
             Event::TickHeartbeat { is_leader, snapshot_configured, batching,
-                                   max_batch_entries, max_batch_bytes },
+                                   max_batch_entries, max_batch_bytes,
+                                   now_us, pipeline_after_us },
             &mut out).into_tick();
         server.run_locked_actions(&out);
         // The InstallSnapshot kernel keeps its place under the guard. Its
@@ -192,7 +212,9 @@ pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
                 &mut sent_response as *mut rusty::RaftResponsePtr);
         }
         unsafe { raft_trace_through(4, send.sent_end_index_, 0) };  // [M0] trace kit
-        server.append_responses().place(send.ord_, sent_response,
+        // [fix, F23] the slot the core placed it in, one of a window per
+        // follower
+        server.append_responses().place(send.slot_, sent_response,
                                        send.sent_round_);
         i += 1;
     }

@@ -60,7 +60,8 @@ fn leading() -> RaftCore<Cmd> {
     let tick = core.step::<NoEntries>(
         Event::TickHeartbeat {
             is_leader: true, snapshot_configured: false, batching: false,
-            max_batch_entries: 256, max_batch_bytes: 16 << 20,
+            max_batch_entries: 256, max_batch_bytes: 16 << 20, now_us: 0,
+            pipeline_after_us: 0,
         },
         &mut out()).into_tick();
     assert!(!tick.declined_);

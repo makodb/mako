@@ -806,12 +806,12 @@ impl AppendResponses {
         AppendResponses { slots_: rusty::Vec::new() }
     }
 
-    // `peers` empty slots: what the core's table holds after it resizes or
-    // abandons its own.
-    pub fn reset(&mut self, peers: usize) {
+    // `slots` empty slots: what the core's table holds after it resizes or
+    // abandons its own (a window per follower since F23).
+    pub fn reset(&mut self, slots: usize) {
         self.slots_.clear();
         let mut i: usize = 0;
-        while i < peers {
+        while i < slots {
             self.slots_.push(rusty::None);
             i += 1;
         }

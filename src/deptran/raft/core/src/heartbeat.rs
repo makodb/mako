@@ -223,7 +223,9 @@ pub fn heartbeat_phase0_locked<C: Clone>(
             &&& final(core).round_.spec_round_id() == old(core).heartbeat_round_
             &&& final(core).round_.spec_term() == final(core).current_term_
             &&& final(core).round_.spec_nservers() > 0
-            &&& final(core).pending_rpcs_.spec_len() == final(core).peers_.spec_len()
+            // [fix, F23] a window of slots per follower
+            &&& final(core).pending_rpcs_.spec_len()
+                    == crate::pending::spec_slots_for(final(core).peers_.spec_len())
             // the epoch is current, and its generation id is fresh
             &&& final(core).pending_leader_term_ == Some(final(core).current_term_)
             &&& (old(core).heartbeat_round_ == u64::MAX
@@ -276,8 +278,10 @@ pub fn heartbeat_phase0_locked<C: Clone>(
     // Sized here rather than in the prologue because the round state is the
     // loop's, not the server's. Idempotent: resize only runs when the two
     // tables disagree, so in-flight slots survive every later round.
-    if core.pending_rpcs_.len() != core.peers_.len() {
-        core.pending_rpcs_.resize(core.peers_.len());
+    // [fix, F23] A window of slots per follower.
+    let slot_count: usize = crate::pending::slots_for(core.peers_.len());
+    if core.pending_rpcs_.len() != slot_count {  // [fix, F23]
+        core.pending_rpcs_.resize(slot_count);  // [fix, F23]
         slots_reset = true;  // [move, M5]
     }
 
@@ -431,6 +435,10 @@ pub struct AppendSend<C> {
     // RAW_ENTRY: the one command; BATCH: one per entry, with its term.
     pub cmds_: Vec<C>,
     pub terms_: Vec<i64>,
+    // [fix, F23] The in-flight slot the core placed it in (the shell keeps its
+    // response handle there), and its payload bytes (the window's byte cap).
+    pub slot_: usize,
+    pub sent_bytes_: u64,  // [fix, F23]
 }
 
 impl<C> AppendSend<C> {
@@ -460,6 +468,8 @@ impl<C> AppendSend<C> {
             sent_round_: sent_round,
             cmds_: Vec::new(),
             terms_: Vec::new(),
+            slot_: 0,  // [fix, F23] set when placed
+            sent_bytes_: 0,  // [fix, F23]
         }
     }
 }
@@ -581,6 +591,7 @@ fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_i
                     send.payload_ = AppendPayload::RAW_ENTRY;
                     send.sent_end_index_ =
                         raft_server_append_sent_end(prev_log_index, 1);
+                    send.sent_bytes_ = entry.payload_bytes();  // [fix, F23]
                     // The kind tag identifies the payload better than the
                     // inner shared_ptr's raw address ever did.
                     let kind: i32 = entry.kind();
@@ -709,6 +720,7 @@ fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_i
                     send.entry_term_ = entry_term as u64;
                     send.sent_end_index_ =
                         raft_server_append_sent_end(prev_log_index, 1);
+                    send.sent_bytes_ = entry_bytes;  // [fix, F23]
                 } else {
                     out.log(RAFT_LOG_INFO,
                         "[BATCH_STOP] site={} idx={}: ending batch before non-TpcCommitCommand kind={}",
@@ -739,6 +751,7 @@ fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_i
         send.payload_ = AppendPayload::BATCH;
         send.sent_end_index_ = raft_server_append_sent_end(prev_log_index,
                                                            batched);
+        send.sent_bytes_ = batch_bytes;  // [fix, F23]
         let batch_end_idx: u64 = send.sent_end_index_;
         let truncated: bool = batch_end_idx < core.raft_log_.last_index();
         out.log(RAFT_LOG_INFO,
@@ -771,6 +784,7 @@ fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_i
 pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
                       snapshot_configured: bool, batching: bool,
                       max_batch_entries: u64, max_batch_bytes: u64,
+                      now_us: u64, pipeline_after_us: u64,  // [fix, F23]
                       out: &mut CoreOutput) -> (r: HeartbeatTick<C>)
     requires
         old(core).inv(),
@@ -880,12 +894,13 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
     // follower's next index goes through core.peers_.next_index(ord).
     let ghost round0 = core.round_;
     let ghost n0 = core.peers_.spec_len();
+    let ghost s0 = core.pending_rpcs_.spec_len();  // [fix, F23]
     let mut ord: usize = 0;
     while ord < core.peers_.len()
         invariant
             core.inv(),
             core.peers_.spec_len() == n0,
-            core.pending_rpcs_.spec_len() == n0,
+            core.pending_rpcs_.spec_len() == s0,  // [fix, F23]
             ord <= n0,
             core.round_ == round0,
             core.authority_rounds_.spec_has_id(round0.spec_round_id()),
@@ -905,7 +920,25 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
             ord += 1;
             continue;
         }
-        if core.pending_rpcs_.occupied(ord) {
+        // [fix, F23] Pipelining. A follower with AppendEntries in flight is
+        // sent another batch only when the newest of them left at least
+        // `pipeline_after_us` ago (the shell passes one heartbeat interval: a
+        // reply that slow is a long round trip, not a busy round), within
+        // PIPELINE_WINDOW and the byte cap, and only to carry entries it has
+        // not been sent: its next index, which each send with entries moves
+        // past its batch, is still in the log above the base. A follower due
+        // a heartbeat or a snapshot waits for its slots to drain, as every
+        // follower with its slot taken did before F23.
+        let flight: InFlight = core.pending_rpcs_.in_flight(peer);  // [fix, F23]
+        let pipelined: bool = flight.count_ > 0;  // [fix, F23]
+        let held: bool = pipelined && (pipeline_after_us == 0  // [fix, F23]
+            || flight.count_ >= PIPELINE_WINDOW
+            || flight.bytes_ >= max_batch_bytes
+            || now_us < flight.newest_at_us_.saturating_add(pipeline_after_us)
+            || core.peers_.next_index(ord) == 0
+            || core.peers_.next_index(ord) > core.raft_log_.last_index()
+            || core.peers_.next_index(ord) < core.raft_log_.base());
+        if held {  // [fix, F23]
             ord += 1;
             continue;
         }
@@ -1004,6 +1037,15 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
                     max_batch_entries, max_batch_bytes, &mut send, out);  // [move, M7]
             }
         }
+        // [fix, F23] A pipelined send carries entries, never a heartbeat.
+        if pipelined && send.payload_ == AppendPayload::HEARTBEAT {
+            skip_follower = true;
+        }
+        // [fix, F23] Any empty slot: the table holds a window per follower.
+        let slot: usize = core.pending_rpcs_.free_slot();
+        if slot == core.pending_rpcs_.len() {  // [fix, F23]
+            skip_follower = true;
+        }
         if skip_follower {
             ord += 1;
             continue;
@@ -1012,9 +1054,17 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
         // The slot's protocol half; the shell adds the response handle when
         // it sends.
         let has_entries: bool = send.payload_ != AppendPayload::HEARTBEAT;
-        core.pending_rpcs_.place(ord, PendingAppend::new(
+        core.pending_rpcs_.place(slot, PendingAppend::new(  // [fix, F23] the slot, prev, time, bytes
             peer, core.round_.term(), core.round_.round_id(),
-            send.sent_end_index_, has_entries));
+            send.sent_end_index_, has_entries,
+            send.prev_log_index_, now_us, send.sent_bytes_));
+        send.slot_ = slot;  // [fix, F23]
+        // [fix, F23] The next batch starts after this one. A reply that does
+        // not accept it moves the index back (heartbeat_apply_append_reply).
+        if has_entries && raft_server_log_index_has_successor(send.sent_end_index_) {
+            core.peers_.set_next_index(ord,  // [fix, F23]
+                raft_server_follower_next_index(send.sent_end_index_));
+        }
         if core.round_.authority_inserted() && core.round_.is_member(peer) {
             // Was a std::map iterator created in PHASE 0 and dereferenced
             // after the RPC sends; look it up by key.
@@ -1095,6 +1145,8 @@ pub struct SentAppend {
     end_index_: u64,
     // peers.len() when this follower is no longer a peer at all.
     ordinal_: usize,
+    // [fix, F23] The RPC's prevLogIndex: where its entries start, less one.
+    prev_index_: u64,
 }
 
 impl SentAppend {
@@ -1108,13 +1160,16 @@ impl SentAppend {
         self.term_
     }
 
-    pub fn new(follower: u16, term: u64, round: u64, end_index: u64, ordinal: usize) -> (r: SentAppend)
+    // [fix, F23] prev_index is F23's.
+    pub fn new(follower: u16, term: u64, round: u64, end_index: u64, ordinal: usize,
+               prev_index: u64) -> (r: SentAppend)
         ensures
             r.spec_ordinal() == ordinal,
             r.spec_term() == term,  // [M12]
     {
-        SentAppend { follower_: follower, term_: term, round_: round,
-                     end_index_: end_index, ordinal_: ordinal }
+        SentAppend { follower_: follower, term_: term, round_: round,  // [fix, F23] prev_index
+                     end_index_: end_index, ordinal_: ordinal,  // [fix, F23]
+                     prev_index_: prev_index }  // [fix, F23]
     }
 
     pub fn round(&self) -> u64 {
@@ -1274,6 +1329,28 @@ fn append_reply_nothing(action: AppendReplyAction) -> (r: AppendReplyOutcome)
 // two mutable borrows of overlapping state, which only compiled because the
 // caller was C++. A Rust caller cannot spell that, and PHASE 2 is a Rust
 // caller now.
+// [fix, F23] (whole item) A reply that does not accept a batch of entries:
+// the follower's next index returns to the batch's start (its prev + 1) if a
+// send moved it past, as the index stayed there until the reply before F23
+// moved it at the send. A later batch's reply still raises it
+// (accept_through); a later batch's reject is then stale
+// (heartbeat_apply_append_reply).
+fn rewind_to_send<C: Clone>(core: &mut RaftCore<C>, sent: &SentAppend)
+    requires old(core).inv(),
+    ensures
+        final(core).inv(),
+        *final(core) == (RaftCore { peers_: final(core).peers_, ..*old(core) }),
+        final(core).peers_.spec_len() == old(core).peers_.spec_len(),
+        forall|o: int| 0 <= o < old(core).peers_.spec_len()
+            ==> #[trigger] final(core).peers_.spec_match(o) == old(core).peers_.spec_match(o),
+{
+    if sent.ordinal_ < core.peers_.len() && sent.end_index_ > sent.prev_index_
+        && core.peers_.next_index(sent.ordinal_) > sent.prev_index_ + 1
+    {
+        core.peers_.set_next_index(sent.ordinal_, sent.prev_index_ + 1);
+    }
+}
+
 pub fn heartbeat_apply_append_reply<C: Clone>(
     core: &mut RaftCore<C>,  // [move, M2] the ledger is core's now
     sent: &SentAppend,
@@ -1349,6 +1426,11 @@ pub fn heartbeat_apply_append_reply<C: Clone>(
     core.authority_rounds_.record_reply(&evidence);
 
     if !reply.available_ {
+        // [fix, F23] The batch may never have arrived: in its own term, its
+        // follower is sent it again.
+        if core.current_term_ == sent.term_ {  // [fix, F23]
+            rewind_to_send(core, sent);  // [fix, F23]
+        }
         return append_reply_nothing(AppendReplyAction::IGNORED);
     }
 
@@ -1376,6 +1458,7 @@ pub fn heartbeat_apply_append_reply<C: Clone>(
     // A valid follower processes AppendEntries in the leader's term before
     // replying, so a lower response term cannot prove this send.
     if reply.term_ != sent.term_ {
+        rewind_to_send(core, sent);  // [fix, F23]
         return append_reply_nothing(AppendReplyAction::IGNORED);
     }
     if !is_leader {
@@ -1386,6 +1469,16 @@ pub fn heartbeat_apply_append_reply<C: Clone>(
     }
 
     if !reply.status_ {
+        // [fix, F23] A reject of a send made before an earlier reply moved
+        // the follower's next index to or below its prev says nothing new:
+        // dropped, so one divergence costs one back-off, not one per batch
+        // that was in flight behind it.
+        if sent.prev_index_ >= core.peers_.next_index(sent.ordinal_) {
+            return append_reply_nothing(AppendReplyAction::IGNORED);
+        }
+        // [fix, F23] The ladder starts from this send's own start, as if no
+        // later batch had been sent.
+        core.peers_.set_next_index(sent.ordinal_, sent.prev_index_ + 1);
         let old_next = core.peers_.next_index(sent.ordinal_);
         let rung = core.peers_
             .back_off_after_reject(sent.ordinal_, reply.last_log_index_);
@@ -1398,6 +1491,7 @@ pub fn heartbeat_apply_append_reply<C: Clone>(
     }
 
     if reply.last_log_index_ < sent.end_index_ {
+        rewind_to_send(core, sent);  // [fix, F23]
         return append_reply_nothing(AppendReplyAction::CONTRADICTORY);
     }
 
@@ -1474,6 +1568,7 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
     let sent_round: u64 = core.pending_rpcs_.sent_round(ord);
     let sent_end_index: u64 = core.pending_rpcs_.sent_end_index(ord);
     let cmd_has_value: bool = core.pending_rpcs_.has_entries(ord);
+    let sent_prev_index: u64 = core.pending_rpcs_.sent_prev_index(ord);  // [fix, F23]
 
     let mut stepped_down: bool = false;
     // What the reply MEANS is heartbeat_apply_append_reply. It reads the wire
@@ -1486,7 +1581,7 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
     let outcome: AppendReplyOutcome = heartbeat_apply_append_reply(
         core,
         &SentAppend::new(follower_id, sent_term, sent_round, sent_end_index,
-                         resp_ord),
+                         resp_ord, sent_prev_index),  // [fix, F23]
         &AppendReply::new(response_available, resp_status, resp_term,  // [move, M11]
                           resp_last_log_index),  // [move, M11]
         log_last_index,

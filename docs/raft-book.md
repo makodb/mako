@@ -807,6 +807,7 @@ For multi-shard deployments:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MAKO_RAFT_HEARTBEAT_INTERVAL_US` | `5000` (prod) / `100000` (test) | Heartbeat interval in microseconds. Overrides the compile-time default at `Setup()` time. Also controls the election-timeout sleep range (`2x`--`4x` the interval). |
+| `MAKO_RAFT_PIPELINE` | (on) | `0` turns off pipelined AppendEntries (F23): each follower then has one batch in flight. On, a follower whose newest batch has been in flight for one heartbeat interval is sent the next, up to 32 batches and one batch's bytes in flight, only with entries; every send still waits for the leader's WAL in a disk build |
 | `MAKO_RAFT_DATA_DIR` | `/var/tmp/raft-wal-$USER` | Disk builds only: the directory holding the Raft stores, on a local filesystem. The other disk settings are in [§11](#11-log-persistence) |
 | `MAKO_RAFT_CREATE` | (unset) | Disk builds only: `1` when this launch creates the cluster, so missing stores are made |
 | `MAKO_RAFT_SNAPSHOTS` | (unset) | Set to `1` to enable snapshot manager |

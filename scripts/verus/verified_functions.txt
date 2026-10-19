@@ -174,6 +174,7 @@ lib::heartbeat::heartbeat_round_saturated
 lib::heartbeat::heartbeat_select_payload
 lib::heartbeat::heartbeat_tick
 lib::heartbeat::raft_commit_advance
+lib::heartbeat::rewind_to_send
 lib::helpers::ElectionCompletionAction::clone
 lib::helpers::RAFT_SERVER_INVALID_SITE_ID
 lib::helpers::raft_quorum_count_reached
@@ -324,10 +325,13 @@ lib::output::CoreOutput::set_log_level
 lib::output::CoreOutput::take_persist
 lib::output::PersistNote::clone
 lib::output::TimerResetReason::clone
+lib::pending::PIPELINE_WINDOW
 lib::pending::PendingAppend::new
 lib::pending::PendingTable::abandon
 lib::pending::PendingTable::follower
+lib::pending::PendingTable::free_slot
 lib::pending::PendingTable::has_entries
+lib::pending::PendingTable::in_flight
 lib::pending::PendingTable::is_empty
 lib::pending::PendingTable::len
 lib::pending::PendingTable::new
@@ -336,8 +340,10 @@ lib::pending::PendingTable::place
 lib::pending::PendingTable::release
 lib::pending::PendingTable::resize
 lib::pending::PendingTable::sent_end_index
+lib::pending::PendingTable::sent_prev_index
 lib::pending::PendingTable::sent_round
 lib::pending::PendingTable::sent_term
+lib::pending::slots_for
 lib::progress::BackoffKind::clone
 lib::progress::FollowerProgress::accept_through
 lib::progress::FollowerProgress::back_off_after_reject

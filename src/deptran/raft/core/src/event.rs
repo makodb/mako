@@ -83,6 +83,11 @@ pub enum Event<'a, C, W> {
         batching: bool,
         max_batch_entries: u64,
         max_batch_bytes: u64,
+        // [fix, F23] The shell's monotonic clock, and how long a follower's
+        // newest AppendEntries must have been in flight before it is sent
+        // another batch (0: never, one in flight per follower as before F23).
+        now_us: u64,
+        pipeline_after_us: u64,
     },
     RecvAppendReply {
         ord: usize,
@@ -502,11 +507,12 @@ impl<C: Clone> RaftCore<C> {
             },
             Event::TickHeartbeat {
                 is_leader, snapshot_configured, batching, max_batch_entries,
-                max_batch_bytes,
+                max_batch_bytes, now_us, pipeline_after_us,  // [fix, F23]
             } => {
                 Reply::Tick(heartbeat_tick(self, is_leader, snapshot_configured,
                                            batching, max_batch_entries,
-                                           max_batch_bytes, out))
+                                           max_batch_bytes, now_us,
+                                           pipeline_after_us, out))  // [fix, F23]
             },
             Event::RecvAppendReply {
                 ord, status, term, last_log_index, is_leader, stopped, failover,

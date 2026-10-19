@@ -75,7 +75,7 @@ fn an_election_proposals_and_a_commit() {
     // A round: the tick sends, a follower acknowledges all, the commit rises.
     let (t, _) = step::<Batch>(&mut core, Event::TickHeartbeat {
         is_leader: true, snapshot_configured: false, batching: true, max_batch_entries: 256,
-        max_batch_bytes: 16 << 20 });
+        max_batch_bytes: 16 << 20, now_us: 0, pipeline_after_us: 0 });
     let t = t.into_tick();
     let term = core.current_term_;
     let sent = t.sends_.iter().map(|s| s.sent_end_index_).min().unwrap();

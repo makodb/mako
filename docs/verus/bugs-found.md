@@ -15,7 +15,8 @@ stalls progress), **race** (undefined behaviour or a torn read, harmless in
 practice so far), **robustness** (only malformed or non-genuine input triggers
 it), **metric** (wrong number in a measurement, no protocol effect),
 **proof coverage** (a run the certificate does not cover, no protocol
-effect). "Latent" means nothing in production reaches it today.
+effect), **performance** (slower than the baseline it must match, no
+protocol effect). "Latent" means nothing in production reaches it today.
 
 | # | Severity | Summary | Status | Fate |
 |---|---|---|---|---|
@@ -70,6 +71,8 @@ effect). "Latent" means nothing in production reaches it today.
 | B50 | robustness (disk) | Recovery deletes only images below the snapshot, so an image whose record never reached the WAL survives every later checkpoint | read in code (second PR #92 review, 2026-10-13) | fixed (2026-10-13): recovery deletes every image but the one the state names |
 | B51 | test infra (latent) | The `:powercut` crash undoes one process-global filesystem, the last store opened | read in code (second PR #92 review, 2026-10-13) | fixed (2026-10-13): every store registers, and a power cut undoes them all |
 | B52 | latent | The set of snapshots refused for the frame cap grows by one entry per (term, follower, index), forever | read in code (second PR #92 review, 2026-10-13) | fixed (2026-10-13): one entry per link |
+| B53 | performance | With one AppendEntries in flight per follower, the two followers of a three-server group lock together over a long round trip since the 10-10 collect change (F11a): an entry waits up to a whole round trip, not half of one, for the next send. At a 20 ms WAN delay about half the runs at N=10-150 had p50 +16% against the C++ build | measured (memory-mode Jetpack gate and per-entry trace, 2026-10-14) | fixed (2026-10-14): F23, pipelined AppendEntries |
+| B54 | liveness | srpc's reactor dropped a timed wait's own deadline when registering it swept the deadline map: the wait was registered before its event was WAIT, and the sweep keeps only WAIT and READY entries. The leader's heartbeat loop then slept in its 5 ms between-rounds wait until something else woke it; with F23 nothing did, for 5-11 s, so a follower took over (6 of 25 G2 runs, and the WAN N=500 run) | measured (G2 gate 2026-10-15, then a stall watchdog: the loop in that wait, its poll thread asleep in epoll); confirmed by a reactor test (198 of 200 waits kept a deadline) | fixed in `a41247aea` (2026-10-15): the deadline is registered after the event is WAIT; `tests/reactor_deadline_rust.rs` |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
 
@@ -1319,3 +1322,66 @@ removed them.
 **Fate.** Fixed (2026-10-13): one entry per (partition, sender, follower)
 link, holding the last refused (term, index); a refusal is logged when it
 differs.
+
+## B53. Followers lock together over a long round trip (performance)
+
+**Where.** `core/src/pending.rs` (`PendingTable`: one slot per follower) and
+`shell/server_cc.rs` (`heartbeat_collect_body`, its `released_behind` exit,
+F11a) at `4c4fb9d28`.
+
+**What is wrong.** A follower had at most one AppendEntries in flight, so
+over a 20 ms link it got one batch per 20.8 ms round trip. Since the second
+piece of F11a (2026-10-10), the reply that frees a follower ends the round
+and the next tick sends to it at once, so a second follower whose reply lands
+0.1 ms later is sent 0.1 ms later. With the same delay on both links the two
+stay locked together for the whole run, and an entry waits for the next send
+up to a whole round trip (median 10.3 ms) instead of half of one (5.3 ms).
+Before F11a the second follower waited out the 5 ms round deadline, which
+pushed the two apart by accident; the C++ and pre-disk builds always ran
+apart.
+
+**How found.** The memory-mode Jetpack gate at `WAN_DELAY_MS=20`
+(2026-10-14, results outside git in `~/raft-test-results/verus/mem-2026-10-14/`)
+failed at N=10, 100, 150 and Zipf 0.8 against both the C++ build (412c225a9)
+and the pre-disk build (44d07a3ee). Each 30 s run sat at p50 26.3-26.9 ms or
+at 31.5-32 ms, with p99 42 ms against the C++ build's 37; the C++ and
+pre-disk builds were tight. A per-entry trace (`MAKO_RAFT_TRACE_FILE`) of
+five reruns at N=100 put the two followers' batches 0.0-0.1 ms apart in the
+slow runs and 7.8-9.4 ms apart in the fast ones (pre-disk 7.6 ms), with the
+network leg and reply-to-commit unchanged. Loopback, G1-G4, and the N=1 and
+saturated WAN points were faster than both baselines.
+
+**Fate.** Fixed (2026-10-14) by F23 (plan A.2): a follower whose newest batch
+has been in flight for a heartbeat interval is sent the next one, up to 32
+batches and one batch's bytes in flight, so the wait no longer depends on how
+the followers' round trips line up. Every send still waits for the leader's
+WAL in a disk build. `core/tests/f23_pipeline.rs`.
+
+## B54. A timed wait could sweep away its own deadline (liveness)
+
+**Where.** `src/srpc/reactor/reactor.rs`, `event_wait_impl`, since srpc
+`959a9da11` (2026-09-26, "reactor: serve timers from a per-reactor deadline
+map"); unfixed on srpc `main` (`5c160a999`, 2026-10-13) and on mako-dev.
+
+**What is wrong.** A timed wait pushed its deadline into the thread's
+deadline map before it set its event to WAIT. The push sweeps the map once it
+holds more entries than its threshold (64 when empty, then twice the live
+count plus 64), and the sweep keeps only entries whose event is WAIT or
+READY. The push that crossed the threshold therefore swept its own entry,
+still INIT: that wait had no deadline, and ended only if its event was set.
+
+**How found.** F23's G2 gate (memory mode, 2026-10-15, results outside git
+in `~/raft-test-results/verus/f23-2026-10-15/`): 6 of 25 runs lost
+leadership and others stalled for seconds, which the build before F23 never
+did. In every stall the leader sent nothing after one round and a follower's
+startup election timer (5-10 s in the bench) ended it. A temporary watchdog
+put the heartbeat loop in its between-rounds wait (5 ms timeout) for
+4.8-11.3 s with its poll thread asleep in epoll. That wait ends early only on
+RequestReplication; with F23 a round more often ends without one, so the
+lost timeout showed. A reactor test, 200 timed waits on never-set events,
+kept 198 deadlines, and the two waiters were not resumed after 5 s.
+
+**Fate.** Fixed in `a41247aea` (2026-10-15): the deadline is pushed after the event is WAIT.
+`tests/reactor_deadline_rust.rs`
+(`a_wait_whose_deadline_push_sweeps_the_map_keeps_its_deadline`). Not yet
+reported upstream.

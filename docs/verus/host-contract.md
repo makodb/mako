@@ -45,7 +45,9 @@ As in the plan's §1.3, from the group's composition
 2. **Truthful sender and routing.** The sender id is the real sender, and a
    reply is attributed to the RPC (and so the follower or voter) it answers:
    the vote tally's voter is the peer its callback was created for (F1); an
-   append reply completes its follower's own slot.
+   append reply completes the slot its RPC was placed in (the shell keeps
+   each response handle in the slot the core chose, `AppendSend::slot_`;
+   since F23 a follower has a window of slots).
 3. **A static configuration shared by all servers**, containing each of them
    (the gate, F5).
 4. **Segments are atomic and globally ordered.** Each core call runs to

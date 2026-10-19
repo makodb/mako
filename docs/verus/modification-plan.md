@@ -943,7 +943,7 @@ cut fibers, a separate crate, ghost code); the algorithm is not rewritten.
 | Append accept, conflict search, truncation, refused committed conflict, follower commit = min(leader_commit, prev+count) | `shell/server_h.rs:5214-5460` |
 | Ack = min(reported, sent_end, leader_last) | `shell/server_h.rs:276-288` |
 | Batching caps (256 entries, 16 MiB) and per-entry byte cap while selecting | `shell/server_cc.rs:935-1060` |
-| Per-follower stop-and-wait: one in-flight slot, cleared on term change or leadership loss; follower order; where `pending_rpcs.place` happens | `PendingTable`, `shell/server_cc.rs:38-90` |
+| Per-follower stop-and-wait: one in-flight slot, cleared on term change or leadership loss; follower order; where `pending_rpcs.place` happens. Since F23 (A.2) a window of slots per follower: stop-and-wait whenever a reply comes back within a heartbeat interval | `PendingTable`, `shell/server_cc.rs:38-90` |
 | Heartbeat round: phase 0 commit, 1 send, 2 collect with early-quorum exit, 3 commit + ledger settle | `shell/server_cc.rs:710-1791` |
 | Preferred-leader election timeouts and startup grace | `GetElectionTimeout`, `shell/server_h.rs:2223-2245` |
 | Read-index authority rounds | `shell/server_cc.rs:130-470` |
@@ -982,6 +982,7 @@ Each lands in its own commit with a lab case showing the new behaviour.
 | F20 | disk persistence | `Event::ObserveTerm { term, stopped, failover }`: a newer term seen outside a modeled message (InstallSnapshot and its reply) is raised, the vote and leader hint cleared, and the server steps down as `SettleElection` does; the shell no longer writes `current_term_`/`vote_for_` itself (the user's decision of 2026-10-08) | Only core steps write term and vote, so a persist note covers every change; uncoupled (`coupled` false), never stepped under the verified gates |
 | F21 | disk persistence | The persist note: `step` compares term, vote and commit before and after its arm, and the two log writers (`Propose`, the AppendEntries handler) mark the lowest index they wrote; `CoreOutput` carries the note (disk design §3, Decision 4) | Each step's saved-state change, exactly; no behaviour change (the shell reads it only in disk builds) |
 | F22 | disk persistence | `Event::Restore { term, vote, commit, entries }` loads a recovered state before `EnterGates`, refusing (`Restored(false)`, unchanged) a state no step produces; it sets no persist note and queues the apply of the committed prefix (disk design §3 "Startup") | A restart resumes from its saved state (B6); coupled as a step aside (`lemma_restore_ginv`, disk design §6) |
+| F23 | fixes | Pipelined AppendEntries (bugs-found B53). `PendingTable` holds a window of `PIPELINE_WINDOW` (32) slots per follower. A follower with batches in flight is sent another only when the newest of them left at least `pipeline_after_us` ago (the shell passes one heartbeat interval; `MAKO_RAFT_PIPELINE=0` passes 0, which turns it off), while its in-flight payload is under one batch's byte cap, and only to carry entries: never a heartbeat or a snapshot. Each send with entries moves the follower's next index past its batch; a reply that does not accept a batch (lost, contradictory, a lower term) moves it back to the batch's start; a reject backs off from its own send's start, and one whose send's prev is at or above the follower's current next index (an earlier reply moved it) is dropped. `TickHeartbeat` gains `now_us` and `pipeline_after_us`. Every send still waits for the leader's WAL in a disk build (disk design §3): nothing leaves before it is durable | Over a long round trip one batch per follower per round trip made an entry wait for the batch ahead of it, and the two followers of a three-server group could lock together (B53). A reply within a heartbeat interval leaves the behaviour as it was. Every send is still an `LSendAppendEntries` of the leader's log (the spec puts no bound on messages in flight); next indices are not spec-visible. Shown by `core/tests/f23_pipeline.rs` (pacing, window, byte cap, back-off, a lost reply), not a lab case: the lab cannot slow a reply, its disconnect answers at once |
 
 Because of S1, the extra append refusals (stopped, non-voter, unauthoritative
 sender, bad payload) and the refused committed conflict
@@ -1015,7 +1016,10 @@ wakes the replication loop (rt `transport.rs`, `reply_landed`; the gate's
 
 F20 was decided by the user on 2026-10-08, while disk persistence was
 planned; F21 and F22 when the user approved that plan, on 2026-10-09:
-"start implementing the plan".
+"start implementing the plan". F23 on 2026-10-14, after the memory-mode
+Jetpack gate at a 20 ms WAN delay failed (B53): "You can fix it, be sure not
+to hurt correctness: the system is sync, so never send a message before
+anything is actually fsync".
 
 ### A.3 "Move, don't rewrite": allowed transformation kinds
 

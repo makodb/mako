@@ -126,7 +126,8 @@ fn round_end_after_losing_leadership_does_not_commit() {
     let tick = core.step::<Batch>(
         Event::TickHeartbeat {
             is_leader: true, snapshot_configured: false, batching: false,
-            max_batch_entries: 256, max_batch_bytes: 16 << 20,
+            max_batch_entries: 256, max_batch_bytes: 16 << 20, now_us: 0,
+            pipeline_after_us: 0,
         },
         &mut out()).into_tick();
     assert!(!tick.declined_);
