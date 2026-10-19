@@ -3912,4 +3912,204 @@ pub proof fn lemma_restore_prev_marks(old: Seq<Entry>, c: LConstants, d: u64, n:
     }
 }
 
+// --- The follower's install (Part B, E4 and E5) ------------------------------
+
+// A Snapshot a Mako leader sent (LSendSnapshot, from a log whose entries
+// change no configuration and carry terms): the prefix through the index,
+// ending at the boundary's term.
+pub open spec fn snap_prefix_ok(p: Seq<LLogEntry>, index: int, snap_term: int) -> bool {
+    &&& index >= 1
+    &&& p.len() == index
+    &&& p[index - 1].term == snap_term
+    &&& forall|k: int| 0 <= k < p.len() ==> (#[trigger] p[k]).change is NoChange && p[k].term >= 0
+}
+
+// A prefix with no configuration entry leaves the initial configuration.
+pub proof fn lemma_prefix_config_plain(c: LConstants, p: Seq<LLogEntry>)
+    requires forall|k: int| 0 <= k < p.len() ==> (#[trigger] p[k]).change is NoChange,
+    ensures
+        prefix_config(c, p) == (c.init_config, Set::<int>::empty()),
+        last_conf_index(p) == 0,
+    decreases p.len(),
+{
+    if p.len() > 0 {
+        let q = p.drop_last();
+        assert forall|k: int| 0 <= k < q.len() implies (#[trigger] q[k]).change is NoChange by {
+            assert(q[k] == p[k]);
+        }
+        lemma_prefix_config_plain(c, q);
+        assert(p.last().change is NoChange);
+    }
+}
+
+pub open spec fn install_reply(term: int, index: int, me: int) -> LRaftMessage {
+    LRaftMessage::AppendResponse { term, success: true, match_index: index, follower: me, read_ctx: 0 }
+}
+
+pub open spec fn install_label(m: LRaftMessage) -> ActionLabel {
+    ActionLabel::InstallSnapshot {
+        term: m->Snapshot_term, index: m->Snapshot_index,
+        snap_term: m->Snapshot_snap_term, prefix: m->Snapshot_prefix,
+    }
+}
+
+// The stale answer: the follower's term, shared (ShareCommit, commit 0).
+pub open spec fn stale_log(l: Seq<Entry>, dst: int, term: int) -> Seq<Entry> {
+    l.push(Entry::Tick)
+        .push(Entry::Send(dst, LRaftMessage::CommitInfo { term, commit: 0, commit_term: 0 }))
+        .push(Entry::Close(ActionLabel::ShareCommit { commit: 0, commit_term: 0 }))
+}
+
+// E4's contact: a higher term's Recv and StepDown; a same-term candidate's
+// StepAside; else nothing.
+pub open spec fn contact_log(l: Seq<Entry>, src: int, m: LRaftMessage, raised: bool, aside: bool) -> Seq<Entry> {
+    if raised {
+        step_down_seg(l.push(Entry::Recv(src, m)), msg_term(m))
+    } else if aside {
+        step_aside_log(l)
+    } else {
+        l
+    }
+}
+
+// E4's acknowledgement of a snapshot the follower's commit covers: the
+// install declined, answered at the index (W1).
+pub open spec fn ack_log(l: Seq<Entry>, src: int, m: LRaftMessage, raised: bool, aside: bool, me: int) -> Seq<Entry> {
+    let l1 = if raised {
+        contact_log(l, src, m, raised, aside)
+    } else {
+        contact_log(l, src, m, raised, aside).push(Entry::Recv(src, m))
+    };
+    l1.push(Entry::Send(src, install_reply(msg_term(m), m->Snapshot_index, me)))
+        .push(Entry::Close(install_label(m)))
+}
+
+// E5's install: the Recv again, the log (unless the boundary matches), commit
+// at the index, the reply.
+pub open spec fn install_log(l: Seq<Entry>, src: int, m: LRaftMessage, retain: bool, me: int) -> Seq<Entry> {
+    let l1 = l.push(Entry::Recv(src, m));
+    let l2 = if retain { l1 } else { l1.push(Entry::Set(LogField::RaftLog, LogValue::VLog(m->Snapshot_prefix))) };
+    l2.push(Entry::Set(LogField::CommitIndex, LogValue::VInt(m->Snapshot_index)))
+        .push(Entry::Send(src, install_reply(msg_term(m), m->Snapshot_index, me)))
+        .push(Entry::Close(install_label(m)))
+}
+
+// The stale answer is LShareCommit: nothing moves.
+pub proof fn lemma_stale_log(l: Seq<Entry>, c: LConstants, dst: int)
+    requires log_ok(l, c), fully_closed(l), replay(l).commit_index >= 0,
+    ensures
+        log_ok(stale_log(l, dst, replay(l).current_term), c),
+        fully_closed(stale_log(l, dst, replay(l).current_term)),
+        replay(stale_log(l, dst, replay(l).current_term)) == replay(l),
+        plain_ext(l, stale_log(l, dst, replay(l).current_term)),
+{
+    let s = replay(l);
+    let m = LRaftMessage::CommitInfo { term: s.current_term, commit: 0, commit_term: 0 };
+    lemma_g_open(l, Entry::Tick, c);
+    let l1 = l.push(Entry::Tick);
+    assert(seg_sends_to(l1, dst));
+    lemma_g_send(l1, dst, m, c);
+    let l2 = l1.push(Entry::Send(dst, m));
+    assert(seg_sends(l2) =~= seq![m]);
+    assert(LShareCommit(s, replay(l2), c, 0, 0, seg_sends(l2)));
+    lemma_g_close(l2, ActionLabel::ShareCommit { commit: 0, commit_term: 0 }, dst, c);
+    broadcast use lemma_ext_push;
+    lemma_ext_refl(l);
+}
+
+// The declined install, closed in the Recv's group: LInstallSnapshot's
+// first disjunct, the reply at the index the commit covers.
+pub proof fn lemma_decline_seg(l: Seq<Entry>, c: LConstants, src: int, m: LRaftMessage, me: int)
+    requires
+        log_ok(l, c),
+        seg_state(l) == replay(l),
+        seg_sends(l) == Seq::<LRaftMessage>::empty(),
+        seg_trigger(l) == Option::Some(Entry::Recv(src, m)),
+        seg_sends_to(l, src),
+        m is Snapshot,
+        snap_prefix_ok(m->Snapshot_prefix, m->Snapshot_index, m->Snapshot_snap_term),
+        replay(l).current_term == m->Snapshot_term,
+        replay(l).role is Follower,
+        m->Snapshot_index <= replay(l).commit_index,
+        me == c.my_id,
+    ensures ({
+        let l3 = l.push(Entry::Send(src, install_reply(msg_term(m), m->Snapshot_index, me)))
+            .push(Entry::Close(install_label(m)));
+        &&& log_ok(l3, c)
+        &&& fully_closed(l3)
+        &&& replay(l3) == replay(l)
+    }),
+{
+    let s = replay(l);
+    let r = install_reply(msg_term(m), m->Snapshot_index, me);
+    lemma_g_send(l, src, r, c);
+    let l2 = l.push(Entry::Send(src, r));
+    assert(seg_sends(l2) =~= seq![r]);
+    assert(install_reply_match(s, m->Snapshot_index, m->Snapshot_index));
+    assert(LInstallSnapshot(s, replay(l2), c, m->Snapshot_term, m->Snapshot_index, m->Snapshot_snap_term,
+        m->Snapshot_prefix, seg_sends(l2)));
+    lemma_g_close(l2, install_label(m), src, c);
+}
+
+// E5's install, its own Recv group: LInstallSnapshot's second disjunct (the
+// boundary matches: commit moves) or its third (the log is the prefix).
+pub proof fn lemma_install_seg(l: Seq<Entry>, c: LConstants, src: int, m: LRaftMessage, retain: bool, me: int)
+    requires
+        log_ok(l, c),
+        fully_closed(l),
+        m is Snapshot,
+        snap_prefix_ok(m->Snapshot_prefix, m->Snapshot_index, m->Snapshot_snap_term),
+        replay(l).current_term == m->Snapshot_term,
+        replay(l).role is Follower,
+        replay(l).commit_index <= m->Snapshot_index,
+        retain ==> m->Snapshot_index <= replay(l).log.len()
+            && replay(l).log[m->Snapshot_index - 1].term == m->Snapshot_snap_term,
+        !retain ==> !(m->Snapshot_index <= replay(l).log.len()
+            && replay(l).log[m->Snapshot_index - 1].term == m->Snapshot_snap_term),
+        replay(l).config == c.init_config,
+        replay(l).outgoing == Set::<int>::empty(),
+        replay(l).conf_index == 0,
+        me == c.my_id,
+    ensures ({
+        let l2 = install_log(l, src, m, retain, me);
+        &&& log_ok(l2, c)
+        &&& fully_closed(l2)
+        &&& replay(l2) == (LState {
+                log: if retain { replay(l).log } else { m->Snapshot_prefix },
+                commit_index: m->Snapshot_index,
+                ..replay(l)
+            })
+        &&& plain_ext(l, l2)
+    }),
+{
+    let s = replay(l);
+    let p = m->Snapshot_prefix;
+    let idx = m->Snapshot_index;
+    lemma_g_open(l, Entry::Recv(src, m), c);
+    let l1 = l.push(Entry::Recv(src, m));
+    assert(seg_sends_to(l1, src));
+    let l2 = if retain { l1 } else { l1.push(Entry::Set(LogField::RaftLog, LogValue::VLog(p))) };
+    if !retain {
+        lemma_g_set(l1, LogField::RaftLog, LogValue::VLog(p), c);
+    }
+    assert(seg_sends_to(l2, src));
+    lemma_g_set(l2, LogField::CommitIndex, LogValue::VInt(idx), c);
+    let l3 = l2.push(Entry::Set(LogField::CommitIndex, LogValue::VInt(idx)));
+    let r = install_reply(msg_term(m), idx, me);
+    lemma_g_send(l3, src, r, c);
+    let l4 = l3.push(Entry::Send(src, r));
+    assert(seg_sends(l4) =~= seq![r]);
+    let s_ = replay(l4);
+    assert(install_reply_match(s_, idx, idx));
+    if !retain {
+        lemma_prefix_config_plain(c, p);
+    }
+    assert(LInstallSnapshot(s, s_, c, m->Snapshot_term, idx, m->Snapshot_snap_term, p, seg_sends(l4)));
+    lemma_g_close(l4, install_label(m), src, c);
+    broadcast use lemma_ext_push;
+    lemma_ext_refl(l);
+    assert(plain_ext(l, l1));
+    assert(plain_ext(l, l2));
+}
+
 } // verus!

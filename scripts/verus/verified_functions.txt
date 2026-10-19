@@ -84,6 +84,7 @@ lib::coupling::lemma_crash_pos
 lib::coupling::lemma_create_ginv
 lib::coupling::lemma_cut_number
 lib::coupling::lemma_cut_pos
+lib::coupling::lemma_decline_seg
 lib::coupling::lemma_ext_ae_log
 lib::coupling::lemma_ext_all
 lib::coupling::lemma_ext_builders
@@ -109,6 +110,7 @@ lib::coupling::lemma_ge_ords
 lib::coupling::lemma_grant_groups
 lib::coupling::lemma_granted_ranks_contains
 lib::coupling::lemma_har_ginv
+lib::coupling::lemma_install_seg
 lib::coupling::lemma_last_ready_after
 lib::coupling::lemma_load_config
 lib::coupling::lemma_log_view_push
@@ -118,6 +120,7 @@ lib::coupling::lemma_no_conf_entries
 lib::coupling::lemma_no_ready
 lib::coupling::lemma_node_cert
 lib::coupling::lemma_peer_ranks_differ
+lib::coupling::lemma_prefix_config_plain
 lib::coupling::lemma_rank_bounds
 lib::coupling::lemma_rank_of
 lib::coupling::lemma_ready_ext
@@ -140,6 +143,7 @@ lib::coupling::lemma_settle_won
 lib::coupling::lemma_snap_sends
 lib::coupling::lemma_sorted_ge
 lib::coupling::lemma_sorted_len
+lib::coupling::lemma_stale_log
 lib::coupling::lemma_step_aside
 lib::coupling::lemma_step_aside_ginv
 lib::coupling::lemma_step_down_seg
