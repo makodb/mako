@@ -24,6 +24,7 @@ The patch series and the frozen manifest live in
 | v1 (export) | `raft-spec-v1-export` (= `c0c242ab`) | v1 + `pub mod protocol;` in the crate root (patch 0002): visibility only, so the core can import the spec (plan §4.5, spike (d) choice (i)). No statement-bearing file changes, so the version stays v1: the manifest's ten sha256 are unchanged | 0.2026.08.02.b677dd5 | 2129 verified, 0 errors (5 min 9 s) | `$RESULTS/spec/verify_spec.v1-export.log` |
 | v2 (export) | `raft-spec-v2-export` (= `8cc23b23`) | upstream `1bb2f142` (A10 snapshots, A11 crash and restart, A14's library with its persistence marks) + S1 + `pub mod protocol;` + patch 0003, which leaves the application ports out of the crate (see below); 17 hashed files, all equal to the group's Mako case study's at this base | 0.2026.08.02.b677dd5 | 1916 verified, 0 errors (78 s) | `$RESULTS/spec/verify_spec.raft-spec-v2-export.20261019T004108.log` |
 | v3 (export) | `raft-spec-v3-export` (= `d87fbfa6`) | v2 + patch 0004: Raft's certificate instance (`CertProtocol for RaftP`) at the protocol level, `src/protocol/Raft/ghost_log_certs_raft.rs`, over copies of the raft-rs port's `HardState` (`LHardState`) and `rank` (`id_rank`); additive, no existing statement changes; the new file is hashed (18 files) | 0.2026.08.02.b677dd5 | 1917 verified, 0 errors (79 s) | `$RESULTS/spec/verify_spec.raft-spec-v3-export.20261019T015645.log` |
+| v4 (export) | `raft-spec-v4-export` (= `535f3478`) | v3 + patch 0005 (W1): `LInstallSnapshot`'s reply reports a match m with `install_reply_match` -- the follower's commit index, as before, or the snapshot's index when it is at or below that commit -- and `success = m > 0`; the agreement proof shrinks to m (`lemma_responses_agree_new_success_install`, `lemma_append_sends`) | 0.2026.08.02.b677dd5 | 1917 verified, 0 errors | `$RESULTS/spec/verify_spec.raft-spec-v4-export.log` |
 
 ## v2: moving the base (2026-10-19)
 
@@ -63,6 +64,21 @@ general, nothing of Mako) and correct (the crate verifies, 1917 items, 0
 errors: the instance's one lemma is the new item). A crate that keeps the
 ports would have two instances for `RaftP`; upstream would move the port onto
 this one. The core proof is unchanged (408 verified).
+
+## v4: an install's reply may report the index it covers (W1, 2026-10-19)
+
+Mako's InstallSnapshot reply carries only the follower's term, and the
+leader credits the snapshot's index (`RecvSnapshotReply`, F28). The spec's
+reply reported the follower's commit index. They agree when the follower
+installs (its commit becomes the index) but not when its progress already
+covers the snapshot, whose commit may be past the index. W1 lets the reply
+report the index when it is at or below the follower's commit
+(coupling-design-persistence-snapshots.md B6). It is abstract (the Raft
+paper's term-only reply, read the way any leader reads it) and correct: every
+such match is a prefix the follower holds committed, and the agreement
+invariants are downward closed in the match, so the one proof that pinned the
+match to the commit shrinks to it (the crate verifies, 1917 items, 0 errors).
+Approved with the snapshot plan, 2026-10-19 ("(1) spec change W1").
 
 ## Changes
 

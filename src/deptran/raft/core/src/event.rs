@@ -481,7 +481,7 @@ impl<C: Clone> RaftCore<C> {
     }
 
     // The core's one entry point. The caller holds mtx_.
-    #[verifier::rlimit(40)]  // [M12] every event's arm and the persistence epilogue, one query
+    #[verifier::rlimit(80)]  // [M12] every event's arm and the persistence epilogue, one query
     pub fn step<W: InboundBatch<C>>(&mut self, ev: Event<'_, C, W>,
                                     out: &mut CoreOutput) -> (r: Reply<C>)
         requires

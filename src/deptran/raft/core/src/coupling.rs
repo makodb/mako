@@ -301,8 +301,23 @@ impl<C> RaftCore<C> {
         }
     }
 
+    // [Part B] the compacted prefix's view, then the live entries' (a whole
+    // log, base 1, has none: ginv's prefix_ok, so the first form is the
+    // second's for it)
     pub open spec fn log_view(&self) -> Seq<LLogEntry> {
-        self.raft_log_.view().map_values(|e: RaftEntry<C>| entry_view(e))
+        if self.raft_log_.spec_base() == 1 {
+            self.raft_log_.view().map_values(|e: RaftEntry<C>| entry_view(e))
+        } else {
+            self.raft_log_.spec_prefix() + self.raft_log_.view().map_values(|e: RaftEntry<C>| entry_view(e))
+        }
+    }
+
+    // [Part B] the prefix stands for the entries below the base, none of
+    // them a configuration change (the leader's prefix is a Mako log's view)
+    pub open spec fn prefix_ok(&self) -> bool {
+        &&& self.raft_log_.spec_prefix().len() == self.raft_log_.spec_base() - 1
+        &&& forall|k: int| 0 <= k < self.raft_log_.spec_prefix().len()
+                ==> (#[trigger] self.raft_log_.spec_prefix()[k]).change is NoChange
     }
 
     pub open spec fn state_view(&self) -> LState {
@@ -338,6 +353,7 @@ impl<C> RaftCore<C> {
         &&& fully_closed(self.g_log_@)
         &&& replay(self.g_log_@) == self.state_view()
         &&& self.snapterm_ == 0
+        &&& self.prefix_ok()  // [Part B]
         &&& !self.config_members_@.contains(RAFT_SERVER_INVALID_SITE_ID)
         &&& (!(self.role_view() is Follower) ==> self.vote_for_ == self.site_id_)
         &&& (self.role_view() is Candidate ==> self.g_votes_@.contains(self.my_rank()))
@@ -374,6 +390,8 @@ impl<C> RaftCore<C> {
         &&& !self.election_in_progress_
         &&& self.vote_for_ == RAFT_SERVER_INVALID_SITE_ID
         &&& self.raft_log_.view().len() == 0
+        &&& self.raft_log_.spec_base() == 1  // [Part B]
+        &&& self.raft_log_.spec_prefix() == Seq::<LLogEntry>::empty()  // [Part B]
         &&& self.commit_index_ == 0
         &&& self.g_votes_@ == Set::<int>::empty()
         &&& self.g_match_@ == Map::<u64, u64>::empty()
@@ -508,6 +526,7 @@ pub open spec fn restore_premise<C>(core: &RaftCore<C>, term: u64, vote: u16, co
     &&& !core.is_leader_
     &&& !core.election_in_progress_
     &&& core.raft_log_.spec_len() == 0
+    &&& core.raft_log_.spec_base() == 1  // [Part B] a fresh log
     &&& exists|prev: Seq<Entry>| #[trigger] restore_prev_ok(core, prev, term, vote, restore_log(rev), commit)
 }
 
@@ -557,6 +576,8 @@ pub proof fn lemma_restore_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, prev: 
         post.g_votes_@ == Set::<int>::empty(),
         post.g_match_@ == replay(prev).match_index,
         post.g_next_@ == replay(prev).next_index,
+        post.raft_log_.spec_base() == pre.raft_log_.spec_base(),  // [Part B]
+        post.raft_log_.spec_prefix() == pre.raft_log_.spec_prefix(),  // [Part B]
     ensures post.ginv(),
 {
     let c = pre.c_view();
@@ -661,7 +682,10 @@ pub open spec fn client_request_log(l: Seq<Entry>, new_log: Seq<LLogEntry>, valu
 
 // The log view grows by the appended entry's view.
 pub proof fn lemma_log_view_push<C>(pre: &RaftCore<C>, post: &RaftCore<C>, e: RaftEntry<C>)
-    requires post.raft_log_.view() == pre.raft_log_.view().push(e),
+    requires
+        post.raft_log_.view() == pre.raft_log_.view().push(e),
+        post.raft_log_.spec_base() == pre.raft_log_.spec_base(),  // [Part B]
+        post.raft_log_.spec_prefix() == pre.raft_log_.spec_prefix(),  // [Part B]
     ensures post.log_view() == pre.log_view().push(entry_view(e)),
 {
     assert(post.log_view() =~= pre.log_view().push(entry_view(e)));
@@ -689,6 +713,8 @@ pub proof fn lemma_client_request_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>,
         post.peer_sites_ == pre.peer_sites_,
         e.spec_has_value(),
         post.g_log_@ == client_request_log(pre.g_log_@, post.log_view(), value_view(e.spec_cmd())),
+        post.raft_log_.spec_base() == pre.raft_log_.spec_base(),  // [Part B]
+        post.raft_log_.spec_prefix() == pre.raft_log_.spec_prefix(),  // [Part B]
     ensures post.ginv(),
 {
     let c = pre.c_view();
@@ -1001,12 +1027,20 @@ pub open spec fn timeout_log(l: Seq<Entry>, me: int, m: LRaftMessage) -> Seq<Ent
 
 // The log view holds no configuration entry (a static configuration).
 pub proof fn lemma_no_conf_entries<C>(core: &RaftCore<C>, lo: int, hi: int)
+    requires core.prefix_ok(),  // [Part B] the prefix's entries are none either
     ensures no_conf_entry_in(core.state_view(), lo, hi),
 {
     let s = core.state_view();
+    let p = core.raft_log_.spec_prefix();
     assert forall|i: int| lo < i <= hi && i <= s.log.len() implies !#[trigger] conf_entry_at(s, i) by {
         if 1 <= i {
-            assert(s.log[i - 1] == entry_view(core.raft_log_.view()[i - 1]));
+            if core.raft_log_.spec_base() == 1 {
+                assert(s.log[i - 1] == entry_view(core.raft_log_.view()[i - 1]));
+            } else if i - 1 < p.len() {
+                assert(s.log[i - 1] == p[i - 1]);
+            } else {
+                assert(s.log[i - 1] == entry_view(core.raft_log_.view()[i - 1 - p.len()]));
+            }
         }
     }
 }
@@ -2036,6 +2070,8 @@ pub proof fn lemma_append_entries<C>(pre: &RaftCore<C>, post: &RaftCore<C>, x: A
         },
         post.g_log_@ == ae_log(pre.g_log_@, x, stepped, aside, accepted, pre.log_view(),
             pre.commit_index_ as int, post.current_term_ as int),
+        post.raft_log_.spec_base() == pre.raft_log_.spec_base(),  // [Part B]
+        post.raft_log_.spec_prefix() == pre.raft_log_.spec_prefix(),  // [Part B]
     ensures post.ginv(),
 {
     let c = pre.c_view();
@@ -3550,6 +3586,7 @@ pub open spec fn restore_cert_ok<C>(core: &RaftCore<C>, d: u64, term: u64, vote:
     &&& !core.is_leader_
     &&& !core.election_in_progress_
     &&& core.raft_log_.spec_len() == 0
+    &&& core.raft_log_.spec_base() == 1  // [Part B] a fresh log
     &&& exists|old: Seq<Entry>| prev_run_ok(old, core.c_view(), d)
             && #[trigger] restore_prev_ok(core, restore_prev(old, d, core.n_view()), term, vote,
                                           restore_log(rev), commit)

@@ -3,9 +3,9 @@
 upstream = "git@github.com:ZhangZihao270/ghost-log-refinement.git"
 base_commit = "1bb2f142"
 branch = "mako-spec"
-tag = "raft-spec-v3-export"
-tag_commit = "d87fbfa6a3d85cdf83bd0ebcfc4528c6eb08a92b"
-patches = ["0001-Raft-spec-a-follower-may-refuse-any-AppendEntries-S1.patch", "0002-lib-make-the-protocol-module-public.patch", "0003-lib-leave-the-application-ports-out-of-Mako-s-spec-e.patch", "0004-Raft-the-certificate-instance-at-the-protocol-level.patch"]
+tag = "raft-spec-v4-export"
+tag_commit = "535f3478e56471f13bf0018f7cc1d69d6041ea64"
+patches = ["0001-Raft-spec-a-follower-may-refuse-any-AppendEntries-S1.patch", "0002-lib-make-the-protocol-module-public.patch", "0003-lib-leave-the-application-ports-out-of-Mako-s-spec-e.patch", "0004-Raft-the-certificate-instance-at-the-protocol-level.patch", "0005-Raft-an-install-s-reply-may-report-the-snapshot-inde.patch"]
 verus_version = "0.2026.08.02.b677dd5"
 toolchain = "1.97.1-x86_64-unknown-linux-gnu"
 verify_command = "verus --crate-type=dylib --expand-errors src/lib.rs (in $GLR)"
@@ -15,7 +15,7 @@ hash_scope = "whole files"
 
 [sha256]
 "src/protocol/Raft/types.rs" = "25bb77a7981e377f87c8d0150987e92519ea855140a678f1003c1bdf4dd2b2e2"
-"src/protocol/Raft/raft.rs" = "62cf9f91799a8314c76e6ea7e119fa09c7ee58479fb0d623494f52cfc7df0e6a"
+"src/protocol/Raft/raft.rs" = "ec85e932ac8c3396f4d6605247a177386bf485bb44e0e1e5bd87b5dee18d381e"
 "src/protocol/Raft/raft_composite.rs" = "ad770a6b9df8862d70e2a4f9e0c0ab6918a51583de5b0d17911376e015758f09"
 "src/protocol/Raft/raft_refinement.rs" = "c346f4fea97fbd41bec45e6ed169f2fe2a4e1646179e0cbd601ba4e0daa7fcca"
 "src/protocol/Raft/read_index.rs" = "254b57b1d61353c5e351f9850123cebc771b682278dd62984119c0543abe3300"

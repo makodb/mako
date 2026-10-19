@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: zyang2 <zyang2@zoo-003.maas>
 Date: Mon, 19 Oct 2026 01:56:43 +0000
-Subject: [PATCH 4/4] Raft: the certificate instance at the protocol level
+Subject: [PATCH 4/5] Raft: the certificate instance at the protocol level
 
 CertProtocol for RaftP lived only in the raft-rs port (src/ports/raftrs/certs.rs),
 which Mako's export compiles out (patch 0003). This adds the same instance in

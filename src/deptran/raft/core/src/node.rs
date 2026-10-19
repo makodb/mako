@@ -624,6 +624,9 @@ impl<C: Clone> RaftCore<C> {
             // [fix, F30] the boundary: the recovered one, or as it was
             r && snap_index == 0 ==> (final(self).snapterm_ == old(self).snapterm_),
             r && snap_index == 0 ==> (final(self).snapidx_ == old(self).snapidx_),
+            // [Part B] a restore without a boundary keeps the log's base and prefix
+            r && snap_index == 0 ==> final(self).raft_log_.spec_base() == old(self).raft_log_.spec_base(),
+            r && snap_index == 0 ==> final(self).raft_log_.spec_prefix() == old(self).raft_log_.spec_prefix(),
             r && snap_index != 0 ==> (final(self).snapterm_ == snap_term),
             r && snap_index != 0 ==> (final(self).snapidx_ == snap_index),
             r ==> (final(self).peers_ == old(self).peers_),
@@ -2641,6 +2644,9 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
                     } else {
                         k as int
                     }),
+                // [Part B] the base and the prefix stay
+                core.raft_log_.spec_base() == pre.raft_log_.spec_base(),
+                core.raft_log_.spec_prefix() == pre.raft_log_.spec_prefix(),
             decreases decoded_count - k,
         {
             let index: u64 = raft_server_append_sent_end(leader_prev_log_index, k + 1);  // [move, M1, M11]

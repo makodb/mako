@@ -1,7 +1,7 @@
 From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: zyang2 <zyang2@zoo-003.maas>
 Date: Mon, 19 Oct 2026 00:41:00 +0000
-Subject: [PATCH 3/4] lib: leave the application ports out of Mako's spec
+Subject: [PATCH 3/5] lib: leave the application ports out of Mako's spec
  export
 
 The raft-rs, kad and other ports are not part of the Raft spec and no

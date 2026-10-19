@@ -277,6 +277,7 @@ lib::log::RaftLog::lemma_wf_bounds
 lib::log::RaftLog::len
 lib::log::RaftLog::new
 lib::log::RaftLog::reset
+lib::log::RaftLog::set_prefix
 lib::log::RaftLog::truncate_from
 lib::log::lemma_pos
 lib::logging::CORE_LOG_MAX_ARGS

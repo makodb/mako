@@ -135,9 +135,33 @@ pub struct RaftLog<C> {
     // Fixed-size blocks. Every block is exactly BLOCK long except the last.
     // Physical position of logical index i is head_ + (i - base_).
     blocks_: Vec<Vec<RaftEntry<C>>>,
+    // [M12] snapshots (Part B): the spec's view of the entries below base_,
+    // which a snapshot replaced; the core writes it, the log keeps it
+    #[cfg(verus_keep_ghost)]
+    g_prefix_: Ghost<Seq<glr::protocol::Raft::types::LLogEntry>>,  // [M12]
 }
 
 impl<C> RaftLog<C> {
+    // [M12] snapshots (Part B): the spec's view of the entries below the base
+    #[cfg(verus_keep_ghost)]
+    pub closed spec fn spec_prefix(&self) -> Seq<glr::protocol::Raft::types::LLogEntry> {
+        self.g_prefix_@
+    }
+
+    #[cfg(verus_keep_ghost)]
+    // [M12] (whole item) The core's record of the prefix a snapshot left: ghost
+    // only, nothing else moves.
+    pub fn set_prefix(&mut self, prefix: Ghost<Seq<glr::protocol::Raft::types::LLogEntry>>)
+        ensures
+            final(self).spec_prefix() == prefix@,
+            final(self).view() == old(self).view(),
+            final(self).spec_base() == old(self).spec_base(),
+            final(self).spec_len() == old(self).spec_len(),
+            old(self).wf() ==> final(self).wf(),
+    {
+        self.g_prefix_ = prefix;  // [M12]
+    }
+
     // The block layout (ghost): live entries occupy physical positions
     // [head_, head_ + len_) of the blocks laid end to end; every block but
     // the last is full, the last holds at least one entry, and there are
@@ -225,8 +249,11 @@ impl<C> RaftLog<C> {
             r.spec_base() == 1,
             r.spec_len() == 0,
             r.view().len() == 0,
+            r.spec_prefix() == Seq::<glr::protocol::Raft::types::LLogEntry>::empty(),  // [M12]
     {
-        RaftLog { base_: 1, head_: 0, len_: 0, blocks_: Vec::new() }
+        RaftLog { base_: 1, head_: 0, len_: 0, blocks_: Vec::new(),  // [M12] the prefix below
+                  #[cfg(verus_keep_ghost)]
+                  g_prefix_: Ghost(Seq::empty()) }  // [M12]
     }
 
     // Entries per block. 4096 * sizeof(RaftEntry) = 128KB, so a block is a
@@ -329,6 +356,7 @@ impl<C> RaftLog<C> {
             final(self).spec_len() == old(self).spec_len() + 1,
             r == final(self).spec_last_index(),
             final(self).view() == old(self).view().push(entry),
+            final(self).spec_prefix() == old(self).spec_prefix(),  // [M12]
     {
         let ghost pre = *self;
         // "is there room in the last block", said directly rather than as
@@ -420,6 +448,7 @@ impl<C> RaftLog<C> {
             final(self).spec_base() == old(self).spec_base(),
             final(self).spec_len() == old(self).spec_len() + rev@.len(),
             final(self).view() == old(self).view() + rev_seq(rev@),
+            final(self).spec_prefix() == old(self).spec_prefix(),  // [M12]
     {
         let ghost orig = rev@;
         let ghost v0 = self.view();
@@ -435,6 +464,7 @@ impl<C> RaftLog<C> {
                 rev@.len() <= orig.len(),
                 rev@ == orig.subrange(0, rev@.len() as int),
                 self.view() == v0 + rev_seq(orig).subrange(0, orig.len() - rev@.len()),
+                self.spec_prefix() == old(self).spec_prefix(),  // [M12]
             decreases rev@.len(),
         {
             let ghost before = self.view();
@@ -470,6 +500,7 @@ impl<C> RaftLog<C> {
                 index as int - old(self).spec_base()
             }),
             final(self).view() == old(self).view().subrange(0, final(self).spec_len()),
+            final(self).spec_prefix() == old(self).spec_prefix(),  // [M12]
     {
         let ghost pre = *self;
         if index <= self.base_ {
@@ -597,6 +628,7 @@ impl<C> RaftLog<C> {
                 old(self).spec_base() } else { index as int + 1 }),
             (index as int) <= old(self).spec_last_index()
                 ==> final(self).spec_last_index() == old(self).spec_last_index(),
+            final(self).spec_prefix() == old(self).spec_prefix(),  // [M12] the core moves it
     {
         if index < self.base_ {
             return 0;
@@ -672,6 +704,7 @@ impl<C> RaftLog<C> {
             final(self).spec_base() == base,
             final(self).spec_len() == 0,
             final(self).view() == Seq::<RaftEntry<C>>::empty(),
+            final(self).spec_prefix() == old(self).spec_prefix(),  // [M12] the core sets it
     {
         self.blocks_.clear();
         self.head_ = 0;
