@@ -2992,12 +2992,11 @@ impl<C> RaftCore<C> {
             // [Part B] (E7) with the recovered snapshot boundary, if any
             Event::Restore { term, vote, commit, d, snap_index, snap_term, entries_rev } =>
                 restore_cert_ok(self, d, term, vote, commit, snap_index, snap_term, entries_rev@),
-            // [fix, F25] refused (unchanged) inside the gate; uncoupled
-            // outside it until the snapshot coupling (design Part B)
+            // [fix, F25] [Part B] inside the gate: creation a stutter that
+            // moves entries into the prefix (E1), compaction refused (E2)
             Event::CreateSnapshot { .. } => self.gated_,
             Event::Compact { .. } => self.gated_,
-            // [fix, F27, fix, F28] the same for the install and its reply
-            // (bugs-found B55: refused inside the gate)
+            // [fix, F27, fix, F28] the install and its reply, inside the gate
             // [Part B] the Snapshot is one a Mako leader sent (§1 item 1)
             Event::RecvInstallSnapshot { last_included_index, last_included_term, prefix, .. } =>
                 self.gated_ && snap_prefix_ok(prefix@, last_included_index as int, last_included_term as int),
@@ -3006,8 +3005,6 @@ impl<C> RaftCore<C> {
             // [Part B] the follower answered at the sender's term or above
             Event::RecvSnapshotReply { send_term, follower_term, .. } =>
                 self.gated_ && follower_term >= send_term,
-            // [fix, F29] leaving the verified configuration ends the coupling
-            Event::LeaveGates => false,
             _ => true,
         }
     }

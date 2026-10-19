@@ -30,7 +30,7 @@ fn a_state_is_restored_then_gated() {
     assert_eq!(out.at(0).kind(), CoreActionKind::APPLY_RANGE);
     assert_eq!((out.at(0).from(), out.at(0).to()), (0, 3));
     assert!(out.take_persist().is_none());
-    assert!(core.step::<Batch>(Event::EnterGates { snapshots_enabled: false, failover: true },
+    assert!(core.step::<Batch>(Event::EnterGates { unsaved_restart: false, failover: true },
                                &mut CoreOutput::new()).into_gates());
     // The restored server carries on: an append after its log is exact too.
     let (r, n) = append(&mut core, 5, 2, (4, 4), &[(5, 15)], 5);
@@ -64,6 +64,33 @@ fn a_state_after_a_snapshot_is_restored() {
     assert_eq!((core.raft_log_.base(), core.raft_log_.last_index()), (11, 13));
     // The apply of 11..=12 is queued, from the boundary.
     assert_eq!((out.at(0).from(), out.at(0).to()), (10, 12));
+}
+
+#[test]
+fn a_recovered_snapshot_is_restored_then_gated() {
+    // [fix, F32] a restart's snapshot boundary (E7) is inside the gate
+    let mut core = configured_ungated();
+    let mut rev = vec![entry(2, 11), entry(3, 12), entry(4, 13)];
+    rev.reverse();
+    let mut out = CoreOutput::new();
+    assert!(core.step::<Batch>(Event::Restore { term: 5, vote: 2, commit: 12, d: 7, snap_index: 10,
+                                                snap_term: 2, entries_rev: rev }, &mut out)
+        .into_restored());
+    assert_eq!((core.snapidx_, core.snapterm_), (10, 2));
+    assert_eq!((core.raft_log_.base(), core.raft_log_.last_index()), (11, 13));
+    assert_eq!((out.at(0).from(), out.at(0).to()), (10, 12));
+    assert!(core.step::<Batch>(Event::EnterGates { unsaved_restart: false, failover: true },
+                               &mut CoreOutput::new()).into_gates());
+    assert!(core.gated_);
+}
+
+#[test]
+fn an_unsaved_restart_stays_outside_the_gate() {
+    // [fix, F32] a memory build's restart from a snapshot image
+    let mut core = configured_ungated();
+    assert!(!core.step::<Batch>(Event::EnterGates { unsaved_restart: true, failover: true },
+                                &mut CoreOutput::new()).into_gates());
+    assert!(!core.gated_);
 }
 
 #[test]

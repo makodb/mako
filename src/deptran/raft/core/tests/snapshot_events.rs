@@ -1,6 +1,6 @@
-// [fix, F25, F27, F28, F29] The snapshot events (coupling design Part B,
-// E1-E6): creation, the install's contact and outcome, the install's reply,
-// and leaving the gates. Each step's persist note is exact (common::step);
+// [fix, F25, F27, F28, F31] The snapshot events (coupling design Part B,
+// E1-E6): creation, the install's contact and outcome, and the install's
+// reply, inside the gate as outside. Each step's persist note is exact (common::step);
 // the raise a newer term makes (F20's, formerly the ObserveTerm event) is
 // covered here through the two messages that carry one.
 
@@ -44,7 +44,10 @@ fn reply(core: &mut RaftCore<Cmd>, send_term: u64, follower_term: u64, index: u6
 
 /// A follower of leader 2 in term 1 holding 1..=3 (terms 1), commit 1.
 fn follower_with_log() -> RaftCore<Cmd> {
-    let mut core = configured_ungated();
+    with_log(configured_ungated())
+}
+
+fn with_log(mut core: RaftCore<Cmd>) -> RaftCore<Cmd> {
     let (r, _) = append(&mut core, 1, 2, (0, 0), &[(1, 11), (1, 12), (1, 13)], 1);
     let (_, ok, _, _) = r.into_append();
     assert_eq!(ok, 1);
@@ -141,12 +144,20 @@ fn stale_conflicting_and_refused_installs() {
 
 #[test]
 fn inside_the_gates_snapshots_behave_as_outside() {
-    // Part B: every snapshot event is coupled inside the gate, so a gated
-    // core takes them as an ungated one does
-    let mut gated = configured();
-    let mut open = configured_ungated();
+    // [fix, F31] Part B: every snapshot event is coupled inside the gate, so
+    // a gated core takes them as an ungated one does
+    let mut gated = with_log(configured());
+    let mut open = follower_with_log();
     assert!(gated.gated_ && !open.gated_);
     for core in [&mut gated, &mut open] {
+        // a snapshot at the applied index (E1)
+        assert!(step::<Batch>(core, Event::Applied { index: 1, published: 0 }).0.into_applied());
+        let (r, n) = step::<Batch>(core, Event::CreateSnapshot { index: 1, term: 1 });
+        assert!(r.into_created() && n.unwrap().snap_.unwrap().keep_);
+        // an install past it, keeping the log after the boundary (E4, E5)
+        assert_eq!(contact(core, 1, 2, 2, 1).0, (1, true, true));
+        assert_eq!(install(core, 2, 1).0, (true, true));
+        assert_eq!((core.snapidx_, core.raft_log_.base(), core.commit_index_), (2, 3, 2));
         // a newer leader's contact is taken; index 0 is covered
         assert_eq!(contact(core, 4, 2, 0, 0).0, (4, true, false));
         // a stale term is answered with the core's own

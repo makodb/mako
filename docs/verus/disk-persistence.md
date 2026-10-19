@@ -309,8 +309,8 @@ empty log and only sets the boundary; its term bump (`shell/server_h.rs:2195-220
 runs as in a memory build, harmless: `Restore` then sets term and vote from
 the store, whose term is at least the image's. With snapshots off it loads nothing (`:2008-2025`),
 so a state naming a snapshot fails closed, saying so. Between `Configure`
-(`shell/server_h.rs:1914`) and `EnterGates` (`:1933`; it passes only with S = 0 and the log
-from 1, `core/src/node.rs:317`) the shell steps a new core event,
+(`shell/server_h.rs:1914`) and `EnterGates` (`:1933`; since F32 it admits
+a boundary, which `Restore` carries, Part B E7) the shell steps a new core event,
 `Restore`, with term, vote, commit and the entries after S. It sets no
 persist note, and fails closed on a state no step produces: a gap after S,
 an entry without a value or of term 0, terms that decrease, start below the

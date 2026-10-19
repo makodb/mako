@@ -124,9 +124,9 @@ pub fn write_event<C: Clone, W: InboundBatch<C>>(s: &mut String, ev: &Event<'_, 
                 put_u(s, *m as u64);
             }
         }
-        Event::EnterGates { snapshots_enabled, failover } => {
+        Event::EnterGates { unsaved_restart, failover } => {  // [fix, F32]
             put(s, "gates");
-            put(s, b(*snapshots_enabled));
+            put(s, b(*unsaved_restart));  // [fix, F32]
             put(s, b(*failover));
         }
         Event::RebuildPeers { next_index } => {
@@ -302,7 +302,6 @@ pub fn write_event<C: Clone, W: InboundBatch<C>>(s: &mut String, ev: &Event<'_, 
             put(s, b(*stopped));
             put(s, b(*failover));
         }
-        Event::LeaveGates => put(s, "leave_gates"),  // [fix, F29]
         Event::Restore { term, vote, commit, d, snap_index, snap_term, entries_rev } => {
             put(s, "restore");
             put_u(s, *term);
@@ -577,7 +576,7 @@ impl InboundBatch<ReplayCmd> for ReplayBatch {
 pub enum OwnedEvent {
     SetIdentity { loc_id: u32, site_id: u16, partition_id: u32 },
     Configure { members: Vec<u16> },
-    EnterGates { snapshots_enabled: bool, failover: bool },
+    EnterGates { unsaved_restart: bool, failover: bool },  // [fix, F32]
     RebuildPeers { next_index: u64 },
     Propose { cmd: ReplayCmd, has_value: bool, is_tpc_commit: bool, kind: i32, payload_bytes: u64 },
     StartElection { timer_guarded: bool, expected_generation: u64, now: u64, stopped: bool },
@@ -621,7 +620,6 @@ pub enum OwnedEvent {
     InstallSnapshot { index: u64, term: u64 },  // [fix, F27]
     RecvSnapshotReply { ord: usize, site_id: u16, snap_last_idx: u64, send_term: u64,  // [fix, F28]
                         follower_term: u64, stopped: bool, failover: bool },
-    LeaveGates,  // [fix, F29]
 }
 
 impl OwnedEvent {
@@ -631,8 +629,8 @@ impl OwnedEvent {
                 loc_id: *loc_id, site_id: *site_id, partition_id: *partition_id,
             },
             OwnedEvent::Configure { members } => Event::Configure { members },
-            OwnedEvent::EnterGates { snapshots_enabled, failover } => Event::EnterGates {
-                snapshots_enabled: *snapshots_enabled, failover: *failover,
+            OwnedEvent::EnterGates { unsaved_restart, failover } => Event::EnterGates {  // [fix, F32]
+                unsaved_restart: *unsaved_restart, failover: *failover,  // [fix, F32]
             },
             OwnedEvent::RebuildPeers { next_index } => Event::RebuildPeers { next_index: *next_index },
             OwnedEvent::Propose { cmd, has_value, is_tpc_commit, kind, payload_bytes } => Event::Propose {
@@ -731,7 +729,6 @@ impl OwnedEvent {
                 send_term: *send_term, follower_term: *follower_term, stopped: *stopped,
                 failover: *failover,
             },
-            OwnedEvent::LeaveGates => Event::LeaveGates,  // [fix, F29]
         }
     }
 }
@@ -785,7 +782,7 @@ pub fn parse_event(text: &str) -> Result<(bool, OwnedEvent), String> {
             }
             OwnedEvent::Configure { members }
         }
-        "gates" => OwnedEvent::EnterGates { snapshots_enabled: t.b()?, failover: t.b()? },
+        "gates" => OwnedEvent::EnterGates { unsaved_restart: t.b()?, failover: t.b()? },  // [fix, F32]
         "peers" => OwnedEvent::RebuildPeers { next_index: t.u()? },
         "propose" => OwnedEvent::Propose {
             cmd: ReplayCmd(t.u()?), has_value: t.b()?, is_tpc_commit: t.b()?,
@@ -888,7 +885,6 @@ pub fn parse_event(text: &str) -> Result<(bool, OwnedEvent), String> {
             ord: t.u()? as usize, site_id: t.u()? as u16, snap_last_idx: t.u()?,
             send_term: t.u()?, follower_term: t.u()?, stopped: t.b()?, failover: t.b()?,
         },
-        "leave_gates" => OwnedEvent::LeaveGates,  // [fix, F29]
         other => return Err(format!("unknown event {other}")),
     };
     if let Some(extra) = t.it.next() {
@@ -1152,7 +1148,7 @@ mod tests {
         let mut text = String::new();
         record(&mut core, Event::SetIdentity { loc_id: 0, site_id: 1, partition_id: 0 }, &mut text);
         record(&mut core, Event::Configure { members: &[1, 2, 3] }, &mut text);
-        record(&mut core, Event::EnterGates { snapshots_enabled: false, failover: true }, &mut text);
+        record(&mut core, Event::EnterGates { unsaved_restart: false, failover: true }, &mut text);
         let c = record(&mut core, Event::StartElection {
             timer_guarded: false, expected_generation: 0, now: 5, stopped: false,
         }, &mut text).into_campaign();

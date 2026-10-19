@@ -96,7 +96,7 @@ fn round_end_after_losing_leadership_does_not_commit() {
     core.step::<Batch>(Event::SetIdentity { loc_id: 0, site_id: A, partition_id: 0 }, &mut out())
         .into_done();
     core.step::<Batch>(Event::Configure { members: &[0, 1, 2, 3, 4] }, &mut out()).into_done();
-    assert!(core.step::<Batch>(Event::EnterGates { snapshots_enabled: false, failover: true },
+    assert!(core.step::<Batch>(Event::EnterGates { unsaved_restart: false, failover: true },
                                &mut out()).into_gates());
 
     // Entries 1..8 everywhere, committed (here: from B, leader at term 1).

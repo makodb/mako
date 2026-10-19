@@ -46,7 +46,7 @@ pub fn configured_ungated() -> RaftCore<Cmd> {
 
 pub fn configured() -> RaftCore<Cmd> {
     let mut core = configured_ungated();
-    assert!(core.step::<Batch>(Event::EnterGates { snapshots_enabled: false, failover: true },
+    assert!(core.step::<Batch>(Event::EnterGates { unsaved_restart: false, failover: true },
                                &mut CoreOutput::new()).into_gates());
     core
 }

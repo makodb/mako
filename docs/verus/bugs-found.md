@@ -73,8 +73,8 @@ protocol effect). "Latent" means nothing in production reaches it today.
 | B52 | latent | The set of snapshots refused for the frame cap grows by one entry per (term, follower, index), forever | read in code (second PR #92 review, 2026-10-13) | fixed (2026-10-13): one entry per link |
 | B53 | performance | With one AppendEntries in flight per follower, the two followers of a three-server group lock together over a long round trip since the 10-10 collect change (F11a): an entry waits up to a whole round trip, not half of one, for the next send. At a 20 ms WAN delay about half the runs at N=10-150 had p50 +16% against the C++ build | measured (memory-mode Jetpack gate and per-entry trace, 2026-10-14) | fixed (2026-10-14): F23, pipelined AppendEntries |
 | B54 | liveness | srpc's reactor dropped a timed wait's own deadline when registering it swept the deadline map: the wait was registered before its event was WAIT, and the sweep keeps only WAIT and READY entries. The leader's heartbeat loop then slept in its 5 ms between-rounds wait until something else woke it; with F23 nothing did, for 5-11 s, so a follower took over (6 of 25 G2 runs, and the WAN N=500 run) | measured (G2 gate 2026-10-15, then a stall watchdog: the loop in that wait, its poll thread asleep in epoll); confirmed by a reactor test (198 of 200 waits kept a deadline) | fixed in `a41247aea` (2026-10-15): the deadline is registered after the event is WAIT; `tests/reactor_deadline_rust.rs` |
-| B55 | proof coverage (latent) | Under the verified configuration (snapshots off) nothing refuses an incoming InstallSnapshot: from an authoritative peer that has snapshots on, a gated server steps the uncoupled `ObserveTerm` and writes `current_leader_id_`, `req_voting_` and `election_in_progress_` outside `step` (server_h.rs:2691-2718). The host contract's ObserveTerm row assumes the path never runs under the gate, but only the sender's configuration keeps it from running | read in code (step 1a coupling design review, 2026-10-19) | fixed (2026-10-19, uncommitted): F27, the core refuses an InstallSnapshot inside the gate after the checks that change nothing; F29, a gated server never has a snapshot manager. The interim premise is retired |
-| B56 | correctness (lab only) | A snapshot manager configured after `EnterGates` passed left the core gated while the shell moved its snapshot boundary and compacted its log: the invariant every step requires (`inv()`: `gated_ ⟹ snapidx_ = 0 ∧ base = 1`) was false from then on, so each later step ran outside its verified precondition. Only the lab does this (its snapshot cases configure managers at run time); production configures the store's manager in `OpenDiskStore`, before `EnterGates`, whose "snapshots off" check then keeps the gate closed | measured (2026-10-19): once F25 made creation a core event, the core refused every snapshot on the lab's gated leader (raftLabTest case 55, "Snapshot index should be > 0, got 0") | fixed (2026-10-19, uncommitted): F29, configuring a manager on a gated server steps `LeaveGates`; with `MAKO_RAFT_VERIFIED_GATES=1` it fails closed |
+| B55 | proof coverage (latent) | Under the verified configuration (snapshots off) nothing refuses an incoming InstallSnapshot: from an authoritative peer that has snapshots on, a gated server steps the uncoupled `ObserveTerm` and writes `current_leader_id_`, `req_voting_` and `election_in_progress_` outside `step` (server_h.rs:2691-2718). The host contract's ObserveTerm row assumes the path never runs under the gate, but only the sender's configuration keeps it from running | read in code (step 1a coupling design review, 2026-10-19) | fixed (2026-10-19): first by refusal (F27, the core refused an InstallSnapshot inside the gate after the checks that change nothing; F29, a gated server held no snapshot manager); since F31 and F32 the install, its reply and the snapshot paths are coupled inside the gate instead. The interim premise is retired |
+| B56 | correctness (lab only) | A snapshot manager configured after `EnterGates` passed left the core gated while the shell moved its snapshot boundary and compacted its log: the invariant every step requires (`inv()`: `gated_ ⟹ snapidx_ = 0 ∧ base = 1`) was false from then on, so each later step ran outside its verified precondition. Only the lab does this (its snapshot cases configure managers at run time); production configures the store's manager in `OpenDiskStore`, before `EnterGates`, whose "snapshots off" check then keeps the gate closed | measured (2026-10-19): once F25 made creation a core event, the core refused every snapshot on the lab's gated leader (raftLabTest case 55, "Snapshot index should be > 0, got 0") | fixed (2026-10-19): F29, configuring a manager on a gated server stepped `LeaveGates` (with `MAKO_RAFT_VERIFIED_GATES=1` it failed closed); superseded by F32: the gate admits snapshots, every boundary move is a coupled step and `inv` asks nothing of the boundary, so `LeaveGates` is gone |
 
 Found at commit `150be3e3b` (2026-10-03) unless stated.
 
@@ -1413,9 +1413,9 @@ core events: `RecvInstallSnapshot` answers a stale term and refuses a term at
 the ceiling or an impossible boundary term, none of which changes anything,
 then refuses everything else inside the gate (reply 0, the unavailable
 answer). F29 keeps a gated server from holding a snapshot manager at all
-(B56). The premise is retired. When the snapshot coupling
-(coupling-design-persistence-snapshots.md, Part B) admits snapshots into the
-gate, the install becomes a coupled step instead of a refused one.
+(B56). The premise is retired. Since F31 and F32 (2026-10-19) the snapshot
+coupling (coupling-design-persistence-snapshots.md, Part B) admits snapshots
+into the gate, and the install is a coupled step instead of a refused one.
 
 ---
 
@@ -1446,7 +1446,11 @@ inside the gate, and the lab's case 55 failed with "Snapshot index should be
 `EnterGates`, and with snapshots enabled `EnterGates` does not pass. No
 embedder export configures one later.
 
-**Fate.** Fixed (2026-10-19, uncommitted) by F29: `SetSnapshotManagerLocked`
-on a gated server steps `LeaveGates` (the core's `gated_` cleared; every
-coupled premise asks for it, so the coupling ends visibly, with a warning),
-and with `MAKO_RAFT_VERIFIED_GATES=1` it fails closed instead.
+**Fate.** Fixed (2026-10-19) by F29: `SetSnapshotManagerLocked`
+on a gated server stepped `LeaveGates` (the core's `gated_` cleared; every
+coupled premise asks for it, so the coupling ended visibly, with a warning),
+and with `MAKO_RAFT_VERIFIED_GATES=1` it failed closed instead. Superseded
+the same day by F32: every snapshot event is a coupled step (F31), `inv`
+no longer asks a gated core for a whole log, and the gate admits snapshots,
+so a manager configured on a gated server keeps it inside the verified
+configuration; `LeaveGates` is gone.

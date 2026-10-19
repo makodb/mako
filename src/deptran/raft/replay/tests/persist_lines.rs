@@ -53,7 +53,7 @@ fn restore_observe_term_and_notes_replay() {
     rec(&mut core, Event::RecvInstallSnapshot { term: 5, leader_site_id: 2, last_included_index: 0,
                                                 last_included_term: 0, applied: 0, stopped: false,
                                                 failover: true }, &mut t);
-    rec(&mut core, Event::EnterGates { snapshots_enabled: false, failover: true }, &mut t);
+    rec(&mut core, Event::EnterGates { unsaved_restart: false, failover: true }, &mut t);
     let c = rec(&mut core, Event::StartElection { timer_guarded: false, expected_generation: 0, now: 1,
                                                   stopped: false }, &mut t).into_campaign();
     rec(&mut core, Event::SettleElection { term: c.term_, loc_id: 0, voters: &[2], granted: &[true],

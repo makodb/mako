@@ -1279,7 +1279,7 @@ fn recover_fresh(store: &rusty::RaftSnapshotManagerPtr, inject: bool, commit: u6
     // SAFETY: the server is live; recovery takes its own locks. [fix, F30]
     // Then the Restore SetupInternal steps after Configure.
     let ok = unsafe { raft_initialize_snapshot_manager(svr.handle(), 0) }
-        && svr.RestoreRecoveredSnapshot();
+        && svr.RestoreRecoveredSnapshot().is_some();  // [fix, F32]
     let stopped = svr.stop_.load(rusty::sync::atomic::Ordering::Acquire);
     let applied = svr.GetAppliedIndex();
     let has_snapshot = svr.HasSnapshot();

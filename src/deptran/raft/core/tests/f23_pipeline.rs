@@ -37,7 +37,7 @@ fn leader() -> RaftCore<Cmd> {
     core.step::<NoEntries>(Event::SetIdentity { loc_id: 0, site_id: 0, partition_id: 0 }, &mut out())
         .into_done();
     core.step::<NoEntries>(Event::Configure { members: &[0, 1, 2] }, &mut out()).into_done();
-    assert!(core.step::<NoEntries>(Event::EnterGates { snapshots_enabled: false, failover: true },
+    assert!(core.step::<NoEntries>(Event::EnterGates { unsaved_restart: false, failover: true },
                                    &mut out()).into_gates());
     let c = core.step::<NoEntries>(
         Event::StartElection { timer_guarded: false, expected_generation: 0, now: 0, stopped: false },

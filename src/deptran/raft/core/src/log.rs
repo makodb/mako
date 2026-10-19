@@ -613,9 +613,9 @@ impl<C> RaftLog<C> {
     // Discard [base, index] -- snapshot compaction. Returns how many went.
     // Whole leading blocks are released; a partial block is retained and its
     // dead prefix is recorded in head_, so the index arithmetic stays exact
-    // and no surviving entry is ever copied. Outside the verified
-    // configuration (CompactLog does nothing under the gates, [fix, F5]);
-    // proved here for its layout only.
+    // and no surviving entry is ever copied. [fix, F32] Inside the verified
+    // configuration since the snapshot coupling: a snapshot's creation and
+    // install compact through it, the coupling's prefix taking what goes.
     pub fn compact_through(&mut self, index: u64) -> (r: usize)
         requires
             old(self).wf(),

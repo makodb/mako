@@ -49,13 +49,15 @@ As in the plan's §1.3, from the group's composition
    each response handle in the slot the core chose, `AppendSend::slot_`;
    since F23 a follower has a window of slots).
 3. **A static configuration shared by all servers**, containing each of them
-   (the gate, F5). Snapshots need no premise here any more: a gated core
-   refuses every snapshot event (F25, F27, F28: an InstallSnapshot is answered
-   only when its term is stale, and changes nothing), and a gated server never
-   holds a snapshot manager (F29 steps `LeaveGates` when one is configured).
-   This was an interim premise, bugs-found B55. The snapshot coupling,
-   coupling-design-persistence-snapshots.md Part B, admits snapshots into the
-   gate.
+   (the gate, F5). Snapshots are inside the gate since the snapshot
+   coupling (coupling-design-persistence-snapshots.md Part B; F31, F32):
+   creation, the leader's InstallSnapshot, the follower's contact and
+   install, the install's reply and a restart's recovered boundary are each
+   coupled (E1, E3-E7), and in-memory compaction refuses inside the gate
+   (E2), which loses nothing (its safe index is below the base). The gate
+   leaves out a memory build that restarts from a snapshot image (its term
+   and vote were never saved, item 5). B55's interim premise, and F29's
+   `LeaveGates`, are gone.
 4. **Segments are atomic and globally ordered.** Each core call runs to
    completion under `mtx_` (decision Q1; `RaftLockGuard` around every
    `step` but the three made before anything else can reach the server:
@@ -137,7 +139,7 @@ admission itself (`coupled_checked`).
 |---|---|---|
 | `SetIdentity` | the core is fresh (empty ghost log): the identity before anything else; the configuration still empty | the worker sets the identity before Setup |
 | `Configure` | the core is fresh; the membership once, sorted, duplicate-free (`admits`); no member is the sentinel site 65535 | Setup's `LoadCurrentConfig`; the config kernel lists real site ids |
-| `EnterGates`, `RebuildPeers`, `AbandonRound`, `ResetRoundState`, `ResetElectionTimer`, `Applied`, `SetFollower`, `StepDown` | none beyond `admits` | -- |
+| `EnterGates` (F32: `unsaved_restart` is `RestoreRecoveredSnapshot`'s report), `RebuildPeers`, `AbandonRound`, `ResetRoundState`, `ResetElectionTimer`, `Applied`, `SetFollower`, `StepDown` | none beyond `admits` | -- |
 | `Propose` | the core leads; the command has a value | `Start` (`shell/server_h.rs`) returns REJECTED unless `IsLeaderLocked()` under `mtx_`, and, under the same lock, refuses a command without a value before appending (F13, bugs-found B16); the no-op is `APPEND_NOOP`'s action after becoming leader |
 | `StartElection` | the gate | F5's `enter_gates` |
 | `SettleElection` | the gate; failover on; `n_total` is the configuration's size; every reply from another member; a grant is at the campaign's term | `RequestVoteImpl` (`shell/server_h.rs:3155`): `n_total` is the lane's quorum size; the replies are this campaign's quorum object's (F1: the callback's peer); a voter grants only at the request's term |
@@ -146,8 +148,10 @@ admission itself (`coupled_checked`).
 | `TickHeartbeat` | the gate; `is_leader` is the core's role (`admits`) | `heartbeat_tick_body` reads `IsLeaderLocked()` under the same lock (`shell/server_cc.rs:85`) |
 | `RecvAppendReply` | the gate; `is_leader ==> ` the core leads (F12, bugs-found B18); a success reports no more than the leader's log | the collection loop reads `IsLeaderLocked()` under the lock (`heartbeat_collect_body`), which is `looping_ && core.is_leader_`: true only while the core leads, before and after shutdown begins; `step_checked` reads a success beyond the log as no reply (F9) |
 | `RoundEnd` | the gate | F5's `enter_gates`. Nothing about the role: PHASE 3 advances the commit index only while the core leads (F12), so a round end after a step-down or during shutdown commits nothing (bugs-found B17, B18) |
-| `CreateSnapshot`, `Compact`, `RecvInstallSnapshot`, `InstallSnapshot`, `RecvSnapshotReply` | the gate: each refuses inside it, changing nothing (F25, F27, F28), so the premise holds by refusal; outside it they are uncoupled until Part B | -- (the core enforces it) |
-| `LeaveGates` | `false`: leaving the verified configuration ends the coupling (F29) | `SetSnapshotManagerLocked` steps it when a manager is configured on a gated server; production configures managers only before `EnterGates` (bugs-found B56) |
+| `CreateSnapshot`, `Compact` | the gate (F31): creation at `snapshot_point()` is a stutter that moves the entries through the index into the compacted prefix (E1); compaction refuses, changing nothing (E2) | -- (the core checks the point) |
+| `RecvInstallSnapshot` | the gate; the Snapshot is one a Mako leader sent: its prefix (the event's ghost field) is the leader's log through the boundary, of the boundary's term, no entry a configuration change (`snap_prefix_ok`, F31) | the leader's tick records each send as `LSendSnapshot` of its view through the boundary (E3); the kernel puts the image at that `(index, term)` on the wire (F26); §1 item 1 delivers it unchanged |
+| `InstallSnapshot` | the gate; the same Snapshot's prefix and sender (`snap_prefix_ok`) | `OnInstallSnapshotLocked` steps it in the same `mtx_` hold, right after E4 admitted the install and the payload kernel loaded that image |
+| `RecvSnapshotReply` | the gate; the follower answered at the term the leader sent in or above (`follower_term >= send_term`) | a follower answers an accepted contact with its term after the contact, at least the request's, and a stale request with its own, higher term; every refusal answers 0, which `raft_snapshot_reply_deliver` (`server.cc`) never steps |
 | `Restore` | before the gate; the core neither leads nor campaigns; an empty, whole log; some previous run's ghost log, its marks numbered without a gap and none Persisted and its count at least d (`prev_run_ok`), whose crash cut at d (`restore_prev`: the certificate's log, or the configuration's load when no Ready is numbered at most d) replays to the restored term, vote and commit, with no outgoing configuration (`restore_cert_ok`, `restore_prev_ok`; the last conjunct since spec v2), and whose log is the recovered snapshot's prefix through `snap_index` (none at 0), a Mako log's ending at `snap_term`, then the restored entries (`restore_view`, Part B E7) | `RestoreDiskState` steps it once, after `Configure` and snapshot recovery, before `EnterGates`, on the state recovery folded from the store; that the store's state is such a replay is §1 item 5's trusted fact. A memory build steps it only for a snapshot startup recovery loaded (`RestoreRecoveredSnapshot`, F30) |
 
 Terms and indices off the wire and in the log stay below 2^62

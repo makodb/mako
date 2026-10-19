@@ -33,7 +33,7 @@ fn configured() -> RaftCore<Cmd> {
     core.step::<NoEntries>(Event::SetIdentity { loc_id: 0, site_id: 1, partition_id: 0 }, &mut out())
         .into_done();
     core.step::<NoEntries>(Event::Configure { members: &[1, 2, 3] }, &mut out()).into_done();
-    assert!(core.step::<NoEntries>(Event::EnterGates { snapshots_enabled: false, failover: true },
+    assert!(core.step::<NoEntries>(Event::EnterGates { unsaved_restart: false, failover: true },
                                    &mut out()).into_gates());
     core
 }

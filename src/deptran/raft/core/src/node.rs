@@ -94,8 +94,9 @@ pub struct RaftCore<C> {
     // Ordinal peer table, rebuilt whenever the configuration changes.
     pub peer_sites_: Vec<u16>,
     // [fix, F5] Whether Setup found the verified configuration
-    // (enter_gates): snapshots off and a whole log, failover on, and a
-    // configuration that contains this server. Set once, never cleared.
+    // (enter_gates): [fix, F32] no restart without the saved term and vote,
+    // failover on, and a configuration that contains this server. Set
+    // once, never cleared.
     pub gated_: bool,
     // [move, M1] raft_on_append_entries' decode scratch, from
     // RaftServerBase: one term per encoded entry of the append being
@@ -175,8 +176,8 @@ impl<C> RaftCore<C> {
         &&& self.election_term_ >= 0
         &&& (self.pending_leader_term_ matches Some(t) ==> t <= self.current_term_)
         &&& (self.election_in_progress_ ==> (self.pending_leader_term_ matches Some(t) ==> t < self.current_term_))
-        // the gate (F5): inside the verified configuration the log is whole
-        // and the configuration contains this server
+        // the gate (F5): inside the verified configuration the configuration
+        // contains this server
         &&& (self.gated_ ==> self.config_members_@.contains(self.site_id_))
     }
 }
@@ -317,10 +318,12 @@ impl<C: Clone> RaftCore<C> {
     }
 
     // [fix, F5] (whole item) verified_config_ok's decision, made by the core (the plan's
-    // new_gated): snapshots off, a whole log (no snapshot boundary, base
-    // 1), failover on, and a configuration containing this server. When it
-    // holds the core remembers it, and its invariant carries the facts.
-    pub fn enter_gates(&mut self, snapshots_enabled: bool, failover: bool) -> (r: bool)
+    // new_gated): [fix, F32] not a memory build's restart from a snapshot
+    // image (host contract §1 item 5: none restarts in place), failover on,
+    // and a configuration containing this server. Snapshots and a compacted
+    // log are inside it since the snapshot coupling (Part B). When it holds
+    // the core remembers it, and its invariant carries the facts.
+    pub fn enter_gates(&mut self, unsaved_restart: bool, failover: bool) -> (r: bool)
         requires old(self).inv(),
         ensures
             final(self).inv(),
@@ -328,27 +331,12 @@ impl<C: Clone> RaftCore<C> {
             old(self).ginv() ==> final(self).ginv(),  // [M12] unseen by the spec
             final(self).g_log_ == old(self).g_log_,  // [M12]
     {
-        let whole_log: bool = self.snapidx_ == 0 && self.raft_log_.base() == 1;
         let contains_self: bool = self.is_config_member(self.site_id_);
-        let ok: bool = !snapshots_enabled && whole_log && failover && contains_self;
+        let ok: bool = !unsaved_restart && failover && contains_self;
         if ok {
             self.gated_ = true;
         }
         ok
-    }
-
-    // [fix, F29] (whole item) Leaving the verified configuration: a snapshot
-    // manager configured after EnterGates passed (bugs-found B56), which the
-    // gate's "snapshots off" no longer describes. From here no event is
-    // coupled (every coupled premise asks for the gate) and the snapshot
-    // paths run.
-    pub fn leave_gates(&mut self)
-        requires old(self).inv(),
-        ensures
-            final(self).inv(),
-            !final(self).gated_,
-    {
-        self.gated_ = false;
     }
 
     // [move, M1] What a fresh HeartbeatDriver used to start with: each run of

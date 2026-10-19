@@ -27,8 +27,9 @@ pub enum Event<'a, C, W> {
     SetIdentity { loc_id: u32, site_id: u16, partition_id: u32 },
     // LoadCurrentConfig: the partition's members, sorted and duplicate-free.
     Configure { members: &'a [u16] },
-    // verified_config_ok: the gate (F5).
-    EnterGates { snapshots_enabled: bool, failover: bool },
+    // verified_config_ok: the gate (F5). [fix, F32] unsaved_restart: a
+    // memory build restarted from a snapshot image, its term and vote lost
+    EnterGates { unsaved_restart: bool, failover: bool },  // [fix, F32]
     // RebuildPeerTables (HeartbeatPrologue).
     RebuildPeers { next_index: u64 },
 
@@ -123,8 +124,6 @@ pub enum Event<'a, C, W> {
     // E2: CompactLog's compaction (coupling-design-persistence-snapshots.md B3)
     CreateSnapshot { index: u64, term: i64 },  // [fix, F25]
     Compact { up_to: u64 },  // [fix, F25]
-    // [fix, F29] a snapshot manager configured after the gates passed
-    LeaveGates,  // [fix, F29]
     // [fix, F27] E4: an InstallSnapshot's leader contact (the wire's leader
     // id, RAFT_SERVER_INVALID_SITE_ID when it fits no site id) with the
     // shell's applied index; E5: the snapshot its payload kernel then loaded
@@ -585,8 +584,7 @@ impl<C: Clone> RaftCore<C> {
                 Event::SetIdentity { .. } | Event::Configure { .. }
                 | Event::RebuildPeers { .. } | Event::AbandonRound
                 | Event::ResetRoundState | Event::SetFollower { .. }
-                | Event::StepDown { .. }
-                | Event::LeaveGates => r is Done,  // [fix, F29]
+                | Event::StepDown { .. } => r is Done,
                 Event::EnterGates { .. } => r is Gates,
                 Event::Propose { .. } => r is Proposed,
                 Event::StartElection { .. } => r is Campaign,
@@ -645,8 +643,8 @@ impl<C: Clone> RaftCore<C> {
                 self.configure(members);
                 Reply::Done
             },
-            Event::EnterGates { snapshots_enabled, failover } => {
-                Reply::Gates(self.enter_gates(snapshots_enabled, failover))
+            Event::EnterGates { unsaved_restart, failover } => {  // [fix, F32]
+                Reply::Gates(self.enter_gates(unsaved_restart, failover))  // [fix, F32]
             },
             Event::RebuildPeers { next_index } => {
                 let ghost pre = *self;
@@ -784,10 +782,6 @@ impl<C: Clone> RaftCore<C> {
                 Reply::Created(self.create_snapshot(index, term, out))  // [fix, F25]
             },
             Event::Compact { up_to } => Reply::Compacted(self.compact(up_to)),  // [fix, F25]
-            Event::LeaveGates => {  // [fix, F29]
-                self.leave_gates();  // [fix, F29]
-                Reply::Done
-            },
             Event::RecvInstallSnapshot { term, leader_site_id, last_included_index,  // [fix, F27]
                                          last_included_term, applied, stopped, failover, .. } => {  // [fix, F27]
                 proof {

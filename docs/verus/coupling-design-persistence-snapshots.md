@@ -1,12 +1,15 @@
 # Coupling design: persistence and snapshots (step 1a)
 
-> **Status (2026-10-19).** Part B's restructuring is implemented, not yet its
-> ghost work: E1 and E2 as F25, E3 as F26, E4 and E5 as F27, E6 as F28 (which
-> deleted `ObserveTerm`), E7 as F30 (modification-plan.md A.2). Each event refuses
-> inside the gate, which closed the gate gap below (bugs-found B55) by refusal,
-> the alternative to a premise. The first lab run found B56, fixed by F29
-> (`LeaveGates`). The proof loop (Part A's ghost counter and marks, Part B's
-> coupling, spec W1) is still to do. The text below is the design as reviewed.
+> **Status (2026-10-19).** Implemented and proved. The restructuring: E1 and
+> E2 as F25, E3 as F26, E4 and E5 as F27, E6 as F28 (which deleted
+> `ObserveTerm`), E7 as F30 (modification-plan.md A.2). The proof: Part A's
+> P1, P3 and P4 (P2, the notes' exactness, stays checked rather than proved),
+> spec v4 with W1, and Part B's coupling of every snapshot event inside the
+> gate (F31), after which the gate admits snapshots (F32, which also removed
+> F29's `LeaveGates`). One departure from the text below: the gate keeps
+> refusing a memory build that restarts from a snapshot image, as F30's
+> approval decided (the open question on that, near the end). The text below
+> is the design as reviewed.
 
 Step 1a of the plan to prove Raft's persistence and snapshot paths against the
 group's spec v2 ([spec-changes.md](spec-changes.md)): which code path is which

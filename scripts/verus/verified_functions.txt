@@ -326,7 +326,6 @@ lib::node::RaftCore::election_settle
 lib::node::RaftCore::enter_gates
 lib::node::RaftCore::install_snapshot
 lib::node::RaftCore::is_config_member
-lib::node::RaftCore::leave_gates
 lib::node::RaftCore::log_term_change
 lib::node::RaftCore::message_admitted
 lib::node::RaftCore::new

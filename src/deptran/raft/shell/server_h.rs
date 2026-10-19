@@ -1066,10 +1066,6 @@ pub struct RaftServerBase {
     pub is_leader_mirror_: rusty::sync::atomic::AtomicBool,
     pub leader_hint_mirror_: rusty::sync::atomic::AtomicU64,
     pub term_mirror_: rusty::sync::atomic::AtomicU64,
-    // [fix, F5] MAKO_RAFT_VERIFIED_GATES=1, read at setup: outside the
-    // verified configuration the server fails closed, and inside it log
-    // compaction and snapshots do nothing.
-    pub verified_gates_: rusty::sync::atomic::AtomicBool,  // [fix, F19]
     // [move, M1] The snapshot configuration and the state machine's
     // snapshot-callback ownership, from RaftCore: the shell's, the core
     // never read them.
@@ -1178,7 +1174,6 @@ impl RaftServerBase {
             leader_hint_mirror_: rusty::sync::atomic::AtomicU64::new(
                 RAFT_SERVER_INVALID_SITE_ID as u64),  // [fix, F8]
             term_mirror_: rusty::sync::atomic::AtomicU64::new(0),  // [fix, F8]
-            verified_gates_: rusty::sync::atomic::AtomicBool::new(false),  // [fix, F5] [fix, F19]
             snapshot_threshold_: rusty::sync::atomic::AtomicU64::new(10000),  // [move, M1] [fix, F19]
             snapshot_callback_owner_token_: rusty::sync::atomic::AtomicU64::new(0),  // [move, M1] [fix, F19]
             next_snapshot_callback_owner_token_: rusty::sync::atomic::AtomicU64::new(1),  // [move, M1] [fix, F19]
@@ -1329,24 +1324,6 @@ impl RaftServerBase {
             unsafe { raft_snapshot_manager_is_set(self.snapshot_manager_.as_ptr()) };
         self.snapshot_manager_configured_
             .store(configured, rusty::sync::atomic::Ordering::Release);
-        // [fix, F29] A manager configured after the gates passed leaves the
-        // verified configuration, whose "snapshots off" no longer holds
-        // (bugs-found B56); with MAKO_RAFT_VERIFIED_GATES=1 that fails closed.
-        if configured && self.core().gated_ {
-            if self.verified_gates_.load(rusty::sync::atomic::Ordering::Relaxed) {
-                rusty::raft_log_error_1(
-                    "[RAFT-GATES] Site {}: a snapshot manager configured inside the verified configuration; stopping",
-                    self.site_id_);
-                self.FailStop();
-                return;
-            }
-            rusty::raft_log_warn_1(
-                "[RAFT-GATES] Site {}: a snapshot manager configured after setup; leaving the verified configuration",
-                self.site_id_);
-            let mut out: CoreOutput = core_output();
-            self.step(Event::LeaveGates, &mut out).into_done();
-            self.run_locked_actions(&out);
-        }
     }
 
     // @unsafe - takes mtx_.
@@ -1547,10 +1524,6 @@ impl RaftServerBase {
 
     // @unsafe - acquiring entry point, for callers that do not hold mtx_.
     pub fn CompactLog(&self, up_to_index: u64) -> usize {
-        // [fix, F5] Inside the verified configuration the log stays whole.
-        if self.verified_gates_.load(rusty::sync::atomic::Ordering::Relaxed) {  // [fix, F19]
-            return 0;
-        }
         let _lock = RaftLockGuard::new(self.mtx());
         self.CompactLogLocked(up_to_index)
     }
@@ -2086,10 +2059,10 @@ impl RaftServerBase {
             return false;
         }
         // [fix, F30] a snapshot recovery loaded that no store restored
-        if !self.RestoreRecoveredSnapshot() {
+        let Some(unsaved_restart) = self.RestoreRecoveredSnapshot() else {  // [fix, F32]
             self.FailClosed();
             return false;
-        }
+        };
 
         // [fix, F5] The configuration the verification covers
         // (docs/verus/modification-plan.md §4.1). Outside it a normal run
@@ -2104,8 +2077,7 @@ impl RaftServerBase {
             return false;
         }
         let gates = gates_env.unwrap();
-        self.verified_gates_.store(gates.is_some() && gates.unwrap() == 1, rusty::sync::atomic::Ordering::Relaxed);  // [fix, F19]
-        if !self.verified_config_ok() {
+        if !self.verified_config_ok(unsaved_restart) {  // [fix, F32]
             if gates.is_some() && gates.unwrap() == 1 {
                 rusty::raft_log_error_1(
                     "[RAFT-VERIFY] Site {} is outside the verified configuration; failing closed (MAKO_RAFT_VERIFIED_GATES=1)",
@@ -2114,7 +2086,7 @@ impl RaftServerBase {
                 return false;
             }
             rusty::raft_log_warn_1(
-                "[RAFT-VERIFY] Site {} is outside the verified configuration (snapshots, failover or membership)",
+                "[RAFT-VERIFY] Site {} is outside the verified configuration (a memory build's restart from a snapshot, failover or membership)",  // [fix, F32]
                 self.site_id_);
         }
 
@@ -2313,14 +2285,16 @@ impl RaftServerBase {
     // an empty log after Configure, with what InitializeSnapshotManagerLocked
     // wrote directly before F30 -- the boundary, commit clamped to it, and a
     // term raised to the boundary's (the vote cleared) when below it -- then
-    // the state machine is published as applied through it. True when there
-    // is nothing to restore or Restore took it. Takes the apply gate, then
-    // mtx_.
-    pub fn RestoreRecoveredSnapshot(&self) -> bool {
+    // the state machine is published as applied through it. None when the
+    // core refused it; [fix, F32] else whether there was one to restore: a
+    // restart in place whose term and vote were never saved, which keeps
+    // the server outside the verified configuration (verified_config_ok).
+    // Takes the apply gate, then mtx_.
+    pub fn RestoreRecoveredSnapshot(&self) -> Option<bool> {  // [fix, F32]
         let _apply_lock =
             RaftStdLockGuard::new(self.state_machine_apply_mtx_.as_ptr());
         let _lock = RaftLockGuard::new(self.mtx());
-        let Some((index, snap_term)) = self.recovered_snapshot().take() else { return true };
+        let Some((index, snap_term)) = self.recovered_snapshot().take() else { return Some(false) };  // [fix, F32]
         let (term, vote): (u64, u16) = if self.core().current_term_ < snap_term {
             rusty::raft_log_warn_3(
                 "[RAFT-SNAPSHOT] Site {} advancing recovered term {} -> {} to cover snapshot boundary",
@@ -2340,7 +2314,7 @@ impl RaftServerBase {
             rusty::raft_log_error_3(
                 "[RAFT-SNAPSHOT] Site {}: the core refused the recovered snapshot ({}, {})",
                 self.site_id_, index, snap_term);
-            return false;
+            return None;  // [fix, F32]
         }
         self.run_locked_actions(&out);
         self.publish_mirrors();
@@ -2354,7 +2328,7 @@ impl RaftServerBase {
             self.site_id_, self.core().snapidx_, self.core().snapterm_,
             self.core().commit_index_, self.core().raft_log_.last_index(),
             self.core().raft_log_.base());
-        true
+        Some(true)  // [fix, F32]
     }
 
     // @safe - the two shapes of recovered progress that no snapshot covers.
@@ -3212,10 +3186,6 @@ impl RaftServerBase {
     // @unsafe - takes the state-machine apply gate, then mtx_. That order is
     // the one every apply-side path uses.
     pub fn MaybeCreateSnapshot(&self) {
-        // [fix, F5] Inside the verified configuration there are no snapshots.
-        if self.verified_gates_.load(rusty::sync::atomic::Ordering::Relaxed) {  // [fix, F19]
-            return;
-        }
         let _apply_lock =
             RaftStdLockGuard::new(self.state_machine_apply_mtx_.as_ptr());
         let _lock = RaftLockGuard::new(self.mtx());
@@ -3789,16 +3759,17 @@ impl RaftServerBase {
         self.RequestReplication();
     }
 
-    // [fix, F5] The gates of the verified configuration: snapshots off, so
-    // the log is whole (no snapshot boundary, base 1); failover on; a static
-    // configuration that contains this server. CALLER MUST NOT HOLD mtx_.
-    pub fn verified_config_ok(&self) -> bool {
-        let snapshots_enabled: bool = unsafe { raft_env_snapshots_enabled() };
+    // [fix, F5] The gates of the verified configuration: [fix, F32] no
+    // restart from a snapshot image without the saved term and vote
+    // (RestoreRecoveredSnapshot's report); failover on; a static
+    // configuration that contains this server. Snapshots are inside it since
+    // the snapshot coupling (Part B). CALLER MUST NOT HOLD mtx_.
+    pub fn verified_config_ok(&self, unsaved_restart: bool) -> bool {  // [fix, F32]
         let _lock = RaftLockGuard::new(self.mtx());
         // [fix, F5] The decision is the core's, which remembers a pass.
         let failover: bool = self.failover_;
         let mut out: CoreOutput = core_output();
-        self.step(Event::EnterGates { snapshots_enabled, failover }, &mut out)
+        self.step(Event::EnterGates { unsaved_restart, failover }, &mut out)  // [fix, F32]
             .into_gates()
     }
 
