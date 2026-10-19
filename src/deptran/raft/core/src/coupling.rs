@@ -3005,8 +3005,11 @@ impl<C> RaftCore<C> {
             Event::Compact { .. } => self.gated_,
             // [fix, F27, fix, F28] the same for the install and its reply
             // (bugs-found B55: refused inside the gate)
-            Event::RecvInstallSnapshot { .. } => self.gated_,
-            Event::InstallSnapshot { .. } => self.gated_,
+            // [Part B] the Snapshot is one a Mako leader sent (§1 item 1)
+            Event::RecvInstallSnapshot { last_included_index, last_included_term, prefix, .. } =>
+                self.gated_ && snap_prefix_ok(prefix@, last_included_index as int, last_included_term as int),
+            Event::InstallSnapshot { index, term, prefix, .. } =>
+                self.gated_ && snap_prefix_ok(prefix@, index as int, term as int),
             // [Part B] the follower answered at the sender's term or above
             Event::RecvSnapshotReply { send_term, follower_term, .. } =>
                 self.gated_ && follower_term >= send_term,
@@ -4110,6 +4113,169 @@ pub proof fn lemma_install_seg(l: Seq<Entry>, c: LConstants, src: int, m: LRaftM
     lemma_ext_refl(l);
     assert(plain_ext(l, l1));
     assert(plain_ext(l, l2));
+}
+
+// E4 at the core (A5's E4, per outcome): the contact -- a higher term's Recv
+// and StepDown, a same-term candidate's StepAside, a follower's nothing --
+// then, for a snapshot the commit covers, the declined install answered at
+// the index. `post` is the follower the contact leaves.
+pub proof fn lemma_e4<C>(pre: &RaftCore<C>, post: &RaftCore<C>, src: int, m: LRaftMessage, raised: bool, ack: bool)
+    requires
+        pre.inv(),
+        pre.ginv(),
+        pre.gated_,
+        m is Snapshot,
+        raised ==> msg_term(m) > pre.current_term_ as int,
+        !raised ==> msg_term(m) == pre.current_term_ as int && !pre.is_leader_,
+        post.current_term_ as int == msg_term(m),
+        post.vote_for_ == (if raised { RAFT_SERVER_INVALID_SITE_ID } else { pre.vote_for_ }),
+        !post.is_leader_,
+        !post.election_in_progress_,
+        post.election_term_ == pre.election_term_,
+        post.raft_log_ == pre.raft_log_,
+        post.commit_index_ == pre.commit_index_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.snapterm_ == pre.snapterm_,
+        post.snapidx_ == pre.snapidx_,
+        post.peers_ == pre.peers_,
+        post.peer_sites_ == pre.peer_sites_,
+        post.g_match_ == pre.g_match_,
+        post.g_next_ == pre.g_next_,
+        post.g_votes_@ == (if raised || pre.role_view() is Candidate { Set::<int>::empty() } else { pre.g_votes_@ }),
+        ack ==> snap_prefix_ok(m->Snapshot_prefix, m->Snapshot_index, m->Snapshot_snap_term)
+            && m->Snapshot_index <= pre.commit_index_ as int,
+        post.g_log_@ == (if ack {
+            ack_log(pre.g_log_@, src, m, raised, !raised && pre.role_view() is Candidate, pre.my_rank())
+        } else {
+            contact_log(pre.g_log_@, src, m, raised, !raised && pre.role_view() is Candidate)
+        }),
+    ensures
+        post.ginv(),
+        plain_ext(pre.g_log_@, post.g_log_@),
+{
+    let c = pre.c_view();
+    let l0 = pre.g_log_@;
+    let s = replay(l0);
+    let t = msg_term(m);
+    let aside = !raised && pre.role_view() is Candidate;
+    lemma_my_rank(pre);
+    lemma_ext_builders(l0);
+    lemma_ext_refl(l0);
+    broadcast use lemma_ext_push;
+    let lc = contact_log(l0, src, m, raised, aside);
+    if raised {
+        lemma_g_open(l0, Entry::Recv(src, m), c);
+        let l1 = l0.push(Entry::Recv(src, m));
+        lemma_step_down_seg(l1, t, c);
+        lemma_ext_builders(l1);
+        lemma_ext_refl(l0);
+        assert(plain_ext(l0, l1));
+        lemma_ext_trans(l0, l1, lc);
+    } else if aside {
+        lemma_step_aside(l0, c);
+    }
+    assert(plain_ext(l0, lc));
+    if ack {
+        let me = pre.my_rank();
+        if raised {
+            lemma_decline_seg(lc, c, src, m, me);
+        } else {
+            lemma_g_open(lc, Entry::Recv(src, m), c);
+            lemma_decline_seg(lc.push(Entry::Recv(src, m)), c, src, m, me);
+        }
+    }
+    assert(post.c_view() == c);
+    assert(post.log_view() == pre.log_view());
+    assert(post.role_view() == LServerRole::Follower);
+    assert(post.state_view() == replay(post.g_log_@));
+}
+
+// E5 at the core: the install the payload kernel loaded. The view stays when
+// the boundary matches (the entries through the index move into the prefix)
+// and is the leader's prefix otherwise; commit and the boundary move to the
+// index.
+pub proof fn lemma_e5<C>(pre: &RaftCore<C>, post: &RaftCore<C>, src: int, m: LRaftMessage, retain: bool)
+    requires
+        pre.inv(),
+        pre.ginv(),
+        pre.gated_,
+        m is Snapshot,
+        snap_prefix_ok(m->Snapshot_prefix, m->Snapshot_index, m->Snapshot_snap_term),
+        m->Snapshot_term == pre.current_term_ as int,
+        !pre.is_leader_,
+        !pre.election_in_progress_,
+        (pre.commit_index_ as int) < m->Snapshot_index,
+        retain == (m->Snapshot_index <= pre.log_view().len()
+            && pre.log_view()[m->Snapshot_index - 1].term == m->Snapshot_snap_term),
+        post.raft_log_.wf(),
+        post.raft_log_.spec_base() == m->Snapshot_index + 1,
+        post.raft_log_.spec_prefix() == (if retain { pre.log_view().take(m->Snapshot_index) }
+            else { m->Snapshot_prefix }),
+        retain ==> post.raft_log_.spec_len() <= pre.raft_log_.spec_len()
+            && post.raft_log_.view() == pre.raft_log_.view().subrange(
+                pre.raft_log_.spec_len() - post.raft_log_.spec_len(), pre.raft_log_.spec_len() as int)
+            && post.raft_log_.spec_last_index() == pre.raft_log_.spec_last_index(),
+        !retain ==> post.raft_log_.spec_len() == 0,
+        post.snapidx_ as int == m->Snapshot_index,
+        post.snapterm_ as int == m->Snapshot_snap_term,
+        post.commit_index_ as int == m->Snapshot_index,
+        post.current_term_ == pre.current_term_,
+        post.vote_for_ == pre.vote_for_,
+        post.is_leader_ == pre.is_leader_,
+        post.election_in_progress_ == pre.election_in_progress_,
+        post.election_term_ == pre.election_term_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.peers_ == pre.peers_,
+        post.peer_sites_ == pre.peer_sites_,
+        post.g_votes_ == pre.g_votes_,
+        post.g_match_ == pre.g_match_,
+        post.g_next_ == pre.g_next_,
+        post.g_log_@ == install_log(pre.g_log_@, src, m, retain, pre.my_rank()),
+    ensures
+        post.ginv(),
+        plain_ext(pre.g_log_@, post.g_log_@),
+{
+    let c = pre.c_view();
+    let l0 = pre.g_log_@;
+    let v0 = pre.log_view();
+    let idx = m->Snapshot_index;
+    let b = pre.raft_log_.spec_base();
+    lemma_my_rank(pre);
+    lemma_view_len(pre);
+    pre.raft_log_.lemma_wf_bounds();
+    post.raft_log_.lemma_wf_bounds();
+    assert(replay(l0) == pre.state_view());
+    lemma_install_seg(l0, c, src, m, retain, pre.my_rank());
+    // every entry of the old view: no configuration change, a term
+    assert forall|k: int| 0 <= k < v0.len() implies (#[trigger] v0[k]).change is NoChange && v0[k].term >= 0 by {
+        if b == 1 || k >= b - 1 {
+            lemma_view_at(pre, k + 1);
+        } else {
+            assert(v0[k] == pre.raft_log_.spec_prefix()[k]);
+        }
+    }
+    // the view after
+    if retain {
+        assert forall|k: int| 0 <= k < v0.len() implies #[trigger] post.log_view()[k] == v0[k] by {
+            if k >= idx {
+                lemma_view_at(post, k + 1);
+                lemma_view_at(pre, k + 1);
+            } else {
+                assert(post.log_view()[k] == post.raft_log_.spec_prefix()[k]);
+            }
+        }
+        lemma_view_len(post);
+        assert(post.log_view() =~= v0);
+    } else {
+        assert(post.raft_log_.view() =~= Seq::<RaftEntry<C>>::empty());
+        assert(post.log_view() =~= m->Snapshot_prefix);
+    }
+    assert(post.c_view() == c);
+    assert(post.role_view() == LServerRole::Follower);
+    assert(post.state_view() == replay(post.g_log_@));
+    assert(post.raft_log_.spec_prefix()[idx - 1].term == m->Snapshot_snap_term);
 }
 
 } // verus!

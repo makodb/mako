@@ -140,25 +140,23 @@ fn stale_conflicting_and_refused_installs() {
 }
 
 #[test]
-fn inside_the_gates_the_install_waits_and_the_reply_is_coupled() {
-    let mut core = configured();
-    assert!(core.gated_);
-    let before = saved(&core);
-    // a stale term is still answered; the contact and the install are
-    // refused, unchanged (their coupling is the next stage of Part B)
-    assert_eq!(contact(&mut core, 0, 2, 3, 0).0, (core.current_term_, false, false));
-    assert_eq!(contact(&mut core, 4, 2, 3, 1).0, (0, false, false));
-    assert_eq!(install(&mut core, 3, 1).0, (false, false));
-    assert_eq!(saved(&core), before);
-    // the reply is coupled inside the gate (F28, Part B): a newer term deposes
-    let (credited, n) = reply(&mut core, 0, 9, 0);
-    assert!(!credited && n.unwrap().hard_);
-    assert_eq!(core.current_term_, 9);
-    // leaving the gates: the contact is taken
-    let (r, n) = step::<Batch>(&mut core, Event::LeaveGates);
-    r.into_done();
-    assert!(n.is_none() && !core.gated_);
-    assert_eq!(contact(&mut core, 10, 2, 0, 0).0, (10, true, false));
+fn inside_the_gates_snapshots_behave_as_outside() {
+    // Part B: every snapshot event is coupled inside the gate, so a gated
+    // core takes them as an ungated one does
+    let mut gated = configured();
+    let mut open = configured_ungated();
+    assert!(gated.gated_ && !open.gated_);
+    for core in [&mut gated, &mut open] {
+        // a newer leader's contact is taken; index 0 is covered
+        assert_eq!(contact(core, 4, 2, 0, 0).0, (4, true, false));
+        // a stale term is answered with the core's own
+        assert_eq!(contact(core, 3, 2, 3, 0).0, (4, false, false));
+        // a newer term in a reply deposes
+        let (credited, n) = reply(core, 4, 9, 0);
+        assert!(!credited && n.unwrap().hard_);
+        assert_eq!(core.current_term_, 9);
+    }
+    assert_eq!(saved(&gated), saved(&open));
 }
 
 #[test]

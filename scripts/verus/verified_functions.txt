@@ -85,6 +85,8 @@ lib::coupling::lemma_create_ginv
 lib::coupling::lemma_cut_number
 lib::coupling::lemma_cut_pos
 lib::coupling::lemma_decline_seg
+lib::coupling::lemma_e4
+lib::coupling::lemma_e5
 lib::coupling::lemma_ext_ae_log
 lib::coupling::lemma_ext_all
 lib::coupling::lemma_ext_builders

@@ -130,8 +130,16 @@ pub enum Event<'a, C, W> {
     // shell's applied index; E5: the snapshot its payload kernel then loaded
     RecvInstallSnapshot { term: u64, leader_site_id: u16, last_included_index: u64,  // [fix, F27]
                           last_included_term: u64, applied: u64, stopped: bool,  // [fix, F27]
-                          failover: bool },  // [fix, F27]
-    InstallSnapshot { index: u64, term: u64 },  // [fix, F27]
+                          failover: bool,  // [fix, F27]
+                          // [Part B] the prefix the Snapshot carries (ghost)
+                          #[cfg(verus_keep_ghost)]
+                          prefix: Ghost<Seq<glr::protocol::Raft::types::LLogEntry>> },
+    InstallSnapshot { index: u64, term: u64,  // [fix, F27]
+                      // [Part B] the Snapshot it installs: sender and prefix (ghost)
+                      #[cfg(verus_keep_ghost)]
+                      src: Ghost<int>,
+                      #[cfg(verus_keep_ghost)]
+                      prefix: Ghost<Seq<glr::protocol::Raft::types::LLogEntry>> },
     // [fix, F28] E6: an InstallSnapshot's reply, as its send recorded it
     RecvSnapshotReply { ord: usize, site_id: u16, snap_last_idx: u64, send_term: u64,  // [fix, F28]
                         follower_term: u64, stopped: bool, failover: bool },  // [fix, F28]
@@ -540,6 +548,7 @@ impl<C: Clone> RaftCore<C> {
         // [M12] persistence: the step's first state, and its builders' growth
         let ghost s0 = *self;
         let ghost pre_ok = s0.ginv() && s0.coupled(&ev) && s0.persist_ok() && !(ev is Restore);
+        let ghost evg = ev;  // [Part B] the event's ghost fields, past the match
         // [fix, F21] the saved fields before the arm, for the persist note
         let term0: u64 = self.current_term_;  // [fix, F21]
         let vote0: u16 = self.vote_for_;  // [fix, F21]
@@ -737,13 +746,22 @@ impl<C: Clone> RaftCore<C> {
                 Reply::Done
             },
             Event::RecvInstallSnapshot { term, leader_site_id, last_included_index,  // [fix, F27]
-                                         last_included_term, applied, stopped, failover } => {  // [fix, F27]
+                                         last_included_term, applied, stopped, failover, .. } => {  // [fix, F27]
+                proof {
+                    // [Part B] the inbox: the sender's rank, the prefix it sent
+                    self.g_inbox_@ = (crate::coupling::rank(self.config_members_@, leader_site_id),
+                                      evg->RecvInstallSnapshot_prefix@);
+                }
                 let (reply_term, contact, install) = self.recv_install_snapshot(  // [fix, F27]
                     term, leader_site_id, last_included_index, last_included_term, applied,
                     stopped, failover, out);
                 Reply::InstallContact { reply_term, contact, install }  // [fix, F27]
             },
-            Event::InstallSnapshot { index, term } => {  // [fix, F27]
+            Event::InstallSnapshot { index, term, .. } => {  // [fix, F27]
+                proof {
+                    // [Part B] the inbox: the Snapshot this installs
+                    self.g_inbox_@ = (evg->InstallSnapshot_src@, evg->InstallSnapshot_prefix@);
+                }
                 let (taken, retain) = self.install_snapshot(index, term, out);  // [fix, F27]
                 Reply::Installed { taken, retain }  // [fix, F27]
             },

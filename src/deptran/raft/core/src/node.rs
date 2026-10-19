@@ -118,6 +118,10 @@ pub struct RaftCore<C> {
     // the number the next Ready mark carries
     #[cfg(verus_keep_ghost)]
     pub g_seq_: Ghost<int>,
+    // [Part B] the InstallSnapshot step is handling: its sender and the
+    // prefix it carries (ghost: the leader's view through the boundary)
+    #[cfg(verus_keep_ghost)]
+    pub g_inbox_: Ghost<(int, Seq<glr::protocol::Raft::types::LLogEntry>)>,
 }
 
 impl<C> RaftCore<C> {
@@ -227,6 +231,8 @@ impl<C: Clone> RaftCore<C> {
             g_next_: Ghost(Map::empty()),  // [M12]
             #[cfg(verus_keep_ghost)]
             g_seq_: Ghost(0),  // [M12]
+            #[cfg(verus_keep_ghost)]
+            g_inbox_: Ghost((0, Seq::empty())),  // [Part B]
         }
     }
 
@@ -582,6 +588,7 @@ impl<C: Clone> RaftCore<C> {
             final(self).g_log_ == old(self).g_log_,
             final(self).g_match_ == old(self).g_match_,
             final(self).g_next_ == old(self).g_next_,
+            final(self).election_term_ == old(self).election_term_,
     {
         if term <= self.current_term_ {
             return;
@@ -846,8 +853,26 @@ impl<C: Clone> RaftCore<C> {
         requires old(self).inv(),
         ensures
             final(self).inv(),
-            old(self).gated_ ==> *final(self) == *old(self),
+            // [Part B] the contact and its outcome, coupled inside the gate
+            old(self).ginv() && old(self).gated_ && crate::coupling::snap_prefix_ok(old(self).g_inbox_@.1,
+                last_included_index as int, last_included_term as int) ==> final(self).ginv(),
+            old(self).ginv() && old(self).gated_ && crate::coupling::snap_prefix_ok(old(self).g_inbox_@.1,
+                last_included_index as int, last_included_term as int)
+                ==> crate::coupling::plain_ext(old(self).g_log_@, final(self).g_log_@),
+            // what InstallSnapshot finds: a follower at the sender's term, the
+            // index past commit
+            r.2 ==> !final(self).is_leader_ && !final(self).election_in_progress_
+                && final(self).current_term_ == term && final(self).commit_index_ < last_included_index,
     {
+        let ghost pre = *self;  // [Part B]
+        let ghost src: int = pre.g_inbox_@.0;  // [Part B]
+        let ghost m = glr::protocol::Raft::types::LRaftMessage::Snapshot {  // [Part B]
+            term: term as int, index: last_included_index as int,
+            snap_term: last_included_term as int, prefix: pre.g_inbox_@.1,
+        };
+        let ghost on = pre.ginv() && pre.gated_ && crate::coupling::snap_prefix_ok(pre.g_inbox_@.1,
+            last_included_index as int, last_included_term as int);  // [Part B]
+        proof { crate::coupling::lemma_ext_refl(pre.g_log_@); }  // [Part B]
         // Edge case 1: a stale term is rejected.
         if term < self.current_term_ {
             out.log(RAFT_LOG_INFO,
@@ -856,6 +881,14 @@ impl<C: Clone> RaftCore<C> {
                  (leader_site_id).arg(),
                  (term).arg(),
                  (self.current_term_).arg()]);
+            proof {
+                // [Part B] the stale answer: the follower's term, shared
+                if on {
+                    self.g_log_@ = crate::coupling::stale_log(pre.g_log_@, src, pre.current_term_ as int);
+                    crate::coupling::lemma_stale_log(pre.g_log_@, pre.c_view(), src);
+                    crate::coupling::lemma_same_fields_ginv(&pre, self);
+                }
+            }
             return (self.current_term_, false, false);
         }
         // A term at the index ceiling could never be left (bugs-found B42).
@@ -876,9 +909,6 @@ impl<C: Clone> RaftCore<C> {
                  (last_included_term).arg(),
                  (leader_site_id).arg(),
                  (term).arg()]);
-            return (0, false, false);
-        }
-        if self.gated_ {
             return (0, false, false);
         }
         let sender_is_current_voter: bool = leader_site_id != RAFT_SERVER_INVALID_SITE_ID
@@ -929,18 +959,16 @@ impl<C: Clone> RaftCore<C> {
         let reply_term: u64 = self.current_term_;
 
         // A current-term leader may retry a snapshot after this follower has
-        // already committed, applied or snapshotted through its boundary:
-        // acknowledged, rolling nothing back.
-        let mut local_progress_index: u64 = self.commit_index_;
-        if self.execute_index_ > local_progress_index {
-            local_progress_index = self.execute_index_;
-        }
+        // already committed through its boundary: acknowledged, rolling
+        // nothing back. [Part B] Covered means at or below commit (the
+        // spec's ack, W1); a boundary past commit but at or below what the
+        // state machine holds cannot occur (both stay at or below commit)
+        // and is refused, not acknowledged.
+        let mut local_progress_index: u64 = self.execute_index_;
         if applied > local_progress_index {
             local_progress_index = applied;
         }
-        if self.snapidx_ > local_progress_index {
-            local_progress_index = self.snapidx_;
-        }
+        let mut result: (u64, bool, bool) = (reply_term, true, true);
         if last_included_index == self.snapidx_ && self.snapidx_ != 0
             && last_included_term != self.snapterm_ as u64
         {
@@ -951,9 +979,8 @@ impl<C: Clone> RaftCore<C> {
                  (last_included_term).arg(),
                  (self.snapidx_).arg(),
                  (self.snapterm_).arg()]);
-            return (0, true, false);
-        }
-        if raft_server_snapshot_is_stale(last_included_index, local_progress_index) {
+            result = (0, true, false);
+        } else if last_included_index <= self.commit_index_ {
             out.log(RAFT_LOG_INFO,
                 "[INSTALL-SNAPSHOT] Site {}: Snapshot index {} is already covered (commit={} execute={} applied={} snapidx={}); acknowledging no-op",
                 &[(self.site_id_).arg(),
@@ -962,17 +989,41 @@ impl<C: Clone> RaftCore<C> {
                  (self.execute_index_).arg(),
                  (applied).arg(),
                  (self.snapidx_).arg()]);
-            return (reply_term, true, false);
-        }
-        if !raft_server_log_index_has_successor(last_included_index) {
+            result = (reply_term, true, false);
+        } else if last_included_index <= local_progress_index {
+            out.log(RAFT_LOG_ERROR,
+                "[INSTALL-SNAPSHOT] Site {}: Snapshot index {} is past commit {} but within the applied state (execute={} applied={}); refusing",
+                &[(self.site_id_).arg(),
+                 (last_included_index).arg(),
+                 (self.commit_index_).arg(),
+                 (self.execute_index_).arg(),
+                 (applied).arg()]);
+            result = (0, true, false);
+        } else if !raft_server_log_index_has_successor(last_included_index) {
             // The log's base requires S + 1: reject rather than wrap.
             out.log(RAFT_LOG_ERROR,
                 "[INSTALL-SNAPSHOT] Site {}: Cannot install terminal snapshot index {}; no successor index is representable",
                 &[(self.site_id_).arg(),
                  (last_included_index).arg()]);
-            return (0, true, false);
+            result = (0, true, false);
         }
-        (reply_term, true, true)
+        proof {
+            // [Part B] the contact (StepDown, StepAside or nothing), then the
+            // declined install when the commit covers the boundary
+            if on {
+                let raised = leader_has_higher_term;
+                let aside = !raised && pre.role_view() is Candidate;
+                let ack = result.1 && !result.2 && result.0 != 0;
+                if ack {
+                    self.g_log_@ = crate::coupling::ack_log(pre.g_log_@, src, m, raised, aside, pre.my_rank());
+                } else {
+                    self.g_log_@ = crate::coupling::contact_log(pre.g_log_@, src, m, raised, aside);
+                }
+                self.g_votes_@ = if raised || aside { Set::<int>::empty() } else { pre.g_votes_@ };
+                crate::coupling::lemma_e4(&pre, self, src, m, raised, ack);
+            }
+        }
+        result
     }
 
     // [fix, F27] (whole item) InstallSnapshot (E5): the snapshot the shell's
@@ -991,16 +1042,37 @@ impl<C: Clone> RaftCore<C> {
         ensures
             final(self).inv(),
             !r.0 ==> *final(self) == *old(self),
-            old(self).gated_ ==> !r.0,
+            // [Part B] coupled inside the gate: the install in its own Recv group
+            old(self).ginv() && old(self).gated_
+                && crate::coupling::snap_prefix_ok(old(self).g_inbox_@.1, index as int, term as int)
+                ==> final(self).ginv(),
+            old(self).ginv() && old(self).gated_
+                && crate::coupling::snap_prefix_ok(old(self).g_inbox_@.1, index as int, term as int)
+                ==> crate::coupling::plain_ext(old(self).g_log_@, final(self).g_log_@),
     {
-        if self.gated_ || self.is_leader_ || index <= self.commit_index_
+        let ghost pre = *self;  // [Part B]
+        let ghost v0 = self.log_view();  // [Part B]
+        let ghost src: int = pre.g_inbox_@.0;  // [Part B]
+        let ghost m = glr::protocol::Raft::types::LRaftMessage::Snapshot {  // [Part B]
+            term: pre.current_term_ as int, index: index as int, snap_term: term as int,
+            prefix: pre.g_inbox_@.1,
+        };
+        let ghost on = pre.ginv() && pre.gated_
+            && crate::coupling::snap_prefix_ok(pre.g_inbox_@.1, index as int, term as int);  // [Part B]
+        proof { crate::coupling::lemma_ext_refl(pre.g_log_@); }  // [Part B]
+        // [Part B] a campaign open here is a contact E4 did not make
+        if self.is_leader_ || self.election_in_progress_ || index <= self.commit_index_
             || index >= RAFT_INDEX_LIMIT || term > self.current_term_
         {
             return (false, false);
         }
+        proof { self.raft_log_.lemma_wf_bounds(); }  // [Part B]
         let mut has_boundary: bool = false;
         let mut local_boundary_term: u64 = 0;
         if let Some(e) = self.raft_log_.get(index) {
+            proof {
+                if on { crate::coupling::lemma_view_at(self, index as int); }  // [Part B]
+            }
             if e.has_value() {  // [move, M6]
                 has_boundary = true;
                 local_boundary_term = e.term() as u64;
@@ -1008,6 +1080,13 @@ impl<C: Clone> RaftCore<C> {
         }
         let retain: bool =
             raft_server_snapshot_boundary_matches(has_boundary, local_boundary_term, term);
+        proof {
+            // [Part B] the boundary the spec reads: the view's entry at the index
+            if on {
+                crate::coupling::lemma_view_len(self);
+                assert(retain == (index as int <= v0.len() && v0[index - 1].term == term as int));
+            }
+        }
         let len: u64 = self.raft_log_.len() as u64;
         if retain && len >= RAFT_INDEX_LIMIT - index - 1 {
             return (false, false);
@@ -1019,7 +1098,15 @@ impl<C: Clone> RaftCore<C> {
         } else {
             self.raft_log_.reset(index + 1);
         }
+        #[cfg(verus_keep_ghost)]
+        self.raft_log_.set_prefix(Ghost(if retain { v0.take(index as int) } else { pre.g_inbox_@.1 }));  // [M12] Part B
         self.commit_index_ = index;
+        proof {
+            if on {  // [Part B]
+                self.g_log_@ = crate::coupling::install_log(pre.g_log_@, src, m, retain, pre.my_rank());
+                crate::coupling::lemma_e5(&pre, self, src, m, retain);
+            }
+        }
         out.note_snapshot(index, term as i64, retain);
         (true, retain)
     }
