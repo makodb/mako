@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
-use raft::server_h::RaftServerBase;
+use raft::server_h::{RaftServerBase, RAFT_INDEX_LIMIT};
 use raft::server_pods_h::RaftVoteOutcome;
 use srpc::misc::{Job, OneTimeJob};
 use srpc::client::Client;
@@ -35,7 +35,7 @@ use srpc::server::Server;
 use crate::rpc::{
     AppendEntriesRequest, AppendEntriesResponse, EmptyAppendEntriesRequest,
     EmptyAppendEntriesResponse, InstallSnapshotRequest, InstallSnapshotRequestBytesRef, InstallSnapshotResponse,
-    RaftProxy, VoteRequest, VoteResponse,
+    RaftProxy, VoteRequest, VoteResponse, WireFits,
 };
 use crate::service::RaftRpcService;
 
@@ -77,18 +77,56 @@ pub type AppendReply = Pending<AppendEntriesResponse>;
 /// # Safety
 /// `ptr`/`len` describe the reply buffer srpc handed the callback, valid for
 /// the duration of that call.
-unsafe fn decode_reply<T: Deserialize + Default>(ptr: *const u8, len: usize)
+unsafe fn decode_reply<T: Deserialize + Default + WireFits + ReplyTerm>(ptr: *const u8, len: usize)
     -> Option<T> {
-    let mut source = BufferSource::new(ptr, len);
+    // Measured first: a short body would abort the decode (bugs-found B41).
+    let bytes: &[u8] = if len == 0 {
+        &[]
+    } else {
+        // SAFETY: the caller's contract: ptr/len are the live reply buffer.
+        unsafe { core::slice::from_raw_parts(ptr, len) }
+    };
+    if !T::wire_fits(bytes) {
+        return None;
+    }
+    let mut source = BufferSource::new(bytes.as_ptr(), bytes.len());
     let mut ar = BinaryReadArchive::new(unsafe {
         make_source_proxy_buffer(&raw mut source)
     });
     let mut out = T::default();
     out.deserialize(&mut ar);
-    if ar.failed() {
-        return None;
+    // A term at the index ceiling is outside the core's premises and could
+    // never be left once adopted: no usable reply (bugs-found B42).
+    out.term_below_ceiling().then_some(out)
+}
+
+/// A reply's term, checked against the core's ceiling (`RAFT_INDEX_LIMIT`).
+trait ReplyTerm {
+    fn term_below_ceiling(&self) -> bool;
+}
+
+impl ReplyTerm for VoteResponse {
+    fn term_below_ceiling(&self) -> bool {
+        self.max_ballot < RAFT_INDEX_LIMIT as i64
     }
-    Some(out)
+}
+
+impl ReplyTerm for AppendEntriesResponse {
+    fn term_below_ceiling(&self) -> bool {
+        self.follower_current_term < RAFT_INDEX_LIMIT
+    }
+}
+
+impl ReplyTerm for EmptyAppendEntriesResponse {
+    fn term_below_ceiling(&self) -> bool {
+        self.follower_current_term < RAFT_INDEX_LIMIT
+    }
+}
+
+impl ReplyTerm for InstallSnapshotResponse {
+    fn term_below_ceiling(&self) -> bool {
+        self.term_out < RAFT_INDEX_LIMIT
+    }
 }
 
 /// How long add_peer keeps trying, and how often: Communicator's

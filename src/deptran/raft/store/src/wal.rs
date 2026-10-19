@@ -188,6 +188,9 @@ pub fn recover(fs: &dyn StoreFs, dir: &Path, id: &Identity, c: u64) -> Result<Re
     let mut segs: Vec<(u64, String)> = Vec::new();
     for name in fs.list(dir).map_err(ctx)? {
         match segment::parse_name(&name) {
+            // Records are numbered from 1, so no writer names a segment 0;
+            // accepted, an empty one would make `d` wrap below.
+            Some(0) => return Err(format!("{}: segment {name:?} starts at record 0", dir.display())),
             Some(first) => segs.push((first, name)),
             None => return Err(format!("{}: unexpected file {name:?} in the WAL directory", dir.display())),
         }
@@ -227,11 +230,14 @@ pub fn recover(fs: &dyn StoreFs, dir: &Path, id: &Identity, c: u64) -> Result<Re
     }
     // Segments wholly at or below c are the base's; the first kept one must
     // start at or below c + 1.
-    while loaded.len() > 1 && loaded[1].0 <= c + 1 {
+    let Some(next) = c.checked_add(1) else {
+        return Err(format!("{}: the base claims record {c}", dir.display()));
+    };
+    while loaded.len() > 1 && loaded[1].0 <= next {
         loaded.remove(0);
     }
-    if loaded[0].0 > c + 1 {
-        return Err(format!("{}: WAL starts at record {}, after {} (a gap)", dir.display(), loaded[0].0, c + 1));
+    if loaded[0].0 > next {
+        return Err(format!("{}: WAL starts at record {}, after {next} (a gap)", dir.display(), loaded[0].0));
     }
 
     let last = loaded.len() - 1;
@@ -286,7 +292,8 @@ pub fn recover(fs: &dyn StoreFs, dir: &Path, id: &Identity, c: u64) -> Result<Re
 /// segment that holds some of them once (the applier's catch-up, design §3).
 /// Changes nothing on disk. The open segment may end in a batch still being
 /// written; records past `to` are never read, and `to` must be durable.
-/// Fails if any record of the range is missing, out of order or repeated.
+/// Fails if any record of the range is missing or out of order; a record
+/// numbered below the one expected (already passed to `f`) is skipped.
 pub fn for_each_record<F>(fs: &dyn StoreFs, dir: &Path, id: &Identity, from: u64, to: u64, mut f: F)
     -> Result<(), String>
 where

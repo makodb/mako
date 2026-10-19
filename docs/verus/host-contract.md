@@ -124,17 +124,25 @@ admission itself (`coupled_checked`).
 
 Terms and indices off the wire and in the log stay below 2^62
 (`raft_index_limit`, the Phase 6 contract): a log that long would hold
-4.6e18 entries.
+4.6e18 entries. For terms off the wire the shell enforces it (bugs-found
+B42): a RequestVote or AppendEntries whose term reaches the ceiling is
+dropped before `step_checked`, an InstallSnapshot is refused, and a reply
+carrying one is decoded as no reply (`rt/src/transport.rs`, `decode_reply`),
+so `SettleElection`, `RecvAppendReply` and `ObserveTerm` never see one; entry
+terms are bounded by their AppendEntries' own (F14).
 
 ## 4. The inbound payload (`InboundBatch`, the shell's `WireBatch`)
 
 The trait's contract (`core/src/node.rs`), trusted because the shell
-implements it (`shell/server_h.rs:3307`):
+implements it (`shell/server_h.rs`, `impl InboundBatch for WireBatch`):
 
 - `spec_entries()` is the payload's entries as the leader encoded them;
   `has_cmd` is the flag the batch was built from; no payload is no entries.
 - `decode_terms`: an accepted decode reads exactly the entries' terms, each
-  at least 1 (F4), and ends below the index ceiling; every entry has a value.
+  at least 1 (F4), and ends below the index ceiling; every entry has a value
+  (by construction: a payload without a value decodes to no entries, and
+  each batch element is a fresh `Arc` the decoder built,
+  `TpcBatchCommand::load`).
   The shell also refuses a term above the append's own (F14, bugs-found
   B4); the proof does not need that.
 - `entry_at(k)` is entry k.

@@ -594,7 +594,7 @@ reads the first six and refuses a malformed value):
 | `MAKO_RAFT_DATA_DIR` | the directory holding the stores; must be on a local filesystem | `/var/tmp/raft-wal-${USER}` |
 | `MAKO_RAFT_FLUSH_DELAY_US` | a sleep after each `fdatasync`, to model a slower device | 0 |
 | `MAKO_RAFT_SEGMENT_BYTES` | the WAL segment size, at least 4096 | 64 MiB |
-| `MAKO_RAFT_CHECKPOINT_BYTES`, `_SECS` | the applier's checkpoint thresholds; the bytes must exceed the segment size (Decision 13) | 256 MiB, 10 |
+| `MAKO_RAFT_CHECKPOINT_BYTES`, `_SECS` | the applier's checkpoint thresholds; the bytes must exceed the segment size (Decision 13), and the seconds be at least 1 | 256 MiB, 10 |
 | `MAKO_RAFT_CREATE` | `1`: this launch creates the cluster, so a missing store is made (Decision 10) | unset |
 | `MAKO_RAFT_DISK_VERIFY` | `1`: at a clean stop, replay the WAL and compare it with the core (`[DISK-VERIFY]`) | unset |
 | `MAKO_RAFT_DISK_STATS` | `1`: the store's counters for flushes, held replies and wakes (`store/src/stats.rs`) | unset |

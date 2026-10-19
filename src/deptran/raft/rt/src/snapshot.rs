@@ -15,7 +15,7 @@
 //! (plan N2).
 
 use core::ffi::c_void;
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -400,13 +400,18 @@ pub fn install_fits_one_frame(len: usize) -> bool {
     len + INSTALL_FRAME_OVERHEAD <= kMaxFramePayloadSize as usize
 }
 
-/// The (term, follower, index) triples already refused for the frame cap, so
-/// the refusal is logged once and not every heartbeat round.
-static REFUSED: Mutex<Option<HashSet<(u64, u16, u64)>>> = Mutex::new(None);
+/// The last (term, index) refused for the frame cap, per (partition,
+/// sender, follower), so a refusal is logged once and not every heartbeat
+/// round. One entry per link: a set of every triple ever refused grew
+/// without bound (bugs-found B52).
+type Link = (u32, u16, u16);
+static REFUSED: Mutex<Option<HashMap<Link, (u64, u64)>>> = Mutex::new(None);
 
-fn refuse_once(term: u64, site_id: u16, index: u64, len: usize) {
+fn refuse_once(partition_id: u32, self_site_id: u16, term: u64, site_id: u16, index: u64, len: usize) {
     let mut refused = REFUSED.lock().unwrap_or_else(|e| e.into_inner());
-    if refused.get_or_insert_with(HashSet::new).insert((term, site_id, index)) {
+    let last = refused.get_or_insert_with(HashMap::new)
+        .insert((partition_id, self_site_id, site_id), (term, index));
+    if last != Some((term, index)) {
         eprintln!("raft-rt: snapshot at index {index} is {len} bytes; one InstallSnapshot \
                    frame is capped at {} bytes, so it cannot be sent to site {site_id}",
                   kMaxFramePayloadSize);
@@ -426,7 +431,7 @@ pub unsafe extern "C" fn raft_phase1_load_and_send_snapshot(
         return false;
     };
     if !install_fits_one_frame(image.bytes.len()) {
-        refuse_once(send_term, site_id, image.index, image.bytes.len());
+        refuse_once(partition_id, self_site_id, send_term, site_id, image.index, image.bytes.len());
         return false;
     }
     let ctx = ReplyCtx(unsafe {

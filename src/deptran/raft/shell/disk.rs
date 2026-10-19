@@ -132,11 +132,17 @@ impl DiskParams {
             // open one alone would keep the threshold crossed (Decision 13).
             return Err(format!("MAKO_RAFT_CHECKPOINT_BYTES={checkpoint_bytes} must exceed the segment size {segment_bytes}"));
         }
+        let checkpoint_secs = env_u64("MAKO_RAFT_CHECKPOINT_SECS", 10)?;
+        if checkpoint_secs == 0 {
+            // A zero interval is always elapsed: a checkpoint (base flush,
+            // segment unlinks, a directory sync) after every fold (bugs-found B46).
+            return Err("MAKO_RAFT_CHECKPOINT_SECS=0: the interval must be at least 1".into());
+        }
         Ok(DiskParams {
             data_dir,
             delay: Duration::from_micros(env_u64("MAKO_RAFT_FLUSH_DELAY_US", 0)?),
             checkpoint_bytes,
-            checkpoint_secs: env_u64("MAKO_RAFT_CHECKPOINT_SECS", 10)?,
+            checkpoint_secs,
             segment_bytes,
             create: env_flag("MAKO_RAFT_CREATE")?,
             verify: env_flag("MAKO_RAFT_DISK_VERIFY")?,
@@ -327,7 +333,7 @@ impl DiskShell {
         let reveals = open_reveals(site)?;
         let real = RealFs::new();
         let fs: Arc<dyn StoreFs> = Arc::new(real.clone());
-        crash::set_powercut_fs(fs.clone());
+        crash::register_powercut_fs(&fs);
         let id = identity(site, partition, members);
         let store = store_path(&params.data_dir, u32::from(site), partition);
         let opts = WalOptions { segment_bytes: params.segment_bytes };

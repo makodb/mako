@@ -1,6 +1,7 @@
 //! Snapshot image files (design §3): written whole before they are named, a
 //! damaged or mismatched one refused, a crash before the directory sync
-//! leaves no image, cleanup keeps the named one and newer.
+//! leaves no image; a checkpoint keeps the named image and newer, recovery
+//! only the named one.
 
 use std::path::Path;
 
@@ -25,12 +26,20 @@ fn write_read_damage_cleanup() {
     assert!(images::read(&fs, dir, &name).is_err());
     images::write(&fs, dir, 20, 3, b"state at 20").unwrap();
     assert!(images::read(&fs, dir, "21-3.img").is_err());
-    // Cleanup: below 20 goes, 20 stays; a .tmp only when asked.
+    // A checkpoint's cleanup: below 20 goes; 20, a newer image and a .tmp
+    // (both possibly still on their way) stay.
     drop(fs.create_new(&dir.join("30-3.img.tmp")).unwrap());
-    assert_eq!(images::cleanup(&fs, dir, 20, false).unwrap(), 1);
-    assert!(fs.exists(&dir.join("20-3.img")) && fs.exists(&dir.join("30-3.img.tmp")));
-    assert_eq!(images::cleanup(&fs, dir, 20, true).unwrap(), 1);
+    images::write(&fs, dir, 25, 3, b"state at 25").unwrap();
+    assert_eq!(images::cleanup(&fs, dir, 20).unwrap(), 1);
+    assert!(fs.exists(&dir.join("20-3.img")) && fs.exists(&dir.join("25-3.img")));
+    assert!(fs.exists(&dir.join("30-3.img.tmp")));
+    // Recovery's: everything but the image the state names, the newer
+    // orphan included (bugs-found B50).
+    assert_eq!(images::cleanup_unnamed(&fs, dir, Some("20-3.img")).unwrap(), 2);
+    assert!(fs.exists(&dir.join("20-3.img")) && !fs.exists(&dir.join("25-3.img")));
     assert!(!fs.exists(&dir.join("30-3.img.tmp")));
+    assert_eq!(images::cleanup_unnamed(&fs, dir, None).unwrap(), 1);
+    assert!(!fs.exists(&dir.join("20-3.img")));
 }
 
 #[test]

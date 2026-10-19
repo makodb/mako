@@ -54,7 +54,8 @@ impl<P> Record<P> {
             }
         }
         if let Some(i) = self.replace_from {
-            last = i + self.entries.len() as u64 - 1;
+            assert!(i >= 1, "record: replace from index 0");
+            last = i - 1 + self.entries.len() as u64;
         }
         last
     }
@@ -115,19 +116,25 @@ pub fn encode<P>(rec: &Record<P>, codec: &dyn Codec<P>, out: &mut Vec<u8>) {
         }
         out.push(sf);
         if let Some(name) = &s.image {
-            put_u16(out, name.len() as u16);
+            // Refused here, not truncated: a cut length prefix ahead of
+            // the whole name is a record its decoder rejects (bugs-found B48).
+            let n = u16::try_from(name.len()).expect("record: image name longer than 65535 bytes");
+            put_u16(out, n);
             out.extend_from_slice(name.as_bytes());
         }
     }
     if let Some(i) = rec.replace_from {
+        // The decoder refuses both; refuse them before they reach the WAL
+        // (bugs-found B47).
+        assert!(i >= 1, "record: replace from index 0");
         put_u64(out, i);
-        put_u32(out, rec.entries.len() as u32);
+        put_u32(out, u32::try_from(rec.entries.len()).expect("record: more than 2^32 entries"));
         for (term, p) in &rec.entries {
             put_u64(out, *term);
             let at = out.len();
             put_u32(out, 0);
             codec.encode(p, out);
-            let len = (out.len() - at - 4) as u32;
+            let len = u32::try_from(out.len() - at - 4).expect("record: an entry longer than 4 GiB");
             out[at..at + 4].copy_from_slice(&len.to_le_bytes());
         }
     }

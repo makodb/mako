@@ -2623,6 +2623,16 @@ impl RaftServerBase {
             return;
         }
 
+        // A term at the index ceiling is outside ObserveTerm's premise and
+        // could never be left (bugs-found B42): refused like a malformed
+        // boundary, with the unavailable sentinel.
+        if term >= RAFT_INDEX_LIMIT {
+            rusty::raft_log_error_3(
+                "[INSTALL-SNAPSHOT] Site {}: Rejecting term {} from leader {} at or above the term ceiling",
+                self.site_id_, term, leader_id);
+            return;
+        }
+
         // A leader cannot have committed an entry from a term that has not
         // happened yet. That is a malformed boundary, not usable leader
         // evidence: reject it with the unavailable sentinel BEFORE
@@ -4692,12 +4702,19 @@ fn on_request_vote_locked(
 
     let election_debug: bool = unsafe { raft_election_debug_enabled() };
     let failover: bool = server.failover_;
-    let decided: Option<Reply> = server.step_checked(
-        Event::RecvRequestVote {
-            stopped, candidate_is_current_voter, lst_log_idx, lst_log_term,
-            can_id, can_term, failover, election_debug,
-        },
-        out);  // [move, M5] [fix, F9]
+    // A term at the index ceiling is outside the core's premise (`admits`)
+    // and, once adopted, could never be left: dropped like an inadmissible
+    // message (bugs-found B42).
+    let decided: Option<Reply> = if can_term >= RAFT_INDEX_LIMIT as i64 {
+        None
+    } else {
+        server.step_checked(
+            Event::RecvRequestVote {
+                stopped, candidate_is_current_voter, lst_log_idx, lst_log_term,
+                can_id, can_term, failover, election_debug,
+            },
+            out)  // [move, M5] [fix, F9]
+    };
     match decided {
         Some(reply) => {
             let (term, granted) = reply.into_vote();
@@ -4712,7 +4729,7 @@ fn on_request_vote_locked(
             // (ServeVote), "no" at the candidate's own term, which the
             // candidate reads as unmodelled input (plan §4.3, V3).
             rusty::raft_log_warn_3(
-                "[RAFT_VOTE] Site {} dropping RequestVote from candidate {} at term {} (outside the configuration or term 0)",
+                "[RAFT_VOTE] Site {} dropping RequestVote from candidate {} at term {} (outside the configuration, term 0, or at the term ceiling)",
                 server.site_id_, can_id, can_term);
             *reply_term = can_term;
             *vote_granted = 0;
@@ -4779,19 +4796,25 @@ fn on_append_entries_locked(
                                          leader_next_log_term,  // [move, M5]
                                          leader_current_term);  // [fix, F14]
     let failover: bool = server.failover_;
-    let decided: Option<Reply> = server.step_checked(
-        Event::RecvAppendEntries {
-            wire: &wire, stopped, sender_is_current_voter,
-            has_cmd: cmd_has_value, leader_current_term, leader_site_id,
-            leader_prev_log_index, leader_prev_log_term, leader_commit_index,
-            failover,
-        },
-        out);  // [move, M5] [fix, F9]
+    // The term ceiling, as for RequestVote (bugs-found B42); entry terms are
+    // bounded by this one (F14).
+    let decided: Option<Reply> = if leader_current_term >= RAFT_INDEX_LIMIT {
+        None
+    } else {
+        server.step_checked(
+            Event::RecvAppendEntries {
+                wire: &wire, stopped, sender_is_current_voter,
+                has_cmd: cmd_has_value, leader_current_term, leader_site_id,
+                leader_prev_log_index, leader_prev_log_term, leader_commit_index,
+                failover,
+            },
+            out)  // [move, M5] [fix, F9]
+    };
     let Some(decided) = decided else {
         // [fix, F9] Dropped: answered as an unavailable replica answers
         // (ServeAppendEntries), 0/0/0, which the leader reads as no reply.
         rusty::raft_log_warn_5(
-            "[APPEND_DROP] Site {} dropping AppendEntries from {} term {} prev {}/{} (outside the configuration, term 0, or a malformed prev)",
+            "[APPEND_DROP] Site {} dropping AppendEntries from {} term {} prev {}/{} (outside the configuration, term 0 or at the term ceiling, or a malformed prev)",
             server.site_id_, leader_site_id, leader_current_term,
             leader_prev_log_index, leader_prev_log_term);
         *follower_append_ok = 0;

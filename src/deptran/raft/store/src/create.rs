@@ -164,14 +164,14 @@ fn recover<P>(
         let r = record::decode(&bytes, codec).map_err(|why| format!("{}: record {seq}: {why}", wal_dir.display()))?;
         state.apply(r).map_err(|why| format!("{}: record {seq}: {why}", wal_dir.display()))?;
     }
-    // Snapshot images (design §3-§4): a `.tmp` names no record, and an image
-    // below the state's snapshot is superseded.
+    // Snapshot images (design §3-§4, Decision 7): a `.tmp` names no record,
+    // and any image but the state's is superseded or an orphan.
     let images = store.join("images");
     if !fs.exists(&images) {
         fs.create_dir(&images).map_err(&e)?;
         fs.sync_dir(store).map_err(&e)?;
     }
-    let gone = crate::images::cleanup(&**fs, &images, state.snap_index, true).map_err(&e)?;
+    let gone = crate::images::cleanup_unnamed(&**fs, &images, state.image.as_deref()).map_err(&e)?;
     if gone > 0 {
         repairs.push(format!("deleted {gone} stale snapshot image file(s)"));
     }

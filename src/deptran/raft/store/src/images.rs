@@ -74,12 +74,25 @@ pub fn read(fs: &dyn StoreFs, dir: &Path, name: &str) -> Result<Vec<u8>, String>
     Ok(b)
 }
 
-/// Deletes every `.tmp` (recovery) and every image below `keep_index`.
-pub fn cleanup(fs: &dyn StoreFs, dir: &Path, keep_index: u64, tmp_too: bool) -> io::Result<usize> {
+/// Deletes every image below `keep_index` (a checkpoint: an image above
+/// the snapshot may be one whose record is still on its way).
+pub fn cleanup(fs: &dyn StoreFs, dir: &Path, keep_index: u64) -> io::Result<usize> {
+    remove_where(fs, dir, |f| parse_name(f).is_some_and(|(s, _)| s < keep_index))
+}
+
+/// Recovery's cleanup: deletes every `.tmp` and every image but `keep`, the
+/// one the recovered state names. Nothing is in flight at recovery, so an
+/// image no record names -- written and synced, but its record never reached
+/// the WAL -- is an orphan, and would otherwise outlive every later
+/// checkpoint until a later snapshot passed it (bugs-found B50).
+pub fn cleanup_unnamed(fs: &dyn StoreFs, dir: &Path, keep: Option<&str>) -> io::Result<usize> {
+    remove_where(fs, dir, |f| f.ends_with(".tmp") || (parse_name(f).is_some() && Some(f) != keep))
+}
+
+fn remove_where(fs: &dyn StoreFs, dir: &Path, doomed: impl Fn(&str) -> bool) -> io::Result<usize> {
     let mut n = 0;
     for f in fs.list(dir)? {
-        let doomed = (tmp_too && f.ends_with(".tmp")) || parse_name(&f).is_some_and(|(s, _)| s < keep_index);
-        if doomed {
+        if doomed(&f) {
             crash_point("image.delete");
             fs.remove_file(&dir.join(&f))?;
             n += 1;

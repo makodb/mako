@@ -6,6 +6,7 @@
 
 #![allow(dead_code)]
 
+use srpc::basetypes::{sparseint_buf_size, sparseint_load64};
 use srpc::client::{AsyncReplyCallback, Client};
 use srpc::serializable::{
     deserialize_bytes_with, make_source_proxy_buffer, serialize_bytes,
@@ -39,6 +40,28 @@ impl Deserialize for WireBytes {
                 |v: &mut Vec<u8>| v.as_mut_ptr());
         }
     }
+}
+
+/// Whether `b` begins with a complete encoding of `Self`. srpc's
+/// streaming decoders abort the process on a short read and trust a
+/// byte string's length into an allocation, so peer bytes are measured
+/// with this before they are decoded (bugs-found B41, B43).
+pub trait WireFits {
+    fn wire_fits(b: &[u8]) -> bool;
+}
+
+/// The end of the v64-prefixed byte string at `at`, if all of it is in
+/// `b` (a negative length is not).
+fn bytes_end(b: &[u8], at: usize) -> Option<usize> {
+    let first = *b.get(at)?;
+    let width = sparseint_buf_size(first);
+    let head = b.get(at..at.checked_add(width)?)?;
+    // load64 reads nine bytes whatever the width; the rest are zero.
+    let mut buf = [0u8; 9];
+    buf[..width].copy_from_slice(head);
+    let n = usize::try_from(sparseint_load64(&buf)).ok()?;
+    let end = (at + width).checked_add(n)?;
+    (end <= b.len()).then_some(end)
 }
 
 /// Wire ids. Randomly assigned once by rpcgen and preserved only by
@@ -77,6 +100,17 @@ impl Deserialize for VoteRequest {
     }
 }
 
+impl WireFits for VoteRequest {
+    fn wire_fits(b: &[u8]) -> bool {
+        let at = 0usize;
+        let at = at + 8; // lst_log_idx
+        let at = at + 8; // lst_log_term
+        let at = at + 2; // site_id
+        let at = at + 8; // cur_term
+        at <= b.len()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct VoteResponse {
     pub max_ballot: i64,
@@ -94,6 +128,15 @@ impl Deserialize for VoteResponse {
     fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
         self.max_ballot.deserialize(ar);
         self.vote_granted.deserialize(ar);
+    }
+}
+
+impl WireFits for VoteResponse {
+    fn wire_fits(b: &[u8]) -> bool {
+        let at = 0usize;
+        let at = at + 8; // max_ballot
+        let at = at + 1; // vote_granted
+        at <= b.len()
     }
 }
 
@@ -148,6 +191,16 @@ impl Deserialize for AppendEntriesResponse {
         self.follower_append_ok.deserialize(ar);
         self.follower_current_term.deserialize(ar);
         self.follower_last_log_index.deserialize(ar);
+    }
+}
+
+impl WireFits for AppendEntriesResponse {
+    fn wire_fits(b: &[u8]) -> bool {
+        let at = 0usize;
+        let at = at + 8; // follower_append_ok
+        let at = at + 8; // follower_current_term
+        let at = at + 8; // follower_last_log_index
+        at <= b.len()
     }
 }
 
@@ -283,6 +336,20 @@ impl Deserialize for EmptyAppendEntriesRequest {
     }
 }
 
+impl WireFits for EmptyAppendEntriesRequest {
+    fn wire_fits(b: &[u8]) -> bool {
+        let at = 0usize;
+        let at = at + 8; // slot
+        let at = at + 8; // ballot
+        let at = at + 8; // leader_current_term
+        let at = at + 2; // leader_site_id
+        let at = at + 8; // leader_prev_log_index
+        let at = at + 8; // leader_prev_log_term
+        let at = at + 8; // leader_commit_index
+        at <= b.len()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EmptyAppendEntriesResponse {
     pub follower_append_ok: u64,
@@ -303,6 +370,16 @@ impl Deserialize for EmptyAppendEntriesResponse {
         self.follower_append_ok.deserialize(ar);
         self.follower_current_term.deserialize(ar);
         self.follower_last_log_index.deserialize(ar);
+    }
+}
+
+impl WireFits for EmptyAppendEntriesResponse {
+    fn wire_fits(b: &[u8]) -> bool {
+        let at = 0usize;
+        let at = at + 8; // follower_append_ok
+        let at = at + 8; // follower_current_term
+        let at = at + 8; // follower_last_log_index
+        at <= b.len()
     }
 }
 
@@ -335,6 +412,18 @@ impl Deserialize for InstallSnapshotRequest {
     }
 }
 
+impl WireFits for InstallSnapshotRequest {
+    fn wire_fits(b: &[u8]) -> bool {
+        let at = 0usize;
+        let at = at + 8; // term
+        let at = at + 8; // leader_id
+        let at = at + 8; // last_included_index
+        let at = at + 8; // last_included_term
+        let Some(at) = bytes_end(b, at) else { return false }; // data
+        at <= b.len()
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InstallSnapshotResponse {
     pub term_out: u64,
@@ -349,6 +438,14 @@ impl Serialize for InstallSnapshotResponse {
 impl Deserialize for InstallSnapshotResponse {
     fn deserialize(&mut self, ar: &mut BinaryReadArchive) {
         self.term_out.deserialize(ar);
+    }
+}
+
+impl WireFits for InstallSnapshotResponse {
+    fn wire_fits(b: &[u8]) -> bool {
+        let at = 0usize;
+        let at = at + 8; // term_out
+        at <= b.len()
     }
 }
 
@@ -435,16 +532,16 @@ pub fn dispatch<H: RaftHandler>(
 ) {
     match rpc_id {
         rpc_id::VOTE => {
+            if !VoteRequest::wire_fits(args_of(req)) {
+                reject_malformed_request(req, weak_sconn);
+                return;
+            }
             let mut typed = VoteRequest::default();
             let mut src = arg_source(req);
             let mut ar = BinaryReadArchive::new(unsafe {
                 make_source_proxy_buffer(&raw mut src)
             });
             typed.deserialize(&mut ar);
-            if ar.failed() {
-                reject_malformed_request(req, weak_sconn);
-                return;
-            }
             reply_with(weak_sconn, req, handler.vote(&typed));
         }
         rpc_id::APPENDENTRIES => {
@@ -455,29 +552,29 @@ pub fn dispatch<H: RaftHandler>(
             reply_with(weak_sconn, req, handler.append_entries(&typed));
         }
         rpc_id::EMPTYAPPENDENTRIES => {
+            if !EmptyAppendEntriesRequest::wire_fits(args_of(req)) {
+                reject_malformed_request(req, weak_sconn);
+                return;
+            }
             let mut typed = EmptyAppendEntriesRequest::default();
             let mut src = arg_source(req);
             let mut ar = BinaryReadArchive::new(unsafe {
                 make_source_proxy_buffer(&raw mut src)
             });
             typed.deserialize(&mut ar);
-            if ar.failed() {
-                reject_malformed_request(req, weak_sconn);
-                return;
-            }
             reply_with(weak_sconn, req, handler.empty_append_entries(&typed));
         }
         rpc_id::INSTALLSNAPSHOT => {
+            if !InstallSnapshotRequest::wire_fits(args_of(req)) {
+                reject_malformed_request(req, weak_sconn);
+                return;
+            }
             let mut typed = InstallSnapshotRequest::default();
             let mut src = arg_source(req);
             let mut ar = BinaryReadArchive::new(unsafe {
                 make_source_proxy_buffer(&raw mut src)
             });
             typed.deserialize(&mut ar);
-            if ar.failed() {
-                reject_malformed_request(req, weak_sconn);
-                return;
-            }
             reply_with(weak_sconn, req, handler.install_snapshot(typed));
         }
         // Unknown id: ignore, matching the generated C++ dispatch.
@@ -560,16 +657,16 @@ pub fn dispatch_held<H: RaftHandler>(
 ) -> Option<HeldReply> {
     let (code, body) = match rpc_id {
         rpc_id::VOTE => {
+            if !VoteRequest::wire_fits(args_of(&req)) {
+                reject_malformed_request(&req, &weak_sconn);
+                return None;
+            }
             let mut typed = VoteRequest::default();
             let mut src = arg_source(&req);
             let mut ar = BinaryReadArchive::new(unsafe {
                 make_source_proxy_buffer(&raw mut src)
             });
             typed.deserialize(&mut ar);
-            if ar.failed() {
-                reject_malformed_request(&req, &weak_sconn);
-                return None;
-            }
             held(handler.vote(&typed))
         }
         rpc_id::APPENDENTRIES => {
@@ -580,29 +677,29 @@ pub fn dispatch_held<H: RaftHandler>(
             held(handler.append_entries(&typed))
         }
         rpc_id::EMPTYAPPENDENTRIES => {
+            if !EmptyAppendEntriesRequest::wire_fits(args_of(&req)) {
+                reject_malformed_request(&req, &weak_sconn);
+                return None;
+            }
             let mut typed = EmptyAppendEntriesRequest::default();
             let mut src = arg_source(&req);
             let mut ar = BinaryReadArchive::new(unsafe {
                 make_source_proxy_buffer(&raw mut src)
             });
             typed.deserialize(&mut ar);
-            if ar.failed() {
-                reject_malformed_request(&req, &weak_sconn);
-                return None;
-            }
             held(handler.empty_append_entries(&typed))
         }
         rpc_id::INSTALLSNAPSHOT => {
+            if !InstallSnapshotRequest::wire_fits(args_of(&req)) {
+                reject_malformed_request(&req, &weak_sconn);
+                return None;
+            }
             let mut typed = InstallSnapshotRequest::default();
             let mut src = arg_source(&req);
             let mut ar = BinaryReadArchive::new(unsafe {
                 make_source_proxy_buffer(&raw mut src)
             });
             typed.deserialize(&mut ar);
-            if ar.failed() {
-                reject_malformed_request(&req, &weak_sconn);
-                return None;
-            }
             held(handler.install_snapshot(typed))
         }
         _ => return None,

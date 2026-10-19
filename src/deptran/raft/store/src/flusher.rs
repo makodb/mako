@@ -56,10 +56,12 @@ impl DurableState {
         self.last.load(Ordering::Acquire)
     }
 
+    /// One publish's triple. Under the lock `publish` holds: lock-free, no
+    /// order of the three loads keeps a concurrent publish from mixing
+    /// two publishes' fields (bugs-found B49).
     pub fn get(&self) -> Durable {
-        // `seq` last: it is stored last, so a reader that sees it sees the rest.
-        let seq = self.seq();
-        Durable { seq, last: self.last(), commit: self.commit.load(Ordering::Acquire) }
+        let _g = self.m.lock().unwrap_or_else(|e| e.into_inner());
+        Durable { seq: self.seq(), last: self.last(), commit: self.commit.load(Ordering::Acquire) }
     }
 
     fn publish(&self, d: Durable) {

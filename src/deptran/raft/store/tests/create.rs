@@ -140,3 +140,19 @@ fn what_recovery_acknowledges_survives_a_power_cut() {
     }
     assert!(recovered > 0, "no budget left a store to recover");
 }
+
+/// No writer names a segment 0 (records are numbered from 1), so a store
+/// whose only segment is named 0 is refused, not opened with its last
+/// durable record wrapped to u64::MAX -- which acknowledged every later
+/// batch before its sync (bugs-found B45).
+#[test]
+fn a_segment_named_zero_is_refused() {
+    let fs = fresh();
+    drop(open(&fs, true).unwrap());
+    let wal = store().join("wal");
+    let zero = wal.join(raft_store::segment::name(0));
+    fs.rename(&wal.join(raft_store::segment::name(1)), &zero).unwrap();
+    fs.poke(&zero, raft_store::segment::header(&ID, 0));
+    let why = open(&fs, false).err().unwrap();
+    assert!(why.contains("starts at record 0"), "{why}");
+}

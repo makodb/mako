@@ -405,14 +405,24 @@ void raft_apply_thread_join(rusty::RaftStdThread* thread) {
 // not interpret it), so the decode is a kernel. Returns false on a malformed
 // frame rather than constructing a half-decoded Command; the caller rejects
 // the request.
+//
+// The bytes come from a peer (or the WAL), and srpc's decoders answer a short
+// read or an impossible length by throwing (read_or_abort's verify, a
+// std::length_error or std::bad_alloc), never through `failed()` -- which only
+// a String's UTF-8 check sets. So the decode runs under raft_catch: no
+// exception may unwind into the Rust caller (bugs-found B44). It has no site
+// to name, so it logs the sentinel INVALID_SITEID.
 bool raft_command_from_bytes(const uint8_t* bytes, size_t len,
                              rusty::RaftCommand* out) {
-  srpc::BufferSource source = srpc::BufferSource::new_(bytes, len);
-  srpc::BinaryReadArchive ar =
-      srpc::BinaryReadArchive::new_(srpc::make_source_proxy_buffer(&source));
   ::janus::Command cmd{};
-  srpc::Deserialize_::deserialize(cmd, ar);
-  if (ar.failed()) {
+  bool failed = false;
+  if (!raft_catch(INVALID_SITEID, "command decode", [&] {
+        srpc::BufferSource source = srpc::BufferSource::new_(bytes, len);
+        srpc::BinaryReadArchive ar = srpc::BinaryReadArchive::new_(
+            srpc::make_source_proxy_buffer(&source));
+        srpc::Deserialize_::deserialize(cmd, ar);
+        failed = ar.failed();
+      }) || failed) {
     return false;
   }
   construct_into(out, std::move(cmd));

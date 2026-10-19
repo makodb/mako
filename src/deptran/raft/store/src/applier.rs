@@ -169,7 +169,7 @@ impl State {
             if let Some(b) = self.base.get(crate::base::KEY_SNAP).map_err(|e| e.to_string())? {
                 if b.len() >= 8 && self.fs.exists(&images) {
                     let snap = u64::from_le_bytes(b[..8].try_into().unwrap());
-                    crate::images::cleanup(&*self.fs, &images, snap, false).map_err(|e| e.to_string())?;
+                    crate::images::cleanup(&*self.fs, &images, snap).map_err(|e| e.to_string())?;
                 }
             }
         }

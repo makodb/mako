@@ -14,6 +14,7 @@
 
 use crate::lab;
 use crate::lab::{ELECTION_TIMEOUT_US, NSERVERS};
+use crate::server_h::RAFT_INDEX_LIMIT;
 use std::sync::atomic::{AtomicI32, Ordering};
 
 // ---------------------------------------------------------------------------
@@ -780,9 +781,11 @@ fn test_unavailable_voter_reply(_st: &mut LabState) -> i32 {
 // ---------------------------------------------------------------------------
 // [fix, F9] Messages the core does not take
 
-// An AppendEntries from a site outside the configuration, one at term 0, and
-// one whose prev index is 0 but whose prev term is not; a RequestVote from
-// outside the configuration, and one at term 0. Each is dropped: the replica
+// An AppendEntries from a site outside the configuration, one at term 0, one
+// whose prev index is 0 but whose prev term is not, and one at the term
+// ceiling (2^62, the core's premise; bugs-found B42); a RequestVote from
+// outside the configuration, one at term 0, and one at the ceiling. Each is
+// dropped: the replica
 // answers as an unavailable replica answers (an append 0/0/0, a vote "no"
 // at the candidate's own term), and its term, log and commit index do not
 // move. Before F9 the first two appends and both votes were refused with the
@@ -813,10 +816,11 @@ fn test_unadmitted_messages_dropped(_st: &mut LabState) -> i32 {
     if !check_msg(control_ok == 1, "the leader's entry-less control append was refused") {
         return 1;
     }
-    let appends: [(u64, u16, u64, u64); 3] = [
+    let appends: [(u64, u16, u64, u64); 4] = [
         (term, stranger, last, last_term),  // outside the configuration
         (0, leader_site, last, last_term),  // term 0
         (term, leader_site, 0, 1),          // prev 0 with a prev term
+        (RAFT_INDEX_LIMIT, leader_site, last, last_term),  // the ceiling (B42)
     ];
     for (k, (t, site, prev, prev_term)) in appends.iter().enumerate() {
         let Some(reply) = lab::serve_append(follower, *t, *site, *prev, *prev_term,
@@ -828,9 +832,10 @@ fn test_unadmitted_messages_dropped(_st: &mut LabState) -> i32 {
             return 1;
         }
     }
-    let votes: [(u16, i64); 2] = [
+    let votes: [(u16, i64); 3] = [
         (stranger, term as i64 + 5),  // outside the configuration
         (candidate_site, 0),          // term 0
+        (candidate_site, i64::MAX),   // past the ceiling (B42)
     ];
     for (k, (site, can_term)) in votes.iter().enumerate() {
         let Some(reply) = lab::serve_vote(follower, last, last_term as i64, *site,
@@ -844,7 +849,8 @@ fn test_unadmitted_messages_dropped(_st: &mut LabState) -> i32 {
     }
     // A refusal the core made would carry the follower's own term, which is
     // at least 1, so 0/0/0 and a "no" at the probe's term can only be drops.
-    // A taken vote request at term + 5 would also have moved the term.
+    // A taken vote request at term + 5, or at the ceiling, would also have
+    // moved the term.
     let Some((term_after, _, _, _, _)) = lab::log_tail(follower) else {
         failed("follower not registered"); return 1;
     };

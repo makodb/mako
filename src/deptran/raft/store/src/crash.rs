@@ -2,7 +2,7 @@
 //!
 //! `MAKO_RAFT_CRASH=<point>[:<n>][:powercut]` arms one point: its n-th pass
 //! (default the first) prints `crash <point>` to stderr and SIGKILLs the
-//! process. With `:powercut` it first undoes, through the registered
+//! process. With `:powercut` it first undoes, through every registered
 //! filesystem's ledger, every write and directory change no sync covered, so
 //! a real disk is left as a power cut would leave it ([`crate::fs::RealFs`]).
 //! Not undone: an unsynced unlink (the ledger does not keep the bytes) and
@@ -11,7 +11,7 @@
 //! restart recovers. Unarmed, a crash point is one atomic load.
 
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::fs::StoreFs;
 
@@ -60,14 +60,18 @@ fn spec() -> Option<&'static CrashSpec> {
 
 static PASSES: AtomicU64 = AtomicU64::new(0);
 
-fn powercut_fs() -> &'static Mutex<Option<Arc<dyn StoreFs>>> {
-    static FS: OnceLock<Mutex<Option<Arc<dyn StoreFs>>>> = OnceLock::new();
-    FS.get_or_init(|| Mutex::new(None))
+fn powercut_fs() -> &'static Mutex<Vec<Weak<dyn StoreFs>>> {
+    static FS: OnceLock<Mutex<Vec<Weak<dyn StoreFs>>>> = OnceLock::new();
+    FS.get_or_init(|| Mutex::new(Vec::new()))
 }
 
-/// Registers the filesystem whose ledger a `:powercut` crash applies.
-pub fn set_powercut_fs(fs: Arc<dyn StoreFs>) {
-    *powercut_fs().lock().unwrap_or_else(|e| e.into_inner()) = Some(fs);
+/// Registers a filesystem whose ledger a `:powercut` crash applies. A power
+/// cut takes every store in the process, so each one registers; one slot
+/// overwritten per store cut only the last-opened one (bugs-found B51).
+pub fn register_powercut_fs(fs: &Arc<dyn StoreFs>) {
+    let mut all = powercut_fs().lock().unwrap_or_else(|e| e.into_inner());
+    all.retain(|w| w.strong_count() > 0);
+    all.push(Arc::downgrade(fs));
 }
 
 extern "C" {
@@ -90,7 +94,7 @@ pub fn crash_point(name: &str) {
         return;
     }
     if s.powercut {
-        if let Some(fs) = powercut_fs().lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        for fs in powercut_fs().lock().unwrap_or_else(|e| e.into_inner()).iter().filter_map(Weak::upgrade) {
             let _ = fs.powercut();
         }
     }
