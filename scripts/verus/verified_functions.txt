@@ -81,6 +81,7 @@ lib::coupling::lemma_comp_logs_shift
 lib::coupling::lemma_crash_cut
 lib::coupling::lemma_crash_dpu
 lib::coupling::lemma_crash_pos
+lib::coupling::lemma_create_ginv
 lib::coupling::lemma_cut_number
 lib::coupling::lemma_cut_pos
 lib::coupling::lemma_ext_ae_log

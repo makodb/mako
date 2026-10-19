@@ -786,6 +786,7 @@ fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_i
 // had, and `if let` is not an option here: the emitter renders its binding
 // with a dot where the C++ needs an arrow.
 #[allow(clippy::too_many_arguments, clippy::unnecessary_unwrap)]
+#[verifier::rlimit(40)]  // [M12] the tick and its per-follower proof, one query
 pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
                       snapshot_configured: bool, batching: bool,
                       max_batch_entries: u64, max_batch_bytes: u64,

@@ -629,8 +629,14 @@ impl<C> RaftLog<C> {
             (index as int) <= old(self).spec_last_index()
                 ==> final(self).spec_last_index() == old(self).spec_last_index(),
             final(self).spec_prefix() == old(self).spec_prefix(),  // [M12] the core moves it
+            // [Part B] the live tail stays
+            final(self).spec_len() <= old(self).spec_len(),
+            final(self).view() == old(self).view().subrange(
+                old(self).spec_len() - final(self).spec_len(), old(self).spec_len() as int),
     {
+        let ghost v0 = self.view();  // [Part B]
         if index < self.base_ {
+            proof { assert(v0.subrange(0, v0.len() as int) =~= v0); }  // [Part B]
             return 0;
         }
         let mut drop_count = index - self.base_ + 1;
@@ -639,6 +645,11 @@ impl<C> RaftLog<C> {
         }
         self.head_ += drop_count;
         self.len_ -= drop_count;
+        proof {
+            // [Part B] the same blocks, read from drop_count on
+            assert(self.view() =~= v0.subrange(drop_count as int, v0.len() as int));
+        }
+        let ghost v1 = self.view();  // [Part B]
         // index + 1, not base_ + drop_count. They agree whenever index is
         // inside the log, and when it is past the tail this is what the flat
         // vector did: the log empties and the index space restarts above the
@@ -650,6 +661,7 @@ impl<C> RaftLog<C> {
             invariant
                 self.base_ == base1,  // [fix, F25]
                 self.len_ == len1,  // [fix, F25]
+                self.view() == v1,  // [Part B]
                 1 <= self.base_,
                 self.base_ as int + (self.len_ as int) <= raft_index_limit(),
                 self.blocks_@.len() == 0 ==> self.head_ as int + self.len_ as int == 0
@@ -672,8 +684,23 @@ impl<C> RaftLog<C> {
                 }
             }
             let ghost pre = self.blocks_@;
+            let ghost h0 = self.head_ as int;  // [Part B]
             self.blocks_.remove(0);
             self.head_ -= 4096;
+            proof {
+                // [Part B] a position read one block lower in the shifted
+                // blocks is the same entry
+                assert forall|k: int| 0 <= k < self.len_ implies
+                    #[trigger] self.view()[k] == v1[k] by {
+                    let p = self.head_ as int + k;
+                    let q = p / 4096;
+                    let r = p % 4096;
+                    vstd::arithmetic::div_mod::lemma_fundamental_div_mod(p, 4096);
+                    lemma_pos(p + 4096, q + 1, r);
+                    assert(self.blocks_@[q] == pre[q + 1]);
+                }
+                assert(self.view() =~= v1);
+            }
             proof {
                 let nb = self.blocks_@.len() as int;
                 assert(self.blocks_@ == pre.remove(0));
@@ -688,6 +715,7 @@ impl<C> RaftLog<C> {
         if self.len_ == 0 {
             self.blocks_.clear();
             self.head_ = 0;
+            proof { assert(self.view() =~= v1); }  // [Part B]
         }
         drop_count as usize
     }

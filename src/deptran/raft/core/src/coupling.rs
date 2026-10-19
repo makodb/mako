@@ -328,6 +328,7 @@ impl<C> RaftCore<C> {
         &&& self.raft_log_.spec_prefix().len() == self.raft_log_.spec_base() - 1
         &&& forall|k: int| 0 <= k < self.raft_log_.spec_prefix().len()
                 ==> (#[trigger] self.raft_log_.spec_prefix()[k]).change is NoChange
+                    && self.raft_log_.spec_prefix()[k].term >= 0
     }
 
     pub open spec fn state_view(&self) -> LState {
@@ -1786,6 +1787,74 @@ pub proof fn lemma_ae_result<C>(old_v: Seq<RaftEntry<C>>, new_v: Seq<RaftEntry<C
         assert(new_v.map_values(|e: RaftEntry<C>| entry_view(e))
             =~= log0.take(prev + f0) + entries_view(es.subrange(f0, es.len() as int)));
     }
+}
+
+// [Part B] CreateSnapshot (E1) is a stutter: the view stays, the entries
+// through the index move into the prefix, and the boundary is the index,
+// with the view's term there.
+pub proof fn lemma_create_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, index: u64, term: i64)
+    requires
+        pre.inv(),
+        pre.ginv(),
+        1 <= index,
+        pre.snapidx_ <= index <= pre.commit_index_,
+        index as int <= pre.log_view().len(),
+        pre.log_view()[index - 1].term == term as int,
+        post.raft_log_.wf(),
+        post.raft_log_.spec_len() <= pre.raft_log_.spec_len(),
+        post.raft_log_.view() == pre.raft_log_.view().subrange(
+            pre.raft_log_.spec_len() - post.raft_log_.spec_len(), pre.raft_log_.spec_len() as int),
+        post.raft_log_.spec_base() == (if (index as int) < pre.raft_log_.spec_base() {
+            pre.raft_log_.spec_base() } else { index as int + 1 }),
+        post.raft_log_.spec_last_index() == pre.raft_log_.spec_last_index(),
+        post.raft_log_.spec_prefix() == pre.log_view().take(index as int),
+        post.snapidx_ == index,
+        post.snapterm_ == term,
+        post.current_term_ == pre.current_term_,
+        post.vote_for_ == pre.vote_for_,
+        post.commit_index_ == pre.commit_index_,
+        post.config_members_ == pre.config_members_,
+        post.site_id_ == pre.site_id_,
+        post.is_leader_ == pre.is_leader_,
+        post.election_in_progress_ == pre.election_in_progress_,
+        post.election_term_ == pre.election_term_,
+        post.peers_ == pre.peers_,
+        post.peer_sites_ == pre.peer_sites_,
+        post.g_log_ == pre.g_log_,
+        post.g_votes_ == pre.g_votes_,
+        post.g_match_ == pre.g_match_,
+        post.g_next_ == pre.g_next_,
+    ensures post.ginv(),
+{
+    let v0 = pre.log_view();
+    let b = pre.raft_log_.spec_base();
+    lemma_view_len(pre);
+    pre.raft_log_.lemma_wf_bounds();
+    post.raft_log_.lemma_wf_bounds();
+    // every entry of the view: no configuration change, a term
+    assert forall|k: int| 0 <= k < v0.len() implies (#[trigger] v0[k]).change is NoChange && v0[k].term >= 0 by {
+        if b == 1 || k >= b - 1 {
+            lemma_view_at(pre, k + 1);
+        } else {
+            assert(v0[k] == pre.raft_log_.spec_prefix()[k]);
+        }
+    }
+    // the view stays
+    let nb = post.raft_log_.spec_base();
+    assert(nb == index as int + 1);
+    assert forall|k: int| 0 <= k < v0.len() implies #[trigger] post.log_view()[k] == v0[k] by {
+        if k >= index as int {
+            lemma_view_at(post, k + 1);
+            lemma_view_at(pre, k + 1);
+        } else {
+            assert(post.log_view()[k] == post.raft_log_.spec_prefix()[k]);
+        }
+    }
+    lemma_view_len(post);
+    assert(post.log_view() =~= v0);
+    assert(post.c_view() == pre.c_view());
+    assert(post.state_view() == pre.state_view());
+    assert(post.raft_log_.spec_prefix()[index - 1] == v0[index - 1]);
 }
 
 // [Part B] comp_logs over a log with a prefix in front, from a prev at or

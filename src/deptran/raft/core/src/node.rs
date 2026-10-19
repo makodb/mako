@@ -701,15 +701,32 @@ impl<C: Clone> RaftCore<C> {
     // which would forge the boundary (CreateSnapshotLocked's rule).
     pub fn snapshot_point(&self) -> (r: Option<(u64, i64)>)
         requires self.inv(),
+        ensures
+            // [Part B] the point's term is the view's there
+            self.prefix_ok() && self.snap_ok() && r is Some ==> 1 <= r.unwrap().0
+                && r.unwrap().0 as int <= self.log_view().len()
+                && self.log_view()[r.unwrap().0 - 1].term == r.unwrap().1 as int,
     {
         let index: u64 = self.execute_index_;
         if index == 0 || !raft_server_log_index_has_successor(index) {
             return None;
         }
+        proof { self.raft_log_.lemma_wf_bounds(); }  // [Part B]
         if raft_server_snapshot_term_uses_boundary(index, self.snapidx_) {
+            proof {
+                if self.prefix_ok() && self.snap_ok() {  // [Part B] the prefix's last
+                    crate::coupling::lemma_view_len(self);
+                    assert(self.log_view()[index - 1] == self.raft_log_.spec_prefix()[index - 1]);
+                }
+            }
             return Some((index, self.snapterm_));
         }
         if let Some(e) = self.raft_log_.get(index) {
+            proof {
+                if self.prefix_ok() && self.snap_ok() {  // [Part B]
+                    crate::coupling::lemma_view_at(self, index as int);
+                }
+            }
             return Some((index, e.term()));
         }
         None
@@ -718,20 +735,22 @@ impl<C: Clone> RaftCore<C> {
     // [fix, F25] (whole item) CreateSnapshot (E1): the shell saved the image
     // at `snapshot_point()` and steps this in the same mtx_ hold. The boundary
     // moves there and the log through it goes (through the commit index and
-    // the boundary, as CompactLog clamps). Refused, changing nothing: inside
-    // the verified configuration (the log stays whole until the snapshot
-    // coupling admits snapshots), for a point that is not the core's own, or
-    // one that would move the boundary back or past the commit index.
+    // the boundary, as CompactLog clamps). Refused, changing nothing, for a
+    // point that is not the core's own, or one that would move the boundary
+    // back or past the commit index. Inside the verified configuration it is
+    // a stutter (Part B): the view stays, the entries through the index move
+    // into the log's ghost prefix (lemma_create_ginv).
     pub fn create_snapshot(&mut self, index: u64, term: i64, out: &mut CoreOutput) -> (r: bool)
         requires old(self).inv(),
         ensures
             final(self).inv(),
             !r ==> *final(self) == *old(self),
-            old(self).gated_ ==> !r,
+            // [Part B] a stutter, inside the gate too: the view stays
+            final(self).g_log_ == old(self).g_log_,
+            old(self).ginv() ==> final(self).ginv(),
     {
-        if self.gated_ {
-            return false;
-        }
+        let ghost pre = *self;  // [Part B]
+        let ghost v0 = self.log_view();  // [Part B]
         match self.snapshot_point() {
             Some((i, t)) => {
                 if i != index || t != term {
@@ -752,6 +771,13 @@ impl<C: Clone> RaftCore<C> {
         self.snapidx_ = index;
         self.snapterm_ = term;
         let _removed: usize = self.raft_log_.compact_through(index);
+        #[cfg(verus_keep_ghost)]
+        self.raft_log_.set_prefix(Ghost(v0.take(index as int)));  // [M12] Part B: the entries through index
+        proof {
+            if pre.ginv() {
+                crate::coupling::lemma_create_ginv(&pre, self, index, term);
+            }
+        }
         out.note_snapshot(index, term, true);
         true
     }
