@@ -439,6 +439,15 @@ impl<C: Clone> RaftCore<C> {
             // [M12] the coupling kept (F9's admission and reply bound are
             // its own)
             old(self).ginv() && old(self).coupled_checked(&ev) ==> final(self).ginv(),
+            // [M12] persistence (Part A): as step's, for a message taken
+            r is Some && !(ev is Restore) ==> final(self).g_seq_@
+                == old(self).g_seq_@ + (if final(out).spec_note() { 1int } else { 0int }),
+            old(self).ginv() && old(self).coupled_checked(&ev) && old(self).persist_ok() && !(ev is Restore)
+                && old(self).g_seq_@ + 1 < u64::MAX ==> {
+                &&& final(self).persist_ok()
+                &&& (r is Some ==> crate::coupling::ready_tail_ok(old(self).g_log_@, final(self).g_log_@,
+                        final(self).g_seq_@))
+            },
             match ev {
                 Event::RecvAppendEntries { .. } => r matches Some(reply) ==> reply is Append,
                 Event::RecvRequestVote { .. } => r matches Some(reply) ==> reply is Vote,
@@ -472,6 +481,7 @@ impl<C: Clone> RaftCore<C> {
     }
 
     // The core's one entry point. The caller holds mtx_.
+    #[verifier::rlimit(40)]  // [M12] every event's arm and the persistence epilogue, one query
     pub fn step<W: InboundBatch<C>>(&mut self, ev: Event<'_, C, W>,
                                     out: &mut CoreOutput) -> (r: Reply<C>)
         requires
@@ -505,7 +515,19 @@ impl<C: Clone> RaftCore<C> {
                 Event::InstallSnapshot { .. } => r is Installed,  // [fix, F27]
                 Event::RecvSnapshotReply { .. } => r is SnapshotReply,  // [fix, F28]
             },
+            // [M12] persistence (Part A): the records the notes made, and the
+            // Ready mark a coupled step ends with, numbered by them (P1)
+            !(ev is Restore) ==> final(self).g_seq_@
+                == old(self).g_seq_@ + (if final(out).spec_note() { 1int } else { 0int }),
+            old(self).ginv() && old(self).coupled(&ev) && old(self).persist_ok() && !(ev is Restore)
+                && old(self).g_seq_@ + 1 < u64::MAX ==> {
+                &&& final(self).persist_ok()
+                &&& crate::coupling::ready_tail_ok(old(self).g_log_@, final(self).g_log_@, final(self).g_seq_@)
+            },
     {
+        // [M12] persistence: the step's first state, and its builders' growth
+        let ghost s0 = *self;
+        let ghost pre_ok = s0.ginv() && s0.coupled(&ev) && s0.persist_ok() && !(ev is Restore);
         // [fix, F21] the saved fields before the arm, for the persist note
         let term0: u64 = self.current_term_;  // [fix, F21]
         let vote0: u16 = self.vote_for_;  // [fix, F21]
@@ -707,6 +729,24 @@ impl<C: Clone> RaftCore<C> {
         let hard: bool = !restoring && (self.current_term_ != term0 || self.vote_for_ != vote0
             || self.commit_index_ != commit0);  // [fix, F21]
         out.finish_persist(hard, self.current_term_, self.vote_for_, self.commit_index_);  // [fix, F21]
+        proof {
+            // [M12] persistence (Part A): a note is the next record; a coupled
+            // step ends with a Ready mark carrying the certificate of the
+            // state it leaves, numbered by the records so far
+            let seq1: int = s0.g_seq_@ + (if out.spec_note() { 1int } else { 0int });
+            if !restoring {
+                self.g_seq_@ = seq1;
+            }
+            if pre_ok && s0.g_seq_@ + 1 < u64::MAX {
+                assert(crate::coupling::plain_ext(s0.g_log_@, self.g_log_@)) by {
+                    crate::coupling::lemma_ext_all::<C>(s0.g_log_@);
+                }
+                let ghost mid = *self;
+                self.g_log_@ = mid.g_log_@.push(
+                    glr::protocol::Raft::ghost_log::Entry::Mark(mid.ready_now(seq1 as u64)));
+                crate::coupling::lemma_ready_step(&mid, self, s0.g_log_@, s0.g_seq_@, seq1);
+            }
+        }
         r
     }
 }

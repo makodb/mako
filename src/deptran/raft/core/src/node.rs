@@ -114,6 +114,10 @@ pub struct RaftCore<C> {
     pub g_match_: Ghost<Map<u64, u64>>,
     #[cfg(verus_keep_ghost)]
     pub g_next_: Ghost<Map<u64, u64>>,
+    // [M12] persistence (Part A): the records the steps' notes have made,
+    // the number the next Ready mark carries
+    #[cfg(verus_keep_ghost)]
+    pub g_seq_: Ghost<int>,
 }
 
 impl<C> RaftCore<C> {
@@ -225,6 +229,8 @@ impl<C: Clone> RaftCore<C> {
             g_match_: Ghost(Map::empty()),  // [M12]
             #[cfg(verus_keep_ghost)]
             g_next_: Ghost(Map::empty()),  // [M12]
+            #[cfg(verus_keep_ghost)]
+            g_seq_: Ghost(0),  // [M12]
         }
     }
 
@@ -275,6 +281,10 @@ impl<C: Clone> RaftCore<C> {
             // (the host contract: no member is the sentinel site)
             old(self).ginv() && old(self).g_log_@.len() == 0
                 && !members@.contains(RAFT_SERVER_INVALID_SITE_ID) ==> final(self).ginv(),
+            // [M12] persistence: the log only grows
+            old(self).ginv() && old(self).g_log_@.len() == 0
+                && !members@.contains(RAFT_SERVER_INVALID_SITE_ID)
+                ==> crate::coupling::plain_ext(old(self).g_log_@, final(self).g_log_@),
     {
         let ghost on = self.ginv() && self.g_log_@.len() == 0
             && !members@.contains(RAFT_SERVER_INVALID_SITE_ID);
@@ -299,6 +309,7 @@ impl<C: Clone> RaftCore<C> {
                 let ghost pre = *old(self);
                 self.g_log_@ = crate::coupling::load_config_log(self.n_view());
                 crate::coupling::lemma_load_config(&pre, self);
+                crate::coupling::lemma_ext_all::<C>(pre.g_log_@);  // persistence
             }
         }
     }
@@ -313,6 +324,7 @@ impl<C: Clone> RaftCore<C> {
             final(self).inv(),
             r ==> final(self).gated_,
             old(self).ginv() ==> final(self).ginv(),  // [M12] unseen by the spec
+            final(self).g_log_ == old(self).g_log_,  // [M12]
     {
         let whole_log: bool = self.snapidx_ == 0 && self.raft_log_.base() == 1;
         let contains_self: bool = self.is_config_member(self.site_id_);
@@ -344,6 +356,7 @@ impl<C: Clone> RaftCore<C> {
         ensures
             final(self).inv(),
             old(self).ginv() ==> final(self).ginv(),  // [M12] unseen by the spec
+            final(self).g_log_ == old(self).g_log_,  // [M12]
     {
         self.pending_rpcs_ = PendingTable::new();
         self.authority_rounds_ = AuthorityLedger::new();
@@ -518,6 +531,9 @@ impl<C: Clone> RaftCore<C> {
             // the shell proposes only while leading, under mtx_, and a
             // command with a value, bugs-found B16)
             old(self).ginv() && old(self).is_leader_ && has_value ==> final(self).ginv(),
+            // [M12] persistence: the log only grows
+            old(self).ginv() && old(self).is_leader_ && has_value
+                ==> crate::coupling::plain_ext(old(self).g_log_@, final(self).g_log_@),
     {
         let ghost pre = *self;
         let previous_index: u64 = self.raft_log_.last_index();
@@ -532,6 +548,7 @@ impl<C: Clone> RaftCore<C> {
                 self.g_log_@ = crate::coupling::client_request_log(
                     pre.g_log_@, self.log_view(), crate::coupling::value_view(e.spec_cmd()));
                 crate::coupling::lemma_client_request_ginv(&pre, self, e);
+                crate::coupling::lemma_ext_all::<C>(pre.g_log_@);  // persistence
             }
         }
         previous_index
@@ -1318,12 +1335,14 @@ impl<C: Clone> RaftCore<C> {
                 && crate::coupling::settle_inputs_ok(old(self), voters@, granted@, reply_terms@,
                     term, n_total) ==> {
                 &&& final(self).ginv()
+                &&& crate::coupling::plain_ext(old(self).g_log_@, final(self).g_log_@)  // [M12] persistence
                 &&& old(self).g_log_@.is_prefix_of(final(self).g_log_@)
                 &&& crate::coupling::settle_entries_ok(final(self).g_log_@, old(self).g_log_@.len() as int,
                         old(self).config_members_@, voters@, granted@, reply_terms@)
             },
     {
         let ghost pre = *self;
+        proof { crate::coupling::lemma_ext_all::<C>(pre.g_log_@); }  // [M12] persistence
         let ghost on = pre.ginv() && pre.gated_ && failover
             && crate::coupling::settle_inputs_ok(&pre, voters@, granted@, reply_terms@, term, n_total);
         if stopped {
@@ -1585,6 +1604,7 @@ impl<C: Clone> RaftCore<C> {
         ensures
             final(self).inv(),
             old(self).ginv() ==> final(self).ginv(),  // [M12] unseen by the spec
+            final(self).g_log_ == old(self).g_log_,  // [M12]
     {
         if raft_server_log_index_above(published, index) {
             out.log(RAFT_LOG_WARN,
@@ -1608,6 +1628,7 @@ impl<C: Clone> RaftCore<C> {
         ensures
             final(self).inv(),
             old(self).ginv() ==> final(self).ginv(),  // [M12] unseen by the spec
+            final(self).g_log_ == old(self).g_log_,  // [M12]
     {
         let prev_time: u64 = self.last_heartbeat_time_;
         self.last_heartbeat_time_ = now;

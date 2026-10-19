@@ -29,6 +29,11 @@ use glr::protocol::Raft::ghost_log::*;
 use glr::protocol::Raft::membership::*;
 #[allow(unused_imports)]
 use glr::protocol::Raft::ghost_log_compose::cluster_c;
+// Persistence (step 1b, Part A): the group's certificates, and Raft's instance
+#[allow(unused_imports)]
+use glr::protocol::ghost_log_certs as gc;
+#[allow(unused_imports)]
+use glr::protocol::Raft::ghost_log_certs_raft::*;
 
 verus! {
 
@@ -37,11 +42,32 @@ verus! {
 // ===========================================================================
 
 // What a ghost log keeps between any two of its entries: every closed
-// segment refines, every label is bound to its trigger, every send routed.
+// segment refines, every label is bound to its trigger, every send routed,
+// and (persistence, Part A) every Ready mark carries a certificate.
 pub open spec fn log_ok(l: Seq<Entry>, c: LConstants) -> bool {
     &&& log_inv(l, c)
     &&& wf(l)
     &&& routed(l)
+    &&& gc::certs_ok::<RaftP>(c, cert_ctx(), l)
+}
+
+// The id universe a certificate's vote is judged in. A Ready mark carries a
+// vote as its spec rank + 1 (0: none), and in this universe the rank of
+// r + 1 is r (lemma_cert_ctx_rank): no configuration needed. (vstd's Set is
+// finite: the universe stops below u64::MAX, past any rank + 1.)
+pub open spec fn cert_ctx() -> Set<u64> {
+    Set::<u64>::range(1, u64::MAX)
+}
+
+// The ids of the universe below v: 1..v-1.
+pub proof fn lemma_cert_ctx_rank(v: u64)
+    requires 1 <= v < u64::MAX,
+    ensures id_rank(cert_ctx(), v) == v - 1,
+{
+    broadcast use vstd::set_lib::range_set_properties;
+    let below = cert_ctx().filter(|x: u64| x < v);
+    assert(below =~= Set::<u64>::range(1, v));
+    assert(Set::<u64>::range(1, v).len() == v - 1);
 }
 
 // Every send of the open segment goes to `d` (the group's seg_sends_to: the
@@ -67,6 +93,7 @@ pub proof fn lemma_g_open(l: Seq<Entry>, e: Entry, c: LConstants)
 {
     lemma_seg_open(l, e, c);
     lemma_routed_push_non_close(l, e);
+    gc::lemma_certs_push_auto::<RaftP>(c, cert_ctx(), l, e);
     lemma_fully_closed_props(l);
     lemma_last_boundary_push_non_close(l, e);
     assert forall|d: int| seg_sends_to(l.push(e), d) by {
@@ -91,6 +118,7 @@ pub proof fn lemma_g_set(l: Seq<Entry>, f: LogField, v: LogValue, c: LConstants)
     let e = Entry::Set(f, v);
     lemma_seg_set(l, f, v, c);
     lemma_routed_push_non_close(l, e);
+    gc::lemma_certs_push_auto::<RaftP>(c, cert_ctx(), l, e);
     lemma_last_boundary_push_non_close(l, e);
     assert forall|d: int| seg_sends_to(l, d) implies seg_sends_to(l.push(e), d) by {
         assert forall|t: int| last_boundary(l.push(e)) <= t < l.push(e).len()
@@ -116,6 +144,7 @@ pub proof fn lemma_g_send(l: Seq<Entry>, dst: int, m: LRaftMessage, c: LConstant
     let e = Entry::Send(dst, m);
     lemma_seg_send(l, dst, m, c);
     lemma_routed_push_non_close(l, e);
+    gc::lemma_certs_push_auto::<RaftP>(c, cert_ctx(), l, e);
     lemma_last_boundary_push_non_close(l, e);
     if seg_sends_to(l, dst) {
         assert forall|t: int| last_boundary(l.push(e)) <= t < l.push(e).len()
@@ -156,6 +185,7 @@ pub proof fn lemma_g_close(l: Seq<Entry>, label: ActionLabel, d: int, c: LConsta
     assert(seg_dsts_ok(l, label));
     lemma_seg_close(l, label, c);
     lemma_routed_push_close(l, label);
+    gc::lemma_certs_push_auto::<RaftP>(c, cert_ctx(), l, Entry::Close(label));
     let l2 = l.push(Entry::Close(label));
     assert(last_boundary(l2) == l2.len());
     assert(l2.take(l2.len() as int) =~= l2);
@@ -362,6 +392,7 @@ pub proof fn lemma_new_ginv<C>(core: &RaftCore<C>)
     let c = core.c_view();
     lemma_empty_log_refines(c);
     lemma_routed_empty();
+    gc::lemma_certs_empty::<RaftP>(c, cert_ctx());
     let l = Seq::<Entry>::empty();
     assert(last_boundary(l) == 0);
     assert(l.take(0) =~= l);
@@ -416,6 +447,7 @@ pub proof fn lemma_load_config<C>(pre: &RaftCore<C>, post: &RaftCore<C>)
     // the empty log, under the new constants
     lemma_empty_log_refines(c);
     lemma_routed_empty();
+    gc::lemma_certs_empty::<RaftP>(c, cert_ctx());
     assert(last_boundary(l0) == 0);
     assert(l0.take(0) =~= l0);
     assert(log_ok(l0, c));
@@ -2798,6 +2830,462 @@ pub proof fn theorem_mako_safety<C>(cores: Seq<RaftCore<C>>, n: int, sched: Seq<
     }
     assert(glr::protocol::Raft::ghost_log_compose::certs_ok(logs, n, cfg0));
     glr::protocol::Raft::ghost_log_compose::theorem_compose_safety(logs, n, cfg0, sched, k);
+}
+
+// ===========================================================================
+// Persistence (step 1b, Part A; coupling-design-persistence-snapshots.md A2):
+// the ghost log only grows between steps, and each gated step ends with a
+// Ready mark numbered by the WAL record count (g_seq_)
+// ===========================================================================
+
+// l2 is l with entries appended, none of them a mark: what every handler
+// does to the ghost log (A1: marks come only from step's end).
+pub open spec fn plain_ext(l: Seq<Entry>, l2: Seq<Entry>) -> bool {
+    &&& l.len() <= l2.len()
+    &&& l2.take(l.len() as int) == l
+    &&& forall|k: int| l.len() <= k < l2.len() ==> !((#[trigger] l2[k]) is Mark)
+}
+
+pub proof fn lemma_ext_refl(l: Seq<Entry>)
+    ensures plain_ext(l, l),
+{
+    assert(l.take(l.len() as int) =~= l);
+}
+
+pub broadcast proof fn lemma_ext_push(l: Seq<Entry>, l2: Seq<Entry>, e: Entry)
+    requires plain_ext(l, l2), !(e is Mark),
+    ensures #[trigger] plain_ext(l, l2.push(e)),
+{
+    assert(l2.push(e).take(l.len() as int) =~= l2.take(l.len() as int));
+    assert forall|k: int| l.len() <= k < l2.push(e).len() implies !((#[trigger] l2.push(e)[k]) is Mark) by {
+        if k < l2.len() { assert(l2.push(e)[k] == l2[k]); }
+    }
+}
+
+pub proof fn lemma_ext_trans(a: Seq<Entry>, b: Seq<Entry>, c: Seq<Entry>)
+    requires plain_ext(a, b), plain_ext(b, c),
+    ensures plain_ext(a, c),
+{
+    assert(c.take(a.len() as int) =~= c.take(b.len() as int).take(a.len() as int));
+    assert forall|k: int| a.len() <= k < c.len() implies !((#[trigger] c[k]) is Mark) by {
+        if k < b.len() { assert(c.take(b.len() as int)[k] == c[k]); assert(b[k] == c[k]); }
+    }
+}
+
+// The handlers' builders append no mark.
+pub proof fn lemma_ext_builders(l: Seq<Entry>)
+    ensures
+        forall|t: int| #[trigger] plain_ext(l, step_down_seg(l, t)),
+        plain_ext(l, step_aside_log(l)),
+        plain_ext(l, become_leader_log(l)),
+        forall|idx: int| #[trigger] plain_ext(l, advance_log(l, idx)),
+        forall|nl: Seq<LLogEntry>, v: int| #[trigger] plain_ext(l, client_request_log(l, nl, v)),
+        forall|me: int, m: LRaftMessage| #[trigger] plain_ext(l, timeout_log(l, me, m)),
+        forall|f: int, t: int, nmi: int, gm: Map<u64, u64>, gn: Map<u64, u64>|
+            #[trigger] plain_ext(l, har_log(l, f, t, nmi, gm, gn)),
+{
+    broadcast use lemma_ext_push;
+    lemma_ext_refl(l);
+    assert forall|t: int| #[trigger] plain_ext(l, step_down_seg(l, t)) by {}
+    assert(plain_ext(l, step_aside_log(l)));
+    assert(plain_ext(l, become_leader_log(l)));
+    assert forall|idx: int| #[trigger] plain_ext(l, advance_log(l, idx)) by {}
+    assert forall|nl: Seq<LLogEntry>, v: int| #[trigger] plain_ext(l, client_request_log(l, nl, v)) by {}
+    assert forall|me: int, m: LRaftMessage| #[trigger] plain_ext(l, timeout_log(l, me, m)) by {}
+    assert forall|f: int, t: int, nmi: int, gm: Map<u64, u64>, gn: Map<u64, u64>|
+        #[trigger] plain_ext(l, har_log(l, f, t, nmi, gm, gn)) by {}
+}
+
+pub proof fn lemma_ext_vote_group(l: Seq<Entry>, src: int, m: LRaftMessage, stepped: bool, granted: bool,
+                                  reply_term: int, me: int)
+    ensures plain_ext(l, vote_group(l, src, m, stepped, granted, reply_term, me)),
+{
+    broadcast use lemma_ext_push;
+    lemma_ext_refl(l);
+    let l1 = l.push(Entry::Recv(src, m));
+    assert(plain_ext(l, l1));
+    let l2 = if stepped { step_down_seg(l1, m->RequestVote_term) } else { l1 };
+    lemma_ext_builders(l1);
+    if stepped { lemma_ext_trans(l, l1, l2); }
+    assert(plain_ext(l, l2));
+}
+
+pub proof fn lemma_ext_settle_step_down(l: Seq<Entry>, cfg: Seq<u16>, voter: u16, granted: bool, term: i64)
+    ensures plain_ext(l, settle_step_down_log(l, cfg, voter, granted, term)),
+{
+    broadcast use lemma_ext_push;
+    lemma_ext_refl(l);
+    let l1 = l.push(Entry::Recv(rank(cfg, voter), vote_reply_view(cfg, voter, granted, term)));
+    lemma_ext_builders(l1);
+    lemma_ext_trans(l, l1, step_down_seg(l1, term as int));
+}
+
+pub proof fn lemma_ext_grant_groups(l: Seq<Entry>, cfg: Seq<u16>, voters: Seq<u16>, granted: Seq<bool>,
+                                    terms: Seq<i64>, votes0: Set<int>, k: int)
+    ensures plain_ext(l, grant_groups(l, cfg, voters, granted, terms, votes0, k)),
+    decreases k,
+{
+    broadcast use lemma_ext_push;
+    if k <= 0 {
+        lemma_ext_refl(l);
+    } else {
+        lemma_ext_grant_groups(l, cfg, voters, granted, terms, votes0, k - 1);
+    }
+}
+
+pub proof fn lemma_ext_settle_won(l: Seq<Entry>, cfg: Seq<u16>, voters: Seq<u16>, granted: Seq<bool>,
+                                  terms: Seq<i64>, votes0: Set<int>, rollback: bool)
+    ensures plain_ext(l, settle_won_log(l, cfg, voters, granted, terms, votes0, rollback)),
+{
+    let g = grant_groups(l, cfg, voters, granted, terms, votes0, voters.len() as int);
+    lemma_ext_grant_groups(l, cfg, voters, granted, terms, votes0, voters.len() as int);
+    lemma_ext_builders(g);
+    lemma_ext_trans(l, g, become_leader_log(g));
+    let lb = become_leader_log(g);
+    lemma_ext_builders(lb);
+    if rollback { lemma_ext_trans(l, lb, step_aside_log(lb)); }
+}
+
+pub proof fn lemma_ext_send_segs(l: Seq<Entry>, log: Seq<LLogEntry>, me: int, f: int, term: int, prev: int,
+                                 prev_term: int, lc: int, has_entry: bool, k: int)
+    ensures plain_ext(l, send_segs(l, log, me, f, term, prev, prev_term, lc, has_entry, k)),
+    decreases k,
+{
+    broadcast use lemma_ext_push;
+    if k <= 0 {
+        lemma_ext_refl(l);
+    } else {
+        lemma_ext_send_segs(l, log, me, f, term, prev, prev_term, lc, has_entry, k - 1);
+    }
+}
+
+pub proof fn lemma_ext_tick_sends<C>(l: Seq<Entry>, sends: Seq<AppendSend<C>>, log: Seq<LLogEntry>,
+                                     cfg: Seq<u16>, me: int, k: int)
+    ensures plain_ext(l, tick_sends_log(l, sends, log, cfg, me, k)),
+    decreases k,
+{
+    if k <= 0 {
+        lemma_ext_refl(l);
+    } else {
+        let s = sends[k - 1];
+        let rest = tick_sends_log(l, sends, log, cfg, me, k - 1);
+        lemma_ext_tick_sends(l, sends, log, cfg, me, k - 1);
+        lemma_ext_send_segs(rest, log, me, rank(cfg, s.site_id_), s.term_ as int, s.prev_log_index_ as int,
+            s.prev_log_term_ as int, s.commit_index_ as int, s.payload_ != AppendPayload::HEARTBEAT, send_count(s));
+        lemma_ext_trans(l, rest, tick_sends_log(l, sends, log, cfg, me, k));
+    }
+}
+
+pub proof fn lemma_ext_fae_seg<C>(l: Seq<Entry>, x: AeView<C>, m: LRaftMessage, log: Seq<LLogEntry>,
+                                  commit: int, match_index: int)
+    ensures plain_ext(l, fae_seg(l, x, m, log, commit, match_index)),
+{
+    broadcast use lemma_ext_push;
+    lemma_ext_refl(l);
+}
+
+pub proof fn lemma_ext_fae_groups<C>(l2: Seq<Entry>, x: AeView<C>, log0: Seq<LLogEntry>, c0: int, i: int)
+    ensures plain_ext(l2, fae_groups(l2, x, log0, c0, i)),
+    decreases i,
+{
+    broadcast use lemma_ext_push;
+    if i <= 0 {
+        lemma_ext_refl(l2);
+    } else {
+        let rest = fae_groups(l2, x, log0, c0, i - 1);
+        lemma_ext_fae_groups(l2, x, log0, c0, i - 1);
+        let opened = if i == 1 { rest } else { rest.push(Entry::Recv(x.ldr, comp_msg(x, i - 1))) };
+        lemma_ext_refl(rest);
+        assert(plain_ext(rest, opened));
+        lemma_ext_trans(l2, rest, opened);
+        lemma_ext_fae_seg(opened, x, comp_msg(x, i - 1), comp_logs(log0, x.prev, x.es, i),
+            comp_commit(c0, x.lc, x.prev, i), x.prev + i);
+        lemma_ext_trans(l2, opened, fae_groups(l2, x, log0, c0, i));
+    }
+}
+
+pub proof fn lemma_ext_ae_log<C>(l0: Seq<Entry>, x: AeView<C>, stepped: bool, aside: bool, accepted: bool,
+                                 log0: Seq<LLogEntry>, c0: int, cur: int)
+    ensures plain_ext(l0, ae_log(l0, x, stepped, aside, accepted, log0, c0, cur)),
+{
+    broadcast use lemma_ext_push;
+    lemma_ext_refl(l0);
+    let l1 = l0.push(Entry::Recv(x.ldr, first_msg(x)));
+    let l2 = if stepped { step_down_seg(l1, x.term) } else { l1 };
+    lemma_ext_builders(l1);
+    if stepped { lemma_ext_trans(l0, l1, l2); }
+    if !accepted {
+        let lr = l2.push(Entry::Send(x.ldr, ae_answer(x, cur, false, 0))).push(Entry::Close(ae_reject_label(x)));
+        assert(plain_ext(l0, lr));
+        lemma_ext_builders(lr);
+        if aside { lemma_ext_trans(l0, lr, step_aside_log(lr)); }
+    } else if x.es.len() == 0 {
+        lemma_ext_fae_seg(l2, x, empty_msg(x), log0, raise_commit(c0, x.lc, x.prev), x.prev);
+        lemma_ext_trans(l0, l2, fae_seg(l2, x, empty_msg(x), log0, raise_commit(c0, x.lc, x.prev), x.prev));
+    } else {
+        lemma_ext_fae_groups(l2, x, log0, c0, x.es.len() as int);
+        lemma_ext_trans(l0, l2, fae_groups(l2, x, log0, c0, x.es.len() as int));
+    }
+}
+
+// What a step's builder may leave (the forms the handlers' ensures state),
+// each a plain extension of the log the step began with.
+pub proof fn lemma_ext_all<C>(l: Seq<Entry>)
+    ensures
+        plain_ext(l, l),
+        forall|t: int| #[trigger] plain_ext(l, step_down_seg(l, t)),
+        plain_ext(l, step_aside_log(l)),
+        forall|idx: int| #[trigger] plain_ext(l, advance_log(l, idx)),
+        forall|me: int, m: LRaftMessage| #[trigger] plain_ext(l, timeout_log(l, me, m)),
+        forall|src: int, m: LRaftMessage, st: bool, gr: bool, rt: int, me: int|
+            #[trigger] plain_ext(l, vote_group(l, src, m, st, gr, rt, me)),
+        forall|l2: Seq<Entry>, x: AeView<C>, acc: bool, log0: Seq<LLogEntry>, c0: int, cur: int|
+            #[trigger] ae_log_ok(l2, l, x, acc, log0, c0, cur) ==> plain_ext(l, l2),
+        forall|l2: Seq<Entry>, f: int, m: LRaftMessage, gm: Map<u64, u64>, gn: Map<u64, u64>|
+            #[trigger] reply_log_ok(l2, l, f, m, gm, gn) ==> plain_ext(l, l2),
+        forall|sends: Seq<AppendSend<C>>, log: Seq<LLogEntry>, cfg: Seq<u16>, me: int, k: int|
+            #[trigger] plain_ext(l, tick_sends_log(l, sends, log, cfg, me, k)),
+        forall|sends: Seq<AppendSend<C>>, log: Seq<LLogEntry>, cfg: Seq<u16>, me: int, k: int, idx: int|
+            #[trigger] plain_ext(l, tick_sends_log(advance_log(l, idx), sends, log, cfg, me, k)),
+        forall|nl: Seq<LLogEntry>, v: int| #[trigger] plain_ext(l, client_request_log(l, nl, v)),
+        forall|cfg: Seq<u16>, voter: u16, gr: bool, t: i64|
+            #[trigger] plain_ext(l, settle_step_down_log(l, cfg, voter, gr, t)),
+        forall|cfg: Seq<u16>, vs: Seq<u16>, gr: Seq<bool>, ts: Seq<i64>, v0: Set<int>, rb: bool|
+            #[trigger] plain_ext(l, settle_won_log(l, cfg, vs, gr, ts, v0, rb)),
+        l.len() == 0 ==> forall|n: int| #[trigger] plain_ext(l, load_config_log(n)),
+{
+    lemma_ext_refl(l);
+    lemma_ext_builders(l);
+    assert forall|cfg: Seq<u16>, voter: u16, gr: bool, t: i64|
+        #[trigger] plain_ext(l, settle_step_down_log(l, cfg, voter, gr, t)) by {
+        lemma_ext_settle_step_down(l, cfg, voter, gr, t);
+    }
+    assert forall|cfg: Seq<u16>, vs: Seq<u16>, gr: Seq<bool>, ts: Seq<i64>, v0: Set<int>, rb: bool|
+        #[trigger] plain_ext(l, settle_won_log(l, cfg, vs, gr, ts, v0, rb)) by {
+        lemma_ext_settle_won(l, cfg, vs, gr, ts, v0, rb);
+    }
+    if l.len() == 0 {
+        assert forall|n: int| #[trigger] plain_ext(l, load_config_log(n)) by {
+            broadcast use lemma_ext_push;
+            assert(load_config_log(n) == l.push(Entry::Tick)
+                .push(Entry::Set(LogField::Config, LogValue::VIntSet(Set::<int>::range(0, n))))
+                .push(Entry::Close(ActionLabel::LoadConfig)));
+        }
+    }
+    assert forall|src: int, m: LRaftMessage, st: bool, gr: bool, rt: int, me: int|
+        #[trigger] plain_ext(l, vote_group(l, src, m, st, gr, rt, me)) by {
+        lemma_ext_vote_group(l, src, m, st, gr, rt, me);
+    }
+    assert forall|l2: Seq<Entry>, x: AeView<C>, acc: bool, log0: Seq<LLogEntry>, c0: int, cur: int|
+        #[trigger] ae_log_ok(l2, l, x, acc, log0, c0, cur) implies plain_ext(l, l2) by {
+        let (st, aside) = choose|st: bool, aside: bool| l2 == #[trigger] ae_log(l, x, st, aside, acc, log0, c0, cur);
+        lemma_ext_ae_log(l, x, st, aside, acc, log0, c0, cur);
+    }
+    assert forall|l2: Seq<Entry>, f: int, m: LRaftMessage, gm: Map<u64, u64>, gn: Map<u64, u64>|
+        #[trigger] reply_log_ok(l2, l, f, m, gm, gn) implies plain_ext(l, l2) by {
+        let l1 = l.push(Entry::Recv(f, m));
+        broadcast use lemma_ext_push;
+        assert(plain_ext(l, l1));
+        lemma_ext_builders(l1);
+        lemma_ext_trans(l, l1, step_down_seg(l1, msg_term(m)));
+    }
+    assert forall|sends: Seq<AppendSend<C>>, log: Seq<LLogEntry>, cfg: Seq<u16>, me: int, k: int|
+        #[trigger] plain_ext(l, tick_sends_log(l, sends, log, cfg, me, k)) by {
+        lemma_ext_tick_sends(l, sends, log, cfg, me, k);
+    }
+    assert forall|sends: Seq<AppendSend<C>>, log: Seq<LLogEntry>, cfg: Seq<u16>, me: int, k: int, idx: int|
+        #[trigger] plain_ext(l, tick_sends_log(advance_log(l, idx), sends, log, cfg, me, k)) by {
+        let a = advance_log(l, idx);
+        lemma_ext_tick_sends(a, sends, log, cfg, me, k);
+        lemma_ext_trans(l, a, tick_sends_log(a, sends, log, cfg, me, k));
+    }
+}
+
+// --- Ready marks -----------------------------------------------------------
+
+pub open spec fn rmark(e: Entry) -> bool {
+    gc::is_ready_mark::<RaftP>(e)
+}
+
+pub open spec fn rnum(e: Entry) -> int {
+    gc::mark_number::<RaftP>(e) as int
+}
+
+// Each Ready mark is numbered as the one before it or one more (A2's
+// ready_seq_ok without its count, which the core keeps beside it).
+pub open spec fn ready_seq_ok(l: Seq<Entry>) -> bool {
+    forall|i: int, j: int| #![trigger rmark(l[i]), rmark(l[j])]
+        0 <= i < j < l.len() && rmark(l[i]) && rmark(l[j])
+        && (forall|k: int| i < k < j ==> !rmark(#[trigger] l[k]))
+        ==> rnum(l[i]) <= rnum(l[j]) <= rnum(l[i]) + 1
+}
+
+// A plain extension keeps the marks: the numbering and the last certificate.
+pub proof fn lemma_ready_ext(l: Seq<Entry>, l2: Seq<Entry>)
+    requires ready_seq_ok(l), plain_ext(l, l2),
+    ensures ready_seq_ok(l2), gc::marks_kept::<RaftP>(l, l2),
+{
+    assert forall|k: int| l.len() <= k < l2.len() implies !gc::is_ready_mark::<RaftP>(#[trigger] l2[k]) by {
+        assert(!(l2[k] is Mark));
+    }
+    assert(glr::protocol::ghost_log_core::log_grows::<RaftP>(l, l2));
+    gc::lemma_marks_kept_grow::<RaftP>(l, l2);
+    assert forall|i: int, j: int| #![trigger rmark(l2[i]), rmark(l2[j])]
+        0 <= i < j < l2.len() && rmark(l2[i]) && rmark(l2[j])
+        && (forall|k: int| i < k < j ==> !rmark(#[trigger] l2[k]))
+        implies rnum(l2[i]) <= rnum(l2[j]) <= rnum(l2[i]) + 1 by {
+        assert(j < l.len()) by { if j >= l.len() { assert(!(l2[j] is Mark)); } }
+        assert(l2.take(l.len() as int)[i] == l[i]);
+        assert(l2.take(l.len() as int)[j] == l[j]);
+        assert forall|k: int| i < k < j implies !rmark(#[trigger] l[k]) by {
+            assert(l2.take(l.len() as int)[k] == l[k]);
+        }
+    }
+}
+
+// A Ready numbered as the last one or one more keeps the numbering.
+pub proof fn lemma_ready_push(l: Seq<Entry>, m: LMark)
+    requires
+        ready_seq_ok(l),
+        gc::is_ready_mark::<RaftP>(Entry::Mark(m)),
+        gc::has_ready::<RaftP>(l) ==> {
+            let last = rnum(l[gc::last_ready_pos::<RaftP>(l)]);
+            last <= rnum(Entry::Mark(m)) <= last + 1
+        },
+    ensures ready_seq_ok(l.push(Entry::Mark(m))),
+{
+    let l2 = l.push(Entry::Mark(m));
+    gc::lemma_last_ready_bounds::<RaftP>(l);
+    assert forall|i: int, j: int| #![trigger rmark(l2[i]), rmark(l2[j])]
+        0 <= i < j < l2.len() && rmark(l2[i]) && rmark(l2[j])
+        && (forall|k: int| i < k < j ==> !rmark(#[trigger] l2[k]))
+        implies rnum(l2[i]) <= rnum(l2[j]) <= rnum(l2[i]) + 1 by {
+        assert(l2[i] == l[i]);
+        if j < l.len() {
+            assert(l2[j] == l[j]);
+            assert forall|k: int| i < k < j implies !rmark(#[trigger] l[k]) by { assert(l2[k] == l[k]); }
+        } else {
+            // i is l's last Ready: one later would sit between i and j
+            assert(gc::has_ready::<RaftP>(l)) by { gc::lemma_last_ready_ge::<RaftP>(l, i); }
+            let p = gc::last_ready_pos::<RaftP>(l);
+            gc::lemma_last_ready_ge::<RaftP>(l, i);
+            if p > i { assert(l2[p] == l[p]); assert(!rmark(l2[p])); }
+            assert(p == i);
+        }
+    }
+}
+
+impl<C> RaftCore<C> {
+    // The vote a Ready mark carries: the spec rank + 1, or 0 for none
+    // (cert_ctx's encoding).
+    pub open spec fn vote_enc(&self) -> u64 {
+        if self.vote_for_ != RAFT_SERVER_INVALID_SITE_ID {
+            (rank(self.config_members_@, self.vote_for_) + 1) as u64
+        } else {
+            0u64
+        }
+    }
+
+    pub open spec fn ready_now(&self, n: u64) -> LMark {
+        LMark::Ready { number: n, term: self.current_term_, vote: self.vote_enc(), commit: self.commit_index_ }
+    }
+
+    // The persistence invariant beside ginv: the marks numbered without a
+    // gap, the last of them the count of records so far (g_seq_).
+    pub open spec fn persist_ok(&self) -> bool {
+        &&& ready_seq_ok(self.g_log_@)
+        &&& 0 <= self.g_seq_@
+        &&& (gc::has_ready::<RaftP>(self.g_log_@)
+                ==> rnum(self.g_log_@[gc::last_ready_pos::<RaftP>(self.g_log_@)]) == self.g_seq_@)
+        &&& (!gc::has_ready::<RaftP>(self.g_log_@) ==> self.g_seq_@ == 0)
+    }
+}
+
+// A step's ghost log after its Ready mark (P1): the handler's log, which
+// plain-extends the log the step began with, then a Ready numbered s.
+pub open spec fn ready_tail_ok(l0: Seq<Entry>, l: Seq<Entry>, s: int) -> bool {
+    &&& l.len() > l0.len()
+    &&& gc::last_ready_pos::<RaftP>(l) == l.len() - 1
+    &&& rnum(l[l.len() - 1]) == s
+    &&& plain_ext(l0, l.drop_last())
+}
+
+// A step's end (A5 step 4): `post` is `pre` with the Ready mark of its state
+// numbered s pushed, and the records counted to s. `pre`'s log plain-extends
+// the step's first log l0, whose numbering ended at s or s - 1.
+pub proof fn lemma_ready_step<C>(pre: &RaftCore<C>, post: &RaftCore<C>, l0: Seq<Entry>, s0: int, s: int)
+    requires
+        pre.inv(),
+        pre.ginv(),
+        ready_seq_ok(l0),
+        0 <= s0,
+        gc::has_ready::<RaftP>(l0) ==> rnum(l0[gc::last_ready_pos::<RaftP>(l0)]) == s0,
+        !gc::has_ready::<RaftP>(l0) ==> s0 == 0,
+        s0 <= s <= s0 + 1,
+        s < u64::MAX,
+        plain_ext(l0, pre.g_log_@),
+        view_frame(pre, post),
+        post.role_view() == pre.role_view(),
+        post.g_votes_@ == pre.g_votes_@,
+        post.g_log_@ == pre.g_log_@.push(Entry::Mark(pre.ready_now(s as u64))),
+        post.g_seq_@ == s,
+        post.is_leader_ == pre.is_leader_,
+        post.election_in_progress_ == pre.election_in_progress_,
+        post.election_term_ == pre.election_term_,
+        post.gated_ == pre.gated_,
+    ensures
+        post.ginv(),
+        post.persist_ok(),
+        ready_tail_ok(l0, post.g_log_@, s),
+{
+    let l = pre.g_log_@;
+    lemma_ready_ext(l0, l);
+    let m = pre.ready_now(s as u64);
+    lemma_cert_now(pre, s as u64);
+    lemma_ready_push(l, m);
+    assert(post.g_log_@.drop_last() =~= l);
+    assert(post.c_view() == pre.c_view());
+    assert(post.log_view() == pre.log_view());
+    assert(post.state_view() == pre.state_view());
+}
+
+// The certificate of the core's state now: what a Ready mark at a step's
+// end carries (A5 step 4, Mako's lemma_cert_now_ok).
+pub proof fn lemma_cert_now<C>(core: &RaftCore<C>, n: u64)
+    requires core.inv(), core.ginv(),
+    ensures ({
+        let l = core.g_log_@;
+        let l2 = l.push(Entry::Mark(core.ready_now(n)));
+        &&& log_ok(l2, core.c_view())
+        &&& fully_closed(l2)
+        &&& replay(l2) == replay(l)
+        &&& gc::last_ready_pos::<RaftP>(l2) == l.len()
+        &&& gc::last_cert::<RaftP>(l2).log == l
+        &&& gc::last_cert::<RaftP>(l2).number == n
+        &&& rmark(l2[l.len() as int]) && rnum(l2[l.len() as int]) == n
+    }),
+{
+    let c = core.c_view();
+    let l = core.g_log_@;
+    let m = core.ready_now(n);
+    let e = Entry::Mark(m);
+    let hs = LHardState { term: core.current_term_, vote: core.vote_enc(), commit: core.commit_index_ };
+    let view = replay(l);
+    assert(view == core.state_view());
+    // the vote, decoded by the universe's rank
+    if core.vote_for_ != RAFT_SERVER_INVALID_SITE_ID {
+        let r = rank(core.config_members_@, core.vote_for_);
+        lemma_sorted_len(core.config_members_@);
+        if core.config_members_@.contains(core.vote_for_) { lemma_rank_bounds(core.config_members_@, core.vote_for_); }
+        assert(0 <= r <= core.config_members_@.len());
+        lemma_cert_ctx_rank((r + 1) as u64);
+    }
+    assert(<RaftP as gc::CertProtocol>::cert_local_ok(l, view, hs, c, cert_ctx()));
+    assert(gc::cert_ok::<RaftP>(gc::Cert { log: l, view, durable: hs, number: n }, c, cert_ctx()));
+    gc::lemma_certs_push_ready::<RaftP>(c, cert_ctx(), l, e, n, hs);
+    lemma_push_mark(l, m, c);
+    lemma_routed_push_non_close(l, e);
+    assert(l.push(e)[l.len() as int] == e);
 }
 
 } // verus!

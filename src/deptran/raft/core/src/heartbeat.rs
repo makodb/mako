@@ -1715,6 +1715,7 @@ pub fn heartbeat_abandon_round<C: Clone>(core: &mut RaftCore<C>)
     ensures
         final(core).inv(),
         old(core).ginv() ==> final(core).ginv(),  // [M12] unseen by the spec
+        final(core).g_log_ == old(core).g_log_,  // [M12]
 {
     core.pending_rpcs_.abandon();
     core.authority_rounds_.abandon();

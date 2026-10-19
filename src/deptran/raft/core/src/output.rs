@@ -197,9 +197,17 @@ impl CoreOutput {
         self.snap_ = None;
     }
 
+    // [M12] persistence (Part A): whether the last step left a note, the
+    // record premise N numbers
+    pub closed spec fn spec_note(&self) -> bool {
+        self.persist_ is Some
+    }
+
     // [fix, F21] (whole item) The last step's note, left in place (the
     // replay recorder reads it; disk builds take it).
-    pub fn persist(&self) -> Option<PersistNote> {
+    pub fn persist(&self) -> (r: Option<PersistNote>)
+        ensures r is Some == self.spec_note(),  // [M12]
+    {
         self.persist_
     }
 
