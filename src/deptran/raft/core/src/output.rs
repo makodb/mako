@@ -164,28 +164,91 @@ pub struct CoreOutput {
     snap_: Option<SnapNote>,  // [fix, F25] the step in progress's boundary move
 }
 
+// [M12] persistence (P2): note_log_write's mark, the lower of two writes (0:
+// none yet)
+pub open spec fn lowest_write(from: u64, index: u64) -> u64 {
+    if from == 0 || index < from { index } else { from }
+}
+
+// [M12] P2: note_snapshot's mark
+pub open spec fn snap_mark(index: u64, term: i64, keep: bool) -> Option<SnapNote> {
+    Some(SnapNote { index_: index, term_: term, keep_: keep })
+}
+
+// [M12] P2: finish_persist's note from the step's marks (opaque: revealed
+// where a note is made or read)
+#[verifier::opaque]
+pub open spec fn finished_note(m: (u64, Option<SnapNote>, Option<PersistNote>), hard: bool, term: u64,
+                               vote: u16, commit: u64) -> Option<PersistNote> {
+    if hard || m.0 != 0 || m.1 is Some {
+        Some(PersistNote { hard_: hard, term_: term, vote_: vote, commit_: commit, log_from_: m.0, snap_: m.1 })
+    } else {
+        None
+    }
+}
+
 impl CoreOutput {
-    pub fn new() -> CoreOutput {
+    pub fn new() -> (r: CoreOutput)  // [M12] P2: named for its ensures
+        ensures r.unmarked(),  // [M12] P2
+    {
         CoreOutput { actions_: Vec::new(), logs_: Vec::new(), log_level_: RAFT_LOG_DEBUG,  // [move, M7]
                      log_from_: 0, persist_: None, snap_: None }  // [fix, F21, fix, F25]
     }
 
+    // [M12] persistence (P2): the step in progress's marks (its lowest log
+    // write, 0 for none, and its boundary move) and the last finished note
+    pub closed spec fn notes(&self) -> (u64, Option<SnapNote>, Option<PersistNote>) {
+        (self.log_from_, self.snap_, self.persist_)
+    }
+
+    pub open spec fn spec_log_from(&self) -> u64 {
+        self.notes().0
+    }
+
+    pub open spec fn spec_snap(&self) -> Option<SnapNote> {
+        self.notes().1
+    }
+
+    pub open spec fn spec_persist(&self) -> Option<PersistNote> {
+        self.notes().2
+    }
+
+    // [M12] P2: a step's start, no mark yet
+    pub open spec fn unmarked(&self) -> bool {
+        self.spec_log_from() == 0 && self.spec_snap() is None
+    }
+
     // [fix, F21] (whole item) A log writer marks the lowest index it wrote.
-    pub fn note_log_write(&mut self, index: u64) {
+    pub fn note_log_write(&mut self, index: u64)
+        ensures  // [M12] P2
+            final(self).spec_log_from() == lowest_write(old(self).spec_log_from(), index),
+            final(self).spec_snap() == old(self).spec_snap(),
+            final(self).spec_persist() == old(self).spec_persist(),
+    {
         if self.log_from_ == 0 || index < self.log_from_ {
             self.log_from_ = index;
         }
     }
 
     // [fix, F25] (whole item) A step that moved the snapshot boundary marks it.
-    pub fn note_snapshot(&mut self, index: u64, term: i64, keep: bool) {
+    pub fn note_snapshot(&mut self, index: u64, term: i64, keep: bool)
+        ensures  // [M12] P2
+            final(self).spec_log_from() == old(self).spec_log_from(),
+            final(self).spec_snap() == snap_mark(index, term, keep),
+            final(self).spec_persist() == old(self).spec_persist(),
+    {
         self.snap_ = Some(SnapNote { index_: index, term_: term, keep_: keep });
     }
 
     // [fix, F21] (whole item) step's end: the note, if the step changed the
     // saved state; a step that changed nothing leaves none. [fix, F25] A
     // boundary move is a change of the saved state.
-    pub fn finish_persist(&mut self, hard: bool, term: u64, vote: u16, commit: u64) {
+    pub fn finish_persist(&mut self, hard: bool, term: u64, vote: u16, commit: u64)
+        ensures  // [M12] P2
+            final(self).unmarked(),
+            final(self).spec_persist() == finished_note(old(self).notes(), hard, term, vote, commit),
+    {
+        proof { reveal(finished_note); }  // [M12] P2
         if hard || self.log_from_ != 0 || self.snap_.is_some() {
             self.persist_ = Some(PersistNote { hard_: hard, term_: term, vote_: vote,
                                                commit_: commit, log_from_: self.log_from_,
@@ -199,8 +262,8 @@ impl CoreOutput {
 
     // [M12] persistence (Part A): whether the last step left a note, the
     // record premise N numbers
-    pub closed spec fn spec_note(&self) -> bool {
-        self.persist_ is Some
+    pub open spec fn spec_note(&self) -> bool {
+        self.spec_persist() is Some
     }
 
     // [fix, F21] (whole item) The last step's note, left in place (the
@@ -212,7 +275,9 @@ impl CoreOutput {
     }
 
     // [fix, F21] (whole item) The last step's note, taken.
-    pub fn take_persist(&mut self) -> Option<PersistNote> {
+    pub fn take_persist(&mut self) -> Option<PersistNote>
+        ensures final(self).spec_log_from() == old(self).spec_log_from(),  // [M12] P2
+    {
         let note = self.persist_;
         self.persist_ = None;
         note
@@ -231,7 +296,9 @@ impl CoreOutput {
 
     // [move, M7] (whole item) One log line, if its level is enabled. At most
     // CORE_LOG_MAX_ARGS arguments are kept.
-    pub fn log(&mut self, level: i32, fmt: &'static str, args: &[LogArg]) {
+    pub fn log(&mut self, level: i32, fmt: &'static str, args: &[LogArg])
+        ensures final(self).notes() == old(self).notes(),  // [M12] P2
+    {
         if level > self.log_level_ {
             return;
         }
@@ -277,7 +344,9 @@ impl CoreOutput {
         &self.logs_[i]
     }
 
-    pub fn push(&mut self, action: CoreAction) {
+    pub fn push(&mut self, action: CoreAction)
+        ensures final(self).notes() == old(self).notes(),  // [M12] P2
+    {
         self.actions_.push(action);
     }
 

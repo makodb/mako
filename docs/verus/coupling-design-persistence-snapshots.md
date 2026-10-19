@@ -3,8 +3,8 @@
 > **Status (2026-10-19).** Implemented and proved. The restructuring: E1 and
 > E2 as F25, E3 as F26, E4 and E5 as F27, E6 as F28 (which deleted
 > `ObserveTerm`), E7 as F30 (modification-plan.md A.2). The proof: Part A's
-> P1, P3 and P4 (P2, the notes' exactness, stays checked rather than proved),
-> spec v4 with W1, and Part B's coupling of every snapshot event inside the
+> P1-P4 (P2, the notes' exactness, as `note_exact` over an opaque
+> `log_fold`, with `step`'s arms split into `step_arm`), spec v4 with W1, and Part B's coupling of every snapshot event inside the
 > gate (F31), after which the gate admits snapshots (F32, which also removed
 > F29's `LeaveGates`). One departure from the text below: the gate keeps
 > refusing a memory build that restarts from a snapshot image, as F30's

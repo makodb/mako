@@ -3539,6 +3539,150 @@ impl<C> RaftCore<C> {
     }
 }
 
+// ---------------------------------------------------------------------------
+// (P2) Note exactness (A4): a step's persist note describes the saved
+// state's change exactly -- the fold the replay's shadow checks
+// (replay/src/lib.rs, Shadow::apply) and the store applies to a record.
+// ---------------------------------------------------------------------------
+
+// The log side of a step whose marks are (log_from, snap), over the log and
+// boundary before (l0, s0) and after (l1, s1): the boundary move first (the
+// log kept after the new boundary, or dropped), then the log from log_from
+// on is l1's; without a mark, l1's view and base are l0's. Opaque: step
+// only matches it (by its arguments); the lemmas below prove it.
+#[verifier::opaque]
+pub open spec fn log_fold_c<C>(l0: crate::log::RaftLog<C>, s0: (u64, i64), l1: crate::log::RaftLog<C>, s1: (u64, i64),
+                               log_from: u64, snap: Option<SnapNote>) -> bool {
+    let base0 = l0.spec_base();
+    let base1: int = match snap {
+        Some(n) => n.index_ as int + 1,
+        None => base0,
+    };
+    let log1: Seq<RaftEntry<C>> = match snap {
+        Some(n) => if n.keep_ { l0.view().skip(n.index_ as int + 1 - base0) } else { Seq::empty() },
+        None => l0.view(),
+    };
+    &&& (snap matches Some(n) ==> base0 <= n.index_ as int + 1
+            && (n.keep_ ==> n.index_ as int + 1 - base0 <= l0.view().len())
+            && s1 == (n.index_, n.term_))
+    &&& (snap is None ==> s1 == s0)
+    &&& l1.spec_base() == base1
+    &&& (log_from == 0 ==> l1.view() == log1)
+    &&& (log_from != 0 ==> base1 <= log_from as int && log_from as int <= base1 + log1.len()
+            && log_from as int - base1 <= l1.view().len()
+            && l1.view().take(log_from as int - base1) == log1.take(log_from as int - base1))
+}
+
+// The fold from core a to core b.
+pub open spec fn log_fold<C>(a: &RaftCore<C>, b: &RaftCore<C>, log_from: u64, snap: Option<SnapNote>) -> bool {
+    log_fold_c(a.raft_log_, (a.snapidx_, a.snapterm_), b.raft_log_, (b.snapidx_, b.snapterm_), log_from, snap)
+}
+
+// A step from a to b left note n: none, and nothing saved changed; or the
+// hard state b's (when the note carries it, else a's) and the log folded.
+// Opaque: lemma_note_exact proves it.
+#[verifier::opaque]
+pub open spec fn note_exact<C>(a: &RaftCore<C>, b: &RaftCore<C>, n: Option<PersistNote>) -> bool {
+    match n {
+        None => {
+            &&& b.current_term_ == a.current_term_
+            &&& b.vote_for_ == a.vote_for_
+            &&& b.commit_index_ == a.commit_index_
+            &&& log_fold(a, b, 0, None)
+        },
+        Some(p) => {
+            &&& (p.hard_ ==> p.term_ == b.current_term_ && p.vote_ == b.vote_for_ && p.commit_ == b.commit_index_)
+            &&& (!p.hard_ ==> b.current_term_ == a.current_term_ && b.vote_for_ == a.vote_for_
+                    && b.commit_index_ == a.commit_index_)
+            &&& log_fold(a, b, p.log_from_, p.snap_)
+        },
+    }
+}
+
+// The note finish_persist makes from a step's marks is exact, given the
+// marks fold the log and hard says whether term, vote or commit moved.
+pub proof fn lemma_note_exact<C>(a: &RaftCore<C>, b: &RaftCore<C>,
+                                 m: (u64, Option<SnapNote>, Option<PersistNote>), hard: bool)
+    requires
+        log_fold(a, b, m.0, m.1),
+        hard == (b.current_term_ != a.current_term_ || b.vote_for_ != a.vote_for_
+            || b.commit_index_ != a.commit_index_),
+    ensures note_exact(a, b, finished_note(m, hard, b.current_term_, b.vote_for_, b.commit_index_)),
+{
+    reveal(note_exact);
+    reveal(finished_note);
+    reveal(log_fold_c);
+}
+
+// A handler that leaves the log and the boundary alone.
+pub open spec fn log_kept<C>(a: &RaftCore<C>, b: &RaftCore<C>) -> bool {
+    &&& b.raft_log_ == a.raft_log_
+    &&& b.snapidx_ == a.snapidx_
+    &&& b.snapterm_ == a.snapterm_
+}
+
+// No mark: the same view and base.
+pub proof fn lemma_fold_same<C>(l0: crate::log::RaftLog<C>, l1: crate::log::RaftLog<C>, s: (u64, i64))
+    requires l1.view() == l0.view(), l1.spec_base() == l0.spec_base(),
+    ensures log_fold_c(l0, s, l1, s, 0, None),
+{
+    reveal(log_fold_c);
+}
+
+// Propose's mark: one entry after the last, the rest kept.
+pub proof fn lemma_fold_append<C>(l0: crate::log::RaftLog<C>, l1: crate::log::RaftLog<C>, s: (u64, i64))
+    requires
+        l0.wf(),
+        l1.wf(),
+        l1.spec_base() == l0.spec_base(),
+        l1.spec_len() == l0.spec_len() + 1,
+        l1.view() == l0.view().push(l1.view().last()),
+        l0.spec_last_index() + 1 < u64::MAX,
+    ensures log_fold_c(l0, s, l1, s, (l0.spec_last_index() + 1) as u64, None),
+{
+    reveal(log_fold_c);
+    l0.lemma_wf_bounds();
+    l1.lemma_wf_bounds();
+    assert(l1.view().take(l0.view().len() as int) =~= l0.view());
+    assert(l0.view().take(l0.view().len() as int) =~= l0.view());
+}
+
+// The append handler's mark: the log cut at the first write, then the
+// batch's entries.
+pub proof fn lemma_fold_write<C>(l0: crate::log::RaftLog<C>, l1: crate::log::RaftLog<C>, s: (u64, i64), from: u64,
+                                 cut: Seq<RaftEntry<C>>, rest: Seq<RaftEntry<C>>)
+    requires
+        l0.wf(),
+        l1.spec_base() == l0.spec_base(),
+        l0.spec_base() <= from as int,
+        from as int - l0.spec_base() <= l0.spec_len(),
+        cut == l0.view().subrange(0, from as int - l0.spec_base()),
+        l1.view() == cut + rest,
+    ensures log_fold_c(l0, s, l1, s, from, None),
+{
+    reveal(log_fold_c);
+    l0.lemma_wf_bounds();
+    let n = from as int - l0.spec_base();
+    assert(l1.view().take(n) =~= cut);
+    assert(l0.view().take(n) =~= cut);
+}
+
+// A boundary move's mark: the log after the new boundary kept, or dropped.
+pub proof fn lemma_fold_snap<C>(l0: crate::log::RaftLog<C>, s0: (u64, i64), l1: crate::log::RaftLog<C>, index: u64, term: i64,
+                                keep: bool)
+    requires
+        l0.wf(),
+        l0.spec_base() <= index as int + 1,
+        l1.spec_base() == index as int + 1,
+        keep ==> index as int + 1 - l0.spec_base() <= l0.spec_len(),
+        keep ==> l1.view() == l0.view().skip(index as int + 1 - l0.spec_base()),
+        !keep ==> l1.view() == Seq::<RaftEntry<C>>::empty(),
+    ensures log_fold_c(l0, s0, l1, (index, term), 0, Some(SnapNote { index_: index, term_: term, keep_: keep })),
+{
+    reveal(log_fold_c);
+    l0.lemma_wf_bounds();
+}
+
 // A step's ghost log after its Ready mark (P1): the handler's log, which
 // plain-extends the log the step began with, then a Ready numbered s.
 pub open spec fn ready_tail_ok(l0: Seq<Entry>, l: Seq<Entry>, s: int) -> bool {

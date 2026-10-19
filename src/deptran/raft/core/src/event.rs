@@ -455,6 +455,9 @@ impl<C: Clone> RaftCore<C> {
                 &&& (r is Some ==> crate::coupling::ready_tail_ok(old(self).g_log_@, final(self).g_log_@,
                         final(self).g_seq_@))
             },
+            // [M12] persistence (P2): as step's, for a message taken
+            r is Some && !(ev is Restore) && old(out).unmarked()
+                ==> crate::coupling::note_exact(old(self), final(self), final(out).spec_persist()),
             match ev {
                 Event::RecvAppendEntries { .. } => r matches Some(reply) ==> reply is Append,
                 Event::RecvRequestVote { .. } => r matches Some(reply) ==> reply is Vote,
@@ -568,17 +571,18 @@ impl<C: Clone> RaftCore<C> {
         ok
     }
 
-    // The core's one entry point. The caller holds mtx_.
-    #[verifier::rlimit(160)]  // [M12] every event's arm and the persistence epilogue, one query
-    #[verifier::spinoff_prover]  // [M12] its own solver, so the crate's earlier queries do not tip it
-    pub fn step<W: InboundBatch<C>>(&mut self, ev: Event<'_, C, W>,
+    // [M12] step's arms: each event's handler and its coupling, one query
+    // apart from step's persistence epilogue, which reads only what this
+    // ensures: the coupling kept, the reply's kind, the ghost log grown by
+    // the arm's builders, and (P2) the arm's marks folding its first state
+    // into its last.
+    fn step_arm<W: InboundBatch<C>>(&mut self, ev: Event<'_, C, W>,  // [M12]
                                     out: &mut CoreOutput) -> (r: Reply<C>)
         requires
             old(self).inv(),
             old(self).admits(&ev),
         ensures
             final(self).inv(),
-            // [M12] the coupling kept, under each event's premise
             old(self).ginv() && old(self).coupled(&ev) ==> final(self).ginv(),
             match ev {
                 Event::SetIdentity { .. } | Event::Configure { .. }
@@ -603,17 +607,10 @@ impl<C: Clone> RaftCore<C> {
                 Event::InstallSnapshot { .. } => r is Installed,  // [fix, F27]
                 Event::RecvSnapshotReply { .. } => r is SnapshotReply,  // [fix, F28]
             },
-            // [M12] persistence (Part A): the records the notes made, and the
-            // Ready mark a coupled step ends with, numbered by them (P1)
-            !(ev is Restore) ==> final(self).g_seq_@
-                == old(self).g_seq_@ + (if final(out).spec_note() { 1int } else { 0int }),
-            old(self).ginv() && old(self).coupled(&ev) && old(self).persist_ok() && !(ev is Restore)
-                && old(self).g_seq_@ + 1 < u64::MAX ==> {
-                &&& final(self).persist_ok()
-                &&& crate::coupling::ready_tail_ok(old(self).g_log_@, final(self).g_log_@, final(self).g_seq_@)
-            },
-            // [M12] persistence (P4): a restart counts from the durable d, its
-            // log the previous run's cut stepped aside, then Ready(d)
+            old(self).ginv() && old(self).coupled(&ev) && !(ev is Restore)
+                ==> crate::coupling::plain_ext(old(self).g_log_@, final(self).g_log_@),
+            !(ev is Restore) && old(out).unmarked() ==> crate::coupling::log_fold(old(self), final(self),
+                final(out).spec_log_from(), final(out).spec_snap()),
             match ev {
                 Event::Restore { d, .. } => old(self).ginv() && old(self).coupled(&ev)
                     && r == Reply::<C>::Restored(true) && (d as int) + 1 < u64::MAX ==> {
@@ -625,16 +622,9 @@ impl<C: Clone> RaftCore<C> {
                 _ => true,
             },
     {
-        // [M12] persistence: the step's first state, and its builders' growth
-        let ghost s0 = *self;
-        let ghost pre_ok = s0.ginv() && s0.coupled(&ev) && s0.persist_ok() && !(ev is Restore);
+        let ghost s0 = *self;  // [M12]
         let ghost evg = ev;  // [Part B] the event's ghost fields, past the match
-        // [fix, F21] the saved fields before the arm, for the persist note
-        let term0: u64 = self.current_term_;  // [fix, F21]
-        let vote0: u16 = self.vote_for_;  // [fix, F21]
-        let commit0: u64 = self.commit_index_;  // [fix, F21]
-        let restoring: bool = matches!(ev, Event::Restore { .. });  // [fix, F21]
-        let r: Reply<C> = match ev {
+        let r: Reply<C> = match ev {  // [M12]
             Event::SetIdentity { loc_id, site_id, partition_id } => {
                 self.set_identity(loc_id, site_id, partition_id);
                 Reply::Done
@@ -808,10 +798,93 @@ impl<C: Clone> RaftCore<C> {
                     send_term, follower_term, stopped, failover, out))
             },
         };
+        proof {
+            // [M12] persistence: the builders' growth
+            if s0.ginv() && s0.coupled(&evg) && !(evg is Restore) {
+                assert(crate::coupling::plain_ext(s0.g_log_@, self.g_log_@)) by {
+                    crate::coupling::lemma_ext_all::<C>(s0.g_log_@);
+                }
+            }
+        }
+        r
+    }
+
+    // The core's one entry point. The caller holds mtx_.
+    pub fn step<W: InboundBatch<C>>(&mut self, ev: Event<'_, C, W>,
+                                    out: &mut CoreOutput) -> (r: Reply<C>)
+        requires
+            old(self).inv(),
+            old(self).admits(&ev),
+        ensures
+            final(self).inv(),
+            // [M12] the coupling kept, under each event's premise
+            old(self).ginv() && old(self).coupled(&ev) ==> final(self).ginv(),
+            match ev {
+                Event::SetIdentity { .. } | Event::Configure { .. }
+                | Event::RebuildPeers { .. } | Event::AbandonRound
+                | Event::ResetRoundState | Event::SetFollower { .. }
+                | Event::StepDown { .. } => r is Done,
+                Event::EnterGates { .. } => r is Gates,
+                Event::Propose { .. } => r is Proposed,
+                Event::StartElection { .. } => r is Campaign,
+                Event::SettleElection { .. } => r is Settled,
+                Event::ResetElectionTimer { .. } => r is TimerReset,
+                Event::RecvRequestVote { .. } => r is Vote,
+                Event::RecvAppendEntries { .. } => r is Append,
+                Event::TickHeartbeat { .. } => r is Tick,
+                Event::RecvAppendReply { .. } => r is AppendReply,
+                Event::RoundEnd { .. } => r is RoundEnd,
+                Event::Applied { .. } => r is Applied,
+                Event::Restore { .. } => r is Restored,  // [fix, F22]
+                Event::CreateSnapshot { .. } => r is Created,  // [fix, F25]
+                Event::Compact { .. } => r is Compacted,  // [fix, F25]
+                Event::RecvInstallSnapshot { .. } => r is InstallContact,  // [fix, F27]
+                Event::InstallSnapshot { .. } => r is Installed,  // [fix, F27]
+                Event::RecvSnapshotReply { .. } => r is SnapshotReply,  // [fix, F28]
+            },
+            // [M12] persistence (Part A): the records the notes made, and the
+            // Ready mark a coupled step ends with, numbered by them (P1)
+            !(ev is Restore) ==> final(self).g_seq_@
+                == old(self).g_seq_@ + (if final(out).spec_note() { 1int } else { 0int }),
+            old(self).ginv() && old(self).coupled(&ev) && old(self).persist_ok() && !(ev is Restore)
+                && old(self).g_seq_@ + 1 < u64::MAX ==> {
+                &&& final(self).persist_ok()
+                &&& crate::coupling::ready_tail_ok(old(self).g_log_@, final(self).g_log_@, final(self).g_seq_@)
+            },
+            // [M12] persistence (P2): the note is exact, and the next step
+            // starts unmarked
+            !(ev is Restore) && old(out).unmarked()
+                ==> crate::coupling::note_exact(old(self), final(self), final(out).spec_persist()),
+            final(out).unmarked(),
+            // [M12] persistence (P4): a restart counts from the durable d, its
+            // log the previous run's cut stepped aside, then Ready(d)
+            match ev {
+                Event::Restore { d, .. } => old(self).ginv() && old(self).coupled(&ev)
+                    && r == Reply::<C>::Restored(true) && (d as int) + 1 < u64::MAX ==> {
+                    &&& final(self).persist_ok()
+                    &&& final(self).g_seq_@ == d as int
+                    &&& glr::protocol::ghost_log_certs::last_ready_pos::<glr::protocol::Raft::ghost_log::RaftP>(
+                            final(self).g_log_@) == final(self).g_log_@.len() - 1
+                },
+                _ => true,
+            },
+    {
+        // [M12] persistence: the step's first state, and its builders' growth
+        let ghost s0 = *self;
+        let ghost pre_ok = s0.ginv() && s0.coupled(&ev) && s0.persist_ok() && !(ev is Restore);
+        let ghost s0_out = *out;  // [M12] P2
+        // [fix, F21] the saved fields before the arm, for the persist note
+        let term0: u64 = self.current_term_;  // [fix, F21]
+        let vote0: u16 = self.vote_for_;  // [fix, F21]
+        let commit0: u64 = self.commit_index_;  // [fix, F21]
+        let restoring: bool = matches!(ev, Event::Restore { .. });  // [fix, F21]
+        let r: Reply<C> = self.step_arm(ev, out);  // [M12] the arms, apart
         // [fix, F21] the note: the hard state if it moved, the log's lowest
         // write; Restore loads state the store already holds, so none
         let hard: bool = !restoring && (self.current_term_ != term0 || self.vote_for_ != vote0
             || self.commit_index_ != commit0);  // [fix, F21]
+        // [M12] P2: the arm's marks (step_arm: they fold the step's first state into this one)
+        let ghost marks = out.notes();
         out.finish_persist(hard, self.current_term_, self.vote_for_, self.commit_index_);  // [fix, F21]
         proof {
             // [M12] persistence (Part A): a note is the next record; a coupled
@@ -822,13 +895,14 @@ impl<C: Clone> RaftCore<C> {
                 self.g_seq_@ = seq1;
             }
             if pre_ok && s0.g_seq_@ + 1 < u64::MAX {
-                assert(crate::coupling::plain_ext(s0.g_log_@, self.g_log_@)) by {
-                    crate::coupling::lemma_ext_all::<C>(s0.g_log_@);
-                }
                 let ghost mid = *self;
                 self.g_log_@ = mid.g_log_@.push(
                     glr::protocol::Raft::ghost_log::Entry::Mark(mid.ready_now(seq1 as u64)));
                 crate::coupling::lemma_ready_step(&mid, self, s0.g_log_@, seq1);
+            }
+            // [M12] P2: the note is exact
+            if !restoring && s0_out.unmarked() {
+                crate::coupling::lemma_note_exact(&s0, self, marks, hard);
             }
         }
         r

@@ -548,6 +548,7 @@ fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_i
         old(send).prev_log_index_ == prev_log_index,
         old(send).payload_ == AppendPayload::HEARTBEAT,
     ensures
+        final(out).notes() == old(out).notes(),  // [M12] P2
         *final(core) == *old(core),
         // [M12] the payload: none (the heartbeat at prev), or entries of the
         // log from prev + 1 to the end it records; the RPC's other fields
@@ -661,6 +662,7 @@ fn heartbeat_select_payload<C: Clone>(core: &mut RaftCore<C>, ord: usize, site_i
                 send.payload_ == AppendPayload::HEARTBEAT,
                 send.sent_end_index_ == old(send).sent_end_index_,
             invariant
+                out.notes() == old(out).notes(),  // [M12] P2
                 core.inv(),
                 (prev_log_index as int) < u64::MAX,
                 // [M12]
@@ -802,6 +804,9 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
         // the gate (F5): the configuration contains this server
         old(core).config_members_@.contains(old(core).site_id_),
     ensures
+        crate::coupling::log_kept(old(core), final(core)),  // [M12] P2
+        crate::coupling::log_fold(old(core), final(core), 0, None),  // [M12] P2
+        final(out).notes() == old(out).notes(),  // [M12] P2
         final(core).inv(),
         // [M12] PHASE 0's commit advance (LAdvanceCommitIndex, when the
         // commit index moved), then each follower's AppendEntries, one
@@ -826,6 +831,9 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
                         == final(core).log_view()[r.snapshots_@[k].index_ - 1].term
         },
 {
+    proof {  // [M12] P2: the log and boundary, kept
+        crate::coupling::lemma_fold_same(core.raft_log_, core.raft_log_, (core.snapidx_, core.snapterm_));
+    }
     let ghost pre = *core;
     let ghost on = pre.ginv() && pre.gated_;
     let mut tick: HeartbeatTick<C> = HeartbeatTick::new();
@@ -841,6 +849,7 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
         let mut ord: usize = 0;
         while ord < core.peers_.len()
             invariant
+                out.notes() == old(out).notes(),  // [M12] P2
                 core.inv(),
                 ord <= core.peers_.spec_len(),
             decreases core.peers_.spec_len() - ord,
@@ -913,6 +922,7 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
     let mut ord: usize = 0;
     while ord < core.peers_.len()
         invariant
+            out.notes() == old(out).notes(),  // [M12] P2
             core.inv(),
             core.peers_.spec_len() == n0,
             core.pending_rpcs_.spec_len() == s0,  // [fix, F23]
@@ -1621,6 +1631,9 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
         ord < old(core).pending_rpcs_.spec_len(),
         (resp_term as int) < raft_index_limit(),
     ensures
+        crate::coupling::log_kept(old(core), final(core)),  // [M12] P2
+        crate::coupling::log_fold(old(core), final(core), 0, None),  // [M12] P2
+        final(out).notes() == old(out).notes(),  // [M12] P2
         final(core).inv(),
         // [M12] the reply's group (coupling::reply_log_ok), from the
         // follower its slot was sent to: a higher term's StepDown, a success
@@ -1641,6 +1654,9 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
                     old(core).g_match_@, old(core).g_next_@)
         },
 {
+    proof {  // [M12] P2: the log and boundary, kept
+        crate::coupling::lemma_fold_same(core.raft_log_, core.raft_log_, (core.snapidx_, core.snapterm_));
+    }
     let ghost pre = *core;
     let ghost on = pre.ginv() && pre.gated_ && (is_leader ==> pre.is_leader_)
         && (resp_status ==> resp_last_log_index as int <= pre.raft_log_.spec_last_index());
@@ -1790,10 +1806,15 @@ pub fn heartbeat_on_reply<C: Clone>(core: &mut RaftCore<C>, ord: usize,
 pub fn heartbeat_abandon_round<C: Clone>(core: &mut RaftCore<C>)
     requires old(core).inv(),
     ensures
+        crate::coupling::log_kept(old(core), final(core)),  // [M12] P2
+        crate::coupling::log_fold(old(core), final(core), 0, None),  // [M12] P2
         final(core).inv(),
         old(core).ginv() ==> final(core).ginv(),  // [M12] unseen by the spec
         final(core).g_log_ == old(core).g_log_,  // [M12]
 {
+    proof {  // [M12] P2: the log and boundary, kept
+        crate::coupling::lemma_fold_same(core.raft_log_, core.raft_log_, (core.snapidx_, core.snapterm_));
+    }
     core.pending_rpcs_.abandon();
     core.authority_rounds_.abandon();
 }
@@ -1853,6 +1874,7 @@ pub fn heartbeat_phase3_locked<C: Clone>(
         // the gate (F5): the configuration contains this server
         old(core).config_members_@.contains(old(core).site_id_),
     ensures
+        crate::coupling::log_kept(old(core), final(core)),  // [M12] P2
         final(core).inv(),
         // [M12] a leader's advance is LAdvanceCommitIndex; a server that no
         // longer leads advances nothing (F12); the read-index settlement is
@@ -1908,6 +1930,9 @@ pub fn heartbeat_round_end<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
         // the gate (F5): the configuration contains this server
         old(core).config_members_@.contains(old(core).site_id_),
     ensures
+        crate::coupling::log_kept(old(core), final(core)),  // [M12] P2
+        crate::coupling::log_fold(old(core), final(core), 0, None),  // [M12] P2
+        final(out).notes() == old(out).notes(),  // [M12] P2
         final(core).inv(),
         // [M12] the commit advance is LAdvanceCommitIndex, to the new commit
         // index; the core advances only while it leads (F12), so the round
@@ -1921,6 +1946,9 @@ pub fn heartbeat_round_end<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
                 })
         },
 {
+    proof {  // [M12] P2: the log and boundary, kept
+        crate::coupling::lemma_fold_same(core.raft_log_, core.raft_log_, (core.snapidx_, core.snapterm_));
+    }
     let members: Vec<u16> = core.config_members_.clone();
     let nservers: usize = core.round_.nservers();
     let outcome: Phase3Outcome = heartbeat_phase3_locked(

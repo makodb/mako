@@ -149,14 +149,15 @@ impl<C> RaftCore<C> {
 
     // Everything else (ghost): the log's layout, the term below the index
     // ceiling, snapidx_ <= commit_index_ <= the last index with the log
-    // starting at or below the snapshot boundary's successor, a sorted
+    // starting right after the snapshot boundary ([M12] P2: was "at or
+    // below"; every boundary move compacts through it), a sorted
     // configuration, the round state, and the gate's facts.
     pub open spec fn inv_config(&self) -> bool {
         &&& self.raft_log_.wf()
         &&& (self.current_term_ as int) < raft_index_limit()
         &&& self.snapidx_ <= self.commit_index_
         &&& (self.commit_index_ as int) <= self.raft_log_.spec_last_index()
-        &&& self.raft_log_.spec_base() <= self.snapidx_ as int + 1
+        &&& self.raft_log_.spec_base() == self.snapidx_ as int + 1
         &&& sites_sorted(self.config_members_@)
         &&& self.authority_rounds_.wf()
         &&& self.round_.wf()
@@ -245,6 +246,8 @@ impl<C: Clone> RaftCore<C> {
             // the host contract: the identity comes before the configuration
             old(self).config_members_@.len() == 0,
         ensures
+            crate::coupling::log_kept(old(self), final(self)),  // [M12] P2
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
             final(self).inv(),
             final(self).site_id_ == site_id,
             // [M12] nothing the spec sees moves (no membership yet, and no
@@ -252,6 +255,9 @@ impl<C: Clone> RaftCore<C> {
             final(self).g_log_ == old(self).g_log_,
             old(self).ginv() && old(self).g_log_@.len() == 0 ==> final(self).ginv(),
     {
+        proof {  // [M12] P2: the log and boundary, kept
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         proof {
             if old(self).g_log_@.len() == 0 {
                 assert(old(self).g_log_@ =~= Seq::<glr::protocol::Raft::ghost_log::Entry>::empty());
@@ -277,6 +283,8 @@ impl<C: Clone> RaftCore<C> {
             // the config kernel's contract: sorted and duplicate-free
             sites_sorted(members@),
         ensures
+            crate::coupling::log_kept(old(self), final(self)),  // [M12] P2
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
             final(self).inv(),
             final(self).config_members_@ == members@,
             final(self).site_id_ == old(self).site_id_,
@@ -289,6 +297,9 @@ impl<C: Clone> RaftCore<C> {
                 && !members@.contains(RAFT_SERVER_INVALID_SITE_ID)
                 ==> crate::coupling::plain_ext(old(self).g_log_@, final(self).g_log_@),
     {
+        proof {  // [M12] P2: the log and boundary, kept
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         let ghost on = self.ginv() && self.g_log_@.len() == 0
             && !members@.contains(RAFT_SERVER_INVALID_SITE_ID);
         self.config_members_.clear();
@@ -326,11 +337,16 @@ impl<C: Clone> RaftCore<C> {
     pub fn enter_gates(&mut self, unsaved_restart: bool, failover: bool) -> (r: bool)
         requires old(self).inv(),
         ensures
+            crate::coupling::log_kept(old(self), final(self)),  // [M12] P2
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
             final(self).inv(),
             r ==> final(self).gated_,
             old(self).ginv() ==> final(self).ginv(),  // [M12] unseen by the spec
             final(self).g_log_ == old(self).g_log_,  // [M12]
     {
+        proof {  // [M12] P2: the log and boundary, kept
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         let contains_self: bool = self.is_config_member(self.site_id_);
         let ok: bool = !unsaved_restart && failover && contains_self;
         if ok {
@@ -344,10 +360,15 @@ impl<C: Clone> RaftCore<C> {
     pub fn reset_round_state(&mut self)
         requires old(self).inv(),
         ensures
+            crate::coupling::log_kept(old(self), final(self)),  // [M12] P2
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
             final(self).inv(),
             old(self).ginv() ==> final(self).ginv(),  // [M12] unseen by the spec
             final(self).g_log_ == old(self).g_log_,  // [M12]
     {
+        proof {  // [M12] P2: the log and boundary, kept
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         self.pending_rpcs_ = PendingTable::new();
         self.authority_rounds_ = AuthorityLedger::new();
         self.pending_leader_term_ = None;
@@ -359,6 +380,8 @@ impl<C: Clone> RaftCore<C> {
     pub fn rebuild_peer_tables(&mut self, next_index: u64)
         requires old(self).inv_config(),
         ensures
+            crate::coupling::log_kept(old(self), final(self)),  // [M12] P2
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
             final(self).inv(),
             final(self).raft_log_ == old(self).raft_log_,
             final(self).current_term_ == old(self).current_term_,
@@ -386,6 +409,9 @@ impl<C: Clone> RaftCore<C> {
             forall|o: int| 0 <= o < final(self).peers_.spec_len()
                 ==> #[trigger] final(self).peers_.spec_match(o) == 0,  // [M12]
     {
+        proof {  // [M12] P2: the log and boundary, kept
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         self.peer_sites_.clear();
         let mut self_is_a_member: bool = false;
         let mut i: usize = 0;
@@ -525,6 +551,10 @@ impl<C: Clone> RaftCore<C> {
             // [M12] persistence: the log only grows
             old(self).ginv() && old(self).is_leader_ && has_value
                 ==> crate::coupling::plain_ext(old(self).g_log_@, final(self).g_log_@),
+            // [M12] P2: one entry written, after the last
+            final(self).raft_log_.spec_last_index() == old(self).raft_log_.spec_last_index() + 1,
+            crate::coupling::log_fold(old(self), final(self),
+                (old(self).raft_log_.spec_last_index() + 1) as u64, None),
     {
         let ghost pre = *self;
         let previous_index: u64 = self.raft_log_.last_index();
@@ -541,6 +571,8 @@ impl<C: Clone> RaftCore<C> {
                 crate::coupling::lemma_client_request_ginv(&pre, self, e);
                 crate::coupling::lemma_ext_all::<C>(pre.g_log_@);  // persistence
             }
+            // [M12] P2: the log before the new entry is kept
+            crate::coupling::lemma_fold_append(pre.raft_log_, self.raft_log_, (pre.snapidx_, pre.snapterm_));
         }
         previous_index
     }
@@ -557,6 +589,7 @@ impl<C: Clone> RaftCore<C> {
             old(self).inv(),
             (term as int) < raft_index_limit(),
         ensures
+            final(out).notes() == old(out).notes(),  // [M12] P2
             final(self).inv(),
             // [Part B] the raise: the term, no vote, a follower; nothing the
             // spec sees beyond the step-down moves
@@ -618,6 +651,7 @@ impl<C: Clone> RaftCore<C> {
             !old(self).gated_,
             old(self).raft_log_.spec_len() == 0,
         ensures
+            final(out).notes() == old(out).notes(),  // [M12] P2
             final(self).inv(),
             // [M12] refused: unchanged; taken: exactly the given state
             !r ==> *final(self) == *old(self),
@@ -677,6 +711,7 @@ impl<C: Clone> RaftCore<C> {
         let mut k: usize = entries_rev.len();
         while k > 0
             invariant
+                out.notes() == old(out).notes(),  // [M12] P2
                 k <= entries_rev@.len(),
                 self.inv(),
                 *self == *old(self),
@@ -758,6 +793,10 @@ impl<C: Clone> RaftCore<C> {
     pub fn create_snapshot(&mut self, index: u64, term: i64, out: &mut CoreOutput) -> (r: bool)
         requires old(self).inv(),
         ensures
+            // [M12] P2: a taken snapshot marks the boundary it moved, keeping the log after it
+            old(out).unmarked() ==> crate::coupling::log_fold(old(self), final(self), final(out).spec_log_from(), final(out).spec_snap()),
+            final(out).spec_log_from() == old(out).spec_log_from(),
+            final(out).spec_persist() == old(out).spec_persist(),
             final(self).inv(),
             !r ==> *final(self) == *old(self),
             // [Part B] a stutter, inside the gate too: the view stays
@@ -766,6 +805,9 @@ impl<C: Clone> RaftCore<C> {
     {
         let ghost pre = *self;  // [Part B]
         let ghost v0 = self.log_view();  // [Part B]
+        proof {  // [M12] P2: a refusal keeps all
+            crate::coupling::lemma_fold_same(pre.raft_log_, pre.raft_log_, (pre.snapidx_, pre.snapterm_));
+        }
         match self.snapshot_point() {
             Some((i, t)) => {
                 if i != index || t != term {
@@ -786,12 +828,22 @@ impl<C: Clone> RaftCore<C> {
         self.snapidx_ = index;
         self.snapterm_ = term;
         let _removed: usize = self.raft_log_.compact_through(index);
+        proof {
+            // [M12] P2: the log after the boundary stays
+            pre.raft_log_.lemma_wf_bounds();
+            self.raft_log_.lemma_wf_bounds();
+            assert(self.raft_log_.view()
+                =~= pre.raft_log_.view().skip(index as int + 1 - pre.raft_log_.spec_base()));
+        }
         #[cfg(verus_keep_ghost)]
         self.raft_log_.set_prefix(Ghost(v0.take(index as int)));  // [M12] Part B: the entries through index
         proof {
             if pre.ginv() {
                 crate::coupling::lemma_create_ginv(&pre, self, index, term);
             }
+            // [M12] P2
+            crate::coupling::lemma_fold_snap(pre.raft_log_, (pre.snapidx_, pre.snapterm_), self.raft_log_,
+                                             index, term, true);
         }
         out.note_snapshot(index, term, true);
         true
@@ -804,9 +856,13 @@ impl<C: Clone> RaftCore<C> {
     pub fn compact(&mut self, up_to: u64) -> (r: u64)
         requires old(self).inv(),
         ensures
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
             final(self).inv(),
             old(self).gated_ ==> *final(self) == *old(self),
     {
+        proof {  // [M12] P2: a refusal keeps all
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         if self.gated_ {
             return 0;
         }
@@ -818,7 +874,16 @@ impl<C: Clone> RaftCore<C> {
         if safe >= RAFT_INDEX_LIMIT || len >= RAFT_INDEX_LIMIT - safe - 1 {
             return 0;
         }
-        self.raft_log_.compact_through(safe) as u64
+        let ghost pre = *self;  // [M12] P2
+        let removed: u64 = self.raft_log_.compact_through(safe) as u64;  // [M12] P2: named for the proof
+        proof {
+            // [M12] P2: the safe index is below the base (inv), so nothing goes
+            pre.raft_log_.lemma_wf_bounds();
+            self.raft_log_.lemma_wf_bounds();
+            assert(self.raft_log_.view() =~= pre.raft_log_.view());
+            crate::coupling::lemma_fold_same(pre.raft_log_, self.raft_log_, (pre.snapidx_, pre.snapterm_));
+        }
+        removed  // [M12]
     }
 
     // [fix, F27] (whole item) RecvInstallSnapshot (E4): the leader contact an
@@ -829,12 +894,13 @@ impl<C: Clone> RaftCore<C> {
     // the unavailable answer). A sender with a higher term raises it; the
     // sender becomes the known leader and this server a follower. Then the
     // snapshot is judged: one that conflicts with this server's own boundary
-    // or has no successor index is refused, one this server's progress
-    // already covers is acknowledged without an install. The reply: (the
-    // answer's term, the contact accepted, install). Inside the verified
-    // configuration it is refused after the checks that change nothing,
-    // changing nothing (bugs-found B55): the snapshot coupling (design Part
-    // B) has not admitted snapshots yet.
+    // or has no successor index is refused, one at or below commit is
+    // acknowledged without an install ([fix, F31] the spec's
+    // acknowledgement; one past commit within the applied state, which
+    // cannot occur, is refused). The reply: (the answer's term, the contact
+    // accepted, install). [fix, F31] Inside the verified configuration as
+    // outside it: the contact is coupled (Part B, E4), which retired
+    // bugs-found B55's refusal.
     #[allow(clippy::too_many_arguments)]
     pub fn recv_install_snapshot(&mut self, term: u64, leader_site_id: u16,
                                  last_included_index: u64, last_included_term: u64,
@@ -842,6 +908,9 @@ impl<C: Clone> RaftCore<C> {
                                  out: &mut CoreOutput) -> (r: (u64, bool, bool))
         requires old(self).inv(),
         ensures
+            crate::coupling::log_kept(old(self), final(self)),  // [M12] P2
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
+            final(out).notes() == old(out).notes(),  // [M12] P2
             final(self).inv(),
             // [Part B] the contact and its outcome, coupled inside the gate
             old(self).ginv() && old(self).gated_ && crate::coupling::snap_prefix_ok(old(self).g_inbox_@.1,
@@ -854,6 +923,9 @@ impl<C: Clone> RaftCore<C> {
             r.2 ==> !final(self).is_leader_ && !final(self).election_in_progress_
                 && final(self).current_term_ == term && final(self).commit_index_ < last_included_index,
     {
+        proof {  // [M12] P2: the log and boundary, kept
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         let ghost pre = *self;  // [Part B]
         let ghost src: int = pre.g_inbox_@.0;  // [Part B]
         let ghost m = glr::protocol::Raft::types::LRaftMessage::Snapshot {  // [Part B]
@@ -1023,13 +1095,17 @@ impl<C: Clone> RaftCore<C> {
     // and the snapshot's term (Figure 13), and goes otherwise. The note
     // carries the boundary and the hard state: the install's outcome as one
     // record (disk design §3). Refused, changing nothing, where no admitted
-    // install reaches: inside the verified configuration, while leading, a
+    // install reaches: [fix, F31] while leading or campaigning, a
     // boundary at or below commit or at the index limit, a term above the
     // current one, or a kept log too long to index. The reply: (taken, kept).
     pub fn install_snapshot(&mut self, index: u64, term: u64,
                             out: &mut CoreOutput) -> (r: (bool, bool))
         requires old(self).inv(),
         ensures
+            // [M12] P2: an install marks the boundary it moved, the log after it kept or dropped
+            old(out).unmarked() ==> crate::coupling::log_fold(old(self), final(self), final(out).spec_log_from(), final(out).spec_snap()),
+            final(out).spec_log_from() == old(out).spec_log_from(),
+            final(out).spec_persist() == old(out).spec_persist(),
             final(self).inv(),
             !r.0 ==> *final(self) == *old(self),
             // [Part B] coupled inside the gate: the install in its own Recv group
@@ -1050,6 +1126,9 @@ impl<C: Clone> RaftCore<C> {
         let ghost on = pre.ginv() && pre.gated_
             && crate::coupling::snap_prefix_ok(pre.g_inbox_@.1, index as int, term as int);  // [Part B]
         proof { crate::coupling::lemma_ext_refl(pre.g_log_@); }  // [Part B]
+        proof {  // [M12] P2: a refusal keeps all
+            crate::coupling::lemma_fold_same(pre.raft_log_, pre.raft_log_, (pre.snapidx_, pre.snapterm_));
+        }
         // [Part B] a campaign open here is a contact E4 did not make
         if self.is_leader_ || self.election_in_progress_ || index <= self.commit_index_
             || index >= RAFT_INDEX_LIMIT || term > self.current_term_
@@ -1085,6 +1164,13 @@ impl<C: Clone> RaftCore<C> {
         self.snapterm_ = term as i64;
         if retain {
             self.raft_log_.compact_through(index);
+            proof {
+                // [M12] P2: the log after the boundary stays
+                pre.raft_log_.lemma_wf_bounds();
+                self.raft_log_.lemma_wf_bounds();
+                assert(self.raft_log_.view()
+                    =~= pre.raft_log_.view().skip(index as int + 1 - pre.raft_log_.spec_base()));
+            }
         } else {
             self.raft_log_.reset(index + 1);
         }
@@ -1096,6 +1182,9 @@ impl<C: Clone> RaftCore<C> {
                 self.g_log_@ = crate::coupling::install_log(pre.g_log_@, src, m, retain, pre.my_rank());
                 crate::coupling::lemma_e5(&pre, self, src, m, retain);
             }
+            // [M12] P2
+            crate::coupling::lemma_fold_snap(pre.raft_log_, (pre.snapidx_, pre.snapterm_), self.raft_log_,
+                                             index, term as i64, retain);
         }
         out.note_snapshot(index, term as i64, retain);
         (true, retain)
@@ -1109,7 +1198,7 @@ impl<C: Clone> RaftCore<C> {
     // this follower -- the term it was sent in is the current one, this
     // server still leads, the index is within its log, the ordinal still
     // names the site -- the runtime checks F9 makes of an append reply.
-    // Inside the verified configuration it is refused, changing nothing.
+    // [fix, F31] Inside the verified configuration as outside it.
     // The reply: whether the follower was credited.
     #[allow(clippy::too_many_arguments)]
     pub fn on_snapshot_reply(&mut self, ord: usize, site_id: u16, snap_last_idx: u64,
@@ -1117,6 +1206,9 @@ impl<C: Clone> RaftCore<C> {
                              failover: bool, out: &mut CoreOutput) -> (r: bool)
         requires old(self).inv(),
         ensures
+            crate::coupling::log_kept(old(self), final(self)),  // [M12] P2
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
+            final(out).notes() == old(out).notes(),  // [M12] P2
             final(self).inv(),
             // [Part B] the reply the follower sent (snap_reply_msg): a higher
             // term deposes this server, a credit is HandleAppendResponse
@@ -1128,6 +1220,9 @@ impl<C: Clone> RaftCore<C> {
                             follower_term, snap_last_idx),
                         old(self).g_match_@, old(self).g_next_@),
     {
+        proof {  // [M12] P2: the log and boundary, kept
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         let ghost pre = *self;  // [Part B]
         let ghost on = pre.ginv() && pre.gated_ && follower_term >= send_term;  // [Part B]
         let ghost f = crate::coupling::rank(pre.config_members_@, site_id);  // [Part B]
@@ -1202,7 +1297,9 @@ impl<C: Clone> RaftCore<C> {
     // event can report its term changes itself.
     pub fn log_term_change(&self, reason: &'static str, old_term: u64,
                            new_term: u64, source: u16,
-                           out: &mut CoreOutput) {  // [move, M7]
+                           out: &mut CoreOutput)  // [move, M7]
+        ensures final(out).notes() == old(out).notes(),  // [M12] P2
+    {
         if old_term == new_term {
             return;
         }
@@ -1285,6 +1382,7 @@ impl<C: Clone> RaftCore<C> {
             // the host contract: a term off the wire is below the ceiling
             (can_term as int) < raft_index_limit(),
         ensures
+            final(out).notes() == old(out).notes(),  // [M12] P2
             final(self).inv(),
             // [M12] a higher term first (the term, no vote, a follower with
             // no campaign), then the vote; the answer is the term it ends
@@ -1399,6 +1497,9 @@ impl<C: Clone> RaftCore<C> {
             // the host contract: the next term is below the ceiling
             (old(self).current_term_ as int) + 1 < raft_index_limit(),
         ensures
+            crate::coupling::log_kept(old(self), final(self)),  // [M12] P2
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
+            final(out).notes() == old(out).notes(),  // [M12] P2
             final(self).inv(),
             // [M12] a campaign that starts is LTimeout, broadcasting r's
             // RequestVote; one that does not is unseen by the spec
@@ -1412,6 +1513,9 @@ impl<C: Clone> RaftCore<C> {
                     })
             },
     {
+        proof {  // [M12] P2: the log and boundary, kept
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         let ghost pre = *self;
         let mut campaign: CampaignStart = CampaignStart::not_started();
         if stopped {
@@ -1502,6 +1606,9 @@ impl<C: Clone> RaftCore<C> {
             // the host contract: a reply's term is below the ceiling
             forall|k: int| 0 <= k < reply_terms@.len() ==> (#[trigger] reply_terms@[k] as int) < raft_index_limit(),
         ensures
+            crate::coupling::log_kept(old(self), final(self)),  // [M12] P2
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
+            final(out).notes() == old(out).notes(),  // [M12] P2
             final(self).inv(),
             // [M12] the settlement's segments: each granted reply and a yes
             // quorum's BecomeLeader, a higher reply term's StepDown, a lost
@@ -1517,6 +1624,9 @@ impl<C: Clone> RaftCore<C> {
                         old(self).config_members_@, voters@, granted@, reply_terms@)
             },
     {
+        proof {  // [M12] P2: the log and boundary, kept
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         let ghost pre = *self;
         proof { crate::coupling::lemma_ext_all::<C>(pre.g_log_@); }  // [M12] persistence
         let ghost on = pre.ginv() && pre.gated_ && failover
@@ -1547,6 +1657,7 @@ impl<C: Clone> RaftCore<C> {
         let mut r: usize = 0;
         while r < voters.len()
             invariant
+                out.notes() == old(out).notes(),  // [M12] P2
                 r <= voters@.len(),
                 voters@.len() == granted@.len(),
                 voters@.len() == reply_terms@.len(),
@@ -1778,10 +1889,16 @@ impl<C: Clone> RaftCore<C> {
                       out: &mut CoreOutput) -> bool  // [move, M7]
         requires old(self).inv(),
         ensures
+            crate::coupling::log_kept(old(self), final(self)),  // [M12] P2
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
+            final(out).notes() == old(out).notes(),  // [M12] P2
             final(self).inv(),
             old(self).ginv() ==> final(self).ginv(),  // [M12] unseen by the spec
             final(self).g_log_ == old(self).g_log_,  // [M12]
     {
+        proof {  // [M12] P2: the log and boundary, kept
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         if raft_server_log_index_above(published, index) {
             out.log(RAFT_LOG_WARN,
                 "[RAFT-APPLY] Site {} refusing to move applied index backward from {} to {}",
@@ -1802,10 +1919,15 @@ impl<C: Clone> RaftCore<C> {
     pub fn reset_election_timer(&mut self, now: u64, timeout_us: u64) -> u64
         requires old(self).inv(),
         ensures
+            crate::coupling::log_kept(old(self), final(self)),  // [M12] P2
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
             final(self).inv(),
             old(self).ginv() ==> final(self).ginv(),  // [M12] unseen by the spec
             final(self).g_log_ == old(self).g_log_,  // [M12]
     {
+        proof {  // [M12] P2: the log and boundary, kept
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         let prev_time: u64 = self.last_heartbeat_time_;
         self.last_heartbeat_time_ = now;
         self.election_timeout_us_ = timeout_us;
@@ -1831,6 +1953,9 @@ impl<C: Clone> RaftCore<C> {
             is_leader ==> !old(self).election_in_progress_,
             is_leader ==> old(self).pending_leader_term_ != Some(old(self).current_term_),
         ensures
+            crate::coupling::log_kept(old(self), final(self)),  // [M12] P2
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
+            final(out).notes() == old(out).notes(),  // [M12] P2
             final(self).inv(),
             final(self).raft_log_ == old(self).raft_log_,
             final(self).current_term_ == old(self).current_term_,
@@ -1864,6 +1989,9 @@ impl<C: Clone> RaftCore<C> {
             is_leader && failover && !stopped ==> forall|o: int| 0 <= o < final(self).peers_.spec_len()
                 ==> #[trigger] final(self).peers_.spec_match(o) == 0,
     {
+        proof {  // [M12] P2: the log and boundary, kept
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         let prev_is_leader: bool = self.is_leader_;
         // raft_log_set_is_leader_entry's term, which it read first.
         let entry_term: u64 = self.current_term_;
@@ -1902,6 +2030,7 @@ impl<C: Clone> RaftCore<C> {
             let mut ord: usize = 0;
             while ord < peers
                 invariant
+                    out.notes() == old(out).notes(),  // [M12] P2
                     self.inv(),
                     peers == self.peers_.spec_len(),
                     self.raft_log_ == old(self).raft_log_,
@@ -2009,6 +2138,9 @@ impl<C: Clone> RaftCore<C> {
                      out: &mut CoreOutput)
         requires old(self).inv(),
         ensures
+            crate::coupling::log_kept(old(self), final(self)),  // [M12] P2
+            crate::coupling::log_fold(old(self), final(self), 0, None),  // [M12] P2
+            final(out).notes() == old(out).notes(),  // [M12] P2
             final(self).inv(),
             final(self).raft_log_ == old(self).raft_log_,
             final(self).current_term_ == old(self).current_term_,
@@ -2035,6 +2167,9 @@ impl<C: Clone> RaftCore<C> {
             final(self).g_match_ == old(self).g_match_,  // [M12]
             final(self).g_next_ == old(self).g_next_,  // [M12]
     {
+        proof {  // [M12] P2: the log and boundary, kept
+            crate::coupling::lemma_fold_same(self.raft_log_, self.raft_log_, (self.snapidx_, self.snapterm_));
+        }
         out.log(RAFT_LOG_INFO,
             "[SPEC-RAFT] Site {}: Stepping down as leader (term={})",
             &[(self.site_id_).arg(),
@@ -2119,6 +2254,9 @@ pub fn raft_on_request_vote<C: Clone>(
         // the host contract: a term off the wire is below the ceiling
         (can_term as int) < raft_index_limit(),
     ensures
+        crate::coupling::log_kept(old(core), final(core)),  // [M12] P2
+        crate::coupling::log_fold(old(core), final(core), 0, None),  // [M12] P2
+        final(out).notes() == old(out).notes(),  // [M12] P2
         final(core).inv(),
         // [M12] the request's group (coupling::vote_group), for a request
         // from another member: a higher term taken up steps down first; the
@@ -2135,6 +2273,9 @@ pub fn raft_on_request_vote<C: Clone>(
                     *final(vote_granted) != 0, *final(reply_term) as int, old(core).my_rank())
         },
 {
+    proof {  // [M12] P2: the log and boundary, kept
+        crate::coupling::lemma_fold_same(core.raft_log_, core.raft_log_, (core.snapidx_, core.snapterm_));
+    }
     let ghost pre = *core;
     let ghost on = pre.ginv() && pre.gated_ && pre.config_members_@.contains(can_id)
         && can_id != pre.site_id_;
@@ -2445,6 +2586,7 @@ pub trait InboundBatch<C> {
 // dot where the C++ needs an arrow, and an inferred binding COPIES the entry.
 #[allow(clippy::too_many_arguments, clippy::unnecessary_unwrap)]
 #[verifier::rlimit(120)]  // [M12] the handler and its proof, one query
+#[verifier::spinoff_prover]  // [M12] P2: its own solver, so the module's earlier queries do not tip it
 pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     core: &mut RaftCore<C>,
     wire: &W,  // [move, M5] [move, M11]
@@ -2469,6 +2611,10 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         (leader_current_term as int) < raft_index_limit(),
         has_cmd == wire.spec_has_payload(),
     ensures
+        // [M12] P2: the log from the first write on is the batch's, the rest kept
+        old(out).unmarked() ==> crate::coupling::log_fold(old(core), final(core), final(out).spec_log_from(), final(out).spec_snap()),
+        final(out).spec_snap() == old(out).spec_snap(),
+        final(out).spec_persist() == old(out).spec_persist(),
         final(core).inv(),
         // [M12] the RPC's group (coupling::ae_log), for a message from
         // another server (F9 drops this server's own): StepDown when its
@@ -2485,6 +2631,9 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         },
 {
     let ghost pre = *core;
+    proof {  // [M12] P2: a path that writes nothing keeps all
+        crate::coupling::lemma_fold_same(pre.raft_log_, pre.raft_log_, (pre.snapidx_, pre.snapterm_));
+    }
     let ghost on = pre.ginv() && pre.gated_ && leader_site_id != pre.site_id_;
     let ghost x = crate::coupling::ae_view(&pre, wire, leader_site_id, leader_current_term,
         leader_prev_log_index, leader_prev_log_term, leader_commit_index);
@@ -2675,6 +2824,7 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
             // most one past the old tail: the log never gets a hole
             leader_prev_log_index as int + i <= old_last_log_index,
         invariant
+            out.notes() == old(out).notes(),  // [M12] P2
             core.inv(),
             decoded_count == core.decoded_terms_@.len(),
             leader_prev_log_index as int + decoded_count < raft_index_limit(),
@@ -2787,6 +2937,7 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
     // at or below the commit index, which the check above refused
     assert(have_first_write ==> core.raft_log_.spec_base() <= first_write_index);
     let ghost mut trunc: Seq<RaftEntry<C>> = Seq::<RaftEntry<C>>::empty();  // [M12] the log, cut
+    let ghost log0 = core.raft_log_;  // [M12] P2: the log before the write
     if have_first_write {
         // Two operations that cannot leave a hole: drop the divergent suffix,
         // then re-append in index order. truncate_from is a no-op when
@@ -2797,12 +2948,14 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
         out.note_log_write(first_write_index);  // [fix, F21] the log from here is rewritten
         assert(core.raft_log_.spec_last_index() == first_write_index - 1);
         proof { trunc = core.raft_log_.view(); }  // [M12]
+        let ghost marked = out.notes();  // [M12] P2
         // [move, M1, M11] WireBatch::append_into's loop, in the core: each
         // entry from first_write_index on is materialized from the payload
         // (one handle clone) and appended, in index order.
         let mut k: u64 = 0;
         while k < decoded_count  // [move, M1, M11]
             invariant
+                out.notes() == marked,  // [M12] P2
                 core.inv(),
                 leader_prev_log_index as int + decoded_count < raft_index_limit(),
                 leader_prev_log_index < first_write_index,
@@ -2839,6 +2992,13 @@ pub fn raft_on_append_entries<C: Clone, W: InboundBatch<C>>(
                 }
             }
             k += 1;
+        }
+        proof {
+            // [M12] P2: the log cut at the first write, then the batch's entries
+            let f0 = first_write_index as int - leader_prev_log_index as int - 1;
+            crate::coupling::lemma_fold_write(log0, core.raft_log_, (core.snapidx_, core.snapterm_),
+                first_write_index, trunc,
+                wire.spec_entries().subrange(f0, if (decoded_count as int) < f0 { f0 } else { decoded_count as int }));
         }
     }
     // The append left the log tail where the result rule predicts.

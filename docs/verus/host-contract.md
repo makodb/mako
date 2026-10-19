@@ -96,10 +96,15 @@ As in the plan's §1.3, from the group's composition
      records -- the replay of the cut's certificate, through the notes
      being exact; a recovered snapshot image stands for that log's entries
      through its boundary.
-   - **Exact notes** (P2, not yet proved): a step with no note changes no
-     saved field, and a note's values and log suffix are the step's;
-     checked on every recording by the replay's shadow
-     (`replay/src/lib.rs`) and by `core/tests/persist_note.rs`.
+   The notes' exactness (P2), a fourth premise until 2026-10-19, is
+   proved: `step` ensures `note_exact` -- a step with no note changes no
+   saved field; with one, the hard state is the step's (or unchanged when
+   the note does not carry it), and the log and boundary are the previous
+   ones folded by the note (`log_fold`: the boundary move, the log kept
+   after it or dropped, then the step's log from `log_from_` on), the fold
+   the replay's shadow (`replay/src/lib.rs`) and the store apply to a
+   record. The shadow and `core/tests/persist_note.rs` still check it on
+   every recording.
    Composing the cluster across the restart -- by D every send that left
    came from a step numbered at most d, by P3 that step is in the cut, and
    the restarted log extends the cut -- is an argument written here, not
