@@ -524,6 +524,18 @@ impl<C: Clone> RaftCore<C> {
                 &&& final(self).persist_ok()
                 &&& crate::coupling::ready_tail_ok(old(self).g_log_@, final(self).g_log_@, final(self).g_seq_@)
             },
+            // [M12] persistence (P4): a restart counts from the durable d, its
+            // log the previous run's cut stepped aside, then Ready(d)
+            match ev {
+                Event::Restore { d, .. } => old(self).ginv() && old(self).coupled(&ev)
+                    && r == Reply::<C>::Restored(true) && (d as int) + 1 < u64::MAX ==> {
+                    &&& final(self).persist_ok()
+                    &&& final(self).g_seq_@ == d as int
+                    &&& glr::protocol::ghost_log_certs::last_ready_pos::<glr::protocol::Raft::ghost_log::RaftP>(
+                            final(self).g_log_@) == final(self).g_log_@.len() - 1
+                },
+                _ => true,
+            },
     {
         // [M12] persistence: the step's first state, and its builders' growth
         let ghost s0 = *self;
@@ -672,7 +684,7 @@ impl<C: Clone> RaftCore<C> {
                 }
                 Reply::Done
             },
-            Event::Restore { term, vote, commit, d: _, snap_index, snap_term, entries_rev } => {  // [fix, F24] d is ghost-only [fix, F30]
+            Event::Restore { term, vote, commit, d: _d, snap_index, snap_term, entries_rev } => {  // [fix, F24] d is ghost-only [fix, F30]
                 let ghost pre = *self;
                 let ghost rev = entries_rev@;
                 let ok: bool = self.restore(term, vote, commit, snap_index, snap_term,  // [fix, F22] [fix, F30]
@@ -682,9 +694,14 @@ impl<C: Clone> RaftCore<C> {
                     // premise provides, stepped aside; refused: nothing moved
                     let log = crate::coupling::restore_log(rev);
                     if ok && pre.ginv() && snap_index == 0
-                        && crate::coupling::restore_premise(&pre, term, vote, commit, rev) {
-                        let prev = choose|p: Seq<glr::protocol::Raft::ghost_log::Entry>|
-                            #[trigger] crate::coupling::restore_prev_ok(&pre, p, term, vote, log, commit);
+                        && crate::coupling::restore_cert_ok(&pre, _d, term, vote, commit, rev) {
+                        // [M12] persistence (P4): prev is what the previous
+                        // run's crash at d left (the cut, P3)
+                        let old = choose|o: Seq<glr::protocol::Raft::ghost_log::Entry>|
+                            crate::coupling::prev_run_ok(o, pre.c_view(), _d)
+                            && #[trigger] crate::coupling::restore_prev_ok(&pre,
+                                crate::coupling::restore_prev(o, _d, pre.n_view()), term, vote, log, commit);
+                        let prev = crate::coupling::restore_prev(old, _d, pre.n_view());
                         pre.raft_log_.lemma_wf_bounds();
                         assert(pre.raft_log_.view() =~= Seq::<RaftEntry<C>>::empty());
                         assert(self.raft_log_.view() =~= rev_seq(rev));
@@ -695,6 +712,18 @@ impl<C: Clone> RaftCore<C> {
                         self.g_next_@ = glr::protocol::Raft::ghost_log::replay(prev).next_index;
                         assert(self.log_entries_ok());
                         crate::coupling::lemma_restore_ginv(&pre, self, prev);
+                        // the records restart at d, after the Ready numbered d
+                        if (_d as int) + 1 < u64::MAX {
+                            crate::coupling::lemma_restore_prev_marks(old, pre.c_view(), _d, pre.n_view());
+                            crate::coupling::lemma_ext_builders(prev);
+                            crate::coupling::lemma_ready_ext(prev, self.g_log_@);
+                            let ghost mid = *self;
+                            crate::coupling::lemma_ext_refl(mid.g_log_@);
+                            self.g_seq_@ = _d as int;
+                            self.g_log_@ = mid.g_log_@.push(
+                                glr::protocol::Raft::ghost_log::Entry::Mark(mid.ready_now(_d)));
+                            crate::coupling::lemma_ready_step(&mid, self, mid.g_log_@, _d as int);
+                        }
                     }
                 }
                 Reply::Restored(ok)
@@ -744,7 +773,7 @@ impl<C: Clone> RaftCore<C> {
                 let ghost mid = *self;
                 self.g_log_@ = mid.g_log_@.push(
                     glr::protocol::Raft::ghost_log::Entry::Mark(mid.ready_now(seq1 as u64)));
-                crate::coupling::lemma_ready_step(&mid, self, s0.g_log_@, s0.g_seq_@, seq1);
+                crate::coupling::lemma_ready_step(&mid, self, s0.g_log_@, seq1);
             }
         }
         r

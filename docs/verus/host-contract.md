@@ -68,21 +68,35 @@ As in the plan's §1.3, from the group's composition
    In a memory build none is persisted, and no replica restarts in place
    under its old id (plan §4.4.2). In a disk build (`-DMAKO_RAFT_DISK=ON`,
    [disk-persistence.md](disk-persistence.md)) a restart is the `Restore`
-   event, coupled as a step aside from a ghost log whose replay holds the
-   restored state (F22, `lemma_restore_ginv`; the premise is an existential
-   and the proof takes a chosen witness, so it holds for every such log).
-   Composing the cluster across the restart instantiates it with the
-   previous run's prefix -- the last fact below says that prefix qualifies
-   and holds every send the old incarnation made -- an argument written
-   here, not mechanized. The trusted facts: every persist note is
-   exact (a step with no note changes no saved field, and a note's values
-   and log suffix are the step's; checked on every recording by the replay's
-   shadow, `replay/src/lib.rs`, and by the cargo tests `core/tests/persist_note.rs`,
-   not proved); the WAL and the base keep whole records in step order and
-   lose only a suffix that no output depended on (`raft-store`'s crash
-   tests and the process-kill tests, `scripts/raft_kill/`); and the restored
-   state is the replay of a prefix of the previous run's ghost log that
-   covers everything the previous run sent.
+   event. What is proved since 2026-10-19 (coupling-design-persistence-snapshots.md,
+   Part A): every coupled step ends with a Ready mark carrying the
+   certificate of the state it leaves, numbered by the records the steps'
+   notes have made (`g_seq_`; P1, `ready_tail_ok`), on a ghost log that only
+   grows and whose marks are numbered without a gap (`persist_ok`); a crash
+   at durable record d leaves the certificate of the Ready numbered exactly
+   d, the last numbered at most d (P3, `lemma_crash_cut`); and `Restore`
+   resumes from that cut, stepped aside, with the count at d and a
+   `Ready(d)` (P4, its premise `restore_cert_ok`). The premises the host
+   keeps:
+   - **D**: an output a step produced leaves only after the WAL is durable
+     through that step's Ready number. The tail read after the section's
+     last push bounds that number from above (the tick's and campaign's
+     waits, the held replies; the kill test's check 9 tests it).
+   - **N**: the queued records are exactly the steps' notes, in step order,
+     numbered from the restored d + 1 (every step goes through the shell's
+     two step wrappers, and no record is pushed by hand since F25-F27).
+   - **T2**: recovery returns records 1..d whole, d at least every durable
+     number the previous run published, and the state is the fold of those
+     records -- the replay of the cut's certificate, through the notes
+     being exact.
+   - **Exact notes** (P2, not yet proved): a step with no note changes no
+     saved field, and a note's values and log suffix are the step's;
+     checked on every recording by the replay's shadow
+     (`replay/src/lib.rs`) and by `core/tests/persist_note.rs`.
+   Composing the cluster across the restart -- by D every send that left
+   came from a step numbered at most d, by P3 that step is in the cut, and
+   the restarted log extends the cut -- is an argument written here, not
+   mechanized: glr has no crash-aware composition at the pinned tag.
 6. **Nothing else about the network**: loss, duplication, reordering and
    delay are allowed; a message the core refuses counts as dropped.
 
@@ -129,7 +143,7 @@ admission itself (`coupled_checked`).
 | `RoundEnd` | the gate | F5's `enter_gates`. Nothing about the role: PHASE 3 advances the commit index only while the core leads (F12), so a round end after a step-down or during shutdown commits nothing (bugs-found B17, B18) |
 | `CreateSnapshot`, `Compact`, `RecvInstallSnapshot`, `InstallSnapshot`, `RecvSnapshotReply` | the gate: each refuses inside it, changing nothing (F25, F27, F28), so the premise holds by refusal; outside it they are uncoupled until Part B | -- (the core enforces it) |
 | `LeaveGates` | `false`: leaving the verified configuration ends the coupling (F29) | `SetSnapshotManagerLocked` steps it when a manager is configured on a gated server; production configures managers only before `EnterGates` (bugs-found B56) |
-| `Restore` | before the gate; the core neither leads nor campaigns; an empty log; no snapshot boundary (`snap_index == 0`, F30: a boundary is uncoupled until Part B); some ghost log replays to the restored term, vote, log and commit, with no outgoing configuration (`restore_prev_ok`; the last conjunct since spec v2, which added the field: under the gate the configuration is static) | `RestoreDiskState` steps it once, after `Configure` and snapshot recovery, before `EnterGates`, on the state recovery folded from the store; that the store's state is such a replay is §1 item 5's trusted fact. A memory build steps it only for a snapshot startup recovery loaded (`RestoreRecoveredSnapshot`, F30), which then has a boundary and so is uncoupled |
+| `Restore` | before the gate; the core neither leads nor campaigns; an empty log; no snapshot boundary (`snap_index == 0`, F30: a boundary is uncoupled until Part B); some previous run's ghost log, its marks numbered without a gap and none Persisted and its count at least d (`prev_run_ok`), whose crash cut at d (`restore_prev`: the certificate's log, or the configuration's load when no Ready is numbered at most d) replays to the restored term, vote, log and commit, with no outgoing configuration (`restore_cert_ok`, `restore_prev_ok`; the last conjunct since spec v2) | `RestoreDiskState` steps it once, after `Configure` and snapshot recovery, before `EnterGates`, on the state recovery folded from the store; that the store's state is such a replay is §1 item 5's trusted fact. A memory build steps it only for a snapshot startup recovery loaded (`RestoreRecoveredSnapshot`, F30), which then has a boundary and so is uncoupled |
 
 Terms and indices off the wire and in the log stay below 2^62
 (`raft_index_limit`, the Phase 6 contract): a log that long would hold

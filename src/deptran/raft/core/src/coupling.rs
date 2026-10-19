@@ -2725,8 +2725,9 @@ impl<C> RaftCore<C> {
             // [fix, F22] (disk design §6) a restart (restore_premise)
             // [fix, F30] without a snapshot boundary: one is uncoupled until
             // the snapshot coupling (design Part B)
-            Event::Restore { term, vote, commit, snap_index, entries_rev, .. } =>
-                snap_index == 0 && restore_premise(self, term, vote, commit, entries_rev@),
+            // [M12] persistence (P4): the previous run's crash cut at d
+            Event::Restore { term, vote, commit, d, snap_index, entries_rev, .. } =>
+                snap_index == 0 && restore_cert_ok(self, d, term, vote, commit, entries_rev@),
             // [fix, F25] refused (unchanged) inside the gate; uncoupled
             // outside it until the snapshot coupling (design Part B)
             Event::CreateSnapshot { .. } => self.gated_,
@@ -3112,7 +3113,9 @@ pub open spec fn rnum(e: Entry) -> int {
 }
 
 // Each Ready mark is numbered as the one before it or one more (A2's
-// ready_seq_ok without its count, which the core keeps beside it).
+// ready_seq_ok without its count, which the core keeps beside it). Opaque:
+// lemma_ready_seq_at applies it to one pair.
+#[verifier::opaque]
 pub open spec fn ready_seq_ok(l: Seq<Entry>) -> bool {
     forall|i: int, j: int| #![trigger rmark(l[i]), rmark(l[j])]
         0 <= i < j < l.len() && rmark(l[i]) && rmark(l[j])
@@ -3120,16 +3123,42 @@ pub open spec fn ready_seq_ok(l: Seq<Entry>) -> bool {
         ==> rnum(l[i]) <= rnum(l[j]) <= rnum(l[i]) + 1
 }
 
+// ready_seq_ok at two consecutive Ready marks.
+pub proof fn lemma_ready_seq_at(l: Seq<Entry>, i: int, j: int)
+    requires
+        ready_seq_ok(l),
+        0 <= i < j < l.len(), rmark(l[i]), rmark(l[j]),
+        forall|k: int| i < k < j ==> !rmark(#[trigger] l[k]),
+    ensures rnum(l[i]) <= rnum(l[j]) <= rnum(l[i]) + 1,
+{
+    reveal(ready_seq_ok);
+}
+
+// No Persisted mark during a run: only a crash appends one (A1), so the
+// cut is decided by the crash's number alone.
+pub open spec fn no_persisted(l: Seq<Entry>) -> bool {
+    forall|k: int| 0 <= k < l.len() ==> !gc::is_persisted_mark::<RaftP>(#[trigger] l[k])
+}
+
 // A plain extension keeps the marks: the numbering and the last certificate.
 pub proof fn lemma_ready_ext(l: Seq<Entry>, l2: Seq<Entry>)
     requires ready_seq_ok(l), plain_ext(l, l2),
-    ensures ready_seq_ok(l2), gc::marks_kept::<RaftP>(l, l2),
+    ensures
+        ready_seq_ok(l2),
+        gc::marks_kept::<RaftP>(l, l2),
+        no_persisted(l) ==> no_persisted(l2),
 {
+    if no_persisted(l) {
+        assert forall|k: int| 0 <= k < l2.len() implies !gc::is_persisted_mark::<RaftP>(#[trigger] l2[k]) by {
+            if k < l.len() { assert(l2.take(l.len() as int)[k] == l[k]); } else { assert(!(l2[k] is Mark)); }
+        }
+    }
     assert forall|k: int| l.len() <= k < l2.len() implies !gc::is_ready_mark::<RaftP>(#[trigger] l2[k]) by {
         assert(!(l2[k] is Mark));
     }
     assert(glr::protocol::ghost_log_core::log_grows::<RaftP>(l, l2));
     gc::lemma_marks_kept_grow::<RaftP>(l, l2);
+    reveal(ready_seq_ok);
     assert forall|i: int, j: int| #![trigger rmark(l2[i]), rmark(l2[j])]
         0 <= i < j < l2.len() && rmark(l2[i]) && rmark(l2[j])
         && (forall|k: int| i < k < j ==> !rmark(#[trigger] l2[k]))
@@ -3156,6 +3185,7 @@ pub proof fn lemma_ready_push(l: Seq<Entry>, m: LMark)
 {
     let l2 = l.push(Entry::Mark(m));
     gc::lemma_last_ready_bounds::<RaftP>(l);
+    reveal(ready_seq_ok);
     assert forall|i: int, j: int| #![trigger rmark(l2[i]), rmark(l2[j])]
         0 <= i < j < l2.len() && rmark(l2[i]) && rmark(l2[j])
         && (forall|k: int| i < k < j ==> !rmark(#[trigger] l2[k]))
@@ -3194,6 +3224,7 @@ impl<C> RaftCore<C> {
     // gap, the last of them the count of records so far (g_seq_).
     pub open spec fn persist_ok(&self) -> bool {
         &&& ready_seq_ok(self.g_log_@)
+        &&& no_persisted(self.g_log_@)
         &&& 0 <= self.g_seq_@
         &&& (gc::has_ready::<RaftP>(self.g_log_@)
                 ==> rnum(self.g_log_@[gc::last_ready_pos::<RaftP>(self.g_log_@)]) == self.g_seq_@)
@@ -3212,17 +3243,19 @@ pub open spec fn ready_tail_ok(l0: Seq<Entry>, l: Seq<Entry>, s: int) -> bool {
 
 // A step's end (A5 step 4): `post` is `pre` with the Ready mark of its state
 // numbered s pushed, and the records counted to s. `pre`'s log plain-extends
-// the step's first log l0, whose numbering ended at s or s - 1.
-pub proof fn lemma_ready_step<C>(pre: &RaftCore<C>, post: &RaftCore<C>, l0: Seq<Entry>, s0: int, s: int)
+// l0 (the step's first log, or a restart's prev stepped aside), whose last
+// Ready, if any, is numbered s or s - 1.
+pub proof fn lemma_ready_step<C>(pre: &RaftCore<C>, post: &RaftCore<C>, l0: Seq<Entry>, s: int)
     requires
         pre.inv(),
         pre.ginv(),
         ready_seq_ok(l0),
-        0 <= s0,
-        gc::has_ready::<RaftP>(l0) ==> rnum(l0[gc::last_ready_pos::<RaftP>(l0)]) == s0,
-        !gc::has_ready::<RaftP>(l0) ==> s0 == 0,
-        s0 <= s <= s0 + 1,
-        s < u64::MAX,
+        no_persisted(l0),
+        gc::has_ready::<RaftP>(l0) ==> {
+            let last = rnum(l0[gc::last_ready_pos::<RaftP>(l0)]);
+            last <= s <= last + 1
+        },
+        0 <= s < u64::MAX,
         plain_ext(l0, pre.g_log_@),
         view_frame(pre, post),
         post.role_view() == pre.role_view(),
@@ -3244,6 +3277,10 @@ pub proof fn lemma_ready_step<C>(pre: &RaftCore<C>, post: &RaftCore<C>, l0: Seq<
     lemma_cert_now(pre, s as u64);
     lemma_ready_push(l, m);
     assert(post.g_log_@.drop_last() =~= l);
+    assert forall|k: int| 0 <= k < post.g_log_@.len() implies
+        !gc::is_persisted_mark::<RaftP>(#[trigger] post.g_log_@[k]) by {
+        if k < l.len() { assert(post.g_log_@[k] == l[k]); }
+    }
     assert(post.c_view() == pre.c_view());
     assert(post.log_view() == pre.log_view());
     assert(post.state_view() == pre.state_view());
@@ -3286,6 +3323,278 @@ pub proof fn lemma_cert_now<C>(core: &RaftCore<C>, n: u64)
     lemma_push_mark(l, m, c);
     lemma_routed_push_non_close(l, e);
     assert(l.push(e)[l.len() as int] == e);
+}
+
+// --- The crash cut (P3) -----------------------------------------------------
+
+// The last Ready mark numbered at most d, -1 if none.
+pub open spec fn cut_pos(l: Seq<Entry>, d: int) -> int
+    decreases l.len(),
+{
+    if l.len() == 0 { -1 }
+    else if rmark(l.last()) && rnum(l.last()) <= d { l.len() - 1 }
+    else { cut_pos(l.drop_last(), d) }
+}
+
+pub proof fn lemma_cut_pos(l: Seq<Entry>, d: int)
+    ensures
+        -1 <= cut_pos(l, d) < l.len(),
+        cut_pos(l, d) >= 0 ==> rmark(l[cut_pos(l, d)]) && rnum(l[cut_pos(l, d)]) <= d,
+        forall|q: int| cut_pos(l, d) < q < l.len() ==> !(rmark(#[trigger] l[q]) && rnum(l[q]) <= d),
+    decreases l.len(),
+{
+    if l.len() > 0 && !(rmark(l.last()) && rnum(l.last()) <= d) {
+        let l1 = l.drop_last();
+        lemma_cut_pos(l1, d);
+        assert forall|q: int| cut_pos(l, d) < q < l.len() implies !(rmark(#[trigger] l[q]) && rnum(l[q]) <= d) by {
+            if q < l1.len() { assert(l1[q] == l[q]); }
+        }
+        if cut_pos(l, d) >= 0 { assert(l1[cut_pos(l, d)] == l[cut_pos(l, d)]); }
+    }
+}
+
+// Nothing after the last Ready mark is one.
+pub proof fn lemma_last_ready_after(l: Seq<Entry>)
+    ensures forall|q: int| gc::last_ready_pos::<RaftP>(l) < q < l.len() ==> !rmark(#[trigger] l[q]),
+    decreases l.len(),
+{
+    gc::lemma_last_ready_bounds::<RaftP>(l);
+    if l.len() > 0 && !rmark(l.last()) {
+        let l1 = l.drop_last();
+        lemma_last_ready_after(l1);
+        gc::lemma_last_ready_bounds::<RaftP>(l1);
+        assert(gc::last_ready_pos::<RaftP>(l) == gc::last_ready_pos::<RaftP>(l1));
+        assert forall|q: int| gc::last_ready_pos::<RaftP>(l) < q < l.len() implies !rmark(#[trigger] l[q]) by {
+            if q < l1.len() { assert(l1[q] == l[q]); } else { assert(l[q] == l.last()); }
+        }
+    }
+}
+
+// The last Ready numbered at most d below a later one numbered above d is
+// numbered d: the numbers rise one at a time.
+#[verifier::spinoff_prover]
+pub proof fn lemma_cut_number(l: Seq<Entry>, p: int, j: int, d: int)
+    requires
+        ready_seq_ok(l),
+        0 <= p < j < l.len(),
+        rmark(l[p]), rmark(l[j]),
+        rnum(l[p]) <= d < rnum(l[j]),
+        forall|q: int| p < q < l.len() && rmark(#[trigger] l[q]) ==> rnum(l[q]) > d,
+    ensures rnum(l[p]) == d,
+    decreases j,
+{
+    let t = l.take(j);
+    assert(t[p] == l[p]);
+    gc::lemma_last_ready_ge::<RaftP>(t, p);
+    gc::lemma_last_ready_bounds::<RaftP>(t);
+    lemma_last_ready_after(t);
+    let k = gc::last_ready_pos::<RaftP>(t);
+    assert(t[k] == l[k]);
+    if k == p {
+        assert forall|q: int| p < q < j implies !rmark(#[trigger] l[q]) by { assert(t[q] == l[q]); }
+        lemma_ready_seq_at(l, p, j);
+    } else {
+        lemma_cut_number(l, p, k, d);
+    }
+}
+
+// What a crash at durable record d leaves: with no Persisted mark in the
+// run's log, the crash's Persisted(d) covers exactly the Ready marks
+// numbered at most d, so the durable certificate is the last of them.
+pub open spec fn crash_log(old: Seq<Entry>, d: u64) -> Seq<Entry> {
+    old.push(Entry::Mark(LMark::Persisted(d)))
+}
+
+#[verifier::spinoff_prover]
+proof fn lemma_crash_dpu(old: Seq<Entry>, d: u64, n: int)
+    requires no_persisted(old), 0 <= n <= old.len(),
+    ensures gc::durable_pos_upto::<RaftP>(crash_log(old, d), n) == cut_pos(old.take(n), d as int),
+    decreases n,
+{
+    let lc = crash_log(old, d);
+    let t = old.take(n);
+    if n > 0 {
+        lemma_crash_dpu(old, d, n - 1);
+        assert(t.drop_last() =~= old.take(n - 1));
+        assert(t.last() == old[n - 1]);
+        assert(lc[n - 1] == old[n - 1]);
+        let pm = lc[old.len() as int];
+        assert(gc::is_persisted_mark::<RaftP>(pm) && gc::mark_number::<RaftP>(pm) == d);
+        if rmark(old[n - 1]) && rnum(old[n - 1]) <= d as int {
+            assert(gc::covered::<RaftP>(lc, n - 1)) by {
+                assert(n - 1 < old.len() as int && gc::is_persisted_mark::<RaftP>(lc[old.len() as int]));
+            }
+        } else {
+            assert(!gc::covered::<RaftP>(lc, n - 1)) by {
+                if gc::covered::<RaftP>(lc, n - 1) {
+                    let q = choose|q: int| n - 1 < q < lc.len() && gc::is_persisted_mark::<RaftP>(#[trigger] lc[q])
+                        && gc::mark_number::<RaftP>(lc[n - 1]) <= gc::mark_number::<RaftP>(lc[q]);
+                    if q < old.len() { assert(lc[q] == old[q]); }
+                }
+            }
+        }
+    }
+}
+
+// P3: the crash cut. With the run's marks numbered without a gap and no
+// Persisted mark among them, a crash at d (at least the first Ready's
+// number, at most the last's) leaves the certificate of the Ready numbered
+// exactly d, the last such; every Ready numbered at most d is at or before
+// it; and the certificate is one (cert_ok).
+#[verifier::spinoff_prover]
+pub proof fn lemma_crash_cut(old: Seq<Entry>, c: LConstants, d: u64, j0: int)
+    requires
+        gc::certs_ok::<RaftP>(c, cert_ctx(), old),
+        ready_seq_ok(old),
+        no_persisted(old),
+        0 <= j0 < old.len(), rmark(old[j0]), rnum(old[j0]) <= d,
+        gc::has_ready::<RaftP>(old),
+        d as int <= rnum(old[gc::last_ready_pos::<RaftP>(old)]),
+    ensures ({
+        let p = gc::durable_pos::<RaftP>(crash_log(old, d));
+        &&& p == cut_pos(old, d as int)
+        &&& 0 <= p < old.len()
+        &&& rmark(old[p]) && rnum(old[p]) == d
+        &&& gc::durable_cert::<RaftP>(crash_log(old, d)) == gc::cert_at::<RaftP>(old, p)
+        &&& gc::cert_ok::<RaftP>(gc::durable_cert::<RaftP>(crash_log(old, d)), c, cert_ctx())
+        &&& forall|q: int| 0 <= q < old.len() && rmark(#[trigger] old[q]) && rnum(old[q]) <= d ==> q <= p
+    }),
+{
+    let lc = crash_log(old, d);
+    lemma_crash_dpu(old, d, old.len() as int);
+    assert(old.take(old.len() as int) =~= old);
+    // the crash's mark is no Ready, so durable_pos skips it
+    assert(!gc::covered::<RaftP>(lc, old.len() as int));
+    lemma_cut_pos(old, d as int);
+    let p = cut_pos(old, d as int);
+    assert(p >= j0);
+    gc::lemma_last_ready_bounds::<RaftP>(old);
+    let last = gc::last_ready_pos::<RaftP>(old);
+    if rnum(old[p]) < d as int {
+        assert(last != p);
+        gc::lemma_last_ready_ge::<RaftP>(old, p);
+        lemma_cut_number(old, p, last, d as int);
+    }
+    assert(gc::cert_at::<RaftP>(lc, p) == gc::cert_at::<RaftP>(old, p)) by {
+        assert(lc.take(p) =~= old.take(p));
+        assert(lc[p] == old[p]);
+    }
+    gc::lemma_certs_push_auto::<RaftP>(c, cert_ctx(), old, Entry::Mark(LMark::Persisted(d)));
+    gc::lemma_durable_cert_ok::<RaftP>(c, cert_ctx(), lc);
+}
+
+// --- Restore (P4) -------------------------------------------------------------
+
+pub proof fn lemma_crash_pos(old: Seq<Entry>, d: u64)
+    requires no_persisted(old),
+    ensures gc::durable_pos::<RaftP>(crash_log(old, d)) == cut_pos(old, d as int),
+{
+    let lc = crash_log(old, d);
+    lemma_crash_dpu(old, d, old.len() as int);
+    assert(old.take(old.len() as int) =~= old);
+    assert(!gc::covered::<RaftP>(lc, old.len() as int));
+}
+
+// A prefix keeps the numbering.
+#[verifier::spinoff_prover]
+pub proof fn lemma_ready_prefix(l: Seq<Entry>, p: int)
+    requires ready_seq_ok(l), 0 <= p <= l.len(),
+    ensures ready_seq_ok(l.take(p)),
+{
+    let t = l.take(p);
+    assert forall|i: int, j: int| #![trigger rmark(t[i]), rmark(t[j])]
+        0 <= i < j < t.len() && rmark(t[i]) && rmark(t[j])
+        && (forall|k: int| i < k < j ==> !rmark(#[trigger] t[k]))
+        implies rnum(t[i]) <= rnum(t[j]) <= rnum(t[i]) + 1 by {
+        assert(t[i] == l[i] && t[j] == l[j]);
+        assert forall|k: int| i < k < j implies !rmark(#[trigger] l[k]) by { assert(t[k] == l[k]); }
+        lemma_ready_seq_at(l, i, j);
+    }
+    reveal(ready_seq_ok);
+}
+
+// A log without Ready marks: numbered trivially, none last.
+pub proof fn lemma_no_ready(l: Seq<Entry>)
+    requires forall|k: int| 0 <= k < l.len() ==> !((#[trigger] l[k]) is Mark),
+    ensures ready_seq_ok(l), no_persisted(l), !gc::has_ready::<RaftP>(l),
+{
+    reveal(ready_seq_ok);
+    gc::lemma_last_ready_bounds::<RaftP>(l);
+}
+
+// What a crash at d leaves the restarted run (A2's restore_prev): the
+// certificate's log when a Ready numbered at most d exists, else the
+// configuration's load -- the log before the first Ready sent nothing.
+pub open spec fn restore_prev(old: Seq<Entry>, d: u64, n: int) -> Seq<Entry> {
+    if gc::durable_pos::<RaftP>(crash_log(old, d)) >= 0 {
+        gc::durable_cert::<RaftP>(crash_log(old, d)).log
+    } else {
+        load_config_log(n)
+    }
+}
+
+// The previous run's ghost log at its crash: a log, its marks numbered
+// without a gap and none Persisted, and the records it counted at least the
+// durable d (premise N: no record is durable before it is queued).
+pub open spec fn prev_run_ok(old: Seq<Entry>, c: LConstants, d: u64) -> bool {
+    &&& log_ok(old, c)
+    &&& ready_seq_ok(old)
+    &&& no_persisted(old)
+    &&& gc::has_ready::<RaftP>(old) ==> d as int <= rnum(old[gc::last_ready_pos::<RaftP>(old)])
+}
+
+// Restore's premise with the crash cut (A4 P4): some previous run, crashed
+// at d, leaves a prev whose replay is the restored state.
+pub open spec fn restore_cert_ok<C>(core: &RaftCore<C>, d: u64, term: u64, vote: u16, commit: u64,
+                                    rev: Seq<RaftEntry<C>>) -> bool {
+    &&& !core.is_leader_
+    &&& !core.election_in_progress_
+    &&& core.raft_log_.spec_len() == 0
+    &&& exists|old: Seq<Entry>| prev_run_ok(old, core.c_view(), d)
+            && #[trigger] restore_prev_ok(core, restore_prev(old, d, core.n_view()), term, vote,
+                                          restore_log(rev), commit)
+}
+
+// The restarted run's prev keeps the numbering, and its last Ready is
+// numbered d or d - 1 (the cut's own is d, P3).
+#[verifier::spinoff_prover]
+pub proof fn lemma_restore_prev_marks(old: Seq<Entry>, c: LConstants, d: u64, n: int)
+    requires prev_run_ok(old, c, d),
+    ensures ({
+        let prev = restore_prev(old, d, n);
+        &&& ready_seq_ok(prev)
+        &&& no_persisted(prev)
+        &&& gc::has_ready::<RaftP>(prev) ==> {
+            let last = rnum(prev[gc::last_ready_pos::<RaftP>(prev)]);
+            last <= d as int <= last + 1
+        }
+    }),
+{
+    lemma_crash_pos(old, d);
+    lemma_cut_pos(old, d as int);
+    let p = cut_pos(old, d as int);
+    if p >= 0 {
+        gc::lemma_last_ready_ge::<RaftP>(old, p);
+        lemma_crash_cut(old, c, d, p);
+        let prev = old.take(p);
+        assert(gc::durable_cert::<RaftP>(crash_log(old, d)).log == prev);
+        lemma_ready_prefix(old, p);
+        assert forall|k: int| 0 <= k < prev.len() implies !gc::is_persisted_mark::<RaftP>(#[trigger] prev[k]) by {
+            assert(prev[k] == old[k]);
+        }
+        if gc::has_ready::<RaftP>(prev) {
+            gc::lemma_last_ready_bounds::<RaftP>(prev);
+            lemma_last_ready_after(prev);
+            let k = gc::last_ready_pos::<RaftP>(prev);
+            assert(prev[k] == old[k]);
+            assert forall|q: int| k < q < p implies !rmark(#[trigger] old[q]) by { assert(prev[q] == old[q]); }
+            lemma_ready_seq_at(old, k, p);
+        }
+    } else {
+        let l = load_config_log(n);
+        assert forall|k: int| 0 <= k < l.len() implies !((#[trigger] l[k]) is Mark) by {}
+        lemma_no_ready(l);
+    }
 }
 
 } // verus!
