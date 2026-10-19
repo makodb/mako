@@ -140,23 +140,25 @@ fn stale_conflicting_and_refused_installs() {
 }
 
 #[test]
-fn inside_the_gates_snapshots_are_refused_until_it_leaves() {
+fn inside_the_gates_the_install_waits_and_the_reply_is_coupled() {
     let mut core = configured();
     assert!(core.gated_);
     let before = saved(&core);
-    // a stale term is still answered; everything else is refused, unchanged
+    // a stale term is still answered; the contact and the install are
+    // refused, unchanged (their coupling is the next stage of Part B)
     assert_eq!(contact(&mut core, 0, 2, 3, 0).0, (core.current_term_, false, false));
     assert_eq!(contact(&mut core, 4, 2, 3, 1).0, (0, false, false));
     assert_eq!(install(&mut core, 3, 1).0, (false, false));
-    assert!(!reply(&mut core, 0, 9, 0).0);
-    let (r, _) = step::<Batch>(&mut core, Event::CreateSnapshot { index: 0, term: 0 });
-    assert!(!r.into_created());
     assert_eq!(saved(&core), before);
+    // the reply is coupled inside the gate (F28, Part B): a newer term deposes
+    let (credited, n) = reply(&mut core, 0, 9, 0);
+    assert!(!credited && n.unwrap().hard_);
+    assert_eq!(core.current_term_, 9);
     // leaving the gates: the contact is taken
     let (r, n) = step::<Batch>(&mut core, Event::LeaveGates);
     r.into_done();
     assert!(n.is_none() && !core.gated_);
-    assert_eq!(contact(&mut core, 4, 2, 0, 0).0, (4, true, false));
+    assert_eq!(contact(&mut core, 10, 2, 0, 0).0, (10, true, false));
 }
 
 #[test]

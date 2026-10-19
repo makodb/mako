@@ -2370,6 +2370,21 @@ pub proof fn lemma_recv_step_down<C>(pre: &RaftCore<C>, post: &RaftCore<C>, src:
     assert(post.state_view() == stepped_down(replay(l0), msg_term(m)));
 }
 
+// [Part B] An InstallSnapshot's reply, as the follower sent it: a term above
+// the one the leader sent in is the stale answer (ShareCommit's CommitInfo,
+// commit 0); the same term is an install's or an acknowledgement's success at
+// the snapshot's index (W1).
+pub open spec fn snap_reply_msg(cfg: Seq<u16>, follower: u16, send_term: u64, term: u64, index: u64) -> LRaftMessage {
+    if term > send_term {
+        LRaftMessage::CommitInfo { term: term as int, commit: 0, commit_term: 0 }
+    } else {
+        LRaftMessage::AppendResponse {
+            term: term as int, success: true, match_index: index as int,
+            follower: rank(cfg, follower), read_ctx: 0,
+        }
+    }
+}
+
 // A success reporting a match past the spec's: HandleAppendResponse.
 pub proof fn lemma_har_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, o: int, term: u64, reported: u64)
     requires
@@ -2992,7 +3007,9 @@ impl<C> RaftCore<C> {
             // (bugs-found B55: refused inside the gate)
             Event::RecvInstallSnapshot { .. } => self.gated_,
             Event::InstallSnapshot { .. } => self.gated_,
-            Event::RecvSnapshotReply { .. } => self.gated_,
+            // [Part B] the follower answered at the sender's term or above
+            Event::RecvSnapshotReply { send_term, follower_term, .. } =>
+                self.gated_ && follower_term >= send_term,
             // [fix, F29] leaving the verified configuration ends the coupling
             Event::LeaveGates => false,
             _ => true,

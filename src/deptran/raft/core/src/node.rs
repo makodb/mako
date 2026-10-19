@@ -564,6 +564,24 @@ impl<C: Clone> RaftCore<C> {
             (term as int) < raft_index_limit(),
         ensures
             final(self).inv(),
+            // [Part B] the raise: the term, no vote, a follower; nothing the
+            // spec sees beyond the step-down moves
+            term <= old(self).current_term_ ==> *final(self) == *old(self),
+            term > old(self).current_term_ ==> final(self).current_term_ == term
+                && final(self).vote_for_ == RAFT_SERVER_INVALID_SITE_ID
+                && !final(self).is_leader_ && !final(self).election_in_progress_,
+            final(self).raft_log_ == old(self).raft_log_,
+            final(self).commit_index_ == old(self).commit_index_,
+            final(self).config_members_ == old(self).config_members_,
+            final(self).site_id_ == old(self).site_id_,
+            final(self).snapterm_ == old(self).snapterm_,
+            final(self).snapidx_ == old(self).snapidx_,
+            final(self).peer_sites_ == old(self).peer_sites_,
+            final(self).peers_ == old(self).peers_,
+            final(self).gated_ == old(self).gated_,
+            final(self).g_log_ == old(self).g_log_,
+            final(self).g_match_ == old(self).g_match_,
+            final(self).g_next_ == old(self).g_next_,
     {
         if term <= self.current_term_ {
             return;
@@ -1023,9 +1041,22 @@ impl<C: Clone> RaftCore<C> {
         requires old(self).inv(),
         ensures
             final(self).inv(),
-            old(self).gated_ ==> *final(self) == *old(self),
+            // [Part B] the reply the follower sent (snap_reply_msg): a higher
+            // term deposes this server, a credit is HandleAppendResponse
+            old(self).ginv() && old(self).gated_ && follower_term >= send_term ==> final(self).ginv(),
+            old(self).ginv() && old(self).gated_ && follower_term >= send_term
+                ==> crate::coupling::reply_log_ok(final(self).g_log_@, old(self).g_log_@,
+                        crate::coupling::rank(old(self).config_members_@, site_id),
+                        crate::coupling::snap_reply_msg(old(self).config_members_@, site_id, send_term,
+                            follower_term, snap_last_idx),
+                        old(self).g_match_@, old(self).g_next_@),
     {
-        if self.gated_ || follower_term >= RAFT_INDEX_LIMIT {
+        let ghost pre = *self;  // [Part B]
+        let ghost on = pre.ginv() && pre.gated_ && follower_term >= send_term;  // [Part B]
+        let ghost f = crate::coupling::rank(pre.config_members_@, site_id);  // [Part B]
+        let ghost m = crate::coupling::snap_reply_msg(pre.config_members_@, site_id, send_term,
+            follower_term, snap_last_idx);  // [Part B]
+        if follower_term >= RAFT_INDEX_LIMIT {
             return false;
         }
         if raft_server_observed_higher_term(follower_term, self.current_term_) {
@@ -1036,6 +1067,14 @@ impl<C: Clone> RaftCore<C> {
                  (follower_term).arg(),
                  (self.current_term_).arg()]);
             self.observe_term(follower_term, stopped, failover, out);
+            proof {
+                if on {  // [Part B] Recv, then StepDown
+                    self.g_log_@ = crate::coupling::step_down_seg(
+                        pre.g_log_@.push(glr::protocol::Raft::ghost_log::Entry::Recv(f, m)), follower_term as int);
+                    self.g_votes_@ = Set::<int>::empty();
+                    crate::coupling::lemma_recv_step_down(&pre, self, f, m);
+                }
+            }
             return false;
         }
         if self.current_term_ != send_term {
@@ -1056,6 +1095,23 @@ impl<C: Clone> RaftCore<C> {
             snap_last_idx
         };
         self.peers_.accept_through(ord, snap_last_idx, has_successor, next_index);
+        proof {
+            // [Part B] the install's success: HandleAppendResponse when it
+            // moves the spec's match, else a stutter
+            if on {
+                self.raft_log_.lemma_wf_bounds();
+                if snap_last_idx as int > crate::coupling::match_of(pre.g_match_@, f) {
+                    self.g_log_@ = crate::coupling::har_log(pre.g_log_@, f, follower_term as int,
+                        snap_last_idx as int, pre.g_match_@, pre.g_next_@);
+                    self.g_match_@ = pre.g_match_@.insert(f as u64, snap_last_idx);
+                    self.g_next_@ = pre.g_next_@.insert(f as u64,
+                        glr::protocol::Raft::raft::u64_inc(snap_last_idx));
+                    crate::coupling::lemma_har_ginv(&pre, self, ord as int, follower_term, snap_last_idx);
+                } else {
+                    crate::coupling::lemma_reply_stutter(&pre, self, true, ord as int, snap_last_idx);
+                }
+            }
+        }
         out.log(RAFT_LOG_INFO,
             "[HEARTBEAT-SNAPSHOT] Site {}: Updated follower {}: next_index={} match_index={}",
             &[(self.site_id_).arg(),
