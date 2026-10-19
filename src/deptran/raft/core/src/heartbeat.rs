@@ -505,7 +505,9 @@ pub struct HeartbeatTick<C> {
 
 impl<C> HeartbeatTick<C> {
     fn new() -> (r: HeartbeatTick<C>)
-        ensures r.sends_@.len() == 0,  // [M12]
+        ensures
+            r.sends_@.len() == 0,  // [M12]
+            r.snapshots_@.len() == 0,  // [Part B]
     {
         HeartbeatTick {
             declined_: false,
@@ -807,14 +809,21 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
         // leader's log (coupling::send_msg); a declined tick sends nothing
         old(core).ginv() && old(core).gated_ ==> {
             &&& final(core).ginv()
-            &&& final(core).g_log_@ == crate::coupling::tick_sends_log(
+            // [Part B] then each InstallSnapshot (LSendSnapshot)
+            &&& final(core).g_log_@ == crate::coupling::snap_sends_log(crate::coupling::tick_sends_log(
                     (if final(core).commit_index_ != old(core).commit_index_ {
                         crate::coupling::advance_log(old(core).g_log_@, final(core).commit_index_ as int)
                     } else {
                         old(core).g_log_@
                     }),
                     r.sends_@, final(core).log_view(), final(core).config_members_@,
-                    final(core).my_rank(), r.sends_@.len() as int)
+                    final(core).my_rank(), r.sends_@.len() as int),
+                    r.snapshots_@, final(core).log_view(), final(core).config_members_@,
+                    r.snapshots_@.len() as int)
+            // [Part B] a send's boundary term is the view's (the wire's last term)
+            &&& forall|k: int| 0 <= k < r.snapshots_@.len()
+                    ==> (#[trigger] r.snapshots_@[k]).snap_term_ as int
+                        == final(core).log_view()[r.snapshots_@[k].index_ - 1].term
         },
 {
     let ghost pre = *core;
@@ -919,6 +928,15 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
             on ==> core.ginv(),
             on ==> core.g_log_@ == crate::coupling::tick_sends_log(mid.g_log_@, tick.sends_@,
                 mid.log_view(), mid.config_members_@, mid.my_rank(), tick.sends_@.len() as int),
+            // [Part B] the snapshot sends so far: to a peer, the boundary, this term
+            on && tick.snapshots_@.len() > 0 ==> mid.is_leader_ && mid.snapidx_ > 0,
+            on ==> forall|k: int| 0 <= k < tick.snapshots_@.len() ==> {
+                &&& (#[trigger] tick.snapshots_@[k]).index_ == mid.snapidx_
+                &&& tick.snapshots_@[k].snap_term_ == mid.snapterm_
+                &&& tick.snapshots_@[k].term_ == mid.current_term_
+                &&& mid.config_members_@.contains(tick.snapshots_@[k].site_id_)
+                &&& tick.snapshots_@[k].site_id_ != mid.site_id_
+            },
         decreases n0 - ord,
     {
         let peer: u16 = core.peer_site_at(ord);
@@ -1014,6 +1032,15 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
                 index_: core.snapidx_,  // [fix, F26]
                 snap_term_: core.snapterm_,  // [fix, F26]
             });
+            proof {
+                // [Part B] a follower below a base past 1: the boundary is
+                // positive; the peer is a member other than this server
+                if on {
+                    assert(mid.snapidx_ > 0);
+                    assert(mid.config_members_@.contains(peer));
+                    assert(peer != mid.site_id_);
+                }
+            }
             skip_follower = true;
         } else {
             runtime_assert(prev_log_index <= core.raft_log_.last_index());  // [move, M10]
@@ -1132,6 +1159,40 @@ pub fn heartbeat_tick<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
             }
         }
         ord += 1;
+    }
+    proof {
+        // [Part B] the InstallSnapshots, after the AppendEntries
+        if on {
+            let ghost before = *core;
+            let cfg = mid.config_members_@;
+            let sn = tick.snapshots_@;
+            let log = mid.log_view();
+            crate::coupling::lemma_my_rank(&mid);
+            crate::coupling::lemma_view_len(&mid);
+            assert forall|j: int| 0 <= j < sn.len() implies {
+                &&& mid.c_view().servers.contains(crate::coupling::rank(cfg, (#[trigger] sn[j]).site_id_))
+                &&& crate::coupling::rank(cfg, sn[j].site_id_) != mid.c_view().my_id
+                &&& sn[j].term_ as int == glr::protocol::Raft::ghost_log::replay(before.g_log_@).current_term
+                &&& 0 < sn[j].index_ as int <= glr::protocol::Raft::ghost_log::replay(before.g_log_@).commit_index
+                &&& sn[j].index_ as int <= log.len()
+            } by {
+                crate::coupling::lemma_rank_bounds(cfg, sn[j].site_id_);
+                crate::coupling::lemma_rank_bounds(cfg, mid.site_id_);
+            }
+            if sn.len() > 0 {
+                crate::coupling::lemma_snap_sends(before.g_log_@, mid.c_view(), sn, log, cfg, sn.len() as int);
+            } else {
+                assert(crate::coupling::snap_sends_log(before.g_log_@, sn, log, cfg, 0) == before.g_log_@);
+            }
+            core.g_log_@ = crate::coupling::snap_sends_log(before.g_log_@, sn, log, cfg, sn.len() as int);
+            if sn.len() > 0 {
+                crate::coupling::lemma_same_fields_ginv(&before, core);
+            }
+            assert forall|k: int| 0 <= k < sn.len() implies
+                (#[trigger] sn[k]).snap_term_ as int == log[sn[k].index_ - 1].term by {
+                assert(log[sn[k].index_ - 1] == mid.raft_log_.spec_prefix()[sn[k].index_ - 1]);
+            }
+        }
     }
     tick.has_authority_ =
         core.authority_rounds_.has_quorum(core.round_.round_id());

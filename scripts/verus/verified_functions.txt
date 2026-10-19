@@ -95,6 +95,7 @@ lib::coupling::lemma_ext_refl
 lib::coupling::lemma_ext_send_segs
 lib::coupling::lemma_ext_settle_step_down
 lib::coupling::lemma_ext_settle_won
+lib::coupling::lemma_ext_snap_sends
 lib::coupling::lemma_ext_tick_sends
 lib::coupling::lemma_ext_trans
 lib::coupling::lemma_ext_vote_group
@@ -136,6 +137,7 @@ lib::coupling::lemma_settle_aside
 lib::coupling::lemma_settle_quorum
 lib::coupling::lemma_settle_step_down
 lib::coupling::lemma_settle_won
+lib::coupling::lemma_snap_sends
 lib::coupling::lemma_sorted_ge
 lib::coupling::lemma_sorted_len
 lib::coupling::lemma_step_aside
@@ -147,6 +149,7 @@ lib::coupling::lemma_view_at
 lib::coupling::lemma_view_len
 lib::coupling::lemma_vote_group
 lib::coupling::send_segs
+lib::coupling::snap_sends_log
 lib::coupling::theorem_mako_safety
 lib::coupling::tick_sends_log
 lib::election::CampaignStart::not_started

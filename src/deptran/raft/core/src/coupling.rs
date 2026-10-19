@@ -2788,6 +2788,79 @@ pub proof fn lemma_send_segs(l: Seq<Entry>, c: LConstants, log: Seq<LLogEntry>, 
     }
 }
 
+// [Part B] E3: the leader's InstallSnapshot to follower f, a Tick group
+// (LSendSnapshot): the boundary, its term, the log through it.
+pub open spec fn snap_msg(term: int, index: int, log: Seq<LLogEntry>) -> LRaftMessage {
+    LRaftMessage::Snapshot { term, index, snap_term: log[index - 1].term, prefix: log.take(index) }
+}
+
+pub open spec fn snap_seg(l: Seq<Entry>, f: int, term: int, index: int, log: Seq<LLogEntry>) -> Seq<Entry> {
+    l.push(Entry::Tick)
+        .push(Entry::Send(f, snap_msg(term, index, log)))
+        .push(Entry::Close(ActionLabel::SendSnapshot { follower: f, snap_index: index }))
+}
+
+// A tick's snapshot sends, in order, after its AppendEntries.
+pub open spec fn snap_sends_log(l: Seq<Entry>, snaps: Seq<SnapshotSend>, log: Seq<LLogEntry>,
+                                cfg: Seq<u16>, k: int) -> Seq<Entry>
+    decreases k,
+{
+    if k <= 0 {
+        l
+    } else {
+        let sn = snaps[k - 1];
+        snap_seg(snap_sends_log(l, snaps, log, cfg, k - 1), rank(cfg, sn.site_id_), sn.term_ as int,
+                 sn.index_ as int, log)
+    }
+}
+
+pub proof fn lemma_snap_sends(l: Seq<Entry>, c: LConstants, snaps: Seq<SnapshotSend>, log: Seq<LLogEntry>,
+                              cfg: Seq<u16>, k: int)
+    requires
+        log_ok(l, c),
+        fully_closed(l),
+        replay(l).role is Leader,
+        replay(l).log == log,
+        0 <= k <= snaps.len(),
+        forall|j: int| 0 <= j < k ==> {
+            &&& c.servers.contains(rank(cfg, (#[trigger] snaps[j]).site_id_))
+            &&& rank(cfg, snaps[j].site_id_) != c.my_id
+            &&& snaps[j].term_ as int == replay(l).current_term
+            &&& 0 < snaps[j].index_ as int <= replay(l).commit_index
+            &&& snaps[j].index_ as int <= log.len()
+        },
+    ensures
+        log_ok(snap_sends_log(l, snaps, log, cfg, k), c),
+        fully_closed(snap_sends_log(l, snaps, log, cfg, k)),
+        replay(snap_sends_log(l, snaps, log, cfg, k)) == replay(l),
+        plain_ext(l, snap_sends_log(l, snaps, log, cfg, k)),
+    decreases k,
+{
+    if k == 0 {
+        lemma_ext_refl(l);
+    } else {
+        lemma_snap_sends(l, c, snaps, log, cfg, k - 1);
+        let rest = snap_sends_log(l, snaps, log, cfg, k - 1);
+        let sn = snaps[k - 1];
+        let f = rank(cfg, sn.site_id_);
+        let idx = sn.index_ as int;
+        let s = replay(rest);
+        let m = snap_msg(sn.term_ as int, idx, log);
+        lemma_g_open(rest, Entry::Tick, c);
+        let l1 = rest.push(Entry::Tick);
+        assert(seg_sends_to(l1, f));
+        lemma_g_send(l1, f, m, c);
+        let l2 = l1.push(Entry::Send(f, m));
+        assert(seg_sends(l2) =~= seq![m]);
+        assert(LSendSnapshot(s, replay(l2), c, f, idx, seg_sends(l2)));
+        lemma_g_close(l2, ActionLabel::SendSnapshot { follower: f, snap_index: idx }, f, c);
+        let l3 = l2.push(Entry::Close(ActionLabel::SendSnapshot { follower: f, snap_index: idx }));
+        assert(l3 == snap_sends_log(l, snaps, log, cfg, k));
+        broadcast use lemma_ext_push;
+        assert(plain_ext(l, l3));
+    }
+}
+
 // How many components a send carries: one for a heartbeat, else its
 // entries.
 pub open spec fn send_count<C>(s: AppendSend<C>) -> int {
@@ -3161,6 +3234,19 @@ pub proof fn lemma_ext_tick_sends<C>(l: Seq<Entry>, sends: Seq<AppendSend<C>>, l
     }
 }
 
+pub proof fn lemma_ext_snap_sends(l: Seq<Entry>, snaps: Seq<SnapshotSend>, log: Seq<LLogEntry>,
+                                  cfg: Seq<u16>, k: int)
+    ensures plain_ext(l, snap_sends_log(l, snaps, log, cfg, k)),
+    decreases k,
+{
+    broadcast use lemma_ext_push;
+    if k <= 0 {
+        lemma_ext_refl(l);
+    } else {
+        lemma_ext_snap_sends(l, snaps, log, cfg, k - 1);
+    }
+}
+
 pub proof fn lemma_ext_fae_seg<C>(l: Seq<Entry>, x: AeView<C>, m: LRaftMessage, log: Seq<LLogEntry>,
                                   commit: int, match_index: int)
     ensures plain_ext(l, fae_seg(l, x, m, log, commit, match_index)),
@@ -3232,6 +3318,14 @@ pub proof fn lemma_ext_all<C>(l: Seq<Entry>)
             #[trigger] plain_ext(l, tick_sends_log(l, sends, log, cfg, me, k)),
         forall|sends: Seq<AppendSend<C>>, log: Seq<LLogEntry>, cfg: Seq<u16>, me: int, k: int, idx: int|
             #[trigger] plain_ext(l, tick_sends_log(advance_log(l, idx), sends, log, cfg, me, k)),
+        // [Part B] the tick's snapshot sends after its AppendEntries
+        forall|sends: Seq<AppendSend<C>>, log: Seq<LLogEntry>, cfg: Seq<u16>, me: int, k: int,
+               snaps: Seq<SnapshotSend>, k2: int|
+            #[trigger] plain_ext(l, snap_sends_log(tick_sends_log(l, sends, log, cfg, me, k), snaps, log, cfg, k2)),
+        forall|sends: Seq<AppendSend<C>>, log: Seq<LLogEntry>, cfg: Seq<u16>, me: int, k: int, idx: int,
+               snaps: Seq<SnapshotSend>, k2: int|
+            #[trigger] plain_ext(l, snap_sends_log(tick_sends_log(advance_log(l, idx), sends, log, cfg, me, k),
+                snaps, log, cfg, k2)),
         forall|nl: Seq<LLogEntry>, v: int| #[trigger] plain_ext(l, client_request_log(l, nl, v)),
         forall|cfg: Seq<u16>, voter: u16, gr: bool, t: i64|
             #[trigger] plain_ext(l, settle_step_down_log(l, cfg, voter, gr, t)),
@@ -3283,6 +3377,25 @@ pub proof fn lemma_ext_all<C>(l: Seq<Entry>)
         let a = advance_log(l, idx);
         lemma_ext_tick_sends(a, sends, log, cfg, me, k);
         lemma_ext_trans(l, a, tick_sends_log(a, sends, log, cfg, me, k));
+    }
+    assert forall|sends: Seq<AppendSend<C>>, log: Seq<LLogEntry>, cfg: Seq<u16>, me: int, k: int,
+                  snaps: Seq<SnapshotSend>, k2: int|
+        #[trigger] plain_ext(l, snap_sends_log(tick_sends_log(l, sends, log, cfg, me, k), snaps, log, cfg, k2)) by {
+        let t = tick_sends_log(l, sends, log, cfg, me, k);
+        lemma_ext_tick_sends(l, sends, log, cfg, me, k);
+        lemma_ext_snap_sends(t, snaps, log, cfg, k2);
+        lemma_ext_trans(l, t, snap_sends_log(t, snaps, log, cfg, k2));
+    }
+    assert forall|sends: Seq<AppendSend<C>>, log: Seq<LLogEntry>, cfg: Seq<u16>, me: int, k: int, idx: int,
+                  snaps: Seq<SnapshotSend>, k2: int|
+        #[trigger] plain_ext(l, snap_sends_log(tick_sends_log(advance_log(l, idx), sends, log, cfg, me, k),
+            snaps, log, cfg, k2)) by {
+        let a = advance_log(l, idx);
+        let t = tick_sends_log(a, sends, log, cfg, me, k);
+        lemma_ext_tick_sends(a, sends, log, cfg, me, k);
+        lemma_ext_trans(l, a, t);
+        lemma_ext_snap_sends(t, snaps, log, cfg, k2);
+        lemma_ext_trans(l, t, snap_sends_log(t, snaps, log, cfg, k2));
     }
 }
 
