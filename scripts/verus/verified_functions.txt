@@ -340,6 +340,7 @@ lib::node::RaftCore::recv_install_snapshot
 lib::node::RaftCore::reset_election_timer
 lib::node::RaftCore::reset_round_state
 lib::node::RaftCore::restore
+lib::node::RaftCore::restore_coupled
 lib::node::RaftCore::set_identity
 lib::node::RaftCore::set_is_leader
 lib::node::RaftCore::snapshot_point

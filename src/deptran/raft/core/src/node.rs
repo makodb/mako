@@ -651,6 +651,8 @@ impl<C: Clone> RaftCore<C> {
             r && snap_index == 0 ==> final(self).raft_log_.spec_prefix() == old(self).raft_log_.spec_prefix(),
             r && snap_index != 0 ==> (final(self).snapterm_ == snap_term),
             r && snap_index != 0 ==> (final(self).snapidx_ == snap_index),
+            r && snap_index != 0 ==> final(self).raft_log_.spec_base() == snap_index + 1,  // [Part B] (E7)
+            r && snap_index != 0 ==> final(self).raft_log_.spec_prefix() == old(self).raft_log_.spec_prefix(),  // [Part B] (E7)
             r ==> (final(self).peers_ == old(self).peers_),
             r ==> (final(self).peer_sites_ == old(self).peer_sites_),
             r ==> (final(self).g_log_ == old(self).g_log_),

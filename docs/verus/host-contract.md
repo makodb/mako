@@ -76,8 +76,12 @@ As in the plan's §1.3, from the group's composition
    at durable record d leaves the certificate of the Ready numbered exactly
    d, the last numbered at most d (P3, `lemma_crash_cut`); and `Restore`
    resumes from that cut, stepped aside, with the count at d and a
-   `Ready(d)` (P4, its premise `restore_cert_ok`). The premises the host
-   keeps:
+   `Ready(d)` (P4, its premise `restore_cert_ok`). Since Part B's E7 the
+   restart may carry a recovered snapshot: the cut's log is then the
+   image's prefix -- through the boundary, ending at the boundary's term,
+   no entry a configuration change -- followed by the recovered entries
+   (`restore_view`), and the core holds that prefix as its compacted one.
+   The premises the host keeps:
    - **D**: an output a step produced leaves only after the WAL is durable
      through that step's Ready number. The tail read after the section's
      last push bounds that number from above (the tick's and campaign's
@@ -88,7 +92,8 @@ As in the plan's §1.3, from the group's composition
    - **T2**: recovery returns records 1..d whole, d at least every durable
      number the previous run published, and the state is the fold of those
      records -- the replay of the cut's certificate, through the notes
-     being exact.
+     being exact; a recovered snapshot image stands for that log's entries
+     through its boundary.
    - **Exact notes** (P2, not yet proved): a step with no note changes no
      saved field, and a note's values and log suffix are the step's;
      checked on every recording by the replay's shadow
@@ -143,7 +148,7 @@ admission itself (`coupled_checked`).
 | `RoundEnd` | the gate | F5's `enter_gates`. Nothing about the role: PHASE 3 advances the commit index only while the core leads (F12), so a round end after a step-down or during shutdown commits nothing (bugs-found B17, B18) |
 | `CreateSnapshot`, `Compact`, `RecvInstallSnapshot`, `InstallSnapshot`, `RecvSnapshotReply` | the gate: each refuses inside it, changing nothing (F25, F27, F28), so the premise holds by refusal; outside it they are uncoupled until Part B | -- (the core enforces it) |
 | `LeaveGates` | `false`: leaving the verified configuration ends the coupling (F29) | `SetSnapshotManagerLocked` steps it when a manager is configured on a gated server; production configures managers only before `EnterGates` (bugs-found B56) |
-| `Restore` | before the gate; the core neither leads nor campaigns; an empty log; no snapshot boundary (`snap_index == 0`, F30: a boundary is uncoupled until Part B); some previous run's ghost log, its marks numbered without a gap and none Persisted and its count at least d (`prev_run_ok`), whose crash cut at d (`restore_prev`: the certificate's log, or the configuration's load when no Ready is numbered at most d) replays to the restored term, vote, log and commit, with no outgoing configuration (`restore_cert_ok`, `restore_prev_ok`; the last conjunct since spec v2) | `RestoreDiskState` steps it once, after `Configure` and snapshot recovery, before `EnterGates`, on the state recovery folded from the store; that the store's state is such a replay is §1 item 5's trusted fact. A memory build steps it only for a snapshot startup recovery loaded (`RestoreRecoveredSnapshot`, F30), which then has a boundary and so is uncoupled |
+| `Restore` | before the gate; the core neither leads nor campaigns; an empty, whole log; some previous run's ghost log, its marks numbered without a gap and none Persisted and its count at least d (`prev_run_ok`), whose crash cut at d (`restore_prev`: the certificate's log, or the configuration's load when no Ready is numbered at most d) replays to the restored term, vote and commit, with no outgoing configuration (`restore_cert_ok`, `restore_prev_ok`; the last conjunct since spec v2), and whose log is the recovered snapshot's prefix through `snap_index` (none at 0), a Mako log's ending at `snap_term`, then the restored entries (`restore_view`, Part B E7) | `RestoreDiskState` steps it once, after `Configure` and snapshot recovery, before `EnterGates`, on the state recovery folded from the store; that the store's state is such a replay is §1 item 5's trusted fact. A memory build steps it only for a snapshot startup recovery loaded (`RestoreRecoveredSnapshot`, F30) |
 
 Terms and indices off the wire and in the log stay below 2^62
 (`raft_index_limit`, the Phase 6 contract): a log that long would hold

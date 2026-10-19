@@ -530,23 +530,19 @@ pub open spec fn view_frame<C>(pre: &RaftCore<C>, post: &RaftCore<C>) -> bool {
 // run's ghost log `prev`, as a step aside
 // ===========================================================================
 
-// Restore's premise: the core neither leads nor campaigns, its log is
-// empty, and some previous ghost log's replay holds the restored term, vote,
-// log and commit; the restarted core steps aside from it (LStepAside, no
-// guard). An existential: the proof takes a witness, so it holds for every
-// such log (host contract §1 item 5).
-pub open spec fn restore_premise<C>(core: &RaftCore<C>, term: u64, vote: u16, commit: u64,
-                                    rev: Seq<RaftEntry<C>>) -> bool {
-    &&& !core.is_leader_
-    &&& !core.election_in_progress_
-    &&& core.raft_log_.spec_len() == 0
-    &&& core.raft_log_.spec_base() == 1  // [Part B] a fresh log
-    &&& exists|prev: Seq<Entry>| #[trigger] restore_prev_ok(core, prev, term, vote, restore_log(rev), commit)
-}
-
 // Restore's entries, last first, as the log they make.
 pub open spec fn restore_log<C>(rev: Seq<RaftEntry<C>>) -> Seq<LLogEntry> {
     rev_seq(rev).map_values(|e: RaftEntry<C>| entry_view(e))
+}
+
+// [Part B] (E7) The previous run's log as a restart recovers it: the
+// recovered snapshot's prefix through snap (none without one), a Mako log's
+// (snap_prefix_ok, as an install's), then the entries.
+pub open spec fn restore_view<C>(l: Seq<LLogEntry>, snap: u64, snap_term: i64,
+                                 rev: Seq<RaftEntry<C>>) -> bool {
+    &&& snap as int <= l.len()
+    &&& l.skip(snap as int) == restore_log(rev)
+    &&& snap > 0 ==> snap_prefix_ok(l.take(snap as int), snap as int, snap_term as int)
 }
 
 // The previous run's ghost log certifies a state whose term, vote, log and
@@ -582,8 +578,8 @@ pub proof fn lemma_restore_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, prev: 
                         post.commit_index_),
         post.config_members_ == pre.config_members_,
         post.site_id_ == pre.site_id_,
-        post.snapterm_ == pre.snapterm_,
-        post.snapidx_ == pre.snapidx_,  // [Part B]
+        post.snap_ok(),  // [Part B] (E7) the recovered boundary, or none
+        post.prefix_ok(),  // [Part B] (E7)
         !post.is_leader_,
         !post.election_in_progress_,
         post.log_entries_ok(),
@@ -591,8 +587,6 @@ pub proof fn lemma_restore_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, prev: 
         post.g_votes_@ == Set::<int>::empty(),
         post.g_match_@ == replay(prev).match_index,
         post.g_next_@ == replay(prev).next_index,
-        post.raft_log_.spec_base() == pre.raft_log_.spec_base(),  // [Part B]
-        post.raft_log_.spec_prefix() == pre.raft_log_.spec_prefix(),  // [Part B]
     ensures post.ginv(),
 {
     let c = pre.c_view();
@@ -2993,12 +2987,11 @@ impl<C> RaftCore<C> {
                 &&& (status ==> last_log_index as int <= self.raft_log_.spec_last_index())
             },
             Event::RoundEnd { .. } => self.gated_,
-            // [fix, F22] (disk design §6) a restart (restore_premise)
-            // [fix, F30] without a snapshot boundary: one is uncoupled until
-            // the snapshot coupling (design Part B)
+            // [fix, F22] (disk design §6) a restart (restore_cert_ok)
             // [M12] persistence (P4): the previous run's crash cut at d
-            Event::Restore { term, vote, commit, d, snap_index, entries_rev, .. } =>
-                snap_index == 0 && restore_cert_ok(self, d, term, vote, commit, entries_rev@),
+            // [Part B] (E7) with the recovered snapshot boundary, if any
+            Event::Restore { term, vote, commit, d, snap_index, snap_term, entries_rev } =>
+                restore_cert_ok(self, d, term, vote, commit, snap_index, snap_term, entries_rev@),
             // [fix, F25] refused (unchanged) inside the gate; uncoupled
             // outside it until the snapshot coupling (design Part B)
             Event::CreateSnapshot { .. } => self.gated_,
@@ -3860,17 +3853,23 @@ pub open spec fn prev_run_ok(old: Seq<Entry>, c: LConstants, d: u64) -> bool {
     &&& gc::has_ready::<RaftP>(old) ==> d as int <= rnum(old[gc::last_ready_pos::<RaftP>(old)])
 }
 
-// Restore's premise with the crash cut (A4 P4): some previous run, crashed
-// at d, leaves a prev whose replay is the restored state.
+// Restore's premise with the crash cut (A4 P4): the core neither leads nor
+// campaigns and its log is empty and whole; some previous run, crashed at
+// d, leaves a prev whose replay is the restored state, its log the
+// recovered boundary's prefix and the entries ([Part B] E7, restore_view).
+// An existential: the proof takes a witness, so it holds for every such run
+// (host contract §1 item 5). Opaque: step's query carries it only by name.
+#[verifier::opaque]
 pub open spec fn restore_cert_ok<C>(core: &RaftCore<C>, d: u64, term: u64, vote: u16, commit: u64,
-                                    rev: Seq<RaftEntry<C>>) -> bool {
+                                    snap: u64, snap_term: i64, rev: Seq<RaftEntry<C>>) -> bool {
     &&& !core.is_leader_
     &&& !core.election_in_progress_
     &&& core.raft_log_.spec_len() == 0
     &&& core.raft_log_.spec_base() == 1  // [Part B] a fresh log
     &&& exists|old: Seq<Entry>| prev_run_ok(old, core.c_view(), d)
             && #[trigger] restore_prev_ok(core, restore_prev(old, d, core.n_view()), term, vote,
-                                          restore_log(rev), commit)
+                                          replay(restore_prev(old, d, core.n_view())).log, commit)
+            && restore_view(replay(restore_prev(old, d, core.n_view())).log, snap, snap_term, rev)
 }
 
 // The restarted run's prev keeps the numbering, and its last Ready is

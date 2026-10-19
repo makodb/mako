@@ -488,8 +488,90 @@ impl<C: Clone> RaftCore<C> {
         }
     }
 
+    // [M12] (whole item) Restore's arm (P4; [Part B] E7): the restore, then,
+    // under its premise, the previous run's cut stepped aside, the recovered
+    // snapshot's prefix and the Ready numbered d. Apart from step, whose
+    // query it would push past its limit.
+    #[allow(clippy::too_many_arguments)]
+    fn restore_coupled(&mut self, term: u64, vote: u16, commit: u64, _d: u64, snap_index: u64,
+                       snap_term: i64, entries_rev: Vec<RaftEntry<C>>, out: &mut CoreOutput) -> (ok: bool)
+        requires
+            old(self).inv(),
+            !old(self).gated_,
+            old(self).raft_log_.spec_len() == 0,
+        ensures
+            final(self).inv(),
+            old(self).ginv() && crate::coupling::restore_cert_ok(old(self), _d, term, vote, commit,
+                snap_index, snap_term, entries_rev@) ==> final(self).ginv(),
+            ok && old(self).ginv() && crate::coupling::restore_cert_ok(old(self), _d, term, vote, commit,
+                snap_index, snap_term, entries_rev@) && (_d as int) + 1 < u64::MAX
+                ==> final(self).persist_ok() && final(self).g_seq_@ == _d as int
+                    && glr::protocol::ghost_log_certs::last_ready_pos::<glr::protocol::Raft::ghost_log::RaftP>(
+                        final(self).g_log_@) == final(self).g_log_@.len() - 1,
+    {
+        let ghost pre = *self;
+        let ghost rev = entries_rev@;
+        proof { reveal(crate::coupling::restore_cert_ok); }
+        // [M12] persistence (P4): the premise's previous run, and the
+        // prev its crash at d left (the cut, P3)
+        let ghost old = choose|o: Seq<glr::protocol::Raft::ghost_log::Entry>|
+            crate::coupling::prev_run_ok(o, pre.c_view(), _d)
+            && #[trigger] crate::coupling::restore_prev_ok(&pre,
+                crate::coupling::restore_prev(o, _d, pre.n_view()), term, vote,
+                glr::protocol::Raft::ghost_log::replay(
+                    crate::coupling::restore_prev(o, _d, pre.n_view())).log, commit)
+            && crate::coupling::restore_view(glr::protocol::Raft::ghost_log::replay(
+                crate::coupling::restore_prev(o, _d, pre.n_view())).log, snap_index, snap_term, rev);
+        let ghost prev = crate::coupling::restore_prev(old, _d, pre.n_view());
+        let ghost log = glr::protocol::Raft::ghost_log::replay(prev).log;
+        let ok: bool = self.restore(term, vote, commit, snap_index, snap_term, entries_rev, out);
+        // [Part B] (E7) the recovered snapshot's prefix: prev's log through it
+        #[cfg(verus_keep_ghost)]
+        if ok && snap_index != 0 {
+            self.raft_log_.set_prefix(Ghost(log.take(snap_index as int)));
+        }
+        proof {
+            // [M12] (disk design §6) taken: prev stepped aside;
+            // refused: nothing moved
+            if ok && pre.ginv()
+                && crate::coupling::restore_cert_ok(&pre, _d, term, vote, commit, snap_index,
+                                                    snap_term, rev) {
+                pre.raft_log_.lemma_wf_bounds();
+                assert(pre.raft_log_.view() =~= Seq::<RaftEntry<C>>::empty());
+                assert(self.raft_log_.view() =~= rev_seq(rev));
+                if snap_index == 0 {
+                    assert(log =~= log.skip(0));
+                    assert(self.log_view() =~= log);
+                } else {
+                    assert(log =~= log.take(snap_index as int) + log.skip(snap_index as int));
+                    assert(self.log_view() =~= log);
+                }
+                self.g_log_@ = crate::coupling::step_aside_log(prev);
+                self.g_votes_@ = Set::<int>::empty();
+                self.g_match_@ = glr::protocol::Raft::ghost_log::replay(prev).match_index;
+                self.g_next_@ = glr::protocol::Raft::ghost_log::replay(prev).next_index;
+                assert(self.log_entries_ok());
+                crate::coupling::lemma_restore_ginv(&pre, self, prev);
+                // the records restart at d, after the Ready numbered d
+                if (_d as int) + 1 < u64::MAX {
+                    crate::coupling::lemma_restore_prev_marks(old, pre.c_view(), _d, pre.n_view());
+                    crate::coupling::lemma_ext_builders(prev);
+                    crate::coupling::lemma_ready_ext(prev, self.g_log_@);
+                    let ghost mid = *self;
+                    crate::coupling::lemma_ext_refl(mid.g_log_@);
+                    self.g_seq_@ = _d as int;
+                    self.g_log_@ = mid.g_log_@.push(
+                        glr::protocol::Raft::ghost_log::Entry::Mark(mid.ready_now(_d)));
+                    crate::coupling::lemma_ready_step(&mid, self, mid.g_log_@, _d as int);
+                }
+            }
+        }
+        ok
+    }
+
     // The core's one entry point. The caller holds mtx_.
-    #[verifier::rlimit(80)]  // [M12] every event's arm and the persistence epilogue, one query
+    #[verifier::rlimit(160)]  // [M12] every event's arm and the persistence epilogue, one query
+    #[verifier::spinoff_prover]  // [M12] its own solver, so the crate's earlier queries do not tip it
     pub fn step<W: InboundBatch<C>>(&mut self, ev: Event<'_, C, W>,
                                     out: &mut CoreOutput) -> (r: Reply<C>)
         requires
@@ -694,47 +776,8 @@ impl<C: Clone> RaftCore<C> {
                 Reply::Done
             },
             Event::Restore { term, vote, commit, d: _d, snap_index, snap_term, entries_rev } => {  // [fix, F24] d is ghost-only [fix, F30]
-                let ghost pre = *self;
-                let ghost rev = entries_rev@;
-                let ok: bool = self.restore(term, vote, commit, snap_index, snap_term,  // [fix, F22] [fix, F30]
-                                            entries_rev, out);
-                proof {
-                    // [M12] (disk design §6) taken: a previous ghost log the
-                    // premise provides, stepped aside; refused: nothing moved
-                    let log = crate::coupling::restore_log(rev);
-                    if ok && pre.ginv() && snap_index == 0
-                        && crate::coupling::restore_cert_ok(&pre, _d, term, vote, commit, rev) {
-                        // [M12] persistence (P4): prev is what the previous
-                        // run's crash at d left (the cut, P3)
-                        let old = choose|o: Seq<glr::protocol::Raft::ghost_log::Entry>|
-                            crate::coupling::prev_run_ok(o, pre.c_view(), _d)
-                            && #[trigger] crate::coupling::restore_prev_ok(&pre,
-                                crate::coupling::restore_prev(o, _d, pre.n_view()), term, vote, log, commit);
-                        let prev = crate::coupling::restore_prev(old, _d, pre.n_view());
-                        pre.raft_log_.lemma_wf_bounds();
-                        assert(pre.raft_log_.view() =~= Seq::<RaftEntry<C>>::empty());
-                        assert(self.raft_log_.view() =~= rev_seq(rev));
-                        assert(self.log_view() =~= log);
-                        self.g_log_@ = crate::coupling::step_aside_log(prev);
-                        self.g_votes_@ = Set::<int>::empty();
-                        self.g_match_@ = glr::protocol::Raft::ghost_log::replay(prev).match_index;
-                        self.g_next_@ = glr::protocol::Raft::ghost_log::replay(prev).next_index;
-                        assert(self.log_entries_ok());
-                        crate::coupling::lemma_restore_ginv(&pre, self, prev);
-                        // the records restart at d, after the Ready numbered d
-                        if (_d as int) + 1 < u64::MAX {
-                            crate::coupling::lemma_restore_prev_marks(old, pre.c_view(), _d, pre.n_view());
-                            crate::coupling::lemma_ext_builders(prev);
-                            crate::coupling::lemma_ready_ext(prev, self.g_log_@);
-                            let ghost mid = *self;
-                            crate::coupling::lemma_ext_refl(mid.g_log_@);
-                            self.g_seq_@ = _d as int;
-                            self.g_log_@ = mid.g_log_@.push(
-                                glr::protocol::Raft::ghost_log::Entry::Mark(mid.ready_now(_d)));
-                            crate::coupling::lemma_ready_step(&mid, self, mid.g_log_@, _d as int);
-                        }
-                    }
-                }
+                let ok: bool = self.restore_coupled(term, vote, commit, _d, snap_index, snap_term,  // [M12]
+                                                    entries_rev, out);
                 Reply::Restored(ok)
             },
             Event::CreateSnapshot { index, term } => {  // [fix, F25]
