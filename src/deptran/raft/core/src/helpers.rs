@@ -137,29 +137,6 @@ pub const fn raft_server_snapshot_term_is_valid(snapshot_term: u64,
 }
 
 #[verifier::allow_in_spec]
-pub const fn raft_server_snapshot_recovery_retains_suffix(
-    has_suffix: bool,
-    has_boundary: bool,
-    boundary_matches: bool,
-    live_snapshot_proves_suffix: bool) -> bool
-    returns has_suffix && ((has_boundary && boundary_matches) || (!has_boundary && live_snapshot_proves_suffix)),
-{
-    has_suffix &&
-        ((has_boundary && boundary_matches) ||
-         (!has_boundary && live_snapshot_proves_suffix))
-}
-
-#[verifier::allow_in_spec]
-pub const fn raft_server_snapshot_recovery_has_unproven_gap(
-    has_suffix: bool,
-    has_boundary: bool,
-    live_snapshot_proves_suffix: bool) -> bool
-    returns has_suffix && !has_boundary && !live_snapshot_proves_suffix,
-{
-    has_suffix && !has_boundary && !live_snapshot_proves_suffix
-}
-
-#[verifier::allow_in_spec]
 pub const fn raft_server_snapshot_term_uses_boundary(snapshot_index: u64,
                                                       existing_snapshot_index: u64) -> bool
     returns snapshot_index == existing_snapshot_index,
@@ -547,14 +524,6 @@ const _: () = assert!(!raft_server_snapshot_boundary_matches(true, 6, 7));
 const _: () = assert!(raft_server_snapshot_term_is_valid(7, 7));
 const _: () = assert!(raft_server_snapshot_term_is_valid(6, 7));
 const _: () = assert!(!raft_server_snapshot_term_is_valid(8, 7));
-const _: () = assert!(raft_server_snapshot_recovery_retains_suffix(true, true, true, false));
-const _: () = assert!(!raft_server_snapshot_recovery_retains_suffix(true, true, false, true));
-const _: () = assert!(raft_server_snapshot_recovery_retains_suffix(true, false, false, true));
-const _: () = assert!(!raft_server_snapshot_recovery_retains_suffix(true, false, false, false));
-const _: () = assert!(!raft_server_snapshot_recovery_retains_suffix(false, false, false, true));
-const _: () = assert!(raft_server_snapshot_recovery_has_unproven_gap(true, false, false));
-const _: () = assert!(!raft_server_snapshot_recovery_has_unproven_gap(true, true, false));
-const _: () = assert!(!raft_server_snapshot_recovery_has_unproven_gap(true, false, true));
 const _: () = assert!(raft_server_snapshot_term_uses_boundary(11, 11));
 const _: () = assert!(!raft_server_snapshot_term_uses_boundary(12, 11));
 const _: () = assert!(raft_server_election_result_is_current(true, 4, 4, 4));

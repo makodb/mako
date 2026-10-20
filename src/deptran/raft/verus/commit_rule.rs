@@ -2,9 +2,9 @@
 //
 // The exec functions below keep the control flow of the production code
 // line for line, with the production types reduced to what the rule reads:
-//   majority_match_index    <- src/deptran/raft/shell/server_h.rs:881-903
-//   commit_index_candidate  <- src/deptran/raft/shell/server_h.rs:313-325
-//   commit_advance          <- src/deptran/raft/shell/server_cc.rs:633-666
+//   majority_match_index    <- PeerTable::majority_match_index (core/src/progress.rs)
+//   commit_index_candidate  <- raft_server_commit_index_candidate (core/src/helpers.rs)
+//   commit_advance          <- raft_commit_advance (core/src/heartbeat.rs)
 // Reductions: PeerTable's progress_ is a Vec of match indexes (the only field
 // the rule reads); the log is a Vec of entry terms, entry k (1-based) at
 // terms[k - 1], so last_index() == terms.len(); the panics become
@@ -55,8 +55,8 @@ proof fn lemma_all_ge_zero(s: Seq<u64>, k: int)
     if k > 0 { lemma_all_ge_zero(s, k - 1); }
 }
 
-// server_h.rs:881-903: pick the match index whose rank (ties broken by
-// position) is (nservers - 1) / 2.
+// PeerTable::majority_match_index: pick the match index whose rank (ties
+// broken by position) is (nservers - 1) / 2.
 pub fn majority_match_index(progress: &Vec<u64>, nservers: usize, last_log_index: u64) -> (r: u64)
     requires
         nservers >= 1,
@@ -107,7 +107,7 @@ pub fn majority_match_index(progress: &Vec<u64>, nservers: usize, last_log_index
     r
 }
 
-// server_h.rs:313-325.
+// raft_server_commit_index_candidate.
 pub fn commit_index_candidate(selected_match: u64, nservers: usize, last_log_index: u64) -> (r: u64)
     ensures
         r <= last_log_index,
@@ -135,7 +135,7 @@ pub struct CommitAdvance {
     pub to: u64,
 }
 
-// server_cc.rs:633-666. `terms` is the leader's log (entry k at terms[k-1]);
+// raft_commit_advance. `terms` is the leader's log (entry k at terms[k-1]);
 // `commit_index` is RaftCore::commit_index_, updated in place.
 pub fn commit_advance(
     progress: &Vec<u64>,

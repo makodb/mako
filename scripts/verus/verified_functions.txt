@@ -267,8 +267,6 @@ lib::helpers::raft_server_snapshot_boundary_matches
 lib::helpers::raft_server_snapshot_is_due
 lib::helpers::raft_server_snapshot_is_stale
 lib::helpers::raft_server_snapshot_progress_clamp
-lib::helpers::raft_server_snapshot_recovery_has_unproven_gap
-lib::helpers::raft_server_snapshot_recovery_retains_suffix
 lib::helpers::raft_server_snapshot_term_is_valid
 lib::helpers::raft_server_snapshot_term_uses_boundary
 lib::helpers::raft_server_timer_campaign_is_current

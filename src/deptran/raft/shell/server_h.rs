@@ -3787,6 +3787,12 @@ impl RaftServerBase {
             members.push(site);
             i += 1;
         }
+        // The core's configure requires the list strictly increasing
+        // (sites_sorted), which the proof only assumes; the kernel builds it
+        // from a std::set. Checked, so a kernel change cannot break it silently.
+        assert!(members.windows(2).all(|w| w[0] < w[1]),
+                "[RAFT-CONFIG] partition {} members not sorted and duplicate-free: {:?}",
+                self.partition_id_, members);
         // [move, M1] The core keeps the membership, and [fix, F5] builds its
         // peer table from it in the same call.
         let mut out: CoreOutput = core_output();
