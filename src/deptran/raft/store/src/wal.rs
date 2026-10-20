@@ -1,5 +1,5 @@
 //! The write-ahead log: a directory of segments, appended by the flusher,
-//! read back at recovery (design §3-§4).
+//! read back at recovery.
 //!
 //! A segment is named by its first sequence number. The writer rotates when
 //! the open segment has reached `segment_bytes`: the new segment's header is
@@ -45,7 +45,7 @@ pub struct Wal {
 /// is at or below it ([`covered_segments`]). The successor's name alone is
 /// no sign: it is in the directory from its `create_new` on, before either
 /// sync, and a crash then leaves a header-less segment that recovery deletes
-/// -- with its predecessor already gone, no segment at all (bugs-found B37).
+/// -- with its predecessor already gone, no segment at all.
 #[derive(Clone)]
 pub struct Rotated(Arc<AtomicU64>);
 
@@ -289,7 +289,7 @@ pub fn recover(fs: &dyn StoreFs, dir: &Path, id: &Identity, c: u64) -> Result<Re
 }
 
 /// Calls `f` on the records numbered `from..=to`, in order, reading each
-/// segment that holds some of them once (the applier's catch-up, design §3).
+/// segment that holds some of them once (the applier's catch-up).
 /// Changes nothing on disk. The open segment may end in a batch still being
 /// written; records past `to` are never read, and `to` must be durable.
 /// Fails if any record of the range is missing or out of order; a record

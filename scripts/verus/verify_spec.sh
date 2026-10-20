@@ -2,8 +2,8 @@
 # verify_spec.sh [--no-run]
 #
 # Checks that the group's spec checkout ($GLR, branch mako-spec) is exactly the
-# frozen spec version recorded in src/deptran/raft/verus/spec/SPEC_VERSION.toml
-# (docs/verus/modification-plan.md §4.5), then runs the full-crate Verus check
+# frozen spec version recorded in src/deptran/raft/verus/spec/SPEC_VERSION.toml,
+# then runs the full-crate Verus check
 # and compares its result with the recorded one:
 #
 #   1. $GLR is clean and on mako-spec, at the commit of the manifest's tag;

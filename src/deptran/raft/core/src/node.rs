@@ -1,7 +1,7 @@
 // RaftCore -- the state the protocol decides over -- and the core calls
 // made on it from the election and the inbound RPC handlers.
 //
-// [move, M1] From src/deptran/raft/shell/server_h.rs (Phase 6); the
+// [move, M1] From src/deptran/raft/shell/server_h.rs; the
 // command is the type parameter C (M11) and logging is records in the
 // output (M7).
 
@@ -103,7 +103,7 @@ pub struct RaftCore<C> {
     // handled, valid only inside that call. Kept across calls so a decode
     // never allocates.
     pub decoded_terms_: Vec<i64>,
-    // [M12] The proof's state (plan Phase 8; Verus only, so a plain build has
+    // [M12] The proof's state (Verus only, so a plain build has
     // none of it): the ghost log of the core's actions, and the spec fields
     // the core keeps no copy of -- the votes a campaign holds (V1), the
     // leader's match and next tables as the spec sees them (V2, V3).
@@ -328,9 +328,9 @@ impl<C: Clone> RaftCore<C> {
         }
     }
 
-    // [fix, F5] (whole item) verified_config_ok's decision, made by the core (the plan's
-    // new_gated): [fix, F32] not a memory build's restart from a snapshot
-    // image (host contract §1 item 5: none restarts in place), failover on,
+    // [fix, F5] (whole item) verified_config_ok's decision, made by the core:
+    // [fix, F32] not a memory build's restart from a snapshot
+    // image (none restarts in place), failover on,
     // and a configuration containing this server. Snapshots and a compacted
     // log are inside it since the snapshot coupling (Part B). When it holds
     // the core remembers it, and its invariant carries the facts.
@@ -546,7 +546,7 @@ impl<C: Clone> RaftCore<C> {
             final(self).inv(),
             // [M12] a leader's proposal is LClientRequest (the host contract:
             // the shell proposes only while leading, under mtx_, and a
-            // command with a value, bugs-found B16)
+            // command with a value)
             old(self).ginv() && old(self).is_leader_ && has_value ==> final(self).ginv(),
             // [M12] persistence: the log only grows
             old(self).ginv() && old(self).is_leader_ && has_value
@@ -632,8 +632,8 @@ impl<C: Clone> RaftCore<C> {
                              RAFT_SERVER_INVALID_SITE_ID, out);
     }
 
-    // [fix, F22] (whole item) Loads a recovered state (disk design §3,
-    // "Startup"): term, vote, commit and the entries after the snapshot
+    // [fix, F22] (whole item) Loads a recovered state:
+    // term, vote, commit and the entries after the snapshot
     // boundary, last first. Refuses, changing nothing, a state no step
     // produces: a term at the ceiling or below the current one, a log that
     // does not start right after the boundary or would reach the ceiling, a
@@ -888,7 +888,7 @@ impl<C: Clone> RaftCore<C> {
 
     // [fix, F27] (whole item) RecvInstallSnapshot (E4): the leader contact an
     // InstallSnapshot makes, which OnInstallSnapshotLocked decided itself
-    // before F27 (coupling-design-persistence-snapshots.md B3), in its order.
+    // before F27, in its order.
     // A stale term is answered with this server's; a term at the ceiling, an
     // impossible boundary term or an unauthoritative sender is refused (0,
     // the unavailable answer). A sender with a higher term raises it; the
@@ -900,7 +900,7 @@ impl<C: Clone> RaftCore<C> {
     // cannot occur, is refused). The reply: (the answer's term, the contact
     // accepted, install). [fix, F31] Inside the verified configuration as
     // outside it: the contact is coupled (Part B, E4), which retired
-    // bugs-found B55's refusal.
+    // its earlier refusal.
     #[allow(clippy::too_many_arguments)]
     pub fn recv_install_snapshot(&mut self, term: u64, leader_site_id: u16,
                                  last_included_index: u64, last_included_term: u64,
@@ -953,7 +953,7 @@ impl<C: Clone> RaftCore<C> {
             }
             return (self.current_term_, false, false);
         }
-        // A term at the index ceiling could never be left (bugs-found B42).
+        // A term at the index ceiling could never be left.
         if term >= RAFT_INDEX_LIMIT {
             out.log(RAFT_LOG_ERROR,
                 "[INSTALL-SNAPSHOT] Site {}: Rejecting term {} from leader {} at or above the term ceiling",
@@ -1094,7 +1094,7 @@ impl<C: Clone> RaftCore<C> {
     // after it stays when this server holds the boundary entry, with a value
     // and the snapshot's term (Figure 13), and goes otherwise. The note
     // carries the boundary and the hard state: the install's outcome as one
-    // record (disk design §3). Refused, changing nothing, where no admitted
+    // record. Refused, changing nothing, where no admitted
     // install reaches: [fix, F31] while leading or campaigning, a
     // boundary at or below commit or at the index limit, a term above the
     // current one, or a kept log too long to index. The reply: (taken, kept).
@@ -1192,7 +1192,7 @@ impl<C: Clone> RaftCore<C> {
 
     // [fix, F28] (whole item) RecvSnapshotReply (E6): an InstallSnapshot's
     // reply, which InstallSnapshotReplyAcceptedLocked decided itself before
-    // F28 (design B3). A higher term deposes this server (F20's raise, now
+    // F28. A higher term deposes this server (F20's raise, now
     // inside this step). Otherwise the follower is credited through the
     // snapshot only while the reply still belongs to this leadership and
     // this follower -- the term it was sent in is the current one, this
@@ -1999,7 +1999,7 @@ impl<C: Clone> RaftCore<C> {
         if is_leader && !prev_is_leader {
             // Leadership publication must not proceed once shutdown began.
             // [fix, F16] Its term half compared current_term_ with a copy
-            // taken on the line before, so it never fired (bugs-found B8).
+            // taken on the line before, so it never fired.
             // The one promotion, election_settle's, checks the campaign's
             // term against the current one before it calls here.
             if stopped {  // [fix, F16]
@@ -2564,7 +2564,7 @@ pub trait InboundBatch<C> {
             r ==> leader_prev_log_index as int + final(terms)@.len() < raft_index_limit(),
             // [M12] no payload is no entries; an accepted decode reads the
             // entries' terms, each a Raft term (F4), and every entry has a
-            // value (bugs-found B16)
+            // value
             !self.spec_has_payload() ==> self.spec_entries().len() == 0,
             r ==> final(terms)@.len() == self.spec_entries().len(),
             r ==> forall|k: int| 0 <= k < final(terms)@.len()

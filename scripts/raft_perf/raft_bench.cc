@@ -12,8 +12,7 @@
  * WHAT IT DOES NOT MEASURE. Nothing above Raft: no Masstree, no STO
  * concurrency control, no transaction execution. That is the point — dbtest's
  * `agg_persist_throughput` counts TRANSACTIONS, so a change confined to Raft
- * moves it by an amount swamped by the layers above. See
- * docs/performance/raft-harness.md.
+ * moves it by an amount swamped by the layers above.
  *
  * WHY THREE PROCESSES AND NOT AN IN-PROCESS CLUSTER. The in-process harness
  * (the lab, `build_raftlab/deptran_server`) is compiled with
@@ -42,7 +41,7 @@
  * so --payload-bytes must be at least 40.
  *
  * SAFETY. This is a benchmark driver: a new .cc file that adds no inline-Rust
- * DSL items (see the raft_bench harness plan (removed; see git history) trap T2). It is a bridge to
+ * DSL items. It is a bridge to
  * the not-yet-converted replication helper, so the calls into that API and the
  * C-library I/O it needs are annotated @unsafe at the boundary; the arithmetic
  * and the sample bookkeeping are @safe.
@@ -124,9 +123,8 @@ uint64_t now_us() {
 }
 
 // ---------------------------------------------------------------------------
-// [M0] Failover timing (--failover-out; point G7 of
-// docs/verus/modification-plan.md §6). Inert unless the flag is given: the
-// apply callback then pays one relaxed load per stamped seq-0 entry.
+// [M0] Failover timing (--failover-out; point G7). Inert unless the flag is
+// given: the apply callback then pays one relaxed load per stamped seq-0 entry.
 //
 // Stamps are CLOCK_REALTIME microseconds, the clock the launcher's
 // `date +%s%N` reads (divided by 1000) when it kills the leader, so all three compare across
@@ -202,8 +200,8 @@ struct Options {
   // Seconds a follower keeps serving after the leader's end markers, or after
   // the wall-clock budget expires if no end marker ever arrives.
   double follower_linger_sec = 5.0;
-  // Phase N0: snapshot support. 0 registers no snapshot callbacks, which is
-  // the unchanged pre-N0 behaviour. B > 0 registers a state machine whose
+  // Snapshot support. 0 registers no snapshot callbacks, which is
+  // the behaviour without snapshots. B > 0 registers a state machine whose
   // image is each covered partition's last applied sequence padded to B bytes.
   long long snapshot_bytes = 0;
   // Where every replica, leader or follower, writes its side record.
@@ -485,7 +483,7 @@ struct PartitionState {
 
   std::atomic<int> end_markers{0};
 
-  // Phase N0: the largest gap between consecutive apply callbacks inside the
+  // The largest gap between consecutive apply callbacks inside the
   // measured window, which is where a snapshot's create (apply gate held
   // through the save) or an install (apply gate held) shows up.
   std::atomic<uint64_t> last_apply_us{0};
@@ -558,7 +556,7 @@ void close_window_at(uint64_t when) {
 }
 
 // ---------------------------------------------------------------------------
-// Snapshot state machine (phase N0)
+// Snapshot state machine
 //
 // One SnapshotInstance per registered callback pair. In single-group mode one
 // Raft server carries every partition, so one instance covers them all; in
@@ -1054,7 +1052,7 @@ struct Record {
   // Latency CDF as percentile -> microseconds, 1..99 plus the tail. The CDF
   // plot consumes this directly; the raw samples are not retained on disk.
   std::vector<std::pair<std::string, double>> latency_cdf_us{};
-  // Phase N0: snapshots.
+  // Snapshots.
   bool snapshots_enabled = false;
   std::string snapshots_env{};
   std::string snapshot_interval_env{};
@@ -1394,7 +1392,7 @@ int main(int argc, char** argv) {
     st.samples.resize(static_cast<size_t>(opt.max_samples));
   }
 
-  // Phase N0: one snapshot instance per Raft server the callbacks go to --
+  // One snapshot instance per Raft server the callbacks go to --
   // one for every partition in single-group mode, one per partition in
   // multi-group mode. Built before the apply callbacks, which consult it.
   g_snap_of_partition.assign(static_cast<size_t>(partitions), nullptr);
@@ -1491,7 +1489,7 @@ int main(int argc, char** argv) {
     register_for_follower_par_id_return(apply_cb, par_id);
   }
 
-  // Phase N0: hand each instance's callbacks to the Raft server that covers
+  // Hand each instance's callbacks to the Raft server that covers
   // its partitions (the first partition names the server).
   for (auto& inst : g_snap_instances) {
     // @unsafe
@@ -1561,7 +1559,7 @@ int main(int argc, char** argv) {
         // A probe is a real, stamped entry that the apply callback will count,
         // so it must be counted as offered too. Without this applied_total
         // exceeds offered_total by one per partition, which reads as an
-        // instrumentation bug in exactly the pair the plan asks for so that a
+        // instrumentation bug in exactly the pair kept so that a
         // shortfall is legible. It lands before the window opens, so it does
         // not touch offered_in_window.
         state[static_cast<size_t>(i)].offered_total.fetch_add(1, std::memory_order_relaxed);
@@ -1580,7 +1578,7 @@ int main(int argc, char** argv) {
   }
 
   int exit_code = 0;
-  // Phase N0: the stall catch-up handshake thread, started once the role is
+  // The stall catch-up handshake thread, started once the role is
   // known and stopped before shutdown.
   std::atomic<bool> catchup_stop{false};
   std::thread catchup_thread;

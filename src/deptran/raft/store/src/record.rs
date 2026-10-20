@@ -1,6 +1,6 @@
 //! One step's changes to the saved state, and their encoding.
 //!
-//! A record states outcomes, never rules (design §3): the new hard state, a
+//! A record states outcomes, never rules: the new hard state, a
 //! snapshot boundary with whether the log after it was kept, and "replace the
 //! log from index i with these entries". Replay applies it whole and decides
 //! nothing. Its sequence number is not stored in it: a batch stores its
@@ -18,7 +18,7 @@ pub struct Hard {
 
 /// A snapshot at index `index` of term `term`. `keep`: the entries after
 /// `index` were kept (the local entry `index` had term `term`); otherwise
-/// the whole log was dropped. `image` names the image file (design §3);
+/// the whole log was dropped. `image` names the image file;
 /// `None` if no image was written, a state recovery refuses.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SnapRef {
@@ -62,7 +62,7 @@ impl<P> Record<P> {
 }
 
 /// Encodes and decodes an entry's payload. The shell's codec writes a Raft
-/// command with the existing codec kernels (design §5).
+/// command with the existing codec kernels.
 pub trait Codec<P>: Send + Sync {
     fn encode(&self, p: &P, out: &mut Vec<u8>);
     fn decode(&self, bytes: &[u8]) -> Result<P, String>;
@@ -117,15 +117,14 @@ pub fn encode<P>(rec: &Record<P>, codec: &dyn Codec<P>, out: &mut Vec<u8>) {
         out.push(sf);
         if let Some(name) = &s.image {
             // Refused here, not truncated: a cut length prefix ahead of
-            // the whole name is a record its decoder rejects (bugs-found B48).
+            // the whole name is a record its decoder rejects.
             let n = u16::try_from(name.len()).expect("record: image name longer than 65535 bytes");
             put_u16(out, n);
             out.extend_from_slice(name.as_bytes());
         }
     }
     if let Some(i) = rec.replace_from {
-        // The decoder refuses both; refuse them before they reach the WAL
-        // (bugs-found B47).
+        // The decoder refuses both; refuse them before they reach the WAL.
         assert!(i >= 1, "record: replace from index 0");
         put_u64(out, i);
         put_u32(out, u32::try_from(rec.entries.len()).expect("record: more than 2^32 entries"));

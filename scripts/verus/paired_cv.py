@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Paired spread of an A/A rotation run, and the round count and bounds it supports.
 
-    scripts/verus/paired_cv.py OUT_DIR ROUNDS A B [--point G1] [--params docs/verus/gate-params.md]
+    scripts/verus/paired_cv.py OUT_DIR ROUNDS A B [--point G1] [--params scripts/verus/gate-params.md]
                                [--min-rounds 10] [--no-write]
 
 Reads OUT_DIR/r<i>.<arm>.json (scripts/raft_perf/rotation_trial.sh). For every
@@ -9,8 +9,8 @@ metric of paired_stats.py: the per-round ratios B/A - 1 over complete rounds,
 CV_paired = their sample standard deviation (a ratio is unitless, so this is
 already relative), and the paired MDE at n rounds, 2.8 * CV_paired / sqrt(n).
 
-For the point's bounded metrics (the "| default Gk |" row of the params file,
-i.e. plan §6's table) it derives the round count: the smallest n in
+For the point's bounded metrics (the "| default Gk |" row of the params file)
+it derives the round count: the smallest n in
 [--min-rounds, 25] whose MDE is below every bound. A metric whose 25-round MDE
 is not below its bound gets its bound widened to that MDE (rounded up to 0.1%),
 and the widening is noted. Unless --no-write, it then replaces the point's
@@ -63,7 +63,7 @@ def main():
     ap.add_argument("b")
     ap.add_argument("--point")
     ap.add_argument("--params", default=os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "..", "docs", "verus", "gate-params.md"))
+        os.path.dirname(os.path.abspath(__file__)), "gate-params.md"))
     ap.add_argument("--min-rounds", type=int, default=10)
     ap.add_argument("--no-write", action="store_true")
     o = ap.parse_args()

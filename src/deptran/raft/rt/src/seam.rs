@@ -6,7 +6,7 @@
 // an event, queue a wake job, send an RPC -- and carries the runtime's handles
 // as opaque carriers whose bytes it never reads (src/rusty-rustc), over the
 // Rust srpc runtime. (A C++ twin of this file served the hybrid and cpp lanes
-// until those were removed; docs/verus/modification-plan.md, Q9.)
+// until those were removed.)
 //
 // HOW THE CARRIERS ARE FILLED. Each carrier is sized for its C++ type, and
 // the Rust value stored in it is chosen to fit:
@@ -214,7 +214,7 @@ pub extern "C" fn raft_fiber_sleep_us(micros: u64) {
     Fiber::sleep(micros.max(1));
 }
 
-// Collect's wait (modification plan F11a: replies as events). The heartbeat
+// Collect's wait (F11a: replies as events). The heartbeat
 // round's collect used to sleep a fixed step between looks at its reply
 // slots; Lion rounds a fiber sleep up to whole milliseconds, so a reply
 // arriving just after a look waited 1-2 ms more. Now the fiber waits on an
@@ -509,5 +509,5 @@ pub unsafe extern "C" fn raft_destroy_response_ptr(p: *mut rusty::RaftResponsePt
 }
 
 // ---------------------------------------------------------------------------
-// InstallSnapshot: rt/src/snapshot.rs (plan N4/N5), with the Rust-lane store.
+// InstallSnapshot: rt/src/snapshot.rs, with the Rust-lane store.
 // ---------------------------------------------------------------------------

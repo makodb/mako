@@ -1,5 +1,5 @@
-//! The saved state a replay of records folds into (design §4's `apply`:
-//! `SavedState::apply`, shared by recovery, the shutdown verify and the
+//! The saved state a replay of records folds into
+//! (`SavedState::apply`, shared by recovery, the shutdown verify and the
 //! applier).
 
 use crate::record::{Hard, Record};
@@ -84,7 +84,7 @@ mod tests {
 
     #[test]
     fn the_design_s_follower_step() {
-        // design §2: at term 4 a follower holds 1-10, 6-10 of term 2; the
+        // At term 4 a follower holds 1-10, 6-10 of term 2; the
         // leader of term 5 sends prev 5, 6'-8' and commit 8.
         let mut s = SavedState::new(u16::MAX);
         s.apply(R { hard: Some(Hard { term: 4, vote: 1, commit: 5 }), replace_from: Some(1), entries: (1..=10).map(|i| (if i <= 5 { 1 } else { 2 }, i)).collect(), ..Default::default() }).unwrap();

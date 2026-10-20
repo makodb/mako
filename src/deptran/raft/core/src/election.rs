@@ -1,6 +1,6 @@
 // The campaign's vote set and outcome, and the election timer's gather.
 //
-// [move, M1] Moved verbatim from src/deptran/raft/shell/server_h.rs (Phase 6),
+// [move, M1] Moved verbatim from src/deptran/raft/shell/server_h.rs,
 // paths aside: the rust lane's rusty::Vec/Option are std's own.
 
 #[allow(unused_imports)]
@@ -24,7 +24,7 @@ pub struct VoteOutcome {
 // [move, M5] One campaign's votes, counted by the core with the rule the
 // runtime's tallies use (RaftVoteQuorumEvent, raft-rt's TallyState): yes once
 // the peer yes votes reach n/2, no once the peer no votes exceed n - n/2
-// (the off-by-one bugs-found B1 records, kept for parity). Each voter
+// (an off-by-one, kept for parity). Each voter
 // counts once ([fix, F1]), and a reply term that is
 // non-negative and higher than any seen is kept, as FeedResponse did.
 pub struct VoteSet {
@@ -106,8 +106,8 @@ impl VoteSet {
             term_: self.highest_term_,
             yes_: self.yes_ >= quorum,
             // [fix, F15] Lost once so many of the n_total - 1 peers refused
-            // that the quorum of peer votes is out of reach: no > (n - 1) - n/2
-            // (bugs-found B1). It was no > n - n/2, which counted this server
+            // that the quorum of peer votes is out of reach: no > (n - 1) - n/2.
+            // It was no > n - n/2, which counted this server
             // as a possible refusal: with three servers it could never hold.
             no_: n_total > 0 && self.no_ > n_total - quorum - 1,  // [fix, F15]
             n_voted_yes_: self.yes_ as i32,

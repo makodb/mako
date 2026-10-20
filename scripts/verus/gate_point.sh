@@ -1,17 +1,16 @@
 #!/usr/bin/env bash
 # gate_point.sh PHASE POINT PARENT CHILD [BASE]
 #
-# Runs one Tier 2 point of docs/verus/modification-plan.md §6 (rotating all
+# Runs one Tier 2 point (rotating all
 # given arms with scripts/raft_perf/rotation_trial.sh), then applies the pass
 # rule PARENT vs CHILD and, if BASE is given, BASE vs CHILD (the cumulative
 # gate). Rounds and bounds come from the point's row in
-# docs/verus/gate-params.md: | G1 | <rounds> | <metric=bound,...> | <note> |
+# scripts/verus/gate-params.md: | G1 | <rounds> | <metric=bound,...> | <note> |
 #
 # Raw results land in $RESULTS/PHASE/POINT (never in git). Exits 1 if any
 # comparison fails, 2 on a usage or configuration error.
 #
-# G2 is gated on a traced metric (decided after the Phase 3 checkpoint,
-# the Phase 3 report §3.1, since removed): the rotation runs with the Phase 0
+# G2 is gated on a traced metric: the rotation runs with the
 # trace kit on and scripts/verus/two_follower_rounds.py turns each run into
 # the time of its rounds that sent to both followers. G2_REPORT_ROUNDS (25)
 # untraced rounds follow in $OUT/untraced for the reported, ungated lines:
@@ -35,7 +34,7 @@ case $G in
   *) echo "unknown point $G" >&2; exit 2;;
 esac
 export DUR=10
-row=$(grep -E "^\| $G \|" docs/verus/gate-params.md) || { echo "no row for $G in gate-params.md" >&2; exit 2; }
+row=$(grep -E "^\| $G \|" scripts/verus/gate-params.md) || { echo "no row for $G in gate-params.md" >&2; exit 2; }
 N=$(echo "$row" | awk -F'|' '{gsub(/ /,"",$3); print $3}')
 B=$(echo "$row" | awk -F'|' '{gsub(/ /,"",$4); print $4}')
 mkdir -p "$RESULTS/$P"; OUT=$RESULTS/$P/$G

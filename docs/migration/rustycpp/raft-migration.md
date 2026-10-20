@@ -1,8 +1,6 @@
 # RustyCpp Safe Code Migration - Raft Module
 
-> This document tracks the older borrow-safety annotation campaign.  The
-> current two-stage source migration (`C++ -> inline Rust DSL -> canonical
-> Rust`) is specified in [raft-rust-migration.md](raft-rust-migration.md).
+> This document tracks the older borrow-safety annotation campaign.
 
 ## Goal
 Mark each function in the raft module (`src/deptran/raft/`) with `// @safe` or `// @unsafe` annotations to enable borrow checking and track memory safety coverage.

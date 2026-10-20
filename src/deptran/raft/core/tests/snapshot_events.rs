@@ -1,4 +1,4 @@
-// [fix, F25, F27, F28, F31] The snapshot events (coupling design Part B,
+// [fix, F25, F27, F28, F31] The snapshot events (Part B,
 // E1-E6): creation, the install's contact and outcome, and the install's
 // reply, inside the gate as outside. Each step's persist note is exact (common::step);
 // the raise a newer term makes (F20's, formerly the ObserveTerm event) is

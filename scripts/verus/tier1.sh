@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # tier1.sh PHASE [rust|rustlab|rustdisk]...
 #
-# Tier 1 of docs/verus/modification-plan.md §6: the Raft suites, serially,
+# Tier 1: the Raft suites, serially,
 # logging to $RESULTS/PHASE/tier1/, then the first-attempt failure count.
 # rust (default): the lab plus the four replication suites; rustlab: the lab
 # alone; rustdisk: the lab and the four suites on build_rust_disk, the
-# -DMAKO_RAFT_DISK=ON tree (docs/verus/disk-persistence.md §8), which
+# -DMAKO_RAFT_DISK=ON tree, which
 # refuses to start with under 8 GB free where the stores live. Raft has no
-# other lane on this branch (the plan, Q9).
+# other lane on this branch.
 #
 # ci.sh's cleanup_processes kill -9s EVERY process of this user named dbtest,
 # simpleTransactionRep, simplePaxos, simpleTransaction or simpleRaft, and

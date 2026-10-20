@@ -12,9 +12,6 @@
 #
 #   examples/raft_bench.sh --out /tmp/point.json --partitions 1 \
 #       --payload-bytes 1024 --rate 5000 --duration-sec 10
-#
-# See docs/performance/raft-harness.md for what the numbers mean and what
-# they deliberately do not mean.
 
 set -uo pipefail
 
@@ -318,7 +315,7 @@ cleanup() {
 trap cleanup EXIT
 
 # ---------------------------------------------------------------------------
-# Raft disk mode (docs/verus/disk-persistence.md §8): a -DMAKO_RAFT_DISK=ON
+# Raft disk mode: a -DMAKO_RAFT_DISK=ON
 # tree gets a fresh, locked store run directory on the local disk, each
 # replica creates its store (MAKO_RAFT_CREATE=1), and the directory goes when
 # this script exits; a run killed outright is swept by the next launcher.
@@ -341,8 +338,8 @@ run_one() {
     # process running while the script believed it had cleaned up.
     local bin extra=()
     bin="$(bin_for "$proc")"
-    # The phase-N0 flags go only to a binary that knows them, so a pre-N0
-    # build still runs under this launcher (the N0 disabled-path comparison).
+    # The snapshot and stall flags go only to a binary that knows them, so an
+    # older build still runs under this launcher.
     local help_text
     help_text="$("$bin" --help 2>&1 || true)"   # --help may exit non-zero
     if grep -q -- '--side-out' <<< "$help_text"; then
@@ -450,7 +447,7 @@ if awk -v s="$KILL_LEADER_AT_SEC" 'BEGIN { exit !(s > 0) }'; then
 fi
 
 # ---------------------------------------------------------------------------
-# Follower stall (--stall-follower-at-sec S --stall-for-sec D), phase N0.
+# Follower stall (--stall-follower-at-sec S --stall-for-sec D).
 #
 # Once the leader announces it is offering load, wait S seconds, SIGSTOP one
 # follower for D seconds, then SIGCONT it. With snapshots on and the interval
@@ -720,7 +717,7 @@ if [ -z "$applied" ] || [ "$applied" -eq 0 ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Phase N0 validity checks.
+# Snapshot and stall validity checks.
 # ---------------------------------------------------------------------------
 json_field() {
     python3 -c 'import json,sys; v=json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else v)' "$OUT_PATH" "$1"

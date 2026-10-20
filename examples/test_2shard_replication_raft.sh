@@ -120,7 +120,7 @@ sleep 1
 # Disk builds: a store directory per shard. A store is named by its site and
 # partition (<site>-<partition>), and both shards number their sites 0-2, so
 # one MAKO_RAFT_DATA_DIR would put two servers on each store and the second
-# would be refused (bugs-found B40).
+# would be refused.
 store_env_s0=()
 store_env_s1=()
 if [ -n "${MAKO_RAFT_DATA_DIR:-}" ]; then

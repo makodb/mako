@@ -1,5 +1,4 @@
-//! Opening a server's store: atomic creation, the lock, recovery (design §4
-//! "Recovery", Decision 10).
+//! Opening a server's store: atomic creation, the lock, recovery.
 //!
 //! ```text
 //! <root>/<site>-<partition>/            the store
@@ -44,7 +43,7 @@ pub type BaseFactory = dyn Fn(&Path, bool) -> io::Result<Box<dyn Base>>;
 /// An open store: the WAL writer, the state its records fold to, and the
 /// lock that keeps a second server off it.
 pub struct Opened<P> {
-    /// The base, with records 1..=c in it (design §3); `None` without one.
+    /// The base, with records 1..=c in it; `None` without one.
     pub base: Option<Box<dyn Base>>,
     pub c: u64,
     pub wal: Wal,
@@ -66,7 +65,7 @@ fn io_ctx(p: &Path) -> impl Fn(io::Error) -> String + '_ {
 /// own entry, then each one up to the root (or `.`, for a relative path),
 /// which keeps the entry of the one below. The data directory may be new --
 /// this launch made it, or a killed launch made it and never synced its
-/// parent -- and a power cut would take it, store and all (bugs-found B35).
+/// parent -- and a power cut would take it, store and all.
 fn sync_ancestors(fs: &dyn StoreFs, store: &Path) -> Result<(), String> {
     for dir in store.ancestors().skip(1) {
         let dir = if dir.as_os_str().is_empty() { Path::new(".") } else { dir };
@@ -136,7 +135,7 @@ fn recover<P>(
     // this server acknowledges anything it writes.
     sync_ancestors(&**fs, store)?;
     let wal_dir = store.join("wal");
-    // The base holds records 1..=c (design §3); the WAL the rest. A base that
+    // The base holds records 1..=c; the WAL the rest. A base that
     // does not open fails closed with RocksDB's reason: never repaired,
     // never recreated empty.
     let (base, c, mut state) = match base_factory {
@@ -164,7 +163,7 @@ fn recover<P>(
         let r = record::decode(&bytes, codec).map_err(|why| format!("{}: record {seq}: {why}", wal_dir.display()))?;
         state.apply(r).map_err(|why| format!("{}: record {seq}: {why}", wal_dir.display()))?;
     }
-    // Snapshot images (design §3-§4, Decision 7): a `.tmp` names no record,
+    // Snapshot images: a `.tmp` names no record,
     // and any image but the state's is superseded or an orphan.
     let images = store.join("images");
     if !fs.exists(&images) {
@@ -197,7 +196,7 @@ pub fn open_store<P>(
     open_store_with_base(fs, store, id, opts, create_new, codec, no_vote, None)
 }
 
-/// [`open_store`], with a base (design §3).
+/// [`open_store`], with a base.
 #[allow(clippy::too_many_arguments)]
 pub fn open_store_with_base<P>(
     fs: Arc<dyn StoreFs>,

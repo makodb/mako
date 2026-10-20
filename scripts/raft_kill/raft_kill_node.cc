@@ -1,6 +1,6 @@
 /*
  * raft_kill_node -- one Raft replica for the process-kill tests
- * (docs/verus/disk-persistence.md §5, §8; driven by run.py beside it).
+ * (driven by run.py beside it).
  *
  *   raft_kill_node PROC TOPOLOGY EVENTS INCARNATION RATE PAUSE_FILE [snapshots]
  *

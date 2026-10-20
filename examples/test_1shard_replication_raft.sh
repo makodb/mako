@@ -5,8 +5,8 @@
 # 1. Show "agg_persist_throughput" keyword
 # 2. Have NewOrder_remote_abort_ratio < 20%
 # 3. Followers replay at least 1000 batches
-# With MAKO_RAFT_RESTART_P1=1 (disk builds; ci.sh shard1ReplicationRaftRestart,
-# docs/verus/disk-persistence.md §8), p1's dbtest is SIGKILLed mid-run
+# With MAKO_RAFT_RESTART_P1=1 (disk builds; ci.sh shard1ReplicationRaftRestart),
+# p1's dbtest is SIGKILLed mid-run
 # and relaunched onto its Raft store without MAKO_RAFT_CREATE: it must
 # recover the store and replay past the point it was killed at.
 

@@ -8,7 +8,7 @@ fn IsPreferredLeaderConfigured(preferred_leader_site_id: u16) -> bool {
 }
 
 // [move, M1] The heartbeat round's core calls and their types live in
-// raft-core (Phase 6).
+// raft-core.
 use raft_core::{AppendPayload, ReplyResult, SnapshotSend};
 use crate::server_h::{core_output, AppendSend, Event, HeartbeatTick};
 use crate::server_h::CoreOutput;  // [move, M3]
@@ -28,7 +28,7 @@ use crate::server_h::RaftLockGuard;
 unsafe extern "C" {
     fn raft_monotonic_now_us() -> u64;
     // Collect's wait: a fiber wait the AppendEntries reply callback ends
-    // early (modification plan F11a); otherwise the step.
+    // early; otherwise the step.
     fn raft_collect_wait_us(micros: u64);
     fn raft_trace_through(stage: i32, through: u64, t_us: u64);  // [M0] trace kit
     fn raft_append_response_read(response: *const rusty::RaftResponsePtr)
@@ -122,7 +122,7 @@ pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
                                    now_us, pipeline_after_us },
             &mut out).into_tick();
         server.run_locked_actions(&out);
-        // Disk builds (disk design §3): nothing this section produced leaves before
+        // Disk builds: nothing this section produced leaves before
         // the WAL holds every record queued so far, the entries sent and the
         // commit they carry included, and so does an InstallSnapshot: its
         // term, and the record that names its image ([fix, F26]).
@@ -136,7 +136,7 @@ pub fn heartbeat_tick_body(server: &RaftServerBase) -> HeartbeatTick {
     if tick.declined_ {
         return tick;
     }
-    // A tick that sends nothing waits for nothing (design §3: it rides the
+    // A tick that sends nothing waits for nothing (it rides the
     // next flush); waiting would hold the replies collect is about to read.
     let sends_anything: bool = !tick.sends_.is_empty() || !tick.snapshots_.is_empty();  // [fix, F26]
     if let Some(d) = server.disk().filter(|_| sends_anything) {
@@ -340,8 +340,8 @@ pub fn heartbeat_collect_body(server: &RaftServerBase, round_id: u64,
         // A reply from an earlier round freed the slot of a follower the
         // log is ahead of: end the round now, so the tick sends to it,
         // instead of waiting out this round's deadline while it sits idle (a
-        // reply held for a WAL flush can outlast the 5 ms deadline; modification
-        // plan F11a). Not for a caught-up follower: an idle leader's rounds
+        // reply held for a WAL flush can outlast the 5 ms deadline).
+        // Not for a caught-up follower: an idle leader's rounds
         // would chain (lab TEST 9).
         if stop_response_processing || !waiting_for_current_round
             || current_round_has_authority || released_behind
@@ -445,7 +445,7 @@ impl HeartbeatDriver {
     pub fn run(&mut self) {
         let server: &RaftServerBase = unsafe { &*self.server_ };  // [fix, F19]
         // [move, M1] a fresh round state per run, as the driver's own was,
-        // under mtx_ like every core call (plan §3.1 rule 1; bugs-found B15)
+        // under mtx_ like every core call
         {
             let _lock = RaftLockGuard::new(server.mtx());
             let mut out: CoreOutput = core_output();
@@ -460,7 +460,7 @@ impl HeartbeatDriver {
             }
             // [move, M5] The tick declines the round when leadership is not
             // held, and the driver waits for the next one, as the C++
-            // `continue` did (bugs-found B12).
+            // `continue` did.
             let tick: HeartbeatTick = heartbeat_tick_body(server);
             if tick.declined_ {
                 continue;
@@ -471,7 +471,7 @@ impl HeartbeatDriver {
         // [move, M1] The in-flight handles are released when the loop ends, as
         // they were when the driver's own round state went out of scope.
         // Before the epilogue, not after: once it reports the loop stopped,
-        // shutdown may free the server. Under mtx_ (bugs-found B15).
+        // shutdown may free the server. Under mtx_.
         {
             let _lock = RaftLockGuard::new(server.mtx());
             let mut out: CoreOutput = core_output();

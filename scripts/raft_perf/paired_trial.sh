@@ -13,8 +13,8 @@
 # no stall), GROUP (single|multi, raft_bench.sh --group-mode).
 #
 # Prints, per metric, the median of the per-pair ratio B/A - 1 and a two-sided
-# sign test over the pairs -- the statistics the earlier paired trials in
-# docs/migration/raft/paired-trial-*.csv reported. Records land in OUT_DIR.
+# sign test over the pairs -- the statistics the earlier paired trials
+# reported. Records land in OUT_DIR.
 set -euo pipefail
 OUT="$1"; PAIRS="$2"; A="$3"; B="$4"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

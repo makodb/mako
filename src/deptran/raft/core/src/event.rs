@@ -3,13 +3,13 @@
 //
 // Every decision the shell asks of the core is
 // an Event, handed to RaftCore::step under mtx_, and answered with a Reply
-// plus the actions and log records in the CoreOutput (plan §3.1-3.2, Phase
-// 6). step only dispatches: each arm is the core call the shell used to make
+// plus the actions and log records in the CoreOutput.
+// step only dispatches: each arm is the core call the shell used to make
 // directly, with the same arguments, in the same critical section.
 //
 // One entry point is what makes the core's history a sequence of events:
 // the shell's recorder writes each event and what it produced, and a replay
-// feeds the same events to another build of the core (plan A.4).
+// feeds the same events to another build of the core.
 //
 // Queries that change nothing (the election timer's gather, a membership or
 // ordinal lookup, the last log term, a term-change log line) stay plain
@@ -111,7 +111,7 @@ pub enum Event<'a, C, W> {
     SetFollower { stopped: bool, failover: bool },
     StepDown { stopped: bool, failover: bool },
 
-    // ---- Disk persistence (docs/verus/disk-persistence.md §3) ----
+    // ---- Disk persistence ----
     // [fix, F22] A recovered state, before EnterGates: term, vote, commit and
     // the entries after the snapshot boundary, last first. [fix, F24] `d`: the
     // store's last durable record number, which the persistence coupling
@@ -121,7 +121,7 @@ pub enum Event<'a, C, W> {
     Restore { term: u64, vote: u16, commit: u64, d: u64, snap_index: u64, snap_term: i64,  // [fix, F30]
               entries_rev: Vec<RaftEntry<C>> },  // [fix, F24]
     // [fix, F25] E1: the snapshot the shell just saved at snapshot_point();
-    // E2: CompactLog's compaction (coupling-design-persistence-snapshots.md B3)
+    // E2: CompactLog's compaction
     CreateSnapshot { index: u64, term: i64 },  // [fix, F25]
     Compact { up_to: u64 },  // [fix, F25]
     // [fix, F27] E4: an InstallSnapshot's leader contact (the wire's leader
@@ -386,13 +386,13 @@ impl<C: Clone> RaftCore<C> {
     }
 
     // [fix, F9] What a message from the network must be before the core
-    // takes it at all (plan A.2): integer compares only. An AppendEntries or
+    // takes it at all: integer compares only. An AppendEntries or
     // RequestVote from this server itself or from a site outside the
     // configuration (B20); a term 0, which no leader or candidate ever
     // holds; an AppendEntries whose prev index and prev term are not both 0
     // or both positive (raft-rs's shape). A payload's own defects (an entry
     // term below 1, a count that overflows) stay the decoder's refusals,
-    // after the handler's gates (A.2's closing paragraph).
+    // after the handler's gates.
     pub fn message_admitted<W: InboundBatch<C>>(&self, ev: &Event<'_, C, W>) -> (r: bool)
         ensures
             match *ev {
@@ -533,7 +533,7 @@ impl<C: Clone> RaftCore<C> {
             self.raft_log_.set_prefix(Ghost(log.take(snap_index as int)));
         }
         proof {
-            // [M12] (disk design §6) taken: prev stepped aside;
+            // [M12] taken: prev stepped aside;
             // refused: nothing moved
             if ok && pre.ginv()
                 && crate::coupling::restore_cert_ok(&pre, _d, term, vote, commit, snap_index,

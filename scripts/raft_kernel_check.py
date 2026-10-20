@@ -10,8 +10,7 @@
                    defined by any other input.
 
 The core-parity check (--cores) compared the rustc core with the transpiled
-one; it went with the cpp and hybrid lanes (docs/verus/modification-plan.md,
-Q9).
+one; it went with the cpp and hybrid lanes.
 
 Only unmangled C symbols count: a Rust or C++ mangled name is never part of
 the kernel ABI.

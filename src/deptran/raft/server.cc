@@ -373,7 +373,7 @@ bool raft_leader_change_cb_is_set(const rusty::RaftLeaderChangeCb* cb) {
   return static_cast<bool>(*cb);
 }
 // The callback is the embedder's and may throw; the caller is Rust, which an
-// exception must not unwind through, so it is caught here (bugs-found B39).
+// exception must not unwind through, so it is caught here.
 // False: it threw, and the caller fails the server stop, as for a throwing
 // apply callback.
 bool raft_fire_leader_change(const rusty::RaftLeaderChangeCb* cb,
@@ -410,7 +410,7 @@ void raft_apply_thread_join(rusty::RaftStdThread* thread) {
 // read or an impossible length by throwing (read_or_abort's verify, a
 // std::length_error or std::bad_alloc), never through `failed()` -- which only
 // a String's UTF-8 check sets. So the decode runs under raft_catch: no
-// exception may unwind into the Rust caller (bugs-found B44). It has no site
+// exception may unwind into the Rust caller. It has no site
 // to name, so it logs the sentinel INVALID_SITEID.
 bool raft_command_from_bytes(const uint8_t* bytes, size_t len,
                              rusty::RaftCommand* out) {
@@ -569,7 +569,7 @@ std::atomic<bool> lab_reject_prepare_called{false};
 class LabPublicationProbe final : public PreparedStateMachineSnapshotInstall {
  public:
   // `manager` is copied through the carrier's clone kernel: the probe reaches
-  // the Rust store only through the SEAM kernels (plan N4).
+  // the Rust store only through the SEAM kernels.
   LabPublicationProbe(const rusty::RaftSnapshotManagerPtr* manager,
                       uint64_t expected_index, uint64_t expected_term,
                       std::string expected_data,
@@ -657,8 +657,8 @@ bool raft_lab_reject_prepare_called() {
 
 // Test 75: embedder callbacks that throw. Each kernel Rust calls must catch
 // its callback's throw itself: a Commit that throws fails the install with
-// code 2, and a leader-change callback that throws reports false (bugs-found
-// B38, B39). Before, either throw unwound into the Rust frames that called
+// code 2, and a leader-change callback that throws reports false.
+// Before, either throw unwound into the Rust frames that called
 // the kernel.
 namespace {
 
@@ -878,7 +878,7 @@ int raft_install_snapshot_payload(
     return 0;
   }
 
-  // The store line, SEAM: the Rust store (rt/src/snapshot.rs, plan N4).
+  // The store line, SEAM: the Rust store (rt/src/snapshot.rs).
   // Prepare above and Commit below stay here.
   const bool saved = raft_snapshot_store_save(
       snapshot_manager, last_included_index, last_included_term,
@@ -895,7 +895,7 @@ int raft_install_snapshot_payload(
 
   // Commit is the embedder's and may throw. Caught here: Rust frames sit
   // between this kernel and raft_install_snapshot_guarded's catch, and an
-  // exception must not unwind through them (bugs-found B38). A throw is a
+  // exception must not unwind through them. A throw is a
   // failed commit.
   bool committed = false;
   if (!raft_catch(site_id, "state-machine snapshot commit", [&] {
@@ -1070,7 +1070,7 @@ bool raft_snapshot_serialize_and_save(
 #endif
   }
 
-  // The store line, SEAM (plan N4).
+  // The store line, SEAM.
   const bool saved = raft_snapshot_store_save(
       snapshot_manager, snap_index, static_cast<uint64_t>(snap_term),
       reinterpret_cast<const uint8_t*>(state_data.data()), state_data.size());
@@ -1471,7 +1471,7 @@ void raft_wire_command_clone_into(const rusty::ffi::c_void* cmd_handle,
 // snapshot callbacks: Rust frames lie between it and them, and an exception
 // must not unwind through Rust, so each kernel that calls one catches the
 // throw itself and reports a failure (prepare_state_machine_snapshot_locked,
-// raft_install_snapshot_payload; bugs-found B38). False -- a throw from this
+// raft_install_snapshot_payload). False -- a throw from this
 // frame's own C++ -- is answered with FailStop, in Rust.
 extern "C" bool raft_install_snapshot_guarded(RaftServerBase* self, uint16_t site_id,
                                    uint64_t term, uint64_t leader_id,
@@ -1489,7 +1489,7 @@ extern "C" bool raft_install_snapshot_guarded(RaftServerBase* self, uint16_t sit
 } // namespace janus
 
 // ---------------------------------------------------------------------------
-// InstallSnapshot RPC counters (phase N0). HOST: the send path and the
+// InstallSnapshot RPC counters. HOST: the send path and the
 // receive handler bump them, and raft_bench reads them into its record. They count RPCs on the wire, which a resend
 // storm shows and the prepare/commit callbacks do not (a repeated install at
 // the same index is acknowledged before prepare).
@@ -1515,8 +1515,7 @@ extern "C" void raft_install_rpc_stats(uint64_t* sent, uint64_t* bytes_sent,
 }
 
 // ---------------------------------------------------------------------------
-// [M0] Per-entry stage trace (the 12-stage latency breakdown kit,
-// docs/performance/raft-latency-breakdown/, since removed). Inert unless
+// [M0] Per-entry stage trace (the 12-stage latency breakdown kit). Inert unless
 // MAKO_RAFT_TRACE_FILE is set: every entry point first reads one cached flag,
 // and raft_trace_now_us returns 0 without reading the clock, so an unset run
 // pays a relaxed load per call and nothing else. When set, one CSV row per log

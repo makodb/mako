@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Round-robin a raft_bench point over several preserved binaries ("arms"), so
 # host drift hits every arm equally. Each arm is a build directory under the
-# repo root holding a raft_bench (a symlink to a preserved copy is fine: see
-# the since-removed raft-latency-regression.md for why arms are preserved).
+# repo root holding a raft_bench (a symlink to a preserved copy is fine).
 #
 #   scripts/raft_perf/arms_roundrobin.sh OUT_DIR TRIALS DURATION_SEC arm...
 #

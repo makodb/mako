@@ -171,8 +171,7 @@ is `SrpcRequestHandle`.
 - `Coordinator`: Coordinates distributed transactions across shards (protocol-specific subclasses like `CoordinatorMultiPaxos`)
 - `TxLogServer`: The replication-engine INTERFACE implemented by the Paxos and
   Raft servers (`src/deptran/scheduler.h`). It holds no state: it was six
-  shared data members until the Tranche 6 work recorded in
-  `docs/migration/raft/conversion-log.md` moved them down into the two
+  shared data members until they were moved down into the two
   concrete servers, because implementation inheritance has no Rust spelling.
 - `Communicator`: Manages RPC communication between nodes
 - `Frame`: Protocol-specific transaction processing logic
@@ -266,7 +265,6 @@ only through the kernels declared `extern "C"` in `server_h.rs` and defined
 in `server.cc`; a kernel is C++ that has a reason to be (reactor, threads,
 wire types, third-party APIs). The one inline block left in `server.h`, the
 kernel-result PODs, is still transpiled and extracted (`server_pods_h.rs`).
-The migration plan has been removed (see git history); what was done is recorded in `docs/migration/raft/conversion-log.md`.
 
 **Raft's runtime is Rust.** Its RPC endpoint is raft-rt's transport
 (`raft_transport.h`); the C++ communicator and RPC service were deleted, as
@@ -276,7 +274,7 @@ is Rust: `SnapshotStore` in `src/deptran/raft/rt/src/snapshot.rs`, reached
 through the SEAM kernels; `RaftSnapshotManagerPtr` is an opaque carrier, so
 a `SnapshotManager` call in `server.cc` does not compile. In memory the bytes
 are the state machine's, verbatim; disk builds (`-DMAKO_RAFT_DISK=ON`) also
-write them as image files (docs/verus/disk-persistence.md).
+write them as image files.
 
 **`src/deptran/raft` holds the source and what checks it**: the crates (core,
 shell, rt, store, replay), the Verus proofs, and the C++ glue the build links.

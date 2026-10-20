@@ -1,4 +1,4 @@
-//! Timing samples for the disk path, for checking the cost model (plan §5):
+//! Timing samples for the disk path, for checking the cost model:
 //! inert unless MAKO_RAFT_DISK_STATS=1, then each metric keeps up to 200k
 //! microsecond samples, summarised by `report` at shutdown.
 

@@ -1,5 +1,5 @@
-// The bounds walk every peer-supplied body passes before it is decoded
-// (bugs-found B41, B43). srpc's streaming decoders abort the process on a
+// The bounds walk every peer-supplied body passes before it is decoded.
+// srpc's streaming decoders abort the process on a
 // short read and trust a byte string's v64 length into an allocation, so
 // `wire_fits` must refuse exactly the bodies those decoders cannot finish:
 // every truncation of a real encoding, and a byte-string length that is

@@ -1,6 +1,6 @@
-// bugs-found B17: the round end (PHASE 3) advances the commit index without
+// B17: the round end (PHASE 3) advances the commit index without
 // checking that this server still leads. This drives one server's core --
-// server A of docs/verus/bugs-found.md's scenario -- through the inputs that
+// server A of this scenario -- through the inputs that
 // server sees, in the order the race delivers them: its heartbeat round's
 // replies, then a newer leader's RequestVote and append (which the RPC
 // handler takes while the heartbeat driver waits on mtx_), then the round

@@ -1,5 +1,5 @@
 // Shared by the disk-persistence tests (persist_note.rs, snapshot_events.rs,
-// restore.rs; docs/verus/disk-persistence.md §3): a core driven through
+// restore.rs): a core driven through
 // Setup's events, an inbound batch with entries, and the exactness check of
 // a step's persist note.
 #![allow(dead_code)]

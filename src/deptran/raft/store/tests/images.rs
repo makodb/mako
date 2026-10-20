@@ -1,4 +1,4 @@
-//! Snapshot image files (design §3): written whole before they are named, a
+//! Snapshot image files: written whole before they are named, a
 //! damaged or mismatched one refused, a crash before the directory sync
 //! leaves no image; a checkpoint keeps the named image and newer, recovery
 //! only the named one.
@@ -34,7 +34,7 @@ fn write_read_damage_cleanup() {
     assert!(fs.exists(&dir.join("20-3.img")) && fs.exists(&dir.join("25-3.img")));
     assert!(fs.exists(&dir.join("30-3.img.tmp")));
     // Recovery's: everything but the image the state names, the newer
-    // orphan included (bugs-found B50).
+    // orphan included.
     assert_eq!(images::cleanup_unnamed(&fs, dir, Some("20-3.img")).unwrap(), 2);
     assert!(fs.exists(&dir.join("20-3.img")) && !fs.exists(&dir.join("25-3.img")));
     assert!(!fs.exists(&dir.join("30-3.img.tmp")));

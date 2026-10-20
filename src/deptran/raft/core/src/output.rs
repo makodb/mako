@@ -1,6 +1,6 @@
 // What a core call asks the shell to do: actions, in push order.
 //
-// [move, M1] Moved verbatim from src/deptran/raft/shell/server_h.rs (Phase 6),
+// [move, M1] Moved verbatim from src/deptran/raft/shell/server_h.rs,
 // paths aside: the rust lane's rusty::Vec/Option are std's own.
 
 #[allow(unused_imports)]
@@ -10,7 +10,7 @@ use vstd::prelude::*;
 verus! {
 
 // ==========================================================================
-// WHAT A CORE DECISION ASKS THE SHELL TO DO ([move, M3], Phase 2)
+// WHAT A CORE DECISION ASKS THE SHELL TO DO ([move, M3])
 //
 // A core function makes no FFI call, takes no lock, reads no clock and fires
 // no callback. Where it used to, it pushes an action here, at the same
@@ -121,8 +121,8 @@ impl CoreAction {
     pub fn became_follower(&self) -> bool { self.became_follower_ }
 }
 
-// [fix, F21] (whole item) One step's change to the saved state (disk design
-// §3, "Records"): the hard state after the step if term, vote or commit
+// [fix, F21] (whole item) One step's change to the saved state:
+// the hard state after the step if term, vote or commit
 // changed, and the lowest log index the step wrote (0: the log is unchanged;
 // the log from that index on is the step's log there). The shell turns it
 // into a write-ahead log record in disk builds and ignores it otherwise.
@@ -140,7 +140,7 @@ pub struct PersistNote {
 // boundary's index and term, and whether the log after it stays (a snapshot
 // taken here, or an install whose boundary matches the local log) or goes (an
 // install that supersedes the log). The shell writes the image file, then the
-// record that names it (disk design §3).
+// record that names it.
 #[derive(Clone, Copy)]
 pub struct SnapNote {
     pub index_: u64,
@@ -289,7 +289,7 @@ impl CoreOutput {
     }
 
     // [move, M0] (whole item) The level lines are kept at, for the replay
-    // recorder (plan A.4).
+    // recorder.
     pub fn log_level(&self) -> i32 {
         self.log_level_
     }

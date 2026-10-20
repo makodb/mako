@@ -1,7 +1,7 @@
 // The heartbeat round as core calls: the tick (PHASE 0 and PHASE 1's
 // decisions), each reply, and the round end (PHASE 3); the commit rule.
 //
-// [move, M1] From src/deptran/raft/shell/server_cc.rs (Phase 6); the
+// [move, M1] From src/deptran/raft/shell/server_cc.rs; the
 // command is the type parameter C (M11) and logging is records in the
 // output (M7).
 
@@ -380,7 +380,7 @@ pub fn heartbeat_round_saturated(round_counter: u64) -> bool {
 }
 
 // ==========================================================================
-// THE HEARTBEAT ROUND, CUT AT ITS SUSPENSIONS ([move, M5], Phase 3)
+// THE HEARTBEAT ROUND, CUT AT ITS SUSPENSIONS ([move, M5])
 //
 // One round is three kinds of core call, each made under mtx_, none of
 // which waits:
@@ -490,7 +490,7 @@ pub struct SnapshotSend {
 
 /// What heartbeat_tick decided.
 pub struct HeartbeatTick<C> {
-    // Not leading: the round ends here (bugs-found B12).
+    // Not leading: the round ends here.
     pub declined_: bool,
     // The core cleared its in-flight slots (resized, or abandoned on a lost
     // or changed leadership epoch); the shell clears its handles to match.
@@ -1890,7 +1890,7 @@ pub fn heartbeat_phase3_locked<C: Clone>(
         // [M12] no advance unless the core leads (F12)
         r.spec_commit().spec_advanced() ==> old(core).is_leader_,
 {
-    // [fix, F12] The commit rule is the leader's (bugs-found B17). A server
+    // [fix, F12] The commit rule is the leader's. A server
     // that stepped down after its round began must not count the old term's
     // match indices against the log it holds now.
     let commit = if core.is_leader_ {  // [fix, F12]
@@ -1936,7 +1936,7 @@ pub fn heartbeat_round_end<C: Clone>(core: &mut RaftCore<C>, is_leader: bool,
         final(core).inv(),
         // [M12] the commit advance is LAdvanceCommitIndex, to the new commit
         // index; the core advances only while it leads (F12), so the round
-        // end needs nothing of the shell's is_leader (bugs-found B17, B18)
+        // end needs nothing of the shell's is_leader
         old(core).ginv() && old(core).gated_ ==> {
             &&& final(core).ginv()
             &&& final(core).g_log_@ == (if r {

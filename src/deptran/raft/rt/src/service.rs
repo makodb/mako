@@ -44,7 +44,7 @@ unsafe extern "C" {
     // Same shape, for the snapshot payload: ServeInstallSnapshot takes a
     // rusty::RaftByteString, which is a std::string carried as 24 opaque
     // bytes with its own destructor kernel. Rust cannot build one.
-    // HOST InstallSnapshot counter (server.cc, phase N0).
+    // HOST InstallSnapshot counter (server.cc).
     fn raft_install_rpc_note_received();
     fn raft_byte_string_from_bytes(bytes: *const u8, len: usize,
                                    out: *mut rusty::RaftByteString);
@@ -81,7 +81,7 @@ impl RaftRpcService {
 
     // `Service::__dispatch__` and `RaftHandler` take `&self`, and so do the
     // handlers: concurrent handlers share the server, and what serialises
-    // them is mtx_ inside it (bugs-found B19).
+    // them is mtx_ inside it.
     fn server(&self) -> &RaftServerBase {
         // SAFETY: see ServerHandle.
         unsafe { &*self.server.0 }
@@ -94,7 +94,7 @@ impl Service for RaftRpcService {
     }
 
     fn __dispatch__(&self, rpc_id: i32, req: Box<Request>, sconn: WeakServerConnection) {
-        // Disk builds (docs/verus/disk-persistence.md §3): the handler
+        // Disk builds: the handler
         // runs now and its reply waits until the WAL is durable through the
         // last record queued after it (an upper bound on its own section's
         // tail); the flusher sends it then, or it goes at once if already
@@ -183,7 +183,7 @@ impl RaftHandler for RaftRpcService {
         let mut resp = InstallSnapshotResponse::default();
         unsafe { raft_install_rpc_note_received() };
         // Copy 2 of 2: prepare_cb takes `const std::string&`, so the image
-        // must exist as a std::string (plan N5, Risks 5).
+        // must exist as a std::string.
         let mut data: rusty::RaftByteString = Default::default();
         unsafe {
             raft_byte_string_from_bytes(req.data.0.as_ptr(), req.data.0.len(),

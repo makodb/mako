@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # g7.sh PHASE ARM_A ARM_B [KILLS]
 #
-# Point G7 of docs/verus/modification-plan.md §6: election and failover time.
+# Point G7: election and failover time.
 # KILLS (default 20) leader kills per arm, the arms interleaved kill by kill
 # in alternating order (A B, B A, ...) so host drift spreads over both rather
 # than looking like a difference between them. Each run is
@@ -15,7 +15,7 @@
 # after the leader starts offering (about 10.5 s), lands after both.
 #
 # Then runs scripts/verus/election_times.py ARM_A vs ARM_B (pass --aa through
-# G7_AA=1 for the Phase 0 A/A run, which sets the bounds instead).
+# G7_AA=1 for the A/A calibration run, which sets the bounds instead).
 set -uo pipefail
 P=${1:?usage: g7.sh PHASE ARM_A ARM_B [KILLS]}; A=${2:?}; B=${3:?}; K=${4:-20}
 : "${RESULTS:?source ~/mako-verus-env.sh first}"

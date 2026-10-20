@@ -72,7 +72,7 @@ fn large_append_entries_throughput() {
 }
 
 /// One InstallSnapshot of 1, 16 and 60 MiB over loopback: the borrowed send
-/// (N5) against the old path, which copied the image into an owned request
+/// against the old path, which copied the image into an owned request
 /// (`to_vec`) first. "send" is the time until the send call returns, the part
 /// the leader spends under `mtx_`; "rtt" is until the reply callback ran.
 ///   cargo test --release -p raft-rt --test large_frame_bench install -- --ignored --nocapture

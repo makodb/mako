@@ -1,4 +1,4 @@
-//! The shutdown drain is a barrier (bugs-found B23): once admission is closed
+//! The shutdown drain is a barrier: once admission is closed
 //! and a drain has returned true, no request reaches the service, and a drain
 //! waits for a handler still inside it. RaftWorker::ShutDown deletes the Raft
 //! server after that drain, so a request let through afterwards would run a

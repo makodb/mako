@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Step C's done-test (the Raft migration plan (removed; see git history)): does any hand-written C++
+"""Does any hand-written C++
 under src/deptran name a field of RaftServerBase or RaftCore?
 
 Hand-written means outside the RUSTYCPP GEN regions and the `#if RUSTYCPP_RUST`
@@ -16,7 +16,7 @@ import collections, os, re, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RS = os.path.join(ROOT, 'src/deptran/raft/shell/server_h.rs')
-# RaftCore lives in the raft-core crate since the Verus plan's Phase 6.
+# RaftCore lives in the raft-core crate.
 CORE_RS = os.path.join(ROOT, 'src/deptran/raft/core/src/node.rs')
 SERVER_RECEIVERS = re.compile(
     r'^(self|server|svr|svr_|s|this|rep_sched_|raft_server|raft_sched_|leader_server|follower_server'

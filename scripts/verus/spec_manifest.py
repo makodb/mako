@@ -7,7 +7,7 @@ Run after tagging TAG (e.g. raft-spec-v1) on $GLR's mako-spec branch and
 running the full-crate check whose log is RESULT_LOG. It regenerates
 src/deptran/raft/verus/spec/patches/ with `git format-patch BASE..TAG`,
 computes the sha256 of every statement-bearing file at TAG
-(docs/verus/modification-plan.md §4.5: whole files, decided in Phase 0), and
+(whole files), and
 writes the manifest that scripts/verus/verify_spec.sh checks. VERIFIED_COUNT
 must match the result line in RESULT_LOG.
 """
@@ -23,7 +23,7 @@ BRANCH = "mako-spec"
 RAFT = "src/protocol/Raft/"
 PROTO = "src/protocol/"
 # The atomic spec, the method layer, and the safety property with its guard
-# copy (plan §4.5). Each file defines part of what the certificate says. Since
+# copy. Each file defines part of what the certificate says. Since
 # v2 the method layer is the protocol-independent library (A14), so its
 # modules and Raft's field instance are hashed too -- the same 17 files as the
 # group's Mako case study at this base (glr src/ports/mako/spec/SPEC_VERSION.toml).

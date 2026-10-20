@@ -1,6 +1,6 @@
 // The read-index authority ledger, its generations, and the round scope.
 //
-// [move, M1] Moved verbatim from src/deptran/raft/shell/server_h.rs (Phase 6),
+// [move, M1] Moved verbatim from src/deptran/raft/shell/server_h.rs,
 // paths aside: the rust lane's rusty::Vec/Option are std's own.
 
 #[allow(unused_imports)]
@@ -22,7 +22,7 @@ pub open spec fn sites_sorted(s: Seq<u16>) -> bool {
 // entry per replica (3 or 5), so a linear scan does as well as a tree, and a
 // Vec is a type the verifier specifies. insert and remove place and take the
 // element with Vec::insert and Vec::remove at its sorted position ([move,
-// M9], Phase 6): the same sequence the hand-written bubble and shift made
+// M9]): the same sequence the hand-written bubble and shift made
 // when only push, pop and indexing were common to the transpiled lane's Vec.
 pub struct SiteSet {
     sites_: Vec<u16>,

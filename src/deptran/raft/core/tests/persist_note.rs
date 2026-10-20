@@ -1,4 +1,4 @@
-// [fix, F21] The persist note (docs/verus/disk-persistence.md §3): every
+// [fix, F21] The persist note: every
 // step's note, applied to the saved state before it, gives the saved state
 // after it, through elections, proposals, appends with conflicts, votes and
 // commits; a step that changes nothing saved leaves none.
@@ -9,7 +9,7 @@ use raft_core::*;
 
 #[test]
 fn the_design_s_follower_step() {
-    // design §2: at term 4 a follower holds 1-10, of which 6-10 are of term
+    // At term 4 a follower holds 1-10, of which 6-10 are of term
     // 2; the leader of term 5 sends prev 5, 6'-8' and commit 8.
     let mut core = configured();
     let old: Vec<(i64, u64)> = (1..=10).map(|i| (if i <= 5 { 1 } else { 2 }, i)).collect();
@@ -26,7 +26,7 @@ fn the_design_s_follower_step() {
 
 #[test]
 fn a_cut_then_an_equal_length_append() {
-    // Decision 4: the log's length does not change, only a scan finds where
+    // The log's length does not change, only a scan finds where
     // the cut began; the note knows.
     let mut core = configured();
     append(&mut core, 2, 2, (0, 0), &[(1, 1), (1, 2), (2, 3), (2, 4), (2, 5)], 2);

@@ -7,8 +7,7 @@
 #
 # Contrast src/srpc/rust-modules.toml, which is schema_version = 2:
 # canonical `.rs` sources compiled directly, with C++ generated into the
-# build tree and the inline carriers deleted. Raft is not there yet --
-# see docs/migration/rustycpp/raft-rust-migration.md stages 3 and 4.
+# build tree and the inline carriers deleted. Raft is not there yet.
 schema_version = 1
 
 # One module per carrier. Module name is the carrier basename with '.'
@@ -35,7 +34,7 @@ cpp_module = "raft.raft_worker_cc"
 source = "src/deptran/raft/raft_worker.cc"
 output = "src/deptran/raft/shell/raft_worker_cc.rs"
 
-# Canonical Rust (F2.6): compiled by rustc, not extracted from a carrier. The
+# Canonical Rust: compiled by rustc, not extracted from a carrier. The
 # extractor leaves these alone and lists them in lib.rs.
 [[module]]
 kind = "canonical"

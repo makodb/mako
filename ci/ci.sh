@@ -75,7 +75,7 @@ is_ancestor_pid() {
     return 1
 }
 
-# Raft disk mode (docs/verus/disk-persistence.md §8): a tree configured
+# Raft disk mode: a tree configured
 # with -DMAKO_RAFT_DISK=ON. Each run of a Raft suite in one gets a fresh,
 # locked store run directory on the local disk, MAKO_RAFT_CREATE=1 (every
 # launch in these suites creates its cluster) and MAKO_RAFT_DISK_VERIFY=1
@@ -112,8 +112,7 @@ with_raft_store() {  # with_raft_store LABEL CMD...
             rc=1
         fi
         # A server whose Raft never started (its store refused, say) can
-        # leave a suite that checks the other servers passing (bugs-found
-        # B40).
+        # leave a suite that checks the other servers passing.
         if [ -n "$logs" ] && grep -l -E 'RAFT-STARTUP\] Site [0-9]+ failed|Raft startup failed' $logs; then
             echo "[raft disk] a server's Raft startup failed (above)"
             rc=1
@@ -501,8 +500,7 @@ run_2shard_replication_simple() {
 # Until this function existed it was on no CI path at all, because the binary
 # that hosts it needs -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON and no script in the
 # repository set either one. A suite nobody builds is worse than no suite: it
-# reads as coverage. `all` runs it; the GitHub workflow does not yet
-# (docs/verus/bugs-found.md B29).
+# reads as coverage. `all` runs it; the GitHub workflow does not yet.
 #
 # It needs its OWN build directory. -DRAFT_TEST=ON defines RAFT_TEST_CORO,
 # which changes RaftServer's behaviour, so the flags must not be folded into
@@ -515,9 +513,9 @@ run_raft_lab_test() {
     local generator="${CMAKE_GENERATOR:-Ninja}"
     local build_type="${CMAKE_BUILD_TYPE:-Release}"
     local lab_build_dir="${RAFT_LAB_BUILD_DIR:-${BUILD_DIR}_raftlab}"
-    # A disk-mode tree (-DMAKO_RAFT_DISK=ON, docs/verus/disk-persistence.md
-    # §8) gets a disk-mode lab; the lab tree is named from BUILD_DIR, so only
-    # this cache read keeps a disk lab off the memory tree's lab, and back.
+    # A disk-mode tree (-DMAKO_RAFT_DISK=ON) gets a disk-mode lab; the lab
+    # tree is named from BUILD_DIR, so only this cache read keeps a disk lab
+    # off the memory tree's lab, and back.
     local disk="OFF"
     if grep -qs '^MAKO_RAFT_DISK:BOOL=ON' "${BUILD_DIR}/CMakeCache.txt"; then
         disk="ON"
@@ -656,8 +654,8 @@ run_2shard_replication_simple_raft() {
     [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
 }
 
-# Raft disk persistence's process-kill tests (docs/verus/disk-persistence.md
-# §5, §8): three raft_kill_node replicas SIGKILLed and restarted onto their stores,
+# Raft disk persistence's process-kill tests: three raft_kill_node replicas
+# SIGKILLed and restarted onto their stores,
 # at random and at crash points, then checked (scripts/raft_kill/check.py).
 # Host only: a -DMAKO_RAFT_DISK=ON tree.
 run_raft_kill_test() {
@@ -674,7 +672,7 @@ run_raft_kill_test() {
 }
 
 # The 1-shard Raft test with p1's dbtest killed and relaunched onto its
-# store (disk design §8). Needs a disk tree; host only.
+# store. Needs a disk tree; host only.
 run_1shard_replication_raft_restart() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard1ReplicationRaftRestart"

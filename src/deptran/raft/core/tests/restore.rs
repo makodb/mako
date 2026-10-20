@@ -1,4 +1,4 @@
-// [fix, F22] Restore (docs/verus/disk-persistence.md §3): a recovered
+// [fix, F22] Restore: a recovered
 // state is loaded before EnterGates, the committed prefix queued for apply,
 // no persist note left; a state no step produces is refused, unchanged.
 

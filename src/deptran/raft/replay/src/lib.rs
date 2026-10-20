@@ -1,4 +1,4 @@
-//! The Raft core's history as text (docs/verus/modification-plan.md A.4).
+//! The Raft core's history as text.
 //!
 //! One record per `RaftCore::step`, one line each:
 //!
@@ -916,7 +916,7 @@ pub struct Replayed {
     pub tainted_at: Option<usize>,
 }
 
-/// The saved state the persist notes describe ([fix, F21]; disk design §3):
+/// The saved state the persist notes describe ([fix, F21]):
 /// folded from the replay core's own notes, and compared with the core.
 /// A step that changed term, vote, commit or the log without a note that
 /// covers the change makes the two differ: the notes are not exact.

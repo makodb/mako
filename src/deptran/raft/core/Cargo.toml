@@ -1,5 +1,5 @@
-# raft-core: the Raft core that Verus checks (docs/verus/modification-plan.md,
-# Phase 6). A member of the Raft workspace (../Cargo.toml), so the
+# raft-core: the Raft core that Verus checks.
+# A member of the Raft workspace (../Cargo.toml), so the
 # workspace's panic = "abort" profile and its clippy gate cover it.
 [package]
 name = "raft-core"
@@ -13,7 +13,7 @@ path = "src/lib.rs"
 
 [dependencies]
 # Verus's macro and library crates at exactly the pinned Verus's version
-# (=0.0.0-2026-08-02-0125, Phase 0 report spike (a), since removed). Under
+# (=0.0.0-2026-08-02-0125). Under
 # plain cargo the verus! macro erases the ghost code, and what is left is
 # the exec code the shell links.
 vstd = "=0.0.0-2026-08-02-0125"

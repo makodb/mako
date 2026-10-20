@@ -6,7 +6,7 @@
 A bound is a signed fraction: positive for a metric where higher is worse
 (latency: fail when the median ratio B/A - 1 exceeds it), negative for a metric
 where lower is worse (throughput: fail when the median ratio falls below it).
-A metric fails only if all three hold (docs/verus/modification-plan.md §6):
+A metric fails only if all three hold:
 the median paired ratio is past its bound in the bad direction, the two-sided
 sign test gives p < 0.05, and the majority of rounds moved in the bad
 direction. A shift past the bound in the good direction is "improved". Exits 1

@@ -79,7 +79,7 @@ pub type AppendReply = Pending<AppendEntriesResponse>;
 /// the duration of that call.
 unsafe fn decode_reply<T: Deserialize + Default + WireFits + ReplyTerm>(ptr: *const u8, len: usize)
     -> Option<T> {
-    // Measured first: a short body would abort the decode (bugs-found B41).
+    // Measured first: a short body would abort the decode.
     let bytes: &[u8] = if len == 0 {
         &[]
     } else {
@@ -96,7 +96,7 @@ unsafe fn decode_reply<T: Deserialize + Default + WireFits + ReplyTerm>(ptr: *co
     let mut out = T::default();
     out.deserialize(&mut ar);
     // A term at the index ceiling is outside the core's premises and could
-    // never be left once adopted: no usable reply (bugs-found B42).
+    // never be left once adopted: no usable reply.
     out.term_below_ceiling().then_some(out)
 }
 
@@ -134,7 +134,7 @@ impl ReplyTerm for InstallSnapshotResponse {
 pub const CONNECT_TIMEOUT: Duration = Duration::from_millis(120 * 1000);
 pub const CONNECT_SLEEP: Duration = Duration::from_millis(1000);
 
-/// Disk builds (disk design §3; bugs-found B22): add_peer's first try lasts this
+/// Disk builds: add_peer's first try lasts this
 /// long (a refused connect returns at once; one to a black-holed address
 /// takes srpc's connect timeout, 5 s), then a dial thread takes the site and
 /// connects a fresh Client every DIAL_EVERY, so a node starts while a peer is
@@ -148,7 +148,7 @@ pub const MAJORITY_TIMEOUT: Duration = Duration::from_millis(120 * 1000);
 /// Empty, a send to the site fails at once, as after a close.
 type PeerSlot = Arc<OnceLock<Arc<Client>>>;
 
-/// Disk builds (docs/verus/disk-persistence.md §3; bugs-found B21): a
+/// Disk builds: a
 /// survivor re-dials a closed peer for good, from 50 ms doubling to 200 ms
 /// (25-300 ms with jitter), so a restarted replica is reached again before
 /// its first campaign (the shortest non-preferred election timeout is
@@ -223,7 +223,7 @@ pub struct RaftTransport {
     // Every RPC this transport sent (the C++ communicator's rpc_count_),
     // which the lab's idle-RPC ceiling (TEST 9) reads.
     rpc_count: AtomicU64,
-    // InstallSnapshots outstanding per follower (N6). Shared with the reply
+    // InstallSnapshots outstanding per follower. Shared with the reply
     // callbacks, which may outlive a send call.
     installs: Arc<Mutex<InstallsInFlight>>,
 }
@@ -241,7 +241,7 @@ pub enum InstallSend {
     NotSent,
 }
 
-/// The resend-suppression set (N6): one entry per follower, for the snapshot
+/// The resend-suppression set: one entry per follower, for the snapshot
 /// last sent to it. Cleared by the entry's reply (success or failure), by the
 /// callback being dropped uncalled, by a failed send, by its deadline, and --
 /// all of them -- by a term change.
@@ -376,9 +376,9 @@ impl RaftTransport {
     /// barrier: srpc refuses every request the closed gate did not let
     /// through, and the count each admitted one holds lasts until its reply
     /// is sent (a held reply included), after its handler's last use of the
-    /// server (bugs-found B23). False (the timeout): one may still be using
+    /// server. False (the timeout): one may still be using
     /// the server, which must then outlive it. Disk builds close Raft's gate
-    /// first (disk design §3), so a request admitted before the close is
+    /// first, so a request admitted before the close is
     /// refused rather than handled and held for a flush.
     pub fn drain(&self, timeout_ms: u64) -> bool {
         match self.server.as_ref() {
@@ -672,7 +672,7 @@ impl RaftTransport {
     }
 
     /// `send_install_snapshot_ref`, sent at most once per `(term, follower,
-    /// index)` while a reply is outstanding (N6). Without this the core
+    /// index)` while a reply is outstanding. Without this the core
     /// resends the whole image every heartbeat round until a reply advances
     /// the follower. The entry is cleared before `done` runs, so a reply that
     /// did not advance the follower lets the next round resend; and it lapses
@@ -702,7 +702,7 @@ impl RaftTransport {
         if sent { InstallSend::Sent } else { InstallSend::NotSent }
     }
 
-    /// InstallSnapshot encoded straight from a borrowed image (plan N5): the
+    /// InstallSnapshot encoded straight from a borrowed image: the
     /// fixed fields and the snapshot bytes go into the frame in one copy, with
     /// no `WireBytes` built first. `done` is as for `send_install_snapshot_with`:
     /// at most once, with the follower's term or 0 on failure; a `false`
@@ -831,8 +831,8 @@ impl TallyState {
     }
 
     // [fix, F15] Lost once so many of the n_total - 1 peers refused that the
-    // quorum of peer votes is out of reach: no > (n - 1) - n/2 (bugs-found
-    // B1). The C++ QuorumEvent::no it came from, no > n - n/2, counted this
+    // quorum of peer votes is out of reach: no > (n - 1) - n/2.
+    // The C++ QuorumEvent::no it came from, no > n - n/2, counted this
     // server as a possible refusal, so with three servers a lost campaign
     // always waited out its deadline.
     fn no(&self) -> bool {
@@ -1234,7 +1234,7 @@ mod tests {
     #[test]
     fn three_replicas_lose_once_both_peers_reject() {
         // [fix, F15] no() is n_voted_no > (n - 1) - n/2 = 1: with both peers
-        // refusing, a yes quorum is out of reach (bugs-found B1). One refusal
+        // refusing, a yes quorum is out of reach. One refusal
         // decides nothing: the other peer may still grant.
         assert!(!fed(3, &[(false, 4)]).decided());
         let tally = fed(3, &[(false, 4), (false, 4)]);

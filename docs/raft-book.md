@@ -508,13 +508,10 @@ Raft's state is memory-only by default. A build configured with
 `-DMAKO_RAFT_DISK=ON` (disk mode) keeps each server's term, vote, commit
 index, log and latest snapshot on the local disk, and recovers them when the
 server restarts. Only the build switch turns it on; the environment variables
-below tune a disk build. The design, as built, is
-[docs/verus/disk-persistence.md](verus/disk-persistence.md), whose §8 lists
-every setting, the store layout and the checks.
+below tune a disk build.
 
 In a memory build a replica must not restart in place under its old id: it
-could vote twice in a term, and restarting a majority loses committed entries
-([bugs-found.md](verus/bugs-found.md) B6).
+could vote twice in a term, and restarting a majority loses committed entries.
 
 ### Configuration
 
@@ -527,7 +524,7 @@ MAKO_RAFT_CREATE=1                          # this launch creates the cluster, s
 The other settings tune or test a disk build: `MAKO_RAFT_FLUSH_DELAY_US`,
 `MAKO_RAFT_SEGMENT_BYTES`, `MAKO_RAFT_CHECKPOINT_BYTES`,
 `MAKO_RAFT_CHECKPOINT_SECS`, `MAKO_RAFT_DISK_VERIFY`, `MAKO_RAFT_DISK_STATS`,
-`MAKO_RAFT_CRASH` and `MAKO_RAFT_KILLTEST_DIR` (design §8).
+`MAKO_RAFT_CRASH` and `MAKO_RAFT_KILLTEST_DIR`.
 
 ### What is Persisted
 
@@ -577,8 +574,7 @@ forget its vote and log, which Raft forbids, so an operator decides whether
 to wipe it and rejoin as a new member or to restore its files.
 
 Disk builds also re-dial a restarted peer, start once a majority of peers is
-up, and close Raft's request gate before the shutdown drain
-([bugs-found.md](verus/bugs-found.md) B21-B23).
+up, and close Raft's request gate before the shutdown drain.
 
 ### Testing
 
@@ -615,8 +611,7 @@ the SEAM kernels (`raft_snapshot_manager_latest`, `_load`,
 `RaftSnapshotManagerPtr`. A memory build writes nothing to disk, so after a
 process restart the store is empty unless an embedder injected one before
 `Setup()`; a disk build (`-DMAKO_RAFT_DISK=ON`) also writes each snapshot as
-an image file and recovers it at startup
-([verus/disk-persistence.md](verus/disk-persistence.md)).
+an image file and recovers it at startup.
 
 ### Snapshot bytes on the wire
 
@@ -1138,4 +1133,4 @@ See `docs/dev/raft_membership_change_design.md` for the full protocol design.
 
 ---
 
-*This document consolidates the Raft implementation documentation from across the Mako project. For the C++-to-Rust conversion, see `docs/migration/raft/conversion-log.md` (what was done) and the Raft migration plan (removed; see git history) (what remains); for log persistence, `docs/plans/log-persistence/`.*
+*This document consolidates the Raft implementation documentation from across the Mako project. For the C++-to-Rust conversion, see git history; for log persistence, `docs/plans/log-persistence/`.*

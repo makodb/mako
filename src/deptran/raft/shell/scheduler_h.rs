@@ -22,7 +22,7 @@ pub enum RaftStartResult {
 // already call; renaming them to snake_case is a mechanical follow-up once
 // nothing hand-written calls them.
 //
-// Every method takes `&self` (bugs-found B19): the worker, the RPC service,
+// Every method takes `&self`: the worker, the RPC service,
 // the fibers and the apply thread call these concurrently on one server, so
 // none of them may hold it as `&mut`. What serialises them is the server's
 // own mtx_ and atomics. TxLogServer above keeps `&mut self`: PaxosServer

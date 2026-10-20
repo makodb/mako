@@ -1,5 +1,5 @@
-// [M0] The trace kit's hooks in raft-rt (docs/verus/modification-plan.md
-// §5 Phase 0; the kit itself is server.cc's raft_trace_* kernels).
+// [M0] The trace kit's hooks in raft-rt
+// (the kit itself is server.cc's raft_trace_* kernels).
 //
 // Two function-pointer slots, null by default. raft_transport.cc's Serve
 // fills them through raft_rt_install_trace only when MAKO_RAFT_TRACE_FILE is

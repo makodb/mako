@@ -514,7 +514,7 @@ void RaftWorker::ShutDown() {
   // otherwise still be running when this thread reaches `delete rep_sched_`
   // below. srpc refuses every request the closed gate did not admit, and
   // counts each admitted one until its reply is sent, so a drain that
-  // completes is the barrier that guarantee needs (bugs-found B23). One that
+  // completes is the barrier that guarantee needs. One that
   // times out is not: a handler may still be using the server, so the server
   // is kept rather than deleted under it (B34).
   if (rust_transport_ != nullptr &&

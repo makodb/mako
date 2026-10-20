@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lab equivalence comparator, modulo timing (docs/verus/modification-plan.md A.4).
+"""Lab equivalence comparator, modulo timing.
 
     lab_trace_compare.py run LAB_DIR OUT_LOG
         Run one full lab suite from LAB_DIR (a ci.sh lab tree such as
@@ -8,8 +8,7 @@
 
     lab_trace_compare.py calibrate --out EXEMPTIONS.json LOG [LOG ...]
         Same-build runs: every field that differs between them is exempt for
-        that case. Writes the machine-readable list (the reasons go in
-        docs/verus/lab-compare-exemptions.md, by hand).
+        that case. Writes the machine-readable list.
 
     lab_trace_compare.py compare [--exemptions EXEMPTIONS.json] LOG... -- LOG...
         Parent runs before "--", child runs after. Prints one row per case and
@@ -173,7 +172,7 @@ def cmd_calibrate(out_path, logs):
         desc = runs[0]["cases"].get(cid, {}).get("desc", "")
         print(f"  case {cid:3d} {desc[:48]:48s} exempt: {', '.join(fs) if fs else '-'}")
     if leaders * 2 > n:
-        print(f"STOP (plan 0.7 point 8): {leaders}/{n} cases exempt the (term, leader) sequence")
+        print(f"STOP: {leaders}/{n} cases exempt the (term, leader) sequence")
     return 1 if probs else 0
 
 

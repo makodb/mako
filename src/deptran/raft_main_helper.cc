@@ -390,8 +390,7 @@ void create_stub_servers() {
 // alive to run their jobs. Each serves the single RaftServer, whose handlers
 // dereference it with no lifetime lease, so the drain precedes its
 // destruction by RaftWorker::ShutDown(). False: a drain timed out, and one of
-// its handlers may still be using that server, which must then be kept
-// (bugs-found B34).
+// its handlers may still be using that server, which must then be kept.
 bool destroy_stub_servers() {
   bool drained = true;
   for (RaftStubServer* stub : rust_stub_servers_g) {
@@ -921,7 +920,7 @@ std::map<std::string, std::string> getHosts(std::string filename) {
 // [fix, F18] Its own accepted submissions still above the commit index. It
 // was n_tot - CommitIndex(): this worker's submission count minus a commit
 // index that also counts every leader's no-op and other servers' entries,
-// so it drifted low and could go negative (bugs-found B7).
+// so it drifted low and could go negative.
 int get_outstanding_logs(uint32_t par_id) {
   auto worker = find_worker(par_id);
   if (!worker) {

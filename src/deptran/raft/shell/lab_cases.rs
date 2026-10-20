@@ -42,7 +42,7 @@ pub fn passed() {
 // The assertion helpers. Each was a macro_rules! macro; they became
 // functions when the C++ lane transpiled this harness, because the transpiler
 // lowered a custom macro invocation to a `// TODO` comment -- 189 of them,
-// which made the transpiled lab report 25/25 while checking nothing (plan L2). Each
+// which made the transpiled lab report 25/25 while checking nothing. Each
 // returns false when the check fails, and the caller returns 1, exactly the
 // early exit the macro performed.
 
@@ -664,7 +664,7 @@ fn test_figure8(st: &mut LabState) -> i32 {
 // B16 -- is refused and leaves the follower's log alone. The same append
 // without its entry is accepted first, so the refusal can only be the
 // entry's term. [fix, F14] So is one whose entry's term is later than the
-// AppendEntries' own (bugs-found B4).
+// AppendEntries' own.
 fn test_entry_term_zero_refused(_st: &mut LabState) -> i32 {
     init2(12, "AppendEntries carrying an entry of term 0, or later than its own, is refused");
 
@@ -739,7 +739,7 @@ fn test_entry_term_zero_refused(_st: &mut LabState) -> i32 {
 // A replica that cannot serve (disconnected, or not yet RPC-ready: the same
 // branch of ServeVote) answers a vote request with "no" at the candidate's
 // own term -- a reply no voter decided, which the verification reads as
-// unmodelled input (docs/verus/modification-plan.md §4.3, V3). Pinned here,
+// unmodelled input. Pinned here,
 // including that the replica's own term does not move.
 fn test_unavailable_voter_reply(_st: &mut LabState) -> i32 {
     init2(13, "An unavailable replica refuses a vote at the candidate's term");
@@ -783,7 +783,7 @@ fn test_unavailable_voter_reply(_st: &mut LabState) -> i32 {
 
 // An AppendEntries from a site outside the configuration, one at term 0, one
 // whose prev index is 0 but whose prev term is not, and one at the term
-// ceiling (2^62, the core's premise; bugs-found B42); a RequestVote from
+// ceiling (2^62, the core's premise); a RequestVote from
 // outside the configuration, one at term 0, and one at the ceiling. Each is
 // dropped: the replica
 // answers as an unavailable replica answers (an append 0/0/0, a vote "no"
@@ -867,7 +867,7 @@ fn test_unadmitted_messages_dropped(_st: &mut LabState) -> i32 {
 
 // Start on the leader with an empty command. Before F13 the leader appended
 // it, and its payload selection then read the slot as missing and skipped
-// every follower whose next index reached it (bugs-found B16). Now Start
+// every follower whose next index reached it. Now Start
 // refuses it, and the leader's log does not move.
 fn test_empty_command_refused(_st: &mut LabState) -> i32 {
     init2(16, "Start refuses a command without a value");

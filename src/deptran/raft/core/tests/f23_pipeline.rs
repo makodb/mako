@@ -1,4 +1,4 @@
-// F23 (docs/verus/modification-plan.md A.2; bugs-found B53): pipelined
+// F23: pipelined
 // AppendEntries. A follower with batches in flight is sent another only once
 // the newest of them has been in flight for `pipeline_after_us`, within
 // PIPELINE_WINDOW and the byte cap, and only to carry entries it has not been

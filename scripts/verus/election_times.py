@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """G7: election and failover time, parent arm A against child arm B.
 
-    scripts/verus/election_times.py DIR A B [--params docs/verus/gate-params.md] [--aa]
+    scripts/verus/election_times.py DIR A B [--params scripts/verus/gate-params.md] [--aa]
 
 DIR holds <i>.<arm>.json records written by examples/raft_bench.sh
 --kill-leader-at-sec (one per leader kill). Each carries three wall-clock
@@ -16,12 +16,12 @@ first_commit = first_commit_us - leader_loss_us. A record missing a field, or
 a missing record, is a failed kill; more than 2 failed kills in an arm fails
 the gate.
 
-Gate (docs/verus/modification-plan.md §6, "G7 rule"): for each duration and
+Gate ("G7 rule"): for each duration and
 statistic (median, p90), fail if B's statistic exceeds A's by more than the
 bound in the "| G7 |" row of the params file AND a one-sided Mann-Whitney U
 test (B slower) gives p < 0.05. Exits 1 on failure.
 
-With --aa (the Phase 0 A/A run) it instead sets each bound to
+With --aa (the A/A calibration run) it instead sets each bound to
 max(10%, |A - B| / A) and rewrites the "| G7 |" row.
 """
 import argparse
@@ -116,7 +116,7 @@ def main():
     ap.add_argument("a")
     ap.add_argument("b")
     ap.add_argument("--params", default=os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "..", "docs", "verus", "gate-params.md"))
+        os.path.dirname(os.path.abspath(__file__)), "gate-params.md"))
     ap.add_argument("--aa", action="store_true")
     ap.add_argument("--alpha", type=float, default=0.05)
     o = ap.parse_args()

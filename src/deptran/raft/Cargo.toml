@@ -37,19 +37,19 @@ crate-type = ["rlib", "staticlib"]
 # rusty::sync::Arc, rusty::ReactorPollThread, rusty::ReactorIntEvent -- and
 # the extracted Rust dies at E0433/E0573 before the emitter is ever consulted.
 # The emitter lowers those names correctly today; this is what lets rustc
-# agree. See the facade-crate constraint in the Raft migration plan (removed; see git history).
+# agree.
 [features]
 # The RaftLab correctness harness. CMake turns this on exactly when
 # -DRAFT_TEST=ON defines RAFT_TEST_CORO for the C++ side, so the two halves of
 # the lab build cannot disagree about whether they are in lab mode.
 #
 # This is only expressible because server_h.rs / server_cc.rs are canonical
-# Rust (F2.6): rustc compiles them directly, so `cfg!` is real. While they
+# Rust: rustc compiles them directly, so `cfg!` is real. While they
 # were DSL blocks a `#[cfg]` was dropped SILENTLY -- scripts/raft_dsl.sh
 # rejects one for that reason -- which is why the lab predicate had to be a
 # C++ kernel (`raft_lab_mode`) read across the ABI.
 raft_test = []
-# Raft disk persistence (docs/verus/disk-persistence.md): CMake turns it
+# Raft disk persistence: CMake turns it
 # on exactly when -DMAKO_RAFT_DISK=ON. Off, the disk path is compiled but
 # never taken (the shell tests `cfg!(feature = "raft_disk")`, a constant).
 raft_disk = ["raft-store/rocksdb"]
@@ -61,13 +61,13 @@ raft_disk = ["raft-store/rocksdb"]
 # types the Raft server holds opaquely. Keeping it inside the vendored
 # tree would put it in the path of every subtree pull.
 rusty = { path = "../../rusty-rustc" }
-# The Raft core that Verus checks (Phase 6): no FFI, no dependencies of its
+# The Raft core that Verus checks: no FFI, no dependencies of its
 # own. This crate is its shell.
 raft-core = { path = "core" }
-# [M0] The replay recorder's format (plan A.4): the writer the shell's
+# [M0] The replay recorder's format: the writer the shell's
 # recorder uses; the replay itself is that crate's test.
 raft-replay = { path = "replay" }
-# The write-ahead log, its recovery and the flusher (disk design §3-§5). Linked in both
+# The write-ahead log, its recovery and the flusher. Linked in both
 # modes, called only in disk builds.
 raft-store = { path = "store" }
 # NO srpc dependency: everything srpc-facing lives in rt/.
@@ -75,7 +75,7 @@ raft-store = { path = "store" }
 [lints.rust]
 unsafe_code = "allow"   # the CRC32 kernel is deliberately unsafe; see its # Safety doc
 
-# Step E of the Raft migration plan (removed; see git history): Rust-authored bodies run on srpc
+# Rust-authored bodies run on srpc
 # fibers and suspend mid-frame. No unwind may cross the fiber's assembly
 # context switch, so a panic must abort rather than unwind. This crate is a
 # verification view today; under the cutover it is the runtime, and this is

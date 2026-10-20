@@ -1,5 +1,4 @@
-//! Snapshot images as files (design §3 "Snapshots: the file, then the
-//! record").
+//! Snapshot images as files.
 //!
 //! An image is written to `<S>-<T>.img.tmp`, synced, renamed to `<S>-<T>.img`
 //! and its directory synced; only then is the record that names it queued,
@@ -84,7 +83,7 @@ pub fn cleanup(fs: &dyn StoreFs, dir: &Path, keep_index: u64) -> io::Result<usiz
 /// one the recovered state names. Nothing is in flight at recovery, so an
 /// image no record names -- written and synced, but its record never reached
 /// the WAL -- is an orphan, and would otherwise outlive every later
-/// checkpoint until a later snapshot passed it (bugs-found B50).
+/// checkpoint until a later snapshot passed it.
 pub fn cleanup_unnamed(fs: &dyn StoreFs, dir: &Path, keep: Option<&str>) -> io::Result<usize> {
     remove_where(fs, dir, |f| f.ends_with(".tmp") || (parse_name(f).is_some() && Some(f) != keep))
 }

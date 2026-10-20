@@ -138,7 +138,7 @@ The plans below are the `@safe`/`@unsafe` borrow-checker and smart-pointer track
 
 ### Raft Migration (Paxos to Raft)
 
-- **[Conversion Log](migration/raft/conversion-log.md)** - Every commit of the Raft C++-to-Rust conversion, in six phases
+- **[Git History](migration/raft/git-history.md)** - Every commit of the Raft conversion, verification and disk persistence work
 
 ---
 

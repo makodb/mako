@@ -1,12 +1,11 @@
-//! The flusher thread and the durable state it publishes (design §3, "The
-//! flusher thread").
+//! The flusher thread and the durable state it publishes.
 //!
 //! The flusher takes every queued record, encodes the batch, appends and
 //! syncs it, sleeps the injected delay, and then publishes `Durable`: the
 //! last durable record, and the log's last index and commit as of it. Waiters
-//! block on [`DurableState`]; the shell's `on_durable` hook (design §3: send the
-//! held replies) runs after each publish. An I/O error aborts the process
-//! (design Decision 14): the crates abort on panic.
+//! block on [`DurableState`]; the shell's `on_durable` hook (send the
+//! held replies) runs after each publish. An I/O error aborts the process:
+//! the crates abort on panic.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -58,7 +57,7 @@ impl DurableState {
 
     /// One publish's triple. Under the lock `publish` holds: lock-free, no
     /// order of the three loads keeps a concurrent publish from mixing
-    /// two publishes' fields (bugs-found B49).
+    /// two publishes' fields.
     pub fn get(&self) -> Durable {
         let _g = self.m.lock().unwrap_or_else(|e| e.into_inner());
         Durable { seq: self.seq(), last: self.last(), commit: self.commit.load(Ordering::Acquire) }
@@ -105,8 +104,8 @@ impl DurableState {
 /// A held reply's send.
 pub type SendReply = Box<dyn FnOnce() + Send>;
 
-/// Replies held until the WAL is durable through their tail (design §3,
-/// "What waits for the disk"). A reply whose tail is already
+/// Replies held until the WAL is durable through their tail.
+/// A reply whose tail is already
 /// durable goes at once. The flusher releases the rest after each publish,
 /// in hold order. `hold` reads the durable number under the list's mutex and
 /// the flusher takes that mutex only after publishing, so a reply never
@@ -158,7 +157,7 @@ pub struct FlusherConfig {
     /// The injected sleep after each sync (`MAKO_RAFT_FLUSH_DELAY_US`): a
     /// device's sync latency, on a store that has none.
     pub delay: Duration,
-    /// The applier's queue (design §3): each synced batch is offered to it.
+    /// The applier's queue: each synced batch is offered to it.
     pub tap: Option<crate::applier::ApplierTap>,
 }
 

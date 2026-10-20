@@ -1,4 +1,4 @@
-//! The flusher under concurrent pushers (design §3's shape): group commit,
+//! The flusher under concurrent pushers: group commit,
 //! the published durable state, and a recovery equal to the pushes.
 
 use std::path::Path;

@@ -1,4 +1,4 @@
-// core_replay (docs/verus/modification-plan.md A.4 item 4): every recording
+// core_replay: every recording
 // under $MAKO_RAFT_REPLAY_DIR, each one node's history, replayed through this
 // build's core. Each record's actions, log lines and reply must come out
 // byte for byte as recorded. With the variable unset there is nothing to

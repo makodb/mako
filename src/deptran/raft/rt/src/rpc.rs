@@ -45,7 +45,7 @@ impl Deserialize for WireBytes {
 /// Whether `b` begins with a complete encoding of `Self`. srpc's
 /// streaming decoders abort the process on a short read and trust a
 /// byte string's length into an allocation, so peer bytes are measured
-/// with this before they are decoded (bugs-found B41, B43).
+/// with this before they are decoded.
 pub trait WireFits {
     fn wire_fits(b: &[u8]) -> bool;
 }
@@ -508,7 +508,7 @@ pub fn register(server: &mut Server, svc_index: usize) -> i32 {
 /// from the body put every field five bytes off and misparsed every
 /// AppendEntries over TCP. The streaming decoders read these bytes through
 /// a cursor of their own (`arg_source`): `req` is borrowed shared, and an
-/// archive advances the cursor it reads (bugs-found B36).
+/// archive advances the cursor it reads.
 fn args_of(req: &Request) -> &[u8] {
     let src = &req.src;
     // SAFETY: src describes a live buffer (req.body) of len_ bytes, and

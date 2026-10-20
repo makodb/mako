@@ -1,12 +1,12 @@
-// [M12] (whole file) The coupling of the core to the group's Raft spec (plan
-// Phase 8): what the core's state and messages mean as the spec's LState and
+// [M12] (whole file) The coupling of the core to the group's Raft spec:
+// what the core's state and messages mean as the spec's LState and
 // LRaftMessage, the ghost log of the core's actions, and the lemmas that each
 // closed segment is one of the spec's atomic steps. Verification only: the
 // module exists when Verus checks the crate (cfg verus_keep_ghost), with the
 // spec imported from the frozen tag (scripts/verus/verify_core.sh); plain
 // cargo never compiles it.
 //
-// The design follows docs/verus/coupling-table.md and the group's raft-rs
+// The design follows the group's raft-rs
 // port (glr src/ports/raftrs/coupling.rs): a ghost log on the core
 // (RaftCore::g_log_), opened by a message (Recv) or a spontaneous trigger
 // (Tick), recording every write to a field the spec tracks (Set) and every
@@ -29,7 +29,7 @@ use glr::protocol::Raft::ghost_log::*;
 use glr::protocol::Raft::membership::*;
 #[allow(unused_imports)]
 use glr::protocol::Raft::ghost_log_compose::cluster_c;
-// Persistence (step 1b, Part A): the group's certificates, and Raft's instance
+// Persistence (Part A): the group's certificates, and Raft's instance
 #[allow(unused_imports)]
 use glr::protocol::ghost_log_certs as gc;
 #[allow(unused_imports)]
@@ -349,7 +349,7 @@ impl<C> RaftCore<C> {
             pending_reads: Seq::<LReadReq>::empty(),
             served_ctxs: Set::<int>::empty(),
             config: Set::<int>::range(0, self.n_view()),
-            outgoing: Set::<int>::empty(),  // [M12] spec v2: no joint configuration under the gate (A9-2's field)
+            outgoing: Set::<int>::empty(),  // [M12] spec v2: no joint configuration under the gate
             conf_index: 0int,
         }
     }
@@ -372,7 +372,7 @@ impl<C> RaftCore<C> {
         &&& self.v2()
     }
 
-    // V2 (plan §4.3): a leader's match index for a follower never exceeds
+    // V2: a leader's match index for a follower never exceeds
     // the spec's (absent: 0), so the spec's quorum covers the exec's. The
     // exec raises it by max(); the spec writes it only when it rises past.
     pub open spec fn v2(&self) -> bool {
@@ -381,7 +381,7 @@ impl<C> RaftCore<C> {
                 <= match_of(self.g_match_@, rank(self.config_members_@, self.peer_sites_@[o]))
     }
 
-    // Every log entry's command has a value (bugs-found B16: the follower's
+    // Every log entry's command has a value (the follower's
     // conflict scan reads a slot without one as absent), and its term is a
     // term (the handlers compare terms as u64).
     pub open spec fn log_entries_ok(&self) -> bool {
@@ -526,7 +526,7 @@ pub open spec fn view_frame<C>(pre: &RaftCore<C>, post: &RaftCore<C>) -> bool {
 }
 
 // ===========================================================================
-// Restore ([fix, F22], disk design §6): a restart resumes from the previous
+// Restore ([fix, F22]): a restart resumes from the previous
 // run's ghost log `prev`, as a step aside
 // ===========================================================================
 
@@ -841,8 +841,7 @@ pub proof fn lemma_step_down_seg(l: Seq<Entry>, new_term: int, c: LConstants)
 // taken up, then GrantVote or RejectVote, all in the request's group
 // ===========================================================================
 
-// The request as the spec sees it: the candidate is its rank
-// (coupling-table §2).
+// The request as the spec sees it: the candidate is its rank.
 pub open spec fn request_vote_msg(cfg: Seq<u16>, can_id: u16, can_term: i64, lst_log_idx: u64,
                                   lst_log_term: i64) -> LRaftMessage {
     LRaftMessage::RequestVote {
@@ -1185,7 +1184,7 @@ pub proof fn lemma_timeout_ginv<C>(pre: &RaftCore<C>, post: &RaftCore<C>, r: Cam
 // higher term is LStepDown; a lost or timed-out campaign LStepAside
 // ===========================================================================
 
-// A vote reply from `voter` as the spec sees it (coupling-table §2): the
+// A vote reply from `voter` as the spec sees it: the
 // voter is the reply's peer (F1), at its rank.
 pub open spec fn vote_reply_view(cfg: Seq<u16>, voter: u16, granted: bool, term: i64) -> LRaftMessage {
     LRaftMessage::VoteResponse { term: term as int, granted, voter: rank(cfg, voter) }
@@ -2276,7 +2275,7 @@ pub proof fn lemma_append_entries<C>(pre: &RaftCore<C>, post: &RaftCore<C>, x: A
 // a match by max(), to at most the reported index)
 // ===========================================================================
 
-// The reply as the spec sees it (coupling-table §2): from the follower its
+// The reply as the spec sees it: from the follower its
 // slot was sent to, the match a success reports (0 for a refusal).
 pub open spec fn reply_msg(cfg: Seq<u16>, follower: u16, status: bool, term: u64, last: u64) -> LRaftMessage {
     LRaftMessage::AppendResponse {
@@ -2509,7 +2508,7 @@ pub proof fn lemma_reply_stutter<C>(pre: &RaftCore<C>, post: &RaftCore<C>, accep
 
 // ===========================================================================
 // The leader's commit advance (raft_commit_advance; PHASE 0, and PHASE 3
-// under bugs-found B17's premise): LAdvanceCommitIndex, spontaneous
+// while leading): LAdvanceCommitIndex, spontaneous
 // ===========================================================================
 
 // The ordinals in [0, k) whose match reaches v.
@@ -2957,9 +2956,9 @@ pub proof fn lemma_same_fields_ginv<C>(b: &RaftCore<C>, a: &RaftCore<C>)
 
 impl<C> RaftCore<C> {
     // Beyond admits: the gate for the protocol's events; Setup's order on a
-    // fresh core; a proposal while leading, with a value (bugs-found B16);
+    // fresh core; a proposal while leading, with a value;
     // a reply's role read under mtx_ and F9's admission for messages; a
-    // round end while leading (bugs-found B17).
+    // round end while leading.
     pub open spec fn coupled<W: InboundBatch<C>>(&self, ev: &Event<'_, C, W>) -> bool {
         match *ev {
             Event::SetIdentity { .. } => self.g_log_@.len() == 0,
@@ -2987,7 +2986,7 @@ impl<C> RaftCore<C> {
                 &&& (status ==> last_log_index as int <= self.raft_log_.spec_last_index())
             },
             Event::RoundEnd { .. } => self.gated_,
-            // [fix, F22] (disk design §6) a restart (restore_cert_ok)
+            // [fix, F22] a restart (restore_cert_ok)
             // [M12] persistence (P4): the previous run's crash cut at d
             // [Part B] (E7) with the recovered snapshot boundary, if any
             Event::Restore { term, vote, commit, d, snap_index, snap_term, entries_rev } =>
@@ -2997,7 +2996,7 @@ impl<C> RaftCore<C> {
             Event::CreateSnapshot { .. } => self.gated_,
             Event::Compact { .. } => self.gated_,
             // [fix, F27, fix, F28] the install and its reply, inside the gate
-            // [Part B] the Snapshot is one a Mako leader sent (§1 item 1)
+            // [Part B] the Snapshot is one a Mako leader sent
             Event::RecvInstallSnapshot { last_included_index, last_included_term, prefix, .. } =>
                 self.gated_ && snap_prefix_ok(prefix@, last_included_index as int, last_included_term as int),
             Event::InstallSnapshot { index, term, prefix, .. } =>
@@ -3060,10 +3059,10 @@ pub proof fn lemma_node_cert<C>(core: &RaftCore<C>)
 {
 }
 
-// The cluster theorem, instantiated (plan Phase 8's goal): n servers, each
+// The cluster theorem, instantiated: n servers, each
 // a core that keeps ginv, in an n-member configuration, at its own rank.
 // Under any schedule of their ghost logs' segments that is causal -- the
-// host contract (docs/verus/host-contract.md): the transport delivers only
+// host contract: the transport delivers only
 // what a verified server's ghost log sent, and each server's segments run
 // in its log's order -- the distributed model's safety invariant holds
 // after every step: at most one leader per term, logs that match, committed
@@ -3101,13 +3100,13 @@ pub proof fn theorem_mako_safety<C>(cores: Seq<RaftCore<C>>, n: int, sched: Seq<
 }
 
 // ===========================================================================
-// Persistence (step 1b, Part A; coupling-design-persistence-snapshots.md A2):
+// Persistence (Part A):
 // the ghost log only grows between steps, and each gated step ends with a
 // Ready mark numbered by the WAL record count (g_seq_)
 // ===========================================================================
 
 // l2 is l with entries appended, none of them a mark: what every handler
-// does to the ghost log (A1: marks come only from step's end).
+// does to the ghost log (marks come only from step's end).
 pub open spec fn plain_ext(l: Seq<Entry>, l2: Seq<Entry>) -> bool {
     &&& l.len() <= l2.len()
     &&& l2.take(l.len() as int) == l
@@ -3419,8 +3418,8 @@ pub open spec fn rnum(e: Entry) -> int {
     gc::mark_number::<RaftP>(e) as int
 }
 
-// Each Ready mark is numbered as the one before it or one more (A2's
-// ready_seq_ok without its count, which the core keeps beside it). Opaque:
+// Each Ready mark is numbered as the one before it or one more (the
+// numbering without its count, which the core keeps beside it). Opaque:
 // lemma_ready_seq_at applies it to one pair.
 #[verifier::opaque]
 pub open spec fn ready_seq_ok(l: Seq<Entry>) -> bool {
@@ -3441,7 +3440,7 @@ pub proof fn lemma_ready_seq_at(l: Seq<Entry>, i: int, j: int)
     reveal(ready_seq_ok);
 }
 
-// No Persisted mark during a run: only a crash appends one (A1), so the
+// No Persisted mark during a run: only a crash appends one, so the
 // cut is decided by the crash's number alone.
 pub open spec fn no_persisted(l: Seq<Entry>) -> bool {
     forall|k: int| 0 <= k < l.len() ==> !gc::is_persisted_mark::<RaftP>(#[trigger] l[k])
@@ -3540,7 +3539,7 @@ impl<C> RaftCore<C> {
 }
 
 // ---------------------------------------------------------------------------
-// (P2) Note exactness (A4): a step's persist note describes the saved
+// (P2) Note exactness: a step's persist note describes the saved
 // state's change exactly -- the fold the replay's shadow checks
 // (replay/src/lib.rs, Shadow::apply) and the store applies to a record.
 // ---------------------------------------------------------------------------
@@ -3692,7 +3691,7 @@ pub open spec fn ready_tail_ok(l0: Seq<Entry>, l: Seq<Entry>, s: int) -> bool {
     &&& plain_ext(l0, l.drop_last())
 }
 
-// A step's end (A5 step 4): `post` is `pre` with the Ready mark of its state
+// A step's end: `post` is `pre` with the Ready mark of its state
 // numbered s pushed, and the records counted to s. `pre`'s log plain-extends
 // l0 (the step's first log, or a restart's prev stepped aside), whose last
 // Ready, if any, is numbered s or s - 1.
@@ -3738,7 +3737,7 @@ pub proof fn lemma_ready_step<C>(pre: &RaftCore<C>, post: &RaftCore<C>, l0: Seq<
 }
 
 // The certificate of the core's state now: what a Ready mark at a step's
-// end carries (A5 step 4, Mako's lemma_cert_now_ok).
+// end carries (Mako's lemma_cert_now_ok).
 pub proof fn lemma_cert_now<C>(core: &RaftCore<C>, n: u64)
     requires core.inv(), core.ginv(),
     ensures ({
@@ -3973,7 +3972,7 @@ pub proof fn lemma_no_ready(l: Seq<Entry>)
     gc::lemma_last_ready_bounds::<RaftP>(l);
 }
 
-// What a crash at d leaves the restarted run (A2's restore_prev): the
+// What a crash at d leaves the restarted run (restore_prev): the
 // certificate's log when a Ready numbered at most d exists, else the
 // configuration's load -- the log before the first Ready sent nothing.
 pub open spec fn restore_prev(old: Seq<Entry>, d: u64, n: int) -> Seq<Entry> {
@@ -3994,12 +3993,12 @@ pub open spec fn prev_run_ok(old: Seq<Entry>, c: LConstants, d: u64) -> bool {
     &&& gc::has_ready::<RaftP>(old) ==> d as int <= rnum(old[gc::last_ready_pos::<RaftP>(old)])
 }
 
-// Restore's premise with the crash cut (A4 P4): the core neither leads nor
+// Restore's premise with the crash cut: the core neither leads nor
 // campaigns and its log is empty and whole; some previous run, crashed at
 // d, leaves a prev whose replay is the restored state, its log the
 // recovered boundary's prefix and the entries ([Part B] E7, restore_view).
-// An existential: the proof takes a witness, so it holds for every such run
-// (host contract §1 item 5). Opaque: step's query carries it only by name.
+// An existential: the proof takes a witness, so it holds for every such run.
+// Opaque: step's query carries it only by name.
 #[verifier::opaque]
 pub open spec fn restore_cert_ok<C>(core: &RaftCore<C>, d: u64, term: u64, vote: u16, commit: u64,
                                     snap: u64, snap_term: i64, rev: Seq<RaftEntry<C>>) -> bool {
@@ -4255,7 +4254,7 @@ pub proof fn lemma_install_seg(l: Seq<Entry>, c: LConstants, src: int, m: LRaftM
     assert(plain_ext(l, l2));
 }
 
-// E4 at the core (A5's E4, per outcome): the contact -- a higher term's Recv
+// E4 at the core, per outcome: the contact -- a higher term's Recv
 // and StepDown, a same-term candidate's StepAside, a follower's nothing --
 // then, for a snapshot the commit covers, the declined install answered at
 // the index. `post` is the follower the contact leaves.

@@ -277,7 +277,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("/// Whether `b` begins with a complete encoding of `Self`. srpc's")
     w("/// streaming decoders abort the process on a short read and trust a")
     w("/// byte string's length into an allocation, so peer bytes are measured")
-    w("/// with this before they are decoded (bugs-found B41, B43).")
+    w("/// with this before they are decoded.")
     w("pub trait WireFits {")
     w("    fn wire_fits(b: &[u8]) -> bool;")
     w("}")
@@ -488,7 +488,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
             w("")
         # A request with a byte-string field (and no opaque one) also gets a
         # borrowed twin, `<Req>BytesRef<'a>`, whose byte fields are slices:
-        # the zero-copy send for InstallSnapshot (plan N5). Same wire bytes.
+        # the zero-copy send for InstallSnapshot. Same wire bytes.
         if opaque_note is None and any(t == "WireBytes" for _, t in fields_in):
             ref = f"{req}BytesRef"
             w(f"/// `{req}` with its byte fields borrowed: encodes the same wire bytes")
@@ -525,8 +525,8 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
             param = f"&{req}"
         else:
             # A request that owns heap storage is handed over BY VALUE, so a
-            # handler can keep its bytes instead of copying them (plan N5:
-            # the follower's InstallSnapshot handoff to the store).
+            # handler can keep its bytes instead of copying them (the
+            # follower's InstallSnapshot handoff to the store).
             param = req
         w(f"    fn {snake(name)}(&self, req: {param}) -> Result<{resp}, i32>;")
     w("}")
@@ -561,7 +561,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("/// from the body put every field five bytes off and misparsed every")
     w("/// AppendEntries over TCP. The streaming decoders read these bytes through")
     w("/// a cursor of their own (`arg_source`): `req` is borrowed shared, and an")
-    w("/// archive advances the cursor it reads (bugs-found B36).")
+    w("/// archive advances the cursor it reads.")
     w("fn args_of(req: &Request) -> &[u8] {")
     w("    let src = &req.src;")
     w("    // SAFETY: src describes a live buffer (req.body) of len_ bytes, and")
@@ -633,7 +633,7 @@ def emit(service, ids: dict[str, int], rpc_path: str) -> tuple[str, list[str]]:
     w("}")
     w("")
 
-    # Disk builds (docs/verus/disk-persistence.md §3): the same routing,
+    # Disk builds: the same routing,
     # but the reply comes back to the caller instead of going out, so it can
     # wait until the WAL holds what the handler changed. The request itself
     # is not Send (its BufferSource is a raw pointer); the reply needs only

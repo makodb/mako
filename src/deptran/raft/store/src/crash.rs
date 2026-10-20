@@ -1,4 +1,4 @@
-//! Named crash points (design §5 "Tests kill processes", §8).
+//! Named crash points.
 //!
 //! `MAKO_RAFT_CRASH=<point>[:<n>][:powercut]` arms one point: its n-th pass
 //! (default the first) prints `crash <point>` to stderr and SIGKILLs the
@@ -67,7 +67,7 @@ fn powercut_fs() -> &'static Mutex<Vec<Weak<dyn StoreFs>>> {
 
 /// Registers a filesystem whose ledger a `:powercut` crash applies. A power
 /// cut takes every store in the process, so each one registers; one slot
-/// overwritten per store cut only the last-opened one (bugs-found B51).
+/// overwritten per store cut only the last-opened one.
 pub fn register_powercut_fs(fs: &Arc<dyn StoreFs>) {
     let mut all = powercut_fs().lock().unwrap_or_else(|e| e.into_inner());
     all.retain(|w| w.strong_count() > 0);

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""ledger_lint.py -- every line of the Raft core is accounted for (plan A.3).
+"""ledger_lint.py -- every line of the Raft core is accounted for.
 
-The core crate (src/deptran/raft/core, Phase 6) did not exist at the
-Phase 0 baseline (tag verus-p0): it was assembled by moving the protocol out
+The core crate (src/deptran/raft/core) did not exist at the
+baseline (tag verus-p0): it was assembled by moving the protocol out
 of the server's Rust sources. So `git diff verus-p0 -- src/deptran/raft/core`
 is all additions, and each added line must be one of:
 
@@ -28,7 +28,7 @@ status is 1. Exit 0 means the core is ghost, moved or labelled throughout.
   python3 scripts/verus/ledger_lint.py            # check
   python3 scripts/verus/ledger_lint.py --stats    # the line inventory
   python3 scripts/verus/ledger_lint.py --ghost-only --base <rev>
-                                                  # Phase 8's diff-2 lint:
+                                                  # the diff-2 lint:
                                                   # every change since <rev>
                                                   # must be ghost (or comment)
 
@@ -46,9 +46,8 @@ from collections import Counter
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 BASE = 'verus-p0'
 # The shell the core was moved out of: the commit before the crate split
-# (Phase 6's start, after the lane removal). Phases 1-4 ledgered their own
-# changes to that code per function (docs/verus/diff-ledger.md); the lint
-# checks what Phase 6 and later did to it.
+# (after the lane removal). Earlier changes to that code were ledgered per
+# function; the lint checks what the split and later did to it.
 MOVED_FROM = '43c57e3ac'
 CORE = 'src/deptran/raft/core'
 # Where the core's code came from, at the baseline.
@@ -80,7 +79,7 @@ def normalize(line):
     """A line's text with the recorded renames applied and whitespace,
     comments and the core's generic parameters removed."""
     t = line.split('//')[0]
-    # M2 (Phase 1): the state struct is the core; and the receivers: a
+    # M2: the state struct is the core; and the receivers: a
     # field read as `self.state_.x` in a server method, `core.x` in a free
     # function or `self.x` in a RaftCore method is the same access
     t = t.replace('RaftConsensusState', 'RaftCore')
@@ -100,7 +99,7 @@ def normalize(line):
     t = re.sub(r'\brusty::(Vec|Option|Some|None|Box|String|sync::atomic)\b', r'\1', t)
     # named returns are contract syntax: `-> (r: T)` reads `-> T`
     t = re.sub(r'->\s*\((\w+):\s*([^()]*(\([^()]*\))?[^()]*)\)', r'-> \2', t)
-    # M10 (Phase 6): the same check, spelled for the verifier
+    # M10: the same check, spelled for the verifier
     t = t.replace('runtime_assert(', 'assert!(')
     # visibility: the core is a crate of its own, so the shell's view of a
     # moved item became `pub` ([move, M1]: paths)
@@ -379,7 +378,7 @@ def main():
                     help='the commit whose Raft sources the core was moved from')
     ap.add_argument('--stats', action='store_true')
     ap.add_argument('--ghost-only', action='store_true',
-                    help="Phase 8's diff-2 lint: lines changed since --base must be ghost")
+                    help="the diff-2 lint: lines changed since --base must be ghost")
     args = ap.parse_args()
     if args.ghost_only:
         # the lines a later phase changed in the core, by diff; a removed line

@@ -29,7 +29,7 @@ pub extern "C" fn raft_rt_run_lab() -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// The snapshot lab kernels, over SnapshotStore (plan N4).
+// The snapshot lab kernels, over SnapshotStore.
 // ---------------------------------------------------------------------------
 
 use crate::snapshot::{put, store_of, SnapshotStore};
@@ -111,7 +111,7 @@ pub unsafe extern "C" fn raft_lab_snapshot_copy_latest(
 }
 
 // ---------------------------------------------------------------------------
-// Tests 50-52 on the Rust lane (plan N10): new tests under the old numbers,
+// Tests 50-52 on the Rust lane: new tests under the old numbers,
 // over SnapshotStore, printing the lines ci.sh counts (`TEST N:` to derive
 // the expected count, `^TEST N Passed` for the passes).
 // ---------------------------------------------------------------------------

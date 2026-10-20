@@ -88,7 +88,7 @@ unsafe extern "C" {
         dst: *mut rusty::RaftSnapshotManagerPtr);
     fn setenv(name: *const core::ffi::c_char, value: *const core::ffi::c_char,
               overwrite: i32) -> i32;
-    // Tests 73-74 (plan N7): the store's save (SEAM: the Rust store or the
+    // Tests 73-74: the store's save (SEAM: the Rust store or the
     // C++ manager), and the recovery step of Setup with its HOST catch
     // wrapper -- the exact path Setup takes.
     fn raft_snapshot_store_save(manager: *const rusty::RaftSnapshotManagerPtr,
@@ -1205,7 +1205,7 @@ fn test_high_frequency_apply(_st: &mut LabState) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// Tests 73-74 -- startup recovery (plan N7)
+// Tests 73-74 -- startup recovery
 //
 // Recovery runs only in Setup, and no other case reaches it with snapshots
 // on: the lab starts with MAKO_RAFT_SNAPSHOTS unset, and 60 and 69 set it
@@ -1264,7 +1264,7 @@ fn recover_fresh(store: &rusty::RaftSnapshotManagerPtr, inject: bool, commit: u6
     let s: *mut RaftServerBase = Box::into_raw(Box::new(RaftServerBase::new()));
     // SAFETY: `s` is the live allocation above until the from_raw below.
     // The two `&mut` calls bracket every shared use, as raft_server_new and
-    // raft_server_delete do (bugs-found B19).
+    // raft_server_delete do.
     unsafe { (*s).ConstructRuntime() };
     let svr: &RaftServerBase = unsafe { &*s };
     if inject {
@@ -1371,7 +1371,7 @@ fn test_recovery_fail_stops(_st: &mut LabState) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// Test 75 -- embedder callbacks that throw (bugs-found B38, B39)
+// Test 75 -- embedder callbacks that throw
 //
 // The kernels are called directly, outside the cluster, so no replica is
 // failed stop: what is tested is that each kernel catches its callback's

@@ -123,7 +123,7 @@ public:
   int tot_num = 0;
 
   // [fix, F18] How many of this worker's own accepted submissions are still
-  // above the commit index (bugs-found B7); -1 without a Raft server.
+  // above the commit index; -1 without a Raft server.
   int OutstandingOwnLogs();
 
   // Configuration
@@ -184,7 +184,7 @@ public:
   void ShutDown();
   // @safe - A drain of another server sharing this worker's Raft server (a
   // single-group stub) timed out: one of its handlers may still be using the
-  // server, so ShutDown must not delete it (bugs-found B34).
+  // server, so ShutDown must not delete it.
   void KeepServerOnShutDown() { keep_server_on_shutdown_ = true; }
   // @safe - bounded pointer dereferences
   void WaitForShutdown();

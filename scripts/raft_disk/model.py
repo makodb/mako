@@ -45,8 +45,7 @@ Low load, one entry per round (G1, G3, G5). The heartbeat loop runs ONE
 round at a time (shell/server_cc.rs, HeartbeatDriver::run):
   a. Start appends the entry and queues its record; the tick wakes and waits
      until the leader's WAL holds every record queued so far, then a fiber
-     wake w, then sends (disk design §3: nothing leaves before its records
-     are durable).
+     wake w, then sends (nothing leaves before its records are durable).
   b. The follower appends, queues its record, and holds its reply until its
      WAL holds it, then the flusher sends the reply (q).
   c. Collect wakes on the reply (F11a) and the round end raises the commit:
@@ -90,7 +89,7 @@ first seconds measure the cache, so the saturated ext4 points discard them
   model.py ... --compare MEASURED.json --baseline BASE.json
       each measured value against its estimate; a miss over a quarter of the
       estimate means a primitive or the structure is wrong: find which with
-      the trace kit before changing anything (disk design §8).
+      the trace kit before changing anything.
 
 ----------------------------------------------------------------------------
 4. WHAT THE MISSES TAUGHT (2026-10-09/10)
@@ -148,7 +147,7 @@ first seconds measure the cache, so the saturated ext4 points discard them
     stalled and writing less. With B32 fixed it read 3 x 2.8: A = 3 stood.
     A check taken on a broken system confirms the wrong number.
   - The same G2 ext4 miss found a bug: every append wrote a RocksDB range
-    delete, and their flush is superlinear in their number (bugs-found B32;
+    delete, and their flush is superlinear in their number (B32;
     1-2 s stalls, shutdowns past their budget). The model said "too slow by
     this much"; the stats said where.
   - 2026-10-10: the tick now waits for the WAL only when it sends,

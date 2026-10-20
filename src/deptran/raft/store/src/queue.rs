@@ -1,5 +1,4 @@
-//! The record queue: records numbered in step order (design §3, "Records,
-//! under the lock").
+//! The record queue: records numbered in step order.
 //!
 //! The step wrappers push under the server's `mtx_`, so the numbering is the
 //! order in which steps changed memory. The flusher takes everything queued

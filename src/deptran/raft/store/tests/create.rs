@@ -1,4 +1,4 @@
-//! Store creation's decisions (design Decision 10): only a
+//! Store creation's decisions: only a
 //! creating launch starts empty; a crash while creating leaves nothing that
 //! blocks a creating relaunch; every refusal says why.
 
@@ -144,7 +144,7 @@ fn what_recovery_acknowledges_survives_a_power_cut() {
 /// No writer names a segment 0 (records are numbered from 1), so a store
 /// whose only segment is named 0 is refused, not opened with its last
 /// durable record wrapped to u64::MAX -- which acknowledged every later
-/// batch before its sync (bugs-found B45).
+/// batch before its sync.
 #[test]
 fn a_segment_named_zero_is_refused() {
     let fs = fresh();

@@ -257,8 +257,8 @@ pub fn wait_one_leader(want_leader: bool, expected: i32) -> i32 {
 }
 
 // ---------------------------------------------------------------------------
-// [M0] The equivalence comparator's view of a case (docs/verus/
-// modification-plan.md A.4 item 1; scripts/verus/lab_trace_compare.py).
+// [M0] The equivalence comparator's view of a case
+// (scripts/verus/lab_trace_compare.py).
 // Printed only when MAKO_RAFT_LAB_COMMIT_LOG=1; no case reads any of it.
 // Lines belong to the case whose "TEST <n>:" line precedes them on stderr.
 

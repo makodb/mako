@@ -1,4 +1,4 @@
-// The cost model's primitives (scripts/raft_disk/model.py; plan §5), each
+// The cost model's primitives (scripts/raft_disk/model.py), each
 // measured in isolation -- no Raft runs here, so the model's inputs cannot
 // be fitted to the experiments it predicts. std only, as raft-store.
 //

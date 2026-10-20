@@ -1,5 +1,4 @@
-// Raft disk persistence, the shell's half (docs/verus/disk-persistence.md
-// §3-§4, its settings §8).
+// Raft disk persistence, the shell's half.
 //
 // Compiled in every build and used only in disk builds: the server holds a
 // DiskShell only when `cfg!(feature = "raft_disk")` (a constant the compiler
@@ -82,7 +81,7 @@ impl Codec<Payload> for ShellCodec {
     }
 }
 
-/// The disk build's settings, from the environment (disk design §8).
+/// The disk build's settings, from the environment.
 #[derive(Clone, Debug)]
 pub struct DiskParams {
     pub data_dir: PathBuf,
@@ -90,7 +89,7 @@ pub struct DiskParams {
     pub segment_bytes: u64,
     pub create: bool,
     pub verify: bool,
-    /// The applier's checkpoint thresholds (design §3, Decision 13).
+    /// The applier's checkpoint thresholds.
     pub checkpoint_bytes: u64,
     pub checkpoint_secs: u64,
 }
@@ -129,13 +128,13 @@ impl DiskParams {
         let checkpoint_bytes = env_u64("MAKO_RAFT_CHECKPOINT_BYTES", 256 << 20)?;
         if checkpoint_bytes <= segment_bytes {
             // Only closed segments are deleted: at or below one segment the
-            // open one alone would keep the threshold crossed (Decision 13).
+            // open one alone would keep the threshold crossed.
             return Err(format!("MAKO_RAFT_CHECKPOINT_BYTES={checkpoint_bytes} must exceed the segment size {segment_bytes}"));
         }
         let checkpoint_secs = env_u64("MAKO_RAFT_CHECKPOINT_SECS", 10)?;
         if checkpoint_secs == 0 {
             // A zero interval is always elapsed: a checkpoint (base flush,
-            // segment unlinks, a directory sync) after every fold (bugs-found B46).
+            // segment unlinks, a directory sync) after every fold.
             return Err("MAKO_RAFT_CHECKPOINT_SECS=0: the interval must be at least 1".into());
         }
         Ok(DiskParams {
@@ -169,7 +168,7 @@ pub fn identity(site: u16, partition: u32, members: &[u16]) -> Identity {
 pub fn record_from_note(note: &PersistNote, log: &RaftLog, image: Option<String>) -> Record<Payload> {
     let mut rec = Record::default();
     // [fix, F25] a boundary move: the record names the image file the shell
-    // wrote just before it (disk design §3)
+    // wrote just before it
     if let Some(s) = note.snap_ {
         rec.snapshot = Some(raft_store::SnapRef { index: s.index_, term: s.term_ as u64, image,
                                                   keep: s.keep_ });
@@ -220,7 +219,7 @@ impl FiberWaiters {
     }
 }
 
-/// The base every disk build keeps (design §3, §5): RocksDB, at `<store>/base`.
+/// The base every disk build keeps: RocksDB, at `<store>/base`.
 #[cfg(feature = "raft_disk")]
 fn base_factory() -> Option<Box<BaseFactory>> {
     Some(Box::new(|p: &Path, create: bool| {
@@ -233,7 +232,7 @@ fn base_factory() -> Option<Box<BaseFactory>> {
     None
 }
 
-/// What recovery found, for the shell's Restore (design §3-§4).
+/// What recovery found, for the shell's Restore.
 pub struct Recovered {
     pub state: SavedState<Payload>,
     pub d: u64,
@@ -245,7 +244,7 @@ pub struct Recovered {
 pub struct DiskShell {
     pub queue: Arc<RecordQueue<Payload>>,
     pub durable: Arc<DurableState>,
-    /// Replies waiting for their records (design §3); the flusher sends them.
+    /// Replies waiting for their records; the flusher sends them.
     pub held: Arc<HeldReplies>,
     /// Fibers waiting for their records (the tick, the campaign).
     waiters: Arc<FiberWaiters>,
@@ -255,14 +254,14 @@ pub struct DiskShell {
     pub params: DiskParams,
     pub id: Identity,
     /// The commit index recovery restored (0 for a new store): no campaign
-    /// starts until the state machine has re-applied through it (design §4),
+    /// starts until the state machine has re-applied through it,
     /// as Mako's apply callback is chosen by role.
     pub recovered_commit: std::sync::atomic::AtomicU64,
     recovered: Mutex<Option<Recovered>>,
     /// The filesystem the store goes through (registered for `:powercut`
     /// crash points, so image writes are undone with the WAL's).
     fs: Arc<dyn StoreFs>,
-    /// MAKO_RAFT_KILLTEST_DIR (design §8): `<dir>/<site>.reveal`, where each
+    /// MAKO_RAFT_KILLTEST_DIR: `<dir>/<site>.reveal`, where each
     /// output that leaves writes what it shows just before it leaves, and
     /// recovery writes what it restored; scripts/raft_kill/check.py
     /// requires every `recovered` line to cover the reveals before it.
@@ -330,7 +329,7 @@ impl DiskShell {
     pub fn open(params: DiskParams, site: u16, partition: u32, members: &[u16], no_vote: u16,
                 wake: FiberWake) -> Result<DiskShell, String> {
         // Not synced here: opening the store syncs every directory above it,
-        // these included, before anything is acknowledged (bugs-found B35).
+        // these included, before anything is acknowledged.
         std::fs::create_dir_all(&params.data_dir)
             .map_err(|e| format!("{}: {e}", params.data_dir.display()))?;
         local::check_local(&params.data_dir)?;
@@ -468,7 +467,7 @@ impl DiskShell {
             raft_store::stats::report(&self.store.display().to_string());
         }
         // The applier stops where its base is: the WAL keeps every record
-        // after c, which the next start folds (design §3); RocksDB's close
+        // after c, which the next start folds; RocksDB's close
         // flushes its memtables.
         let a = self.applier.lock().unwrap_or_else(|e| e.into_inner()).take();
         if let Some(a) = a {
@@ -535,9 +534,9 @@ unsafe extern "C" fn write_image_emit(ctx: *mut core::ffi::c_void, index: u64, t
 }
 
 impl DiskShell {
-    /// Design §3: the snapshot store's latest image, written durably to
+    /// The snapshot store's latest image, written durably to
     /// `<store>/images` before the record naming it is queued. An I/O error
-    /// aborts, as a WAL error does (design Decision 14).
+    /// aborts, as a WAL error does.
     ///
     /// # Safety
     /// `manager` is the server's live snapshot-manager carrier.
@@ -559,7 +558,7 @@ impl DiskShell {
         }
     }
 
-    /// Design §4: a snapshot store holding the recovered image, for Setup's
+    /// A snapshot store holding the recovered image, for Setup's
     /// snapshot recovery to load (it keeps an injected store).
     pub fn image_store(&self, index: u64, term: u64, name: &str) -> Result<rusty::RaftSnapshotManagerPtr, String> {
         let bytes = raft_store::images::read(&*self.fs, &self.store.join("images"), name)?;

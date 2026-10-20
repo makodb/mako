@@ -9,7 +9,7 @@ scripts/raft_perf/jetpack/run_jetpack_sweep.sh and jetpack_compare.py lay them
 out. It reads summary.json, which jetpack_compare.py writes from the same
 per-round files with Jetpack's own aggregate(); run that first.
 
-Rules (docs/verus/modification-plan.md §6, Tier 3), on the median over rounds
+Rules (Tier 3), on the median over rounds
 of the per-round paired ratio candidate/baseline - 1:
   throughput  fail below -2% at any N
   p50         fail above +2% at any N

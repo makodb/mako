@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks a raft_kill run (docs/verus/disk-persistence.md §5, §8).
+"""Checks a raft_kill run.
 
 Reads <run>/events/<proc>.events (raft_kill_node's lines, all incarnations
 of a node appended to one file) and <run>/logs/<proc>.<inc>.log (each

@@ -2,7 +2,7 @@
 // transpiled, so edit it directly.
 
 use crate::server_pods_h::{RaftElectionTimeouts, RaftServerHandle};
-// [move, M1] The core's pure items live in raft-core (Phase 6); re-exported
+// [move, M1] The core's pure items live in raft-core; re-exported
 // so every path through server_h keeps resolving.
 pub use raft_core::*;
 // [move, M11] The core is generic over its command handle; the shell's is
@@ -112,7 +112,7 @@ impl RaftLockGuard {
     // A raw pointer rather than `&mut RaftCheckedMutex`: every call site
     // passes `self.mtx()`, the address of a field of the live object whose
     // method is running, reached from `&self` through its ShellCell
-    // ([fix, F19], bugs-found B19). The C++ mutex is locked in place; no
+    // ([fix, F19]). The C++ mutex is locked in place; no
     // reference to it is held, so the body goes on using `self` while the
     // lock is held.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
@@ -171,8 +171,8 @@ impl Drop for RaftStdLockGuard {
     }
 }
 
-// [fix, F19] A shell field that changes after the server is shared
-// (bugs-found B19). Every entry reaches the server as a shared
+// [fix, F19] A shell field that changes after the server is shared.
+// Every entry reaches the server as a shared
 // `&RaftServerBase` now -- the C ABI exports, the RPC service, the fibers,
 // the apply thread, the lab -- so a field that changes lives in an atomic,
 // a mutex, or one of these. `get` hands out the one `&mut` while the caller
@@ -581,7 +581,7 @@ unsafe extern "C" {
     // The kernel bridge (server.cc). Each takes the base and, where it has
     // to reach a method that has not converted, casts down to RaftServer.
     fn raft_leader_change_cb_is_set(cb: *const rusty::RaftLeaderChangeCb) -> bool;
-    // False: the callback threw (caught in the kernel, bugs-found B39).
+    // False: the callback threw (caught in the kernel).
     fn raft_fire_leader_change(cb: *const rusty::RaftLeaderChangeCb, site_id: u16,
                                is_leader: bool) -> bool;
     // The env-tunable election-timeout knobs, read in one shot. They were
@@ -1002,7 +1002,7 @@ pub struct RaftServerBase {
     pub heartbeat_: bool,
     pub heartbeat_setup_: rusty::sync::atomic::AtomicBool,  // [fix, F19]
     // [fix, F17] An atomic: lab case 67 sets it on running servers while the
-    // heartbeat and election loops read it (bugs-found B14). Relaxed: no
+    // heartbeat and election loops read it. Relaxed: no
     // other memory is published with it.
     pub heartbeat_interval_us_: rusty::sync::atomic::AtomicU64,
     pub log_retention_window_: rusty::sync::atomic::AtomicU64,  // [fix, F19]
@@ -1072,11 +1072,11 @@ pub struct RaftServerBase {
     pub snapshot_threshold_: rusty::sync::atomic::AtomicU64,  // [fix, F19]
     pub snapshot_callback_owner_token_: rusty::sync::atomic::AtomicU64,  // [fix, F19]
     pub next_snapshot_callback_owner_token_: rusty::sync::atomic::AtomicU64,  // [fix, F19]
-    // [M0] The replay recorder (plan A.4): off unless MAKO_RAFT_REPLAY_DIR
+    // [M0] The replay recorder: off unless MAKO_RAFT_REPLAY_DIR
     // is set.
     // [fix, F19] Under mtx_ (the step wrapper).
     pub recorder_: ShellCell<CoreRecorder>,
-    // Disk persistence (docs/verus/disk-persistence.md §3): the store,
+    // Disk persistence: the store,
     // set once by SetupInternal in disk builds (never in memory builds), and
     // read by the step wrappers under mtx_ and at shutdown.
     pub disk_: std::sync::OnceLock<std::sync::Arc<crate::disk::DiskShell>>,
@@ -1248,7 +1248,7 @@ impl RaftServerBase {
     pub fn RequestVoteFromElectionTimer(&self, expected_generation: u64)
         -> bool
     {
-        // Disk builds (disk design §4): a restarted server campaigns only once its
+        // Disk builds: a restarted server campaigns only once its
         // state machine has re-applied what recovery found committed; Mako's
         // apply callback is chosen by role, and a leader's would not replay.
         if let Some(d) = self.disk() {
@@ -1355,7 +1355,7 @@ impl RaftServerBase {
             .load(rusty::sync::atomic::Ordering::Acquire)
     }
 
-    // Disk builds (disk design §3): the worker's drain closes Raft's gate first, as
+    // Disk builds: the worker's drain closes Raft's gate first, as
     // PrepareForShutdown does, under mtx_. srpc's own admission flag is never
     // checked on dispatch, so without this a request arriving during the
     // drain is handled and its reply held for a flush, keeping the drain
@@ -1581,7 +1581,7 @@ impl RaftServerBase {
         self.step(Event::RebuildPeers { next_index }, &mut out).into_done();
     }
 
-    // [move, M5] The one way into the core (plan §3.1 rule 1): an event and
+    // [move, M5] The one way into the core: an event and
     // its reply, under mtx_, which the caller holds (Setup's identity and
     // membership come before anything else can reach the server).
     pub fn step(&self, ev: Event<'_>, out: &mut CoreOutput) -> Reply {
@@ -1616,13 +1616,13 @@ impl RaftServerBase {
     }
 
     // Disk builds: the step's persist note becomes a WAL record, numbered
-    // in step order (disk design §3, "Records, under the lock"). CALLER
+    // in step order. CALLER
     // MUST HOLD mtx_.
     fn disk_note(&self, out: &mut CoreOutput) {
         if let Some(d) = self.disk() {
             if let Some(note) = out.take_persist() {
                 // [fix, F25] a boundary move: the image file first, then the
-                // record naming it (disk design §3)
+                // record naming it
                 let image: Option<String> = if note.snap_.is_some() {
                     // SAFETY: the server's own carrier, under mtx_.
                     unsafe {
@@ -1865,7 +1865,7 @@ impl RaftServerBase {
                         self.site_id_);
                 }
                 // A throwing callback fails the server stop, as a throwing
-                // apply callback does (bugs-found B39).
+                // apply callback does.
                 if !unsafe {
                     raft_fire_leader_change(
                         &cb as *const rusty::RaftLeaderChangeCb, self.site_id_, became_leader)
@@ -2027,7 +2027,7 @@ impl RaftServerBase {
         }
 
         // Disk builds: the store opens before snapshot recovery, so a
-        // recovered snapshot image is the store recovery loads (disk design §3).
+        // recovered snapshot image is the store recovery loads.
         if cfg!(feature = "raft_disk") && !self.OpenDiskStore() {
             self.FailClosed();
             return false;
@@ -2064,8 +2064,8 @@ impl RaftServerBase {
             return false;
         };
 
-        // [fix, F5] The configuration the verification covers
-        // (docs/verus/modification-plan.md §4.1). Outside it a normal run
+        // [fix, F5] The configuration the verification covers.
+        // Outside it a normal run
         // logs once and carries on; MAKO_RAFT_VERIFIED_GATES=1 fails closed.
         // The knob is parsed whatever the configuration, as the others are,
         // so a malformed value never goes unnoticed.
@@ -2118,7 +2118,7 @@ impl RaftServerBase {
         true
     }
 
-    // Disk builds (disk design §3-§4): opens or creates this server's store,
+    // Disk builds: opens or creates this server's store,
     // taking over what recovery found, and starts its flusher. Every refusal
     // fails closed with the reason.
     fn OpenDiskStore(&self) -> bool {
@@ -2163,7 +2163,7 @@ impl RaftServerBase {
             if r.state.snap_index == 0 {
                 return None;
             }
-            // Disk design §4: the image the state names becomes the snapshot store
+            // The image the state names becomes the snapshot store
             // recovery loads; snapshots off, or a missing or damaged image,
             // fails closed.
             if !unsafe { raft_env_snapshots_enabled() } {
@@ -2191,7 +2191,7 @@ impl RaftServerBase {
         true
     }
 
-    // Disk builds (disk design §3): the recovered state enters the core as one
+    // Disk builds: the recovered state enters the core as one
     // event, after Configure and snapshot recovery, before EnterGates.
     fn RestoreDiskState(&self) -> bool {
         let Some(shell) = self.disk() else { return true };
@@ -2860,7 +2860,7 @@ impl RaftServerBase {
                 continue;
             }
 
-            // Disk builds (disk design §3): a leader's apply tells Mako the entry is
+            // Disk builds: a leader's apply tells Mako the entry is
             // replicated, so the entry must be on this server's disk first; a
             // leader never cuts its log, so a durable last index at or above
             // id means it is. With two or more servers this never blocks (a
@@ -3204,7 +3204,7 @@ impl RaftServerBase {
     // @unsafe - copies the manager under mtx_ before querying it, so the
     // query itself never runs with Raft state locked.
     //
-    // The copy is real (plan N4): before, only the is_set test ran under the
+    // The copy is real: before, only the is_set test ran under the
     // lock and the query read snapshot_manager_ after releasing it, so a
     // concurrent SetSnapshotManagerLocked could replace the carrier mid-read.
     pub fn HasSnapshot(&self) -> bool {
@@ -3414,7 +3414,7 @@ impl RaftServerBase {
         if !campaign.started_ {
             return false;
         }
-        // Disk builds (disk design §3): the vote requests carry term + 1 and imply
+        // Disk builds: the vote requests carry term + 1 and imply
         // the self-vote, so they leave only once the WAL holds both.
         if let Some(d) = self.disk() {
             if !d.wait_durable(disk_tail, 10_000, &|| self.stopped_now()) {
@@ -3526,7 +3526,7 @@ pub struct WireBatch {
     has_cmd_: bool,
     next_log_term_: u64,
     // [fix, F14] The AppendEntries' own term: no entry it carries may be of
-    // a later term (bugs-found B4).
+    // a later term.
     leader_term_: u64,
     // The batch decode_terms found (null for a single-entry payload), kept
     // for entry_at so the payload is cast once per call, as it was when
@@ -3569,7 +3569,7 @@ impl raft_core::InboundBatch<rusty::RaftCommand> for WireBatch {
             // (the spec's B16). A payload carrying any other is refused like
             // any undecodable one. [fix, F14] Nor may it exceed the
             // AppendEntries' own term: a leader's log holds no entry of a
-            // later term (bugs-found B4).
+            // later term.
             let mut terms_valid: bool = true;
             let mut i: u64 = 0;
             while i < count {
@@ -3616,7 +3616,7 @@ impl raft_core::InboundBatch<rusty::RaftCommand> for WireBatch {
     }
 }
 
-// [M0] The replay recorder (plan A.4). With MAKO_RAFT_REPLAY_DIR=<dir> set,
+// [M0] The replay recorder. With MAKO_RAFT_REPLAY_DIR=<dir> set,
 // every server writes each core step to <dir>/<pid>.<n>.rec (n counts the
 // process's servers), one record a line in raft-replay's format; the replay
 // test (raft-replay's core_replay) feeds them back to the core. Unset, the
@@ -3915,7 +3915,7 @@ impl RaftServerBase {
 }
 
 // [fix, F19] The shared twins of TxLogServer's set_commo and
-// reg_learner_action (bugs-found B19). The worker registers the RPC service
+// reg_learner_action. The worker registers the RPC service
 // before it calls reg_learner_action, so an inbound handler can already hold
 // the server as `&RaftServerBase` when it does: the call must not make a
 // `&mut` of it. TxLogServer keeps `&mut self` because PaxosServer implements
@@ -4100,8 +4100,8 @@ impl RaftSpecific for RaftServerBase {
         self.leader_hint_mirror_.load(rusty::sync::atomic::Ordering::Acquire) as u16
     }
 
-    // @safe - writes a shell atomic and logs. [move, M1] Not mtx_ any more
-    // (plan Phase 4): only the election timeout's choice reads it, and
+    // @safe - writes a shell atomic and logs. [move, M1] Not mtx_ any more:
+    // only the election timeout's choice reads it, and
     // nothing in the core does.
     fn SetPreferredLeader(&self, site_id: u16) {
         let old_preferred: u16 = self.preferred_leader();
@@ -4145,7 +4145,7 @@ impl RaftSpecific for RaftServerBase {
 
     // See the trait: this is the unlocked read get_outstanding_logs makes.
     // [fix, F8] It reads the mirror, not the core's field, which another
-    // thread may be writing under mtx_ (bugs-found B2).
+    // thread may be writing under mtx_.
     fn CommitIndex(&self) -> u64 {
         self.commit_index_mirror_.load(rusty::sync::atomic::Ordering::Acquire)
     }
@@ -4167,7 +4167,7 @@ impl RaftSpecific for RaftServerBase {
             }
             // [fix, F13] A command without a value would become an entry the
             // leader never replicates: its payload selection reads such a
-            // slot as missing (bugs-found B16). Refuse it, as a non-leader's
+            // slot as missing. Refuse it, as a non-leader's
             // proposal is refused.
             if !unsafe { raft_command_has_value(cmd as *const rusty::RaftCommand) } {
                 rusty::raft_log_warn_1(
@@ -4348,7 +4348,7 @@ impl RaftServerBase {
         // the C++ handler took. The locked body is entered through a C++
         // kernel (raft_install_snapshot_guarded); false is a throw it caught.
         // The embedder's snapshot callbacks are caught in the kernels that
-        // call them, below these Rust frames (bugs-found B38).
+        // call them, below these Rust frames.
         {
             let _apply_lock =
                 RaftStdLockGuard::new(self.state_machine_apply_mtx_.as_ptr());
@@ -4513,7 +4513,7 @@ fn on_request_vote_locked(
     let failover: bool = server.failover_;
     // A term at the index ceiling is outside the core's premise (`admits`)
     // and, once adopted, could never be left: dropped like an inadmissible
-    // message (bugs-found B42).
+    // message.
     let decided: Option<Reply> = if can_term >= RAFT_INDEX_LIMIT as i64 {
         None
     } else {
@@ -4536,7 +4536,7 @@ fn on_request_vote_locked(
         None => {
             // [fix, F9] Dropped: answered as an unavailable replica answers
             // (ServeVote), "no" at the candidate's own term, which the
-            // candidate reads as unmodelled input (plan §4.3, V3).
+            // candidate reads as unmodelled input.
             rusty::raft_log_warn_3(
                 "[RAFT_VOTE] Site {} dropping RequestVote from candidate {} at term {} (outside the configuration, term 0, or at the term ceiling)",
                 server.site_id_, can_id, can_term);
@@ -4605,7 +4605,7 @@ fn on_append_entries_locked(
                                          leader_next_log_term,  // [move, M5]
                                          leader_current_term);  // [fix, F14]
     let failover: bool = server.failover_;
-    // The term ceiling, as for RequestVote (bugs-found B42); entry terms are
+    // The term ceiling, as for RequestVote; entry terms are
     // bounded by this one (F14).
     let decided: Option<Reply> = if leader_current_term >= RAFT_INDEX_LIMIT {
         None

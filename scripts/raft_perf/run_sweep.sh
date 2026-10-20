@@ -29,8 +29,6 @@
 # What was replaced is every axis: jetpack swept nine consensus protocols by
 # client concurrency, Zipf skew and key range; this sweeps one protocol by
 # offered rate, entry size, batch hint, partition count and Raft group mode.
-#
-# See docs/performance/raft-harness.md for what the numbers mean.
 
 set -uo pipefail
 
@@ -64,11 +62,10 @@ fi
 
 # ---------------------------------------------------------------------------
 # The axes. Every number below is data, not logic — change it here, nowhere
-# else. The derivations are in the Mako Raft entry-size profile notes (removed; see git history) (what Mako
-# actually submits) and in the knee measurements quoted beside each array.
+# else. The knee measurements are quoted beside each array.
 # ---------------------------------------------------------------------------
 
-# The three cluster shapes, and only these three (harness plan decision D5).
+# The three cluster shapes, and only these three.
 # "1 partition" is the low-variance regression gate. "6 partitions" is what
 # production runs. The two group modes at six partitions bracket the cost of
 # the shared recursive mutex that single-group mode puts every partition
@@ -82,9 +79,8 @@ CONFIGS=(
 
 # Entry sizes, bracketing the profile. The middle value is the measured p50 of
 # a real TPC-C Raft entry, 286208 bytes, NOT the arithmetic mean (~310 KB):
-# the mean is dragged upward by the 13 MB and 25 MB single entries that
-# the Mako Raft entry-size profile notes (removed; see git history) records as rare events rather than workload,
-# so the p50 is the honest "typical entry". 4096 is "much smaller" and 1048576
+# the mean is dragged upward by 13 MB and 25 MB single entries, rare events
+# rather than workload, so the p50 is the honest "typical entry". 4096 is "much smaller" and 1048576
 # is "much larger" while still inside the observed tail.
 PAYLOAD_SMALL=4096
 PAYLOAD_PROFILE=286208
@@ -132,10 +128,9 @@ declare -A MAX_OUTSTANDING=(
 # paced array below saturation and has a lower bound, not a measured ceiling.
 # Fixing this needs a per-(payload, group_mode) array; doing so changes what
 # the sweep produces, so it is deliberately NOT folded in here without a
-# re-run. See the since-removed raft-baseline.md, "Known gaps".
-# For calibration, the real TPC-C workload profiled in
-# the Mako Raft entry-size profile notes (removed; see git history) submits ~303 entries/s of ~290 KB, i.e. Mako
-# in production sits right at this ceiling.
+# re-run.
+# For calibration, the real TPC-C workload submits ~303 entries/s of
+# ~290 KB, i.e. Mako in production sits right at this ceiling.
 # Re-measure on a new machine with:  ./run_sweep.sh --phase knee
 declare -A RATES=(
     [$PAYLOAD_SMALL]="240 600 1200 2400 3600 4800 6000 7100 8300 8900 9500 10100 10700 11300 11900 13100 14900 17900 23800 35700 0"

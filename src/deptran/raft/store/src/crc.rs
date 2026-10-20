@@ -1,8 +1,8 @@
 //! CRC32C (Castagnoli), the checksum of segment headers and WAL batches.
 //!
 //! SSE4.2's `crc32` instruction when the CPU has it (about 0.13 us/KiB on
-//! zoo-003), else a slice-by-8 table (about 0.65 us/KiB). The plan's cost
-//! model (plan §5) shows the table version costs G2 a further 8%, hence the
+//! zoo-003), else a slice-by-8 table (about 0.65 us/KiB). The cost
+//! model shows the table version costs G2 a further 8%, hence the
 //! hardware path.
 
 use std::sync::OnceLock;

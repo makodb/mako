@@ -16,8 +16,8 @@ class Communicator;
 
 // The replication engine interface.
 //
-// WHAT THIS USED TO BE, and why it changed. Until the Tranche 6 work
-// (docs/migration/raft/conversion-log.md section 1), TxLogServer was not an interface
+// WHAT THIS USED TO BE, and why it changed. Until the Raft conversion,
+// TxLogServer was not an interface
 // at all: it was six public data members (loc_id_, site_id_, app_next_,
 // commo_, partition_id_, mtx_), one non-virtual method that assigned one of
 // them, and a virtual destructor -- ZERO behavioural virtuals. RaftServer and
@@ -57,7 +57,7 @@ class Communicator;
 // std::recursive_mutex shared by both engines by inheritance -- 48 acquisitions
 // in Raft, 4 in Paxos. Each server now owns its own, which is what lets Raft
 // replace its recursive mutex with a single Mutex<RaftState> without touching
-// Paxos (Tranche 5).
+// Paxos.
 //
 // The learner callback, at namespace scope rather than as a member typedef of
 // TxLogServer: a DSL `pub trait` cannot declare a nested type, and nothing
@@ -139,7 +139,7 @@ pub enum RaftStartResult {
 // already call; renaming them to snake_case is a mechanical follow-up once
 // nothing hand-written calls them.
 //
-// Every method takes `&self` (bugs-found B19): the worker, the RPC service,
+// Every method takes `&self`: the worker, the RPC service,
 // the fibers and the apply thread call these concurrently on one server, so
 // none of them may hold it as `&mut`. What serialises them is the server's
 // own mtx_ and atomics. TxLogServer above keeps `&mut self`: PaxosServer
@@ -205,7 +205,7 @@ pub trait RaftSpecific: TxLogServer {
                                         prepare_cb: &rusty::RaftPrepareSnapshotCb) -> u64;
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=d04755016a9c260600b98d9dd4894cd1ea825a7adec51686d7b7ad740cf188cb*/
+/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=c401fcd7826ef65fe45a0d20892bff4274153874eb330655ae8116c5fab7871a*/
 enum class RaftStartResult : int32_t;
 constexpr RaftStartResult RaftStartResult_REJECTED();
 constexpr RaftStartResult RaftStartResult_APPENDED();

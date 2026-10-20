@@ -1,7 +1,7 @@
 // The replicated log: entries (a command handle and the facts cached about
 // it, M6) in fixed blocks, never moved once written.
 //
-// [move, M1] From src/deptran/raft/shell/server_h.rs (Phase 6); the
+// [move, M1] From src/deptran/raft/shell/server_h.rs; the
 // command is the type parameter C (M11) and logging is records in the
 // output (M7).
 
@@ -18,7 +18,7 @@ verus! {
 // about 146,000 years), so no execution comes near it. Keeping indices below
 // it is what lets the index arithmetic below be proved free of overflow; the
 // shell's side of it is the host-contract assumption that no index it hands
-// the core reaches it (the Phase 6 report, since removed).
+// the core reaches it.
 pub open spec fn raft_index_limit() -> int {
     0x4000_0000_0000_0000int
 }

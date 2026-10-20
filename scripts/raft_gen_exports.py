@@ -25,7 +25,7 @@ INTERFACE = ['set_site_identity', 'set_commo', 'reg_learner_action', 'EnsureSetu
 # [fix, F19] TxLogServer methods whose export calls a `&self` inherent twin
 # rather than the trait method: TxLogServer keeps `&mut self` because
 # PaxosServer implements it too, and the worker can call these after the
-# server is shared (bugs-found B19). The export keeps the trait method's name.
+# server is shared. The export keeps the trait method's name.
 SHARED_TWINS = {'set_commo': 'bind_commo', 'reg_learner_action': 'register_learner_action'}
 KERNEL_CALLED = ['ApplyThreadLoop', 'BindReplicationWakeOwner', 'FailStop', 'InitializeSnapshotManagerLocked',
                  'InstallSnapshotReplyAccepted', 'OnInstallSnapshotLocked', 'SetupInternal', 'StartElectionTimer']

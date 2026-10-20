@@ -6,9 +6,9 @@
 
 Reads the per-entry stage traces of a TRACE=1 rotation
 (scripts/raft_perf/rotation_trial.sh: OUT_DIR/trace.r<i>.<arm>.<pid>, one CSV
-per process, from the Phase 0 trace kit, MAKO_RAFT_TRACE_FILE).
+per process, from the trace kit, MAKO_RAFT_TRACE_FILE).
 
-Why this metric (Phase 3 report §3.1, since removed). At saturation the
+Why this metric. At saturation the
 leader skips a follower whose reply missed the round's early-quorum pass, a
 round that sends to one follower is far shorter than one that sends to two,
 and how often that happens is a timing race. G2's throughput therefore
@@ -24,8 +24,8 @@ behind is sent older ones. A round's time is the gap to the next round's
 first send. Rounds in the middle half of the run are counted, away from the
 warm-up and the drain, and only full ones: rounds whose first send carried
 the run's largest batch (256 entries at G2). A run can fall into a stretch
-of short follow-up rounds carrying a few entries each (one Phase 3
-validation run had 1,208 of them), whose times would otherwise swamp the
+of short follow-up rounds carrying a few entries each (one validation
+run had 1,208 of them), whose times would otherwise swamp the
 median.
 
 summarize writes OUT_DIR/r<i>.<arm>.rounds.json per run (kept, so a re-run

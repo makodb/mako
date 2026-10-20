@@ -16,10 +16,7 @@
 # the manifest-less `rustc` invocation that could not resolve a single foreign
 # type name. What still stands is the orphan-impl rule -- an `impl` on a
 # hand-written C++ type is stubbed out, so the unit of conversion is a whole
-# type -- and implementation inheritance, which has no Rust spelling. See
-# the constraints list in the Raft migration plan and docs/stage2_raft.txt
-# (both removed; see git history; docs/stage2_open_questions.md Q1b lived on
-# as docs/stage2_raft.txt:353).
+# type -- and implementation inheritance, which has no Rust spelling.
 #
 # Usage:
 #   bash scripts/raft_dsl.sh --check [--transpiler PATH] [FILE ...]
@@ -663,7 +660,6 @@ if [[ -f "${RAFT_CRATE_MANIFEST}" && ${#FILES[@]} -eq ${#EXPECTED_INVENTORY_FILE
     # flag to every crate it builds from this manifest; the per-carrier stage's
     # `-D warnings` is preserved, not relaxed.
     #
-    # See the facade-crate constraint in the Raft migration plan (removed; see git history).
     if ! output=$(cd "${RAFT_CRATE_DIR}" && \
         RUSTFLAGS="-D warnings" CARGO_TARGET_DIR="${RAFT_CARGO_TARGET}" \
         cargo build --quiet --workspace --lib 2>&1); then

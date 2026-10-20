@@ -1,6 +1,6 @@
 // The pure decision helpers (raft_server_*) and their compile-time checks.
 //
-// [move, M1] Moved verbatim from src/deptran/raft/shell/server_h.rs (Phase 6),
+// [move, M1] Moved verbatim from src/deptran/raft/shell/server_h.rs,
 // paths aside: the rust lane's rusty::Vec/Option are std's own.
 
 #[allow(unused_imports)]

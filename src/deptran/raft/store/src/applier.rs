@@ -1,4 +1,4 @@
-//! The applier thread (design §3-§4 "The base and the applier").
+//! The applier thread.
 //!
 //! The flusher offers each synced batch (its first number and encoded
 //! records) on a bounded queue and drops it when the queue is full; the
@@ -8,7 +8,7 @@
 //! by a catch-up read from the segments. A checkpoint, every
 //! `checkpoint_bytes` of records or `checkpoint_secs`, flushes the base and
 //! then deletes the segments it covers. A base error stops the applier and
-//! so the deletion: the WAL still holds every record (design Decision 14).
+//! so the deletion: the WAL still holds every record.
 
 use std::path::PathBuf;
 use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender, TrySendError};
@@ -69,7 +69,7 @@ struct State {
     fs: Arc<dyn StoreFs>,
     wal_dir: PathBuf,
     /// The WAL writer's published rotation: no segment goes before its
-    /// successor's creation is durable (bugs-found B37).
+    /// successor's creation is durable.
     rotated: wal::Rotated,
     id: Identity,
     durable: Arc<DurableState>,
@@ -164,7 +164,7 @@ impl State {
         if !doomed.is_empty() {
             self.fs.sync_dir(&self.wal_dir).map_err(|e| e.to_string())?;
         }
-        // Images older than the one the base now durably names (design §3).
+        // Images older than the one the base now durably names.
         if let Some(images) = self.wal_dir.parent().map(|p| p.join("images")) {
             if let Some(b) = self.base.get(crate::base::KEY_SNAP).map_err(|e| e.to_string())? {
                 if b.len() >= 8 && self.fs.exists(&images) {
@@ -214,7 +214,7 @@ impl Applier {
                             }
                             // Shutdown: stop where the base is. The WAL holds
                             // every record after c, so a lagging base costs
-                            // only replay time at the next start (design §3);
+                            // only replay time at the next start;
                             // folding a saturated run's backlog here would hold
                             // the shutdown for as long as the backlog takes.
                             Err(RecvTimeoutError::Disconnected) => return Ok(()),

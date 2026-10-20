@@ -142,7 +142,7 @@ fn a_campaign_over_tcp_reaches_a_quorum() {
 fn a_rejected_three_replica_campaign_is_lost_at_once() {
     // [fix, F15] no() is n_voted_no > (n - 1) - n/2 = 1: both peers'
     // refusals decide the campaign as lost, without waiting out the
-    // caller's one-second deadline (bugs-found B1; before F15 the rule was
+    // caller's one-second deadline (before F15 the rule was
     // > n - n/2 = 2, which two peers could not reach).
     let (transport, _servers) = cluster([0, 0, 0]);
     let req = VoteRequest { lst_log_idx: 0, lst_log_term: 0, site_id: 1, cur_term: 3 };
@@ -233,7 +233,7 @@ fn install_snapshot_delivers_binary_data_and_calls_back_once() {
     assert_eq!(servers[1].2.lock().unwrap().snapshot.as_deref(), Some(data.as_slice()));
 }
 
-/// The leader's path (N4): the image is borrowed from the store, not copied
+/// The leader's path: the image is borrowed from the store, not copied
 /// into an owned request, and the follower decodes exactly those bytes.
 fn send_borrowed(transport: &RaftTransport, servers: &[Responder], data: &[u8]) {
     let req = InstallSnapshotRequestBytesRef {
@@ -285,7 +285,7 @@ fn the_frame_cap_refuses_larger_images() {
 }
 
 // ---------------------------------------------------------------------------
-// N6: resend suppression. A follower that holds its InstallSnapshot reply
+// Resend suppression. A follower that holds its InstallSnapshot reply
 // until the test releases it, so an install is outstanding for as long as
 // the test needs.
 // ---------------------------------------------------------------------------

@@ -1,19 +1,18 @@
 #!/usr/bin/env bash
 # verify_core.sh [--log FILE] [extra verus args...]
 #
-# Verus over the Raft core crate (src/deptran/raft/core, plan Phase 6) with
-# the pinned binary ($VERUS_PIN, docs/verus/modification-plan.md §0.3). The
-# run uses --output-json --time-expanded, and scripts/verus/verus_gate.py
-# decides (docs/verus/disk-persistence.md §8): it exits 1 on any
+# Verus over the Raft core crate (src/deptran/raft/core) with the pinned
+# binary ($VERUS_PIN). The run uses --output-json --time-expanded, and
+# scripts/verus/verus_gate.py decides: it exits 1 on any
 # verification error, if a function named in
 # scripts/verus/verified_functions.txt is missing or failed, or if the core
 # trusts anything (the spellings are in verus_gate.py's docstring) not listed
 # in scripts/verus/core_trusted.txt -- the crate's trusted surface, which must
-# only shrink. The run imports spec v1 (the manifest's tag; plan
-# §4.5, spike (d) choice (i)) for the proof side (core/src/coupling.rs, Verus
+# only shrink. The run imports spec v1 (the manifest's tag; spike
+# (d) choice (i)) for the proof side (core/src/coupling.rs, Verus
 # only).
 #
-# The crate also builds with plain cargo, ghost code erased (spike (a)):
+# The crate also builds with plain cargo, ghost code erased:
 # this script is the proof half, not the build.
 set -uo pipefail
 : "${VERUS_PIN:?source ~/mako-verus-env.sh first}"
@@ -24,7 +23,7 @@ LOG=""
 if [ "${1:-}" = "--log" ]; then LOG="$2"; shift 2; fi
 LOG="${LOG:-$(mktemp /tmp/verify_core_XXXX.log)}"
 
-# The spec the proof side imports (plan §4.5, Phase 0 spike (d) choice (i)):
+# The spec the proof side imports:
 # the group's crate exported by Verus from the frozen tag the manifest
 # names, archived out of $GLR (so its working tree does not matter) and
 # built once per tag into $RESULTS/spec/export/<tag>.

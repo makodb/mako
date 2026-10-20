@@ -1,4 +1,4 @@
-//! The Rust lane's snapshot store (plan phase N3/N4).
+//! The Rust lane's snapshot store.
 //!
 //! One slot holding the latest snapshot's `(index, term, bytes)`, owned by
 //! Rust: the only snapshot store, as the Rust lane is the only lane (the C++
@@ -11,8 +11,7 @@
 //! kernels below are the only code that looks inside the carrier here.
 //!
 //! No streaming reader/writer, no pruning, no format: production calls none
-//! of them, and InstallSnapshot ships the state machine's bytes verbatim
-//! (plan N2).
+//! of them, and InstallSnapshot ships the state machine's bytes verbatim.
 
 use core::ffi::c_void;
 use std::collections::HashMap;
@@ -77,7 +76,7 @@ impl SnapshotStore {
     }
 
     /// As `save`, taking ownership of a ready buffer: no copy (the follower's
-    /// InstallSnapshot handoff, N5).
+    /// InstallSnapshot handoff).
     pub fn save_owned(&self, index: u64, term: u64, bytes: Vec<u8>) -> bool {
         if index == 0 {
             return false;
@@ -257,7 +256,7 @@ pub unsafe extern "C" fn raft_snapshot_manager_load(
 
 /// The store line of the two HOST kernels (create's save and install's
 /// save). On the follower's install path the decoded InstallSnapshot buffer
-/// is handed over without a copy when it matches (N5); otherwise the bytes
+/// is handed over without a copy when it matches; otherwise the bytes
 /// are copied from `data`.
 ///
 /// # Safety
@@ -279,7 +278,7 @@ pub unsafe extern "C" fn raft_snapshot_store_save(
 }
 
 // ---------------------------------------------------------------------------
-// Disk builds (docs/verus/disk-persistence.md §3-§4): the shell writes the
+// Disk builds: the shell writes the
 // latest image to a file, and recovery builds a store from a file's bytes.
 // ---------------------------------------------------------------------------
 
@@ -301,7 +300,7 @@ pub unsafe extern "C" fn raft_snapshot_manager_with_latest(
 }
 
 /// A new store holding one snapshot, into the all-zero carrier `out`: the
-/// image recovery read from its file, injected before Setup (N7 keeps it).
+/// image recovery read from its file, injected before Setup (recovery keeps it).
 ///
 /// # Safety
 /// `out` is a live, all-zero carrier; `data` is valid for `len` bytes.
@@ -318,7 +317,7 @@ pub unsafe extern "C" fn raft_snapshot_manager_from_bytes(
 }
 
 // ---------------------------------------------------------------------------
-// The follower's InstallSnapshot handoff (N5). ServeInstallSnapshot runs
+// The follower's InstallSnapshot handoff. ServeInstallSnapshot runs
 // synchronously on the poll thread, so the service parks the decoded buffer
 // here, tagged with (index, term, len), for exactly the duration of that
 // call; the store takes it when the tag matches, and the service clears the
@@ -354,7 +353,7 @@ fn take_handoff(index: u64, term: u64, len: usize) -> Option<Vec<u8>> {
 
 
 // ---------------------------------------------------------------------------
-// InstallSnapshot, leader side (N5). The image is read as an Arc (O(1), under
+// InstallSnapshot, leader side. The image is read as an Arc (O(1), under
 // the caller's mtx_) and sent on the Rust transport.
 // ---------------------------------------------------------------------------
 
@@ -365,7 +364,7 @@ unsafe extern "C" {
                                    snap_last_idx: u64, send_term: u64) -> *mut c_void;
     fn raft_snapshot_reply_deliver(ctx: *mut c_void, follower_term: u64);
     fn raft_snapshot_reply_free(ctx: *mut c_void);
-    // HOST InstallSnapshot counters (server.cc, phase N0).
+    // HOST InstallSnapshot counters (server.cc).
     fn raft_install_rpc_note_sent(bytes: u64);
 }
 
@@ -403,7 +402,7 @@ pub fn install_fits_one_frame(len: usize) -> bool {
 /// The last (term, index) refused for the frame cap, per (partition,
 /// sender, follower), so a refusal is logged once and not every heartbeat
 /// round. One entry per link: a set of every triple ever refused grew
-/// without bound (bugs-found B52).
+/// without bound.
 type Link = (u32, u16, u16);
 static REFUSED: Mutex<Option<HashMap<Link, (u64, u64)>>> = Mutex::new(None);
 
@@ -466,7 +465,7 @@ pub unsafe extern "C" fn raft_phase1_load_and_send_snapshot(
     let deadline = install_deadline(heartbeat_us, image.bytes.len());
     // The callback owns the context: it delivers at most once and frees on
     // drop, whether or not it ever ran. A send that never left, or one
-    // suppressed because the same install is outstanding (N6), frees it
+    // suppressed because the same install is outstanding, frees it
     // without a delivery, as the C++ lane's commo did for a failed send.
     let sent = t.send_install_snapshot_once(site_id, &req, deadline, move |follower_term| {
         ctx.deliver(follower_term);
@@ -477,7 +476,7 @@ pub unsafe extern "C" fn raft_phase1_load_and_send_snapshot(
     true
 }
 
-/// How long an outstanding install suppresses resends (N6): four heartbeat
+/// How long an outstanding install suppresses resends: four heartbeat
 /// intervals, at least 200 ms, plus 20 ns per byte (50 MB/s, several times
 /// slower than the loopback figure in rt/tests/large_frame_bench.rs).
 pub fn install_deadline(heartbeat_us: u64, len: usize) -> Duration {
@@ -586,7 +585,7 @@ mod tests {
         }
     }
 
-    /// N7: recovery keeps a store injected before Setup -- the same Arc, not
+    /// Recovery keeps a store injected before Setup -- the same Arc, not
     /// a copy -- and otherwise starts from a new, empty one.
     #[test]
     fn pick_manager_keeps_an_injected_store() {

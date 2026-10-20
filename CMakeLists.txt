@@ -266,19 +266,6 @@ add_custom_target(raft_goal0_source_gate
 )
 add_dependencies(raft_goal0_source_gate build_rusty_cpp_transpiler)
 
-# The generated C++/Rust correspondence (docs/migration/raft/
-# cpp-rust-correspondence.md) and its kernel classification. --check fails
-# when the document is stale, or when a kernel is defined nowhere or twice --
-# the source-level half of raft_kernel_check. Before this target nothing ran
-# it, so the document could go stale unnoticed.
-add_custom_target(raft_correspondence_check
-    COMMAND python3 "${CMAKE_CURRENT_SOURCE_DIR}/scripts/gen_correspondence.py" --check
-    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
-    COMMENT "Checking the Raft C++/Rust correspondence and kernel classes"
-    VERBATIM
-)
-add_dependencies(raft_goal0_source_gate raft_correspondence_check)
-
 # NOTE: RustyCppSubmodule.cmake already computes CPP_BORROW_CHECKER and creates
 # build targets. Do not override checker paths here or Docker CARGO_TARGET_DIR
 # support is bypassed.
@@ -460,7 +447,7 @@ option(CHECK_INVARIANTS "Enable invariant checking" OFF)
 option(COCO "Enable COCO" OFF)
 option(MAKO_USE_RAFT "Build Mako with the Raft replication helper" OFF)
 option(RAFT_TEST "Enable Raft lab testing fiber" OFF)
-# Raft disk persistence (docs/verus/disk-persistence.md): a build switch,
+# Raft disk persistence: a build switch,
 # not a run-time one. OFF is the memory-mode binary with the disk code
 # compiled out; ON turns on the raft crates' cargo feature `raft_disk`.
 option(MAKO_RAFT_DISK "Build the Raft write-ahead log and recovery (disk mode)" OFF)
@@ -1160,7 +1147,7 @@ target_compile_options(cluster PUBLIC ${BENCH_CXXFLAGS})
 # std_port_hashbrown, so naming std_port pulls in both archives/BMIs.
 target_link_libraries(cluster PUBLIC srpc pthread btree_port vec_port rc_port std_port)
 
-# The Raft server is Rust (the Raft migration plan (removed; see git history), F2.6). src/deptran/raft is a
+# The Raft server is Rust. src/deptran/raft is a
 # cargo staticlib: its C ABI (src/deptran/raft/server_exports.h) is what the C++
 # shim `class RaftServer` and the hand-written kernels in server.cc call, and it
 # calls those kernels back. cargo builds it into this build tree; the pinned
@@ -1390,9 +1377,9 @@ add_custom_command(
     VERBATIM)
 add_custom_target(raft_store_test DEPENDS ${RAFT_STORE_TEST_STAMP})
 list(APPEND RAFT_KERNEL_CHECK_DEPS raft_store_test)
-# raft-core's and raft-replay's tests: the evidence the host contract cites
-# for what it trusts, every persist note exact (core/tests/persist_note.rs,
-# the replay's shadow); Verus does not read the notes.
+# raft-core's and raft-replay's tests: they check every persist note on
+# recorded runs (core/tests/persist_note.rs, the replay's shadow), a runtime
+# check beside Verus's proof that each note is exact.
 file(GLOB RAFT_CORE_TEST_SOURCES CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/src/*.rs
     ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/tests/*.rs
@@ -1774,7 +1761,7 @@ add_apps(paxos_async_commit_test src/mako/benchmarks/paxos_async_commit_test.cc)
 add_apps(basic src/mako/benchmarks/ut/basic.cc)
 add_apps(rocksdbInterfaceTest examples/rocksdbInterfaceTest.cc)
 
-# raft_bench — standalone Raft performance driver (docs/performance/raft-harness.md),
+# raft_bench — standalone Raft performance driver,
 # beside the scripts that drive it (scripts/raft_perf/).
 # Registered the same way as paxos_async_commit_test above: it is an ordinary
 # app that links `mako` and drives the replication helper. It is deliberately
@@ -1783,7 +1770,7 @@ add_apps(rocksdbInterfaceTest examples/rocksdbInterfaceTest.cc)
 # `mako` via TXLOG_HELPER_SRC, so the driver measures the production build.
 add_apps(raft_bench scripts/raft_perf/raft_bench.cc)
 # raft_kill_node -- one Raft replica for the process-kill tests, beside the
-# driver and checker that use it (scripts/raft_kill/; disk design §8).
+# driver and checker that use it (scripts/raft_kill/).
 add_apps(raft_kill_node scripts/raft_kill/raft_kill_node.cc)
 # Provenance the record cannot otherwise obtain: neither MODE nor
 # CMAKE_BUILD_TYPE is a preprocessor macro, and a number is not interpretable
