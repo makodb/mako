@@ -84,7 +84,9 @@ pub fn ops_for(rec: &Record<Vec<u8>>, seq: u64, top: &mut u64, ops: &mut Vec<Op>
         put_u64(&mut v, s.term);
         v.push(u8::from(s.keep));
         let name = s.image.clone().unwrap_or_default();
-        put_u16(&mut v, name.len() as u16);
+        // Refused, not truncated, as record.rs's encode refuses it.
+        let n = u16::try_from(name.len()).expect("base: image name longer than 65535 bytes");
+        put_u16(&mut v, n);
         v.extend_from_slice(name.as_bytes());
         ops.push(Op::Put(KEY_SNAP.to_vec(), v));
         ops.push(Op::DeleteRange(entry_key(0), entry_key(s.index + 1)));

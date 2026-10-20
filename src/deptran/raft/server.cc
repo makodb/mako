@@ -1442,6 +1442,11 @@ const rusty::ffi::c_void* raft_wire_batch(const rusty::ffi::c_void* cmd_handle) 
   return static_cast<const rusty::ffi::c_void*>(
       static_cast<const void*>(&borrowed));
 }
+// Bounds contract: raft_batch_term_at and raft_batch_command_into index cmds_
+// unchecked, so a caller passes a non-null handle from raft_wire_batch and
+// i < raft_batch_len. Their one caller, WireBatch in shell/server_h.rs, does:
+// decode_terms loops below raft_batch_len, and the core asks entry_at only
+// for k below the number of terms decode_terms decoded.
 uint64_t raft_batch_len(const rusty::ffi::c_void* batch_handle) {
   return static_cast<uint64_t>(wire_batch(batch_handle).cmds_.size());
 }

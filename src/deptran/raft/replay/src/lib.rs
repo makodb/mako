@@ -835,6 +835,11 @@ pub fn parse_event(text: &str) -> Result<(bool, OwnedEvent), String> {
                 terms.push(t.i()?);
             }
             let m = t.u()?;
+            // A valid payload has one entry per term, as the writer records
+            // it; fewer would leave entry_at indexing past `entries`.
+            if valid && m != n {
+                return Err(format!("append: {m} entries for {n} terms"));
+            }
             let mut entries = Vec::new();
             for _ in 0..m {
                 entries.push((t.b()?, t.b()?, t.i()? as i32, t.u()?, t.u()?));
@@ -1185,6 +1190,18 @@ mod tests {
         // A write outside step stops the replay where it is marked.
         let tainted = format!("{}T test\n{}", text, text);
         assert_eq!(replay(&tainted).unwrap(), Replayed { steps: 11, tainted_at: Some(12) });
+    }
+
+    #[test]
+    fn append_needs_an_entry_per_term() {
+        // stopped 0, voter 1, has_cmd 1, term 3, site 1, prev 0/0, commit 0,
+        // failover 0, valid 1; then the terms, then the entries.
+        let head = "E append 0 1 1 3 1 0 0 0 0 1";
+        assert!(parse_event(&format!("{head} 2 3 3 2 1 0 7 10 99 1 0 7 10 98")).is_ok());
+        match parse_event(&format!("{head} 2 3 3 1 1 0 7 10 99")) {
+            Err(e) => assert_eq!(e, "append: 1 entries for 2 terms"),
+            Ok(_) => panic!("an append with fewer entries than terms parsed"),
+        }
     }
 
     #[test]

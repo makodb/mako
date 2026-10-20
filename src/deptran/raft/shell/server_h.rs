@@ -628,6 +628,7 @@ unsafe extern "C" {
     fn raft_wire_is_batch(cmd: *const core::ffi::c_void) -> bool;
     fn raft_wire_batch(cmd: *const core::ffi::c_void) -> *const core::ffi::c_void;
     fn raft_batch_len(batch: *const core::ffi::c_void) -> u64;
+    // i < raft_batch_len(batch): server.cc indexes the batch unchecked.
     fn raft_batch_term_at(batch: *const core::ffi::c_void, i: u64) -> i64;
     fn raft_batch_command_into(batch: *const core::ffi::c_void, i: u64,
                                dst: *mut rusty::RaftCommand);
