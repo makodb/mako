@@ -605,8 +605,7 @@ PYCHK
   # Verification now happens over the whole module graph in the crate stage
   # below: rustc + clippy over src/deptran/raft, plus a drift check that a
   # committed .rs must equal a fresh extraction. That is strictly more code
-  # compiled, at coarser granularity -- the trade recorded in
-  # docs/stage2_current_progress.txt.
+  # compiled, at coarser granularity.
   #
   # WHAT WAS GIVEN UP, explicitly: a block may now compile only because a
   # sibling module or a crate dependency supplies something. Per-carrier
@@ -617,11 +616,10 @@ done
 # ---------------------------------------------------------------------------
 # STAGE 2: crate-level verification.
 #
-# The per-carrier rustc stage above proves each carrier is self-contained
-# Rust. This stage proves the same Rust compiles as a MODULE GRAPH, which is
+# The per-carrier rustc stage that sat above is gone (see the note there).
+# This stage proves the extracted Rust compiles as a MODULE GRAPH, which is
 # what src/srpc does and what makes impl/containers/type-mapped C++ types
-# expressible at all. Both run for now; the per-carrier stage is removed in a
-# following commit once they have agreed.
+# expressible at all.
 #
 # The .rs files under the crate are GENERATED from the inline blocks. In
 # --rewrite mode they are regenerated; in --check mode a mismatch between a

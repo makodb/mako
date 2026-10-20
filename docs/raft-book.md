@@ -571,7 +571,10 @@ another server has seen.
 ### Write Failures
 
 A WAL write or `fdatasync` that fails stops the whole process: the flusher
-panics, and the Raft crates build with `panic = "abort"`. After a failed
+panics, and the Raft crates build with `panic = "abort"`. A supervisor sees
+`thread 'raft-flusher' panicked at` on stderr, followed by
+`raft-store: WAL write failed at record <N>: <error>`, and then the process
+dies of SIGABRT. After a failed
 sync the batch may or may not be on disk, and retrying cannot tell, so the
 server stops rather than send anything that depends on it. Every Raft
 replica and shard the process hosts stops with it, and nothing in Mako
