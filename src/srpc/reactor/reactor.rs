@@ -299,9 +299,11 @@ pub struct BoxEvent<Type> {
     pub state_: EventState,
     pub prunable_: Cell<bool>,
     pub self_: Weak<dyn EventPollable>,
-    // Mako-local: a Mutex, not a RefCell. A BoxEvent's payload is published
-    // by a FOREIGN thread (an RPC completion running on the connection's poll
-    // thread) and read by the owner. RefCell/Cell would be a data race.
+    // Mako-local: a Mutex, not a RefCell, so a set() from a thread other
+    // than the owner cannot race the owner's get(). Such a set() publishes
+    // only the payload and is_set_ (see boxevent_set); it is not a wake. The
+    // owner sees it at its next test, a timed wait's deadline or an
+    // event_ping, so an untimed wait() needs the setter to ping or post a Job.
     pub content_: Mutex<Type>,
     pub is_set_: AtomicBool,
 }

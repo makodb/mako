@@ -526,6 +526,11 @@ The other settings tune or test a disk build: `MAKO_RAFT_FLUSH_DELAY_US`,
 `MAKO_RAFT_CHECKPOINT_SECS`, `MAKO_RAFT_DISK_VERIFY`, `MAKO_RAFT_DISK_STATS`,
 `MAKO_RAFT_CRASH` and `MAKO_RAFT_KILLTEST_DIR`.
 
+A store opens only on ext4, xfs, btrfs or tmpfs. Inside a Docker container
+`/var/tmp` is on overlayfs, which the store refuses, so there point
+`MAKO_RAFT_DATA_DIR` (or, for `ci/ci.sh`, `MAKO_RAFT_DATA_ROOT`) at a
+bind-mounted directory.
+
 ### What is Persisted
 
 Each step that changes saved state writes one record to the write-ahead log
@@ -562,6 +567,17 @@ durable. RPC replies are held until then (rpcgen's `dispatch_held`), the
 heartbeat and election fibers wait before they send, and a leader applies an
 entry only once it is durable. A restart therefore never forgets anything
 another server has seen.
+
+### Write Failures
+
+A WAL write or `fdatasync` that fails stops the whole process: the flusher
+panics, and the Raft crates build with `panic = "abort"`. After a failed
+sync the batch may or may not be on disk, and retrying cannot tell, so the
+server stops rather than send anything that depends on it. Every Raft
+replica and shard the process hosts stops with it, and nothing in Mako
+restarts the process; restarted onto its store, it recovers as below. A
+failure in the base only stops the applier: checkpoints stop deleting
+segments, and the WAL keeps every record.
 
 ### Recovery
 

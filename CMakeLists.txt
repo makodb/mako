@@ -250,10 +250,12 @@ set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
 include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppTranspiler.cmake)
 create_rustycpp_transpiler_build_target()
 
-# Stage-1 Raft source-provenance gate. Production still compiles the adjacent
-# generated C++ in the existing carriers; this target proves those bytes are a
-# fresh rendering of their inline Rust DSL and that every extracted carrier is
-# accepted by real rustc.
+# Raft source-provenance gate. The Raft server is canonical Rust built into
+# libraft_rt.a; the C++ carriers that still hold inline Rust DSL blocks
+# compile the committed C++ generated next to each block. This target proves
+# those bytes are a fresh rendering of their blocks, that the shell crate's
+# extracted modules and lib.rs match the blocks, and that the crate builds and
+# passes clippy with -D warnings.
 add_custom_target(raft_goal0_source_gate
     COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/raft-dsl-cargo
         bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_dsl.sh"
@@ -1226,10 +1228,13 @@ add_custom_command(
     # exit; gcc: a _Thread_local seed with no teardown) and the linker picked
     # one by archive order. Passing the compiler through makes the two copies
     # the same code; stage 0b removes the second copy.
+    # --locked here and in the cargo tests below: build what
+    # src/deptran/raft/Cargo.lock records, and fail on a stale lock rather
+    # than re-resolve it.
     COMMAND ${CMAKE_COMMAND} -E env
             "CC=${CMAKE_C_COMPILER}"
             "AR=${CMAKE_AR}"
-            cargo build --release --quiet
+            cargo build --release --locked --quiet
             --manifest-path ${RAFT_RUST_MANIFEST}
             --target-dir ${RAFT_RUST_TARGET_DIR}
             ${RAFT_RUST_FEATURES}
@@ -1343,7 +1348,7 @@ add_custom_command(
     COMMAND ${CMAKE_COMMAND} -E env
             "CC=${CMAKE_C_COMPILER}"
             "AR=${CMAKE_AR}"
-            cargo test --release --quiet
+            cargo test --release --locked --quiet
             --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml
             --target-dir ${RAFT_RUST_TARGET_DIR}
             ${RAFT_RUST_FEATURES}
@@ -1366,7 +1371,7 @@ file(GLOB RAFT_STORE_TEST_SOURCES CONFIGURE_DEPENDS
 set(RAFT_STORE_TEST_STAMP "${CMAKE_BINARY_DIR}/raft_store_test.stamp")
 add_custom_command(
     OUTPUT ${RAFT_STORE_TEST_STAMP}
-    COMMAND cargo test --release --quiet ${RAFT_STORE_TEST_FEATURES}
+    COMMAND cargo test --release --locked --quiet ${RAFT_STORE_TEST_FEATURES}
             --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/Cargo.toml
             --target-dir ${RAFT_RUST_TARGET_DIR}
     COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_STORE_TEST_STAMP}
@@ -1389,7 +1394,7 @@ file(GLOB RAFT_CORE_TEST_SOURCES CONFIGURE_DEPENDS
 set(RAFT_CORE_TEST_STAMP "${CMAKE_BINARY_DIR}/raft_core_test.stamp")
 add_custom_command(
     OUTPUT ${RAFT_CORE_TEST_STAMP}
-    COMMAND cargo test --release --quiet -p raft-core -p raft-replay
+    COMMAND cargo test --release --locked --quiet -p raft-core -p raft-replay
             --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
             --target-dir ${RAFT_RUST_TARGET_DIR}
     COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_CORE_TEST_STAMP}
