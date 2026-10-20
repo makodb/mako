@@ -62,7 +62,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # The axes. Every number below is data, not logic — change it here, nowhere
-# else. The knee measurements are quoted beside each array.
+# else.
 # ---------------------------------------------------------------------------
 
 # The three cluster shapes, and only these three.
@@ -106,31 +106,9 @@ declare -A MAX_OUTSTANDING=(
 # the measured unthrottled rate K: 0.02 0.05 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.75
 # 0.8 0.85 0.9 0.95 1.0 1.1 1.25 1.5 2.0 3.0, then 0 (unthrottled) last.
 #
-# K measured on zoo-003 (Linux 7.0.0-29, clang Release MODE=perf), unthrottled,
-# SINGLE group mode, 8 s window:
-#   4096 B    -> 11872 entries/s (1 par), 11805 (6 par)  ~ 49 MB/s
-#   286208 B  ->   225 entries/s (1 par),   262 (6 par)  ~ 64-75 MB/s
-#   1048576 B ->    65 entries/s (1 par),    64 (6 par)  ~ 67 MB/s
-#
-# WARNING: these arrays are calibrated for single-group mode ONLY, and do not
-# bracket the knee in per-partition (multi) mode. That one and six partitions
-# agree closely above was once read here as evidence of a shared
-# loopback/bandwidth ceiling. The 412c225a baseline falsifies that reading: in
-# multi mode, on the same loopback, the same machine reaches
-#   4096 B -> 68769 entries/s (~282 MB/s), 286208 B -> 1588/s (~454 MB/s),
-#   1048576 B -> 451/s (~473 MB/s)
-# i.e. five to six times the single-group figure. The single-group ceiling is
-# therefore the serialization of one Raft group -- one recursive mutex, one
-# replication fiber -- not the network. The agreement between 1 and 6
-# partitions in single mode is explained by their sharing that one group.
-#
-# Consequence: every multi-mode series in the 412c225a baseline runs its whole
-# paced array below saturation and has a lower bound, not a measured ceiling.
-# Fixing this needs a per-(payload, group_mode) array; doing so changes what
-# the sweep produces, so it is deliberately NOT folded in here without a
-# re-run.
-# For calibration, the real TPC-C workload submits ~303 entries/s of
-# ~290 KB, i.e. Mako in production sits right at this ceiling.
+# K is the unthrottled rate in single-group mode. The arrays are calibrated
+# for single-group mode only and do not bracket the knee in per-partition
+# (multi) mode, which saturates several times higher.
 # Re-measure on a new machine with:  ./run_sweep.sh --phase knee
 declare -A RATES=(
     [$PAYLOAD_SMALL]="240 600 1200 2400 3600 4800 6000 7100 8300 8900 9500 10100 10700 11300 11900 13100 14900 17900 23800 35700 0"

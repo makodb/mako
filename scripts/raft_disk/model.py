@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Predicting Raft disk mode's performance from first principles.
 
-This file is a worked example of bottleneck estimation ("napkin math"): price
-the primitives in isolation, write down the structure of the critical path
-from the code, combine the two into a prediction, and only then measure. A
-prediction that misses is information -- it says a primitive or the
-structure is wrong -- and the record at the end shows what each miss taught.
+Bottleneck estimation ("napkin math"): price the primitives in isolation,
+write down the structure of the critical path from the code, and combine the
+two into a prediction to compare with a measurement. A prediction that
+misses says a primitive or the structure is wrong.
 
 THE RULE: no input below comes from a disk-mode run. Primitives come from
 microbenchmarks that never run Raft (scripts/raft_disk/params.rs); the parts
@@ -91,71 +90,6 @@ first seconds measure the cache, so the saturated ext4 points discard them
       estimate means a primitive or the structure is wrong: find which with
       the trace kit before changing anything.
 
-----------------------------------------------------------------------------
-4. WHAT THE MISSES TAUGHT (2026-10-09/10)
-----------------------------------------------------------------------------
-  - Pre-Lion, the leader's flush hid in a 1 ms poll hop. Lion wakes the poll
-    thread at once, so the flush is exposed in full: a structure change
-    upstream silently invalidated a term.
-  - Collect slept a fixed step that Lion rounds to whole milliseconds; a
-    reply held for a flush missed a step (G1 +38% at D = 1 ms). The fix was
-    in the code (collect waits on the reply), and memory mode gained too.
-  - The commit's follow-up round was missing from the structure: harmless
-    in memory mode, two flushes in disk mode, and once a round pair outlasts
-    the arrival gap, entries queue for the loop.
-  - Saturated, the reply outlasted collect's deadline (one heartbeat, 5 ms;
-    the follower's hold made it ~7.6 ms) and the two followers fell out of
-    step: each round waited out its deadline for one while the other, its
-    reply in, sat idle (1,600 of ~3,000 collects ended at the deadline; G2
-    tmpfs 21-23k/s against 30k). Code, not model: collect ends when an
-    earlier round's reply frees a follower (36k/s).
-  - Then k, the number of batch flushes in series, went 2 -> 1 -> neither.
-    k = 2 looked wrong once the collect fix landed (one run, 36k/s against
-    k = 1's 36.5k) -- but that k = 1 estimate was built on memory pieces
-    traced BEFORE the fix, and the fix sped the memory build too (G2 +82%).
-    Re-traced, k = 1 missed G2 tmpfs by -19% and -28% (D = 0, 1 ms). The
-    trace said where: 256-entry rounds, 6.4 / 9.3 ms apart, of which the
-    reply round trip was 6.2 / 7.9 -- the rest, 0.2 / 1.4 ms, the leader
-    waiting at the tick for its WAL before sending. That wait is the flush
-    of the last few Starts (leader flushes of p50 177 us at D = 0), not of
-    the batch: a fixed-cost flush, F(1). Two lessons: a model input taken
-    from the baseline goes stale when a change moves the baseline -- re-take
-    it; and agreement from one run on stale inputs proves nothing. What is
-    left (G2 tmpfs -16 to -18%): in place, a follower's flush ran ~10% over
-    F, and its AppendEntries handler 0.3 ms over the memory build's.
-  - e was assumed 0.5 us; the serializer costs about 3 us an entry. At a
-    256-entry batch that is most of a flush on tmpfs.
-  - s measured with one writer (165 us on ext4) is not s in place, and
-    neither was three writers at once (273 us): G1 on ext4 missed by +31%.
-    The flusher stats put a flush in place at 365-400 us. Taking the syncs in
-    turns, as a round does, gave 285 us; with an idle gap between them, 360
-    us. ext4's journal batches syncs that arrive together; a lone one after
-    an idle device pays in full. Measure a primitive in the structure's
-    pattern.
-  - G2 on ext4 came in at a third of the latency bound (-65%), with 1-2 s
-    stalls. Disk stats: follower flushes of p50 3 ms, mean 15 ms;
-    /proc/meminfo: 190 MB in writeback at once, three replicas' 64 MB
-    memtables flushing together. The device: a rotational RAID volume whose
-    cache takes ~1.5 GB fast, then ~135 MB/s. No latency term finds that:
-    the miss was a missing ceiling. A first cut took A = 3 (WAL, flush,
-    one compaction) and a 12 s run's volume through the cache, and missed
-    again (-30%): the cache's fill is not repeatable (1.1-1.7 GB between
-    params.rs runs, ~2.4 GB in place) and a 12 s window is mostly transient.
-    Measure the steady state instead (20 s warm-up). A was then argued down
-    to 2 (compaction as debt) from a device byte count of 3 x 2.35 x 4.1 KB
-    an entry -- but that count was taken with B32 live (below), the base
-    stalled and writing less. With B32 fixed it read 3 x 2.8: A = 3 stood.
-    A check taken on a broken system confirms the wrong number.
-  - The same G2 ext4 miss found a bug: every append wrote a RocksDB range
-    delete, and their flush is superlinear in their number (B32;
-    1-2 s stalls, shutdowns past their budget). The model said "too slow by
-    this much"; the stats said where.
-  - 2026-10-10: the tick now waits for the WAL only when it sends,
-    and the memory pieces were re-traced. Against the estimates: G1 -6%,
-    -17%, +10% (tmpfs D = 0, 1 ms; ext4), G2 -16%, -13%, -6%. Measured G2
-    tmpfs moved only +1% and +5% from the run before, as it should: every
-    saturated tick sends. The smaller G2 misses came mostly from the
-    re-traced inputs.
 """
 import argparse
 import csv

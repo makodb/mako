@@ -127,7 +127,7 @@ fn sync_turns(dir: &str, writers: usize, size: usize, n: usize, gap_us: u64) -> 
 /// the first window's, slow MB/s after it; = fast and the whole volume if it
 /// never fell). It idles a minute first so a cache left full by whatever ran
 /// before drains -- a gate run, too, starts after the memory arm's run, which
-/// writes nothing (a full cache measured 268 MB here, a drained one 1.6 GB).
+/// writes nothing.
 fn bandwidth(dir: &str, chunk: usize, total: usize) -> (f64, f64, f64) {
     std::thread::sleep(Duration::from_secs(60));
     let t0 = Instant::now();
