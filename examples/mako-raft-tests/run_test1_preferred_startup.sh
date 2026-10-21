@@ -1,25 +1,23 @@
 #!/bin/bash
 
 ###############################################################################
-# Test 1: Preferred Replica Startup Test (with TimeoutNow Protocol)
+# Test 1: Preferred Replica Startup Test (election-timer bias)
 ###############################################################################
 # Purpose: Verify that the preferred replica (localhost) becomes leader
-#          via TimeoutNow leadership transfer protocol
+#          through the preferred-leader election-timer bias
 #
 # Test Scenario:
 # - Start 5-node Raft cluster (localhost, p1, p2, p3, p4)
 # - localhost is configured as preferred leader
-# - Any replica wins initial election (standard Raft)
-# - Non-preferred leader waits 5s for cluster to stabilize
-# - Non-preferred leader sends TimeoutNow to localhost
-# - localhost receives TimeoutNow and starts election immediately
-# - localhost wins election and becomes leader
+# - Non-preferred replicas hold a startup grace period with long timeouts
+# - localhost uses the short preferred timeout, times out first, and wins
+#   the initial election
 # - localhost remains leader for 30 seconds
 #
 # Expected Result:
-# - localhost becomes leader within 7 seconds (5s wait + 2s transfer)
+# - localhost becomes leader within a few seconds of startup
 # - localhost remains stable leader for full 30 seconds
-# - Clean leadership transfer via TimeoutNow RPC
+# - No non-preferred replica ever becomes leader
 # - Test exits with code 0 (success)
 ###############################################################################
 

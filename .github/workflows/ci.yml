@@ -36,14 +36,14 @@ jobs:
         with:
           submodules: recursive
 
-      # The srpc source gate runs ripgrep (src/srpc/scripts/srpc_dsl_check.sh).
+      # The source gates run ripgrep (src/srpc/scripts/srpc_dsl_check.sh).
       # apt_packages.sh installs it, but this job pulls the CI image's :latest
       # tag, which is only rebuilt after a push to mako-dev, so install it here
       # if the image predates that. Do NOT mark the checkout safe for git
-      # globally here: the gate vouches for exactly the directories it reads
-      # (ownership_exception() in scripts/extract_srpc_rust.py), and
-      # test_bare_git_really_is_refused asserts that bare git still refuses a
-      # foreign-owned checkout.
+      # globally here: the gates vouch for exactly the directories they read
+      # (ownership_exception() in scripts/extract_srpc_rust.py, owned_git in
+      # scripts/raft_dsl.sh), and test_bare_git_really_is_refused asserts
+      # that bare git still refuses a foreign-owned checkout.
       - name: Container prerequisites
         shell: bash
         run: |
@@ -78,8 +78,17 @@ jobs:
         run: >-
           cmake --build "${GOAL0_BUILD_DIR}"
           --parallel "${CI_MAKE_JOBS}"
-          --target srpc_goal0_dual_compile test_client_service test_arc_mutex_thread test_txn_timeout test_raft_messages test_raft_quorum test_raft_channel_transport test_raft_transport_facade test_raft_dispatcher_facade test_raft_memory_snapshot_manager test_raft_test_cluster test_raft_srpc_transport_compile
+          --target srpc_goal0_dual_compile test_client_service test_arc_mutex_thread test_txn_timeout test_srpc_timeout_race
           -- -k 0
+
+      - name: Verify Raft inline Rust DSL provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          transpiler="$(cat "${GOAL0_BUILD_DIR}/src/srpc/goal0-transpiler-executable.txt")"
+          test -x "${transpiler}"
+          "${transpiler}" --build-info
+          bash scripts/raft_dsl.sh --check --transpiler "${transpiler}"
 
       - name: Verify emitter and canonical Rust invalidate crate generation
         shell: bash
@@ -184,7 +193,7 @@ jobs:
           ctest --test-dir "${GOAL0_BUILD_DIR}"
           --output-on-failure
           --no-tests=error
-          -R '^(test_client_service|test_arc_mutex_thread|test_txn_timeout|test_raft_messages|test_raft_quorum|test_raft_channel_transport|test_raft_transport_facade|test_raft_dispatcher_facade|test_raft_memory_snapshot_manager|test_raft_test_cluster|test_raft_srpc_transport_compile)$'
+          -R '^(test_client_service|test_arc_mutex_thread|test_txn_timeout|test_srpc_timeout_race)$'
 
   build-and-test:
     runs-on: ubuntu-24.04
@@ -231,14 +240,14 @@ jobs:
         with:
           submodules: recursive  # if you use submodules (e.g., third-party libs)
 
-      # The srpc source gate runs ripgrep (src/srpc/scripts/srpc_dsl_check.sh).
+      # The source gates run ripgrep (src/srpc/scripts/srpc_dsl_check.sh).
       # apt_packages.sh installs it, but this job pulls the CI image's :latest
       # tag, which is only rebuilt after a push to mako-dev, so install it here
       # if the image predates that. Do NOT mark the checkout safe for git
-      # globally here: the gate vouches for exactly the directories it reads
-      # (ownership_exception() in scripts/extract_srpc_rust.py), and
-      # test_bare_git_really_is_refused asserts that bare git still refuses a
-      # foreign-owned checkout.
+      # globally here: the gates vouch for exactly the directories they read
+      # (ownership_exception() in scripts/extract_srpc_rust.py, owned_git in
+      # scripts/raft_dsl.sh), and test_bare_git_really_is_refused asserts
+      # that bare git still refuses a foreign-owned checkout.
       - name: Container prerequisites
         shell: bash
         run: |

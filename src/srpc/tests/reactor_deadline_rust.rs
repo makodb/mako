@@ -421,3 +421,40 @@ fn a_waiter_that_waits_again_at_once_is_not_resumed_by_a_second_entry() {
     reactor.run_loop(false, true);
     assert_eq!(phase.get(), 2);
 }
+
+#[test]
+fn a_wait_whose_deadline_push_sweeps_the_map_keeps_its_deadline() {
+    // The sweep runs inside event_deadline_push, once the map holds more
+    // entries than its threshold (64 when empty), and keeps only entries whose
+    // event is WAIT or READY. A timed wait used to push its deadline before it
+    // set WAIT, so the push that crossed the threshold swept its own entry: that
+    // wait had no deadline left, and a never-set event's waiter was never
+    // resumed. 200 waits cross the threshold at least twice (65th, then 193rd).
+    const WAITS: usize = 200;
+    let reactor = Reactor::get_reactor();
+    let base = event_wake_report::<()>();
+    let resumed = counter();
+    let mut events = Vec::with_capacity(WAITS);
+    for _ in 0..WAITS {
+        let ev = create_sp_int_event(1);
+        {
+            let (e, r) = (ev.clone(), resumed.clone());
+            Fiber::create_run(move || {
+                e.wait_timeout(100_000);
+                r.set(r.get() + 1);
+            });
+        }
+        events.push(ev);
+    }
+    assert_eq!(resumed.get(), 0);
+    assert_eq!(
+        event_wake_report::<()>().live_deadlines,
+        base.live_deadlines + WAITS,
+        "a timed wait lost its deadline entry"
+    );
+    std::thread::sleep(Duration::from_millis(150));
+    drive_until(&reactor, "every timed wait to time out", || resumed.get() == WAITS);
+    for ev in &events {
+        assert_eq!(ev.status(), EventStatus::TIMEOUT);
+    }
+}

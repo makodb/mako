@@ -7,6 +7,9 @@ use std::sync::Arc;
 
 #[allow(unused_imports)]
 use crate::reactor as _;
+// `is_ready` is an EventPollable method; Mako's BoxEvent publishes readiness
+// through an atomic, so the trait accessor is the only correct reader.
+use crate::reactor::EventPollable;
 
 /// Construct the `BoxEvent<T>` state owned by a new promise.
 pub fn fiber_make_state<T: Clone + Default + 'static>() -> Arc<crate::reactor::BoxEvent<T>> {
@@ -47,7 +50,7 @@ impl<T: Clone + Default + 'static> FiberPromise<T> {
             "FiberPromise has no state (moved-from?)"
         );
         let ev = self.state_.as_ref().unwrap();
-        assert!(!(*ev).is_set_.get(), "FiberPromise value already set");
+        assert!(!(*ev).is_ready(), "FiberPromise value already set");
         (*ev).set(value);
     }
 
@@ -56,7 +59,7 @@ impl<T: Clone + Default + 'static> FiberPromise<T> {
             return false;
         }
         let ev = self.state_.as_ref().unwrap();
-        (*ev).is_set_.get()
+        (*ev).is_ready()
     }
 }
 
@@ -85,7 +88,7 @@ impl<T: Clone + Default + 'static> FiberFuture<T> {
             "FiberFuture has no state (invalid or moved-from?)"
         );
         let ev = self.state_.as_ref().unwrap();
-        if !(*ev).is_set_.get() {
+        if !(*ev).is_ready() {
             (*ev).wait();
         }
         (*ev).get()
@@ -97,11 +100,11 @@ impl<T: Clone + Default + 'static> FiberFuture<T> {
             return false;
         }
         let ev = self.state_.as_ref().unwrap();
-        if (*ev).is_set_.get() {
+        if (*ev).is_ready() {
             return true;
         }
         (*ev).wait_timeout(timeout_us);
-        (*ev).is_set_.get()
+        (*ev).is_ready()
     }
 
     pub fn is_ready(&self) -> bool {
@@ -109,7 +112,7 @@ impl<T: Clone + Default + 'static> FiberFuture<T> {
             return false;
         }
         let ev = self.state_.as_ref().unwrap();
-        (*ev).is_set_.get()
+        (*ev).is_ready()
     }
 
     pub fn valid(&self) -> bool {

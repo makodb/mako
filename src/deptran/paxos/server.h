@@ -7,6 +7,7 @@
 #include "../paxos_worker.h"
 #include "deptran/raft/log_storage.hpp"
 #include "deptran/raft/snapshot_manager.hpp"
+#include <mutex>   // std::recursive_mutex mtx_, declared below
 
 namespace janus {
 
@@ -24,6 +25,13 @@ struct PaxosData {
 
 class PaxosServer : public TxLogServer {
  public:
+  // The five site fields and the recursive mutex used to arrive by inheriting
+  // TxLogServer's data members. They are declared here now; every body that
+  // reads them is unchanged. See src/deptran/scheduler.h for why.
+  TXLOG_SERVER_SITE_FIELDS()
+  std::recursive_mutex mtx_{};
+  TXLOG_SERVER_SITE_METHODS()
+
   // ----min_active <= max_executed <= max_committed---
   slotid_t min_active_slot_ = 0; // anything before (lt) this slot is freed
   slotid_t max_executed_slot_ = 0;
@@ -88,7 +96,7 @@ class PaxosServer : public TxLogServer {
   /**
    * Replay committed entries after recovery.
    * Called after app_next_ callback is registered to apply recovered entries.
-   * Must be called AFTER RegLearnerAction() sets up the callback.
+   * Must be called AFTER reg_learner_action() sets up the callback.
    */
   // @unsafe - Calls app_next_ which may have side effects
   void ReplayCommittedEntries();

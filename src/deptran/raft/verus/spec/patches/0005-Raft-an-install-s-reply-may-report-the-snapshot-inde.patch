@@ -1,0 +1,81 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: zyang2 <zyang2@zoo-003.maas>
+Date: Mon, 19 Oct 2026 16:12:36 +0000
+Subject: [PATCH 5/5] Raft: an install's reply may report the snapshot index it
+ covers (W1)
+
+LInstallSnapshot's reply reports a match m with install_reply_match:
+the follower's commit index, as before, or the snapshot's index when it
+is at or below that commit -- the reading of a term-only reply, whose
+sender credits the index it sent. Every such m is a prefix the follower
+holds committed, so the agreement argument shrinks to m
+(lemma_responses_agree_new_success_install, lemma_append_sends).
+---
+ src/protocol/Raft/raft.rs                        | 16 +++++++++++++---
+ .../Raft/refinement_proof/log_induction_agree.rs |  6 ++++--
+ .../refinement_proof/log_induction_commit.rs     |  4 +++-
+ 3 files changed, 20 insertions(+), 6 deletions(-)
+
+diff --git a/src/protocol/Raft/raft.rs b/src/protocol/Raft/raft.rs
+index df7d76fd..178d6577 100644
+--- a/src/protocol/Raft/raft.rs
++++ b/src/protocol/Raft/raft.rs
+@@ -414,9 +414,19 @@ verus! {
+                         ..s
+                     }))
+         })
+-        &&& sent_packets == seq![LRaftMessage::AppendResponse {
+-            term: s.current_term, success: s_.commit_index > 0, match_index: s_.commit_index, follower: c.my_id, read_ctx: 0int,
+-        }]
++        // [W1] the reply reports the follower's commit, or the snapshot's
++        // index when that commit covers it (a term-only reply's reading)
++        &&& exists|m: int| #[trigger] install_reply_match(s_, index, m)
++                && sent_packets == seq![LRaftMessage::AppendResponse {
++                    term: s.current_term, success: m > 0, match_index: m, follower: c.my_id, read_ctx: 0int,
++                }]
++    }
++
++    /// [W1] The match an install's reply may report: the follower's commit
++    /// index, or the snapshot's index when it is at or below that commit.
++    /// Every such match is a prefix the follower holds committed.
++    pub open spec fn install_reply_match(s_: LState, index: int, m: int) -> bool {
++        m == s_.commit_index || (m == index && index <= s_.commit_index)
+     }
+ 
+     // ----------------------------------------------------------------------
+diff --git a/src/protocol/Raft/refinement_proof/log_induction_agree.rs b/src/protocol/Raft/refinement_proof/log_induction_agree.rs
+index 41c96eb7..ef17ef18 100644
+--- a/src/protocol/Raft/refinement_proof/log_induction_agree.rs
++++ b/src/protocol/Raft/refinement_proof/log_induction_agree.rs
+@@ -416,12 +416,14 @@ verus! {
+         let i = choose |i: int| 0 <= i < st.sent.len() && p.msg == st.sent[i];
+         assert(f == sid);
+         assert(term == s_.current_term && s_.current_term == s.current_term);
+-        assert(mi == s_.commit_index);
++        // [W1] the reported match is at most the commit
++        assert(0 <= mi <= s_.commit_index);
+         assert(ds_.term_log == ds.term_log);
+         let cl = ds.commit_log;
++        lemma_prefix_eq_shrink(s_.log, cl, s_.commit_index, mi);
+         assert(prefix_eq(s_.log, cl, mi));
+         let ti = choose |ti: int| #![trigger ds.term_log.dom().contains(ti)]
+-            ds.term_log.dom().contains(ti) && ti <= term && mi <= ds.term_commit[ti];
++            ds.term_log.dom().contains(ti) && ti <= term && s_.commit_index <= ds.term_commit[ti];
+         assert(prefix_eq(cl, ds.term_log[ti], ds.term_commit[ti]));
+         lemma_prefix_eq_shrink(cl, ds.term_log[ti], ds.term_commit[ti], mi);
+         if ti < term {
+diff --git a/src/protocol/Raft/refinement_proof/log_induction_commit.rs b/src/protocol/Raft/refinement_proof/log_induction_commit.rs
+index 76674057..70a7bce0 100644
+--- a/src/protocol/Raft/refinement_proof/log_induction_commit.rs
++++ b/src/protocol/Raft/refinement_proof/log_induction_commit.rs
+@@ -141,7 +141,9 @@ verus! {
+                 &&& (st.kind is InstallSnapshot ==> {
+                         &&& s_.current_term == s.current_term
+                         &&& s_.commit_index >= s.commit_index
+-                        &&& st.sent == seq![LRaftMessage::AppendResponse { term: s_.current_term, success: s_.commit_index > 0, match_index: s_.commit_index, follower: st.server_id, read_ctx: 0int }]
++                        // [W1] the reply's match: the commit, or the index it covers
++                        &&& exists|m: int| #[trigger] install_reply_match(s_, st.kind->InstallSnapshot_index, m)
++                                && st.sent == seq![LRaftMessage::AppendResponse { term: s_.current_term, success: m > 0, match_index: m, follower: st.server_id, read_ctx: 0int }]
+                     })
+                 &&& (st.kind is StaleAppend ==> {
+                         &&& s_.log == s.log

@@ -143,7 +143,8 @@ make_simple_txn_rep_config() {
 # The replication config uses a contiguous range per shard:
 #   shard i ports = base + i*1000 + cluster*100 + partition
 # where cluster ∈ {0=localhost, 1=p1, 2=p2, 3=learner} and partition ∈ [0, nthreads).
-# Probe leader port of each cluster on each shard (so 4 * nshards bind attempts).
+# Probes EVERY port the config binds -- all four clusters x all nthreads
+# partitions x each shard -- plus each one's +10000 heartbeat twin.
 # Keeps the range out of the simpleTransaction band (20000-31699). NOTE: unlike
 # that band, this one sits INSIDE the Linux default ephemeral range
 # (32768-60999) — it cannot fit below 32768 because the +10000 heartbeat ports
@@ -186,16 +187,36 @@ def port_free(port):
     return True
 
 def probe(base):
-    # Probe the leader port of each cluster on each shard, plus the matching
-    # heartbeat port (paxos + 10000). Catches both the listen-port collision
-    # AND the heartbeat-port collision in one pass.
+    # Probe EVERY port the generated config will bind, plus each one's
+    # heartbeat twin (+10000).
+    #
+    # Layout: port = base + shard*1000 + cluster*100 + partition, for
+    # cluster in {0=localhost, 1=p1, 2=p2, 3=learner} and partition in
+    # [0, NTHREADS).
+    #
+    # This used to probe only the partition-0 port of each cluster -- offsets
+    # {0,100,200,300} -- while NTHREADS was parsed and never used. At six
+    # partitions that checked 3 of 18 listeners, so a base whose +201..+205
+    # were already taken passed the probe and the run then died with
+    # `rrr::Server::start: channel listener failed to bind ...: AddressInUse`,
+    # which is Log_fatal: the replica exits, no leader forms, the run yields
+    # no record. Observed: base 52868, collision at 53072 = base+204, p2's
+    # partition-4 listener.
+    #
+    # It bites hardest in per-partition Raft group mode, where all N listeners
+    # per process are real binds; single-group mode serves all but partition 0
+    # from stub servers.
+    #
+    # Cost: NSHARDS * 4 * NTHREADS * 2 binds per candidate base -- 36 for one
+    # shard at six partitions, against 8 before. Still trivial next to a run.
     for sh in range(NSHARDS):
         for cl in (0, 100, 200, 300):
-            p = base + sh * 1000 + cl
-            if not port_free(p):
-                return False
-            if not port_free(p + CTRL_PORT_DELTA):
-                return False
+            for part in range(NTHREADS):
+                p = base + sh * 1000 + cl + part
+                if not port_free(p):
+                    return False
+                if not port_free(p + CTRL_PORT_DELTA):
+                    return False
     return True
 
 for _ in range(2000):

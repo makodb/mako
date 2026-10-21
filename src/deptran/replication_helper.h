@@ -17,6 +17,8 @@
 #include <vector>
 #include <cstdint>
 
+#include "raft/snapshot_callbacks.h"
+
 namespace janus {
 
 // Replication type enum - Copy type suitable for rusty::Cell
@@ -62,6 +64,11 @@ void register_for_leader_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)>,
     uint32_t);
+// The embedder's state-machine snapshot callbacks for one partition's Raft
+// server (Raft only; the Paxos helper ignores them).
+void register_snapshot_callbacks_for_partition(uint32_t par_id,
+                                               janus::RaftCreateSnapshotFn create,
+                                               janus::RaftPrepareSnapshotFn prepare);
 void submit(const char*, int, uint32_t);
 void add_log(const char*, int, uint32_t);
 void add_log_without_queue(const char*, int, uint32_t);
@@ -99,6 +106,11 @@ void register_for_leader_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)>,
     uint32_t);
+// The embedder's state-machine snapshot callbacks for one partition's Raft
+// server (Raft only; the Paxos helper ignores them).
+void register_snapshot_callbacks_for_partition(uint32_t par_id,
+                                               janus::RaftCreateSnapshotFn create,
+                                               janus::RaftPrepareSnapshotFn prepare);
 void submit(const char*, int, uint32_t);
 void add_log(const char*, int, uint32_t);
 void add_log_without_queue(const char*, int, uint32_t);
@@ -136,6 +148,11 @@ void register_for_leader_par_id_return(
     std::function<int(const char*&, int, int, int,
                       std::queue<std::tuple<int, int, int, int, const char*>>&)>,
     uint32_t);
+// The embedder's state-machine snapshot callbacks for one partition's Raft
+// server (Raft only; the Paxos helper ignores them).
+void register_snapshot_callbacks_for_partition(uint32_t par_id,
+                                               janus::RaftCreateSnapshotFn create,
+                                               janus::RaftPrepareSnapshotFn prepare);
 void submit(const char*, int, uint32_t);
 void add_log(const char*, int, uint32_t);
 void add_log_without_queue(const char*, int, uint32_t);
