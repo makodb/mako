@@ -1,6 +1,13 @@
 # Raft conversion, verification and disk persistence: git history
 
-Every commit on this branch since it left `mako-dev`, oldest first (merges and the srpc subtree squash left out).
+Every commit of PR #92 (branch `raft-rust` of `yangzeyu1026/mako`) since it left `mako-dev`, oldest first (merges and the srpc subtree squash left out). The PR was squash-merged, so none of these commits is in `mako-dev`'s history; they stay reachable through the PR:
+
+```bash
+git fetch origin pull/92/head
+git show 4973a7576
+```
+
+The list ends at `190122dbf`; any later commits are in the PR.
 
 | commit | date | author | subject |
 |---|---|---|---|
@@ -411,3 +418,9 @@ Every commit on this branch since it left `mako-dev`, oldest first (merges and t
 | `0c650d6de` | 2026-10-19 | zyang2 | verus: a restart's recovered snapshot is coupled (Part B, E7) |
 | `3f2193ed4` | 2026-10-19 | zyang2 | raft: the verified gate admits snapshots (F31, F32) |
 | `b44ac8184` | 2026-10-19 | zyang2 | verus: a step's persist note is exact (Part A, P2) |
+| `35047db76` | 2026-10-20 | zyang2 | raft: keep process docs out of the repository; record the git history |
+| `cde263649` | 2026-10-20 | zyang2 | scripts: drop the measurement results and history kept in tool files |
+| `0382d99b0` | 2026-10-20 | zyang2 | raft: correct stale comments and docs; lock the Raft cargo builds |
+| `ccb8f4de4` | 2026-10-20 | zyang2 | raft: name the WAL-failure signal; drop raft_dsl.sh's dead doc reference |
+| `21944f3f1` | 2026-10-20 | zyang2 | raft: refuse a short append in a replay recording; refuse a long image name |
+| `190122dbf` | 2026-10-20 | zyang2 | raft: delete two dead recovery helpers; check the member list is sorted |

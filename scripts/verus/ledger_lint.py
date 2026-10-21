@@ -2,9 +2,10 @@
 """ledger_lint.py -- every line of the Raft core is accounted for.
 
 The core crate (src/deptran/raft/core) did not exist at the
-baseline (tag verus-p0): it was assembled by moving the protocol out
-of the server's Rust sources. So `git diff verus-p0 -- src/deptran/raft/core`
-is all additions, and each added line must be one of:
+baseline (571c07301, tagged verus-p0 in the clone the work was done in): it
+was assembled by moving the protocol out of the server's Rust sources. So
+`git diff 571c07301 -- src/deptran/raft/core` is all additions, and each added
+line must be one of:
 
   ghost       Verus proof text: a requires / ensures / invariant / decreases
               clause, a proof block, an assert, a let ghost, a spec or proof
@@ -25,6 +26,11 @@ is all additions, and each added line must be one of:
 Anything else is an unregistered executable change: reported, and the exit
 status is 1. Exit 0 means the core is ghost, moved or labelled throughout.
 
+Both baselines are commits of PR #92, which was squash-merged into mako-dev,
+so a mako-dev clone lacks them. Without its baseline the lint is skipped (exit
+0, saying so) rather than run against nothing, which would report every
+executable line; `git fetch origin pull/92/head` brings them back.
+
   python3 scripts/verus/ledger_lint.py            # check
   python3 scripts/verus/ledger_lint.py --stats    # the line inventory
   python3 scripts/verus/ledger_lint.py --ghost-only --base <rev>
@@ -44,7 +50,8 @@ import sys
 from collections import Counter
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
-BASE = 'verus-p0'
+# verus-p0, by commit: the tag exists only in the clone the work was done in.
+BASE = '571c07301'
 # The shell the core was moved out of: the commit before the crate split
 # (after the lane removal). Earlier changes to that code were ledgered per
 # function; the lint checks what the split and later did to it.
@@ -73,6 +80,11 @@ GHOST_LINE = re.compile(
 def git(*args):
     return subprocess.run(['git', *args], cwd=ROOT, capture_output=True, text=True,
                           check=True).stdout
+
+
+def have_commit(rev):
+    return subprocess.run(['git', 'cat-file', '-e', f'{rev}^{{commit}}'], cwd=ROOT,
+                          capture_output=True).returncode == 0
 
 
 def normalize(line):
@@ -380,6 +392,12 @@ def main():
     ap.add_argument('--ghost-only', action='store_true',
                     help="the diff-2 lint: lines changed since --base must be ghost")
     args = ap.parse_args()
+    # corpus() reads an absent revision as empty, so check first.
+    baseline = args.base if args.ghost_only else args.moved_from
+    if not have_commit(baseline):
+        print(f'ledger lint: skipped, {baseline} is not in this clone '
+              f'(it is in PR #92: git fetch origin pull/92/head)')
+        sys.exit(0)
     if args.ghost_only:
         # the lines a later phase changed in the core, by diff; a removed line
         # and an added one that are the same code (a named return, a comment,
