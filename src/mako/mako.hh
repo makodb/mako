@@ -254,6 +254,13 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
         CommitInfo commit_info = get_latest_commit_info((char *) log, len);
         timestamp = commit_info.timestamp;  // Store for return value encoding
         sync_util::sync_logger::local_timestamp_[par_id].store(commit_info.timestamp, memory_order_release) ;
+        // Raft: a replica that becomes leader takes no Paxos-style takeover,
+        // which moves the epoch on. Keep its next commit timestamp past every
+        // entry it replays, so its own writes win over the old leader's on
+        // every replica (replay keeps the larger commit id, cmpFunc2_v2).
+        if (janus::is_using_raft()) {
+          sync_util::sync_logger::advance_local_replica_id(commit_info.timestamp / 10 + 1);
+        }
 #ifndef DISABLE_DISK
         // Followers don't persist to disk, so immediately update disk_timestamp_ too
         sync_util::sync_logger::disk_timestamp_[par_id].store(commit_info.timestamp, memory_order_release) ;

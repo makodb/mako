@@ -41,6 +41,18 @@ namespace sync_util {
         static std::unordered_map<int, uint32_t> hist_timestamp; // on the running shard
         static std::atomic<uint32_t> noops_cnt;
         static std::atomic<uint32_t> noops_cnt_hole;
+
+        // Raise local_replica_id, the timestamp the next commit takes, to at
+        // least ts.
+        static void advance_local_replica_id(uint32_t ts) {
+            const int target = static_cast<int>(ts);
+            int cur = __atomic_load_n(&local_replica_id, __ATOMIC_ACQUIRE);
+            while (cur < target &&
+                   !__atomic_compare_exchange_n(&local_replica_id, &cur, target, false,
+                                                __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            }
+        }
+
         static int exchange_refresh_cnt;
         static std::atomic<bool> exchange_running;
         static int failed_shard_index;
