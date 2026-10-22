@@ -226,6 +226,10 @@ void register_leader_election_callback(std::function<void(int)> cb) {
     DISPATCH_VOID_RAFT_OR_PAXOS(register_leader_election_callback, cb);  // @unsafe
 }
 
+void register_catch_up_callback(std::function<void(int)> cb) {
+    DISPATCH_VOID_RAFT_OR_PAXOS(register_catch_up_callback, cb);  // @unsafe
+}
+
 void register_for_leader_par_id(std::function<void(const char*&, int, int)> cb, uint32_t par_id) {
     DISPATCH_VOID_RAFT_OR_PAXOS(register_for_leader_par_id, cb, par_id);  // @unsafe
 }

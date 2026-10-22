@@ -21,6 +21,10 @@ using namespace janus;
 namespace janus {
 vector<shared_ptr<RaftWorker>> raft_workers_g = {};
 std::function<void(int)> leader_callback_{};
+// How many partitions this process leads are catching up
+// (RaftWorker::BeginCatchUp), and who is told each time it changes.
+int catching_up_count_ = 0;   // under raft_global_callback_mutex
+std::function<void(int)> catch_up_callback_{};
 std::mutex raft_global_callback_mutex;
 }
 
@@ -1031,6 +1035,16 @@ void register_leader_election_callback(std::function<void(int)> cb) {
   janus::leader_callback_ = std::move(cb);
 }
 
+// register_catch_up_callback saves the notifier told how many partitions
+// this process leads are catching up, and tells it the count now.
+void register_catch_up_callback(std::function<void(int)> cb) {
+  std::lock_guard<std::mutex> guard(janus::raft_global_callback_mutex);
+  janus::catch_up_callback_ = std::move(cb);
+  if (janus::catch_up_callback_) {
+    janus::catch_up_callback_(janus::catching_up_count_);
+  }
+}
+
 // register_for_leader_par_id registers leader callbacks that want the partition id.
 void register_for_leader_par_id(
     std::function<void(const char*&, int, int)> cb, uint32_t par_id) {
@@ -1288,6 +1302,17 @@ void raft_handle_leader_change(uint32_t partition_id, bool is_leader) {
 void NotifyRaftLeaderChange(uint32_t partition_id, bool is_leader) {
   if (is_using_raft()) {
     raft_handle_leader_change(partition_id, is_leader);
+  }
+}
+
+// @safe - Called by RaftWorker for each partition that starts or stops
+// catching up; tells the registered notifier the new count, under the lock
+// so counts arrive in order.
+void NotifyRaftCatchUp(bool catching_up) {
+  std::lock_guard<std::mutex> guard(raft_global_callback_mutex);
+  catching_up_count_ += catching_up ? 1 : -1;
+  if (catch_up_callback_) {
+    catch_up_callback_(catching_up_count_);
   }
 }
 

@@ -56,10 +56,14 @@ namespace {
 
 // A command's tx_id names the process that appended it: the site id in the
 // top 16 bits, then the low 24 bits of the first term this process led
-// (RaftWorker::AuthorTerm), then a 24-bit counter.
+// (RaftWorker::AuthorTerm), then a catch-up-marker bit and a 23-bit counter.
 constexpr int kTxIdCounterBits = 24;
-constexpr txnid_t kTxIdCounterMask = (txnid_t{1} << kTxIdCounterBits) - 1;
+constexpr txnid_t kCatchUpMarkerBit = txnid_t{1} << (kTxIdCounterBits - 1);
+constexpr txnid_t kTxIdCounterMask = kCatchUpMarkerBit - 1;
 constexpr uint64_t kAuthorTermMask = (uint64_t{1} << 24) - 1;
+// A marker also carries this payload, so an entry is a marker only with
+// both: Mako's own logs never equal it, and the end-of-run entries are empty.
+constexpr std::string_view kCatchUpMarkerPayload = "MAKO_RAFT_CATCH_UP_MARKER_V1";
 
 }  // namespace
 
@@ -341,12 +345,15 @@ void RaftWorker::SetupBase() {
         }
       }
       if (raft_worker_should_notify_default_partition(par_ids.empty())) {
-        uint32_t par_id = site_info_ ? site_info_->partition_id_ : 0;
-        NotifyRaftLeaderChange(par_id, leader);
+        par_ids.insert(site_info_ ? site_info_->partition_id_ : 0);
+      }
+      if (leader) {
+        BeginCatchUp(par_ids);
       } else {
-        for (uint32_t pid : par_ids) {
-          NotifyRaftLeaderChange(pid, leader);
-        }
+        EndCatchUp(0, 0);
+      }
+      for (uint32_t pid : par_ids) {
+        NotifyRaftLeaderChange(pid, leader);
       }
     });
   }
@@ -699,7 +706,8 @@ void RaftWorker::StopSubmitThread() {
     remaining.swap(submit_queue_);
   }
   for (auto& entry : remaining) {
-    Submit(entry.payload.data(), static_cast<int>(entry.payload.size()), entry.par_id);
+    Submit(entry.payload.data(), static_cast<int>(entry.payload.size()), entry.par_id,
+           entry.catch_up_marker);
   }
 }
 
@@ -791,8 +799,63 @@ bool RaftWorker::IsOwnTxId(txnid_t tx_id) const {
          (tx_id >> kTxIdCounterBits) == (OwnTxIdPrefix(author_term) >> kTxIdCounterBits);
 }
 
+// @unsafe - submit queue and the catch-up map, both under their mutexes
+void RaftWorker::BeginCatchUp(const std::set<uint32_t>& par_ids) {
+  std::vector<uint32_t> started;
+  {
+    std::lock_guard<std::mutex> guard(catch_up_mutex_);
+    for (uint32_t pid : par_ids) {
+      if (catching_up_.emplace(pid, 0).second) {
+        started.push_back(pid);
+      }
+    }
+  }
+  for (uint32_t pid : started) {
+    Log_info("[RAFT-CATCHUP] partition {}: leading; applying entries of earlier terms", pid);
+    NotifyRaftCatchUp(true);
+    PendingLog marker;
+    marker.payload.assign(kCatchUpMarkerPayload.data(), kCatchUpMarkerPayload.size());
+    marker.par_id = pid;
+    marker.catch_up_marker = true;
+    if (raft_worker_should_enqueue(submit_thread_started_)) {
+      {
+        std::lock_guard<std::mutex> lock(submit_mutex_);
+        submit_queue_.push_back(std::move(marker));
+      }
+      submit_cv_.notify_one();
+    } else {
+      Submit(marker.payload.data(), static_cast<int>(marker.payload.size()), pid, true);
+    }
+  }
+}
+
+// @unsafe - the catch-up map under its mutex
+void RaftWorker::EndCatchUp(uint32_t par_id, txnid_t marker) {
+  int ended = 0;
+  {
+    std::lock_guard<std::mutex> guard(catch_up_mutex_);
+    if (marker == 0) {
+      ended = static_cast<int>(catching_up_.size());
+      catching_up_.clear();
+    } else {
+      auto it = catching_up_.find(par_id);
+      // Only this leadership's own marker: an earlier one applying says
+      // nothing about the entries before the current one.
+      if (it != catching_up_.end() && it->second == marker) {
+        catching_up_.erase(it);
+        ended = 1;
+        Log_info("[RAFT-CATCHUP] partition {}: caught up", par_id);
+      }
+    }
+  }
+  for (int i = 0; i < ended; i++) {
+    NotifyRaftCatchUp(false);
+  }
+}
+
 // @unsafe - external calls marked @external [safe], pointer ops are bounded
-void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
+void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id,
+                        bool catch_up_marker) {
   // Log_debug("[RAFT-SUBMIT] Enter Submit: par_id={} length={}", par_id, length);
 
   // Do not pre-check leadership here. RaftServer::Start() performs the
@@ -811,6 +874,15 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   const uint64_t trace_submit_us = raft_trace_now_us();  // [M0] trace kit
   static std::atomic<txnid_t> next_tx_id{1};
   txnid_t tx_id = OwnTxIdPrefix(AuthorTerm()) | (next_tx_id.fetch_add(1) & kTxIdCounterMask);
+  if (catch_up_marker) {
+    tx_id |= kCatchUpMarkerBit;
+    std::lock_guard<std::mutex> guard(catch_up_mutex_);
+    auto it = catching_up_.find(par_id);
+    if (it == catching_up_.end()) {
+      return;  // leadership was lost first, which ended the catch-up
+    }
+    it->second = tx_id;
+  }
 
   // Use the production helper to create TpcCommitCommand{cmd_=LogEntry}.
   auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id, par_id);
@@ -1074,6 +1146,16 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
     return status;
   }
 
+  // A catch-up marker (BeginCatchUp) is not Mako's. Its own leadership's
+  // marker ends that partition's catch-up.
+  if ((tpc_cmd.unwrap()->tx_id_ & kCatchUpMarkerBit) &&
+      std::string_view(log, len) == kCatchUpMarkerPayload) {
+    if (IsOwnTxId(tpc_cmd.unwrap()->tx_id_)) {
+      EndCatchUp(par_id, tpc_cmd.unwrap()->tx_id_);
+    }
+    return 0;
+  }
+
   // The leader callback only marks a command committed; the follower
   // callback writes it into the tables. So a command takes the leader
   // callback in the process that appended it and the follower callback
@@ -1235,7 +1317,8 @@ void RaftWorker::SubmitLoop() {
 
     for (auto& entry : batch) {
       t_trace_enq_us = entry.enq_us;  // [M0] trace kit
-      Submit(entry.payload.data(), static_cast<int>(entry.payload.size()), entry.par_id);
+      Submit(entry.payload.data(), static_cast<int>(entry.payload.size()), entry.par_id,
+             entry.catch_up_marker);
     }
 
     lock.lock();
