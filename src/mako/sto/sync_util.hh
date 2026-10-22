@@ -42,6 +42,18 @@ namespace sync_util {
         static std::atomic<uint32_t> noops_cnt;
         static std::atomic<uint32_t> noops_cnt_hole;
 
+        // Raft: how many partitions this process has just started leading
+        // and is still catching up on (applying entries of earlier terms).
+        // A commit that will be logged waits while it is nonzero, so it
+        // takes a timestamp after everything those entries carry.
+        static std::atomic<int> raft_catching_up_;
+
+        static void wait_raft_catch_up() {
+            while (raft_catching_up_.load(std::memory_order_acquire) > 0) {
+                std::this_thread::sleep_for(std::chrono::microseconds(50));
+            }
+        }
+
         // Raise local_replica_id, the timestamp the next commit takes, to at
         // least ts.
         static void advance_local_replica_id(uint32_t ts) {

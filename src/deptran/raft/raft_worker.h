@@ -12,6 +12,7 @@
 #include <condition_variable>
 #include <deque>
 #include <map>
+#include <set>
 #include <thread>
 
 // @external: {
@@ -46,6 +47,10 @@ extern std::function<void(int)> leader_callback_;
 void raft_handle_leader_change(uint32_t partition_id, bool is_leader);
 // @unsafe - uses raw global std::function, unbounded callback invocation
 void NotifyRaftLeaderChange(uint32_t partition_id, bool is_leader);
+// A partition this process leads starts (true) or stops (false) catching up
+// on entries of earlier terms; see RaftWorker::BeginCatchUp.
+// @unsafe - uses raw global std::function, unbounded callback invocation
+void NotifyRaftCatchUp(bool catching_up);
 
 // Watermark callback type used for per-partition leader/follower routing
 using watermark_callback_t = std::function<int(const char*&, int, int, int,
@@ -96,6 +101,7 @@ private:
     std::string payload;
     uint32_t par_id;
     uint64_t enq_us = 0;  // [M0] trace kit: enqueue stamp, 0 when off
+    bool catch_up_marker = false;  // BeginCatchUp's marker
   };
   std::deque<PendingLog> submit_queue_;
   std::mutex submit_mutex_;
@@ -207,7 +213,7 @@ public:
 
   // Log submission (called from Mako)
   // @unsafe - uses raw pointers, shared_ptr, dynamic_cast
-  void Submit(const char* log, int len, uint32_t par_id);
+  void Submit(const char* log, int len, uint32_t par_id, bool catch_up_marker = false);
   // @safe
   void IncSubmit();
   // @safe - mutex/condvar operations are bounded
@@ -304,6 +310,18 @@ public:
   // Whether this process appended the command carrying tx_id.
   // @unsafe - site_info_ pointer dereference
   bool IsOwnTxId(txnid_t tx_id) const;
+
+  // A replica that becomes leader still has to apply the entries of earlier
+  // terms, and until it has, a write it commits may take a timestamp below
+  // theirs and be overwritten when they replay. So on becoming leader it
+  // appends a marker to each partition it leads, and the partition catches
+  // up when its marker applies, which is after every entry before it.
+  // NotifyRaftCatchUp reports each partition starting and finishing, and
+  // Mako holds logged commits meanwhile. Losing leadership ends it.
+  void BeginCatchUp(const std::set<uint32_t>& par_ids);
+  void EndCatchUp(uint32_t par_id, txnid_t marker);   // marker 0: end it anyway
+  std::map<uint32_t, txnid_t> catching_up_;  // partition -> its marker (0 until submitted)
+  std::mutex catch_up_mutex_;
 
 private:
   // @safe - mutex/condvar operations are bounded

@@ -523,6 +523,11 @@ bool Transaction::try_commit(bool no_paxos) {
     }
 #endif
 
+    // A write that will be logged waits while this process catches up as a
+    // new Raft leader (wait_raft_catch_up); replay (no_paxos) is what it
+    // waits for. Before any lock is taken, so replay is never blocked.
+    if (!no_paxos) sync_util::sync_logger::wait_raft_catch_up();
+
     state_ = s_committing;
 
     unsigned writeset[tset_size_ ? tset_size_ : 1];

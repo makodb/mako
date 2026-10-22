@@ -22,6 +22,7 @@ int sync_util::sync_logger::local_replica_id = 0;
 std::chrono::time_point<std::chrono::high_resolution_clock> sync_util::sync_logger::last_update = std::chrono::high_resolution_clock::now();
 int sync_util::sync_logger::nthreads = 0;
 bool sync_util::sync_logger::worker_running = false;
+std::atomic<int> sync_util::sync_logger::raft_catching_up_{0};
 bool sync_util::sync_logger::is_leader = true;
 std::string sync_util::sync_logger::cluster = mako::LOCALHOST_CENTER;
 transport::Configuration *sync_util::sync_logger::config = nullptr;
