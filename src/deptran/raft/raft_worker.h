@@ -288,10 +288,19 @@ public:
       int length,
       txnid_t tx_id,
       uint32_t par_id);
+  // The first term this process led, 0 until it leads. It tells this
+  // process's commands from those of every other process of the same site:
+  // a later one (a restart, whose entries an earlier process may have left
+  // in the log) can only lead terms above any an earlier one led, since its
+  // election needs a majority, which includes a replica that saw those
+  // terms. A term has one leader, so no two processes share it.
+  // @unsafe - GetRaftServer returns a raw pointer
+  uint64_t AuthorTerm();
+  std::atomic<uint64_t> author_term_{0};
   // The top 40 bits of the tx_id of every command this process appends:
-  // its site id and a value that differs from an earlier process's.
+  // its site id and its AuthorTerm.
   // @unsafe - site_info_ pointer dereference
-  txnid_t OwnTxIdPrefix() const;
+  txnid_t OwnTxIdPrefix(uint64_t author_term) const;
   // Whether this process appended the command carrying tx_id.
   // @unsafe - site_info_ pointer dereference
   bool IsOwnTxId(txnid_t tx_id) const;

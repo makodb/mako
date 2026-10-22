@@ -55,22 +55,11 @@ namespace janus {
 namespace {
 
 // A command's tx_id names the process that appended it: the site id in the
-// top 16 bits, then 24 bits that tell this process from an earlier one of
-// the same site (a disk-mode restart applies that one's entries again),
-// then a 24-bit counter.
+// top 16 bits, then the low 24 bits of the first term this process led
+// (RaftWorker::AuthorTerm), then a 24-bit counter.
 constexpr int kTxIdCounterBits = 24;
 constexpr txnid_t kTxIdCounterMask = (txnid_t{1} << kTxIdCounterBits) - 1;
-
-uint64_t ProcessIncarnation() {
-  static const uint64_t bits = [] {
-    std::random_device rd;
-    const uint64_t now = static_cast<uint64_t>(
-        std::chrono::system_clock::now().time_since_epoch().count());
-    const uint64_t b = (static_cast<uint64_t>(rd()) ^ now ^ (now >> 24)) & 0xFFFFFF;
-    return b == 0 ? uint64_t{1} : b;  // never 0: untagged tx_ids are not ours
-  }();
-  return bits;
-}
+constexpr uint64_t kAuthorTermMask = (uint64_t{1} << 24) - 1;
 
 }  // namespace
 
@@ -335,6 +324,9 @@ void RaftWorker::SetupBase() {
       {
         std::lock_guard<std::recursive_mutex> guard(election_state_lock);
         is_leader = raft_worker_leader_flag_from_bool(leader);
+      }
+      if (leader) {
+        AuthorTerm();  // fixes this process's tag at its first leadership
       }
       // Notify all partitions that currently have callback registrations.
       std::set<uint32_t> par_ids;
@@ -764,15 +756,39 @@ rusty::Arc<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
   return tpc_cmd;
 }
 
+// @unsafe - GetRaftServer returns a raw pointer
+uint64_t RaftWorker::AuthorTerm() {
+  uint64_t term = author_term_.load(std::memory_order_acquire);
+  if (term != 0) {
+    return term;
+  }
+  RaftSpecific* raft_server = GetRaftServer();
+  if (raft_server == nullptr || !raft_server->IsLeader()) {
+    return 0;
+  }
+  uint64_t expected = 0;
+  term = raft_server->CurrentTerm();
+  if (!author_term_.compare_exchange_strong(expected, term, std::memory_order_acq_rel)) {
+    term = expected;
+  } else {
+    Log_info("[RAFT-AUTHOR] site {} tags the commands it appends with term {}",
+             site_info_ ? site_info_->id : 0, term);
+  }
+  return term;
+}
+
 // @unsafe - site_info_ pointer dereference
-txnid_t RaftWorker::OwnTxIdPrefix() const {
+txnid_t RaftWorker::OwnTxIdPrefix(uint64_t author_term) const {
   const uint64_t site = static_cast<uint64_t>(site_info_->id);
-  return ((site << 24) | ProcessIncarnation()) << kTxIdCounterBits;
+  return ((site << 24) | (author_term & kAuthorTermMask)) << kTxIdCounterBits;
 }
 
 // @unsafe - site_info_ pointer dereference
 bool RaftWorker::IsOwnTxId(txnid_t tx_id) const {
-  return (tx_id >> kTxIdCounterBits) == (OwnTxIdPrefix() >> kTxIdCounterBits);
+  // A process that never led appended nothing.
+  const uint64_t author_term = author_term_.load(std::memory_order_acquire);
+  return author_term != 0 &&
+         (tx_id >> kTxIdCounterBits) == (OwnTxIdPrefix(author_term) >> kTxIdCounterBits);
 }
 
 // @unsafe - external calls marked @external [safe], pointer ops are bounded
@@ -794,7 +810,7 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   // commands this process appended from everyone else's.
   const uint64_t trace_submit_us = raft_trace_now_us();  // [M0] trace kit
   static std::atomic<txnid_t> next_tx_id{1};
-  txnid_t tx_id = OwnTxIdPrefix() | (next_tx_id.fetch_add(1) & kTxIdCounterMask);
+  txnid_t tx_id = OwnTxIdPrefix(AuthorTerm()) | (next_tx_id.fetch_add(1) & kTxIdCounterMask);
 
   // Use the production helper to create TpcCommitCommand{cmd_=LogEntry}.
   auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id, par_id);
