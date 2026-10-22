@@ -52,6 +52,28 @@ extern "C" uint64_t raft_trace_now_us();
 namespace { thread_local uint64_t t_trace_enq_us = 0; }
 namespace janus {
 
+namespace {
+
+// A command's tx_id names the process that appended it: the site id in the
+// top 16 bits, then 24 bits that tell this process from an earlier one of
+// the same site (a disk-mode restart applies that one's entries again),
+// then a 24-bit counter.
+constexpr int kTxIdCounterBits = 24;
+constexpr txnid_t kTxIdCounterMask = (txnid_t{1} << kTxIdCounterBits) - 1;
+
+uint64_t ProcessIncarnation() {
+  static const uint64_t bits = [] {
+    std::random_device rd;
+    const uint64_t now = static_cast<uint64_t>(
+        std::chrono::system_clock::now().time_since_epoch().count());
+    const uint64_t b = (static_cast<uint64_t>(rd()) ^ now ^ (now >> 24)) & 0xFFFFFF;
+    return b == 0 ? uint64_t{1} : b;  // never 0: untagged tx_ids are not ours
+  }();
+  return bits;
+}
+
+}  // namespace
+
 // Pure worker decisions over copied scalar values. Thread lifecycle,
 // condition-variable waits, queue mutation, callbacks, allocation, and Raft
 // submission stay in the existing C++ control flow. `const fn` makes the
@@ -742,6 +764,17 @@ rusty::Arc<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
   return tpc_cmd;
 }
 
+// @unsafe - site_info_ pointer dereference
+txnid_t RaftWorker::OwnTxIdPrefix() const {
+  const uint64_t site = static_cast<uint64_t>(site_info_->id);
+  return ((site << 24) | ProcessIncarnation()) << kTxIdCounterBits;
+}
+
+// @unsafe - site_info_ pointer dereference
+bool RaftWorker::IsOwnTxId(txnid_t tx_id) const {
+  return (tx_id >> kTxIdCounterBits) == (OwnTxIdPrefix() >> kTxIdCounterBits);
+}
+
 // @unsafe - external calls marked @external [safe], pointer ops are bounded
 void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   // Log_debug("[RAFT-SUBMIT] Enter Submit: par_id={} length={}", par_id, length);
@@ -757,10 +790,11 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
     return;
   }
 
-  // Use a simple incrementing tx_id (in production this would be a global txn ID)
+  // An incrementing tx_id under this process's tag, so Next can tell the
+  // commands this process appended from everyone else's.
   const uint64_t trace_submit_us = raft_trace_now_us();  // [M0] trace kit
   static std::atomic<txnid_t> next_tx_id{1};
-  txnid_t tx_id = next_tx_id.fetch_add(1);
+  txnid_t tx_id = OwnTxIdPrefix() | (next_tx_id.fetch_add(1) & kTxIdCounterMask);
 
   // Use the production helper to create TpcCommitCommand{cmd_=LogEntry}.
   auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id, par_id);
@@ -1024,7 +1058,14 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
     return status;
   }
 
-  bool am_leader = IsLeader(par_id);
+  // The leader callback only marks a command committed; the follower
+  // callback writes it into the tables. So a command takes the leader
+  // callback in the process that appended it and the follower callback
+  // everywhere else, whatever this node's role is now. A node elected while
+  // the old leader's last commands were uncommitted applies them as leader,
+  // and they still have to reach its tables; a leader deposed before its
+  // own commands applied still only has to mark them committed.
+  const bool am_author = IsOwnTxId(tpc_cmd.unwrap()->tx_id_);
 
   // Route to the richest per-partition callback first, then preserve the two
   // legacy void-callback APIs as role-aware fallbacks. Copy under the mutex and
@@ -1034,14 +1075,14 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
   std::function<void(const char*, int)> active_simple_callback;
   {
     std::lock_guard<std::mutex> guard(callback_registry_mutex_);
-    auto& cb_map = am_leader ? leader_callbacks_by_partition_
+    auto& cb_map = am_author ? leader_callbacks_by_partition_
                              : follower_callbacks_by_partition_;
     auto cb_it = cb_map.find(par_id);
     if (cb_it != cb_map.end() &&
         raft_worker_callback_available(static_cast<bool>(cb_it->second))) {
       active_callback = cb_it->second;
     } else {
-      auto& global_cb = am_leader ? leader_callback_par_id_return_
+      auto& global_cb = am_author ? leader_callback_par_id_return_
                                   : follower_callback_par_id_return_;
       if (raft_worker_callback_available(static_cast<bool>(global_cb))) {
         active_callback = global_cb;
@@ -1050,7 +1091,7 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
 
     if (!active_callback) {
       auto& partition_cb_map =
-          am_leader ? leader_partition_apply_callbacks_by_partition_
+          am_author ? leader_partition_apply_callbacks_by_partition_
                     : follower_partition_apply_callbacks_by_partition_;
       auto partition_cb_it = partition_cb_map.find(par_id);
       if (partition_cb_it != partition_cb_map.end() &&
@@ -1063,7 +1104,7 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
 
     if (!active_callback && !active_partition_callback) {
       auto& simple_cb_map =
-          am_leader ? leader_apply_callbacks_by_partition_
+          am_author ? leader_apply_callbacks_by_partition_
                     : follower_apply_callbacks_by_partition_;
       auto simple_cb_it = simple_cb_map.find(par_id);
       if (simple_cb_it != simple_cb_map.end() &&
@@ -1078,12 +1119,12 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
   if (!active_callback && !active_partition_callback &&
       !active_simple_callback) {
     Log_error("[RAFT-CALLBACK] No {} callback registered for partition {}",
-              am_leader ? "leader" : "follower", par_id);
+              am_author ? "leader" : "follower", par_id);
     throw std::runtime_error("Raft application callback is not registered");
   }
 
   Log_debug("[RAFT-CALLBACK] Applying log at slot {} par_id {} using {} callback",
-            slot_id, par_id, am_leader ? "LEADER" : "FOLLOWER");
+            slot_id, par_id, am_author ? "LEADER" : "FOLLOWER");
 
   uint32_t timestamp = 0;
   if (active_callback) {
@@ -1110,7 +1151,7 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
   }
 
   Log_debug("Raft applied log at slot {}: status={}, timestamp={}, role={}, par_id={}",
-            slot_id, status, timestamp, am_leader ? "leader" : "follower", par_id);
+            slot_id, status, timestamp, am_author ? "leader" : "follower", par_id);
 
   return status;
   } // end @unsafe block for const char* log

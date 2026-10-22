@@ -288,6 +288,13 @@ public:
       int length,
       txnid_t tx_id,
       uint32_t par_id);
+  // The top 40 bits of the tx_id of every command this process appends:
+  // its site id and a value that differs from an earlier process's.
+  // @unsafe - site_info_ pointer dereference
+  txnid_t OwnTxIdPrefix() const;
+  // Whether this process appended the command carrying tx_id.
+  // @unsafe - site_info_ pointer dereference
+  bool IsOwnTxId(txnid_t tx_id) const;
 
 private:
   // @safe - mutex/condvar operations are bounded
