@@ -27,25 +27,73 @@ void PaxosServer::OnSyncLog(const janus::Command& cmd_env,
   }
   es->state_unlock();
   *valid = 1;
+  // With a byte bound, the reply stops before the entry that would cross
+  // it (but carries at least one), and later partitions get nothing this
+  // time; the caller asks again from where the reply ended.
+  const int64_t max_bytes = bcmd.unwrap()->max_reply_bytes;
+  const bool include_accepted = bcmd.unwrap()->include_accepted != 0;
+  int64_t reply_bytes = 0;
+  bool reply_full = false;
+  // Whether the reply has room for cmd; counts its bytes if so.
+  auto fits = [&](const janus::Command& cmd) {
+    if (max_bytes <= 0) return true;
+    const auto entry = marshallable_cast<LogEntry>(cmd);
+    const int64_t entry_bytes = entry.is_some() ? entry.unwrap()->length : 64;
+    if (reply_bytes > 0 && reply_bytes + entry_bytes > max_bytes) {
+      reply_full = true;
+      return false;
+    }
+    reply_bytes += entry_bytes;
+    return true;
+  };
+  auto add = [](BulkPaxosCmd& to, slotid_t slot, ballot_t ballot, const janus::Command& cmd) {
+    to.slots.push_back(slot);
+    to.ballots.push_back(ballot);
+    to.cmds.push_back(rusty::Arc<janus::Command>::make(cmd));
+  };
   for(int i = 0; i < pxs_workers_g.size(); i++){
     ret_cmd.missing_slots.push_back(vector<slotid_t>{});
     PaxosServer* ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     BulkPaxosCmd bp_cmd;
+    BulkPaxosCmd accepted_cmd;
     ps->mtx_.lock();
 
-    for(int j = bcmd.unwrap()->sync_commit_slot[i]; j <= ps->max_committed_slot_; j++){
-      auto inst = ps->GetInstance(j);
-      // committed_cmd_ is Command; the temp_cmd
-      // copy + janus::Command(Command) wrapping below relies on
-      // Command's copy ctor.
-      if(inst->committed_cmd_.has_value()){
-        bp_cmd.slots.push_back(j);
-        bp_cmd.ballots.push_back(inst->max_ballot_accepted_);
-        auto temp_cmd = inst->committed_cmd_;
-      	janus::Command md(temp_cmd);
-      	auto shrd_ptr = rusty::Arc<janus::Command>::make(md);
-        bp_cmd.cmds.push_back(std::move(shrd_ptr));
+    // A learner catching up can ask from slot 1; slots below
+    // min_active_slot_ are gone (a recovered log starts later) and
+    // GetInstance must not be asked for them.
+    const slotid_t first = std::max<slotid_t>(bcmd.unwrap()->sync_commit_slot[i], ps->min_active_slot_);
+    if (!include_accepted) {
+      for(slotid_t j = first; !reply_full && j <= ps->max_committed_slot_; j++){
+        auto inst = ps->GetInstance(j);
+        if(inst->committed_cmd_.has_value()){
+          if (!fits(inst->committed_cmd_)) break;
+          add(bp_cmd, j, inst->max_ballot_accepted_, inst->committed_cmd_);
+        }
       }
+    } else {
+      // The promise comes first, under the same lock as the report, so no
+      // accept of a lower ballot lands between them.
+      if (bcmd.unwrap()->promise_epoch > ps->cur_epoch) {
+        ps->cur_epoch = bcmd.unwrap()->promise_epoch;
+        ps->PersistEpoch();
+      }
+      // Every slot this acceptor holds from first on: committed values as
+      // above, and values only accepted, with the ballot each was accepted
+      // at, for the next leader to adopt.
+      for (auto it = ps->logs_.lower_bound(first); !reply_full && it != ps->logs_.end(); ++it) {
+        const auto& inst = it->second;
+        if (!inst) continue;
+        if (inst->committed_cmd_.has_value()) {
+          if (!fits(inst->committed_cmd_)) break;
+          add(bp_cmd, it->first, inst->max_ballot_accepted_, inst->committed_cmd_);
+        } else if (inst->accepted_cmd_.has_value()) {
+          if (!fits(inst->accepted_cmd_)) break;
+          add(accepted_cmd, it->first, inst->max_ballot_accepted_, inst->accepted_cmd_);
+        }
+      }
+      ret_cmd.accepted_data.push_back(rusty::Arc<janus::Command>::make(
+          rusty::Arc<BulkPaxosCmd>::make(std::move(accepted_cmd))));
+      ret_cmd.complete.push_back(reply_full ? 0 : 1);
     }
     //Log_info("The partition {}, sync commit is {}; max executed-committed slot is [{}-{}] on follower", i, bcmd->sync_commit_slot[i], ps->max_executed_slot_, ps->max_committed_slot_);
     for(int j = ps->max_executed_slot_; j < bcmd.unwrap()->sync_commit_slot[i]; j++){
@@ -68,6 +116,9 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
   // marshallable_cast works on Command directly.
   const auto bcmd = marshallable_cast<BulkPaxosCmd>(cmd_env);
   verify(bcmd.is_some());
+  // OnSyncLog reads this partition's log, and raises cur_epoch, from
+  // another partition's thread.
+  std::lock_guard<std::recursive_mutex> lock(mtx_);
   // Defensive: reject an empty or incoherent batch instead of indexing
   // ballots[0] into it. A malformed BulkAccept is broadcast to every acceptor,
   // so an unchecked deref here takes down the whole replica group at once —
@@ -106,6 +157,7 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
 
   // collect entries for batch persistence
   std::vector<std::pair<slotid_t, std::shared_ptr<PaxosData>>> entries_to_persist;
+  bool decided_first = false;
 
   //Log_info("multi-paxos scheduler accept for slot: {}, par_id: {}", cur_slot, partition_id_);
   for(int i = 0; i < bcmd.unwrap()->slots.size(); i++){
@@ -139,6 +191,10 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
         instance->max_ballot_seen_ = ballot_id;
         instance->max_ballot_accepted_ = ballot_id;
         instance->accepted_cmd_ = *bcmd.unwrap()->cmds[i];
+        if (instance->decided_ && !instance->committed_cmd_.has_value()) {
+          instance->committed_cmd_ = instance->accepted_cmd_;   // its decide came first
+          decided_first = true;
+        }
         max_accepted_slot_ = slot_id;
         n_accept_++;
         *valid &= 1;
@@ -148,6 +204,9 @@ void PaxosServer::OnBulkAccept(const janus::Command& cmd_env,
   }
   // batch persist all accepted entries
   PersistLogEntries(entries_to_persist);
+  if (decided_first) {
+    ExecuteCommitted();
+  }
   if(req_leader != 0)
 	Log_debug("multi-paxos scheduler accept for slot: {}, par_id: {}", cur_slot, partition_id_);
   cb();
@@ -160,6 +219,7 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
   // marshallable_cast works on Command directly.
   const auto bcmd = marshallable_cast<PaxosPrepCmd>(cmd_env);
   verify(bcmd.is_some());
+  std::lock_guard<std::recursive_mutex> lock(mtx_);  // as in OnBulkAccept
   // Defensive: same malformed-batch blast door as OnBulkAccept.
   if (bcmd.unwrap()->slots.empty() ||
       bcmd.unwrap()->ballots.size() != bcmd.unwrap()->slots.size()) {
@@ -189,7 +249,6 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
   // if(req_leader != es->machine_id)
   // es->set_state(0);
   // es->state_unlock();
-  vector<std::pair<int,shared_ptr<PaxosData>>> commit_exec;
   // collect entries for batch persistence
   std::vector<std::pair<slotid_t, std::shared_ptr<PaxosData>>> entries_to_persist;
   for(int i = 0; i < bcmd.unwrap()->slots.size(); i++){
@@ -225,7 +284,13 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
         //verify(instance->max_ballot_accepted_ == ballot_id); //todo: for correctness, if a new commit comes, sync accept.
         instance->max_ballot_seen_ = ballot_id;
         instance->max_ballot_accepted_ = ballot_id;
-        instance->committed_cmd_ = instance->accepted_cmd_;
+        // Committing a slot whose accept has not arrived would commit
+        // nothing and stall the partition here, so the decision is noted
+        // and OnBulkAccept commits the value when it comes.
+        instance->decided_ = true;
+        if (instance->accepted_cmd_.has_value()) {
+          instance->committed_cmd_ = instance->accepted_cmd_;
+        }
         *valid &= 1;
         if (slot_id > max_committed_slot_) {
             max_committed_slot_ = slot_id;
@@ -240,28 +305,26 @@ void PaxosServer::OnBulkCommit(const janus::Command& cmd_env,
     cb();
     return;
   }
-  slotid_t tmpx = max_executed_slot_ + 1;
-  for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
-      auto next_instance = GetInstance(id);
-      if (next_instance->committed_cmd_.has_value()) {
-          commit_exec.push_back(std::make_pair(id,next_instance));
-          max_executed_slot_++;
-          n_commit_++;
-      }else{
-        //Log_info("wait for the id:{}, par_id:{}, max:{}", id, partition_id_, max_committed_slot_);
-        // if (max_committed_slot_ - tmpx>20){
-        //   max_executed_slot_++;
-        //   n_commit_++;
-        // }
-        break;
-      }
-   }
-  for(int i = 0; i < commit_exec.size(); i++){
-      app_next_(commit_exec[i].first,commit_exec[i].second->committed_cmd_);
-  }
+  ExecuteCommitted();
 
   *valid = 1;
   cb();
+}
+
+void PaxosServer::ExecuteCommitted() {
+  vector<std::pair<int,shared_ptr<PaxosData>>> commit_exec;
+  for (slotid_t id = max_executed_slot_ + 1; id <= max_committed_slot_; id++) {
+    auto next_instance = GetInstance(id);
+    if (!next_instance->committed_cmd_.has_value()) {
+      break;
+    }
+    commit_exec.push_back(std::make_pair(id, next_instance));
+    max_executed_slot_++;
+    n_commit_++;
+  }
+  for (int i = 0; i < commit_exec.size(); i++) {
+    app_next_(commit_exec[i].first, commit_exec[i].second->committed_cmd_);
+  }
 }
 
 void PaxosServer::OnForwardToLearner(const srpc::i32& par_id,
@@ -270,10 +333,30 @@ void PaxosServer::OnForwardToLearner(const srpc::i32& par_id,
                                     const janus::Command& cmd,
                                     rusty::Function<void()> cb) {
   //Log_info("received slot:{}",slot);
-  max_committed_slot_learner_ = slot;
   std::lock_guard<std::recursive_mutex> lock(mtx_);
+  if (took_over_) {
+    // Catch-up applied every slot up to the takeover, and later slots are
+    // this leader's own; applying p1's copy would run the leader callback a
+    // second time (moving local timestamps back, resetting the watermark on
+    // a repeated no-op, counting an end signal twice).
+    cb();
+    return;
+  }
+  // Forwards can arrive after a takeover's catch-up has applied later
+  // slots, so the learner's position only moves forward.
+  if (static_cast<slotid_t>(slot) > max_committed_slot_learner_) {
+    max_committed_slot_learner_ = slot;
+  }
+  // A takeover's catch-up may have applied this slot already, and the
+  // replay callback is not idempotent (markers start threads, no-ops and
+  // end signals are counted).
+  if (LearnerHasApplied(static_cast<slotid_t>(slot))) {
+    cb();
+    return;
+  }
   // app_next_ takes janus::Command directly.
   int status=app_next_(slot,cmd);
+  NoteLearnerApplied(static_cast<slotid_t>(slot));
   cb();
   if (status==janus::PaxosStatus::STATUS_NOOPS){// if noops
     Log_info("Noops received on the learner side");

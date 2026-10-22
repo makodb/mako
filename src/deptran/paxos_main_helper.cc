@@ -346,15 +346,10 @@ void submit(const char* log, int len, uint32_t par_id) {
         // `SetupBase`), so this verify would have always fired had
         // this branch ever been reached.  Field + class deleted in
         // this phase.
-        string log_str;
-        std::copy(log, log + len, std::back_inserter(log_str));
+        // Submit on the caller's thread: it can wait for a free accept
+        // round, and rounds finish on the poll thread.
         worker->IncSubmit();
-
-        auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([&worker,log_str,len,par_id] () {
-            worker->Submit(log_str.data(),len, par_id);
-        }));
-        auto arc_job_base = rusty::Arc<Job>(arc_job);
-        worker->GetPollThread()->add(arc_job_base);
+        worker->Submit(log, len, par_id);
         submit_tot++;
     }
 }
@@ -488,11 +483,291 @@ void upgrade_p1_to_leader() {
   sync_callbacks_for_new_leader();
 }
 
+// Run fn on a Paxos worker's poll thread and wait for it to finish.
+static void run_on_poll_thread(const shared_ptr<PaxosWorker>& pw, std::function<void()> fn) {
+  auto done = std::make_shared<std::pair<std::mutex, std::condition_variable>>();
+  auto finished = std::make_shared<bool>(false);
+  auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([fn, done, finished]() {
+    fn();
+    std::lock_guard<std::mutex> lock(done->first);
+    *finished = true;
+    done->second.notify_all();
+  }));
+  pw->GetPollThread()->add(rusty::Arc<Job>(arc_job));
+  std::unique_lock<std::mutex> lock(done->first);
+  done->second.wait(lock, [&] { return *finished; });
+}
+
+using SlotEntries = std::vector<std::pair<slotid_t, rusty::Arc<janus::Command>>>;
+
+// Applies a learner's entries for partition i, in slot order, through the
+// partition's replay callback on that partition's thread, where forwarded
+// entries are applied. Slots it has applied already are skipped, since the
+// replay callback is not idempotent. Returns how many it applied.
+static size_t apply_on_learner(size_t i, const SlotEntries& entries) {
+  auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
+  size_t applied = 0;
+  run_on_poll_thread(pxs_workers_g[i], [ps, &entries, &applied] {
+    std::lock_guard<std::recursive_mutex> lock(ps->mtx_);
+    for (auto& e : entries) {
+      if (ps->LearnerHasApplied(e.first)) {
+        continue;
+      }
+      ps->app_next_(static_cast<int>(e.first), *e.second);
+      ps->NoteLearnerApplied(e.first);
+      applied++;
+    }
+  });
+  return applied;
+}
+
+// apply_on_learner for every partition's entries, all partitions at once.
+// The takeover waits for this, and the other shards wait for the takeover.
+static size_t apply_on_learner_all(const std::vector<SlotEntries>& per) {
+  std::vector<size_t> applied(per.size(), 0);
+  std::vector<std::thread> threads;
+  for (size_t i = 0; i < per.size(); i++) {
+    if (per[i].empty()) continue;
+    threads.emplace_back([i, &per, &applied] { applied[i] = apply_on_learner(i, per[i]); });
+  }
+  for (auto& t : threads) {
+    t.join();
+  }
+  size_t total = 0;
+  for (size_t a : applied) {
+    total += a;
+  }
+  return total;
+}
+
+// A learner gets the log from p1, which forwards each entry as it applies
+// it, so the learner holds only what p1 has applied and forwarded so far,
+// minus any entry p1 committed before its connection to the learner was up
+// (p1 skips those). When p1 runs behind (on a loaded host, by thousands of
+// entries, including rows the TPC-C loader wrote), the learner would take
+// over without data the acceptors had committed, and the takeover below
+// moves its slots past that data, so it is never applied. Before leading,
+// it therefore fetches from the acceptors every entry they committed from
+// its first unapplied slot on, in replies of at most kCatchUpReplyBytes,
+// and applies them (apply_on_learner_all). Replay writes a key only over an
+// older version, so entries it already has, or entries applied out of
+// order, leave the same state. Returns the
+// highest committed slot seen per partition. If an acceptor rejects the
+// request because it is in a later epoch, *higher_epoch is set to that
+// epoch: another replica has taken over.
+static std::vector<slotid_t> catch_up_learner(int epoch, ballot_t* higher_epoch) {
+  constexpr int64_t kCatchUpReplyBytes = 16 * 1024 * 1024;
+  const size_t n = pxs_workers_g.size();
+  std::vector<slotid_t> next(n), high(n);
+  for (size_t i = 0; i < n; i++) {
+    auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
+    std::lock_guard<std::recursive_mutex> lock(ps->mtx_);
+    high[i] = ps->max_committed_slot_learner_;
+    next[i] = ps->learner_applied_prefix_ + 1;
+    Log_info("learner catch-up: partition {} applied every slot up to {}, {} more runs up to {}",
+             i, ps->learner_applied_prefix_, ps->learner_applied_runs_.size(), high[i]);
+  }
+  size_t applied = 0;
+  int rounds = 0;
+  for (;;) {
+    auto req = make_shared<SyncLogRequest>();
+    req->leader_id = es->machine_id;
+    req->epoch = epoch;
+    req->sync_commit_slot = next;
+    req->max_reply_bytes = kCatchUpReplyBytes;
+    map<pair<int, slotid_t>, rusty::Arc<janus::Command>> got;
+    bool ok = false;
+    ballot_t rejected = 0;
+    run_on_poll_thread(pxs_workers_g.back(), [&] {
+      ok = pxs_workers_g.back()->FetchCommitted(req, &got, &rejected);
+    });
+    if (!ok) {
+      if (rejected > epoch) {
+        *higher_epoch = rejected;
+        Log_warn("learner catch-up: an acceptor is in epoch {}, past this learner's {}",
+                 rejected, epoch);
+      } else {
+        Log_warn("learner catch-up: the acceptors did not answer; taking over with what was forwarded");
+      }
+      break;
+    }
+    // The map is ordered by (partition, slot), so each partition's entries
+    // come out in slot order.
+    std::vector<SlotEntries> per(n);
+    for (auto& kv : got) {
+      const size_t par = static_cast<size_t>(kv.first.first);
+      if (par < n && kv.first.second >= next[par]) {
+        per[par].emplace_back(kv.first.second, kv.second.clone());
+      }
+    }
+    applied += apply_on_learner_all(per);
+    bool progress = false;
+    for (size_t i = 0; i < n; i++) {
+      if (per[i].empty()) continue;
+      next[i] = per[i].back().first + 1;
+      high[i] = std::max(high[i], per[i].back().first);
+      progress = true;
+    }
+    rounds++;
+    if (!progress) break;
+  }
+  Log_info("learner catch-up: applied {} committed entries from the acceptors in {} rounds",
+           applied, rounds);
+  return high;
+}
+
+// A value the old leader got accepted by a quorum is chosen even if no
+// replica heard its decide. The leader learns a slot is decided as soon as
+// its own decide reaches it, and may then release the slot's transactions,
+// while the acceptors still hold the value only as accepted; catch-up asks
+// for committed entries only, and the takeover would give those slots to
+// new entries. So, after catch-up, the learner asks both acceptors (with
+// the leader gone, every accept quorum includes one of them) for every
+// value they accepted past the committed slots and adopts, per slot, the
+// one accepted at the highest ballot, as a Paxos prepare phase does. A
+// value only one acceptor accepted may not have been chosen; choosing it
+// now is safe. Each acceptor first promises lead_epoch, the epoch the
+// learner will lead in, and rejects lower ballots from then on, so the old
+// leader, if it was only paused, cannot get a value accepted after it was
+// read here. Replies stop at kRecoveryReplyBytes, so a slot is settled
+// only once both acceptors have reported every slot up to it. The adopted
+// values are proposed again at the slots they were accepted at, which
+// follow the committed ones without a gap: the leader sends each acceptor
+// its accepts in slot order, so neither can hold a slot past one that
+// both lack, unless a send failed outright. Should that happen, adoption
+// stops at the gap and the slots past it go to new entries. Returns the
+// adopted values per partition, in slot order; *higher_epoch as in
+// catch_up_learner.
+static std::vector<SlotEntries> recover_accepted(int epoch, ballot_t lead_epoch,
+                                                 const std::vector<slotid_t>& committed_high,
+                                                 ballot_t* higher_epoch) {
+  constexpr int64_t kRecoveryReplyBytes = 16 * 1024 * 1024;
+  constexpr ballot_t kCommitted = std::numeric_limits<ballot_t>::max();
+  constexpr slotid_t kAll = std::numeric_limits<slotid_t>::max();
+  const size_t n = pxs_workers_g.size();
+  std::vector<std::map<slotid_t, std::pair<ballot_t, rusty::Arc<janus::Command>>>> best(n);
+  std::vector<slotid_t> next(n);
+  std::vector<bool> done(n, false);
+  for (size_t i = 0; i < n; i++) {
+    next[i] = committed_high[i] + 1;
+  }
+  for (;;) {
+    auto req = make_shared<SyncLogRequest>();
+    req->leader_id = es->machine_id;
+    req->epoch = epoch;
+    req->sync_commit_slot = next;
+    req->max_reply_bytes = kRecoveryReplyBytes;
+    req->include_accepted = 1;
+    req->promise_epoch = lead_epoch;
+    vector<rusty::Arc<SyncLogResponse>> responses;
+    bool ok = false;
+    ballot_t rejected = 0;
+    run_on_poll_thread(pxs_workers_g.back(), [&] {
+      ok = pxs_workers_g.back()->FetchSyncLog(req, &responses, &rejected);
+    });
+    if (!ok) {
+      if (rejected > epoch) {
+        *higher_epoch = rejected;
+      } else {
+        Log_warn("learner recovery: the acceptors did not answer; adopting only the slots settled so far");
+      }
+      break;
+    }
+    bool progress = false;
+    for (size_t i = 0; i < n; i++) {
+      if (done[i]) continue;
+      struct Reported { slotid_t slot; ballot_t ballot; rusty::Arc<janus::Command> cmd; };
+      std::vector<Reported> reported;
+      slotid_t settled = kAll, reported_last = next[i] - 1;
+      for (const auto& r : responses) {
+        slotid_t last = next[i] - 1;
+        auto take = [&](const vector<rusty::Arc<janus::Command>>& data, bool committed) {
+          if (i >= data.size()) return;
+          const auto bp = marshallable_cast<BulkPaxosCmd>(*data[i]);
+          if (bp.is_none()) return;
+          for (size_t k = 0; k < bp.unwrap()->slots.size(); k++) {
+            const slotid_t slot = bp.unwrap()->slots[k];
+            if (slot < next[i]) continue;
+            last = std::max(last, slot);
+            reported.push_back({slot, committed ? kCommitted : bp.unwrap()->ballots[k],
+                                bp.unwrap()->cmds[k].clone()});
+          }
+        };
+        take(r->sync_data, true);
+        take(r->accepted_data, false);
+        reported_last = std::max(reported_last, last);
+        if (i >= r->complete.size() || r->complete[i] == 0) {
+          settled = std::min(settled, last);
+        }
+      }
+      for (auto& v : reported) {
+        if (v.slot > settled) continue;
+        auto it = best[i].find(v.slot);
+        if (it == best[i].end() || it->second.first < v.ballot) {
+          best[i].insert_or_assign(v.slot, std::make_pair(v.ballot, std::move(v.cmd)));
+        }
+      }
+      if (settled == kAll) {
+        // Later requests start past this partition's slots, so its
+        // entries do not use up the next replies' bytes.
+        done[i] = true;
+        next[i] = reported_last + 1;
+        progress = true;
+      } else if (settled >= next[i]) {
+        next[i] = settled + 1;
+        progress = true;
+      }
+    }
+    if (std::all_of(done.begin(), done.end(), [](bool d) { return d; })) break;
+    if (!progress) {
+      Log_warn("learner recovery: the acceptors' replies settled no slot; adopting only the slots settled so far");
+      break;
+    }
+  }
+  std::vector<SlotEntries> adopted(n);
+  for (size_t i = 0; i < n; i++) {
+    for (auto& kv : best[i]) {
+      if (kv.first != committed_high[i] + 1 + static_cast<slotid_t>(adopted[i].size())) {
+        Log_warn("learner recovery: partition {}: no acceptor holds slot {}; not adopting the {} values past it",
+                 i, committed_high[i] + 1 + adopted[i].size(), best[i].size() - adopted[i].size());
+        break;
+      }
+      adopted[i].emplace_back(kv.first, kv.second.second.clone());
+    }
+    if (!adopted[i].empty()) {
+      Log_info("learner recovery: partition {} adopts {} accepted values in slots {}-{}",
+               i, adopted[i].size(), adopted[i].front().first, adopted[i].back().first);
+    }
+  }
+  return adopted;
+}
+
 void stuff_todo_learner_upgrade(){
+  // Still a follower of the old epoch here: the replay callbacks are the
+  // follower ones, which write entries into the tables.
+  ballot_t higher_epoch = 0;
+  const std::vector<slotid_t> committed_high = catch_up_learner(es->get_epoch(), &higher_epoch);
+  std::vector<SlotEntries> adopted;
+  // The epoch this learner will lead in (es->set_epoch() below adds one).
+  const ballot_t lead_epoch = es->get_epoch() + 1;
+  if (higher_epoch == 0) {
+    adopted = recover_accepted(es->get_epoch(), lead_epoch, committed_high, &higher_epoch);
+  }
+  if (higher_epoch > 0) {
+    // Another replica already leads in a later epoch; this one stays a
+    // learner rather than take over without the acceptors.
+    Log_warn("learner takeover: not taking over, the acceptors are in epoch {}", higher_epoch);
+    return;
+  }
+  apply_on_learner_all(adopted);
   Config::GetConfig()->UpgradeFromLearnerToLeader();
   es->state_lock();
   es->set_state(1);
   es->set_epoch(); // increase the epoch number for failover
+  if (es->get_epoch() != lead_epoch) {
+    Log_warn("learner takeover: leading in epoch {}, but the acceptors were promised {}",
+             es->get_epoch(), lead_epoch);
+  }
   for(int i = 0; i < pxs_workers_g.size(); i++){
     pxs_workers_g[i]->election_state_lock.lock();
     pxs_workers_g[i]->cur_epoch = es->get_epoch();
@@ -500,10 +775,21 @@ void stuff_todo_learner_upgrade(){
     pxs_workers_g[i]->election_state_lock.unlock();
     auto ps = dynamic_cast<PaxosServer*>(pxs_workers_g[i]->rep_sched_);
     ps->mtx_.lock();
-    ps->max_committed_slot_ = ps->max_committed_slot_learner_+100;
-    ps->max_executed_slot_ = ps->max_committed_slot_;
-    ps->cur_open_slot_ = ps->max_committed_slot_+1;
+    // New slots start right after every slot the acceptors committed. The
+    // old +100 guessed at how far p1 had run past its forwards; catch-up
+    // now knows, and the followers apply in order, so a gap would leave
+    // them waiting for slots nobody will send (BroadcastSyncCommit sends
+    // nothing), and they would never apply this leader's entries.
+    ps->max_committed_slot_ = std::max(ps->max_committed_slot_learner_, committed_high[i]);
+    // The adopted values were applied above as a learner applies them, so
+    // when their proposals below commit they are not executed again.
+    const slotid_t last_adopted = adopted[i].empty() ? slotid_t{0} : adopted[i].back().first;
+    ps->max_executed_slot_ = std::max(ps->max_committed_slot_, last_adopted);
+    // The adopted values keep their slots (proposed again below); this
+    // leader's own entries start after them.
+    ps->cur_open_slot_ = ps->max_executed_slot_ + 1;
     ps->cur_epoch = es->get_epoch();
+    ps->took_over_ = true;
     ps->mtx_.unlock();
   }
   int epoch = es->get_epoch();
@@ -511,6 +797,30 @@ void stuff_todo_learner_upgrade(){
   send_sync_logs(epoch);
   //send_no_ops_to_all_workers(epoch);
   sync_callbacks_for_new_leader(); // switch from follower_callback_ to leader_callback_
+  // Propose the adopted values again in this epoch, each at the slot it was
+  // accepted at, ahead of this leader's own entries, so the acceptors commit
+  // them. Each gets its slot explicitly rather than the next open one: a
+  // decide the old leader sent before it died can still reach p1 during
+  // recovery and be forwarded here, moving max_committed_slot_learner_ into
+  // these slots, and the next open slot would then shift every value onto
+  // another value's slot. A value already committed at its slot is proposed
+  // again unchanged.
+  for (size_t i = 0; i < adopted.size(); i++) {
+    if (adopted[i].empty()) continue;
+    auto& pw = pxs_workers_g[i];
+    for (auto& e : adopted[i]) {
+      const auto entry = marshallable_cast<LogEntry>(*e.second);
+      verify(entry.is_some());
+      std::unique_lock<std::mutex> lock(pw->condition_mutex);
+      pw->IncSubmit();
+      pw->Submit(entry.unwrap()->log_entry.data(), entry.unwrap()->length,
+                 pw->site_info_->partition_id_, e.first);
+    }
+    auto ps = dynamic_cast<PaxosServer*>(pw->rep_sched_);
+    Log_info("learner takeover: partition {} proposes its {} adopted values again in slots {}-{}; "
+             "its own entries start at slot {}",
+             i, adopted[i].size(), adopted[i].front().first, adopted[i].back().first, ps->cur_open_slot_);
+  }
   send_no_ops_for_mark(epoch);
   vector<thread> threads;
   //usleep(40*1000);

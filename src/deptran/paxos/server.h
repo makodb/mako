@@ -1,6 +1,8 @@
 #pragma once
 
 #include "../__dep__.h"
+#include <iterator>
+#include <map>
 #include "../constants.h"
 #include "../distribution.h"
 #include "../scheduler.h"
@@ -21,6 +23,9 @@ struct PaxosData {
   bool is_no_op = false;
   Command accepted_cmd_{};
   Command committed_cmd_{};
+  // A decide for this slot has arrived. If it came before the accept, the
+  // accept commits the value when it arrives.
+  bool decided_ = false;
 };
 
 class PaxosServer : public TxLogServer {
@@ -43,9 +48,49 @@ class PaxosServer : public TxLogServer {
   slotid_t max_touched_slot = 0;
   int leader_id;
   map<slotid_t, shared_ptr<PaxosData>> logs_{}; // the committed values
-  ballot_t cur_epoch;
+  ballot_t cur_epoch = 0;  // acceptors reject lower ballots
   // for learner for the later on takeover
   slotid_t max_committed_slot_learner_ = 0;
+  // Set when this learner takes over (under mtx_). p1 keeps forwarding what
+  // it applies to the learner's address, which is now the leader's, and the
+  // leader already runs every slot it commits through its own callback.
+  bool took_over_ = false;
+  // Learner: every slot up to learner_applied_prefix_ has been applied, and
+  // learner_applied_runs_ maps the first slot of each applied run past it to
+  // the run's last slot. p1 skips a forward while its connection to the
+  // learner is not up, and drops some when the learner falls far behind, so
+  // the last slot forwarded can be far past a hole; a hole costs one entry
+  // here, not one per later slot. Runs never touch, and none starts at
+  // learner_applied_prefix_ + 1.
+  slotid_t learner_applied_prefix_ = 0;
+  std::map<slotid_t, slotid_t> learner_applied_runs_{};
+  // Call with mtx_ held.
+  bool LearnerHasApplied(slotid_t slot) const {
+    if (slot <= learner_applied_prefix_) return true;
+    auto it = learner_applied_runs_.upper_bound(slot);
+    if (it == learner_applied_runs_.begin()) return false;
+    return slot <= std::prev(it)->second;
+  }
+  // Call with mtx_ held.
+  void NoteLearnerApplied(slotid_t slot) {
+    if (LearnerHasApplied(slot)) return;
+    slotid_t first = slot, last = slot;
+    auto after = learner_applied_runs_.find(slot + 1);
+    if (after != learner_applied_runs_.end()) {
+      last = after->second;
+      learner_applied_runs_.erase(after);
+    }
+    auto it = learner_applied_runs_.lower_bound(slot);
+    if (it != learner_applied_runs_.begin() && std::prev(it)->second + 1 == slot) {
+      first = std::prev(it)->first;
+      learner_applied_runs_.erase(std::prev(it));
+    }
+    if (first == learner_applied_prefix_ + 1) {
+      learner_applied_prefix_ = last;
+    } else {
+      learner_applied_runs_[first] = last;
+    }
+  }
 
   int n_accept_ = 0;
   int n_commit_ = 0;
@@ -151,6 +196,9 @@ class PaxosServer : public TxLogServer {
                     i32 *valid,
                     rusty::Function<void()> cb);
 
+  // Apply the committed slots that follow the last applied one, in order,
+  // up to the first that is not committed yet.
+  void ExecuteCommitted();
   void OnBulkCommit(const janus::Command& cmd,
                     i32* ballot,
                     i32 *valid,

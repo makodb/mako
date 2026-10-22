@@ -288,6 +288,75 @@ inline void PaxosWorker::_BulkSubmit(const janus::Command& sp_m, int cnt = 0){
 // handlers are also dead now but left for a follow-up sweep that
 // also clears the rcc_rpc.proto definitions.
 
+bool PaxosWorker::FetchSyncLog(
+    shared_ptr<SyncLogRequest> req,
+    vector<rusty::Arc<SyncLogResponse>>* out,
+    ballot_t* higher_epoch) {
+  auto callback_state = std::make_shared<SyncLogCallbackState>();
+  auto rejected_epoch = std::make_shared<std::atomic<ballot_t>>(0);
+  // @unsafe { boundary copy: shared_ptr<SyncLogRequest> param -> Arc envelope }
+  auto sp_quorum = rep_commo_->BroadcastSyncLog(
+      site_info_->partition_id_,
+      rusty::Arc<SyncLogRequest>::make(*req),
+      [callback_state, rejected_epoch](shared_ptr<janus::Command> md, ballot_t ballot,
+                                       int resp_type) {
+    if (!resp_type) {
+      ballot_t seen = rejected_epoch->load();
+      while (ballot > seen && !rejected_epoch->compare_exchange_weak(seen, ballot)) {
+      }
+      return;
+    }
+    if (md == nullptr) {
+      return;
+    }
+    auto response = marshallable_cast<SyncLogResponse>(*md);
+    if (response.is_none()) {
+      return;
+    }
+    std::lock_guard<std::mutex> lock(callback_state->mutex);
+    if (callback_state->accepting_responses) {
+      callback_state->responses.emplace_back(response.unwrap());
+    }
+  });
+  // The event counts the dead leader among its voters, but only p1 and p2
+  // are asked, so one acceptor rejecting the request as stale leaves it
+  // short of both its yes and its no threshold. A stale reply settles the
+  // question on its own (another replica leads), so stop waiting on it.
+  while (!sp_quorum->yes() && !sp_quorum->no() && rejected_epoch->load() == 0) {
+    srpc::create_sp_timeout_event(1000)->wait();
+  }
+  {
+    std::lock_guard<std::mutex> lock(callback_state->mutex);
+    callback_state->accepting_responses = false;
+    *out = std::move(callback_state->responses);
+  }
+  *higher_epoch = rejected_epoch->load();
+  if (*higher_epoch > 0) {
+    return false;
+  }
+  return sp_quorum->yes();
+}
+
+bool PaxosWorker::FetchCommitted(
+    shared_ptr<SyncLogRequest> req,
+    map<pair<int, slotid_t>, rusty::Arc<janus::Command>>* out,
+    ballot_t* higher_epoch) {
+  vector<rusty::Arc<SyncLogResponse>> responses;
+  if (!FetchSyncLog(req, &responses, higher_epoch)) {
+    return false;
+  }
+  for (const auto& response : responses) {
+    for (int j = 0; j < response->sync_data.size(); j++) {
+      const auto bp_cmd = marshallable_cast<BulkPaxosCmd>(*response->sync_data[j]);
+      for (int k = 0; k < bp_cmd.unwrap()->slots.size(); k++) {
+        out->insert_or_assign(make_pair(j, bp_cmd.unwrap()->slots[k]),
+                              bp_cmd.unwrap()->cmds[k].clone());
+      }
+    }
+  }
+  return true;
+}
+
 int PaxosWorker::SendSyncLog(shared_ptr<SyncLogRequest> sync_log_req){
   auto es_pww = es_pw;
   auto callback_state = std::make_shared<SyncLogCallbackState>();
@@ -493,7 +562,15 @@ PaxosWorker::PaxosWorker() {
 
 PaxosWorker::~PaxosWorker() {
   Log_info("Ending worker with n_tot {} and n_current {}", (int)n_tot, (int)n_current);
-  stop_flag = true;
+  if (inflight_waits_ > 0) {
+    Log_info("partition {}: Submit waited for a free accept round {} times",
+             site_info_ != nullptr ? (int)site_info_->partition_id_ : -1, inflight_waits_);
+  }
+  {
+    std::lock_guard<std::mutex> lock(inflight_mu_);
+    stop_flag = true;
+  }
+  inflight_cv_.notify_all();
   // removed `stop_replay_flag = true;` —
   // the field went away with the dead `StartReplayRead`.
 
@@ -506,22 +583,64 @@ PaxosWorker::~PaxosWorker() {
   }
 }
 
-void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id) { // this is the starting point on the client side
+void PaxosWorker::Submit(const char* log_entry, int length, uint32_t par_id, slotid_t slot) { // this is the starting point on the client side
+  if (static_cast<size_t>(length) > MultiPaxosCommo::kMaxLogBytesPerMessage) {
+    // It could never be sent to the replicas, and a slot given to it would
+    // never be decided, stalling every later slot of the partition.
+    Log_error("partition {}: a {}-byte log entry is larger than one RPC frame can replicate; "
+              "not submitted", site_info_ != nullptr ? (int)site_info_->partition_id_ : -1, length);
+    n_current += 1;
+    if (n_current >= n_tot) finish_cond.notify_all();
+    return;
+  }
   // Fill-then-wrap: build the entry locally, wrap once complete.
   LogEntry cmd;
   // Use std::string for payload to avoid mismatched allocation/deallocation
   cmd.log_entry = std::string(log_entry, length);
   cmd.length = length;
-  _Submit(rusty::Arc<LogEntry>::make(std::move(cmd)));
+  _Submit(rusty::Arc<LogEntry>::make(std::move(cmd)), slot);
 }
 
-inline void PaxosWorker::_Submit(const janus::Command& sp_m) {
+void PaxosWorker::ReleaseInFlightRound() {
+  {
+    std::lock_guard<std::mutex> lock(inflight_mu_);
+    inflight_rounds_--;
+  }
+  inflight_cv_.notify_one();
+}
+
+inline void PaxosWorker::_Submit(const janus::Command& sp_m, slotid_t slot) {
   verify(rep_frame_ != nullptr);
+  bool counted = false;
+  if (stop_flag != true) {
+    std::unique_lock<std::mutex> lock(inflight_mu_);
+    auto has_room = [this] {
+      return stop_flag ||
+             (inflight_rounds_ < kMaxInFlightRounds &&
+              (rep_commo_ == nullptr || rep_commo_->MaxQueuedBytes() < kMaxPeerBacklogBytes));
+    };
+    if (!has_room()) {
+      inflight_waits_++;
+      // A finishing round notifies inflight_cv_; a draining peer queue does
+      // not, so look again every millisecond.
+      while (!has_room()) {
+        inflight_cv_.wait_for(lock, std::chrono::milliseconds(1));
+      }
+    }
+    inflight_rounds_++;
+    counted = true;
+  }
   auto coord = rep_frame_->CreateCoordinator();
   coord->par_id_ = site_info_->partition_id_;
   coord->loc_id_ = site_info_->locale_id;
   //marker:ansh slot_hint not being used anymore.
-  slotid_t x = ((PaxosServer*)rep_sched_)->get_open_slot();
+  auto ps = (PaxosServer*)rep_sched_;
+  slotid_t x = slot;
+  if (x == kNextOpenSlot) {
+    x = ps->get_open_slot();
+  } else if (ps->cur_open_slot_ <= x) {
+    ps->cur_open_slot_ = x + 1;
+  }
   coord->SetSlot(x);
   if(stop_flag != true) {
     coord->SetCommand(sp_m);
@@ -529,11 +648,15 @@ inline void PaxosWorker::_Submit(const janus::Command& sp_m) {
     vector<shared_ptr<Coordinator>> curr2;
     curr2.push_back(sp_coo);
     auto arc_job = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([this, curr2]() {
-      this->BulkSubmit(curr2);
+      this->BulkSubmit(curr2);  // returns once the round is decided or given up
+      this->ReleaseInFlightRound();
     }));
     auto arc_job_base = rusty::Arc<Job>(arc_job);
     submitJob(arc_job_base);
   } else{
+    if (counted) {
+      ReleaseInFlightRound();
+    }
     coord->Submit(sp_m);
   }
 }
