@@ -660,8 +660,9 @@ static void setup_transport_callbacks()
 
 #if defined(FAIL_NEW_VERSION)
 // A failover moves a shard's leadership to another replica of it during the
-// run: the learner under Paxos (heartbeatMonitor2). These steps run on that
-// replica before and after it starts a new epoch on its shard.
+// run: the learner under Paxos (heartbeatMonitor2), the replica that wins an
+// election under Raft (raft_take_over). The same steps run on that replica
+// under both, before and after it starts a new epoch on its shard.
 
 // Pause the other shards: they stop sending to this shard, close their epoch
 // with no-ops and move to the next one (bench.cc, control 0).
@@ -716,10 +717,54 @@ static void finish_shard_failover()
   sync_util::sync_logger::cv.notify_one();
 }
 
+static std::atomic<bool> raft_takeover_started{false};
+
+// Raft: this replica leads its shard during the run, and it was not started
+// as the shard's leader, so the leader it replaces had run the workers. Take
+// over as the Paxos learner does.
+static void raft_take_over()
+{
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  auto* config = benchConfig.getConfig();
+  const int shard = benchConfig.getShardIndex();
+  Warning("[RAFT-TAKEOVER] shard %d: leading during the run; taking over", shard);
+  // The old leader's entries apply first; the final watermark is taken
+  // over them.
+  sync_util::sync_logger::wait_raft_catch_up();
+  if (sync_util::sync_logger::raft_following_.load(std::memory_order_acquire)) {
+    Warning("[RAFT-TAKEOVER] shard %d: lost the leadership while catching up", shard);
+    raft_takeover_started.store(false);  // the next leadership tries again
+    return;
+  }
+  if (benchConfig.getEndReceived() > 0) {
+    Warning("[RAFT-TAKEOVER] shard %d: the old leader had ended the run", shard);
+    return;
+  }
+  begin_shard_failover();
+  // A new epoch on this shard, and no-ops that close the old one on every
+  // partition (stuff_todo_learner_upgrade under Paxos). This replica's
+  // leader callback publishes the shard's final watermark when partition
+  // 0's no-op applies.
+  set_epoch();
+  std::string log = "no-ops:" + std::to_string(get_epoch());
+  for (int i = 0; i < benchConfig.getNthreads(); i++) {
+    if (!add_log_to_nc(log.c_str(), log.size(), i)) {
+      Warning("[RAFT-TAKEOVER] shard %d: lost the leadership while closing the old epoch", shard);
+      return;
+    }
+  }
+  mako::NFSSync::wait_for_key("fvw_"+std::to_string(shard),
+                              config->shard(0, benchConfig.getClusterRole()).host.c_str(),
+                              config->mports[benchConfig.getClusterRole()]);
+  finish_shard_failover();
+  Warning("[RAFT-TAKEOVER] shard %d: epoch %d, workers starting", shard, get_epoch());
+}
+
 // Raft reports every leadership change, once per partition: 1 = this
 // process leads, 0 = it no longer does.
 static void raft_leadership_changed(bool leading)
 {
+  auto& benchConfig = BenchmarkConfig::getInstance();
   if (!leading) {
     if (sync_util::sync_logger::worker_running) {
       sync_util::sync_logger::raft_following_.store(true, std::memory_order_release);
@@ -727,6 +772,18 @@ static void raft_leadership_changed(bool leading)
     return;
   }
   sync_util::sync_logger::raft_following_.store(false, std::memory_order_release);
+  // Nothing to take over for the replica started as the shard's leader,
+  // whose workers are running, or with one shard; nor in an election
+  // before the run (worker_running is set on a follower once the leader
+  // starts its workers) or after its end.
+  if (benchConfig.getLeaderConfig() || benchConfig.getNshards() <= 1 ||
+      !sync_util::sync_logger::worker_running || benchConfig.getEndReceived() > 0) {
+    return;
+  }
+  if (raft_takeover_started.exchange(true)) {
+    return;
+  }
+  std::thread(raft_take_over).detach();
 }
 #endif
 
@@ -748,7 +805,7 @@ static void setup_leader_election_callbacks()
     }
 #endif
     switch (control) {
-#if defined(FAIL_NEW_VERSION) && !defined(MAKO_USE_RAFT)
+#if defined(FAIL_NEW_VERSION)
       case 0: {
         std::cout<<"Implement a new fail recovery!"<<std::endl;
         begin_shard_failover();
@@ -995,7 +1052,14 @@ static abstract_db * init_env() {
 #endif
 
     // start a failure monitor on learners
-    if (benchConfig.getCluster().compare(mako::LEARNER_CENTER)==0) { // learner cluster
+    bool may_take_over = benchConfig.getCluster().compare(mako::LEARNER_CENTER)==0; // learner cluster
+#if defined(FAIL_NEW_VERSION)
+    // Under Raft any follower can become its shard's leader during the run
+    // (raft_take_over).
+    may_take_over = may_take_over || (janus::is_using_raft() && !benchConfig.getLeaderConfig() &&
+                                      benchConfig.getNshards() > 1);
+#endif
+    if (may_take_over) {
       abstract_db * db = replicated_db.getDBWrapper(benchConfig.getNthreads())->getDB () ;
       bench_runner *r = start_workers_tpcc(1, db, benchConfig.getNthreads(), true);
       modeMonitor(db, benchConfig.getNthreads(), r) ;
