@@ -69,6 +69,9 @@ namespace sync_util {
         static std::atomic<bool> exchange_running;
         static int failed_shard_index;
         static uint32_t failed_shard_ts;
+        // The cluster role of the failed shard's new leader
+        // (begin_shard_failover).
+        static int failed_shard_role;
         
         static void Init(int shardIdx_X, int nshards_X, int nthreads_X, bool is_leader_X,
                          string cluster_X,

@@ -653,6 +653,65 @@ static void setup_transport_callbacks()
   });
 }
 
+#if defined(FAIL_NEW_VERSION)
+// A failover moves a shard's leadership to another replica of it during the
+// run: the learner under Paxos (heartbeatMonitor2). These steps run on that
+// replica before and after it starts a new epoch on its shard.
+
+// Pause the other shards: they stop sending to this shard, close their epoch
+// with no-ops and move to the next one (bench.cc, control 0).
+static void begin_shard_failover()
+{
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  auto* config = benchConfig.getConfig();
+  sync_util::sync_logger::exchange_running = false;
+  sync_util::sync_logger::failed_shard_index = benchConfig.getShardIndex();
+  sync_util::sync_logger::failed_shard_role = benchConfig.getClusterRole();
+  // The other shards' leaders send to this replica from now on.
+  mako::NFSSync::set_key("failed_shard_role_"+std::to_string(benchConfig.getShardIndex()),
+                         std::to_string(benchConfig.getClusterRole()).c_str(),
+                         config->shard(0, mako::LOCALHOST_CENTER_INT).host.c_str(),
+                         config->mports[mako::LOCALHOST_CENTER_INT]);
+  sync_util::sync_logger::client_control(0, benchConfig.getShardIndex()); // in bench.cc register_fasttransport_for_bench
+}
+
+// Once this shard's old epoch is closed: take the stable cut from every
+// shard's final watermark, let the other shards move on (control 1), and
+// start this replica's workers (modeMonitorRun).
+static void finish_shard_failover()
+{
+  // Wait for FVW in the old epoch (w * 10 + epoch); this is very important in our new implementation
+  // Single timestamp system: collect all shard watermarks and use maximum
+  uint32_t max_watermark = 0;
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  auto* config = benchConfig.getConfig();
+  for (int i=0; i<benchConfig.getNshards(); i++) {
+    // This shard's from this replica, the others' from their leaders.
+    int clusterRoleLocal = mako::LOCALHOST_CENTER_INT;
+    if (i==benchConfig.getShardIndex())
+      clusterRoleLocal = benchConfig.getClusterRole();
+    mako::NFSSync::wait_for_key("fvw_"+std::to_string(i),
+                                    config->shard(0, clusterRoleLocal).host.c_str(), config->mports[clusterRoleLocal]);
+    std::string w_i = mako::NFSSync::get_key("fvw_"+std::to_string(i),
+                                                config->shard(0, clusterRoleLocal).host.c_str(),
+                                                config->mports[clusterRoleLocal]);
+    std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
+    uint32_t watermark = std::stoi(w_i);
+    max_watermark = std::max(max_watermark, watermark);
+  }
+
+  sync_util::sync_logger::update_stable_timestamp(get_epoch()-1, max_watermark);
+  sync_util::sync_logger::client_control(1, benchConfig.getShardIndex());
+
+  // Start transactions in new epoch
+  std::lock_guard<std::mutex> lk((sync_util::sync_logger::m));
+  sync_util::sync_logger::toLeader = true ;
+  std::cout << "notify a new leader is elected!\n" ;
+  //sync_util::sync_logger::worker_running = true;
+  sync_util::sync_logger::cv.notify_one();
+}
+#endif
+
 static void setup_leader_election_callbacks()
 {
   // Raft: logged commits wait while a partition this process just started
@@ -672,10 +731,7 @@ static void setup_leader_election_callbacks()
           break;
         }
         std::cout<<"Implement a new fail recovery!"<<std::endl;
-        sync_util::sync_logger::exchange_running = false;
-        auto& benchConfig = BenchmarkConfig::getInstance();
-        sync_util::sync_logger::failed_shard_index = benchConfig.getShardIndex();
-        sync_util::sync_logger::client_control(0, benchConfig.getShardIndex()); // in bench.cc register_fasttransport_for_bench
+        begin_shard_failover();
         break;
       }
       case 2: {
@@ -683,34 +739,7 @@ static void setup_leader_election_callbacks()
           // Raft: Became leader - no action needed, Raft handles internally
           break;
         }
-        // Wait for FVW in the old epoch (w * 10 + epoch); this is very important in our new implementation
-        // Single timestamp system: collect all shard watermarks and use maximum
-        uint32_t max_watermark = 0;
-        auto& benchConfig = BenchmarkConfig::getInstance();
-        for (int i=0; i<benchConfig.getNshards(); i++) {
-          int clusterRoleLocal = mako::LOCALHOST_CENTER_INT;
-          if (i==0)
-            clusterRoleLocal = mako::LEARNER_CENTER_INT;
-          mako::NFSSync::wait_for_key("fvw_"+std::to_string(i),
-                                          benchConfig.getConfig()->shard(0, clusterRoleLocal).host.c_str(), benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
-          std::string w_i = mako::NFSSync::get_key("fvw_"+std::to_string(i),
-                                                      benchConfig.getConfig()->shard(0, clusterRoleLocal).host.c_str(),
-                                                      benchConfig.getConfig()->mports[clusterRoleLocal]);
-          std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
-          uint32_t watermark = std::stoi(w_i);
-          max_watermark = std::max(max_watermark, watermark);
-        }
-
-        sync_util::sync_logger::update_stable_timestamp(get_epoch()-1, max_watermark);
-        sync_util::sync_logger::client_control(1, benchConfig.getShardIndex());
-
-        // Start transactions in new epoch
-        std::lock_guard<std::mutex> lk((sync_util::sync_logger::m));
-        sync_util::sync_logger::toLeader = true ;
-        std::cout << "notify a new leader is elected!\n" ;
-        //sync_util::sync_logger::worker_running = true;
-        sync_util::sync_logger::cv.notify_one();
-        auto x0 = std::chrono::high_resolution_clock::now() ;
+        finish_shard_failover();
         break;
       }
 #endif

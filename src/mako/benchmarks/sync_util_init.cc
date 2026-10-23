@@ -36,3 +36,4 @@ int sync_util::sync_logger::exchange_refresh_cnt = 0;
 std::atomic<bool> sync_util::sync_logger::exchange_running{true};
 int sync_util::sync_logger::failed_shard_index = -1;
 uint32_t sync_util::sync_logger::failed_shard_ts = -1;
+int sync_util::sync_logger::failed_shard_role = mako::LEARNER_CENTER_INT;
