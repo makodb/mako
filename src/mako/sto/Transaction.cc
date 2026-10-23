@@ -527,6 +527,16 @@ bool Transaction::try_commit(bool no_paxos) {
     // new Raft leader (wait_raft_catch_up); replay (no_paxos) is what it
     // waits for. Before any lock is taken, so replay is never blocked.
     if (!no_paxos) sync_util::sync_logger::wait_raft_catch_up();
+    // A process that lost its shard's Raft leadership during the run aborts
+    // the write instead: nothing it logs now would be replicated.
+    if (!no_paxos && sync_util::sync_logger::raft_following_.load(std::memory_order_acquire)) {
+        TXP_INCREMENT(txp_commit_time_aborts);
+        stop(false, nullptr, 0);
+        if ((TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0) && TThread::sclient != nullptr) {
+            TThread::sclient->remoteAbort();
+        }
+        return false;
+    }
 
     state_ = s_committing;
 

@@ -54,6 +54,12 @@ namespace sync_util {
             }
         }
 
+        // Raft: this process lost the leadership of its shard while the
+        // benchmark ran. Its workers run no transactions until it leads
+        // again (bench_worker::run), and a logged commit already under way
+        // aborts (try_commit): nothing it logs would be replicated.
+        static std::atomic<bool> raft_following_;
+
         // Raise local_replica_id, the timestamp the next commit takes, to at
         // least ts.
         static void advance_local_replica_id(uint32_t ts) {

@@ -710,6 +710,19 @@ static void finish_shard_failover()
   //sync_util::sync_logger::worker_running = true;
   sync_util::sync_logger::cv.notify_one();
 }
+
+// Raft reports every leadership change, once per partition: 1 = this
+// process leads, 0 = it no longer does.
+static void raft_leadership_changed(bool leading)
+{
+  if (!leading) {
+    if (sync_util::sync_logger::worker_running) {
+      sync_util::sync_logger::raft_following_.store(true, std::memory_order_release);
+    }
+    return;
+  }
+  sync_util::sync_logger::raft_following_.store(false, std::memory_order_release);
+}
 #endif
 
 static void setup_leader_election_callbacks()
@@ -723,22 +736,20 @@ static void setup_leader_election_callbacks()
     // happens on the learner for case 0 and case 2, 3
     uint32_t aa = mako::getCurrentTimeMillis();
     Warning("Receive a control command:%d, current ms: %llu", control, aa);
+#if defined(FAIL_NEW_VERSION)
+    if (janus::is_using_raft()) {
+      raft_leadership_changed(control == 1);
+      return;
+    }
+#endif
     switch (control) {
 #if defined(FAIL_NEW_VERSION) && !defined(MAKO_USE_RAFT)
       case 0: {
-        if (janus::is_using_raft()) {
-          // Raft: Leader stepped down - no action needed, Raft handles internally
-          break;
-        }
         std::cout<<"Implement a new fail recovery!"<<std::endl;
         begin_shard_failover();
         break;
       }
       case 2: {
-        if (janus::is_using_raft()) {
-          // Raft: Became leader - no action needed, Raft handles internally
-          break;
-        }
         finish_shard_failover();
         break;
       }
