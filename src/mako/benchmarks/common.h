@@ -75,6 +75,12 @@ public:
             std::cout << "wait_for_all_up setup finish!" << std::endl;
         }
 
+        // A key that a failover waits for, one per epoch it closes, so a
+        // later takeover never reads an earlier one's value.
+        static std::string failover_key(const std::string& name, int shard, int closed_epoch) {
+            return name + "_" + std::to_string(shard) + "_e" + std::to_string(closed_epoch);
+        }
+
         static int set_key(std::string kk, const char *value, const char*host, int port) {
             std::string filename = std::string("nfs_sync_") + host + "_" + std::to_string(port) + "_" + kk;
             std::ofstream outfile(filename);
@@ -102,6 +108,19 @@ public:
             std::ifstream infile(filename);
             return std::string((std::istreambuf_iterator<char>(infile)),
                             std::istreambuf_iterator<char>());
+        }
+
+        // A key's value once it has one: the key's file appears when
+        // set_key creates it, before the value is written.
+        static string wait_for_value(std::string kk, const char*host, int port) {
+            while (1) {
+                wait_for_key(kk, host, port);
+                std::string value = get_key(kk, host, port);
+                if (!value.empty()) {
+                    return value;
+                }
+                usleep(0);
+            }
         }
     };
 }

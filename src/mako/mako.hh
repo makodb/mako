@@ -189,6 +189,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
     uint32_t timestamp = 0;  // Track timestamp for return value encoding
     abstract_db * db = replicated_db.getDBWrapper(par_id)->getDB () ;
     bool noops = false;
+    int closed_epoch = -1;  // the epoch a no-op closes
 
     if (len==mako::ADVANCER_MARKER_NUM) { // start a advancer
       status = mako::PaxosStatus::STATUS_REPLAY_DONE;
@@ -217,6 +218,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
       if (isNoops(log,len)!=-1) {
         Warning("receive a noops, par_id:%d on follower_callback_,%s",par_id,log);
         if (par_id==0) set_epoch(isNoops(log,len));
+        closed_epoch = isNoops(log,len) - 1;
         noops=true;
         status = mako::PaxosStatus::STATUS_NOOPS;
       }
@@ -234,7 +236,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
         if (par_id==0) {
           uint32_t local_w = sync_util::sync_logger::computeLocal();
           //Warning("update %s in phase-1 on port:%d", ("noops_phase_"+std::to_string(shardIndex)).c_str(), config->mports[clusterRole]);
-          mako::NFSSync::set_key("noops_phase_"+std::to_string(benchConfig.getShardIndex()), 
+          mako::NFSSync::set_key(mako::NFSSync::failover_key("noops_phase", benchConfig.getShardIndex(), closed_epoch),
                                      std::to_string(local_w).c_str(),
                                      benchConfig.getConfig()->shard(0, benchConfig.getClusterRole()).host.c_str(),
                                      benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
@@ -284,9 +286,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
     if (noops) {
       for (int i=0; i<benchConfig.getNshards(); i++) {
         if (i!=benchConfig.getShardIndex() && par_id==0) {
-          mako::NFSSync::wait_for_key("noops_phase_"+std::to_string(i), 
-                                          benchConfig.getConfig()->shard(0, benchConfig.getClusterRole()).host.c_str(), benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
-          std::string local_w = mako::NFSSync::get_key("noops_phase_"+std::to_string(i), 
+          std::string local_w = mako::NFSSync::wait_for_value(mako::NFSSync::failover_key("noops_phase", i, closed_epoch),
                                                           benchConfig.getConfig()->shard(0, benchConfig.getClusterRole()).host.c_str(), 
                                                           benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
 
@@ -356,6 +356,7 @@ static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& adv
     int status = mako::PaxosStatus::STATUS_NORMAL;
     uint32_t timestamp = 0;  // Track timestamp for return value encoding
     bool noops = false;
+    int closed_epoch = -1;  // the epoch a no-op closes
 
     if (len==mako::ADVANCER_MARKER_NUM) { // start a advancer
       status = mako::PaxosStatus::STATUS_REPLAY_DONE;
@@ -380,6 +381,7 @@ static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& adv
     if (len>0) {
       if (isNoops(log,len)!=-1) {
         //Warning("receive a noops, par_id:%d on leader_callback_,log:%s",par_id,log);
+        closed_epoch = isNoops(log,len) - 1;
         noops=true;
         status = mako::PaxosStatus::STATUS_NOOPS;
       }
@@ -397,13 +399,13 @@ static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& adv
         Warning("phase-1,par_id:%d DONE",par_id);
         if (par_id==0) {
           uint32_t local_w = sync_util::sync_logger::computeLocal();
-          mako::NFSSync::set_key("noops_phase_"+std::to_string(benchConfig.getShardIndex()), 
+          mako::NFSSync::set_key(mako::NFSSync::failover_key("noops_phase", benchConfig.getShardIndex(), closed_epoch),
                                         std::to_string(local_w).c_str(),
                                         benchConfig.getConfig()->shard(0, benchConfig.getClusterRole()).host.c_str(), 
                                         benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
           sync_util::sync_logger::update_stable_timestamp(get_epoch()-1, sync_util::sync_logger::retrieveShardW()/10);
 #if defined(FAIL_NEW_VERSION)
-          mako::NFSSync::set_key("fvw_"+std::to_string(benchConfig.getShardIndex()), 
+          mako::NFSSync::set_key(mako::NFSSync::failover_key("fvw", benchConfig.getShardIndex(), closed_epoch),
                                      std::to_string(local_w).c_str(),
                                      benchConfig.getConfig()->shard(0, benchConfig.getClusterRole()).host.c_str(),
                                      benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
@@ -686,14 +688,13 @@ static void finish_shard_failover()
   uint32_t max_watermark = 0;
   auto& benchConfig = BenchmarkConfig::getInstance();
   auto* config = benchConfig.getConfig();
+  const int closed_epoch = get_epoch()-1;
   for (int i=0; i<benchConfig.getNshards(); i++) {
     // This shard's from this replica, the others' from their leaders.
     int clusterRoleLocal = mako::LOCALHOST_CENTER_INT;
     if (i==benchConfig.getShardIndex())
       clusterRoleLocal = benchConfig.getClusterRole();
-    mako::NFSSync::wait_for_key("fvw_"+std::to_string(i),
-                                    config->shard(0, clusterRoleLocal).host.c_str(), config->mports[clusterRoleLocal]);
-    std::string w_i = mako::NFSSync::get_key("fvw_"+std::to_string(i),
+    std::string w_i = mako::NFSSync::wait_for_value(mako::NFSSync::failover_key("fvw", i, closed_epoch),
                                                 config->shard(0, clusterRoleLocal).host.c_str(),
                                                 config->mports[clusterRoleLocal]);
     std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
@@ -748,7 +749,7 @@ static void raft_take_over()
       return;
     }
   }
-  mako::NFSSync::wait_for_key("fvw_"+std::to_string(shard),
+  mako::NFSSync::wait_for_key(mako::NFSSync::failover_key("fvw", shard, get_epoch()-1),
                               config->shard(0, benchConfig.getClusterRole()).host.c_str(),
                               config->mports[benchConfig.getClusterRole()]);
   finish_shard_failover();

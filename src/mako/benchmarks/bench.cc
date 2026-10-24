@@ -163,7 +163,10 @@ bench_worker::run()
         sync_util::sync_logger::failed_shard_ts = value/10;
         sync_util::sync_logger::setShardWBlind(value/10, value%10);
 
-        string log = "no-ops:" + to_string(get_epoch());
+        // A no-op carries the epoch that starts after it (isNoops), as the
+        // new leader's do: followers take their epoch from it, and the keys
+        // of the epoch it closes are named after it.
+        string log = "no-ops:" + to_string(get_epoch() + 1);
         for(int i = 0; i < benchConfig.getNthreads(); i++){
           add_log_to_nc(log.c_str(), log.size(), i);
         }
@@ -185,12 +188,13 @@ bench_worker::run()
       case 1: {
         // Update its local FVW
         vector<uint32_t> fvw(benchConfig.getNshards());
+        const int closed_epoch = get_epoch()-1;
         for (int i=0; i<benchConfig.getNshards(); i++) {
           // the failed shard's from its new leader
           int clusterRoleLocal = mako::LOCALHOST_CENTER_INT;
           if (i==sync_util::sync_logger::failed_shard_index)
             clusterRoleLocal = sync_util::sync_logger::failed_shard_role;
-          std::string w_i = mako::NFSSync::get_key("fvw_"+std::to_string(i), 
+          std::string w_i = mako::NFSSync::wait_for_value(mako::NFSSync::failover_key("fvw", i, closed_epoch),
                                                       benchConfig.getConfig()->shard(0, clusterRoleLocal).host.c_str(), 
                                                       benchConfig.getConfig()->mports[clusterRoleLocal]);
           std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
@@ -225,8 +229,8 @@ bench_worker::run()
         //   shardClientAll[par_id]->setBreakTimeout(false);
         // }
         // resume the database worker threads, update it after the new workers are created;
-        // 4. issue no-ops within the old epoch
-        string log = "no-ops:" + to_string(get_epoch());
+        // 4. issue no-ops that close the old epoch (carrying the new one)
+        string log = "no-ops:" + to_string(get_epoch() + 1);
         for(int i = 0; i < benchConfig.getNthreads(); i++){
           add_log_to_nc(log.c_str(), log.size(), i);
         }
