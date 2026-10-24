@@ -41,10 +41,43 @@ namespace sync_util {
         static std::unordered_map<int, uint32_t> hist_timestamp; // on the running shard
         static std::atomic<uint32_t> noops_cnt;
         static std::atomic<uint32_t> noops_cnt_hole;
+
+        // Raft: how many partitions this process has just started leading
+        // and is still catching up on (applying entries of earlier terms).
+        // A commit that will be logged waits while it is nonzero, so it
+        // takes a timestamp after everything those entries carry.
+        static std::atomic<int> raft_catching_up_;
+
+        static void wait_raft_catch_up() {
+            while (raft_catching_up_.load(std::memory_order_acquire) > 0) {
+                std::this_thread::sleep_for(std::chrono::microseconds(50));
+            }
+        }
+
+        // Raft: this process lost the leadership of its shard while the
+        // benchmark ran. Its workers run no transactions until it leads
+        // again (bench_worker::run), and a logged commit already under way
+        // aborts (try_commit): nothing it logs would be replicated.
+        static std::atomic<bool> raft_following_;
+
+        // Raise local_replica_id, the timestamp the next commit takes, to at
+        // least ts.
+        static void advance_local_replica_id(uint32_t ts) {
+            const int target = static_cast<int>(ts);
+            int cur = __atomic_load_n(&local_replica_id, __ATOMIC_ACQUIRE);
+            while (cur < target &&
+                   !__atomic_compare_exchange_n(&local_replica_id, &cur, target, false,
+                                                __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
+            }
+        }
+
         static int exchange_refresh_cnt;
         static std::atomic<bool> exchange_running;
         static int failed_shard_index;
         static uint32_t failed_shard_ts;
+        // The cluster role of the failed shard's new leader
+        // (begin_shard_failover).
+        static int failed_shard_role;
         
         static void Init(int shardIdx_X, int nshards_X, int nthreads_X, bool is_leader_X,
                          string cluster_X,

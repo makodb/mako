@@ -620,6 +620,37 @@ run_2shard_replication_raft() {
     return 1
 }
 
+# Mako's cross-shard failover under Raft: shard 0's leader is killed while
+# the benchmark runs, a follower takes over, and shard 1 moves on with it.
+# Retried only when the cluster never got as far as the kill (exit 3).
+run_2shard_failover_raft() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh shard2FailoverRaft"
+    echo "========================================="
+    local attempt=1
+    local max_attempts=2
+    while [ $attempt -le $max_attempts ]; do
+        cleanup_processes
+        set +e
+        with_raft_store 2shard_failover_raft bash ./examples/test_2shard_failover_raft.sh
+        local test_result=$?
+        set -e
+        check_for_hanging_processes "shard2FailoverRaft"
+        local hanging_check=$?
+        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
+            return 0
+        fi
+        if [ $test_result -ne 3 ]; then
+            return 1
+        fi
+        if [ $attempt -lt $max_attempts ]; then
+            echo "Retrying shard2FailoverRaft (attempt $((attempt + 1))/$max_attempts)..."
+        fi
+        attempt=$((attempt + 1))
+    done
+    return 1
+}
+
 run_1shard_replication_simple_raft() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard1ReplicationSimpleRaft"
@@ -889,6 +920,9 @@ case "${1:-}" in
     shard2ReplicationRaft)
         run_2shard_replication_raft
         ;;
+    shard2FailoverRaft)
+        run_2shard_failover_raft
+        ;;
     shard1ReplicationSimpleRaft)
         run_1shard_replication_simple_raft
         ;;
@@ -944,6 +978,7 @@ case "${1:-}" in
         # Raft replication tests
         run_1shard_replication_raft
         run_2shard_replication_raft
+        run_2shard_failover_raft
         run_1shard_replication_simple_raft
         run_2shard_replication_simple_raft
         run_raft_lab_test
@@ -962,7 +997,7 @@ case "${1:-}" in
         echo "  shardNoReplication,"
         echo "  shard1Replication, shard2Replication,"
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
-        echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
+        echo "  shard1ReplicationRaft, shard2ReplicationRaft, shard2FailoverRaft,"
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
         echo "  raftLabTest, raftKillTest, shard1ReplicationRaftRestart (disk trees),"
         echo "  rocksdbTests, multiShardSingleProcess,"

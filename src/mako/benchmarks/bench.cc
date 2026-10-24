@@ -150,6 +150,14 @@ bench_worker::run()
       case 0: {
         benchConfig.setControlMode(4);
         // If a transaction sent to a failed shard, we put it into the queue
+        {
+          // The replica that leads the failed shard now (begin_shard_failover);
+          // set before the index, which turns the routing on.
+          std::string role = mako::NFSSync::get_key("failed_shard_role_"+std::to_string(value%10),
+                                                    benchConfig.getConfig()->shard(0, mako::LOCALHOST_CENTER_INT).host.c_str(),
+                                                    benchConfig.getConfig()->mports[mako::LOCALHOST_CENTER_INT]);
+          sync_util::sync_logger::failed_shard_role = role.empty() ? mako::LEARNER_CENTER_INT : std::stoi(role);
+        }
         sync_util::sync_logger::failed_shard_index = value%10;
         sync_util::sync_logger::failed_shard_ts = value/10;
         sync_util::sync_logger::setShardWBlind(value/10, value%10);
@@ -177,10 +185,10 @@ bench_worker::run()
         // Update its local FVW
         vector<uint32_t> fvw(benchConfig.getNshards());
         for (int i=0; i<benchConfig.getNshards(); i++) {
-          // it should get shard-0 from the learner
+          // the failed shard's from its new leader
           int clusterRoleLocal = mako::LOCALHOST_CENTER_INT;
-          if (i==0) 
-            clusterRoleLocal = mako::LEARNER_CENTER_INT;
+          if (i==sync_util::sync_logger::failed_shard_index)
+            clusterRoleLocal = sync_util::sync_logger::failed_shard_role;
           std::string w_i = mako::NFSSync::get_key("fvw_"+std::to_string(i), 
                                                       benchConfig.getConfig()->shard(0, clusterRoleLocal).host.c_str(), 
                                                       benchConfig.getConfig()->mports[clusterRoleLocal]);
@@ -304,6 +312,14 @@ bench_worker::run()
   }
 
   while (benchConfig.isRunning() && (benchConfig.getRunMode() != RUNMODE_OPS || ntxn_commits < benchConfig.getOpsPerWorker())) {
+    // Raft: a process that lost its shard's leadership during the run runs
+    // nothing until it leads again. Its commits would not be replicated, and
+    // replaying the new leader's entries changes the tables, and the epoch,
+    // under a running transaction.
+    if (sync_util::sync_logger::raft_following_.load(std::memory_order_acquire)) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      continue;
+    }
     throttler.begin_work();  // Start work timing
     double d = r.next_uniform();
     for (size_t i = 0; i < workload.size(); i++) {
