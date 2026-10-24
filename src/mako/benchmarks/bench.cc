@@ -163,15 +163,25 @@ bench_worker::run()
         sync_util::sync_logger::failed_shard_ts = value/10;
         sync_util::sync_logger::setShardWBlind(value/10, value%10);
 
+        // Close the epoch the failed shard's new leader closes and start the
+        // one after it, so both sides name the closed epoch's keys alike,
+        // also after a takeover that was cut short had moved this shard on.
+        int closing_epoch = get_epoch();
+        {
+          std::string e = mako::NFSSync::get_key("failed_shard_epoch_"+std::to_string(value%10),
+                                                 benchConfig.getConfig()->shard(0, mako::LOCALHOST_CENTER_INT).host.c_str(),
+                                                 benchConfig.getConfig()->mports[mako::LOCALHOST_CENTER_INT]);
+          if (!e.empty()) closing_epoch = std::stoi(e);
+        }
         // A no-op carries the epoch that starts after it (isNoops), as the
         // new leader's do: followers take their epoch from it, and the keys
         // of the epoch it closes are named after it.
-        string log = "no-ops:" + to_string(get_epoch() + 1);
+        string log = "no-ops:" + to_string(closing_epoch + 1);
         for(int i = 0; i < benchConfig.getNthreads(); i++){
           add_log_to_nc(log.c_str(), log.size(), i);
         }
 
-        set_epoch();
+        set_epoch(closing_epoch + 1);
         benchConfig.setRuntimePlus(benchConfig.getRuntime()); // another runtime
 
         // Unpaused previous blocked threads if any

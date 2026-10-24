@@ -670,9 +670,14 @@ static void begin_shard_failover()
   sync_util::sync_logger::exchange_running = false;
   sync_util::sync_logger::failed_shard_index = benchConfig.getShardIndex();
   sync_util::sync_logger::failed_shard_role = benchConfig.getClusterRole();
-  // The other shards' leaders send to this replica from now on.
+  // The other shards' leaders send to this replica from now on, and close
+  // the epoch this replica closes, the one it is in.
   mako::NFSSync::set_key("failed_shard_role_"+std::to_string(benchConfig.getShardIndex()),
                          std::to_string(benchConfig.getClusterRole()).c_str(),
+                         config->shard(0, mako::LOCALHOST_CENTER_INT).host.c_str(),
+                         config->mports[mako::LOCALHOST_CENTER_INT]);
+  mako::NFSSync::set_key("failed_shard_epoch_"+std::to_string(benchConfig.getShardIndex()),
+                         std::to_string(get_epoch()).c_str(),
                          config->shard(0, mako::LOCALHOST_CENTER_INT).host.c_str(),
                          config->mports[mako::LOCALHOST_CENTER_INT]);
   sync_util::sync_logger::client_control(0, benchConfig.getShardIndex()); // in bench.cc register_fasttransport_for_bench
