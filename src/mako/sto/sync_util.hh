@@ -60,6 +60,9 @@ namespace sync_util {
         // again (bench_worker::run), and a logged commit already under way
         // aborts (try_commit): nothing it logs would be replicated.
         static std::atomic<bool> raft_following_;
+        // Raft: takeovers of its shard this process has under way
+        // (raft_take_over); its workers wait until none are.
+        static std::atomic<int> raft_taking_over_;
 
         // Raise local_replica_id, the timestamp the next commit takes, to at
         // least ts.

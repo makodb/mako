@@ -318,10 +318,11 @@ bench_worker::run()
 
   while (benchConfig.isRunning() && (benchConfig.getRunMode() != RUNMODE_OPS || ntxn_commits < benchConfig.getOpsPerWorker())) {
     // Raft: a process that lost its shard's leadership during the run runs
-    // nothing until it leads again. Its commits would not be replicated, and
-    // replaying the new leader's entries changes the tables, and the epoch,
-    // under a running transaction.
-    if (sync_util::sync_logger::raft_following_.load(std::memory_order_acquire)) {
+    // nothing until it leads again and has taken the shard over. Its commits
+    // would not be replicated, and replaying the new leader's entries
+    // changes the tables, and the epoch, under a running transaction.
+    if (sync_util::sync_logger::raft_following_.load(std::memory_order_acquire) ||
+        sync_util::sync_logger::raft_taking_over_.load(std::memory_order_acquire) > 0) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
       continue;
     }

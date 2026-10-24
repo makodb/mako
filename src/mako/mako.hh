@@ -712,23 +712,32 @@ static void finish_shard_failover()
   sync_util::sync_logger::cv.notify_one();
 }
 
+// How many times this process has stopped leading: a takeover belongs to
+// the leadership it started in.
+static std::atomic<uint64_t> raft_leaderships_lost{0};
+// Set for this leadership once its takeover has started; cleared when the
+// leadership ends, so the next one takes over again.
 static std::atomic<bool> raft_takeover_started{false};
+static std::mutex raft_takeover_mu;  // one takeover at a time
 
-// Raft: this replica leads its shard during the run, and it was not started
-// as the shard's leader, so the leader it replaces had run the workers. Take
-// over as the Paxos learner does.
-static void raft_take_over()
+// Raft: this replica was elected while the benchmark runs, so another one
+// may have led the shard since it last did, or it never did. Take over as
+// the Paxos learner does.
+static void raft_take_over(uint64_t leadership)
 {
   auto& benchConfig = BenchmarkConfig::getInstance();
   auto* config = benchConfig.getConfig();
   const int shard = benchConfig.getShardIndex();
+  struct Done {  // lets this process's workers run again, however it ends
+    ~Done() { sync_util::sync_logger::raft_taking_over_.fetch_sub(1, std::memory_order_acq_rel); }
+  } done;
+  std::lock_guard<std::mutex> one_at_a_time(raft_takeover_mu);
   Warning("[RAFT-TAKEOVER] shard %d: leading during the run; taking over", shard);
   // The old leader's entries apply first; the final watermark is taken
   // over them.
   sync_util::sync_logger::wait_raft_catch_up();
-  if (sync_util::sync_logger::raft_following_.load(std::memory_order_acquire)) {
+  if (raft_leaderships_lost.load(std::memory_order_acquire) != leadership) {
     Warning("[RAFT-TAKEOVER] shard %d: lost the leadership while catching up", shard);
-    raft_takeover_started.store(false);  // the next leadership tries again
     return;
   }
   if (benchConfig.getEndReceived() > 0) {
@@ -761,24 +770,30 @@ static void raft_leadership_changed(bool leading)
 {
   auto& benchConfig = BenchmarkConfig::getInstance();
   if (!leading) {
+    raft_leaderships_lost.fetch_add(1, std::memory_order_acq_rel);
+    raft_takeover_started.store(false, std::memory_order_release);
     if (sync_util::sync_logger::worker_running) {
       sync_util::sync_logger::raft_following_.store(true, std::memory_order_release);
     }
     return;
   }
+  const uint64_t leadership = raft_leaderships_lost.load(std::memory_order_acquire);
+  // An election during the run takes over, whoever wins it: a follower, or
+  // a replica that led before (the one started as the shard's leader, or an
+  // earlier taker), whose workers stay held until it has. Nothing to take
+  // over with one shard, in the elections before the run (a follower sets
+  // worker_running once the leader starts its workers), or after its end.
+  const bool take_over = benchConfig.getNshards() > 1 &&
+                         sync_util::sync_logger::worker_running &&
+                         benchConfig.getEndReceived() == 0 &&
+                         !raft_takeover_started.exchange(true);
+  if (take_over) {
+    sync_util::sync_logger::raft_taking_over_.fetch_add(1, std::memory_order_acq_rel);
+  }
   sync_util::sync_logger::raft_following_.store(false, std::memory_order_release);
-  // Nothing to take over for the replica started as the shard's leader,
-  // whose workers are running, or with one shard; nor in an election
-  // before the run (worker_running is set on a follower once the leader
-  // starts its workers) or after its end.
-  if (benchConfig.getLeaderConfig() || benchConfig.getNshards() <= 1 ||
-      !sync_util::sync_logger::worker_running || benchConfig.getEndReceived() > 0) {
-    return;
+  if (take_over) {
+    std::thread(raft_take_over, leadership).detach();
   }
-  if (raft_takeover_started.exchange(true)) {
-    return;
-  }
-  std::thread(raft_take_over).detach();
 }
 #endif
 

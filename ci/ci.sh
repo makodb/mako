@@ -620,23 +620,26 @@ run_2shard_replication_raft() {
     return 1
 }
 
-# Mako's cross-shard failover under Raft: one shard's leader is killed while
-# the benchmark runs, a follower takes over, and the other shard moves on with
-# it; first shard 0's leader, then shard 1's. Each is retried only when the
-# cluster never got as far as the kill (exit 3).
+# Mako's cross-shard failover under Raft: one shard's leader is taken away
+# while the benchmark runs, a follower takes over, and the other shard moves
+# on with it. Shard 0's leader killed, shard 1's killed, and shard 0's paused
+# with a second takeover after the first. Each is retried only when the
+# cluster never got as far as the test (exit 3).
 run_2shard_failover_raft() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard2FailoverRaft"
     echo "========================================="
-    local shard
-    for shard in 0 1; do
+    local scenario shard event
+    for scenario in 0/kill 1/kill 0/twice; do
+        shard=${scenario%/*}
+        event=${scenario#*/}
         local attempt=1
         local max_attempts=2
         local passed=0
         while [ $attempt -le $max_attempts ]; do
             cleanup_processes
             set +e
-            MAKO_FAILOVER_SHARD=$shard with_raft_store 2shard_failover_raft bash ./examples/test_2shard_failover_raft.sh
+            MAKO_FAILOVER_SHARD=$shard MAKO_FAILOVER_EVENT=$event with_raft_store 2shard_failover_raft bash ./examples/test_2shard_failover_raft.sh
             local test_result=$?
             set -e
             check_for_hanging_processes "shard2FailoverRaft"
@@ -649,7 +652,7 @@ run_2shard_failover_raft() {
                 break
             fi
             if [ $attempt -lt $max_attempts ]; then
-                echo "Retrying shard2FailoverRaft, shard $shard (attempt $((attempt + 1))/$max_attempts)..."
+                echo "Retrying shard2FailoverRaft, $scenario (attempt $((attempt + 1))/$max_attempts)..."
             fi
             attempt=$((attempt + 1))
         done

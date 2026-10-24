@@ -152,7 +152,7 @@ partition reports each leadership change of this process.
 | Value | Paxos (FAIL_NEW_VERSION) | Raft |
 |-------|-------------|-------------|
 | 0 | Learner starts a takeover: stop exchange, `client_control(0)` | Lost leadership: once the run has started, its workers run no transactions until it leads again |
-| 1 | — | Gained leadership: a follower that leads during the run takes over (`raft_take_over`) |
+| 1 | — | Gained leadership: an election during the run takes over (`raft_take_over`) |
 | 2 | Learner leads: collect FVW, `client_control(1)`, notify workers | — |
 | 3 | Commit new leader (!FAIL_NEW_VERSION) | — |
 | 4 | Datacenter failure (!FAIL_NEW_VERSION) | — |
@@ -178,14 +178,16 @@ an earlier one's. Any shard can fail over.
 Raft reports elections at startup too, and an early version that ran the
 Paxos steps on every Raft leadership change made cross-shard calls to
 shards that were not up yet (commit 6a66fa55 then skipped them under
-Raft). A Raft takeover therefore runs only on a replica that was not
-started as its shard's leader, in a multi-shard run, once that leader has
-started its workers (a follower sets `worker_running` when it applies the
-leader's advancer marker) and before the run's end markers apply. A process
-that loses the leadership during the run runs no transactions until it
-leads again (`raft_following_`): nothing it logs would be replicated, and
-replaying the new leader's entries changes the tables under its
-transactions.
+Raft). A Raft takeover therefore runs only in a multi-shard run, once the
+shard's leader has started its workers (a follower sets `worker_running`
+when it applies the leader's advancer marker) and before the run's end
+markers apply. Then every election takes over, whoever wins it: a follower,
+the replica started as the shard's leader after it lost the leadership, or
+an earlier taker. A process that loses the leadership during the run runs
+no transactions until it leads again and has taken over (`raft_following_`,
+`raft_taking_over_`): nothing it logs would be replicated, and replaying
+the new leader's entries changes the tables under its transactions. A
+takeover belongs to the leadership it started in, and one runs at a time.
 
 ### 4.4 Compile-Time vs Runtime Guards
 
