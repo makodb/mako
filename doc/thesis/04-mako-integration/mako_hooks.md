@@ -167,7 +167,13 @@ Under Raft the replica that wins the election does the same
 then runs the steps the learner runs (`begin_shard_failover`, a new epoch
 and its no-ops, `finish_shard_failover`). The other shards find the new
 leader by its cluster role (`failed_shard_role`), which the takeover
-publishes before it pauses them.
+publishes before it pauses them. Every shard cuts the old epoch at the same
+point, the smallest of the shards' final watermarks: the paper's finalized
+vector watermark keeps a transaction only if it is below every shard's
+component (§5.2), and with one timestamp per transaction that is the
+smallest one. The keys the shards wait on carry the epoch they close
+(`NFSSync::failover_key`), so a later takeover in the same run never reads
+an earlier one's. Any shard can fail over.
 
 Raft reports elections at startup too, and an early version that ran the
 Paxos steps on every Raft leadership change made cross-shard calls to

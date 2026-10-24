@@ -41,6 +41,7 @@ static inline void* tpcc_memalign(size_t alignment, size_t size) {
 #include "bench.h"
 #include "tpcc.h"
 #include "lib/server.h"
+#include "lib/common.h"
 #include "sto/Interface.hh"
 #include "sto/Transaction.hh"
 #include "common.h"
@@ -2349,18 +2350,22 @@ tpcc_worker::txn_new_order()
   }
 
 #if defined(FAIL_NEW_VERSION)
-  if (BenchmarkConfig::getInstance().getControlMode()==5 && counter_new_order_failed>0 && BenchmarkConfig::getInstance().getShardIndex()>0){
+  if (BenchmarkConfig::getInstance().getControlMode()==5 && counter_new_order_failed>0 &&
+      BenchmarkConfig::getInstance().getShardIndex()!=sync_util::sync_logger::failed_shard_index){
     if (rand()%20==0){
       counter_new_order_failed-=1;
-      supplierWarehouseIDs[0]=RandomNumber(r, 1, NumWarehouses()); // always assume the shard-0 failed
+      // a warehouse of the shard that failed
+      supplierWarehouseIDs[0]=sync_util::sync_logger::failed_shard_index * NumWarehouses() + RandomNumber(r, 1, NumWarehouses());
       isRemote = true;
     }
   }
 #else
-  if (BenchmarkConfig::getInstance().getControlMode()==2 && counter_new_order_failed>0 && BenchmarkConfig::getInstance().getShardIndex()>0){
+  if (BenchmarkConfig::getInstance().getControlMode()==2 && counter_new_order_failed>0 &&
+      BenchmarkConfig::getInstance().getShardIndex()!=sync_util::sync_logger::failed_shard_index){
     if (rand()%20==0){
       counter_new_order_failed-=1;
-      supplierWarehouseIDs[0]=RandomNumber(r, 1, NumWarehouses()); // always assume the shard-0 failed
+      // a warehouse of the shard that failed
+      supplierWarehouseIDs[0]=sync_util::sync_logger::failed_shard_index * NumWarehouses() + RandomNumber(r, 1, NumWarehouses());
       isRemote = true;
     }
   }
@@ -2911,18 +2916,22 @@ if (TThread::get_is_micro()) {
   }
 
 #if defined(FAIL_NEW_VERSION)
-  if (BenchmarkConfig::getInstance().getControlMode()==5 && counter_payment_failed>0 && BenchmarkConfig::getInstance().getShardIndex()>0){
+  if (BenchmarkConfig::getInstance().getControlMode()==5 && counter_payment_failed>0 &&
+      BenchmarkConfig::getInstance().getShardIndex()!=sync_util::sync_logger::failed_shard_index){
     if (rand()%20==0){
       counter_payment_failed-=1;
-      customerWarehouseID=RandomNumber(r, 1, NumWarehouses());
+      // a warehouse of the shard that failed
+      customerWarehouseID=sync_util::sync_logger::failed_shard_index * NumWarehouses() + RandomNumber(r, 1, NumWarehouses());
       isRemote=true;
     }
   }
 #else
-  if (BenchmarkConfig::getInstance().getControlMode()==2 && counter_payment_failed>0 && BenchmarkConfig::getInstance().getShardIndex()>0){
+  if (BenchmarkConfig::getInstance().getControlMode()==2 && counter_payment_failed>0 &&
+      BenchmarkConfig::getInstance().getShardIndex()!=sync_util::sync_logger::failed_shard_index){
     if (rand()%20==0){
       counter_payment_failed-=1;
-      customerWarehouseID=RandomNumber(r, 1, NumWarehouses());
+      // a warehouse of the shard that failed
+      customerWarehouseID=sync_util::sync_logger::failed_shard_index * NumWarehouses() + RandomNumber(r, 1, NumWarehouses());
       isRemote=true;
     }
   }
@@ -3552,7 +3561,9 @@ private:
       printf("reinitializing partitions under failure\n");
         string nCount[12] = {"customer", "customer_name_idx", "district", "history", "new_order", "oorder", 
                              "oorder_c_id_idx", "order_line", "stock", "stock_data", "warehouse", "item"};
-        int table_id = 0;
+        // This shard's tables, in the order they were opened (TPCC_TABLE_LIST);
+        // each shard's ids start at shard_index*NUM_TABLES_PER_SHARD+1.
+        int table_id = BenchmarkConfig::getInstance().getShardIndex() * mako::NUM_TABLES_PER_SHARD;
         for (int i=0; i<12; i++) {
             if (nCount[i] != "item") {
                 vector<abstract_ordered_index *> ret(BenchmarkConfig::getInstance().getNthreads());
