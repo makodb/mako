@@ -684,9 +684,8 @@ static void begin_shard_failover()
 static void finish_shard_failover()
 {
   // Wait for FVW in the old epoch (w * 10 + epoch); this is very important in our new implementation
-  // Single timestamp system: collect all shard watermarks and use maximum
-  uint32_t max_watermark = 0;
   auto& benchConfig = BenchmarkConfig::getInstance();
+  vector<uint32_t> fvw(benchConfig.getNshards());
   auto* config = benchConfig.getConfig();
   const int closed_epoch = get_epoch()-1;
   for (int i=0; i<benchConfig.getNshards(); i++) {
@@ -698,11 +697,11 @@ static void finish_shard_failover()
                                                 config->shard(0, clusterRoleLocal).host.c_str(),
                                                 config->mports[clusterRoleLocal]);
     std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
-    uint32_t watermark = std::stoi(w_i);
-    max_watermark = std::max(max_watermark, watermark);
+    fvw[i] = static_cast<uint32_t>(std::stoul(w_i));  // unsigned: a commit id can pass INT_MAX
   }
 
-  sync_util::sync_logger::update_stable_timestamp(get_epoch()-1, max_watermark);
+  // The same cut as the other shards take (bench.cc, control 1).
+  sync_util::sync_logger::update_stable_timestamp_vec(get_epoch()-1, fvw);
   sync_util::sync_logger::client_control(1, benchConfig.getShardIndex());
 
   // Start transactions in new epoch

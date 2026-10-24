@@ -1,5 +1,6 @@
 #ifndef _SYNC_UTIL_H
 #define _SYNC_UTIL_H
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <thread>
@@ -183,11 +184,14 @@ namespace sync_util {
            hist_timestamp[epoch]=tt; 
         }
 
-        // Single timestamp system: ensure vector contains replicated value
+        // The stable cut of a closed epoch from its finalized vector watermark
+        // (every shard's final watermark): versions of that epoch above the
+        // cut are rolled back. The paper (§5.2) keeps a transaction only if
+        // it is below every shard's component; with one timestamp per
+        // transaction that is the smallest component, on every shard alike.
         static void update_stable_timestamp_vec(int epoch, vector<uint32_t> tt_vec) { 
-           // In single timestamp system, just use the first element
            if (!tt_vec.empty()) {
-               hist_timestamp[epoch] = tt_vec[0];
+               hist_timestamp[epoch] = *std::min_element(tt_vec.begin(), tt_vec.end());
                std::cout<<"update_stable_timestamp_vec, epoch:"<<epoch<<",tt:"<<hist_timestamp[epoch]<<std::endl;
            }
         }
