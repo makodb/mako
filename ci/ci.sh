@@ -622,15 +622,16 @@ run_2shard_replication_raft() {
 
 # Mako's cross-shard failover under Raft: one shard's leader is taken away
 # while the benchmark runs, a follower takes over, and the other shard moves
-# on with it. Shard 0's leader killed, shard 1's killed, and shard 0's paused
-# with a second takeover after the first. Each is retried only when the
-# cluster never got as far as the test (exit 3).
+# on with it. Shard 0's leader killed, shard 1's killed, shard 0's paused with
+# a second takeover after the first, and shard 0's paused and back again
+# (it wins the second election). Each is retried only when the cluster never
+# got as far as the test (exit 3).
 run_2shard_failover_raft() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard2FailoverRaft"
     echo "========================================="
     local scenario shard event
-    for scenario in 0/kill 1/kill 0/twice; do
+    for scenario in 0/kill 1/kill 0/twice 0/back; do
         shard=${scenario%/*}
         event=${scenario#*/}
         local attempt=1

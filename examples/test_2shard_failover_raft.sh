@@ -16,11 +16,13 @@
 # paused at once. The old leader's log is behind, so the other follower wins
 # and takes over a second time; the test then checks 1-4 for the second
 # takeover, which must read the other shard's final watermark of the second
-# epoch, not the first's.
+# epoch, not the first's. With MAKO_FAILOVER_EVENT=back the old leader gets a
+# few seconds to catch up before that follower is paused, so it wins the
+# second election itself and takes the shard back.
 #
 # Usage: test_2shard_failover_raft.sh [threads]
 # Env: MAKO_FAILOVER_SHARD (the shard whose leader goes, 0 or 1, default 0),
-#      MAKO_FAILOVER_EVENT (kill or twice, default kill),
+#      MAKO_FAILOVER_EVENT (kill, twice or back, default kill),
 #      MAKO_FAILOVER_AFTER (seconds into the run before the event, default 8),
 #      MAKO_FAILOVER_TIMEOUT (seconds after the event for both runs to end,
 #      default 240).
@@ -39,8 +41,8 @@ case "$F" in
 esac
 event="${MAKO_FAILOVER_EVENT:-kill}"
 case "$event" in
-    kill|twice) ;;
-    *) echo "MAKO_FAILOVER_EVENT must be kill or twice"; exit 2 ;;
+    kill|twice|back) ;;
+    *) echo "MAKO_FAILOVER_EVENT must be kill, twice or back"; exit 2 ;;
 esac
 fail_after="${MAKO_FAILOVER_AFTER:-8}"
 fail_timeout="${MAKO_FAILOVER_TIMEOUT:-240}"
@@ -205,7 +207,7 @@ wait_for_takeover() {
 waited=0
 first_epoch=""
 first_leader=""
-if [ "$event" = twice ]; then
+if [ "$event" != kill ]; then
     if ! wait_for_takeover localhost; then
         echo "  ✗ no replica of shard $F took over the first time"
         exit 1
@@ -214,12 +216,20 @@ if [ "$event" = twice ]; then
     first_epoch=$new_epoch
     second_victim=$(pid_of "$F" "$first_leader")
     kill -CONT "$victim"
+    if [ "$event" = back ]; then
+        # The old leader catches up first, so it can win the next election.
+        sleep 5
+    fi
     kill -STOP "$second_victim"
     STOPPED+=("$second_victim")
     echo "Resumed shard $F's old leader and paused $first_leader (pid $second_victim)"
     if ! wait_for_takeover "$first_leader"; then
         echo "  ✗ no other replica of shard $F took over the second time"
         exit 1
+    fi
+    if [ "$event" = back ] && [ "$new_leader" != localhost ]; then
+        echo "  ✗ $new_leader won the second election, not the old leader; the case did not run"
+        exit 3
     fi
 else
     wait_for_takeover localhost
@@ -271,7 +281,7 @@ if [ -z "$new_leader" ]; then
     failed=1
 else
     nl="$(log $F-$new_leader)"
-    if [ "$event" = twice ]; then
+    if [ "$event" != kill ]; then
         echo "  ✓ shard $F's $first_leader took over (epoch $first_epoch), then $new_leader (epoch $new_epoch):"
     else
         echo "  ✓ shard $F's $new_leader took over:"
@@ -289,7 +299,7 @@ else
         echo "  ✗ its workers did not finish a run"
         failed=1
     fi
-    if [ "$event" = twice ]; then
+    if [ "$event" != kill ]; then
         w1=$(fvw_read "$(log $F-$first_leader)" "$O")
         w2=$(fvw_read "$nl" "$O")
         if [ -n "$w1" ] && [ -n "$w2" ] && ! same_number "$w1" "$w2"; then
@@ -302,7 +312,7 @@ else
 fi
 
 controls=1
-[ "$event" = twice ] && controls=2
+[ "$event" != kill ] && controls=2
 if [ "$(grep -c "register_fasttransport_for_bench: 0" "$so")" -ge "$controls" ] &&
    [ "$(grep -c "register_fasttransport_for_bench: 1" "$so")" -ge "$controls" ]; then
     echo "  ✓ shard $O paused and moved to the new epoch (${controls}x)"

@@ -725,6 +725,28 @@ static std::atomic<uint64_t> raft_leaderships_lost{0};
 static std::atomic<bool> raft_takeover_started{false};
 static std::mutex raft_takeover_mu;  // one takeover at a time
 
+// Whether another replica may have led this shard's run since this process
+// last did, from the last takeover begun for the shard (begin_shard_failover's
+// keys): none yet, so only the replica started as its leader has led; or
+// one by another replica; or one of this process's that did not finish.
+static bool shard_moved_since_this_led()
+{
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  auto* config = benchConfig.getConfig();
+  const std::string shard = std::to_string(benchConfig.getShardIndex());
+  const std::string host = config->shard(0, mako::LOCALHOST_CENTER_INT).host;  // shard() returns a copy
+  const int port = config->mports[mako::LOCALHOST_CENTER_INT];
+  std::string role = mako::NFSSync::get_key("failed_shard_role_" + shard, host.c_str(), port);
+  if (role.empty()) {
+    return !benchConfig.getLeaderConfig();
+  }
+  if (std::stoi(role) != benchConfig.getClusterRole()) {
+    return true;
+  }
+  std::string closed = mako::NFSSync::get_key("failed_shard_epoch_" + shard, host.c_str(), port);
+  return closed.empty() || std::stoi(closed) + 1 != get_epoch();
+}
+
 // Raft: this replica was elected while the benchmark runs, so another one
 // may have led the shard since it last did, or it never did. Take over as
 // the Paxos learner does.
@@ -747,6 +769,13 @@ static void raft_take_over(uint64_t leadership)
   }
   if (benchConfig.getEndReceived() > 0) {
     Warning("[RAFT-TAKEOVER] shard %d: the old leader had ended the run", shard);
+    return;
+  }
+  // Leading again with nobody else having led since: the shards still
+  // send here, in this epoch, so there is nothing to take over, and a
+  // takeover would only use up an epoch (one digit in a commit id).
+  if (!shard_moved_since_this_led()) {
+    Warning("[RAFT-TAKEOVER] shard %d: leading again, no takeover since; nothing to take over", shard);
     return;
   }
   begin_shard_failover();
