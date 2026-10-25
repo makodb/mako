@@ -4621,6 +4621,7 @@ ABI_SPECS = {
             ('T', 'srpc::tcpconn_send_bytes@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, unsigned long)'),
             ('T', 'srpc::tcpconn_send_frame@srpc.tcp_channel(srpc::TcpConnection@srpc.tcp_channel const&, srpc::ChannelFrame@srpc.channel const&)'),
             ('T', 'srpc::tcpconn_trim_sent@srpc.tcp_channel(std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, unsigned long)'),
+            ('T', 'srpc::tcpconn_append_frame@srpc.tcp_channel(std::__1::vector<unsigned char, std::__1::allocator<unsigned char>>&, int, unsigned char const*, unsigned long)'),
             ('T', 'srpc::tcplistener_accept_step@srpc.tcp_channel(srpc::TcpListener@srpc.tcp_channel const&, srpc::AcceptStep@srpc.tcp_channel*)'),
             ('T', 'srpc::tcplistener_accept_step_new@srpc.tcp_channel()'),
             ('T', 'srpc::tcplistener_close_accepted@srpc.tcp_channel(srpc::AcceptStep@srpc.tcp_channel&)'),

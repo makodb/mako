@@ -35,7 +35,7 @@ use std::rc::Rc;
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, Wake, Waker};
-use std::sync::{Arc, Weak};
+use std::sync::{Arc, Mutex, Weak};
 use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU64};
 
 use crate::basetypes::Time;
@@ -299,8 +299,13 @@ pub struct BoxEvent<Type> {
     pub state_: EventState,
     pub prunable_: Cell<bool>,
     pub self_: Weak<dyn EventPollable>,
-    pub content_: RefCell<Type>,
-    pub is_set_: Cell<bool>,
+    // Mako-local: a Mutex, not a RefCell, so a set() from a thread other
+    // than the owner cannot race the owner's get(). Such a set() publishes
+    // only the payload and is_set_ (see boxevent_set); it is not a wake. The
+    // owner sees it at its next test, a timed wait's deadline or an
+    // event_ping, so an untimed wait() needs the setter to ping or post a Job.
+    pub content_: Mutex<Type>,
+    pub is_set_: AtomicBool,
 }
 
 impl<Type: Clone + Default + 'static> BoxEvent<Type> {
@@ -336,7 +341,7 @@ impl<Type: Clone + Default + 'static> EventPollable for BoxEvent<Type> {
         event_test_impl(self)
     }
     fn is_ready(&self) -> bool {
-        self.is_set_.get()
+        self.is_set_.load(std::sync::atomic::Ordering::Acquire)
     }
     fn log(&self) {}
     fn status(&self) -> EventStatus {
@@ -376,31 +381,39 @@ fn boxevent_make<Type: Clone + Default + 'static>() -> Arc<BoxEvent<Type>> {
         state_: EventState::new(),
         prunable_: Cell::new(true),
         self_: Weak::<BoxEvent<Type>>::new(),
-        content_: RefCell::new(Default::default()),
-        is_set_: Cell::new(false),
+        content_: Mutex::new(Default::default()),
+        is_set_: AtomicBool::new(false),
     });
     event_state_seed(&sp.state_);
     sp
 }
 
-// Returns the slot payload by value (copy out of the RefCell).
+// Returns the slot payload by value while serializing with a foreign setter.
 fn boxevent_get<Type: Clone>(ev: &BoxEvent<Type>) -> Type {
-    let g = ev.content_.borrow();
+    let g = ev.content_.lock().unwrap();
     (*g).clone()
 }
 
 fn boxevent_set<Type: Clone + Default + 'static>(ev: &BoxEvent<Type>, c: &Type) {
-    ev.is_set_.set(true);
     {
-        let mut g = ev.content_.borrow_mut();
+        let mut g = ev.content_.lock().unwrap();
         *g = c.clone();
+        // Publish readiness only AFTER the protected payload is complete,
+        // or a foreign reader can observe is_set_ with a half-written slot.
+        ev.is_set_.store(true, std::sync::atomic::Ordering::Release);
     }
-    ev.test();
+    // Event status, weak Fiber state and the reactor queues are owner-thread
+    // only, so a foreign setter publishes the payload and stops there. Lion
+    // has no per-pass scan: the owner sees the payload when it next tests the
+    // event, at a timed wait's deadline, or sooner if event_ping wakes it.
+    if std::thread::current().id() == ev.owner_thread_ {
+        ev.test();
+    }
 }
 
 fn boxevent_clear<Type: Default>(ev: &BoxEvent<Type>) {
-    ev.is_set_.set(false);
-    let mut g = ev.content_.borrow_mut();
+    let mut g = ev.content_.lock().unwrap();
+    ev.is_set_.store(false, std::sync::atomic::Ordering::Release);
     let _old = core::mem::take(&mut *g);
 }
 
@@ -741,7 +754,7 @@ impl WaitAll {
         // The child tells this parent when it becomes ready (S4 step 4).
         event_parent_link::<()>(&x, &self.self_);
         // Bind the guard, then deref — chaining `.borrow_mut().push(x)`
-        // mis-lowers to push(Vec::from_iter(x)). See §8.33.
+        // mis-lowers to push(Vec::from_iter(x)). See §7.33.
         let mut g = self.events_.borrow_mut();
         (*g).push(x);
     }
@@ -3397,18 +3410,11 @@ fn event_wait_impl<W: EventCore>(ev: &W, timeout: u64) {
             reactor_rc.composite_events_.borrow_mut().push_back(ev.core_self().upgrade().unwrap());
         }
 
-        // A timed wait registers its deadline with this thread's deadline
-        // map, which check_timeout drains in deadline order (S4 step 3).
         // wakeup_time_ names the deadline of this wait, and 0 for an untimed
         // one: an entry left by an earlier wait of the same event no longer
         // matches it, and is dropped unserved (see EventDeadline).
-        if timeout > 0 {
-            let now = Time::now(true);
-            ev.core_state().wakeup_time_.set(now + timeout);
-            event_deadline_push(ev, now + timeout, false);
-        } else {
-            ev.core_state().wakeup_time_.set(0u64);
-        }
+        let deadline: u64 = if timeout > 0 { Time::now(true) + timeout } else { 0u64 };
+        ev.core_state().wakeup_time_.set(deadline);
 
         // Transpiled Weak has no implicit Rc→Weak conversion; use the static
         // Rc::downgrade(rc) factory (mirrors std::rc::Rc::downgrade). `fiber` is
@@ -3416,6 +3422,17 @@ fn event_wait_impl<W: EventCore>(ev: &W, timeout: u64) {
         // original `fiber` stays live for the checks below.
         *ev.core_state().wp_fiber_.borrow_mut() = Rc::<Fiber>::downgrade(&fiber);
         ev.core_status().set(EventStatus::WAIT);
+
+        // A timed wait registers its deadline with this thread's deadline
+        // map, which check_timeout drains in deadline order (S4 step 3). Only
+        // once the event is WAIT: the push may sweep the map, and the sweep
+        // keeps only WAIT and READY entries, so a push made before WAIT swept
+        // this wait's own entry and left it with no deadline -- a never-set
+        // event's waiter was then never resumed
+        // (tests/reactor_deadline_rust.rs, the push-sweeps test).
+        if timeout > 0 {
+            event_deadline_push(ev, deadline, false);
+        }
         let fiber_status = fiber.status_.get();
         reactor_verify(fiber_status != FiberStatus::FINISHED && fiber_status != FiberStatus::RECYCLED);
         (*fiber).yield_();
@@ -5330,7 +5347,13 @@ fn fiber_yield_invoke(y: &mut fiber_yield_t) {
 /// the C fiber engine for this fiber, and the pointee must still be alive --
 /// i.e. this may only be called by the engine, on that fiber's own stack,
 /// before `fiber_task_t` is destroyed.  It is never called from Rust or C++.
-#[no_mangle]
+///
+/// No `#[no_mangle]`: the engine receives this as a FUNCTION POINTER from
+/// `fiber_engine_start` below and no C or C++ translation unit names the
+/// symbol, so exporting it bought nothing -- and it made the symbol a hard
+/// multiple definition when both the transpiled lane (libsrpc.a) and the
+/// rustc lane (libsrpc.rlib) are linked into one process, which is exactly
+/// what mako's Raft work needs to do.
 pub unsafe extern "C" fn fiber_task_entry_thunk(arg: *mut core::ffi::c_void) {
     let task: *mut fiber_task_t = arg as *mut fiber_task_t;
     unsafe { fiber_task_body_invoke(&mut (*task).fn_, &mut (*task).yield_); }

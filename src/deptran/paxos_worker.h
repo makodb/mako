@@ -397,7 +397,7 @@ public:
   void SetupService();
   void SetupCommo();
   void ShutDown();
-  // take MarshallDeputy (matches RegLearnerAction
+  // take MarshallDeputy (matches reg_learner_action
   // signature in deptran/scheduler.h).
   int Next(int, janus::Command);
   void WaitForSubmit();

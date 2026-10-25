@@ -89,9 +89,9 @@ class GateStaticContractTests(unittest.TestCase):
         self.assertEqual(set(GATE.EXPECTED_GENERATED_MODULE_SHA256), manifest)
         self.assertEqual(set(GATE.IMPORTER_USE_MARKERS), manifest)
         self.assertEqual(
-            sum(len(spec.symbols) for spec in GATE.ABI_SPECS.values()), 2107
+            sum(len(spec.symbols) for spec in GATE.ABI_SPECS.values()), 2112
         )
-        self.assertEqual(GATE.EXPECTED_TOTAL_PROVIDER_SYMBOLS, 2107)
+        self.assertEqual(GATE.EXPECTED_TOTAL_PROVIDER_SYMBOLS, 2112)
         GATE.require_importer_coverage(self.modules)
 
     def test_platform_implementation_symbols_are_exhaustive(self) -> None:
@@ -120,7 +120,8 @@ class GateStaticContractTests(unittest.TestCase):
             # unique / -24 raw: S7b retires the epoll loop and the
             # pending-write path.
             "srpc.reactor": (398, 425),
-            "srpc.server": (86, 98),
+            # Mako-local: +4 for the admission gate (rpc/server.rs).
+            "srpc.server": (90, 102),
             "srpc.client": (271, 284),
             "srpc.request_queue": (33, 34),
             "srpc.channel": (14, 21),
@@ -144,7 +145,8 @@ class GateStaticContractTests(unittest.TestCase):
             "srpc.any_message": (10, 11),
             # The Lion transport tasks, write-through and the cork (S5);
             # -51 unique / -55 raw: S7b retires TCP's pollable surface.
-            "srpc.tcp_channel": (165, 181),
+            # Mako-local: +1 for tcpconn_append_frame (rpc/tcp_channel.rs).
+            "srpc.tcp_channel": (166, 182),
         }
         for module, (unique_count, raw_count) in expected.items():
             with self.subTest(module=module):
@@ -425,7 +427,7 @@ class GateContractTests(unittest.TestCase):
         self.assertEqual(set(GATE.EXPECTED_IMPORTS), manifest)
         self.assertEqual(set(GATE.EXPECTED_GENERATED_MODULE_SHA256), manifest)
         self.assertEqual(set(GATE.IMPORTER_USE_MARKERS), manifest)
-        self.assertEqual(sum(len(spec.symbols) for spec in GATE.ABI_SPECS.values()), 2107)
+        self.assertEqual(sum(len(spec.symbols) for spec in GATE.ABI_SPECS.values()), 2112)
         GATE.require_importer_coverage(self.modules)
         GATE.require_cpp_surfaces(ROOT, self.generated, self.modules)
 
@@ -611,7 +613,8 @@ class GateContractTests(unittest.TestCase):
             # unique / -24 raw: S7b retires the epoll loop and the
             # pending-write path.
             "srpc.reactor": (398, 425),
-            "srpc.server": (86, 98),
+            # Mako-local: +4 for the admission gate (rpc/server.rs).
+            "srpc.server": (90, 102),
             "srpc.client": (271, 284),
             "srpc.request_queue": (33, 34),
             "srpc.serializable_envelope": (0, 1),
@@ -644,7 +647,8 @@ class GateContractTests(unittest.TestCase):
             "srpc.any_message": (10, 11),
             # The Lion transport tasks, write-through and the cork (S5);
             # -51 unique / -55 raw: S7b retires TCP's pollable surface.
-            "srpc.tcp_channel": (165, 181),
+            # Mako-local: +1 for tcpconn_append_frame (rpc/tcp_channel.rs).
+            "srpc.tcp_channel": (166, 182),
         }
         for module, (unique_count, raw_count) in expected.items():
             with self.subTest(module=module):

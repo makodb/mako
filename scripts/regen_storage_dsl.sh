@@ -118,7 +118,7 @@ for f in "${FILES[@]}"; do
     cp "$f" "$tmp"
     # Report and keep going rather than aborting the sweep on the first
     # failure: a drift guard that stops at file 2 under-reports (same
-    # reasoning as scripts/rrr_dsl_check.sh).
+    # reasoning as scripts/srpc_dsl_check.sh).
     if ! "$TRANSPILER" inline-rust --rewrite --files "$tmp" >/dev/null; then
       echo "TRANSPILE-FAIL: $f (see the transpiler message above)" >&2
       status=1

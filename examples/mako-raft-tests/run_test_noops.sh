@@ -20,7 +20,9 @@ NC='\033[0m' # No Color
 
 # Test configuration
 TEST_NAME="NO-OPS Watermark Synchronization Test"
-TEST_DURATION=25  # seconds (startup + NO-OPS + logs + verification)
+# Allow the drain failure path to publish/observe its terminal marker and clean
+# up deterministically instead of being killed by the diagnostic wrapper.
+TEST_DURATION=40  # seconds (startup + NO-OPS + logs + drain diagnostics)
 PROCESSES=("localhost" "p1" "p2" "p3" "p4")
 
 # Get absolute paths
