@@ -75,13 +75,96 @@ client; it does not restrict verification to this replica's replayed rows.
 
 ### TPC-C warehouse handles
 
-With `MAKO_CLUSTER_CONFIG` enabled, TPC-C's governed table accessors resolve
-`(canonical logical table, global warehouse)` through the current native
-owner **and ownership version**, rather than retaining the startup local/remote pointer.
+With `MAKO_CLUSTER_CONFIG` enabled, each TPC-C worker precomputes a
+`ShardingPreparedRoute` for each governed `(canonical table, global warehouse)`.
+Construction encodes the fixed coordinate only: no metadata read, handle
+selection, authorization or epoch pin. Local and remote accessors index the same
+per-table descriptor vector.
+
+First use in a protected metadata view resolves the captured owner **and
+ownership version**, immutable table binding, and physical/proxy handle. The
+descriptor retains a private fixed-cache slot tagged by
+`mako_sharding_read_view_id`. These values survive logical transactions and
+engine epoch ticks while the complete native admission view remains unchanged.
+Raw-key captures remain transaction-scoped; arbitrary keys do not accumulate
+in the persistent cache.
+
+Each new logical context establishes a fresh transaction identity, not fresh
+request bytes for every point. A returned point is a thin routing result for
+immediate dispatch, not an admission token accepted by another API. Only an
+outgoing RPC materializes the full envelope, directly into its destination.
+Batch captures remain transaction-scoped. Successful ownership decisions for
+fixed coordinates belong to the protected view, not the transaction, and are
+reused without a new metadata lookup or repeated point authorization.
+The following storage verb reuses a prepared slot only when
+its physical table ID matches. Raw-key and received requests cannot establish
+this shortcut. Slot indices survive capture-vector growth; element addresses
+are never retained across callbacks.
+
+A changed native view clears retained fixed routes, physical-handle mappings and
+bindings, discarding borrowed references before their binding owners. This
+includes Freeze with unchanged routing labels, owner changes and conservative
+control republication. OCC retries retain their original protected view,
+including across Freeze; there is no current-epoch comparison at commit.
+Without an open logical context (including setup), accessors select without
+beginning admission or pinning an epoch. Idle cached descriptors retain no pin.
+Cold selection from an existing grant uses `mako_sharding_warehouse_select`;
+it never refreshes the grant.
 `src/cluster/warehouse.rs` owns the handle cache and selection. The narrow
 `src/mako/benchmarks/tpcc_warehouse_bridge.h` callback only opens an engine
 index, registers its immutable canonical binding, and returns a borrowed
 opaque pointer; the engine retains those indexes until shutdown.
+
+Cold warehouse-directory hits take shared read guards; misses take an exclusive
+guard and recheck so concurrent opens create one index per physical identity.
+Warm prepared descriptors bypass that directory as well as binding discovery.
+The worker's immutable admission snapshot retains routing and complete local
+authorization metadata. Reuse does not acquire the participant/control mutex.
+Engine-owned handles remain stable but do not
+independently authorize access.
+
+#### View-tagged ownership authorization
+
+The cached fact is a successful native ownership decision for the exact
+`(Node/admission view, canonical table, fixed coordinate, grant)` tuple.
+`AdmissionSnapshot::point` is a pure check of captured Serving state and exact
+owner/ownership version; it does not depend on a transaction ID or acquire a
+transaction lease. Repeating it on identical inputs cannot change its result.
+
+At transaction entry, pin the existing STO epoch, activate the native read, and
+obtain `mako_sharding_read_view_id`. The existing integer comparison with the
+TLS cache's view ID covers all retained fixed entries:
+
+- **Equal:** retain their successful ownership decisions alongside routes and
+  handles. Rebuilding a transaction's point must not clear these decisions.
+- **Different:** discard the fixed entries, including their decisions. First
+  local use authorizes against the new protected view and caches only success.
+  A failed authorization leaves the entry unauthorized; another attempt cannot
+  turn that failure into a cache hit.
+
+No per-entry generation, new global counter, current-global-version read per
+operation, or version-equality check at commit is needed. The native ID denotes
+the complete captured admission view, not merely a routing label. Freeze with
+unchanged routing labels must invalidate a refreshed cache; an already-pinned
+old transaction may retain its old authorization until its normal cleanup.
+
+This memoizes only ownership. Every transaction still establishes its own
+engine/logical guards, request identity and batch membership. Runtime readiness,
+stop and metadata-failure errors reject **new logical contexts**, including
+native read-cache hits. An admitted context uses its protected view until
+cleanup; accesses do not poll service availability. Actual storage, transport
+and cold resource-acquisition errors retain their existing error paths.
+Incoming envelopes retain independent exact validation and per-envelope
+authorization; arbitrary raw-key captures remain transaction-scoped. Receiver
+success cannot seed a local fixed-coordinate authorization, and routing/handle
+selection alone is never a successful authorization.
+
+Regression obligations: stable-view commit/abort across transaction and epoch
+boundaries; transaction-scoped batch membership; independent scopes; repeated
+failed authorization under Frozen; migration/ownership return; admitted work
+finishing after logical service stop while fresh admission fails; and no idle
+engine pin. Engine and host owners must finish admitted work before destroying
+their storage; stopping service acceptance is not engine destruction.
 
 The fixed routing coordinate is the four-byte big-endian global warehouse ID.
 Row keys keep their existing warehouse-local encoding. Each governed warehouse
@@ -89,7 +172,7 @@ gets a separate physical index, even when the static benchmark layout would
 share a tree. Local handle identity includes the physical participant: two
 shards in one process never share source and destination bytes. Cross-participant
 access uses an origin-owned remote proxy, including in that single-process
-case, so the destination admits the operation through its own lease registry.
+case, so the destination admits the operation through its own immutable view.
 Proxies have canonical bindings but are excluded from the reverse physical
 index; RPC resolves the destination's binding rather than copying a numeric
 source table-id window.
@@ -99,15 +182,15 @@ every warehouse coordinate intersecting its range **before** scanning/copying
 the destination. This opens adopted local storage before publication and reuses
 the correct participant's existing index on partial return. Source cleanup uses
 that same explicit physical-owner API, not workload route resolution. The cache
-does not authorize access: native lease admission rejects a stale incarnation,
-and a subsequent workload attempt resolves again.
+does not authorize access: captured admission checks the exact owner and
+ownership version; a new workload attempt resolves again.
 
 The immutable replicated `item` table is explicitly classified as replicated
 by the native catalog; the mutable microbenchmark's `item` is explicitly static.
 Neither invents a single warehouse owner. When `MAKO_CLUSTER_CONFIG` is absent,
 the existing static vectors and single-process table wiring remain in use.
 
-### Governed point operations and terminal leases
+### Governed operations and epoch-pinned lifetime
 
 Raw and transactional point entrypoints capture
 `(snapshot_version, owner, ownership_version)` in one native lookup before
@@ -119,21 +202,166 @@ Shared proxy flags never change.
 Explicit static/immutable tables and disabled deployments retain their existing
 dispatch behavior.
 
-Receiver admission compares the request version with a locally **certified**
-snapshot version. A match skips the metadata range lookup; otherwise the
-original local `Serving`/ownership-version check runs. Certification checks
-whole assigned intervals at update time and is invalidated before migration
-authority changes, including Freeze before publication. Both paths register
-the same leases under the control/admission mutex. `NO_SNAPSHOT` means an
-uncaptured/untrusted grant and forces exact validation; public gateway claims
-cannot opt themselves into the trusted worker fast path. Recovery never restores
-a certificate or bypasses the metadata-only inspection fence.
+The engine bridge is `src/mako/lib/sharding_admission.{h,cc}`; its feature
+predicate is `sharding_admission_enabled`. `sharding_resolve_point` selects the
+current context's capture and establishes local ownership before returning.
+Its immutable `ShardingPoint` carries a borrowed index and a tagged route
+reference, not an owned request. Captured routes use stable slot indices rather
+than addresses into movable vectors; unmanaged points borrow their caller's key
+only for immediate dispatch. It is not an authority token: no API accepts a
+previously returned point for local admission. Local storage kernels therefore
+do not revalidate transaction IDs, private revisions, slots or handles on every
+operation. A non-null captured handle is published only after selection and
+local authorization succeed. Warm selection reuses both results. The private
+cache revision tracks transaction-scoped batch membership, not request refresh.
+The first successful authorization in a fixed entry's protected-view lifetime
+calls `mako_sharding_read_point`; subsequent transactions may reuse that decision.
 
-Transactional lock batches carry a distinct put/delete operation byte per row.
+`ShardingPoint::write_request` constructs the wire envelope only at remote
+dispatch, combining the captured route/grant with the current context's
+transaction identity. Received envelopes remain borrowed under their receiver
+guard. Control RPCs take their identity directly from the context; they do not
+inherit the most recently accessed row or scan. Explicit scan envelopes remain
+explicit. There is no mutable TLS outgoing-request slot.
+
+Received envelopes retain exact wire-request validation against the actual key
+and physical owner. Changing an envelope, including A→B→A, clears that envelope's
+selected handle and authorization; closing/reopening establishes a new logical
+context. The shared physical mapping may remain cached for the unchanged view,
+but a mapping hit is never ownership authorization. The private TLS revision
+fails closed on overflow; it is not an authority epoch or commit-time equality
+check. Captured-view and engine-pin contracts remain. There are no participant
+scope-slot hints or production per-access lease books.
+
+`sharding_table_binding` and `sharding_physical_handle` share a view-scoped
+indexed mapping cache across point, scan and receiver paths. Prepared/received
+points retain direct immutable binding pointers; other table IDs use an integer
+map whose `Arc` values own those bindings. Raw physical mappings use only the
+canonical table ID, never arbitrary row keys. Fixed mappings additionally use
+the exact coordinate, borrowing its bytes from a retained immutable binding,
+not from an incoming envelope or a movable map element. The protected view
+identifies the local participant. Physical index pointers use the native ABI's
+pointer-sized integer representation inside Rust collections; the engine owns
+the indexes until shutdown. Only successful lookups are cached. Cold misses use
+the existing registry; warm hits need no registry mutex, name lookup, allocation
+or `Arc` clone. Mapping reuse does not bypass incoming coordinate/grant checks,
+point/range ownership admission, or view invalidation.
+
+Before metadata or storage access, the caller announces a pin in the existing
+STO worker epoch slot using sample/announce/recheck on the same atomic STO
+global clock. Nested and retained guards conservatively keep the oldest pin
+until all guards leave. The engine guard lasts through effects, unlocks, cleanup
+and its end callback; the logical guard additionally spans OCC retries and
+terminal RPC cleanup. An idle mode-1 helper placeholder is not pinned; actual
+received work enters before using the engine.
+`Transaction::in_progress()` tests the actual engine state, not helper mode.
+An engine-local abort leaves a stopped attempt even if its logical RPC identity
+is retained for terminal cleanup. Rebinding that identity must not reactivate
+the stopped engine; its logical guard remains until request cleanup finishes.
+`shard_reset()` explicitly starts the next empty, unpinned helper placeholder.
+Multi-row handlers stop at the first failed access. A failed write batch rolls
+back its staged rows before retaining the terminal reply; later rows must not
+touch the stopped engine. Multi-row reads likewise stop on an engine-local
+abort rather than continuing with a stale abort indicator into another request.
+
+With native admission disabled, the existing static client treats a failed-read
+reply as terminal and omits a second Abort RPC. After that request's cleanup,
+the receiver restores only the empty, unpinned helper placeholder; the next
+request enters a new engine attempt rather than reusing the stopped one.
+
+`Transaction::register_thread()` assigns a process-wide physical-worker slot,
+including replay workers and every colocated owner. Slots are not recycled;
+registration refuses `MAX_THREADS` exhaustion rather than aliasing another
+worker. The existing timer is initialized once per process, not by assuming a
+particular owner's worker is slot zero. Epoch cuts do not wrap. Separate
+processes exchange completion acknowledgments, never comparable epoch numbers.
+
+`mako_sharding_read_begin(owner, epoch, out)` borrows the safely pinned nonzero
+epoch and activates a reusable thread-local `MakoShardRead`. An owner/epoch cache
+hit reuses immutable metadata without a per-transaction allocation, Arc clone,
+or participant mutex. A miss takes an Arc to the already-published complete
+admission/routing view under its separate publication lock, not the participant
+mutex held by long-running transfer I/O. One logical context is active
+per worker; nested operations reuse it rather than overwriting the cache.
+`mako_sharding_read_begin` is the availability/error boundary, even on an
+owner/epoch cache hit. The protected route/point/range/scan APIs and view-ID
+retrieval validate active same-thread FFI handles but do not poll Node readiness.
+The former per-operation `mako_sharding_read_live` API is removed.
+`mako_sharding_read_end` marks the context inactive after engine and terminal
+cleanup, before the logical epoch guard leaves. TLS may retain metadata and Node
+Arcs while idle; those memory lifetimes do not extend host/index lifetimes.
+Logical service stop rejects new contexts without revoking admitted ones.
+Worker join, terminal acknowledgments and quiesce must precede physical
+host/index destruction. Retained metadata startup still cannot admit work.
+
+`mako_sharding_read_view_id` returns a nonzero, process-unique cache-incarnation
+ID only for an active same-thread protected read; failures clear its output. On epoch
+refresh, identical retained Node and full AdmissionSnapshot Arcs keep the same
+ID. Actual replacement, owner switching, A→B→A, and distinct worker caches get
+different IDs. Arc identity is compared while both owned values remain alive,
+so allocator address reuse cannot produce an ABA hit. ID allocation happens
+only on replacement, not every transaction/epoch; exhaustion fails closed.
+This label is neither a routing version nor an authority epoch. It can establish
+that a previously successful ownership decision still has identical inputs;
+it cannot manufacture success or replace receiver validation, begin-time
+availability checks or engine lifetime guards. An old view can remain cached until the existing
+epoch-refresh boundary; Freeze's publication-before-cut and drain rules below
+still govern that case.
+
+The entry fast path compares an integer epoch, not all metadata. Complete
+table/interval, absence and warehouse-alias copying belongs to publication;
+worker refresh does not recopy the maps. Point admission checks captured Serving
+state and exact local owner/ownership version; range admission covers the whole requested
+interval, not merely its first point. A foreign snapshot number alone is not
+proof: routing provenance and coordinates must match or captured local metadata
+must validate the request. An already-pinned old view may authorize later
+accesses for that context even after Frozen publication. No epoch-at-commit
+equality is imposed. This has nonzero fixed entry/lifetime cost and retains
+normal STO OCC, synchronization and storage costs.
+
+An idle cached non-Serving view can conservatively reject after Abort or
+activation until a new entry refreshes at a later engine epoch. Ordinary
+transaction retry handles this; a current routing label alone is not evidence
+that the caller's captured view authorizes physical access.
+
+Incoming pieces retain their exact transported full request, including
+`NO_SNAPSHOT`. Receiver dispatch selects this participant's registered physical
+handle once; storage validates the actual coordinate and uses that same handle.
+A new batch row or envelope invalidates the incoming handle selection, and a
+previous resolved point cannot replace a changed incoming grant or snapshot.
+Gateway pre-admission remains separate from execution-time admission.
+
+Frozen publication removes new authorization before the host advances the same
+STO clock. Drain scans the existing worker slots and requires each to be zero or
+at least the retained cut. This covers readers, absent reads, scans, writers and
+their actual completion, not just a decision or RPC response. No separate
+authority clock, transaction registry or per-key reader counter supplies drain.
+Volatile pins cannot establish crash recovery: retained metadata startup remains
+inspection-only and readiness/read admission stay fenced.
+
+Migration privately pre-copies while the source serves. Each source lookahead
+copies bytes under the row lock and publishes them only after its STO/OCC
+transaction commits; observations across calls need not form one snapshot.
+A concurrent OCC conflict ends the advisory pass with Retry, not false EOF.
+The synchronous destination job joins every accepted physical effect before its
+reply; Final/Abort share its participant borrow and reject delayed Stage-round-0
+work after the round changes. After Frozen-before-cut and true drain, the final
+merge still scans the complete range, skips only equal-identity/equal-byte puts,
+and removes destination-only rows. Pre-copy does not justify a dirty-only final
+delta. The conditional durable library keeps its separate lease/recovery
+contract and is not replaced by volatile native pins.
+
+Transactional lock batches carry a distinct put/delete operation byte and exact
+captured route per row. A governed commit row must already have been resolved
+in the current logical transaction when its proxy write was staged. Batching
+materializes that row's envelope from its capture; it never performs a fresh
+route lookup or substitutes the last outgoing request. Explicit snapshot-segment
+full scans keep their separate interval admission, and generic raw scans still
+use `NO_SNAPSHOT`.
 A remote delete stages `MassTrans::transDelete` at the participant, including
 the absent-key read when no row exists; it is not encoded as an empty put.
 Absent transactional reads return `NOT_FOUND` without dropping their read set.
-Read, write, and absent-key native leases remain held through actual engine
+Read, write, and absent-key native epoch guards remain held through actual engine
 install/unlock/cleanup. Terminal reply retries replay retained results rather
 than executing again, and abort/unlock also retry uncertain transport outcomes.
 The origin uses `transDeleteRemote` to stage an initialized delete carrier even
@@ -161,20 +389,20 @@ successful scan. Callbacks publish copied bytes only after engine commit.
 The image compared by Rust is the logical row value, excluding MBTA's internal
 metadata trailer. Point puts rebuild that trailer with the normal engine
 encoder. Successful point puts/deletes have a one-physical-key frame.
-The Rust participant authorization guard protects the **selected range**, not
-all node data: already-admitted transactions may still change unrelated ranges.
-Raw transfer calls do not reenter ordinary lease admission; a scoped engine
-lifecycle hook suppresses only that reentry and leaves normal admission intact.
+Frozen publication and the completed same-STO-clock cut protect the **selected
+range**, not all node data: transactions may still change unrelated ranges.
+Transfer calls bypass workload admission, not normal engine synchronization;
+pre-copy runs in real STO transactions while source workload remains active.
 The host binds each native thread to its actual shard and allocator/Masstree
 runtime and releases its transaction state before worker exit.
 
 ### Governed range scans
 
-The V3 scan request binds the complete transaction identity,
+For remote segments, the V3 scan request binds the complete transaction identity,
 `(snapshot_version, owner, ownership_version)` tuple, logical table, and
 raw-versus-fixed warehouse coordinate. Each V2 page echoes the retained snapshot
 version and is rejected before callbacks if it differs. The C++ receiver
-compares that embedded identity with the outer `ShardingRequest` before lease
+compares that embedded identity with the outer `ShardingRequest` before immutable
 admission or engine access. `mako_full_scan_new` takes `MakoScanIdentity`;
 `mako_scan_page_identity_matches` validates it without allocating a coordinate
 copy. Raw scans carry no fixed coordinate, so long raw keys are not constrained
@@ -186,14 +414,44 @@ fresh global version. Only that full-interval provenance authorizes the range
 fast path; a generic local scan with only a lower-endpoint point capture uses
 exact range validation, including absent keys and ownership gaps.
 
-`full_scan_core.rs` owns checked request encoding/decoding, raw callback page
-assembly and cursor consumption. `full_scan_proofs.rs` derives forward/reverse
-coverage and exact byte values from transactional ordered engine callbacks,
-explicit exhaustion/stop reasons, the held grant and placement coherence.
-A nonempty short page is not EOF; errors, byte-budget stops and user callback
-stops cannot masquerade as complete range coverage. The FFI/lifetime wrappers,
-SRPC response association, physical-handle labeling and MBTA metadata stripping
-remain foreign contracts, not verified C++ bodies.
+Native-enabled scans use that one retained snapshot for both execution paths:
+
+- A segment owned by the current transaction participant resolves the canonical
+  local physical index, admits its **complete interval**, then calls MassTrans
+  directly. Fixed-coordinate indexes admit their warehouse coordinate, not a
+  range of physical row keys. No local cursor, transport page, encoding or
+  decoding is created. The epoch guard remains held through transaction cleanup.
+- Other participants retain the V3 request/V2 page protocol, even if they share
+  the process. The visitor does not refresh the snapshot between local and
+  remote segments. A callback stop prevents visiting later segments.
+
+Immutable admission checks the captured complete interval. A cached routing
+version alone is insufficient authorization. Frozen prevents new captured views
+from serving the range; an old view remains valid while its context is pinned,
+and drain waits for that context's actual completion.
+Loading and disabled-sharding paths retain their existing admission rules and
+use direct execution for physically local segments.
+
+Direct execution retains forward `[start, end)` and reverse `(end, start]`
+bounds, binary and empty keys, caller-arena value lifetime, metadata stripping,
+and callback exception cleanup. Public scans avoid incidental transport-page
+read-ahead and retain MassTrans's OCC observations. The internal normalized
+reverse adapter also accepts an unbounded upper end: it discovers an actual
+maximum in the same transaction, retains that forward traversal's observations,
+then scans backwards. It does not invent an infinity key. OCC failure aborts
+without replaying user callbacks.
+
+`full_scan_core.rs` owns remote request encoding/decoding, callback page assembly
+and cursor consumption. `full_scan_proofs.rs` relates both paged and direct
+callbacks to the transactional physical image, then derives logical ordered
+coverage from the held grant and placement coherence. `native_direct_scan`,
+`native_direct_fixed_coordinate_scan` and `mixed_sharded_scan` cover direct
+segments, warehouse aliases and mixed traversal. Callback stop proves only a
+prefix; errors do not certify completion. For remote pages, a nonempty short
+page is not EOF and a byte-budget stop is not exhaustion. FFI lifetimes, callback
+forwarding, SRPC response association, physical-handle labeling, actual STO/OCC
+semantics and MBTA metadata stripping remain foreign contracts, not verified
+C++ bodies.
 
 ### Recovery and progress scope
 
@@ -213,12 +471,22 @@ exact reads, synchronous WAL-enabled atomic batches, an exclusive writer lock
 held across reopen, and fail-closed uncertain-I/O settlement. Creation is explicit;
 retained open never recreates missing state. The coordinator uses the checked
 `DurableCoordinator` replay. The participant uses a separately tagged live
-bookkeeping journal, not a counterfeit `DurableEngine`: it records leases,
-controls, and transfer intent/results, with no claim that Ready/Done rows survive.
+bookkeeping journal, not a counterfeit `DurableEngine`: it records controls and
+transfer intent/results, with no claim that Ready/Done rows survive. Historical
+lease records do not make the new volatile worker pins recoverable.
 Reopening validates that prefix but leaves the participant and data admission
 closed. Historical admin outcomes remain inspectable; pending migrations and
 old leases cannot be finished or automatically resumed.
 See [configuration and restart behavior](mako-book.md#optional-durable-migration-metadata).
+
+After epoch-cutover integration, run `./docker_build.sh ci nativeShardingProof`
+and `./docker_build.sh ci nativeShardingSmoke`. Required native checks include
+announcement/recheck races, nested oldest pins, post-Frozen old-view access,
+effects and terminal cleanup before drain, idle-helper entry, colocated owners,
+concurrent pre-copy writes/deletes, joined/fenced delayed rounds, exact final
+absence, admitted-view completion after service stop, rejected fresh admission,
+and retained-metadata startup fencing. These obligations are not a claim
+that the new runtime has already passed every formal proof gate.
 
 `durable_kv.rs`, `durable_coordinator.rs`, `durable_participant.rs`, and
 `durable_engine.rs` also provide the stronger conditional durable-interface path.

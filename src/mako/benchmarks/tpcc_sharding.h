@@ -8,6 +8,8 @@ class FullOrderedIndex;
 
 namespace mako {
 
+class ShardingPreparedRoute;
+
 // Canonical catalog identity, never a node's physical table-id window. Disabled
 // deployments and the immutable replicated item table do not use the warehouse
 // directory. Unknown enabled tables are configuration errors, not static routes.
@@ -19,13 +21,12 @@ struct TpccTableIdentity {
 bool tpcc_native_warehouses_enabled();
 TpccTableIdentity tpcc_table_identity(const char* logical_name);
 
-// Resolve on every workload access. The opaque engine handle is borrowed until
-// process shutdown; native lease admission still checks the selected incarnation
-// before accessing its bytes. The caller supplies its actual participant, not
-// the warehouse's original static owner.
+// Open transactions reuse their first complete capture and selected handle.
+// Outside a transaction this is non-admitting resolution (including loaders).
+// Handles are engine-owned until shutdown; byte access always requires native
+// admission. The participant is the caller, not the warehouse's original owner.
 // @unsafe - native synchronized handle directory and engine-owned pointer boundary.
-FullOrderedIndex* tpcc_resolve_warehouse(uint64_t table, uint32_t global_warehouse,
-                                       uint32_t participant);
+FullOrderedIndex* tpcc_resolve_warehouse(ShardingPreparedRoute& route, uint32_t participant);
 
 } // namespace mako
 #endif

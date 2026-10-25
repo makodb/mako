@@ -921,7 +921,7 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/transport.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/fasttransport.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/srpc_rpc_backend.cc"
-  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/sharding_leases.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/sharding_admission.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/multi_transport_manager.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/configuration.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/timestamp.cc"
@@ -1093,7 +1093,7 @@ add_custom_target(verify_native_sharding
 
 # ---------------------------------------------------------------------------
 # `cluster` retains the configuration KV ports and the disabled/static engine
-# table-address bridge. Governed placement/leases/migration live exclusively
+# table-address bridge. Governed placement/admission/migration live exclusively
 # in the native Rust staticlib, not retired C++ policy/cache module partitions.
 set(CLUSTER_MODULE_INTERFACES
     ${CMAKE_SOURCE_DIR}/src/cluster/kv_store.h
@@ -2159,7 +2159,19 @@ if(BUILD_TESTS)
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         yaml-cpp rocksdb lz4 numa event_pthreads
         pthread)
-    add_test(NAME test_mako_nontxn_distributed COMMAND test_mako_nontxn_distributed)
+    add_test(NAME test_mako_nontxn_distributed COMMAND test_mako_nontxn_distributed
+        --gtest_filter=-NativeMixedScan.*)
+    # Native actors are process-global; run mixed local/paged scans separately
+    # from the same executable's static-routing suite.
+    add_test(NAME test_mako_native_mixed_scan
+        COMMAND ${CMAKE_COMMAND} -E env
+            --unset=MAKO_SHARD_METADATA_DIR --unset=MAKO_SHARD_METADATA_INIT
+            MAKO_NATIVE_MIXED_SCAN=1 MAKO_CLUSTER_CONFIG=1
+            $<TARGET_FILE:test_mako_nontxn_distributed>
+            --gtest_filter=NativeMixedScan.LocalAndRemoteSegments)
+    set_tests_properties(test_mako_nontxn_distributed test_mako_native_mixed_scan
+        PROPERTIES RESOURCE_LOCK mako_distributed_loopback)
+    set_tests_properties(test_mako_native_mixed_scan PROPERTIES TIMEOUT 300)
 
     # Reproducer for sanitizer-findings.md Finding 6 (Mako allocator
     # cap). Aborts by design — gated on MAKO_REPRO_FINDING6=1 so it
@@ -2215,11 +2227,24 @@ if(BUILD_TESTS)
     )
     add_test(NAME STOTransactionRealTests COMMAND test_sto_transaction_real)
 
+    # Exercise the real process-wide clock/slots, nested retained guards, lazy
+    # helper activation, and reclamation callbacks through terminal cleanup.
+    add_executable(test_sto_epoch_rcu
+        src/mako/sto/unit-rcu.cc src/mako/sto/clp.c)
+    # CLP supports C++; the linked Masstree target propagates a C++ config header.
+    set_source_files_properties(src/mako/sto/clp.c PROPERTIES LANGUAGE CXX)
+    target_include_directories(test_sto_epoch_rcu PRIVATE ${TEST_INCLUDE_DIRS})
+    target_link_libraries(test_sto_epoch_rcu
+        mako ${TEST_LINK_LIBS} yaml-cpp rocksdb lz4 numa event_pthreads pthread)
+    add_test(NAME STOEpochRCUTests COMMAND test_sto_epoch_rcu)
+    set_tests_properties(STOEpochRCUTests PROPERTIES
+        ENVIRONMENT "MAKO_CLUSTER_CONFIG=0" TIMEOUT 120)
+
     # Custom target to run live Silo-support and STO tests
     add_custom_target(run_silo_sto_tests
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure -R "Silo|STO"
         DEPENDS test_silo_varint test_silo_rcu_thread test_silo_allocator
-                test_sto_transaction test_sto_transaction_real
+                test_sto_transaction test_sto_transaction_real test_sto_epoch_rcu
         COMMENT "Running live Silo-support and STO tests"
     )
 

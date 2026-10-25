@@ -1,12 +1,17 @@
-//! Executable transfer composition. The caller retains its participant/storage
-//! mutex through this entire call, including completion-capability consumption.
+//! Executable transfer composition. The caller retains the participant borrow
+//! through every physical effect and completion-capability consumption.
 //! Only RawStore is a native engine boundary; it has no metadata/handler oracle.
+//! Native Frozen scans additionally require the caller's completed STO cut;
+//! the conditional durable capture API below retains its separate lease guard.
 use vstd::prelude::*;
 use crate::types::*;
 use crate::participant::{Participant, ControlResult, Cleanup};
 use crate::storage::{self, Source, Store};
 #[cfg(verus_keep_ghost)]
 use crate::storage::{Image, first, identity, in_range, row_cell};
+#[cfg(all(test, not(verus_keep_ghost)))]
+#[path = "transfer_tests.rs"]
+mod tests;
 
 verus! {
 /// Erased borrow scope. None permits any window; Some binds a durable adapter
@@ -126,6 +131,109 @@ pub fn capture<K: RawStore>(node: &Participant,store: &K,plan: &MigrationPlan,af
     match status { Status::Ok => {}, _ => return Err(status) }
     store.scan(&plan.range,after)
 }
+/// Native metadata authority is independent of the conditional lease book.
+pub open spec fn frozen_capture_authorized(node: Participant,plan: MigrationPlan) -> bool {
+    node.envelope_view(plan) && node.owner_view() == plan.source
+        && node.range_role(plan,Role::Frozen,None,false)
+}
+
+/// Exact frozen-source scan under an immutable, full-scope metadata borrow.
+/// The production caller MUST first complete its retained generation-bound STO
+/// cut and keep Frozen metadata unchanged through this call. That real engine
+/// exclusion supplies RawStore's stable exact-image contract; this wrapper
+/// neither inspects lease emptiness nor establishes engine drainage by itself.
+/// Concurrent live precopy scans must not use this exact frozen-image API.
+pub fn capture_frozen<K: RawStore>(node: &Participant,store: &K,plan: &MigrationPlan,after: Option<&Row>)
+    -> (result: Result<Option<Row>,Status>)
+    requires node.wf(),store.wf(),scope_allows(store.scope(),plan.range),
+    ensures result is Ok ==> frozen_capture_authorized(*node,*plan)
+        && first(store.image(plan.range),plan.range,
+            match after { None => None, Some(r) => Some(identity(*r)) },result->Ok_0),
+        frozen_capture_authorized(*node,*plan) && store.available(plan.range) ==> result is Ok,
+{
+    if !node.frozen_source(plan) { return Err(Status::Retry); }
+    store.scan(&plan.range,after)
+}
+
+pub open spec fn precopy_authorized(node: Participant,plan: MigrationPlan) -> bool {
+    node.envelope_view(plan) && node.owner_view() == plan.destination
+        && node.range_role(plan,Role::Stage,Some(0),false)
+}
+
+/// Advisory round-zero write. The immutable participant borrow covers the
+/// complete plan check and raw effect, so Final/Abort cannot race between them.
+/// This returns only a status: no coverage, CompletedCopy, or Ready is minted.
+/// The single private destination job supplies exclusive access to its Stage
+/// window; it must finish before Final/Abort can mutate this metadata.
+pub fn precopy_put<K: RawStore>(node: &Participant,store: &mut K,plan: &MigrationPlan,row: &Row)
+    -> (status: Status)
+    requires node.wf(),old(store).wf(),scope_allows(old(store).scope(),plan.range),
+    ensures final(store).wf(),final(store).scope() == old(store).scope(),
+        final(store).context() == old(store).context(),
+        final(store).available(plan.range) == old(store).available(plan.range),
+        status == Status::Ok ==> precopy_authorized(*node,*plan)
+            && in_range(plan.range,row_cell(plan.range.table,*row))
+            && final(store).image(plan.range) == old(store).image(plan.range).insert(row_cell(plan.range.table,*row),row.value@),
+        status != Status::Ok ==> final(store).image(plan.range) == old(store).image(plan.range),
+        storage::preserves_outside(final(store).image(plan.range),old(store).image(plan.range),plan.range),
+        precopy_authorized(*node,*plan) && in_range(plan.range,row_cell(plan.range.table,*row))
+            && old(store).available(plan.range) ==> status == Status::Ok,
+{
+    if !node.background_destination(plan) { return Status::Retry; }
+    if !crate::bytes::contains(&plan.range,plan.range.table,&row.coordinate) { return Status::Invalid; }
+    let ghost before = store.image(plan.range);
+    let status = store.put(&plan.range,row);
+    proof {
+        assert forall|k: storage::Cell| !in_range(plan.range,k) implies
+            storage::value(store.image(plan.range),k) == storage::value(before,k) by {
+            assert(k != row_cell(plan.range.table,*row));
+        }
+    }
+    status
+}
+
+/// A concrete selected coordinate witnesses refusal; a check of only the first
+/// interval could not establish this fact for a later changed interval.
+pub proof fn precopy_fenced_at(node: Participant,plan: MigrationPlan,key: Seq<u8>)
+    requires crate::bytes::contains_spec(plan.range,plan.range.table,key),
+        match node.local_meta(plan.range.table,key) {
+            None => true,
+            Some(m) => m.role != Role::Stage || m.fence != plan.generation || m.round != 0 || m.terminal,
+        },
+    ensures !precopy_authorized(node,plan),
+{}
+
+/// The actual control-frame postcondition of successful first Final/Abort
+/// delivery makes every old round-zero packet in that range ineligible.
+pub proof fn precopy_after_final_or_abort(before: Participant,after: Participant,
+    plan: MigrationPlan,command: Command,key: Seq<u8>)
+    requires after.control_frame(before,plan,command),
+        command == Command::Final || command == Command::Abort,
+        crate::bytes::contains_spec(plan.range,plan.range.table,key),
+    ensures !precopy_authorized(after,plan),
+{
+    assert(after.local_meta(plan.range.table,key) == match before.local_meta(plan.range.table,key) {
+        Some(m) => Some(crate::participant::effect_spec(m,plan.generation,command,before.owner_view() == plan.source)),
+        None => None,
+    });
+    precopy_fenced_at(after,plan,key);
+}
+
+/// A newly started generation may have the same destination and round zero;
+/// its installed generation fence still excludes the old job's physical write.
+pub proof fn precopy_old_generation(node: Participant,old_plan: MigrationPlan,
+    new_plan: MigrationPlan,key: Seq<u8>)
+    requires old_plan.generation != new_plan.generation,
+        crate::bytes::contains_spec(old_plan.range,old_plan.range.table,key),
+        old_plan.range.table == new_plan.range.table,
+        crate::bytes::contains_spec(new_plan.range,new_plan.range.table,key),
+        node.range_role(new_plan,Role::Stage,Some(0),false),
+    ensures !precopy_authorized(node,old_plan),
+{
+    assert(node.local_meta(old_plan.range.table,key).unwrap().fence == new_plan.generation);
+    precopy_fenced_at(node,old_plan,key);
+}
+
 
 /// Final command delivery precedes this call. Native effects and Ready seal are
 /// inseparable under the caller's one mutable participant borrow/mutex.

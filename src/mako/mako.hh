@@ -188,11 +188,6 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
     int status = mako::PaxosStatus::STATUS_INIT;
     uint32_t timestamp = 0;  // Track timestamp for return value encoding
     abstract_db * db = replicated_db.getDBWrapper(par_id)->getDB () ;
-    // SINGLE-RAFT FIX: getDB() calls TThread::set_id(par_id), changing the
-    // thread ID per partition. But the STO Transaction object caches threadid_
-    // at creation time. In single-Raft, all partitions share one thread, so
-    // the thread ID changes with each par_id. Sync Transaction's threadid_.
-    Sto::update_threadid();
     bool noops = false;
 
     if (len==mako::ADVANCER_MARKER_NUM) { // start a advancer

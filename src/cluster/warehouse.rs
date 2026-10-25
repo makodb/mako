@@ -1,8 +1,9 @@
 //! Warehouse engine-handle selection, shared by the production FFI and Verus.
 //!
 //! Handles are non-owning tokens supplied by the legacy engine opener. The FFI
-//! holds one directory mutex across lookup/open/register; indexes live until
-//! engine shutdown. Local bytes are keyed by the physical participant, not just
+//! reads cached handles under a directory read lock; misses hold its write lock
+//! across recheck/open/register. Indexes live until engine shutdown.
+//! Local bytes are keyed by the physical participant, not just
 //! the warehouse. Proxies belong to the originating participant and are never
 //! entered in the engine's reverse physical-binding index. A proxy can follow
 //! any destination; its RPC captures the full grant again under transaction

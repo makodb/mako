@@ -49,8 +49,12 @@ static inline void* tpcc_memalign(size_t alignment, size_t size) {
 #include "benchmarks/benchmark_config.h"
 #include "benchmarks/rpc_setup.h"
 #include "benchmarks/tpcc_warehouse_bridge.h"
+#include "benchmarks/tpcc_sharding.h"
+#include "lib/sharding_admission.h"
+#include <rusty/vec.hpp>
 
 import std;
+import rusty;
 
 using namespace std;
 using namespace util;
@@ -377,8 +381,8 @@ class tpcc_worker_mixin {
   , identity_ ## name(tpcc_table_identity(#name))
 
 public:
-  // @unsafe - borrows the runner's static-mode handles; native selection owns
-  // no engine pointers and is repeated for every access, including retries.
+  // @unsafe - borrows static-mode handles and prepares native warehouse
+  // coordinates without selecting engine handles or admitting storage access.
   tpcc_worker_mixin(const map<string, vector<abstract_ordered_index *>> &partitions,
                     const map<string, vector<abstract_ordered_index *>> &remote_partitions,
                     int shard_index) :
@@ -387,7 +391,20 @@ public:
     TPCC_TABLE_LIST(DEFN_TBL_INIT_X)
   {
     ALWAYS_ERROR(NumWarehouses() >= 1);
+    // @unsafe - precomputes catalog coordinate bytes without acquiring authority.
+#define PREPARE_TBL_ROUTES_X(name) \
+    if (identity_ ## name.kind == 0) { \
+      routes_ ## name.reserve(NumWarehousesTotal()); \
+      for (size_t wid = 1; wid <= NumWarehousesTotal(); ++wid) \
+        routes_ ## name.push(ShardingPreparedRoute(identity_ ## name.table, wid)); \
+    }
+    TPCC_TABLE_LIST(PREPARE_TBL_ROUTES_X)
+#undef PREPARE_TBL_ROUTES_X
   }
+
+  // @unsafe - trivial route elements have no fallible cleanup; preserve the
+  // legacy worker/loader base classes' nonthrowing destruction contract.
+  ~tpcc_worker_mixin() noexcept = default;
 
 #undef DEFN_TBL_INIT_X
 
@@ -399,6 +416,7 @@ private: \
   const vector<abstract_ordered_index *>& tbl_ ## name ## _vec; \
   const vector<abstract_ordered_index *>& remote_tbl_ ## name ## _remote_vec; \
   const TpccTableIdentity identity_ ## name; \
+  rusty::Vec<ShardingPreparedRoute> routes_ ## name; \
 protected: \
   /* @unsafe - native handle borrow; static vectors are immutable setup data. */ \
   inline ALWAYS_INLINE abstract_ordered_index * \
@@ -406,17 +424,17 @@ protected: \
   { \
     INVARIANT(wid >= 1 && wid <= NumWarehouses()); \
     if (identity_ ## name.kind == 0) \
-      return tpcc_resolve_warehouse(identity_ ## name.table, \
-          warehouse_origin_ * NumWarehouses() + wid, warehouse_origin_); \
+      return tpcc_resolve_warehouse( \
+          routes_ ## name[warehouse_origin_ * NumWarehouses() + wid - 1], warehouse_origin_); \
     return tbl_ ## name ## _vec[wid - 1]; \
   } \
-  /* @unsafe - a global warehouse re-resolves even when it returns locally. */ \
+  /* @unsafe - global warehouse access shares the transaction-bound descriptor. */ \
   inline ALWAYS_INLINE abstract_ordered_index * \
   remote_tbl_ ## name (unsigned int wid) \
   { \
     INVARIANT(wid >= 1 && wid <= NumWarehousesTotal()); \
     if (identity_ ## name.kind == 0) \
-      return tpcc_resolve_warehouse(identity_ ## name.table, wid, warehouse_origin_); \
+      return tpcc_resolve_warehouse(routes_ ## name[wid - 1], warehouse_origin_); \
     return remote_tbl_ ## name ## _remote_vec[wid - 1]; \
   }
 

@@ -1,4 +1,4 @@
-//! Refinement of exact coordinate and interval leases to every logical key.
+//! Conditional lease refinement to every logical key; not native epoch drainage.
 //! Addresses describe the logical universe, not the set of existing storage rows.
 //! Native drain implies logical drain without a coverage premise; the converse
 //! needs a represented key in every relevant scope/range INTERSECTION.

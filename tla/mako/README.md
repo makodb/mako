@@ -303,7 +303,8 @@ Additional interface and native contracts:
 | `sharding_recovery::theorem_stale_incarnation`, `theorem_safe_removal`, `theorem_rejoin_fence` | Restarted/removed owners reject stale credentials; removal cannot abandon directory ownership, active handoff endpoints or leases; numeric owner reuse advances its membership fence. |
 | `sharding_progress::theorem_service_eventual_completion` | Under the primitive fairness/settlement contracts below, an admitted migration eventually finishes with the necessary actual historical physical cleanup. |
 | `sharding_retention::{theorem_collection,theorem_forgotten,theorem_space}` and `protocol` | Acknowledged, checkpoint-covered administrative records can be collected without nonce reuse; stale requests/control/copies are fenced, and materialized administrative state has a configured bound. |
-| Native `full_scan_proofs::{sharded_scan,native_fixed_coordinate_scan}` | Ordered complete forward/reverse results agree byte-for-byte with the trusted transactional image and placement projection, including fixed warehouse coordinates. |
+| Native `full_scan_proofs::{sharded_scan,native_fixed_coordinate_scan}` | Paged forward/reverse results agree byte-for-byte with the trusted transactional image and placement projection, including fixed warehouse coordinates. |
+| Native `full_scan_proofs::{native_direct_scan,native_direct_fixed_coordinate_scan,mixed_sharded_scan}` | Direct local callbacks and mixed local/paged traversal have ordered prefix semantics and exact complete results under one captured snapshot, complete admitted scopes and a common transaction read view. |
 | Native `execution_refinement::{finite_source_history,loaded_source_history}` | Actual source-step observations construct a placement history and its invariants; the caller supplies no already-certified model path or ghost journal. |
 
 
@@ -339,6 +340,288 @@ guards of progressing actions—not merely assuming a desirable final state:
 
 These are nonvacuity proofs alongside the arbitrary-finite-behavior induction,
 not a substitute for it or a liveness proof.
+
+### Native engine-epoch admission and draining
+
+`sharding_epoch_admission*.rs` and `sharding_epoch_drain*.rs` specify reuse of
+the existing STO epoch domain for cached admission and a source grace period,
+instead of registering each point/range lease. The native integration follows
+this contract, with private online pre-copy before Freeze. There is **no
+additional authority-epoch counter** and no commit-time epoch-equality test.
+Fresh native and independent proof/control runs and real-engine smoke passed;
+the dated record below separates them from earlier lease-path results.
+The conditional durable path retains its persistent leases. The separate
+commit-time alternative is documented below.
+
+#### Metadata, pins, and the publication boundary
+
+A view is immutable sharding metadata, not an MVCC snapshot of application
+values. Its grants cover potential accesses, including absent coordinates,
+unbounded interval tails, and every physical row alias under an ownership
+coordinate. Ownership versions and migration generations retain their existing
+fencing meaning.
+
+The admission model separates the reader protocol into observable transitions:
+
+1. `Probe` samples the existing engine epoch.
+2. `Announce` publishes the sampled epoch; no view is usable yet.
+3. `Validate` rechecks that the engine epoch still matches. Otherwise the
+   reader must `Resample` and announce again before accessing metadata/storage.
+4. `Capture` reuses the worker's immutable metadata only when the cache tag
+   matches the **retained entry epoch**. A miss loads the published object.
+5. `Retry` retains that entry epoch and captured object. The protection lasts
+   through RPC waits, engine effects, and cleanup; only terminal `Exit` releases
+   it. Periodic `Tick` transitions do not revoke captured permission.
+
+`Publish` and `Tick` are deliberately separate. A transaction can reuse cached
+Serving metadata after the Frozen object is published but before the epoch
+cut. That transaction is legal and must be drained. Conversely, a thread can
+sample the old epoch, pause without announcing, and announce it **after** a
+barrier completes. The entry recheck prevents that late announcement from
+resurrecting the old cached permission.
+
+`history` indexes identify immutable publications in ghost state; `floor[e]`
+records which publication preceded advancement to engine epoch `e`. They are
+not runtime clocks or arrays to add to the hot path. `completed` records
+completed engine grace periods, not authority validity. Logical reader records
+are also ghost state, not a proposed shared per-transaction registry.
+`worker_slots_refine_reader_drain` proves that scanning one slot containing
+each worker's **oldest** announced epoch is equivalent to scanning all its
+logical guards. Reporting the newest nested/retry epoch is unsound.
+
+#### Native entry cost and cache contents
+
+The native implementation has a fixed entry cost, not zero synchronization.
+Entry safely announces/rechecks the existing STO epoch before accessing metadata.
+The cache-hit comparison is just `entry_epoch == worker.cached_epoch`; it does
+not compare routing tables or load a current sharding-version counter. A miss
+loads the published immutable object and tags it with the retained entry epoch.
+Periodic STO ticks can cause a refresh even when no range has moved.
+
+The cached object contains both routing information and complete owner-local
+Serving/Frozen interval metadata. Authorization checks use that captured object,
+not current mutable participant state. Requests still bind the complete owner
+and ownership version; a foreign snapshot number cannot manufacture authority.
+Point permission covers absent rows and all physical aliases at its coordinate;
+range permission covers the whole interval, not merely its lower endpoint.
+
+The production admission path has no shared transaction/lease registry, per-key reader
+counter, or per-access participant mutex. Thread-local cache ownership is retained
+across transactions so a cache hit needs no allocation or shared reference-count
+increment. Ordinary STO validation, write locks, routing/handle resolution and
+correctly ordered epoch entry still cost work. Commit never tests equality with
+the current global epoch. Performance must be measured against a matched disabled
+run; the proof makes no throughput or zero-overhead claim.
+
+#### Handoff and the safety argument
+
+The composed machine includes the following final handoff portion:
+
+```text
+Freeze publication
+    -> establish a cut by advancing the existing source epoch
+    -> complete the grace period for announcements older than that cut
+    -> exact final copy, including absence/deletion
+    -> publish ownership, activate the destination, reclaim the old source
+```
+
+Old captured transactions may commit after Freeze and after arbitrarily many
+ticks. Migration waits for their actual effects, cleanup, and pin release.
+An epoch mismatch alone never aborts them. New transactions cannot acquire
+Frozen permission through a stale routing grant or an idle worker cache.
+Unrelated old read sections conservatively delay the process-wide cut.
+
+The full native sequence starts **before** this portion: prepare nonserving
+destination staging and pre-copy rows while the source continues serving.
+Pre-copy is advisory and may contain stale values or destination-only rows.
+The model records per-row observations independently of later source writes,
+accepted outstanding effects, explicit close/join, and retained stale packets.
+Acceptance requires the current generation/round and open job. Final and Abort
+cannot overtake unjoined effects. The native worker serializes the complete
+synchronous pre-copy job with Final/Abort under the same participant borrow;
+its reply joins actual effects, and Stage round 0 rejects delayed old work.
+
+Exact final traversal starts from the beginning after the real epoch drain,
+copying changed/inserted values and removing destination-only rows, including
+source deletions. Equal identity **and bytes** avoid a physical put; they do not
+permit skipping coverage. Without complete change tracking, pre-copy can reduce
+transfer/write work but the final scan remains proportional to the selected
+range. A volatile STO cut cannot replace the conditional durable library's exact
+persistent transaction settlement.
+
+The central implication is derived from the admission machine, not imposed as
+a source-stability premise on `Copy`: a completed post-Freeze cut excludes
+every older captured publication; the source's remaining publication suffix
+denies the scope; therefore no unfinished source transaction can remain.
+`EngineCommit` does not recheck current authority or pin liveness to hide an
+early-release bug. Pin retention is an inductive invariant.
+
+| Export | Guarantee |
+|---|---|
+| Both modules' `proofs::theorem_finite_behavior` | Every finite enabled execution preserves the inductive invariant, without bounds on workers, transaction IDs, epochs, retries, or handoffs. |
+| Admission `completed_excludes_older_views`, `stale_announcement_cannot_enter`, `post_cut_cache_is_refreshed` | Late entry and stale caches cannot bypass a completed publication cut. |
+| Admission `worker_slots_refine_reader_drain`, `retained_guard_bounds_worker_slot` | One minimum-announcement slot per worker accounts for retained/nested guards. |
+| Admission `certificate_covers_future_footprint`, `interval_certificate_covers_absence_and_aliases` | Captured certificates cover future accesses throughout the complete immutable scope, not merely its first or present row. |
+| Drain `drain_removes_old_effects`, `copy_waits_for_real_drain` | Final copy cannot overtake an old successful effect or unfinished cleanup. |
+| Drain `pending_effect_preserves` | Placement safety for a pending engine effect does not require the model's conservative OCC equality check. |
+| Drain `every_scope_coordinate_agrees`, `publication_preserves_image`, `exact_copy_covers_absence` | One common execution preserves the full logical/physical image, including missing rows and destination-only deletion. |
+| Drain `copied_source_cannot_receive_effect`, `source_stable_after_copy`, `stale_control_rejected` | Copied source data cannot receive a late authorized effect; obsolete controls cannot advance a newer move. |
+| Drain `precopy::accepted_packet_is_current`, `join_waits_for_effects`, `final_requires_join`, `old_packet_rejected` | Generation/round/closure fencing and joined physical effects precede exact final replacement. |
+| Drain `projection::physical_cut_entails_each_owner_drain`, `completed_physical_cut_enables_local_completion` | One physical clock and minimum-slot inventory conservatively drain every colocated owner's retained guards. |
+
+Constructive witnesses exercise successful post-Freeze insertion, cache reuse
+between publication and the cut, independent local clocks, retained retries,
+cleanup-delayed draining, unrelated readers, late RPC enrollment, cancellation
+with destination-only bytes, and A→B→A. `arbitrary_round_trips` constructs an
+unbounded number of round trips. Data witnesses use finite-support images
+inside an unbounded ownership/absence scope. Additional witnesses interleave
+source updates/deletion with stale pre-copy observations, correct the final
+image, and reject delayed old packets. Bad-order examples demonstrate lost
+inserts, stale overwrites and reclamation underneath unfinished cleanup.
+
+#### What this does not prove about the native implementation
+
+- The transition system supplies sequentially ordered, coherent
+  publication/announcement/recheck operations. It does not prove a C++/Rust
+  weak-memory implementation, a fence-free reader, or zero instruction cost.
+  Native STO fields now use sequentially consistent atomics and a
+  sample/announce/recheck kernel; this is an explicit foreign boundary, not a
+  weak-memory theorem supplied by the model.
+- Real entry must precede metadata/handle dereference. Retained logical
+  contexts must keep their oldest pin across engine retries and RPC suspension.
+  Idle helper/reset transactions must become quiescent, and a migration waiter
+  must not hold the old read section it is waiting to drain.
+- All affected readers must be represented. Colocated owners must share the
+  actual process-wide STO clock and pin inventory; separate processes exchange
+  completion acknowledgements, not numerically comparable epochs. Silo/Masstree
+  physical-memory reclamation remains a distinct existing mechanism.
+- Ordinary OCC and distributed atomic settlement remain an explicit engine
+  interface. The data machine uses conservative full-scope snapshot validation
+  and image replacement; its placement-effect lemma does not depend on that
+  validation guard. This is not native distributed strict serializability,
+  operation-set sealing, or a proof of incremental C++ installation.
+  Unknown outcomes are not terminal settlement.
+- Exact copy is an interface-level image operation here. Checked Rust mirror
+  traversal retains complete row-alias/absence and byte correspondence. Native
+  `capture_frozen` checks full Frozen metadata; its real completed STO cut is an
+  explicit caller/host premise. Private `precopy_put` checks full Stage round-0
+  authority under the effect's immutable borrow. Actual queue serialization,
+  cut wiring and C++ engine effects still require native evidence.
+- Epochs and generations are mathematical naturals and IDs are not reused.
+  Machine wrap/reuse must be excluded or separately proved. This model adds
+  no crash recovery, fairness, bounded migration latency, or throughput result.
+  An old transaction can delay the grace period indefinitely.
+
+### Proposed commit-time validation (not deployed)
+
+`sharding_commit_validation*.rs` models the earlier concurrent-copy alternative
+to per-access leases, not the native engine-epoch algorithm above. It is
+independent of the lease/Drain proof: no stable-source, drained-range, or
+held-grant lemma from that proof is imported. It remains a separate alternative;
+the native cutover does not adopt its commit-time authority validation.
+
+The proposed ordering is:
+
+1. Capture an immutable route and a valid, coherent participant authority
+   snapshot; retain the corresponding engine/storage lifetime.
+2. Record the complete point/read/write/scan footprint. Freeze the operation
+   set and acquire **all** local and remote write intents before authority
+   validation. No later packet may extend that prepared transaction.
+3. Check each participant's current authority epoch. An unchanged epoch uses
+   the captured authority; otherwise check exact Serving owner/version over
+   the whole recorded scope. Restart incarnation must also match. An unchanged
+   directory publication number is insufficient: Freeze precedes publication.
+4. Run ordinary engine validation and settle the transaction against its
+   captured physical targets, never by rerouting its already-executed writes.
+5. Migration changes the source authority epoch at Freeze, then performs an
+   exact, intent-aware final copy. Retire, publish the whole immutable routing
+   scope, and activate the destination only after complete coverage. Reclaim
+   source storage only after outstanding references and cleanup finish.
+
+The copy argument is local, not a whole-range drain: an authorized writer
+already owns its write intent; an unsettled intent prevents certifying that
+row or gap. A writer that has not validated when Freeze takes effect cannot
+become authorized for that frozen grant. Consequently, once a row/absence is
+copied, no later authorized source effect can invalidate it. Exact coverage
+then permits publication without assuming the whole source was stable before
+copy began. A read-only transaction can outlive handoff; it retains storage,
+not serving authority for new accesses.
+
+The unchanged-epoch shortcut requires a baseline that authorizes the **entire
+eventual footprint**, not merely a well-formed snapshot or an accepted first
+operation. A certificate covering the captured routing view can establish this
+without per-operation mutable admission. Otherwise each newly introduced scope
+must be checked against the immutable baseline, or use exact validation instead
+of this shortcut. Capturing an epoch after a range is already Frozen and later
+observing the same epoch proves no authority at all.
+
+The projected machine includes both the captured and current local epochs:
+Freeze changes the latter in the same transition that removes Serving.
+`EpochBump` represents an unrelated authority change and exercises the exact
+fallback. The authority module additionally models fresh incarnations and
+coherent snapshot histories. Epochs/generations are mathematical naturals;
+an implementation must prevent wrap/reuse.
+
+| Export within `sharding_commit_validation` | Guarantee |
+|---|---|
+| `authority::certificate_covers_future_footprint` | A valid captured-view certificate covers subsequently discovered scopes drawn from that same immutable view; accepting the first key alone is insufficient. |
+| `authority::validation_establishes_authority`, `proofs::epoch_validation_refines_gate` | Same-epoch fast check and changed-epoch exact fallback establish the authority needed by the operational validator. |
+| `authority::scan_checks_every_coordinate`, `authority::every_row_alias_is_covered` | Whole intervals include absent keys, internal gaps, unbounded tails, and every physical row under a warehouse ownership coordinate. |
+| `proofs::theorem_finite_behavior` | Every finite enabled execution preserves canonical physical/logical agreement, unique Serving authority, captured write targets, and storage pins. Transaction IDs and repeated handoffs are unbounded. |
+| `proofs::pending_writer_blocks_copy`, `proofs::copied_prefix_stable` | Unsettled authorized writes—including inserts into absence—cannot be skipped; copied source/destination cells remain stable until activation or cancellation. |
+| `proofs::whole_range_agreement`, `proofs::whole_scope_publication` | One common indexed execution covers the complete scope. Publication preserves its logical cells and leaves outside rows unchanged. |
+| `proofs::lifetime_prevents_reclaim`, `proofs::sealed_rejects_late_access`, `proofs::stale_control_rejected` | Unfinished references block reclamation; sealed transactions reject additional accesses; obsolete generations cannot advance or erase a move. |
+
+Enabled witnesses exercise an absent-key insert crossing Freeze, cleanup after
+unlock, a read-only transaction completing after handoff and a newer write,
+unrelated-epoch fallback, cancellation with destination-only data, and A→B→A
+without ownership-version ABA. Checked counterexamples show why skipping an
+absent-key intent, checking only the unchanged directory, or trusting an
+initially Frozen same-epoch baseline is unsound.
+
+`Cell.writer` is semantic provenance, not an assertion that a native STO
+timestamp has that encoding. The footprint and immutable write effect are
+projected inputs; the model does not implement their collection. In particular,
+the common-execution theorem is **physical/logical agreement, not a
+strict-serializability theorem**. It does not choose separate serialization
+orders for individual keys and call their conjunction a transaction history.
+
+The remaining engine/refinement obligations are substantive:
+
+- One globally complete operation set and distributed prepare/decision, ordinary
+  OCC (including read-only/gap validation), and a common transaction history.
+  The existing fixed-placement/atomic-prepare proofs are not automatically a
+  refinement of this split, moving-placement algorithm.
+  In the current engine, `Transaction::shard_validate` checks reads but does not
+  seal the prepared operation set; `shard_try_lock_last_writeset` locks only the
+  last write item. Their caller must establish the complete aggregate condition
+  and reject late pieces; invoking either primitive once is not that proof.
+- Fresh, coherent metadata observations with the required memory ordering;
+  authority capture and lifetime retention must not race reclamation.
+- Raw traversal must certify *every possible unsettled intent* in a copied gap,
+  including unpublished/invalid insert carriers. It must not treat an I/O abort
+  or a returned candidate row as successful coverage. Destination-only rows
+  must be removed, and stale asynchronous copy/cleanup work must be fenced.
+- Logical settlement must precede unlocking; cleanup may follow unlocking.
+  Keep engine storage alive through that cleanup. A retained metadata `Arc`
+  alone does not establish row/index lifetime or old-source retention.
+
+The real-engine smoke exercises this interface, not its universal refinement:
+the production `native_sharding_storage.cc` `scan_one` callback and actual
+MassTrans/STO lock/validate/install/unlock/cleanup run under deterministic
+two-thread schedules, with sharding disabled and no lease/Drain path. Both
+non-MV and MV tables are exercised in the nonopaque Release configuration.
+Pending locked inserts, updates and deletes reject copy; read-only absent-point
+and gap conflicts reject commit. Removing the writer lock demonstrates the
+failure directly: copy returns the old value, then the writer installs the new
+value. A non-MV committed delete can expose final absence before its removed
+value unlocks. Thus the sufficient contract is **no unsettled logical effect**,
+not “every physical lock blocks copy” or “locks last through cleanup.”
+
+This model adds no crash recovery, fairness, latency, or performance result.
+Native memory ordering, full distributed OCC composition, scan-frontier
+refinement, and source reclamation remain outside the mechanized result.
+
 
 ### Trusted recovery and progress interfaces
 
@@ -428,25 +711,26 @@ There is no alternate executable model in the production data path.
 | Native source under `src/cluster/` | Correspondence |
 |---|---|
 | `directory*`, `routing*` | Ordered interval updates, immutable complete snapshots, paired snapshot/ownership capture, homogeneous scan segments, and snapshot decoding/installation. |
-| `leases*`, `participant*` | Exact point/range admissions, including absent keys and readers; checked snapshot certification, constant-time version fast path, ownership fallback, freeze/drain and generation/round-fenced metadata. |
+| `participant*`, `epoch_admission` | Generation/round-fenced metadata; exact immutable all-table/all-coordinate capture and Serving owner/version point/whole-range authorization, including absence and aliases. |
+| `leases*` | Conditional durable point/range admissions, held scopes and exact registry drain; not the native epoch admission path. |
 | `migration*` | Retained caller nonces, fresh generations, issued controls, receipts, publication and terminal outcomes. |
-| `coordinator_publication*`, `snapshot_admission_composition` | Checked actual snapshot serialization, immutable equal-version publication derived from native effect histories, and captured fast admission into the original placement/lease refinement. |
-| `storage*`, `transfer*` | Ordered exact mirror, explicit EOF, destination-only deletion, cleanup completion and real failure prefixes. |
+| `coordinator_publication*` | Checked actual snapshot serialization and immutable equal-version publication derived from native effect histories. |
+| `storage*`, `transfer*` | Ordered exact mirror, equal-value write elision, explicit EOF, destination-only deletion, guarded private pre-copy, Frozen-source capture, cleanup completion and real failure prefixes. |
 | `ghost_log*`, `execution_refinement*`, `transfer_*proofs` | Raw field/entry effects and closed certificates relating concrete views to independent placement paths. |
-| `full_scan_core`, `full_scan_proofs` | Transaction/snapshot/grant/table/coordinate-bound request codecs, version-bound pages, actual raw callback/page assembly, ordered pagination, range coverage and byte-value correspondence. |
+| `full_scan_core`, `full_scan_proofs` | Transaction/snapshot/grant/table/coordinate-bound codecs, version-bound pages, raw callback/page assembly, ordered pagination, direct callback prefixes and mixed local/paged range coverage with byte-value correspondence. |
 | `source_*history`, `source_execution`, `source_causality`, `lease_composition_proofs` | Chained participant/engine images, multi-owner lease union, actual settlement before release, and capture/emission provenance. |
 | `transfer_progress` | Exact native scan/put/delete interpretation and checked final-copy/cleanup callbacks under primitive availability. |
 | `durable_kv`, `durable_*codec` | Versioned byte keys/records, atomic head+operation append, unknown-outcome settlement, namespace separation and committed-prefix reconstruction. |
 | `durable_coordinator`, `durable_participant`, `durable_engine` | Native-operation replay, durable admissions and transaction origins, phase resumption, and data-before-certificate / settlement-before-release ordering. |
 | `durable_*refinement`, `durable_participant_*` | Native effect and semantic replay bridges to recovery; erased provenance is not a recovery input. |
 
-The public source-history entry points calculate the placement image from each
-native record and construct their own closed effect certificates. Participant
-snapshots and owner-local registries are chained, rather than replacing an actor
-with a merely metadata-compatible object. Global drain follows from the union
-of those registries; finishing one owner cannot release another owner's holds.
-Actual engine settlement precedes a known completion callback and lease release.
-An unknown callback cannot manufacture completion.
+The source-history/lease results apply to the conditional lease embedding, not
+the new native epoch wiring. Their entry points calculate the placement image
+from each native record and construct closed effect certificates. Participant
+snapshots and owner-local registries are chained; global lease drain follows
+from their union. Finishing one owner cannot release another owner's holds.
+Actual engine settlement precedes a known completion callback and lease release;
+an unknown callback cannot manufacture completion.
 
 Private completion/certificate tokens distinguish metadata changes from
 completed storage and emitted responses. Captures require actual ordered
@@ -461,30 +745,24 @@ The row-value embedding is fixed and injective (`code([]) = 1`,
 `code(prefix ++ [b]) = 256 * code(prefix) + b`), not a caller-supplied encoding.
 It is ghost-only and adds no runtime value conversion.
 
-The snapshot fast path separates **request provenance** from **local authority**.
-Checked point/interval capture supplies the former; update-time
-`Participant::certify_snapshot` checks the latter over entire assigned intervals.
-`coordinator_publication_proofs` derives immutable equal-version observations
-from the real native initialization/operation effects. The composition then
-invokes the actual `acquire_routed` / `acquire_range_routed` bodies and derives the
-original `AdmissionRecord` authority/lease obligations, rather than assuming
-`Serving` or successful admission at the boundary.
+Native epoch admission separates **request provenance** from **local authority**.
+Checked routing point/interval capture supplies the former. `AdmissionSnapshot`
+copies the complete participant metadata domain and checks its captured Serving
+owner/version for every requested point or full interval; an incoming routing
+label never grants permission by itself. The TLS wrapper retains ownership of
+this immutable object across transactions and refreshes only when the retained
+entry epoch or owner changes. That wrapper and its epoch lifetime are
+foreign/unchecked integration, not inferred from a matching integer.
 
-The independent `sharding_fast_path` extension reuses placement transitions,
-directory history and lease/read invariants. It conservatively clears all
-certificates for an authority-changing action; production invalidates only its
-local participant. Constructive traces cover fast point/scan admission, Freeze
-while publication is unchanged, drain blocked by a held lease, and old-view
-fallback after handoff. Arbitrary requests enter the exact-validation path with
-no snapshot provenance. The native continuous interval proofs additionally cover
-gaps with no stored rows; the independent scan projection quantifies over all
-modeled keys in the selected interval.
+`coordinator_publication_proofs` separately derives immutable equal-version
+observations from native initialization and operation histories. The old
+production snapshot-certification/hint APIs and their composition module have
+been removed, not retained as a compatibility path. The independent
+`sharding_fast_path` model remains a historical lease-based comparison; its
+certification/lease witnesses are not claims about native epoch admission.
 
-This is not authentication by an integer. The source/ABI contract still requires
-genuine capture, unchanged native peer transport, and the fixed coordinator's
-publication stream. The public gateway cannot claim that origin merely by
-supplying a matching version. Metadata-only recovery remains inspection-only,
-and the derived admission certificate is neither journaled nor restored.
+Metadata-only recovery remains inspection-only. Neither a cached read object
+nor a volatile STO announcement is journaled or restored as recovered authority.
 
 The theorem remains conditional on named embedding contracts: canonical finite
 logical-key/physical-cell labeling (including absence), transport request/result
@@ -503,6 +781,20 @@ certify those handlers merely because the source audit finds their callers.
 Real-engine smoke scenarios exercise this boundary but are not a proof of it.
 `full_scan.rs` supplies native byte/FFI/callback adapters around the verified
 `full_scan_core.rs`; those adapters are likewise not a verified handler theorem.
+
+The direct-scan contracts describe physical engine enumeration and synchronous
+callback delivery, not the desired logical result as an assumption. Complete
+logical results are derived through the existing read-view/lease embedding and
+placement invariant. Exhaustion must deliver every enumerated row; user stop
+permits only an ordered prefix including the stopping row, and errors do not
+certify completion. `mixed_sharded_scan` composes direct and paged segments
+without changing the captured routing table or transaction read view.
+Canonical C++ handle resolution, full-scope admission before callbacks, callback
+forwarding/lifetimes, metadata stripping and actual STO/OCC semantics remain
+foreign obligations. The live-engine smoke covers local oversized rows,
+forward/reverse bounds, callbacks and OCC failures; the isolated
+`test_mako_native_mixed_scan` exercises real migrated remote segments through
+SRPC rather than treating “stop before remote” as complete mixed-path coverage.
 
 `execution_refinement` imports **placement**, not `sharding_transactions`: it is
 not a native distributed transaction-history refinement. The durable library
@@ -597,6 +889,9 @@ See [the concrete record format and backend obligations](../../docs/storage-inte
 | `sharding_publication.rs`, `sharding_reads.rs`, `sharding_drain.rs` | Source-derived operational counterexamples, explicitly separate from the corrected protocol. |
 | `sharding_placement*.rs` | Corrected ownership, leases, copy rounds, immutable publication, abort/retry and induction. |
 | `sharding_transactions.rs` | Successful-OCC composition, observable serial histories and retained terminal results. |
+| `sharding_commit_validation*.rs` | Proposed lease-free commit-time authority, write-intent/copy ordering, full scopes, lifetime pins, and independent witnesses; not the deployed native algorithm. |
+| `sharding_epoch_admission*.rs` | Existing-engine-epoch enrollment, immutable cache provenance, minimum worker-slot aggregation, grace-period induction and race witnesses. |
+| `sharding_epoch_drain*.rs` | Epoch admission, effects/cleanup, online pre-copy observation/fencing/join, exact full-scope handoff, shared-domain projection and repeated-migration witnesses. |
 | `sharding_*witness*.rs` | Enabled forward, abort/retry and partial-return executions. |
 | `sharding_bytes.rs` | Shared injective byte-value representation. |
 | `sharding_recovery*.rs` | Per-authority recovery, durable engine suffixes, admission/membership fencing and constructive lifecycle witnesses. |
@@ -649,7 +944,8 @@ selects the same-source production crate;
 the default selects the independent crate. Each mode verifies its entire
 unchanged baseline before mutating temporary copies.
 
-The independent runner injects eighteen bugs: seven core MakoV2 mutations
+The independent runner injects fifty-seven bugs. The original eighteen cover
+seven core MakoV2 mutations
 (ignoring local holes; bypassing finality coverage; skipping read validation;
 accepting a non-increasing timestamp; treating maximum log transaction time as
 a frontier; relabeling stale reports; inflating an epoch's close cut), six
@@ -658,11 +954,31 @@ physical observations; admitting leases after freeze; accepting the wrong copy
 round; sealing without coverage; accepting an obsolete abort), stale
 recovery admission, collection before checkpoint coverage, retained certificates
 across authority changes, unchecked certification, and mixed-version capture.
-The native runner removes byte-content injectivity, permits unknown completion,
-discards another owner's holds, bypasses private-copy scan provenance, aliases
-durable owner namespaces, permits an arbitrary unknown-batch settlement, skips
-delivery-time invalidation, bypasses interval certification, bypasses version
-mismatch fallback, and reuses a published snapshot version.
+Eighteen commit-time-validation controls additionally remove baseline
+authorization, epoch/incarnation invalidation (including the operational Freeze
+step), complete scan/row-alias scopes, atomic whole-scope publication, fresh
+generations, Frozen rejection, complete locking, settlement-before-unlock,
+intent-aware exact copy, coverage-before-retirement, lifetime-before-reclaim,
+stale-control fencing, or the sealed-operation boundary.
+Fifteen engine-epoch controls additionally remove the entry recheck, epoch-keyed
+cache refresh, retained retry pin, announcement drain, oldest-worker-slot
+aggregation, complete alias/scope certificates, post-publication cut, completed
+barrier before copy, settlement/cleanup protection, exact destination
+replacement, stale-generation fencing, receiver-side enrollment, or copy before
+publication. Pending-effect release and post-effect/pre-cleanup release are
+checked separately.
+Six further controls remove private-copy generation/round/closure fencing,
+allow Join with outstanding effects, let exact final copy overtake an unjoined
+job, or map a colocated logical guard to a younger physical announcement.
+The twenty-one native controls reject lost byte-content injectivity, unknown
+completion, lost multi-owner holds, forged copy provenance, aliased durable
+namespaces, arbitrary unknown-batch settlement, reused publication versions,
+and omitted direct-scan callback rows. Five target immutable point/range
+authority (receiver, Serving role, ownership version and complete intervals);
+eight target exact mirror identity/byte equality, destination-only deletion,
+private-copy envelope/range/round/generation fencing and Frozen-source capture.
+The retained lease/effect controls concern the conditional durable contracts,
+not a per-access lease path in native epoch admission.
 Mutants target named safety lemmas, so unrelated constructive-trace failures
 cannot pass a control. Type errors, verifier crashes and resource exhaustion
 also do not count as successful controls. Originals remain unchanged.
@@ -671,6 +987,447 @@ No `assume`, `admit`, external proof bodies, solver resource-limit overrides,
 or model-checking results are used to establish the result.
 
 ### Checked results
+
+#### Native engine-epoch cutover (2026-10-21)
+
+Fresh Docker runs on `zoo-002` used Rust `1.97.1` and attested Verus
+`0.2026.08.02.b677dd5`:
+
+```text
+native src/cluster/lib.rs:  1449 verified, 0 errors
+independent model:           707 verified, 0 errors
+native negative controls:     21 passed
+model negative controls:      57 passed
+locked native Cargo tests:    64 passed
+file-backed SIGKILL cases:     2 passed
+native live layouts:          2 passed
+metadata SIGKILL/reopen:       4 passed
+affected CTest suites:         6 passed
+one-shard Paxos replay:        1 passed
+```
+
+The source inventory contained 99 reachable files. Both complete positive
+roots ran without module/function filters or resource overrides; all mutants
+failed their named semantic obligations. The native and model scopes were run
+as separate Docker invocations of `verify_controls.py`, alongside separate
+invocations of the locked Cargo and durable-example commands from `verify_native_sharding.sh`.
+Long model witness/controller proofs were split into checked phases to avoid
+resource exhaustion, without weakening contracts or skipping enabled steps.
+The native generation-fence control targets its defining authority lemma:
+checking only a caller would trust the mutated callee's postcondition.
+
+The fresh Release build used Clang 22/libc++, `OPACITY=OFF`, and C++ borrow
+checking disabled. The storage DSL regeneration check passed. Native smoke
+exercised real MBTA/STO and SRPC in separate-process and colocated-owner layouts:
+timer-spanning commits; retained old guards through OCC conflict/retry and
+cleanup; idle helpers; first access to another coordinate through an old view
+after Frozen; actual private pre-copy followed by source update/insert/delete;
+full final deletion of stale/private-only rows; late-job fencing after
+Final/Abort/new generations; actual source-Commit reply loss/retry; and stale
+authentic control replay. Four production SIGKILL/reopen cases retained
+committed/pending metadata while rejecting data admission and continuation.
+
+CTest passed `test_client_service`, `test_silo_nontxn_api`,
+`test_mako_nontxn_distributed`, `STOTransactionRealTests`,
+`test_mako_native_mixed_scan`, and `STOEpochRCUTests`. The last covers nested
+old guards, real engine cleanup, lazy helper activation and retirement behind
+a newer reader, plus allocation/reclamation stress. The final one-shard Paxos
+scenario observed 3,287 follower replay batches with migration disabled.
+It is not a replication-plus-migration test.
+
+Full TPC-C exercised foreign lifecycle paths beyond the migration smoke:
+
+- Mode 1 reported an already-aborted engine attempt as active, so a later
+  Abort RPC tried to re-enter its epoch. Liveness now follows the engine state;
+  terminal rebinding retains the logical pin without reviving the engine.
+- Multi-row handlers continued after an engine abort. Failed batches now roll
+  back their staged rows and stop; both multi-row read variants consume the
+  abort indicator before another storage access.
+- With native admission disabled, static clients treat a failed-read reply as
+  terminal and skip another Abort RPC. The receiver now restores an empty,
+  unpinned helper only after that request's physical cleanup, so the next
+  request starts a fresh engine attempt.
+
+Each correction has a real-engine regression that failed before the fix.
+The final ordinary binary passed full two-shard TPC-C with native admission
+enabled and disabled: both processes exited zero in each run, with strict
+startup, workload geometry and report validation. These are verification runs,
+not samples substituted into the matched performance comparison.
+
+Evidence: `zoo-002:/home/users/shuai/mako-native-epoch.WfX0NaeP/`.
+`proof-native-7` and `proof-model-5` each have command/source-hash/result JSON
+and complete logs. Their log SHA-256 values are respectively
+`648f14f40e2bec5b2b9a8fecb02c11586abd12351ac00816eae3239c6ae609e5`
+and `024b51141f7dbf352f7c3a344a71b5cdffe36773531b815f602a629d6582db4e`.
+`build-static-reset`, `smoke-static-reset`, `regressions-static-reset`, and
+`replication-static-reset` record the final C++ build/runtime checks.
+`workload-native-static-reset` and `workload-disabled-static-reset` retain the
+full-workload checks and their frozen binary hashes.
+`helper-regression-before`, `batch-regression-before`, and
+`static-regression-before` preserve the failing-before tests.
+`helper-timestamp-diagnostic.json` records an intermediate stale-object rebuild.
+`smoke-batch-fix` retains a listener/ephemeral-port collision; subsequent
+launches use the existing `docker_build.sh` reserved-port policy.
+`workload-native-reparse` corrects a diagnostic-only parser flag on already
+successful ordinary workload logs without rerunning either process.
+`cargo-1`, `durable-1`, and `storage-dsl-1` retain the Rust, recovery and
+regeneration checks. The C++ lifecycle corrections changed neither Verus root.
+All command/result JSON, complete logs, fixture/CTest/replica logs and earlier
+failed attempts remain in the same evidence directory, not silently replaced.
+
+These results do not mechanize C++ atomics, allocator/RCU, FFI, RPC queues or
+distributed OCC. The durable reference is not production MBTA recovery.
+The [matched timing record](../../docs/architecture/sharding-migration.md#engine-epoch-comparison-2026-10-21)
+is separate from correctness/proof evidence.
+
+#### Prepared workload routing (2026-10-22)
+
+The first prepared-routing optimization precomputed fixed-coordinate descriptors
+and bound their private capture slots once per logical transaction. Immutable point descriptors carry a
+context/envelope incarnation, preventing stale local slots, same-transaction
+envelope replacement, A→B→A restoration, or a reopened receiver context from
+reusing earlier resolutions. This is foreign C++ bridge bookkeeping, not a new
+authority epoch. Native admission, STO pin lifetimes, exact wire validation and
+handle-directory/binding-cache policies were unchanged in that comparison.
+
+Fresh Docker evidence in the directory above:
+
+- `prepared-build-3`, `prepared-build-smoke-4`, and
+  `prepared-build-receiver-6`: final production and fixture builds.
+- `prepared-smoke-2`: both real live layouts and all four metadata
+  SIGKILL/reopen cases passed. Prepared descriptors survive capture-vector
+  growth, interleaved production proxy selection, ownership return, and a real
+  OCC conflict/retry through an old pinned view after Freeze. Construction and
+  idle resolution do not announce an epoch.
+- `prepared-regressions-1`: client service, nontransactional API/distribution,
+  and real STO transaction suites passed. `STOEpochRCUTests` passed in
+  `prepared-smoke-2`.
+- `prepared-receiver-3`: isolated `NativeMixedScan.LocalAndRemoteSegments`
+  passed, including stale-token rejection, abort rollback, and a fresh token's
+  committed engine effect after reopening identical incoming request bytes.
+- `prepared-replication-1`: one-shard Paxos passed with 3,206 follower replay
+  batches; migration remained disabled.
+- `prepared-dsl-and-drivers-1` and `prepared-integrity-4`: storage regeneration
+  passed and all 79 pre-timing source hashes matched.
+
+The initial fixture failures are retained, not replaced: `prepared-smoke-1`
+needed a real warehouse proxy opener; the receiver assertions in
+`prepared-smoke-2` and `prepared-receiver-2` incorrectly assumed
+read-your-writes and omitted the transaction tuple's metadata suffix,
+respectively. The corrected test verifies committed payload bytes with the
+existing `mako::Encode` boundary instead.
+
+This optimization changed no Rust production or Verus source. The previous
+formal results remain results for those sources; the proof roots were **not
+rerun**, and the new C++ cache is **not mechanized**. Its foreign lifetime and
+provenance obligations are exercised by the real-engine regressions above.
+The pre-timing tree is retained in `source-manifest-prepared-v4.json`,
+`mako-source-prepared-v4.patch`, and `mako-source-prepared-v4-files.tar`.
+
+#### Cross-transaction prepared routing (2026-10-22)
+
+Fixed-coordinate routes, immutable bindings and selected handles now survive
+logical completion while the protected native view's cache-incarnation ID is
+unchanged. The ID follows the retained Node/full AdmissionSnapshot Arc pair,
+not the engine epoch or routing label. Owner changes, full-view replacement,
+worker changes and A→B→A cannot reuse an earlier cache incarnation; checked
+allocation fails closed on exhaustion. Same-view epoch refresh allocates no ID.
+Raw-key captures remain transaction-scoped. New transactions still acquire
+their guards, construct fresh immutable points and perform native point
+authorization; old points and unstaged batch captures remain invalid.
+
+Docker evidence under `/home/users/shuai/mako-native-epoch.WfX0NaeP` on zoo-002:
+
+- `prepared-cross-build-1` and `prepared-cross-build-smoke-2`: production and
+  final fixture builds passed, including mandatory production source gates.
+- `prepared-cross-cargo-1`: all **68** native Rust tests passed. New cases
+  cover stable cross-epoch identity, Frozen with unchanged routing labels,
+  owner/Node/worker changes, ABA, stopped/closed reads and ID exhaustion.
+- `prepared-cross-smoke-2`: both real live layouts and all four metadata
+  SIGKILL/reopen cases passed. Persistent copied/interleaved descriptors
+  retain real commit/abort behavior, do not retain an idle epoch pin, reject
+  stale points and old batch captures, and invalidate through migration and
+  ownership return. Warmed descriptors reject fresh Frozen operations while
+  the precopy worker's old pinned view survives its actual OCC retry.
+- `prepared-cross-regressions-1`: all six CTest targets passed—client service,
+  nontransactional API/distribution, isolated NativeMixedScan, real STO
+  transactions and epoch/RCU. Receiver exact-envelope, ABA and identical
+  close/reopen cases retain their real committed/rolled-back effects.
+- `prepared-cross-replication-1`: one-shard Paxos passed with **3,240**
+  follower replay batches; migration was disabled.
+- `prepared-cross-integrity-1` checked storage regeneration.
+  `prepared-cross-integrity-2` matched all **79** final source hashes and
+  checked the measurement drivers' syntax.
+
+The failed `prepared-cross-smoke-1` is retained. Its new stable-view assertion
+initially took a baseline from a cache predating a replay command's conservative
+publication. The fixture now advances the engine epoch before taking that
+baseline; the cross-epoch equality assertion remains. No production code
+changed between the two smoke runs.
+
+The new Rust cache identity lives in ordinary `ffi.rs`, excluded from the Verus
+configuration; the foreign C++ descriptor cache is also **not mechanized**.
+Native admission policy and the Verus proof roots are unchanged and were
+**not rerun** for this optimization. The runtime tests and actual engine
+scenarios above exercise the added cache-incarnation/lifetime obligations;
+they are not a new formal proof.
+
+`source-manifest-cross-v2.json`, `mako-source-cross-v2.patch` and
+`mako-source-cross-v2-files.tar` preserve the pre-timing snapshot.
+[Matched performance results](../../docs/architecture/sharding-migration.md#cross-transaction-prepared-routing-comparison-2026-10-22)
+are separate from this correctness evidence.
+
+#### Protected-view ownership memoization (2026-10-23)
+
+The design was documented before implementation in
+[sharding migration](../../docs/architecture/sharding-migration.md#view-tagged-authorization-reuse-design)
+and the [storage contract](../../docs/storage-interface.md#view-tagged-ownership-authorization).
+The C++ bridge now retains each fixed entry's successful ownership predicate
+when rebuilding a new transaction's point. The existing transaction-entry
+view-ID comparison invalidates the whole fixed cache on a different protected
+Node/admission view. This adds no new counter or per-operation generation
+comparison. Raw captures, received envelopes, transaction/point provenance,
+batch membership and runtime readiness checks keep their previous contracts.
+
+Fresh Docker evidence under `/home/users/shuai/mako-native-epoch.WfX0NaeP`
+on zoo-002:
+
+- `prepared-auth-build-1`: all requested production/fixture targets and their
+  mandatory production source gates passed.
+- `prepared-auth-smoke-1`: both live process layouts and all four metadata
+  SIGKILL/reopen scenarios passed. Existing real commit/abort, epoch refresh,
+  ownership return, stale points/batches, receiver checks and pinned old-view
+  OCC retries remain covered. The strengthened Frozen scenario retries in
+  distinct transactions: failure must never become memoized success. Normal
+  teardown now warms a fixed authorization, reuses it in a new logical context,
+  stops the real services, and directly rejects that context's previously
+  authorized point; terminal cleanup releases its pin.
+- `prepared-auth-regressions-1`: all six CTest targets passed—client service,
+  nontransactional API/distribution, isolated NativeMixedScan, real STO
+  transactions and epoch/RCU.
+- `prepared-auth-replication-1`: one-shard Paxos passed with **3,340**
+  follower replay batches; migration was disabled.
+- `prepared-auth-integrity-1`: all **79** source hashes and all three
+  measurement drivers' syntax checks passed.
+
+The pure native `AdmissionSnapshot::point` predicate and all Rust/Verus sources
+are unchanged. Native cluster Cargo tests and the formal proof roots were
+**not rerun** for this C++-only production change. The bridge's cached-decision
+lifetime is **not mechanized**; the actual engine scenarios above exercise
+its added obligations without claiming a new formal proof.
+
+`source-manifest-auth-v1.json`, `mako-source-auth-v1.patch` and
+`mako-source-auth-v1-files.tar` preserve the pre-timing tree, including the
+design contract. Final verification/performance documentation is archived
+separately in `mako-auth-final-docs.tar`.
+[Matched performance results](../../docs/architecture/sharding-migration.md#protected-view-ownership-memoization-comparison-2026-10-23)
+include the complete replacement profile window and the excluded window's
+separate, unresolved worker-startup map race.
+
+#### Boundary-only access admission (2026-10-24)
+
+The [access contract](../../docs/architecture/sharding-migration.md#boundary-only-access-admission-2026-10-24)
+now establishes local ownership while resolving the current operation, rather
+than accepting a returned point for repeated identity validation. The old point
+admission API is removed. Runtime availability is checked at new logical-context
+entry; admitted protected reads do not poll service flags or lose their view
+when native service acceptance stops. Owners must finish admitted work before
+destroying host/index storage. Received-wire validation and migration drain
+semantics remain separate boundaries.
+
+Fresh Docker evidence under `/home/users/shuai/mako-native-epoch.WfX0NaeP`
+on zoo-002:
+
+- `prepared-boundary-build-1`: all eight requested production/fixture targets
+  and their mandatory source gates passed.
+- `prepared-boundary-integrity-1`: all **79** pre-verification source hashes
+  matched the isolated build tree.
+- `prepared-boundary-native-1`: **68 native Cargo tests passed**, including
+  retained-view access after Retry/Io availability changes, rejection of
+  subsequent cached/refreshed admission, and active/closed/foreign handle cases.
+- `prepared-boundary-smoke-1`: both real live layouts and all four metadata
+  SIGKILL/reopen scenarios passed. The fixture now performs a real engine read
+  and commits a write after logical service stop under an already-admitted
+  guard, observes the committed value, releases the guard, then rejects fresh
+  engine work. Retained worker reads preserve their view/ownership outcomes
+  through stop; fresh admission fails after release and terminal pins drain.
+  Existing Frozen, ownership-return, prepared-cache, receiver-forgery and
+  old-view OCC retry scenarios remain exercised.
+- `prepared-boundary-regressions-1`: all **six** CTest targets passed—client
+  service, nontransactional API/distribution, isolated NativeMixedScan, real
+  STO transactions and epoch/RCU. Receiver tests reject actual accesses under
+  forged grants/coordinates rather than checking reuse of internal point tokens.
+- `prepared-boundary-replication-1`: one-shard Paxos passed with **3,224**
+  follower replay batches; native migration was disabled.
+- `prepared-boundary-regen-1`: `scripts/regen_storage_dsl.sh --check` passed.
+
+The executable FFI and C++ bridge changed; the ownership predicate and formal
+proof roots did not. Formal verification was **not rerun**. Boundary admission
+and host/engine lifetime are not newly mechanized by these runtime tests.
+That correctness window did not include timing. Later matched measurements are
+recorded in `boundary-performance-results-v1.json` and the staged comparison
+linked below.
+
+`source-manifest-boundary-v1.json`, `mako-source-boundary-v1.patch` and
+`mako-source-boundary-v1-files.tar` preserve the pre-verification source.
+`boundary-results-v1.json` records receipts and source provenance;
+`mako-boundary-final-docs.tar` separately preserves the final documentation.
+
+#### Thin descriptors and indexed bindings (2026-10-24)
+
+The [bridge optimizations](../../docs/architecture/sharding-migration.md#thin-descriptors-and-indexed-bindings-2026-10-24)
+replace owned per-point envelopes with lazy serialization, then share indexed
+binding/physical mappings across point, scan and receiver paths. Mapping reuse
+is not authorization. The Rust ownership predicate, native view invalidation
+and formal proof roots are unchanged. Formal verification was **not rerun**;
+these C++ cache/lifetime and wire-bridge changes are not newly mechanized.
+
+Fresh Docker evidence under `/home/users/shuai/mako-native-epoch.WfX0NaeP`
+on zoo-002:
+
+- `prepared-descriptor-build-1` and `prepared-descriptor-verify-1` passed for the
+  first optimization alone: eight production/fixture targets and mandatory
+  source gates, all 79 source hashes, both live layouts, four metadata
+  SIGKILL/reopen cases and all six targeted CTest suites.
+- `prepared-optimized-build-2` passed for the combined implementation. The
+  earlier `prepared-optimized-build-1` compile failure is retained, not counted
+  as runtime evidence. The final bridge stores opaque pointer-sized handles
+  in Rust collections without changing the pinned transpiler.
+- `prepared-optimized-verify-1` matched all 79 source hashes, then passed both
+  live layouts and all four metadata SIGKILL/reopen cases. Deferred envelopes
+  preserve their own raw/fixed route through vector growth and interleaving;
+  new logical transactions get fresh identities. Batch rows cannot borrow
+  another row's scope or a preceding transaction's capture.
+- The same combined receipt passed all **six** targeted CTest suites. Warm
+  receiver mappings are exercised across fresh transactions and interleaved
+  raw/warehouse scopes. Actual receiver dispatch rejects malformed coordinate
+  lengths, wrong coordinates/owners and transplanted grants. Freeze/migration
+  after cache warming still rejects stale ownership while unaffected raw keys
+  and destination data remain accessible.
+- All **68 native Cargo tests** and `scripts/regen_storage_dsl.sh --check`
+  passed. One-shard Paxos passed with **3,227 follower replay batches**;
+  native migration was disabled in that replication run.
+
+`source-manifest-descriptor-v1.json` and
+`mako-source-descriptor-v1-files.tar` preserve the descriptor-only inputs.
+`source-manifest-optimized-v2.json` and `mako-source-optimized-v2-files.tar`
+preserve the verified combined inputs, extending the preceding boundary
+snapshot. `optimized-verified-binary-v1.json` binds that manifest to binary
+SHA-256 `7ca8d15a655195cf8ad1f715d05e23ed4a769088515e5e0a6da9901d3a2755b6`
+and the frozen timing/profile/attribution drivers.
+
+`prepared-descriptor-benchmark-1` passed all 24 preliminary timing cases.
+`prepared-optimized-benchmark-1` and `prepared-optimized-benchmark-2` passed
+both complete 36-case six-arm windows: **72 cases**, with ten measured runs per
+arm after excluding the two prespecified warmups. The counterbalanced repeat
+and every slow trial are retained. `prepared-optimized-profile-1` passed all
+twelve separate captures;
+`optimized-profile-loss-v1.json` records inspection of every capture log, with
+no loss reported. `prepared-optimized-attribution-1` conserved every sample
+count and period total against independent `perf report` totals. The
+[performance discussion](../../docs/architecture/sharding-migration.md#separate-cpu-attribution)
+separates targeted savings from control drift and the noisy storage/transport
+differential; the CPU estimates are not additive wall-time costs.
+
+`optimized-results-v1.json` records the two windows, pooled medians, control
+drift, conserved CPU attribution and receipt/source fingerprints.
+`mako-optimized-final-docs.tar` separately preserves the final design,
+storage contract, book and this evidence index. Documentation changes were
+not mixed into the frozen benchmark inputs.
+
+#### Historical independent epoch protocol, before native cutover
+
+The complete independent crate and its semantic controls passed in Docker
+with Rust `1.97.1` and attested Verus `0.2026.08.02.b677dd5`:
+
+```text
+independent model:       688 verified, 0 errors
+model negative controls: 51 passed (15 new epoch-protocol controls)
+```
+
+The command was `python3 tla/mako/scripts/verify_controls.py` with the pinned
+verifier environment. Its positive baseline used the complete `src/lib.rs`,
+`--no-cheating`, and no module/function filters or resource overrides. The
+constructive schedules and bad-order counterexamples are part of that crate,
+not an external bounded checker.
+
+Evidence: `zoo-002:/home/users/shuai/mako-epoch-proof.vx45VcDm/verification-6.log`
+and `verification-6.json`; the JSON records the command, source hashes, log
+SHA-256, elapsed time, and successful exit status. This run did not change or
+reverify the native lease implementation; its earlier results follow below.
+
+
+#### Historical direct local scans on the lease path
+
+The full Docker proof gate passed with Rust `1.97.1` and pinned Verus
+`0.2026.08.02.b677dd5`:
+
+```text
+native src/cluster/lib.rs:  1455 verified, 0 errors
+independent model:          595 verified, 0 errors
+native negative controls:    21 passed
+model negative controls:     36 passed
+locked native Cargo tests:   64 passed
+file-backed SIGKILL cases:    2 passed
+```
+
+The source inventory contained 99 reachable files. Both positive crates ran
+without module/function filters; every control failed its named semantic
+obligation. The new control rejects a direct-scan exhaustion certificate that
+silently drops a callback row. An initial native run exceeded the resource
+limit in the existing `transcript_complete` proof after a shared predicate was
+factored out. Restoring its original inline form fixed automation; no resource
+override or weakened theorem was used.
+
+The Release `OPACITY=OFF` Docker build produced `dbtest`, `mako_admin`, the native
+smoke fixture and both affected CTest executables. Borrow checking was disabled
+in this build. The storage DSL regeneration check passed. Live smoke passed
+two-process and single-process migration/scan scenarios, four metadata-only
+SIGKILL/reopen cases and the isolated mixed local/remote scan CTest. The existing
+client-service and static distributed CTest suites also passed. These runs
+exercise foreign code; they do not turn it into verified C++.
+
+Evidence is retained at `/home/users/shuai/mako-local-scan.SdAzPTRe/`:
+`proof-v2.json` records the proof source hashes and command,
+`proof-v2.log` records the complete gate, and `build-v2`, `storage-dsl`,
+`smoke-v1` and `static-ctest` each have command/result JSON and raw logs.
+The proof log SHA-256 is
+`a22db3bd1f6211b3cd16ea5c8e3817e7ce2e90d4f57d919731b6f491e2c2f22a`.
+That revision retained production leases and Drain; it did not deploy the
+commit-time-validation proposal below. Its verification record made no new throughput claim.
+
+#### Commit-time-validation proposal
+
+The complete independent crate and its controls passed in Docker with the
+pinned Verus/Rust versions above:
+
+```text
+independent model:          595 verified, 0 errors
+model negative controls:     36 passed (18 new commit-time controls)
+actual-engine schedules:     18 passed (12 mutations, 4 gaps/absent points,
+                                       2 expected missing-lock failures)
+```
+
+The positive run had no module/function filters. Every mutant failed a named
+safety obligation, not parsing, typing, solver resources, or a verifier crash.
+The engine schedules used actual production callbacks with `OPACITY=OFF`,
+Release, both MV modes, and borrow checking disabled for the fixture build.
+They did not run a live lease-free migration or test old-source reclamation.
+The temporary CMake inclusion was removed; production behavior is unchanged.
+
+Local evidence is retained in
+`/home/users/shuai/mako-sharding-commit-proof.VHE0TnJ6/`:
+`proof-certified.json` records all independent source hashes and the attested
+toolchain; `proof-certified.log` records the full baseline and all controls.
+`engine-v2.json` records fixture/build/run hashes and commands;
+`engine-v2-run.log` records the observed engine phases. Their log SHA-256 values
+are respectively
+`43b66839ca24ed4bb4fb9e8d704527c5ba345063070456043cca49890e98d07a`
+and `8c949f524c83301fc61dc75d576f2f455a04d45a2161b5bfc43ef78fffc5b7d8`.
+These independent-protocol results do not extend the native
+refinement/recovery scope of the earlier gate below.
+
+#### Earlier deployed-path gate
 
 The complete `scripts/verify_native_sharding.sh` gate, including certified
 snapshot admission, the durable native extension, and metadata-backend

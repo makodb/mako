@@ -22,7 +22,10 @@ namespace mako
         ~ShardClient();
         ShardClient(const ShardClient&) = delete;
         ShardClient& operator=(const ShardClient&) = delete;
-        int remoteGet(int remote_table_id, std::string key, std::string &value);
+        // @unsafe - immediately dispatches the thin point under storage's logical guard.
+        int remoteGet(int remote_table_id, const std::string& key, std::string &value,
+                      const ShardingPoint& point);
+        // @unsafe - captures and explicitly transports this scan's grant and snapshot.
         int remoteScan(int remote_table_id, std::string start_key, std::string end_key, std::string &value);
         // @unsafe - one bounded transaction piece, never a terminal/EOF shortcut.
         int fullScanPage(int table_id, const ShardingRequest& sharding,
@@ -39,13 +42,13 @@ namespace mako
         // timeout retries. Its TxnId and first owner+epoch grant are unchanged;
         // ERROR is terminal admission failure, never a key-not-found result.
         int nontxnPut(int remote_table_id, const std::string &key,
-                      const std::string &value, bool *op_result);
+                      const std::string &value, bool *op_result, const ShardingPoint& point);
         int nontxnInsert(int remote_table_id, const std::string &key,
-                         const std::string &value, bool *op_result);
+                         const std::string &value, bool *op_result, const ShardingPoint& point);
         int nontxnGet(int remote_table_id, const std::string &key,
-                      std::string &value);
+                      std::string &value, const ShardingPoint& point);
         int nontxnRemove(int remote_table_id, const std::string &key,
-                         bool *op_result);
+                         bool *op_result, const ShardingPoint& point);
         // @unsafe - ingress forwarding retains its external ID and selected grant.
         int forwardNontxn(const ShardingRequest& request, uint8_t kind,
                           uint16_t legacy_table, const std::string& key,
@@ -56,7 +59,6 @@ namespace mako
         int remoteExchangeWatermark(uint32_t &watermark, uint64_t set_bits);
         int remoteControl(int control, uint32_t value, uint32_t &ret_value, uint64_t set_bits);
         int remoteAbort();
-        int remoteLock(int remote_table_id, std::string key, std::string &value);
         int remoteBatchLock(rusty::Vec<int>& remote_table_id_batch,
                             rusty::Vec<string>& key_batch, rusty::Vec<string>& value_batch,
                             rusty::Vec<uint8_t>& operation_batch);
@@ -101,7 +103,7 @@ namespace mako
         // Shared body of nontxnPut/nontxnInsert/nontxnRemove.
         int nontxnWrite(uint8_t reqType, int remote_table_id,
                         const std::string &key, const std::string &value,
-                        bool *op_result);
+                        bool *op_result, const ShardingPoint& point);
 
         /* Timeout which only go to one shard. */
         void GiveUpTimeout();

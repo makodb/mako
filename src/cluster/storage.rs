@@ -232,6 +232,8 @@ fn compare_rows(a: &Row,b: &Row) -> (result: i32)
 }
 
 /// Merge complete ordered streams with two lookaheads and one consumed row.
+/// Equal identities with equal bytes advance coverage without a physical put;
+/// the final pass still scans every source/destination row and deletes extras.
 pub fn mirror<'a,S: Store,R: Source>(plan: &'a MigrationPlan,owner: u32,store: &mut S,source: &R)
     -> (result: Result<CompletedCopy<'a>,Status>)
     requires old(store).wf(), source.wf(),
@@ -274,9 +276,17 @@ pub fn mirror<'a,S: Store,R: Source>(plan: &'a MigrationPlan,owner: u32,store: &
         if comparison <= 0 {
             let row = src.unwrap();
             proof { proofs::step(current,initial,source.image(),plan.range,before,s,d,row); }
-            let status = store.put(plan,owner,&row);
-            proof { proofs::frame_effect(current,initial,store.image(),plan.range,row_cell(plan.range.table,row),Some(row.value@)); }
-            match status { Status::Ok => {}, _ => return Err(status) }
+            let unchanged = match &dst {
+                Some(destination) => comparison == 0 && compare(&row.value,&destination.value) == 0,
+                None => false,
+            };
+            if unchanged {
+                proof { proofs::elide_equal(current,initial,source.image(),plan.range,before,row,d.unwrap()); }
+            } else {
+                let status = store.put(plan,owner,&row);
+                proof { proofs::frame_effect(current,initial,store.image(),plan.range,row_cell(plan.range.table,row),Some(row.value@)); }
+                match status { Status::Ok => {}, _ => return Err(status) }
+            }
             proof {
                 assert(store.image() == proofs::effect(current,source.image(),plan.range,row));
                 proofs::progress(initial,source.image(),plan.range,before,row);

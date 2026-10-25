@@ -13,15 +13,15 @@ evidence. Full production row/TP recovery was explicitly not selected.
 
 - Persist coordinator plans, generations, nonce bindings, decisions, receipts,
   and administrative reply bookkeeping before exposing successful mutations.
-- Persist participant lease changes, successful controls, and transfer
-  intent/result bookkeeping before acknowledging those operations.
+- Persist successful participant controls and transfer intent/result bookkeeping
+  before acknowledging those operations; native epoch pins remain volatile.
 - Retain an exact committed journal prefix across process restart. Never
   interpret a storage error as absence or silently replace retained state with
   genesis.
 - Fence uncertain persistence. An uncertain Commit must not become an Abort
   merely because its reply was lost.
 - On retained startup, permit historical admin inspection but refuse data
-  admission, new migrations, capture, control/copy/cleanup, and lease release.
+  admission, new migrations, capture, and control/copy/cleanup.
 - Do not implement `DurableEngine` with no-op callbacks or treat newly loaded
   initial rows as recovered post-migration data.
 
@@ -31,12 +31,15 @@ rather than disappearing or being guessed aborted.
 
 ## 2. Fixed design choices
 
-- Keep the existing freeze/drain/final-copy algorithm. No transaction spans the
-  moving range or the source and destination.
+- Use private online pre-copy while the source serves, then publish Frozen
+  before a cut on the existing STO clock and drain retained oldest worker pins
+  through effects, unlocks, engine cleanup and terminal RPC cleanup. Join/fence
+  pre-copy by generation/round before the complete exact final scan, including
+  destination-only deletes. No transaction spans the moving range or both owners.
 - Use RocksDB's local atomic WriteBatch for journal entry plus head. No new
   single-key-only journal protocol or application transaction engine is needed.
 - Keep fixed owners, one active migration, append-only history, and retained
-  fences. No compaction, changing membership, background pre-copy, or rebalance.
+  fences. No compaction, changing membership, or automatic rebalance.
 - Keep the existing non-replicated migration restriction. Local RocksDB metadata
   does not enable migration alongside Raft/Paxos replay.
 - Make persistence opt-in with a stable directory and explicit first
@@ -99,12 +102,14 @@ same exact-intent retry semantics.
 separate versioned **live-bookkeeping** payload:
 
 - Bootstrap records bind owner and exact catalog/deployment identity.
-- Successful Begin, point/range acquisition, and Finish changes are retained.
-  Already-retained point acquisitions and unchanged Begin/Finish do not require
-  another metadata append.
+- The original lease-based integration retained Begin/acquire/Finish changes.
+  That is historical bookkeeping, not the native epoch admission data path:
+  worker pins and cached immutable read contexts are volatile, not journaled
+  per-access lease updates and not recoverable transaction outcomes.
 - Successful control results are retained before their replies. Transfer intent
   precedes physical work; its result is retained before acknowledgement.
-- All persistence remains under the existing participant serialization guard.
+- Control persistence remains serialized; native read cache hits do not acquire
+  the participant/control mutex.
 - Reopening validates the committed prefix but leaves the journal inactive and
   the participant inaccessible for data use. No recovered transaction is
   finished or released.
@@ -123,14 +128,25 @@ the peer hello identity and fences the node on persistence failure.
 
 | State | Data and migration behavior | Admin behavior |
 |---|---|---|
-| Fresh live-only deployment | Existing loader/peer readiness and live lease/control gates. | Existing nonce semantics. |
-| Explicitly initialized metadata deployment | Same live algorithm, with synchronous bookkeeping before successful acknowledgements. | Mutations and retained replies are journaled. |
-| Retained metadata startup | Readiness and every lease entrypoint return Retry; capture, controls, copy, cleanup, and continuation are rejected. | Poll and an identical Begin retry may inspect historical outcomes; new Begin and Abort are rejected. |
+| Fresh live-only deployment | Loader/peer readiness and immutable epoch-cached admission; serialized controls. | Existing nonce semantics. |
+| Explicitly initialized metadata deployment | Same live epoch algorithm, with synchronous control/transfer bookkeeping before successful acknowledgements. | Mutations and retained replies are journaled. |
+| Retained metadata startup | Readiness and read admission return Retry; capture, controls, copy, cleanup, and continuation are rejected. | Poll and an identical Begin retry may inspect historical outcomes; new Begin and Abort are rejected. |
 | Uncertain metadata persistence | Candidate is fenced; no uncertain decision is converted to Abort. | Failed private coordinator state is not exposed. |
 
 A retained pending migration stays pending. These restrictions apply after
 clean shutdown as well as SIGKILL. Workload loaders, local transaction absence,
 and timeout do not discharge recovery obligations.
+
+The native bridge is `src/mako/lib/sharding_admission.{h,cc}`, gated by
+`sharding_admission_enabled`. Safely pinned callers use
+`mako_sharding_read_begin(owner, epoch, out)` and the read route/point/range/live
+APIs, then `mako_sharding_read_end` after actual cleanup. The TLS cache compares
+owner and integer epoch on entry; complete local metadata certification occurs
+at publication/refresh, not per operation. Captured views may continue admitting
+their original context after Frozen; no commit-time epoch equality is required.
+Fixed epoch/lifetime overhead and normal STO synchronization remain. The
+conditional `DurableParticipant` lease/recovery library retains its stronger
+contract separately; volatile native pins do not satisfy it.
 
 Configuration:
 
@@ -145,7 +161,8 @@ See the [operator instructions](../../mako-book.md#optional-durable-migration-me
 
 ### Step 5: verification and documentation
 
-Completed in Docker:
+Historical metadata-only integration evidence, before the native epoch cutover
+(the fresh epoch-cutover evidence follows separately):
 
 - Full native proof root: **1,398 verified, 0 errors**.
 - Full independent root: **526 verified, 0 errors**.
@@ -168,11 +185,22 @@ The [verification record](../../../tla/mako/README.md#checked-results) separates
 these scopes. No proof escape, filtered positive root, compiler pin change, or
 weakened durable-library contract was introduced.
 
+The epoch cutover now has fresh Docker runtime evidence: both live layouts and
+all four production metadata SIGKILL/reopen cases passed with immutable read
+admission and real STO pins. The live scenarios cover retained retry/cleanup
+guards, idle helpers, colocated owners, first old-view access after Frozen,
+source writes/deletes after private pre-copy, exact final reconciliation, and
+delayed-job rejection after Final/Abort/new generations. Nested guards and
+reclamation behind newer readers pass the engine/RCU regression.
+The current proof, Rust-test and smoke records are listed separately in the
+[verification record](../../../tla/mako/README.md#checked-results). Epoch drain
+is neither an empty-lease-book assertion nor crash recovery.
+
 ## 4. Completion boundary and limits
 
-The selected metadata-only deliverable is implemented and exercised. The
-end-to-end design, storage contract, operator notes, and verification record
-reflect that boundary.
+The metadata-only deliverable and its native epoch cutover are implemented and
+exercised. Retained metadata remains inspection-only; replacing volatile lease
+bookkeeping with process-local epoch pins does not add primary-data recovery.
 
 The foreign RocksDB kernel and runtime integration are tested, not
 Verus-verified. SIGKILL is process-death evidence, not a power-loss test or an

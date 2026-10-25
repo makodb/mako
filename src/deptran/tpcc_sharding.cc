@@ -1,6 +1,7 @@
 #include <cstring>
 #include "mako/benchmarks/tpcc_sharding.h"
 #include "mako/storage/abstract_db.h"
+#include "mako/lib/sharding_admission.h"
 
 namespace mako {
 
@@ -20,17 +21,10 @@ TpccTableIdentity tpcc_table_identity(const char* logical_name) {
     return identity;
 }
 
-// @unsafe - Rust selects a process-lifetime engine-owned handle under its mutex.
-// Neither the snapshot lookup nor this pointer conversion authorizes byte access:
-// the engine takes an exact native owner+epoch lease before using the handle.
-FullOrderedIndex* tpcc_resolve_warehouse(uint64_t table, uint32_t global_warehouse,
-                                       uint32_t participant) {
-    uintptr_t handle = 0;
-    MakoShardGrant grant{};
-    if (mako_sharding_warehouse_resolve(table, global_warehouse, participant,
-                                        &handle, &grant) != MAKO_SHARD_OK || !handle)
-        throw abstract_db::abstract_abort_exception();
-    return reinterpret_cast<FullOrderedIndex*>(handle);
+// @unsafe - borrows the captured transaction's handle, or resolves without a lease
+// for setup/no-open-context access. Actual storage access still requires admission.
+FullOrderedIndex* tpcc_resolve_warehouse(ShardingPreparedRoute& route, uint32_t participant) {
+    return sharding_warehouse_handle(route, participant);
 }
 
 } // namespace mako

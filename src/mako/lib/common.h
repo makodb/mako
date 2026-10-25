@@ -2,7 +2,7 @@
 #define _LIB_COMMON_H_
 
 #include "lib/timestamp.h"
-#include "lib/sharding_leases.h"
+#include "lib/sharding_admission.h"
 
 #include <iostream>
 #include <cstdio>

@@ -220,12 +220,13 @@ namespace mako
     }
 
 
+    // @unsafe - captures the scan request before dispatch through the legacy RPC client.
     int ShardClient::remoteScan(int remote_table_id, std::string start_key, std::string end_key, std::string &value) {
 
         int table_id = remote_table_id;
         // Use policy-based routing if available, otherwise fall back to table-ID-based
         ShardingRequest request{};
-        int dstShardIndex = sharding_route_request(table_id, start_key, request);
+        int dstShardIndex = sharding_scan_request(table_id, start_key, request);
         if (dstShardIndex < 0) return ErrorCode::ABORT;
 
         TThread::readset_shard_bits |= (1 << dstShardIndex);
@@ -243,6 +244,7 @@ namespace mako
                     start_key, 
                     end_key,
                     table_id,
+                    request,
                     bind(&ShardClient::ScanCallback, this,
                         placeholders::_1),
                     bind(&ShardClient::GiveUpTimeout, this),
@@ -266,7 +268,6 @@ namespace mako
         // Even an ambiguous timeout must be terminally cleaned up. Do not add
         // this shard to trans_nosend_abort merely because a reply was lost.
         TThread::readset_shard_bits |= (1u << destination);
-        sharding_use_outgoing_request(request);
         Promise promise(GET_TIMEOUT);
         waiting = &promise;
         client->SetNumResponseWaiting(1);
@@ -289,12 +290,11 @@ namespace mako
         transport->Statistics();
     }
 
-    int ShardClient::remoteGet(int remote_table_id, std::string key, std::string &value) {
-
+    // @unsafe - dispatches the captured point; only the RPC client materializes its envelope.
+    int ShardClient::remoteGet(int remote_table_id, const std::string& key,
+                               std::string &value, const ShardingPoint& point) {
         int table_id = remote_table_id;
-        // Use policy-based routing if available, otherwise fall back to table-ID-based
-        ShardingRequest request{};
-        int dstShardIndex = sharding_route_request(table_id, key, request);
+        const int dstShardIndex = point.owner();
         if (dstShardIndex < 0) return ErrorCode::ABORT;
 
         TThread::readset_shard_bits |= (1 << dstShardIndex) ;
@@ -311,6 +311,7 @@ namespace mako
                     server_id,
                     key, 
                     table_id,
+                    point,
                     bind(&ShardClient::GetCallback, this,
                         placeholders::_1),
                     bind(&ShardClient::GiveUpTimeout, this),
@@ -343,10 +344,9 @@ namespace mako
     int ShardClient::nontxnWrite(uint8_t reqType, int remote_table_id,
                                  const std::string &key,
                                  const std::string &value,
-                                 bool *op_result) {
+                                 bool *op_result, const ShardingPoint& point) {
         int table_id = remote_table_id;
-        ShardingRequest request{};
-        int dstShardIndex = sharding_route_request(table_id, key, request);
+        const int dstShardIndex = point.owner();
         if (dstShardIndex < 0) return ErrorCode::ERROR;
 
         Promise promise(GET_TIMEOUT);
@@ -363,7 +363,7 @@ namespace mako
                     key,
                     value,
                     table_id,
-                    request,
+                    point,
                     reqType,
                     bind(&ShardClient::NontxnWriteCallback, this,
                         placeholders::_1),
@@ -385,10 +385,9 @@ namespace mako
     // when the key is absent.
     // @unsafe - blocks on a Promise like remoteGet
     int ShardClient::nontxnGet(int remote_table_id, const std::string &key,
-                               std::string &value) {
+                               std::string &value, const ShardingPoint& point) {
         int table_id = remote_table_id;
-        ShardingRequest request{};
-        int dstShardIndex = sharding_route_request(table_id, key, request);
+        const int dstShardIndex = point.owner();
         if (dstShardIndex < 0) return ErrorCode::ERROR;
 
         Promise promise(GET_TIMEOUT);
@@ -405,7 +404,7 @@ namespace mako
                     key,
                     std::string(),
                     table_id,
-                    request,
+                    point,
                     mako::nontxnGetReqType,
                     bind(&ShardClient::NontxnWriteCallback, this,
                         placeholders::_1),
@@ -416,22 +415,28 @@ namespace mako
         return promise.GetReply();
     }
 
+    // @unsafe - delegates the existing resolved capture to the native RPC bridge.
     int ShardClient::nontxnPut(int remote_table_id, const std::string &key,
-                               const std::string &value, bool *op_result) {
-        return nontxnWrite(mako::nontxnPutReqType, remote_table_id, key, value, op_result);
+                               const std::string &value, bool *op_result,
+                               const ShardingPoint& point) {
+        return nontxnWrite(mako::nontxnPutReqType, remote_table_id, key, value, op_result, point);
     }
 
+    // @unsafe - retry attempts retain this same request and selected owner.
     int ShardClient::nontxnInsert(int remote_table_id, const std::string &key,
-                                  const std::string &value, bool *op_result) {
-        return nontxnWrite(mako::nontxnInsertReqType, remote_table_id, key, value, op_result);
+                                  const std::string &value, bool *op_result,
+                                  const ShardingPoint& point) {
+        return nontxnWrite(mako::nontxnInsertReqType, remote_table_id, key, value, op_result, point);
     }
 
+    // @unsafe - wire delete retains the resolved operation, including absent keys.
     int ShardClient::nontxnRemove(int remote_table_id, const std::string &key,
-                                  bool *op_result) {
+                                  bool *op_result, const ShardingPoint& point) {
         return nontxnWrite(mako::nontxnRemoveReqType, remote_table_id, key,
-                           std::string(), op_result);
+                           std::string(), op_result, point);
     }
 
+    // @unsafe - serializes each staged row's existing capture into transport-owned buffers.
     int ShardClient::remoteBatchLock(
         rusty::Vec<int>& remote_table_id_batch,
         rusty::Vec<string>& key_batch,
@@ -447,9 +452,9 @@ namespace mako
         for (size_t i = 0; i < remote_table_id_batch.len(); i++) {
             int remote_table_id = remote_table_id_batch[i];
             int table_id = remote_table_id;
-            // Use policy-based routing if available, otherwise fall back to table-ID-based
+            // A staged governed write already captured its request before dispatch.
             ShardingRequest request{};
-            int dst_shard_idx = sharding_route_request(table_id, key_batch[i], request);
+            int dst_shard_idx = sharding_batch_request(table_id, key_batch[i], request);
             if (dst_shard_idx < 0) return ErrorCode::ABORT;
 
             // after combine remoteLock + remoteValidate, this step might need to be skipped
@@ -477,36 +482,6 @@ namespace mako
         return is_all_response_ok();
     }
 
-    int ShardClient::remoteLock(int remote_table_id, std::string key, std::string &value) {
-        Panic("Deprecated!");
-
-        int table_id = remote_table_id;
-        // Use policy-based routing if available, otherwise fall back to table-ID-based
-        ShardingRequest request{};
-        int dstShardIndex = sharding_route_request(table_id, key, request);
-        if (dstShardIndex < 0) return ErrorCode::ABORT;
-        
-        TThread::writeset_shard_bits |= (1 << dstShardIndex) ;
-        Promise promise(BASIC_TIMEOUT);
-        waiting = &promise;
-
-        client->SetNumResponseWaiting(1);
-
-        const int timeout = promise.GetTimeout();
-        uint16_t server_id = shardIndex*config.warehouses+par_id;
-
-        client->InvokeLock(++tid,  // txn_nr
-                    dstShardIndex,  // shardIdx
-                    server_id,
-                    key,
-                    value,
-                    table_id,
-                    bind(&ShardClient::BasicCallBack, this,
-                        placeholders::_1),
-                    bind(&ShardClient::GiveUpTimeout, this),
-                timeout);
-        return promise.GetReply();
-    }
 
     int ShardClient::remoteValidate(uint32_t &watermark) {
         int shards_to_send_bits = TThread::writeset_shard_bits | TThread::readset_shard_bits;
@@ -546,13 +521,13 @@ namespace mako
                     bind(&ShardClient::SendToAllStatusCallBack, this, placeholders::_1),
                     bind(&ShardClient::SendToAllGiveUpTimeout, this), BASIC_TIMEOUT);
             } catch (int) {
-                if (!sharding_leases_enabled()) throw;
+                if (!sharding_admission_enabled()) throw;
                 status_received.clear();
                 usleep(1000);
                 continue;
             }
             const int result = is_all_response_ok();
-            if (result == ErrorCode::SUCCESS || !sharding_leases_enabled()) return result;
+            if (result == ErrorCode::SUCCESS || !sharding_admission_enabled()) return result;
             usleep(1000);
         }
     }
@@ -663,13 +638,13 @@ namespace mako
                     bind(&ShardClient::SendToAllStatusCallBack, this, placeholders::_1),
                     bind(&ShardClient::SendToAllGiveUpTimeout, this), BASIC_TIMEOUT);
             } catch (int) {
-                if (!sharding_leases_enabled()) throw;
+                if (!sharding_admission_enabled()) throw;
                 status_received.clear();
                 usleep(1000);
                 continue;
             }
             const int result = is_all_response_ok();
-            if (result == ErrorCode::SUCCESS || !sharding_leases_enabled()) return result;
+            if (result == ErrorCode::SUCCESS || !sharding_admission_enabled()) return result;
             usleep(1000);
         }
     }
@@ -720,7 +695,7 @@ namespace mako
     // therefore contacts every touched shard, including uncertain/rejected reads.
     int ShardClient::remoteAbort() {
         int shards = TThread::writeset_shard_bits | TThread::readset_shard_bits;
-        if (!sharding_leases_enabled())
+        if (!sharding_admission_enabled())
             shards &= ~TThread::trans_nosend_abort;
         if (!shards) return ErrorCode::SUCCESS;
         const uint16_t server_id = shardIndex * config.warehouses + par_id;
@@ -731,13 +706,13 @@ namespace mako
                     bind(&ShardClient::SendToAllStatusCallBack, this, placeholders::_1),
                     bind(&ShardClient::SendToAllGiveUpTimeout, this), ABORT_TIMEOUT);
             } catch (int) {
-                if (!sharding_leases_enabled()) throw;
+                if (!sharding_admission_enabled()) throw;
                 status_received.clear();
                 usleep(1000);
                 continue;
             }
             const int result = is_all_response_ok();
-            if (result == ErrorCode::SUCCESS || !sharding_leases_enabled()) return result;
+            if (result == ErrorCode::SUCCESS || !sharding_admission_enabled()) return result;
             usleep(1000);
         }
     }

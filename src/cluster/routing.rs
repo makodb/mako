@@ -1,7 +1,7 @@
 //! Whole immutable routing observations and allocation-free full-grant scans.
-//! Installation runs under the native owner's mutex. Clone `snapshot_arc` under
-//! that lock, then release it before invoking scan callbacks: one retained Arc
-//! pins every boundary and the version across blocking/reentrant native calls.
+//! Installation runs under the native owner's write lock. Clone `snapshot_arc`
+//! under a read lock, then release it before invoking scan callbacks: one retained
+//! Arc pins every boundary and the version across blocking/reentrant native calls.
 //! Initial version zero is valid. Later committed generations may skip aborted
 //! generations; stale versions return Retry, equal identical versions stutter,
 //! and conflicting equal versions return Invalid. The first accepted snapshot

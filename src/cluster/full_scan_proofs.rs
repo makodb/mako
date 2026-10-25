@@ -1,8 +1,8 @@
 //! Sharding composition, not an OCC/MVCC or native-engine correctness proof.
 //! The trusted interface is complete raw engine enumeration at an exact
-//! transaction/canonical physical address. Sharding page coverage/EOF is derived.
-//! All pages of a successful scan refer to ONE transaction snapshot. A caller
-//! stopping its callback is not a complete query. Errors abort this certificate.
+//! transaction/canonical physical address. Both direct enumeration and sharding
+//! page coverage/EOF are derived from it, in ONE transaction read view. A caller
+//! stopping its callback is not an exhaustion certificate. Errors certify nothing.
 #![cfg(verus_keep_ghost)]
 use vstd::prelude::*;
 use crate::bytes::{cmp_spec, cmp_laws, cmp_trans};
@@ -742,6 +742,14 @@ pub open spec fn target(identity: crate::full_scan_core::ScanIdentity) -> ScanTa
 pub open spec fn snapshot_value(rows: SnapshotRows,k: Seq<u8>) -> Option<Seq<u8>> {
     if rows.contains_key(k) {Some(rows[k])} else {None}
 }
+/// Direct enumeration's foreign-engine obligation: the same physical view
+/// contract written inline in trusted_transaction_scan below. This is not
+/// logical exactness: retained admission and placement derive the latter.
+pub open spec fn trusted_engine_rows(views: EngineViews,
+    request: crate::full_scan_core::BoundRequest,raw: Seq<WireRow>) -> bool {
+    views.contains_key(target(request.identity))
+    && exact(&request.bounds,opt_bytes(request.bounds.cursor),views[target(request.identity)],raw)
+}
 /// Trusted engine range enumeration, BEFORE the sharding page builder. `raw`
 /// is the complete common-snapshot engine iterator; actual callbacks form its
 /// prefix and stop only on the callback's return or an engine error. The
@@ -1123,6 +1131,192 @@ pub proof fn participant_admission_evidence(node: crate::participant::Participan
         node.open_range_lease(request.identity.transaction,request.identity.table,
             request.bounds.lo@,opt_bytes(request.bounds.hi),request.identity.grant);
     }
+}
+
+/// Ghost transcript of synchronous native callbacks, not a page or wire
+/// representation. `delivered` includes the row whose callback returns false.
+/// Canonical handle resolution, value stripping, callback lifetimes and STO's
+/// OCC/abort detection remain foreign obligations, exactly as for paged scans.
+pub struct DirectScan {
+    pub request: crate::full_scan_core::BoundRequest,
+    pub participant: crate::participant::Participant,
+    pub raw: Seq<WireRow>,
+    pub delivered: Seq<WireRow>,
+    pub continued: Seq<bool>,
+    pub exit: EngineExit,
+}
+pub open spec fn trusted_direct_enumeration(d: DirectScan,views: EngineViews) -> bool {
+    if d.exit is Error {true} else {
+        trusted_engine_rows(views,d.request,d.raw)
+        && d.delivered.len() <= d.raw.len()
+        && d.continued.len() == d.delivered.len()
+        && (forall|i: int| 0 <= i < d.delivered.len() ==> d.delivered[i] == d.raw[i])
+        && match d.exit {
+            EngineExit::Exhausted => d.delivered.len() == d.raw.len()
+                && forall|i: int| 0 <= i < d.continued.len() ==> d.continued[i],
+            EngineExit::CallbackStop => d.delivered.len() > 0 && !d.continued.last()
+                && forall|i: int| 0 <= i < d.continued.len()-1 ==> d.continued[i],
+            EngineExit::Error => true,
+        }
+    }
+}
+/// The captured request/grant admits the ENTIRE physical interval, or its
+/// single fixed ownership coordinate (all warehouse row aliases). No new
+/// snapshot, successful-version shortcut, page builder or codec is required.
+pub open spec fn direct_scan(d: DirectScan,views: EngineViews) -> bool {
+    d.request.bounds.wf() && d.request.identity.wf() && d.request.bounds.cursor is None
+    && d.participant.wf() && d.participant.owner_view() == d.request.identity.grant.owner
+    && (if d.request.identity.fixed_coordinate {
+        d.participant.open_hold(d.request.identity.transaction,d.request.identity.table,
+            d.request.identity.coordinate@,d.request.identity.grant)
+    } else {
+        d.participant.open_range(d.request.identity.transaction,d.request.identity.table,
+            d.request.bounds.lo@,opt_bytes(d.request.bounds.hi),d.request.identity.grant)
+    })
+    && trusted_direct_enumeration(d,views)
+}
+pub open spec fn direct_complete(d: DirectScan,views: EngineViews) -> bool {
+    direct_scan(d,views) && d.exit is Exhausted
+}
+/// Early stop is a successful ordered prefix, possibly including the last
+/// row; it is never evidence that the engine observed exhaustion. Error
+/// (including silent engine abort) provides no successful-prefix certificate.
+pub proof fn direct_engine_delivery(d: DirectScan,views: EngineViews)
+    requires trusted_direct_enumeration(d,views), !(d.exit is Error),
+    ensures trusted_engine_rows(views,d.request,d.raw),
+        d.delivered == d.raw.take(d.delivered.len() as int),
+        d.exit is Exhausted ==> d.delivered == d.raw,
+        d.exit is CallbackStop ==> d.delivered.len() > 0 && !d.continued.last(),
+{
+    assert(d.delivered =~= d.raw.take(d.delivered.len() as int));
+    if d.exit is Exhausted { assert(d.delivered =~= d.raw); }
+}
+pub proof fn direct_stop_or_error_not_complete(d: DirectScan,views: EngineViews)
+    requires d.exit is CallbackStop || d.exit is Error,
+    ensures !direct_complete(d,views),
+{}
+
+/// Logical exactness of the complete native iterator is DERIVED from the
+/// canonical physical engine view and retained range admission. Raw byte keys
+/// and fixed-coordinate warehouse aliases use the same projection. The byte
+/// sequences have no nonempty/encoding premise; direction is arbitrary.
+pub proof fn native_direct_scan(d: DirectScan,views: EngineViews,
+    c: crate::sharding_placement::Constants,s: crate::sharding_placement::State,txn: int,
+    labels: Map<int,crate::storage::Cell>,logical: Image)
+    requires direct_scan(d,views), !(d.exit is Error),
+        crate::sharding_placement::proofs::inv(c,s),
+        read_view_embedding(c,s,labels,logical,views,d.request.identity.transaction),
+        lease_embedding(s,txn,labels,d.request.identity.transaction,d.participant.lease_view()),
+    ensures admitted(d.request,d.participant.lease_view()),
+        interval_exact(d.request.bounds.reverse,d.request.bounds.lo@,opt_bytes(d.request.bounds.hi),
+            project(logical,d.request.identity.table,target(d.request.identity).3),d.raw),
+        d.delivered == d.raw.take(d.delivered.len() as int),
+        sorted(d.request.bounds.reverse,d.delivered),
+        forall|k: Seq<u8>,v: Seq<u8>| contains_row(d.delivered,k,v) ==>
+            project(logical,d.request.identity.table,target(d.request.identity).3).contains_key(k)
+            && project(logical,d.request.identity.table,target(d.request.identity).3)[k] == v
+            && inside(k,d.request.bounds.lo@,opt_bytes(d.request.bounds.hi)),
+        d.exit is Exhausted ==> interval_exact(d.request.bounds.reverse,d.request.bounds.lo@,
+            opt_bytes(d.request.bounds.hi),
+            project(logical,d.request.identity.table,target(d.request.identity).3),d.delivered),
+{
+    hide(cmp_spec); hide(read_view_embedding); hide(lease_embedding);
+    hide(crate::sharding_placement::proofs::inv);
+    let request = d.request;
+    let image = project(logical,request.identity.table,target(request.identity).3);
+    direct_engine_delivery(d,views);
+    participant_admission_evidence(d.participant,request);
+    admission_to_model_hold(s,txn,labels,request,d.participant.lease_view());
+    assert forall|k: Seq<u8>,v: Seq<u8>| contains_row(d.raw,k,v) <==>
+        image.contains_key(k) && image[k] == v
+        && inside(k,request.bounds.lo@,opt_bytes(request.bounds.hi)) by {
+        cmp_symmetry(request.bounds.lo@,k);
+        if inside(k,request.bounds.lo@,opt_bytes(request.bounds.hi)) {
+            admitted_snapshot_matches_logical(c,s,txn,labels,logical,views,request,k);
+        }
+    }
+    assert forall|i: int,j: int| 0 <= i < j < d.delivered.len() implies
+        precedes(request.bounds.reverse,d.delivered[i].key,d.delivered[j].key) by {
+        assert(d.delivered[i] == d.raw[i]); assert(d.delivered[j] == d.raw[j]);
+    }
+    assert forall|k: Seq<u8>,v: Seq<u8>| contains_row(d.delivered,k,v) implies
+        image.contains_key(k) && image[k] == v
+        && inside(k,request.bounds.lo@,opt_bytes(request.bounds.hi)) by {
+        let i = choose|i: int| 0 <= i < d.delivered.len()
+            && d.delivered[i].key == k && d.delivered[i].value == v;
+        assert(d.delivered[i] == d.raw[i]);
+        assert(contains_row(d.raw,k,v));
+    }
+}
+
+pub proof fn native_direct_fixed_coordinate_scan(t: RouteTable,coordinate_bytes: Seq<u8>,
+    d: DirectScan,views: EngineViews,c: crate::sharding_placement::Constants,
+    s: crate::sharding_placement::State,txn: int,labels: Map<int,crate::storage::Cell>,logical: Image)
+    requires direct_complete(d,views), d.request.identity.table == t.table,
+        d.request.identity.fixed_coordinate, d.request.identity.coordinate@ == coordinate_bytes,
+        d.request.identity.grant == route(t.boundaries@,coordinate_bytes),
+        crate::sharding_placement::proofs::inv(c,s),
+        read_view_embedding(c,s,labels,logical,views,d.request.identity.transaction),
+        lease_embedding(s,txn,labels,d.request.identity.transaction,d.participant.lease_view()),
+    ensures interval_exact(d.request.bounds.reverse,d.request.bounds.lo@,opt_bytes(d.request.bounds.hi),
+        project(logical,t.table,Some(coordinate_bytes)),d.delivered),
+{
+    native_direct_scan(d,views,c,s,txn,labels,logical);
+}
+
+/// Per-segment evidence chooses transport, not a presumed logical result.
+pub enum SegmentTransport { Native(DirectScan), Paged(Seq<Exchange>) }
+pub open spec fn transport_request(e: SegmentTransport) -> crate::full_scan_core::BoundRequest {
+    match e { SegmentTransport::Native(d) => d.request,
+        SegmentTransport::Paged(xs) => xs[0].before.request }
+}
+pub open spec fn transport_rows(e: SegmentTransport) -> Seq<WireRow> {
+    match e { SegmentTransport::Native(d) => d.delivered,
+        SegmentTransport::Paged(xs) => xs.last().after.delivered@ }
+}
+pub open spec fn transport_leases(e: SegmentTransport) -> Map<u64,SessionView> {
+    match e { SegmentTransport::Native(d) => d.participant.lease_view(),
+        SegmentTransport::Paged(xs) => xs[0].leases }
+}
+pub open spec fn transport_complete(e: SegmentTransport,views: EngineViews) -> bool {
+    match e {
+        SegmentTransport::Native(d) => direct_complete(d,views),
+        SegmentTransport::Paged(xs) => xs.len() > 0 && exchanges(xs[0].before.request,views,xs)
+            && xs[0].before.delivered@ == Seq::<WireRow>::empty(),
+    }
+}
+/// Same immutable routing table and existing segment-order induction as
+/// sharded_scan. Each native segment contributes exactness WITHOUT a page;
+/// remote segments retain all exchange/codec/EOF obligations. A stopped or
+/// errored direct segment cannot satisfy this complete-query theorem.
+pub proof fn mixed_sharded_scan(t: RouteTable,reverse: bool,lo: Seq<u8>,hi: Option<Seq<u8>>,
+    ss: Seq<ScanSegment>,id: TxnId,traces: Seq<SegmentTransport>,
+    c: crate::sharding_placement::Constants,s: crate::sharding_placement::State,txn: int,
+    labels: Map<int,crate::storage::Cell>,logical: Image,views: EngineViews)
+    requires segments(t,reverse,lo,hi,ss), traces.len() == ss.len(),
+        crate::sharding_placement::proofs::inv(c,s), read_view_embedding(c,s,labels,logical,views,id),
+        forall|i: int| 0 <= i < ss.len() ==> transport_complete(traces[i],views)
+            && transport_request(traces[i]).identity.transaction == id
+            && transport_request(traces[i]).identity.table == t.table
+            && transport_request(traces[i]).identity.grant == ss[i].grant
+            && !transport_request(traces[i]).identity.fixed_coordinate
+            && segment_request(&transport_request(traces[i]).bounds,ss[i],reverse)
+            && lease_embedding(s,txn,labels,id,transport_leases(traces[i])),
+    ensures interval_exact(reverse,lo,hi,project(logical,t.table,None),
+        flatten(Seq::new(traces.len(),|i: int| transport_rows(traces[i])))),
+{
+    hide(cmp_spec); hide(exchange); hide(exchanges); hide(trusted_transaction_scan);
+    hide(read_view_embedding); hide(lease_embedding); hide(crate::sharding_placement::proofs::inv);
+    hide(request_wire); hide(rows_wire); hide(blob); hide(word32); hide(word64);
+    let chunks = Seq::new(traces.len(),|i: int| transport_rows(traces[i]));
+    assert forall|i: int| 0 <= i < ss.len() implies
+        interval_exact(reverse,ss[i].lo@,hi_view(ss[i].hi),project(logical,t.table,None),chunks[i]) by {
+        match traces[i] {
+            SegmentTransport::Native(d) => { native_direct_scan(d,views,c,s,txn,labels,logical); },
+            SegmentTransport::Paged(xs) => { raw_exchange_scan(c,s,txn,labels,logical,views,xs); },
+        }
+    }
+    merge_segments(t,reverse,lo,hi,ss,project(logical,t.table,None),chunks);
 }
 
 pub enum EngineExit { Exhausted, CallbackStop, Error }

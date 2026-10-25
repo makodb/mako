@@ -14,7 +14,7 @@ typedef void (*MakoShardReplySink)(void*, uint32_t status, MakoShardBytes reply)
 
 /* Native I/O only: Rust owns ordering, authorization and migration state.
  * Storage callbacks run on a thread entered below, under the Rust participant
- * guard. They MUST NOT call ordinary lease admission. Their image consists of
+ * guard. They MUST NOT call ordinary admission. Their image consists of
  * logical row bytes in the selected range, not engine metadata trailers.
  * A successful put/delete is atomic and changes only the named physical key;
  * an error has no committed effect. Unrelated ranges may change concurrently.
@@ -29,7 +29,10 @@ typedef struct MakoShardHost {
                      uint32_t proxy, uint32_t kind, uintptr_t* handle);
     /* Exactly one sink call on OK; NOT_FOUND alone certifies true EOF. Cursor
      * ordering is strict (coordinate,key), never coordinate+NUL. Every warehouse
-     * coordinate intersecting the range is considered, including unopened ones. */
+     * coordinate intersecting the range is considered, including unopened ones.
+     * Each lookahead uses a real STO transaction and locks a row while copying
+     * its bytes. Precopy is not a range snapshot; exact reconciliation requires
+     * a frozen source and the completed STO cut below. */
     uint32_t (*scan_next)(void*, uint64_t table, MakoShardBytes lo,
                           uint32_t has_hi, MakoShardBytes hi, uint32_t has_after,
                           MakoShardBytes after_coordinate, MakoShardBytes after_key,
@@ -42,12 +45,17 @@ typedef struct MakoShardHost {
      * application status; transport failures return IO without a callback. */
     uint32_t (*peer_call)(void*, uint32_t owner, uint32_t operation,
                           MakoShardBytes payload, MakoShardReplySink, void*);
+    /* The one process-wide STO clock, shared by colocated owners. A cut of
+     * zero fails closed (clock exhausted). Drained returns OK or BUSY and must
+     * only inspect existing worker slots, never enter an engine transaction. */
+    uint64_t (*epoch_cut)(void*);
+    uint32_t (*epoch_drained)(void*, uint64_t cut);
 } MakoShardHost;
 
-/* start copies the vtable; the context and DB outlive stop. The catalog and
- * warehouse opener must already be seeded, and loaders must have finished.
- * stop is invoked off native workers, closes admission and joins all native
- * jobs before returning. Replicated nodes pass allow_migration=0. */
+/* start copies the vtable; the context and DB outlive stop and all admitted
+ * ordinary work. The catalog/opener must be seeded and loaders finished.
+ * stop runs off native workers, closes new admission and joins native jobs;
+ * it does not revoke protected views. Replicated nodes pass allow_migration=0. */
 uint32_t mako_sharding_start_node(uint32_t owner, uint32_t nshards,
                                   uint32_t allow_migration, const MakoShardHost*);
 uint32_t mako_sharding_dispatch(uint32_t owner, uint32_t operation,
@@ -88,8 +96,8 @@ namespace transport { class Configuration; }
 
 namespace mako {
 
-// @unsafe - borrowed engine/runtime outlive the host; owning RPC objects are
-// dropped only after service acceptance stops and Rust workers are joined.
+// @unsafe - borrowed engine/runtime outlive the host and admitted ordinary work.
+// RPC objects drop after service acceptance stops and Rust workers are joined.
 struct NativeShardingHost {
     abstract_db* db;
     const uint32_t owner;

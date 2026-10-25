@@ -1,4 +1,4 @@
-//! Exact point and half-open interval leases for sequential client transactions.
+//! Conditional durable point/range leases; not the native epoch admission path.
 //!
 //! The retained session is also its client's non-wrapping sequence fence. A
 //! terminal empty session may be replaced, but its sequence may never be reused.

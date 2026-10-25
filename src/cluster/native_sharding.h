@@ -26,9 +26,8 @@ typedef struct MakoShardGrant {
 } MakoShardGrant;
 
 /* Paired by one immutable route lookup, never refreshed separately on retry.
- * Point callers bind the original table/coordinate; range callers require a
- * homogeneous snapshot segment, not merely a route for its lower endpoint.
- * Untrusted or uncaptured grants must use NO_SNAPSHOT and exact validation. */
+ * Incoming snapshot numbers are labels, not proof of routing provenance.
+ * Point and whole-range admission always validate captured local metadata. */
 #define MAKO_SHARD_NO_SNAPSHOT UINT64_MAX
 typedef struct MakoShardRoute {
     MakoShardGrant grant;
@@ -46,18 +45,14 @@ enum MakoShardStatus {
 };
 
 /* These functions target the process's initialized native participant/cache.
- * Disabled cluster configuration is detected by the C++ caller, not treated as
- * successful ownership by these functions. Acquiring a lease and checking the
- * local role/incarnation take the same Rust mutex. A successful lease remains
- * held across storage access, transaction retries, validation and cleanup until
- * the terminal finish call. All engine reads, including scan scopes, pin leases.
- */
+ * Disabled configuration is detected by C++ and never grants ownership here.
+ * Ordinary accesses use the retained immutable read context below. */
 uint32_t mako_sharding_route(uint64_t table, MakoShardBytes coordinate,
                              MakoShardRoute* route);
 uint32_t mako_sharding_enabled(void);
 uint32_t mako_sharding_active(uint32_t participant);
 /* Separate from local activation: true only after every fixed peer loaded the
- * same catalog. Ordinary leases fail closed until this bootstrap barrier. */
+ * same catalog. Ordinary admission fails closed until this bootstrap barrier. */
 uint32_t mako_sharding_ready(uint32_t participant);
 /* Startup only: wait for the native catalog handshake before releasing ordinary
  * workers. No engine, participant, or host ownership lock may span this call. */
@@ -69,18 +64,42 @@ uint32_t mako_sharding_replication_replay(uint32_t replicated);
 /* Benchmark-only fixed-live shutdown barrier on the existing shared sync
  * filesystem (UTF-8 path). Call after this owner's ordinary workers join and
  * acknowledge all terminal RPCs; keep every data/control listener alive until
- * it returns OK. Includes pending migration terminal receipts. Not a lease
+ * it returns OK. Includes pending migration terminal receipts. Not an admission
  * bypass. Per-run marker directories remain until external run cleanup. */
 uint32_t mako_sharding_quiesce(uint32_t participant, MakoShardBytes sync_directory);
-uint32_t mako_sharding_lease_begin(uint32_t participant, MakoShardTxn transaction);
-uint32_t mako_sharding_lease_acquire(uint32_t participant, MakoShardTxn transaction,
-                                     uint64_t table, MakoShardBytes coordinate,
-                                     MakoShardRoute route);
-uint32_t mako_sharding_lease_acquire_range(uint32_t participant, MakoShardTxn transaction,
-                                           uint64_t table, MakoShardBytes lo,
-                                           uint32_t has_hi, MakoShardBytes hi,
-                                           MakoShardRoute route);
-uint32_t mako_sharding_lease_finish(uint32_t participant, MakoShardTxn transaction);
+/* One active logical context per worker. Caller must first safely pin the
+ * nonzero STO epoch and retain it across retries, engine effects and cleanup.
+ * Begin captures immutable metadata on owner/epoch cache miss; a cache hit
+ * allocates nothing, clones no Arc and acquires no participant/registry mutex.
+ * Nested operations reuse the active context; another begin returns BUSY.
+ * The pointer is thread-bound and valid only until end. The TLS allocation is
+ * reused: never retain/use an ended handle, even if its address recurs.
+ * End follows actual engine cleanup and precedes leaving the STO guard. No
+ * callback may end a context while one of its borrowed calls is in progress.
+ * Begin checks readiness/stop/metadata fences even on cache hits. Later changes
+ * do not revoke an admitted view. Owners keep engine/host storage alive until
+ * admitted work ends; protected calls do not poll readiness or current epochs. */
+typedef struct MakoShardRead MakoShardRead;
+// @unsafe - caller pins epoch first; out is writable, failure writes null.
+uint32_t mako_sharding_read_begin(uint32_t owner, uint64_t epoch, const MakoShardRead** out);
+// @unsafe - same-thread terminal cleanup only; null is harmless.
+void mako_sharding_read_end(const MakoShardRead* read);
+// @unsafe - out is writable (cleared on failure); active same-thread read required.
+// Nonzero opaque cache-incarnation ID, stable across transactions/epoch refreshes
+// only while the retained Node and full admission view are unchanged. Distinct
+// worker caches and A->B->A replacements get distinct IDs. Not an authorization:
+// begin-time readiness, transaction-scoped admission and exact wire checks apply.
+uint32_t mako_sharding_read_view_id(const MakoShardRead* read, uint64_t* out);
+// @unsafe - coordinate and output are borrowed for this call.
+uint32_t mako_sharding_read_route(const MakoShardRead* read, uint64_t table,
+                                  MakoShardBytes coordinate, MakoShardRoute* route);
+// @unsafe - coordinate is borrowed; exact captured metadata authorizes it.
+uint32_t mako_sharding_read_point(const MakoShardRead* read, uint64_t table,
+                                  MakoShardBytes coordinate, MakoShardRoute route);
+// @unsafe - every coordinate of the nonempty half-open range is checked.
+uint32_t mako_sharding_read_range(const MakoShardRead* read, uint64_t table,
+                                  MakoShardBytes lo, uint32_t has_hi,
+                                  MakoShardBytes hi, MakoShardRoute route);
 
 /* Catalog construction precedes loading/activation. Identity and table kind
  * are explicit; an unknown table never means an unmanaged successful access. */
@@ -108,6 +127,10 @@ uint32_t mako_sharding_warehouse_register(uint64_t table, uint32_t warehouse,
 uint32_t mako_sharding_warehouse_resolve(uint64_t table, uint32_t warehouse,
                                          uint32_t participant, uintptr_t* handle,
                                          MakoShardGrant* grant);
+// Select from the existing complete grant; never refresh routing or authorize bytes.
+uint32_t mako_sharding_warehouse_select(uint64_t table, uint32_t warehouse,
+                                        uint32_t participant, MakoShardGrant grant,
+                                        uintptr_t* handle);
 uint32_t mako_sharding_warehouse_local(uint64_t table, uint32_t warehouse,
                                        uint32_t owner, uintptr_t* handle);
 uint32_t mako_sharding_local_table(uint64_t table, MakoShardBytes coordinate,

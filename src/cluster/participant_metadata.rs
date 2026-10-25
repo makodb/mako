@@ -24,6 +24,23 @@ pub open spec fn meta_route(p: Seq<MetaBoundary>, k: Seq<u8>) -> Option<ReplicaM
     else if crate::bytes::cmp_spec(p.last().start@,k) <= 0 { Some(p.last().meta) }
     else { meta_route(p.drop_last(),k) }
 }
+
+pub open spec fn same_boundaries(a: Seq<MetaBoundary>, b: Seq<MetaBoundary>) -> bool {
+    a.len() == b.len() && forall|i:int| 0 <= i < a.len() ==>
+        a[i].start@ == b[i].start@ && a[i].meta == b[i].meta
+}
+pub proof fn same_meta_routes(a: Seq<MetaBoundary>, b: Seq<MetaBoundary>, key: Seq<u8>)
+    requires same_boundaries(a,b),
+    ensures meta_route(a,key) == meta_route(b,key),
+    decreases a.len(),
+{
+    if a.len() > 0 {
+        if crate::bytes::cmp_spec(a.last().start@,key) > 0 {
+            assert(same_boundaries(a.drop_last(),b.drop_last()));
+            same_meta_routes(a.drop_last(),b.drop_last(),key);
+        }
+    }
+}
 pub proof fn selected_meta(p: Seq<MetaBoundary>, i: int, k: Seq<u8>)
     requires 0 <= i < p.len(), crate::bytes::cmp_spec(p[i].start@,k) <= 0,
         forall|j: int| i < j < p.len() ==> crate::bytes::cmp_spec(#[trigger] p[j].start@,k) > 0,
@@ -162,7 +179,31 @@ fn below_slice(k: &[u8], hi: Option<&[u8]>) -> (yes: bool)
     match hi { Some(h) => compare(k,h) < 0, None => true }
 }
 impl MetaTable {
-    pub(super) fn serving_range(&self, lo: &[u8], hi: Option<&[u8]>, ownership_version: u64) -> (yes: bool)
+    /// Publication-only deep copy, preserving every interval and all absences.
+    pub(crate) fn admission_copy(&self) -> (out: Self)
+        ensures same_boundaries(out.boundaries@,self.boundaries@),
+            meta_wf(out.boundaries@) == meta_wf(self.boundaries@),
+            forall|key:Seq<u8>|meta_route(out.boundaries@,key)==meta_route(self.boundaries@,key),
+    {
+        let mut boundaries = Vec::new();
+        let mut i = 0usize;
+        while i < self.boundaries.len()
+            invariant i <= self.boundaries.len(),
+                same_boundaries(boundaries@,self.boundaries@.take(i as int)),
+            decreases self.boundaries.len() - i,
+        {
+            let b = &self.boundaries[i];
+            boundaries.push(MetaBoundary { start: copy_bytes(&b.start), meta: b.meta });
+            i += 1;
+        }
+        proof {
+            assert forall|key:Seq<u8>|meta_route(boundaries@,key)==meta_route(self.boundaries@,key) by {
+                same_meta_routes(boundaries@,self.boundaries@,key);
+            }
+        }
+        Self { boundaries }
+    }
+    pub(crate) fn serving_range(&self, lo: &[u8], hi: Option<&[u8]>, ownership_version: u64) -> (yes: bool)
         ensures yes && meta_wf(self.boundaries@) ==> forall|k: Seq<u8>|
             crate::directory::inside(k,lo@,crate::directory::hi_view(hi)) ==>
                 meta_route(self.boundaries@,k).is_some()
@@ -307,7 +348,7 @@ impl MetaTable {
         proof { if meta_wf(self.boundaries@) { selected_meta(self.boundaries@,lo as int-1,coordinate@); } }
         Some(lo - 1)
     }
-    pub(super) fn lookup(&self, coordinate: &[u8]) -> (out: Option<ReplicaMeta>)
+    pub(crate) fn lookup(&self, coordinate: &[u8]) -> (out: Option<ReplicaMeta>)
         ensures meta_wf(self.boundaries@) ==> out == meta_route(self.boundaries@,coordinate@),
     {
         match self.index(coordinate) { Some(i) => Some(self.boundaries[i].meta), None => None }

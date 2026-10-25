@@ -6,7 +6,7 @@
 #include <rusty/option.hpp>
 #include "benchmarks/tpcc_sharding.h"
 #include "lib/table_registry.h"
-#include "lib/sharding_leases.h"
+#include "lib/sharding_admission.h"
 #include "storage/abstract_db.h"
 
 namespace mako {

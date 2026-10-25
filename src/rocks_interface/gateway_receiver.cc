@@ -32,7 +32,7 @@ void ShardReceiver::ClientRoute(const MakoGatewayRequest& req, MakoGatewayRespon
     if (table <= 0 || table > UINT16_MAX) return;
     resp.physical_table = static_cast<uint32_t>(table);
     resp.owner = static_cast<uint32_t>(TThread::get_shard_index());
-    if (sharding_leases_enabled()) {
+    if (sharding_admission_enabled()) {
         auto binding = get_table_registry().native_binding(table);
         if (binding.is_none()) return;
         const auto& b = *binding.as_ref().unwrap();
@@ -77,16 +77,18 @@ void ShardReceiver::ClientRoute(const MakoGatewayRequest& req, MakoGatewayRespon
     resp.outcome = MAKO_GATEWAY_COMMITTED;
 }
 
-// @unsafe - sole production gateway storage callback. Rust admitted this exact
-// request before entry. Engine lifetime hooks, not a detached permission bit,
-// protect every read/write until actual commit/abort cleanup has completed.
+// @unsafe - Rust fences the client identity; this callback authorizes storage
+// against the epoch-pinned immutable view. Engine and logical guards survive
+// every read/write through actual commit/abort and terminal cleanup.
 void ShardReceiver::ExecuteClientOperation(void* context, const MakoGatewayRequest* req,
                                            MakoGatewayResponse* resp) {
     auto* receiver = static_cast<ShardReceiver*>(context);
     resp->status = ErrorCode::ERROR;
     resp->outcome = MAKO_GATEWAY_ABORTED;
     if (req->physical_table > UINT16_MAX || req->key_length >= max_key_length
-        || req->value_length >= max_value_length) return;
+        || req->value_length >= max_value_length
+        || req->coordinate_length > sizeof(req->coordinate)
+        || req->coordinate_length > sizeof(ShardingRequest::coordinate)) return;
     // Do not bind over, abort, or finish another live participant's staged work.
     if (TThread::txn && TThread::txn->has_staged_items()) {
         resp->status = ErrorCode::SERVER_BUSY;
@@ -118,7 +120,7 @@ void ShardReceiver::ExecuteClientOperation(void* context, const MakoGatewayReque
         if (req->owner != static_cast<uint32_t>(TThread::get_shard_index())) {
             // Client-only ephemeral endpoint cannot collide with a benchmark
             // worker listener. Its helper partition is the existing partition0.
-            // It has no native ingress lease; the destination owns that lifetime.
+            // No local storage is touched; the destination owns the read lifetime.
             struct Forwarder {
                 int owner;
                 rusty::Box<ShardClient> client;
@@ -144,16 +146,18 @@ void ShardReceiver::ExecuteClientOperation(void* context, const MakoGatewayReque
             if (!sharding_bind_request(sharding)) return;
             bound = true;
             const int table = sharding_request_table(sharding, req->physical_table);
-            if (table <= 0 || table > UINT16_MAX) {
-                sharding_finish_request();
-                return;
-            }
+            if (table <= 0 || table > UINT16_MAX)
+                throw abstract_db::abstract_abort_exception();
             // Reject a fenced incarnation before invoking any engine effect.
-            // RunNontxnOp's local wrapper reuses this same exact held lease.
+            // RunNontxnOp's local wrapper reuses this exact epoch-pinned view.
             sharding_require_point(table, key.data(), key.size());
             attempted = true;
             resp->status = receiver->RunNontxnOp(kind, static_cast<uint16_t>(table),
                                                 key, value, &result, &output);
+            // Early/busy returns may leave only the helper placeholder alive.
+            // Binding acquired its engine guard, so settle it before the read.
+            if (sharding_has_request() && TThread::txn && TThread::txn->in_progress())
+                TThread::txn->silent_abort();
             sharding_finish_request(); // follows actual engine completion
             bound = false;
         }
@@ -177,7 +181,11 @@ void ShardReceiver::ExecuteClientOperation(void* context, const MakoGatewayReque
         // No exception crosses Rust. If completion cannot be established, the
         // retained unknown result fences the stream instead of guessing success.
         if (bound) {
-            try { sharding_finish_request(); }
+            try {
+                if (sharding_has_request() && TThread::txn && TThread::txn->in_progress())
+                    TThread::txn->silent_abort();
+                sharding_finish_request();
+            }
             catch (...) { resp->outcome = MAKO_GATEWAY_UNKNOWN; }
         }
     }

@@ -73,4 +73,25 @@ TEST_F(ShardRouterTest, CanonicalBindingIsImmutable) {
     EXPECT_EQ(0u, binding.as_ref().unwrap()->kind);
     EXPECT_TRUE(binding.as_ref().unwrap()->fixed_coordinate.is_none());
 }
+
+// @unsafe - the retained Arc allocation, not a registry bucket, owns this borrow.
+TEST_F(ShardRouterTest, RetainedBindingSurvivesRegistryGrowthAndRelease) {
+    auto& registry = get_table_registry();
+    const std::string coordinate("\0\0\0\1", 4);
+    registry.register_table(1, "retained", 0);
+    ASSERT_TRUE(registry.bind_native("retained", 7001, rusty::Some(coordinate), 0));
+    auto retained = registry.native_binding(1).unwrap();
+    const auto& binding = *retained;
+    for (int id = 2; id < 2048; ++id) {
+        const auto name = "growth_" + std::to_string(id);
+        registry.register_table(id, name, 0);
+        ASSERT_TRUE(registry.bind_native(name, 8000 + id, rusty::None, 0));
+    }
+    EXPECT_EQ(&binding, &*registry.native_binding(1).unwrap());
+    registry.clear(); // test-only registry teardown must not dangle retained owners
+    EXPECT_EQ(7001u, binding.table);
+    EXPECT_EQ(0u, binding.kind);
+    ASSERT_TRUE(binding.fixed_coordinate.is_some());
+    EXPECT_EQ(coordinate, binding.fixed_coordinate.as_ref().unwrap());
+}
 } // namespace mako

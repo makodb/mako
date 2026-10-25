@@ -1,26 +1,22 @@
-//! Local metadata and exact admissions. The embedding driver holds one mutex
-//! across these methods and the native storage operation they authorize.
-//! Storage completion is represented by unforgeable driver-owned capabilities;
-//! a successful metadata transition alone is never a cleanup acknowledgement.
+//! Authoritative local interval metadata and conditional durable admissions.
+//! Native data accesses use an immutable epoch_admission copy; native control
+//! still serializes mutations here. The separate durable library retains exact
+//! lease algorithms. Storage completion capabilities do not prove STO drainage.
 use vstd::prelude::*;
+#[cfg(verus_keep_ghost)]
+use vstd::std_specs::iter::IteratorSpec;
 use std::collections::HashMap;
 use crate::bytes::{compare, contains};
 use crate::directory::RouteTable;
 use crate::leases::LeaseRegistry;
 use crate::types::*;
 use crate::storage::{CompletedCopy, CompletedCleanup};
-use crate::routing::Snapshot;
 #[path = "participant_metadata.rs"]
 mod metadata;
 pub use metadata::*;
 #[cfg(verus_keep_ghost)]
 #[path = "participant_control_proofs.rs"]
 mod control_proofs;
-#[path = "participant_admission.rs"]
-mod admission;
-#[cfg(all(test, not(verus_keep_ghost)))]
-#[path = "participant_admission_tests.rs"]
-mod admission_tests;
 
 verus! {
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -82,22 +78,11 @@ pub struct Participant {
     tables: HashMap<u64, MetaTable>,
     leases: LeaseRegistry,
     receipts: HashMap<u64, Receipt>,
-    fast_version: Option<u64>,
-    certified: Ghost<Option<crate::routing::Snapshot>>,
 }
 
 impl Participant {
-    pub closed spec fn certified_snapshot(&self) -> Option<Snapshot> { self.certified@ }
-    pub closed spec fn certification_wf(&self) -> bool {
-        match self.fast_version {
-            None => self.certified@ == None,
-            Some(v) => v != NO_SNAPSHOT && self.certified@.is_some()
-                && self.certified@.unwrap().version == v
-                && self.snapshot_authority(self.certified@.unwrap()),
-        }
-    }
     pub closed spec fn wf(&self) -> bool {
-        self.leases.wf() && self.certification_wf()
+        self.leases.wf()
             && forall|table: u64| self.tables@.contains_key(table) ==> meta_wf(self.tables@[table].boundaries@)
     }
     pub closed spec fn lease_view(&self) -> Map<u64,crate::leases::SessionView> { self.leases@ }
@@ -203,7 +188,6 @@ impl Participant {
 
     pub fn new(owner: u32, tables: Vec<RouteTable>) -> (out: Result<Self,Status>)
         ensures match out { Ok(p) => p.wf() && p.owner_view()==owner
-            && p.certified_snapshot() == None
             && p.lease_view()==Map::<u64,crate::leases::SessionView>::empty()
             && p.bootstrap_view(owner,tables@)
             && forall|g:u64| !p.has_receipt(g), Err(_) => true },
@@ -272,8 +256,7 @@ impl Participant {
                 }
             }
         }
-        let p=Self { owner, tables: local, leases: LeaseRegistry::new(), receipts: HashMap::new(),
-            fast_version: None, certified: Ghost(None) };
+        let p=Self { owner, tables: local, leases: LeaseRegistry::new(), receipts: HashMap::new() };
         proof{
             assert(p.wf());
             assert(p.receipt_view() =~= Map::<u64,ReceiptView>::empty());
@@ -314,6 +297,105 @@ impl Participant {
         ensures self.open_range(id,table,lo,hi,grant),
     {}
     pub fn owner(&self) -> (out: u32) ensures out == self.owner_view(), { self.owner }
+    /// Copy the authoritative domain, not just tables present in routing.
+    /// Physical warehouse aliases and absent tables therefore retain their
+    /// exact meaning even when the routing publication has a different domain.
+    pub(crate) fn admission_tables(&self) -> (out: HashMap<u64,MetaTable>)
+        requires self.wf(),
+        ensures out@.dom() == self.table_ids(),
+            forall|table:u64|out@.contains_key(table) ==> meta_wf(out@[table].boundaries@),
+            forall|table:u64,key:Seq<u8>|self.local_meta(table,key) ==
+                if out@.contains_key(table) {meta_route(out@[table].boundaries@,key)} else {None},
+    {
+        let mut out: HashMap<u64,MetaTable> = HashMap::new();
+        let mut keys = self.tables.keys();
+        loop
+            invariant
+                IteratorSpec::decrease(&keys).is_some(),
+                out@.dom().subset_of(self.tables@.dom()),
+                IteratorSpec::remaining(&keys).unref().to_set().subset_of(self.tables@.dom()),
+                out@.dom().union(IteratorSpec::remaining(&keys).unref().to_set()) == self.tables@.dom(),
+                forall|table:u64|out@.contains_key(table) ==> meta_wf(out@[table].boundaries@)
+                    && forall|key:Seq<u8>|meta_route(out@[table].boundaries@,key)==self.local_meta(table,key),
+                self.wf(),
+            decreases IteratorSpec::decrease(&keys).unwrap(),
+        {
+            let ghost remaining = IteratorSpec::remaining(&keys);
+            let ghost previous = out@;
+            let table = match keys.next() {
+                Some(table) => table,
+                None => {
+                    proof {
+                        assert(remaining.len() == 0);
+                        assert(remaining.unref().to_set() =~= Set::<u64>::empty());
+                        assert(out@.dom() == self.table_ids());
+                        assert forall|table:u64,key:Seq<u8>| self.local_meta(table,key) ==
+                            if out@.contains_key(table) {meta_route(out@[table].boundaries@,key)} else {None} by {
+                            if out@.contains_key(table) {
+                                assert(meta_route(out@[table].boundaries@,key)==self.local_meta(table,key));
+                            } else {
+                                assert(!self.tables@.contains_key(table));
+                            }
+                        }
+                    }
+                    return out;
+                },
+            };
+            proof {
+                // Connect next's reference-valued head/tail contract to the
+                // value-valued domain partition; no executable key copy is needed.
+                let rest = IteratorSpec::remaining(&keys);
+                assert(remaining.len() > 0 && remaining[0] == table);
+                assert(rest == remaining.drop_first());
+                assert(remaining.unref()[0] == *table);
+                remaining.unref().to_set_ensures();
+                rest.unref().to_set_ensures();
+                assert(remaining.unref().to_set().contains(*table));
+                assert(self.tables@.contains_key(*table));
+                assert forall|t:u64| remaining.unref().to_set().contains(t)
+                    <==> rest.unref().to_set().insert(*table).contains(t) by {
+                    if remaining.unref().to_set().contains(t) {
+                        let i = choose|i:int| 0 <= i < remaining.unref().len()
+                            && remaining.unref()[i] == t;
+                        if i > 0 {
+                            assert(rest.unref()[i-1] == t);
+                            assert(rest.unref().to_set().contains(t));
+                        } else {
+                            assert(t == *table);
+                        }
+                    }
+                    if rest.unref().to_set().contains(t) {
+                        let i = choose|i:int| 0 <= i < rest.unref().len()
+                            && rest.unref()[i] == t;
+                        assert(remaining.unref()[i+1] == t);
+                        assert(remaining.unref().to_set().contains(t));
+                    }
+                }
+                assert(remaining.unref().to_set() =~= rest.unref().to_set().insert(*table));
+            }
+            let value = self.tables.get(table).unwrap();
+            let copied = value.admission_copy();
+            let ghost copied_boundaries = copied.boundaries@;
+            out.insert(*table,copied);
+            proof {
+                let rest = IteratorSpec::remaining(&keys).unref().to_set();
+                assert(out@.dom() =~= previous.dom().insert(*table));
+                assert(out@.dom().subset_of(self.tables@.dom()));
+                assert(rest.subset_of(self.tables@.dom()));
+                assert(out@.dom().union(rest) =~= self.tables@.dom());
+                assert forall|t:u64| out@.contains_key(t) implies meta_wf(out@[t].boundaries@)
+                    && forall|key:Seq<u8>|meta_route(out@[t].boundaries@,key)==self.local_meta(t,key) by {
+                    if t == *table {
+                        assert(out@[t].boundaries@ == copied_boundaries);
+                        assert(*value == self.tables@[t]);
+                    } else {
+                        assert(previous.contains_key(t));
+                        assert(out@[t] == previous[t]);
+                    }
+                }
+            }
+        }
+    }
     pub fn meta(&self, table: u64, coordinate: &[u8]) -> (out: Option<ReplicaMeta>)
         ensures self.table_wf(table) ==> out == self.local_meta(table,coordinate@),
     {
@@ -676,7 +758,6 @@ impl Participant {
     pub fn deliver(&mut self, plan: &MigrationPlan, command: Command) -> (out: ControlResult)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).lease_view() == old(self).lease_view(),
-            final(self).certified_snapshot() == None,
             final(self).owner_view() == old(self).owner_view(),
             final(self).table_ids()==old(self).table_ids(),
             final(self).receipt_view()==if out.status==Status::Ok && !old(self).command_seen(plan.generation,command){
@@ -705,7 +786,6 @@ impl Participant {
                 && (forall|k: Seq<u8>| crate::bytes::contains_spec(plan.range,plan.range.table,k) ==>
                     old(self).command_at(*plan,command,old(self).drained_view(plan.range),k)),
     {
-        self.invalidate_snapshot();
         if !self.envelope(plan) { return ControlResult::status(Status::Invalid); }
         let mask = bit(command);
         let mut receipt = match self.receipts.get(&plan.generation) {
@@ -847,6 +927,30 @@ impl Participant {
             self.local_meta(plan.range.table,k).is_some()
             && role_spec(self.local_meta(plan.range.table,k).unwrap(),plan.generation,role,round,terminal)
     }
+    /// Native control metadata only: the host's generation-bound STO cut,
+    /// not the conditional durable lease registry, supplies quiescence.
+    pub(crate) fn frozen_source(&self, plan:&MigrationPlan) -> (yes:bool)
+        requires self.wf(),
+        ensures yes == (self.envelope_view(*plan) && self.owner_view()==plan.source
+            && self.range_role(*plan,Role::Frozen,None,false)),
+    {
+        self.envelope(plan) && self.owner==plan.source && self.all_role(plan,Role::Frozen,None,false)
+    }
+    pub(crate) fn background_destination(&self, plan:&MigrationPlan) -> (yes:bool)
+        requires self.wf(),
+        ensures yes == (self.envelope_view(*plan) && self.owner_view()==plan.destination
+            && self.range_role(*plan,Role::Stage,Some(0),false)),
+    {
+        self.envelope(plan) && self.owner==plan.destination && self.all_role(plan,Role::Stage,Some(0),false)
+    }
+    pub(crate) fn background_source(&self, plan:&MigrationPlan) -> (yes:bool)
+        requires self.wf(),
+        ensures yes == (self.envelope_view(*plan) && self.owner_view()==plan.source
+            && forall|key:Seq<u8>|crate::bytes::contains_spec(plan.range,plan.range.table,key) ==>
+                self.command_at(*plan,Command::Freeze,false,key)),
+    {
+        self.envelope(plan) && self.owner==plan.source && self.range_guard(plan,Command::Freeze,false)
+    }
     pub closed spec fn cleanup_pending(&self, plan: MigrationPlan) -> bool {
         self.receipts@.contains_key(plan.generation)
             && !self.receipts@[plan.generation].complete
@@ -941,7 +1045,6 @@ impl Participant {
     pub(crate) fn seal(&mut self, plan: &MigrationPlan, completed: &CompletedCopy) -> (out: ControlResult)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).lease_view() == old(self).lease_view(),
-            final(self).certified_snapshot() == None,
             final(self).owner_view() == old(self).owner_view(),
             final(self).table_ids()==old(self).table_ids(),
             out.cleanup==Cleanup::None,
@@ -963,7 +1066,6 @@ impl Participant {
                     old(self).local_meta(plan.range.table,k).is_some()
                     && role_spec(old(self).local_meta(plan.range.table,k).unwrap(),plan.generation,Role::Stage,Some(1),false)),
     {
-        self.invalidate_snapshot();
         if !self.envelope(plan) || self.owner != plan.destination || !completed.matches(plan,self.owner) {
             return ControlResult::status(Status::Invalid);
         }
@@ -993,7 +1095,6 @@ impl Participant {
     pub(crate) fn complete_cleanup(&mut self, plan: &MigrationPlan, completed: CompletedCleanup) -> (out: ControlResult)
         requires old(self).wf(),
         ensures final(self).wf(), final(self).lease_view() == old(self).lease_view(), final(self).local_unchanged(*old(self)),
-            final(self).certified_snapshot() == None,
             final(self).table_ids()==old(self).table_ids(),
             out.cleanup==Cleanup::None,
             final(self).receipt_view()==if out.status==Status::Ok{
@@ -1013,7 +1114,6 @@ impl Participant {
                     old(self).local_meta(plan.range.table,k).is_some()
                     && role_spec(old(self).local_meta(plan.range.table,k).unwrap(),plan.generation,Role::Empty,None,true),
     {
-        self.invalidate_snapshot();
         if !self.envelope(plan) || !completed.matches(plan,self.owner) { return ControlResult::status(Status::Invalid); }
         let mut receipt = match self.receipts.get(&plan.generation) { Some(r) => *r, None => return ControlResult::status(Status::Retry) };
         if matches!(receipt.cleanup,Cleanup::None) { return ControlResult::status(Status::Invalid); }

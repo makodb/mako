@@ -210,10 +210,12 @@ fn participant_incomplete_journal_is_retained_without_any_append_admission() {
         let plan = MigrationPlan { generation: 1, nonce: NONCE, source: 0, destination: 1,
             range: range(), old: vec![Boundary { start: vec![], grant: Grant { owner: 0, ownership_version: 0 } }] };
         let plan = crate::wire::encode_plan(&plan).unwrap();
-        let grant = Grant { owner: 0, ownership_version: 0 };
         let result = ControlResult { status: Status::Ok, certificate: None, cleanup: Cleanup::None };
         let mut live = ParticipantLog::new(0, 2, IDENTITY, Some(&path), true).unwrap();
-        live.record(Event::Begin(NONCE)).unwrap();
+        live.record(Event::Control {
+            operation: crate::wire::command_operation(crate::types::Command::Freeze),
+            plan: &plan, result: &result,
+        }).unwrap();
         if transfer_started {
             live.record(Event::Transfer { plan: &plan, cleanup: false, result: None }).unwrap();
         }
@@ -221,10 +223,6 @@ fn participant_incomplete_journal_is_retained_without_any_append_admission() {
         let mut retained = ParticipantLog::new(0, 2, IDENTITY, Some(&path), false).unwrap();
         assert!(retained.recovered());
         for event in [
-            Event::Begin(TxnId { client: NONCE.client, sequence: 2 }),
-            Event::Acquire { id: NONCE, table: TABLE, coordinate: b"m", grant },
-            Event::Range { id: NONCE, table: TABLE, lo: b"m", hi: Some(b"n"), grant },
-            Event::Finish(NONCE),
             Event::Control { operation: crate::wire::DRAIN, plan: &plan, result: &result },
             Event::Transfer { plan: &plan, cleanup: false, result: None },
             Event::Transfer { plan: &plan, cleanup: false, result: Some(&result) },
@@ -248,8 +246,7 @@ fn participant_incomplete_journal_is_retained_without_any_append_admission() {
 fn malformed_committed_participant_payload_refuses_startup() {
     let directory = Directory::new();
     let path = directory.database("participant");
-    let mut live = ParticipantLog::new(0, 2, IDENTITY, Some(&path), true).unwrap();
-    live.record(Event::Begin(NONCE)).unwrap();
+    let live = ParticipantLog::new(0, 2, IDENTITY, Some(&path), true).unwrap();
     drop(live);
     {
         let mut kv = RocksKv::open(&path, false).unwrap();

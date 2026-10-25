@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <string.h>
 #include <stdlib.h>
+#include <limits>
 
 #include "Transaction.hh"
 #include "MassTrans.hh"
@@ -18,10 +19,10 @@ import std;
 #define MAX(a,b) ((a)>(b)?(a):(b))
 #endif
 
-std::function<int()> callback_ = nullptr;
-// @safe
-void register_sync_util(std::function<int()> cb) {
-    callback_ = cb;
+rusty::Function<int()> callback_;
+// @safe - transfer ownership of the configured term callback.
+void register_sync_util(rusty::Function<int()> cb) {
+    callback_ = std::move(cb);
 }
 
 Transaction::testing_type Transaction::testing;
@@ -55,7 +56,7 @@ Transaction::epoch_state __attribute__((aligned(128))) Transaction::global_epoch
 __thread Transaction *TThread::txn = nullptr;
 __thread mako::ShardClient *TThread::sclient = nullptr;
 __thread HashWrapper *TThread::tprops = nullptr;
-std::function<void(threadinfo_t::epoch_type)> Transaction::epoch_advance_callback;
+rusty::Function<void(Transaction::epoch_type)> Transaction::epoch_advance_callback;
 #if defined(SIMPLE_WORKLOAD)
 TransactionTid::type __attribute__((aligned(128))) Transaction::_TID = 1;
 #else
@@ -97,32 +98,150 @@ void Transaction::refresh_tset_chunk() {
     tset_next_ = tset_[tset_size_ / tset_chunk];
 }
 
-// @unsafe: uses fetch_and_add, usleep, and global epoch manipulation
-void* Transaction::epoch_advancer(void*) {
-    static int num_epoch_advancers = 0;
-    if (fetch_and_add(&num_epoch_advancers, 1) != 0)
-        std::cerr << "WARNING: more than one epoch_advancer thread\n";
+// @unsafe - shared by ordinary, helper, transfer and replay initialization.
+// Slots are never recycled while a prior worker might still publish to them.
+void Transaction::register_thread() {
+    static std::atomic<unsigned> next_worker{0};
+    static thread_local int registered_worker = -1;
+    if (registered_worker < 0) {
+        const auto worker = next_worker.fetch_add(1, std::memory_order_relaxed);
+        always_assert(worker < MAX_THREADS);
+        registered_worker = static_cast<int>(worker);
+    }
+    TThread::set_id(registered_worker);
+}
 
-    // don't bother epoch'ing til things have picked up
-    usleep(100000);
-    while (global_epochs.run) {
-        epoch_type g = global_epochs.global_epoch;
-        epoch_type e = g;
-        for (auto& t : tinfo) {
-            if (t.epoch != 0 && signed_epoch_type(t.epoch - e) < 0)
-                e = t.epoch;
+// @unsafe - one worker owns its slot/depth. Sequential consistency orders entry
+// against cut scans: an announcement missed by a scan must fail the recheck.
+Transaction::epoch_type Transaction::epoch_enter() {
+    const int worker = TThread::id();
+    always_assert(worker >= 0 && worker < MAX_THREADS);
+    auto& thr = tinfo[worker];
+    if (thr.epoch_depth != 0) {
+        if (thr.epoch_depth == std::numeric_limits<unsigned>::max()) return 0;
+        ++thr.epoch_depth;
+        return thr.epoch.load(std::memory_order_seq_cst);
+    }
+    for (;;) {
+        const auto sampled = global_epochs.global_epoch.load(std::memory_order_seq_cst);
+        if (sampled == std::numeric_limits<epoch_type>::max()) return 0;
+        thr.epoch.store(sampled, std::memory_order_seq_cst);
+        if (global_epochs.global_epoch.load(std::memory_order_seq_cst) == sampled) {
+            thr.epoch_depth = 1;
+            return sampled;
         }
-        global_epochs.global_epoch = std::max(g + 1, epoch_type(1));
-        global_epochs.active_epoch = e;
-        global_epochs.recent_tid = Transaction::_TID;
+        thr.epoch.store(0, std::memory_order_seq_cst);
+    }
+}
 
-        if (epoch_advance_callback)
-            epoch_advance_callback(global_epochs.global_epoch);
+// @unsafe - the oldest announcement survives until every nested owner leaves.
+void Transaction::epoch_leave() {
+    const int worker = TThread::id();
+    always_assert(worker >= 0 && worker < MAX_THREADS);
+    auto& thr = tinfo[worker];
+    always_assert(thr.epoch_depth != 0);
+    if (--thr.epoch_depth == 0)
+        thr.epoch.store(0, std::memory_order_seq_cst);
+}
 
+// @safe - the timer and migration fences advance the same nonwrapping clock.
+Transaction::epoch_type Transaction::epoch_cut() {
+    auto old = global_epochs.global_epoch.load(std::memory_order_seq_cst);
+    for (;;) {
+        if (old == std::numeric_limits<epoch_type>::max()) return 0;
+        if (global_epochs.global_epoch.compare_exchange_weak(
+                old, old + 1, std::memory_order_seq_cst))
+            return old + 1;
+    }
+}
+
+// @safe - observes existing announcements without acquiring an epoch guard.
+bool Transaction::epoch_drained(epoch_type cut) {
+    if (cut == 0 || cut > epoch_current()) return false;
+    for (const auto& thr : tinfo) {
+        const auto announced = thr.epoch.load(std::memory_order_seq_cst);
+        if (announced != 0 && announced < cut) return false;
+    }
+    return true;
+}
+
+// @safe - observation is not admission; storage callers must enter a guard.
+Transaction::epoch_type Transaction::epoch_current() {
+    return global_epochs.global_epoch.load(std::memory_order_seq_cst);
+}
+
+// @unsafe - thread-owned engine state and legacy Masstree/RCU callbacks.
+void Transaction::ensure_epoch() {
+    if (engine_epoch_) return;
+    always_assert(TThread::id() == threadid_ && state_ < s_aborted);
+    if (epoch_enter() == 0) throw Abort();
+    engine_epoch_ = true;
+    auto& thr = tinfo[TThread::id()];
+    try {
+        thr.rcu_set.clean_until(global_epochs.active_epoch.load(std::memory_order_seq_cst));
+        if (thr.trans_start_callback) {
+            thr.trans_start_callback();
+            engine_callback_ = true;
+        }
+        mako::sharding_engine_start();
+    } catch (...) {
+        finish_epoch(false);
+        throw;
+    }
+}
+
+// @unsafe - legacy timer/thread API; reclamation follows actual announcements,
+// never an assumed grace period inferred from elapsed timer ticks.
+void* Transaction::epoch_advancer(void*) {
+    static std::atomic<unsigned> num_epoch_advancers{0};
+    if (num_epoch_advancers.fetch_add(1, std::memory_order_relaxed) != 0) {
+        num_epoch_advancers.fetch_sub(1, std::memory_order_relaxed);
+        std::cerr << "WARNING: more than one epoch_advancer thread\n";
+        return nullptr;
+    }
+
+    usleep(100000);
+    while (global_epochs.run.load(std::memory_order_relaxed)) {
+        const auto cut = epoch_cut();
+        if (cut == 0) break;
+        epoch_type oldest = cut;
+        for (const auto& thr : tinfo) {
+            const auto announced = thr.epoch.load(std::memory_order_seq_cst);
+            if (announced != 0 && announced < oldest) oldest = announced;
+        }
+        global_epochs.active_epoch.store(oldest, std::memory_order_seq_cst);
+        global_epochs.recent_tid.store(Transaction::_TID, std::memory_order_relaxed);
+
+        if (epoch_advance_callback) epoch_advance_callback(cut);
         usleep(100000);
     }
-    fetch_and_add(&num_epoch_advancers, -1);
-    return NULL;
+    num_epoch_advancers.fetch_sub(1, std::memory_order_relaxed);
+    return nullptr;
+}
+
+// @unsafe - keep STO announced through legacy end callbacks and sharding
+// completion, including exceptional completion after a failed sharding start.
+void Transaction::finish_epoch(bool committed) {
+    auto& thr = tinfo[TThread::id()];
+    try {
+        if (engine_callback_) {
+            engine_callback_ = false;
+            if (thr.trans_end_callback) thr.trans_end_callback();
+        }
+        state_ = s_aborted + committed;
+        mako::sharding_engine_complete();
+    } catch (...) {
+        state_ = s_aborted + committed;
+        if (engine_epoch_) {
+            engine_epoch_ = false;
+            epoch_leave();
+        }
+        throw;
+    }
+    if (engine_epoch_) {
+        engine_epoch_ = false;
+        epoch_leave();
+    }
 }
 
 // @safe
@@ -240,7 +359,7 @@ void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
         }
     } else {
         // Participants acquire locks while staging, before any try_commit state.
-        // Abort must release those locks before releasing the native lease.
+        // Abort must release those locks before releasing epoch admission.
         if (TThread::mode() == 1 || state_ == s_committing_locked) {
             for (unsigned tidx = tset_size_; tidx != first_write_; --tidx) {
                 const unsigned index = tidx - 1;
@@ -258,14 +377,7 @@ void Transaction::stop(bool committed, unsigned* writeset, unsigned nwriteset) {
     }
 
 after_unlock:
-    // TODO: this will probably mess up with nested transactions
-    threadinfo_t& thr = tinfo[TThread::id()];
-    if (thr.trans_end_callback)
-        thr.trans_end_callback();
-    // XXX should reset trans_end_callback after calling it...
-    state_ = s_aborted + committed;
-    // @unsafe - native scopes outlive unlocks, cleanup, and end callbacks.
-    mako::sharding_engine_complete();
+    finish_epoch(committed);
 }
 
 // @safe
@@ -324,7 +436,7 @@ void Transaction::shard_serialize_util(uint32_t timestamp) {
 
 // @safe
 uint8_t Transaction::get_current_term() const {
-    if(callback_ != nullptr){
+    if (callback_) {
         if(!current_term_)
             current_term_ = callback_();
     }else{
@@ -378,11 +490,7 @@ void Transaction::shard_unlock(bool committed) {
             it->owner()->cleanup(*it, committed);
         }
     }
-    threadinfo_t& thr = tinfo[TThread::id()];
-    if (thr.trans_end_callback)
-        thr.trans_end_callback();
-    state_ = s_aborted + committed;
-    mako::sharding_engine_complete(); // @unsafe - after every physical cleanup
+    finish_epoch(committed);
 }
 
 // @unsafe: complex commit protocol with remote operations, locking, and validation

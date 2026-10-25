@@ -5,7 +5,7 @@
 #include <limits>
 #include <string_view>
 #include "benchmarks/benchmark_config.h"
-#include "lib/sharding_leases.h"
+#include "lib/sharding_admission.h"
 #include "lib/table_registry.h"
 #include "silo_runtime.h"
 #include "storage/mbta_wrapper.hh"
@@ -24,7 +24,7 @@ MakoShardBytes bytes(const std::string& value) {
 }
 
 // @unsafe - brackets only raw engine calls made under Rust's transfer guard.
-// No ordinary lease can be opened while the participant mutex is held here.
+// No ordinary admission can be opened while the participant mutex is held here.
 struct KernelTransaction {
     bool entered;
     KernelTransaction() : entered(sharding_enter_native_kernel()) {}
@@ -142,28 +142,37 @@ mbta_table* physical(NativeShardingHost& host, uint64_t table, bool fixed,
     return index->mbta;
 }
 
-// @unsafe - one ordered engine lookahead. Successful commit precedes publication
-// of copied bytes. OCC conflicts/errors never masquerade as end-of-range.
+// @unsafe - one ordered, committed STO lookahead. Lock each value while copying
+// raw bytes so background precopy can overlap source updates/resizes/deletes.
+// Leaf predicates and read versions are validated before publishing any bytes;
+// conflicts/errors are never EOF, and separate lookaheads are not a snapshot.
 uint32_t scan_one(mbta_table* index, const std::string& start,
                     const std::string* end, bool exclusive,
                     std::string& key, std::string& value) {
     if (!index) return MAKO_SHARD_IO;
     bool found = false;
+    bool malformed = false;
     KernelTransaction kernel;
     if (!kernel.entered) return MAKO_SHARD_INVALID;
     try {
         Sto::start_transaction();
-        index->transQuery(mbta_table::Str(start), end ? mbta_table::Str(*end) : mbta_table::Str(),
+        index->transQuery<true>(mbta_table::Str(start), end ? mbta_table::Str(*end) : mbta_table::Str(),
             [&](mbta_table::Str row_key, std::string& row_value) {
-                if (row_value.size() < mako::EXTRA_BITS_FOR_VALUE) throw Transaction::Abort();
+                if (row_value.size() < mako::EXTRA_BITS_FOR_VALUE) {
+                    malformed = true;
+                    return false;
+                }
                 key.assign(row_key.data(), row_key.length());
                 value.assign(row_value.data(), row_value.size() - mako::EXTRA_BITS_FOR_VALUE);
                 found = true;
                 return false;
             }, nullptr, mbta_table::mythreadinfo, !exclusive);
-        if (TThread::transget_without_throw) return MAKO_SHARD_IO;
-        if (!Sto::try_commit_no_paxos()) return MAKO_SHARD_IO;
+        if (malformed) return MAKO_SHARD_IO;
+        if (TThread::transget_without_throw) return MAKO_SHARD_RETRY;
+        if (!Sto::try_commit_no_paxos()) return MAKO_SHARD_RETRY;
         return found ? MAKO_SHARD_OK : MAKO_SHARD_NOT_FOUND;
+    } catch (const Transaction::Abort&) {
+        return MAKO_SHARD_RETRY;
     } catch (...) {
         return MAKO_SHARD_IO;
     }
@@ -260,11 +269,21 @@ uint32_t put(void* context, uint64_t table, MakoShardBytes coordinate,
 uint32_t remove(void* context, uint64_t table, MakoShardBytes coordinate, MakoShardBytes key) {
     return mutate(context, table, coordinate, key, nullptr);
 }
+// @safe - the runtime publishes Frozen before cutting this existing STO clock.
+uint64_t epoch_cut(void*) {
+    return Transaction::epoch_cut();
+}
+
+// @safe - no thread registration, transaction, or new epoch pin while draining.
+uint32_t epoch_drained(void*, uint64_t cut) {
+    if (cut == 0 || cut > Transaction::epoch_current()) return MAKO_SHARD_INVALID;
+    return Transaction::epoch_drained(cut) ? MAKO_SHARD_OK : MAKO_SHARD_BUSY;
+}
 } // namespace
 
 // @safe - immutable callback table copied by the native Rust runtime.
 MakoShardHost NativeShardingHost::callbacks() {
     return {this, thread_enter, thread_leave, open, scan_next, put, remove,
-             native_sharding_peer_call};
+             native_sharding_peer_call, epoch_cut, epoch_drained};
 }
 } // namespace mako

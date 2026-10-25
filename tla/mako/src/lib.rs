@@ -41,3 +41,10 @@ pub mod sharding_recovery;
 pub mod sharding_progress;
 pub mod sharding_retention;
 pub mod sharding_bytes;
+
+// Proposed lease-free validation protocol; independent of native lease proofs.
+pub mod sharding_commit_validation;
+
+// Proposed reuse of engine epochs for cached admission and drained handoff.
+pub mod sharding_epoch_admission;
+pub mod sharding_epoch_drain;

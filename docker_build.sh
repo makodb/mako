@@ -873,7 +873,8 @@ case "$ACTION" in
         REQUIRED_BINS=("build_docker/dbtest")
         case "${CI_TEST}" in
             nativeShardingSmoke)
-                REQUIRED_BINS=("build_docker/native_sharding_smoke" "build_docker/mako_admin")
+                REQUIRED_BINS=("build_docker/native_sharding_smoke" "build_docker/mako_admin"
+                               "build_docker/test_mako_nontxn_distributed" "build_docker/test_sto_epoch_rcu")
                 ;;
             simpleTransaction)
                 REQUIRED_BINS=("build_docker/simpleTransaction")

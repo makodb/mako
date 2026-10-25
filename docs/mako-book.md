@@ -339,16 +339,20 @@ fixed, live, non-replicated owners. The service retains caller nonces, plans,
 issued controls, receipts and outcomes. Repeating an identical request returns
 its existing generation/outcome; it does not allocate another attempt.
 
-1. **Stage destination and freeze source.** The destination's selected range
-   enters staging under the new generation. The source rejects new admissions
-   for that range while existing leases finish.
-2. **Drain every access lease.** Readers, absent-key observations, range scans
-   and writers all count. Leases remain held through actual engine completion
-   and terminal peer cleanup, not merely until an RPC response or commit decision.
-3. **Exact final mirror.** With the source range stable, merge ordered
-   `(coordinate, row key)` scans, copy actual values and delete destination-only
-   rows. EOF is explicit; an error or short nonempty page is not EOF. Destination
-   readiness requires complete exact coverage, not a checksum.
+1. **Stage and privately pre-copy.** The destination stages under the new
+   generation while the source continues serving. Concurrent source reads use
+   actual STO transactions, not unsynchronized raw storage scans.
+2. **Publish Frozen, cut, and drain.** Publish immutable non-serving metadata
+   before advancing the existing STO global epoch. Retain that same-clock cut
+   and wait for every worker slot to be zero or at least the cut. Old readers,
+   absent reads, scans and writers retain their oldest pin through effects,
+   unlocks, engine cleanup and terminal peer cleanup, including OCC retries.
+3. **Join, fence, and exactly reconcile.** Join background copy and fence its
+   generation/round before final reconciliation. With the source range stable,
+   merge complete ordered `(coordinate, row key)` scans, copy actual values and
+   delete destination-only rows. EOF is explicit; an error or short nonempty
+   page is not EOF. Readiness requires exact coverage, not a checksum or a
+   dirty-only final delta.
 4. **Retire and publish.** Fence the old source incarnation before publishing
    an immutable complete `(owner, ownership_version)` directory snapshot. Unrelated
    intervals retain their routes. A returned owner receives a new ownership version, so an old grant
@@ -358,26 +362,59 @@ its existing generation/outcome; it does not allocate another attempt.
    retains its real partial state and is retried; changing metadata alone is
    not a cleanup acknowledgement.
 
-This implementation deliberately has **no background bulk copy**. The source
-freeze covers the complete final mirror, not a claimed bounded final delta.
+Pre-copy reduces work that may remain but does not bound the final scan or freeze
+duration. Final/Abort/new-move fences reject delayed pre-copy packets.
 Abort before the irrevocable cutover restores source service and cleans staging;
 after the decision, retries complete that decision. Generation, copy-round and
 terminal fences reject delayed authentic controls from older attempts. No timeout
 is interpreted as proof that an effect did not happen.
 
-Ordinary native requests capture the routing snapshot version and range
-ownership grant together. A receiver with a locally certified matching snapshot
-can register the lease without looking up the range metadata. Migration controls
-invalidate that certificate before changing local authority; receiving a new
-snapshot does not by itself authorize a frozen or not-yet-activated range.
-Absent/mismatching certificates fall back to exact ownership validation, so an
-old snapshot can still access an unchanged range. Retries and scan pages retain
-their original paired identity. Untrusted gateway claims use exact validation,
-not the trusted worker shortcut. This optimization does not change lease drain,
-transaction completion, or inspection-only recovery requirements.
+Ordinary native requests use epoch-cached immutable admission. The bridge is
+`src/mako/lib/sharding_admission.{h,cc}` (`sharding_admission_enabled`).
+After safely announcing the existing STO epoch with sample/announce/recheck,
+`mako_sharding_read_begin(owner, epoch, out)` activates a reusable TLS
+`MakoShardRead`. Owner/epoch cache hits compare integers rather than full metadata,
+without per-transaction allocation, Arc clone or participant mutex. Cache misses
+take an Arc to the already-published complete local metadata and routing view;
+they do not recopy or recertify all metadata on each worker refresh.
 
-Native peer handshakes bind the paired-request ABI; gateway requests use version
-2 and bound scan requests use version 3. Upgrade communicating binaries together.
+The `mako_sharding_read_route`, `mako_sharding_read_point` and
+`mako_sharding_read_range` APIs use captured Serving state and exact local
+owner/ownership version, including whole-range coverage and absence.
+Readiness, stop and metadata-failure checks belong to `mako_sharding_read_begin`,
+including cache hits, not each access. An admitted context retains its view
+through cleanup even if native service acceptance stops; host/index owners must
+finish that work before destroying storage. `mako_sharding_read_end` follows
+actual cleanup before the logical pin leaves. There is no epoch-at-commit
+equality. Actual storage/transport failures follow their normal error paths.
+Foreign snapshot numbers alone are not authorization: received requests still
+validate provenance, coordinates and captured local metadata. Local resolution
+authorizes before dispatch; no API accepts a returned point for revalidation.
+Retries retain their exact request identity. No production per-access lease
+registry, scope hint or participant mutex is used for admission.
+
+Local points are thin routing results: selected index plus a captured-route
+reference. They do not construct or copy full RPC envelopes. Remote dispatch
+materializes an envelope directly into its destination, retaining the captured
+grant and using the current transaction identity. Deferred batches use each
+row's own capture from that transaction; control messages do not inherit a
+previous row's scope. See the [storage contract](storage-interface.md#tpcc-warehouse-handles).
+Point, scan and receiver paths also share view-scoped indexed binding and
+physical-handle caches. Warm lookup avoids registry locking and ownership
+reference-count updates. A physical mapping is not authorization: incoming
+requests still establish their own admission, and a changed native view clears
+the mappings and borrowed binding references.
+
+This is not zero overhead: fixed epoch entry/lifetime work and ordinary STO
+synchronization/OCC remain. The engine guard and logical guard conservatively
+retain the oldest nested epoch; no second authority clock, transaction registry
+or per-key reader counter replaces true drain. Volatile pin state is not crash
+recovery. The conditional durable lease/recovery library remains a separate
+supported contract with its existing transaction and storage assumptions.
+
+Native peer handshakes use version 4 for the epoch/pre-copy control contract;
+gateway requests remain version 2 and bound scans version 3.
+Upgrade communicating binaries together.
 The persistent metadata deployment identity and journal encodings are unchanged;
 opening retained metadata still does not restore rows or permit serving.
 
@@ -386,7 +423,7 @@ warehouse coordinates; row keys keep their existing encoding. The immutable
 `item` table is explicitly replicated/static, not assigned a fictitious mutable
 warehouse owner. Adopted local indexes are materialized before publication and
 identified by physical owner as well as canonical table/coordinate. Same-process
-cross-owner access still uses the real participant RPC and lease path.
+cross-owner access still uses the real participant RPC and immutable admission path.
 
 The old C++ policy/cache/migration graph, checksum cutover and write-only drain
 are removed. There is no replicated `reshard/*` journal, live membership
@@ -410,7 +447,14 @@ compaction does not collect participant journals, receipt dictionaries or
 outstanding copy work.
 See [the trusted interface contract](../tla/mako/README.md#trusted-recovery-and-progress-interfaces).
 Run `./docker_build.sh ci nativeShardingProof` and
-`./docker_build.sh ci nativeShardingSmoke` for the separate proof and real-engine gates.
+`./docker_build.sh ci nativeShardingSmoke` for the separate proof and real-engine
+gates. Fresh Docker smoke covers retained guards through OCC retry/cleanup,
+old-view first access after Frozen, idle helpers, colocated owners, source
+mutation after private pre-copy, exact final absence, delayed-job fencing, and
+metadata SIGKILL/reopen. Engine/RCU tests cover nested guards and retirement
+behind newer readers. See the [checked results](../tla/mako/README.md#checked-results)
+for proof scopes and commands; native weak-memory ordering and distributed OCC
+remain explicit foreign boundaries.
 
 #### Optional durable migration metadata
 
@@ -438,7 +482,7 @@ the running candidate rather than acknowledging success.
 
 **Retained startup is inspection-only.** The native admin service can return
 historical nonce outcomes through Poll or an identical Begin retry, but readiness
-and lease begin/acquire/range/finish return Retry. New Begin, Abort, capture,
+and read admission return Retry. New Begin, Abort, capture,
 control, copy, and cleanup are rejected. A retained pending migration stays
 pending. The normal workload readiness wait also fails closed; a successful
 historical admin reply does not mean the data is available.

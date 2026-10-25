@@ -34,6 +34,15 @@ uint32_t mako_sharding_scan_segments(uint64_t table, MakoShardBytes lo,
                                       uint32_t reverse,
                                       MakoScanSegmentCallback callback,
                                       void* context);
+/* Traverse the logical operation's retained routing, never a fresh snapshot.
+ * Reentrant reads are allowed; callbacks cannot end/replace this read context. */
+// @unsafe - callback context and spans remain live for the synchronous traversal.
+uint32_t mako_sharding_read_scan_segments(const MakoShardRead* read,
+                                           uint64_t table, MakoShardBytes lo,
+                                           uint32_t has_hi, MakoShardBytes hi,
+                                           uint32_t reverse,
+                                           MakoScanSegmentCallback callback,
+                                           void* context);
 /* Callback bytes are borrowed only for the call; exceptions must not cross Rust. */
 typedef uint32_t (*MakoScanRowCallback)(void*, MakoShardBytes, MakoShardBytes);
 uint32_t mako_full_scan_new(MakoScanBounds bounds,
@@ -51,7 +60,7 @@ uint32_t mako_scan_page_identity_matches(const MakoScanPage* page,
 void mako_scan_page_free(MakoScanPage* page);
 MakoScanBounds mako_scan_page_bounds(const MakoScanPage* page);
 /* Reverse without hi/cursor first observes every key of a forward native scan
- * under the same transaction and full-range lease, then starts reverse at this
+ * under the same transaction and full-range admission, then starts reverse at this
  * actual maximum inclusively. present distinguishes empty key from no rows.
  * The maximum bytes remain borrowed from page until it is freed. */
 uint32_t mako_scan_page_observe_max(MakoScanPage* page, MakoShardBytes key);

@@ -1,9 +1,9 @@
 //! Conditional-backend regressions: actual journal bytes survive file reopen.
 use crate as native;
 #[path = "durable_test_store.rs"]
-mod store;
+pub(crate) mod store;
 #[path = "durable_test_engine.rs"]
-mod engine;
+pub(crate) mod engine;
 #[path = "durable_test_protocol.rs"]
 mod protocol;
 use native::durable_kv::{journal_key, Journal, JournalError, Namespace, HEAD_TAG};

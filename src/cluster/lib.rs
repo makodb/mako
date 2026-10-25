@@ -8,6 +8,7 @@ pub mod directory_proofs;
 pub mod leases;
 pub mod migration;
 pub mod participant;
+pub mod epoch_admission;
 pub mod storage;
 pub mod transfer;
 pub mod routing;
@@ -72,7 +73,7 @@ pub mod execution_refinement;
 #[cfg(verus_keep_ghost)]
 pub mod routing_proofs;
 #[cfg(verus_keep_ghost)]
-pub mod snapshot_admission_composition;
+pub mod coordinator_publication_proofs;
 #[cfg(verus_keep_ghost)]
 pub mod routing_codec_proofs;
 #[cfg(verus_keep_ghost)]

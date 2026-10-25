@@ -2,12 +2,12 @@
 //! Completion records describe observed live effects, not recoverable row data.
 //! Reopening validates the retained prefix but never reactivates a participant.
 use std::path::{Path, PathBuf};
-use crate::durable_codec::{write_grant, write_txn, read_grant, read_txn};
+use crate::durable_codec::{read_grant, read_txn};
 use crate::durable_kv::{Journal, Namespace};
 use crate::participant::{Cleanup, ControlResult};
 use crate::rocks_metadata::RocksKv;
 use crate::routing_codec::{Reader, Writer};
-use crate::types::{Grant, Status, TxnId};
+use crate::types::Status;
 use crate::wire::{self, checked};
 
 // Separate payload version from the durable-engine participant codec: a live
@@ -41,10 +41,6 @@ impl Configuration {
 }
 
 pub enum Event<'a> {
-    Begin(TxnId),
-    Acquire { id: TxnId, table: u64, coordinate: &'a [u8], grant: Grant },
-    Range { id: TxnId, table: u64, lo: &'a [u8], hi: Option<&'a [u8]>, grant: Grant },
-    Finish(TxnId),
     Control { operation: u32, plan: &'a [u8], result: &'a ControlResult },
     Transfer { plan: &'a [u8], cleanup: bool, result: Option<&'a ControlResult> },
 }
@@ -88,7 +84,6 @@ impl ParticipantLog {
         if !initialize { journal.fence(); }
         Ok(Self { persistent: Some(Persistent { kv, journal }), recovered: !initialize, failed: false })
     }
-    pub fn enabled(&self) -> bool { self.persistent.is_some() }
     pub fn recovered(&self) -> bool { self.recovered }
     pub fn failed(&self) -> bool { self.failed }
     pub fn record(&mut self, event: Event<'_>) -> Result<(), Status> {
@@ -123,28 +118,12 @@ fn write_result(writer: &mut Writer, result: &ControlResult) -> Result<(), Statu
 }
 fn encode(event: Event<'_>) -> Result<Vec<u8>, Status> {
     let kind = match &event {
-        Event::Begin(_) => 1, Event::Acquire { .. } => 2, Event::Range { .. } => 3,
-        Event::Finish(_) => 4, Event::Control { .. } => 5,
+        Event::Control { .. } => 5,
         Event::Transfer { result: None, .. } => 6,
         Event::Transfer { result: Some(_), .. } => 7,
     };
     let mut writer = header(kind)?;
     match event {
-        Event::Begin(id) | Event::Finish(id) => checked(write_txn(&mut writer, id))?,
-        Event::Acquire { id, table, coordinate, grant } => {
-            checked(write_txn(&mut writer, id))?;
-            checked(writer.write_u64(table))?;
-            checked(writer.write_bytes(coordinate))?;
-            checked(write_grant(&mut writer, grant))?;
-        },
-        Event::Range { id, table, lo, hi, grant } => {
-            checked(write_txn(&mut writer, id))?;
-            checked(writer.write_u64(table))?;
-            checked(writer.write_bytes(lo))?;
-            checked(writer.write_u32(u32::from(hi.is_some())))?;
-            if let Some(hi) = hi { checked(writer.write_bytes(hi))?; }
-            checked(write_grant(&mut writer, grant))?;
-        },
         Event::Control { operation, plan, result } => {
             checked(writer.write_u32(operation))?;
             checked(writer.write_bytes(plan))?;
@@ -173,6 +152,8 @@ fn validate(bytes: &[u8], nodes: u32) -> Result<(), Status> {
     if reader.read_u64()? != TAG { return Err(Status::Invalid); }
     let kind = reader.read_u32()?;
     match kind {
+        // Historical live lease records remain inspectable, never replayed as
+        // epoch protection or emitted by the production path after the cutover.
         1 | 4 => { read_txn(&mut reader)?; },
         2 | 3 => {
             read_txn(&mut reader)?;

@@ -107,7 +107,7 @@ namespace mako
             response->status = ErrorCode::SUCCESS;
         } catch (const abstract_db::abstract_abort_exception&) {
             db->shard_abort_txn(nullptr);
-            if (!sharding_leases_enabled()) db->shard_reset();
+            if (!sharding_admission_enabled()) db->shard_reset();
         }
     }
 
@@ -141,8 +141,8 @@ namespace mako
         return sizeof(*r);
     }
 
-    // @unsafe - fixed sequential worker streams; the native participant owns lease
-    // admission. This boundary retains opaque replies and serializes ambient STO.
+    // @unsafe - fixed sequential worker streams retain epoch-pinned admission.
+    // This boundary retains opaque replies and serializes ambient STO.
     size_t ShardReceiver::ReceiveRequest(uint8_t kind, char* input, char* output) {
         const bool standalone = kind >= nontxnPutReqType && kind <= nontxnGetReqType;
         const bool piece = kind == getReqType || kind == scanReqType
@@ -158,9 +158,16 @@ namespace mako
         const uint32_t number = header->req_nr;
         // Forwarded gateway calls retain their ingress sequence even with the
         // native directory disabled, so a lost reply cannot repeat an effect.
-        if (!sharding_leases_enabled()
-            && !(standalone && (request.transaction.client & (uint64_t{1} << 63))))
-            return DispatchRequest(kind, input, output);
+        if (!sharding_admission_enabled()
+            && !(standalone && (request.transaction.client & (uint64_t{1} << 63)))) {
+            const size_t length = DispatchRequest(kind, input, output);
+            // Static callers treat an engine-aborted read reply as terminal and
+            // skip a second Abort RPC. Reset only after this request's physical
+            // effects, unlocks and cleanup have finished; the placeholder is idle.
+            if (TThread::mode() == 1 && TThread::txn && !TThread::txn->in_progress())
+                db->shard_reset();
+            return length;
+        }
         auto peers = sharding_peers_.lock().unwrap();
         auto& peer = (*peers)[request.transaction.client];
         if (request.transaction.sequence < peer.sequence)
@@ -348,7 +355,7 @@ namespace mako
         respLen = sizeof(basic_response_t);
         resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
         resp->req_nr = req->req_nr;
-        if (!sharding_leases_enabled()) db->shard_reset();
+        if (!sharding_admission_enabled()) db->shard_reset();
 
     }
 
@@ -369,7 +376,7 @@ namespace mako
         respLen = sizeof(basic_response_t);
         resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
         resp->req_nr = req->req_nr;
-        if (!sharding_leases_enabled()) db->shard_reset();
+        if (!sharding_admission_enabled()) db->shard_reset();
     }
 
     void ShardReceiver::HandleInstallRequest(char *reqBuf, char *respBuf, size_t &respLen)
@@ -392,7 +399,7 @@ namespace mako
         respLen = sizeof(basic_response_t);
         resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
         resp->req_nr = req->req_nr;
-        if (!sharding_leases_enabled()) db->shard_reset();
+        if (!sharding_admission_enabled()) db->shard_reset();
     }
 
     void ShardReceiver::HandleValidateRequest(char *reqBuf, char *respBuf, size_t &respLen)
@@ -460,6 +467,7 @@ namespace mako
         }
     }
 
+    // @unsafe - stop legacy engine staging and clean up on the first failed row.
     void ShardReceiver::HandleBatchLockMicroMegaRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         auto *req = reinterpret_cast<batch_lock_request_t *>(reqBuf);
@@ -486,9 +494,11 @@ namespace mako
                         k_s_new.i_id = base_ol_i_id + i;
                         stage_batch_write(require_table(table_id), EncodeK(obj_key0, k_s_new), obj_v, operation);
                     }
-                } catch (abstract_db::abstract_abort_exception &ex) {
-                   status = ErrorCode::ABORT;
-                   Debug("HandleBatchLockMicroMegaRequest: fail to lock a key");
+                } catch (const abstract_db::abstract_abort_exception&) {
+                    db->shard_abort_txn(nullptr);
+                    status = ErrorCode::ABORT;
+                    Debug("HandleBatchLockMicroMegaRequest: fail to lock a key");
+                    break;
                 }
             }
         }
@@ -499,6 +509,7 @@ namespace mako
         resp->req_nr = req->req_nr;
     }
 
+    // @unsafe - stop legacy engine staging and clean up on the first failed row.
     void ShardReceiver::HandleBatchLockMegaRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         auto *req = reinterpret_cast<batch_lock_request_t *>(reqBuf);
@@ -525,10 +536,11 @@ namespace mako
                         k_s_new.s_i_id = base_ol_i_id + i;
                         stage_batch_write(require_table(table_id), EncodeK(obj_key0, k_s_new), obj_v, operation);
                     }
-                } catch (abstract_db::abstract_abort_exception &ex) {
-                   //db->shard_abort_txn(nullptr);
-                   status = ErrorCode::ABORT;
-                   Debug("HandleLockRequest: fail to lock a key");
+                } catch (const abstract_db::abstract_abort_exception&) {
+                    db->shard_abort_txn(nullptr);
+                    status = ErrorCode::ABORT;
+                    Debug("HandleLockRequest: fail to lock a key");
+                    break;
                 }
             }
         }
@@ -539,6 +551,7 @@ namespace mako
         resp->req_nr = req->req_nr;
     }
 
+    // @unsafe - stop legacy engine staging and clean up on the first failed row.
     void ShardReceiver::HandleBatchLockRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
 #if defined(MEGA_BENCHMARK)
@@ -564,10 +577,11 @@ namespace mako
             if (table_id > 0) {
                 try {
                     stage_batch_write(require_table(table_id), obj_key0, obj_v, operation);
-                } catch (abstract_db::abstract_abort_exception &ex) {
-                   //db->shard_abort_txn(nullptr);
-                   status = ErrorCode::ABORT;
-                   Debug("HandleLockRequest: fail to lock a key");
+                } catch (const abstract_db::abstract_abort_exception&) {
+                    db->shard_abort_txn(nullptr);
+                    status = ErrorCode::ABORT;
+                    Debug("HandleLockRequest: fail to lock a key");
+                    break;
                 }
             }
         }
@@ -651,6 +665,7 @@ namespace mako
         memcpy(resp->value, val.c_str(), val.length());
     }
 
+    // @unsafe - a failed read ends the legacy batch before another engine access.
     void ShardReceiver::HandleGetMicroMegaRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         auto *req = reinterpret_cast<get_request_t *>(reqBuf);
@@ -673,6 +688,11 @@ namespace mako
                 for (int i=0; i<mako::mega_batch_size; i++) {
                    k_s_new.i_id = base_ol_i_id + i;
                    ret = require_table(req->table_id)->shard_get(EncodeK(obj_key0, k_s_new), obj_v, std::string::npos);
+                   if (TThread::transget_without_throw) {
+                       TThread::transget_without_throw = false;
+                       throw abstract_db::abstract_abort_exception();
+                   }
+                   if (!ret) break;
                    memcpy((char*)c_v.c_str()+offset,obj_v.c_str(),value_size);
                    offset = 0;
                 }
@@ -700,6 +720,7 @@ namespace mako
         memcpy(resp->value, c_v.c_str(), c_v.length());
     }
 
+    // @unsafe - a failed read ends the legacy batch before another engine access.
     void ShardReceiver::HandleGetMegaRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         auto *req = reinterpret_cast<get_request_t *>(reqBuf);
@@ -724,6 +745,11 @@ namespace mako
                 for (int i=0; i<mako::mega_batch_size; i++) {
                    k_s_new.s_i_id = base_ol_i_id + i;
                    ret = require_table(req->table_id)->shard_get(EncodeK(obj_key0, k_s_new), obj_v, std::string::npos);
+                   if (TThread::transget_without_throw) {
+                       TThread::transget_without_throw = false;
+                       throw abstract_db::abstract_abort_exception();
+                   }
+                   if (!ret) break;
                    memcpy((char*)c_v.c_str()+offset,obj_v.c_str(),mako::size_per_stock_value);
                    //offset += mako::size_per_stock_value;
                    offset = 0;
@@ -781,7 +807,7 @@ namespace mako
                         throw abstract_db::abstract_abort_exception();
                     }
                     if (!ret) {
-                        // Keep the absent-key read and native lease until 2PC.
+                        // Keep the absent-key read and captured epoch until 2PC.
                         obj_v.clear();
                         status = ErrorCode::NOT_FOUND;
                     }
@@ -946,7 +972,7 @@ namespace mako
         // shard_reset establishes). Mode-0 threads (ClientTcpServer
         // workers) must NOT get that: a lingering in_progress txn
         // would trip the next op's mode-0 start_transaction assert.
-        if (saved_mode == 1 && !sharding_leases_enabled()) {
+        if (saved_mode == 1 && !sharding_admission_enabled()) {
             db->shard_reset();
         }
         return status;

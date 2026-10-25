@@ -52,7 +52,7 @@ Notes:
 Native Rust sharding has separate reproducible Docker gates:
 
 ```bash
-# Pinned Verus production modules/refinement, independent model + 13 controls,
+# Pinned Verus production modules/refinement, independent model and controls,
 # then locked native Rust tests. No C++ rebuild is needed for this gate.
 ./docker_build.sh ci nativeShardingProof
 
@@ -62,12 +62,12 @@ Native Rust sharding has separate reproducible Docker gates:
 ./docker_build.sh ci-quick nativeShardingSmoke
 ```
 
-The smoke runs two fixed shard processes and then two participants in one
-process. It asserts raw-range and warehouse handoff/return, values and absence
+The native epoch smoke exercises two fixed shard processes and then
+two participants in one process, with raw-range and warehouse handoff/return, values and absence
 (including destination-only stale rows), post-handoff writes/deletes,
 paginated forward/reverse scans (including unbounded warehouse scans with
-empty and binary maximum keys), increasing ownership epochs, rejection of
-old grants, retained nonce outcomes and a held-lease abort. Logs are retained
+empty and binary maximum keys), increasing ownership versions, rejection of
+old grants, retained nonce outcomes and a retained-epoch abort. Logs are retained
 under `build_docker/native-sharding-smoke/`. Its dedicated fixture uses the
 same production engine, native host and control RPC as dbtest; its point/scan
 assertions execute on the current owner's actual index. A fixture-only wrapper
@@ -82,6 +82,35 @@ drop, and is distinct from duplicate admin begin/poll tests. The fixture does
 not replace the separate dbtest/FastTransport distributed transaction tests.
 Live migration is supported only for nonreplicated fixed live processes;
 ordinary replicated workloads remain supported with migration disabled.
+
+The native cutover contract uses epoch-cached immutable admission via
+`src/mako/lib/sharding_admission.{h,cc}` and `sharding_admission_enabled`.
+After STO sample/announce/recheck, `mako_sharding_read_begin(owner, epoch, out)`
+reuses a TLS read view on an owner/integer-epoch cache hit; route/point/range/live
+read APIs replace per-access production leases and hints. Full metadata
+certification occurs at publication; worker refresh takes an Arc to that view
+without recopying its maps. Read end follows actual engine and terminal RPC cleanup.
+The fixed epoch/lifetime work is nonzero;
+ordinary STO synchronization remains, without epoch-at-commit equality.
+
+Migration privately pre-copies while the source serves, publishes Frozen before
+cutting that same STO clock, and drains the oldest retained worker pins through
+effects and cleanup. It joins/fences pre-copy by generation/round before a full
+exact final scan, including destination-only deletes; this is not a dirty-only
+delta. Volatile pins are not crash recovery. Metadata reopen remains
+inspection-only, and the conditional durable lease/recovery library retains its
+separate stronger assumptions.
+
+Fresh Docker smoke passed for the epoch cutover: timer-spanning commits,
+retained epochs across OCC retry/cleanup, idle helpers, colocated owners,
+post-Frozen first access through an older complete view, private pre-copy
+followed by source inserts/updates/deletes, exact final absence, delayed-job
+rejection, and four metadata SIGKILL/reopen fencing cases. Engine/RCU regressions
+also exercise nested guards and reclamation behind a newer reader. Native memory
+ordering and distributed OCC remain foreign proof boundaries. See the
+[checked results](tla/mako/README.md#checked-results) and
+[matched performance comparison](docs/architecture/sharding-migration.md#engine-epoch-comparison-2026-10-21);
+neither the proofs nor these smoke cases claim zero overhead.
 
 `src/cluster/Cargo.lock` pins the standard Rust staticlib dependencies. This
 crate is not transpiled and does not change SRPC/rusty-cpp pins. The proof gate

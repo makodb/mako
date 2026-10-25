@@ -85,7 +85,7 @@ public:
   }
 
   static void static_init() {
-    Transaction::epoch_advance_callback = [] (unsigned) {
+    Transaction::epoch_advance_callback = [] (Transaction::epoch_type) {
       // just advance blindly because of the way Masstree uses epochs
       globalepoch++;
     };
@@ -134,6 +134,8 @@ public:
 
   template <typename ValType>
   bool transGet(Str key, ValType& retval, threadinfo_type& ti = mythreadinfo) {
+    // @unsafe - an idle helper must enter STO/RCU before looking up any node.
+    Sto::transaction()->ensure_epoch();
     // if false:
     //   1) not found a key
     //   2) found a key, but updated by other writes 
@@ -179,6 +181,8 @@ public:
 
   template <typename K>
   bool transDelete(const K& key, threadinfo_type& ti = mythreadinfo) {
+    // @unsafe - includes disabled-sharding helper requests.
+    Sto::transaction()->ensure_epoch();
     auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_unlocked(*ti.ti);
     if (found) {
@@ -238,6 +242,7 @@ private:
   // @unsafe - shares cursor insertion/OCC bookkeeping for puts and proxy intents.
   template <bool INSERT, bool SET, bool DELETE = false, typename StringType, typename ValueType>
   bool trans_write(const StringType& key, const ValueType& value, bool(*compar)(const std::string& newValue,const std::string& oldValue), threadinfo_type& ti = mythreadinfo) {
+    Sto::transaction()->ensure_epoch(); // @unsafe - before either cursor lookup
     // optimization to do an unlocked lookup first
     if (SET) {
       auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
@@ -356,7 +361,11 @@ public:
 
   // range queries
   // @unsafe - legacy Masstree cursor; exclusive starts implement binary paging.
+  // Transfer scans lock each row while copying it: a version recheck alone
+  // cannot make concurrent raw length/pointer/byte mutation a safe read.
+  template <bool LockValues = false>
   void transQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo, bool begin_inclusive = true) {
+    Sto::transaction()->ensure_epoch();
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
       this->ensureNotFound(node, version);
     };
@@ -381,10 +390,28 @@ public:
       value_type stack_val;
       value_type& val = va ? *allocate_value(va) : stack_val;
       Version v;
-      if(!atomicRead(e, v, val)){
+      bool visible = true;
+      if constexpr (LockValues) {
+        if (!TransactionTid::try_lock(e->version())) Sto::abort();
+        acquire_fence();
+        try {
+          v = TransactionTid::unlocked(e->version());
+          if (v & invalid_bit) throw Transaction::Abort();
+          assign_val(val, e->read_value());
+          if (TThread::is_multiversion())
+            visible = MultiVersionValue::mvGET(val, (char*)e->data(),
+                TThread::txn->get_current_term(), sync_util::sync_logger::hist_timestamp);
+        } catch (...) {
+          TransactionTid::unlock(e->version());
+          throw;
+        }
+        TransactionTid::unlock(e->version());
+      } else if (!atomicRead(e, v, val)) {
         Sto::abort();
       }
       item.observe(tversion_type(v));
+      if constexpr (LockValues)
+        return !visible || callback(key, val);
 
       if (!TThread::is_multiversion())
         return callback(key, val);
@@ -408,6 +435,7 @@ public:
 
   // @unsafe - inclusive lower bound is used by normalized half-open scan pages.
   void transRQuery(Str begin, Str end, RangeCallback callback, ValueAllocator *va = nullptr, threadinfo_type& ti = mythreadinfo, bool begin_inclusive = true, bool end_inclusive = false) {
+    Sto::transaction()->ensure_epoch(); // @unsafe - before the reverse cursor
     auto node_callback = [&] (leaf_type* node, typename unlocked_cursor_type::nodeversion_value_type version) {
       this->ensureNotFound(node, version);
     };

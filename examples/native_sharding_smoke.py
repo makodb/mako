@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Drive real MBTA/native/srpc nodes; every OK is emitted after engine assertions.
 
-This tests native migration, owner-local point I/O, production paginated scans,
-and fixture-only faults at the real native peer callback boundary. Replays use
-only previously issued bytes through real srpc; no storage or replies are faked.
-The fixture does not start dbtest's ordinary FastTransport data plane.
+This tests native migration, owner-local point I/O, direct local full scans,
+STO timer/cut/cleanup lifetimes, and fixture-only real peer callback barriers.
+Precopy inspection reads actual MBTA bytes; old jobs replay only issued bytes
+through real srpc. No storage, epochs, or replies are mocked. Each retained
+context lives on its own registered physical worker. The fixture does not start
+dbtest's ordinary FastTransport data plane; mixed scans stop before remote I/O.
 """
 from pathlib import Path
 import os
@@ -156,6 +158,10 @@ def run(both):
             for owner, node in enumerate(by_owner):
                 node.command(f"ready {owner} raw")
                 node.command(f"reconnect {owner} raw")
+                node.command(f"epoch-idle {owner} raw")
+            by_owner[0].command("epoch-ticks 0 raw")
+            if both:
+                by_owner[0].command("epoch-shared 0 raw")
             client = 720001 if both else 720000
             sequence = 0
 
@@ -196,17 +202,27 @@ def run(both):
                 return int(result.rsplit(" ", 1)[1])
 
             by_owner[0].command("remember-unmoved 0 raw")
+            by_owner[0].command("direct-scan 0 raw 0")
             for table, name, lo, hi in (("raw", "smoke_raw", "6d", "6e"),
                                         ("warehouse", "warehouse", "00000001", "00000002")):
                 previous = route(table, 0, 0)
                 by_owner[0].command(f"remember 0 {table}")
                 by_owner[0].command(f"check 0 {table} 0")
                 by_owner[0].command(f"fault-arm 0 {table}")
+                by_owner[0].command(f"precopy-arm 0 {table}")
                 sequence += 1
                 intent = (name, lo, hi, 0, 1)
                 # The fixture drops an actual successful source Commit reply
                 # before the native sink, requiring real cleanup-receipt retry.
                 admin("begin", sequence, *intent)
+                by_owner[0].command(f"precopy-wait 0 {table}")
+                # The real round-0 reply is held before Freeze. Mutations commit
+                # on A while B's physical image still contains the older bytes.
+                by_owner[0].command(f"precopy-mutate 0 {table}")
+                by_owner[1].command(f"precopy-private 1 {table}")
+                if admin("poll", sequence)[1] != "pending":
+                    raise RuntimeError("precopy reply barrier did not precede publication")
+                by_owner[0].command(f"precopy-release 0 {table}")
                 result = terminal(sequence, "committed")
                 by_owner[0].command(f"fault-assert 0 {table}")
                 if admin("begin", sequence, *intent) != result:
@@ -214,9 +230,13 @@ def run(both):
                 if admin("begin", sequence, name, lo, hi, 1, 0, expected_error=True) is not None:
                     raise RuntimeError("changed intent reused an accepted nonce")
                 current = route(table, 1, previous + 1)
+                by_owner[1].command(f"precopy-final 1 {table}")
+                by_owner[0].command(f"precopy-replay 0 {table}")
                 by_owner[0].command(f"stale 0 {table} {previous}")
                 by_owner[0].command(f"probe-stale 0 {table}")
                 by_owner[0].command("probe-unmoved 0 raw")
+                if table == "raw":
+                    by_owner[0].command("scan-stop-before-remote 0 raw")
                 by_owner[1].command(f"check 1 {table} 0")
                 by_owner[1].command(f"write 1 {table}")
                 by_owner[1].command(f"check 1 {table} 1")
@@ -228,32 +248,40 @@ def run(both):
                 by_owner[0].command(f"stale 0 {table} {previous}")
                 by_owner[0].command(f"probe-stale 0 {table}")
                 by_owner[0].command(f"check 0 {table} 1")
+                if table == "raw":
+                    by_owner[0].command("direct-scan 0 raw 1")
                 if returned <= current:
                     raise RuntimeError("owner return reused its old ownership version")
                 by_owner[0].command(f"replay 0 {table}")
+                by_owner[0].command(f"precopy-replay 0 {table}")
                 if route(table, 0, returned) != returned:
                     raise RuntimeError("old Start/Final/Commit changed returned ownership version")
                 by_owner[0].command(f"check 0 {table} 1")
                 by_owner[1].command(f"stale 1 {table} {current}")
             by_owner[0].command("unmoved 0 raw")
             by_owner[0].command("gateway-forged 0 raw")
-            # A held real participant lease deterministically prevents commit.
-            # Abort must terminate without consuming or changing the old grant.
+            # A real retained whole-view context deterministically prevents cut
+            # completion, even after its conflicted engine attempt is cleaned up.
             ownership_version = route("raw", 0, 0)
             by_owner[0].command("remember 0 raw")
             by_owner[0].command("hold 0 raw")
+            by_owner[0].command("hold-conflict 0 raw")
+            by_owner[0].command("precopy-arm 0 raw")
             by_owner[0].command("capture 0 raw")
             sequence += 1
             admin("begin", sequence, "smoke_raw", "6d", "6e", 0, 1)
+            by_owner[0].command("precopy-wait 0 raw")
+            by_owner[0].command("precopy-release 0 raw")
             by_owner[0].command("probe-frozen 0 raw")
             by_owner[0].command("probe-unmoved 0 raw")
             pending = admin("poll", sequence)
             if pending[1] != "pending":
-                raise RuntimeError("migration crossed an unresolved real access lease")
+                raise RuntimeError("migration crossed a retained STO logical epoch")
             admin("abort", sequence)
             by_owner[0].command("release 0 raw")
             terminal(sequence, "aborted")
             by_owner[0].command("capture-stop 0 raw")
+            by_owner[0].command("precopy-replay 0 raw")
             if route("raw", 0, ownership_version) != ownership_version:
                 raise RuntimeError("abort published a replacement grant")
             by_owner[0].command("check 0 raw 1")
@@ -266,6 +294,7 @@ def run(both):
             current = route("raw", 1, ownership_version + 1)
             by_owner[1].command("check 1 raw 1")
             by_owner[0].command("replay-abort 0 raw")
+            by_owner[0].command("precopy-replay 0 raw")
             if route("raw", 1, current) != current:
                 raise RuntimeError("old Abort changed the newer published ownership version")
             by_owner[1].command("check 1 raw 1")
@@ -283,10 +312,12 @@ def run(both):
         finally:
             for node in nodes:
                 node.close(success)
-    print(f"PASS {mode}: raw and warehouse owner return, values/absence, writes, "
-          "forward/reverse pagination, paired snapshot/ownership versions, stale-view fallback, "
-          "matching-version freeze rejection, untrusted gateway fencing, retained outcomes, held-lease abort, "
-          "real callback-boundary Commit reply loss/retry and issued old control replay", flush=True)
+    print(f"PASS {mode}: raw/warehouse owner return and direct local scan scenarios; "
+          "timer ticks preserve commit, OCC retry/cleanup retain logical epoch, idle helper cuts drain; "
+          "colocated process slots, late/stale admission, retained full-view first access after Freeze; "
+          "real private precopy plus final insert/update/delete/destination-only reconciliation; "
+          "terminal/generation-fenced precopy replay, abort and retained outcomes, "
+          "real Commit reply loss/retry and issued old control replay", flush=True)
 
 def run_metadata(both, pending):
     """SIGKILL retention of metadata only; MBTA rows are deliberately not restored."""
@@ -341,6 +372,7 @@ def run_metadata(both, pending):
             origin.command("ready 0 raw")
             destination.command("ready 1 raw")
             if pending:
+                origin.command("remember 0 raw")
                 origin.command("hold 0 raw")
             elif not both:
                 origin.command("fault-arm 0 raw")
@@ -356,11 +388,11 @@ def run_metadata(both, pending):
             if retained[0] != begun[0]:
                 raise RuntimeError("metadata migration changed generation")
             if pending:
-                # Ensure the real held lease keeps the migration pending while
-                # the driver runs, rather than merely observing an early BEGIN.
-                time.sleep(0.5)
+                # A fresh post-cut rejection observes real Freeze; the retained
+                # worker then commits its old view but keeps the logical pin.
+                origin.command("probe-frozen 0 raw")
                 if admin("poll") != retained:
-                    raise RuntimeError("held lease failed to pin pending metadata")
+                    raise RuntimeError("retained epoch failed to pin pending metadata")
             else:
                 if not both:
                     origin.command("fault-assert 0 raw")
@@ -378,7 +410,7 @@ def run_metadata(both, pending):
                     destination.command("metadata-fenced 1 raw")
                     origin.command("replay-target-fenced 0 raw 1")
             # Owner zero is both the migration origin and coordinator. Pending
-            # death loses its real held lease, but must not allow orphan release
+            # death loses its real retained context, but must not allow orphan release
             # or automatically resume/abort the retained migration.
             origin.kill()
             if both:
@@ -407,7 +439,7 @@ def run_metadata(both, pending):
             if success and cleanup_errors:
                 raise RuntimeError(f"metadata fixture cleanup failed: {cleanup_errors}")
     print(f"PASS metadata {mode} {outcome}: SIGKILL/reopen retained generation and nonce; "
-          "all lease entrypoints/data readiness fenced; no row recovery or migration resume",
+          "immutable read entry/data readiness fenced; no row recovery or migration resume",
           flush=True)
 
 run(False)

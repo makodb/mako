@@ -11,19 +11,13 @@ size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
                                                  abstract_db* db);
 
 class ThreadDBWrapperMbta {
-protected:
-    int thread_id;
-    bool is_init = false;
-
 public:
     static abstract_db* replay_thread_wrapper_db;
-    ThreadDBWrapperMbta() = delete;
-    ThreadDBWrapperMbta(int thread_id){
-        this->thread_id = thread_id;
-    }
-    abstract_db * getDB(){ // have to be initialized inside each replay thread
-        if(!is_init){
-            TThread::set_id(this->thread_id);
+    // @unsafe - initialize the physical replay worker, not a partition alias.
+    abstract_db * getDB() {
+        static thread_local bool is_init = false;
+        if (!is_init) {
+            Transaction::register_thread();
             TThread::disable_multiversion(); // one the follower, disable the multi-version
             actual_directs::thread_init();
             is_init = true;
@@ -39,7 +33,7 @@ class TSharedThreadPoolMbta
     {
         // Create the specified number of threads
         for (int i = 0; i < threads; ++i) {
-            this->_mapping[i] = new ThreadDBWrapperMbta(i);
+            this->_mapping[i] = new ThreadDBWrapperMbta();
         }
     }
 
