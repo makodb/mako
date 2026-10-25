@@ -47,12 +47,23 @@ void helper_server(
   std::map<int, abstract_ordered_index *> open_tables,
   spin_barrier *barrier_ready)
 {
+  // @unsafe - bind allocator/RCU state before allocating the helper engine.
+  auto& cfg = BenchmarkConfig::getInstance();
+  BenchmarkConfig::setThreadLocalShardIndex(running_shardIndex);
+  auto* shard = cfg.getShardContext(running_shardIndex);
+  if (shard && shard->runtime.get())
+    const_cast<SiloRuntime*>(shard->runtime.get())->BindToCurrentThread();
+  else
+    SiloRuntime::Current()->BindToCurrentThread();
   scoped_db_thread_ctx ctx(db, true, 1);
+  // @unsafe - helper initialization borrows loader allocation, never admission.
+  TThread::in_loading_phase = false;
   TThread::set_mode(1);
 #if defined(DISABLE_MULTI_VERSION)
   TThread::disable_multiversion();
 #else
-  TThread::enable_multiverison();
+  if (cfg.getIsReplicated()) TThread::enable_multiverison();
+  else TThread::disable_multiversion();
 #endif
   int shardIdx = (g_wid - 1) / num_warehouses;
   int par_id = (g_wid - 1) % num_warehouses;
@@ -93,9 +104,8 @@ void rpc_server(
     config->configFile,
     local_uri,
     cluster,
-    // Handler range is inclusive; 14-16 are the self-contained
-    // non-txn write ops (nontxnPut/Insert/Remove, common.h).
-    1, 17,
+    // Inclusive range includes nontransactional ops and full ordered scan pages.
+    1, mako::fullScanReqType,
     0, // physPort
     0, // numa node
     running_shardIndex,
@@ -130,8 +140,9 @@ void mako::setup_helper(
   const std::map<int, abstract_ordered_index *> &open_tables)
 {
   auto &cfg = BenchmarkConfig::getInstance();
-  auto &queue_holders = cfg.getQueueHolders();
-  auto &queue_holders_response = cfg.getQueueHoldersResponse();
+  auto* shard = cfg.getShardContext(cfg.getShardIndex());
+  auto &queue_holders = shard ? shard->queue_holders : cfg.getQueueHolders();
+  auto &queue_holders_response = shard ? shard->queue_holders_response : cfg.getQueueHoldersResponse();
 
   // Count the number of helper threads that will be created
   int num_helpers = 0;
@@ -193,6 +204,10 @@ void mako::stop_helper()
       entry.second->request_stop();
     } 
   }
+  for (auto& shard : cfg.getShardContexts()) {
+    for (auto& entry : shard.second.queue_holders)
+      if (entry.second) entry.second->request_stop();
+  }
   {
     std::lock_guard<std::mutex> lock(g_helper_mu);
     g_helper_servers.clear();
@@ -206,10 +221,12 @@ void mako::initialize_per_thread(abstract_db *db_) {
 void mako::setup_rpc_server()
 {
   auto &cfg = BenchmarkConfig::getInstance();
-  auto &server_transports = cfg.getServerTransports();
-  auto &queue_holders = cfg.getQueueHolders();
-  auto &queue_holders_response = cfg.getQueueHoldersResponse();
-  auto &set_server_transport = cfg.getServerTransportReadyCounter();
+  auto* shard = cfg.getShardContext(cfg.getShardIndex());
+  auto &server_transports = shard ? shard->server_transports : cfg.getServerTransports();
+  auto &queue_holders = shard ? shard->queue_holders : cfg.getQueueHolders();
+  auto &queue_holders_response = shard ? shard->queue_holders_response : cfg.getQueueHoldersResponse();
+  // Each setup waits until all its threads perform their sole counter access.
+  std::atomic<int> set_server_transport{0};
 
   // Use existing state; server threads will populate queues.
   if (server_transports.size() < cfg.getNumRpcServer())
@@ -245,10 +262,12 @@ void mako::setup_rpc_server()
   }
 }
 
+// @unsafe - stop only the current owner's listeners after all-owner drain.
 void mako::stop_rpc_server()
 {
   auto &cfg = BenchmarkConfig::getInstance();
-  auto &server_transports = cfg.getServerTransports();
+  auto* shard = cfg.getShardContext(cfg.getShardIndex());
+  auto &server_transports = shard ? shard->server_transports : cfg.getServerTransports();
 
   // Use actual vector size to avoid out-of-bounds access
   // In multi-shard mode, server_transports may be empty while getNumRpcServer() > 0

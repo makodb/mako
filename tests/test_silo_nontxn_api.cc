@@ -260,6 +260,98 @@ TEST_F(SiloNonTxnApi, L3ScanOrderAndEarlyStop) {
     }
 }
 
+// @unsafe - callbacks cross the engine boundary; exceptions must close the read txn.
+TEST_F(SiloNonTxnApi, ScanCallbackExceptionReleasesTransaction) {
+    struct ScanFailure {};
+    struct ThrowingCallback : oi_scan_callback {
+        // @unsafe - deliberately exercises the engine's callback exception boundary.
+        bool invoke(const char*, size_t, const std::string&) override {
+            throw ScanFailure{};
+        }
+    } callback;
+    auto* table = make_table("throwing_scan");
+    ASSERT_TRUE(table->put(lcdf::Str("key"), "before"));
+    const std::string lower = "a", upper = "z";
+    EXPECT_THROW(table->scan(lower, &upper, callback, nullptr), ScanFailure);
+    ASSERT_FALSE(Sto::in_progress());
+    EXPECT_THROW(table->rscan(upper, &lower, callback, nullptr), ScanFailure);
+    ASSERT_FALSE(Sto::in_progress());
+    EXPECT_FALSE(table->put(lcdf::Str("key"), "after"));
+    std::string value;
+    ASSERT_TRUE(table->get(lcdf::Str("key"), value, std::string::npos));
+    EXPECT_EQ(value, "after");
+}
+
+// @unsafe - exercises exact binary bounds through the legacy engine interface.
+TEST_F(SiloNonTxnApi, L3ScanExactBinaryBounds) {
+    abstract_ordered_index* table = make_table("binary_scan_bounds");
+    const std::array<std::string, 7> keys{
+        "", std::string("\0", 1), std::string("\0\xff", 2), "a",
+        std::string("a\0", 2), std::string("a\xff", 2), std::string("\xff", 1)};
+    for (size_t i = 0; i < keys.size(); ++i)
+        ASSERT_TRUE(table->put(lcdf::Str(keys[i]), "value" + std::to_string(i)));
+
+    // @unsafe - callbacks must observe the exact half-open or reversed interval.
+    auto check = [&](bool reverse, const std::string& start, const std::string* end,
+                     std::initializer_list<size_t> expected) {
+        CollectCallback callback;
+        if (reverse) table->rscan(start, end, callback, nullptr);
+        else table->scan(start, end, callback, nullptr);
+        ASSERT_EQ(callback.pairs.size(), expected.size());
+        size_t position = 0;
+        for (const auto i : expected) {
+            EXPECT_EQ(callback.pairs[position].first, keys[i]);
+            EXPECT_EQ(callback.pairs[position].second, "value" + std::to_string(i));
+            ++position;
+        }
+    };
+    check(false, keys[1], &keys[5], {1, 2, 3, 4});
+    check(true, keys[5], &keys[1], {5, 4, 3, 2});
+    check(false, keys[0], nullptr, {0, 1, 2, 3, 4, 5, 6});
+    check(false, keys[0], &keys[0], {});
+    check(true, keys[0], nullptr, {0});
+    check(true, keys[6], &keys[0], {6, 5, 4, 3, 2, 1});
+    check(true, keys[6], nullptr, {6, 5, 4, 3, 2, 1, 0});
+    check(false, keys[3], &keys[3], {});
+    check(true, keys[3], &keys[3], {});
+    check(false, keys[5], &keys[1], {});
+    check(true, keys[1], &keys[5], {});
+}
+
+// @unsafe - retained callback borrows must belong to the caller's live arena.
+TEST_F(SiloNonTxnApi, L3ScanArenaValuesSurviveLaterDeliveries) {
+    abstract_ordered_index* table = make_table("arena_scan_values");
+    const std::array<std::string, 3> values{
+        std::string(300, 'a'), std::string(450, 'b'), std::string(600, 'c')};
+    for (size_t i = 0; i < values.size(); ++i)
+        ASSERT_TRUE(table->put(lcdf::Str("k" + std::to_string(i)), values[i]));
+    str_arena arena;
+    struct RetainValues : oi_scan_callback {
+        std::array<const std::string*, 6> values{};
+        size_t count = 0;
+        // @unsafe - borrow arena-owned strings, never callback stack temporaries.
+        bool invoke(const char* key, size_t length, const std::string& value) override {
+            if (count == values.size()) {
+                ADD_FAILURE() << "scan delivered an unexpected extra row";
+                return false;
+            }
+            const size_t index = count < 3 ? count : 5 - count;
+            EXPECT_EQ(std::string(key, length), "k" + std::to_string(index));
+            values[count++] = &value;
+            return true;
+        }
+    } callback;
+    table->scan("k0", nullptr, callback, &arena);
+    ASSERT_EQ(callback.count, 3u);
+    table->rscan("k2", nullptr, callback, &arena);
+    ASSERT_EQ(callback.count, 6u);
+    *arena() = "subsequent allocation";
+    for (size_t i = 0; i < callback.values.size(); ++i) {
+        ASSERT_TRUE(arena.manages(callback.values[i]));
+        EXPECT_EQ(*callback.values[i], values[i < 3 ? i : 5 - i]);
+    }
+}
+
 // ===========================================================================
 // 3. Sharded level
 // ===========================================================================

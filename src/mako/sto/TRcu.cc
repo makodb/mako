@@ -55,7 +55,7 @@ void TRcuSet::grow() {
 
 // @unsafe: calls function pointers stored in array
 inline bool TRcuGroup::clean_until(epoch_type max_epoch) {
-    while (head_ != tail_ && signed_epoch_type(max_epoch - e_[head_].u.epoch) > 0) {
+    while (head_ != tail_ && e_[head_].u.epoch < max_epoch) {
         ++head_;
         while (head_ != tail_ && e_[head_].function) {
             e_[head_].function(e_[head_].u.argument);

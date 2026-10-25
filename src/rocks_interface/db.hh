@@ -76,6 +76,11 @@ struct ClientConfig {
     // RPC timeout in milliseconds
     uint32_t timeout_ms = 5000;
 
+    // Unique external caller namespace (high bit set), provisioned by deployment.
+    // Never reuse a client ID across restarts with outstanding/unknown results.
+    uint64_t client_id = 0;
+    uint64_t first_sequence = 1;
+
     // @safe - Check if client config is valid
     bool is_valid() const {
         return enabled &&

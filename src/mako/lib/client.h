@@ -27,35 +27,62 @@ namespace mako
 
         void ReceiveResponse(uint8_t reqType, char *respBuf);
 
+        // @unsafe - materializes the captured point directly in the transport buffer.
         void InvokeGet(uint64_t txn_nr,
                             int dstShardIdx,
                             uint16_t server_id,
                             const string &key,
                             uint16_t table_id,
+                            const ShardingPoint& point,
                             resp_continuation_t continuation,
                             error_continuation_t error_continuation,
                             uint32_t timeout);
         
+        // @unsafe - transports the caller's captured scan envelope unchanged.
         void InvokeScan(uint64_t txn_nr,
                             int dstShardIdx,
                             uint16_t server_id,
                             const string &start_key,
                             const string &end_key,
                             uint16_t table_id,
+                            const ShardingRequest& sharding,
                             resp_continuation_t continuation,
                             error_continuation_t error_continuation,
                             uint32_t timeout);
+
+        // @unsafe - opaque Rust-coded page; routing/identity are already captured.
+        void InvokeFullScanPage(uint64_t txn_nr, int destination,
+                                uint16_t server_id, int table_id,
+                                const ShardingRequest& sharding,
+                                const uint8_t* payload, size_t length,
+                                resp_continuation_t continuation,
+                                error_continuation_t error_continuation);
 
         // Self-contained non-transactional write (put / insert / remove,
         // selected by reqType — one of nontxnPutReqType /
         // nontxnInsertReqType / nontxnRemoveReqType). value is empty for
         // remove. See docs/storage-interface.md.
+        // @unsafe - local dispatch retains a thin point until transport packing.
         void InvokeNontxnWrite(uint64_t txn_nr,
                             int dstShardIdx,
                             uint16_t server_id,
                             const string &key,
                             const string &value,
                             uint16_t table_id,
+                            const ShardingPoint& point,
+                            uint8_t reqType,
+                            resp_continuation_t continuation,
+                            error_continuation_t error_continuation,
+                            uint32_t timeout);
+
+        // @unsafe - forwarding preserves the incoming wire envelope unchanged.
+        void InvokeNontxnWrite(uint64_t txn_nr,
+                            int dstShardIdx,
+                            uint16_t server_id,
+                            const string &key,
+                            const string &value,
+                            uint16_t table_id,
+                            const ShardingRequest& sharding,
                             uint8_t reqType,
                             resp_continuation_t continuation,
                             error_continuation_t error_continuation,
@@ -68,15 +95,6 @@ namespace mako
                             error_continuation_t error_continuation,
                             uint32_t timeout);
 
-        void InvokeLock(uint64_t txn_nr,
-                            int dstShardIdx,
-                            uint16_t server_id,
-                            const string &key,
-                            const string &value,
-                            uint16_t table_id,
-                            resp_continuation_t continuation,
-                            error_continuation_t error_continuation,
-                            uint32_t timeout);
 
         void InvokeValidate(uint64_t txn_nr,
                             int dstShardIdx,
@@ -167,6 +185,18 @@ namespace mako
         void SetNumResponseWaiting(int num_response_waiting) { this->num_response_waiting = num_response_waiting; };
 
     protected:
+        // @unsafe - packs shared fields into the transport-owned request buffer.
+        nontxn_write_request_t* PrepareNontxnWrite(
+                            uint64_t txn_nr, uint16_t server_id,
+                            const string& key, const string& value,
+                            uint16_t table_id, uint8_t reqType,
+                            const resp_continuation_t& continuation,
+                            const error_continuation_t& error_continuation);
+        // @unsafe - sends the fully packed buffer using the existing failure path.
+        void SendNontxnWrite(uint8_t reqType, int dstShardIdx,
+                            uint16_t server_id, const nontxn_write_request_t& request);
+        // @unsafe - legacy synchronous transport failure must resolve its promise.
+        void SendShardRequest(uint8_t kind, int shard, uint16_t server, size_t length);
         struct PendingRequest
         {
             string request;

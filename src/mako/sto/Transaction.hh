@@ -6,7 +6,7 @@
 // #include "small_vector.hh"
 #include "TRcu.hh"
 #include <algorithm>
-#include <functional>
+#include <rusty/function.hpp>
 #include <memory>
 #include <type_traits>
 #include <unistd.h>
@@ -22,6 +22,7 @@
 #include "sto/Interface.hh"
 #include "sto/sync_util.hh"
 #include "benchmarks/benchmark_config.h"
+#include "lib/sharding_admission.h"
 
 #ifndef STO_PROFILE_COUNTERS
 #define STO_PROFILE_COUNTERS 0
@@ -88,7 +89,7 @@
 // on the remote: 4098*8*3
 #define MAX_ARRAY_SIZE_IN_BYTES_SMALL  size_t(4096)*size_t(3)*size_t(8)*sizeof(char)
 
-void register_sync_util(std::function<int()>);
+void register_sync_util(rusty::Function<int()>);
 
 // @unsafe: manages raw memory buffers
 class StringAllocator{
@@ -346,12 +347,14 @@ void reportPerf();
 
 struct __attribute__((aligned(128))) threadinfo_t {
     using epoch_type = TRcuSet::epoch_type;
-    epoch_type epoch;
+    std::atomic<epoch_type> epoch;
+    // Only this worker changes depth; readers inspect the atomic oldest epoch.
+    unsigned epoch_depth = 0;
     TRcuSet rcu_set;
     // XXX(NH): these should be vectors so multiple data structures can register
     // callbacks for these
-    std::function<void(void)> trans_start_callback;
-    std::function<void(void)> trans_end_callback;
+    rusty::Function<void()> trans_start_callback;
+    rusty::Function<void()> trans_end_callback;
     txp_counters p_;
     threadinfo_t()
         : epoch(0) {
@@ -370,17 +373,35 @@ public:
 
     static threadinfo_t tinfo[MAX_THREADS];
     static struct epoch_state {
-        epoch_type global_epoch; // != 0
-        epoch_type active_epoch; // no thread is before this epoch
-        TransactionTid::type recent_tid;
-        bool run;
+        std::atomic<epoch_type> global_epoch; // nonzero, never wraps
+        std::atomic<epoch_type> active_epoch; // no admitted guard precedes this
+        std::atomic<TransactionTid::type> recent_tid;
+        std::atomic<bool> run;
     } global_epochs;
     typedef TransactionTid::type tid_type;
 private:
     static TransactionTid::type _TID;
 public:
 
-    static std::function<void(threadinfo_t::epoch_type)> epoch_advance_callback;
+    static rusty::Function<void(epoch_type)> epoch_advance_callback;
+
+    // @unsafe - allocate one process-global slot per native worker, not owner
+    // or replay partition. Registration happens before engine/RCU initialization.
+    static void register_thread();
+
+    // @unsafe - worker-owned nesting over the existing process-wide RCU slots.
+    // A zero result fails admission/cut closed on exhausted epoch/depth space.
+    static epoch_type epoch_enter();
+    static void epoch_leave();
+    static epoch_type epoch_cut();
+    static bool epoch_drained(epoch_type cut);
+    static epoch_type epoch_current();
+
+    // @unsafe - begins a deferred helper's engine/RCU lifetime before storage,
+    // then notifies logical admission once; never replaces an existing guard.
+    void ensure_epoch();
+    // @safe - thread-owned lifetime query for contexts opened inside an engine.
+    bool has_epoch() const { return engine_epoch_; }
 
     static txp_counters txp_counters_combined() {
         txp_counters out;
@@ -404,26 +425,34 @@ public:
     }
 
     static void* epoch_advancer(void*);
+    // @unsafe - retire at the current clock, not the worker's oldest retained
+    // pin: a later reader may still hold an object unlinked by an old guard.
     template <typename T>
     static void rcu_delete(T* x) {
         auto& thr = tinfo[TThread::id()];
-        thr.rcu_set.add(thr.epoch, ObjectDestroyer<T>::destroy_and_free, x);
+        thr.rcu_set.add(epoch_current(), ObjectDestroyer<T>::destroy_and_free, x);
     }
+    // @unsafe - deferred array destruction uses the unlink/retirement epoch.
     template <typename T>
     static void rcu_delete_array(T* x) {
         auto& thr = tinfo[TThread::id()];
-        thr.rcu_set.add(thr.epoch, ObjectDestroyer<T>::destroy_and_free_array, x);
+        thr.rcu_set.add(epoch_current(), ObjectDestroyer<T>::destroy_and_free_array, x);
     }
+    // @unsafe - raw allocator free is delayed past all readers at retirement.
     static void rcu_free(void* ptr) {
         auto& thr = tinfo[TThread::id()];
-        thr.rcu_set.add(thr.epoch, ::free, ptr);
+        thr.rcu_set.add(epoch_current(), ::free, ptr);
     }
+    // @unsafe - defer a legacy callback until its retirement epoch is safe.
     static void rcu_call(void (*function)(void*), void* argument) {
         auto& thr = tinfo[TThread::id()];
-        thr.rcu_set.add(thr.epoch, function, argument);
+        thr.rcu_set.add(epoch_current(), function, argument);
     }
+    // @unsafe - quiescence cannot clear an active engine or retained context.
     static void rcu_quiesce() {
-        tinfo[TThread::id()].epoch = 0;
+        auto& thr = tinfo[TThread::id()];
+        if (thr.epoch_depth == 0)
+            thr.epoch.store(0, std::memory_order_seq_cst);
     }
 
 #if STO_PROFILE_COUNTERS
@@ -461,6 +490,8 @@ private:
     Transaction(int threadid, const testing_type&)
         : threadid_(threadid), is_test_(true) {
         initialize();
+        // @unsafe - deterministic tests multiplex logical workers on one thread.
+        TThread::set_id(threadid_);
         start();
     }
 
@@ -472,14 +503,9 @@ private:
         start_time = mako::getCurrentTimeMillis();
     }
 
-    // reset data so we can be reused for another transaction
-    void start() {  // weihshen, start and init a transaction
-        //Warning("the id %d and size of tinfo:%d", TThread::id(), sizeof(tinfo)/sizeof(threadinfo_t));
-        threadinfo_t& thr = tinfo[TThread::id()];
-        //Warning("the id-2 %d and size of tinfo:%d, addr: %p", TThread::id(), sizeof(tinfo)/sizeof(threadinfo_t), &thr);
-        //if (isAborted_
-        //   && tinfo[TThread::id()].p(txp_total_aborts) % 0x10000 == 0xFFFF)
-           //print_stats();
+    // @unsafe - reset an attempt without releasing a retained logical context.
+    void start() {
+        always_assert(!engine_epoch_);
         TThread::readset_shard_bits = 0;
         TThread::writeset_shard_bits = 0;
         TThread::the_debug_bit = 0;
@@ -488,10 +514,6 @@ private:
         TThread::trans_nosend_abort = 0;
         //TThread::in_loading_phase = true;
         TThread::increment_id += 1;
-        thr.epoch = global_epochs.global_epoch;
-        thr.rcu_set.clean_until(global_epochs.active_epoch);
-        if (thr.trans_start_callback)
-            thr.trans_start_callback();
         hash_base_ += tset_size_ + 1;
         tset_size_ = 0;
         tset_next_ = tset0_;
@@ -508,7 +530,7 @@ private:
         current_term_ = 0;
         // Initialize single timestamp system
         maxTimestampReadSet = 0;
-        buf_.clear();
+        // Buffer destruction is covered by the newly acquired engine guard.
 #if STO_DEBUG_ABORTS
         abort_item_ = nullptr;
         abort_reason_ = nullptr;
@@ -516,6 +538,18 @@ private:
 #endif
         TXP_INCREMENT(txp_total_starts);
         state_ = s_in_progress;
+        try {
+            // Idle mode-1 reset is only a placeholder. Its first real access
+            // (also with sharding disabled) must call ensure_epoch().
+            if (TThread::mode() != 1 || mako::sharding_has_request())
+                ensure_epoch();
+            buf_.clear();
+        } catch (...) {
+            // Admission can throw after pinning STO. Never leak that guard or
+            // leave its Masstree callback active on a failed start.
+            silent_abort();
+            throw;
+        }
     }
 
 #if TRANSACTION_HASHTABLE
@@ -661,7 +695,8 @@ private:
 
 public:
     void silent_abort() {
-        if (in_progress())
+        // A mode-1 idle convention must not repeat completed cleanup.
+        if (state_ < s_aborted)
             stop(false, nullptr, 0);
     }
 
@@ -686,20 +721,14 @@ public:
         return state_ == s_aborted;
     }
 
+    // @safe - helper mode does not revive a terminal engine attempt.
     bool in_progress() {
-        return TThread::mode() == 1 || state_ < s_aborted;
+        return state_ < s_aborted;
     }
 
-    // @safe - True iff the transaction has accumulated read/write-set
-    // items. Distinguishes an IDLE participant thread (in_progress by
-    // mode-1 convention, but empty — safe to borrow for a one-op txn)
-    // from one that is mid-2PC with staged state (must not be
-    // clobbered). Used by the non-txn write handlers.
-    //
-    // The in_progress() conjunct matters: after a mode-0 commit,
-    // tset_size_ keeps its final count until the next
-    // start_transaction resets it — a committed txn's leftovers are
-    // not staged state.
+    // @safe - an idle helper has a started but empty placeholder. A stopped
+    // attempt's remaining tset entries are not staged state in any mode.
+    // Nontransactional handlers must not borrow a live, nonempty 2PC attempt.
     bool has_staged_items() {
         return in_progress() && tset_size_ != 0;
     }
@@ -873,6 +902,8 @@ private:
     bool any_nonopaque_;
     bool may_duplicate_items_;
     bool is_test_;
+    bool engine_epoch_ = false;
+    bool engine_callback_ = false;
     TransItem* tset_next_;
     unsigned tset_size_;
     mutable tid_type start_tid_;
@@ -892,6 +923,8 @@ private:
 
     void hard_check_opacity(TransItem* item, TransactionTid::type t);
     void stop(bool committed, unsigned* writes, unsigned nwrites);
+    // @unsafe - invoked only after every engine effect, unlock and cleanup.
+    void finish_epoch(bool committed);
 
     friend class TransProxy;
     friend class TransItem;
@@ -921,25 +954,31 @@ public:
             TThread::txn->threadid_ = TThread::id();
     }
 
+    // @safe - only an actual live attempt enables transactional container access.
     static bool in_progress() {
-        return TThread::mode() == 1 ||
-                    (TThread::mode() == 0 && TThread::txn && TThread::txn->in_progress());
+        return (TThread::mode() == 0 || TThread::mode() == 1)
+            && TThread::txn && TThread::txn->in_progress();
     }
 
+    // @unsafe - an engine-local abort may already have stopped STO. Remote
+    // participants still require terminal acknowledgement under the same ID.
     static void abort() {
-        // Be defensive during shutdown - only abort if transaction is in progress
-        if (!in_progress()) {
+        if (!TThread::txn || TThread::txn->state_ == Transaction::s_committed)
             return;
-        }
-        TThread::txn->abort();
+        abort_without_throw();
+        throw Transaction::Abort();
     }
 
+    // @unsafe - release engine locks first, but pin native scopes and identity
+    // through every remote acknowledgement even when STO has already aborted.
     static void abort_without_throw() {
-        // Check if we need to do remote abort before aborting locally
-        bool needs_remote_abort = in_progress() &&
-            (TThread::writeset_shard_bits>0||TThread::readset_shard_bits>0);
+        if (!TThread::txn || TThread::txn->state_ == Transaction::s_committed)
+            return;
+        mako::ShardingOperation operation;
+        const bool needs_remote_abort =
+            (TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0);
         Sto::silent_abort();
-        if (needs_remote_abort)
+        if (needs_remote_abort && TThread::sclient)
             TThread::sclient->remoteAbort();
     }
 
@@ -1064,6 +1103,8 @@ public:
         use();
     }
     ~TestTransaction() {
+        use();
+        t_.silent_abort();
         if (base_ && !base_->is_test_) {
             TThread::txn = base_;
             TThread::set_id(base_->threadid_);

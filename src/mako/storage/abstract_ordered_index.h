@@ -130,23 +130,10 @@ pub trait FullOrderedIndex: TxnOrderedIndex + ShardParticipant {
 }
 #endif
 /*RUSTYCPP:GEN-BEGIN id=abstract_ordered_index.1 version=1 rust_sha256=c36262c7476b8b6a434a69826a128d044b17539ff63a8ad9ca5ff900b854ab47*/
-class ShardParticipant {
-public:
-    virtual ~ShardParticipant() noexcept(false) {}
-    virtual bool shard_get(lcdf::Str key, std::string& value, size_t max_bytes_read) = 0;
-    virtual const c_char* shard_put(lcdf::Str key, const std::string& value) = 0;
-    virtual bool shard_scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) = 0;
-    ShardParticipant(const ShardParticipant&) = delete;
-    ShardParticipant& operator=(const ShardParticipant&) = delete;
-    ShardParticipant(ShardParticipant&&) = delete;
-    ShardParticipant& operator=(ShardParticipant&&) = delete;
-protected:
-    ShardParticipant() = default;
-};
-
-template <class U> class ShardParticipantAdapter;
-template <class U> class ShardParticipantAdapterRef;
-template <class U> class ShardParticipantAdapterRefMut;
+class OrderedIndex;
+class TxnOrderedIndex;
+class ShardParticipant;
+class FullOrderedIndex;
 
 class OrderedIndex {
 public:
@@ -194,6 +181,24 @@ protected:
 template <class U> class TxnOrderedIndexAdapter;
 template <class U> class TxnOrderedIndexAdapterRef;
 template <class U> class TxnOrderedIndexAdapterRefMut;
+
+class ShardParticipant {
+public:
+    virtual ~ShardParticipant() noexcept(false) {}
+    virtual bool shard_get(lcdf::Str key, std::string& value, size_t max_bytes_read) = 0;
+    virtual const c_char* shard_put(lcdf::Str key, const std::string& value) = 0;
+    virtual bool shard_scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) = 0;
+    ShardParticipant(const ShardParticipant&) = delete;
+    ShardParticipant& operator=(const ShardParticipant&) = delete;
+    ShardParticipant(ShardParticipant&&) = delete;
+    ShardParticipant& operator=(ShardParticipant&&) = delete;
+protected:
+    ShardParticipant() = default;
+};
+
+template <class U> class ShardParticipantAdapter;
+template <class U> class ShardParticipantAdapterRef;
+template <class U> class ShardParticipantAdapterRefMut;
 
 class FullOrderedIndex : public TxnOrderedIndex, public ShardParticipant {
 public:

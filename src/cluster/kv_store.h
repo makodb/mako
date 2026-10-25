@@ -3,7 +3,7 @@ module;
 #include <rusty/option.hpp>   // get() returns rusty::Option<std::string>
 export module cluster:kv_store;
 
-namespace janus {
+export namespace janus {
 
 /**
  * KvStore — the minimal key-value port the cluster metadata component
@@ -34,8 +34,9 @@ pub trait KvStore {
     fn remove(&mut self, key: &std::string);
 }
 #endif
-export {
-/*RUSTYCPP:GEN-BEGIN id=kv_store.1 version=1 rust_sha256=fcaaf367b94719c3db074bc9cef6ef83ad25c9a1fc53c9d2bcce23e6cad1f2d0*/
+/*RUSTYCPP:GEN-BEGIN id=kv_store.2 version=1 rust_sha256=fcaaf367b94719c3db074bc9cef6ef83ad25c9a1fc53c9d2bcce23e6cad1f2d0*/
+class KvStore;
+
 class KvStore {
 public:
     virtual ~KvStore() noexcept(false) {}
@@ -53,7 +54,6 @@ protected:
 template <class U> class KvStoreAdapter;
 template <class U> class KvStoreAdapterRef;
 template <class U> class KvStoreAdapterRefMut;
-/*RUSTYCPP:GEN-END id=kv_store.1*/
-}
+/*RUSTYCPP:GEN-END id=kv_store.2*/
 
 }  // namespace janus

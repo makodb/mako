@@ -51,6 +51,10 @@ size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
                                                  unsigned short int count,
                                                  unsigned int len,
                                                  abstract_db* db) {
+    // @unsafe - this function is exclusively replication-log row application.
+    // Admission is outside the OCC retry loop: a forbidden replay is not a
+    // transient transaction conflict and must not spin forever.
+    mako::ShardingReplicationReplay replay;
     size_t put_ops = 0;
 
     unsigned short int *len_of_K=0, *len_of_V=0, *table_id=0;
@@ -112,12 +116,16 @@ size_t getFileContentNew_OneLogOptimized_mbta_v2(char *buffer, /* K-V pairs */
                 // compare-and-put); replay tables are mbta by construction.
                 static_cast<mbta_ordered_index*>(table_index)
                     ->put_mbta(txn, obj_k, cmpFunc2_v2, obj_v);
-                auto ret = db->commit_txn_no_paxos(txn);// we should have ret>0, then retry
+                if (!db->commit_txn_no_paxos(txn)) {
+                    ++try_cnt;
+                    continue;
+                }
                 if (try_cnt > 1 && try_cnt % 20 == 0) {
                     std::cout << "succeed at retry#:" << try_cnt << std::endl;
                 }
                 break ;
             } catch (...) {   // if abort happens, replay it until it succeeds
+                Sto::silent_abort(); // @unsafe - cleanup before the next OCC attempt
                 try_cnt += 1 ;
             }
         }

@@ -44,10 +44,96 @@ bash src/mako/update_config.sh
 make -j32
 
 # Run tests
-./ci/ci.sh all
+./docker_build.sh ci all
 ```
 
 Notes:
+
+Native Rust sharding has separate reproducible Docker gates:
+
+```bash
+# Pinned Verus production modules/refinement, independent model and controls,
+# then locked native Rust tests. No C++ rebuild is needed for this gate.
+./docker_build.sh ci nativeShardingProof
+
+# Build and exercise real MBTA/STO storage with native Rust and loopback srpc.
+./docker_build.sh ci nativeShardingSmoke
+# Reuse an existing Docker build:
+./docker_build.sh ci-quick nativeShardingSmoke
+```
+
+The native epoch smoke exercises two fixed shard processes and then
+two participants in one process, with raw-range and warehouse handoff/return, values and absence
+(including destination-only stale rows), post-handoff writes/deletes,
+paginated forward/reverse scans (including unbounded warehouse scans with
+empty and binary maximum keys), increasing ownership versions, rejection of
+old grants, retained nonce outcomes and a retained-epoch abort. Logs are retained
+under `build_docker/native-sharding-smoke/`. Its dedicated fixture uses the
+same production engine, native host and control RPC as dbtest; its point/scan
+assertions execute on the current owner's actual index. A fixture-only wrapper
+forwards the actual source Commit through srpc, then drops its first successful
+reply at the native callback boundary (returns I/O failure without calling the
+Rust sink). The test requires a real retransmission and the identical retained
+cleanup receipt. It records actually issued Start/Final/Commit/Abort payloads
+and replays those unchanged through the original RPC callback after owner return
+or a later committed generation, checking epochs, values and absence again.
+This is callback-boundary transport-loss injection, not a physical TCP packet
+drop, and is distinct from duplicate admin begin/poll tests. The fixture does
+not replace the separate dbtest/FastTransport distributed transaction tests.
+Live migration is supported only for nonreplicated fixed live processes;
+ordinary replicated workloads remain supported with migration disabled.
+
+The native cutover contract uses epoch-cached immutable admission via
+`src/mako/lib/sharding_admission.{h,cc}` and `sharding_admission_enabled`.
+After STO sample/announce/recheck, `mako_sharding_read_begin(owner, epoch, out)`
+reuses a TLS read view on an owner/integer-epoch cache hit; route/point/range/live
+read APIs replace per-access production leases and hints. Full metadata
+certification occurs at publication; worker refresh takes an Arc to that view
+without recopying its maps. Read end follows actual engine and terminal RPC cleanup.
+The fixed epoch/lifetime work is nonzero;
+ordinary STO synchronization remains, without epoch-at-commit equality.
+
+Migration privately pre-copies while the source serves, publishes Frozen before
+cutting that same STO clock, and drains the oldest retained worker pins through
+effects and cleanup. It joins/fences pre-copy by generation/round before a full
+exact final scan, including destination-only deletes; this is not a dirty-only
+delta. Volatile pins are not crash recovery. Metadata reopen remains
+inspection-only, and the conditional durable lease/recovery library retains its
+separate stronger assumptions.
+
+Fresh Docker smoke passed for the epoch cutover: timer-spanning commits,
+retained epochs across OCC retry/cleanup, idle helpers, colocated owners,
+post-Frozen first access through an older complete view, private pre-copy
+followed by source inserts/updates/deletes, exact final absence, delayed-job
+rejection, and four metadata SIGKILL/reopen fencing cases. Engine/RCU regressions
+also exercise nested guards and reclamation behind a newer reader. Native memory
+ordering and distributed OCC remain foreign proof boundaries. See the
+[checked results](tla/mako/README.md#checked-results) and
+[matched performance comparison](docs/architecture/sharding-migration.md#engine-epoch-comparison-2026-10-21);
+neither the proofs nor these smoke cases claim zero overhead.
+
+`src/cluster/Cargo.lock` pins the standard Rust staticlib dependencies. This
+crate is not transpiled and does not change SRPC/rusty-cpp pins. The proof gate
+attests the Verus `0.2026.08.02.b677dd5` release archive by SHA-256, uses Rust
+`1.97.1`, and verifies `src/cluster/lib.rs` without module filters or verifier
+resource overrides. Native transport/thread/lifetime/engine boundary code
+outside Verus is not claimed as verified handler logic; the source-coverage
+audit is not itself a proof.
+Native source histories construct the independent **placement** refinement from
+actor and engine effects; they also establish canonical byte-value and ordered
+scan correspondence. Separate sharding protocols prove recovery, configured-owner
+lifecycle, conditional progress and administrative retention against explicit
+transaction/Raft/storage interfaces. Those interfaces do not make the current
+live-only native adapter crash-safe or reclaim its participant journals.
+See [the proof scopes, contracts and checked results](tla/mako/README.md)
+for the exact guarantees and trusted boundaries.
+
+The native build uses ordinary `cargo`/`rustc` from `PATH` (minimum Rust
+`1.97.1`), including the Docker image's official `/opt/rust` tarball installation;
+rustup is not required. Verification requires exactly `1.97.1` and uses the
+pinned launcher's supported `VERUS_USE_RUSTUP=0` mode with that compiler's real
+sysroot and driver library. An older image must be rebuilt before running the
+proof gate.
 
 ---
 
@@ -108,7 +194,7 @@ Mako includes a Redis-compatible layer for:
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Make changes with tests
-4. Ensure tests pass (`./ci/ci.sh all`)
+4. Ensure tests pass (`./docker_build.sh ci all`)
 5. Submit a pull request
 
 ---

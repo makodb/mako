@@ -65,7 +65,7 @@ public:
                     // Generate key
                     uint64_t key_id = key_counter++ % MAX_KEYS;
                     string key = "key_w" + to_string(worker_id_) + "_" + to_string(key_id);
-                    string value = Encode("value_" + to_string(worker_id_) + "_" + to_string(key_counter));
+                    string value = mako::Encode("value_" + to_string(worker_id_) + "_" + to_string(key_counter));
 
                     // Check which shard this key belongs to
                     int key_shard = table->check_shard(key);

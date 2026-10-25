@@ -188,11 +188,6 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
     int status = mako::PaxosStatus::STATUS_INIT;
     uint32_t timestamp = 0;  // Track timestamp for return value encoding
     abstract_db * db = replicated_db.getDBWrapper(par_id)->getDB () ;
-    // SINGLE-RAFT FIX: getDB() calls TThread::set_id(par_id), changing the
-    // thread ID per partition. But the STO Transaction object caches threadid_
-    // at creation time. In single-Raft, all partitions share one thread, so
-    // the thread ID changes with each par_id. Sync Transaction's threadid_.
-    Sto::update_threadid();
     bool noops = false;
 
     if (len==mako::ADVANCER_MARKER_NUM) { // start a advancer
@@ -903,12 +898,6 @@ static abstract_db * init_env() {
     int ret2 = setup2(0, benchConfig.getShardIndex());
     sleep(3); // ensure that all get started
 
-    // Wire the cluster-config read path (shard-0 config service +
-    // per-node ConfigWatcher into the routing cache). No-op unless
-    // MAKO_CLUSTER_CONFIG=1 and the cluster has >1 shard.
-    // @unsafe { RPC I/O, storage index open, background thread }
-    janus::BootstrapClusterConfig(db);
-
 #ifndef DISABLE_DISK
     // Initialize RocksDB persistence layer ONLY on the leader
     // Followers and learners don't need RocksDB since they only replay, not generate logs
@@ -975,6 +964,8 @@ static void send_end_signal() {
 
 static void db_close() {
   auto& benchConfig = BenchmarkConfig::getInstance();
+  // @unsafe - no native queue, deferred reply, or watcher may outlive the DB.
+  janus::ShutdownClusterConfig();
   if (benchConfig.getLeaderConfig() && benchConfig.getIsReplicated()) {
     send_end_signal();
     // Give followers/learners time to receive and process the end signal
