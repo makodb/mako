@@ -264,9 +264,12 @@ failed=0
 cut_of() {
     grep -a -o "update_stable_timestamp_vec, epoch:[0-9]*,tt:[0-9]*" "$1" | tail -1 | sed 's/.*tt://'
 }
-# The final watermark of shard $2 that a process read last.
+# The final watermark of shard $2 that a process of the failed shard read
+# last. Only its "get fvw" lines name the other shard's key ("set fvw" names
+# its own), and another thread's output can land inside the line, before the
+# key, so match from the key on.
 fvw_read() {
-    grep -a -o "get fvw, [0-9]*, fvw_$2:[0-9]*" "$1" | tail -1 | sed 's/.*://'
+    grep -a -o "fvw_$2:[0-9]*" "$1" | tail -1 | sed 's/.*://'
 }
 # A process's threads share its log, and another thread's output can land
 # right after a number, so one of two equal numbers may carry extra digits.
