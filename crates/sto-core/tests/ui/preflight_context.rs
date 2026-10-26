@@ -1,13 +1,13 @@
-use sto_core::PreflightContext;
+use sto_core::LockContext;
 
 fn assert_send<T: Send>() {}
 fn assert_sync<T: Sync>() {}
 
-fn escape(context: PreflightContext<'_>) -> PreflightContext<'static> {
+fn escape(context: LockContext<'_>) -> LockContext<'static> {
     context
 }
 
 fn main() {
-    assert_send::<PreflightContext<'static>>();
-    assert_sync::<PreflightContext<'static>>();
+    assert_send::<LockContext<'static>>();
+    assert_sync::<LockContext<'static>>();
 }

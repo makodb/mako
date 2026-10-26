@@ -1,18 +1,42 @@
 //! A transactionally composable wrapping `i64` counter.
 //!
-//! `TxnCounter` is intentionally independent of [`crate::TxnCell`]'s payload
-//! representation. The committed value is one [`AtomicI64`], while the shared
-//! [`AtomicVersion`] supplies observation validation and canonical exclusive
-//! commit ownership. Transaction-local intents are wrapping deltas rather than
-//! replacement values.
+//! [`TxnCounter`] fills the deferred-addition role of C++ `TCounter`, not its
+//! full interface. The committed value is one [`AtomicI64`], independent of
+//! [`crate::TxnCell`]'s payload representation; intents are wrapping `i64`
+//! deltas, not replacement values.
+//!
+//! # Datatype walkthrough
+//!
+//! - **Read/increment.** [`TxnCounter::increment`] composes a wrapping delta
+//!   through [`TransProxy::add_write`] without a shared read.
+//!   [`TxnCounter::get`] records the first checked version and base, retains
+//!   that first observation, and overlays the current staged delta for
+//!   read-your-writes, even when the increment preceded the read.
+//! - **Lock/check.** Every intent, including `increment(0)` or increments that
+//!   wrap/cancel to zero, synchronously acquires the canonical exclusive
+//!   [`AtomicVersion`] lock in [`TObject::lock`]; these are not multi-owner
+//!   commutative locks. [`TObject::check`] validates a recorded observation
+//!   against the unlocked version or this transaction's held guard. A blind
+//!   increment has no ordinary read obligation.
+//! - **Install/unlock.** [`TObject::install`] applies the delta once with
+//!   wrapping atomic addition, then requests commit-version publication and
+//!   unlock, like C++ `TCounter::install`. Core defers this publication for
+//!   shared physical locks and retained distributed participants.
+//! - **Cleanup.** [`TObject::cleanup`] clears the retained base, installation
+//!   marker, and remaining intent after unlock on a definite outcome.
+//!
+//! C++ `TCounter` also supports assignments and predicate comparisons. Rust
+//! exposes neither: its predicate type is [`NoPredicate`]. Ordered observation
+//! metadata does not imply opacity; the current runtime rejects opaque
+//! isolation. This is a protocol correspondence, not feature parity.
 
 use std::fmt;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
-use crate::adapter::{
-    FinishDisposition, FinishItem, InstallItem, NoPredicate, ObservationOrder, ObservationRef,
-    OpacityToken, PreflightItem, TransactionalResource,
+use crate::object::{
+    CleanupDisposition, CleanupItem, InstallItem, NoPredicate, ObservationOrder, ObservationRef,
+    OpacityToken, PreflightItem, TObject,
 };
 use crate::error::{
     AccessError, AdapterFault, AdapterFaultKind, AdapterPhase, CheckError, Conflict, ItemInitError,
@@ -20,13 +44,13 @@ use crate::error::{
 };
 use crate::identity::{LockClass, LockIdentity, LockNamespaceId, OccVersion, ResourceClass};
 use crate::lock::{
-    ExecutionCheckContext, FinishContext, InstallContext, LockRequest, LockUse, PredicateContext,
-    PreflightContext, ValidationContext,
+    ExecutionCheckContext, CleanupContext, InstallContext, LockRequest, LockUse, PredicateContext,
+    LockContext, ValidationContext,
 };
 use crate::runtime::{RegisteredResource, Runtime};
 use crate::txn_cell::VersionLock;
 use crate::version::AtomicVersion;
-use crate::{Active, Entry, Transaction};
+use crate::{Active, TransProxy, Transaction};
 
 const COUNTER_RESOURCE_CLASS_VALUE: u32 = 1;
 const COUNTER_LOCK_CLASS_VALUE: u32 = 1;
@@ -37,6 +61,11 @@ const COUNTER_LOCK_KEY: u64 = 0;
 /// Every addition has explicit two's-complement wrapping semantics. Repeated
 /// increments in one transaction compose into one deferred delta, including
 /// when their mathematical sum exceeds the `i64` range.
+///
+/// [`Self::get`] overlays the current delta on the retained first shared
+/// base. [`Self::increment`] preserves that observation and records a write
+/// intent even for zero. There is no assignment or predicate API; see the
+/// [module walkthrough](crate::txn_counter) for the exclusive commit protocol.
 pub struct TxnCounter {
     resource: RegisteredResource<CounterAdapter>,
 }
@@ -77,6 +106,9 @@ impl TxnCounter {
     }
 
     /// Stages a wrapping increment without requiring a shared read.
+    ///
+    /// A zero delta is still a write intent: it is locked and installed at
+    /// commit, rather than converted into a read-only operation.
     pub fn increment(
         &self,
         txn: &mut Transaction<'_, Active>,
@@ -84,7 +116,7 @@ impl TxnCounter {
     ) -> Result<(), AccessError> {
         txn.with_item(&self.resource, (), move |entry| {
             let composed = entry.intent().copied().unwrap_or(0).wrapping_add(delta);
-            entry.stage(composed)
+            entry.add_write(composed)
         })
     }
 }
@@ -117,6 +149,7 @@ struct CounterAdapter {
 #[derive(Debug, Default)]
 struct CounterLocal {
     first_base: Option<i64>,
+    locked_version: Option<OccVersion>,
     installed: bool,
 }
 
@@ -136,9 +169,19 @@ struct CounterPrepared {
 }
 
 impl CounterAdapter {
-    fn get(&self, entry: &mut Entry<'_, Self>) -> Result<i64, AccessError> {
+    fn get(&self, entry: &mut TransProxy<'_, Self>) -> Result<i64, AccessError> {
         let delta = entry.intent().copied().unwrap_or(0);
         if let Some(base) = entry.local().first_base {
+            return Ok(base.wrapping_add(delta));
+        }
+
+        // An incremental participant can read after a blind increment was
+        // locked. The core still owns that guard; capture the protected base
+        // instead of mistaking this transaction's lock for a competing writer.
+        if let Some(version) = entry.local().locked_version {
+            let base = self.value.load(Ordering::Relaxed);
+            entry.add_read(CounterObservation { version })?;
+            entry.local_mut().first_base = Some(base);
             return Ok(base.wrapping_add(delta));
         }
 
@@ -151,7 +194,7 @@ impl CounterAdapter {
             return Err(Conflict::ReadValidation.into());
         }
 
-        entry.record_read(CounterObservation { version: observed })?;
+        entry.add_read(CounterObservation { version: observed })?;
         entry.local_mut().first_base = Some(base);
         Ok(base.wrapping_add(delta))
     }
@@ -184,7 +227,7 @@ impl CounterAdapter {
     }
 }
 
-impl TransactionalResource for CounterAdapter {
+impl TObject for CounterAdapter {
     type Key = ();
     type Local = CounterLocal;
     type Observation = CounterObservation;
@@ -196,20 +239,23 @@ impl TransactionalResource for CounterAdapter {
         Ok(CounterLocal::default())
     }
 
-    fn preflight(
+    fn lock(
         &self,
         _key: &Self::Key,
-        item: PreflightItem<'_, Self>,
-        cx: &mut PreflightContext<'_>,
+        mut item: PreflightItem<'_, Self>,
+        cx: &mut LockContext<'_>,
     ) -> Result<Self::Prepared, PrepareError> {
         let lock_use = if item.intent().is_some() {
-            Some(cx.require_lock(LockRequest::new(
+            Some(cx.try_lock(LockRequest::new(
                 self.lock_identity.clone(),
                 Arc::clone(&self.lock),
             ))?)
         } else {
             None
         };
+        if let Some(use_) = lock_use.as_ref() {
+            item.local_mut().locked_version = Some(cx.guard(use_)?.before());
+        }
         Ok(CounterPrepared { lock_use })
     }
 
@@ -235,7 +281,7 @@ impl TransactionalResource for CounterAdapter {
         match *predicate {}
     }
 
-    fn upgrade_predicate(
+    fn check_predicate(
         &self,
         _key: &Self::Key,
         predicate: &Self::Predicate,
@@ -245,7 +291,7 @@ impl TransactionalResource for CounterAdapter {
         match *predicate {}
     }
 
-    fn validate_read(
+    fn check(
         &self,
         _key: &Self::Key,
         observation: &Self::Observation,
@@ -301,17 +347,20 @@ impl TransactionalResource for CounterAdapter {
         if expected_base.is_some_and(|expected| expected != previous) {
             panic!("sto-core TxnCounter invariant: installed over an unvalidated base");
         }
+        cx.try_publish_unlock(lock_use)
+            .unwrap_or_else(|error| panic!("sto-core TxnCounter publication failed: {error}"));
     }
 
-    fn finish(
+    fn cleanup(
         &self,
         _key: &Self::Key,
-        mut item: FinishItem<'_, Self>,
+        mut item: CleanupItem<'_, Self>,
         _prepared: Option<&mut Self::Prepared>,
-        _disposition: FinishDisposition,
-        _cx: &mut FinishContext<'_>,
+        _disposition: CleanupDisposition,
+        _cx: &mut CleanupContext<'_>,
     ) {
         item.local_mut().first_base = None;
+        item.local_mut().locked_version = None;
         item.local_mut().installed = false;
         let _ = item.take_remaining_intent();
     }

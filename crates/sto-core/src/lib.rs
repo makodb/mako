@@ -7,7 +7,7 @@
 //! and commit callbacks. This crate is native Rust and is not translated into
 //! C++.
 
-pub mod adapter;
+pub mod object;
 pub mod direct_commit;
 pub mod error;
 pub mod hook;
@@ -21,18 +21,21 @@ pub mod txn_cell;
 pub mod txn_counter;
 pub mod version;
 
-mod item;
+#[cfg(feature = "test-install-observer")]
+pub mod test_install;
+
+mod trans_item;
 mod terminal_read;
 
-pub use adapter::{
-    FinishDisposition, FinishItem, InstallItem, NoPredicate, ObservationOrder, ObservationRef,
-    OpacityToken, PreflightFreeReadCapability, PreflightFreeReadFinish, PreflightFreeReadValidate,
-    PreflightItem, ResourceKey, TerminalReadBatchCapability, TerminalReadBatchValidate,
-    TransactionalResource,
+pub use object::{
+    CommitVersionRequirement, CleanupDisposition, CleanupItem, InstallItem, NoPredicate,
+    ObservationOrder, ObservationRef, OpacityToken, PreflightFreeReadCapability,
+    PreflightFreeReadCleanup, PreflightFreeReadValidate, PreflightItem, ResourceKey,
+    TerminalReadBatchCapability, TerminalReadBatchValidate, TObject,
 };
 pub use direct_commit::{
     BorrowedDirectPrepare, BorrowedInjectiveLockCommitCapability, BorrowedLockToken,
-    BorrowedTokenPrepare, BorrowedUniqueLockCommitCapability, DirectBorrowedLockTarget,
+    BorrowedTokenCommitOperations, BorrowedUniqueLockCommitCapability, DirectBorrowedLockTarget,
     DirectCommitCapability, DirectInstall, DirectInstallContext, DirectLockMut, DirectLockRef,
     DirectPrepare, DirectTokenLock, DirectValidate, DirectValidationContext, DirectValidationItem,
     UniqueLockCommitCapability,
@@ -40,20 +43,21 @@ pub use direct_commit::{
 pub use error::*;
 pub use hook::{CommitHook, CommitHookError};
 pub use identity::*;
-pub use item::Entry;
+pub use trans_item::TransProxy;
 pub use lock::{
-    AcquireContext, ErasedLockUse, ExecutionCheckContext, FinishContext, InstallContext,
-    LockDisposition, LockRequest, LockUse, PredicateContext, PreflightContext,
+    AcquireContext, ErasedLockUse, ExecutionCheckContext, CleanupContext, InstallContext,
+    LockDisposition, LockRequest, LockUse, PredicateContext, LockContext,
     PreflightFreeValidationContext, ReleaseContext, TransactionLock, ValidationContext,
 };
 pub use runtime::{
     IsolationMode, ObjectRegistration, RegisteredResource, Runtime, RuntimeConfig, RuntimeHealth,
     WorkerContext,
 };
-pub use terminal_read::TerminalReadEntry;
+pub use terminal_read::TerminalReadProxy;
 pub use transaction::{
-    Active, ItemBatchControl, ItemBatchOutcome, ResolvedItemSession, TerminalReadOpen,
-    TerminalReadReady, TerminalReadTransaction, Transaction, UniqueItemKeyIndex, UniqueItemKeys,
+    Active, ItemBatchControl, ItemBatchOutcome, Participant, ParticipantError, ParticipantPhase,
+    ResolvedItemSession, TerminalReadOpen, TerminalReadReady, TerminalReadTransaction, Transaction,
+    UniqueItemKeyIndex, UniqueItemKeys,
 };
 pub use txn_array::{ArrayBoundsError, TxnArray};
 pub use txn_cell::{TxnCell, VersionLock};

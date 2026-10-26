@@ -5,12 +5,12 @@ use std::sync::{
 
 use sto_core::{
     AccessError, AcquireContext, AcquireError, Active, AdapterFault, AdapterFaultKind,
-    AdapterPhase, AtomicVersion, CheckError, Conflict, DetachedVersionGuard, Entry,
-    ExecutionCheckContext, FinishContext, FinishDisposition, FinishItem, InstallContext,
+    AdapterPhase, AtomicVersion, CheckError, Conflict, DetachedVersionGuard, TransProxy,
+    ExecutionCheckContext, CleanupContext, CleanupDisposition, CleanupItem, InstallContext,
     InstallItem, LockClass, LockDisposition, LockIdentity, LockNamespaceId, LockRequest, LockUse,
     NoPredicate, ObservationOrder, ObservationRef, OccVersion, OpacityToken, PredicateContext,
-    PreflightContext, PreflightItem, PrepareError, RegisteredResource, ReleaseContext,
-    ResourceClass, Runtime, RuntimeConfig, Transaction, TransactionLock, TransactionalResource,
+    LockContext, PreflightItem, PrepareError, RegisteredResource, ReleaseContext,
+    ResourceClass, Runtime, RuntimeConfig, Transaction, TransactionLock, TObject,
     ValidationContext,
 };
 
@@ -88,6 +88,7 @@ struct Local {
 
 struct Prepared {
     lock_use: Option<LockUse<SharedVersionLock>>,
+    final_value: Option<i64>,
 }
 
 struct ClassAdapter<const TAG: u32> {
@@ -98,7 +99,7 @@ struct ClassAdapter<const TAG: u32> {
 }
 
 impl<const TAG: u32> ClassAdapter<TAG> {
-    fn get(&self, entry: &mut Entry<'_, Self>) -> Result<i64, AccessError> {
+    fn get(&self, entry: &mut TransProxy<'_, Self>) -> Result<i64, AccessError> {
         if let Some(intent) = entry.intent() {
             return Ok(*intent);
         }
@@ -114,7 +115,7 @@ impl<const TAG: u32> ClassAdapter<TAG> {
         if !self.version.validate(version) {
             return Err(Conflict::ReadValidation.into());
         }
-        entry.record_read(Observation { version })?;
+        entry.add_read(Observation { version })?;
         entry.local_mut().snapshot = Some(snapshot);
         Ok(snapshot)
     }
@@ -150,7 +151,7 @@ impl<const TAG: u32> ClassAdapter<TAG> {
     }
 }
 
-impl<const TAG: u32> TransactionalResource for ClassAdapter<TAG> {
+impl<const TAG: u32> TObject for ClassAdapter<TAG> {
     type Key = ();
     type Local = Local;
     type Observation = Observation;
@@ -165,21 +166,24 @@ impl<const TAG: u32> TransactionalResource for ClassAdapter<TAG> {
         })
     }
 
-    fn preflight(
+    fn lock(
         &self,
         _key: &Self::Key,
         item: PreflightItem<'_, Self>,
-        cx: &mut PreflightContext<'_>,
+        cx: &mut LockContext<'_>,
     ) -> Result<Self::Prepared, PrepareError> {
         let lock_use = if item.intent().is_some() {
-            Some(cx.require_lock(LockRequest::new(
+            Some(cx.try_lock(LockRequest::new(
                 self.lock_identity.clone(),
                 Arc::clone(&self.lock),
             ))?)
         } else {
             None
         };
-        Ok(Prepared { lock_use })
+        if let Some(use_) = lock_use.as_ref() {
+            assert!(cx.guard(use_)?.inner.is_held(), "locking is synchronous");
+        }
+        Ok(Prepared { lock_use, final_value: item.intent().copied() })
     }
 
     fn revalidate_read(
@@ -204,7 +208,7 @@ impl<const TAG: u32> TransactionalResource for ClassAdapter<TAG> {
         match *predicate {}
     }
 
-    fn upgrade_predicate(
+    fn check_predicate(
         &self,
         _key: &Self::Key,
         predicate: &Self::Predicate,
@@ -214,7 +218,7 @@ impl<const TAG: u32> TransactionalResource for ClassAdapter<TAG> {
         match *predicate {}
     }
 
-    fn validate_read(
+    fn check(
         &self,
         _key: &Self::Key,
         observation: &Self::Observation,
@@ -253,17 +257,20 @@ impl<const TAG: u32> TransactionalResource for ClassAdapter<TAG> {
             assert_eq!(observation.version, guard.inner.before());
         }
 
-        let displaced = self.value.swap(*item.intent(), Ordering::AcqRel);
+        assert_eq!(prepared.final_value, Some(*item.intent()));
+        let displaced = self.value.swap(prepared.final_value.unwrap(), Ordering::AcqRel);
         item.local_mut().displaced = Some(displaced);
+        let published = cx.try_publish_unlock(prepared.lock_use.as_ref().unwrap()).unwrap();
+        assert_eq!(self.version.observe().is_ok(), published);
     }
 
-    fn finish(
+    fn cleanup(
         &self,
         _key: &Self::Key,
-        mut item: FinishItem<'_, Self>,
+        mut item: CleanupItem<'_, Self>,
         _prepared: Option<&mut Self::Prepared>,
-        _disposition: FinishDisposition,
-        _cx: &mut FinishContext<'_>,
+        _disposition: CleanupDisposition,
+        _cx: &mut CleanupContext<'_>,
     ) {
         item.local_mut().snapshot = None;
         item.local_mut().displaced = None;
@@ -286,7 +293,7 @@ impl<const TAG: u32> ClassHandle<TAG> {
         transaction: &mut Transaction<'_, Active>,
         value: i64,
     ) -> Result<(), AccessError> {
-        transaction.with_item(&self.resource, (), |entry| entry.stage(value))
+        transaction.with_item(&self.resource, (), |entry| entry.add_write(value))
     }
 
     fn add(
@@ -297,7 +304,7 @@ impl<const TAG: u32> ClassHandle<TAG> {
         let adapter = self.resource.adapter();
         transaction.with_item(&self.resource, (), |entry| {
             let current = adapter.get(entry)?;
-            entry.stage(current.wrapping_add(delta))
+            entry.add_write(current.wrapping_add(delta))
         })
     }
 }
@@ -396,4 +403,51 @@ fn downstream_adapter_uses_two_resource_classes_and_one_typed_physical_lock() {
     second.set(&mut transaction, -2).unwrap();
     transaction.abort();
     assert_eq!(read_pair(&mut worker, &first, &second), (13, 207));
+}
+
+#[test]
+fn participant_refreshes_preparation_and_retains_aliased_guards_until_finish() {
+    use mako_clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
+    use sto_core::{CommitOutcome, ParticipantPhase};
+
+    let runtime = Runtime::new(RuntimeConfig::new().with_max_locks_per_transaction(1)).unwrap();
+    let (first, second) = register_two_classes(&runtime, 10, 100);
+    let mut worker = runtime.attach().unwrap();
+    let mut participant = worker.begin().unwrap().into_participant();
+    participant.with_transaction(|txn| first.set(txn, 11)).unwrap();
+    participant.lock_writes().unwrap();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut competing = runtime.attach().unwrap();
+            let mut reader = competing.begin().unwrap();
+            assert_eq!(first.get(&mut reader), Err(Conflict::LockBusy.into()));
+            reader.abort();
+        }).join().unwrap();
+    });
+
+    participant.with_transaction(|txn| {
+        first.set(txn, 12)?;
+        second.set(txn, 101)?;
+        assert_eq!(first.get(txn)?, 12);
+        Ok(())
+    }).unwrap();
+    participant.lock_writes().unwrap();
+    participant.validate().unwrap();
+    assert_eq!(participant.phase(), ParticipantPhase::Validated);
+    assert!(participant.with_transaction(|txn| first.set(txn, 99)).is_err());
+    participant.install(DistributedTimeTerm::new(
+        DistributedTimestamp::new(73).unwrap(),
+        DistributedTerm::new(4).unwrap(),
+    )).unwrap();
+    std::thread::scope(|scope| {
+        scope.spawn(|| {
+            let mut competing = runtime.attach().unwrap();
+            let mut reader = competing.begin().unwrap();
+            assert_eq!(second.get(&mut reader), Err(Conflict::LockBusy.into()));
+            reader.abort();
+        }).join().unwrap();
+    });
+    // Even an abort request after installation completes committed cleanup.
+    assert!(matches!(participant.abort().unwrap(), CommitOutcome::Committed(_)));
+    assert_eq!(read_pair(&mut worker, &first, &second), (12, 101));
 }

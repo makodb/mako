@@ -22,8 +22,13 @@
 //!
 //! The clock is process-global in production ([`global`]) because one process
 //! owns one cache-order namespace. Tests construct private [`Clock`]s.
+//!
+//! Distributed transaction bases and decimal terms use the independent
+//! [`distributed`] authority; they are never HLC stamps or cache sequences.
 
 #![forbid(unsafe_code)]
+
+pub mod distributed;
 
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -188,6 +193,18 @@ impl Clock {
     /// The physical clock feeding this HLC.
     pub fn physical(&self) -> &PhysicalClock {
         &self.physical
+    }
+
+    /// Opaque address of the packed HLC word for a non-binding cache hint.
+    ///
+    /// The address is valid only while this exact `Clock` remains alive and
+    /// unmoved. It grants no permission to load, store, or dereference the
+    /// word. Callers may only submit a non-faulting hardware prefetch hint;
+    /// timestamp and gate operations must still use the clock methods.
+    #[doc(hidden)]
+    #[inline]
+    pub fn prefetch_address(&self) -> *const u8 {
+        std::ptr::from_ref(&self.hlc).cast()
     }
 
     /// Current stamp, or zero if nothing was ever allocated.

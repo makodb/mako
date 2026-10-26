@@ -43,6 +43,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::OnceLock;
 
 use crate::value::Entry;
+use crate::EntryWord;
 
 /// Entries in segment 0. Later segments double.
 const BASE: u32 = 1024;
@@ -150,12 +151,19 @@ impl EntryTable {
         }
     }
 
-    /// Append an entry, returning its index.
+    /// Append an entry, returning the word the key index stores for it.
     ///
     /// The slot is fully initialised before this returns, and the caller
-    /// publishes the index into the key directory only afterwards — so no
-    /// reader can reach an index whose slot is still empty.
-    pub fn push(&self, entry: Entry) -> u32 {
+    /// publishes the word into the key directory only afterwards — so no
+    /// reader can reach an entry whose slot is still empty.
+    ///
+    /// The word is the entry's **address**, not its index: segments are
+    /// allocated once and never move (see the module docs), so an address
+    /// is stable for the life of the table, and the read path resolves an
+    /// entry with one dereference instead of walking the segment array.
+    /// The index is reserved for the store's own bookkeeping, where it is
+    /// a dense small integer rather than a pointer to chase.
+    pub fn push(&self, entry: Entry) -> EntryWord {
         let idx = self.next.fetch_add(1, Ordering::AcqRel);
         let (s, off) = locate(idx);
         assert!(
@@ -175,12 +183,47 @@ impl EntryTable {
             (*slot.entry.get()).write(entry);
         }
         slot.ready.store(true, Ordering::Release);
-        idx
+        // SAFETY: the entry was just written and `ready` released, so the
+        // address is that of an initialised `Entry` inside a segment that
+        // is never moved or freed while the table lives.
+        let entry_ref: &Entry = unsafe { (*slot.entry.get()).assume_init_ref() };
+        Self::word_of_entry(entry_ref)
     }
 
-    /// Borrow an entry.
+    /// The word naming `entry` in the key index.
     ///
-    /// Two relaxed loads and an index — no lock, no reference count. The
+    /// Only meaningful for an entry of this table: the word is the
+    /// address, and [`EntryTable::entry_of`] turns it back into a
+    /// reference with no lookup at all.
+    #[inline]
+    pub fn word_of_entry(entry: &Entry) -> EntryWord {
+        entry as *const Entry as EntryWord
+    }
+
+    /// The entry a word names. The word must have come from this table.
+    ///
+    /// `0` is the key index's absence marker and no entry has address 0,
+    /// so the two cannot be confused. The reference is valid while the
+    /// store owning this table is alive, which is the same lifetime the
+    /// index's words are valid for.
+    #[inline]
+    pub fn entry_of(word: EntryWord) -> &'static Entry {
+        assert!(
+            word != 0,
+            "word 0 is the index's absence marker, not an entry address"
+        );
+        // SAFETY: `word` was produced by `push`/`word_of_entry` from an
+        // entry in a table whose segments are allocated once and never
+        // moved, and the caller holds the store that owns that table.
+        unsafe { &*(word as *const Entry) }
+    }
+
+    /// Borrow an entry by its dense index.
+    ///
+    /// Two relaxed loads and an index — no lock, no reference count. This
+    /// is for the store's own bookkeeping (tickets, the dirty map); the
+    /// data path resolves words with [`EntryTable::entry_of`], which is
+    /// one dereference and no segment walk. The
     /// returned reference is valid as long as the table is, because
     /// entries are never freed and segments never move.
     #[inline]
@@ -278,11 +321,14 @@ mod tests {
         #[cfg(not(miri))]
         const M: u32 = 5000;
         for i in 0..M {
-            let idx = t.push(Entry::new(
+            let word = t.push(Entry::new(
                 format!("k{i}").as_bytes(),
                 Record::resident(u64::from(i) + 1, &[]),
             ));
-            assert_eq!(idx, i);
+            // The word is the entry's address: distinct per entry, and
+            // never the index's absence marker.
+            assert_ne!(word, 0);
+            assert_eq!(EntryTable::entry_of(word).key(), format!("k{i}").as_bytes());
         }
         for i in 0..M {
             assert_eq!(t.get(i).key(), format!("k{i}").as_bytes());
@@ -321,11 +367,15 @@ mod tests {
                 let published = std::sync::Arc::clone(&published);
                 scope.spawn(move || {
                     for i in 0..ROUNDS {
-                        let idx = t.push(Entry::new(
+                        // This case publishes the INDEX on purpose: the
+                        // property under test is the Release/Acquire
+                        // pairing between `push` and `get`, and `get` is
+                        // the index accessor.
+                        t.push(Entry::new(
                             format!("k{i:06}").as_bytes(),
                             Record::resident(u64::from(i) + 1, &[0xAB; 24]),
                         ));
-                        published.store(idx, Ordering::Relaxed);
+                        published.store(i, Ordering::Relaxed);
                     }
                 });
             }
@@ -401,8 +451,8 @@ mod tests {
         );
         // And every one of them resolves, which is what would break if a
         // segment were published before it was filled.
-        for idx in all {
-            let _ = t.get(idx).key();
+        for word in all {
+            let _ = EntryTable::entry_of(word).key();
         }
     }
 }

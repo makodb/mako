@@ -1,17 +1,17 @@
 //! Worker-affine transaction execution and the native STO commit protocol.
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::{
     any::TypeId,
     hash::{Hash, Hasher},
     marker::PhantomData,
     num::NonZeroUsize,
-    panic::{catch_unwind, AssertUnwindSafe},
     rc::Rc,
     sync::Arc,
 };
 
 use crate::{
-    adapter::{FinishDisposition, ResourceKey, TerminalReadBatchCapability, TransactionalResource},
+    object::{CleanupDisposition, ResourceKey, TerminalReadBatchCapability, TObject},
     error::{
         AbortInfo, AbortReason, AccessError, AcquireError, AdapterFault, AdapterPhase, BeginError,
         CheckError, CommitFailure, CommitInfo, CommitOutcome, DefiniteOutcome, FailurePhase,
@@ -19,15 +19,26 @@ use crate::{
         Unsupported,
     },
     hook::{CommitHook, CommitHookError},
-    item::{
-        BatchFinishStage, Entry, ErasedItem, ErasedItemBatch, ItemBox, ItemData, TypedItemBatch,
+    trans_item::{
+        BatchFinishStage, TransProxy, ErasedItem, ErasedItemBatch, TransItem, TransItemData, TypedTransItemBatch,
     },
     lock::{
-        FinishContext, LockDisposition, LockPlan, LockPlanStorage, PreflightFreeValidationContext,
+        CleanupContext, LockDisposition, LockPlan, LockPlanStorage, PreflightFreeValidationContext,
     },
     runtime::{IsolationMode, RegisteredResource, Runtime, WorkerContext},
-    terminal_read::{ErasedTerminalReadBatch, TerminalReadEntry, TypedTerminalReadBatch},
+    terminal_read::{ErasedTerminalReadBatch, TerminalReadProxy, TypedTerminalReadBatch},
 };
+
+#[path = "direct_protocol.rs"]
+mod direct_protocol;
+pub(crate) use direct_protocol::{DirectCommitBody, DirectCommitContext, DirectCommitStepFailure};
+
+#[path = "ordinary_protocol.rs"]
+mod ordinary_protocol;
+use ordinary_protocol::{contain_driver_unwind, DriverStep};
+#[path = "participant.rs"]
+mod participant;
+pub use participant::{Participant, ParticipantError, ParticipantPhase};
 
 /// Marker for a general active transaction.
 #[derive(Debug)]
@@ -318,7 +329,7 @@ impl ItemHasher {
     }
 
     #[inline]
-    fn for_resource<A: TransactionalResource>(resource: &RegisteredResource<A>) -> Self {
+    fn for_resource<A: TObject>(resource: &RegisteredResource<A>) -> Self {
         Self {
             state: resource.object_id().get()
                 ^ (u64::from(resource.resource_class().get()) << 32)
@@ -579,6 +590,7 @@ impl ItemIndex {
 struct CommitShape {
     has_writes: bool,
     has_predicates: bool,
+    requires_ordered_commit_id: bool,
 }
 
 // Consecutive operations commonly use the same resource. Retain only that
@@ -606,83 +618,10 @@ impl ValidatedBindings {
     }
 }
 
-pub(crate) struct TransactionScratch {
-    // Keep one worker-affine runtime handle paired with the reusable frame.
-    // Moving it between scratch and the active frame avoids a shared Arc
-    // increment/decrement on every transaction boundary.
-    runtime: Arc<Runtime>,
-    items: Vec<Option<Box<dyn ErasedItem>>>,
-    // The leading ordinary boxes whose retained resource handles have already
-    // been disposed. This avoids repeating erased calls and unwind boundaries
-    // after a transaction switches to the separate typed-batch pool.
-    ordinary_disposed_prefix: usize,
-    unique_batch: Option<Box<dyn ErasedItemBatch>>,
-    item_index: ItemIndex,
-    lock_storage: LockPlanStorage,
-}
-
-impl TransactionScratch {
-    pub(crate) fn new(runtime: Arc<Runtime>) -> Self {
-        Self {
-            runtime,
-            items: Vec::new(),
-            ordinary_disposed_prefix: 0,
-            unique_batch: None,
-            item_index: ItemIndex::default(),
-            lock_storage: LockPlanStorage::default(),
-        }
-    }
-
-    /// Drops every adapter binding retained by this idle worker scratch under
-    /// an unwind boundary. On failure the caller must poison the runtime and
-    /// quarantine the returned scratch rather than run any more destructors.
-    #[allow(
-        clippy::result_large_err,
-        reason = "the unwind path must return the allocation itself for no-allocation quarantine"
-    )]
-    pub(crate) fn dispose_retained_resources(mut self) -> Result<(), Self> {
-        debug_assert!(self.ordinary_disposed_prefix <= self.items.len());
-        for item_slot in self.ordinary_disposed_prefix..self.items.len() {
-            let Some(item) = self.items[item_slot].as_mut() else {
-                continue;
-            };
-            let disposal = catch_unwind(AssertUnwindSafe(|| {
-                item.dispose_retained_resource();
-            }));
-            if disposal.is_err() {
-                return Err(self);
-            }
-        }
-        if let Some(batch) = self.unique_batch.as_mut() {
-            let disposal = catch_unwind(AssertUnwindSafe(|| {
-                batch.dispose_retained_resources();
-            }));
-            if disposal.is_err() {
-                return Err(self);
-            }
-        }
-        Ok(())
-    }
-}
-
-impl std::fmt::Debug for TransactionScratch {
-    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("TransactionScratch")
-            .field("runtime_id", &self.runtime.id())
-            .field("item_capacity", &self.items.capacity())
-            .field("ordinary_disposed_prefix", &self.ordinary_disposed_prefix)
-            .field("has_unique_batch_pool", &self.unique_batch.is_some())
-            .field("item_index_capacity", &self.item_index.entries.capacity())
-            .finish()
-    }
-}
-
 /// Worker-affine storage used only by the restricted terminal-read protocol.
 ///
-/// Keeping this pool separate preserves the general transaction frame's
-/// by-value layout while allowing a terminal batch to retain one reusable
-/// typed allocation and resource binding at a stable address.
+/// Keeping this pool separate lets a terminal batch retain one reusable typed
+/// allocation and resource binding without touching the general frame.
 pub(crate) struct TerminalReadScratch {
     runtime: Arc<Runtime>,
     terminal_read_batch: Option<Box<dyn ErasedTerminalReadBatch>>,
@@ -725,10 +664,17 @@ impl std::fmt::Debug for TerminalReadScratch {
     }
 }
 
-struct TransactionFrame {
+/// One allocation per attached worker, moved by exclusive ownership between
+/// the idle worker, active transaction, and commit driver. The frame itself
+/// stays in place; no raw frame reference aliases the mutable worker borrow.
+pub(crate) struct TransactionFrame {
+    // This handle stays with the allocation across attempts, avoiding a shared
+    // Arc increment/decrement on every transaction boundary.
     runtime: Arc<Runtime>,
     isolation: IsolationMode,
     items: Vec<Option<Box<dyn ErasedItem>>>,
+    // Leading ordinary boxes whose retained bindings have already been
+    // disposed after switching to the separate typed-batch pool.
     ordinary_disposed_prefix: usize,
     unique_batch: Option<Box<dyn ErasedItemBatch>>,
     batch_active: bool,
@@ -746,56 +692,79 @@ struct TransactionFrame {
     // Consecutive read-then-write operations commonly touch the same logical
     // item. Store slot + 1 so this exact-identity cache remains one word and
     // can bypass hashing plus open-addressed probing on the second access.
-    // The cache is attempt-local and never enters worker scratch.
+    // The cache is attempt-local and is reset before reusing this frame.
     last_accessed_item_slot: Option<NonZeroUsize>,
     lock_storage: LockPlanStorage,
     doomed: bool,
 }
 
 impl TransactionFrame {
-    fn new(isolation: IsolationMode, mut scratch: TransactionScratch) -> Self {
-        scratch.item_index.begin_transaction();
-        debug_assert!(scratch
-            .unique_batch
-            .as_ref()
-            .is_none_or(|batch| batch.active_len() == 0));
-        debug_assert!(scratch.ordinary_disposed_prefix <= scratch.items.len());
+    pub(crate) fn new(runtime: Arc<Runtime>) -> Self {
         Self {
-            runtime: scratch.runtime,
-            isolation,
-            items: scratch.items,
-            ordinary_disposed_prefix: scratch.ordinary_disposed_prefix,
-            unique_batch: scratch.unique_batch,
+            isolation: runtime.config().default_isolation(),
+            runtime,
+            items: Vec::new(),
+            ordinary_disposed_prefix: 0,
+            unique_batch: None,
             batch_active: false,
-            item_index: scratch.item_index,
+            item_index: ItemIndex::default(),
             item_count: 0,
             validated_bindings: ValidatedBindings::default(),
             last_accessed_item_slot: None,
-            lock_storage: scratch.lock_storage,
+            lock_storage: LockPlanStorage::default(),
             doomed: false,
         }
     }
 
-    fn into_scratch(self) -> TransactionScratch {
+    fn begin(&mut self, isolation: IsolationMode) {
+        self.assert_reusable();
+        self.item_index.begin_transaction();
+        self.isolation = isolation;
+        self.item_count = 0;
+        self.validated_bindings = ValidatedBindings::default();
+        self.last_accessed_item_slot = None;
+        self.doomed = false;
+    }
+
+    pub(crate) fn assert_reusable(&self) {
         debug_assert!(!self.batch_active);
         debug_assert!(self
             .unique_batch
             .as_ref()
             .is_none_or(|batch| batch.active_len() == 0));
         debug_assert!(self.ordinary_disposed_prefix <= self.items.len());
-        TransactionScratch {
-            runtime: self.runtime,
-            items: self.items,
-            ordinary_disposed_prefix: self.ordinary_disposed_prefix,
-            unique_batch: self.unique_batch,
-            item_index: self.item_index,
-            lock_storage: self.lock_storage,
+    }
+
+    /// Drops idle retained bindings under the existing unwind boundaries.
+    /// Failure returns the complete allocation for no-allocation quarantine;
+    /// the caller must not run further adapter destructors on that frame.
+    pub(crate) fn dispose_retained_resources(mut self: Box<Self>) -> Result<(), Box<Self>> {
+        self.assert_reusable();
+        for item_slot in self.ordinary_disposed_prefix..self.items.len() {
+            let Some(item) = self.items[item_slot].as_mut() else {
+                continue;
+            };
+            let disposal = catch_unwind(AssertUnwindSafe(|| {
+                item.dispose_retained_resource();
+            }));
+            if disposal.is_err() {
+                return Err(self);
+            }
         }
+        if let Some(batch) = self.unique_batch.as_mut() {
+            let disposal = catch_unwind(AssertUnwindSafe(|| {
+                batch.dispose_retained_resources();
+            }));
+            if disposal.is_err() {
+                return Err(self);
+            }
+        }
+        Ok(())
     }
 
     fn commit_shape(&self) -> CommitShape {
         if self.batch_active {
-            let (has_writes, has_predicates) = self
+            let (has_writes, has_predicates, requires_ordered_commit_id) = self
                 .unique_batch
                 .as_ref()
                 .expect("an active unique batch retains its storage")
@@ -803,11 +772,13 @@ impl TransactionFrame {
             return CommitShape {
                 has_writes,
                 has_predicates,
+                requires_ordered_commit_id,
             };
         }
         let mut shape = CommitShape {
             has_writes: false,
             has_predicates: false,
+            requires_ordered_commit_id: false,
         };
         for item in self.items[..self.item_count]
             .iter()
@@ -815,7 +786,8 @@ impl TransactionFrame {
         {
             shape.has_writes |= item.has_intent();
             shape.has_predicates |= item.has_predicate();
-            if shape.has_writes && shape.has_predicates {
+            shape.requires_ordered_commit_id |= item.requires_ordered_commit_id();
+            if shape.has_writes && shape.has_predicates && shape.requires_ordered_commit_id {
                 break;
             }
         }
@@ -836,6 +808,19 @@ impl TransactionFrame {
                 .expect("commit owns every live item slot")
                 .is_preflight_free_read_candidate()
         })
+    }
+}
+
+impl std::fmt::Debug for TransactionFrame {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TransactionFrame")
+            .field("runtime_id", &self.runtime.id())
+            .field("item_capacity", &self.items.capacity())
+            .field("ordinary_disposed_prefix", &self.ordinary_disposed_prefix)
+            .field("has_unique_batch_pool", &self.unique_batch.is_some())
+            .field("item_index_capacity", &self.item_index.entries.capacity())
+            .finish()
     }
 }
 
@@ -895,11 +880,53 @@ impl TerminalReadFrame {
 /// fn require_send<T: Send>() {}
 /// require_send::<sto_core::Transaction<'static>>();
 /// ```
+///
+/// Shared access cannot cross threads either:
+///
+/// ```compile_fail
+/// fn require_sync<T: Sync>() {}
+/// require_sync::<sto_core::Transaction<'static>>();
+/// ```
+///
+/// The transaction cannot outlive its attached worker:
+///
+/// ```compile_fail
+/// fn escape(transaction: sto_core::Transaction<'_>) -> sto_core::Transaction<'static> {
+///     transaction
+/// }
+/// ```
 pub struct Transaction<'worker, State = Active> {
     worker: Option<&'worker mut WorkerContext>,
-    frame: Option<TransactionFrame>,
+    frame: Option<TransactionFrameRef<'worker>>,
     state: PhantomData<fn() -> State>,
     not_send_sync: PhantomData<Rc<()>>,
+}
+
+// Operation scopes borrow a retained participant frame instead of moving its
+// ownership into a temporary Transaction. Even replacing that public mutable
+// view cannot extract or prematurely clean up the participant's frame.
+enum TransactionFrameRef<'worker> {
+    Owned(Box<TransactionFrame>),
+    Borrowed(&'worker mut TransactionFrame),
+}
+
+impl std::ops::Deref for TransactionFrameRef<'_> {
+    type Target = TransactionFrame;
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Owned(frame) => frame,
+            Self::Borrowed(frame) => frame,
+        }
+    }
+}
+
+impl std::ops::DerefMut for TransactionFrameRef<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        match self {
+            Self::Owned(frame) => frame,
+            Self::Borrowed(frame) => frame,
+        }
+    }
 }
 
 /// One restricted terminal-read transaction borrowing an attached worker.
@@ -926,7 +953,7 @@ pub struct TerminalReadTransaction<'worker, State = TerminalReadOpen> {
 /// across several [`Self::with_resolved_item`] calls. It is created only by
 /// [`Transaction::with_item_session`], cannot escape that method's closure,
 /// and is structurally neither `Send` nor `Sync`.
-pub struct ResolvedItemSession<'session, A: TransactionalResource> {
+pub struct ResolvedItemSession<'session, A: TObject> {
     frame: &'session mut TransactionFrame,
     resource: &'session RegisteredResource<A>,
     binding_retained: bool,
@@ -934,7 +961,7 @@ pub struct ResolvedItemSession<'session, A: TransactionalResource> {
     not_send_sync: PhantomData<Rc<()>>,
 }
 
-impl<A: TransactionalResource> ResolvedItemSession<'_, A> {
+impl<A: TObject> ResolvedItemSession<'_, A> {
     /// Returns whether this session can still take the direct unique-batch
     /// append lane.
     ///
@@ -967,7 +994,7 @@ impl<A: TransactionalResource> ResolvedItemSession<'_, A> {
         &mut self,
         lookup: impl FnOnce() -> Result<Option<(A::Key, C)>, AccessError>,
         create: impl FnOnce() -> Result<(A::Key, C), AccessError>,
-        operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>, C) -> Result<R, AccessError>,
+        operation: impl for<'entry> FnOnce(&mut TransProxy<'entry, A>, C) -> Result<R, AccessError>,
     ) -> Result<R, AccessError> {
         if self.failure.is_some() {
             return Err(InvalidUse::TransactionDoomed.into());
@@ -1009,7 +1036,7 @@ impl<A: TransactionalResource> ResolvedItemSession<'_, A> {
     pub fn try_with_unique_item_batch(
         &mut self,
         keys: UniqueItemKeys<'_, A::Key>,
-        operation: impl for<'entry> FnMut(usize, &mut Entry<'entry, A>) -> Result<(), AccessError>,
+        operation: impl for<'entry> FnMut(usize, &mut TransProxy<'entry, A>) -> Result<(), AccessError>,
     ) -> Result<bool, AccessError> {
         if self.failure.is_some() {
             return Err(InvalidUse::TransactionDoomed.into());
@@ -1050,7 +1077,7 @@ impl<A: TransactionalResource> ResolvedItemSession<'_, A> {
         keys: UniqueItemKeys<'_, A::Key>,
         operation: impl for<'entry> FnMut(
             usize,
-            &mut Entry<'entry, A>,
+            &mut TransProxy<'entry, A>,
         ) -> Result<ItemBatchControl, AccessError>,
     ) -> Result<ItemBatchOutcome, AccessError> {
         if self.failure.is_some() {
@@ -1138,14 +1165,15 @@ impl WorkerContext {
         isolation: IsolationMode,
     ) -> Result<Transaction<'_, Active>, BeginError> {
         self.begin_isolation(isolation)?;
-        let scratch = self
-            .transaction_scratch
+        let mut frame = self
+            .transaction_frame
             .take()
-            .expect("idle worker retains transaction scratch");
-        debug_assert!(Arc::ptr_eq(&scratch.runtime, &self.runtime));
+            .expect("idle worker retains its transaction frame");
+        debug_assert!(Arc::ptr_eq(&frame.runtime, &self.runtime));
+        frame.begin(isolation);
         Ok(Transaction {
             worker: Some(self),
-            frame: Some(TransactionFrame::new(isolation, scratch)),
+            frame: Some(TransactionFrameRef::Owned(frame)),
             state: PhantomData,
             not_send_sync: PhantomData,
         })
@@ -1215,7 +1243,7 @@ impl<'worker> TerminalReadTransaction<'worker, TerminalReadOpen> {
     ///
     /// The transaction must have been created by
     /// [`WorkerContext::begin_terminal_read_batch`]. Each callback receives a
-    /// restricted [`TerminalReadEntry`] and must record exactly one ordinary
+    /// restricted [`TerminalReadProxy`] and must record exactly one ordinary
     /// observation. Duplicate keys are permitted: without writes or later
     /// lookup they are independent conservative observations of the same
     /// logical item.
@@ -1230,11 +1258,11 @@ impl<'worker> TerminalReadTransaction<'worker, TerminalReadOpen> {
         keys: &[A::Key],
         mut operation: impl for<'entry> FnMut(
             usize,
-            &mut TerminalReadEntry<'entry, A>,
+            &mut TerminalReadProxy<'entry, A>,
         ) -> Result<(), AccessError>,
     ) -> Result<TerminalReadTransaction<'worker, TerminalReadReady>, AccessError>
     where
-        A: TransactionalResource,
+        A: TObject,
     {
         let frame = self
             .frame
@@ -1264,6 +1292,16 @@ impl<'worker> TerminalReadTransaction<'worker, TerminalReadOpen> {
 }
 
 impl<'worker> Transaction<'worker, Active> {
+    /// Retains this exact frame for incremental distributed participant work.
+    pub fn into_participant(mut self) -> Participant<'worker> {
+        let frame = self.take_owned_frame()
+            .expect("a borrowed participant operation cannot transfer ownership");
+        Participant::new(
+            self.worker.take().expect("active transaction retains worker"),
+            frame,
+        )
+    }
+
     /// Returns this transaction's selected isolation profile.
     pub fn isolation(&self) -> IsolationMode {
         self.frame
@@ -1288,7 +1326,7 @@ impl<'worker> Transaction<'worker, Active> {
     #[doc(hidden)]
     pub fn has_items_for<A>(&self, resource: &RegisteredResource<A>) -> bool
     where
-        A: TransactionalResource,
+        A: TObject,
     {
         let Some(frame) = self.frame.as_ref() else {
             return false;
@@ -1298,7 +1336,7 @@ impl<'worker> Transaction<'worker, Active> {
             return frame
                 .unique_batch
                 .as_ref()
-                .and_then(|batch| batch.as_any().downcast_ref::<TypedItemBatch<A>>())
+                .and_then(|batch| batch.as_any().downcast_ref::<TypedTransItemBatch<A>>())
                 .is_some_and(|batch| batch.contains_active_binding(resource));
         }
         frame.items[..frame.item_count].iter().any(|slot| {
@@ -1315,12 +1353,12 @@ impl<'worker> Transaction<'worker, Active> {
         &mut self,
         resource: &RegisteredResource<A>,
         key: A::Key,
-        operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>) -> Result<R, AccessError>,
+        operation: impl for<'entry> FnOnce(&mut TransProxy<'entry, A>) -> Result<R, AccessError>,
     ) -> Result<R, AccessError>
     where
-        A: TransactionalResource,
+        A: TObject,
     {
-        let Some(frame) = self.frame.as_mut() else {
+        let Some(frame) = self.frame.as_deref_mut() else {
             return Err(InvalidUse::TransactionFinished.into());
         };
         if frame.doomed {
@@ -1363,12 +1401,12 @@ impl<'worker> Transaction<'worker, Active> {
         resource: &RegisteredResource<A>,
         lookup: impl FnOnce() -> Result<Option<(A::Key, C)>, AccessError>,
         create: impl FnOnce() -> Result<(A::Key, C), AccessError>,
-        operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>, C) -> Result<R, AccessError>,
+        operation: impl for<'entry> FnOnce(&mut TransProxy<'entry, A>, C) -> Result<R, AccessError>,
     ) -> Result<R, AccessError>
     where
-        A: TransactionalResource,
+        A: TObject,
     {
-        let Some(frame) = self.frame.as_mut() else {
+        let Some(frame) = self.frame.as_deref_mut() else {
             return Err(InvalidUse::TransactionFinished.into());
         };
         if frame.doomed {
@@ -1413,9 +1451,9 @@ impl<'worker> Transaction<'worker, Active> {
         ) -> Result<R, AccessError>,
     ) -> Result<R, AccessError>
     where
-        A: TransactionalResource,
+        A: TObject,
     {
-        let Some(frame) = self.frame.as_mut() else {
+        let Some(frame) = self.frame.as_deref_mut() else {
             return Err(InvalidUse::TransactionFinished.into());
         };
         if frame.doomed {
@@ -1458,7 +1496,7 @@ impl<'worker> Transaction<'worker, Active> {
     ///
     /// The [`UniqueItemKeys`] proof lets core omit per-item hashing, index
     /// probing, identity dispatch, and index insertion. Each key still gets
-    /// the ordinary typed [`Entry`] surface in input order, so adapters may
+    /// the ordinary typed [`TransProxy`] surface in input order, so adapters may
     /// record observations, predicates, or intents normally. The first group
     /// starts an empty transaction. Further groups may remain contiguous when
     /// they use the same adapter type and a distinct exact
@@ -1483,12 +1521,12 @@ impl<'worker> Transaction<'worker, Active> {
         &mut self,
         resource: &RegisteredResource<A>,
         keys: UniqueItemKeys<'_, A::Key>,
-        operation: impl for<'entry> FnMut(usize, &mut Entry<'entry, A>) -> Result<(), AccessError>,
+        operation: impl for<'entry> FnMut(usize, &mut TransProxy<'entry, A>) -> Result<(), AccessError>,
     ) -> Result<(), AccessError>
     where
-        A: TransactionalResource,
+        A: TObject,
     {
-        let Some(frame) = self.frame.as_mut() else {
+        let Some(frame) = self.frame.as_deref_mut() else {
             return Err(InvalidUse::TransactionFinished.into());
         };
         if frame.doomed {
@@ -1544,14 +1582,13 @@ impl<'worker> Transaction<'worker, Active> {
         &mut self,
         hook: Option<&mut dyn CommitHook>,
     ) -> Result<CommitOutcome, CommitFailure> {
+        let Some(frame) = self.take_owned_frame() else {
+            return Ok(CommitOutcome::Aborted(AbortReason::InvalidUse(InvalidUse::IllegalItemState)));
+        };
         let worker = self
             .worker
             .take()
             .expect("active transaction always retains its worker");
-        let frame = self
-            .frame
-            .take()
-            .expect("active transaction always retains its frame");
         let mut driver = CommitDriver::new(worker, frame, hook);
         match catch_unwind(AssertUnwindSafe(|| driver.run())) {
             Ok(result) => result,
@@ -1564,15 +1601,24 @@ impl<'worker> Transaction<'worker, Active> {
 
     /// Explicitly aborts and finishes every inserted item exactly once.
     pub fn abort(mut self) -> AbortInfo {
+        let Some(frame) = self.take_owned_frame() else {
+            return AbortInfo::new(AbortReason::InvalidUse(InvalidUse::IllegalItemState));
+        };
         let worker = self
             .worker
             .take()
             .expect("active transaction always retains its worker");
-        let frame = self
-            .frame
-            .take()
-            .expect("active transaction always retains its frame");
         abort_without_locks(worker, frame, AbortReason::Explicit)
+    }
+
+    fn take_owned_frame(&mut self) -> Option<Box<TransactionFrame>> {
+        match self.frame.take().expect("active transaction retains its frame") {
+            TransactionFrameRef::Owned(frame) => Some(frame),
+            TransactionFrameRef::Borrowed(frame) => {
+                frame.doomed = true;
+                None
+            }
+        }
     }
 }
 
@@ -1617,7 +1663,12 @@ impl<State> Drop for Transaction<'_, State> {
         let (Some(worker), Some(frame)) = (self.worker.take(), self.frame.take()) else {
             return;
         };
-        let _ = abort_without_locks(worker, frame, AbortReason::Explicit);
+        match frame {
+            TransactionFrameRef::Owned(frame) => {
+                let _ = abort_without_locks(worker, frame, AbortReason::Explicit);
+            }
+            TransactionFrameRef::Borrowed(frame) => frame.doomed = true,
+        }
     }
 }
 
@@ -1635,10 +1686,10 @@ fn with_item_inner<A, R>(
     frame: &mut TransactionFrame,
     resource: &RegisteredResource<A>,
     key: A::Key,
-    operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>) -> Result<R, AccessError>,
+    operation: impl for<'entry> FnOnce(&mut TransProxy<'entry, A>) -> Result<R, AccessError>,
 ) -> Result<R, AccessError>
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     validate_item_resource(frame, resource)?;
     with_item_inner_validated(frame, resource, key, operation)
@@ -1650,10 +1701,10 @@ fn with_resolved_item_inner_validated<A, C, R>(
     resource: &RegisteredResource<A>,
     lookup: impl FnOnce() -> Result<Option<(A::Key, C)>, AccessError>,
     create: impl FnOnce() -> Result<(A::Key, C), AccessError>,
-    operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>, C) -> Result<R, AccessError>,
+    operation: impl for<'entry> FnOnce(&mut TransProxy<'entry, A>, C) -> Result<R, AccessError>,
 ) -> Result<R, AccessError>
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     let resolved = lookup()?;
     let (key, context) = if let Some(existing) = resolved {
@@ -1681,7 +1732,7 @@ fn validate_item_resource<A>(
     resource: &RegisteredResource<A>,
 ) -> Result<(), AccessError>
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     let binding_identity = resource.binding_identity();
     if frame.validated_bindings.activate(binding_identity) {
@@ -1697,7 +1748,7 @@ fn validate_item_resource_miss<A>(
     binding_identity: NonZeroUsize,
 ) -> Result<(), AccessError>
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     if let Err(error) = resource.validate_for_runtime(frame.runtime.id()) {
         return item_resource_validation_failure(error);
@@ -1728,7 +1779,7 @@ fn can_append_unique_item_batch<A>(
     resource: &RegisteredResource<A>,
 ) -> bool
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     if frame.item_count == 0 {
         return !frame.batch_active && frame.item_index.len == 0;
@@ -1753,7 +1804,7 @@ where
     }
     erased
         .as_any()
-        .downcast_ref::<TypedItemBatch<A>>()
+        .downcast_ref::<TypedTransItemBatch<A>>()
         .is_some_and(|batch| !batch.contains_active_binding(resource))
 }
 
@@ -1762,10 +1813,10 @@ fn with_item_inner_validated<A, R>(
     frame: &mut TransactionFrame,
     resource: &RegisteredResource<A>,
     key: A::Key,
-    operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>) -> Result<R, AccessError>,
+    operation: impl for<'entry> FnOnce(&mut TransProxy<'entry, A>) -> Result<R, AccessError>,
 ) -> Result<R, AccessError>
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     // Keep an otherwise homogeneous scalar transaction in the same contiguous
     // typed storage used by the proven-unique batch lane. This is especially
@@ -1793,7 +1844,7 @@ where
                 runtime.poison();
                 AdapterFault::invariant(AdapterPhase::Execute)
             })?;
-            if let Some(batch) = erased.as_any_mut().downcast_mut::<TypedItemBatch<A>>() {
+            if let Some(batch) = erased.as_any_mut().downcast_mut::<TypedTransItemBatch<A>>() {
                 return with_active_typed_batch_item_inner_validated(
                     runtime,
                     items,
@@ -1816,15 +1867,15 @@ where
     with_ordinary_item_inner_validated(frame, resource, key, operation)
 }
 
-#[inline]
+#[inline(never)]
 fn with_ordinary_item_inner_validated<A, R>(
     frame: &mut TransactionFrame,
     resource: &RegisteredResource<A>,
     key: A::Key,
-    operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>) -> Result<R, AccessError>,
+    operation: impl for<'entry> FnOnce(&mut TransProxy<'entry, A>) -> Result<R, AccessError>,
 ) -> Result<R, AccessError>
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     materialize_item_index(frame)?;
     let object_id = resource.object_id();
@@ -1856,7 +1907,7 @@ where
             .get_mut(item_slot)
             .and_then(Option::as_mut)
             .expect("last-accessed item cache references an empty slot");
-        let Some(typed) = item.as_any_mut().downcast_mut::<ItemBox<A>>() else {
+        let Some(typed) = item.as_any_mut().downcast_mut::<TransItem<A>>() else {
             frame.runtime.poison();
             return Err(AdapterFault::new(
                 AdapterPhase::Execute,
@@ -1864,7 +1915,7 @@ where
             )
             .into());
         };
-        return operation(&mut Entry::new(typed));
+        return operation(&mut TransProxy::new(typed));
     }
 
     let identity_hash = item_hash(resource, &key);
@@ -1890,7 +1941,7 @@ where
             .get_mut(item_slot)
             .and_then(Option::as_mut)
             .expect("item index references an empty slot");
-        let Some(typed) = item.as_any_mut().downcast_mut::<ItemBox<A>>() else {
+        let Some(typed) = item.as_any_mut().downcast_mut::<TransItem<A>>() else {
             frame.runtime.poison();
             return Err(AdapterFault::new(
                 AdapterPhase::Execute,
@@ -1898,7 +1949,7 @@ where
             )
             .into());
         };
-        return operation(&mut Entry::new(typed));
+        return operation(&mut TransProxy::new(typed));
     }
 
     let maximum_items = frame.runtime.config().max_items_per_transaction();
@@ -1926,7 +1977,7 @@ where
         let item = pooled
             .as_mut()
             .expect("an allocated pooled slot remains occupied");
-        if let Some(typed) = item.as_any_mut().downcast_mut::<ItemBox<A>>() {
+        if let Some(typed) = item.as_any_mut().downcast_mut::<TransItem<A>>() {
             if !typed.retains_binding(resource) && dispose_pooled_resource(runtime, typed).is_err()
             {
                 return Err(pooled_resource_panic());
@@ -1937,17 +1988,17 @@ where
             item_index.insert(identity_hash, item_slot);
             *item_count += 1;
             *last_accessed_item_slot = Some(encode_item_slot(item_slot));
-            return operation(&mut Entry::new(typed));
+            return operation(&mut TransProxy::new(typed));
         }
 
         if dispose_pooled_resource(runtime, item.as_mut()).is_err() {
             return Err(pooled_resource_panic());
         }
         let local = initialize_local(runtime, resource, &key)?;
-        *pooled = Some(Box::new(ItemBox::new(resource.clone(), key, local)));
+        *pooled = Some(Box::new(TransItem::new(resource.clone(), key, local)));
     } else {
         let local = initialize_local(runtime, resource, &key)?;
-        items.push(Some(Box::new(ItemBox::new(resource.clone(), key, local))));
+        items.push(Some(Box::new(TransItem::new(resource.clone(), key, local))));
     }
     *ordinary_disposed_prefix = 0;
     item_index.insert(identity_hash, item_slot);
@@ -1957,7 +2008,7 @@ where
     let item = items[item_slot]
         .as_mut()
         .expect("newly inserted item remains occupied");
-    let Some(typed) = item.as_any_mut().downcast_mut::<ItemBox<A>>() else {
+    let Some(typed) = item.as_any_mut().downcast_mut::<TransItem<A>>() else {
         runtime.poison();
         return Err(AdapterFault::new(
             AdapterPhase::Execute,
@@ -1965,7 +2016,7 @@ where
         )
         .into());
     };
-    operation(&mut Entry::new(typed))
+    operation(&mut TransProxy::new(typed))
 }
 
 #[inline]
@@ -1973,10 +2024,10 @@ fn with_typed_batch_item_inner_validated<A, R>(
     frame: &mut TransactionFrame,
     resource: &RegisteredResource<A>,
     key: A::Key,
-    operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>) -> Result<R, AccessError>,
+    operation: impl for<'entry> FnOnce(&mut TransProxy<'entry, A>) -> Result<R, AccessError>,
 ) -> Result<R, AccessError>
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     let TransactionFrame {
         runtime,
@@ -1999,7 +2050,25 @@ where
         let batch = prepare_typed_unique_batch::<A>(runtime, unique_batch, 1)?;
         ensure_ordinary_pool_prefix_disposed(runtime, items, ordinary_disposed_prefix, 1)?;
         *batch_active = true;
-        batch
+        // First-item fast path: a fresh batch has no live prefix, so the
+        // binding filter, last-access cache, and index are all empty by
+        // construction. Activating slot zero directly skips the generic
+        // active-item helper's cache/filter/index checks below.
+        debug_assert_eq!(batch.active_len(), 0);
+        debug_assert!(last_accessed_item_slot.is_none());
+        if batch.pooled_len() == 0 {
+            batch.try_reserve_for_len(1)?;
+        }
+        let activated_slot =
+            activate_typed_batch_item::<A, true>(runtime, batch, item_count, resource, key)?;
+        debug_assert_eq!(activated_slot, 0);
+        let (item, intent) = batch.active_item_parts_mut(0);
+        let result = operation(&mut TransProxy::new_batch(item, intent));
+        if result.is_ok() {
+            batch.note_active_item_shape(0);
+            *last_accessed_item_slot = Some(encode_item_slot(0));
+        }
+        return result;
     } else {
         let erased = unique_batch.as_mut().ok_or_else(|| {
             runtime.poison();
@@ -2007,7 +2076,7 @@ where
         })?;
         erased
             .as_any_mut()
-            .downcast_mut::<TypedItemBatch<A>>()
+            .downcast_mut::<TypedTransItemBatch<A>>()
             .ok_or_else(|| {
                 runtime.poison();
                 AdapterFault::invariant(AdapterPhase::Execute)
@@ -2037,13 +2106,13 @@ fn with_active_typed_batch_item_inner_validated<A, R>(
     item_index: &mut ItemIndex,
     item_count: &mut usize,
     last_accessed_item_slot: &mut Option<NonZeroUsize>,
-    batch: &mut TypedItemBatch<A>,
+    batch: &mut TypedTransItemBatch<A>,
     resource: &RegisteredResource<A>,
     key: A::Key,
-    operation: impl for<'entry> FnOnce(&mut Entry<'entry, A>) -> Result<R, AccessError>,
+    operation: impl for<'entry> FnOnce(&mut TransProxy<'entry, A>) -> Result<R, AccessError>,
 ) -> Result<R, AccessError>
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     // The last-access cache carries full binding-and-key equality, so it is
     // authoritative even when the item lies in the unindexed typed suffix.
@@ -2056,7 +2125,7 @@ where
     });
     if let Some(item_slot) = cached_item_slot.filter(|_| cached_identity_matches) {
         let (item, intent) = batch.active_item_parts_mut(item_slot);
-        let result = operation(&mut Entry::new_batch(item, intent));
+        let result = operation(&mut TransProxy::new_batch(item, intent));
         if result.is_ok() {
             batch.note_active_item_shape(item_slot);
         }
@@ -2094,7 +2163,7 @@ where
             ItemIndexProbe::Occupied(item_slot) => {
                 *last_accessed_item_slot = Some(encode_item_slot(item_slot));
                 let (item, intent) = batch.active_item_parts_mut(item_slot);
-                let result = operation(&mut Entry::new_batch(item, intent));
+                let result = operation(&mut TransProxy::new_batch(item, intent));
                 if result.is_ok() {
                     batch.note_active_item_shape(item_slot);
                 }
@@ -2131,7 +2200,7 @@ where
     }?;
     debug_assert_eq!(activated_slot, item_slot);
     let (item, intent) = batch.active_item_parts_mut(item_slot);
-    let result = operation(&mut Entry::new_batch(item, intent));
+    let result = operation(&mut TransProxy::new_batch(item, intent));
     if result.is_ok() {
         batch.note_active_item_shape(item_slot);
         if let Some((identity_hash, insertion_bucket)) = indexed_insertion {
@@ -2245,10 +2314,10 @@ fn try_append_unique_item_batch_inner_validated<A>(
     frame: &mut TransactionFrame,
     resource: &RegisteredResource<A>,
     keys: UniqueItemKeys<'_, A::Key>,
-    mut operation: impl for<'entry> FnMut(usize, &mut Entry<'entry, A>) -> Result<(), AccessError>,
+    mut operation: impl for<'entry> FnMut(usize, &mut TransProxy<'entry, A>) -> Result<(), AccessError>,
 ) -> Result<bool, AccessError>
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     try_append_unique_item_batch_controlled_inner_validated::<A, true>(
         frame,
@@ -2274,11 +2343,11 @@ fn try_append_unique_item_batch_while_inner_validated<A>(
     keys: UniqueItemKeys<'_, A::Key>,
     operation: impl for<'entry> FnMut(
         usize,
-        &mut Entry<'entry, A>,
+        &mut TransProxy<'entry, A>,
     ) -> Result<ItemBatchControl, AccessError>,
 ) -> Result<ItemBatchOutcome, AccessError>
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     try_append_unique_item_batch_controlled_inner_validated::<A, false>(
         frame, resource, keys, operation,
@@ -2287,7 +2356,7 @@ where
 
 #[inline]
 fn try_append_unique_item_batch_controlled_inner_validated<
-    A: TransactionalResource,
+    A: TObject,
     const PREFLIGHT_COMPLETE_BATCH: bool,
 >(
     frame: &mut TransactionFrame,
@@ -2295,7 +2364,7 @@ fn try_append_unique_item_batch_controlled_inner_validated<
     keys: UniqueItemKeys<'_, A::Key>,
     mut operation: impl for<'entry> FnMut(
         usize,
-        &mut Entry<'entry, A>,
+        &mut TransProxy<'entry, A>,
     ) -> Result<ItemBatchControl, AccessError>,
 ) -> Result<ItemBatchOutcome, AccessError> {
     // Preserve the original first-group hot path: the more expensive typed
@@ -2348,7 +2417,7 @@ fn try_append_unique_item_batch_controlled_inner_validated<
         })?;
         let batch = erased
             .as_any_mut()
-            .downcast_mut::<TypedItemBatch<A>>()
+            .downcast_mut::<TypedTransItemBatch<A>>()
             .ok_or_else(|| {
                 runtime.poison();
                 AdapterFault::invariant(AdapterPhase::Execute)
@@ -2401,7 +2470,7 @@ fn try_append_unique_item_batch_controlled_inner_validated<
         }?;
         debug_assert_eq!(item_slot, first_item_slot + index);
         let (item, intent) = batch.active_item_parts_mut(item_slot);
-        let control = operation(index, &mut Entry::new_batch(item, intent))?;
+        let control = operation(index, &mut TransProxy::new_batch(item, intent))?;
         batch.note_active_item_shape(item_slot);
         if control == ItemBatchControl::Stop {
             return Ok(ItemBatchOutcome::Stopped {
@@ -2420,11 +2489,11 @@ fn append_terminal_read_batch<A>(
     keys: &[A::Key],
     operation: &mut impl for<'entry> FnMut(
         usize,
-        &mut TerminalReadEntry<'entry, A>,
+        &mut TerminalReadProxy<'entry, A>,
     ) -> Result<(), AccessError>,
 ) -> Result<(), AccessError>
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     debug_assert_eq!(frame.active_len(), 0);
     debug_assert!(!frame.terminal_read_active);
@@ -2482,7 +2551,7 @@ where
     Ok(())
 }
 
-fn prepare_typed_terminal_read_batch<'batch, A: TransactionalResource>(
+fn prepare_typed_terminal_read_batch<'batch, A: TObject>(
     runtime: &Runtime,
     batch_slot: &'batch mut Option<Box<dyn ErasedTerminalReadBatch>>,
     resource: &RegisteredResource<A>,
@@ -2597,13 +2666,13 @@ fn dispose_ordinary_pool_prefix_slow(
 #[inline]
 fn activate_typed_batch_item<A, const NEW_BINDING: bool>(
     runtime: &Runtime,
-    batch: &mut TypedItemBatch<A>,
+    batch: &mut TypedTransItemBatch<A>,
     item_count: &mut usize,
     resource: &RegisteredResource<A>,
     key: A::Key,
 ) -> Result<usize, AccessError>
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     let item_slot = *item_count;
     debug_assert_eq!(batch.active_len(), item_slot);
@@ -2649,13 +2718,13 @@ where
 #[inline(never)]
 fn activate_rebound_typed_batch_item<A, const NEW_BINDING: bool>(
     runtime: &Runtime,
-    batch: &mut TypedItemBatch<A>,
+    batch: &mut TypedTransItemBatch<A>,
     item_count: &mut usize,
     resource: &RegisteredResource<A>,
     key: A::Key,
 ) -> Result<usize, AccessError>
 where
-    A: TransactionalResource,
+    A: TObject,
 {
     let item_slot = *item_count;
     debug_assert_eq!(batch.active_len(), item_slot);
@@ -2683,7 +2752,7 @@ where
         };
         let local = initialize_local(runtime, resource, &key)?;
         batch.push_active::<NEW_BINDING>(
-            ItemData::new(resource.clone(), key, local),
+            TransItemData::new(resource.clone(), key, local),
             direct_capability,
         );
     }
@@ -2692,7 +2761,7 @@ where
 }
 
 #[inline]
-fn direct_capability_for_new_binding<A: TransactionalResource>(
+fn direct_capability_for_new_binding<A: TObject>(
     runtime: &Runtime,
     resource: &RegisteredResource<A>,
 ) -> Result<Option<&'static crate::direct_commit::DirectCommitCapability<A>>, AccessError> {
@@ -2710,58 +2779,63 @@ fn direct_capability_for_new_binding<A: TransactionalResource>(
     }
 }
 
-fn prepare_typed_unique_batch<'batch, A: TransactionalResource>(
+fn prepare_typed_unique_batch<'batch, A: TObject>(
     runtime: &Runtime,
     batch_slot: &'batch mut Option<Box<dyn ErasedItemBatch>>,
     needed: usize,
-) -> Result<&'batch mut TypedItemBatch<A>, AccessError> {
-    let replace = batch_slot
-        .as_ref()
-        .is_some_and(|batch| batch.adapter_type_id() != TypeId::of::<A>());
-
-    if replace || batch_slot.is_none() {
+) -> Result<&'batch mut TypedTransItemBatch<A>, AccessError> {
+    let retained = batch_slot
+        .as_mut()
+        .and_then(|batch| batch.as_any_mut().downcast_mut::<TypedTransItemBatch<A>>())
+        .map(std::ptr::NonNull::from);
+    let created = retained.is_none();
+    let mut typed = if let Some(retained) = retained {
+        retained
+    } else {
         // Reserve the complete candidate before disposing an incompatible
         // retained pool. A recoverable allocation failure is therefore
         // mutation-free with respect to adapter/resource lifetime.
-        let mut replacement = TypedItemBatch::<A>::new();
+        let mut replacement = TypedTransItemBatch::<A>::new();
         replacement.try_reserve_for_len(needed)?;
 
-        if replace {
-            let batch = batch_slot
-                .as_mut()
-                .expect("a replacement candidate remains present");
+        if let Some(batch) = batch_slot.as_mut() {
             if dispose_pooled_batch_resources(runtime, batch.as_mut()).is_err() {
                 return Err(pooled_resource_panic());
             }
         }
         *batch_slot = Some(Box::new(replacement));
-    }
+        std::ptr::NonNull::from(
+            batch_slot
+                .as_mut()
+                .expect("typed batch storage was installed")
+                .as_any_mut()
+                .downcast_mut::<TypedTransItemBatch<A>>()
+                .expect("new typed batch matches its adapter"),
+        )
+    };
 
-    let batch = batch_slot
-        .as_mut()
-        .expect("typed batch storage was installed");
+    // SAFETY: the pointer comes either from Any's checked downcast of the
+    // retained Box or from the replacement Box installed above. Neither Box
+    // moves its allocation, and the slot remains exclusively borrowed for
+    // 'batch. The pointer only ends the temporary borrow so the incompatible
+    // branch can replace the slot; no unchecked type-identity claim is used.
+    #[allow(
+        unsafe_code,
+        reason = "the checked Box projection remains valid under the exclusive pool borrow"
+    )]
+    let batch = unsafe { typed.as_mut() };
     if batch.active_len() != 0 {
         runtime.poison();
         return Err(AdapterFault::invariant(AdapterPhase::Execute).into());
     }
-    let batch = batch
-        .as_any_mut()
-        .downcast_mut::<TypedItemBatch<A>>()
-        .ok_or_else(|| {
-            runtime.poison();
-            AdapterFault::new(
-                AdapterPhase::Execute,
-                crate::error::AdapterFaultKind::TypeMismatch,
-            )
-        })?;
-    if !replace {
+    if !created {
         batch.try_reserve_for_len(needed)?;
     }
     Ok(batch)
 }
 
 #[inline]
-fn initialize_local<A: TransactionalResource>(
+fn initialize_local<A: TObject>(
     runtime: &Runtime,
     resource: &RegisteredResource<A>,
     key: &A::Key,
@@ -2781,7 +2855,7 @@ fn initialize_local<A: TransactionalResource>(
 }
 
 #[inline]
-pub(crate) fn item_hash<A: TransactionalResource>(
+pub(crate) fn item_hash<A: TObject>(
     resource: &RegisteredResource<A>,
     key: &A::Key,
 ) -> u64 {
@@ -2800,9 +2874,9 @@ fn dispose_pooled_resource(runtime: &Runtime, item: &mut dyn ErasedItem) -> Resu
     }
 }
 
-fn dispose_pooled_typed_resource<A: TransactionalResource>(
+fn dispose_pooled_typed_resource<A: TObject>(
     runtime: &Runtime,
-    item: &mut ItemData<A>,
+    item: &mut TransItemData<A>,
 ) -> Result<(), ()> {
     match catch_unwind(AssertUnwindSafe(|| item.dispose_retained_resource())) {
         Ok(()) => Ok(()),
@@ -2849,18 +2923,22 @@ fn pooled_resource_panic() -> AccessError {
 }
 
 #[cfg(test)]
+#[path = "frame_reuse_tests.rs"]
+mod frame_reuse_tests;
+
+#[cfg(test)]
 mod item_index_tests {
     use super::{
         Active, ErasedTerminalReadBatch, ItemIndex, ItemIndexEntry, ItemIndexProbe,
-        TerminalReadFrame, TerminalReadScratch, Transaction, TransactionFrame, TransactionScratch,
-        UniqueItemKeyIndex, UniqueItemKeys, ValidatedBindings,
+        TerminalReadFrame, TerminalReadScratch, Transaction, UniqueItemKeyIndex,
+        UniqueItemKeys, ValidatedBindings,
     };
     use crate::{
-        AccessError, CapacityError, CheckError, ExecutionCheckContext, FinishContext,
-        FinishDisposition, FinishItem, InstallContext, InstallItem, InvalidUse, ItemInitError,
-        NoPredicate, ObservationOrder, OpacityToken, PredicateContext, PreflightContext,
+        AccessError, CapacityError, CheckError, ExecutionCheckContext, CleanupContext,
+        CleanupDisposition, CleanupItem, InstallContext, InstallItem, InvalidUse, ItemInitError,
+        NoPredicate, ObservationOrder, OpacityToken, PredicateContext, LockContext,
         PreflightItem, PrepareError, RegisteredResource, ResourceClass, Runtime, RuntimeConfig,
-        TransactionalResource, TxnCell, ValidationContext, WorkerContext,
+        TObject, TxnCell, ValidationContext,
     };
     use std::{
         num::NonZeroUsize,
@@ -2868,7 +2946,7 @@ mod item_index_tests {
         sync::Arc,
     };
 
-    struct CacheObservation;
+    pub(super) struct CacheObservation;
 
     impl OpacityToken for CacheObservation {
         fn observation_order(&self) -> ObservationOrder {
@@ -2876,9 +2954,9 @@ mod item_index_tests {
         }
     }
 
-    struct CacheAdapter;
+    pub(super) struct CacheAdapter;
 
-    impl TransactionalResource for CacheAdapter {
+    impl TObject for CacheAdapter {
         type Key = u64;
         type Local = ();
         type Observation = CacheObservation;
@@ -2890,11 +2968,11 @@ mod item_index_tests {
             Ok(())
         }
 
-        fn preflight(
+        fn lock(
             &self,
             _key: &Self::Key,
             _item: PreflightItem<'_, Self>,
-            _cx: &mut PreflightContext<'_>,
+            _cx: &mut LockContext<'_>,
         ) -> Result<Self::Prepared, PrepareError> {
             Ok(())
         }
@@ -2917,7 +2995,7 @@ mod item_index_tests {
             match *predicate {}
         }
 
-        fn upgrade_predicate(
+        fn check_predicate(
             &self,
             _key: &Self::Key,
             predicate: &Self::Predicate,
@@ -2927,7 +3005,7 @@ mod item_index_tests {
             match *predicate {}
         }
 
-        fn validate_read(
+        fn check(
             &self,
             _key: &Self::Key,
             _observation: &Self::Observation,
@@ -2946,18 +3024,18 @@ mod item_index_tests {
         ) {
         }
 
-        fn finish(
+        fn cleanup(
             &self,
             _key: &Self::Key,
-            _item: FinishItem<'_, Self>,
+            _item: CleanupItem<'_, Self>,
             _prepared: Option<&mut Self::Prepared>,
-            _disposition: FinishDisposition,
-            _cx: &mut FinishContext<'_>,
+            _disposition: CleanupDisposition,
+            _cx: &mut CleanupContext<'_>,
         ) {
         }
     }
 
-    fn cache_resource(runtime: &Arc<Runtime>) -> RegisteredResource<CacheAdapter> {
+    pub(super) fn cache_resource(runtime: &Arc<Runtime>) -> RegisteredResource<CacheAdapter> {
         runtime
             .register_object()
             .unwrap()
@@ -2965,7 +3043,7 @@ mod item_index_tests {
             .unwrap()
     }
 
-    fn cached_bindings(transaction: &Transaction<'_, Active>) -> Vec<NonZeroUsize> {
+    pub(super) fn cached_bindings(transaction: &Transaction<'_, Active>) -> Vec<NonZeroUsize> {
         transaction
             .frame
             .as_ref()
@@ -3043,18 +3121,6 @@ mod item_index_tests {
         assert_eq!(std::mem::align_of::<ItemIndexEntry>(), 8);
     }
 
-    #[test]
-    #[cfg(target_pointer_width = "64")]
-    fn validated_binding_cache_is_one_word_without_growing_worker_scratch() {
-        assert_eq!(std::mem::size_of::<Option<NonZeroUsize>>(), 8);
-        assert_eq!(std::mem::size_of::<ValidatedBindings>(), 8);
-        assert_eq!(std::mem::align_of::<ValidatedBindings>(), 8);
-        assert_eq!(std::mem::size_of::<TransactionScratch>(), 168);
-        assert_eq!(std::mem::size_of::<TransactionFrame>(), 200);
-        assert_eq!(std::mem::size_of::<Option<TransactionFrame>>(), 200);
-        assert_eq!(std::mem::size_of::<Transaction<'static, Active>>(), 208);
-        assert_eq!(std::mem::size_of::<WorkerContext>(), 208);
-    }
 
     #[test]
     fn validated_binding_cache_keeps_only_the_most_recent_binding() {
@@ -3360,12 +3426,13 @@ enum CommitBoundary {
 
 struct CommitDriver<'worker, 'hook> {
     worker: &'worker mut WorkerContext,
-    frame: Option<TransactionFrame>,
+    frame: Option<Box<TransactionFrame>>,
     locks: Option<LockPlan>,
     // The concrete plan is retained inside the exact typed batch so its
     // allocation can be reused without adding another transaction-frame word.
     direct_lane: bool,
     commit_id: Option<crate::identity::OccCommitId>,
+    certified_shape: Option<CommitShape>,
     boundary: CommitBoundary,
     phase: FailurePhase,
     completed: bool,
@@ -3375,7 +3442,7 @@ struct CommitDriver<'worker, 'hook> {
 impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
     fn new(
         worker: &'worker mut WorkerContext,
-        frame: TransactionFrame,
+        frame: Box<TransactionFrame>,
         hook: Option<&'hook mut dyn CommitHook>,
     ) -> Self {
         Self {
@@ -3384,6 +3451,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
             locks: None,
             direct_lane: false,
             commit_id: None,
+            certified_shape: None,
             boundary: CommitBoundary::Reversible,
             phase: FailurePhase::Preflight,
             completed: false,
@@ -3435,357 +3503,57 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
             return self.run_direct();
         }
 
-        let runtime_id = self.frame().runtime.id();
-        let max_locks = self.frame().runtime.config().max_locks_per_transaction();
-        // Consume the per-owner generation before invoking any adapter
-        // preflight callback. Even if preflight aborts or unwinds after
-        // retaining a LockUse, no later plan can reuse that token's identity.
-        let plan_nonce = match self.worker.reserve_lock_plan_nonce() {
-            Ok(nonce) => nonce,
-            Err(error) => return self.abort_commit(error.into(), None),
-        };
-        let storage = std::mem::take(
-            &mut self
-                .frame
-                .as_mut()
-                .expect("commit driver owns its frame")
-                .lock_storage,
-        );
-        let lock_plan = match LockPlan::with_storage(runtime_id, max_locks, plan_nonce, storage) {
-            Ok(plan) => plan,
-            Err(error) => return self.abort_commit(error.into(), None),
-        };
-        self.locks = Some(lock_plan);
-
-        if self.frame().batch_active {
-            let result = catch_unwind(AssertUnwindSafe(|| {
-                let (frame, locks) = self.parts_mut();
-                let mut cx = locks.preflight_context()?;
-                frame
-                    .unique_batch
-                    .as_mut()
-                    .expect("an active unique batch retains its storage")
-                    .preflight(&mut cx)
-            }));
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => return self.handle_prepare_error(error),
-                Err(_) => {
-                    return self.abort_commit(
-                        AbortReason::Internal(InternalError::new(
-                            FailurePhase::Preflight,
-                            "preflight callback panicked",
-                        )),
-                        Some(self.poison(FailurePhase::Preflight, "preflight callback panicked")),
-                    );
-                }
-            }
-        } else {
-            let result = catch_unwind(AssertUnwindSafe(|| {
-                let (frame, locks) = self.parts_mut();
-                let mut cx = locks.preflight_context()?;
-                for item_slot in 0..frame.item_count {
-                    frame.items[item_slot]
-                        .as_mut()
-                        .expect("commit owns every live item slot")
-                        .preflight(&mut cx)?;
-                }
-                Ok::<(), PrepareError>(())
-            }));
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => return self.handle_prepare_error(error),
-                Err(_) => {
-                    return self.abort_commit(
-                        AbortReason::Internal(InternalError::new(
-                            FailurePhase::Preflight,
-                            "preflight callback panicked",
-                        )),
-                        Some(self.poison(FailurePhase::Preflight, "preflight callback panicked")),
-                    );
-                }
-            }
+        let steps = self.lock_ordinary(false)
+            .and_then(|()| self.certify_ordinary())
+            .and_then(|()| self.install_ordinary(None, false));
+        match steps {
+            Ok(()) => self.finish_ordinary(),
+            Err(terminal) => terminal,
         }
+    }
 
-        // Preflight cannot add/remove an intent or observation through its
-        // restricted item view, so this shape remains stable for the rest of
-        // the attempt. Cache it once instead of rescanning every item at each
-        // commit phase.
-        let commit_shape = self.frame().commit_shape();
+    /// Executes the same commit boundary and hook protocol as the general
+    /// lane while keeping one concrete lock-frame vector inside the typed
+    /// batch. The selected capability excludes predicates, maps every write
+    /// to exactly one distinct lock, and leaves the generic preparation
+    /// sidecar empty.
+    fn run_direct(&mut self) -> Result<CommitOutcome, CommitFailure> {
+        debug_assert!(self.direct_lane);
+        debug_assert!(self.locks.is_none());
+        debug_assert!(self.frame().batch_active);
 
-        self.phase = FailurePhase::Acquire;
-        let owner = self.worker.owner;
-        let acquire = catch_unwind(AssertUnwindSafe(|| self.locks_mut().acquire_all(owner)));
-        match acquire {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => return self.handle_acquire_error(error),
-            Err(_) => return self.handle_acquire_panic(),
-        }
-
-        if commit_shape.has_writes && self.hook.is_some() {
-            self.phase = FailurePhase::UpperMetadata;
-            let reservation = catch_unwind(AssertUnwindSafe(|| {
-                self.hook
-                    .as_deref_mut()
-                    .map_or(Ok(()), CommitHook::reserve_upper_metadata)
-            }));
-            match reservation {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => return self.abort_for_hook_error(error),
-                Err(_) => {
-                    return self.abort_commit(
-                        AbortReason::Internal(InternalError::new(
-                            FailurePhase::UpperMetadata,
-                            "upper metadata reservation panicked",
-                        )),
-                        Some(self.poison(
-                            FailurePhase::UpperMetadata,
-                            "upper metadata reservation panicked",
-                        )),
-                    )
-                }
-            }
-        }
-
-        if commit_shape.has_predicates {
-            self.phase = FailurePhase::PredicateUpgrade;
-            if self.frame().batch_active {
-                let result = catch_unwind(AssertUnwindSafe(|| {
-                    let (frame, locks) = self.parts_mut();
-                    let cx = locks.predicate_context().map_err(CheckError::from)?;
-                    frame
-                        .unique_batch
-                        .as_mut()
-                        .expect("an active unique batch retains its storage")
-                        .upgrade_predicates(&cx)
-                }));
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => {
-                        return self.handle_check_error(error, FailurePhase::PredicateUpgrade)
-                    }
-                    Err(_) => {
-                        return self.abort_commit(
-                            AbortReason::Internal(InternalError::new(
-                                FailurePhase::PredicateUpgrade,
-                                "predicate callback panicked",
-                            )),
-                            Some(self.poison(
-                                FailurePhase::PredicateUpgrade,
-                                "predicate callback panicked",
-                            )),
-                        )
-                    }
-                }
-            } else {
-                let result = catch_unwind(AssertUnwindSafe(|| {
-                    let (frame, locks) = self.parts_mut();
-                    let cx = locks.predicate_context().map_err(CheckError::from)?;
-                    for item_slot in 0..frame.item_count {
-                        frame.items[item_slot]
-                            .as_mut()
-                            .expect("commit owns every live item slot")
-                            .upgrade_predicate(&cx)?;
-                    }
-                    Ok::<(), CheckError>(())
-                }));
-                match result {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => {
-                        return self.handle_check_error(error, FailurePhase::PredicateUpgrade)
-                    }
-                    Err(_) => {
-                        return self.abort_commit(
-                            AbortReason::Internal(InternalError::new(
-                                FailurePhase::PredicateUpgrade,
-                                "predicate callback panicked",
-                            )),
-                            Some(self.poison(
-                                FailurePhase::PredicateUpgrade,
-                                "predicate callback panicked",
-                            )),
-                        )
-                    }
-                }
-            }
-        }
-
-        if commit_shape.has_writes {
-            self.phase = FailurePhase::CommitMetadata;
-            self.commit_id = match self.frame().runtime.reserve_commit_id() {
-                Ok(commit_id) => Some(commit_id),
-                Err(error) => return self.abort_commit(error.into(), None),
+        let result = {
+            // Split fields, not ownership. The driver continues to own the
+            // complete frame and its retained batch during every callback.
+            let frame = self.frame.as_mut().expect("direct commit owns its frame");
+            let batch = frame
+                .unique_batch
+                .as_deref_mut()
+                .expect("direct commit owns an active typed batch");
+            let mut cx = DirectCommitContext {
+                runtime: &frame.runtime,
+                owner: self.worker.owner,
+                phase: &mut self.phase,
+                boundary: &mut self.boundary,
+                commit_id: &mut self.commit_id,
+                hook: &mut self.hook,
             };
-        }
-
-        self.phase = FailurePhase::Validation;
-        if self.frame().batch_active {
-            let commit_id = self.commit_id;
-            let result = catch_unwind(AssertUnwindSafe(|| {
-                let (frame, locks) = self.parts_mut();
-                let cx = locks
-                    .validation_context(commit_id)
-                    .map_err(CheckError::from)?;
-                frame
-                    .unique_batch
-                    .as_ref()
-                    .expect("an active unique batch retains its storage")
-                    .validate(&cx)
-            }));
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => return self.handle_check_error(error, FailurePhase::Validation),
-                Err(_) => {
-                    return self.abort_commit(
-                        AbortReason::Internal(InternalError::new(
-                            FailurePhase::Validation,
-                            "validation callback panicked",
-                        )),
-                        Some(self.poison(FailurePhase::Validation, "validation callback panicked")),
-                    )
-                }
-            }
-        } else {
-            let commit_id = self.commit_id;
-            let result = catch_unwind(AssertUnwindSafe(|| {
-                let (frame, locks) = self.parts_mut();
-                let cx = locks
-                    .validation_context(commit_id)
-                    .map_err(CheckError::from)?;
-                for item_slot in 0..frame.item_count {
-                    frame.items[item_slot]
-                        .as_ref()
-                        .expect("commit owns every live item slot")
-                        .validate(&cx)?;
-                }
-                Ok::<(), CheckError>(())
-            }));
-            match result {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => return self.handle_check_error(error, FailurePhase::Validation),
-                Err(_) => {
-                    return self.abort_commit(
-                        AbortReason::Internal(InternalError::new(
-                            FailurePhase::Validation,
-                            "validation callback panicked",
-                        )),
-                        Some(self.poison(FailurePhase::Validation, "validation callback panicked")),
-                    )
-                }
-            }
-        }
-
-        if commit_shape.has_writes && self.hook.is_some() {
-            self.phase = FailurePhase::PreinstallHook;
-            let acceptance = catch_unwind(AssertUnwindSafe(|| {
-                self.hook
-                    .as_deref_mut()
-                    .map_or(Ok(()), CommitHook::pre_install)
-            }));
-            match acceptance {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => return self.abort_for_hook_error(error),
-                Err(_) => {
-                    return self.abort_commit(
-                        AbortReason::Internal(InternalError::new(
-                            FailurePhase::PreinstallHook,
-                            "pre-install hook panicked",
-                        )),
-                        Some(
-                            self.poison(FailurePhase::PreinstallHook, "pre-install hook panicked"),
-                        ),
-                    )
-                }
-            }
-        }
-
-        self.boundary = CommitBoundary::Irrevocable;
-        if commit_shape.has_writes {
-            self.phase = FailurePhase::Install;
-            if self.frame().batch_active {
-                let commit_id = self.commit_id;
-                let result = catch_unwind(AssertUnwindSafe(|| {
-                    let (frame, locks) = self.parts_mut();
-                    let mut cx = locks
-                        .install_context(commit_id)
-                        .expect("held plan must construct an install context");
-                    frame
-                        .unique_batch
-                        .as_mut()
-                        .expect("an active unique batch retains its storage")
-                        .install(&mut cx);
-                }));
-                if result.is_err() {
-                    return self.indeterminate(FailurePhase::Install, "install callback panicked");
-                }
+            if frame.item_count == 1 {
+                // One erased entry, followed by statically typed batch calls.
+                // Eligibility was already proved for every exact binding.
+                batch.run_single_item_direct(&mut cx)
             } else {
-                let commit_id = self.commit_id;
-                let result = catch_unwind(AssertUnwindSafe(|| {
-                    let (frame, locks) = self.parts_mut();
-                    let mut cx = locks
-                        .install_context(commit_id)
-                        .expect("held plan must construct an install context");
-                    for item_slot in 0..frame.item_count {
-                        if !frame.items[item_slot]
-                            .as_ref()
-                            .expect("commit owns every live item slot")
-                            .has_intent()
-                        {
-                            continue;
-                        }
-                        frame.items[item_slot]
-                            .as_mut()
-                            .expect("commit owns every live item slot")
-                            .install(&mut cx);
-                    }
-                }));
-                if result.is_err() {
-                    return self.indeterminate(FailurePhase::Install, "install callback panicked");
-                }
+                // Keep larger direct transactions on the same phase code,
+                // using their existing per-phase erased batch dispatch.
+                cx.run(batch)
             }
-        }
-
-        if commit_shape.has_writes && self.hook.is_some() {
-            self.phase = FailurePhase::PostInstallHook;
-            let publication = catch_unwind(AssertUnwindSafe(|| {
-                if let Some(hook) = self.hook.as_deref_mut() {
-                    hook.post_install();
-                }
-            }));
-            if publication.is_err() {
-                return self
-                    .indeterminate(FailurePhase::PostInstallHook, "post-install hook panicked");
-            }
-        }
-
-        self.phase = FailurePhase::Release;
-        let disposition = LockDisposition::Committed {
-            occ_commit_id: self.commit_id,
         };
-        let released = catch_unwind(AssertUnwindSafe(|| {
-            self.locks_mut().release_all(disposition)
-        }));
-        match released {
-            Ok(Ok(())) => {
-                self.boundary = CommitBoundary::Published;
-                if self.drop_released_lock_plan().is_err() {
-                    return self.finish_committed_with_poison(PoisonInfo::new(
-                        FailurePhase::Release,
-                        "released lock-plan destruction panicked",
-                    ));
-                }
-            }
-            Ok(Err(_)) | Err(_) => {
-                return self.indeterminate_after_release_failure(
-                    FailurePhase::Release,
-                    "lock release failed or panicked",
-                )
-            }
+        if let Err(error) = result {
+            return self.handle_direct_step_failure(error);
         }
-
         self.phase = FailurePhase::Finish;
         let commit_info = CommitInfo::new(self.commit_id);
-        if let Err(info) = self.finish_items(FinishDisposition::Committed, FailurePhase::Finish) {
+        if let Err(info) = self.finish_items(CleanupDisposition::Committed, FailurePhase::Finish) {
             self.complete_worker();
             return Err(CommitFailure::Poisoned {
                 outcome: DefiniteOutcome::Committed(commit_info),
@@ -3798,192 +3566,56 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         Ok(CommitOutcome::Committed(commit_info))
     }
 
-    /// Executes the same commit boundary and hook protocol as the general
-    /// lane while keeping one concrete lock-frame vector inside the typed
-    /// batch. The selected capability excludes predicates, maps every write
-    /// to exactly one distinct lock, and leaves the generic preparation
-    /// sidecar empty.
-    fn run_direct(&mut self) -> Result<CommitOutcome, CommitFailure> {
-        debug_assert!(self.direct_lane);
-        debug_assert!(self.locks.is_none());
-        debug_assert!(self.frame().batch_active);
-        let commit_shape = self.frame().commit_shape();
-        debug_assert!(commit_shape.has_writes);
-        debug_assert!(!commit_shape.has_predicates);
-
-        self.phase = FailurePhase::Preflight;
-        let runtime_id = self.frame().runtime.id();
-        let max_locks = self.frame().runtime.config().max_locks_per_transaction();
-        let preflight = catch_unwind(AssertUnwindSafe(|| {
-            self.direct_batch_mut()
-                .direct_preflight(runtime_id, max_locks)
-        }));
-        match preflight {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => return self.handle_prepare_error(error),
-            Err(_) => {
-                return self.abort_commit(
-                    AbortReason::Internal(InternalError::new(
-                        FailurePhase::Preflight,
-                        "direct preflight callback panicked",
-                    )),
-                    Some(self.poison(
-                        FailurePhase::Preflight,
-                        "direct preflight callback panicked",
-                    )),
-                )
+    #[cold]
+    fn handle_direct_step_failure(
+        &mut self,
+        error: DirectCommitStepFailure,
+    ) -> Result<CommitOutcome, CommitFailure> {
+        match error {
+            DirectCommitStepFailure::Prepare(error) => self.handle_prepare_error(error),
+            DirectCommitStepFailure::Acquire(error) => self.handle_acquire_error(error),
+            DirectCommitStepFailure::CommitMetadata(error) => self.abort_commit(error.into(), None),
+            DirectCommitStepFailure::Validation(error) => {
+                self.handle_check_error(error, FailurePhase::Validation)
             }
-        }
-
-        self.phase = FailurePhase::Acquire;
-        let owner = self.worker.owner;
-        let acquire = catch_unwind(AssertUnwindSafe(|| {
-            self.direct_batch_mut().direct_acquire_all(owner)
-        }));
-        match acquire {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => return self.handle_acquire_error(error),
-            Err(_) => return self.handle_acquire_panic(),
-        }
-
-        if self.hook.is_some() {
-            self.phase = FailurePhase::UpperMetadata;
-            let reservation = catch_unwind(AssertUnwindSafe(|| {
-                self.hook
-                    .as_deref_mut()
-                    .map_or(Ok(()), CommitHook::reserve_upper_metadata)
-            }));
-            match reservation {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => return self.abort_for_hook_error(error),
-                Err(_) => {
-                    return self.abort_commit(
-                        AbortReason::Internal(InternalError::new(
-                            FailurePhase::UpperMetadata,
-                            "upper metadata reservation panicked",
-                        )),
-                        Some(self.poison(
-                            FailurePhase::UpperMetadata,
-                            "upper metadata reservation panicked",
-                        )),
-                    )
-                }
-            }
-        }
-
-        self.phase = FailurePhase::CommitMetadata;
-        self.commit_id = match self.frame().runtime.reserve_commit_id() {
-            Ok(commit_id) => Some(commit_id),
-            Err(error) => return self.abort_commit(error.into(), None),
-        };
-
-        self.phase = FailurePhase::Validation;
-        let commit_id = self.commit_id;
-        let validation = catch_unwind(AssertUnwindSafe(|| {
-            self.direct_batch().direct_validate(commit_id)
-        }));
-        match validation {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => return self.handle_check_error(error, FailurePhase::Validation),
-            Err(_) => {
-                return self.abort_commit(
-                    AbortReason::Internal(InternalError::new(
-                        FailurePhase::Validation,
-                        "direct validation callback panicked",
-                    )),
-                    Some(self.poison(
-                        FailurePhase::Validation,
-                        "direct validation callback panicked",
-                    )),
-                )
-            }
-        }
-
-        if self.hook.is_some() {
-            self.phase = FailurePhase::PreinstallHook;
-            let acceptance = catch_unwind(AssertUnwindSafe(|| {
-                self.hook
-                    .as_deref_mut()
-                    .map_or(Ok(()), CommitHook::pre_install)
-            }));
-            match acceptance {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => return self.abort_for_hook_error(error),
-                Err(_) => {
-                    return self.abort_commit(
-                        AbortReason::Internal(InternalError::new(
-                            FailurePhase::PreinstallHook,
-                            "pre-install hook panicked",
-                        )),
-                        Some(
-                            self.poison(FailurePhase::PreinstallHook, "pre-install hook panicked"),
-                        ),
-                    )
-                }
-            }
-        }
-
-        self.boundary = CommitBoundary::Irrevocable;
-        self.phase = FailurePhase::Install;
-        let commit_id = self.commit_id;
-        let installation = catch_unwind(AssertUnwindSafe(|| {
-            self.direct_batch_mut().direct_install(commit_id);
-        }));
-        if installation.is_err() {
-            return self.indeterminate(FailurePhase::Install, "direct install callback panicked");
-        }
-
-        if self.hook.is_some() {
-            self.phase = FailurePhase::PostInstallHook;
-            let publication = catch_unwind(AssertUnwindSafe(|| {
-                if let Some(hook) = self.hook.as_deref_mut() {
-                    hook.post_install();
-                }
-            }));
-            if publication.is_err() {
-                return self
-                    .indeterminate(FailurePhase::PostInstallHook, "post-install hook panicked");
-            }
-        }
-
-        self.phase = FailurePhase::Release;
-        let disposition = LockDisposition::Committed {
-            occ_commit_id: self.commit_id,
-        };
-        let released = catch_unwind(AssertUnwindSafe(|| {
-            self.direct_batch_mut().direct_release_all(disposition)
-        }));
-        match released {
-            Ok(Ok(())) => {
-                self.boundary = CommitBoundary::Published;
-                if self.drop_released_direct_plan().is_err() {
-                    return self.finish_committed_with_poison(PoisonInfo::new(
-                        FailurePhase::Release,
-                        "released direct-plan destruction panicked",
-                    ));
-                }
-            }
-            Ok(Err(_)) | Err(_) => {
-                return self.indeterminate_after_release_failure(
+            DirectCommitStepFailure::Hook(error) => self.abort_for_hook_error(error),
+            DirectCommitStepFailure::Release => self.indeterminate_after_release_failure(
+                FailurePhase::Release,
+                "direct lock release failed or panicked",
+            ),
+            DirectCommitStepFailure::ReleasedPlanTeardown(_) => {
+                self.finish_committed_with_poison(PoisonInfo::new(
                     FailurePhase::Release,
-                    "direct lock release failed or panicked",
+                    "released direct-plan destruction panicked",
+                ))
+            }
+            DirectCommitStepFailure::Panicked(phase, _payload) => {
+                let reason = match phase {
+                    FailurePhase::Preflight => "direct preflight callback panicked",
+                    FailurePhase::Acquire => return self.handle_acquire_panic(),
+                    FailurePhase::UpperMetadata => "upper metadata reservation panicked",
+                    FailurePhase::Validation => "direct validation callback panicked",
+                    FailurePhase::PreinstallHook => "pre-install hook panicked",
+                    FailurePhase::Install => {
+                        return self.indeterminate(phase, "direct install callback panicked")
+                    }
+                    FailurePhase::PostInstallHook => {
+                        return self.indeterminate(phase, "post-install hook panicked")
+                    }
+                    FailurePhase::Release => {
+                        return self.indeterminate_after_release_failure(
+                            phase,
+                            "direct lock release failed or panicked",
+                        )
+                    }
+                    _ => return self.contain_unexpected_unwind(),
+                };
+                self.abort_commit(
+                    AbortReason::Internal(InternalError::new(phase, reason)),
+                    Some(self.poison(phase, reason)),
                 )
             }
         }
-
-        self.phase = FailurePhase::Finish;
-        let commit_info = CommitInfo::new(self.commit_id);
-        if let Err(info) = self.finish_items(FinishDisposition::Committed, FailurePhase::Finish) {
-            self.complete_worker();
-            return Err(CommitFailure::Poisoned {
-                outcome: DefiniteOutcome::Committed(commit_info),
-                info,
-            });
-        }
-
-        self.recycle_frame();
-        self.complete_worker();
-        Ok(CommitOutcome::Committed(commit_info))
     }
 
     fn commit_preflight_free_read_only(&mut self) -> Result<CommitOutcome, CommitFailure> {
@@ -4017,7 +3649,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
                             FailurePhase::Validation,
                             "preflight-free validation callback panicked",
                         )),
-                    )
+                    );
                 }
             }
         } else {
@@ -4044,7 +3676,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
                             FailurePhase::Validation,
                             "preflight-free validation callback panicked",
                         )),
-                    )
+                    );
                 }
             }
         }
@@ -4056,7 +3688,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         self.boundary = CommitBoundary::Published;
         self.phase = FailurePhase::Finish;
         let commit_info = CommitInfo::new(None);
-        if let Err(info) = self.finish_items(FinishDisposition::Committed, FailurePhase::Finish) {
+        if let Err(info) = self.finish_items(CleanupDisposition::Committed, FailurePhase::Finish) {
             self.complete_worker();
             return Err(CommitFailure::Poisoned {
                 outcome: DefiniteOutcome::Committed(commit_info),
@@ -4075,15 +3707,20 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
     ) -> Result<CommitOutcome, CommitFailure> {
         match error {
             PrepareError::Conflict(conflict) => self.abort_commit(conflict.into(), None),
-            PrepareError::Capacity(capacity) => self.abort_commit(capacity.into(), None),
+            PrepareError::Capacity(capacity) => {
+                if capacity.is_terminal() {
+                    self.frame().runtime.mark_version_exhausted();
+                }
+                self.abort_commit(capacity.into(), None)
+            }
             PrepareError::Fault(fault) => self.abort_commit(
                 AbortReason::Internal(InternalError::new(
-                    FailurePhase::Preflight,
-                    "adapter fault during preflight",
+                    adapter_failure_phase(fault),
+                    "adapter fault during datatype locking",
                 )),
                 Some(self.poison(
                     adapter_failure_phase(fault),
-                    "adapter fault during preflight",
+                    "adapter fault during datatype locking",
                 )),
             ),
         }
@@ -4105,6 +3742,12 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
     ) -> Result<CommitOutcome, CommitFailure> {
         match error {
             AcquireError::Conflict(conflict) => self.abort_commit(conflict.into(), None),
+            AcquireError::Capacity(capacity) => {
+                if capacity.is_terminal() {
+                    self.frame().runtime.mark_version_exhausted();
+                }
+                self.abort_commit(capacity.into(), None)
+            }
             AcquireError::Fault(fault) => self.abort_commit(
                 AbortReason::Internal(InternalError::new(
                     FailurePhase::Acquire,
@@ -4256,7 +3899,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         }
 
         if let Err(finish_poison) =
-            self.finish_items(FinishDisposition::Aborted, FailurePhase::Finish)
+            self.finish_items(CleanupDisposition::Aborted, FailurePhase::Finish)
         {
             poison = Some(finish_poison);
         }
@@ -4385,7 +4028,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         self.worker.runtime.poison();
         self.phase = FailurePhase::Finish;
         if let Err(finish_poison) =
-            self.finish_items(FinishDisposition::Committed, FailurePhase::Finish)
+            self.finish_items(CleanupDisposition::Committed, FailurePhase::Finish)
         {
             info = finish_poison;
         }
@@ -4460,7 +4103,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
 
     fn finish_items(
         &mut self,
-        disposition: FinishDisposition,
+        disposition: CleanupDisposition,
         phase: FailurePhase,
     ) -> Result<(), PoisonInfo> {
         let Some(frame) = self.frame.as_mut() else {
@@ -4473,7 +4116,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
                     .unique_batch
                     .as_mut()
                     .expect("an active unique batch retains its storage");
-                let mut cx = FinishContext::new();
+                let mut cx = CleanupContext::new();
                 batch.finish_and_teardown(disposition, &mut cx, &mut stage);
             }));
             if cleanup.is_err() {
@@ -4494,7 +4137,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
         }
         let mut stage = BatchFinishStage::Callback;
         let cleanup = catch_unwind(AssertUnwindSafe(|| {
-            let mut cx = FinishContext::new();
+            let mut cx = CleanupContext::new();
             for item_slot in (0..frame.item_count).rev() {
                 stage = BatchFinishStage::Callback;
                 let item = frame.items[item_slot]
@@ -4571,8 +4214,7 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
 
     fn recycle_frame(&mut self) {
         if let Some(frame) = self.frame.take() {
-            self.worker
-                .recycle_transaction_scratch(frame.into_scratch());
+            self.worker.recycle_transaction_frame(frame);
         }
     }
 
@@ -4674,7 +4316,7 @@ impl<'worker> TerminalReadCommitDriver<'worker> {
             match result {
                 Ok(Ok(())) => {}
                 Ok(Err(CheckError::Conflict(conflict))) => {
-                    return self.abort_commit(conflict.into(), None)
+                    return self.abort_commit(conflict.into(), None);
                 }
                 Ok(Err(CheckError::Fault(fault))) => {
                     let reason = AbortReason::Internal(InternalError::new(
@@ -4866,7 +4508,7 @@ impl Drop for TerminalReadCommitDriver<'_> {
 
 fn abort_without_locks(
     worker: &mut WorkerContext,
-    mut frame: TransactionFrame,
+    mut frame: Box<TransactionFrame>,
     reason: AbortReason,
 ) -> AbortInfo {
     let cleanup = catch_unwind(AssertUnwindSafe(|| {
@@ -4875,17 +4517,17 @@ fn abort_without_locks(
                 .unique_batch
                 .as_mut()
                 .expect("an active unique batch retains its storage");
-            let mut cx = FinishContext::new();
+            let mut cx = CleanupContext::new();
             let mut stage = BatchFinishStage::Callback;
-            batch.finish_and_teardown(FinishDisposition::Aborted, &mut cx, &mut stage);
+            batch.finish_and_teardown(CleanupDisposition::Aborted, &mut cx, &mut stage);
             frame.batch_active = false;
         } else {
-            let mut cx = FinishContext::new();
+            let mut cx = CleanupContext::new();
             for item_slot in (0..frame.item_count).rev() {
                 let item = frame.items[item_slot]
                     .as_mut()
                     .expect("finish owns every remaining item slot");
-                item.finish(FinishDisposition::Aborted, &mut cx);
+                item.finish(CleanupDisposition::Aborted, &mut cx);
                 item.teardown_after_finish();
                 // Retain the empty typed item for the worker's next transaction.
             }
@@ -4895,7 +4537,7 @@ fn abort_without_locks(
         frame.runtime.poison();
         std::mem::forget(frame);
     } else {
-        worker.recycle_transaction_scratch(frame.into_scratch());
+        worker.recycle_transaction_frame(frame);
     }
     worker.finish_transaction();
     AbortInfo::new(reason)

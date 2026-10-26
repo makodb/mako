@@ -53,9 +53,14 @@
 //               thread-local free list
 //   table       entry slots written once, without OnceLock's arbitration
 //               between initialisers that cannot race
+//   slot        the per-entry value pointer: one atomic word, replaced by
+//               CAS, with the displaced record released through a
+//               crossbeam-epoch guard. The epoch is what makes a
+//               load-then-increment by a reader safe against a
+//               concurrent displacement (see the module docs)
 //
 // Everything else in this crate is unsafe-free and stays that way. A
-// fourth is an argument to have before it is written, not after.
+// fifth is an argument to have before it is written, not after.
 #![deny(unsafe_code)]
 #![warn(missing_docs)]
 
@@ -63,6 +68,7 @@ pub mod durability;
 pub mod fakes;
 pub mod record;
 pub mod runtime;
+mod slot;
 pub mod store;
 pub mod table;
 pub mod value;
@@ -114,6 +120,30 @@ impl<T> std::ops::Deref for CacheLine<T> {
     fn deref(&self) -> &T {
         &self.0
     }
+}
+
+/// What a read into a caller-owned buffer produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CopyOutcome {
+    /// The key is absent or deleted; nothing was written.
+    Absent,
+    /// The value was copied; this is its length.
+    Copied(usize),
+    /// The value does not fit. Nothing was written; this is its length.
+    TooSmall(usize),
+}
+
+/// Copy `bytes` into `out`, or report that they do not fit.
+///
+/// The one place "does it fit" is decided, so the slice readers in
+/// [`value`] and [`store`] cannot disagree about it.
+#[inline]
+pub(crate) fn place(bytes: &[u8], out: &mut [u8]) -> CopyOutcome {
+    if bytes.len() > out.len() {
+        return CopyOutcome::TooSmall(bytes.len());
+    }
+    out[..bytes.len()].copy_from_slice(bytes);
+    CopyOutcome::Copied(bytes.len())
 }
 
 /// A monotonically increasing version stamped on every published value.
@@ -274,10 +304,7 @@ pub trait Blobs: Send + Sync {
     /// override it with a streaming iterator so startup memory does not include
     /// a second copy of every key. Implementations must release iterator state
     /// on callback errors and unwinding panics.
-    fn for_each_entry(
-        &self,
-        f: &mut EntryVisitor<'_>,
-    ) -> Result<(), BlobError> {
+    fn for_each_entry(&self, f: &mut EntryVisitor<'_>) -> Result<(), BlobError> {
         let mut keys = Vec::new();
         self.for_each_key(&mut |key| keys.push(key.to_vec()))?;
         for key in keys {
@@ -356,10 +383,7 @@ impl<T: Blobs + ?Sized> Blobs for std::sync::Arc<T> {
     fn for_each_key(&self, f: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
         (**self).for_each_key(f)
     }
-    fn for_each_entry(
-        &self,
-        f: &mut EntryVisitor<'_>,
-    ) -> Result<(), BlobError> {
+    fn for_each_entry(&self, f: &mut EntryVisitor<'_>) -> Result<(), BlobError> {
         (**self).for_each_entry(f)
     }
     fn for_each_entry_from(
@@ -563,10 +587,7 @@ mod tests {
             fn for_each_key(&self, _: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
                 panic!("streaming visitor must not collect keys");
             }
-            fn for_each_entry(
-                &self,
-                f: &mut EntryVisitor<'_>,
-            ) -> Result<(), BlobError> {
+            fn for_each_entry(&self, f: &mut EntryVisitor<'_>) -> Result<(), BlobError> {
                 f(b"key", b"value")
             }
             fn for_each_entry_from(

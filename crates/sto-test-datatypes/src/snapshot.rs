@@ -5,11 +5,11 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use sto_core::{
     AccessError, Active, AdapterFault, AdapterFaultKind, AdapterPhase, AtomicVersion, CheckError,
-    Conflict, Entry, ExecutionCheckContext, FinishContext, FinishDisposition, FinishItem,
+    Conflict, TransProxy, ExecutionCheckContext, CleanupContext, CleanupDisposition, CleanupItem,
     InstallContext, InstallItem, LockClass, LockIdentity, LockNamespaceId, LockRequest, LockUse,
     NoPredicate, ObjectId, ObservationOrder, ObservationRef, OccVersion, OpacityToken,
-    PredicateContext, PreflightContext, PreflightItem, PrepareError, RegisteredResource,
-    RegistrationError, ResourceClass, Runtime, Transaction, TransactionalResource,
+    PredicateContext, LockContext, PreflightItem, PrepareError, RegisteredResource,
+    RegistrationError, ResourceClass, Runtime, Transaction, TObject,
     ValidationContext, VersionLock,
 };
 
@@ -78,7 +78,7 @@ impl<T: Clone + Send + Sync + 'static> Snapshot<T> {
             let mut replacement = snapshot.as_ref().clone();
             let result = operation(&mut replacement);
             let replacement = Arc::new(replacement);
-            entry.stage(replacement)?;
+            entry.add_write(replacement)?;
             Ok(result)
         })
     }
@@ -100,7 +100,7 @@ impl<T: Clone + Send + Sync + 'static> Snapshot<T> {
             let mut replacement = snapshot.as_ref().clone();
             match operation(&mut replacement) {
                 Ok(result) => {
-                    entry.stage(Arc::new(replacement))?;
+                    entry.add_write(Arc::new(replacement))?;
                     Ok(Ok(result))
                 }
                 Err(error) => Ok(Err(error)),
@@ -149,7 +149,7 @@ struct SnapshotPrepared {
 }
 
 impl<T: Clone + Send + Sync + 'static> SnapshotAdapter<T> {
-    fn snapshot(&self, entry: &mut Entry<'_, Self>) -> Result<Arc<T>, AccessError> {
+    fn snapshot(&self, entry: &mut TransProxy<'_, Self>) -> Result<Arc<T>, AccessError> {
         if let Some(intent) = entry.intent() {
             return Ok(Arc::clone(intent));
         }
@@ -166,7 +166,7 @@ impl<T: Clone + Send + Sync + 'static> SnapshotAdapter<T> {
             return Err(Conflict::ReadValidation.into());
         }
 
-        entry.record_read(SnapshotObservation { version: observed })?;
+        entry.add_read(SnapshotObservation { version: observed })?;
         entry.local_mut().first_snapshot = Some(Arc::clone(&snapshot));
         Ok(snapshot)
     }
@@ -199,7 +199,7 @@ impl<T: Clone + Send + Sync + 'static> SnapshotAdapter<T> {
     }
 }
 
-impl<T: Clone + Send + Sync + 'static> TransactionalResource for SnapshotAdapter<T> {
+impl<T: Clone + Send + Sync + 'static> TObject for SnapshotAdapter<T> {
     type Key = ();
     type Local = SnapshotLocal<T>;
     type Observation = SnapshotObservation;
@@ -214,14 +214,14 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for SnapshotAdapter
         })
     }
 
-    fn preflight(
+    fn lock(
         &self,
         _key: &Self::Key,
         item: PreflightItem<'_, Self>,
-        cx: &mut PreflightContext<'_>,
+        cx: &mut LockContext<'_>,
     ) -> Result<Self::Prepared, PrepareError> {
         let lock_use = if item.intent().is_some() {
-            Some(cx.require_lock(LockRequest::new(
+            Some(cx.try_lock(LockRequest::new(
                 self.lock_identity.clone(),
                 Arc::clone(&self.lock),
             ))?)
@@ -253,7 +253,7 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for SnapshotAdapter
         match *predicate {}
     }
 
-    fn upgrade_predicate(
+    fn check_predicate(
         &self,
         _key: &Self::Key,
         predicate: &Self::Predicate,
@@ -263,7 +263,7 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for SnapshotAdapter
         match *predicate {}
     }
 
-    fn validate_read(
+    fn check(
         &self,
         _key: &Self::Key,
         observation: &Self::Observation,
@@ -317,13 +317,13 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for SnapshotAdapter
         item.local_mut().displaced = Some(displaced);
     }
 
-    fn finish(
+    fn cleanup(
         &self,
         _key: &Self::Key,
-        mut item: FinishItem<'_, Self>,
+        mut item: CleanupItem<'_, Self>,
         _prepared: Option<&mut Self::Prepared>,
-        _disposition: FinishDisposition,
-        _cx: &mut FinishContext<'_>,
+        _disposition: CleanupDisposition,
+        _cx: &mut CleanupContext<'_>,
     ) {
         item.local_mut().first_snapshot = None;
         item.local_mut().displaced = None;

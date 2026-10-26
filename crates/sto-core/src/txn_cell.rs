@@ -1,18 +1,40 @@
 //! A generic, single-item transactional cell.
 //!
-//! `TxnCell` is the correctness-first vertical-slice adapter for native STO.
-//! Values are immutable `Arc<T>` snapshots published through `ArcSwap`; the
-//! tracked [`AtomicVersion`] supplies OCC validation and exclusive commit
-//! ownership. No borrowed payload guard escapes an operation.
+//! [`TxnCell`] fills the single-value role of C++ `TBox`: read your staged
+//! write, otherwise observe a committed value; check its version at commit,
+//! then install the replacement under an exclusive lock.
+//!
+//! # Datatype walkthrough
+//!
+//! - **Read/write.** [`TxnCell::get`] returns a clone of the staged value first
+//!   (read-your-writes), otherwise reuses the first owned immutable `Arc<T>`
+//!   snapshot. The first shared read records its checked version through
+//!   [`TransProxy::add_read`]. [`TxnCell::set`] stages an `Arc<T>` replacement
+//!   through [`TransProxy::add_write`]; it does not erase an earlier observation.
+//! - **Lock/check.** [`TObject::lock`] acquires the canonical exclusive
+//!   [`AtomicVersion`] lock synchronously only for a write intent.
+//!   [`TObject::check`] validates the retained observation against either the
+//!   unlocked version or this transaction's held guard.
+//! - **Install/unlock.** [`TObject::install`] swaps the staged `Arc` into
+//!   `ArcSwap`, retaining the displaced `Arc` in transaction-local state.
+//!   Like `TBox::install`, it requests version publication and unlock here.
+//!   Core defers that request for shared locks and retained participants.
+//! - **Cleanup.** [`TObject::cleanup`] drops the first snapshot, displaced
+//!   value, and remaining intent after unlock on a definite outcome.
+//!
+//! No borrowed payload guard escapes an operation. Owned snapshot retention
+//! and post-unlock value destruction are Rust ownership choices, not a claim
+//! of `TBox` representation or opacity parity. This datatype records no
+//! predicates, and the current runtime does not support opaque isolation.
 
 use std::fmt;
 use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
-use crate::adapter::{
-    FinishDisposition, FinishItem, InstallItem, NoPredicate, ObservationOrder, OpacityToken,
-    PreflightItem, TransactionalResource,
+use crate::object::{
+    CleanupDisposition, CleanupItem, InstallItem, NoPredicate, ObservationOrder, OpacityToken,
+    PreflightItem, TObject,
 };
 use crate::error::{
     AccessError, AcquireError, AdapterFault, AdapterFaultKind, AdapterPhase, CheckError, Conflict,
@@ -20,13 +42,13 @@ use crate::error::{
 };
 use crate::identity::{LockClass, LockIdentity, LockNamespaceId, OccVersion, ResourceClass};
 use crate::lock::{
-    AcquireContext, ExecutionCheckContext, FinishContext, InstallContext, LockDisposition,
-    LockRequest, LockUse, PredicateContext, PreflightContext, ReleaseContext, TransactionLock,
+    AcquireContext, ExecutionCheckContext, CleanupContext, InstallContext, LockDisposition,
+    LockRequest, LockUse, PredicateContext, LockContext, ReleaseContext, TransactionLock,
     ValidationContext,
 };
 use crate::runtime::{RegisteredResource, Runtime};
 use crate::version::{AtomicVersion, DetachedVersionGuard};
-use crate::{Active, Entry, Transaction};
+use crate::{Active, TransProxy, Transaction};
 
 const CELL_RESOURCE_CLASS_VALUE: u32 = 1;
 const CELL_LOCK_CLASS_VALUE: u32 = 1;
@@ -79,6 +101,11 @@ impl TransactionLock for VersionLock {
 /// Each cell is one private STO object with one logical item and one physical
 /// version lock. Cloning this handle preserves that identity and shares the
 /// same value.
+///
+/// [`Self::get`] observes a retained snapshot or the latest staged
+/// [`Self::set`] value. Setting after a read preserves the original version
+/// obligation; a blind set need not record a shared read. See the
+/// [module walkthrough](crate::txn_cell) for lock, install, and cleanup roles.
 pub struct TxnCell<T: Clone + Send + Sync + 'static> {
     resource: RegisteredResource<CellAdapter<T>>,
 }
@@ -118,7 +145,7 @@ impl<T: Clone + Send + Sync + 'static> TxnCell<T> {
     /// Replaces this transaction's staged value without publishing it.
     pub fn set(&self, txn: &mut Transaction<'_, Active>, value: T) -> Result<(), AccessError> {
         let intent = Arc::new(value);
-        txn.with_item(&self.resource, (), move |entry| entry.stage(intent))
+        txn.with_item(&self.resource, (), move |entry| entry.add_write(intent))
     }
 
     /// Stable STO object identity of this cell.
@@ -174,7 +201,7 @@ struct CellPrepared {
 }
 
 impl<T: Clone + Send + Sync + 'static> CellAdapter<T> {
-    fn get(&self, entry: &mut Entry<'_, Self>) -> Result<T, AccessError> {
+    fn get(&self, entry: &mut TransProxy<'_, Self>) -> Result<T, AccessError> {
         if let Some(intent) = entry.intent() {
             return Ok(intent.as_ref().clone());
         }
@@ -191,7 +218,7 @@ impl<T: Clone + Send + Sync + 'static> CellAdapter<T> {
             return Err(Conflict::ReadValidation.into());
         }
 
-        entry.record_read(CellObservation { version: observed })?;
+        entry.add_read(CellObservation { version: observed })?;
         entry.local_mut().first_snapshot = Some(Arc::clone(&snapshot));
         Ok(snapshot.as_ref().clone())
     }
@@ -224,7 +251,7 @@ impl<T: Clone + Send + Sync + 'static> CellAdapter<T> {
     }
 }
 
-impl<T: Clone + Send + Sync + 'static> TransactionalResource for CellAdapter<T> {
+impl<T: Clone + Send + Sync + 'static> TObject for CellAdapter<T> {
     type Key = ();
     type Local = CellLocal<T>;
     type Observation = CellObservation;
@@ -239,14 +266,14 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for CellAdapter<T> 
         })
     }
 
-    fn preflight(
+    fn lock(
         &self,
         _key: &Self::Key,
         item: PreflightItem<'_, Self>,
-        cx: &mut PreflightContext<'_>,
+        cx: &mut LockContext<'_>,
     ) -> Result<Self::Prepared, PrepareError> {
         let lock_use = if item.intent().is_some() {
-            Some(cx.require_lock(LockRequest::new(
+            Some(cx.try_lock(LockRequest::new(
                 self.lock_identity.clone(),
                 Arc::clone(&self.lock),
             ))?)
@@ -278,7 +305,7 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for CellAdapter<T> 
         match *predicate {}
     }
 
-    fn upgrade_predicate(
+    fn check_predicate(
         &self,
         _key: &Self::Key,
         predicate: &Self::Predicate,
@@ -288,7 +315,7 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for CellAdapter<T> 
         match *predicate {}
     }
 
-    fn validate_read(
+    fn check(
         &self,
         _key: &Self::Key,
         observation: &Self::Observation,
@@ -328,15 +355,17 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for CellAdapter<T> 
         let replacement = Arc::clone(item.intent());
         let displaced = self.value.swap(replacement);
         item.local_mut().displaced = Some(displaced);
+        cx.try_publish_unlock(lock_use)
+            .unwrap_or_else(|error| panic!("sto-core TxnCell publication failed: {error}"));
     }
 
-    fn finish(
+    fn cleanup(
         &self,
         _key: &Self::Key,
-        mut item: FinishItem<'_, Self>,
+        mut item: CleanupItem<'_, Self>,
         _prepared: Option<&mut Self::Prepared>,
-        _disposition: FinishDisposition,
-        _cx: &mut FinishContext<'_>,
+        _disposition: CleanupDisposition,
+        _cx: &mut CleanupContext<'_>,
     ) {
         item.local_mut().first_snapshot = None;
         item.local_mut().displaced = None;
@@ -347,7 +376,7 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for CellAdapter<T> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::adapter::ObservationRef;
+    use crate::object::ObservationRef;
     use crate::error::{AbortReason, CommitOutcome};
     use crate::runtime::RuntimeConfig;
 

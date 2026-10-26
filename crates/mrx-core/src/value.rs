@@ -6,9 +6,9 @@
 //! to be taught the hard way.
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
 
-use crate::record::Record;
+use crate::record::{Kind, Record};
+use crate::slot::Slot;
 
 // `Val` and `ValState` used to live here: an `Arc<Val>` whose
 // `ValState::Resident` held a `Vec<u8>`. That was TWO allocations per
@@ -28,15 +28,11 @@ pub struct Entry {
     key: Box<[u8]>,
     /// The current value.
     ///
-    /// A `Mutex<Arc<Val>>` rather than an atomic pointer or `ArcSwap`:
-    /// this crate is `forbid(unsafe_code)` and depends on nothing outside
-    /// std, which keeps the eventual CMake integration free of a vendored
-    /// dependency tree. Publication is still expressed as an explicit
-    /// compare-and-swap against the *exact* record read (see
-    /// [`Entry::compare_publish`]) so the semantics — and therefore the
-    /// mutation coverage — match the lock-free original. Swapping in a
-    /// lock-free slot later is a change behind these same tests.
-    val: Mutex<Record>,
+    /// An atomic pointer replaced by compare-and-swap, with reclamation
+    /// deferred through an epoch — see [`crate::slot`] for the protocol
+    /// and for why a `Mutex<Record>` (which this replaced) charged the
+    /// read path a store to a shared word, a clone and a drop.
+    val: Slot,
     /// CLOCK second-chance bit. Set on access, cleared by the sweeper.
     referenced: AtomicBool,
 }
@@ -46,7 +42,7 @@ impl Entry {
     pub fn new(key: &[u8], initial: Record) -> Self {
         Self {
             key: key.to_vec().into_boxed_slice(),
-            val: Mutex::new(initial),
+            val: Slot::new(initial),
             referenced: AtomicBool::new(true),
         }
     }
@@ -58,7 +54,7 @@ impl Entry {
 
     /// The currently published value.
     pub fn load(&self) -> Record {
-        self.val.lock().expect("entry mutex poisoned").clone()
+        self.val.load()
     }
 
     /// Load and mark the entry as recently used.
@@ -77,17 +73,51 @@ impl Entry {
     /// lookup; the refcount is roughly half of it.
     ///
     /// This is the shape the C++ implementation uses: hold the record
-    /// still, `memcpy` the bytes into the caller's buffer, let go. It
-    /// holds an RCU epoch where this holds the slot lock, but neither
-    /// hands a reference to the value outward, which is what makes the
-    /// copy the only thing the caller keeps.
+    /// still, copy the bytes into the caller's buffer, let go. It holds
+    /// an epoch guard, exactly as the C++ read side holds an RCU region,
+    /// and neither hands a reference to the value outward — which is what
+    /// makes the copy the only thing the caller keeps.
     ///
-    /// `f` must not block: it runs with the slot held, and every reader
-    /// and writer of this key is behind it.
+    /// Nothing is locked, so `f` may block; doing so only delays the
+    /// reclamation of records another thread has already displaced.
     pub fn with_value<R>(&self, f: impl FnOnce(&Record) -> R) -> R {
         self.referenced.store(true, Ordering::Relaxed);
-        let slot = self.val.lock().expect("entry mutex poisoned");
-        f(&slot)
+        self.val.with_value(f)
+    }
+
+    /// Copy the published bytes into `out`, reusing its capacity.
+    ///
+    /// `None` means the value is not resident and a fill is needed;
+    /// `Some(false)` means the key is deleted, and `out` is left empty.
+    /// This is the read path's shape: no handle is created, so no
+    /// refcount is touched, and no `Vec` is allocated per read.
+    pub fn copy_into(&self, out: &mut Vec<u8>) -> Option<bool> {
+        self.referenced.store(true, Ordering::Relaxed);
+        self.val.with_value(|v| match v.kind() {
+            Kind::Tombstone => Some(false),
+            Kind::Resident => {
+                out.extend_from_slice(v.bytes().expect("a resident record has bytes"));
+                Some(true)
+            }
+            Kind::Evicted => None,
+        })
+    }
+
+    /// Copy the published bytes into a fixed slice.
+    ///
+    /// `None` means the value is not resident (a fill is needed),
+    /// `Some(Absent)` means deleted, and `Some(TooSmall(len))` reports a
+    /// value that does not fit without copying it.
+    pub fn copy_into_slice(&self, out: &mut [u8]) -> Option<crate::CopyOutcome> {
+        self.referenced.store(true, Ordering::Relaxed);
+        self.val.with_value(|v| match v.kind() {
+            Kind::Tombstone => Some(crate::CopyOutcome::Absent),
+            Kind::Resident => {
+                let bytes = v.bytes().expect("a resident record has bytes");
+                Some(crate::place(bytes, out))
+            }
+            Kind::Evicted => None,
+        })
     }
 
     /// Publish `new` only if the currently published record is still
@@ -96,54 +126,25 @@ impl Entry {
     /// Identity, not equality: two records can be equal in content and
     /// distinct in obligation. Returns `true` if the swap happened.
     pub fn compare_publish(&self, expected: &Record, new: Record) -> bool {
-        let displaced = {
-            let mut slot = self.val.lock().expect("entry mutex poisoned");
-            if !Record::ptr_eq(&slot, expected) {
-                return false;
-            }
-            std::mem::replace(&mut *slot, new)
-        };
-        // Freed with the lock released, as in `with_slot`.
-        drop(displaced);
-        true
+        self.val.compare_publish(expected, new)
     }
 
-    /// Publish unconditionally, returning the displaced record.
+    /// Run `f` against the published record, publish whatever it returns,
+    /// and retry `f` if another writer wins in between.
     ///
-    /// Used only where the caller has already decided under the same
-    /// critical section (the write path), never to blind-overwrite a
-    /// value another thread may have published.
-    pub fn publish(&self, new: Record) -> Record {
-        let mut slot = self.val.lock().expect("entry mutex poisoned");
-        std::mem::replace(&mut *slot, new)
-    }
-
-    /// Run `f` against the published record while holding the slot, and
-    /// publish whatever it returns.
+    /// This is how the write path stays atomic per key: the decision (does
+    /// the key exist? may this write proceed?) is made against the exact
+    /// record the compare-and-swap then compares, so no other writer can
+    /// interleave between the decision and the publication.
     ///
-    /// This is how the write path stays atomic per key without a separate
-    /// retry loop: the decision (does the key exist? may this write
-    /// proceed?) and the publication happen under one acquisition, so no
-    /// other writer can interleave between them.
-    pub fn with_slot<R>(&self, f: impl FnOnce(&Record) -> (Option<Record>, R)) -> R {
-        let (displaced, r) = {
-            let mut slot = self.val.lock().expect("entry mutex poisoned");
-            let (new, r) = f(&slot);
-            (new.map(|v| std::mem::replace(&mut *slot, v)), r)
-        };
-        // The lock is RELEASED here, and only then does the displaced
-        // record's refcount reach zero and its allocation get freed.
-        //
-        // `*slot = v` dropped it inside the critical section, so every
-        // overwrite ran `free()` — of a block another thread almost
-        // certainly allocated — while holding the lock that every reader
-        // and writer of this key is queued behind. The C++ implementation
-        // never frees on this path at all: it pushes the old record onto a
-        // thread-local queue and defers the free to an epoch boundary.
-        // This does not defer, but it does get the allocator out of the
-        // critical section.
-        drop(displaced);
-        r
+    /// `f` must therefore be re-runnable: on contention its `R` is
+    /// discarded and it is called again with the record that won. Nothing
+    /// derived from the first attempt is observable — no publication
+    /// happened — but side effects inside `f` do repeat (the write path
+    /// draws a fresh version and allocates a fresh record per attempt,
+    /// exactly as the C++ `mrx_write` retry loop does).
+    pub fn with_slot<R>(&self, f: impl FnMut(&Record) -> (Option<Record>, R)) -> R {
+        self.val.with_slot(f)
     }
 
     /// Take the CLOCK bit, clearing it. `true` means "recently used, give

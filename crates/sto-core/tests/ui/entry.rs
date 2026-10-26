@@ -1,15 +1,15 @@
 mod support;
 
-use sto_core::Entry;
+use sto_core::TransProxy;
 
 fn assert_send<T: Send>() {}
 fn assert_sync<T: Sync>() {}
 
-fn escape(entry: Entry<'_, support::Adapter>) -> Entry<'static, support::Adapter> {
+fn escape(entry: TransProxy<'_, support::Adapter>) -> TransProxy<'static, support::Adapter> {
     entry
 }
 
 fn main() {
-    assert_send::<Entry<'static, support::Adapter>>();
-    assert_sync::<Entry<'static, support::Adapter>>();
+    assert_send::<TransProxy<'static, support::Adapter>>();
+    assert_sync::<TransProxy<'static, support::Adapter>>();
 }

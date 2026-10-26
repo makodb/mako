@@ -33,6 +33,7 @@ RUNNER_DIR = Path(__file__).resolve().parent
 ORIGINAL_CRATE = RUNNER_DIR.parent
 ORIGINAL_CRATES = ORIGINAL_CRATE.parent
 ORIGINAL_LOCKFILE = ORIGINAL_CRATES / "Cargo.lock"
+ORIGINAL_TOOLCHAIN = ORIGINAL_CRATES.parent / "rust-toolchain.toml"
 PATH_DEPENDENCY = re.compile(r'(?P<prefix>path\s*=\s*)"(?P<path>[^"]+)"')
 LIB_RS = "src/lib.rs"
 
@@ -291,6 +292,9 @@ def create_workspace(label: str, temp_root: Path) -> Path:
         encoding="utf-8",
     )
     shutil.copy2(ORIGINAL_LOCKFILE, root / "Cargo.lock")
+    # Cargo runs below a temporary root, outside the repository's rustup
+    # directory override. Carry the pin rather than selecting the host default.
+    shutil.copy2(ORIGINAL_TOOLCHAIN, root / "rust-toolchain.toml")
     return root
 
 
@@ -350,6 +354,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     report: dict[str, object] = {
         "crate": str(ORIGINAL_CRATE),
         "source_sha256": sha256_text((ORIGINAL_CRATE / LIB_RS).read_text(encoding="utf-8")),
+        "toolchain_file": str(ORIGINAL_TOOLCHAIN),
+        "toolchain_sha256": hashlib.sha256(ORIGINAL_TOOLCHAIN.read_bytes()).hexdigest(),
+        "rustup_toolchain_override": os.environ.get("RUSTUP_TOOLCHAIN"),
         "mutations": [],
     }
     try:
@@ -361,6 +368,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Baseline: every targeted test passes on the untouched copy.
         root = create_workspace("baseline", temp_root)
         env = environment(root)
+        versions = {}
+        for label, executable in (("cargo", args.cargo), ("rustc", env.get("RUSTC", "rustc"))):
+            result = run([executable, "--version"], root, env, args.timeout)
+            if result["returncode"] != 0:
+                raise HarnessFailure(f"cannot identify isolated {label}: {result['stderr_tail']}")
+            versions[label] = str(result["stdout"]).strip()
+        report["toolchain_versions"] = versions
         normalize_lockfile(args.cargo, root, env, args.timeout)
         baseline_tests = sorted({m.test for m in selected})
         baseline: list[dict[str, object]] = []
@@ -416,6 +430,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 shutil.rmtree(root, ignore_errors=True)
         report["killed"] = killed
         report["total"] = len(selected)
+        after_toolchain = hashlib.sha256(ORIGINAL_TOOLCHAIN.read_bytes()).hexdigest()
+        report["toolchain_integrity"] = {
+            "before": report["toolchain_sha256"],
+            "after": after_toolchain,
+            "unchanged": after_toolchain == report["toolchain_sha256"],
+        }
+        if after_toolchain != report["toolchain_sha256"]:
+            raise HarnessFailure("repository toolchain pin changed during the mutation campaign")
         report["verdict"] = "pass" if killed == len(selected) else "fail"
     except HarnessFailure as failure:
         report["verdict"] = "harness-error"

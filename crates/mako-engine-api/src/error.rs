@@ -39,6 +39,10 @@ pub enum Error {
     DuplicateWrite,
     /// The transaction exceeded an item or write-set limit and was aborted.
     TransactionTooLarge,
+    /// The engine's OCC version space is exhausted; the runtime cannot admit
+    /// more transactions. This is terminal, not a retryable transaction-size
+    /// limit, and is separate from the upper-layer Mako timestamp.
+    VersionExhausted,
     /// A key or value exceeded a representation limit.
     ValueTooLarge,
     /// The post-validation durability hook rejected the transaction before install.
@@ -119,6 +123,9 @@ impl fmt::Display for Error {
             ),
             Self::TransactionTooLarge => {
                 write!(f, "local transaction exceeded an engine size limit and was aborted")
+            }
+            Self::VersionExhausted => {
+                write!(f, "transaction engine version space exhausted; retire this runtime")
             }
             Self::ValueTooLarge => write!(f, "key or value exceeded an engine size limit"),
             Self::CommitHookRejected => {

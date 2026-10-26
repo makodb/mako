@@ -9,23 +9,35 @@ use std::{
 use sto_core::{
     AbortReason, AccessError, AcquireContext, AcquireError, Active, AdapterFault, AdapterFaultKind,
     AdapterPhase, BorrowedInjectiveLockCommitCapability, BorrowedLockToken,
-    BorrowedUniqueLockCommitCapability, CheckError, CommitFailure, CommitHook, CommitHookError,
-    CommitOutcome, Conflict, DefiniteOutcome, DirectBorrowedLockTarget, DirectCommitCapability,
-    DirectInstallContext, DirectLockMut, DirectLockRef, DirectTokenLock, DirectValidationContext,
-    DirectValidationItem, Entry, ExecutionCheckContext, FailurePhase, FinishContext,
-    FinishDisposition, FinishItem, InstallContext, InstallItem, InternalError, InvalidUse,
-    ItemInitError, LockClass, LockDisposition, LockIdentity, LockNamespaceId, LockRequest, LockUse,
-    NoPredicate, ObservationOrder, OpacityToken, PoisonInfo, PredicateContext, PreflightContext,
+    BorrowedTokenCommitOperations, BorrowedUniqueLockCommitCapability, CheckError, CommitFailure,
+    CommitHook, CommitHookError, CommitOutcome, Conflict, DefiniteOutcome,
+    DirectBorrowedLockTarget, DirectCommitCapability, DirectInstallContext, DirectLockMut,
+    DirectLockRef, DirectTokenLock, DirectValidationContext, DirectValidationItem, TransProxy,
+    ExecutionCheckContext, FailurePhase, CleanupContext, CleanupDisposition, CleanupItem,
+    InstallContext, InstallItem, InternalError, InvalidUse, ItemInitError, LockClass,
+    LockDisposition, LockIdentity, LockNamespaceId, LockRequest, LockUse, NoPredicate,
+    ObservationOrder, OpacityToken, PoisonInfo, PredicateContext, LockContext,
     PreflightFreeReadCapability, PreflightFreeValidationContext, PreflightItem, PrepareError,
     RegisteredResource, ResourceClass, Runtime, RuntimeConfig, RuntimeHealth,
-    TerminalReadBatchCapability, Transaction, TransactionLock, TransactionalResource, TxnArray,
+    TerminalReadBatchCapability, Transaction, TransactionLock, TObject, TxnArray,
     UniqueItemKeys, ValidationContext,
 };
+
+#[cfg(feature = "test-install-observer")]
+#[path = "support/failure_protocol_install_observer.rs"]
+mod install_observer;
+
+#[path = "support/direct_terminal.rs"]
+mod direct_terminal;
+
+#[path = "support/singleton_view.rs"]
+mod singleton_view;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Callback {
     ItemInit,
     DirectCapability,
+    TargetBorrow,
     Preflight,
     Acquire,
     PredicateUpgrade,
@@ -70,7 +82,7 @@ enum Event {
     AdapterDrop,
     Finish {
         key: u64,
-        disposition: FinishDisposition,
+        disposition: CleanupDisposition,
         prepared: bool,
     },
     PreflightFreeFinish(u64),
@@ -378,7 +390,7 @@ impl Drop for InjectAdapter {
     }
 }
 
-impl TransactionalResource for InjectAdapter {
+impl TObject for InjectAdapter {
     type Key = u64;
     type Local = ();
     type Observation = Token;
@@ -407,11 +419,11 @@ impl TransactionalResource for InjectAdapter {
         self.terminal_reads.then_some(&INJECT_TERMINAL_READ_BATCH)
     }
 
-    fn preflight(
+    fn lock(
         &self,
         key: &Self::Key,
         item: PreflightItem<'_, Self>,
-        cx: &mut PreflightContext<'_>,
+        cx: &mut LockContext<'_>,
     ) -> Result<Self::Prepared, PrepareError> {
         self.harness.record(Event::Preflight(*key));
         match self.harness.action(Callback::Preflight, *key) {
@@ -432,7 +444,7 @@ impl TransactionalResource for InjectAdapter {
                 key: *key,
                 harness: Arc::clone(&self.harness),
             });
-            Some(cx.require_lock(LockRequest::new(identity, target))?)
+            Some(cx.try_lock(LockRequest::new(identity, target))?)
         } else {
             None
         };
@@ -457,7 +469,7 @@ impl TransactionalResource for InjectAdapter {
         Ok(ObservationOrder::Unordered)
     }
 
-    fn upgrade_predicate(
+    fn check_predicate(
         &self,
         key: &Self::Key,
         _predicate: &Self::Predicate,
@@ -474,7 +486,7 @@ impl TransactionalResource for InjectAdapter {
         Ok(Token::upgraded(*key, &self.harness))
     }
 
-    fn validate_read(
+    fn check(
         &self,
         key: &Self::Key,
         _observation: &Self::Observation,
@@ -511,13 +523,13 @@ impl TransactionalResource for InjectAdapter {
         }
     }
 
-    fn finish(
+    fn cleanup(
         &self,
         key: &Self::Key,
-        mut item: FinishItem<'_, Self>,
+        mut item: CleanupItem<'_, Self>,
         prepared: Option<&mut Self::Prepared>,
-        disposition: FinishDisposition,
-        _cx: &mut FinishContext<'_>,
+        disposition: CleanupDisposition,
+        _cx: &mut CleanupContext<'_>,
     ) {
         self.harness.record(Event::Finish {
             key: *key,
@@ -533,6 +545,8 @@ impl TransactionalResource for InjectAdapter {
 
 #[derive(Clone, Copy)]
 enum DirectIdentityMode {
+    #[cfg(feature = "test-install-observer")]
+    Owned,
     Checked,
     CheckedAliasTenth,
     Injective,
@@ -576,7 +590,13 @@ impl Drop for DirectInjectAdapter {
 
 impl DirectBorrowedLockTarget<BorrowedInjectLock> for DirectInjectAdapter {
     fn direct_borrowed_lock_target(&self) -> &BorrowedInjectLock {
-        if self.unstable_target && self.target_calls.fetch_add(1, Ordering::Relaxed) & 1 == 1 {
+        let call = self.target_calls.fetch_add(1, Ordering::Relaxed) + 1;
+        match self.harness.action(Callback::TargetBorrow, call as u64) {
+            Some(Action::Panic) => panic!("injected target-borrow panic"),
+            Some(Action::Fault) => return &self.alternate_target,
+            None | Some(Action::Conflict) => {}
+        }
+        if self.unstable_target && call & 1 == 0 {
             &self.alternate_target
         } else {
             &self.target
@@ -584,7 +604,7 @@ impl DirectBorrowedLockTarget<BorrowedInjectLock> for DirectInjectAdapter {
     }
 }
 
-impl TransactionalResource for DirectInjectAdapter {
+impl TObject for DirectInjectAdapter {
     type Key = u64;
     type Local = ();
     type Observation = Token;
@@ -609,6 +629,10 @@ impl TransactionalResource for DirectInjectAdapter {
         if !self.direct_capability_enabled {
             return None;
         }
+        #[cfg(feature = "test-install-observer")]
+        if matches!(self.identity_mode, DirectIdentityMode::Owned) {
+            return Some(&install_observer::OWNED_DIRECT_COMMIT);
+        }
         Some(
             match (
                 self.drop_only_committed_finish,
@@ -622,11 +646,11 @@ impl TransactionalResource for DirectInjectAdapter {
         )
     }
 
-    fn preflight(
+    fn lock(
         &self,
         key: &Self::Key,
         item: PreflightItem<'_, Self>,
-        cx: &mut PreflightContext<'_>,
+        cx: &mut LockContext<'_>,
     ) -> Result<Self::Prepared, PrepareError> {
         self.harness.record(Event::Preflight(*key));
         match self.harness.action(Callback::Preflight, *key) {
@@ -642,7 +666,7 @@ impl TransactionalResource for DirectInjectAdapter {
                 LockClass::new(1).unwrap(),
                 *key,
             );
-            Some(cx.require_lock(LockRequest::new(
+            Some(cx.try_lock(LockRequest::new(
                 identity,
                 Arc::new(InjectLock {
                     key: *key,
@@ -673,7 +697,7 @@ impl TransactionalResource for DirectInjectAdapter {
         match *predicate {}
     }
 
-    fn upgrade_predicate(
+    fn check_predicate(
         &self,
         _key: &Self::Key,
         predicate: &Self::Predicate,
@@ -683,7 +707,7 @@ impl TransactionalResource for DirectInjectAdapter {
         match *predicate {}
     }
 
-    fn validate_read(
+    fn check(
         &self,
         key: &Self::Key,
         _observation: &Self::Observation,
@@ -721,13 +745,13 @@ impl TransactionalResource for DirectInjectAdapter {
         }
     }
 
-    fn finish(
+    fn cleanup(
         &self,
         key: &Self::Key,
-        mut item: FinishItem<'_, Self>,
+        mut item: CleanupItem<'_, Self>,
         prepared: Option<&mut Self::Prepared>,
-        disposition: FinishDisposition,
-        _cx: &mut FinishContext<'_>,
+        disposition: CleanupDisposition,
+        _cx: &mut CleanupContext<'_>,
     ) {
         self.harness.record(Event::Finish {
             key: *key,
@@ -762,21 +786,55 @@ static INJECT_DIRECT_UNIQUE_LOCKS: BorrowedUniqueLockCommitCapability<
     install_inject_direct,
 );
 
+struct InjectDirectTokenOperations;
+
+impl BorrowedTokenCommitOperations<DirectInjectAdapter, BorrowedInjectLock>
+    for InjectDirectTokenOperations
+{
+    fn prepare(
+        &self,
+        adapter: &DirectInjectAdapter,
+        key: &u64,
+        item: PreflightItem<'_, DirectInjectAdapter>,
+    ) -> Result<Option<BorrowedLockToken<u64>>, PrepareError> {
+        prepare_inject_direct_token(adapter, key, item)
+    }
+
+    fn validate(
+        &self,
+        adapter: &DirectInjectAdapter,
+        key: &u64,
+        item: DirectValidationItem<'_, DirectInjectAdapter>,
+        lock: Option<DirectLockRef<'_, BorrowedInjectLock>>,
+        cx: &DirectValidationContext,
+    ) -> Result<(), CheckError> {
+        validate_inject_direct(adapter, key, item, lock, cx)
+    }
+
+    fn install(
+        &self,
+        adapter: &DirectInjectAdapter,
+        key: &u64,
+        item: InstallItem<'_, DirectInjectAdapter>,
+        lock: DirectLockMut<'_, BorrowedInjectLock>,
+        cx: &mut DirectInstallContext,
+    ) {
+        install_inject_direct(adapter, key, item, lock, cx);
+    }
+}
+
 static INJECT_DIRECT_TOKEN_LOCKS: BorrowedInjectiveLockCommitCapability<
     DirectInjectAdapter,
     BorrowedInjectLock,
-> = BorrowedInjectiveLockCommitCapability::new(
-    prepare_inject_direct_token,
-    validate_inject_direct,
-    install_inject_direct,
-);
+    InjectDirectTokenOperations,
+> = BorrowedInjectiveLockCommitCapability::new(InjectDirectTokenOperations);
 
 static INJECT_DIRECT_COMMIT: DirectCommitCapability<DirectInjectAdapter> =
     DirectCommitCapability::borrowed_unique_lock(&INJECT_DIRECT_UNIQUE_LOCKS);
 
 static INJECT_DROP_ONLY_DIRECT_COMMIT: DirectCommitCapability<DirectInjectAdapter> =
     DirectCommitCapability::borrowed_unique_lock(&INJECT_DIRECT_UNIQUE_LOCKS)
-        .with_drop_only_committed_finish();
+        .with_drop_only_committed_cleanup();
 
 #[allow(
     unsafe_code,
@@ -791,7 +849,7 @@ static INJECT_INJECTIVE_DIRECT_COMMIT: DirectCommitCapability<DirectInjectAdapte
 )]
 static INJECT_DROP_ONLY_INJECTIVE_DIRECT_COMMIT: DirectCommitCapability<DirectInjectAdapter> =
     unsafe { DirectCommitCapability::borrowed_injective_token_lock(&INJECT_DIRECT_TOKEN_LOCKS) }
-        .with_drop_only_committed_finish();
+        .with_drop_only_committed_cleanup();
 
 fn prepare_inject_direct(
     adapter: &DirectInjectAdapter,
@@ -941,8 +999,8 @@ fn validate_inject_preflight_free_read(
 fn finish_inject_preflight_free_read(
     adapter: &InjectAdapter,
     key: &u64,
-    mut item: FinishItem<'_, InjectAdapter>,
-    _cx: &mut FinishContext<'_>,
+    mut item: CleanupItem<'_, InjectAdapter>,
+    _cx: &mut CleanupContext<'_>,
 ) {
     adapter.harness.record(Event::PreflightFreeFinish(*key));
     if adapter
@@ -1244,7 +1302,7 @@ fn stage_read(
     key: u64,
 ) {
     transaction
-        .with_item(resource, key, |entry| entry.record_read(Token::inert()))
+        .with_item(resource, key, |entry| entry.add_read(Token::inert()))
         .unwrap();
 }
 
@@ -1255,7 +1313,7 @@ fn stage_tracked_read(
 ) {
     transaction
         .with_item(resource, key, |entry| {
-            entry.record_read(Token::upgraded(key, &resource.adapter().harness))
+            entry.add_read(Token::upgraded(key, &resource.adapter().harness))
         })
         .unwrap();
 }
@@ -1266,7 +1324,7 @@ fn stage_write(
     key: u64,
 ) {
     transaction
-        .with_item(resource, key, |entry| entry.stage(()))
+        .with_item(resource, key, |entry| entry.add_write(()))
         .unwrap();
 }
 
@@ -1277,8 +1335,8 @@ fn stage_read_write(
 ) {
     transaction
         .with_item(resource, key, |entry| {
-            entry.record_read(Token::inert())?;
-            entry.stage(())
+            entry.add_read(Token::inert())?;
+            entry.add_write(())
         })
         .unwrap();
 }
@@ -1290,7 +1348,7 @@ fn stage_direct_write(
 ) {
     transaction
         .with_item(resource, key, |entry| {
-            entry.stage(DirectIntent::new(key, &resource.adapter().harness))
+            entry.add_write(DirectIntent::new(key, &resource.adapter().harness))
         })
         .unwrap();
 }
@@ -1302,8 +1360,8 @@ fn stage_direct_read_write(
 ) {
     transaction
         .with_item(resource, key, |entry| {
-            entry.record_read(Token::inert())?;
-            entry.stage(DirectIntent::new(key, &resource.adapter().harness))
+            entry.add_read(Token::inert())?;
+            entry.add_write(DirectIntent::new(key, &resource.adapter().harness))
         })
         .unwrap();
 }
@@ -1315,8 +1373,8 @@ fn stage_tracked_direct_read_write(
 ) {
     transaction
         .with_item(resource, key, |entry| {
-            entry.record_read(Token::upgraded(key, &resource.adapter().harness))?;
-            entry.stage(DirectIntent::new(key, &resource.adapter().harness))
+            entry.add_read(Token::upgraded(key, &resource.adapter().harness))?;
+            entry.add_write(DirectIntent::new(key, &resource.adapter().harness))
         })
         .unwrap();
 }
@@ -1328,11 +1386,11 @@ fn stage_predicate_write(
 ) {
     transaction
         .with_item(resource, key, |entry| {
-            entry.record_predicate(PredicateToken {
+            entry.set_predicate(PredicateToken {
                 key,
                 harness: Arc::clone(&resource.adapter().harness),
             })?;
-            entry.stage(())
+            entry.add_write(())
         })
         .unwrap();
 }
@@ -1346,7 +1404,7 @@ fn stage_unique_write(
         .with_unique_item_batch(
             resource,
             UniqueItemKeys::try_new(keys).unwrap(),
-            |_, entry| entry.stage(()),
+            |_, entry| entry.add_write(()),
         )
         .unwrap();
 }
@@ -1361,8 +1419,8 @@ fn stage_unique_read_write(
             resource,
             UniqueItemKeys::try_new(keys).unwrap(),
             |_, entry| {
-                entry.record_read(Token::inert())?;
-                entry.stage(())
+                entry.add_read(Token::inert())?;
+                entry.add_write(())
             },
         )
         .unwrap();
@@ -1379,11 +1437,11 @@ fn stage_unique_predicate_write(
             UniqueItemKeys::try_new(keys).unwrap(),
             |index, entry| {
                 let key = keys[index];
-                entry.record_predicate(PredicateToken {
+                entry.set_predicate(PredicateToken {
                     key,
                     harness: Arc::clone(&resource.adapter().harness),
                 })?;
-                entry.stage(())
+                entry.add_write(())
             },
         )
         .unwrap();
@@ -1398,7 +1456,7 @@ fn stage_unique_read(
         .with_unique_item_batch(
             resource,
             UniqueItemKeys::try_new(keys).unwrap(),
-            |_, entry| entry.record_read(Token::inert()),
+            |_, entry| entry.add_read(Token::inert()),
         )
         .unwrap();
 }
@@ -1414,13 +1472,13 @@ fn stage_unique_tracked_read(
             UniqueItemKeys::try_new(keys).unwrap(),
             |index, entry| {
                 let key = keys[index];
-                entry.record_read(Token::upgraded(key, &resource.adapter().harness))
+                entry.add_read(Token::upgraded(key, &resource.adapter().harness))
             },
         )
         .unwrap();
 }
 
-fn finish_events(events: &[Event]) -> Vec<(u64, FinishDisposition, bool)> {
+fn finish_events(events: &[Event]) -> Vec<(u64, CleanupDisposition, bool)> {
     events
         .iter()
         .filter_map(|event| match event {
@@ -1564,9 +1622,9 @@ fn explicit_abort_and_drop_finish_once_in_reverse_without_preflight() {
     assert_eq!(
         finish_events(&fixture.harness.events()),
         vec![
-            (3, FinishDisposition::Aborted, false),
-            (2, FinishDisposition::Aborted, false),
-            (1, FinishDisposition::Aborted, false),
+            (3, CleanupDisposition::Aborted, false),
+            (2, CleanupDisposition::Aborted, false),
+            (1, CleanupDisposition::Aborted, false),
         ]
     );
 
@@ -1580,9 +1638,9 @@ fn explicit_abort_and_drop_finish_once_in_reverse_without_preflight() {
     assert_eq!(
         finish_events(&fixture.harness.events()),
         vec![
-            (3, FinishDisposition::Aborted, false),
-            (2, FinishDisposition::Aborted, false),
-            (1, FinishDisposition::Aborted, false),
+            (3, CleanupDisposition::Aborted, false),
+            (2, CleanupDisposition::Aborted, false),
+            (1, CleanupDisposition::Aborted, false),
         ]
     );
 
@@ -1604,22 +1662,22 @@ fn normal_commit_releases_lock_order_and_finishes_reverse_item_order_once() {
     ));
 
     let events = fixture.harness.events();
-    assert_eq!(callback_keys(&events, Callback::Acquire), vec![1, 2, 3]);
+    assert_eq!(callback_keys(&events, Callback::Acquire), vec![2, 3, 1]);
     assert_eq!(callback_keys(&events, Callback::Install), vec![2, 3, 1]);
     assert!(matches!(
         release_events(&events).as_slice(),
         [
+            (1, LockDisposition::Committed { .. }),
             (3, LockDisposition::Committed { .. }),
             (2, LockDisposition::Committed { .. }),
-            (1, LockDisposition::Committed { .. }),
         ]
     ));
     assert_eq!(
         finish_events(&events),
         vec![
-            (1, FinishDisposition::Committed, true),
-            (3, FinishDisposition::Committed, true),
-            (2, FinishDisposition::Committed, true),
+            (1, CleanupDisposition::Committed, true),
+            (3, CleanupDisposition::Committed, true),
+            (2, CleanupDisposition::Committed, true),
         ]
     );
     let last_release = events
@@ -1692,9 +1750,9 @@ fn direct_typed_commit_uses_request_order_and_finishes_without_generic_preparati
     assert_eq!(
         finish_events(&events),
         vec![
-            (1, FinishDisposition::Committed, false),
-            (3, FinishDisposition::Committed, false),
-            (2, FinishDisposition::Committed, false),
+            (1, CleanupDisposition::Committed, false),
+            (3, CleanupDisposition::Committed, false),
+            (2, CleanupDisposition::Committed, false),
         ]
     );
 
@@ -1735,7 +1793,7 @@ fn direct_capability_panic_is_contained_during_first_binding_activation() {
     let mut worker = fixture.runtime.attach().unwrap();
     let mut transaction = worker.begin().unwrap();
     let result = transaction.with_item(&fixture.resource, 7, |entry| {
-        entry.stage(DirectIntent::new(7, &fixture.resource.adapter().harness))
+        entry.add_write(DirectIntent::new(7, &fixture.resource.adapter().harness))
     });
 
     assert!(matches!(
@@ -1764,7 +1822,7 @@ fn direct_capability_panic_on_second_binding_aborts_the_live_prefix_once() {
 
     let access = catch_unwind(AssertUnwindSafe(|| {
         transaction.with_item(&second, 2, |entry| {
-            entry.stage(DirectIntent::new(2, &second.adapter().harness))
+            entry.add_write(DirectIntent::new(2, &second.adapter().harness))
         })
     }));
     assert!(matches!(
@@ -1782,7 +1840,7 @@ fn direct_capability_panic_on_second_binding_aborts_the_live_prefix_once() {
     assert_poisoned_aborted(transaction.commit(), FailurePhase::Execution);
     assert_eq!(
         finish_events(&first_harness.events()),
-        [(1, FinishDisposition::Aborted, false)]
+        [(1, CleanupDisposition::Aborted, false)]
     );
     assert!(second_harness.events().is_empty());
 }
@@ -1886,7 +1944,7 @@ fn injective_token_plan_rejects_a_changed_target_before_acquisition() {
     assert!(callback_keys(&events, Callback::Acquire).is_empty());
     assert_eq!(
         finish_events(&events),
-        [(7, FinishDisposition::Aborted, false)]
+        [(7, CleanupDisposition::Aborted, false)]
     );
     assert_eq!(runtime.health(), RuntimeHealth::Poisoned);
 }
@@ -1929,9 +1987,9 @@ fn injective_token_acquire_failures_release_prefix_and_preserve_certainty() {
             assert_eq!(
                 finish_events(&events),
                 [
-                    (3, FinishDisposition::Aborted, false),
-                    (2, FinishDisposition::Aborted, false),
-                    (1, FinishDisposition::Aborted, false),
+                    (3, CleanupDisposition::Aborted, false),
+                    (2, CleanupDisposition::Aborted, false),
+                    (1, CleanupDisposition::Aborted, false),
                 ]
             );
             assert_eq!(
@@ -2080,7 +2138,7 @@ fn injective_borrowed_direct_plan_still_checks_both_intent_shapes() {
         } else {
             stage_direct_read_write(&mut transaction, &resource, 1);
             transaction
-                .with_item(&resource, 10, |entry| entry.record_read(Token::inert()))
+                .with_item(&resource, 10, |entry| entry.add_read(Token::inert()))
                 .unwrap();
         }
 
@@ -2171,9 +2229,9 @@ fn drop_only_direct_abort_still_runs_finish_for_conflicts_faults_and_panics() {
         assert_eq!(
             finish_events(&events),
             [
-                (3, FinishDisposition::Aborted, false),
-                (2, FinishDisposition::Aborted, false),
-                (1, FinishDisposition::Aborted, false),
+                (3, CleanupDisposition::Aborted, false),
+                (2, CleanupDisposition::Aborted, false),
+                (1, CleanupDisposition::Aborted, false),
             ]
         );
         assert_eq!(callback_keys(&events, Callback::IntentDrop), [3, 2, 1]);
@@ -2192,12 +2250,13 @@ fn drop_only_direct_abort_still_runs_finish_for_conflicts_faults_and_panics() {
     assert_poisoned_aborted(transaction.commit(), FailurePhase::Finish);
     assert_eq!(
         finish_events(&fixture.harness.events()),
-        [(3, FinishDisposition::Aborted, false)]
+        [(3, CleanupDisposition::Aborted, false)]
     );
 }
 
 #[test]
 fn drop_only_direct_teardown_panic_is_a_definite_committed_failure() {
+    direct_terminal::singleton_drop_only_teardown_failure();
     let fixture = drop_only_direct_fixture(vec![(Callback::IntentDrop, 2, Action::Panic)]);
     let mut worker = fixture.runtime.attach().unwrap();
     let mut transaction = worker.begin().unwrap();
@@ -2255,7 +2314,7 @@ fn borrowed_direct_plan_rejects_a_changed_target_before_acquisition() {
     assert!(callback_keys(&events, Callback::Acquire).is_empty());
     assert_eq!(
         finish_events(&events),
-        [(7, FinishDisposition::Aborted, false)]
+        [(7, CleanupDisposition::Aborted, false)]
     );
     assert_eq!(runtime.health(), RuntimeHealth::Poisoned);
 }
@@ -2277,8 +2336,8 @@ fn distinct_resource_unique_groups_remain_direct_commit_eligible() {
             &first,
             UniqueItemKeys::try_new(&first_keys).unwrap(),
             |index, entry| {
-                entry.record_read(Token::inert())?;
-                entry.stage(DirectIntent::new(
+                entry.add_read(Token::inert())?;
+                entry.add_write(DirectIntent::new(
                     first_keys[index],
                     &first.adapter().harness,
                 ))
@@ -2290,8 +2349,8 @@ fn distinct_resource_unique_groups_remain_direct_commit_eligible() {
             &second,
             UniqueItemKeys::try_new(&second_keys).unwrap(),
             |index, entry| {
-                entry.record_read(Token::inert())?;
-                entry.stage(DirectIntent::new(
+                entry.add_read(Token::inert())?;
+                entry.add_write(DirectIntent::new(
                     second_keys[index],
                     &second.adapter().harness,
                 ))
@@ -2316,16 +2375,16 @@ fn distinct_resource_unique_groups_remain_direct_commit_eligible() {
     assert_eq!(
         finish_events(&first_events),
         [
-            (1, FinishDisposition::Committed, false),
-            (2, FinishDisposition::Committed, false),
+            (1, CleanupDisposition::Committed, false),
+            (2, CleanupDisposition::Committed, false),
         ],
         "both groups must finish through the preparation-free direct plan"
     );
     assert_eq!(
         finish_events(&second_events),
         [
-            (3, FinishDisposition::Committed, false),
-            (2, FinishDisposition::Committed, false),
+            (3, CleanupDisposition::Committed, false),
+            (2, CleanupDisposition::Committed, false),
         ],
         "the second resource group must remain in the same direct plan"
     );
@@ -2390,11 +2449,11 @@ fn distinct_resource_direct_capability_mismatch_uses_generic_commit() {
     ));
     assert_eq!(
         finish_events(&first_harness.events()),
-        [(1, FinishDisposition::Committed, true)]
+        [(1, CleanupDisposition::Committed, true)]
     );
     assert_eq!(
         finish_events(&second_harness.events()),
-        [(2, FinishDisposition::Committed, true)]
+        [(2, CleanupDisposition::Committed, true)]
     );
 }
 
@@ -2422,11 +2481,11 @@ fn direct_capability_summary_resets_after_generic_commit_and_explicit_abort() {
             ));
             assert_eq!(
                 finish_events(&first_harness.events()),
-                [(1, FinishDisposition::Committed, true)]
+                [(1, CleanupDisposition::Committed, true)]
             );
             assert_eq!(
                 finish_events(&second_harness.events()),
-                [(2, FinishDisposition::Committed, true)]
+                [(2, CleanupDisposition::Committed, true)]
             );
         } else {
             assert_eq!(transaction.abort().reason(), &AbortReason::Explicit);
@@ -2448,7 +2507,7 @@ fn direct_capability_summary_resets_after_generic_commit_and_explicit_abort() {
         ));
         assert_eq!(
             finish_events(&first_harness.events()),
-            [(3, FinishDisposition::Committed, false)],
+            [(3, CleanupDisposition::Committed, false)],
             "the eligible successor must select direct commit"
         );
         assert!(second_harness.events().is_empty());
@@ -2480,11 +2539,11 @@ fn one_distinct_resource_without_direct_capability_uses_generic_commit() {
     ));
     assert_eq!(
         finish_events(&first_harness.events()),
-        [(1, FinishDisposition::Committed, true)]
+        [(1, CleanupDisposition::Committed, true)]
     );
     assert_eq!(
         finish_events(&second_harness.events()),
-        [(2, FinishDisposition::Committed, true)]
+        [(2, CleanupDisposition::Committed, true)]
     );
 }
 
@@ -2537,8 +2596,8 @@ fn indexed_typed_prefix_and_unique_suffix_remain_direct_commit_eligible() {
             &second,
             UniqueItemKeys::try_new(&suffix).unwrap(),
             |index, entry| {
-                entry.record_read(Token::inert())?;
-                entry.stage(DirectIntent::new(suffix[index], &second.adapter().harness))
+                entry.add_read(Token::inert())?;
+                entry.add_write(DirectIntent::new(suffix[index], &second.adapter().harness))
             },
         )
         .unwrap();
@@ -2557,16 +2616,16 @@ fn indexed_typed_prefix_and_unique_suffix_remain_direct_commit_eligible() {
     assert_eq!(
         finish_events(&first_events),
         [
-            (1, FinishDisposition::Committed, false),
-            (2, FinishDisposition::Committed, false),
+            (1, CleanupDisposition::Committed, false),
+            (2, CleanupDisposition::Committed, false),
         ],
         "the indexed prefix must finish through the preparation-free direct plan"
     );
     assert_eq!(
         finish_events(&second_events),
         [
-            (3, FinishDisposition::Committed, false),
-            (2, FinishDisposition::Committed, false),
+            (3, CleanupDisposition::Committed, false),
+            (2, CleanupDisposition::Committed, false),
         ],
         "the unindexed suffix must remain in the same direct plan"
     );
@@ -2602,8 +2661,8 @@ fn indexed_typed_prefix_and_unique_suffix_apply_drop_only_committed_finish() {
             UniqueItemKeys::try_new(&suffix).unwrap(),
             |index, entry| {
                 let key = suffix[index];
-                entry.record_read(Token::upgraded(key, &second.adapter().harness))?;
-                entry.stage(DirectIntent::new(key, &second.adapter().harness))
+                entry.add_read(Token::upgraded(key, &second.adapter().harness))?;
+                entry.add_write(DirectIntent::new(key, &second.adapter().harness))
             },
         )
         .unwrap();
@@ -2648,9 +2707,9 @@ fn direct_acquisition_failure_releases_the_held_prefix_and_definitely_aborts() {
     assert_eq!(
         finish_events(&events),
         vec![
-            (3, FinishDisposition::Aborted, false),
-            (2, FinishDisposition::Aborted, false),
-            (1, FinishDisposition::Aborted, false),
+            (3, CleanupDisposition::Aborted, false),
+            (2, CleanupDisposition::Aborted, false),
+            (1, CleanupDisposition::Aborted, false),
         ]
     );
     assert_eq!(fixture.runtime.health(), RuntimeHealth::Healthy);
@@ -2685,6 +2744,7 @@ fn direct_validation_conflict_releases_every_guard_before_abort_finish() {
 
 #[test]
 fn direct_install_release_and_finish_panics_preserve_commit_boundaries() {
+    direct_terminal::singleton_uncertain_boundaries();
     let install = direct_fixture(vec![(Callback::Install, 2, Action::Panic)]);
     let mut worker = install.runtime.attach().unwrap();
     let mut transaction = worker.begin().unwrap();
@@ -2746,8 +2806,8 @@ fn direct_install_release_and_finish_panics_preserve_commit_boundaries() {
     assert_eq!(
         finish_events(&finish.harness.events()),
         [
-            (3, FinishDisposition::Committed, false),
-            (2, FinishDisposition::Committed, false),
+            (3, CleanupDisposition::Committed, false),
+            (2, CleanupDisposition::Committed, false),
         ]
     );
     assert_eq!(finish.runtime.health(), RuntimeHealth::Poisoned);
@@ -2769,7 +2829,7 @@ fn direct_capability_falls_back_after_typed_batch_materialization() {
     assert_eq!(callback_keys(&events, Callback::Acquire), [1]);
     assert_eq!(
         finish_events(&events),
-        [(1, FinishDisposition::Committed, true)],
+        [(1, CleanupDisposition::Committed, true)],
         "materialization must use the ordinary Prepared/LockPlan protocol"
     );
     assert_eq!(
@@ -2804,7 +2864,7 @@ fn swallowed_access_error_dooms_and_finishes_the_inserted_item() {
     let result: Result<(), AccessError> = transaction.with_item(
         &fixture.resource,
         7,
-        |_entry: &mut Entry<'_, InjectAdapter>| Err(Conflict::ReadValidation.into()),
+        |_entry: &mut TransProxy<'_, InjectAdapter>| Err(Conflict::ReadValidation.into()),
     );
     assert!(matches!(result, Err(AccessError::Conflict(_))));
     assert!(transaction.is_doomed());
@@ -2814,7 +2874,7 @@ fn swallowed_access_error_dooms_and_finishes_the_inserted_item() {
     );
     assert_eq!(
         finish_events(&fixture.harness.events()),
-        vec![(7, FinishDisposition::Aborted, false)]
+        vec![(7, CleanupDisposition::Aborted, false)]
     );
 }
 
@@ -2843,7 +2903,7 @@ fn swallowed_fault_poison_and_internal_access_errors_poison_definite_abort() {
         assert_eq!(fixture.runtime.health(), RuntimeHealth::Poisoned);
         assert_eq!(
             finish_events(&fixture.harness.events()),
-            vec![(8, FinishDisposition::Aborted, false)]
+            vec![(8, CleanupDisposition::Aborted, false)]
         );
     }
 }
@@ -2892,7 +2952,7 @@ fn unique_batch_item_init_failure_aborts_only_the_initialized_prefix() {
         );
         assert_eq!(
             finish_events(&events),
-            vec![(1, FinishDisposition::Aborted, false)]
+            vec![(1, CleanupDisposition::Aborted, false)]
         );
     }
 }
@@ -2910,23 +2970,23 @@ fn unique_batch_commit_preserves_phase_lock_and_reverse_finish_order() {
     ));
     let events = fixture.harness.events();
     assert_eq!(callback_keys(&events, Callback::Preflight), vec![2, 3, 1]);
-    assert_eq!(callback_keys(&events, Callback::Acquire), vec![1, 2, 3]);
+    assert_eq!(callback_keys(&events, Callback::Acquire), vec![2, 3, 1]);
     assert_eq!(callback_keys(&events, Callback::Validation), vec![2, 3, 1]);
     assert_eq!(callback_keys(&events, Callback::Install), vec![2, 3, 1]);
     assert!(matches!(
         release_events(&events).as_slice(),
         [
+            (1, LockDisposition::Committed { .. }),
             (3, LockDisposition::Committed { .. }),
             (2, LockDisposition::Committed { .. }),
-            (1, LockDisposition::Committed { .. }),
         ]
     ));
     assert_eq!(
         finish_events(&events),
         vec![
-            (1, FinishDisposition::Committed, true),
-            (3, FinishDisposition::Committed, true),
-            (2, FinishDisposition::Committed, true),
+            (1, CleanupDisposition::Committed, true),
+            (3, CleanupDisposition::Committed, true),
+            (2, CleanupDisposition::Committed, true),
         ]
     );
 }
@@ -2952,14 +3012,15 @@ fn unique_batch_preflight_failure_tracks_typed_prefix_and_outcome() {
 
         let events = fixture.harness.events();
         assert_eq!(callback_keys(&events, Callback::Preflight), vec![1, 2]);
-        assert!(callback_keys(&events, Callback::Acquire).is_empty());
+        assert_eq!(callback_keys(&events, Callback::Acquire), vec![1]);
+        assert_eq!(release_events(&events), vec![(1, LockDisposition::Aborted)]);
         assert!(callback_keys(&events, Callback::Install).is_empty());
         assert_eq!(
             finish_events(&events),
             vec![
-                (3, FinishDisposition::Aborted, false),
-                (2, FinishDisposition::Aborted, false),
-                (1, FinishDisposition::Aborted, true),
+                (3, CleanupDisposition::Aborted, false),
+                (2, CleanupDisposition::Aborted, false),
+                (1, CleanupDisposition::Aborted, true),
             ]
         );
     }
@@ -2985,9 +3046,9 @@ fn unique_batch_predicate_and_validation_callbacks_preserve_failure_semantics() 
     assert_eq!(
         finish_events(&events),
         vec![
-            (2, FinishDisposition::Committed, true),
-            (1, FinishDisposition::Committed, true),
-            (3, FinishDisposition::Committed, true),
+            (2, CleanupDisposition::Committed, true),
+            (1, CleanupDisposition::Committed, true),
+            (3, CleanupDisposition::Committed, true),
         ]
     );
 
@@ -3034,9 +3095,9 @@ fn unique_batch_predicate_and_validation_callbacks_preserve_failure_semantics() 
             assert_eq!(
                 finish_events(&events),
                 vec![
-                    (3, FinishDisposition::Aborted, true),
-                    (2, FinishDisposition::Aborted, true),
-                    (1, FinishDisposition::Aborted, true),
+                    (3, CleanupDisposition::Aborted, true),
+                    (2, CleanupDisposition::Aborted, true),
+                    (1, CleanupDisposition::Aborted, true),
                 ]
             );
         }
@@ -3073,8 +3134,8 @@ fn unique_batch_install_and_finish_panics_keep_boundary_classification() {
     assert_eq!(
         finish_events(&finish.harness.events()),
         vec![
-            (3, FinishDisposition::Committed, true),
-            (2, FinishDisposition::Committed, true),
+            (3, CleanupDisposition::Committed, true),
+            (2, CleanupDisposition::Committed, true),
         ]
     );
     assert_eq!(finish.runtime.health(), RuntimeHealth::Poisoned);
@@ -3132,9 +3193,9 @@ fn unique_batch_preflight_free_path_is_typed_ordered_and_contained() {
         assert_eq!(
             finish_events(&events),
             vec![
-                (3, FinishDisposition::Aborted, false),
-                (2, FinishDisposition::Aborted, false),
-                (1, FinishDisposition::Aborted, false),
+                (3, CleanupDisposition::Aborted, false),
+                (2, CleanupDisposition::Aborted, false),
+                (1, CleanupDisposition::Aborted, false),
             ]
         );
         assert!(events
@@ -3191,12 +3252,13 @@ fn preflight_failure_at_item_n_tracks_prepared_state_and_reverse_finish() {
         assert_eq!(
             finish_events(&events),
             vec![
-                (3, FinishDisposition::Aborted, false),
-                (2, FinishDisposition::Aborted, false),
-                (1, FinishDisposition::Aborted, true),
+                (3, CleanupDisposition::Aborted, false),
+                (2, CleanupDisposition::Aborted, false),
+                (1, CleanupDisposition::Aborted, true),
             ]
         );
-        assert!(callback_keys(&events, Callback::Acquire).is_empty());
+        assert_eq!(callback_keys(&events, Callback::Acquire), vec![1]);
+        assert_eq!(release_events(&events), vec![(1, LockDisposition::Aborted)]);
         assert!(callback_keys(&events, Callback::Install).is_empty());
     }
 }
@@ -3248,7 +3310,7 @@ fn preflight_free_read_keeps_final_certification_and_mixes_with_normal_locks() {
     ));
     assert_eq!(
         finish_events(&normal_events),
-        vec![(22, FinishDisposition::Committed, true)]
+        vec![(22, CleanupDisposition::Committed, true)]
     );
 }
 
@@ -3305,7 +3367,7 @@ fn drop_only_preflight_free_read_mixes_with_normal_write_cleanup() {
     ));
     assert_eq!(
         finish_events(&normal_events),
-        vec![(22, FinishDisposition::Committed, true)]
+        vec![(22, CleanupDisposition::Committed, true)]
     );
     assert_eq!(runtime.health(), RuntimeHealth::Healthy);
 }
@@ -3447,9 +3509,9 @@ fn drop_only_preflight_free_abort_still_runs_regular_finish_once() {
     assert_eq!(
         finish_events(&events),
         vec![
-            (3, FinishDisposition::Aborted, false),
-            (2, FinishDisposition::Aborted, false),
-            (1, FinishDisposition::Aborted, false),
+            (3, CleanupDisposition::Aborted, false),
+            (2, CleanupDisposition::Aborted, false),
+            (1, CleanupDisposition::Aborted, false),
         ]
     );
     assert!(events
@@ -3482,7 +3544,7 @@ fn drop_only_preflight_free_abort_still_runs_regular_finish_once() {
     assert_eq!(info.phase(), FailurePhase::Finish);
     assert_eq!(
         finish_events(&panicking.harness.events()),
-        vec![(3, FinishDisposition::Aborted, false)]
+        vec![(3, CleanupDisposition::Aborted, false)]
     );
     assert_eq!(panicking.runtime.health(), RuntimeHealth::Poisoned);
 }
@@ -3544,7 +3606,7 @@ fn preflight_free_capability_falls_back_for_intent_predicate_and_unobserved_item
     stage_read_write(&mut transaction, &fixture.resource, 1);
     transaction
         .with_item(&fixture.resource, 2, |entry| {
-            entry.record_predicate(PredicateToken {
+            entry.set_predicate(PredicateToken {
                 key: 2,
                 harness: Arc::clone(&fixture.harness),
             })
@@ -3565,9 +3627,9 @@ fn preflight_free_capability_falls_back_for_intent_predicate_and_unobserved_item
     assert_eq!(
         finish_events(&events),
         vec![
-            (3, FinishDisposition::Committed, true),
-            (2, FinishDisposition::Committed, true),
-            (1, FinishDisposition::Committed, true),
+            (3, CleanupDisposition::Committed, true),
+            (2, CleanupDisposition::Committed, true),
+            (1, CleanupDisposition::Committed, true),
         ]
     );
     assert!(events
@@ -3608,7 +3670,7 @@ fn preflight_free_validation_conflict_fault_and_panic_keep_definite_abort() {
         );
         assert_eq!(
             finish_events(&events),
-            vec![(1, FinishDisposition::Aborted, false)]
+            vec![(1, CleanupDisposition::Aborted, false)]
         );
         assert!(events
             .iter()
@@ -3640,7 +3702,7 @@ fn later_fallback_conflict_aborts_an_already_certified_preflight_free_read() {
     );
     assert_eq!(
         finish_events(&fast_harness.events()),
-        vec![(1, FinishDisposition::Aborted, false)]
+        vec![(1, CleanupDisposition::Aborted, false)]
     );
     assert!(fast_harness
         .events()
@@ -3692,7 +3754,7 @@ fn explicit_abort_never_selects_preflight_free_commit_callbacks() {
     assert!(callback_keys(&events, Callback::PreflightFreeValidation).is_empty());
     assert_eq!(
         finish_events(&events),
-        vec![(1, FinishDisposition::Aborted, false)]
+        vec![(1, CleanupDisposition::Aborted, false)]
     );
     assert!(events
         .iter()
@@ -3730,9 +3792,9 @@ fn acquisition_failures_release_prior_guards_and_panic_quarantines_items() {
             assert_eq!(
                 finish_events(&events),
                 vec![
-                    (3, FinishDisposition::Aborted, true),
-                    (2, FinishDisposition::Aborted, true),
-                    (1, FinishDisposition::Aborted, true),
+                    (3, CleanupDisposition::Aborted, false),
+                    (2, CleanupDisposition::Aborted, false),
+                    (1, CleanupDisposition::Aborted, true),
                 ]
             );
         }
@@ -3764,7 +3826,7 @@ fn rollback_panic_during_acquisition_quarantines_items_and_releases_other_guards
         stage_write(&mut transaction, &fixture.resource, key);
     }
 
-    assert_poisoned_aborted(transaction.commit(), FailurePhase::Acquire);
+    assert_poisoned_aborted(transaction.commit(), FailurePhase::Release);
     let events = fixture.harness.events();
     assert_eq!(callback_keys(&events, Callback::Acquire), vec![1, 2, 3]);
     assert_eq!(
@@ -3806,7 +3868,7 @@ fn predicate_upgrade_success_is_validated_and_conflict_installs_nothing() {
     ));
     assert_eq!(
         finish_events(&events),
-        vec![(1, FinishDisposition::Committed, true)]
+        vec![(1, CleanupDisposition::Committed, true)]
     );
     let release = events
         .iter()
@@ -3887,7 +3949,7 @@ fn predicate_and_validation_faults_or_panics_abort_before_install() {
             assert_eq!(release_events(&events), vec![(1, LockDisposition::Aborted)]);
             assert_eq!(
                 finish_events(&events),
-                vec![(1, FinishDisposition::Aborted, true)]
+                vec![(1, CleanupDisposition::Aborted, true)]
             );
         }
     }
@@ -3996,8 +4058,8 @@ fn finish_panic_after_publication_is_poisoned_but_definitely_committed() {
     assert_eq!(
         finish_events(&events),
         vec![
-            (3, FinishDisposition::Committed, true),
-            (2, FinishDisposition::Committed, true),
+            (3, CleanupDisposition::Committed, true),
+            (2, CleanupDisposition::Committed, true),
         ]
     );
     assert_eq!(fixture.runtime.health(), RuntimeHealth::Poisoned);
@@ -4098,7 +4160,7 @@ fn abort_finish_panic_is_poisoned_with_a_definite_aborted_outcome() {
     assert_poisoned_aborted(transaction.commit(), FailurePhase::Finish);
     assert_eq!(
         finish_events(&fixture.harness.events()),
-        vec![(2, FinishDisposition::Aborted, false)]
+        vec![(2, CleanupDisposition::Aborted, false)]
     );
 }
 
@@ -4236,7 +4298,7 @@ fn typed_unique_batch_pool_contains_same_type_rebind_panic() {
     let result = transaction.with_unique_item_batch(
         &second,
         UniqueItemKeys::try_new(&keys).unwrap(),
-        |_, entry| entry.stage(()),
+        |_, entry| entry.add_write(()),
     );
     assert!(matches!(
         result,
@@ -4336,8 +4398,8 @@ fn typed_batch_materialization_preserves_ordinary_pool_tail_lifetime() {
     assert_eq!(
         finish_events(&batched_harness.events()),
         vec![
-            (11, FinishDisposition::Committed, true),
-            (10, FinishDisposition::Committed, true),
+            (11, CleanupDisposition::Committed, true),
+            (10, CleanupDisposition::Committed, true),
         ]
     );
 
@@ -4438,7 +4500,7 @@ fn terminal_read_commit_uses_only_validation_and_reverse_drop_cleanup() {
         .unwrap()
         .with_terminal_read_batch(&fixture.resource, &keys, |_, entry| {
             let key = *entry.key();
-            entry.record_read(Token::upgraded(key, &fixture.harness))
+            entry.add_read(Token::upgraded(key, &fixture.harness))
         })
         .unwrap();
 
@@ -4475,7 +4537,7 @@ fn terminal_read_explicit_abort_and_operation_failure_are_drop_only() {
         .unwrap()
         .with_terminal_read_batch(&fixture.resource, &[1, 2, 3], |_, entry| {
             let key = *entry.key();
-            entry.record_read(Token::upgraded(key, &fixture.harness))
+            entry.add_read(Token::upgraded(key, &fixture.harness))
         })
         .unwrap();
     ready.abort();
@@ -4494,7 +4556,7 @@ fn terminal_read_explicit_abort_and_operation_failure_are_drop_only() {
                 return Err(InvalidUse::IllegalItemState.into());
             }
             let key = *entry.key();
-            entry.record_read(Token::upgraded(key, &fixture.harness))
+            entry.add_read(Token::upgraded(key, &fixture.harness))
         });
     assert!(matches!(
         result,
@@ -4517,7 +4579,7 @@ fn terminal_read_operation_unwind_aborts_recorded_prefix_and_reuses_worker() {
             .unwrap()
             .with_terminal_read_batch(&fixture.resource, &[1, 2, 3], |index, entry| {
                 let key = *entry.key();
-                entry.record_read(Token::upgraded(key, &fixture.harness))?;
+                entry.add_read(Token::upgraded(key, &fixture.harness))?;
                 assert_ne!(index, 1, "injected terminal operation panic");
                 Ok(())
             });
@@ -4533,7 +4595,7 @@ fn terminal_read_operation_unwind_aborts_recorded_prefix_and_reuses_worker() {
         .begin_terminal_read_batch()
         .unwrap()
         .with_terminal_read_batch(&fixture.resource, &[9], |_, entry| {
-            entry.record_read(Token::inert())
+            entry.add_read(Token::inert())
         })
         .unwrap();
     assert!(matches!(
@@ -4555,7 +4617,7 @@ fn terminal_read_validation_failures_keep_definite_abort_classification() {
         .unwrap()
         .with_terminal_read_batch(&conflict.resource, &[1, 2, 3], |_, entry| {
             let key = *entry.key();
-            entry.record_read(Token::upgraded(key, &conflict.harness))
+            entry.add_read(Token::upgraded(key, &conflict.harness))
         })
         .unwrap();
     assert_eq!(
@@ -4576,7 +4638,7 @@ fn terminal_read_validation_failures_keep_definite_abort_classification() {
             .unwrap()
             .with_terminal_read_batch(&fixture.resource, &[1], |_, entry| {
                 let key = *entry.key();
-                entry.record_read(Token::upgraded(key, &fixture.harness))
+                entry.add_read(Token::upgraded(key, &fixture.harness))
             })
             .unwrap();
         assert!(matches!(
@@ -4603,7 +4665,7 @@ fn terminal_read_post_certification_drop_panic_is_definitely_committed() {
         .unwrap()
         .with_terminal_read_batch(&fixture.resource, &[1, 2, 3], |_, entry| {
             let key = *entry.key();
-            entry.record_read(Token::upgraded(key, &fixture.harness))
+            entry.add_read(Token::upgraded(key, &fixture.harness))
         })
         .unwrap();
     assert!(matches!(
@@ -4629,7 +4691,7 @@ fn terminal_read_requires_its_stronger_explicit_capability() {
             .begin_terminal_read_batch()
             .unwrap()
             .with_terminal_read_batch(&fixture.resource, &[1], |_, entry| {
-                entry.record_read(Token::inert())
+                entry.add_read(Token::inert())
             });
         assert_eq!(
             result.unwrap_err(),
@@ -4663,7 +4725,7 @@ fn terminal_read_pool_contains_adapter_panic_on_rebind() {
     let ready = worker
         .begin_terminal_read_batch()
         .unwrap()
-        .with_terminal_read_batch(&first, &[1], |_, entry| entry.record_read(Token::inert()))
+        .with_terminal_read_batch(&first, &[1], |_, entry| entry.add_read(Token::inert()))
         .unwrap();
     assert!(matches!(
         ready.commit().unwrap(),
@@ -4674,7 +4736,7 @@ fn terminal_read_pool_contains_adapter_panic_on_rebind() {
     let result = worker
         .begin_terminal_read_batch()
         .unwrap()
-        .with_terminal_read_batch(&second, &[2], |_, entry| entry.record_read(Token::inert()));
+        .with_terminal_read_batch(&second, &[2], |_, entry| entry.add_read(Token::inert()));
     assert!(matches!(
         result,
         Err(AccessError::Fault(fault))
@@ -4704,7 +4766,7 @@ fn terminal_read_pool_contains_adapter_panic_when_worker_drops() {
         .begin_terminal_read_batch()
         .unwrap()
         .with_terminal_read_batch(&resource, &[1], |_, entry| {
-            entry.record_read(Token::inert())
+            entry.add_read(Token::inert())
         })
         .unwrap();
     assert!(matches!(
@@ -4724,4 +4786,70 @@ fn terminal_read_pool_contains_adapter_panic_when_worker_drops() {
             .count(),
         1
     );
+}
+
+#[test]
+fn retained_participant_preserves_poisoned_and_unknown_outcomes() {
+    use mako_clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
+    use sto_core::{ParticipantError, ParticipantPhase};
+
+    let acquire = fixture(vec![(Callback::Acquire, 2, Action::Panic)]);
+    let mut worker = acquire.runtime.attach().unwrap();
+    let mut participant = worker.begin().unwrap().into_participant();
+    participant.with_transaction(|txn| {
+        stage_write(txn, &acquire.resource, 1);
+        stage_write(txn, &acquire.resource, 2);
+        Ok(())
+    }).unwrap();
+    let Err(ParticipantError::Failure(failure)) = participant.lock_writes() else {
+        panic!("uncertain acquisition must poison a definite abort");
+    };
+    assert!(matches!(failure, CommitFailure::Poisoned {
+        outcome: DefiniteOutcome::Aborted(_), ..
+    }));
+    assert_eq!(participant.phase(), ParticipantPhase::Finished);
+    assert_eq!(participant.finish(true), Err(failure));
+    assert_eq!(acquire.runtime.health(), RuntimeHealth::Poisoned);
+    assert!(finish_events(&acquire.harness.events()).is_empty());
+
+    let install = fixture(vec![(Callback::Install, 2, Action::Panic)]);
+    let mut worker = install.runtime.attach().unwrap();
+    let mut participant = worker.begin().unwrap().into_participant();
+    participant.with_transaction(|txn| {
+        stage_write(txn, &install.resource, 1);
+        stage_write(txn, &install.resource, 2);
+        Ok(())
+    }).unwrap();
+    participant.validate().unwrap();
+    let Err(ParticipantError::Failure(failure)) = participant.install(DistributedTimeTerm::new(
+        DistributedTimestamp::new(21).unwrap(),
+        DistributedTerm::new(3).unwrap(),
+    )) else {
+        panic!("installation panic must remain indeterminate");
+    };
+    assert!(matches!(failure, CommitFailure::Indeterminate(_)));
+    assert_eq!(participant.abort(), Err(failure));
+    assert_eq!(install.runtime.health(), RuntimeHealth::Indeterminate);
+    assert!(finish_events(&install.harness.events()).is_empty());
+}
+
+#[test]
+fn installed_participant_cleanup_failure_is_definitely_committed() {
+    use mako_clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
+    let fixture = fixture(vec![(Callback::Finish, 1, Action::Panic)]);
+    let mut worker = fixture.runtime.attach().unwrap();
+    let mut participant = worker.begin().unwrap().into_participant();
+    participant.with_transaction(|txn| {
+        stage_write(txn, &fixture.resource, 1);
+        Ok(())
+    }).unwrap();
+    participant.validate().unwrap();
+    participant.install(DistributedTimeTerm::new(
+        DistributedTimestamp::new(22).unwrap(),
+        DistributedTerm::new(3).unwrap(),
+    )).unwrap();
+    assert!(matches!(participant.finish(false), Err(CommitFailure::Poisoned {
+        outcome: DefiniteOutcome::Committed(_), ..
+    })));
+    assert_eq!(fixture.runtime.health(), RuntimeHealth::Poisoned);
 }

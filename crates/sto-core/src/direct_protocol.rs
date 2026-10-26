@@ -2,7 +2,7 @@
 
 use super::{CommitBoundary, ErasedItemBatch};
 use crate::{
-    adapter::TransactionalResource, direct_commit::ErasedDirectCommitPlan, item::ItemData,
+    object::TObject, direct_commit::ErasedDirectCommitPlan, trans_item::TransItemData,
     AcquireError, AdapterFault, CapacityError, CheckError, CommitHook, CommitHookError,
     FailurePhase, LockDisposition, OccCommitId, OwnerId, PrepareError, Runtime,
 };
@@ -34,7 +34,9 @@ pub(crate) enum DirectCommitStepFailure {
     // original driver's named catch result left scope after cleanup.
     Panicked(FailurePhase, Box<dyn Any + Send>),
     Release,
-    ReleasedPlanTeardown,
+    // The batch must quarantine its retained plan before destroying a caught
+    // teardown payload, whose destructor can itself panic.
+    ReleasedPlanTeardown(Option<Box<dyn Any + Send>>),
 }
 
 /// The already-prepared part of the protocol. The ordinary batch delegates
@@ -65,14 +67,14 @@ impl<B: ErasedItemBatch + ?Sized> DirectCommitBody for B {
     }
 }
 
-struct ConcreteDirectPlan<'plan, A: TransactionalResource, P> {
+struct ConcreteDirectPlan<'plan, A: TObject, P> {
     plan: &'plan mut P,
-    items: &'plan mut [ItemData<A>],
+    items: &'plan mut [TransItemData<A>],
     intents: &'plan mut [Option<A::Intent>],
     active_len: usize,
 }
 
-impl<A: TransactionalResource, P: ErasedDirectCommitPlan<A>> DirectCommitBody
+impl<A: TObject, P: ErasedDirectCommitPlan<A>> DirectCommitBody
     for ConcreteDirectPlan<'_, A, P>
 {
     fn acquire(&mut self, owner: OwnerId) -> Result<(), AcquireError> {
@@ -113,7 +115,7 @@ impl DirectCommitContext<'_, '_> {
         self.run_body(batch, requires_ordered_commit_id)?;
         batch
             .teardown_direct_plan()
-            .map_err(|()| DirectCommitStepFailure::ReleasedPlanTeardown)
+            .map_err(|()| DirectCommitStepFailure::ReleasedPlanTeardown(None))
     }
 
     pub(crate) fn preflight<B: ErasedItemBatch + ?Sized>(
@@ -124,25 +126,55 @@ impl DirectCommitContext<'_, '_> {
         debug_assert!(has_writes);
         debug_assert!(!has_predicates);
 
-        *self.phase = FailurePhase::Preflight;
-        let runtime_id = self.runtime.id();
-        let max_locks = self.runtime.config().max_locks_per_transaction();
-        match catch_unwind(AssertUnwindSafe(|| {
-            batch.direct_preflight(runtime_id, max_locks)
-        })) {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => return Err(DirectCommitStepFailure::Prepare(error)),
-            Err(payload) => return Err(DirectCommitStepFailure::Panicked(*self.phase, payload)),
-        }
+        self.preflight_step(|runtime_id, max_locks| batch.direct_preflight(runtime_id, max_locks))?;
         Ok(requires_ordered_commit_id)
+    }
+
+    pub(crate) fn preflight_step(
+        &mut self,
+        prepare: impl FnOnce(crate::RuntimeId, usize) -> Result<(), PrepareError>,
+    ) -> Result<(), DirectCommitStepFailure> {
+        *self.phase = FailurePhase::Preflight;
+        match catch_unwind(AssertUnwindSafe(|| {
+            prepare(
+                self.runtime.id(),
+                self.runtime.config().max_locks_per_transaction(),
+            )
+        })) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(DirectCommitStepFailure::Prepare(error)),
+            Err(payload) => Err(DirectCommitStepFailure::Panicked(*self.phase, payload)),
+        }
+    }
+
+    pub(crate) fn prepare_concrete_plan<A: TObject, P: ErasedDirectCommitPlan<A>>(
+        &mut self,
+        plan: &mut P,
+        items: &mut [TransItemData<A>; 1],
+        intents: &mut [Option<A::Intent>; 1],
+    ) -> Result<(), DirectCommitStepFailure> {
+        self.preflight_step(|runtime_id, max_locks| {
+            plan.prepare(items, intents, runtime_id, max_locks)
+        })
+    }
+
+    pub(crate) fn teardown_concrete_plan<A: TObject, P: ErasedDirectCommitPlan<A>>(
+        &mut self,
+        plan: &mut P,
+    ) -> Result<(), DirectCommitStepFailure> {
+        match catch_unwind(AssertUnwindSafe(|| plan.teardown_adapter_state())) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(())) => Err(DirectCommitStepFailure::ReleasedPlanTeardown(None)),
+            Err(payload) => Err(DirectCommitStepFailure::ReleasedPlanTeardown(Some(payload))),
+        }
     }
 
     /// All borrows refer to disjoint fields of the same retained batch. Slice
     /// bounds are checked in their original phases, not during this handoff.
-    pub(crate) fn run_concrete_plan<A: TransactionalResource, P: ErasedDirectCommitPlan<A>>(
+    pub(crate) fn run_concrete_plan<A: TObject, P: ErasedDirectCommitPlan<A>>(
         &mut self,
         plan: &mut P,
-        items: &mut [ItemData<A>],
+        items: &mut [TransItemData<A>],
         intents: &mut [Option<A::Intent>],
         active_len: usize,
         requires_ordered_commit_id: bool,
@@ -280,7 +312,3 @@ impl DirectCommitContext<'_, '_> {
         Ok(())
     }
 }
-
-#[cfg(test)]
-#[path = "direct_protocol_tests.rs"]
-mod tests;

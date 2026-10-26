@@ -1,20 +1,20 @@
 error[E0277]: `Rc<()>` cannot be sent between threads safely
   --> tests/ui/finish_context.rs:11:19
    |
-11 |     assert_send::<FinishContext<'static>>();
-   |                   ^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be sent between threads safely
+11 |     assert_send::<CleanupContext<'static>>();
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be sent between threads safely
    |
-   = help: within `FinishContext<'static>`, the trait `Send` is not implemented for `Rc<()>`
+   = help: within `CleanupContext<'static>`, the trait `Send` is not implemented for `Rc<()>`
 note: required because it appears within the type `PhantomData<Rc<()>>`
   --> $RUST/core/src/marker.rs
    |
    | pub struct PhantomData<T: PointeeSized>;
    |            ^^^^^^^^^^^
-note: required because it appears within the type `FinishContext<'static>`
+note: required because it appears within the type `CleanupContext<'static>`
   --> src/lock.rs
    |
-   | pub struct FinishContext<'a> {
-   |            ^^^^^^^^^^^^^
+   | pub struct CleanupContext<'a> {
+   |            ^^^^^^^^^^^^^^
 note: required by a bound in `assert_send`
   --> tests/ui/finish_context.rs:3:19
    |
@@ -24,20 +24,20 @@ note: required by a bound in `assert_send`
 error[E0277]: `Rc<()>` cannot be shared between threads safely
   --> tests/ui/finish_context.rs:12:19
    |
-12 |     assert_sync::<FinishContext<'static>>();
-   |                   ^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be shared between threads safely
+12 |     assert_sync::<CleanupContext<'static>>();
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^ `Rc<()>` cannot be shared between threads safely
    |
-   = help: within `FinishContext<'static>`, the trait `Sync` is not implemented for `Rc<()>`
+   = help: within `CleanupContext<'static>`, the trait `Sync` is not implemented for `Rc<()>`
 note: required because it appears within the type `PhantomData<Rc<()>>`
   --> $RUST/core/src/marker.rs
    |
    | pub struct PhantomData<T: PointeeSized>;
    |            ^^^^^^^^^^^
-note: required because it appears within the type `FinishContext<'static>`
+note: required because it appears within the type `CleanupContext<'static>`
   --> src/lock.rs
    |
-   | pub struct FinishContext<'a> {
-   |            ^^^^^^^^^^^^^
+   | pub struct CleanupContext<'a> {
+   |            ^^^^^^^^^^^^^^
 note: required by a bound in `assert_sync`
   --> tests/ui/finish_context.rs:4:19
    |
@@ -47,7 +47,7 @@ note: required by a bound in `assert_sync`
 error: lifetime may not live long enough
  --> tests/ui/finish_context.rs:7:5
   |
-6 | fn escape(context: FinishContext<'_>) -> FinishContext<'static> {
-  |           ------- has type `FinishContext<'1>`
+6 | fn escape(context: CleanupContext<'_>) -> CleanupContext<'static> {
+  |           ------- has type `CleanupContext<'1>`
 7 |     context
   |     ^^^^^^^ returning this value requires that `'1` must outlive `'static`

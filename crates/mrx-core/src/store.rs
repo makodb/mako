@@ -14,7 +14,9 @@ use crate::durability::{
 use crate::record::{Kind, Record};
 use crate::table::EntryTable;
 use crate::value::Entry;
-use crate::{BlobOp, Blobs, CacheLine, Config, EntryWord, KeyIndex, Version};
+use crate::{
+    place, BlobOp, Blobs, CacheLine, Config, CopyOutcome, EntryWord, KeyIndex, Version,
+};
 
 /// What a write did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -149,7 +151,7 @@ pub struct Store<K: KeyIndex, B: Blobs> {
     /// Both the coalescer (a hot key occupies one slot however many
     /// tickets it generates) and the honesty mechanism (an entry stays
     /// here, pinning the watermark, until a real write discharges it).
-    dirty: Mutex<HashMap<u32, Version>>,
+    dirty: Mutex<HashMap<EntryWord, Version>>,
 
     /// Tickets the flusher took from a writer but could not fit in the
     /// log. They wait here and retry next cycle.
@@ -235,16 +237,16 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         Ok(())
     }
 
-    /// Find or create the entry for a key, returning its index.
+    /// Find or create the entry for a key, returning the entry itself.
     ///
     /// The seed is a closure, not a value, because the overwhelmingly
     /// common case is that the key already exists and the seed is never
     /// needed. Taking it by value allocated an `Arc<Val>` on **every**
     /// write and dropped it unused on all but the first — found while
     /// profiling the write path, and free to fix.
-    fn intern(&self, key: &[u8], seed: impl FnOnce() -> Record) -> u32 {
-        if let Some(w) = self.index.get(key) {
-            return (w - 1) as u32;
+    fn intern(&self, key: &[u8], seed: impl FnOnce() -> Record) -> &Entry {
+        if let Some(word) = self.index.get(key) {
+            return EntryTable::entry_of(word);
         }
         // Missed, so an insert follows. Hold ONE pin across the rest:
         // masstree charges per-call setup only for the outermost region,
@@ -255,28 +257,24 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         // never reach the flusher, the durable store, or caller code —
         // see KeyIndex::pin.
         let _pin = crate::Pin::new(&self.index);
-        // The entry is fully initialised by `push` before its index is
-        // published into the directory below, so no reader can reach a
-        // half-built slot.
-        let idx = self.entries.push(Entry::new(key, seed()));
-        let word: EntryWord = idx as u64 + 1;
+        // The entry is fully initialised by `push` before the word naming
+        // it is published into the directory below, so no reader can reach
+        // a half-built slot. The word is the entry's ADDRESS: the table's
+        // segments never move, so a reader resolves it with one
+        // dereference instead of walking the segment array.
+        let word = self.entries.push(Entry::new(key, seed()));
         let won = self.index.get_or_insert(key, word);
         if won != word {
             // Another thread interned it first. Ours is orphaned, which
             // is harmless: entries are immortal anyway and nothing else
             // can reach it.
-            return (won - 1) as u32;
+            return EntryTable::entry_of(won);
         }
         self.floor_bytes
             .fetch_add(ENTRY_OVERHEAD + key.len() as u64, Ordering::Relaxed);
         self.resident_bytes
             .fetch_add(ENTRY_OVERHEAD + key.len() as u64, Ordering::Relaxed);
-        idx
-    }
-
-    #[inline]
-    fn entry(&self, idx: u32) -> &Entry {
-        self.entries.get(idx)
+        EntryTable::entry_of(word)
     }
 
     /// The slots that have actually been handed to a thread.
@@ -388,35 +386,111 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     /// Read a key.
     ///
     /// An index miss is **authoritative absence** and never consults the
-    /// durable store. Only a non-resident value does.
+    /// durable store. Only a non-resident value does. Allocates one `Vec`
+    /// that the caller keeps; use [`Store::get_into`] to reuse a buffer.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, crate::BlobError> {
-        let Some(word) = self.index.get(key) else {
-            return Ok(None);
-        };
-        let e = self.entry((word - 1) as u32);
-        // Fast path: copy the bytes out while holding the slot, without
-        // cloning the Arc. The refcount traffic that avoids is about half
-        // the cost of a resident read on a hot key — see
-        // [`Entry::with_value`].
-        //
-        // `Evicted` falls through, because the fill path genuinely needs
-        // the record's identity: it compares against the EXACT record it
-        // read, after going to the durable store, and a version number
-        // would not distinguish a record that was replaced, flushed and
-        // re-evicted in between.
-        let fast = e.with_value(|v| match v.kind() {
-            Kind::Tombstone => Some(None),
-            Kind::Resident => Some(v.bytes().map(<[u8]>::to_vec)),
-            Kind::Evicted => None,
-        });
-        if let Some(r) = fast {
-            return Ok(r);
+        let mut out = Vec::new();
+        if self.get_into(key, &mut out)? {
+            Ok(Some(out))
+        } else {
+            Ok(None)
         }
+    }
+
+    /// Read a key into `out`, reusing its capacity.
+    ///
+    /// The `Vec` API, for Rust callers in a read loop. ([`Store::copy_value_into`]
+    /// is the slice API, and is what an FFI boundary should use.)
+    pub fn get_into(&self, key: &[u8], out: &mut Vec<u8>) -> Result<bool, crate::BlobError> {
+        out.clear();
+        // NO pin of our own: the tree call opens the region it needs, and
+        // a second one here measured as pure cost (see the read-path note
+        // in `slot.rs`). The word it returns is an entry address, and
+        // entries are immortal, so it stays valid after that region closes.
+        let word = self.index.get(key);
+        // Authoritative absence: an index miss is never a fill.
+        let Some(word) = word else {
+            return Ok(false);
+        };
+        match EntryTable::entry_of(word).copy_into(out) {
+            Some(found) => Ok(found),
+            // `Evicted`: the fill needs the record's identity and the
+            // durable store, and it must not run under a region.
+            None => self.fill_into(key, out),
+        }
+    }
+
+    /// Copy a key's value into a caller-owned slice. No allocation, and
+    /// no intermediate: this is the shape an FFI boundary wants.
+    ///
+    /// [`CopyOutcome::TooSmall`] reports the value's length and writes
+    /// nothing, so a caller with a fixed buffer can tell "does not fit"
+    /// from "absent" without truncating.
+    pub fn copy_value_into(
+        &self,
+        key: &[u8],
+        out: &mut [u8],
+    ) -> Result<CopyOutcome, crate::BlobError> {
+        // As in `get_into`: the tree call owns its region, and a second
+        // one around it is pure cost.
+        let Some(word) = self.index.get(key) else {
+            return Ok(CopyOutcome::Absent);
+        };
+        match EntryTable::entry_of(word).copy_into_slice(out) {
+            Some(found) => Ok(found),
+            None => self.fill_into_slice(key, out),
+        }
+    }
+
+    /// The non-resident path of [`Store::get_into`], with no region held.
+    ///
+    /// The fill compares against the EXACT record it read, after going to
+    /// the durable store: a version number would not distinguish a record
+    /// that was replaced, flushed and re-evicted in between.
+    /// The Vec flavour of the non-resident path.
+    fn fill_into(&self, key: &[u8], out: &mut Vec<u8>) -> Result<bool, crate::BlobError> {
+        let Some(word) = self.index.get(key) else {
+            return Ok(false);
+        };
+        let e = EntryTable::entry_of(word);
         let cur = e.load_touched();
         match cur.kind() {
-            Kind::Tombstone => Ok(None),
-            Kind::Resident => Ok(cur.bytes().map(<[u8]>::to_vec)),
-            Kind::Evicted => self.fill(e, &cur),
+            Kind::Tombstone => Ok(false),
+            Kind::Resident => {
+                out.extend_from_slice(cur.bytes().expect("a resident record has bytes"));
+                Ok(true)
+            }
+            Kind::Evicted => match self.fill(e, &cur)? {
+                Some(bytes) => {
+                    out.extend_from_slice(&bytes);
+                    Ok(true)
+                }
+                None => Ok(false),
+            },
+        }
+    }
+
+    /// The slice flavour of the non-resident path.
+    fn fill_into_slice(
+        &self,
+        key: &[u8],
+        out: &mut [u8],
+    ) -> Result<CopyOutcome, crate::BlobError> {
+        let Some(word) = self.index.get(key) else {
+            return Ok(CopyOutcome::Absent);
+        };
+        let e = EntryTable::entry_of(word);
+        let cur = e.load_touched();
+        match cur.kind() {
+            Kind::Tombstone => Ok(CopyOutcome::Absent),
+            Kind::Resident => {
+                let bytes = cur.bytes().expect("a resident record has bytes");
+                Ok(place(bytes, out))
+            }
+            Kind::Evicted => match self.fill(e, &cur)? {
+                Some(bytes) => Ok(place(&bytes, out)),
+                None => Ok(CopyOutcome::Absent),
+            },
         }
     }
 
@@ -474,8 +548,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     }
 
     fn write(&self, key: &[u8], val: Option<&[u8]>, mode: WriteMode) -> WriteOutcome {
-        let idx = self.intern(key, Record::shared_tombstone);
-        let e = self.entry(idx);
+        let e = self.intern(key, Record::shared_tombstone);
         let w = self.writer();
 
         // Arm BEFORE drawing: the version exists from the instant it is
@@ -538,7 +611,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         // covered by the batch.
         if let Some(full) = w.submit(
             Ticket {
-                entry: idx,
+                entry: EntryTable::word_of_entry(e),
                 version: ver,
             },
             self.cfg.batch,
@@ -646,7 +719,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         let last = raw[n - 1].0.clone();
         let mut pairs = Vec::with_capacity(n);
         for (k, word) in raw.into_iter().skip(usize::from(skip_first)) {
-            let e = self.entry((word - 1) as u32);
+            let e = EntryTable::entry_of(word);
             let fast = e.with_value(|v| match v.kind() {
                 Kind::Tombstone => Some(None),
                 Kind::Resident => Some(v.bytes().map(<[u8]>::to_vec)),
@@ -788,7 +861,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         }
 
         // --- writeback -----------------------------------------------
-        let candidates: Vec<(u32, Version)> = {
+        let candidates: Vec<(EntryWord, Version)> = {
             let d = self.dirty.lock().expect("dirty lock poisoned");
             d.iter()
                 .take(self.cfg.writeback_chunk)
@@ -812,9 +885,9 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
             // the allocator traffic lands on the same arenas the sixteen
             // producer threads are using.
             let mut held: Vec<(&Entry, Record)> = Vec::with_capacity(candidates.len());
-            let mut wrote: Vec<u32> = Vec::with_capacity(candidates.len());
-            for (idx, owed) in &candidates {
-                let e = self.entry(*idx);
+            let mut wrote: Vec<EntryWord> = Vec::with_capacity(candidates.len());
+            for (word, owed) in &candidates {
+                let e = EntryTable::entry_of(*word);
                 // Re-read the CURRENT value: writing bytes snapshotted at
                 // drain time is the bug above. `owed` is the version that
                 // created the obligation and is deliberately NOT what gets
@@ -823,7 +896,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
                 let cur = e.load();
                 debug_assert!(
                     cur.version() >= *owed,
-                    "entry {idx} went backwards: {} < {owed}",
+                    "an entry went backwards: {} < {owed}",
                     cur.version()
                 );
                 // Non-resident means already durable (eviction requires
@@ -833,7 +906,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
                 if cur.kind() != Kind::Evicted {
                     held.push((e, cur));
                 }
-                wrote.push(*idx);
+                wrote.push(*word);
             }
             let ops: Vec<BlobOp<'_>> = held
                 .iter()
@@ -853,8 +926,8 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
                     // Erase ONLY after the write succeeded. Draining the
                     // map while building the batch discharges obligations
                     // before knowing they landed.
-                    for idx in &wrote {
-                        d.remove(idx);
+                    for word in &wrote {
+                        d.remove(word);
                     }
                     progressed += wrote.len();
                     self.io_failing.store(false, Ordering::Release);
@@ -1042,8 +1115,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     /// tombstone must never become evicted: that transition republishes
     /// the key as live-but-evicted, and the next read fills it from the
     /// durable store, resurrecting a deleted key.
-    pub fn evict(&self, idx: u32) -> bool {
-        let e = self.entry(idx);
+    pub fn evict(&self, e: &Entry) -> bool {
         let cur = e.load();
         if cur.kind() != Kind::Resident {
             return false;
@@ -1070,13 +1142,13 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
         for _ in 0..self.cfg.sweep_chunk.min(n as usize) {
             let idx = *cursor % n;
             *cursor = (*cursor + 1) % n;
-            let e = self.entry(idx);
+            let e = self.entries.get(idx);
             // Second chance: a recently touched value survives, paying
             // for it with the bit.
             if e.take_referenced() {
                 continue;
             }
-            if self.evict(idx) {
+            if self.evict(e) {
                 evicted += 1;
             }
             if !self.over_capacity() {
@@ -1108,7 +1180,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     /// eviction actually happened rather than inferring it from timing.
     pub fn is_resident(&self, key: &[u8]) -> Option<bool> {
         let word = self.index.get(key)?;
-        let cur = self.entry((word - 1) as u32).load();
+        let cur = EntryTable::entry_of(word).load();
         match cur.kind() {
             Kind::Resident => Some(true),
             Kind::Evicted => Some(false),
@@ -1119,14 +1191,14 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     /// The version currently published for a key, if it is known.
     pub fn version_of(&self, key: &[u8]) -> Option<Version> {
         let word = self.index.get(key)?;
-        Some(self.entry((word - 1) as u32).load().version())
+        Some(EntryTable::entry_of(word).load().version())
     }
 
     /// Try to evict one key's value by name. Test-facing wrapper around
     /// the eligibility rules.
     pub fn evict_key(&self, key: &[u8]) -> bool {
         match self.index.get(key) {
-            Some(w) => self.evict((w - 1) as u32),
+            Some(word) => self.evict(EntryTable::entry_of(word)),
             None => false,
         }
     }

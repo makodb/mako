@@ -3,7 +3,7 @@
 use std::{any::Any, marker::PhantomData, rc::Rc};
 
 use crate::{
-    adapter::{TerminalReadBatchCapability, TransactionalResource},
+    object::{TerminalReadBatchCapability, TObject},
     error::{AccessError, AdapterFault, AdapterPhase, CapacityError, CheckError, InvalidUse},
     lock::PreflightFreeValidationContext,
     runtime::RegisteredResource,
@@ -25,7 +25,7 @@ pub(crate) trait ErasedTerminalReadBatch: Any {
 /// callback is active. This keeps each completed item to exactly one `Key` and
 /// one `Observation`, while a callback error or unwind still leaves its key in
 /// core custody for contained abort cleanup.
-pub(crate) struct TypedTerminalReadBatch<A: TransactionalResource> {
+pub(crate) struct TypedTerminalReadBatch<A: TObject> {
     // Automatic drop order keeps the registered binding alive until both
     // adapter-owned vectors have been destroyed.
     observations: Vec<A::Observation>,
@@ -34,7 +34,7 @@ pub(crate) struct TypedTerminalReadBatch<A: TransactionalResource> {
     resource: Option<RegisteredResource<A>>,
 }
 
-impl<A: TransactionalResource> TypedTerminalReadBatch<A> {
+impl<A: TObject> TypedTerminalReadBatch<A> {
     pub(crate) const fn new() -> Self {
         Self {
             observations: Vec::new(),
@@ -114,11 +114,11 @@ impl<A: TransactionalResource> TypedTerminalReadBatch<A> {
     }
 
     #[inline]
-    pub(crate) fn pending_entry(&mut self) -> TerminalReadEntry<'_, A> {
+    pub(crate) fn pending_entry(&mut self) -> TerminalReadProxy<'_, A> {
         debug_assert_eq!(self.keys.len(), self.observations.len() + 1);
         let slot = self.observations.len();
         let key = &self.keys[slot];
-        TerminalReadEntry {
+        TerminalReadProxy {
             key,
             observations: &mut self.observations,
             slot,
@@ -148,7 +148,7 @@ impl<A: TransactionalResource> TypedTerminalReadBatch<A> {
         debug_assert!(self.keys.len() >= self.observations.len());
         debug_assert!(self.keys.len() <= self.observations.len() + 1);
 
-        // An operation that returned or unwound before `record_read` leaves one
+        // An operation that returned or unwound before `add_read` leaves one
         // pending key. Remove it before the completed prefix.
         while self.keys.len() > self.observations.len() {
             drop(self.keys.pop().expect("a pending terminal key exists"));
@@ -168,7 +168,7 @@ impl<A: TransactionalResource> TypedTerminalReadBatch<A> {
     }
 }
 
-impl<A: TransactionalResource> ErasedTerminalReadBatch for TypedTerminalReadBatch<A> {
+impl<A: TObject> ErasedTerminalReadBatch for TypedTerminalReadBatch<A> {
     fn as_any_mut(&mut self) -> &mut dyn Any {
         self
     }
@@ -198,14 +198,14 @@ impl<A: TransactionalResource> ErasedTerminalReadBatch for TypedTerminalReadBatc
 ///
 /// It intentionally exposes no local state, predicates, intents, or commit
 /// preparation. The callback must record exactly one ordinary observation.
-pub struct TerminalReadEntry<'entry, A: TransactionalResource> {
+pub struct TerminalReadProxy<'entry, A: TObject> {
     key: &'entry A::Key,
     observations: &'entry mut Vec<A::Observation>,
     slot: usize,
     not_send_sync: PhantomData<Rc<()>>,
 }
 
-impl<A: TransactionalResource> TerminalReadEntry<'_, A> {
+impl<A: TObject> TerminalReadProxy<'_, A> {
     /// Borrows the exact key retained by core for this item.
     #[inline]
     pub fn key(&self) -> &A::Key {
@@ -214,7 +214,7 @@ impl<A: TransactionalResource> TerminalReadEntry<'_, A> {
 
     /// Records this item's one ordinary-read observation.
     #[inline]
-    pub fn record_read(&mut self, observation: A::Observation) -> Result<(), AccessError> {
+    pub fn add_read(&mut self, observation: A::Observation) -> Result<(), AccessError> {
         if self.observations.len() != self.slot {
             return Err(InvalidUse::IllegalItemState.into());
         }

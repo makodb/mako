@@ -7,7 +7,7 @@ use std::fmt;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use crate::error::{AcquireError, Conflict, VersionError};
+use crate::error::{AcquireError, CapacityError, Conflict, VersionError};
 use crate::identity::{OccCommitId, OccVersion, OwnerId};
 use crate::lock::{AcquireContext, LockDisposition, ReleaseContext, TransactionLock};
 
@@ -126,7 +126,7 @@ impl AtomicVersion {
         &self,
         owner: OwnerId,
     ) -> Result<DetachedVersionGuard, AcquireError> {
-        let before = self.try_acquire_version(owner)?;
+        let before = self.try_acquire_version::<false>(owner)?;
         Ok(DetachedVersionGuard {
             target_address: self.address(),
             before,
@@ -146,7 +146,54 @@ impl AtomicVersion {
         observed: OccVersion,
         owner: OwnerId,
     ) -> Result<DetachedVersionGuard, AcquireError> {
+        self.try_acquire_observed::<false>(observed, owner)
+    }
+
+    /// Acquires a detached guard only when a record-local successor exists.
+    ///
+    /// Capacity is checked on the exact unlocked word before its acquisition
+    /// CAS. Exhaustion never acquires a guard or changes the word. The adapter
+    /// must publish these generations as unordered observations.
+    pub fn try_acquire_local_detached(
+        &self,
+        owner: OwnerId,
+    ) -> Result<DetachedVersionGuard, AcquireError> {
+        let before = self.try_acquire_version::<true>(owner)?;
+        Ok(DetachedVersionGuard {
+            target_address: self.address(),
+            before,
+            owner,
+            held: true,
+        })
+    }
+
+    /// Acquires the exact observation with room for one local publication.
+    ///
+    /// As with [`Self::try_acquire_local_detached`], the capacity check precedes
+    /// acquisition. A stale or held observation remains a normal conflict.
+    pub fn try_acquire_local_detached_observed(
+        &self,
+        observed: OccVersion,
+        owner: OwnerId,
+    ) -> Result<DetachedVersionGuard, AcquireError> {
+        self.try_acquire_observed::<true>(observed, owner)
+    }
+
+    fn try_acquire_observed<const LOCAL: bool>(
+        &self,
+        observed: OccVersion,
+        owner: OwnerId,
+    ) -> Result<DetachedVersionGuard, AcquireError> {
         let expected = encode_unlocked(observed);
+        if LOCAL && observed.checked_next().is_none() {
+            return match decode(self.word.load(Ordering::Acquire)) {
+                VersionState::Unlocked(current) if current == observed => {
+                    Err(CapacityError::VersionExhausted.into())
+                }
+                VersionState::Unlocked(_) => Err(Conflict::ReadValidation.into()),
+                VersionState::Locked { .. } => Err(Conflict::LockBusy.into()),
+            };
+        }
         match self.word.compare_exchange(
             expected,
             encode_locked(observed, owner),
@@ -167,7 +214,7 @@ impl AtomicVersion {
     }
 
     fn try_acquire_owned(self: Arc<Self>, owner: OwnerId) -> Result<VersionGuard, AcquireError> {
-        let before = self.try_acquire_version(owner)?;
+        let before = self.try_acquire_version::<false>(owner)?;
         Ok(VersionGuard {
             target: self,
             before,
@@ -176,11 +223,17 @@ impl AtomicVersion {
         })
     }
 
-    fn try_acquire_version(&self, owner: OwnerId) -> Result<OccVersion, AcquireError> {
+    fn try_acquire_version<const LOCAL: bool>(
+        &self,
+        owner: OwnerId,
+    ) -> Result<OccVersion, AcquireError> {
         let current = self.word.load(Ordering::Acquire);
         let VersionState::Unlocked(version) = decode(current) else {
             return Err(Conflict::LockBusy.into());
         };
+        if LOCAL && version.checked_next().is_none() {
+            return Err(CapacityError::VersionExhausted.into());
+        }
         let desired = encode_locked(version, owner);
 
         self.word
@@ -479,6 +532,53 @@ impl DetachedVersionGuard {
             });
         }
         target.release_word(self.before, self.owner, encode_unlocked(version))?;
+        self.held = false;
+        Ok(version)
+    }
+
+    /// Commit-unlocks at the checked local successor of the acquired version.
+    ///
+    /// This generation is not an ordered runtime commit ID. Adapters using
+    /// this operation must check capacity before irrevocable installation and
+    /// expose unordered observations. Errors retain the guard and lock word.
+    pub fn release_local_commit(
+        &mut self,
+        target: &AtomicVersion,
+    ) -> Result<OccVersion, VersionError> {
+        self.ensure_releasable(target)?;
+        let version = self
+            .before
+            .checked_next()
+            .ok_or(VersionError::GenerationExhausted(self.before))?;
+        target.release_word(self.before, self.owner, encode_unlocked(version))?;
+        self.held = false;
+        Ok(version)
+    }
+
+    /// Commit-unlocks a stable target at its checked local successor.
+    ///
+    /// This has the same unordered-observation and pre-install capacity
+    /// requirements as [`Self::release_local_commit`].
+    ///
+    /// # Safety
+    ///
+    /// The target must satisfy every continuous-identity, exclusive-ownership,
+    /// and no-ABA requirement of [`Self::release_commit_stable_target`].
+    #[allow(
+        unsafe_code,
+        reason = "the caller proves continuously stable target ownership"
+    )]
+    #[inline]
+    pub unsafe fn release_local_commit_stable_target(
+        &mut self,
+        target: &AtomicVersion,
+    ) -> Result<OccVersion, VersionError> {
+        self.ensure_releasable(target)?;
+        let version = self
+            .before
+            .checked_next()
+            .ok_or(VersionError::GenerationExhausted(self.before))?;
+        target.release_word_stable_target(self.before, self.owner, encode_unlocked(version))?;
         self.held = false;
         Ok(version)
     }

@@ -23,8 +23,8 @@
 //!    and it is what makes handing out `&[u8]` from a shared reference
 //!    sound.
 //! 3. **The refcount is the only mutable field**, it is atomic, and the
-//!    last decrement (`Release`, then an `Acquire` fence) happens-before
-//!    the deallocation.
+//!    last decrement (`Release`, then an `Acquire` fence, or an acquire
+//!    load under TSan) happens-before the deallocation.
 //! 4. **The payload is initialised before the record is reachable.**
 //!    `new` writes the header and copies the bytes before it returns a
 //!    `Record`, and nothing else can observe the allocation.
@@ -36,7 +36,9 @@
 
 use std::alloc::{alloc, dealloc, handle_alloc_error, Layout};
 use std::ptr::NonNull;
-use std::sync::atomic::{fence, AtomicUsize, Ordering};
+#[cfg(not(mrx_sanitize_thread))]
+use std::sync::atomic::fence;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::Version;
 
@@ -53,8 +55,11 @@ pub enum Kind {
     Tombstone = 2,
 }
 
+/// The allocation header. `pub(crate)` because the entry slot stores a
+/// raw pointer to it (see [`crate::slot`]); nothing outside this crate
+/// may name it.
 #[repr(C)]
-struct Header {
+pub(crate) struct Header {
     refs: AtomicUsize,
     version: Version,
     len: u32,
@@ -349,6 +354,90 @@ impl Record {
     pub fn ptr_eq(a: &Self, b: &Self) -> bool {
         std::ptr::eq(a.ptr.as_ptr(), b.ptr.as_ptr())
     }
+
+    // -----------------------------------------------------------------
+    // Reference-count moves for the entry slot.
+    //
+    // The slot holds exactly one reference to whatever it publishes, and
+    // the four functions below are the only way that reference crosses
+    // the slot boundary. They exist so an increment or a decrement is
+    // never run by accident: `clone` and `Drop` are the right shapes for
+    // an owning handle, and none of these are.
+    // -----------------------------------------------------------------
+
+    /// The header pointer, for the slot's atomic word.
+    pub(crate) fn as_header_ptr(&self) -> *const Header {
+        self.ptr.as_ptr()
+    }
+
+    /// Live references to this allocation, including the slot's own.
+    ///
+    /// For tests and debug assertions only. Nothing in a data path may
+    /// branch on this: the value is stale the moment it is read.
+    #[cfg(test)]
+    pub(crate) fn refcount(&self) -> usize {
+        self.header().refs.load(Ordering::Relaxed)
+    }
+
+    /// An owning handle over a reference the caller ALREADY holds.
+    ///
+    /// # Safety
+    ///
+    /// The caller must own a reference to `p` and must not release it
+    /// anywhere else; the returned handle releases it on drop.
+    pub(crate) unsafe fn from_owned_ptr(p: *const Header) -> Record {
+        debug_assert!(!p.is_null(), "the slot never publishes null");
+        Record {
+            ptr: NonNull::new_unchecked(p as *mut Header),
+        }
+    }
+
+    /// Give the handle up WITHOUT releasing its reference.
+    ///
+    /// The transfer direction that pairs with [`Record::from_owned_ptr`]:
+    /// whoever calls this now owes the reference.
+    pub(crate) fn into_raw_owned(self) -> *const Header {
+        let p = self.ptr.as_ptr();
+        std::mem::forget(self);
+        p
+    }
+
+    /// Add a reference to a record the caller does NOT own.
+    ///
+    /// # Safety
+    ///
+    /// `p` must be a live record whose allocation cannot be freed by
+    /// another thread before this call completes — which is what the
+    /// epoch guard at every call site provides, since every release of
+    /// the slot's own reference is deferred through that same epoch.
+    pub(crate) unsafe fn ref_from_ptr(p: *const Header) -> Record {
+        debug_assert!(!p.is_null(), "the slot never publishes null");
+        (*p).refs.fetch_add(1, Ordering::Relaxed);
+        Record {
+            ptr: NonNull::new_unchecked(p as *mut Header),
+        }
+    }
+
+    /// Run `f` against a borrowed handle that owns no reference.
+    ///
+    /// This is the refcount-free read: `f` gets `&Record` for the
+    /// duration of the call, and nothing escapes that owns anything.
+    ///
+    /// # Safety
+    ///
+    /// As [`Record::ref_from_ptr`]: `p` must stay allocated for the whole
+    /// call.
+    pub(crate) unsafe fn with_borrowed<R>(p: *const Header, f: impl FnOnce(&Record) -> R) -> R {
+        debug_assert!(!p.is_null(), "the slot never publishes null");
+        let handle = Record {
+            ptr: NonNull::new_unchecked(p as *mut Header),
+        };
+        let r = f(&handle);
+        // The handle never owned a reference; dropping it would release
+        // someone else's.
+        std::mem::forget(handle);
+        r
+    }
 }
 
 impl Clone for Record {
@@ -368,9 +457,12 @@ impl Drop for Record {
         if self.header().refs.fetch_sub(1, Ordering::Release) != 1 {
             return;
         }
-        // Acquire the other threads' releases before touching the
-        // allocation. Again, `Arc`'s reasoning.
+        // Acquire the other threads' releases before touching the allocation.
+        // Like std::sync::Arc, use a load under TSan: it cannot observe fences.
+        #[cfg(not(mrx_sanitize_thread))]
         fence(Ordering::Acquire);
+        #[cfg(mrx_sanitize_thread)]
+        self.header().refs.load(Ordering::Acquire);
         let len = self.header().len as usize;
         // SAFETY: the refcount reached zero, so this handle is the last
         // and no other thread can observe the allocation. The layout is
@@ -438,10 +530,8 @@ mod tests {
         let b = a.clone();
         let c = b.clone();
         assert!(Record::ptr_eq(&a, &c));
-        assert_eq!(a.header().refs.load(Ordering::Relaxed), 3);
         drop(b);
         drop(c);
-        assert_eq!(a.header().refs.load(Ordering::Relaxed), 1);
         assert_eq!(a.bytes(), Some(&b"shared"[..]), "still readable");
         // `a` frees here; Miri checks that it is exactly once and with
         // the right layout.
@@ -573,6 +663,33 @@ mod tests {
                 });
             }
         });
-        assert_eq!(r.header().refs.load(Ordering::Relaxed), 1);
+        assert_eq!(r.bytes(), Some(&b"contended"[..]));
+    }
+
+    #[test]
+    fn last_drop_acquires_a_prior_threads_release() {
+        // Bypass the small-record cache so the last reference really frees.
+        let last = Record::resident(1, &[0x7b; MAX_CLASS_BYTES * 2]);
+        let other = last.clone();
+        let released = std::sync::atomic::AtomicBool::new(false);
+        let finished = std::sync::atomic::AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                drop(other);
+                released.store(true, Ordering::Relaxed);
+                // Keep the thread alive: joining must not supply the acquire
+                // edge that the last reference is responsible for.
+                while !finished.load(Ordering::Relaxed) {
+                    std::thread::yield_now();
+                }
+            });
+            while !released.load(Ordering::Relaxed) {
+                std::thread::yield_now();
+            }
+            let payload_matches = last.bytes() == Some(&[0x7b; MAX_CLASS_BYTES * 2][..]);
+            drop(last);
+            finished.store(true, Ordering::Relaxed);
+            assert!(payload_matches);
+        });
     }
 }

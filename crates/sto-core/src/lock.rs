@@ -1,15 +1,13 @@
 //! Physical-lock planning and typed guard access.
 //!
-//! Logical transaction items may name the same physical lock.  This module
-//! keeps lock-frame slots stable for typed [`LockUse`] tokens. The general lane
-//! deduplicates and acquires frames in full [`LockIdentity`] order; an explicit
-//! transaction-wide unique lane acquires certified-distinct frames in request
-//! order.
+//! Logical transaction items may name the same physical lock. This module
+//! keeps stable typed [`LockUse`] tokens and acquires synchronously in item
+//! access order. Canonical identity sorting is only a deduplication index.
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::any::{Any, TypeId};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -143,7 +141,7 @@ impl std::fmt::Debug for ErasedLockUse {
 /// An unforgeable typed reference to one frame in the current lock plan.
 ///
 /// This token is intentionally neither `Clone` nor `Copy`. An adapter stores
-/// the exact value returned by [`PreflightContext::require_lock`] in its
+/// the exact value returned by [`LockContext::try_lock`] in its
 /// prepared state. Its runtime ID and persistent per-owner plan generation
 /// prevent a retained token from aliasing a later plan, even after the owner
 /// slot is detached and reused. Call [`LockUse::erase`] when the prepared
@@ -259,42 +257,45 @@ impl AcquireContext<'_> {
     }
 }
 
-/// Capabilities available while constructing the physical lock plan.
-pub struct PreflightContext<'a> {
+/// Datatype-controlled synchronous acquisition of core-retained typed guards.
+pub struct LockContext<'a> {
     plan: &'a mut LockPlan,
+    incremental: bool,
     not_send_or_sync: PhantomData<Rc<()>>,
 }
 
-impl PreflightContext<'_> {
-    /// Adds or reuses a canonical physical lock request.
-    pub fn require_lock<L: TransactionLock>(
+impl LockContext<'_> {
+    /// Acquires now, or reuses the same canonical physical target already held.
+    pub fn try_lock<L: TransactionLock>(
         &mut self,
         request: LockRequest<L>,
     ) -> Result<LockUse<L>, PrepareError> {
-        self.plan.require_lock(request)
+        let use_ = self.plan.require_lock(request)?;
+        self.plan.acquire_requested(&use_)?;
+        Ok(use_)
     }
 
-    /// Adds a physical lock whose identity is unique in this transaction and
-    /// selects request-order acquisition for the complete lock plan.
+    /// Acquires a physical target proven unique within a local transaction.
     ///
-    /// This is a transaction-wide adapter contract: every lock request emitted
-    /// by every preflight callback in the plan must use this method, and no two
-    /// requests may carry equal [`LockIdentity`] values. Core rejects mixing
-    /// this lane with [`Self::require_lock`] and verifies the uniqueness claim
-    /// with a cheap filter plus exact equality on possible collisions.
-    ///
-    /// Unlike the general lane, acquisition follows successful request order
-    /// rather than canonical identity order. This remains deadlock-free because
-    /// [`TransactionLock::try_acquire`] is bounded and nonblocking; a failed
-    /// acquisition releases the already-acquired prefix in reverse order. It
-    /// can nevertheless change contention and retry behavior, so adapters
-    /// should select it only when their item-to-lock mapping supplies a clear
-    /// transaction-wide uniqueness argument.
-    pub fn require_unique_lock<L: TransactionLock>(
+    /// Like `try_lock`, acquisition follows item/access order, not identity
+    /// sort order. A retained participant may revisit the same item in later
+    /// batches, so core deduplicates this request against its earlier guards.
+    pub fn try_unique_lock<L: TransactionLock>(
         &mut self,
         request: LockRequest<L>,
     ) -> Result<LockUse<L>, PrepareError> {
-        self.plan.require_unique_lock(request)
+        let use_ = if self.incremental {
+            self.plan.require_lock(request)?
+        } else {
+            self.plan.require_unique_lock(request)?
+        };
+        self.plan.acquire_requested(&use_)?;
+        Ok(use_)
+    }
+
+    /// Borrows the exact held typed guard within this callback's scope.
+    pub fn guard<L: TransactionLock>(&self, use_: &LockUse<L>) -> Result<&L::Guard, AdapterFault> {
+        self.plan.guard(use_, AdapterPhase::Acquire)
     }
 }
 
@@ -413,8 +414,8 @@ pub struct PreflightFreeValidationContext<'a> {
 impl PreflightFreeValidationContext<'_> {
     /// Returns the core OCC identity selected before final validation.
     ///
-    /// A wholly read-only transaction does not reserve an identity and
-    /// therefore returns `None`.
+    /// A read-only transaction or one whose writing bindings all use local
+    /// versions returns `None`. This does not identify the read-only lane.
     pub fn occ_commit_id(&self) -> Option<OccCommitId> {
         self.occ_commit_id
     }
@@ -435,6 +436,8 @@ impl PreflightFreeValidationContext<'_> {
 pub struct InstallContext<'a> {
     plan: &'a mut LockPlan,
     occ_commit_id: Option<OccCommitId>,
+    distributed_time_term: Option<mako_clock::distributed::DistributedTimeTerm>,
+    retain_locks: bool,
     not_send_or_sync: PhantomData<Rc<()>>,
 }
 
@@ -494,9 +497,32 @@ impl InstallContext<'_> {
             .target_and_guard_mut_erased::<L>(use_, AdapterPhase::Install)
     }
 
+    /// Publishes and releases an exclusively used lock during installation.
+    ///
+    /// This is the datatype-controlled `set_version_unlock` path. A lock
+    /// shared by multiple logical items remains held until the transaction's
+    /// final unlock pass; returning `false` reports that deferral. Publication
+    /// cannot precede installation of another item protected by the same lock.
+    /// Released guards remain owned by core until all locks are released.
+    pub fn try_publish_unlock<L: TransactionLock>(
+        &mut self,
+        use_: &LockUse<L>,
+    ) -> Result<bool, AdapterFault> {
+        if self.retain_locks {
+            self.plan.guard(use_, AdapterPhase::Install)?;
+            return Ok(false);
+        }
+        self.plan.publish_unlock(use_, self.occ_commit_id)
+    }
+
     /// Returns the core OCC identity selected for this transaction.
     pub fn occ_commit_id(&self) -> Option<OccCommitId> {
         self.occ_commit_id
+    }
+
+    /// The external distributed decision, independent of the local OCC ID.
+    pub fn distributed_time_term(&self) -> Option<mako_clock::distributed::DistributedTimeTerm> {
+        self.distributed_time_term
     }
 }
 
@@ -530,12 +556,12 @@ impl ReleaseContext<'_> {
 /// Post-unlock cleanup capability.
 ///
 /// V1 intentionally exposes no lock or transaction access during cleanup.
-pub struct FinishContext<'a> {
+pub struct CleanupContext<'a> {
     scope: PhantomData<&'a mut ()>,
     not_send_or_sync: PhantomData<Rc<()>>,
 }
 
-impl FinishContext<'_> {
+impl CleanupContext<'_> {
     pub(crate) fn new() -> Self {
         Self {
             scope: PhantomData,
@@ -597,6 +623,7 @@ struct LockFrame<L: TransactionLock> {
     guard: Option<L::Guard>,
     target: Option<Arc<L>>,
     state: FrameState,
+    shared: bool,
 }
 
 impl<L: TransactionLock> LockFrame<L> {
@@ -605,6 +632,7 @@ impl<L: TransactionLock> LockFrame<L> {
             guard: None,
             target: Some(target),
             state: FrameState::Planned,
+            shared: false,
         }
     }
 
@@ -665,6 +693,7 @@ impl<L: TransactionLock> LockFrame<L> {
         }
         self.target = Some(target);
         self.state = FrameState::Planned;
+        self.shared = false;
         Ok(())
     }
 }
@@ -708,6 +737,9 @@ impl<L: TransactionLock> ErasedLockFrame for LockFrame<L> {
         disposition: LockDisposition,
         cx: &ReleaseContext<'_>,
     ) -> Result<(), AdapterFault> {
+        if self.state == FrameState::Released {
+            return Ok(());
+        }
         if self.state != FrameState::Held {
             return Err(AdapterFault::invariant(AdapterPhase::Release));
         }
@@ -776,9 +808,8 @@ pub(crate) struct LockPlan {
     // path O(1). A set bit triggers an exact scan, so collisions never reject
     // distinct identities and duplicate identities never reach acquisition.
     unique_identity_filter: u64,
-    // Successful acquisition always advances through a prefix of the selected
-    // order. A count therefore retains the exact recovery set without a second
-    // per-lock vector or a push on every successful callback.
+    // Acquisitions follow frame insertion/item order. The sorted identity
+    // index is only for deduplication; this prefix is the exact recovery set.
     acquired_len: usize,
     owner: Option<OwnerId>,
     state: PlanState,
@@ -827,14 +858,75 @@ impl LockPlan {
         })
     }
 
-    pub(crate) fn preflight_context(&mut self) -> Result<PreflightContext<'_>, PrepareError> {
+    pub(crate) fn lock_context(
+        &mut self,
+        owner: OwnerId,
+        incremental: bool,
+    ) -> Result<LockContext<'_>, PrepareError> {
+        if !matches!(self.state, PlanState::Planning | PlanState::Held)
+            || self.callback_in_progress.is_some()
+            || self.owner.is_some_and(|held| held != owner)
+            || self.acquired_len != self.active_frames
+        {
+            return Err(AdapterFault::invariant(AdapterPhase::Acquire).into());
+        }
+        self.owner = Some(owner);
+        self.state = PlanState::Held;
+        Ok(LockContext { plan: self, incremental, not_send_or_sync: PhantomData })
+    }
+
+    pub(crate) fn finish_locking(&self) -> Result<(), PrepareError> {
+        self.ensure_held(AdapterPhase::Acquire)?;
+        if self.acquired_len != self.active_frames {
+            return Err(AdapterFault::invariant(AdapterPhase::Acquire).into());
+        }
+        Ok(())
+    }
+
+    pub(crate) fn has_uncertain_callback(&self) -> bool {
+        self.callback_in_progress.is_some()
+    }
+
+    fn acquire_requested<L: TransactionLock>(&mut self, use_: &LockUse<L>) -> Result<(), PrepareError> {
+        // Unit tests can construct the private allocation-only preparation
+        // context; production callbacks always enter with a retained owner.
+        let Some(owner) = self.owner else {
+            return Ok(());
+        };
+        let slot = use_.slot();
+        if slot < self.acquired_len {
+            return Ok(());
+        }
+        if slot != self.acquired_len || self.state != PlanState::Held {
+            return Err(AdapterFault::invariant(AdapterPhase::Acquire).into());
+        }
+        self.state = PlanState::Acquiring;
+        self.callback_in_progress = Some(slot);
+        let cx = AcquireContext { owner: &owner, not_send_or_sync: PhantomData };
+        let result = self.frames[slot].acquire(&self.identities[slot], &cx);
+        self.callback_in_progress = None;
+        self.state = PlanState::Held;
+        match result {
+            Ok(()) => {
+                self.acquired_len += 1;
+                Ok(())
+            }
+            Err(AcquireError::Conflict(error)) => Err(PrepareError::Conflict(error)),
+            Err(AcquireError::Capacity(error)) => Err(PrepareError::Capacity(error)),
+            Err(AcquireError::Fault(error)) => Err(PrepareError::Fault(error)),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn preflight_context(&mut self) -> Result<LockContext<'_>, PrepareError> {
         if self.state != PlanState::Planning {
             return Err(PrepareError::Fault(AdapterFault::invariant(
                 AdapterPhase::Preflight,
             )));
         }
-        Ok(PreflightContext {
+        Ok(LockContext {
             plan: self,
+            incremental: false,
             not_send_or_sync: PhantomData,
         })
     }
@@ -853,6 +945,7 @@ impl LockPlan {
         self.state == PlanState::Held
     }
 
+    #[cfg(test)]
     pub(crate) fn acquire_all(&mut self, owner: OwnerId) -> Result<(), AcquireError> {
         if self.state != PlanState::Planning || self.callback_in_progress.is_some() {
             return Err(AcquireError::Fault(AdapterFault::invariant(
@@ -868,8 +961,7 @@ impl LockPlan {
             not_send_or_sync: PhantomData,
         };
 
-        for order_index in 0..self.acquisition_order.len() {
-            let slot = self.acquisition_order[order_index];
+        for slot in 0..self.active_frames {
             self.callback_in_progress = Some(slot);
             let result = self.frames[slot].acquire(&self.identities[slot], &acquire_context);
             self.callback_in_progress = None;
@@ -888,7 +980,7 @@ impl LockPlan {
                 return Err(error);
             }
 
-            debug_assert_eq!(self.acquired_len, order_index);
+            debug_assert_eq!(self.acquired_len, slot);
             self.acquired_len += 1;
         }
 
@@ -916,14 +1008,26 @@ impl LockPlan {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn install_context(
         &mut self,
         occ_commit_id: Option<OccCommitId>,
+    ) -> Result<InstallContext<'_>, AdapterFault> {
+        self.install_context_with_decision(occ_commit_id, None, false)
+    }
+
+    pub(crate) fn install_context_with_decision(
+        &mut self,
+        occ_commit_id: Option<OccCommitId>,
+        distributed_time_term: Option<mako_clock::distributed::DistributedTimeTerm>,
+        retain_locks: bool,
     ) -> Result<InstallContext<'_>, AdapterFault> {
         self.ensure_held(AdapterPhase::Install)?;
         Ok(InstallContext {
             plan: self,
             occ_commit_id,
+            distributed_time_term,
+            retain_locks,
             not_send_or_sync: PhantomData,
         })
     }
@@ -998,7 +1102,7 @@ impl LockPlan {
         &mut self,
         request: LockRequest<L>,
     ) -> Result<LockUse<L>, PrepareError> {
-        if self.state != PlanState::Planning {
+        if !matches!(self.state, PlanState::Planning | PlanState::Held) {
             return Err(PrepareError::Fault(AdapterFault::invariant(
                 AdapterPhase::Preflight,
             )));
@@ -1017,12 +1121,12 @@ impl LockPlan {
         {
             Ok(order_index) => {
                 let slot = self.acquisition_order[order_index];
-                let frame = self.frames.get(slot).ok_or_else(|| {
+                let frame = self.frames.get_mut(slot).ok_or_else(|| {
                     PrepareError::Fault(AdapterFault::invariant(AdapterPhase::Preflight))
                 })?;
                 let typed = frame
-                    .as_any()
-                    .downcast_ref::<LockFrame<L>>()
+                    .as_any_mut()
+                    .downcast_mut::<LockFrame<L>>()
                     .ok_or_else(|| {
                         PrepareError::Fault(AdapterFault::new(
                             AdapterPhase::Preflight,
@@ -1040,6 +1144,7 @@ impl LockPlan {
                         AdapterFaultKind::LockIdentityMismatch,
                     )));
                 }
+                typed.shared = true;
                 return self.lock_use(slot);
             }
             Err(insertion_index) => insertion_index,
@@ -1052,7 +1157,7 @@ impl LockPlan {
         &mut self,
         request: LockRequest<L>,
     ) -> Result<LockUse<L>, PrepareError> {
-        if self.state != PlanState::Planning {
+        if !matches!(self.state, PlanState::Planning | PlanState::Held) {
             return Err(PrepareError::Fault(AdapterFault::invariant(
                 AdapterPhase::Preflight,
             )));
@@ -1286,6 +1391,34 @@ impl LockPlan {
         Ok(())
     }
 
+    fn publish_unlock<L: TransactionLock>(
+        &mut self,
+        use_: &LockUse<L>,
+        occ_commit_id: Option<OccCommitId>,
+    ) -> Result<bool, AdapterFault> {
+        self.ensure_held(AdapterPhase::Install)?;
+        self.validate_use(&use_.erased, AdapterPhase::Install)?;
+        let slot = use_.slot();
+        let frame = self.frames[slot]
+            .as_any()
+            .downcast_ref::<LockFrame<L>>()
+            .ok_or_else(|| AdapterFault::new(AdapterPhase::Install, AdapterFaultKind::TypeMismatch))?;
+        frame.guard(AdapterPhase::Install)?;
+        if frame.shared {
+            return Ok(false);
+        }
+        let owner = self.owner.expect("a held plan retains its owner");
+        let disposition = LockDisposition::Committed { occ_commit_id };
+        let cx = ReleaseContext::new(&owner, occ_commit_id);
+        // Preserve the uncertain callback's identity if release unwinds.
+        self.state = PlanState::Releasing;
+        self.callback_in_progress = Some(slot);
+        self.frames[slot].release(disposition, &cx)?;
+        self.callback_in_progress = None;
+        self.state = PlanState::Held;
+        Ok(true)
+    }
+
     fn release_acquired(
         &mut self,
         disposition: LockDisposition,
@@ -1293,10 +1426,10 @@ impl LockPlan {
     ) -> Result<(), AdapterFault> {
         while self.acquired_len != 0 {
             self.acquired_len -= 1;
-            let slot = *self
-                .acquisition_order
-                .get(self.acquired_len)
-                .ok_or_else(|| AdapterFault::invariant(AdapterPhase::Release))?;
+            let slot = self.acquired_len;
+            if self.quarantined_callback == Some(slot) {
+                continue;
+            }
             self.callback_in_progress = Some(slot);
             self.frames[slot].release(disposition, cx)?;
             self.callback_in_progress = None;
@@ -1504,7 +1637,7 @@ mod tests {
         let lock_use = plan
             .preflight_context()
             .unwrap()
-            .require_lock(LockRequest::new(identity(10), Arc::clone(&target)))
+            .try_lock(LockRequest::new(identity(10), Arc::clone(&target)))
             .unwrap();
         drop(target);
         assert_eq!(weak_target.strong_count(), 1);
@@ -1542,7 +1675,7 @@ mod tests {
         let lock_use = plan
             .preflight_context()
             .unwrap()
-            .require_lock(request)
+            .try_lock(request)
             .unwrap();
 
         plan.acquire_all(owner_id()).unwrap();
@@ -1574,7 +1707,7 @@ mod tests {
         let erased = plan
             .preflight_context()
             .unwrap()
-            .require_lock(request)
+            .try_lock(request)
             .unwrap()
             .erase();
 
@@ -1614,7 +1747,7 @@ mod tests {
         let wrong_plan = other_plan
             .preflight_context()
             .unwrap()
-            .require_lock(other_request)
+            .try_lock(other_request)
             .unwrap()
             .erase();
 
@@ -1623,7 +1756,7 @@ mod tests {
         let current = plan
             .preflight_context()
             .unwrap()
-            .require_lock(current_request)
+            .try_lock(current_request)
             .unwrap()
             .erase();
         let wrong_runtime = ErasedLockUse {
@@ -1658,7 +1791,7 @@ mod tests {
         let wrong_plan = other_plan
             .preflight_context()
             .unwrap()
-            .require_lock(other_request)
+            .try_lock(other_request)
             .unwrap();
 
         let mut plan = LockPlan::new(runtime_id(), 1).unwrap();
@@ -1666,7 +1799,7 @@ mod tests {
         let current = plan
             .preflight_context()
             .unwrap()
-            .require_lock(current_request)
+            .try_lock(current_request)
             .unwrap();
         let stale_slot = LockUse::<TestLock> {
             erased: ErasedLockUse {
@@ -1737,7 +1870,7 @@ mod tests {
         let mut plan = LockPlan::new(runtime_id(), 1).unwrap();
         plan.preflight_context()
             .unwrap()
-            .require_lock(LockRequest::new(identity(10), Arc::clone(&target)))
+            .try_lock(LockRequest::new(identity(10), Arc::clone(&target)))
             .unwrap();
 
         plan.acquire_all(owner_id()).unwrap();
@@ -1816,7 +1949,7 @@ mod tests {
             let (_, lock_request) = request(id, key, false, &events);
             plan.preflight_context()
                 .unwrap()
-                .require_lock(lock_request)
+                .try_lock(lock_request)
                 .unwrap();
         }
 
@@ -1834,7 +1967,7 @@ mod tests {
         first_plan
             .preflight_context()
             .unwrap()
-            .require_lock(LockRequest::new(
+            .try_lock(LockRequest::new(
                 identity(10),
                 Arc::new(IdentityRecordingLock {
                     seen: Arc::clone(&seen),
@@ -1851,7 +1984,7 @@ mod tests {
         second_plan
             .preflight_context()
             .unwrap()
-            .require_lock(LockRequest::new(
+            .try_lock(LockRequest::new(
                 identity(77),
                 Arc::new(IdentityRecordingLock {
                     seen: Arc::clone(&seen),
@@ -1874,12 +2007,12 @@ mod tests {
         let first = plan
             .preflight_context()
             .unwrap()
-            .require_lock(first_request)
+            .try_lock(first_request)
             .unwrap();
         let second = plan
             .preflight_context()
             .unwrap()
-            .require_lock(LockRequest::new(identity(10), Arc::clone(&target)))
+            .try_lock(LockRequest::new(identity(10), Arc::clone(&target)))
             .unwrap();
 
         assert_eq!(plan.len(), 1);
@@ -1905,13 +2038,13 @@ mod tests {
         target_plan
             .preflight_context()
             .unwrap()
-            .require_lock(first_request)
+            .try_lock(first_request)
             .unwrap();
         let (_, other_request) = request(2, 10, false, &events);
         let target_error = target_plan
             .preflight_context()
             .unwrap()
-            .require_lock(other_request)
+            .try_lock(other_request)
             .unwrap_err();
         assert!(matches!(
             target_error,
@@ -1924,12 +2057,12 @@ mod tests {
         type_plan
             .preflight_context()
             .unwrap()
-            .require_lock(first_request)
+            .try_lock(first_request)
             .unwrap();
         let type_error = type_plan
             .preflight_context()
             .unwrap()
-            .require_lock(LockRequest::new(identity(10), Arc::new(OtherLock)))
+            .try_lock(LockRequest::new(identity(10), Arc::new(OtherLock)))
             .unwrap_err();
         assert!(matches!(
             type_error,
@@ -1938,7 +2071,7 @@ mod tests {
     }
 
     #[test]
-    fn sorted_planning_does_not_change_typed_slots_and_release_is_reverse() {
+    fn identity_index_does_not_sort_acquisition_and_release_is_reverse() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let mut plan = LockPlan::new(runtime_id(), 8).unwrap();
         let mut uses = Vec::new();
@@ -1947,7 +2080,7 @@ mod tests {
             uses.push(
                 plan.preflight_context()
                     .unwrap()
-                    .require_lock(lock_request)
+                    .try_lock(lock_request)
                     .unwrap(),
             );
         }
@@ -1955,14 +2088,14 @@ mod tests {
         assert_eq!(
             plan.acquisition_order,
             vec![1, 2, 0],
-            "planning keeps canonical lock order without moving frame slots"
+            "deduplication keeps identity order without changing acquisition order"
         );
 
         plan.acquire_all(owner_id()).unwrap();
         assert_eq!(plan.acquisition_order, vec![1, 2, 0]);
         assert_eq!(
             *events.lock().unwrap(),
-            vec![Event::Acquire(10), Event::Acquire(20), Event::Acquire(30)]
+            vec![Event::Acquire(30), Event::Acquire(10), Event::Acquire(20)]
         );
         {
             let mut context = plan.install_context(None).unwrap();
@@ -1978,15 +2111,9 @@ mod tests {
         assert_eq!(
             *events.lock().unwrap(),
             vec![
+                Event::Acquire(30),
                 Event::Acquire(10),
                 Event::Acquire(20),
-                Event::Acquire(30),
-                Event::Release(
-                    30,
-                    LockDisposition::Committed {
-                        occ_commit_id: None
-                    }
-                ),
                 Event::Release(
                     20,
                     LockDisposition::Committed {
@@ -1995,6 +2122,12 @@ mod tests {
                 ),
                 Event::Release(
                     10,
+                    LockDisposition::Committed {
+                        occ_commit_id: None
+                    }
+                ),
+                Event::Release(
+                    30,
                     LockDisposition::Committed {
                         occ_commit_id: None
                     }
@@ -2013,20 +2146,20 @@ mod tests {
         let first = plan
             .preflight_context()
             .unwrap()
-            .require_unique_lock(first_request)
+            .try_unique_lock(first_request)
             .unwrap();
         let (_, second_request) = request(10, 10, false, &events);
         let second = plan
             .preflight_context()
             .unwrap()
-            .require_unique_lock(second_request)
+            .try_unique_lock(second_request)
             .unwrap()
             .erase();
         let (_, third_request) = request(20, 20, false, &events);
         let third = plan
             .preflight_context()
             .unwrap()
-            .require_unique_lock(third_request)
+            .try_unique_lock(third_request)
             .unwrap();
 
         assert_eq!(plan.acquisition_order, vec![0, 1, 2]);
@@ -2059,14 +2192,14 @@ mod tests {
         let (_, first_request) = request(1, 10, false, &events);
         plan.preflight_context()
             .unwrap()
-            .require_unique_lock(first_request)
+            .try_unique_lock(first_request)
             .unwrap();
 
         let (_, duplicate_request) = request(2, 10, false, &events);
         let error = plan
             .preflight_context()
             .unwrap()
-            .require_unique_lock(duplicate_request)
+            .try_unique_lock(duplicate_request)
             .unwrap_err();
         assert!(matches!(
             error,
@@ -2097,7 +2230,7 @@ mod tests {
             });
             plan.preflight_context()
                 .unwrap()
-                .require_unique_lock(LockRequest::new(lock_identity, target))
+                .try_unique_lock(LockRequest::new(lock_identity, target))
                 .unwrap();
         }
 
@@ -2115,13 +2248,13 @@ mod tests {
         canonical_first
             .preflight_context()
             .unwrap()
-            .require_lock(first_request)
+            .try_lock(first_request)
             .unwrap();
         let (_, second_request) = request(2, 20, false, &events);
         let unique_error = canonical_first
             .preflight_context()
             .unwrap()
-            .require_unique_lock(second_request)
+            .try_unique_lock(second_request)
             .unwrap_err();
         assert!(matches!(
             unique_error,
@@ -2135,13 +2268,13 @@ mod tests {
         unique_first
             .preflight_context()
             .unwrap()
-            .require_unique_lock(first_request)
+            .try_unique_lock(first_request)
             .unwrap();
         let (_, second_request) = request(2, 20, false, &events);
         let canonical_error = unique_first
             .preflight_context()
             .unwrap()
-            .require_lock(second_request)
+            .try_lock(second_request)
             .unwrap_err();
         assert!(matches!(
             canonical_error,
@@ -2159,7 +2292,7 @@ mod tests {
             let (_, lock_request) = request(id, key, fail, &events);
             plan.preflight_context()
                 .unwrap()
-                .require_unique_lock(lock_request)
+                .try_unique_lock(lock_request)
                 .unwrap();
         }
 
@@ -2183,7 +2316,7 @@ mod tests {
         let stale = first_plan
             .preflight_context()
             .unwrap()
-            .require_lock(first_request)
+            .try_lock(first_request)
             .unwrap();
 
         let mut second_plan = LockPlan::new(runtime_id(), 8).unwrap();
@@ -2191,7 +2324,7 @@ mod tests {
         let current = second_plan
             .preflight_context()
             .unwrap()
-            .require_lock(second_request)
+            .try_lock(second_request)
             .unwrap();
         second_plan.acquire_all(owner_id()).unwrap();
         {
@@ -2285,13 +2418,13 @@ mod tests {
         let stale = first_plan
             .preflight_context()
             .unwrap()
-            .require_lock(first_request)
+            .try_lock(first_request)
             .unwrap();
         let (_, second_request) = request(2, 20, false, &events);
         first_plan
             .preflight_context()
             .unwrap()
-            .require_lock(second_request)
+            .try_lock(second_request)
             .unwrap();
 
         let frame_addresses = [frame_address(&first_plan, 0), frame_address(&first_plan, 1)];
@@ -2314,13 +2447,13 @@ mod tests {
         let current = second_plan
             .preflight_context()
             .unwrap()
-            .require_lock(first_request)
+            .try_lock(first_request)
             .unwrap();
         let (_, second_request) = request(4, 40, false, &events);
         second_plan
             .preflight_context()
             .unwrap()
-            .require_lock(second_request)
+            .try_lock(second_request)
             .unwrap();
 
         assert_eq!(frame_address(&second_plan, 0), frame_addresses[0]);
@@ -2363,7 +2496,7 @@ mod tests {
             );
             plan.preflight_context()
                 .unwrap()
-                .require_lock(LockRequest::new(lock_identity, Arc::clone(&target)))
+                .try_lock(LockRequest::new(lock_identity, Arc::clone(&target)))
                 .unwrap();
             targets.push(target);
         }
@@ -2376,7 +2509,7 @@ mod tests {
         );
         plan.preflight_context()
             .unwrap()
-            .require_lock(LockRequest::new(
+            .try_lock(LockRequest::new(
                 duplicate_identity,
                 Arc::clone(&targets[4]),
             ))
@@ -2396,7 +2529,7 @@ mod tests {
             let (_, lock_request) = request(id, id, fail, &events);
             plan.preflight_context()
                 .unwrap()
-                .require_lock(lock_request)
+                .try_lock(lock_request)
                 .unwrap();
         }
 
@@ -2422,13 +2555,13 @@ mod tests {
         first_plan
             .preflight_context()
             .unwrap()
-            .require_lock(first_request)
+            .try_lock(first_request)
             .unwrap();
         let (_, failing_request) = request(2, 2, true, &events);
         first_plan
             .preflight_context()
             .unwrap()
-            .require_lock(failing_request)
+            .try_lock(failing_request)
             .unwrap();
         let frame_addresses = [frame_address(&first_plan, 0), frame_address(&first_plan, 1)];
 
@@ -2443,7 +2576,7 @@ mod tests {
             second_plan
                 .preflight_context()
                 .unwrap()
-                .require_lock(lock_request)
+                .try_lock(lock_request)
                 .unwrap();
         }
         assert_eq!(frame_address(&second_plan, 0), frame_addresses[0]);
@@ -2473,7 +2606,7 @@ mod tests {
         let error = plan
             .preflight_context()
             .unwrap()
-            .require_lock(LockRequest::new(other_runtime_identity, target))
+            .try_lock(LockRequest::new(other_runtime_identity, target))
             .unwrap_err();
         assert!(matches!(
             error,
@@ -2498,18 +2631,18 @@ mod tests {
         let (target, first_request) = request(1, 10, false, &events);
         plan.preflight_context()
             .unwrap()
-            .require_lock(first_request)
+            .try_lock(first_request)
             .unwrap();
         plan.preflight_context()
             .unwrap()
-            .require_lock(LockRequest::new(identity(10), Arc::clone(&target)))
+            .try_lock(LockRequest::new(identity(10), Arc::clone(&target)))
             .unwrap();
 
         let (_, second_request) = request(2, 20, false, &events);
         assert!(matches!(
             plan.preflight_context()
                 .unwrap()
-                .require_lock(second_request),
+                .try_lock(second_request),
             Err(PrepareError::Capacity(CapacityError::LockLimit))
         ));
         assert_eq!(plan.len(), 1);
@@ -2527,7 +2660,7 @@ mod tests {
         ] {
             plan.preflight_context()
                 .unwrap()
-                .require_lock(request)
+                .try_lock(request)
                 .unwrap();
         }
 
@@ -2560,7 +2693,7 @@ mod tests {
         ] {
             plan.preflight_context()
                 .unwrap()
-                .require_lock(request)
+                .try_lock(request)
                 .unwrap();
         }
         plan.acquire_all(owner_id()).unwrap();

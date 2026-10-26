@@ -19,7 +19,7 @@ use std::cell::UnsafeCell;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use crate::{Version, FIRST_VERSION};
+use crate::{EntryWord, Version, FIRST_VERSION};
 
 /// A dirty ticket: "this entry changed at this version".
 ///
@@ -31,8 +31,9 @@ use crate::{Version, FIRST_VERSION};
 /// re-read the entry's *current* value at write time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ticket {
-    /// Which entry (an index into the store's entry table).
-    pub entry: u32,
+    /// Which entry, as the key index's word for it: the entry's address,
+    /// not a table index. See [`crate::EntryTable`].
+    pub entry: EntryWord,
     /// The version that was published.
     pub version: Version,
 }
@@ -791,7 +792,7 @@ mod tests {
             hs.push(std::thread::spawn(move || {
                 for i in 0..PER {
                     log.append(&[Ticket {
-                        entry: t as u32,
+                        entry: t as crate::EntryWord,
                         version: t * PER + i + 1,
                     }]);
                 }

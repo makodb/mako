@@ -3,10 +3,10 @@
 use std::rc::Rc;
 
 use sto_core::{
-    AcquireContext, AcquireError, CheckError, ExecutionCheckContext, FinishContext,
-    FinishDisposition, FinishItem, InstallContext, InstallItem, ItemInitError, LockDisposition,
-    LockIdentity, NoPredicate, ObservationOrder, OpacityToken, PredicateContext, PreflightContext,
-    PreflightItem, PrepareError, ReleaseContext, TransactionLock, TransactionalResource,
+    AcquireContext, AcquireError, CheckError, ExecutionCheckContext, CleanupContext,
+    CleanupDisposition, CleanupItem, InstallContext, InstallItem, ItemInitError, LockDisposition,
+    LockIdentity, NoPredicate, ObservationOrder, OpacityToken, PredicateContext, LockContext,
+    PreflightItem, PrepareError, ReleaseContext, TransactionLock, TObject,
     ValidationContext,
 };
 
@@ -21,7 +21,7 @@ impl OpacityToken for Observation {
     }
 }
 
-impl TransactionalResource for Adapter {
+impl TObject for Adapter {
     type Key = ();
     type Local = ();
     type Observation = Observation;
@@ -33,11 +33,11 @@ impl TransactionalResource for Adapter {
         Ok(())
     }
 
-    fn preflight(
+    fn lock(
         &self,
         _key: &Self::Key,
         _item: PreflightItem<'_, Self>,
-        _cx: &mut PreflightContext<'_>,
+        _cx: &mut LockContext<'_>,
     ) -> Result<Self::Prepared, PrepareError> {
         Ok(())
     }
@@ -60,7 +60,7 @@ impl TransactionalResource for Adapter {
         match *predicate {}
     }
 
-    fn upgrade_predicate(
+    fn check_predicate(
         &self,
         _key: &Self::Key,
         predicate: &Self::Predicate,
@@ -70,7 +70,7 @@ impl TransactionalResource for Adapter {
         match *predicate {}
     }
 
-    fn validate_read(
+    fn check(
         &self,
         _key: &Self::Key,
         _observation: &Self::Observation,
@@ -89,13 +89,13 @@ impl TransactionalResource for Adapter {
     ) {
     }
 
-    fn finish(
+    fn cleanup(
         &self,
         _key: &Self::Key,
-        _item: FinishItem<'_, Self>,
+        _item: CleanupItem<'_, Self>,
         _prepared: Option<&mut Self::Prepared>,
-        _disposition: FinishDisposition,
-        _cx: &mut FinishContext<'_>,
+        _disposition: CleanupDisposition,
+        _cx: &mut CleanupContext<'_>,
     ) {
     }
 }

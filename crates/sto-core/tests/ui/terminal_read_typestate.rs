@@ -1,10 +1,10 @@
 use sto_core::{
     AccessError, RegisteredResource, TerminalReadOpen, TerminalReadReady,
     TerminalReadTransaction,
-    TransactionalResource,
+    TObject,
 };
 
-fn ordinary_access_is_unavailable<A: TransactionalResource>(
+fn ordinary_access_is_unavailable<A: TObject>(
     transaction: &mut TerminalReadTransaction<'_, TerminalReadOpen>,
     resource: &RegisteredResource<A>,
     key: A::Key,
@@ -12,7 +12,7 @@ fn ordinary_access_is_unavailable<A: TransactionalResource>(
     let _ = transaction.with_item(resource, key, |_| Ok::<(), AccessError>(()));
 }
 
-fn later_access_is_unavailable<A: TransactionalResource>(
+fn later_access_is_unavailable<A: TObject>(
     transaction: &mut TerminalReadTransaction<'_, TerminalReadReady>,
     resource: &RegisteredResource<A>,
     key: A::Key,

@@ -79,6 +79,11 @@ pub trait EngineDb: Send + Sync + Sized {
 
     /// Open a facade and attach the calling worker.
     fn open() -> Result<Self>;
+    /// Whether this database's runtime can still admit transactions.
+    ///
+    /// This diagnostic snapshot does not attach or quarantine the caller.
+    /// Worker-local quarantine is reported separately by `worker_health`.
+    fn runtime_is_healthy(&self) -> bool;
     /// Claim the process-wide cache-order namespace in one immutable mode.
     ///
     /// # Safety

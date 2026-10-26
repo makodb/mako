@@ -51,8 +51,8 @@ impl CapacityError {
     /// Whether this exhaustion permanently disables the runtime instead of
     /// bounding the current attempt.
     ///
-    /// `VersionExhausted` is terminal: the checked OCC commit-ID domain is
-    /// spent, so `Runtime::reserve_commit_id` transitions the runtime to
+    /// `VersionExhausted` is terminal: an ordered or adapter-local version
+    /// domain is spent, so the commit driver transitions the runtime to
     /// `RuntimeHealth::Exhausted` and every later transaction is refused. The
     /// remaining variants bound one attempt's resources and leave a healthy
     /// runtime able to serve a fresh one. Integrations that translate capacity
@@ -270,6 +270,7 @@ pub enum BeginError {
 pub enum RegistrationError {
     Capacity(CapacityError),
     InvalidUse(InvalidUse),
+    Unsupported(Unsupported),
     Poisoned(PoisonInfo),
 }
 
@@ -304,6 +305,7 @@ pub enum PrepareError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AcquireError {
     Conflict(Conflict),
+    Capacity(CapacityError),
     Fault(AdapterFault),
 }
 
@@ -338,6 +340,8 @@ impl CommitInfo {
         Self { occ_commit_id }
     }
 
+    /// Returns the ordered identity if any writing binding required one.
+    /// `None` also covers successful writes through only adapter-local bindings.
     pub const fn occ_commit_id(&self) -> Option<OccCommitId> {
         self.occ_commit_id
     }
@@ -447,6 +451,7 @@ from_variant!(PoisonInfo => BeginError, Poisoned);
 
 from_variant!(CapacityError => RegistrationError, Capacity);
 from_variant!(InvalidUse => RegistrationError, InvalidUse);
+from_variant!(Unsupported => RegistrationError, Unsupported);
 from_variant!(PoisonInfo => RegistrationError, Poisoned);
 
 from_variant!(Conflict => AccessError, Conflict);
@@ -465,6 +470,7 @@ from_variant!(CapacityError => PrepareError, Capacity);
 from_variant!(AdapterFault => PrepareError, Fault);
 
 from_variant!(Conflict => AcquireError, Conflict);
+from_variant!(CapacityError => AcquireError, Capacity);
 from_variant!(AdapterFault => AcquireError, Fault);
 
 from_variant!(Conflict => CheckError, Conflict);
@@ -499,7 +505,7 @@ mod tests {
     }
 
     #[test]
-    fn only_commit_id_exhaustion_is_terminal() {
+    fn only_version_exhaustion_is_terminal() {
         // Spent OCC commit IDs permanently disable the runtime; every other
         // bound describes the current attempt and leaves a healthy runtime.
         assert!(CapacityError::VersionExhausted.is_terminal());

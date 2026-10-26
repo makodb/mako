@@ -12,6 +12,11 @@ license = "MIT"
 publish = false
 
 [dependencies]
+# The epoch that makes the entry slot's lock-free pointer safe: readers
+# pin a guard before loading, writers defer the release of what they
+# displace. The alternative was keeping a per-key mutex on the read path.
+# See `src/slot.rs`.
+crossbeam-epoch = "0.9"
 
 # LTO IS MANDATORY-OFF, and this is not a preference.
 #

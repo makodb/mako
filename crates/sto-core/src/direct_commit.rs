@@ -6,23 +6,22 @@
 //! protocol driver; they can only configure the concrete unique-lock plan
 //! supplied here.
 
-use std::{
-    marker::PhantomData,
-    panic::{catch_unwind, AssertUnwindSafe},
-    ptr::NonNull,
-    rc::Rc,
-    sync::Arc,
-};
+#[path = "singleton_direct.rs"]
+mod singleton_direct;
+
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::{marker::PhantomData, ptr::NonNull, rc::Rc, sync::Arc};
 
 use crate::{
-    adapter::{InstallItem, NoPredicate, ObservationRef, PreflightItem, TransactionalResource},
+    object::{InstallItem, NoPredicate, ObservationRef, PreflightItem, TObject},
     error::{
         AcquireError, AdapterFault, AdapterFaultKind, AdapterPhase, CapacityError, CheckError,
         PrepareError,
     },
     identity::{LockIdentity, OccCommitId, OwnerId, RuntimeId},
-    item::ItemData,
+    trans_item::TransItemData,
     lock::{AcquireContext, LockDisposition, LockRequest, ReleaseContext, TransactionLock},
+    transaction::{DirectCommitContext, DirectCommitStepFailure},
 };
 
 /// Read-only item state supplied during direct final certification.
@@ -30,14 +29,14 @@ use crate::{
 /// The view cannot mutate or remove any adapter-owned value. The direct plan
 /// separately supplies the exact retained target and held guard for a writing
 /// item, and supplies no lock for an ordinary read.
-pub struct DirectValidationItem<'item, A: TransactionalResource> {
+pub struct DirectValidationItem<'item, A: TObject> {
     local: &'item A::Local,
     observation: ObservationRef<'item, A>,
     intent: Option<&'item A::Intent>,
     not_send_sync: PhantomData<Rc<()>>,
 }
 
-impl<'item, A: TransactionalResource> DirectValidationItem<'item, A> {
+impl<'item, A: TObject> DirectValidationItem<'item, A> {
     pub(crate) fn new(
         local: &'item A::Local,
         observation: ObservationRef<'item, A>,
@@ -121,7 +120,7 @@ impl DirectValidationContext {
         self.owner
     }
 
-    /// Returns the reserved OCC commit identity, when this transaction writes.
+    /// Returns the ordered identity if any writing binding requires one.
     pub fn occ_commit_id(&self) -> Option<OccCommitId> {
         self.occ_commit_id
     }
@@ -131,6 +130,7 @@ impl DirectValidationContext {
 pub struct DirectInstallContext {
     owner: OwnerId,
     occ_commit_id: Option<OccCommitId>,
+    distributed_time_term: Option<mako_clock::distributed::DistributedTimeTerm>,
     not_send_sync: PhantomData<Rc<()>>,
 }
 
@@ -140,16 +140,22 @@ impl DirectInstallContext {
         self.owner
     }
 
-    /// Returns the OCC commit identity reserved for this writing transaction.
+    /// Returns the ordered identity if any writing binding requires one.
+    /// An all-local writing transaction returns `None`.
     pub fn occ_commit_id(&self) -> Option<OccCommitId> {
         self.occ_commit_id
+    }
+
+    /// The external distributed decision, independent of the local OCC ID.
+    pub fn distributed_time_term(&self) -> Option<mako_clock::distributed::DistributedTimeTerm> {
+        self.distributed_time_term
     }
 }
 
 /// Plans either no lock for a read or exactly one unique lock for a write.
 pub type DirectPrepare<A, L> = for<'item> fn(
     &A,
-    &<A as TransactionalResource>::Key,
+    &<A as TObject>::Key,
     PreflightItem<'item, A>,
 ) -> Result<Option<LockRequest<L>>, PrepareError>;
 
@@ -157,7 +163,7 @@ pub type DirectPrepare<A, L> = for<'item> fn(
 /// by the live transaction item.
 pub type BorrowedDirectPrepare<A> = for<'item> fn(
     &A,
-    &<A as TransactionalResource>::Key,
+    &<A as TObject>::Key,
     PreflightItem<'item, A>,
 ) -> Result<Option<LockIdentity>, PrepareError>;
 
@@ -190,19 +196,44 @@ impl<T: Copy> BorrowedLockToken<T> {
     }
 }
 
-/// Plans either no lock for a read or one compact token for a write.
-pub type BorrowedTokenPrepare<A, L> =
-    for<'item> fn(
-        &A,
-        &<A as TransactionalResource>::Key,
-        PreflightItem<'item, A>,
-    )
-        -> Result<Option<BorrowedLockToken<<L as DirectTokenLock>::Token>>, PrepareError>;
+/// Adapter operations for the core-owned compact borrowed-token plan.
+///
+/// The operation type remains concrete after the erased plan entry, so
+/// preparation and installation can inline without replacing core's guard
+/// ownership, failure recovery, or capability certification contracts.
+pub trait BorrowedTokenCommitOperations<A: TObject, L: DirectTokenLock>:
+    Sync + 'static
+{
+    fn prepare(
+        &self,
+        adapter: &A,
+        key: &A::Key,
+        item: PreflightItem<'_, A>,
+    ) -> Result<Option<BorrowedLockToken<L::Token>>, PrepareError>;
+
+    fn validate(
+        &self,
+        adapter: &A,
+        key: &A::Key,
+        item: DirectValidationItem<'_, A>,
+        lock: Option<DirectLockRef<'_, L>>,
+        cx: &DirectValidationContext,
+    ) -> Result<(), CheckError>;
+
+    fn install(
+        &self,
+        adapter: &A,
+        key: &A::Key,
+        item: InstallItem<'_, A>,
+        lock: DirectLockMut<'_, L>,
+        cx: &mut DirectInstallContext,
+    );
+}
 
 /// Certifies one item against its optional exact direct guard.
 pub type DirectValidate<A, L> = for<'item, 'lock> fn(
     &A,
-    &<A as TransactionalResource>::Key,
+    &<A as TObject>::Key,
     DirectValidationItem<'item, A>,
     Option<DirectLockRef<'lock, L>>,
     &DirectValidationContext,
@@ -211,7 +242,7 @@ pub type DirectValidate<A, L> = for<'item, 'lock> fn(
 /// Installs one writing item through its exact direct target and guard.
 pub type DirectInstall<A, L> = for<'item, 'lock> fn(
     &A,
-    &<A as TransactionalResource>::Key,
+    &<A as TObject>::Key,
     InstallItem<'item, A>,
     DirectLockMut<'lock, L>,
     &mut DirectInstallContext,
@@ -228,9 +259,9 @@ pub type DirectInstall<A, L> = for<'item, 'lock> fn(
 /// preserves the definite/indeterminate outcome rules.
 ///
 /// The associated [`DirectCommitCapability`] additionally promises that
-/// [`TransactionalResource::finish`] is complete when called with no
+/// [`TObject::cleanup`] is complete when called with no
 /// `Prepared` value after this alternate protocol.
-pub struct UniqueLockCommitCapability<A: TransactionalResource, L: TransactionLock> {
+pub struct UniqueLockCommitCapability<A: TObject, L: TransactionLock> {
     prepare: DirectPrepare<A, L>,
     validate: DirectValidate<A, L>,
     install: DirectInstall<A, L>,
@@ -244,7 +275,7 @@ pub struct UniqueLockCommitCapability<A: TransactionalResource, L: TransactionLo
 /// The method must return the same target address from direct preparation
 /// through release. Core records and verifies that address before using a
 /// guard with the target; it never dereferences the recorded raw address.
-pub trait DirectBorrowedLockTarget<L: TransactionLock>: TransactionalResource {
+pub trait DirectBorrowedLockTarget<L: TransactionLock>: TObject {
     /// Reborrows the canonical target retained by this adapter.
     fn direct_borrowed_lock_target(&self) -> &L;
 }
@@ -298,7 +329,7 @@ pub unsafe trait DirectTokenLock: TransactionLock {
 /// avoiding an owned [`Arc`] in every lock frame. Core verifies target-address
 /// stability and retains the complete item batch until all guards have been
 /// released and destroyed.
-pub struct BorrowedUniqueLockCommitCapability<A: TransactionalResource, L: TransactionLock> {
+pub struct BorrowedUniqueLockCommitCapability<A: TObject, L: TransactionLock> {
     prepare: BorrowedDirectPrepare<A>,
     validate: DirectValidate<A, L>,
     install: DirectInstall<A, L>,
@@ -310,24 +341,24 @@ pub struct BorrowedUniqueLockCommitCapability<A: TransactionalResource, L: Trans
 /// item. Core retains that token in the frame until acquisition replaces it
 /// with the exact guard, avoiding a parallel full-identity vector. Validation,
 /// installation, release, and teardown retain the ordinary direct protocol.
-pub struct BorrowedInjectiveLockCommitCapability<A: TransactionalResource, L: DirectTokenLock> {
-    prepare: BorrowedTokenPrepare<A, L>,
-    validate: DirectValidate<A, L>,
-    install: DirectInstall<A, L>,
+pub struct BorrowedInjectiveLockCommitCapability<
+    A: TObject,
+    L: DirectTokenLock,
+    O: BorrowedTokenCommitOperations<A, L>,
+> {
+    operations: O,
+    types: PhantomData<fn() -> (A, L)>,
     write_acquisition_certifies: bool,
 }
 
-impl<A: TransactionalResource, L: DirectTokenLock> BorrowedInjectiveLockCommitCapability<A, L> {
-    /// Creates the callback set consumed by core's sealed compact plan.
-    pub const fn new(
-        prepare: BorrowedTokenPrepare<A, L>,
-        validate: DirectValidate<A, L>,
-        install: DirectInstall<A, L>,
-    ) -> Self {
+impl<A: TObject, L: DirectTokenLock, O: BorrowedTokenCommitOperations<A, L>>
+    BorrowedInjectiveLockCommitCapability<A, L, O>
+{
+    /// Creates the concrete operation set consumed by core's sealed plan.
+    pub const fn new(operations: O) -> Self {
         Self {
-            prepare,
-            validate,
-            install,
+            operations,
+            types: PhantomData,
             write_acquisition_certifies: false,
         }
     }
@@ -374,7 +405,7 @@ impl<A: TransactionalResource, L: DirectTokenLock> BorrowedInjectiveLockCommitCa
     }
 }
 
-impl<A: TransactionalResource, L: TransactionLock> BorrowedUniqueLockCommitCapability<A, L> {
+impl<A: TObject, L: TransactionLock> BorrowedUniqueLockCommitCapability<A, L> {
     /// Creates the typed callback set consumed by core's sealed borrowed plan.
     pub const fn new(
         prepare: BorrowedDirectPrepare<A>,
@@ -389,7 +420,7 @@ impl<A: TransactionalResource, L: TransactionLock> BorrowedUniqueLockCommitCapab
     }
 }
 
-impl<A: TransactionalResource, L: TransactionLock> UniqueLockCommitCapability<A, L> {
+impl<A: TObject, L: TransactionLock> UniqueLockCommitCapability<A, L> {
     /// Creates the typed callback set consumed by core's sealed direct plan.
     pub const fn new(
         prepare: DirectPrepare<A, L>,
@@ -407,7 +438,7 @@ impl<A: TransactionalResource, L: TransactionLock> UniqueLockCommitCapability<A,
 mod sealed {
     use super::*;
 
-    pub(crate) trait Capability<A: TransactionalResource>: Sync {
+    pub(crate) trait Capability<A: TObject>: Sync {
         fn create_plan(
             &'static self,
             public: &'static DirectCommitCapability<A>,
@@ -420,7 +451,7 @@ mod sealed {
 /// The wrapper is intentionally non-extensible: adapters construct it only
 /// from one of core's typed capability values, while the erased plan
 /// implementation and its state transitions remain private to `sto-core`.
-pub struct DirectCommitCapability<A: TransactionalResource> {
+pub struct DirectCommitCapability<A: TObject> {
     implementation: &'static dyn sealed::Capability<A>,
     // `true` is installed only through the explicit builder below. Core never
     // infers drop-only cleanup from callback behavior or adapter state.
@@ -431,13 +462,13 @@ pub struct DirectCommitCapability<A: TransactionalResource> {
     check_duplicate_identities: bool,
 }
 
-impl<A: TransactionalResource> DirectCommitCapability<A> {
+impl<A: TObject> DirectCommitCapability<A> {
     /// Selects core's one-distinct-lock-per-writing-item implementation.
     pub const fn unique_lock<L: TransactionLock>(
         implementation: &'static UniqueLockCommitCapability<A, L>,
     ) -> Self
     where
-        A: TransactionalResource<Predicate = NoPredicate>,
+        A: TObject<Predicate = NoPredicate>,
     {
         Self {
             implementation,
@@ -455,7 +486,7 @@ impl<A: TransactionalResource> DirectCommitCapability<A> {
         implementation: &'static BorrowedUniqueLockCommitCapability<A, L>,
     ) -> Self
     where
-        A: DirectBorrowedLockTarget<L> + TransactionalResource<Predicate = NoPredicate>,
+        A: DirectBorrowedLockTarget<L> + TObject<Predicate = NoPredicate>,
     {
         Self {
             implementation,
@@ -495,7 +526,7 @@ impl<A: TransactionalResource> DirectCommitCapability<A> {
         implementation: &'static BorrowedUniqueLockCommitCapability<A, L>,
     ) -> Self
     where
-        A: DirectBorrowedLockTarget<L> + TransactionalResource<Predicate = NoPredicate>,
+        A: DirectBorrowedLockTarget<L> + TObject<Predicate = NoPredicate>,
     {
         Self {
             implementation,
@@ -528,11 +559,14 @@ impl<A: TransactionalResource> DirectCommitCapability<A> {
         unsafe_code,
         reason = "the unsafe constructor records the adapter's compact-token injectivity proof"
     )]
-    pub const unsafe fn borrowed_injective_token_lock<L: DirectTokenLock>(
-        implementation: &'static BorrowedInjectiveLockCommitCapability<A, L>,
+    pub const unsafe fn borrowed_injective_token_lock<
+        L: DirectTokenLock,
+        O: BorrowedTokenCommitOperations<A, L>,
+    >(
+        implementation: &'static BorrowedInjectiveLockCommitCapability<A, L, O>,
     ) -> Self
     where
-        A: DirectBorrowedLockTarget<L> + TransactionalResource<Predicate = NoPredicate>,
+        A: DirectBorrowedLockTarget<L> + TObject<Predicate = NoPredicate>,
     {
         Self {
             implementation,
@@ -544,22 +578,22 @@ impl<A: TransactionalResource> DirectCommitCapability<A> {
     /// Explicitly makes committed direct-item cleanup core-owned and drop-only.
     ///
     /// The ordinary direct capability still invokes
-    /// [`TransactionalResource::finish`] after every definite outcome. This
+    /// [`TObject::cleanup`] after every definite outcome. This
     /// stronger opt-in suppresses that callback only after direct validation,
     /// installation, and committed lock release have all completed. At that
     /// point, dropping each item's remaining intent, observation, predicate,
     /// local state, and key in reverse item order must be the complete
     /// committed cleanup. In particular, cleanup must not require another
-    /// shared-state mutation, consumption through [`crate::adapter::FinishItem`],
-    /// or access to [`crate::adapter::FinishContext`].
+    /// shared-state mutation, consumption through [`crate::CleanupItem`],
+    /// or access to [`crate::CleanupContext`].
     ///
-    /// Aborted direct attempts continue to invoke `finish` exactly once for
+    /// Aborted direct attempts continue to invoke `cleanup` exactly once for
     /// every live item. Indeterminate attempts remain quarantined and run no
     /// item cleanup, exactly as for the ordinary direct capability. Core
     /// contains destructor panics under its normal post-publication failure
     /// boundary.
     #[must_use]
-    pub const fn with_drop_only_committed_finish(mut self) -> Self {
+    pub const fn with_drop_only_committed_cleanup(mut self) -> Self {
         self.drop_only_committed_finish = true;
         self
     }
@@ -579,37 +613,46 @@ impl<A: TransactionalResource> DirectCommitCapability<A> {
     }
 }
 
-pub(crate) trait ErasedDirectCommitPlan<A: TransactionalResource> {
+pub(crate) trait ErasedDirectCommitPlan<A: TObject> {
     fn capability(&self) -> &'static DirectCommitCapability<A>;
+    /// Prepares, commits, and tears down through this concrete plan.
+    /// The caller retains ownership and quarantines a failed teardown.
+    fn run_single_item_direct(
+        &mut self,
+        items: &mut [TransItemData<A>; 1],
+        intents: &mut [Option<A::Intent>; 1],
+        requires_ordered_commit_id: bool,
+        cx: &mut DirectCommitContext<'_, '_>,
+    ) -> Result<(), DirectCommitStepFailure>;
     fn prepare(
         &mut self,
-        items: &mut [ItemData<A>],
+        items: &mut [TransItemData<A>],
         intents: &mut [Option<A::Intent>],
         runtime_id: RuntimeId,
         max_locks: usize,
     ) -> Result<(), PrepareError>;
-    fn acquire_all(&mut self, items: &[ItemData<A>], owner: OwnerId) -> Result<(), AcquireError>;
+    fn acquire_all(&mut self, items: &[TransItemData<A>], owner: OwnerId) -> Result<(), AcquireError>;
     fn validate(
         &self,
-        items: &[ItemData<A>],
+        items: &[TransItemData<A>],
         intents: &[Option<A::Intent>],
         occ_commit_id: Option<OccCommitId>,
     ) -> Result<(), CheckError>;
     fn install(
         &mut self,
-        items: &mut [ItemData<A>],
+        items: &mut [TransItemData<A>],
         intents: &[Option<A::Intent>],
         occ_commit_id: Option<OccCommitId>,
     );
     fn requires_release(&self) -> bool;
     fn release_all(
         &mut self,
-        items: &[ItemData<A>],
+        items: &[TransItemData<A>],
         disposition: LockDisposition,
     ) -> Result<(), AdapterFault>;
     fn recover_after_callback_panic(
         &mut self,
-        items: &[ItemData<A>],
+        items: &[TransItemData<A>],
         disposition: LockDisposition,
     ) -> Result<(), AdapterFault>;
     fn teardown_adapter_state(&mut self) -> Result<(), ()>;
@@ -837,7 +880,7 @@ impl<L: TransactionLock> DirectLockFrame<L> {
     }
 }
 
-struct UniqueLockCommitPlan<A: TransactionalResource, L: TransactionLock> {
+struct UniqueLockCommitPlan<A: TObject, L: TransactionLock> {
     public_capability: &'static DirectCommitCapability<A>,
     implementation: &'static UniqueLockCommitCapability<A, L>,
     frames: Vec<DirectLockFrame<L>>,
@@ -853,7 +896,7 @@ struct UniqueLockCommitPlan<A: TransactionalResource, L: TransactionLock> {
     quarantined_callback: Option<usize>,
 }
 
-impl<A: TransactionalResource, L: TransactionLock> UniqueLockCommitPlan<A, L> {
+impl<A: TObject, L: TransactionLock> UniqueLockCommitPlan<A, L> {
     fn new(
         public_capability: &'static DirectCommitCapability<A>,
         implementation: &'static UniqueLockCommitCapability<A, L>,
@@ -891,7 +934,7 @@ impl<A: TransactionalResource, L: TransactionLock> UniqueLockCommitPlan<A, L> {
     }
 }
 
-impl<A: TransactionalResource, L: TransactionLock> sealed::Capability<A>
+impl<A: TObject, L: TransactionLock> sealed::Capability<A>
     for UniqueLockCommitCapability<A, L>
 {
     fn create_plan(
@@ -902,16 +945,28 @@ impl<A: TransactionalResource, L: TransactionLock> sealed::Capability<A>
     }
 }
 
-impl<A: TransactionalResource, L: TransactionLock> ErasedDirectCommitPlan<A>
+impl<A: TObject, L: TransactionLock> ErasedDirectCommitPlan<A>
     for UniqueLockCommitPlan<A, L>
 {
+    fn run_single_item_direct(
+        &mut self,
+        items: &mut [TransItemData<A>; 1],
+        intents: &mut [Option<A::Intent>; 1],
+        requires_ordered_commit_id: bool,
+        cx: &mut DirectCommitContext<'_, '_>,
+    ) -> Result<(), DirectCommitStepFailure> {
+        cx.prepare_concrete_plan(self, items, intents)?;
+        cx.run_concrete_plan(self, items, intents, 1, requires_ordered_commit_id)?;
+        cx.teardown_concrete_plan(self)
+    }
+
     fn capability(&self) -> &'static DirectCommitCapability<A> {
         self.public_capability
     }
 
     fn prepare(
         &mut self,
-        items: &mut [ItemData<A>],
+        items: &mut [TransItemData<A>],
         intents: &mut [Option<A::Intent>],
         runtime_id: RuntimeId,
         max_locks: usize,
@@ -1024,7 +1079,7 @@ impl<A: TransactionalResource, L: TransactionLock> ErasedDirectCommitPlan<A>
         Ok(())
     }
 
-    fn acquire_all(&mut self, _items: &[ItemData<A>], owner: OwnerId) -> Result<(), AcquireError> {
+    fn acquire_all(&mut self, _items: &[TransItemData<A>], owner: OwnerId) -> Result<(), AcquireError> {
         if self.state != PlanState::Planning || self.callback_in_progress.is_some() {
             return Err(AdapterFault::invariant(AdapterPhase::Acquire).into());
         }
@@ -1054,7 +1109,7 @@ impl<A: TransactionalResource, L: TransactionLock> ErasedDirectCommitPlan<A>
 
     fn validate(
         &self,
-        items: &[ItemData<A>],
+        items: &[TransItemData<A>],
         intents: &[Option<A::Intent>],
         occ_commit_id: Option<OccCommitId>,
     ) -> Result<(), CheckError> {
@@ -1091,7 +1146,7 @@ impl<A: TransactionalResource, L: TransactionLock> ErasedDirectCommitPlan<A>
 
     fn install(
         &mut self,
-        items: &mut [ItemData<A>],
+        items: &mut [TransItemData<A>],
         intents: &[Option<A::Intent>],
         occ_commit_id: Option<OccCommitId>,
     ) {
@@ -1105,6 +1160,7 @@ impl<A: TransactionalResource, L: TransactionLock> ErasedDirectCommitPlan<A>
         let mut cx = DirectInstallContext {
             owner,
             occ_commit_id,
+            distributed_time_term: None,
             not_send_sync: PhantomData,
         };
         for frame_slot in 0..self.active_frames {
@@ -1116,6 +1172,8 @@ impl<A: TransactionalResource, L: TransactionLock> ErasedDirectCommitPlan<A>
                 .lock_mut()
                 .expect("a direct install frame remains held");
             (self.implementation.install)(adapter, key, item, lock, &mut cx);
+            #[cfg(feature = "test-install-observer")]
+            crate::test_install::write_installed();
         }
     }
 
@@ -1125,7 +1183,7 @@ impl<A: TransactionalResource, L: TransactionLock> ErasedDirectCommitPlan<A>
 
     fn release_all(
         &mut self,
-        _items: &[ItemData<A>],
+        _items: &[TransItemData<A>],
         disposition: LockDisposition,
     ) -> Result<(), AdapterFault> {
         if self.state != PlanState::Held || self.callback_in_progress.is_some() {
@@ -1144,7 +1202,7 @@ impl<A: TransactionalResource, L: TransactionLock> ErasedDirectCommitPlan<A>
 
     fn recover_after_callback_panic(
         &mut self,
-        _items: &[ItemData<A>],
+        _items: &[TransItemData<A>],
         disposition: LockDisposition,
     ) -> Result<(), AdapterFault> {
         if !matches!(self.state, PlanState::Acquiring | PlanState::Releasing)
@@ -1318,7 +1376,7 @@ impl<L: TransactionLock> BorrowedDirectLockFrame<L> {
     }
 }
 
-struct BorrowedUniqueLockCommitPlan<A: TransactionalResource, L: TransactionLock> {
+struct BorrowedUniqueLockCommitPlan<A: TObject, L: TransactionLock> {
     public_capability: &'static DirectCommitCapability<A>,
     implementation: &'static BorrowedUniqueLockCommitCapability<A, L>,
     frames: Vec<BorrowedDirectLockFrame<L>>,
@@ -1358,7 +1416,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: TransactionLock> BorrowedUniqueLockCommi
 
     fn release_acquired(
         &mut self,
-        items: &[ItemData<A>],
+        items: &[TransItemData<A>],
         disposition: LockDisposition,
         cx: &ReleaseContext<'_>,
     ) -> Result<(), AdapterFault> {
@@ -1393,13 +1451,25 @@ impl<A: DirectBorrowedLockTarget<L>, L: TransactionLock> sealed::Capability<A>
 impl<A: DirectBorrowedLockTarget<L>, L: TransactionLock> ErasedDirectCommitPlan<A>
     for BorrowedUniqueLockCommitPlan<A, L>
 {
+    fn run_single_item_direct(
+        &mut self,
+        items: &mut [TransItemData<A>; 1],
+        intents: &mut [Option<A::Intent>; 1],
+        requires_ordered_commit_id: bool,
+        cx: &mut DirectCommitContext<'_, '_>,
+    ) -> Result<(), DirectCommitStepFailure> {
+        cx.prepare_concrete_plan(self, items, intents)?;
+        cx.run_concrete_plan(self, items, intents, 1, requires_ordered_commit_id)?;
+        cx.teardown_concrete_plan(self)
+    }
+
     fn capability(&self) -> &'static DirectCommitCapability<A> {
         self.public_capability
     }
 
     fn prepare(
         &mut self,
-        items: &mut [ItemData<A>],
+        items: &mut [TransItemData<A>],
         intents: &mut [Option<A::Intent>],
         runtime_id: RuntimeId,
         max_locks: usize,
@@ -1515,7 +1585,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: TransactionLock> ErasedDirectCommitPlan<
         Ok(())
     }
 
-    fn acquire_all(&mut self, items: &[ItemData<A>], owner: OwnerId) -> Result<(), AcquireError> {
+    fn acquire_all(&mut self, items: &[TransItemData<A>], owner: OwnerId) -> Result<(), AcquireError> {
         if self.state != PlanState::Planning || self.callback_in_progress.is_some() {
             return Err(AdapterFault::invariant(AdapterPhase::Acquire).into());
         }
@@ -1553,7 +1623,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: TransactionLock> ErasedDirectCommitPlan<
 
     fn validate(
         &self,
-        items: &[ItemData<A>],
+        items: &[TransItemData<A>],
         intents: &[Option<A::Intent>],
         occ_commit_id: Option<OccCommitId>,
     ) -> Result<(), CheckError> {
@@ -1591,7 +1661,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: TransactionLock> ErasedDirectCommitPlan<
 
     fn install(
         &mut self,
-        items: &mut [ItemData<A>],
+        items: &mut [TransItemData<A>],
         intents: &[Option<A::Intent>],
         occ_commit_id: Option<OccCommitId>,
     ) {
@@ -1605,6 +1675,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: TransactionLock> ErasedDirectCommitPlan<
         let mut cx = DirectInstallContext {
             owner,
             occ_commit_id,
+            distributed_time_term: None,
             not_send_sync: PhantomData,
         };
         for frame_slot in 0..self.active_frames {
@@ -1617,6 +1688,8 @@ impl<A: DirectBorrowedLockTarget<L>, L: TransactionLock> ErasedDirectCommitPlan<
                 .lock_mut(target)
                 .expect("a borrowed direct install frame remains held by its exact target");
             (self.implementation.install)(adapter, key, item, lock, &mut cx);
+            #[cfg(feature = "test-install-observer")]
+            crate::test_install::write_installed();
         }
     }
 
@@ -1626,7 +1699,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: TransactionLock> ErasedDirectCommitPlan<
 
     fn release_all(
         &mut self,
-        items: &[ItemData<A>],
+        items: &[TransItemData<A>],
         disposition: LockDisposition,
     ) -> Result<(), AdapterFault> {
         if self.state != PlanState::Held || self.callback_in_progress.is_some() {
@@ -1645,7 +1718,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: TransactionLock> ErasedDirectCommitPlan<
 
     fn recover_after_callback_panic(
         &mut self,
-        items: &[ItemData<A>],
+        items: &[TransItemData<A>],
         disposition: LockDisposition,
     ) -> Result<(), AdapterFault> {
         if !matches!(self.state, PlanState::Acquiring | PlanState::Releasing)
@@ -1740,6 +1813,7 @@ impl<L: DirectTokenLock> BorrowedTokenLockFrame<L> {
             .is_some_and(|address| std::ptr::eq(address.as_ptr(), target))
     }
 
+    #[inline(always)]
     fn acquire(
         &mut self,
         runtime_id: RuntimeId,
@@ -1876,9 +1950,13 @@ impl<L: DirectTokenLock> BorrowedTokenLockFrame<L> {
     }
 }
 
-struct BorrowedInjectiveLockCommitPlan<A: TransactionalResource, L: DirectTokenLock> {
+struct BorrowedInjectiveLockCommitPlan<
+    A: TObject,
+    L: DirectTokenLock,
+    O: BorrowedTokenCommitOperations<A, L>,
+> {
     public_capability: &'static DirectCommitCapability<A>,
-    implementation: &'static BorrowedInjectiveLockCommitCapability<A, L>,
+    implementation: &'static BorrowedInjectiveLockCommitCapability<A, L, O>,
     frames: Vec<BorrowedTokenLockFrame<L>>,
     active_frames: usize,
     acquired_len: usize,
@@ -1888,10 +1966,15 @@ struct BorrowedInjectiveLockCommitPlan<A: TransactionalResource, L: DirectTokenL
     quarantined_callback: Option<usize>,
 }
 
-impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> BorrowedInjectiveLockCommitPlan<A, L> {
+impl<
+        A: DirectBorrowedLockTarget<L>,
+        L: DirectTokenLock,
+        O: BorrowedTokenCommitOperations<A, L>,
+    > BorrowedInjectiveLockCommitPlan<A, L, O>
+{
     fn new(
         public_capability: &'static DirectCommitCapability<A>,
-        implementation: &'static BorrowedInjectiveLockCommitCapability<A, L>,
+        implementation: &'static BorrowedInjectiveLockCommitCapability<A, L, O>,
     ) -> Self {
         Self {
             public_capability,
@@ -1908,7 +1991,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> BorrowedInjectiveLockCo
 
     fn release_acquired(
         &mut self,
-        items: &[ItemData<A>],
+        items: &[TransItemData<A>],
         disposition: LockDisposition,
         cx: &ReleaseContext<'_>,
     ) -> Result<(), AdapterFault> {
@@ -1929,7 +2012,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> BorrowedInjectiveLockCo
     fn plan_writing_item(
         &mut self,
         item_slot: usize,
-        item: &mut ItemData<A>,
+        item: &mut TransItemData<A>,
         intent: &mut Option<A::Intent>,
         runtime_id: RuntimeId,
         max_locks: usize,
@@ -1942,12 +2025,16 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> BorrowedInjectiveLockCo
             )
             .into());
         }
-        let token = (self.implementation.prepare)(adapter, key, item_view)?.ok_or_else(|| {
-            AdapterFault::new(
-                AdapterPhase::Preflight,
-                AdapterFaultKind::LockIdentityMismatch,
-            )
-        })?;
+        let token = self
+            .implementation
+            .operations
+            .prepare(adapter, key, item_view)?
+            .ok_or_else(|| {
+                AdapterFault::new(
+                    AdapterPhase::Preflight,
+                    AdapterFaultKind::LockIdentityMismatch,
+                )
+            })?;
 
         let target = adapter.direct_borrowed_lock_target();
         let frame_slot = self.active_frames;
@@ -1976,8 +2063,11 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> BorrowedInjectiveLockCo
     }
 }
 
-impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> sealed::Capability<A>
-    for BorrowedInjectiveLockCommitCapability<A, L>
+impl<
+        A: DirectBorrowedLockTarget<L>,
+        L: DirectTokenLock,
+        O: BorrowedTokenCommitOperations<A, L>,
+    > sealed::Capability<A> for BorrowedInjectiveLockCommitCapability<A, L, O>
 {
     fn create_plan(
         &'static self,
@@ -1987,16 +2077,47 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> sealed::Capability<A>
     }
 }
 
-impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> ErasedDirectCommitPlan<A>
-    for BorrowedInjectiveLockCommitPlan<A, L>
+impl<
+        A: DirectBorrowedLockTarget<L>,
+        L: DirectTokenLock,
+        O: BorrowedTokenCommitOperations<A, L>,
+    > ErasedDirectCommitPlan<A> for BorrowedInjectiveLockCommitPlan<A, L, O>
 {
+    fn run_single_item_direct(
+        &mut self,
+        items: &mut [TransItemData<A>; 1],
+        intents: &mut [Option<A::Intent>; 1],
+        requires_ordered_commit_id: bool,
+        cx: &mut DirectCommitContext<'_, '_>,
+    ) -> Result<(), DirectCommitStepFailure> {
+        cx.prepare_concrete_plan(self, items, intents)?;
+        if self.active_frames == 1
+            && self.acquired_len == 0
+            && self
+                .frames
+                .first()
+                .is_some_and(|frame| frame.item_slot == 0)
+        {
+            cx.run_created_body(
+                || singleton_direct::SingletonBody::new(self, &mut items[0], &intents[0]),
+                requires_ordered_commit_id,
+            )
+        } else {
+            // Keep malformed prepared frame state on the original
+            // phase-specific recovery path.
+            cx.run_concrete_plan(self, items, intents, 1, requires_ordered_commit_id)
+        }?;
+        cx.teardown_concrete_plan(self)
+    }
+
     fn capability(&self) -> &'static DirectCommitCapability<A> {
         self.public_capability
     }
 
+    #[inline]
     fn prepare(
         &mut self,
-        items: &mut [ItemData<A>],
+        items: &mut [TransItemData<A>],
         intents: &mut [Option<A::Intent>],
         runtime_id: RuntimeId,
         max_locks: usize,
@@ -2034,7 +2155,12 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> ErasedDirectCommitPlan<
                 continue;
             }
             let (adapter, key, item_view) = item.direct_preflight_parts(intent);
-            if (self.implementation.prepare)(adapter, key, item_view)?.is_some() {
+            if self
+                .implementation
+                .operations
+                .prepare(adapter, key, item_view)?
+                .is_some()
+            {
                 return Err(AdapterFault::new(
                     AdapterPhase::Preflight,
                     AdapterFaultKind::LockIdentityMismatch,
@@ -2049,7 +2175,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> ErasedDirectCommitPlan<
         Ok(())
     }
 
-    fn acquire_all(&mut self, items: &[ItemData<A>], owner: OwnerId) -> Result<(), AcquireError> {
+    fn acquire_all(&mut self, items: &[TransItemData<A>], owner: OwnerId) -> Result<(), AcquireError> {
         if self.state != PlanState::Planning {
             return Err(AdapterFault::invariant(AdapterPhase::Acquire).into());
         }
@@ -2087,7 +2213,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> ErasedDirectCommitPlan<
 
     fn validate(
         &self,
-        items: &[ItemData<A>],
+        items: &[TransItemData<A>],
         intents: &[Option<A::Intent>],
         occ_commit_id: Option<OccCommitId>,
     ) -> Result<(), CheckError> {
@@ -2122,7 +2248,9 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> ErasedDirectCommitPlan<
             } else {
                 None
             };
-            (self.implementation.validate)(adapter, key, item_view, lock, &cx)?;
+            self.implementation
+                .operations
+                .validate(adapter, key, item_view, lock, &cx)?;
         }
         if frame_slot != self.active_frames {
             return Err(AdapterFault::invariant(AdapterPhase::Validation).into());
@@ -2132,7 +2260,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> ErasedDirectCommitPlan<
 
     fn install(
         &mut self,
-        items: &mut [ItemData<A>],
+        items: &mut [TransItemData<A>],
         intents: &[Option<A::Intent>],
         occ_commit_id: Option<OccCommitId>,
     ) {
@@ -2146,6 +2274,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> ErasedDirectCommitPlan<
         let mut cx = DirectInstallContext {
             owner,
             occ_commit_id,
+            distributed_time_term: None,
             not_send_sync: PhantomData,
         };
         for frame_slot in 0..self.active_frames {
@@ -2157,7 +2286,11 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> ErasedDirectCommitPlan<
             let lock = self.frames[frame_slot]
                 .lock_mut(target)
                 .expect("a borrowed direct token frame remains held by its exact target");
-            (self.implementation.install)(adapter, key, item, lock, &mut cx);
+            self.implementation
+                .operations
+                .install(adapter, key, item, lock, &mut cx);
+            #[cfg(feature = "test-install-observer")]
+            crate::test_install::write_installed();
         }
     }
 
@@ -2167,7 +2300,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> ErasedDirectCommitPlan<
 
     fn release_all(
         &mut self,
-        items: &[ItemData<A>],
+        items: &[TransItemData<A>],
         disposition: LockDisposition,
     ) -> Result<(), AdapterFault> {
         if self.state != PlanState::Held {
@@ -2198,7 +2331,7 @@ impl<A: DirectBorrowedLockTarget<L>, L: DirectTokenLock> ErasedDirectCommitPlan<
 
     fn recover_after_callback_panic(
         &mut self,
-        items: &[ItemData<A>],
+        items: &[TransItemData<A>],
         disposition: LockDisposition,
     ) -> Result<(), AdapterFault> {
         if !matches!(self.state, PlanState::Acquiring | PlanState::Releasing)

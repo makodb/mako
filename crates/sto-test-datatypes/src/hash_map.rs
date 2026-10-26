@@ -21,12 +21,12 @@ use std::{
 use arc_swap::ArcSwap;
 use sto_core::{
     AccessError, Active, AdapterFault, AdapterFaultKind, AdapterPhase, AtomicVersion,
-    CapacityError, CheckError, Conflict, Entry, ExecutionCheckContext, FinishContext,
-    FinishDisposition, FinishItem, InstallContext, InstallItem, LockClass, LockIdentity,
+    CapacityError, CheckError, Conflict, TransProxy, ExecutionCheckContext, CleanupContext,
+    CleanupDisposition, CleanupItem, InstallContext, InstallItem, LockClass, LockIdentity,
     LockNamespaceId, LockRequest, LockUse, NoPredicate, ObjectId, ObservationOrder, ObservationRef,
-    OccVersion, OpacityToken, PredicateContext, PreflightContext, PreflightItem, PrepareError,
+    OccVersion, OpacityToken, PredicateContext, LockContext, PreflightItem, PrepareError,
     RegisteredResource, RegistrationError, ResourceClass, ResourceKey, Runtime, Transaction,
-    TransactionalResource, ValidationContext, VersionLock,
+    TObject, ValidationContext, VersionLock,
 };
 
 const HASH_MAP_RESOURCE_CLASS_VALUE: u32 = 1;
@@ -230,7 +230,7 @@ where
                 let snapshot = adapter.snapshot(bucket_index, entry)?;
                 let mut replacement = snapshot.as_ref().clone();
                 let previous = replacement.insert(key, value);
-                entry.stage(Arc::new(replacement))?;
+                entry.add_write(Arc::new(replacement))?;
                 Ok(previous)
             },
         )
@@ -260,7 +260,7 @@ where
                 let mut replacement = snapshot.as_ref().clone();
                 let previous = replacement.remove(key);
                 if previous.is_some() || had_intent {
-                    entry.stage(Arc::new(replacement))?;
+                    entry.add_write(Arc::new(replacement))?;
                 }
                 Ok(previous)
             },
@@ -402,7 +402,7 @@ where
     fn snapshot(
         &self,
         bucket_index: usize,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
     ) -> Result<Arc<BTreeMap<K, V>>, AccessError> {
         if let Some(intent) = entry.intent() {
             return Ok(Arc::clone(intent));
@@ -421,7 +421,7 @@ where
             return Err(Conflict::ReadValidation.into());
         }
 
-        entry.record_read(HashMapObservation { version: observed })?;
+        entry.add_read(HashMapObservation { version: observed })?;
         entry.local_mut().first_snapshot = Some(Arc::clone(&snapshot));
         Ok(snapshot)
     }
@@ -471,7 +471,7 @@ where
     }
 }
 
-impl<K, V> TransactionalResource for HashMapAdapter<K, V>
+impl<K, V> TObject for HashMapAdapter<K, V>
 where
     K: ResourceKey + Hash,
     V: Clone + Send + Sync + 'static,
@@ -497,11 +497,11 @@ where
         })
     }
 
-    fn preflight(
+    fn lock(
         &self,
         key: &Self::Key,
         item: PreflightItem<'_, Self>,
-        cx: &mut PreflightContext<'_>,
+        cx: &mut LockContext<'_>,
     ) -> Result<Self::Prepared, PrepareError> {
         let bucket = self.buckets.get(*key).ok_or_else(|| {
             AdapterFault::new(
@@ -510,7 +510,7 @@ where
             )
         })?;
         let lock_use = if item.intent().is_some() {
-            Some(cx.require_lock(LockRequest::new(
+            Some(cx.try_lock(LockRequest::new(
                 bucket.lock_identity.clone(),
                 Arc::clone(&bucket.lock),
             ))?)
@@ -548,7 +548,7 @@ where
         match *predicate {}
     }
 
-    fn upgrade_predicate(
+    fn check_predicate(
         &self,
         _key: &Self::Key,
         predicate: &Self::Predicate,
@@ -558,7 +558,7 @@ where
         match *predicate {}
     }
 
-    fn validate_read(
+    fn check(
         &self,
         key: &Self::Key,
         observation: &Self::Observation,
@@ -623,13 +623,13 @@ where
         item.local_mut().displaced = Some(displaced);
     }
 
-    fn finish(
+    fn cleanup(
         &self,
         _key: &Self::Key,
-        mut item: FinishItem<'_, Self>,
+        mut item: CleanupItem<'_, Self>,
         _prepared: Option<&mut Self::Prepared>,
-        _disposition: FinishDisposition,
-        _cx: &mut FinishContext<'_>,
+        _disposition: CleanupDisposition,
+        _cx: &mut CleanupContext<'_>,
     ) {
         item.local_mut().first_snapshot = None;
         item.local_mut().displaced = None;

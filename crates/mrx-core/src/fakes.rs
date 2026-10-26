@@ -205,10 +205,7 @@ impl Blobs for MemBlobs {
         })
     }
 
-    fn for_each_entry(
-        &self,
-        f: &mut EntryVisitor<'_>,
-    ) -> Result<(), BlobError> {
+    fn for_each_entry(&self, f: &mut EntryVisitor<'_>) -> Result<(), BlobError> {
         self.for_each_entry_from(b"", usize::MAX, &mut |key, value| {
             f(key, value)?;
             Ok(true)

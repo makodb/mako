@@ -149,6 +149,8 @@ struct WorkerStats {
     aborts: u64,
     logical_ops: u64,
     checksum: u64,
+    // Includes warmup and commits crossing a timing boundary, unlike throughput.
+    total_committed_increments: u64,
 }
 
 enum AttemptOutcome {
@@ -231,6 +233,19 @@ fn run() -> Result<(), String> {
         aggregate.aborts = aggregate.aborts.wrapping_add(stats.aborts);
         aggregate.logical_ops = aggregate.logical_ops.wrapping_add(stats.logical_ops);
         aggregate.checksum = aggregate.checksum.wrapping_add(stats.checksum);
+        aggregate.total_committed_increments = aggregate
+            .total_committed_increments
+            .wrapping_add(stats.total_committed_increments);
+    }
+
+    // Workers have detached; certification and the final sum are untimed.
+    let initial_sum = (u128::from(config.keyspace) * u128::from(config.keyspace - 1) / 2) as u64;
+    let expected_final_sum = initial_sum.wrapping_add(aggregate.total_committed_increments);
+    let final_sum = verify_final_sum(&runtime, &array, array_len)?;
+    if final_sum != expected_final_sum {
+        return Err(format!(
+            "final array sum mismatch: expected {expected_final_sum}, got {final_sum}"
+        ));
     }
 
     let elapsed_ns = u64::try_from(elapsed.as_nanos()).unwrap_or(u64::MAX);
@@ -255,7 +270,11 @@ fn run() -> Result<(), String> {
             "\"elapsed_ns\":{},",
             "\"txn_per_sec\":{:.6},",
             "\"ops_per_sec\":{:.6},",
-            "\"checksum\":{}",
+            "\"checksum\":{},",
+            "\"total_committed_increments\":{},",
+            "\"final_sum\":{},",
+            "\"expected_final_sum\":{},",
+            "\"verified\":true",
             "}}"
         ),
         config.threads,
@@ -273,8 +292,41 @@ fn run() -> Result<(), String> {
         txn_per_sec,
         ops_per_sec,
         aggregate.checksum,
+        aggregate.total_committed_increments,
+        final_sum,
+        expected_final_sum,
     );
     Ok(())
+}
+
+fn verify_final_sum(
+    runtime: &Arc<Runtime>,
+    array: &TxnArray<u64>,
+    array_len: usize,
+) -> Result<u64, String> {
+    let mut worker = runtime
+        .attach()
+        .map_err(|error| format!("attach final verifier: {error:?}"))?;
+    let mut sum = 0_u64;
+    for index in 0..array_len {
+        let mut transaction = worker
+            .begin()
+            .map_err(|error| format!("begin final verification: {error:?}"))?;
+        let value = array
+            .get(&mut transaction, index)
+            .map_err(|error| format!("final read failed: {error:?}"))?
+            .map_err(|error| format!("final read escaped configured bounds: {error}"))?;
+        if !matches!(
+            transaction
+                .commit()
+                .map_err(|error| format!("final certification failed: {error:?}"))?,
+            CommitOutcome::Committed(_)
+        ) {
+            return Err("quiescent final verification aborted".to_owned());
+        }
+        sum = sum.wrapping_add(value);
+    }
+    Ok(sum)
 }
 
 fn transition_phase(phase: &AtomicU8, from: u8, to: u8, context: &str) -> Result<(), String> {
@@ -333,7 +385,7 @@ fn run_worker(
         previous_phase = current_phase;
         reported_quiescence = false;
 
-        materialize_transaction(&mut random, config, &mut operations);
+        let increments = materialize_transaction(&mut random, config, &mut operations);
         let mut logical_attempts = 0_u64;
         let mut logical_aborts = 0_u64;
         let committed_checksum = loop {
@@ -352,6 +404,8 @@ fn run_worker(
         let Some(committed_checksum) = committed_checksum else {
             break;
         };
+        stats.total_committed_increments =
+            stats.total_committed_increments.wrapping_add(increments);
         if current_phase == PHASE_MEASURE && phase.load(Ordering::Acquire) == PHASE_MEASURE {
             stats.commits = stats.commits.wrapping_add(1);
             stats.attempts = stats.attempts.wrapping_add(logical_attempts);
@@ -369,8 +423,9 @@ fn materialize_transaction(
     random: &mut SplitMix64,
     config: Config,
     operations: &mut Vec<Operation>,
-) {
+) -> u64 {
     operations.clear();
+    let mut increments = 0;
     for _ in 0..config.ops_per_txn {
         let mut key_number = random.next_u64() % config.keyspace;
         while operations
@@ -380,11 +435,13 @@ fn materialize_transaction(
             key_number = key_number.wrapping_add(1) % config.keyspace;
         }
         let write = random.next_u64() % 100 < u64::from(config.write_percent);
+        increments += u64::from(write);
         operations.push(Operation {
             index: key_number as usize,
             write,
         });
     }
+    increments
 }
 
 fn attempt_transaction(

@@ -1,17 +1,17 @@
 //! Core-owned typed transaction items and their private erased dispatch.
 
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::{
     any::{Any, TypeId},
     marker::PhantomData,
     num::NonZeroUsize,
-    panic::{catch_unwind, AssertUnwindSafe},
     rc::Rc,
 };
 
 use crate::{
-    adapter::{
-        FinishDisposition, FinishItem, InstallItem, ObservationOrder, ObservationRef,
-        PreflightFreeReadCapability, PreflightItem, TransactionalResource,
+    object::{
+        CommitVersionRequirement, CleanupDisposition, CleanupItem, InstallItem, ObservationOrder,
+        ObservationRef, PreflightFreeReadCapability, PreflightItem, TObject,
     },
     direct_commit::{DirectCommitCapability, DirectValidationItem, ErasedDirectCommitPlan},
     error::{
@@ -20,11 +20,11 @@ use crate::{
     },
     identity::{ObjectId, OccCommitId, OwnerId, ResourceClass, RuntimeId},
     lock::{
-        ExecutionCheckContext, FinishContext, InstallContext, LockDisposition, PredicateContext,
-        PreflightContext, PreflightFreeValidationContext, ValidationContext,
+        ExecutionCheckContext, CleanupContext, InstallContext, LockDisposition, PredicateContext,
+        LockContext, PreflightFreeValidationContext, ValidationContext,
     },
     runtime::RegisteredResource,
-    transaction::item_hash,
+    transaction::{item_hash, DirectCommitContext, DirectCommitStepFailure},
 };
 
 pub(crate) enum ObservationState<O, P> {
@@ -37,7 +37,7 @@ pub(crate) enum ObservationState<O, P> {
 impl<O, P> ObservationState<O, P> {
     fn as_ref<A>(&self) -> ObservationRef<'_, A>
     where
-        A: TransactionalResource<Observation = O, Predicate = P>,
+        A: TObject<Observation = O, Predicate = P>,
     {
         match self {
             Self::Unobserved => ObservationRef::Unobserved,
@@ -57,11 +57,11 @@ pub(crate) enum PreparationState<P> {
 
 /// Execution-hot state used by homogeneous typed batches.
 ///
-/// This mirrors the execution fields of [`ItemBox`], but deliberately omits
+/// This mirrors the execution fields of [`TransItem`], but deliberately omits
 /// the comparatively large intent and commit preparation. The batch keeps
 /// both in parallel vectors so point-operation walks touch only the compact
 /// identity, observation, and local-state stride.
-pub(crate) struct ItemData<A: TransactionalResource> {
+pub(crate) struct TransItemData<A: TObject> {
     observation: ObservationState<A::Observation, A::Predicate>,
     // Kept separate from `observation` so the two adapter-owned values can be
     // removed and dropped under distinct unwind boundaries.
@@ -71,9 +71,21 @@ pub(crate) struct ItemData<A: TransactionalResource> {
     resource: Option<RegisteredResource<A>>,
 }
 
-/// The core-controlled, typed equivalent of one C++ `TItem` in the ordinary
+/// Borrows the immutable identity and separate mutable local field after
+/// successful direct preflight. Nothing in this view owns adapter state.
+pub(crate) struct DirectSingletonItem<'item, A: TObject> {
+    pub(crate) adapter: &'item A,
+    pub(crate) key: &'item A::Key,
+    pub(crate) local: &'item mut A::Local,
+    pub(crate) observation: ObservationRef<'item, A>,
+    // Preserve the original validation/install check even for malformed
+    // internal state, rather than certifying Some during view construction.
+    pub(crate) intent: &'item Option<A::Intent>,
+}
+
+/// The core-controlled, typed equivalent of one C++ `TransItem` in the ordinary
 /// heterogeneous representation.
-pub(crate) struct ItemBox<A: TransactionalResource> {
+pub(crate) struct TransItem<A: TObject> {
     // Field order is also the fail-safe automatic drop order. Normal cleanup
     // uses `teardown_after_finish` so each adapter-owned destructor is
     // individually contained and the resource handle remains alive last. A
@@ -90,7 +102,7 @@ pub(crate) struct ItemBox<A: TransactionalResource> {
     resource: Option<RegisteredResource<A>>,
 }
 
-impl<A: TransactionalResource> ItemData<A> {
+impl<A: TObject> TransItemData<A> {
     #[inline]
     pub(crate) fn new(resource: RegisteredResource<A>, key: A::Key, local: A::Local) -> Self {
         Self {
@@ -213,6 +225,29 @@ impl<A: TransactionalResource> ItemData<A> {
         (adapter, key, item)
     }
 
+    pub(crate) fn direct_singleton_parts<'item>(
+        &'item mut self,
+        intent: &'item Option<A::Intent>,
+    ) -> DirectSingletonItem<'item, A> {
+        let Self {
+            resource,
+            key,
+            local,
+            observation,
+            ..
+        } = self;
+        DirectSingletonItem {
+            adapter: resource
+                .as_ref()
+                .expect("active item retains its resource")
+                .adapter(),
+            key: key.as_ref().expect("active item retains its key"),
+            local: local.as_mut().expect("active item retains its local state"),
+            observation: observation.as_ref::<A>(),
+            intent,
+        }
+    }
+
     pub(crate) fn direct_validation_parts<'item>(
         &'item self,
         intent: &'item Option<A::Intent>,
@@ -318,7 +353,7 @@ impl<A: TransactionalResource> ItemData<A> {
         &mut self,
         intent: &mut Option<A::Intent>,
         preparation: &mut PreparationState<A::Prepared>,
-        cx: &mut PreflightContext<'_>,
+        cx: &mut LockContext<'_>,
     ) -> Result<(), PrepareError> {
         let Self {
             observation,
@@ -337,7 +372,7 @@ impl<A: TransactionalResource> ItemData<A> {
             intent,
         );
         let prepared =
-            adapter.preflight(key.as_ref().expect("active item retains its key"), view, cx)?;
+            adapter.lock(key.as_ref().expect("active item retains its key"), view, cx)?;
         *preparation = PreparationState::Prepared(prepared);
         Ok(())
     }
@@ -350,7 +385,7 @@ impl<A: TransactionalResource> ItemData<A> {
         &mut self,
         intent: &mut Option<A::Intent>,
         preparation: &mut PreparationState<A::Prepared>,
-        cx: &mut PreflightContext<'_>,
+        cx: &mut LockContext<'_>,
     ) -> Result<(), PrepareError> {
         self.preflight_full_typed(intent, preparation, cx)
     }
@@ -376,7 +411,7 @@ impl<A: TransactionalResource> ItemData<A> {
             .as_ref()
             .expect("active item retains its resource")
             .adapter()
-            .upgrade_predicate(
+            .check_predicate(
                 self.key.as_ref().expect("active item retains its key"),
                 predicate,
                 prepared,
@@ -478,7 +513,7 @@ impl<A: TransactionalResource> ItemData<A> {
                 .as_ref()
                 .expect("active item retains its resource")
                 .adapter()
-                .validate_read(
+                .check(
                     self.key.as_ref().expect("active item retains its key"),
                     observation,
                     prepared,
@@ -533,6 +568,8 @@ impl<A: TransactionalResource> ItemData<A> {
             unreachable!("prepared state was checked before install");
         };
         *preparation = PreparationState::Installed(prepared);
+        #[cfg(feature = "test-install-observer")]
+        crate::test_install::write_installed();
     }
 
     /// Statically dispatched finish used by a homogeneous typed batch.
@@ -541,8 +578,8 @@ impl<A: TransactionalResource> ItemData<A> {
         &mut self,
         intent: &mut Option<A::Intent>,
         preparation: &mut PreparationState<A::Prepared>,
-        disposition: FinishDisposition,
-        cx: &mut FinishContext<'_>,
+        disposition: CleanupDisposition,
+        cx: &mut CleanupContext<'_>,
     ) {
         let Self {
             observation,
@@ -554,13 +591,13 @@ impl<A: TransactionalResource> ItemData<A> {
         let resource = resource.as_ref().expect("active item retains its resource");
         let adapter = resource.adapter();
         if matches!(preparation, PreparationState::PreflightFreeRead)
-            && disposition == FinishDisposition::Committed
+            && disposition == CleanupDisposition::Committed
         {
             let capability: &PreflightFreeReadCapability<A> = adapter
                 .preflight_free_read_capability()
                 .expect("preflight-free read capability disappeared before committed finish");
             if let Some(finish_committed) = capability.finish_committed_callback() {
-                let view = FinishItem::new(
+                let view = CleanupItem::new(
                     local.as_mut().expect("active item retains its local state"),
                     observation.as_ref::<A>(),
                     intent,
@@ -581,12 +618,12 @@ impl<A: TransactionalResource> ItemData<A> {
                 Some(prepared)
             }
         };
-        let view = FinishItem::new(
+        let view = CleanupItem::new(
             local.as_mut().expect("active item retains its local state"),
             observation.as_ref::<A>(),
             intent,
         );
-        adapter.finish(
+        adapter.cleanup(
             key.as_ref().expect("active item retains its key"),
             view,
             prepared,
@@ -617,7 +654,7 @@ impl<A: TransactionalResource> ItemData<A> {
     }
 }
 
-impl<A: TransactionalResource> ItemBox<A> {
+impl<A: TObject> TransItem<A> {
     #[inline]
     pub(crate) fn new(resource: RegisteredResource<A>, key: A::Key, local: A::Local) -> Self {
         Self {
@@ -632,8 +669,8 @@ impl<A: TransactionalResource> ItemBox<A> {
     }
 
     #[inline]
-    fn from_data(data: ItemData<A>, intent: Option<A::Intent>) -> Self {
-        let ItemData {
+    fn from_data(data: TransItemData<A>, intent: Option<A::Intent>) -> Self {
+        let TransItemData {
             observation,
             retained_predicate,
             local,
@@ -693,7 +730,7 @@ impl<A: TransactionalResource> ItemBox<A> {
     // `ErasedItem::preflight`, and those reads should not pay the stack frame
     // needed by a resource's potentially large write-planning callback.
     #[inline(never)]
-    fn preflight_full(&mut self, cx: &mut PreflightContext<'_>) -> Result<(), PrepareError> {
+    fn preflight_full(&mut self, cx: &mut LockContext<'_>) -> Result<(), PrepareError> {
         let Self {
             intent,
             preparation: _,
@@ -713,7 +750,7 @@ impl<A: TransactionalResource> ItemBox<A> {
             intent,
         );
         let prepared =
-            adapter.preflight(key.as_ref().expect("active item retains its key"), view, cx)?;
+            adapter.lock(key.as_ref().expect("active item retains its key"), view, cx)?;
         self.preparation = PreparationState::Prepared(prepared);
         Ok(())
     }
@@ -755,11 +792,15 @@ pub(crate) enum BatchFinishStage {
 pub(crate) trait ErasedItemBatch: Any {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
-    fn adapter_type_id(&self) -> TypeId;
     fn active_len(&self) -> usize;
-    fn commit_shape(&self) -> (bool, bool);
+    fn commit_shape(&self) -> (bool, bool, bool);
     fn is_preflight_free_read_only(&self) -> bool;
     fn select_direct_commit(&mut self) -> bool;
+    /// Enters the shared phase driver once with this batch's concrete type.
+    fn run_single_item_direct(
+        &mut self,
+        cx: &mut DirectCommitContext<'_, '_>,
+    ) -> Result<(), DirectCommitStepFailure>;
     fn direct_preflight(
         &mut self,
         runtime_id: RuntimeId,
@@ -775,7 +816,7 @@ pub(crate) trait ErasedItemBatch: Any {
         disposition: LockDisposition,
     ) -> Result<(), AdapterFault>;
     fn teardown_direct_plan(&mut self) -> Result<(), ()>;
-    fn preflight(&mut self, cx: &mut PreflightContext<'_>) -> Result<(), PrepareError>;
+    fn preflight(&mut self, cx: &mut LockContext<'_>) -> Result<(), PrepareError>;
     fn upgrade_predicates(&mut self, cx: &PredicateContext<'_>) -> Result<(), CheckError>;
     fn validate_preflight_free_reads(
         &mut self,
@@ -785,8 +826,8 @@ pub(crate) trait ErasedItemBatch: Any {
     fn install(&mut self, cx: &mut InstallContext<'_>);
     fn finish_and_teardown(
         &mut self,
-        disposition: FinishDisposition,
-        cx: &mut FinishContext<'_>,
+        disposition: CleanupDisposition,
+        cx: &mut CleanupContext<'_>,
         stage: &mut BatchFinishStage,
     );
     fn drain_active_into(&mut self, destination: &mut [Option<Box<dyn ErasedItem>>]);
@@ -795,7 +836,7 @@ pub(crate) trait ErasedItemBatch: Any {
 
 /// Worker-pooled typed storage shared by exact unique batches and homogeneous
 /// scalar transactions.
-pub(crate) struct TypedItemBatch<A: TransactionalResource> {
+pub(crate) struct TypedTransItemBatch<A: TObject> {
     // Intent is execution-hot only for the subset of accesses that stage a
     // write. Keeping the dense optional values parallel to `items` removes
     // their full maximum footprint from every point-operation item stride.
@@ -820,7 +861,7 @@ pub(crate) struct TypedItemBatch<A: TransactionalResource> {
     // Direct preparation deliberately leaves the generic per-item sidecar
     // empty. This exact batch-level marker selects finish-without-Prepared.
     direct_prepared: bool,
-    items: Vec<ItemData<A>>,
+    items: Vec<TransItemData<A>>,
     active_len: usize,
     // One advisory bit per exact live binding. A clear bit proves absence;
     // a set bit is only a possible match and must never replace the exact Arc
@@ -834,10 +875,11 @@ pub(crate) struct TypedItemBatch<A: TransactionalResource> {
     // and adapter preflight cannot later add or remove execution-time state.
     has_writes: bool,
     has_predicates: bool,
+    requires_ordered_commit_id: bool,
     all_preflight_free_reads: bool,
 }
 
-impl<A: TransactionalResource> TypedItemBatch<A> {
+impl<A: TObject> TypedTransItemBatch<A> {
     pub(crate) const fn new() -> Self {
         Self {
             intents: Vec::new(),
@@ -852,6 +894,7 @@ impl<A: TransactionalResource> TypedItemBatch<A> {
             active_binding_filter: 0,
             has_writes: false,
             has_predicates: false,
+            requires_ordered_commit_id: false,
             all_preflight_free_reads: true,
         }
     }
@@ -882,7 +925,7 @@ impl<A: TransactionalResource> TypedItemBatch<A> {
     }
 
     #[inline]
-    pub(crate) fn pooled_item_mut(&mut self, slot: usize) -> Option<&mut ItemData<A>> {
+    pub(crate) fn pooled_item_mut(&mut self, slot: usize) -> Option<&mut TransItemData<A>> {
         debug_assert_eq!(slot, self.active_len);
         self.items.get_mut(slot)
     }
@@ -901,7 +944,7 @@ impl<A: TransactionalResource> TypedItemBatch<A> {
     #[inline]
     pub(crate) fn push_active<const NEW_BINDING: bool>(
         &mut self,
-        item: ItemData<A>,
+        item: TransItemData<A>,
         direct_capability: Option<&'static DirectCommitCapability<A>>,
     ) {
         debug_assert_eq!(self.active_len, self.items.len());
@@ -975,13 +1018,13 @@ impl<A: TransactionalResource> TypedItemBatch<A> {
     pub(crate) fn active_item_parts_mut(
         &mut self,
         slot: usize,
-    ) -> (&mut ItemData<A>, &mut Option<A::Intent>) {
+    ) -> (&mut TransItemData<A>, &mut Option<A::Intent>) {
         debug_assert!(slot < self.active_len);
         (&mut self.items[slot], &mut self.intents[slot])
     }
 
     #[inline]
-    pub(crate) fn active_item(&self, slot: usize) -> &ItemData<A> {
+    pub(crate) fn active_item(&self, slot: usize) -> &TransItemData<A> {
         debug_assert!(slot < self.active_len);
         &self.items[slot]
     }
@@ -1019,6 +1062,12 @@ impl<A: TransactionalResource> TypedItemBatch<A> {
         let intent = &self.intents[slot];
         if intent.is_some() {
             self.has_writes = true;
+            self.requires_ordered_commit_id |= item
+                .resource
+                .as_ref()
+                .expect("active item retains its resource")
+                .commit_version_requirement()
+                == CommitVersionRequirement::Ordered;
         }
         self.has_predicates |= matches!(item.observation, ObservationState::Predicate(_));
         if self.all_preflight_free_reads {
@@ -1034,6 +1083,7 @@ impl<A: TransactionalResource> TypedItemBatch<A> {
         self.direct_capability_ineligible = false;
         self.has_writes = false;
         self.has_predicates = false;
+        self.requires_ordered_commit_id = false;
         self.all_preflight_free_reads = true;
     }
 
@@ -1053,6 +1103,24 @@ impl<A: TransactionalResource> TypedItemBatch<A> {
         }
         self.direct_capability_summary
     }
+
+    fn retain_direct_plan(&mut self) -> Result<(), PrepareError> {
+        let capability = self
+            .selected_direct_capability
+            .ok_or_else(|| AdapterFault::invariant(AdapterPhase::Preflight))?;
+        let replace = self
+            .direct_plan
+            .as_ref()
+            .is_some_and(|plan| !std::ptr::eq(plan.capability(), capability));
+        if replace {
+            drop(self.direct_plan.take());
+        }
+        if self.direct_plan.is_none() {
+            self.direct_plan = Some(capability.create_plan());
+        }
+        self.direct_prepared = true;
+        Ok(())
+    }
 }
 
 /// Maps one stable, nonzero binding allocation address to an advisory bit.
@@ -1060,13 +1128,13 @@ impl<A: TransactionalResource> TypedItemBatch<A> {
 /// six bits. Collisions are expected and are always resolved by exact binding
 /// equality when a positive result matters.
 #[inline(always)]
-fn active_binding_filter_bit<A: TransactionalResource>(resource: &RegisteredResource<A>) -> u64 {
+fn active_binding_filter_bit<A: TObject>(resource: &RegisteredResource<A>) -> u64 {
     let address = resource.binding_identity().get() as u64;
     let bit = address.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> 58;
     1_u64 << bit
 }
 
-impl<A: TransactionalResource> ErasedItemBatch for TypedItemBatch<A> {
+impl<A: TObject> ErasedItemBatch for TypedTransItemBatch<A> {
     fn as_any(&self) -> &dyn Any {
         self
     }
@@ -1075,17 +1143,16 @@ impl<A: TransactionalResource> ErasedItemBatch for TypedItemBatch<A> {
         self
     }
 
-    #[inline]
-    fn adapter_type_id(&self) -> TypeId {
-        TypeId::of::<A>()
-    }
-
     fn active_len(&self) -> usize {
         self.active_len
     }
 
-    fn commit_shape(&self) -> (bool, bool) {
-        (self.has_writes, self.has_predicates)
+    fn commit_shape(&self) -> (bool, bool, bool) {
+        (
+            self.has_writes,
+            self.has_predicates,
+            self.requires_ordered_commit_id,
+        )
     }
 
     fn is_preflight_free_read_only(&self) -> bool {
@@ -1098,25 +1165,53 @@ impl<A: TransactionalResource> ErasedItemBatch for TypedItemBatch<A> {
         self.selected_direct_capability.is_some()
     }
 
+    fn run_single_item_direct(
+        &mut self,
+        cx: &mut DirectCommitContext<'_, '_>,
+    ) -> Result<(), DirectCommitStepFailure> {
+        debug_assert_eq!(self.active_len, 1);
+        debug_assert!(self.has_writes && !self.has_predicates);
+        cx.preflight_step(|_, _| {
+            if self.active_len != 1 || self.items.is_empty() || self.intents.is_empty() {
+                return Err(AdapterFault::invariant(AdapterPhase::Preflight).into());
+            }
+            self.retain_direct_plan()
+        })?;
+        // The concrete entry only borrows the retained plan. Its complete
+        // success path is static; failed teardown returns to this owner before
+        // either the plan or a caught panic payload can be destroyed.
+        let result = self
+            .direct_plan
+            .as_mut()
+            .expect("successful direct preflight retains its plan")
+            .run_single_item_direct(
+                self.items
+                    .first_chunk_mut::<1>()
+                    .expect("singleton item remains present"),
+                self.intents
+                    .first_chunk_mut::<1>()
+                    .expect("singleton intent remains present"),
+                self.requires_ordered_commit_id,
+                cx,
+            );
+        if let Err(DirectCommitStepFailure::ReleasedPlanTeardown(payload)) = result {
+            let plan = self
+                .direct_plan
+                .take()
+                .expect("failed teardown retains its plan");
+            std::mem::forget(plan);
+            drop(payload);
+            return Err(DirectCommitStepFailure::ReleasedPlanTeardown(None));
+        }
+        result
+    }
+
     fn direct_preflight(
         &mut self,
         runtime_id: RuntimeId,
         max_locks: usize,
     ) -> Result<(), PrepareError> {
-        let capability = self
-            .selected_direct_capability
-            .ok_or_else(|| AdapterFault::invariant(crate::error::AdapterPhase::Preflight))?;
-        let replace = self
-            .direct_plan
-            .as_ref()
-            .is_some_and(|plan| !std::ptr::eq(plan.capability(), capability));
-        if replace {
-            drop(self.direct_plan.take());
-        }
-        if self.direct_plan.is_none() {
-            self.direct_plan = Some(capability.create_plan());
-        }
-        self.direct_prepared = true;
+        self.retain_direct_plan()?;
         self.direct_plan
             .as_mut()
             .expect("direct plan was installed")
@@ -1214,7 +1309,7 @@ impl<A: TransactionalResource> ErasedItemBatch for TypedItemBatch<A> {
         Ok(())
     }
 
-    fn preflight(&mut self, cx: &mut PreflightContext<'_>) -> Result<(), PrepareError> {
+    fn preflight(&mut self, cx: &mut LockContext<'_>) -> Result<(), PrepareError> {
         debug_assert!(self.preparations.is_empty());
         assert_eq!(
             self.intents.len(),
@@ -1301,8 +1396,8 @@ impl<A: TransactionalResource> ErasedItemBatch for TypedItemBatch<A> {
 
     fn finish_and_teardown(
         &mut self,
-        disposition: FinishDisposition,
-        cx: &mut FinishContext<'_>,
+        disposition: CleanupDisposition,
+        cx: &mut CleanupContext<'_>,
         stage: &mut BatchFinishStage,
     ) {
         assert_eq!(
@@ -1315,7 +1410,7 @@ impl<A: TransactionalResource> ErasedItemBatch for TypedItemBatch<A> {
             let capability = self
                 .selected_direct_capability
                 .expect("a direct-prepared batch retains its selected capability");
-            let drop_only_committed = disposition == FinishDisposition::Committed
+            let drop_only_committed = disposition == CleanupDisposition::Committed
                 && capability.has_drop_only_committed_finish();
             if drop_only_committed {
                 for item_slot in (0..self.active_len).rev() {
@@ -1355,12 +1450,12 @@ impl<A: TransactionalResource> ErasedItemBatch for TypedItemBatch<A> {
             // reach this branch only after that lane's direct validation.
             debug_assert!(self.preparations.is_empty());
             debug_assert!(
-                disposition == FinishDisposition::Aborted || self.all_preflight_free_reads
+                disposition == CleanupDisposition::Aborted || self.all_preflight_free_reads
             );
             for item_slot in (0..self.active_len).rev() {
                 let item = &mut self.items[item_slot];
                 let intent = &mut self.intents[item_slot];
-                let mut preparation = if disposition == FinishDisposition::Committed {
+                let mut preparation = if disposition == CleanupDisposition::Committed {
                     PreparationState::PreflightFreeRead
                 } else {
                     PreparationState::Unprepared
@@ -1393,7 +1488,7 @@ impl<A: TransactionalResource> ErasedItemBatch for TypedItemBatch<A> {
             // The destination's retained resource was disposed under its own
             // unwind boundary before this infallible replacement phase. Its
             // prior item box therefore contains no adapter-owned live state.
-            drop(destination[item_slot].replace(Box::new(ItemBox::from_data(data, intent))));
+            drop(destination[item_slot].replace(Box::new(TransItem::from_data(data, intent))));
         }
         debug_assert_eq!(self.intents.len(), self.items.len());
         debug_assert!(self.intents.iter().all(Option::is_none));
@@ -1418,16 +1513,16 @@ impl<A: TransactionalResource> ErasedItemBatch for TypedItemBatch<A> {
 ///
 /// An entry is created only by `Transaction::with_item`, cannot escape its
 /// closure, and is structurally neither `Send` nor `Sync`.
-pub struct Entry<'entry, A: TransactionalResource> {
+pub struct TransProxy<'entry, A: TObject> {
     intent: &'entry mut Option<A::Intent>,
     observation: &'entry mut ObservationState<A::Observation, A::Predicate>,
     local: &'entry mut Option<A::Local>,
     not_send_sync: PhantomData<Rc<()>>,
 }
 
-impl<'entry, A: TransactionalResource> Entry<'entry, A> {
+impl<'entry, A: TObject> TransProxy<'entry, A> {
     #[inline]
-    pub(crate) fn new(item: &'entry mut ItemBox<A>) -> Self {
+    pub(crate) fn new(item: &'entry mut TransItem<A>) -> Self {
         Self {
             intent: &mut item.intent,
             observation: &mut item.observation,
@@ -1438,7 +1533,7 @@ impl<'entry, A: TransactionalResource> Entry<'entry, A> {
 
     #[inline]
     pub(crate) fn new_batch(
-        item: &'entry mut ItemData<A>,
+        item: &'entry mut TransItemData<A>,
         intent: &'entry mut Option<A::Intent>,
     ) -> Self {
         Self {
@@ -1480,7 +1575,7 @@ impl<'entry, A: TransactionalResource> Entry<'entry, A> {
 
     /// Records the first ordinary read observation for this logical item.
     #[inline]
-    pub fn record_read(&mut self, observation: A::Observation) -> Result<(), AccessError> {
+    pub fn add_read(&mut self, observation: A::Observation) -> Result<(), AccessError> {
         if !matches!(self.observation, ObservationState::Unobserved) {
             return Err(InvalidUse::IllegalItemState.into());
         }
@@ -1507,7 +1602,7 @@ impl<'entry, A: TransactionalResource> Entry<'entry, A> {
 
     /// Records the first optimistic predicate for this logical item.
     #[inline]
-    pub fn record_predicate(&mut self, predicate: A::Predicate) -> Result<(), AccessError> {
+    pub fn set_predicate(&mut self, predicate: A::Predicate) -> Result<(), AccessError> {
         if !matches!(self.observation, ObservationState::Unobserved) {
             return Err(InvalidUse::IllegalItemState.into());
         }
@@ -1517,7 +1612,7 @@ impl<'entry, A: TransactionalResource> Entry<'entry, A> {
 
     /// Stores an adapter-composed deferred intent.
     #[inline]
-    pub fn stage(&mut self, intent: A::Intent) -> Result<(), AccessError> {
+    pub fn add_write(&mut self, intent: A::Intent) -> Result<(), AccessError> {
         *self.intent = Some(intent);
         Ok(())
     }
@@ -1541,10 +1636,11 @@ pub(crate) trait ErasedItem: sealed::Sealed {
     ) -> bool;
     fn as_any_mut(&mut self) -> &mut dyn Any;
     fn has_intent(&self) -> bool;
+    fn requires_ordered_commit_id(&self) -> bool;
     fn has_predicate(&self) -> bool;
     fn is_preflight_free_read_candidate(&self) -> bool;
 
-    fn preflight(&mut self, cx: &mut PreflightContext<'_>) -> Result<(), PrepareError>;
+    fn preflight(&mut self, cx: &mut LockContext<'_>) -> Result<(), PrepareError>;
     #[allow(dead_code, reason = "reserved for the negotiated opaque profile")]
     fn revalidate_for_opacity(
         &self,
@@ -1557,14 +1653,14 @@ pub(crate) trait ErasedItem: sealed::Sealed {
     ) -> Result<(), CheckError>;
     fn validate(&self, cx: &ValidationContext<'_>) -> Result<(), CheckError>;
     fn install(&mut self, cx: &mut InstallContext<'_>);
-    fn finish(&mut self, disposition: FinishDisposition, cx: &mut FinishContext<'_>);
+    fn finish(&mut self, disposition: CleanupDisposition, cx: &mut CleanupContext<'_>);
     fn teardown_after_finish(&mut self);
     fn dispose_retained_resource(&mut self);
 }
 
-impl<A: TransactionalResource> sealed::Sealed for ItemBox<A> {}
+impl<A: TObject> sealed::Sealed for TransItem<A> {}
 
-impl<A: TransactionalResource> ErasedItem for ItemBox<A> {
+impl<A: TObject> ErasedItem for TransItem<A> {
     #[inline]
     fn identity_hash(&self) -> u64 {
         item_hash(
@@ -1605,6 +1701,16 @@ impl<A: TransactionalResource> ErasedItem for ItemBox<A> {
         self.intent.is_some()
     }
 
+    fn requires_ordered_commit_id(&self) -> bool {
+        self.intent.is_some()
+            && self
+                .resource
+                .as_ref()
+                .expect("active item retains its resource")
+                .commit_version_requirement()
+                == CommitVersionRequirement::Ordered
+    }
+
     fn has_predicate(&self) -> bool {
         matches!(self.observation, ObservationState::Predicate(_))
     }
@@ -1625,8 +1731,8 @@ impl<A: TransactionalResource> ErasedItem for ItemBox<A> {
     }
 
     #[inline(always)]
-    fn preflight(&mut self, cx: &mut PreflightContext<'_>) -> Result<(), PrepareError> {
-        if !matches!(self.preparation, PreparationState::Unprepared) {
+    fn preflight(&mut self, cx: &mut LockContext<'_>) -> Result<(), PrepareError> {
+        if matches!(self.preparation, PreparationState::Installed(_)) {
             return Err(crate::error::AdapterFault::invariant(
                 crate::error::AdapterPhase::Preflight,
             )
@@ -1667,7 +1773,7 @@ impl<A: TransactionalResource> ErasedItem for ItemBox<A> {
                         observation,
                         cx,
                     )?;
-                Ok(crate::adapter::OpacityToken::observation_order(observation))
+                Ok(crate::object::OpacityToken::observation_order(observation))
             }
             ObservationState::Predicate(predicate) => self
                 .resource
@@ -1697,7 +1803,7 @@ impl<A: TransactionalResource> ErasedItem for ItemBox<A> {
             .as_ref()
             .expect("active item retains its resource")
             .adapter()
-            .upgrade_predicate(
+            .check_predicate(
                 self.key.as_ref().expect("active item retains its key"),
                 predicate,
                 prepared,
@@ -1801,7 +1907,7 @@ impl<A: TransactionalResource> ErasedItem for ItemBox<A> {
                 .as_ref()
                 .expect("active item retains its resource")
                 .adapter()
-                .validate_read(
+                .check(
                     self.key.as_ref().expect("active item retains its key"),
                     observation,
                     prepared,
@@ -1851,9 +1957,11 @@ impl<A: TransactionalResource> ErasedItem for ItemBox<A> {
             unreachable!("prepared state was checked before install");
         };
         *preparation = PreparationState::Installed(prepared);
+        #[cfg(feature = "test-install-observer")]
+        crate::test_install::write_installed();
     }
 
-    fn finish(&mut self, disposition: FinishDisposition, cx: &mut FinishContext<'_>) {
+    fn finish(&mut self, disposition: CleanupDisposition, cx: &mut CleanupContext<'_>) {
         let Self {
             intent,
             preparation,
@@ -1866,13 +1974,13 @@ impl<A: TransactionalResource> ErasedItem for ItemBox<A> {
         let resource = resource.as_ref().expect("active item retains its resource");
         let adapter = resource.adapter();
         if matches!(preparation, PreparationState::PreflightFreeRead)
-            && disposition == FinishDisposition::Committed
+            && disposition == CleanupDisposition::Committed
         {
             let capability: &PreflightFreeReadCapability<A> = adapter
                 .preflight_free_read_capability()
                 .expect("preflight-free read capability disappeared before committed finish");
             if let Some(finish_committed) = capability.finish_committed_callback() {
-                let view = FinishItem::new(
+                let view = CleanupItem::new(
                     local.as_mut().expect("active item retains its local state"),
                     observation.as_ref::<A>(),
                     intent,
@@ -1893,12 +2001,12 @@ impl<A: TransactionalResource> ErasedItem for ItemBox<A> {
                 Some(prepared)
             }
         };
-        let view = FinishItem::new(
+        let view = CleanupItem::new(
             local.as_mut().expect("active item retains its local state"),
             observation.as_ref::<A>(),
             intent,
         );
-        adapter.finish(
+        adapter.cleanup(
             key.as_ref().expect("active item retains its key"),
             view,
             prepared,
@@ -1908,11 +2016,11 @@ impl<A: TransactionalResource> ErasedItem for ItemBox<A> {
     }
 
     fn teardown_after_finish(&mut self) {
-        ItemBox::teardown_after_finish(self);
+        TransItem::teardown_after_finish(self);
     }
 
     fn dispose_retained_resource(&mut self) {
-        ItemBox::dispose_retained_resource(self);
+        TransItem::dispose_retained_resource(self);
     }
 }
 
@@ -1942,28 +2050,28 @@ mod tests {
         _words: [usize; 3],
     }
 
-    impl crate::adapter::OpacityToken for Token {
+    impl crate::object::OpacityToken for Token {
         fn observation_order(&self) -> ObservationOrder {
             ObservationOrder::Unordered
         }
     }
 
-    impl TransactionalResource for Dummy {
+    impl TObject for Dummy {
         type Key = u64;
         type Local = LayoutRole;
         type Observation = Token;
-        type Predicate = crate::adapter::NoPredicate;
+        type Predicate = crate::object::NoPredicate;
         type Intent = LayoutIntent;
         type Prepared = LayoutPrepared;
 
         fn new_local(&self, _: &u64) -> Result<LayoutRole, crate::error::ItemInitError> {
             Ok(LayoutRole::Record)
         }
-        fn preflight(
+        fn lock(
             &self,
             _: &u64,
             _: PreflightItem<'_, Self>,
-            _: &mut PreflightContext<'_>,
+            _: &mut LockContext<'_>,
         ) -> Result<LayoutPrepared, PrepareError> {
             Ok(LayoutPrepared { _words: [0; 3] })
         }
@@ -1978,21 +2086,21 @@ mod tests {
         fn revalidate_predicate(
             &self,
             _: &u64,
-            predicate: &crate::adapter::NoPredicate,
+            predicate: &crate::object::NoPredicate,
             _: &ExecutionCheckContext<'_>,
         ) -> Result<ObservationOrder, CheckError> {
             match *predicate {}
         }
-        fn upgrade_predicate(
+        fn check_predicate(
             &self,
             _: &u64,
-            predicate: &crate::adapter::NoPredicate,
+            predicate: &crate::object::NoPredicate,
             _: &LayoutPrepared,
             _: &PredicateContext<'_>,
         ) -> Result<Token, CheckError> {
             match *predicate {}
         }
-        fn validate_read(
+        fn check(
             &self,
             _: &u64,
             _: &Token,
@@ -2009,20 +2117,20 @@ mod tests {
             _: &mut InstallContext<'_>,
         ) {
         }
-        fn finish(
+        fn cleanup(
             &self,
             _: &u64,
-            _: FinishItem<'_, Self>,
+            _: CleanupItem<'_, Self>,
             _: Option<&mut LayoutPrepared>,
-            _: FinishDisposition,
-            _: &mut FinishContext<'_>,
+            _: CleanupDisposition,
+            _: &mut CleanupContext<'_>,
         ) {
         }
     }
 
     #[test]
     fn observation_state_exposes_each_legal_borrow_shape() {
-        let state: ObservationState<Token, crate::adapter::NoPredicate> =
+        let state: ObservationState<Token, crate::object::NoPredicate> =
             ObservationState::Read(Token { _words: [0; 2] });
         assert!(matches!(state.as_ref::<Dummy>(), ObservationRef::Read(_)));
 
@@ -2036,8 +2144,8 @@ mod tests {
         struct LegacyItemBox {
             intent: Option<LayoutIntent>,
             preparation: LegacyPreparationState<LayoutPrepared>,
-            observation: ObservationState<Token, crate::adapter::NoPredicate>,
-            retained_predicate: Option<crate::adapter::NoPredicate>,
+            observation: ObservationState<Token, crate::object::NoPredicate>,
+            retained_predicate: Option<crate::object::NoPredicate>,
             local: Option<LayoutRole>,
             key: Option<u64>,
             resource: Option<RegisteredResource<Dummy>>,
@@ -2052,11 +2160,11 @@ mod tests {
             std::mem::size_of::<LegacyPreparationState<[usize; 4]>>()
         );
         assert_eq!(
-            std::mem::size_of::<ItemBox<Dummy>>(),
+            std::mem::size_of::<TransItem<Dummy>>(),
             std::mem::size_of::<LegacyItemBox>()
         );
         assert_eq!(
-            std::mem::align_of::<ItemBox<Dummy>>(),
+            std::mem::align_of::<TransItem<Dummy>>(),
             std::mem::align_of::<LegacyItemBox>()
         );
     }
@@ -2067,16 +2175,16 @@ mod tests {
         // targets: key 8, local 1, observation 16, intent 40, prepared 24,
         // and resource handle 8 bytes. Pin the 56-byte hot TPCC item stride;
         // the 40-byte optional intent and 32-byte preparation live in cold,
-        // phase-specific parallel streams while ItemBox remains unchanged.
+        // phase-specific parallel streams while TransItem remains unchanged.
         if cfg!(target_pointer_width = "64") {
             assert_eq!(std::mem::size_of::<LayoutIntent>(), 40);
             assert_eq!(std::mem::size_of::<Option<LayoutIntent>>(), 40);
             assert_eq!(std::mem::size_of::<LayoutPrepared>(), 24);
             assert_eq!(std::mem::size_of::<PreparationState<LayoutPrepared>>(), 32);
-            assert_eq!(std::mem::size_of::<ItemData<Dummy>>(), 56);
-            assert_eq!(std::mem::size_of::<ItemBox<Dummy>>(), 128);
+            assert_eq!(std::mem::size_of::<TransItemData<Dummy>>(), 56);
+            assert_eq!(std::mem::size_of::<TransItem<Dummy>>(), 128);
         }
-        assert!(std::mem::size_of::<ItemData<Dummy>>() < std::mem::size_of::<ItemBox<Dummy>>());
+        assert!(std::mem::size_of::<TransItemData<Dummy>>() < std::mem::size_of::<TransItem<Dummy>>());
 
         let runtime =
             crate::runtime::Runtime::new(crate::runtime::RuntimeConfig::default()).unwrap();
@@ -2085,24 +2193,24 @@ mod tests {
             .unwrap()
             .register_resource(ResourceClass::new(1).unwrap(), Dummy)
             .unwrap();
-        let mut batch = TypedItemBatch::<Dummy>::new();
+        let mut batch = TypedTransItemBatch::<Dummy>::new();
 
         assert!(batch.intents.is_empty());
         assert_eq!(batch.intents.capacity(), 0);
         assert!(batch.preparations.is_empty());
         assert_eq!(batch.preparations.capacity(), 0);
         batch.push_active::<true>(
-            ItemData::new(resource.clone(), 17, LayoutRole::Record),
+            TransItemData::new(resource.clone(), 17, LayoutRole::Record),
             None,
         );
         assert_eq!(batch.intents.len(), 1);
         assert!(batch.intents[0].is_none());
         {
             let (item, intent) = batch.active_item_parts_mut(0);
-            let mut entry = Entry::new_batch(item, intent);
-            entry.record_read(Token { _words: [0; 2] }).unwrap();
+            let mut entry = TransProxy::new_batch(item, intent);
+            entry.add_read(Token { _words: [0; 2] }).unwrap();
             entry
-                .stage(LayoutIntent {
+                .add_write(LayoutIntent {
                     _words: [0; 4],
                     _niche: NonZeroUsize::new(1).unwrap(),
                 })
@@ -2118,7 +2226,7 @@ mod tests {
             .as_deref_mut()
             .unwrap()
             .as_any_mut()
-            .downcast_mut::<ItemBox<Dummy>>()
+            .downcast_mut::<TransItem<Dummy>>()
             .unwrap();
 
         assert_eq!(item.key.as_ref(), Some(&17));
@@ -2141,16 +2249,16 @@ mod tests {
             .unwrap()
             .register_resource(ResourceClass::new(1).unwrap(), Dummy)
             .unwrap();
-        let mut batch = TypedItemBatch::<Dummy>::new();
+        let mut batch = TypedTransItemBatch::<Dummy>::new();
         batch.try_reserve_for_len(2).unwrap();
-        batch.push_active::<true>(ItemData::new(resource.clone(), 1, LayoutRole::Record), None);
+        batch.push_active::<true>(TransItemData::new(resource.clone(), 1, LayoutRole::Record), None);
         let binding_filter = batch.active_binding_filter;
-        batch.push_active::<false>(ItemData::new(resource.clone(), 2, LayoutRole::Record), None);
+        batch.push_active::<false>(TransItemData::new(resource.clone(), 2, LayoutRole::Record), None);
         assert_eq!(batch.active_binding_filter, binding_filter);
         for slot in 0..2 {
             let (item, intent) = batch.active_item_parts_mut(slot);
-            Entry::new_batch(item, intent)
-                .stage(LayoutIntent {
+            TransProxy::new_batch(item, intent)
+                .add_write(LayoutIntent {
                     _words: [slot; 4],
                     _niche: NonZeroUsize::new(slot + 1).unwrap(),
                 })
@@ -2160,9 +2268,9 @@ mod tests {
 
         let retained_capacity = batch.intents.capacity();
         let retained_allocation = batch.intents.as_ptr();
-        let mut finish = FinishContext::new();
+        let mut finish = CleanupContext::new();
         let mut stage = BatchFinishStage::Callback;
-        batch.finish_and_teardown(FinishDisposition::Aborted, &mut finish, &mut stage);
+        batch.finish_and_teardown(CleanupDisposition::Aborted, &mut finish, &mut stage);
         assert_eq!(batch.active_len(), 0);
         assert_eq!(batch.intents.len(), 2);
         assert!(batch.intents.iter().all(Option::is_none));
@@ -2178,7 +2286,7 @@ mod tests {
         assert_eq!(batch.intents.as_ptr(), retained_allocation);
         {
             let (item, intent) = batch.active_item_parts_mut(0);
-            let entry = Entry::new_batch(item, intent);
+            let entry = TransProxy::new_batch(item, intent);
             assert!(entry.intent().is_none());
         }
 
@@ -2195,7 +2303,7 @@ mod tests {
             .as_deref_mut()
             .unwrap()
             .as_any_mut()
-            .downcast_mut::<ItemBox<Dummy>>()
+            .downcast_mut::<TransItem<Dummy>>()
             .unwrap();
         assert_eq!(materialized.key.as_ref(), Some(&3));
         assert!(materialized.intent.is_none());
@@ -2234,8 +2342,8 @@ mod tests {
             active_binding_filter_bit(second)
         );
 
-        let mut batch = TypedItemBatch::<Dummy>::new();
-        batch.push_active::<true>(ItemData::new(first.clone(), 1, LayoutRole::Record), None);
+        let mut batch = TypedTransItemBatch::<Dummy>::new();
+        batch.push_active::<true>(TransItemData::new(first.clone(), 1, LayoutRole::Record), None);
         assert!(batch.contains_active_binding(first));
         assert!(!batch.binding_definitely_absent(second));
         assert!(
@@ -2243,13 +2351,13 @@ mod tests {
             "a positive filter bit must still use exact binding equality"
         );
 
-        batch.push_active::<true>(ItemData::new(second.clone(), 2, LayoutRole::Record), None);
+        batch.push_active::<true>(TransItemData::new(second.clone(), 2, LayoutRole::Record), None);
         assert!(batch.contains_active_binding(first));
         assert!(batch.contains_active_binding(second));
 
-        let mut finish = FinishContext::new();
+        let mut finish = CleanupContext::new();
         let mut stage = BatchFinishStage::Callback;
-        batch.finish_and_teardown(FinishDisposition::Aborted, &mut finish, &mut stage);
+        batch.finish_and_teardown(CleanupDisposition::Aborted, &mut finish, &mut stage);
         assert_eq!(batch.active_len(), 0);
         assert_eq!(batch.active_binding_filter, 0);
         assert!(batch.binding_definitely_absent(first));

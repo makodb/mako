@@ -48,7 +48,9 @@ pub trait CommitHook {
     fn pre_install(&mut self) -> Result<(), CommitHookError>;
 
     /// Publishes infallible upper-layer metadata after every staged write has
-    /// been installed and before any transaction lock is released.
+    /// been installed and before core releases the remaining transaction locks.
+    /// Datatypes that opt into install-time publication may already be visible;
+    /// table adapters retain their locks through this hook.
     ///
     /// Implementations must not panic. At this point the transaction is
     /// irrevocable, so this callback cannot reject the commit or roll back its

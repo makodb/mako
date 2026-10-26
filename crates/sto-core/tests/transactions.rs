@@ -10,12 +10,12 @@ use std::{
 };
 
 use sto_core::{
-    AccessError, Active, CapacityError, CheckError, CommitOutcome, Conflict, Entry,
-    ExecutionCheckContext, FinishContext, FinishDisposition, FinishItem, InstallContext,
+    AccessError, Active, CapacityError, CheckError, CommitOutcome, Conflict, TransProxy,
+    ExecutionCheckContext, CleanupContext, CleanupDisposition, CleanupItem, InstallContext,
     InstallItem, InvalidUse, ItemBatchControl, ItemBatchOutcome, ItemInitError, NoPredicate,
-    ObservationOrder, ObservationRef, OpacityToken, PredicateContext, PreflightContext,
+    ObservationOrder, ObservationRef, OpacityToken, PredicateContext, LockContext,
     PreflightItem, PrepareError, ResourceClass, Runtime, RuntimeConfig, RuntimeHealth, Transaction,
-    TransactionalResource, TxnCell, UniqueItemKeyIndex, UniqueItemKeys, ValidationContext,
+    TObject, TxnCell, UniqueItemKeyIndex, UniqueItemKeys, ValidationContext,
 };
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -89,7 +89,7 @@ impl Drop for FixtureIntent {
     }
 }
 
-impl TransactionalResource for FixtureAdapter {
+impl TObject for FixtureAdapter {
     type Key = CollisionKey;
     type Local = ();
     type Observation = UnorderedObservation;
@@ -105,11 +105,11 @@ impl TransactionalResource for FixtureAdapter {
         Ok(())
     }
 
-    fn preflight(
+    fn lock(
         &self,
         _key: &Self::Key,
         _item: PreflightItem<'_, Self>,
-        _cx: &mut PreflightContext<'_>,
+        _cx: &mut LockContext<'_>,
     ) -> Result<Self::Prepared, PrepareError> {
         Ok(())
     }
@@ -132,7 +132,7 @@ impl TransactionalResource for FixtureAdapter {
         match *predicate {}
     }
 
-    fn upgrade_predicate(
+    fn check_predicate(
         &self,
         _key: &Self::Key,
         predicate: &Self::Predicate,
@@ -142,7 +142,7 @@ impl TransactionalResource for FixtureAdapter {
         match *predicate {}
     }
 
-    fn validate_read(
+    fn check(
         &self,
         _key: &Self::Key,
         _observation: &Self::Observation,
@@ -161,13 +161,13 @@ impl TransactionalResource for FixtureAdapter {
     ) {
     }
 
-    fn finish(
+    fn cleanup(
         &self,
         _key: &Self::Key,
-        _item: FinishItem<'_, Self>,
+        _item: CleanupItem<'_, Self>,
         _prepared: Option<&mut Self::Prepared>,
-        _disposition: FinishDisposition,
-        _cx: &mut FinishContext<'_>,
+        _disposition: CleanupDisposition,
+        _cx: &mut CleanupContext<'_>,
     ) {
         self.finished.fetch_add(1, Ordering::Relaxed);
     }
@@ -274,7 +274,7 @@ fn full_key_equality_survives_hash_collisions_and_reuses_items() {
 
     for key in [CollisionKey(1), CollisionKey(2), CollisionKey(1)] {
         transaction
-            .with_item(&resource, key, |_entry: &mut Entry<'_, FixtureAdapter>| {
+            .with_item(&resource, key, |_entry: &mut TransProxy<'_, FixtureAdapter>| {
                 Ok(())
             })
             .unwrap();
@@ -291,7 +291,7 @@ fn full_key_equality_survives_hash_collisions_and_reuses_items() {
     let mut transaction = worker.begin().unwrap();
     for key in [CollisionKey(2), CollisionKey(3), CollisionKey(2)] {
         transaction
-            .with_item(&resource, key, |_entry: &mut Entry<'_, FixtureAdapter>| {
+            .with_item(&resource, key, |_entry: &mut TransProxy<'_, FixtureAdapter>| {
                 Ok(())
             })
             .unwrap();
@@ -495,7 +495,7 @@ fn distinct_resource_unique_groups_append_without_key_hashing() {
         .with_unique_item_batch(
             &first,
             UniqueItemKeys::try_new(&first_keys).unwrap(),
-            |_, entry| entry.record_read(UnorderedObservation),
+            |_, entry| entry.add_read(UnorderedObservation),
         )
         .unwrap();
     transaction
@@ -503,7 +503,7 @@ fn distinct_resource_unique_groups_append_without_key_hashing() {
             assert!(session.can_start_unique_item_batch());
             assert!(session.try_with_unique_item_batch(
                 UniqueItemKeys::try_new(&second_keys).unwrap(),
-                |_, entry| entry.record_read(UnorderedObservation),
+                |_, entry| entry.add_read(UnorderedObservation),
             )?);
             assert!(!session.can_start_unique_item_batch());
             Ok(())
@@ -539,12 +539,12 @@ fn distinct_binding_scalars_extend_the_unindexed_typed_suffix() {
         .with_unique_item_batch(
             &first,
             UniqueItemKeys::try_new(&first_keys).unwrap(),
-            |_, entry| entry.record_read(UnorderedObservation),
+            |_, entry| entry.add_read(UnorderedObservation),
         )
         .unwrap();
     transaction
         .with_item(&second, CollisionKey(10), |entry| {
-            entry.record_read(UnorderedObservation)
+            entry.add_read(UnorderedObservation)
         })
         .unwrap();
     transaction
@@ -555,7 +555,7 @@ fn distinct_binding_scalars_extend_the_unindexed_typed_suffix() {
         .unwrap();
     transaction
         .with_item(&third, CollisionKey(20), |entry| {
-            entry.record_read(UnorderedObservation)
+            entry.add_read(UnorderedObservation)
         })
         .unwrap();
 
@@ -611,7 +611,7 @@ fn streaming_unique_batch_retains_only_the_stopped_prefix() {
             session.try_with_unique_item_batch_while(
                 UniqueItemKeys::try_new(&keys).unwrap(),
                 |index, entry| {
-                    entry.record_read(UnorderedObservation)?;
+                    entry.add_read(UnorderedObservation)?;
                     Ok(if index == 1 {
                         ItemBatchControl::Stop
                     } else {
@@ -648,7 +648,7 @@ fn streaming_unique_batch_reports_capacity_after_its_successful_prefix() {
             .try_with_unique_item_batch_while(
                 UniqueItemKeys::try_new(&keys).unwrap(),
                 |_, entry| {
-                    entry.record_read(UnorderedObservation)?;
+                    entry.add_read(UnorderedObservation)?;
                     operated.fetch_add(1, Ordering::Relaxed);
                     Ok(ItemBatchControl::Continue)
                 },
@@ -681,7 +681,7 @@ fn unindexed_scalar_prefix_accepts_unique_suffix_and_materializes_on_lookup() {
 
     transaction
         .with_item(&first, CollisionKey(10), |entry| {
-            entry.record_read(UnorderedObservation)
+            entry.add_read(UnorderedObservation)
         })
         .unwrap();
     COLLISION_HASH_CALLS.with(|calls| assert_eq!(calls.get(), 0));
@@ -692,7 +692,7 @@ fn unindexed_scalar_prefix_accepts_unique_suffix_and_materializes_on_lookup() {
             assert!(session.can_start_unique_item_batch());
             assert!(session.try_with_unique_item_batch(
                 UniqueItemKeys::try_new(&suffix).unwrap(),
-                |_, entry| entry.record_read(UnorderedObservation),
+                |_, entry| entry.add_read(UnorderedObservation),
             )?);
             Ok(())
         })
@@ -741,7 +741,7 @@ fn indexed_typed_prefix_materializes_only_the_unique_suffix_into_ordinary_storag
 
     transaction
         .with_item(&first, CollisionKey(10), |entry| {
-            entry.record_read(UnorderedObservation)
+            entry.add_read(UnorderedObservation)
         })
         .unwrap();
     let suffix = [CollisionKey(20), CollisionKey(21)];
@@ -749,7 +749,7 @@ fn indexed_typed_prefix_materializes_only_the_unique_suffix_into_ordinary_storag
         .with_unique_item_batch(
             &second,
             UniqueItemKeys::try_new(&suffix).unwrap(),
-            |_, entry| entry.record_read(UnorderedObservation),
+            |_, entry| entry.add_read(UnorderedObservation),
         )
         .unwrap();
 
@@ -792,14 +792,14 @@ fn indexed_prefix_suffix_hash_unwind_aborts_every_item_and_worker_recovers() {
         let mut transaction = worker.begin().unwrap();
         transaction
             .with_item(&first, CollisionKey(10), |entry| {
-                entry.record_read(UnorderedObservation)
+                entry.add_read(UnorderedObservation)
             })
             .unwrap();
         transaction
             .with_unique_item_batch(
                 &second,
                 UniqueItemKeys::try_new(&suffix).unwrap(),
-                |_, entry| entry.record_read(UnorderedObservation),
+                |_, entry| entry.add_read(UnorderedObservation),
             )
             .unwrap();
 
@@ -842,7 +842,7 @@ fn direct_unique_group_rejects_a_previously_used_resource_binding() {
         .with_unique_item_batch(
             &resource,
             UniqueItemKeys::try_new(&first_keys).unwrap(),
-            |_, entry| entry.record_read(UnorderedObservation),
+            |_, entry| entry.add_read(UnorderedObservation),
         )
         .unwrap();
     assert_eq!(
@@ -877,7 +877,7 @@ fn resolved_session_falls_back_after_same_resource_unique_group() {
         .with_unique_item_batch(
             &resource,
             UniqueItemKeys::try_new(&first_keys).unwrap(),
-            |_, entry| entry.record_read(UnorderedObservation),
+            |_, entry| entry.add_read(UnorderedObservation),
         )
         .unwrap();
 
@@ -900,7 +900,7 @@ fn resolved_session_falls_back_after_same_resource_unique_group() {
             session.with_resolved_item(
                 || Ok(Some((CollisionKey(2), ()))),
                 || panic!("a resolved key must not invoke create"),
-                |entry, ()| entry.record_read(UnorderedObservation),
+                |entry, ()| entry.add_read(UnorderedObservation),
             )?;
             session.with_resolved_item(
                 || Ok(Some((CollisionKey(1), ()))),
@@ -1131,9 +1131,9 @@ fn multiple_unique_groups_survive_scalar_and_mixed_adapter_materialization() {
             &first,
             UniqueItemKeys::try_new(&first_keys).unwrap(),
             |index, entry| {
-                entry.record_read(UnorderedObservation)?;
+                entry.add_read(UnorderedObservation)?;
                 if index == 1 {
-                    entry.stage(FixtureIntent {
+                    entry.add_write(FixtureIntent {
                         value: 0xfeed,
                         drops: Arc::clone(&intent_drops),
                         panic_on_drop: false,
@@ -1147,7 +1147,7 @@ fn multiple_unique_groups_survive_scalar_and_mixed_adapter_materialization() {
         .with_unique_item_batch(
             &second,
             UniqueItemKeys::try_new(&second_keys).unwrap(),
-            |_, entry| entry.record_read(UnorderedObservation),
+            |_, entry| entry.add_read(UnorderedObservation),
         )
         .unwrap();
 
@@ -1168,7 +1168,7 @@ fn multiple_unique_groups_survive_scalar_and_mixed_adapter_materialization() {
         .unwrap();
     transaction
         .with_item(&first, CollisionKey(4), |entry| {
-            entry.record_read(UnorderedObservation)
+            entry.add_read(UnorderedObservation)
         })
         .unwrap();
 
@@ -1207,11 +1207,11 @@ fn unique_batch_lazily_materializes_an_exact_index_for_later_access() {
     transaction
         .with_unique_item_batch(&resource, unique, |index, entry| {
             assert!(matches!(entry.observation(), ObservationRef::Unobserved));
-            entry.record_read(UnorderedObservation)?;
+            entry.add_read(UnorderedObservation)?;
             if index == 1 {
                 // The optimized append lane deliberately retains the complete
                 // Entry surface rather than imposing read-only semantics.
-                entry.stage(FixtureIntent {
+                entry.add_write(FixtureIntent {
                     value: 0xfeed_beef,
                     drops: Arc::clone(&intent_drops),
                     panic_on_drop: false,
@@ -1267,7 +1267,7 @@ fn typed_batch_intent_drop_panic_is_contained_before_pool_reuse() {
             &resource,
             UniqueItemKeys::try_new(&keys).unwrap(),
             |_, entry| {
-                entry.stage(FixtureIntent {
+                entry.add_write(FixtureIntent {
                     value: 7,
                     drops: Arc::clone(&drops),
                     panic_on_drop: true,
@@ -1302,7 +1302,7 @@ fn typed_batch_intent_sidecar_reuses_three_one_three_high_water() {
                 &resource,
                 UniqueItemKeys::try_new(keys).unwrap(),
                 |index, entry| {
-                    entry.stage(FixtureIntent {
+                    entry.add_write(FixtureIntent {
                         value: ((attempt as u64) << 32) | index as u64,
                         drops: Arc::clone(&intent_drops),
                         panic_on_drop: false,
@@ -1398,7 +1398,7 @@ fn unique_batch_materializes_before_mixed_resource_and_adapter_access() {
         .with_unique_item_batch(
             &first,
             UniqueItemKeys::try_new(&keys).unwrap(),
-            |_, entry| entry.record_read(UnorderedObservation),
+            |_, entry| entry.add_read(UnorderedObservation),
         )
         .unwrap();
 
@@ -1407,7 +1407,7 @@ fn unique_batch_materializes_before_mixed_resource_and_adapter_access() {
     // ordinary frame after the one-time typed-batch materialization.
     transaction
         .with_item(&second, CollisionKey(1), |entry| {
-            entry.record_read(UnorderedObservation)
+            entry.add_read(UnorderedObservation)
         })
         .unwrap();
     assert_eq!(cell.get(&mut transaction).unwrap(), 41);
@@ -1442,7 +1442,7 @@ fn unique_batch_hash_unwind_after_materialization_aborts_complete_prefix() {
             .with_unique_item_batch(
                 &resource,
                 UniqueItemKeys::try_new(&keys).unwrap(),
-                |_, entry| entry.record_read(UnorderedObservation),
+                |_, entry| entry.add_read(UnorderedObservation),
             )
             .unwrap();
 
@@ -1663,7 +1663,7 @@ fn unique_batch_replaces_a_different_typed_pooled_slot() {
     let unique = UniqueItemKeys::try_new(&keys).unwrap();
     assert!(transaction
         .with_unique_item_batch(&resource, unique, |_, entry| {
-            entry.record_read(UnorderedObservation)
+            entry.add_read(UnorderedObservation)
         })
         .is_ok());
     assert!(matches!(
@@ -1741,7 +1741,7 @@ fn resolved_item_session_reuses_items_and_resolver_contexts() {
                 },
                 |entry, context| {
                     assert!(matches!(entry.observation(), ObservationRef::Unobserved));
-                    entry.record_read(UnorderedObservation)?;
+                    entry.add_read(UnorderedObservation)?;
                     Ok(context)
                 },
             )?;
@@ -1796,7 +1796,7 @@ fn resolved_session_unique_batch_can_fall_back_without_dooming() {
         .with_item_session(&resource, |session| {
             assert!(session.can_start_unique_item_batch());
             assert!(session.try_with_unique_item_batch(unique, |_, entry| {
-                entry.record_read(UnorderedObservation)
+                entry.add_read(UnorderedObservation)
             })?);
             assert!(!session.can_start_unique_item_batch());
 
@@ -1940,7 +1940,7 @@ fn caught_access_error_permanently_dooms_the_transaction() {
     let result: Result<(), AccessError> = transaction.with_item(
         &resource,
         CollisionKey(1),
-        |_entry: &mut Entry<'_, FixtureAdapter>| Err(InvalidUse::IllegalItemState.into()),
+        |_entry: &mut TransProxy<'_, FixtureAdapter>| Err(InvalidUse::IllegalItemState.into()),
     );
     assert_eq!(
         result,
@@ -2183,6 +2183,6 @@ fn _external_adapter_operation(
     resource: &sto_core::RegisteredResource<FixtureAdapter>,
 ) -> Result<(), AccessError> {
     transaction.with_item(resource, CollisionKey(9), |entry| {
-        entry.record_read(UnorderedObservation)
+        entry.add_read(UnorderedObservation)
     })
 }

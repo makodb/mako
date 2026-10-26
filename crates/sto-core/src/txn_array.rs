@@ -11,9 +11,9 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
-use crate::adapter::{
-    FinishDisposition, FinishItem, InstallItem, NoPredicate, ObservationOrder, ObservationRef,
-    OpacityToken, PreflightItem, TransactionalResource,
+use crate::object::{
+    CleanupDisposition, CleanupItem, InstallItem, NoPredicate, ObservationOrder, ObservationRef,
+    OpacityToken, PreflightItem, TObject,
 };
 use crate::error::{
     AccessError, AdapterFault, AdapterFaultKind, AdapterPhase, CapacityError, CheckError, Conflict,
@@ -21,13 +21,13 @@ use crate::error::{
 };
 use crate::identity::{LockClass, LockIdentity, LockNamespaceId, OccVersion, ResourceClass};
 use crate::lock::{
-    ExecutionCheckContext, FinishContext, InstallContext, LockRequest, LockUse, PredicateContext,
-    PreflightContext, ValidationContext,
+    ExecutionCheckContext, CleanupContext, InstallContext, LockRequest, LockUse, PredicateContext,
+    LockContext, ValidationContext,
 };
 use crate::runtime::{RegisteredResource, Runtime};
 use crate::txn_cell::VersionLock;
 use crate::version::AtomicVersion;
-use crate::{Active, Entry, Transaction};
+use crate::{Active, TransProxy, Transaction};
 
 const ARRAY_RESOURCE_CLASS_VALUE: u32 = 1;
 const ARRAY_LOCK_CLASS_VALUE: u32 = 1;
@@ -160,7 +160,7 @@ impl<T: Clone + Send + Sync + 'static> TxnArray<T> {
             return Ok(Err(ArrayBoundsError::new(index, self.len())));
         }
         let intent = Arc::new(value);
-        txn.with_item(&self.resource, index, move |entry| entry.stage(intent))
+        txn.with_item(&self.resource, index, move |entry| entry.add_write(intent))
             .map(Ok)
     }
 }
@@ -217,7 +217,7 @@ struct ArrayPrepared {
 }
 
 impl<T: Clone + Send + Sync + 'static> ArrayAdapter<T> {
-    fn get(&self, index: usize, entry: &mut Entry<'_, Self>) -> Result<T, AccessError> {
+    fn get(&self, index: usize, entry: &mut TransProxy<'_, Self>) -> Result<T, AccessError> {
         if let Some(intent) = entry.intent() {
             return Ok(intent.as_ref().clone());
         }
@@ -235,7 +235,7 @@ impl<T: Clone + Send + Sync + 'static> ArrayAdapter<T> {
             return Err(Conflict::ReadValidation.into());
         }
 
-        entry.record_read(ArrayObservation { version: observed })?;
+        entry.add_read(ArrayObservation { version: observed })?;
         entry.local_mut().first_snapshot = Some(Arc::clone(&snapshot));
         Ok(snapshot.as_ref().clone())
     }
@@ -285,7 +285,7 @@ impl<T: Clone + Send + Sync + 'static> ArrayAdapter<T> {
     }
 }
 
-impl<T: Clone + Send + Sync + 'static> TransactionalResource for ArrayAdapter<T> {
+impl<T: Clone + Send + Sync + 'static> TObject for ArrayAdapter<T> {
     type Key = usize;
     type Local = ArrayLocal<T>;
     type Observation = ArrayObservation;
@@ -307,11 +307,11 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for ArrayAdapter<T>
         })
     }
 
-    fn preflight(
+    fn lock(
         &self,
         key: &Self::Key,
         item: PreflightItem<'_, Self>,
-        cx: &mut PreflightContext<'_>,
+        cx: &mut LockContext<'_>,
     ) -> Result<Self::Prepared, PrepareError> {
         let slot = self.slots.get(*key).ok_or_else(|| {
             AdapterFault::new(
@@ -320,7 +320,7 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for ArrayAdapter<T>
             )
         })?;
         let lock_use = if item.intent().is_some() {
-            Some(cx.require_lock(LockRequest::new(
+            Some(cx.try_lock(LockRequest::new(
                 slot.lock_identity.clone(),
                 Arc::clone(&slot.lock),
             ))?)
@@ -358,7 +358,7 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for ArrayAdapter<T>
         match *predicate {}
     }
 
-    fn upgrade_predicate(
+    fn check_predicate(
         &self,
         _key: &Self::Key,
         predicate: &Self::Predicate,
@@ -368,7 +368,7 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for ArrayAdapter<T>
         match *predicate {}
     }
 
-    fn validate_read(
+    fn check(
         &self,
         key: &Self::Key,
         observation: &Self::Observation,
@@ -424,13 +424,13 @@ impl<T: Clone + Send + Sync + 'static> TransactionalResource for ArrayAdapter<T>
         item.local_mut().displaced = Some(displaced);
     }
 
-    fn finish(
+    fn cleanup(
         &self,
         _key: &Self::Key,
-        mut item: FinishItem<'_, Self>,
+        mut item: CleanupItem<'_, Self>,
         _prepared: Option<&mut Self::Prepared>,
-        _disposition: FinishDisposition,
-        _cx: &mut FinishContext<'_>,
+        _disposition: CleanupDisposition,
+        _cx: &mut CleanupContext<'_>,
     ) {
         item.local_mut().first_snapshot = None;
         item.local_mut().displaced = None;

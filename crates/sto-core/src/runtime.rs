@@ -13,13 +13,13 @@ use std::{
 };
 
 use crate::{
-    adapter::TransactionalResource,
+    object::{CommitVersionRequirement, TObject},
     error::{
         AttachError, BeginError, CapacityError, FailurePhase, InvalidUse, PoisonInfo,
         RegistrationError, RuntimeError, Unsupported,
     },
     identity::{ObjectId, OccCommitId, OwnerId, ResourceClass, RuntimeId},
-    transaction::{TerminalReadScratch, TransactionScratch},
+    transaction::{TerminalReadScratch, TransactionFrame},
 };
 
 static NEXT_RUNTIME_ID: AtomicU64 = AtomicU64::new(1);
@@ -270,7 +270,7 @@ impl Runtime {
             owner,
             thread: current_thread,
             transaction_active: false,
-            transaction_scratch: Some(TransactionScratch::new(Arc::clone(self))),
+            transaction_frame: Some(Box::new(TransactionFrame::new(Arc::clone(self)))),
             terminal_read_scratch: Some(Box::new(TerminalReadScratch::new(Arc::clone(self)))),
             next_lock_plan_generation,
             not_send_sync: PhantomData,
@@ -304,24 +304,29 @@ impl Runtime {
     }
 
     pub(crate) fn reserve_commit_id(&self) -> Result<OccCommitId, CapacityError> {
-        // A writing commit needs only a unique, monotonically increasing
+        // An ordered writing commit needs a unique, monotonically increasing
         // ticket. `try_update` would implement that with a contended CAS loop;
         // under many writers its retries serialize progress much more than
-        // the single hardware xadd used by native STO. Exhaustion is terminal,
+        // a single hardware xadd. Exhaustion is terminal,
         // so it is safe to consume one value past the representable range and
         // quarantine the runtime. At most the already attached,
         // bounded worker set can reach this point after the transition.
         let previous = self.next_commit_id.fetch_add(1, Ordering::AcqRel);
         if previous >= OccCommitId::MAX_VALUE {
-            let _ = self.health.compare_exchange(
-                HEALTHY,
-                EXHAUSTED,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            );
+            self.mark_version_exhausted();
             return Err(CapacityError::VersionExhausted);
         }
         OccCommitId::new(previous + 1).map_err(|_| CapacityError::VersionExhausted)
+    }
+
+    pub(crate) fn mark_version_exhausted(&self) {
+        // Preserve an earlier poison/indeterminate diagnosis. Local-version
+        // acquisition reports exhaustion after releasing earlier acquired
+        // locks; this transition precedes returning the failed commit. A
+        // concurrent commit overlapping that transition may still complete.
+        let _ =
+            self.health
+                .compare_exchange(HEALTHY, EXHAUSTED, Ordering::AcqRel, Ordering::Acquire);
     }
 
     pub(crate) fn poison(&self) {
@@ -377,7 +382,7 @@ pub struct WorkerContext {
     pub(crate) owner: OwnerId,
     pub(crate) thread: ThreadId,
     pub(crate) transaction_active: bool,
-    pub(crate) transaction_scratch: Option<TransactionScratch>,
+    pub(crate) transaction_frame: Option<Box<TransactionFrame>>,
     pub(crate) terminal_read_scratch: Option<Box<TerminalReadScratch>>,
     next_lock_plan_generation: u64,
     not_send_sync: PhantomData<Rc<()>>,
@@ -412,10 +417,11 @@ impl WorkerContext {
         self.transaction_active = false;
     }
 
-    pub(crate) fn recycle_transaction_scratch(&mut self, scratch: TransactionScratch) {
+    pub(crate) fn recycle_transaction_frame(&mut self, frame: Box<TransactionFrame>) {
         debug_assert!(self.transaction_active);
-        debug_assert!(self.transaction_scratch.is_none());
-        self.transaction_scratch = Some(scratch);
+        debug_assert!(self.transaction_frame.is_none());
+        frame.assert_reusable();
+        self.transaction_frame = Some(frame);
     }
 
     pub(crate) fn recycle_terminal_read_scratch(&mut self, scratch: Box<TerminalReadScratch>) {
@@ -447,10 +453,10 @@ impl Drop for WorkerContext {
         if self.transaction_active {
             self.runtime.poison();
         }
-        if let Some(scratch) = self.transaction_scratch.take() {
-            if let Err(quarantined) = scratch.dispose_retained_resources() {
+        if let Some(frame) = self.transaction_frame.take() {
+            if let Err(quarantined) = frame.dispose_retained_resources() {
                 // A retained adapter destructor unwound. Keep the entire
-                // scratch allocation quarantined so no later pooled destructor
+                // frame allocation quarantined so no later pooled destructor
                 // runs during this unwind, and make the failure observable to
                 // every other worker through runtime health.
                 self.runtime.poison();
@@ -494,7 +500,7 @@ impl ObjectRegistration {
     }
 
     /// Registers one adapter type for one resource class.
-    pub fn register_resource<A: TransactionalResource>(
+    pub fn register_resource<A: TObject>(
         &self,
         class: ResourceClass,
         adapter: A,
@@ -502,6 +508,7 @@ impl ObjectRegistration {
         self.lease
             .runtime
             .ensure_healthy(FailurePhase::Registration)?;
+        let commit_version_requirement = adapter.commit_version_requirement();
         let mut classes = recover_lock(&self.lease.classes);
         if classes.contains_key(&class) {
             return Err(InvalidUse::DuplicateResourceClass.into());
@@ -524,6 +531,7 @@ impl ObjectRegistration {
                 lease: Arc::clone(&self.lease),
                 class,
                 registered_type,
+                commit_version_requirement,
             }),
         })
     }
@@ -533,20 +541,21 @@ impl ObjectRegistration {
 ///
 /// Keeping identity, type proof, adapter, and object lease together makes the
 /// public capability one `Arc` wide without weakening registration identity.
-struct ResourceBinding<A: TransactionalResource> {
+struct ResourceBinding<A: TObject> {
     adapter: A,
     lease: Arc<ObjectLease>,
     class: ResourceClass,
     registered_type: RegisteredType,
+    commit_version_requirement: CommitVersionRequirement,
 }
 
 /// Cloneable typed handle for one `(ObjectId, ResourceClass)` binding.
 #[repr(transparent)]
-pub struct RegisteredResource<A: TransactionalResource> {
+pub struct RegisteredResource<A: TObject> {
     binding: Arc<ResourceBinding<A>>,
 }
 
-impl<A: TransactionalResource> Clone for RegisteredResource<A> {
+impl<A: TObject> Clone for RegisteredResource<A> {
     fn clone(&self) -> Self {
         Self {
             binding: Arc::clone(&self.binding),
@@ -554,7 +563,7 @@ impl<A: TransactionalResource> Clone for RegisteredResource<A> {
     }
 }
 
-impl<A: TransactionalResource> std::fmt::Debug for RegisteredResource<A> {
+impl<A: TObject> std::fmt::Debug for RegisteredResource<A> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
             .debug_struct("RegisteredResource")
@@ -566,7 +575,12 @@ impl<A: TransactionalResource> std::fmt::Debug for RegisteredResource<A> {
     }
 }
 
-impl<A: TransactionalResource> RegisteredResource<A> {
+impl<A: TObject> RegisteredResource<A> {
+    #[inline]
+    pub(crate) fn commit_version_requirement(&self) -> CommitVersionRequirement {
+        self.binding.commit_version_requirement
+    }
+
     #[inline]
     pub fn adapter(&self) -> &A {
         &self.binding.adapter
@@ -629,11 +643,11 @@ mod tests {
 
     use crate::{
         AbortReason, AcquireContext, AcquireError, CheckError, CommitFailure, CommitOutcome,
-        Conflict, ExecutionCheckContext, FinishContext, FinishDisposition, FinishItem,
+        Conflict, ExecutionCheckContext, CleanupContext, CleanupDisposition, CleanupItem,
         InstallContext, InstallItem, ItemInitError, LockClass, LockDisposition, LockIdentity,
         LockNamespaceId, LockRequest, LockUse, NoPredicate, ObservationOrder, OpacityToken,
-        PredicateContext, PreflightContext, PreflightItem, PrepareError, ReleaseContext,
-        ResourceClass, TransactionLock, TransactionalResource, ValidationContext,
+        PredicateContext, LockContext, PreflightItem, PrepareError, ReleaseContext,
+        ResourceClass, TransactionLock, TObject, ValidationContext,
     };
 
     const PREFLIGHT_SUCCEEDS: u8 = 0;
@@ -679,7 +693,7 @@ mod tests {
         observed_nonces: Arc<Mutex<Vec<u64>>>,
     }
 
-    impl TransactionalResource for NonceAdapter {
+    impl TObject for NonceAdapter {
         type Key = u64;
         type Local = ();
         type Observation = NonceObservation;
@@ -691,14 +705,14 @@ mod tests {
             Ok(())
         }
 
-        fn preflight(
+        fn lock(
             &self,
             key: &Self::Key,
             _item: PreflightItem<'_, Self>,
-            cx: &mut PreflightContext<'_>,
+            cx: &mut LockContext<'_>,
         ) -> Result<Self::Prepared, PrepareError> {
             self.preflight_calls.fetch_add(1, Ordering::Relaxed);
-            let lock_use = cx.require_lock(LockRequest::new(
+            let lock_use = cx.try_lock(LockRequest::new(
                 LockIdentity::new(
                     self.runtime_id,
                     LockNamespaceId::new(1).unwrap(),
@@ -735,7 +749,7 @@ mod tests {
             match *predicate {}
         }
 
-        fn upgrade_predicate(
+        fn check_predicate(
             &self,
             _key: &Self::Key,
             predicate: &Self::Predicate,
@@ -745,7 +759,7 @@ mod tests {
             match *predicate {}
         }
 
-        fn validate_read(
+        fn check(
             &self,
             _key: &Self::Key,
             _observation: &Self::Observation,
@@ -766,13 +780,13 @@ mod tests {
                 .expect("the current transaction's LockUse must resolve");
         }
 
-        fn finish(
+        fn cleanup(
             &self,
             _key: &Self::Key,
-            _item: FinishItem<'_, Self>,
+            _item: CleanupItem<'_, Self>,
             _prepared: Option<&mut Self::Prepared>,
-            _disposition: FinishDisposition,
-            _cx: &mut FinishContext<'_>,
+            _disposition: CleanupDisposition,
+            _cx: &mut CleanupContext<'_>,
         ) {
         }
     }
@@ -824,7 +838,7 @@ mod tests {
     ) -> Result<CommitOutcome, CommitFailure> {
         let mut transaction = worker.begin().unwrap();
         transaction
-            .with_item(&fixture.resource, 7, |entry| entry.stage(()))
+            .with_item(&fixture.resource, 7, |entry| entry.add_write(()))
             .unwrap();
         transaction.commit()
     }
