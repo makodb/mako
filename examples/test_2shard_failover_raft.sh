@@ -369,12 +369,22 @@ echo "========================================="
 # What the runs did: shard $O's failover controls, and per transaction type
 # its remote share, abort ratios and latencies (an abort latency near the
 # RPC timeout, 250 ms, means requests got no answer); the failed shard's
-# elections and takeovers.
+# elections and takeovers; and in each, the warnings it logged most often
+# from the failover on, numbers dropped (what it kept running into).
+top_warnings() {  # log, start pattern
+    sed -n "/$2/,\$p" "$1" | grep -a '^[WE] \[\| ! ' |
+        sed -e 's/^[0-9-]*:[0-9.]*-[0-9]*(us) [0-9]* ! *//' -e 's/^[WE] \[[^]]*\] [0-9-]* [0-9:.]* | //' -e 's/[0-9][0-9]*/N/g' |
+        sort | uniq -c | sort -rn | head -10 | cut -c1-200 | sed 's/^/      /'
+}
 echo "--- shard $O ($so)"
 grep -a "register_fasttransport_for_bench" "$so" | sed 's/^/    /'
 grep -a "_remote_ratio:\|_abort_ratio:\|_abort_latency:\|_commit_latency:" "$so" | tail -20 | sed 's/^/    /'
+echo "    most frequent warnings from the first failover control on:"
+top_warnings "$so" "register_fasttransport_for_bench: 0"
 for f in "$(log $F-localhost)" "$(log $F-p1)" "$(log $F-p2)"; do
     echo "--- $f"
     grep -a "became leader\|RAFT-TAKEOVER\|client for the control is starting\|_abort_ratio:" "$f" | tail -12 | sed 's/^/    /'
+    echo "    most frequent warnings from its takeover on:"
+    top_warnings "$f" "RAFT-TAKEOVER"
 done
 exit 1
