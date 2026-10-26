@@ -409,7 +409,9 @@ static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& adv
                                      std::to_string(local_w).c_str(),
                                      benchConfig.getConfig()->shard(0, benchConfig.getClusterRole()).host.c_str(),
                                      benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
-          std::cout<<"set fvw, " << benchConfig.getClusterRole() << ", fvw_"+std::to_string(benchConfig.getShardIndex())<<":"<<local_w<<std::endl;
+          // One write, as update_stable_timestamp_vec's line.
+          std::cerr << "set fvw, " + std::to_string(benchConfig.getClusterRole()) + ", fvw_" +
+                       std::to_string(benchConfig.getShardIndex()) + ":" + std::to_string(local_w) + "\n";
 #endif
           sync_util::sync_logger::reset(); 
         }
@@ -701,7 +703,8 @@ static void finish_shard_failover()
     std::string w_i = mako::NFSSync::wait_for_value(mako::NFSSync::failover_key("fvw", i, closed_epoch),
                                                 config->shard(0, clusterRoleLocal).host.c_str(),
                                                 config->mports[clusterRoleLocal]);
-    std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
+    // One write, as update_stable_timestamp_vec's line.
+    std::cerr << "get fvw, " + std::to_string(clusterRoleLocal) + ", fvw_" + std::to_string(i) + ":" + w_i + "\n";
     fvw[i] = static_cast<uint32_t>(std::stoul(w_i));  // unsigned: a commit id can pass INT_MAX
   }
 

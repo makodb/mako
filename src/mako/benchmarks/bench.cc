@@ -207,7 +207,8 @@ bench_worker::run()
           std::string w_i = mako::NFSSync::wait_for_value(mako::NFSSync::failover_key("fvw", i, closed_epoch),
                                                       benchConfig.getConfig()->shard(0, clusterRoleLocal).host.c_str(), 
                                                       benchConfig.getConfig()->mports[clusterRoleLocal]);
-          std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
+          // One write, as update_stable_timestamp_vec's line.
+          std::cerr << "get fvw, " + std::to_string(clusterRoleLocal) + ", fvw_" + std::to_string(i) + ":" + w_i + "\n";
           fvw[i] = static_cast<uint32_t>(std::stoul(w_i));  // unsigned: a commit id can pass INT_MAX
         }
 
