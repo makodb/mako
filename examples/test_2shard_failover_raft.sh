@@ -366,8 +366,15 @@ if [ $failed -eq 0 ]; then
 fi
 echo "Some checks failed! (Raft failover, shard $F, $event)"
 echo "========================================="
-for f in "$(log $F-p1)" "$(log $F-p2)" "$so"; do
+# What the runs did: shard $O's failover controls, and per transaction type
+# its remote share, abort ratios and latencies (an abort latency near the
+# RPC timeout, 250 ms, means requests got no answer); the failed shard's
+# elections and takeovers.
+echo "--- shard $O ($so)"
+grep -a "register_fasttransport_for_bench" "$so" | sed 's/^/    /'
+grep -a "_remote_ratio:\|_abort_ratio:\|_abort_latency:\|_commit_latency:" "$so" | tail -20 | sed 's/^/    /'
+for f in "$(log $F-localhost)" "$(log $F-p1)" "$(log $F-p2)"; do
     echo "--- $f"
-    tail -10 "$f"
+    grep -a "became leader\|RAFT-TAKEOVER\|client for the control is starting\|_abort_ratio:" "$f" | tail -12 | sed 's/^/    /'
 done
 exit 1
