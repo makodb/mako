@@ -116,7 +116,7 @@ namespace mako
 
         crtReqK =
             PendingRequestK("InvokeValidate",
-                            reqId,
+                            reqId + current_term,
                             txn_nr,
                             server_id,
                             continuation,
@@ -151,7 +151,7 @@ namespace mako
 
         crtReqK =
             PendingRequestK("InvokeGetTimestamp",
-                            reqId,
+                            reqId + current_term,
                             txn_nr,
                             server_id,
                             continuation,
@@ -190,7 +190,7 @@ namespace mako
 
         crtReqK =
             PendingRequestK("InvokeControl",
-                            reqId,
+                            reqId + current_term,
                             txn_nr,
                             server_id,
                             continuation,
@@ -232,7 +232,7 @@ namespace mako
 
         crtReqK =
             PendingRequestK("InvokeWarmup",
-                            reqId,
+                            reqId + current_term,
                             txn_nr,
                             server_id,
                             continuation,
@@ -269,7 +269,7 @@ namespace mako
 
         crtReqK =
             PendingRequestK("InvokeExchangeWatermark",
-                            reqId,
+                            reqId + current_term,
                             txn_nr,
                             server_id,
                             continuation,
@@ -305,7 +305,7 @@ namespace mako
 
         crtReqK =
             PendingRequestK("InvokeInstall",
-                            reqId,
+                            reqId + current_term,
                             txn_nr,
                             server_id,
                             continuation,
@@ -357,7 +357,7 @@ namespace mako
 
         crtReqK =
             PendingRequestK("InvokeSerializeUtil",
-                            reqId,
+                            reqId + current_term,
                             txn_nr,
                             server_id,
                             continuation,
@@ -397,7 +397,7 @@ namespace mako
 
         crtReqK =
             PendingRequestK("InvokeUnLock",
-                            reqId,
+                            reqId + current_term,
                             txn_nr,
                             server_id,
                             continuation,
@@ -433,7 +433,7 @@ namespace mako
 
         crtReqK =
             PendingRequestK("batchLock",
-                            reqId,
+                            reqId + current_term,
                             txn_nr,
                             server_id,
                             continuation,
@@ -488,7 +488,7 @@ namespace mako
 
         crtReqK =
             PendingRequestK(start_key,
-                            reqId,
+                            reqId + current_term,
                             txn_nr,
                             server_id,
                             continuation,
@@ -568,18 +568,19 @@ namespace mako
 
         //Warning("invoke InvokeGet,txn_nr:%d,par_id:%d,id:%d",txn_nr,TThread::getGlobalPartitionID(),TThread::id());
         Debug("invoke InvokeGet\n");
+        // We intialize epoch number once a remoteGET is called as we have it for every transaction.
+        // Before crtReqK: a reply is matched against the number the request carries, epoch included.
+#if defined(FAIL_NEW_VERSION)
+        current_term = sc_callback_();
+#endif
         crtReqK =
             PendingRequestK(key,
-                            reqId,
+                            reqId + current_term,
                             txn_nr,
                             server_id,
                             continuation,
                             error_continuation);
 
-        // We intialize epoch number once a remoteGET is called as we have it for every transaction.
-#if defined(FAIL_NEW_VERSION)
-        current_term = sc_callback_();
-#endif
         auto *reqBuf = reinterpret_cast<get_request_t *>(
             transport->GetRequestBuf(
                 sizeof(get_request_t),
@@ -644,7 +645,7 @@ namespace mako
         Debug("invoke InvokeNontxnWrite type=%d\n", reqType);
         crtReqK =
             PendingRequestK(key,
-                            reqId,
+                            reqId + current_term,
                             txn_nr,
                             server_id,
                             continuation,
@@ -695,7 +696,7 @@ namespace mako
 
         crtReqK =
             PendingRequestK("InvokeAbort",
-                            reqId,
+                            reqId + current_term,
                             txn_nr,
                             server_id,
                             continuation,
