@@ -620,6 +620,48 @@ run_2shard_replication_raft() {
     return 1
 }
 
+# Mako's cross-shard failover under Raft: one shard's leader is taken away
+# while the benchmark runs, a follower takes over, and the other shard moves
+# on with it. Shard 0's leader killed, shard 1's killed, shard 0's paused with
+# a second takeover after the first, and shard 0's paused and back again
+# (it wins the second election). Each is retried only when the cluster never
+# got as far as the test (exit 3).
+run_2shard_failover_raft() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh shard2FailoverRaft"
+    echo "========================================="
+    local scenario shard event
+    for scenario in 0/kill 1/kill 0/twice 0/back; do
+        shard=${scenario%/*}
+        event=${scenario#*/}
+        local attempt=1
+        local max_attempts=2
+        local passed=0
+        while [ $attempt -le $max_attempts ]; do
+            cleanup_processes
+            set +e
+            MAKO_FAILOVER_SHARD=$shard MAKO_FAILOVER_EVENT=$event with_raft_store 2shard_failover_raft bash ./examples/test_2shard_failover_raft.sh
+            local test_result=$?
+            set -e
+            check_for_hanging_processes "shard2FailoverRaft"
+            local hanging_check=$?
+            if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
+                passed=1
+                break
+            fi
+            if [ $test_result -ne 3 ]; then
+                break
+            fi
+            if [ $attempt -lt $max_attempts ]; then
+                echo "Retrying shard2FailoverRaft, $scenario (attempt $((attempt + 1))/$max_attempts)..."
+            fi
+            attempt=$((attempt + 1))
+        done
+        [ $passed -eq 1 ] || return 1
+    done
+    return 0
+}
+
 run_1shard_replication_simple_raft() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shard1ReplicationSimpleRaft"
@@ -895,6 +937,9 @@ case "${1:-}" in
     shard2ReplicationRaft)
         run_2shard_replication_raft
         ;;
+    shard2FailoverRaft)
+        run_2shard_failover_raft
+        ;;
     shard1ReplicationSimpleRaft)
         run_1shard_replication_simple_raft
         ;;
@@ -952,6 +997,7 @@ case "${1:-}" in
         # Raft replication tests
         run_1shard_replication_raft
         run_2shard_replication_raft
+        run_2shard_failover_raft
         run_1shard_replication_simple_raft
         run_2shard_replication_simple_raft
         run_raft_lab_test
@@ -971,7 +1017,7 @@ case "${1:-}" in
         echo "  nativeShardingProof, nativeShardingSmoke,"
         echo "  shard1Replication, shard2Replication,"
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
-        echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
+        echo "  shard1ReplicationRaft, shard2ReplicationRaft, shard2FailoverRaft,"
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
         echo "  raftLabTest, raftKillTest, shard1ReplicationRaftRestart (disk trees),"
         echo "  rocksdbTests, multiShardSingleProcess,"

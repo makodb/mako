@@ -189,6 +189,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
     uint32_t timestamp = 0;  // Track timestamp for return value encoding
     abstract_db * db = replicated_db.getDBWrapper(par_id)->getDB () ;
     bool noops = false;
+    int closed_epoch = -1;  // the epoch a no-op closes
 
     if (len==mako::ADVANCER_MARKER_NUM) { // start a advancer
       status = mako::PaxosStatus::STATUS_REPLAY_DONE;
@@ -217,6 +218,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
       if (isNoops(log,len)!=-1) {
         Warning("receive a noops, par_id:%d on follower_callback_,%s",par_id,log);
         if (par_id==0) set_epoch(isNoops(log,len));
+        closed_epoch = isNoops(log,len) - 1;
         noops=true;
         status = mako::PaxosStatus::STATUS_NOOPS;
       }
@@ -234,7 +236,7 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
         if (par_id==0) {
           uint32_t local_w = sync_util::sync_logger::computeLocal();
           //Warning("update %s in phase-1 on port:%d", ("noops_phase_"+std::to_string(shardIndex)).c_str(), config->mports[clusterRole]);
-          mako::NFSSync::set_key("noops_phase_"+std::to_string(benchConfig.getShardIndex()), 
+          mako::NFSSync::set_key(mako::NFSSync::failover_key("noops_phase", benchConfig.getShardIndex(), closed_epoch),
                                      std::to_string(local_w).c_str(),
                                      benchConfig.getConfig()->shard(0, benchConfig.getClusterRole()).host.c_str(),
                                      benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
@@ -249,6 +251,13 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
         CommitInfo commit_info = get_latest_commit_info((char *) log, len);
         timestamp = commit_info.timestamp;  // Store for return value encoding
         sync_util::sync_logger::local_timestamp_[par_id].store(commit_info.timestamp, memory_order_release) ;
+        // Raft: a replica that becomes leader takes no Paxos-style takeover,
+        // which moves the epoch on. Keep its next commit timestamp past every
+        // entry it replays, so its own writes win over the old leader's on
+        // every replica (replay keeps the larger commit id, cmpFunc2_v2).
+        if (janus::is_using_raft()) {
+          sync_util::sync_logger::advance_local_replica_id(commit_info.timestamp / 10 + 1);
+        }
 #ifndef DISABLE_DISK
         // Followers don't persist to disk, so immediately update disk_timestamp_ too
         sync_util::sync_logger::disk_timestamp_[par_id].store(commit_info.timestamp, memory_order_release) ;
@@ -272,12 +281,12 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
     }
 
     // wait for vectorized watermark computed from other partition servers
+    // (one key per other shard; with more threads than shards, counting
+    // threads here waited forever for shards that do not exist)
     if (noops) {
-      for (int i=0; i<benchConfig.getNthreads(); i++) {
+      for (int i=0; i<benchConfig.getNshards(); i++) {
         if (i!=benchConfig.getShardIndex() && par_id==0) {
-          mako::NFSSync::wait_for_key("noops_phase_"+std::to_string(i), 
-                                          benchConfig.getConfig()->shard(0, benchConfig.getClusterRole()).host.c_str(), benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
-          std::string local_w = mako::NFSSync::get_key("noops_phase_"+std::to_string(i), 
+          std::string local_w = mako::NFSSync::wait_for_value(mako::NFSSync::failover_key("noops_phase", i, closed_epoch),
                                                           benchConfig.getConfig()->shard(0, benchConfig.getClusterRole()).host.c_str(), 
                                                           benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
 
@@ -347,6 +356,7 @@ static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& adv
     int status = mako::PaxosStatus::STATUS_NORMAL;
     uint32_t timestamp = 0;  // Track timestamp for return value encoding
     bool noops = false;
+    int closed_epoch = -1;  // the epoch a no-op closes
 
     if (len==mako::ADVANCER_MARKER_NUM) { // start a advancer
       status = mako::PaxosStatus::STATUS_REPLAY_DONE;
@@ -371,6 +381,7 @@ static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& adv
     if (len>0) {
       if (isNoops(log,len)!=-1) {
         //Warning("receive a noops, par_id:%d on leader_callback_,log:%s",par_id,log);
+        closed_epoch = isNoops(log,len) - 1;
         noops=true;
         status = mako::PaxosStatus::STATUS_NOOPS;
       }
@@ -388,17 +399,19 @@ static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& adv
         Warning("phase-1,par_id:%d DONE",par_id);
         if (par_id==0) {
           uint32_t local_w = sync_util::sync_logger::computeLocal();
-          mako::NFSSync::set_key("noops_phase_"+std::to_string(benchConfig.getShardIndex()), 
+          mako::NFSSync::set_key(mako::NFSSync::failover_key("noops_phase", benchConfig.getShardIndex(), closed_epoch),
                                         std::to_string(local_w).c_str(),
                                         benchConfig.getConfig()->shard(0, benchConfig.getClusterRole()).host.c_str(), 
                                         benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
           sync_util::sync_logger::update_stable_timestamp(get_epoch()-1, sync_util::sync_logger::retrieveShardW()/10);
 #if defined(FAIL_NEW_VERSION)
-          mako::NFSSync::set_key("fvw_"+std::to_string(benchConfig.getShardIndex()), 
+          mako::NFSSync::set_key(mako::NFSSync::failover_key("fvw", benchConfig.getShardIndex(), closed_epoch),
                                      std::to_string(local_w).c_str(),
                                      benchConfig.getConfig()->shard(0, benchConfig.getClusterRole()).host.c_str(),
                                      benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
-          std::cout<<"set fvw, " << benchConfig.getClusterRole() << ", fvw_"+std::to_string(benchConfig.getShardIndex())<<":"<<local_w<<std::endl;
+          // One write, as update_stable_timestamp_vec's line.
+          std::cerr << "set fvw, " + std::to_string(benchConfig.getClusterRole()) + ", fvw_" +
+                       std::to_string(benchConfig.getShardIndex()) + ":" + std::to_string(local_w) + "\n";
 #endif
           sync_util::sync_logger::reset(); 
         }
@@ -644,59 +657,209 @@ static void setup_transport_callbacks()
   });
 }
 
+#if defined(FAIL_NEW_VERSION)
+// A failover moves a shard's leadership to another replica of it during the
+// run: the learner under Paxos (heartbeatMonitor2), the replica that wins an
+// election under Raft (raft_take_over). The same steps run on that replica
+// under both, before and after it starts a new epoch on its shard.
+
+// Pause the other shards: they stop sending to this shard, close their epoch
+// with no-ops and move to the next one (bench.cc, control 0).
+static void begin_shard_failover()
+{
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  auto* config = benchConfig.getConfig();
+  sync_util::sync_logger::exchange_running = false;
+  sync_util::sync_logger::failed_shard_index = benchConfig.getShardIndex();
+  sync_util::sync_logger::failed_shard_role = benchConfig.getClusterRole();
+  // The other shards' leaders send to this replica from now on, and close
+  // the epoch this replica closes, the one it is in.
+  mako::NFSSync::set_key("failed_shard_role_"+std::to_string(benchConfig.getShardIndex()),
+                         std::to_string(benchConfig.getClusterRole()).c_str(),
+                         config->shard(0, mako::LOCALHOST_CENTER_INT).host.c_str(),
+                         config->mports[mako::LOCALHOST_CENTER_INT]);
+  mako::NFSSync::set_key("failed_shard_epoch_"+std::to_string(benchConfig.getShardIndex()),
+                         std::to_string(get_epoch()).c_str(),
+                         config->shard(0, mako::LOCALHOST_CENTER_INT).host.c_str(),
+                         config->mports[mako::LOCALHOST_CENTER_INT]);
+  sync_util::sync_logger::client_control(0, benchConfig.getShardIndex()); // in bench.cc register_fasttransport_for_bench
+}
+
+// Once this shard's old epoch is closed: take the stable cut from every
+// shard's final watermark, let the other shards move on (control 1), and
+// start this replica's workers (modeMonitorRun).
+static void finish_shard_failover()
+{
+  // Wait for FVW in the old epoch (w * 10 + epoch); this is very important in our new implementation
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  vector<uint32_t> fvw(benchConfig.getNshards());
+  auto* config = benchConfig.getConfig();
+  const int closed_epoch = get_epoch()-1;
+  for (int i=0; i<benchConfig.getNshards(); i++) {
+    // This shard's from this replica, the others' from their leaders.
+    int clusterRoleLocal = mako::LOCALHOST_CENTER_INT;
+    if (i==benchConfig.getShardIndex())
+      clusterRoleLocal = benchConfig.getClusterRole();
+    std::string w_i = mako::NFSSync::wait_for_value(mako::NFSSync::failover_key("fvw", i, closed_epoch),
+                                                config->shard(0, clusterRoleLocal).host.c_str(),
+                                                config->mports[clusterRoleLocal]);
+    // One write, as update_stable_timestamp_vec's line.
+    std::cerr << "get fvw, " + std::to_string(clusterRoleLocal) + ", fvw_" + std::to_string(i) + ":" + w_i + "\n";
+    fvw[i] = static_cast<uint32_t>(std::stoul(w_i));  // unsigned: a commit id can pass INT_MAX
+  }
+
+  // The same cut as the other shards take (bench.cc, control 1).
+  sync_util::sync_logger::update_stable_timestamp_vec(get_epoch()-1, fvw);
+  sync_util::sync_logger::client_control(1, benchConfig.getShardIndex());
+
+  // Start transactions in new epoch
+  std::lock_guard<std::mutex> lk((sync_util::sync_logger::m));
+  sync_util::sync_logger::toLeader = true ;
+  std::cout << "notify a new leader is elected!\n" ;
+  //sync_util::sync_logger::worker_running = true;
+  sync_util::sync_logger::cv.notify_one();
+}
+
+// How many times this process has stopped leading: a takeover belongs to
+// the leadership it started in.
+static std::atomic<uint64_t> raft_leaderships_lost{0};
+// Set for this leadership once its takeover has started; cleared when the
+// leadership ends, so the next one takes over again.
+static std::atomic<bool> raft_takeover_started{false};
+static std::mutex raft_takeover_mu;  // one takeover at a time
+
+// Whether another replica may have led this shard's run since this process
+// last did, from the last takeover begun for the shard (begin_shard_failover's
+// keys): none yet, so only the replica started as its leader has led; or
+// one by another replica; or one of this process's that did not finish.
+static bool shard_moved_since_this_led()
+{
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  auto* config = benchConfig.getConfig();
+  const std::string shard = std::to_string(benchConfig.getShardIndex());
+  const std::string host = config->shard(0, mako::LOCALHOST_CENTER_INT).host;  // shard() returns a copy
+  const int port = config->mports[mako::LOCALHOST_CENTER_INT];
+  std::string role = mako::NFSSync::get_key("failed_shard_role_" + shard, host.c_str(), port);
+  if (role.empty()) {
+    return !benchConfig.getLeaderConfig();
+  }
+  if (std::stoi(role) != benchConfig.getClusterRole()) {
+    return true;
+  }
+  std::string closed = mako::NFSSync::get_key("failed_shard_epoch_" + shard, host.c_str(), port);
+  return closed.empty() || std::stoi(closed) + 1 != get_epoch();
+}
+
+// Raft: this replica was elected while the benchmark runs, so another one
+// may have led the shard since it last did, or it never did. Take over as
+// the Paxos learner does.
+static void raft_take_over(uint64_t leadership)
+{
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  auto* config = benchConfig.getConfig();
+  const int shard = benchConfig.getShardIndex();
+  struct Done {  // lets this process's workers run again, however it ends
+    ~Done() { sync_util::sync_logger::raft_taking_over_.fetch_sub(1, std::memory_order_acq_rel); }
+  } done;
+  std::lock_guard<std::mutex> one_at_a_time(raft_takeover_mu);
+  Warning("[RAFT-TAKEOVER] shard %d: leading during the run; taking over", shard);
+  // The old leader's entries apply first; the final watermark is taken
+  // over them.
+  sync_util::sync_logger::wait_raft_catch_up();
+  if (raft_leaderships_lost.load(std::memory_order_acquire) != leadership) {
+    Warning("[RAFT-TAKEOVER] shard %d: lost the leadership while catching up", shard);
+    return;
+  }
+  if (benchConfig.getEndReceived() > 0) {
+    Warning("[RAFT-TAKEOVER] shard %d: the old leader had ended the run", shard);
+    return;
+  }
+  // Leading again with nobody else having led since: the shards still
+  // send here, in this epoch, so there is nothing to take over, and a
+  // takeover would only use up an epoch (one digit in a commit id).
+  if (!shard_moved_since_this_led()) {
+    Warning("[RAFT-TAKEOVER] shard %d: leading again, no takeover since; nothing to take over", shard);
+    return;
+  }
+  begin_shard_failover();
+  // A new epoch on this shard, and no-ops that close the old one on every
+  // partition (stuff_todo_learner_upgrade under Paxos). This replica's
+  // leader callback publishes the shard's final watermark when partition
+  // 0's no-op applies.
+  set_epoch();
+  std::string log = "no-ops:" + std::to_string(get_epoch());
+  for (int i = 0; i < benchConfig.getNthreads(); i++) {
+    if (!add_log_to_nc(log.c_str(), log.size(), i)) {
+      Warning("[RAFT-TAKEOVER] shard %d: lost the leadership while closing the old epoch", shard);
+      return;
+    }
+  }
+  mako::NFSSync::wait_for_key(mako::NFSSync::failover_key("fvw", shard, get_epoch()-1),
+                              config->shard(0, benchConfig.getClusterRole()).host.c_str(),
+                              config->mports[benchConfig.getClusterRole()]);
+  finish_shard_failover();
+  Warning("[RAFT-TAKEOVER] shard %d: epoch %d, workers starting", shard, get_epoch());
+}
+
+// Raft reports every leadership change, once per partition: 1 = this
+// process leads, 0 = it no longer does.
+static void raft_leadership_changed(bool leading)
+{
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  if (!leading) {
+    raft_leaderships_lost.fetch_add(1, std::memory_order_acq_rel);
+    raft_takeover_started.store(false, std::memory_order_release);
+    if (sync_util::sync_logger::worker_running) {
+      sync_util::sync_logger::raft_following_.store(true, std::memory_order_release);
+    }
+    return;
+  }
+  const uint64_t leadership = raft_leaderships_lost.load(std::memory_order_acquire);
+  // An election during the run takes over, whoever wins it: a follower, or
+  // a replica that led before (the one started as the shard's leader, or an
+  // earlier taker), whose workers stay held until it has. Nothing to take
+  // over with one shard, in the elections before the run (a follower sets
+  // worker_running once the leader starts its workers), or after its end.
+  const bool take_over = benchConfig.getNshards() > 1 &&
+                         sync_util::sync_logger::worker_running &&
+                         benchConfig.getEndReceived() == 0 &&
+                         !raft_takeover_started.exchange(true);
+  if (take_over) {
+    sync_util::sync_logger::raft_taking_over_.fetch_add(1, std::memory_order_acq_rel);
+  }
+  sync_util::sync_logger::raft_following_.store(false, std::memory_order_release);
+  if (take_over) {
+    std::thread(raft_take_over, leadership).detach();
+  }
+}
+#endif
+
 static void setup_leader_election_callbacks()
 {
+  // Raft: logged commits wait while a partition this process just started
+  // leading applies the entries of earlier terms (sync_logger::raft_catching_up_).
+  register_catch_up_callback([](int partitions) {
+    sync_util::sync_logger::raft_catching_up_.store(partitions, std::memory_order_release);
+  });
   register_leader_election_callback([&](int control) { // communicate with third party: Paxos
     // happens on the learner for case 0 and case 2, 3
     uint32_t aa = mako::getCurrentTimeMillis();
     Warning("Receive a control command:%d, current ms: %llu", control, aa);
+#if defined(FAIL_NEW_VERSION)
+    if (janus::is_using_raft()) {
+      raft_leadership_changed(control == 1);
+      return;
+    }
+#endif
     switch (control) {
-#if defined(FAIL_NEW_VERSION) && !defined(MAKO_USE_RAFT)
+#if defined(FAIL_NEW_VERSION)
       case 0: {
-        if (janus::is_using_raft()) {
-          // Raft: Leader stepped down - no action needed, Raft handles internally
-          break;
-        }
         std::cout<<"Implement a new fail recovery!"<<std::endl;
-        sync_util::sync_logger::exchange_running = false;
-        auto& benchConfig = BenchmarkConfig::getInstance();
-        sync_util::sync_logger::failed_shard_index = benchConfig.getShardIndex();
-        sync_util::sync_logger::client_control(0, benchConfig.getShardIndex()); // in bench.cc register_fasttransport_for_bench
+        begin_shard_failover();
         break;
       }
       case 2: {
-        if (janus::is_using_raft()) {
-          // Raft: Became leader - no action needed, Raft handles internally
-          break;
-        }
-        // Wait for FVW in the old epoch (w * 10 + epoch); this is very important in our new implementation
-        // Single timestamp system: collect all shard watermarks and use maximum
-        uint32_t max_watermark = 0;
-        auto& benchConfig = BenchmarkConfig::getInstance();
-        for (int i=0; i<benchConfig.getNshards(); i++) {
-          int clusterRoleLocal = mako::LOCALHOST_CENTER_INT;
-          if (i==0)
-            clusterRoleLocal = mako::LEARNER_CENTER_INT;
-          mako::NFSSync::wait_for_key("fvw_"+std::to_string(i),
-                                          benchConfig.getConfig()->shard(0, clusterRoleLocal).host.c_str(), benchConfig.getConfig()->mports[benchConfig.getClusterRole()]);
-          std::string w_i = mako::NFSSync::get_key("fvw_"+std::to_string(i),
-                                                      benchConfig.getConfig()->shard(0, clusterRoleLocal).host.c_str(),
-                                                      benchConfig.getConfig()->mports[clusterRoleLocal]);
-          std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
-          uint32_t watermark = std::stoi(w_i);
-          max_watermark = std::max(max_watermark, watermark);
-        }
-
-        sync_util::sync_logger::update_stable_timestamp(get_epoch()-1, max_watermark);
-        sync_util::sync_logger::client_control(1, benchConfig.getShardIndex());
-
-        // Start transactions in new epoch
-        std::lock_guard<std::mutex> lk((sync_util::sync_logger::m));
-        sync_util::sync_logger::toLeader = true ;
-        std::cout << "notify a new leader is elected!\n" ;
-        //sync_util::sync_logger::worker_running = true;
-        sync_util::sync_logger::cv.notify_one();
-        auto x0 = std::chrono::high_resolution_clock::now() ;
+        finish_shard_failover();
         break;
       }
 #endif
@@ -930,7 +1093,14 @@ static abstract_db * init_env() {
 #endif
 
     // start a failure monitor on learners
-    if (benchConfig.getCluster().compare(mako::LEARNER_CENTER)==0) { // learner cluster
+    bool may_take_over = benchConfig.getCluster().compare(mako::LEARNER_CENTER)==0; // learner cluster
+#if defined(FAIL_NEW_VERSION)
+    // Under Raft any follower can become its shard's leader during the run
+    // (raft_take_over).
+    may_take_over = may_take_over || (janus::is_using_raft() && !benchConfig.getLeaderConfig() &&
+                                      benchConfig.getNshards() > 1);
+#endif
+    if (may_take_over) {
       abstract_db * db = replicated_db.getDBWrapper(benchConfig.getNthreads())->getDB () ;
       bench_runner *r = start_workers_tpcc(1, db, benchConfig.getNthreads(), true);
       modeMonitor(db, benchConfig.getNthreads(), r) ;

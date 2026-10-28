@@ -179,13 +179,16 @@ rusty::Option<rusty::Arc<srpc::Client>> SrpcRpcBackend::GetOrCreateClient(uint8_
     auto session_key = std::make_tuple(LOCALHOST_CENTER_INT, shard_idx, server_id);
 
     if (sync_util::sync_logger::failed_shard_index >= 0) {
-        if (cluster_role_ == LEARNER_CENTER_INT)
+        // The failed shard's new leader sends to the other shards' leaders,
+        // and they send to it (failed_shard_role says which replica it is).
+        if (cluster_role_ != LOCALHOST_CENTER_INT)
             clusterRoleSentTo = LOCALHOST_CENTER_INT;
 
         if (cluster_role_ == LOCALHOST_CENTER_INT) {
             if (shard_idx == sync_util::sync_logger::failed_shard_index) {
-                session_key = std::make_tuple(LEARNER_CENTER_INT, shard_idx, server_id);
-                clusterRoleSentTo = LEARNER_CENTER_INT;
+                const int new_leader_role = sync_util::sync_logger::failed_shard_role;
+                session_key = std::make_tuple(new_leader_role, shard_idx, server_id);
+                clusterRoleSentTo = new_leader_role;
             }
         }
     }

@@ -665,6 +665,13 @@ pub unsafe extern "C" fn raft_server_commit_index(s: *const RaftServerBase) -> u
 /// # Safety
 /// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
 #[no_mangle]
+pub unsafe extern "C" fn raft_server_current_term(s: *const RaftServerBase) -> u64 {
+    (*s).CurrentTerm()
+}
+
+/// # Safety
+/// `s` is a live `RaftServerBase`; every pointer argument is live for the call.
+#[no_mangle]
 pub unsafe extern "C" fn raft_server_start(s: *const RaftServerBase,
                                            cmd: *const rusty::RaftCommand,
                                            index: *mut u64,

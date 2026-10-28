@@ -34,6 +34,7 @@ bool raft_server_is_rpc_ready(const RaftServerBase* s);
 uint16_t raft_server_site_id(const RaftServerBase* s);
 uint32_t raft_server_partition_id(const RaftServerBase* s);
 uint64_t raft_server_commit_index(const RaftServerBase* s);
+uint64_t raft_server_current_term(const RaftServerBase* s);
 RaftStartResult raft_server_start(const RaftServerBase* s, const rusty::RaftCommand* cmd, uint64_t* index, uint64_t* term);
 void raft_server_serve_vote(const RaftServerBase* s, uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted);
 void raft_server_serve_append_entries(const RaftServerBase* s, uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand* cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index);

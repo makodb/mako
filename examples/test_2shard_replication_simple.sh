@@ -389,7 +389,11 @@ else
     echo ""
     echo "Debug information:"
     echo "Check simple-shard0-localhost.log and simple-shard1-localhost.log for details"
-    tail -10 "$log_s0_localhost" 2>/dev/null
-    tail -10 "$log_s1_localhost" 2>/dev/null
+    for f in "$log_s0_localhost" "$log_s1_localhost"; do
+        echo "--- $f"
+        tail -25 "$f" 2>/dev/null
+    done
+    echo "--- failed checks, aborts and failovers in every process's log:"
+    grep -a -H "FAIL\|abort\|Panic\|uncaught\|trigger an new leader\|control: 0" simple-*.log 2>/dev/null | head -30
     exit 1
 fi

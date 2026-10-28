@@ -52,6 +52,21 @@ extern "C" uint64_t raft_trace_now_us();
 namespace { thread_local uint64_t t_trace_enq_us = 0; }
 namespace janus {
 
+namespace {
+
+// A command's tx_id names the process that appended it: the site id in the
+// top 16 bits, then the low 24 bits of the first term this process led
+// (RaftWorker::AuthorTerm), then a catch-up-marker bit and a 23-bit counter.
+constexpr int kTxIdCounterBits = 24;
+constexpr txnid_t kCatchUpMarkerBit = txnid_t{1} << (kTxIdCounterBits - 1);
+constexpr txnid_t kTxIdCounterMask = kCatchUpMarkerBit - 1;
+constexpr uint64_t kAuthorTermMask = (uint64_t{1} << 24) - 1;
+// A marker also carries this payload, so an entry is a marker only with
+// both: Mako's own logs never equal it, and the end-of-run entries are empty.
+constexpr std::string_view kCatchUpMarkerPayload = "MAKO_RAFT_CATCH_UP_MARKER_V1";
+
+}  // namespace
+
 // Pure worker decisions over copied scalar values. Thread lifecycle,
 // condition-variable waits, queue mutation, callbacks, allocation, and Raft
 // submission stay in the existing C++ control flow. `const fn` makes the
@@ -314,6 +329,9 @@ void RaftWorker::SetupBase() {
         std::lock_guard<std::recursive_mutex> guard(election_state_lock);
         is_leader = raft_worker_leader_flag_from_bool(leader);
       }
+      if (leader) {
+        AuthorTerm();  // fixes this process's tag at its first leadership
+      }
       // Notify all partitions that currently have callback registrations.
       std::set<uint32_t> par_ids;
       {
@@ -327,12 +345,15 @@ void RaftWorker::SetupBase() {
         }
       }
       if (raft_worker_should_notify_default_partition(par_ids.empty())) {
-        uint32_t par_id = site_info_ ? site_info_->partition_id_ : 0;
-        NotifyRaftLeaderChange(par_id, leader);
+        par_ids.insert(site_info_ ? site_info_->partition_id_ : 0);
+      }
+      if (leader) {
+        BeginCatchUp(par_ids);
       } else {
-        for (uint32_t pid : par_ids) {
-          NotifyRaftLeaderChange(pid, leader);
-        }
+        EndCatchUp(0, 0);
+      }
+      for (uint32_t pid : par_ids) {
+        NotifyRaftLeaderChange(pid, leader);
       }
     });
   }
@@ -685,7 +706,8 @@ void RaftWorker::StopSubmitThread() {
     remaining.swap(submit_queue_);
   }
   for (auto& entry : remaining) {
-    Submit(entry.payload.data(), static_cast<int>(entry.payload.size()), entry.par_id);
+    Submit(entry.payload.data(), static_cast<int>(entry.payload.size()), entry.par_id,
+           entry.catch_up_marker);
   }
 }
 
@@ -742,8 +764,98 @@ rusty::Arc<TpcCommitCommand> RaftWorker::CreateRaftLogCommand(
   return tpc_cmd;
 }
 
+// @unsafe - GetRaftServer returns a raw pointer
+uint64_t RaftWorker::AuthorTerm() {
+  uint64_t term = author_term_.load(std::memory_order_acquire);
+  if (term != 0) {
+    return term;
+  }
+  RaftSpecific* raft_server = GetRaftServer();
+  if (raft_server == nullptr || !raft_server->IsLeader()) {
+    return 0;
+  }
+  uint64_t expected = 0;
+  term = raft_server->CurrentTerm();
+  if (!author_term_.compare_exchange_strong(expected, term, std::memory_order_acq_rel)) {
+    term = expected;
+  } else {
+    Log_info("[RAFT-AUTHOR] site {} tags the commands it appends with term {}",
+             site_info_ ? site_info_->id : 0, term);
+  }
+  return term;
+}
+
+// @unsafe - site_info_ pointer dereference
+txnid_t RaftWorker::OwnTxIdPrefix(uint64_t author_term) const {
+  const uint64_t site = static_cast<uint64_t>(site_info_->id);
+  return ((site << 24) | (author_term & kAuthorTermMask)) << kTxIdCounterBits;
+}
+
+// @unsafe - site_info_ pointer dereference
+bool RaftWorker::IsOwnTxId(txnid_t tx_id) const {
+  // A process that never led appended nothing.
+  const uint64_t author_term = author_term_.load(std::memory_order_acquire);
+  return author_term != 0 &&
+         (tx_id >> kTxIdCounterBits) == (OwnTxIdPrefix(author_term) >> kTxIdCounterBits);
+}
+
+// @unsafe - submit queue and the catch-up map, both under their mutexes
+void RaftWorker::BeginCatchUp(const std::set<uint32_t>& par_ids) {
+  std::vector<uint32_t> started;
+  {
+    std::lock_guard<std::mutex> guard(catch_up_mutex_);
+    for (uint32_t pid : par_ids) {
+      if (catching_up_.emplace(pid, 0).second) {
+        started.push_back(pid);
+      }
+    }
+  }
+  for (uint32_t pid : started) {
+    Log_info("[RAFT-CATCHUP] partition {}: leading; applying entries of earlier terms", pid);
+    NotifyRaftCatchUp(true);
+    PendingLog marker;
+    marker.payload.assign(kCatchUpMarkerPayload.data(), kCatchUpMarkerPayload.size());
+    marker.par_id = pid;
+    marker.catch_up_marker = true;
+    if (raft_worker_should_enqueue(submit_thread_started_)) {
+      {
+        std::lock_guard<std::mutex> lock(submit_mutex_);
+        submit_queue_.push_back(std::move(marker));
+      }
+      submit_cv_.notify_one();
+    } else {
+      Submit(marker.payload.data(), static_cast<int>(marker.payload.size()), pid, true);
+    }
+  }
+}
+
+// @unsafe - the catch-up map under its mutex
+void RaftWorker::EndCatchUp(uint32_t par_id, txnid_t marker) {
+  int ended = 0;
+  {
+    std::lock_guard<std::mutex> guard(catch_up_mutex_);
+    if (marker == 0) {
+      ended = static_cast<int>(catching_up_.size());
+      catching_up_.clear();
+    } else {
+      auto it = catching_up_.find(par_id);
+      // Only this leadership's own marker: an earlier one applying says
+      // nothing about the entries before the current one.
+      if (it != catching_up_.end() && it->second == marker) {
+        catching_up_.erase(it);
+        ended = 1;
+        Log_info("[RAFT-CATCHUP] partition {}: caught up", par_id);
+      }
+    }
+  }
+  for (int i = 0; i < ended; i++) {
+    NotifyRaftCatchUp(false);
+  }
+}
+
 // @unsafe - external calls marked @external [safe], pointer ops are bounded
-void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
+void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id,
+                        bool catch_up_marker) {
   // Log_debug("[RAFT-SUBMIT] Enter Submit: par_id={} length={}", par_id, length);
 
   // Do not pre-check leadership here. RaftServer::Start() performs the
@@ -757,10 +869,20 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
     return;
   }
 
-  // Use a simple incrementing tx_id (in production this would be a global txn ID)
+  // An incrementing tx_id under this process's tag, so Next can tell the
+  // commands this process appended from everyone else's.
   const uint64_t trace_submit_us = raft_trace_now_us();  // [M0] trace kit
   static std::atomic<txnid_t> next_tx_id{1};
-  txnid_t tx_id = next_tx_id.fetch_add(1);
+  txnid_t tx_id = OwnTxIdPrefix(AuthorTerm()) | (next_tx_id.fetch_add(1) & kTxIdCounterMask);
+  if (catch_up_marker) {
+    tx_id |= kCatchUpMarkerBit;
+    std::lock_guard<std::mutex> guard(catch_up_mutex_);
+    auto it = catching_up_.find(par_id);
+    if (it == catching_up_.end()) {
+      return;  // leadership was lost first, which ended the catch-up
+    }
+    it->second = tx_id;
+  }
 
   // Use the production helper to create TpcCommitCommand{cmd_=LogEntry}.
   auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id, par_id);
@@ -1024,7 +1146,24 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
     return status;
   }
 
-  bool am_leader = IsLeader(par_id);
+  // A catch-up marker (BeginCatchUp) is not Mako's. Its own leadership's
+  // marker ends that partition's catch-up.
+  if ((tpc_cmd.unwrap()->tx_id_ & kCatchUpMarkerBit) &&
+      std::string_view(log, len) == kCatchUpMarkerPayload) {
+    if (IsOwnTxId(tpc_cmd.unwrap()->tx_id_)) {
+      EndCatchUp(par_id, tpc_cmd.unwrap()->tx_id_);
+    }
+    return 0;
+  }
+
+  // The leader callback only marks a command committed; the follower
+  // callback writes it into the tables. So a command takes the leader
+  // callback in the process that appended it and the follower callback
+  // everywhere else, whatever this node's role is now. A node elected while
+  // the old leader's last commands were uncommitted applies them as leader,
+  // and they still have to reach its tables; a leader deposed before its
+  // own commands applied still only has to mark them committed.
+  const bool am_author = IsOwnTxId(tpc_cmd.unwrap()->tx_id_);
 
   // Route to the richest per-partition callback first, then preserve the two
   // legacy void-callback APIs as role-aware fallbacks. Copy under the mutex and
@@ -1034,14 +1173,14 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
   std::function<void(const char*, int)> active_simple_callback;
   {
     std::lock_guard<std::mutex> guard(callback_registry_mutex_);
-    auto& cb_map = am_leader ? leader_callbacks_by_partition_
+    auto& cb_map = am_author ? leader_callbacks_by_partition_
                              : follower_callbacks_by_partition_;
     auto cb_it = cb_map.find(par_id);
     if (cb_it != cb_map.end() &&
         raft_worker_callback_available(static_cast<bool>(cb_it->second))) {
       active_callback = cb_it->second;
     } else {
-      auto& global_cb = am_leader ? leader_callback_par_id_return_
+      auto& global_cb = am_author ? leader_callback_par_id_return_
                                   : follower_callback_par_id_return_;
       if (raft_worker_callback_available(static_cast<bool>(global_cb))) {
         active_callback = global_cb;
@@ -1050,7 +1189,7 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
 
     if (!active_callback) {
       auto& partition_cb_map =
-          am_leader ? leader_partition_apply_callbacks_by_partition_
+          am_author ? leader_partition_apply_callbacks_by_partition_
                     : follower_partition_apply_callbacks_by_partition_;
       auto partition_cb_it = partition_cb_map.find(par_id);
       if (partition_cb_it != partition_cb_map.end() &&
@@ -1063,7 +1202,7 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
 
     if (!active_callback && !active_partition_callback) {
       auto& simple_cb_map =
-          am_leader ? leader_apply_callbacks_by_partition_
+          am_author ? leader_apply_callbacks_by_partition_
                     : follower_apply_callbacks_by_partition_;
       auto simple_cb_it = simple_cb_map.find(par_id);
       if (simple_cb_it != simple_cb_map.end() &&
@@ -1078,12 +1217,12 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
   if (!active_callback && !active_partition_callback &&
       !active_simple_callback) {
     Log_error("[RAFT-CALLBACK] No {} callback registered for partition {}",
-              am_leader ? "leader" : "follower", par_id);
+              am_author ? "leader" : "follower", par_id);
     throw std::runtime_error("Raft application callback is not registered");
   }
 
   Log_debug("[RAFT-CALLBACK] Applying log at slot {} par_id {} using {} callback",
-            slot_id, par_id, am_leader ? "LEADER" : "FOLLOWER");
+            slot_id, par_id, am_author ? "LEADER" : "FOLLOWER");
 
   uint32_t timestamp = 0;
   if (active_callback) {
@@ -1110,7 +1249,7 @@ int RaftWorker::Next(slotid_t slot_id, janus::Command md) {
   }
 
   Log_debug("Raft applied log at slot {}: status={}, timestamp={}, role={}, par_id={}",
-            slot_id, status, timestamp, am_leader ? "leader" : "follower", par_id);
+            slot_id, status, timestamp, am_author ? "leader" : "follower", par_id);
 
   return status;
   } // end @unsafe block for const char* log
@@ -1178,7 +1317,8 @@ void RaftWorker::SubmitLoop() {
 
     for (auto& entry : batch) {
       t_trace_enq_us = entry.enq_us;  // [M0] trace kit
-      Submit(entry.payload.data(), static_cast<int>(entry.payload.size()), entry.par_id);
+      Submit(entry.payload.data(), static_cast<int>(entry.payload.size()), entry.par_id,
+             entry.catch_up_marker);
     }
 
     lock.lock();

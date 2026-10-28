@@ -151,16 +151,37 @@ bench_worker::run()
       case 0: {
         benchConfig.setControlMode(4);
         // If a transaction sent to a failed shard, we put it into the queue
+        {
+          // The replica that leads the failed shard now (begin_shard_failover);
+          // set before the index, which turns the routing on.
+          std::string role = mako::NFSSync::get_key("failed_shard_role_"+std::to_string(value%10),
+                                                    benchConfig.getConfig()->shard(0, mako::LOCALHOST_CENTER_INT).host.c_str(),
+                                                    benchConfig.getConfig()->mports[mako::LOCALHOST_CENTER_INT]);
+          sync_util::sync_logger::failed_shard_role = role.empty() ? mako::LEARNER_CENTER_INT : std::stoi(role);
+        }
         sync_util::sync_logger::failed_shard_index = value%10;
         sync_util::sync_logger::failed_shard_ts = value/10;
         sync_util::sync_logger::setShardWBlind(value/10, value%10);
 
-        string log = "no-ops:" + to_string(get_epoch());
+        // Close the epoch the failed shard's new leader closes and start the
+        // one after it, so both sides name the closed epoch's keys alike,
+        // also after a takeover that was cut short had moved this shard on.
+        int closing_epoch = get_epoch();
+        {
+          std::string e = mako::NFSSync::get_key("failed_shard_epoch_"+std::to_string(value%10),
+                                                 benchConfig.getConfig()->shard(0, mako::LOCALHOST_CENTER_INT).host.c_str(),
+                                                 benchConfig.getConfig()->mports[mako::LOCALHOST_CENTER_INT]);
+          if (!e.empty()) closing_epoch = std::stoi(e);
+        }
+        // A no-op carries the epoch that starts after it (isNoops), as the
+        // new leader's do: followers take their epoch from it, and the keys
+        // of the epoch it closes are named after it.
+        string log = "no-ops:" + to_string(closing_epoch + 1);
         for(int i = 0; i < benchConfig.getNthreads(); i++){
           add_log_to_nc(log.c_str(), log.size(), i);
         }
 
-        set_epoch();
+        set_epoch(closing_epoch + 1);
         benchConfig.setRuntimePlus(benchConfig.getRuntime()); // another runtime
 
         // Unpaused previous blocked threads if any
@@ -177,16 +198,18 @@ bench_worker::run()
       case 1: {
         // Update its local FVW
         vector<uint32_t> fvw(benchConfig.getNshards());
+        const int closed_epoch = get_epoch()-1;
         for (int i=0; i<benchConfig.getNshards(); i++) {
-          // it should get shard-0 from the learner
+          // the failed shard's from its new leader
           int clusterRoleLocal = mako::LOCALHOST_CENTER_INT;
-          if (i==0) 
-            clusterRoleLocal = mako::LEARNER_CENTER_INT;
-          std::string w_i = mako::NFSSync::get_key("fvw_"+std::to_string(i), 
+          if (i==sync_util::sync_logger::failed_shard_index)
+            clusterRoleLocal = sync_util::sync_logger::failed_shard_role;
+          std::string w_i = mako::NFSSync::wait_for_value(mako::NFSSync::failover_key("fvw", i, closed_epoch),
                                                       benchConfig.getConfig()->shard(0, clusterRoleLocal).host.c_str(), 
                                                       benchConfig.getConfig()->mports[clusterRoleLocal]);
-          std::cout<<"get fvw, " << clusterRoleLocal << ", fvw_"+std::to_string(i)<<":"<<w_i<<std::endl;
-          fvw[i] = std::stoi(w_i);
+          // One write, as update_stable_timestamp_vec's line.
+          std::cerr << "get fvw, " + std::to_string(clusterRoleLocal) + ", fvw_" + std::to_string(i) + ":" + w_i + "\n";
+          fvw[i] = static_cast<uint32_t>(std::stoul(w_i));  // unsigned: a commit id can pass INT_MAX
         }
 
         sync_util::sync_logger::update_stable_timestamp_vec(get_epoch()-1, fvw);
@@ -217,8 +240,8 @@ bench_worker::run()
         //   shardClientAll[par_id]->setBreakTimeout(false);
         // }
         // resume the database worker threads, update it after the new workers are created;
-        // 4. issue no-ops within the old epoch
-        string log = "no-ops:" + to_string(get_epoch());
+        // 4. issue no-ops that close the old epoch (carrying the new one)
+        string log = "no-ops:" + to_string(get_epoch() + 1);
         for(int i = 0; i < benchConfig.getNthreads(); i++){
           add_log_to_nc(log.c_str(), log.size(), i);
         }
@@ -305,6 +328,15 @@ bench_worker::run()
   }
 
   while (benchConfig.isRunning() && (benchConfig.getRunMode() != RUNMODE_OPS || ntxn_commits < benchConfig.getOpsPerWorker())) {
+    // Raft: a process that lost its shard's leadership during the run runs
+    // nothing until it leads again and has taken the shard over. Its commits
+    // would not be replicated, and replaying the new leader's entries
+    // changes the tables, and the epoch, under a running transaction.
+    if (sync_util::sync_logger::raft_following_.load(std::memory_order_acquire) ||
+        sync_util::sync_logger::raft_taking_over_.load(std::memory_order_acquire) > 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      continue;
+    }
     throttler.begin_work();  // Start work timing
     double d = r.next_uniform();
     for (size_t i = 0; i < workload.size(); i++) {

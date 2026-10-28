@@ -12,7 +12,7 @@ The key principle is that Mako remains protocol-agnostic: all Raft-specific
 logic is behind the dispatcher.  The Mako-side changes are limited to:
 
 1. **Auto-detection**: Scanning YAML configs for `ab: raft`
-2. **Guard clauses**: `is_using_raft()` checks in failure-handling code paths
+2. **Failover**: the Raft takeover (§4.3), and `is_using_raft()` checks in the other failure-handling code paths
 3. **Launch scripts**: Separate Raft-specific scripts with correct config files
 4. **Config files**: `occ_raft.yml` alongside `occ_paxos.yml`
 
@@ -121,10 +121,16 @@ when a datacenter fails and a new leader must be elected.
 // mako.hh:641-761
 static void setup_leader_election_callbacks() {
     register_leader_election_callback([&](int control) {
+#if defined(FAIL_NEW_VERSION)
+        if (janus::is_using_raft()) {
+            raft_leadership_changed(control == 1);
+            return;
+        }
+#endif
         switch (control) {
-#if defined(FAIL_NEW_VERSION) && !defined(MAKO_USE_RAFT)
-            case 0: { /* leader stepped down */ }
-            case 2: { /* became leader */ }
+#if defined(FAIL_NEW_VERSION)
+            case 0: { /* learner starts a takeover: begin_shard_failover() */ }
+            case 2: { /* learner leads its shard: finish_shard_failover() */ }
 #endif
 #if !defined(FAIL_NEW_VERSION)
             case 0: { /* leader stepped down (partial failure) */ }
@@ -139,40 +145,49 @@ static void setup_leader_election_callbacks() {
 
 The `control` parameter values:
 
-| Value | Meaning | Paxos Action | Raft Action |
-|-------|---------|-------------|-------------|
-| 0 | Lost leadership | Stop exchange, issue `client_control(0)` | No-op (Raft handles internally) |
-| 1 | (reserved) | — | — |
-| 2 | Gained leadership | Collect FVW, `client_control(1)`, notify workers | No-op (Raft handles internally) |
-| 3 | Commit new leader | Notify workers, `client_control(2)` | No-op |
-| 4 | Datacenter failure | Forward to all followers | No-op |
+Paxos and Raft give `control` different meanings. Under Paxos the learner's
+heartbeat monitor sends 0 and 2 around its takeover; under Raft every
+partition reports each leadership change of this process.
 
-### 4.3 The `is_using_raft()` Guard
+| Value | Paxos (FAIL_NEW_VERSION) | Raft |
+|-------|-------------|-------------|
+| 0 | Learner starts a takeover: stop exchange, `client_control(0)` | Lost leadership: once the run has started, its workers run no transactions until it leads again |
+| 1 | — | Gained leadership: an election during the run takes over (`raft_take_over`) |
+| 2 | Learner leads: collect FVW, `client_control(1)`, notify workers | — |
+| 3 | Commit new leader (!FAIL_NEW_VERSION) | — |
+| 4 | Datacenter failure (!FAIL_NEW_VERSION) | — |
 
-Every `case` that performs cross-shard RPC or coordination checks
-`janus::is_using_raft()` and breaks immediately if true:
+### 4.3 Taking Over a Shard Under Raft
 
-```cpp
-case 0: {
-    if (janus::is_using_raft()) {
-        // Raft: Leader stepped down - no action needed
-        break;
-    }
-    // Paxos: complex recovery...
-    sync_util::sync_logger::client_control(0, ...);
-    break;
-}
-```
+Under Paxos the learner takes over a shard whose leader fails: it pauses
+the other shards, closes the old epoch with no-ops, takes the stable cut
+from every shard's final watermark (FVW), and starts its worker threads.
+Under Raft the replica that wins the election does the same
+(`raft_take_over`): it waits until it has applied the old leader's entries,
+then runs the steps the learner runs (`begin_shard_failover`, a new epoch
+and its no-ops, `finish_shard_failover`). The other shards find the new
+leader by its cluster role (`failed_shard_role`), which the takeover
+publishes before it pauses them. Every shard cuts the old epoch at the same
+point, the smallest of the shards' final watermarks: the paper's finalized
+vector watermark keeps a transaction only if it is below every shard's
+component (§5.2), and with one timestamp per transaction that is the
+smallest one. The keys the shards wait on carry the epoch they close
+(`NFSSync::failover_key`), so a later takeover in the same run never reads
+an earlier one's. Any shard can fail over.
 
-This guard exists because of a real bug: without it, Raft leadership
-changes (which are frequent — every election, every transfer) would trigger
-the Paxos failure-recovery code path, which calls `client_control()` to
-issue cross-shard RPCs.  In a 2-shard system, these RPCs would fail because
-the target shards are running Raft (not Paxos) and don't have the expected
-RPC handlers.
-
-**The bug manifested as**: cross-shard RPC timeouts during Raft leader
-elections in 2-shard mode, causing the entire system to hang.
+Raft reports elections at startup too, and an early version that ran the
+Paxos steps on every Raft leadership change made cross-shard calls to
+shards that were not up yet (commit 6a66fa55 then skipped them under
+Raft). A Raft takeover therefore runs only in a multi-shard run, once the
+shard's leader has started its workers (a follower sets `worker_running`
+when it applies the leader's advancer marker) and before the run's end
+markers apply. Then every election takes over, whoever wins it: a follower,
+the replica started as the shard's leader after it lost the leadership, or
+an earlier taker. A process that loses the leadership during the run runs
+no transactions until it leads again and has taken over (`raft_following_`,
+`raft_taking_over_`): nothing it logs would be replicated, and replaying
+the new leader's entries changes the tables under its transactions. A
+takeover belongs to the leadership it started in, and one runs at a time.
 
 ### 4.4 Compile-Time vs Runtime Guards
 
@@ -186,8 +201,7 @@ runtime (`janus::is_using_raft()`) guards:
   because the same binary can run with either Paxos or Raft, selected by
   config or CLI flag.
 
-Both code paths (`FAIL_NEW_VERSION` and `!FAIL_NEW_VERSION`) contain the
-same `is_using_raft()` guards for cases 0 and 2.
+Under `!FAIL_NEW_VERSION`, cases 0 and 2 break out under Raft.
 
 ## 5. `setup_paxos_leader_callbacks()` / `setup_paxos_follower_callbacks()`
 
@@ -433,14 +447,13 @@ engine is completely protocol-agnostic.
 | Change Type | Location | Lines | Description |
 |-------------|----------|-------|-------------|
 | Auto-detection | `mako.hh:779-816` | 38 | `detect_replication_type_from_config()` scans YAML for `ab: raft` |
-| Guard clause | `mako.hh:650` | 3 | `is_using_raft()` in FAIL_NEW_VERSION case 0 |
-| Guard clause | `mako.hh:662` | 3 | `is_using_raft()` in FAIL_NEW_VERSION case 2 |
+| Failover | `mako.hh` | ~140 | `raft_leadership_changed()` / `raft_take_over()`: the learner's takeover, run by the Raft replica that wins an election during the run |
 | Guard clause | `mako.hh:700` | 3 | `is_using_raft()` in !FAIL_NEW_VERSION case 0 |
 | Guard clause | `mako.hh:722` | 3 | `is_using_raft()` in !FAIL_NEW_VERSION case 2 |
 | Config file | `config/occ_raft.yml` | 10 | Raft-mode OCC configuration |
 | Launch script | `bash/shard_raft.sh` | 39 | Raft-specific shard launcher |
 | Launch script | `bash/shard.sh:36-41` | 6 | Protocol-switching in unified launcher |
 
-**Total Mako-side changes**: ~105 lines (5 guard clauses + 1 function + 2 scripts + 1 config).
+**Total Mako-side changes**: ~240 lines (the takeover + 2 guard clauses + 1 function + 2 scripts + 1 config).
 The vast majority of the Raft integration lives in `src/deptran/`, not in
 Mako.

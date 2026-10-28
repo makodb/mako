@@ -54,6 +54,8 @@ pub trait RaftSpecific: TxLogServer {
     fn SiteId(&self) -> u16;
     fn PartitionId(&self) -> u32;
     fn CommitIndex(&self) -> u64;
+    // The current term, read like CommitIndex. It never goes down.
+    fn CurrentTerm(&self) -> u64;
     // Replication entry: the worker's "replicate this command".
     fn Start(&self, cmd: &rusty::RaftCommand, index: *mut u64,
              term: *mut u64) -> RaftStartResult;

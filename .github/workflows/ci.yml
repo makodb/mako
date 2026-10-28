@@ -341,6 +341,9 @@ jobs:
       - name: Run tests - 2 shard with Raft replication - dbtest
         run: ./ci/ci.sh shard2ReplicationRaft
 
+      - name: Run tests - 2 shard with Raft replication - a shard leader killed mid-run
+        run: ./ci/ci.sh shard2FailoverRaft
+
       - name: Run tests - 1 shard with Raft replication - simpleTransactionRep
         run: ./ci/ci.sh shard1ReplicationSimpleRaft
 

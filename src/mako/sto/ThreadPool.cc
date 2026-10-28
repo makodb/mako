@@ -26,6 +26,12 @@ void keystore_encode3_v2(std::string& s, uint32_t x) {
     memcpy ((void *)(s.data() + s.length() - mako::EXTRA_BITS_FOR_VALUE), &x, mako::BITS_OF_TT);
     // for the later on takeovering from the old leader
     mako::Node *header = reinterpret_cast<mako::Node *>((char*)(s.data() + s.length() - mako::BITS_OF_NODE));
+    // x is the commit id, timestamp * 10 + term; the leader keeps the bare
+    // timestamp in the header (mvInstall). Reads fold it into the reader's
+    // commit timestamp (UPDATE_VS), so once this replica leads, a stale
+    // value here (the replay buffer is reused) would drive its timestamps
+    // into the billions.
+    header->timestamp = x / 10;
     header->data_size = 0;
 }
 
