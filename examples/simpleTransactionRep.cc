@@ -1267,7 +1267,14 @@ int main(int argc, char **argv) {
             }
         }
 
-        std::this_thread::sleep_for(std::chrono::seconds(5)); // Wait all shards finish setup
+        if (server_only_mode) {
+            std::this_thread::sleep_for(std::chrono::seconds(5)); // Wait all shards finish setup
+        } else {
+            // Every shard's leader serves before any test runs: a fixed wait was
+            // too short when one shard started slowly, and its first cross-shard
+            // writes failed against a shard that was not listening yet.
+            mako::NFSSync::mark_shard_up_and_wait();
+        }
     }
 
     // Handle different modes
