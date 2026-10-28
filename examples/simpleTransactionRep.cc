@@ -1089,6 +1089,9 @@ static int run_client_mode_configured(const char* server_host, int server_port, 
 }
 
 int main(int argc, char **argv) {
+    // Line-buffered stdout: a failed check prints [FAIL] and then aborts (VERIFY),
+    // and the test reads this output from a file, where a full buffer would be lost.
+    setvbuf(stdout, nullptr, _IOLBF, 0);
 
     // ========================================================================
     // Determine run mode from command-line flags
