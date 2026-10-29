@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <deque>
 #include <rusty/arc.hpp>
 
 #include "../__dep__.h"
@@ -79,6 +81,51 @@ class MultiPaxosCommo : public Communicator {
       parid_t par_id,
       const janus::Command& cmd,
       const std::function<void(ballot_t, int)>& cb);
+
+  // Bytes waiting in the longest queue to one peer. A leader waits for it
+  // to drain before it starts more rounds (PaxosWorker::_Submit).
+  size_t MaxQueuedBytes();
+
+  // srpc refuses a frame over 64 MiB with an error the client also reports
+  // as CLIENT_ERR_IO, so a message carrying more log than this can never be
+  // sent. PaxosWorker::Submit refuses such an entry before it takes a slot.
+  static constexpr size_t kMaxLogBytesPerMessage = 60u << 20;
+
+ private:
+  // The messages for one peer that wait behind one the channel refused.
+  struct PeerSendQueue {
+    std::mutex mu;
+    struct Message {
+      const char* what;
+      size_t log_bytes;   // the log entries it carries, for the warnings
+      size_t bytes;       // what it counts against the queue's backlog
+      std::function<int32_t(srpc::Client*)> send;
+    };
+    std::deque<Message> pending;
+    std::atomic<size_t> queued_bytes{0};
+    uint64_t dropped = 0;    // messages refused for a full backlog
+    bool draining = false;   // a DrainSendQueue job is sending them
+  };
+
+  // Send one message to peer now, or queue it behind earlier ones; send
+  // returns 0 once the message is queued on the connection, or the client's
+  // error code. before_queue, if set, runs when the message has to wait, so
+  // it can stop sharing data the caller goes on to change. With
+  // max_backlog_bytes set, a message that would take the peer's queue past
+  // it is dropped instead.
+  void SendInOrder(const std::shared_ptr<RpcPeer>& peer,
+                   parid_t par_id,
+                   const char* what,
+                   size_t log_bytes,
+                   std::function<int32_t(srpc::Client*)> send,
+                   std::function<void()> before_queue = nullptr,
+                   size_t max_backlog_bytes = 0);
+  void DrainSendQueue(std::shared_ptr<RpcPeer> peer,
+                      parid_t par_id,
+                      std::shared_ptr<PeerSendQueue> queue);
+
+  std::mutex send_queues_mu_;
+  std::map<siteid_t, std::shared_ptr<PeerSendQueue>> send_queues_;
 };
 
 }  // namespace janus

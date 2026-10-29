@@ -137,6 +137,18 @@ class SyncLogRequest
     int leader_id;
     ballot_t epoch;
     vector<slotid_t> sync_commit_slot;
+    // Upper bound on the log bytes one reply carries, 0 for no bound. A
+    // learner catching up before it leads can be far behind, and one reply
+    // must stay under the RPC frame limit.
+    int64_t max_reply_bytes = 0;
+    // A learner about to lead also asks for the slots accepted but not
+    // known to be committed (SyncLogResponse::accepted_data).
+    int32_t include_accepted = 0;
+    // With include_accepted: the epoch the learner is about to lead in. An
+    // acceptor rejects lower ballots from then on, as a Paxos promise, so a
+    // leader that was only paused cannot get more values accepted after the
+    // learner has read what was accepted.
+    ballot_t promise_epoch = 0;
     SyncLogRequest() = default;
 
     void save(BinaryWriteArchive& ar) const {
@@ -146,6 +158,9 @@ class SyncLogRequest
       for (size_t i = 0; i < sync_commit_slot.size(); i++) {
         srpc::Serialize_::serialize(sync_commit_slot[i], ar);
       }
+      srpc::Serialize_::serialize(max_reply_bytes, ar);
+      srpc::Serialize_::serialize(include_accepted, ar);
+      srpc::Serialize_::serialize(promise_epoch, ar);
     }
 
     void load(BinaryReadArchive& ar) {
@@ -158,6 +173,9 @@ class SyncLogRequest
         srpc::Deserialize_::deserialize(x, ar);
         sync_commit_slot.push_back(x);
       }
+      srpc::Deserialize_::deserialize(max_reply_bytes, ar);
+      srpc::Deserialize_::deserialize(include_accepted, ar);
+      srpc::Deserialize_::deserialize(promise_epoch, ar);
     }
 };
 
@@ -166,6 +184,8 @@ class SyncLogRequest
 //   int32_t sync_data.size() | N x MarshallDeputy bytes
 //   int32_t missing_slots.size()
 //   per missing_slots row: int32_t inner.size() | M x slotid_t
+//   int32_t accepted_data.size() | K x MarshallDeputy bytes
+//   int32_t complete.size() | L x int32_t
 // The nested `vector<shared_ptr<janus::Command>>` field uses the
 // prep `operator<<` / `operator>>` overloads for
 // MarshallDeputy on BinaryWriteArchive / BinaryReadArchive — same byte
@@ -176,6 +196,13 @@ class SyncLogResponse
   public:
     vector<rusty::Arc<janus::Command>> sync_data;
     vector<vector<slotid_t>> missing_slots;
+    // Only for a request with include_accepted, one per partition: the
+    // slots from the requested one on that hold a value accepted but not
+    // committed, each with the ballot it was accepted at, and whether the
+    // reply holds every slot the acceptor has from the requested one on (1)
+    // or stopped at the byte bound (0).
+    vector<rusty::Arc<janus::Command>> accepted_data;
+    vector<int32_t> complete;
     SyncLogResponse() = default;
 
     void save(BinaryWriteArchive& ar) const {
@@ -189,6 +216,14 @@ class SyncLogResponse
         for (size_t j = 0; j < missing_slots[i].size(); j++) {
           srpc::Serialize_::serialize(missing_slots[i][j], ar);
         }
+      }
+      srpc::Serialize_::serialize(static_cast<int32_t>(accepted_data.size()), ar);
+      for (size_t i = 0; i < accepted_data.size(); i++) {
+        srpc::Serialize_::serialize(*accepted_data[i], ar);
+      }
+      srpc::Serialize_::serialize(static_cast<int32_t>(complete.size()), ar);
+      for (size_t i = 0; i < complete.size(); i++) {
+        srpc::Serialize_::serialize(complete[i], ar);
       }
     }
 
@@ -212,6 +247,19 @@ class SyncLogResponse
           cur.push_back(x);
         }
         missing_slots.push_back(std::move(cur));
+      }
+      srpc::Deserialize_::deserialize(sz, ar);
+      for (int i = 0; i < sz; i++) {
+        auto x = rusty::Arc<janus::Command>::make();
+        // @unsafe - unique-owner mutation window (factory-fresh Arc).
+        srpc::Deserialize_::deserialize(x.get_mut().unwrap(), ar);
+        accepted_data.push_back(std::move(x));
+      }
+      srpc::Deserialize_::deserialize(sz, ar);
+      for (int i = 0; i < sz; i++) {
+        int32_t x;
+        srpc::Deserialize_::deserialize(x, ar);
+        complete.push_back(x);
       }
     }
 };
@@ -326,11 +374,29 @@ private:
   // take const janus::Command&;
   // shared_ptr<Marshallable> callers auto-convert via Command's
   // implicit ctor.
-  inline void _Submit(const janus::Command&);
+  inline void _Submit(const janus::Command&, slotid_t slot = kNextOpenSlot);
   inline void _BulkSubmit(const janus::Command&, int);
 
   std::mutex finish_mutex{};
   std::condition_variable finish_cond{};
+  // Leader: accept rounds started on this partition and not finished.
+  // Each one holds a fiber, with 1 MiB of stack address space, until a
+  // quorum answers, so a leader that commits faster than its followers
+  // answer would add rounds without bound. _Submit waits while
+  // kMaxInFlightRounds are out, which slows the caller to the rate the
+  // followers accept. It runs on the caller's thread, never on this
+  // partition's poll thread, where rounds finish. A leader whose
+  // followers keep up has a few rounds out per partition. It also waits
+  // while kMaxPeerBacklogBytes wait to be sent to one replica: a quorum
+  // can go on without a slow replica, whose queue would otherwise grow
+  // without bound.
+  static constexpr int kMaxInFlightRounds = 64;
+  static constexpr size_t kMaxPeerBacklogBytes = 256u << 20;
+  std::mutex inflight_mu_{};
+  std::condition_variable inflight_cv_{};
+  int inflight_rounds_ = 0;
+  uint64_t inflight_waits_ = 0;  // times _Submit waited for a free round
+  void ReleaseInFlightRound();
   bool noops_received=false;
   std::function<void(const char*, int)> callback_ = nullptr;
   std::function<void(const char*&, int, int)> callback_par_id_ = nullptr;
@@ -357,8 +423,11 @@ public:
   // is initialized via `Config::get_tot_req()` at worker construction
   // and a follow-up sweep can chase the Config wiring.
   int tot_num = 0;
-  int cur_epoch;
-  int is_leader;
+  // The ballot this worker's accepts carry (BulkSubmit), and whether it may
+  // propose (add_log_to_nc). setup2 marks the first leader; nothing set the
+  // epoch, so acceptors fencing an old leader relied on it being 0.
+  int cur_epoch = 0;
+  int is_leader = 0;
   // removed `int bulk_writer = 0;` and
   // `int bulk_reader = 0;` — only used inside the now-deleted
   // `AddAcceptNc` / `StartReadAcceptNc` NC-batching pair.
@@ -413,6 +482,17 @@ public:
   // `SendSyncNoOpLog` declarations — definitions deleted; see
   // paxos_worker.cc retirement comments.
   int SendSyncLog(shared_ptr<SyncLogRequest>);
+  // Sends the request to the acceptors and returns their replies. False
+  // when they did not both answer; *higher_epoch is then the epoch of an
+  // acceptor that rejected the request as stale, or 0.
+  bool FetchSyncLog(shared_ptr<SyncLogRequest>,
+                    vector<rusty::Arc<SyncLogResponse>>*,
+                    ballot_t* higher_epoch);
+  // The entries the acceptors have committed from the request's
+  // sync_commit_slot on, keyed by (partition, slot). Fails as FetchSyncLog.
+  bool FetchCommitted(shared_ptr<SyncLogRequest>,
+                      map<pair<int, slotid_t>, rusty::Arc<janus::Command>>*,
+                      ballot_t* higher_epoch);
   static void* StartReadAccept(void*);
   PaxosWorker();
   ~PaxosWorker();
@@ -422,7 +502,11 @@ public:
   bool IsLeader(uint32_t);
   bool IsPartition(uint32_t);
 
-  void Submit(const char*, int, uint32_t);
+  // Submit's default slot: the next open one. slotid_t is unsigned.
+  static constexpr slotid_t kNextOpenSlot = static_cast<slotid_t>(-1);
+  // A slot other than kNextOpenSlot proposes the entry at that slot (a new
+  // leader re-proposing the values it adopted at takeover).
+  void Submit(const char*, int, uint32_t, slotid_t slot = kNextOpenSlot);
   void register_apply_callback(std::function<void(const char*, int)>);
   void register_apply_callback_par_id(std::function<void(const char*&, int, int)>);
   void register_apply_callback_par_id_return(std::function<int(const char*&, int, int, int, std::queue<std::tuple<int, int, int, int, const char *>> &)>);
@@ -557,6 +641,13 @@ public:
     return (double)send_prep_anyway_timeout < diff.count();
   }
 
+  // An acceptor turned this node's request down because it promised a later
+  // epoch to a new leader. The workers stop proposing and keep their own
+  // epoch: BulkSubmit uses it as the ballot, so anything still on its way out
+  // stays below the promise and is refused. Taking the acceptor's epoch, as
+  // this used to with is_leader left set, gave this node the new leader's
+  // ballot, and the acceptors took its accepts for slots the new leader was
+  // filling.
   void step_down(int epoch){
     state_lock();
     if(cur_epoch > epoch){
@@ -568,8 +659,7 @@ public:
     set_epoch(epoch);
     for(int i = 0 ; i < pxs_workers_g.size(); i++){
       pxs_workers_g[i]->election_state_lock.lock();
-      pxs_workers_g[i]->cur_epoch = epoch;
-      pxs_workers_g[i]->is_leader = 1;
+      pxs_workers_g[i]->is_leader = 0;
       pxs_workers_g[i]->election_state_lock.unlock();
     }
     state_unlock();
