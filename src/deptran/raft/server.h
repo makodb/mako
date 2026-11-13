@@ -534,6 +534,7 @@ class RaftServer : public RaftSpecific {
   uint16_t SiteId() const override { return raft_server_site_id(impl_); }
   uint32_t PartitionId() const override { return raft_server_partition_id(impl_); }
   uint64_t CommitIndex() const override { return raft_server_commit_index(impl_); }
+  uint64_t CurrentTerm() const override { return raft_server_current_term(impl_); }
   RaftStartResult Start(const rusty::RaftCommand& cmd, uint64_t* index, uint64_t* term) const override { return raft_server_start(impl_, &cmd, index, term); }
   void ServeVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted) const override { raft_server_serve_vote(impl_, lst_log_idx, lst_log_term, can_id, can_term, reply_term, vote_granted); }
   void ServeAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index) const override { raft_server_serve_append_entries(impl_, leader_current_term, leader_site_id, leader_prev_log_index, leader_prev_log_term, leader_commit_index, &cmd, leader_next_log_term, follower_append_ok, follower_current_term, follower_last_log_index); }

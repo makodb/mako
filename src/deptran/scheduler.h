@@ -171,6 +171,8 @@ pub trait RaftSpecific: TxLogServer {
     fn SiteId(&self) -> u16;
     fn PartitionId(&self) -> u32;
     fn CommitIndex(&self) -> u64;
+    // The current term, read like CommitIndex. It never goes down.
+    fn CurrentTerm(&self) -> u64;
     // Replication entry: the worker's "replicate this command".
     fn Start(&self, cmd: &rusty::RaftCommand, index: *mut u64,
              term: *mut u64) -> RaftStartResult;
@@ -205,7 +207,7 @@ pub trait RaftSpecific: TxLogServer {
                                         prepare_cb: &rusty::RaftPrepareSnapshotCb) -> u64;
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=c401fcd7826ef65fe45a0d20892bff4274153874eb330655ae8116c5fab7871a*/
+/*RUSTYCPP:GEN-BEGIN id=deptran_scheduler.tx_log_server version=1 rust_sha256=65e0802ec4b08103869959145ac329ac2650f88d5c0ae3bb0afdc45a19804160*/
 enum class RaftStartResult : int32_t;
 constexpr RaftStartResult RaftStartResult_REJECTED();
 constexpr RaftStartResult RaftStartResult_APPENDED();
@@ -251,6 +253,7 @@ public:
     virtual uint16_t SiteId() const = 0;
     virtual uint32_t PartitionId() const = 0;
     virtual uint64_t CommitIndex() const = 0;
+    virtual uint64_t CurrentTerm() const = 0;
     virtual RaftStartResult Start(const rusty::RaftCommand& cmd, uint64_t* index, uint64_t* term) const = 0;
     virtual void ServeVote(uint64_t lst_log_idx, int64_t lst_log_term, uint16_t can_id, int64_t can_term, int64_t* reply_term, int8_t* vote_granted) const = 0;
     virtual void ServeAppendEntries(uint64_t leader_current_term, uint16_t leader_site_id, uint64_t leader_prev_log_index, uint64_t leader_prev_log_term, uint64_t leader_commit_index, const rusty::RaftCommand& cmd, uint64_t leader_next_log_term, uint64_t* follower_append_ok, uint64_t* follower_current_term, uint64_t* follower_last_log_index) const = 0;

@@ -4157,6 +4157,11 @@ impl RaftSpecific for RaftServerBase {
         self.commit_index_mirror_.load(rusty::sync::atomic::Ordering::Acquire)
     }
 
+    // Without mtx_, like CommitIndex: the term publish_mirrors stored.
+    fn CurrentTerm(&self) -> u64 {
+        self.term_mirror_.load(rusty::sync::atomic::Ordering::Acquire)
+    }
+
     // @unsafe - CALLER MUST NOT HOLD mtx_. Appends one command locally and
     // then publishes the replication wake, in that order: the wake path never
     // nests the gate's owner mutex below Raft state.

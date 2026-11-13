@@ -20,7 +20,7 @@ RS = str(pathlib.Path(__file__).resolve().parent.parent /
 INTERFACE = ['set_site_identity', 'set_commo', 'reg_learner_action', 'EnsureSetup', 'WaitForStartup',
              'PrepareForShutdown', 'IsLeader', 'GetLeaderHint', 'SetPreferredLeader',
              'RegisterLeaderChangeCallback', 'IsRpcReady', 'SiteId', 'PartitionId',
-             'CommitIndex', 'Start', 'ServeVote', 'ServeAppendEntries', 'ServeInstallSnapshot',
+             'CommitIndex', 'CurrentTerm', 'Start', 'ServeVote', 'ServeAppendEntries', 'ServeInstallSnapshot',
              'SetStateMachineSnapshotCallbacks']
 # [fix, F19] TxLogServer methods whose export calls a `&self` inherent twin
 # rather than the trait method: TxLogServer keeps `&mut self` because
