@@ -809,8 +809,24 @@ void RaftWorker::Submit(const char* log_entry, int length, uint32_t par_id) {
   // An incrementing tx_id under this process's tag, so Next can tell the
   // commands this process appended from everyone else's.
   const uint64_t trace_submit_us = raft_trace_now_us();  // [M0] trace kit
+  const uint64_t author_term = AuthorTerm();
+  if (author_term == 0) {
+    // This process has not led, so Start() refuses the command, unless the
+    // process is elected between here and Start(). Then the command would
+    // carry no author: the leader-change callback fixes the tag to the
+    // winning term, IsOwnTxId never matches, and Next would replay this
+    // process's own command. Refuse it here, as Start() would have a moment
+    // earlier.
+    static std::atomic<uint64_t> refused_untagged{0};
+    const uint64_t n = ++refused_untagged;
+    if (n <= 5 || n % 1000 == 0) {
+      Log_warn("[RAFT-SUBMIT] par_id={}: refused a command before this process's first "
+               "leadership ({} refused)", par_id, n);
+    }
+    return;
+  }
   static std::atomic<txnid_t> next_tx_id{1};
-  txnid_t tx_id = OwnTxIdPrefix(AuthorTerm()) | (next_tx_id.fetch_add(1) & kTxIdCounterMask);
+  txnid_t tx_id = OwnTxIdPrefix(author_term) | (next_tx_id.fetch_add(1) & kTxIdCounterMask);
 
   // Use the production helper to create TpcCommitCommand{cmd_=LogEntry}.
   auto tpc_cmd = CreateRaftLogCommand(log_entry, length, tx_id, par_id);
