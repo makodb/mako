@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 /// An open file the store appends to.
 pub trait StoreFile: Send {
     fn write_all(&mut self, buf: &[u8]) -> io::Result<()>;
-    /// `fdatasync`: the data and the length written so far are durable.
+    /// `fdatasync` in the default sync policy; async policy leaves data in cache.
     fn sync_data(&mut self) -> io::Result<()>;
 }
 
@@ -24,8 +24,8 @@ pub trait StoreFs: Send + Sync {
     fn create_dir(&self, p: &Path) -> io::Result<()>;
     /// Creates a new, empty file; fails if it exists.
     fn create_new(&self, p: &Path) -> io::Result<Box<dyn StoreFile>>;
-    /// Opens an existing file to append to. RealFs's power-cut ledger counts
-    /// its current bytes as synced (a caller that cannot know syncs it).
+    /// Opens an existing file to append to. RealFs's default-policy power-cut
+    /// ledger counts its current bytes as synced; async retains known coverage.
     fn open_append(&self, p: &Path) -> io::Result<Box<dyn StoreFile>>;
     /// Takes an exclusive lock on an existing file (`flock`), held while the
     /// returned guard lives; fails at once if another process holds it.
@@ -37,10 +37,10 @@ pub trait StoreFs: Send + Sync {
     fn remove_file(&self, p: &Path) -> io::Result<()>;
     fn remove_dir_all(&self, p: &Path) -> io::Result<()>;
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
-    /// Cuts a file to `len` bytes and syncs it.
+    /// Cuts a file to `len` bytes and syncs it under the default sync policy.
     fn truncate(&self, p: &Path, len: u64) -> io::Result<()>;
-    /// `fsync` on a directory: its entries (creations, renames, removals)
-    /// are durable.
+    /// `fsync` on a directory under the default sync policy. The explicitly
+    /// weak async policy leaves entries and file data unsynced.
     fn sync_dir(&self, dir: &Path) -> io::Result<()>;
     /// Simulates a power cut on the files this object wrote: unsynced data
     /// and directory changes are undone. Used by crash points (`:powercut`).
@@ -67,14 +67,25 @@ fn parent(p: &Path) -> PathBuf {
 }
 
 /// The real filesystem, with a ledger for simulated power cuts.
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct RealFs {
     ledger: Arc<Mutex<Ledger>>,
+    sync_writes: bool,
+}
+
+impl Default for RealFs {
+    fn default() -> Self { Self::with_sync_writes(true) }
 }
 
 impl RealFs {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Async retains every write but omits file/directory persistence barriers.
+    /// It is not safe for a durable Raft quorum after a machine/power failure.
+    pub fn with_sync_writes(sync_writes: bool) -> Self {
+        Self { ledger: Arc::new(Mutex::new(Ledger::default())), sync_writes }
     }
 
     fn ledger(&self) -> MutexGuard<'_, Ledger> {
@@ -86,6 +97,7 @@ struct RealFile {
     file: File,
     path: PathBuf,
     ledger: Arc<Mutex<Ledger>>,
+    sync_writes: bool,
 }
 
 impl StoreFile for RealFile {
@@ -97,6 +109,7 @@ impl StoreFile for RealFile {
     }
 
     fn sync_data(&mut self) -> io::Result<()> {
+        if !self.sync_writes { return Ok(()); }
         self.file.sync_data()?;
         let mut l = self.ledger.lock().unwrap_or_else(|e| e.into_inner());
         let e = l.lens.entry(self.path.clone()).or_insert((0, 0));
@@ -117,14 +130,16 @@ impl StoreFs for RealFs {
         let mut l = self.ledger();
         l.uncovered.push(DirOp::Created(p.to_path_buf()));
         l.lens.insert(p.to_path_buf(), (0, 0));
-        Ok(Box::new(RealFile { file, path: p.to_path_buf(), ledger: self.ledger.clone() }))
+        Ok(Box::new(RealFile { file, path: p.to_path_buf(), ledger: self.ledger.clone(), sync_writes: self.sync_writes }))
     }
 
     fn open_append(&self, p: &Path) -> io::Result<Box<dyn StoreFile>> {
         let file = OpenOptions::new().append(true).open(p)?;
         let len = file.metadata()?.len();
-        self.ledger().lens.insert(p.to_path_buf(), (len, len));
-        Ok(Box::new(RealFile { file, path: p.to_path_buf(), ledger: self.ledger.clone() }))
+        let mut ledger = self.ledger();
+        let synced = if self.sync_writes { len } else { ledger.lens.get(p).map_or(len, |entry| entry.1) };
+        ledger.lens.insert(p.to_path_buf(), (len, synced));
+        Ok(Box::new(RealFile { file, path: p.to_path_buf(), ledger: self.ledger.clone(), sync_writes: self.sync_writes }))
     }
 
     fn lock(&self, p: &Path) -> io::Result<Box<dyn std::any::Any + Send>> {
@@ -182,15 +197,16 @@ impl StoreFs for RealFs {
     fn truncate(&self, p: &Path, len: u64) -> io::Result<()> {
         let f = OpenOptions::new().write(true).open(p)?;
         f.set_len(len)?;
-        f.sync_data()?;
+        if self.sync_writes { f.sync_data()?; }
         let mut l = self.ledger();
         if let Some(e) = l.lens.get_mut(p) {
-            *e = (len, len);
+            *e = (len, if self.sync_writes { len } else { e.1.min(len) });
         }
         Ok(())
     }
 
     fn sync_dir(&self, dir: &Path) -> io::Result<()> {
+        if !self.sync_writes { return Ok(()); }
         File::open(dir)?.sync_all()?;
         let mut l = self.ledger();
         l.uncovered.retain_mut(|op| match op {
@@ -268,6 +284,7 @@ const ROOT: u64 = 0;
 #[derive(Clone)]
 pub struct MemFs {
     inner: Arc<Mutex<MemInner>>,
+    sync_writes: bool,
 }
 
 impl Default for MemFs {
@@ -359,10 +376,16 @@ fn mix(s: &mut u64) -> u64 {
 
 impl MemFs {
     pub fn new() -> Self {
+        Self::with_sync_writes(true)
+    }
+
+    /// Models the same explicit persistence policy as [`RealFs`].
+    pub fn with_sync_writes(sync_writes: bool) -> Self {
         let mut nodes = HashMap::new();
         nodes.insert(ROOT, Node::Dir { entries: BTreeMap::new(), durable: BTreeMap::new() });
         MemFs {
             inner: Arc::new(Mutex::new(MemInner { nodes, next: 1, budget: None, dead: false, ops: 0 })),
+            sync_writes,
         }
     }
 
@@ -475,6 +498,7 @@ impl StoreFile for MemFile {
     }
 
     fn sync_data(&mut self) -> io::Result<()> {
+        if !self.fs.sync_writes { return Ok(()); }
         let mut g = self.fs.st();
         g.op()?;
         match g.nodes.get_mut(&self.ino) {
@@ -577,7 +601,7 @@ impl StoreFs for MemFs {
         match g.nodes.get_mut(&ino) {
             Some(Node::File { data, durable }) => {
                 data.truncate(len as usize);
-                *durable = data.clone();
+                if self.sync_writes { *durable = data.clone(); }
                 Ok(())
             }
             _ => Err(not_found(p)),
@@ -585,6 +609,7 @@ impl StoreFs for MemFs {
     }
 
     fn sync_dir(&self, dir: &Path) -> io::Result<()> {
+        if !self.sync_writes { return Ok(()); }
         let mut g = self.st();
         g.op()?;
         let ino = g.resolve(dir).ok_or_else(|| not_found(dir))?;
@@ -600,5 +625,69 @@ impl StoreFs for MemFs {
     fn powercut(&self) -> io::Result<()> {
         self.crash(Crash::PowerCut);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+    use crate::{segment, wal, Identity, Wal, WalOptions};
+
+    #[test]
+    fn wal_policy_preserves_writes_but_only_sync_survives_powercut() {
+        let id = Identity { site: 1, partition: 0, fingerprint: 7, format: 1 };
+        let directory = Path::new("/wal");
+        let options = WalOptions { segment_bytes: segment::HEADER_LEN as u64 + 1 };
+        for sync_writes in [true, false] {
+            let durable = MemFs::new();
+            durable.mkdir_p(directory);
+            // Seed a durable empty segment so a missing directory cannot hide
+            // accidental syncing of an async append during this test.
+            drop(Wal::create(Arc::new(durable.clone()), directory, id, options).unwrap());
+            let mut fs = durable.clone();
+            fs.sync_writes = sync_writes;
+            let mut writer = Wal::resume(Arc::new(fs.clone()), directory, id, options, 1).unwrap();
+            writer.append(1, &[b"first".to_vec()]).unwrap();
+            writer.append(2, &[b"second".to_vec()]).unwrap();
+            drop(writer);
+            assert_eq!(fs.list(directory).unwrap().len(), 2, "must exercise rotation");
+            fs.crash(Crash::Kill);
+            let recovered = wal::recover(&fs, directory, &id, 0).unwrap();
+            assert_eq!(recovered.records, vec![(1, b"first".to_vec()), (2, b"second".to_vec())]);
+            fs.crash(Crash::PowerCut);
+            let recovered = wal::recover(&fs, directory, &id, 0).unwrap();
+            assert_eq!(recovered.d, if sync_writes { 2 } else { 0 });
+            assert_eq!(fs.list(directory).unwrap().len(), if sync_writes { 2 } else { 1 });
+        }
+    }
+
+    #[test]
+    fn async_wal_still_reports_write_failures() {
+        let fs = MemFs::with_sync_writes(false);
+        let directory = Path::new("/wal");
+        fs.mkdir_p(directory);
+        let id = Identity { site: 1, partition: 0, fingerprint: 7, format: 1 };
+        let mut writer = Wal::create(Arc::new(fs.clone()), directory, id, WalOptions::default()).unwrap();
+        fs.set_budget(Some(0));
+        assert!(writer.append(1, &[b"not-written".to_vec()]).is_err());
+        assert_eq!(writer.next_seq(), 1);
+    }
+
+    #[test]
+    fn truncation_obeys_persistence_policy() {
+        for sync_writes in [true, false] {
+            let mut fs = MemFs::new();
+            let path = Path::new("/file");
+            let mut file = fs.create_new(path).unwrap();
+            file.write_all(b"original").unwrap();
+            file.sync_data().unwrap();
+            fs.sync_dir(Path::new("/")).unwrap();
+            drop(file);
+            fs.sync_writes = sync_writes;
+            fs.truncate(path, 3).unwrap();
+            assert_eq!(fs.read(path).unwrap(), b"ori");
+            fs.crash(Crash::PowerCut);
+            assert_eq!(fs.read(path).unwrap(), if sync_writes { &b"ori"[..] } else { &b"original"[..] });
+        }
     }
 }

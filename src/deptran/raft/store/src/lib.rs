@@ -11,7 +11,9 @@
 //! The store is generic over the payload type `P` (an entry's command); the
 //! shell supplies a [`Codec`]. All file access goes through [`StoreFs`], so
 //! the tests run on [`MemFs`], which models what a crash or a power cut
-//! keeps.
+//! keeps. These durability guarantees require the default sync filesystem
+//! policy. Explicit `with_sync_writes(false)` is a weak persistence experiment:
+//! the WAL is still written, but acknowledgement is not power-crash durable.
 
 pub mod applier;
 pub mod base;

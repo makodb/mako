@@ -1,0 +1,8 @@
+{
+  "source_branch": "worktree-masstree-rocks",
+  "source_head": "d16184fdb2bc540a8357cc98c383369824da875e",
+  "snapshot_ref": "codex/rocksdb-raft-sto-source",
+  "snapshot_commit": "4f04db97c36becd50b5b6ec288985b65da54a11b",
+  "snapshot_scope": "Selected tracked and untracked working sources; source worktree and index unchanged",
+  "packages": ["sto-core", "mako-clock", "mako-engine-api", "mrx-core", "mrx-rocks", "sto-test-datatypes", "mako-history", "mako-differential"]
+}

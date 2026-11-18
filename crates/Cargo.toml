@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = [
+    "sto-core",
+    "mako-clock",
+    "mako-engine-api",
+    "mrx-core",
+    "mrx-rocks",
+    "sto-test-datatypes",
+    "mako-history",
+    "mako-differential",
+    "sto-rocksdb",
+    "raft-host",
+    "rocksdb-raft-service",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.95"
+license = "MIT"
+publish = false
+
+[profile.release]
+lto = false
+panic = "abort"
+codegen-units = 1
+opt-level = 3
+
+[profile.dev]
+lto = false
+
+# Match the existing native Raft workspace's SRPC/Lion Verus unification.
+# Standalone sharding verification retains its own pinned verifier dependency.
+[patch."https://github.com/verus-lang/verus"]
+vstd = "=0.0.0-2026-08-02-0125"

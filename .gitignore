@@ -10,6 +10,9 @@
 /target-docker
 /target
 /.cargo-docker
+/target-rocksdb-raft/
+/.cargo-rocksdb-raft/
+/crates/target/
 .lock-waf*
 *.pyc
 .cproject
@@ -92,6 +95,7 @@ experiment_*.sh
 nfs_sync_*
 out-perf.masstree/*
 *.json
+!/crates/sto-reuse-source.json
 /tmp
 /log
 /archive

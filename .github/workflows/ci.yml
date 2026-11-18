@@ -17,6 +17,38 @@ permissions:
 #  cancel-in-progress: false
 
 jobs:
+  rocksdb-raft:
+    name: Native Rust STO + RocksDB + Raft
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/makodb/mako-ci-ubuntu24:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    timeout-minutes: 90
+    env:
+      CI_BUILD_JOBS: "4"
+      ROCKSDB_RAFT_BUILD_DIR: build_rocksdb_raft
+      CARGO_TARGET_DIR: target-rocksdb-raft
+    steps:
+      - name: Checkout without optional native engines
+        uses: actions/checkout@v4
+      - name: Initialize native SRPC dependency only
+        run: git submodule update --init src/srpc/third-party/lion
+      - name: Install pinned Rust toolchain
+        run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
+      - name: Build and qualify local-only storage and replication
+        run: bash ci/rocksdb_raft.sh
+      - name: Retain test diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rocksdb-raft-tests
+          path: |
+            build_rocksdb_raft/Testing/Temporary/
+            build_rocksdb_raft/runtime-evidence.*/**/node*.log
+            build_rocksdb_raft/runtime-evidence.*/**/*.json
+
   srpc-goal0-dual-compile:
     name: Goal-0 SRPC canonical Rust dual compile
     runs-on: ubuntu-24.04

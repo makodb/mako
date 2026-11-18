@@ -859,6 +859,9 @@ case "${1:-}" in
     compile)
         compile
         ;;
+    rocksdbRaft)
+        bash ./ci/rocksdb_raft.sh
+        ;;
     nativeShardingProof)
         bash ./scripts/verify_native_sharding.sh
         ;;

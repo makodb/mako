@@ -1,0 +1,20 @@
+[package]
+name = "mako-clock"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Mako's process-wide hybrid logical clock, general certification gate, and dense cache sequence"
+
+[features]
+default = ["distributed"]
+distributed = ["mako-engine-api/distributed"]
+# Deterministic physical-clock override for tests; never enable in production.
+test-hooks = []
+
+[dependencies]
+mako-engine-api = { path = "../mako-engine-api", default-features = false }
+
+[lints.rust]
+unsafe_code = "forbid"

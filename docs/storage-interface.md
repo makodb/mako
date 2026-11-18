@@ -10,6 +10,39 @@ converts, the per-class translation recipe, the lowering footguns — see
 the field guide [porting-cpp-to-rust-dsl.md](porting-cpp-to-rust-dsl.md);
 this page covers only the storage-specific mechanics.
 
+## Product-profile boundary
+
+The traits and C++ wrappers below belong to the default `MAKO` profile.
+`ROCKSDB_RAFT` returns from the root CMake configuration before those engine
+targets or their native dependencies are configured. Its storage adapter is
+`crates/sto-rocksdb`, backed by `crates/mrx-rocks`; it does not implement the
+distributed `FullOrderedIndex`/`ShardParticipant` interface.
+
+Rust STO retains the transaction's observations, intents, canonical locks and
+certification. The adapter retains only key/range concurrency metadata outside
+transactions; committed values live in RocksDB. A native snapshot supplies reads,
+and STO intents supply read-your-writes. Final certification and local Raft
+admission share a short ordering gate; quorum/application waits do not hold it.
+An uncertain accepted attempt retains its reservations until authoritative
+application or discard, or fences the runtime on unresolved teardown.
+
+The logical database root has an exclusive process lease independent of the
+currently selected RocksDB generation. Checkpoint installation cannot open a
+second writer by moving the native `LOCK` into a retired directory. Old snapshots
+retain their generation's native handle; maintenance reclaims a retired
+generation only after its last lease is gone. Startup reclaims unselected
+private generations only after Raft recovery has established authority.
+
+The local profile disables the `distributed` defaults of `sto-core`,
+`mako-clock` and `mako-engine-api`, the `mrx-core` cache feature, and
+`mako-sharding`'s `engine-host` feature. Existing defaults remain enabled for
+their original consumers. Routing imports the native immutable catalog/snapshot
+types without pulling in migration participants or the Mako engine.
+
+See [the direct service API](rocksdb_interface.md#direct-rocksdb-service-profile)
+and [the design](plans/rocksdb-raft-mode.md) for build, operation and recovery.
+
+
 ## One interface, three traits, three backends
 
 The interface is authored as **rusty-cpp inline-Rust traits** in

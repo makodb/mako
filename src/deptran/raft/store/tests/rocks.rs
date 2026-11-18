@@ -57,3 +57,32 @@ fn rocks_roundtrip() {
     drop(b);
     std::fs::remove_dir_all(&dir).unwrap();
 }
+
+/// Exit the writer without running RocksBase::drop or requesting a flush.
+/// Recovery must come from real WAL writes, not a destructor's memtable flush.
+#[test]
+fn async_base_wal_survives_process_exit() {
+    const CHILD_PATH: &str = "RAFT_ASYNC_BASE_WAL_TEST_PATH";
+    if let Some(path) = std::env::var_os(CHILD_PATH) {
+        let mut base = RocksBase::open_with_sync_writes(std::path::Path::new(&path), true, false).unwrap();
+        base.write(&[
+            Op::Put(base::KEY_ID.to_vec(), base::identity_bytes(&ID)),
+            Op::Put(base::KEY_C.to_vec(), 19u64.to_le_bytes().to_vec()),
+            Op::Put(b"payload".to_vec(), b"written without a flush".to_vec()),
+        ]).unwrap();
+        std::process::exit(0);
+    }
+    let directory = std::env::temp_dir().join(format!("raft-async-rocks-test-{}-{}",
+        std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+    std::fs::create_dir(&directory).unwrap();
+    let path = directory.join("base");
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "async_base_wal_survives_process_exit", "--nocapture"])
+        .env(CHILD_PATH, &path).status().unwrap();
+    assert!(status.success());
+    let base = RocksBase::open_with_sync_writes(&path, false, false).unwrap();
+    assert_eq!(base.get(base::KEY_C).unwrap().unwrap(), 19u64.to_le_bytes());
+    assert_eq!(base.get(b"payload").unwrap().unwrap(), b"written without a flush");
+    drop(base);
+    std::fs::remove_dir_all(directory).unwrap();
+}

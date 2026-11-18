@@ -147,6 +147,11 @@ The plans below are the `@safe`/`@unsafe` borrow-checker and smart-pointer track
 
 ## Development Plans
 
+### Rust STO + RocksDB + Raft
+
+- [Feature Plan](plans/rocksdb-raft-mode.md) — Reuse Rust STO with a direct RocksDB
+  adapter and Raft; no Masstree/Mako cache or distributed transactions.
+
 ### Config Node System
 
 - **[Overview](plans/config-node/overview.md)** - Configuration persistence master plan

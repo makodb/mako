@@ -15,6 +15,198 @@ Read the conceptual section first if you're deciding *whether* Mako's interface 
 > against compilation. Literal `SiloRuntime` references below remain current:
 > it is live allocator, RCU, and Masstree runtime support for STO/MassTrans.
 
+## Direct RocksDB service profile
+
+`MAKO_BUILD_PROFILE=MAKO` remains the default described by the C++ interface
+reference below. `MAKO_BUILD_PROFILE=ROCKSDB_RAFT` selects a separate native Rust
+service: reused Rust STO concurrency control, direct RocksDB committed storage,
+and Raft replication, synchronous by default. It does **not** instantiate `IDatabase`, C++ STO,
+MassTrans, Masstree, `SiloRuntime`, or a Mako value cache.
+
+This profile preserves the RocksDB-like transaction programming model, not the
+RocksDB C++ ABI. Its Rust client is `rocksdb_raft_service::client::Client`; its
+standalone C boundary is `src/rocks_interface/rocksdb_raft.h`, linked against
+`librocksdb_raft_service.so`. The C header includes no Mako engine headers.
+
+### Build and launch
+
+Run builds and qualification through Docker:
+
+```bash
+./docker_build.sh build-rocksdb-raft
+./docker_build.sh ci rocksdbRaft
+```
+
+Inside the Docker development environment, generate and run a local cluster:
+
+```bash
+python3 scripts/rocksdb_raft/cluster.py \
+  --bin-dir build_rocksdb_raft --data-dir /tmp/rocksdb-cluster \
+  --replicas 3 --shards 2 --server-workers 40
+```
+
+The data directory must be empty. The helper emits `node1.json` through
+`node3.json`, a separate connection-only `client.json`, and the chosen endpoints.
+`--generate-only` writes configuration without launching servers. The running
+helper creates `alpha`, `beta`, and `bench`; generate-only mode declares their
+routes but does not create persisted tables. The two-shard layout splits each
+at byte `m`. A one-member group is useful for measuring local durability, not
+for fault tolerance.
+
+Explicit first creation is
+`rocksdb_raft_server --config node1.json --bootstrap`. Restart the same node
+without `--bootstrap`; missing Raft authority is an error, not a fresh cluster.
+Keep node/group IDs, peer membership and the routing catalog unchanged. A
+`raft.service-routing.json` sibling of each Raft directory binds that identity;
+it is outside the store's atomically created directory. This profile does not
+implement online placement migration or membership changes.
+
+`rocksdb_raft_client --config client.json --stdio` accepts one request JSON
+object per line. Byte arrays preserve binary keys/values. Unlike the CLI, the
+C `mako_rocksdb_raft_request` entrypoint accepts a versioned envelope:
+`{"version":1,"request":{...}}`. Free every returned C buffer exactly once with
+`mako_rocksdb_raft_buffer_free`, and close the client after its calls finish.
+
+Inside Docker, `cmake --install build_rocksdb_raft --prefix /tmp/rocksdb-install`
+installs the three executables under `bin`, the client library under `lib`,
+and the standalone header as `include/mako/rocksdb_raft.h`. An installed C
+consumer includes `<mako/rocksdb_raft.h>` and links `-lrocksdb_raft_service`;
+set its runtime library search path to the installation's `lib` directory.
+The installed CLI and a real C consumer are covered by the qualification evidence.
+
+### Durability selection
+
+The default is `durability: "sync"` in server JSON. For the explicit weak
+persistence experiment, set the top-level field to `"async"` on **every**
+replica, or pass `--durability async` to `scripts/rocksdb_raft/cluster.py`.
+Status reports both `durability` and `power_crash_durable`; async startup emits
+a warning.
+
+- **Sync:** acknowledged writes require durable quorum and synchronous atomic
+  user-DB application.
+- **Async:** user RocksDB WAL remains enabled with `sync=false`; Raft writes
+  still occur, but foreground log/file/directory persistence barriers are
+  omitted. Commit still waits for quorum ordering and local atomic application,
+  **not power-crash durability**. Acknowledged data and consensus state may be
+  lost after machine/power failure. This is not a production durable quorum.
+- OS writeback and RocksDB background flush/compaction perform persistence.
+  There is no configured periodic WAL-sync deadline or bounded loss window.
+  RocksDB-internal startup/background syncs and explicit user-DB checkpoint/
+  generation maintenance are not globally suppressed.
+- The async Raft base enables its own WAL with `sync=false` so nonwaiting base
+  flushes and Raft-segment reclamation remain process-crash recoverable. The
+  default sync base keeps its existing separate-Raft-WAL protection.
+- Modes have distinct persistent identities; reopening or installing a
+  checkpoint under the opposite mode is rejected. Use fresh directories for
+  comparisons. Raft wire modes also differ, so a sync group cannot count async
+  peer acknowledgments as durable votes/replication.
+
+`rocksdb_raft_bench` and `scripts/rocksdb_raft/performance.py` accept the same
+`--durability sync|async` selection. Native `OptimisticTransactionDB`, local STO,
+and replicated application use the selected WAL policy; the remote benchmark
+checks the service's reported mode before running. The matrix records the
+selection, guarantee, actual server configs and commands. Compare both policies
+with the same binary, dataset and concurrency, in separate data directories.
+
+`smoke.py --durability async` exercises transaction semantics and process
+restart/failover, **not** power-loss durability. CI runs both policies; the Raft
+store suite separately models loss of unsynchronized data on power failure.
+
+### Transaction and failure contract
+
+The durability guarantees below describe the default **sync** policy. Async
+keeps transaction isolation, ordering and error handling but has the weaker
+persistence contract above.
+
+- Begin selects **one shard-local user DB** and establishes a committed
+  current-term Raft barrier before capturing a RocksDB snapshot: a fresh
+  correlated quorum round plus local application catch-up, not a new durable
+  log entry per Begin. Operations reuse that snapshot; they do not acquire a
+  fresh authority barrier per Get.
+- Get, Exists, Put, Insert, Delete, bounded Scan/ReverseScan, Commit and Rollback
+  operate through Rust STO items. Multiple logical tables in that DB can commit
+  atomically. Tables are byte namespaces, not separately configured native
+  column families.
+- Every read is tracked, including absence. Scans use a conservative
+  database-wide change generation; unrelated writes can conflict with scans.
+  RocksDB's own block cache remains enabled; there is no separate committed-value
+  mirror or delayed cache-to-RocksDB writeback.
+- A key, range, or explicit DB outside the selected shard poisons the **whole**
+  transaction. No partial writes are published, even for co-located shards.
+- Write success requires quorum commitment and local durable application of one
+  atomic batch containing rows, catalog/count/version metadata, outcome, and
+  applied-prefix receipt. Followers replay the decided command, not the client
+  body or old OCC validation. Read-only completion has no user write command or
+  durable write-outcome record.
+- A stable `(client, sequence)` request identity resolves uncertain write
+  outcomes. `unknown_outcome`, lost replies, or storage failure after possible
+  submission do **not** authorize replaying the transaction body or claiming a
+  rollback. Query Outcome with the same identity; an absent outcome is not proof
+  of abort while the accepted log suffix remains unresolved.
+- Storage/application failures fence admission. Restart reconciles the user DB
+  against durable Raft authority before serving; it never truncates an
+  acknowledged user state to make recovery appear successful.
+
+### Performance matrix
+
+Inside Docker, the harness starts fresh clusters and databases itself; do not
+leave another benchmark or qualification run competing for the storage device:
+
+```bash
+python3 scripts/rocksdb_raft/performance.py \
+  --bin-dir build_rocksdb_raft --data-dir /tmp/rocksdb-performance \
+  --modes native,sto,replicated --replicas 1,3 --shards 1,2 --threads 8,16 \
+  --workloads point,disjoint,hot,multikey,scan \
+  --seconds 10 --dataset-keys 1024 --output /tmp/rocksdb-performance.json
+```
+
+`native` uses real native `OptimisticTransactionDB`; `sto` uses Rust STO and
+ordered durable RocksDB application without Raft/network; `replicated` uses the
+actual service. Data preload is outside the measured interval. All writing
+commits retain synchronous WAL durability. The service uses production timeout
+defaults, not the shorter failure-injection fixture deadlines: 10-second commit/
+read-barrier waits, 12-second client requests and 30-second idle transactions.
+Native Raft uses 40-ms heartbeats, one-second durable peer RPCs and randomized
+three-to-six-second election intervals. Those peer timings include storage
+latency; they are not just network round-trip budgets.
+
+The service workload uses two client processes with 8 or 16 threads each.
+A single local DB cannot have two writer processes, so the corresponding
+one-shard local references use one process with 16 or 32 threads; two-shard local
+references use two independent DB processes. Server worker counts, replica
+counts and this process-layout difference are reported separately.
+Native scans track returned keys but do not certify range phantoms as Rust STO
+does. All test transactions are shard-local; this is not unchanged TPC-C.
+The native reference also calls synchronous `Commit` for read-only transactions;
+this RocksDB version syncs an empty WAL batch, unlike the STO read-only fast
+path. Do not interpret their read-only throughput ratio as CPU-only overhead.
+
+Both references use strict WAL recovery and ordered writes. Native OCC requires
+its own retained memtable conflict history (128 MiB with the qualified RocksDB
+build); the raw STO database does not enable that extra history. Persisted
+OPTIONS capture this engine-specific difference rather than claiming identical
+native internals.
+
+The JSON output contains throughput, conflicts/unknowns/errors, latency
+histograms, per-process CPU/RSS/IO, actual RocksDB options and storage growth.
+Client Begin/operation/Commit timings are wall time, not internal CPU attribution.
+The design records the complete 80-case matrices on the
+[HDD host](plans/rocksdb-raft-mode.md#complete-installed-product-matrix) and
+[local SSD host](plans/rocksdb-raft-mode.md#local-ssd-rerun), including their
+hardware and comparison limitations. The separate
+[CPU attribution](plans/rocksdb-raft-mode.md#cpu-attribution-and-interpretation)
+and [durability traces](plans/rocksdb-raft-mode.md#measured-durability-cost)
+were measured on the HDD host, not the SSD.
+
+The [paired sync/async SSD comparison](plans/rocksdb-raft-mode.md#matched-sync-versus-async-ssd-comparison)
+uses the same binaries and includes native RocksDB with `sync=false`, local STO,
+and one/three replicas. It records the remaining gap and shared-host/short-run
+limits; async results are not power-crash-durable throughput.
+
+See the [implementation design and evaluation](plans/rocksdb-raft-mode.md) for
+source provenance, retained-attempt lifetime, checkpoint ordering and measurements.
+The remaining sections describe the unchanged default Mako facade.
+
 ---
 
 ## Conceptual Model
@@ -69,7 +261,12 @@ TPC-C creates approximately ten primary and secondary table instances.
 
 ### 3. Transaction semantics
 
-**RocksDB.** Two flavors: `OptimisticTransactionDB` (OCC, validates read-set at commit) and `TransactionDB` (pessimistic 2PL, locks acquired eagerly). Both use `class Transaction` with `Put`/`Get`/`GetForUpdate`/`Commit`/`Rollback`. Isolation: snapshot isolation by default; serializable with `SetSnapshot()` + `GetForUpdate()`. Supports 2PC (`Prepare`).
+**RocksDB.** Two flavors: `OptimisticTransactionDB` (OCC) and `TransactionDB`
+(pessimistic locking). Snapshot reads require explicit snapshot selection;
+`GetForUpdate()` tracks point reads for optimistic validation, whereas ordinary
+Get and iterators do not provide complete serializable range certification.
+Optimistic `Prepare()` is unsupported by the qualified RocksDB 8.9 library;
+prepared-transaction support belongs to configured `TransactionDB` modes.
 
 **STO/MassTrans.** OCC with optional opacity checking. `abstract_db::new_txn(flags, arena, buf)` returns a `void*` handle; ops are staged in a per-txn item set (`tset_`, `src/mako/sto/Transaction.hh:571-577`), validated at `commit_txn(txn)` returning `bool`. Aborts throw `abstract_abort_exception` or set an error flag; retry is caller-driven (no automatic loop). Isolation is **serializable** via read-set validation at commit — stricter than RocksDB's default snapshot isolation. No 2PC surface.
 
@@ -85,8 +282,8 @@ TPC-C creates approximately ten primary and secondary table instances.
 | Commit | `txn->Commit()` returning `Status` | `db->commit_txn(txn)` returning `bool` | Aligned semantics; different signatures |
 | Rollback | `txn->Rollback()` | `db->abort_txn(txn)` | Aligned |
 | Retry on conflict | Caller loop | Caller loop | Aligned |
-| 2PC (`Prepare`) | Supported | Not supported | Gap |
-| `SetName` (named txn for recovery) | Supported | Not supported | Gap |
+| 2PC (`Prepare`) | Not supported by the optimistic engine | Not supported | Neither optimistic surface exposes prepared transactions |
+| `SetName` (named txn for recovery) | Not supported by the optimistic engine | Not supported | Prepared/named recovery is a different native engine mode |
 
 **No pessimistic flavor**. RocksDB's `TransactionDB` (2PL) has no counterpart. Any consumer requiring lock-based blocking semantics can't be supported without a fresh implementation.
 
