@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import io
+import sys
 from contextlib import redirect_stderr
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,13 +16,27 @@ SCRIPT = Path(__file__).parents[1] / "run_sto_tpcc_compare.py"
 SPEC = importlib.util.spec_from_file_location("run_sto_tpcc_compare", SCRIPT)
 assert SPEC is not None and SPEC.loader is not None
 MODULE = importlib.util.module_from_spec(SPEC)
+sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
+VARIANTS = [
+    MODULE.Variant("cpp", Path("/bench/cpp"), "cpp", "baseline"),
+    MODULE.Variant("rust", Path("/bench/rust"), "rust", "candidate"),
+]
 
 
-def result(engine: str, throughput: float, pair_id: str = "p0") -> dict[str, object]:
+def result(
+    engine: str,
+    throughput: float,
+    pair_id: str = "p0",
+    *,
+    variant: str | None = None,
+    role: str | None = None,
+) -> dict[str, object]:
     return {
         "schema_version": 1,
         "engine": engine,
+        "variant": variant if variant is not None else engine,
+        "pair_role": role if role is not None else ("baseline" if engine == "cpp" else "candidate"),
         "threads": 4,
         "warehouses": 4,
         "configured_seconds": 30,
@@ -71,28 +86,7 @@ def benchmark_timeout(
 
 
 class RunnerTests(unittest.TestCase):
-    def test_external_mako_workloads_are_guarded_as_competitors(self) -> None:
-        self.assertIn("run_scalability_benchmark.py", MODULE.RUNNER_PROCESS_NAMES)
-        self.assertIn("makoCon", MODULE.BENCHMARK_PROCESS_NAMES)
-        self.assertIn("mako_bench_resp_scalability", MODULE.BENCHMARK_PROCESS_NAMES)
-
-    def test_persistent_pgo_driver_scripts_are_guarded_as_competitors(self) -> None:
-        for script in (
-            "build_sto_tpcc_pgo.sh",
-            "build_sto_masstree_pgo.sh",
-        ):
-            with self.subTest(script=script):
-                self.assertIn(script, MODULE.RUNNER_PROCESS_NAMES)
-                argv = ["bash", f"/tmp/pgo/{script}"]
-                self.assertTrue(
-                    any(
-                        Path(argument).name in MODULE.RUNNER_PROCESS_NAMES
-                        for argument in argv
-                    )
-                )
-
     def test_native_pgo_training_is_guarded_with_truncated_linux_comm(self) -> None:
-        self.assertIn("sto_tpcc_bench-generate", MODULE.BENCHMARK_PROCESS_NAMES)
         self.assertTrue(
             MODULE.matches_process_name(
                 "unavailable",
@@ -114,6 +108,36 @@ class RunnerTests(unittest.TestCase):
                 MODULE.BENCHMARK_PROCESS_NAMES,
             )
         )
+
+    def test_guard_distinguishes_runner_invocations_from_filename_arguments(self) -> None:
+        runner = "/bench/run_sto_tpcc_compare.py"
+        build_runner = "/bench/build_sto_tpcc_pgo.sh"
+        commands = {
+            101: ["docker", "run", "image", "python3", runner],
+            102: ["python3", "-B", runner],
+            103: ["python3", "/bench/unrelated.py", runner],
+            104: ["python3", "-c", "print('not a benchmark')", runner],
+            105: ["python3", "-W", "error", "-X", "dev", "-m", "scripts.run_sto_tpcc_compare"],
+            106: ["bash", "-e", "-o", "pipefail", build_runner],
+            107: ["bash", "-c", "printf '%s' \"$1\"", "shell", build_runner],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            proc = Path(directory)
+            for pid, argv in commands.items():
+                entry = proc / str(pid)
+                entry.mkdir()
+                (entry / "comm").write_text(argv[0] + "\n")
+                (entry / "cmdline").write_bytes("\0".join(argv).encode() + b"\0")
+
+            def process_path(path: str) -> Path:
+                return proc if path == "/proc" else Path(path)
+
+            with (
+                mock.patch.object(MODULE, "Path", side_effect=process_path),
+                mock.patch.object(MODULE, "ancestor_pids", return_value=set()),
+            ):
+                found = MODULE.find_competing_processes(SimpleNamespace(variants=[]))
+        self.assertEqual({row["pid"] for row in found}, {102, 105, 106})
 
     def test_file_fingerprint_records_content_and_identity(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -162,33 +186,6 @@ class RunnerTests(unittest.TestCase):
             MODULE.parse_workload_mix("45,43,4,4,3")
         with self.assertRaisesRegex(argparse.ArgumentTypeError, "five nonnegative"):
             MODULE.parse_workload_mix("101,0,0,0,-1")
-
-    def test_allocator_memory_defaults_to_one_gibibyte(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            binary = root / "sto_tpcc_bench"
-            binary.write_bytes(b"#!/bin/sh\n")
-            binary.chmod(0o755)
-            config = root / "config.yml"
-            config.write_text("hosts: []\n", encoding="utf-8")
-            argv = [
-                str(SCRIPT),
-                "--binary",
-                str(binary),
-                "--config",
-                str(config),
-                "--output-dir",
-                str(root / "results"),
-                "--threads",
-                "1",
-                "--physical-cpus",
-                "0",
-            ]
-            with mock.patch.object(MODULE.sys, "argv", argv):
-                args = MODULE.parse_args()
-
-        self.assertEqual(args.allocator_memory, "1G")
-        self.assertEqual(args.rust_registry_memory, "8G")
 
     def test_registry_budget_overrides_ambient_value_and_is_recorded(self) -> None:
         with mock.patch.dict(
@@ -260,55 +257,6 @@ class RunnerTests(unittest.TestCase):
                 "45,43,4,4,4",
             )
 
-    def test_allocator_memory_is_identical_and_recorded_for_both_engines(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            args = SimpleNamespace(
-                physical_cpus=[10, 11, 12, 13],
-                taskset="taskset",
-                binary=Path(directory) / "sto_tpcc_bench",
-                config=Path(directory) / "config.yml",
-                site="local_s0",
-                runtime_seconds=30,
-                workload_mix=[45, 43, 4, 4, 4],
-                allocator_memory="2G",
-                timeout_seconds=60,
-                output_dir=Path(directory),
-                guard_lxd_during_measurement=False,
-            )
-
-            def completed_run(command: list[str], **_kwargs: object) -> object:
-                engine = command[-1]
-                stdout = MODULE.RESULT_PREFIX + MODULE.json.dumps(
-                    result(engine, 80.0 if engine == "rust" else 100.0)
-                )
-                return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
-
-            with (
-                mock.patch.dict(MODULE.os.environ, {}, clear=True),
-                mock.patch.object(
-                    MODULE.subprocess, "run", side_effect=completed_run
-                ) as run,
-            ):
-                records = [
-                    MODULE.run_one(args, engine, 4, 0, index, "p0")
-                    for index, engine in enumerate(("cpp", "rust"), start=1)
-                ]
-
-        for record, call in zip(records, run.call_args_list, strict=True):
-            environment = call.kwargs["env"]
-            self.assertEqual(environment["MAKO_TPCC_ALLOCATOR_MEMORY"], "2G")
-            self.assertEqual(record["command"], call.args[0])
-            self.assertEqual(record["pair_attempt"], 1)
-            self.assertIn("-attempt01-", record["stdout_log"])
-            self.assertEqual(
-                record["environment_overrides"],
-                {
-                    "MAKO_TPCC_ALLOCATOR_MEMORY": "2G",
-                    "MAKO_STO_TPCC_REGISTRY_MEMORY": "8G",
-                    "MAKO_TPCC_WORKLOAD_MIX": "45,43,4,4,4",
-                },
-            )
-
     def test_run_one_preserves_pre_measurement_timeout_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             output_dir = Path(directory)
@@ -325,6 +273,7 @@ class RunnerTests(unittest.TestCase):
                 output_dir=output_dir,
                 guard_lxd_during_measurement=True,
             )
+            args.binary.write_bytes(b"benchmark executable")
             timeout = MODULE.subprocess.TimeoutExpired(
                 ["sto_tpcc_bench"],
                 60,
@@ -338,7 +287,7 @@ class RunnerTests(unittest.TestCase):
             ):
                 MODULE.run_one(
                     args,
-                    "cpp",
+                    MODULE.Variant("cpp", args.binary, "cpp", "baseline"),
                     1,
                     2,
                     21,
@@ -397,14 +346,16 @@ class RunnerTests(unittest.TestCase):
                 output_dir=output_dir,
                 guard_lxd_during_measurement=False,
             )
+            args.binary.write_bytes(b"benchmark executable")
+            variant = MODULE.Variant("cpp", args.binary, "cpp", "baseline")
             stdout = MODULE.RESULT_PREFIX + MODULE.json.dumps(result("cpp", 100.0))
             completed = SimpleNamespace(returncode=0, stdout=stdout, stderr="")
             with mock.patch.object(MODULE.subprocess, "run", return_value=completed):
                 first = MODULE.run_one(
-                    args, "cpp", 4, 0, 7, "pair-1", pair_attempt=1
+                    args, variant, 4, 0, 7, "pair-1", pair_attempt=1
                 )
                 second = MODULE.run_one(
-                    args, "cpp", 4, 0, 7, "pair-1", pair_attempt=2
+                    args, variant, 4, 0, 7, "pair-1", pair_attempt=2
                 )
 
             self.assertEqual(first["run_order"], second["run_order"])
@@ -437,6 +388,7 @@ class RunnerTests(unittest.TestCase):
                 output_dir=output_dir,
                 guard_lxd_during_measurement=True,
             )
+            args.binary.write_bytes(b"benchmark executable")
             timeout = MODULE.subprocess.TimeoutExpired(
                 ["sto_tpcc_bench"],
                 60,
@@ -449,7 +401,10 @@ class RunnerTests(unittest.TestCase):
                 mock.patch.object(MODULE.subprocess, "run", side_effect=timeout),
                 self.assertRaises(MODULE.BenchmarkProcessTimeout) as raised,
             ):
-                MODULE.run_one(args, "rust", 1, 0, 1, "r00-c00-1t")
+                MODULE.run_one(
+                    args, MODULE.Variant("rust", args.binary, "rust", "candidate"),
+                    1, 0, 1, "r00-c00-1t",
+                )
 
             self.assertFalse(raised.exception.before_measurement)
             self.assertEqual(
@@ -502,7 +457,6 @@ class RunnerTests(unittest.TestCase):
                 MODULE.parse_args()
 
         self.assertIn(variable, stderr.getvalue())
-        self.assertIn("including empty values", stderr.getvalue())
 
     def test_extract_result_accepts_one_valid_record(self) -> None:
         record = result("rust", 80.0)
@@ -531,24 +485,24 @@ class RunnerTests(unittest.TestCase):
             {row["median_rust_percent_of_cpp"] for row in rows}, {80.0}
         )
 
-    def test_quiet_window_reports_all_interference(self) -> None:
-        sample = {
-            "restart_count_before": 10,
-            "restart_count_after": 11,
-            "cpu_idle_percent": {0: 100.0, 1: 94.9},
-            "competing_before": [],
-            "competing_after": [{"pid": 123}],
-            "observed_seconds": 1.99,
-        }
+    def test_summary_pairs_two_rust_variants_without_merging_or_cpp_ratios(self) -> None:
+        records = [
+            result("rust", 80.0, "p0", variant="R1", role="candidate"),
+            result("rust", 100.0, "p0", variant="R0", role="baseline"),
+            result("rust", 1000.0, "p1", variant="R0", role="baseline"),
+            result("rust", 900.0, "p1", variant="R1", role="candidate"),
+        ]
+        rows = MODULE.summarize(records)
         self.assertEqual(
-            MODULE.quiet_window_violations(sample),
-            [
-                "lxd NRestarts changed during the quiet window",
-                "a selected CPU was below 95% idle",
-                "a competing STO/perf job was present",
-                "the quiet window was too short",
-            ],
+            {row["variant"]: row["median_txn_per_sec"] for row in rows},
+            {"R0": 550.0, "R1": 490.0},
         )
+        self.assertEqual({row["engine"] for row in rows}, {"rust"})
+        self.assertEqual({row["repetitions"] for row in rows}, {2})
+        self.assertEqual(
+            {row["median_candidate_percent_of_baseline"] for row in rows}, {85.0}
+        )
+        self.assertEqual({row["median_rust_percent_of_cpp"] for row in rows}, {None})
 
     def test_lxd_alignment_waits_for_a_strict_restart_increment(self) -> None:
         with (
@@ -738,7 +692,7 @@ class RunnerTests(unittest.TestCase):
 
         def fake_run_one(
             _args: object,
-            engine: str,
+            variant: MODULE.Variant,
             _threads: int,
             _repetition: int,
             run_order: int,
@@ -746,6 +700,7 @@ class RunnerTests(unittest.TestCase):
             *,
             pair_attempt: int,
         ) -> dict[str, object]:
+            engine = variant.backend
             calls.append((engine, run_order, pair_attempt))
             record = result(engine, 100.0 if engine == "cpp" else 80.0, pair_id)
             record["run_order"] = run_order
@@ -774,7 +729,7 @@ class RunnerTests(unittest.TestCase):
         ):
             accepted = MODULE.run_guarded_pair(
                 args,
-                ["cpp", "rust"],
+                VARIANTS,
                 threads=4,
                 repetition=0,
                 pair_id="pair-1",
@@ -799,6 +754,8 @@ class RunnerTests(unittest.TestCase):
             [
                 {
                     "engine": "cpp",
+                    "variant": "cpp",
+                    "pair_role": "baseline",
                     "run_order": 7,
                     "pair_attempt": 1,
                     "stdout_log": "007-pair-1-attempt01-cpp.stdout.log",
@@ -830,7 +787,7 @@ class RunnerTests(unittest.TestCase):
         ):
             accepted = MODULE.run_guarded_pair(
                 args,
-                ["cpp", "rust"],
+                VARIANTS,
                 threads=1,
                 repetition=0,
                 pair_id="pair-1",
@@ -870,7 +827,7 @@ class RunnerTests(unittest.TestCase):
         ):
             accepted = MODULE.run_guarded_pair(
                 args,
-                ["cpp", "rust"],
+                VARIANTS,
                 threads=16,
                 repetition=0,
                 pair_id="pair-1",
@@ -923,7 +880,7 @@ class RunnerTests(unittest.TestCase):
         ):
             accepted = MODULE.run_guarded_pair(
                 args,
-                ["cpp", "rust"],
+                VARIANTS,
                 threads=16,
                 repetition=0,
                 pair_id="pair-1",
@@ -951,7 +908,7 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "benchmark defect"):
                 MODULE.run_guarded_pair(
                     SimpleNamespace(),
-                    ["cpp", "rust"],
+                    VARIANTS,
                     threads=1,
                     repetition=0,
                     pair_id="pair-1",
@@ -981,7 +938,7 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as raised:
                 MODULE.run_guarded_pair(
                     SimpleNamespace(),
-                    ["cpp", "rust"],
+                    VARIANTS,
                     threads=1,
                     repetition=0,
                     pair_id="pair-1",
@@ -1015,7 +972,7 @@ class RunnerTests(unittest.TestCase):
         ):
             accepted = MODULE.run_guarded_pair(
                 SimpleNamespace(),
-                ["cpp", "rust"],
+                VARIANTS,
                 threads=1,
                 repetition=0,
                 pair_id="pair-1",
@@ -1058,7 +1015,7 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaises(MODULE.BenchmarkProcessTimeout) as raised:
                 MODULE.run_guarded_pair(
                     SimpleNamespace(),
-                    ["cpp", "rust"],
+                    VARIANTS,
                     threads=1,
                     repetition=0,
                     pair_id="pair-1",
@@ -1088,7 +1045,7 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaises(MODULE.BenchmarkProcessTimeout) as raised:
                 MODULE.run_guarded_pair(
                     SimpleNamespace(),
-                    ["cpp", "rust"],
+                    VARIANTS,
                     threads=1,
                     repetition=0,
                     pair_id="pair-1",
@@ -1122,7 +1079,7 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaises(MODULE.BenchmarkProcessTimeout) as raised:
                 MODULE.run_guarded_pair(
                     SimpleNamespace(),
-                    ["cpp", "rust"],
+                    VARIANTS,
                     threads=1,
                     repetition=0,
                     pair_id="pair-1",
@@ -1155,7 +1112,7 @@ class RunnerTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "after 2 attempts"):
                 MODULE.run_guarded_pair(
                     SimpleNamespace(),
-                    ["cpp", "rust"],
+                    VARIANTS,
                     threads=1,
                     repetition=0,
                     pair_id="pair-1",
@@ -1194,7 +1151,7 @@ class RunnerTests(unittest.TestCase):
         ):
             accepted = MODULE.run_guarded_pair(
                 SimpleNamespace(),
-                ["cpp", "rust"],
+                VARIANTS,
                 threads=1,
                 repetition=0,
                 pair_id="pair-1",

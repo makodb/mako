@@ -1627,6 +1627,29 @@ target_link_libraries(mako PUBLIC txlog_core_obj masstree mako_allocator)
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
 
+# The Rust STO adapter uses the Masstree C ABI and runtime, not the C++
+# transaction engine or cluster modules. Compile that exact native dependency
+# closure separately for focused mixed-language sanitizer tests. These sources
+# retain the same generated Masstree configuration and compiler flags as mako.
+add_library(mako_mtree_boundary STATIC EXCLUDE_FROM_ALL
+    src/mako/storage/mtree_abi.cc
+    src/mako/allocator.cc
+    src/mako/core.cc
+    src/mako/counter.cc
+    src/mako/rcu.cc
+    src/mako/ticker.cc
+    src/mako/silo_runtime.cc)
+target_include_directories(mako_mtree_boundary BEFORE PUBLIC
+    "${MASSTREE_CONFIG_INCLUDE_DIR}")
+target_include_directories(mako_mtree_boundary PUBLIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/${MASSTREE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/mako"
+    "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/include")
+target_compile_options(mako_mtree_boundary PUBLIC ${BENCH_CXXFLAGS})
+target_compile_definitions(mako_mtree_boundary PUBLIC CONFIG_H=\"${CONFIG_H}\")
+target_link_libraries(mako_mtree_boundary PUBLIC masstree)
+
 # Enforce the public mako-local symbol boundary in every native build, not
 # only in profiles that happen to have the vendored GoogleTest checkout.
 # libmako contains many unrelated C++ template symbols, so the checker limits
@@ -2322,6 +2345,8 @@ if(MAKO_CARGO_EXECUTABLE)
     set(STO_TPCC_RUST_MANIFESTS
         "${CMAKE_CURRENT_SOURCE_DIR}/rust-toolchain.toml"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/mako-clock/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/mako-engine-api/Cargo.toml"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/Cargo.toml"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/build.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/mtree-sys/Cargo.toml"
@@ -2333,6 +2358,8 @@ if(MAKO_CARGO_EXECUTABLE)
     file(GLOB_RECURSE STO_TPCC_RUST_SOURCES CONFIGURE_DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-tpcc-ffi/*.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-core/src/*.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/mako-clock/src/*.rs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/crates/mako-engine-api/src/*.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/src/*.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/src/*.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/mtree-sys/src/*.rs")
@@ -2684,40 +2711,41 @@ if(TARGET sto_tpcc_bench)
         RUN_SERIAL TRUE
         TIMEOUT 30)
 
-    add_test(NAME test_sto_tpcc_rejects_rust_distributed_shard
-        COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
-            --expected-failure-text "Rust STO TPC-C comparison supports one non-replicated shard"
-            --expected-exit-code 2
-            --
-            "$<TARGET_FILE:sto_tpcc_bench>"
-            --num-threads 1
-            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/config/local-shards2-warehouses1.yml"
-            --local-shards 0
-            --storage-engine rust
-            --slow-exit)
-    set_tests_properties(test_sto_tpcc_rejects_rust_distributed_shard PROPERTIES
-        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
-        RUN_SERIAL TRUE
-        TIMEOUT 30)
-
-    add_test(NAME test_sto_tpcc_rejects_rust_replication
-        COMMAND "${Python3_EXECUTABLE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_tpcc_ctest.py"
-            --expected-failure-text "Rust STO TPC-C comparison supports one non-replicated shard"
-            --expected-exit-code 2
-            --
-            "$<TARGET_FILE:sto_tpcc_bench>"
-            --num-threads 1
-            --shard-config "${CMAKE_CURRENT_SOURCE_DIR}/config/mako_sto_tpcc_local.yml"
-            --site-name local_s0
-            --is-replicated
-            --storage-engine rust
-            --slow-exit)
-    set_tests_properties(test_sto_tpcc_rejects_rust_replication PROPERTIES
-        LABELS "sto;masstree;rust;ffi;lifecycle;tpcc;configuration"
-        RUN_SERIAL TRUE
-        TIMEOUT 30)
+    foreach(_protocol_engine IN ITEMS cpp rust)
+        foreach(_protocol_replication IN ITEMS none paxos raft)
+            set(_protocol_test
+                "test_sto_tpcc_protocol_${_protocol_engine}_${_protocol_replication}")
+            add_test(NAME "${_protocol_test}"
+                COMMAND "${Python3_EXECUTABLE}"
+                    "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_protocol_ctest.py"
+                    --binary "$<TARGET_FILE:sto_tpcc_bench>"
+                    --engine "${_protocol_engine}"
+                    --shards 2
+                    --replication "${_protocol_replication}"
+                    --output "${CMAKE_CURRENT_BINARY_DIR}/${_protocol_test}")
+            set_tests_properties("${_protocol_test}" PROPERTIES
+                LABELS "sto;masstree;ffi;tpcc;distributed;${_protocol_engine};${_protocol_replication}"
+                RUN_SERIAL TRUE
+                TIMEOUT 660)
+            if(_protocol_engine STREQUAL "rust" OR
+                    NOT _protocol_replication STREQUAL "none")
+                set(_colocated_test "${_protocol_test}_colocated")
+                add_test(NAME "${_colocated_test}"
+                    COMMAND "${Python3_EXECUTABLE}"
+                        "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_sto_protocol_ctest.py"
+                        --binary "$<TARGET_FILE:sto_tpcc_bench>"
+                        --engine "${_protocol_engine}"
+                        --shards 2
+                        --replication "${_protocol_replication}"
+                        --colocated-leader
+                        --output "${CMAKE_CURRENT_BINARY_DIR}/${_colocated_test}")
+                set_tests_properties("${_colocated_test}" PROPERTIES
+                    LABELS "sto;masstree;ffi;tpcc;distributed;colocated;${_protocol_engine};${_protocol_replication}"
+                    RUN_SERIAL TRUE
+                    TIMEOUT 660)
+            endif()
+        endforeach()
+    endforeach()
 
     add_test(NAME test_sto_tpcc_rejects_rust_worker_limit
         COMMAND "${Python3_EXECUTABLE}"
@@ -2838,6 +2866,13 @@ if(MAKO_CARGO_EXECUTABLE)
                 "TSAN_OPTIONS=$ENV{TSAN_OPTIONS}")
         endif()
     endif()
+    set(_MAKO_RUST_STO_NATIVE_ABI_EXCLUSIONS "")
+    if(NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL "")
+        # The sanitizer driver runs this native C++ facade in its own lifetime
+        # lane: point-only checks with STO_RMW=OFF, then the full RMW/scan and
+        # differential suite with STO_RMW=ON. Neither policy belongs to Rust STO.
+        list(APPEND _MAKO_RUST_STO_NATIVE_ABI_EXCLUSIONS --exclude mako-local)
+    endif()
     add_custom_target(rust_sto_integration
         COMMAND "${CMAKE_COMMAND}" -E env
             --unset=CARGO_BUILD_TARGET
@@ -2868,6 +2903,11 @@ if(MAKO_CARGO_EXECUTABLE)
             --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
             --workspace
             --exclude sto-tpcc-ffi
+            # Backend features are mutually exclusive. Exercise the adapter
+            # and cache separately with an explicit engine selection.
+            --exclude mako-engine --exclude mako-engine-sto
+            --exclude mako-cache --exclude mako-cache-bench
+            ${_MAKO_RUST_STO_NATIVE_ABI_EXCLUSIONS}
             --all-targets
             --all-features
             --locked
@@ -2888,6 +2928,33 @@ if(MAKO_CARGO_EXECUTABLE)
         VERBATIM
         COMMENT "Checking the Rust STO workspace and native integration"
     )
+    # Keep the selected engine and its cache in the same instrumented link
+    # closure. Passing all workspace features would select both backends.
+    add_custom_target(rust_sto_cache_integration
+        COMMAND "${Python3_EXECUTABLE}" -B -m unittest discover
+            -s "${CMAKE_CURRENT_SOURCE_DIR}/scripts"
+            -p test_run_rust_sto_cache_tests.py
+        COMMAND "${CMAKE_COMMAND}" -E env
+            --unset=CARGO_BUILD_TARGET
+            --unset=CARGO_ENCODED_RUSTFLAGS
+            "CARGO_TARGET_DIR=${CMAKE_CURRENT_BINARY_DIR}/rust-cache-target"
+            ${_MAKO_RUST_STO_WORKSPACE_NATIVE_ENV}
+            "MAKO_MTREE_NATIVE_INTEGRATION=1"
+            "MAKO_MTREE_NATIVE_LIB_DIRS=$<TARGET_FILE_DIR:mako_mtree_boundary>:$<TARGET_FILE_DIR:masstree>:${_MAKO_CXX_COMPILER_ROOT}/lib"
+            "MAKO_MTREE_NATIVE_LIBS=static=mako_mtree_boundary,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread"
+            "${_MAKO_MTREE_LOADER_PATH_VARIABLE}=${_MAKO_CXX_COMPILER_ROOT}/lib"
+            "${Python3_EXECUTABLE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/scripts/ci/run_rust_sto_cache_tests.py"
+            --cargo "${MAKO_CARGO_EXECUTABLE}"
+            --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/crates/Cargo.toml"
+            --report "${CMAKE_CURRENT_BINARY_DIR}/rust-sto-cache-tests.json"
+            ${_MAKO_RUST_STO_CARGO_PLATFORM_ARGS}
+        DEPENDS mako_mtree_boundary masstree
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        USES_TERMINAL VERBATIM
+        COMMENT "Checking the selected Rust STO adapter and transaction cache"
+    )
+    add_dependencies(rust_sto_integration rust_sto_cache_integration)
 endif()
 
 # Use vendored GoogleTest only (no system gtest dependency).
@@ -4005,11 +4072,11 @@ if(BUILD_TESTS)
         pthread)
     add_test(NAME test_kv_backends COMMAND test_kv_backends)
 
-    # Test: distributed (two-shards-in-one-process) non-txn API — the
-    # gating tests for docs/mako-nontxn-api-plan.md. Exercises the
-    # nontxnPut/Insert/Remove RPCs + remoteGet end-to-end over the
-    # loopback fake transport.
-    add_executable(test_mako_nontxn_distributed tests/test_mako_nontxn_distributed.cc)
+    # Participant RPC, retained-admission, poll-loop liveness, and replay-prefix
+    # regressions. Admission cases use real loopback/socketpair TCP channels.
+    add_executable(test_mako_nontxn_distributed
+        tests/test_mako_nontxn_distributed.cc
+        tests/test_replication_admission.cc)
     # Out-of-tree build dirs have no ./src or ../src — bake the source root.
     target_compile_definitions(test_mako_nontxn_distributed PRIVATE
         MAKO_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
@@ -4028,6 +4095,24 @@ if(BUILD_TESTS)
         LABELS "silo;distributed"
         RUN_SERIAL TRUE
         TIMEOUT 60)
+
+    # Keep the existing explicit/manual reactor contract covered alongside the
+    # poll-worker fairness regression. Do not register the standalone load test.
+    add_executable(test_srpc_reactor_extended
+        src/srpc/tests/test_reactor_extended.cc)
+    target_include_directories(test_srpc_reactor_extended PRIVATE
+        ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_srpc_reactor_extended PRIVATE ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_srpc_reactor_extended
+        srpc ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    add_test(NAME test_srpc_reactor_manual_compatibility
+        COMMAND test_srpc_reactor_extended
+            --gtest_filter=ExtendedReactorTest.EventChain:ExtendedReactorTest.NestedFibers
+            --gtest_fail_if_no_test_selected)
+    set_tests_properties(test_srpc_reactor_manual_compatibility PROPERTIES
+        LABELS "srpc;reactor;lifecycle"
+        RUN_SERIAL TRUE
+        TIMEOUT 30)
 
     # Focused regression for an idle mode-1 helper pinning Masstree RCU while
     # a short-lived ClientTcpServer worker drains its callback queue at exit.
@@ -4192,11 +4277,6 @@ if(BUILD_TESTS)
                     ${CARGO_EXECUTABLE} test --locked
                     -p mako-engine-sto --all-features --all-targets
                     -- --test-threads=1
-            # The two skipped library cases are pre-existing G4 failures of
-            # the cache itself: they fail identically on the C ABI engine and
-            # on the pre-merge tree, and the existing CI never ran the cache
-            # library suite. They are tracked in the cutover plan and must be
-            # fixed before the default engine switches.
             COMMAND ${CMAKE_COMMAND} -E env
                     ${MAKO_LOCAL_CARGO_ENV}
                     ${_MAKO_ENGINE_STO_NATIVE_ENV}
@@ -4205,8 +4285,6 @@ if(BUILD_TESTS)
                     --features engine-sto-test-hooks,test-support
                     --lib
                     -- --test-threads=1
-                    --skip milestone1_acceptance_tests::gc_stops_at_first_unexpired_record_in_untagged_stream_despite_later_expired_records
-                    --skip milestone1_acceptance_tests::recovered_empty_database_advances_hlc_and_lane_ids_past_checkpoint_state
             COMMAND ${CMAKE_COMMAND} -E env
                     ${MAKO_LOCAL_CARGO_ENV}
                     ${_MAKO_ENGINE_STO_NATIVE_ENV}
@@ -4215,10 +4293,128 @@ if(BUILD_TESTS)
                     --features engine-sto-test-hooks,test-support
                     --test "*"
                     -- --test-threads=1
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_LOCAL_CARGO_ENV}
+                    ${_MAKO_ENGINE_STO_NATIVE_ENV}
+                    ${CARGO_EXECUTABLE} test --locked -p mako-cache --doc
+                    --no-default-features --features engine-sto
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
             DEPENDS mako masstree mako_local_differential_driver
                     check_mako_local_build_fingerprint
             COMMENT "Running the Rust STO engine, its differential, and the cache on it"
+            VERBATIM
+        )
+
+        add_custom_target(run_mako_engine_integration_driver_tests
+            COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}" -B -m unittest discover
+                    -s "${CMAKE_SOURCE_DIR}/scripts"
+                    -p test_mako_cache_cross_engine_reopen.py
+            COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}" -B -m unittest discover
+                    -s "${CMAKE_SOURCE_DIR}/scripts"
+                    -p test_mako_engine_sto_mutations.py
+            COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}" -B -m unittest discover
+                    -s "${CMAKE_SOURCE_DIR}/scripts"
+                    -p test_run_rust_sto_cache_tests.py
+            COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}" -B -m unittest discover
+                    -s "${CMAKE_SOURCE_DIR}/crates/mako-cache/mutations"
+                    -p test_runner.py
+            COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}" -B -m unittest discover
+                    -s "${CMAKE_SOURCE_DIR}/scripts"
+                    -p test_mako_engine_benchmark_drivers.py
+            COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}" -B -m unittest discover
+                    -s "${CMAKE_SOURCE_DIR}/scripts"
+                    -p test_run_rust_sto_miri.py
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            COMMENT "Checking engine integration acceptance drivers"
+            VERBATIM
+        )
+
+        # The mako-engine-sto mutation runner compiles each mutant of the
+        # Rust STO engine's record, one-put, publication, and budget logic in
+        # an isolated workspace and accepts a kill only from its designated
+        # exact test. It links the same native archives as the engine tests.
+        add_custom_target(run_mako_engine_sto_mutation_tests
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_RUST_TOOLCHAIN_ENV}
+                    ${CARGO_EXECUTABLE} fetch --locked
+                    --manifest-path "${CMAKE_SOURCE_DIR}/crates/Cargo.toml"
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_RUST_TOOLCHAIN_ENV}
+                    ${_MAKO_ENGINE_STO_NATIVE_ENV}
+                    "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+                    "${CMAKE_SOURCE_DIR}/crates/mako-engine-sto/mutations/run.py"
+                    --cargo "${CARGO_EXECUTABLE}"
+                    --temp-root "${CMAKE_BINARY_DIR}/mako-engine-sto-mutation-work"
+                    --report "${CMAKE_BINARY_DIR}/mako-engine-sto-mutations.json"
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            DEPENDS mako masstree check_mako_local_build_fingerprint
+            COMMENT "Running isolated mako-engine-sto mutation gate"
+            VERBATIM
+        )
+
+        # Both engines must write one durable format. Build the benchmark
+        # against each engine in its own target directory, then write a
+        # database with one build and recover it with the other, in both
+        # directions, through the benchmark's own sample/recover roles. Run
+        # the benchmark's protocol and expected-state unit tests for each
+        # engine too; a successful process exit must not mask a weak oracle.
+        add_custom_target(run_mako_engine_cross_reopen_tests
+            COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}" -B -m unittest discover
+                    -s "${CMAKE_SOURCE_DIR}/scripts"
+                    -p test_mako_cache_cross_engine_reopen.py
+            COMMAND ${CMAKE_COMMAND} -E env
+                    --unset=CARGO_BUILD_TARGET
+                    --unset=CARGO_ENCODED_RUSTFLAGS
+                    ${MAKO_RUST_TOOLCHAIN_ENV}
+                    "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-cache-bench-c-abi"
+                    "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_FAKE_ABI=0"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    ${CARGO_EXECUTABLE} build --locked
+                    -p mako-cache-bench --bin mako-cache-bench
+                    --no-default-features --features engine-c-abi
+            COMMAND ${CMAKE_COMMAND} -E env
+                    --unset=CARGO_BUILD_TARGET
+                    --unset=CARGO_ENCODED_RUSTFLAGS
+                    ${MAKO_RUST_TOOLCHAIN_ENV}
+                    "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-cache-bench-c-abi"
+                    "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                    "MAKO_LOCAL_FAKE_ABI=0"
+                    "MAKO_LOCAL_REQUIRE_NATIVE=1"
+                    ${CARGO_EXECUTABLE} test --locked
+                    -p mako-cache-bench --bin mako-cache-bench
+                    --no-default-features --features engine-c-abi
+                    -- --test-threads=1
+            COMMAND ${CMAKE_COMMAND} -E env
+                    --unset=CARGO_BUILD_TARGET
+                    --unset=CARGO_ENCODED_RUSTFLAGS
+                    ${MAKO_RUST_TOOLCHAIN_ENV}
+                    "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-cache-bench-sto"
+                    ${_MAKO_ENGINE_STO_NATIVE_ENV}
+                    ${CARGO_EXECUTABLE} build --locked
+                    -p mako-cache-bench --bin mako-cache-bench
+                    --no-default-features --features engine-sto
+            COMMAND ${CMAKE_COMMAND} -E env
+                    --unset=CARGO_BUILD_TARGET
+                    --unset=CARGO_ENCODED_RUSTFLAGS
+                    ${MAKO_RUST_TOOLCHAIN_ENV}
+                    "CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/cargo-target-mako-cache-bench-sto"
+                    ${_MAKO_ENGINE_STO_NATIVE_ENV}
+                    ${CARGO_EXECUTABLE} test --locked
+                    -p mako-cache-bench --bin mako-cache-bench
+                    --no-default-features --features engine-sto
+                    -- --test-threads=1
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${_MAKO_ENGINE_STO_NATIVE_ENV}
+                    "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+                    "${CMAKE_SOURCE_DIR}/scripts/mako_cache_cross_engine_reopen.py"
+                    --binary "c-abi=${CMAKE_BINARY_DIR}/cargo-target-mako-cache-bench-c-abi/debug/mako-cache-bench"
+                    --binary "sto=${CMAKE_BINARY_DIR}/cargo-target-mako-cache-bench-sto/debug/mako-cache-bench"
+                    --data-root "${CMAKE_BINARY_DIR}/mako-cross-reopen-data"
+                    --report "${CMAKE_BINARY_DIR}/mako-engine-cross-reopen.json"
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
+            DEPENDS mako masstree check_mako_local_build_fingerprint
+            COMMENT "Reopening cache databases across the C ABI and Rust STO engines"
             VERBATIM
         )
 
@@ -4329,7 +4525,8 @@ if(BUILD_TESTS)
                     "MAKO_LOCAL_FAKE_ABI=0"
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
                     ${MAKO_CACHE_NATIVE_CRASH_TEST_ENV}
-                    ${CARGO_EXECUTABLE} test --locked --features test-support
+                    ${CARGO_EXECUTABLE} test --locked --no-default-features
+                    --features engine-c-abi,test-support
                     -p mako-cache --all-targets -- --test-threads=1
             COMMAND ${CMAKE_COMMAND} -E env
                     ${MAKO_CACHE_CARGO_ENV}
@@ -4337,6 +4534,7 @@ if(BUILD_TESTS)
                     "MAKO_LOCAL_FAKE_ABI=0"
                     "MAKO_LOCAL_REQUIRE_NATIVE=1"
                     ${CARGO_EXECUTABLE} test --locked -p mako-cache --doc
+                    --no-default-features --features engine-c-abi
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
             DEPENDS mako
             COMMENT "Running Rust transaction-cache tests"
@@ -4361,6 +4559,29 @@ if(BUILD_TESTS)
                     --report "${CMAKE_BINARY_DIR}/mako-clock-mutations.json"
             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
             COMMENT "Running isolated mako-clock HLC mutation gate"
+            VERBATIM
+        )
+
+        # The cache protocol must reject the same mutations on the Rust
+        # engine. Its observer hooks live in Rust, so this gate also runs
+        # against the production hook-off Masstree archive.
+        add_custom_target(run_mako_cache_sto_mutation_tests
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_RUST_TOOLCHAIN_ENV}
+                    ${CARGO_EXECUTABLE} fetch --locked
+                    --manifest-path "${CMAKE_SOURCE_DIR}/crates/Cargo.toml"
+            COMMAND ${CMAKE_COMMAND} -E env
+                    ${MAKO_RUST_TOOLCHAIN_ENV}
+                    ${_MAKO_ENGINE_STO_NATIVE_ENV}
+                    "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
+                    "${CMAKE_SOURCE_DIR}/crates/mako-cache/mutations/run.py"
+                    --engine sto --cargo "${CARGO_EXECUTABLE}"
+                    --mako-build-dir "${CMAKE_BINARY_DIR}"
+                    --temp-root "${CMAKE_BINARY_DIR}/mako-cache-sto-mutation-work"
+                    --report "${CMAKE_BINARY_DIR}/mako-cache-sto-mutations.json"
+            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+            DEPENDS mako masstree check_mako_local_build_fingerprint
+            COMMENT "Running cache protocol mutations against Rust STO"
             VERBATIM
         )
 
@@ -4430,6 +4651,17 @@ if(BUILD_TESTS)
                 run_mako_cache_rust_tests)
         endif()
         add_dependencies(run_silo_sto_tests run_mako_cache_rust_tests)
+    endif()
+    if(TARGET run_mako_engine_sto_tests)
+        # These targets share the native archives and are all required before
+        # changing the cache's default engine. Keep both backends in CI.
+        add_dependencies(run_silo_sto_tests
+            run_mako_engine_integration_driver_tests
+            run_mako_engine_sto_tests
+            run_mako_engine_sto_mutation_tests
+            run_mako_cache_sto_mutation_tests
+            run_mako_engine_cross_reopen_tests
+            run_mako_clock_mutation_tests)
     endif()
     if(TARGET run_mako_cache_mutation_tests)
         # Run the ordinary baseline before spending time on isolated mutants.

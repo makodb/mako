@@ -1460,6 +1460,10 @@ impl Reactor {
     }
     pub fn run_loop(&self, infinite: bool, do_check_timeout: bool) {
         reactor_verify(rusty::thread::current_id() == self.thread_id_.get());
+        // A poll worker must return to epoll and the pending-write sweep after
+        // one ready generation. Explicit non-poll drivers still drain event
+        // chains to quiescence (or keep looping when requested).
+        let bounded = pollworker_is_on_poll_thread();
         self.looping_.set(infinite);
         loop {
             let mut found_ready_events = true;
@@ -1547,11 +1551,14 @@ impl Reactor {
                         }
                     }
                 }
-                if !infinite && !found_ready_events {
+                // Finish the entire extracted snapshot before ending a poll
+                // turn: READY/TIMEOUT events already moved out of their
+                // queues must not be abandoned when another event requeues.
+                if bounded || (!infinite && !found_ready_events) {
                     break;
                 }
             }
-            if !self.looping_.get() {
+            if bounded || !self.looping_.get() {
                 break;
             }
         }
@@ -1726,9 +1733,22 @@ impl Reactor {
         for idx in ingress_ready {
             self.enqueue_stackless_task(idx);
         }
+        // Count the admitted FIFO generation without moving its storage.
+        // Poll-time enqueues append behind it and retain their queued bit for
+        // the next I/O turn; foreign/self wakes in ingress stay there until
+        // the next call. Non-poll callers retain the explicit drain behavior.
+        let bounded = pollworker_is_on_poll_thread();
+        let mut remaining = if bounded {
+            self.ready_stackless_tasks_.borrow().len()
+        } else {
+            0usize
+        };
         let mut did_work = false;
         let mut keep_going = true;
-        while keep_going {
+        while keep_going && (!bounded || remaining > 0usize) {
+            if bounded {
+                remaining -= 1usize;
+            }
             let mut idx: usize = 0usize;
             let mut have_task = false;
             {
@@ -3149,8 +3169,13 @@ fn reactor_create_run_fiber_at_impl(self_: &Reactor, func: FiberFn, file: SrcFil
         self_.recycle(fiber_ref);
     }
 
-    // Step 6: Process events
-    self_.run_loop(false, true);
+    // Step 6: Only explicit non-poll drivers pump other events here.
+    // The new fiber has already run to its first suspension/completion.
+    // Recursively draining on a poll worker would prevent socket writes and
+    // pending write-interest updates from running when a fiber keeps waking.
+    if !pollworker_is_on_poll_thread() {
+        self_.run_loop(false, true);
+    }
 
     // Step 7: Restore previous running fiber
     self_.restore_running_fiber(old_fiber);

@@ -142,8 +142,13 @@ class StringAllocator{
         memcpy (queueLog + pos, &st_time, sizeof(uint32_t));
         pos += sizeof(uint32_t);
         //Warning("Paxos log cleanup!max_bytes_size:%d",max_bytes_size);
-        // Use local partition ID for Paxos workers (they are indexed 0 to warehouses-1 per shard)
-        add_log_to_nc((char *)queueLog, pos, TThread::getLocalPartitionID(), batch_size);
+        // @unsafe - Submit only to this participant's owning replication stream.
+        const auto& cfg = BenchmarkConfig::getInstance();
+        const int shard = TThread::get_shard_index();
+        const int local_partition = TThread::getLocalPartitionID();
+        if (!add_log_to_nc((char *)queueLog, pos,
+                cfg.getReplicationPartition(shard, local_partition), batch_size))
+            Panic("replication rejected installed transaction log");
 
 #ifndef DISABLE_DISK
         // Asynchronously persist to RocksDB
@@ -152,8 +157,12 @@ class StringAllocator{
         static std::atomic<uint64_t> persist_success_count{0};
         static std::atomic<uint64_t> persist_fail_count{0};
         persistence.persistAsync((const char*)queueLog, pos, shard_id, TThread::getLocalPartitionID(),
-            [](bool success) {
+            [watermark_partition = cfg.getReplicationWatermarkPartition(
+                 shard, local_partition),
+             timestamp = latest_commit_timestamp](bool success) {
                 if (success) {
+                    sync_util::sync_logger::updateDiskTimestamp(
+                        watermark_partition, timestamp);
                     persist_success_count.fetch_add(1, std::memory_order_relaxed);
                     if (persist_success_count % 1000 == 0) {
                         std::cout << "[RocksDB] Persisted " << persist_success_count.load()
@@ -639,8 +648,8 @@ private:
         start_time = mako::getCurrentTimeMillis();
     }
 
-    // reset data so we can be reused for another transaction
-    void start() {  // weihshen, start and init a transaction
+    // @unsafe - Starts legacy RCU/datatype state and the worker-affine RPC lane.
+    void start() {
         //Warning("the id %d and size of tinfo:%d", TThread::id(), sizeof(tinfo)/sizeof(threadinfo_t));
         threadinfo_t& thr = tinfo[TThread::id()];
         //Warning("the id-2 %d and size of tinfo:%d, addr: %p", TThread::id(), sizeof(tinfo)/sizeof(threadinfo_t), &thr);
@@ -684,7 +693,8 @@ private:
         start_tid_ = commit_tid_ = 0;
         tid_unique_ = 0;
         mako_timestamp_stamp_ = 0;
-        current_term_ = 0;
+        current_term_ = std::numeric_limits<uint8_t>::max();
+        get_current_term();
         // Initialize single timestamp system
         maxTimestampReadSet = 0;
         buf_.clear();
@@ -695,6 +705,14 @@ private:
 #endif
         TXP_INCREMENT(txp_total_starts);
         state_ = s_in_progress;
+        if (TThread::mode() == 0 && TThread::sclient != nullptr) {
+            try {
+                TThread::sclient->beginAttempt(current_term_);
+            } catch (...) {
+                silent_abort();
+                throw;
+            }
+        }
     }
 
 #if TRANSACTION_HASHTABLE
@@ -844,6 +862,7 @@ private:
     }
 
 public:
+    // @unsafe - Resolves retained datatype state without undoing INSTALL.
     void silent_abort() {
         // Mode 1 reports in_progress() even while logically idle. Stop only a
         // transaction that has actually started, so duplicate abort/teardown
@@ -1136,6 +1155,7 @@ public:
 
     bool try_assign_mako_timestamp(uint64_t& result) const noexcept;
 
+    // @unsafe - Combines legacy clock allocation with synchronous shard RPCs.
     bool updateSingleTimestamp(bool& exhausted) const {
         assert(state_ == s_committing_locked || state_ == s_committing);
         if (!tid_unique_ &&
@@ -1147,11 +1167,12 @@ public:
             return false;
         }
 
-        if (TThread::writeset_shard_bits>0/*||TThread::readset_shard_bits>0*/) {
-            // Get single timestamp from remote shards
+        if (TThread::sclient != nullptr &&
+            TThread::sclient->hasTouchedParticipants()) {
+            // Read-only participants can retain scan dependencies beyond the
+            // returned row. Include their proposal before final validation.
             uint32_t remote_timestamp = 0;
-            if (TThread::sclient == nullptr ||
-                TThread::sclient->remoteGetTimestamp(remote_timestamp) != 0 ||
+            if (TThread::sclient->remoteGetTimestamp(remote_timestamp) != 0 ||
                 remote_timestamp == 0)
                 return false;
             if (remote_timestamp > max_mako_timestamp) {
@@ -1291,9 +1312,10 @@ private:
 
 class Sto {
 public:
+    // @unsafe - Legacy per-thread arena; the native contract retains it for process lifetime.
     static Transaction* transaction() {
         if (!TThread::txn)
-            TThread::txn = new Transaction(false);
+            TThread::txn = allocate_process_lifetime_transaction();
         return TThread::txn;
     }
 
@@ -1327,10 +1349,12 @@ public:
     }
 
     static void abort_without_throw() {
+        // @unsafe - Resolve every contacted participant, including read-only.
         // Check if we need to do remote abort before aborting locally
-        bool needs_remote_abort = TThread::txn &&
+        const bool needs_remote_abort = TThread::txn &&
             TThread::txn->has_active_state() &&
-            (TThread::writeset_shard_bits>0||TThread::readset_shard_bits>0);
+            TThread::sclient != nullptr &&
+            TThread::sclient->hasTouchedParticipants();
         Sto::silent_abort();
         if (needs_remote_abort) {
             ALWAYS_ASSERT(TThread::sclient != nullptr);
@@ -1463,6 +1487,14 @@ public:
     static TransactionTid::type initialized_tid() {
         // XXX: we might want a nonopaque_bit in here too.
         return TransactionTid::increment_value;
+    }
+
+private:
+    // @unsafe - Allocation kernel for the legacy arena, with no RCU-safe teardown.
+    // Keep this cold allocation visible to the native LSan lifetime policy;
+    // ordinary transaction buffers are allocated outside this helper.
+    [[gnu::noinline]] static Transaction* allocate_process_lifetime_transaction() {
+        return new Transaction(false);
     }
 };
 

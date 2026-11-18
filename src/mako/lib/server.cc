@@ -63,11 +63,135 @@ namespace mako
         open_tables_table_id[table_id] = table;
     }
 
-    // Message handlers.
+
+    // @unsafe - Produces the existing reply shape without entering storage.
+    size_t ShardReceiver::RejectParticipant(uint8_t type,
+                                            const basic_request_t &request,
+                                            char *response, int status) {
+        if (type == getReqType || type == scanReqType) {
+            auto *reply = reinterpret_cast<get_response_t *>(response);
+            *reply = {};
+            reply->req_nr = request.req_nr;
+            reply->identity = request.identity;
+            reply->status = status;
+            return sizeof(get_response_t);
+        }
+        if (type == validateReqType || type == getTimestampReqType) {
+            auto *reply = reinterpret_cast<get_int_response_t *>(response);
+            *reply = {};
+            reply->req_nr = request.req_nr;
+            reply->identity = request.identity;
+            reply->status = status;
+            reply->shard_index = TThread::get_shard_index();
+            return sizeof(get_int_response_t);
+        }
+        auto *reply = reinterpret_cast<basic_response_t *>(response);
+        *reply = {};
+        reply->req_nr = request.req_nr;
+        reply->identity = request.identity;
+        reply->status = status;
+        return sizeof(basic_response_t);
+    }
+
+    // @unsafe - The helper is the sole owner of this lane and backend participant.
+    // Admission precedes reset, reads, locks, clocks, INSTALL and ABORT alike.
+    bool ShardReceiver::AdmitParticipant(uint8_t type, char *request,
+                                         char *response, size_t &response_size) {
+        const auto &header = *reinterpret_cast<const basic_request_t *>(request);
+        const auto &identity = header.identity;
+#if defined(FAIL_NEW_VERSION)
+        if (ss_callback_) current_term = std::max(current_term, ss_callback_());
+#endif
+        const int rejected = type == installReqType ? ErrorCode::UNKNOWN : ErrorCode::ABORT;
+        auto reject = [&](int status) {
+            response_size = RejectParticipant(type, header, response, status);
+            return false;
+        };
+        if (!identity.incarnation || !identity.attempt || !identity.sequence ||
+            identity.term > 9 || identity.term < static_cast<uint32_t>(current_term))
+            return reject(rejected);
+        if (participant_unknown) return reject(ErrorCode::UNKNOWN);
+
+        const bool same_attempt = identity.incarnation == admitted_identity.incarnation &&
+                                  identity.attempt == admitted_identity.attempt &&
+                                  identity.term == admitted_identity.term;
+        if (same_attempt) {
+            if (identity.sequence == admitted_identity.sequence &&
+                type == cached_request_type && cached_response_size) {
+                memcpy(response, cached_response, cached_response_size);
+                response_size = cached_response_size;
+                return false;
+            }
+            if (identity.sequence <= admitted_identity.sequence) return reject(rejected);
+            if (participant_terminal) {
+                if (type == abortReqType && !participant_committed)
+                    return reject(ErrorCode::SUCCESS);
+                return reject(participant_committed ? ErrorCode::UNKNOWN : rejected);
+            }
+            if (type == installReqType && !participant_sealed)
+                return reject(ErrorCode::UNKNOWN);
+            if (participant_sealed && type != installReqType && type != abortReqType)
+                return reject(ErrorCode::ABORT);
+        } else {
+            if (type == installReqType) return reject(ErrorCode::UNKNOWN);
+            if (admitted_identity.incarnation) {
+                const bool newer_term = identity.term > admitted_identity.term;
+                if (!newer_term &&
+                    (identity.incarnation != admitted_identity.incarnation ||
+                     identity.attempt <= admitted_identity.attempt))
+                    return reject(rejected);
+                // A live old attempt is resolved only by its own terminal or a
+                // newer term. Never let a delayed packet adopt the next frame.
+                if (!participant_terminal && !newer_term)
+                    return reject(rejected);
+                if (db->shard_participant_active()) db->shard_abort_txn(nullptr);
+            }
+            participant_terminal = participant_committed = participant_sealed = false;
+            cached_response_size = 0;
+        }
+        current_term = identity.term;
+        admitted_identity = identity;
+        if (!db->shard_participant_active()) db->shard_reset();
+        db->shard_set_term(identity.term);
+        return true;
+    }
+
+    // @unsafe - Copies only the bounded reply; terminal outcomes survive reset.
+    void ShardReceiver::CompleteParticipant(uint8_t type, char *response,
+                                            size_t response_size) {
+        auto *header = reinterpret_cast<basic_response_t *>(response);
+        header->identity = admitted_identity;
+        const int status = type == getReqType || type == scanReqType
+            ? reinterpret_cast<get_response_t *>(response)->status
+            : (type == validateReqType || type == getTimestampReqType
+                ? reinterpret_cast<get_int_response_t *>(response)->status
+                : header->status);
+        if (type == installReqType) {
+            participant_committed = status == ErrorCode::SUCCESS;
+            participant_unknown = !participant_committed;
+            participant_terminal = true;
+        } else if (type == abortReqType ||
+                   (status != ErrorCode::SUCCESS && status != ErrorCode::NOT_FOUND)) {
+            if (db->shard_participant_active()) db->shard_abort_txn(nullptr);
+            participant_terminal = true;
+            participant_sealed = false;
+        } else if (type == validateReqType) {
+            participant_sealed = true;
+        }
+        if (response_size > sizeof(cached_response))
+            throw std::length_error("participant reply exceeds cache");
+        memcpy(cached_response, response, response_size);
+        cached_response_size = response_size;
+        cached_request_type = type;
+    }
+    // @unsafe - Dispatches admitted legacy wire buffers to the selected backend.
     size_t ShardReceiver::ReceiveRequest(uint8_t reqType, char *reqBuf, char *respBuf)
     {
         Debug("server deal with reqType: %d", reqType);
-        size_t respLen;
+        size_t respLen = 0;
+        const bool participant = reqType >= getReqType && reqType <= batchLockReqType;
+        if (participant && !AdmitParticipant(reqType, reqBuf, respBuf, respLen))
+            return respLen;
         switch (reqType)
         {
         case getReqType:
@@ -128,10 +252,12 @@ namespace mako
         default:
             Warning("Unrecognized rquest type: %d", reqType);
         }
+        if (participant) CompleteParticipant(reqType, respBuf, respLen);
 
         return respLen;
     }
 
+    // @unsafe - Resolves only the identity admitted by ReceiveRequest.
     void ShardReceiver::HandleAbortRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         int status = ErrorCode::SUCCESS;
@@ -140,12 +266,12 @@ namespace mako
 
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
         respLen = sizeof(basic_response_t);
-        resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
+        resp->status = status;
         resp->req_nr = req->req_nr;
-        db->shard_reset();
 
     }
 
+    // @unsafe - Retired legacy RPC entrypoint.
     void ShardReceiver::HandleUnLockRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         Panic("Deprecated!");
@@ -161,34 +287,34 @@ namespace mako
 
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
         respLen = sizeof(basic_response_t);
-        resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
+        resp->status = status;
         resp->req_nr = req->req_nr;
         db->shard_reset();
     }
 
+    // @unsafe - Irreversible backend publication, never converted into abort.
     void ShardReceiver::HandleInstallRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         int status = ErrorCode::SUCCESS;
         auto *req = reinterpret_cast<vector_int_request_t *>(reqBuf);
         try {
-            // Single timestamp system: decode single timestamp directly
-            uint32_t timestamp = decode_single_timestamp(req->value);
+            const uint32_t timestamp = decode_single_timestamp(req->value);
             db->shard_install(timestamp);
             db->shard_serialize_util(timestamp);
             db->shard_unlock(true);
-        } catch (abstract_db::abstract_abort_exception &ex) {
-            //db->shard_abort_txn(nullptr);
-            status = ErrorCode::ABORT;
-            Warning("HandleInstallRequest error");
+        } catch (...) {
+            // Publication may already have happened. Retain the backend's
+            // quarantined frame and never report a retryable abort.
+            status = ErrorCode::UNKNOWN;
         }
 
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
         respLen = sizeof(basic_response_t);
-        resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
+        resp->status = status;
         resp->req_nr = req->req_nr;
-        db->shard_reset();
     }
 
+    // @unsafe - Seals the admitted backend participant.
     void ShardReceiver::HandleValidateRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         int status = ErrorCode::SUCCESS;
@@ -207,11 +333,12 @@ namespace mako
         auto *resp = reinterpret_cast<get_int_response_t *>(respBuf);
         respLen = sizeof(get_int_response_t);
         resp->result = sync_util::sync_logger::retrieveShardW();
-        resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
+        resp->status = status;
         resp->shard_index = TThread::get_shard_index();
         resp->req_nr = req->req_nr;
     }
 
+    // @unsafe - Dispatches to the selected backend timestamp authority.
     void ShardReceiver::HandleGetTimestampRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         int status = ErrorCode::SUCCESS;
@@ -221,9 +348,9 @@ namespace mako
         resp->req_nr = req->req_nr;
         respLen = sizeof(get_int_response_t);
         uint32_t timestamp = 0;
-        if (!Transaction::try_allocate_legacy_distributed_timestamp(timestamp))
+        if (!db->shard_timestamp(timestamp))
             status = ErrorCode::ABORT;
-        resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
+        resp->status = status;
         resp->result = timestamp;
     }
 
@@ -237,10 +364,10 @@ namespace mako
 
         // auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
         // respLen = sizeof(basic_response_t);
-        // resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
         // resp->req_nr = req->req_nr;
     }
 
+    // @unsafe - Native benchmark batch decoding after identity admission.
     void ShardReceiver::HandleBatchLockMicroMegaRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         auto *req = reinterpret_cast<batch_lock_request_t *>(reqBuf);
@@ -275,10 +402,11 @@ namespace mako
 
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
         respLen = sizeof(basic_response_t);
-        resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
+        resp->status = status;
         resp->req_nr = req->req_nr;
     }
 
+    // @unsafe - Native benchmark batch decoding after identity admission.
     void ShardReceiver::HandleBatchLockMegaRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         auto *req = reinterpret_cast<batch_lock_request_t *>(reqBuf);
@@ -314,10 +442,11 @@ namespace mako
 
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
         respLen = sizeof(basic_response_t);
-        resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
+        resp->status = status;
         resp->req_nr = req->req_nr;
     }
 
+    // @unsafe - Decodes owned wire mutations into the admitted participant.
     void ShardReceiver::HandleBatchLockRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
 #if defined(MEGA_BENCHMARK)
@@ -329,11 +458,12 @@ namespace mako
         int status = ErrorCode::SUCCESS;
 
         uint16_t table_id, klen, vlen;
+        uint8_t operation = 0;
         char *k_ptr, *v_ptr;
         auto wrapper = BatchLockRequestWrapper(reqBuf);
         
         while (!wrapper.all_request_handled()) {
-            wrapper.read_one_request(&k_ptr, &klen, &v_ptr, &vlen, &table_id);
+            wrapper.read_one_request(&k_ptr, &klen, &v_ptr, &vlen, &table_id, &operation);
             //string key(k_ptr, klen);
             obj_key0.assign(k_ptr, klen);
             //string value(v_ptr, vlen);
@@ -341,22 +471,24 @@ namespace mako
 
             if (table_id > 0) {
                 try {
-                    open_tables_table_id[table_id]->shard_put(obj_key0, obj_v);
+                    db->shard_mutate(table_id, lcdf::Str(obj_key0.data(), obj_key0.size()),
+                                     obj_v, operation);
                 } catch (abstract_db::abstract_abort_exception &ex) {
-                   //db->shard_abort_txn(nullptr);
                    status = ErrorCode::ABORT;
                    Debug("HandleLockRequest: fail to lock a key");
+                   break;
                 }
             }
         }
 
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
         respLen = sizeof(basic_response_t);
-        resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
+        resp->status = status;
         resp->req_nr = req->req_nr;
 #endif
     }
 
+    // @unsafe - Retired legacy RPC entrypoint.
     void ShardReceiver::HandleLockRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         Panic("Deprecated");
@@ -382,10 +514,11 @@ namespace mako
 
         auto *resp = reinterpret_cast<basic_response_t *>(respBuf);
         respLen = sizeof(basic_response_t);
-        resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
+        resp->status = status;
         resp->req_nr = req->req_nr;
     }
 
+    // @unsafe - Native scan callback boundary for an admitted participant.
     void ShardReceiver::HandleScanRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         string val;
@@ -402,10 +535,12 @@ namespace mako
         static_limit_callback<512> c(s_arena.get(), true); // probably a safe bet for now, NMaxCustomerIdxScanElems
         if (req->table_id > 0) {
             try {
-                open_tables_table_id[req->table_id]->shard_scan(obj_key0, &obj_key1, c, s_arena.get());
-                if (c.size() == 0) {
-                    //Warning("# of scan is 0, table_id: %d", (int)req->table_id);
+                auto table = open_tables_table_id.find(req->table_id);
+                if (table == open_tables_table_id.end() || !table->second ||
+                    !table->second->shard_scan(obj_key0, &obj_key1, c, s_arena.get()))
                     throw abstract_db::abstract_abort_exception();
+                if (c.size() == 0) {
+                    status = ErrorCode::NOT_FOUND;
                 } else {
                     ALWAYS_ASSERT(c.size() > 0);
                     int index = c.size() / 2;
@@ -418,17 +553,18 @@ namespace mako
                 status = ErrorCode::ABORT;
             }
         } else {
-            val = "this is a mocked value for the rpc client and rpc server";
+            status = ErrorCode::ABORT;
         }
         
         auto *resp = reinterpret_cast<scan_response_t *>(respBuf);
         respLen = sizeof(scan_response_t) - max_value_length + val.length();
-        resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
+        resp->status = status;
         resp->req_nr = req->req_nr;
         resp->len = val.length();
         memcpy(resp->value, val.c_str(), val.length());
     }
 
+    // @unsafe - Native benchmark read boundary after identity admission.
     void ShardReceiver::HandleGetMicroMegaRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         auto *req = reinterpret_cast<get_request_t *>(reqBuf);
@@ -471,13 +607,14 @@ namespace mako
         auto *resp = reinterpret_cast<get_response_t *>(respBuf);
         respLen = sizeof(get_response_t) - max_value_length + c_v.length();
         ALWAYS_ASSERT(max_value_length>=obj_v.length());
-        resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
+        resp->status = status;
         resp->req_nr = req->req_nr;
         resp->len = c_v.length();
         //Warning("the remoteGET,len:%d,table_id:%d,keys:%s,key_len:%d,val_len:%d",obj_v.length(),req->table_id,mako::printStringAsBit(obj_key0).c_str(),req->len,obj_v.length());
         memcpy(resp->value, c_v.c_str(), c_v.length());
     }
 
+    // @unsafe - Native benchmark read boundary after identity admission.
     void ShardReceiver::HandleGetMegaRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
         auto *req = reinterpret_cast<get_request_t *>(reqBuf);
@@ -524,13 +661,14 @@ namespace mako
         auto *resp = reinterpret_cast<get_response_t *>(respBuf);
         respLen = sizeof(get_response_t) - max_value_length + c_v.length();
         ALWAYS_ASSERT(max_value_length>=obj_v.length());
-        resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
+        resp->status = status;
         resp->req_nr = req->req_nr;
         resp->len = c_v.length();
         //Warning("the remoteGET,len:%d,table_id:%d,keys:%s,key_len:%d,val_len:%d",obj_v.length(),req->table_id,mako::printStringAsBit(obj_key0).c_str(),req->len,obj_v.length());
         memcpy(resp->value, c_v.c_str(), c_v.length());
     }
 
+    // @unsafe - Native read boundary after identity admission.
     void ShardReceiver::HandleGetRequest(char *reqBuf, char *respBuf, size_t &respLen)
     {
 #if defined(MEGA_BENCHMARK)
@@ -539,10 +677,8 @@ namespace mako
         HandleGetMicroMegaRequest(reqBuf, respBuf, respLen);
 #else
         auto *req = reinterpret_cast<get_request_t *>(reqBuf);
-#if defined(FAIL_NEW_VERSION)
-        current_term = ss_callback_();
-#endif
         obj_key0.assign(req->key, req->len);
+        obj_v.clear();
 
         int status = ErrorCode::SUCCESS;
         if (req->table_id > 0) {
@@ -554,11 +690,9 @@ namespace mako
             } else {
                 try {
                     bool ret = it->second->shard_get(obj_key0, obj_v, std::string::npos);
-                    // abort here,
-                    //  "not found a key" maybe a expected behavior
-                    if (!ret){ // key not found or found but invalid
-                        db->shard_abort_txn(nullptr);
-                        status = ErrorCode::ABORT;
+                    if (!ret) {
+                        obj_v.clear();
+                        status = ErrorCode::NOT_FOUND;
                     }
                 } catch (abstract_db::abstract_abort_exception &ex) {
                     // No need to abort, the client side will issue an abort
@@ -567,13 +701,13 @@ namespace mako
                 }
             }
         } else {
-            obj_v = "this is a mocked value for the rpc client and rpc server";
+            status = ErrorCode::ABORT;
         }
         
         auto *resp = reinterpret_cast<get_response_t *>(respBuf);
         respLen = sizeof(get_response_t) - max_value_length + obj_v.length();
         ALWAYS_ASSERT(max_value_length>=obj_v.length());
-        resp->status = (current_term > req->req_nr % 10)? ErrorCode::ABORT: status; // If a reqest comes from old epoch, reject it.;
+        resp->status = status;
         resp->req_nr = req->req_nr;
         resp->len = obj_v.length();
         //Warning("the remoteGET,len:%d,table_id:%d,keys:%s,key_len:%d,val_len:%d",obj_v.length(),req->table_id,mako::printStringAsBit(obj_key0).c_str(),req->len,obj_v.length());
@@ -652,7 +786,9 @@ namespace mako
         // threads' txns in_progress but EMPTY between 2PC transactions
         // — that state is safe to borrow (restored below). Only a txn
         // with staged items is busy.
-        if (TThread::txn && TThread::txn->has_staged_items()) {
+        if (participant_unknown ||
+            (db->shard_participant_active() && !db->shard_participant_empty()) ||
+            (admitted_identity.incarnation && !participant_terminal)) {
             return ErrorCode::SERVER_BUSY;
         }
 
@@ -679,8 +815,8 @@ namespace mako
         // guaranteed by the busy guard above) so the op's
         // Sto::start_transaction passes its mode-0 assertion. Aborting
         // an empty txn unwinds nothing.
-        if (TThread::txn && TThread::txn->in_progress()) {
-            TThread::txn->silent_abort();
+        if (db->shard_participant_active()) {
+            db->shard_abort_txn(nullptr);
         }
 
         try {
@@ -1065,6 +1201,7 @@ namespace mako
         shardReceiver->UpdateTableEntry(table_id, table);
     }
 
+    // @unsafe - Owns backend-affine frames while draining native request handles.
     void ShardServer::Run()
     {
         while (true) {
@@ -1076,10 +1213,9 @@ namespace mako
             // staged items may own reads or locks across later 2PC messages
             // and must remain active.
             bool parked_idle_participant = false;
-            if (TThread::mode() == 1 && TThread::txn != nullptr &&
-                TThread::txn->has_active_state() &&
-                !TThread::txn->has_staged_items()) {
-                db->abort_txn_local(nullptr);
+            if (TThread::mode() == 1 && db->shard_participant_active() &&
+                db->shard_participant_empty() && shardReceiver->CanParkParticipant()) {
+                db->shard_abort_txn(nullptr);
                 parked_idle_participant = true;
             }
 
@@ -1108,16 +1244,6 @@ namespace mako
                 // a TransportRequestHandle* as an opaque token.
                 mako::TransportRequestHandle* req_handle = reinterpret_cast<mako::TransportRequestHandle*>(handle);
 
-                // A failed GET or SCAN aborts the participant locally. The
-                // coordinator records that fact and omits the redundant ABORT
-                // RPC, so the next request can arrive while this helper's STO
-                // transaction is inactive. This check must run for every
-                // dequeued request, not only after suspend(): a new request can
-                // enter the queue while the helper is draining it.
-                if (TThread::mode() == 1 && TThread::txn != nullptr &&
-                    !TThread::txn->has_active_state()) {
-                    db->shard_reset();
-                }
 
                 size_t msgLen = shardReceiver->ReceiveRequest(
                     req_handle->GetRequestType(),

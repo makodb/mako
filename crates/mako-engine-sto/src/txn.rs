@@ -41,10 +41,34 @@ use crate::outcome::{
     TrustedPreselectedUncheckedOnePutRecordOutcome, TrustedUncheckedOnePutRecordOutcome,
 };
 use crate::record::{self, OpKind, OpRef};
+use crate::touched::{Staged, TouchLog};
 use crate::worker::{self, Attachment};
 use crate::TrustedFusedOnePutHolderAttempt;
 
 type StoTransaction = sto_core::Transaction<'static, Active>;
+
+#[path = "holder_commit.rs"]
+mod holder_commit;
+
+#[cfg(all(test, feature = "test-hooks", not(miri)))]
+#[path = "txn_poison_tests.rs"]
+mod poison_tests;
+
+#[cfg(all(test, feature = "test-hooks", not(miri)))]
+#[path = "txn_pool_tests.rs"]
+mod pool_tests;
+
+#[cfg(all(test, feature = "test-hooks", not(miri)))]
+#[path = "txn_borrow_tests.rs"]
+mod borrow_tests;
+
+#[cfg(all(test, feature = "test-hooks", not(miri)))]
+#[path = "txn_local_version_tests.rs"]
+mod local_version_tests;
+
+#[cfg(test)]
+#[path = "txn_ownership_tests.rs"]
+mod ownership_tests;
 
 const SCAN_CHUNK_ENTRIES: usize = 64;
 const MINIMUM_WRITE_ITEM_CHARGE: usize = 4;
@@ -74,27 +98,6 @@ fn turn_token(sequence: u64, ring_shift: u32, phase: u64) -> u64 {
     ((sequence >> ring_shift) << TURN_PHASE_BITS) | phase
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Staged {
-    Untouched,
-    Live,
-    Deleted,
-}
-
-/// One key this transaction has touched, in first-touch order.
-struct Touched {
-    table_id: u64,
-    key: Vec<u8>,
-    /// Presence immediately before this transaction's first operation on it.
-    existed_before: Option<bool>,
-    staged: Staged,
-    value: Vec<u8>,
-    read: bool,
-    wrote: bool,
-    inserted: bool,
-    deleted: bool,
-}
-
 #[derive(Clone, Copy)]
 struct OnePut {
     touched: usize,
@@ -111,7 +114,7 @@ pub struct Transaction<'db> {
     inner: Option<StoTransaction>,
     active: bool,
     trusted: Option<&'db TableEntry>,
-    touched: Vec<Touched>,
+    touched: TouchLog,
     mutations: u32,
     has_predicate: bool,
     fast_eligible: bool,
@@ -142,6 +145,9 @@ enum Effect {
 fn map_access(error: AccessError) -> (Error, Effect) {
     match error {
         AccessError::Conflict(_) => (Error::Conflict, Effect::Finished),
+        AccessError::Capacity(CapacityError::VersionExhausted) => {
+            (Error::VersionExhausted, Effect::Quarantined)
+        }
         AccessError::Capacity(
             CapacityError::ItemLimit
             | CapacityError::LockLimit
@@ -161,11 +167,15 @@ fn map_access(error: AccessError) -> (Error, Effect) {
 
 fn map_begin(error: BeginError) -> Error {
     match error {
+        BeginError::Capacity(CapacityError::VersionExhausted) => Error::VersionExhausted,
         BeginError::Capacity(_) => Error::OutOfMemory,
         BeginError::InvalidUse(InvalidUse::WorkerBusy) => Error::TransactionAlreadyActive,
         BeginError::InvalidUse(_) => Error::Internal,
         BeginError::Unsupported(_) => Error::FeatureUnavailable,
-        BeginError::Poisoned(_) => Error::WorkerPoisoned,
+        BeginError::Poisoned(_) => {
+            worker::poison_current_worker();
+            Error::WorkerPoisoned
+        }
     }
 }
 
@@ -173,6 +183,7 @@ fn map_abort(reason: AbortReason, hook_failure: Option<Error>) -> Error {
     match reason {
         AbortReason::HookRejected => hook_failure.unwrap_or(Error::CommitHookRejected),
         AbortReason::Conflict(_) => Error::Conflict,
+        AbortReason::Capacity(CapacityError::VersionExhausted) => Error::VersionExhausted,
         AbortReason::Capacity(_) => Error::TransactionTooLarge,
         AbortReason::Explicit
         | AbortReason::Doomed
@@ -261,7 +272,7 @@ impl<'db> Transaction<'db> {
             inner: Some(inner),
             active: true,
             trusted,
-            touched: Vec::new(),
+            touched: attachment.slot.take_touched(),
             mutations: 0,
             has_predicate: false,
             fast_eligible: true,
@@ -308,11 +319,15 @@ impl<'db> Transaction<'db> {
         self.inner.take()
     }
 
-    fn abort_inner(&mut self) {
+    fn abort_inner(&mut self) -> Result<()> {
         if let Some(inner) = self.take_inner() {
             let _ = inner.abort();
+            let cleanup = self.db.check_abort_cleanup();
             self.attachment.slot.release();
+            self.touched.record_cleanup(cleanup.is_ok());
+            cleanup?;
         }
+        Ok(())
     }
 
     #[cold]
@@ -321,15 +336,16 @@ impl<'db> Transaction<'db> {
         match effect {
             Effect::Active => Err(error),
             Effect::Finished => {
-                self.abort_inner();
+                self.abort_inner()?;
                 if worker::take_cleanup_failure(TestCleanupBoundary::Operation) {
+                    self.touched.record_cleanup(false);
                     worker::poison_current_worker();
                     return Err(Error::WorkerPoisoned);
                 }
                 Err(error)
             }
             Effect::Quarantined => {
-                self.abort_inner();
+                let _ = self.abort_inner();
                 worker::poison_current_worker();
                 Err(error)
             }
@@ -369,27 +385,15 @@ impl<'db> Transaction<'db> {
             self.invalidate_witness();
         }
     }
-
     fn touch(&mut self, table_id: u64, key: &[u8]) -> usize {
-        if let Some(index) = self
-            .touched
-            .iter()
-            .position(|entry| entry.table_id == table_id && entry.key == key)
-        {
-            return index;
+        self.touched.touch(table_id, key)
+    }
+
+    fn recycle_touched(&mut self) {
+        if self.touched.has_storage() {
+            let log = std::mem::take(&mut self.touched);
+            self.attachment.slot.recycle_touched(log);
         }
-        self.touched.push(Touched {
-            table_id,
-            key: key.to_vec(),
-            existed_before: None,
-            staged: Staged::Untouched,
-            value: Vec::new(),
-            read: false,
-            wrote: false,
-            inserted: false,
-            deleted: false,
-        });
-        self.touched.len() - 1
     }
 
     fn canonical_ops(&self) -> Vec<OpRef<'_>> {
@@ -489,22 +493,54 @@ impl<'db> Transaction<'db> {
             return self.fail_closed(Error::TransactionTooLarge);
         }
         let worker = self.attachment.worker;
-        let result =
+        // Only the first trusted operation borrows. Its immutable allocation
+        // is anchored before the Table call, including errors and unwinds.
+        // Later operations retain this one allocation if they replace it and
+        // use ordinary owned staging, never another borrowed generation.
+        let borrow_first = capture
+            && self.touched.can_borrow_first()
+            && value.len() > 38
+            && value.len() <= sto_masstree::STABLE_ATOMIC_VALUE_CAPACITY;
+        let result = if borrow_first {
+            let bytes = self.touched.prepare_first(table.entry.id, key, value);
+            let inner = self
+                .inner
+                .as_mut()
+                .expect("active transaction retains core");
+            // SAFETY: TouchLog owns these bytes before core entry and neither
+            // mutates nor frees them until cleanup is proved. Failed cleanup
+            // pins the allocation independently of any caller-owned holder.
+            unsafe {
+                table
+                    .entry
+                    .table
+                    .put_borrowed_with_previous_presence(inner, worker, key, bytes)
+            }
+        } else {
             table
                 .entry
                 .table
-                .put_with_previous_presence(self.inner_mut(), worker, key, value);
+                .put_with_previous_presence(self.inner_mut(), worker, key, value)
+        };
         let existed = match result {
             Ok(existed) => existed,
             Err(error) => return self.fail_access(error),
         };
         self.mutations += 1;
-        let index = self.touch(table.entry.id, key);
+        let index = if borrow_first {
+            self.touched.accept_first()
+        } else {
+            let index = self.touch(table.entry.id, key);
+            self.touched.retire_value(index);
+            index
+        };
         let entry = &mut self.touched[index];
         entry.wrote = true;
         entry.staged = Staged::Live;
-        entry.value.clear();
-        entry.value.extend_from_slice(value);
+        if !borrow_first {
+            entry.value.clear();
+            entry.value.extend_from_slice(value);
+        }
         if !existed {
             entry.inserted = true;
         }
@@ -548,6 +584,9 @@ impl<'db> Transaction<'db> {
             Err(error) => return self.fail_access(error),
         };
         let index = self.touch(table.entry.id, key);
+        if inserted {
+            self.touched.retire_value(index);
+        }
         let entry = &mut self.touched[index];
         if inserted {
             self.mutations += 1;
@@ -586,6 +625,9 @@ impl<'db> Transaction<'db> {
             Err(error) => return self.fail_access(error),
         };
         let index = self.touch(table.entry.id, key);
+        if existed {
+            self.touched.retire_value(index);
+        }
         let entry = &mut self.touched[index];
         if existed {
             self.mutations += 1;
@@ -731,11 +773,16 @@ impl<'db> Transaction<'db> {
         self.apply_commit_cleanup_failure(report)
     }
 
-    fn apply_commit_cleanup_failure(&self, report: CommitReport) -> CommitReport {
-        if worker::take_cleanup_failure(TestCleanupBoundary::Commit) {
+    fn apply_commit_cleanup_failure(&mut self, report: CommitReport) -> CommitReport {
+        let report = if worker::take_cleanup_failure(TestCleanupBoundary::Commit) {
             worker::poison_current_worker();
-            return QUARANTINED_REPORT;
-        }
+            QUARANTINED_REPORT
+        } else {
+            report
+        };
+        self.touched.record_cleanup(
+            report.cleanup.is_ok() && !matches!(report.disposition, CommitDisposition::Unknown(_)),
+        );
         report
     }
 
@@ -743,8 +790,9 @@ impl<'db> Transaction<'db> {
         if !self.active {
             return Ok(());
         }
-        self.abort_inner();
+        self.abort_inner()?;
         if worker::take_cleanup_failure(TestCleanupBoundary::Abort) {
+            self.touched.record_cleanup(false);
             worker::poison_current_worker();
             return Err(Error::WorkerPoisoned);
         }
@@ -785,17 +833,23 @@ impl<'db> Transaction<'db> {
     }
 
     /// Validate a one-put candidate against the live witness and seal it.
+    /// `expected_record_bytes` must equal the witness captured at `put`; the
+    /// exact-bytes recomputation is already implied by that equality, so the
+    /// terminal skips a second `exact_record_bytes` walk over the op.
     fn seal_one_put_candidate(&mut self, expected_record_bytes: usize) -> Option<OnePut> {
         if self.plan.is_some() || expected_record_bytes == 0 {
             return None;
         }
-        let (one_put, op) = self.one_put_op()?;
-        let exact = record::exact_record_bytes(&[op], CommitRecordChecksum::None)?;
-        if exact != expected_record_bytes || exact != one_put.exact_bytes as usize {
+        let one_put = self.one_put?;
+        if one_put.exact_bytes as usize != expected_record_bytes {
+            return None;
+        }
+        let entry = self.touched.get(one_put.touched)?;
+        if entry.staged != Staged::Live {
             return None;
         }
         self.plan = Some(CommitRecordPreflight::from_parts(
-            exact,
+            expected_record_bytes,
             1,
             CommitRecordChecksum::None,
         ));
@@ -880,7 +934,9 @@ impl<'db> Transaction<'db> {
     ///
     /// # Safety
     ///
-    /// As above; `candidate` must be the current one-put plan.
+    /// As above; `candidate` must be the current one-put plan. A stale
+    /// candidate (any operation ran after it was taken) is refused before
+    /// `acquire` runs, so the engine never binds storage for it.
     #[doc(hidden)]
     pub unsafe fn commit_report_with_unchecked_one_put_record_target<F>(
         mut self,
@@ -1149,8 +1205,13 @@ impl<'db> Transaction<'db> {
             // and Release-published BOUND; nothing else can touch the holder
             // until READY or a cache pin.
             let holder = unsafe { &mut *run.holder };
-            let value = &mut self.touched[one_put.touched].value;
-            holder.seal(value, run.sequence, table_id, run.timestamp_stamp);
+            self.seal_holder_value(
+                holder,
+                one_put.touched,
+                run.sequence,
+                table_id,
+                run.timestamp_stamp,
+            );
             holder_sealed = true;
             if run.report.disposition == CommitDisposition::Committed && run.report.cleanup.is_ok()
             {
@@ -1291,40 +1352,61 @@ impl<'db> Transaction<'db> {
                 holder_state: 0,
             };
         };
-        let (_, op) = self.one_put_op().expect("sealed candidate");
-        let ops = [op];
-        let run = run_terminal(
-            inner,
-            self.db,
-            Spec {
-                gate: if restricted { Gate::None } else { Gate::Hlc },
-                gate_after_validation: restricted,
-                order: if restricted {
-                    Order::RestrictedStampOnly
-                } else {
-                    Order::RustSequence
-                },
-                unhealthy,
-                sink: Sink::PreselectedHolder,
-                acquire: no_acquire(),
-                preflight: CommitRecordPreflight::from_parts(exact, 1, CommitRecordChecksum::None),
-                ops: &ops,
-                prepared_overflow_key: Vec::new(),
-            },
-        );
-        let run = self.finish_run(run);
+        // This terminal only accepts a timestamp. It never encodes a record,
+        // allocates a sequence, or binds an arena/callback target, so retain
+        // only the state its hook actually needs. The candidate, holder and
+        // ordering-profile checks above are unchanged.
+        let mut run = holder_commit::run(inner, unhealthy, restricted);
+        self.attachment.slot.release();
+        run.report = self.apply_commit_cleanup_failure(run.report);
         let mut holder_state = 0;
         if run.timestamp_stamp != 0 {
             // The accepted hook only captured the timestamp; transfer the
             // staged value and seal after the core has finished.
-            let value = &mut self.touched[one_put.touched].value;
-            holder_ref.seal(value, sequence.get(), table_id, run.timestamp_stamp);
+            self.seal_holder_value(
+                holder_ref,
+                one_put.touched,
+                sequence.get(),
+                table_id,
+                run.timestamp_stamp,
+            );
             holder_state = (run.timestamp_stamp << 1) | 1;
         }
         TrustedPreselectedUncheckedOnePutHolderOutcome {
             report: run.report,
             holder_state,
         }
+    }
+    #[inline]
+    fn seal_holder_value(
+        &mut self,
+        holder: &mut Holder,
+        index: usize,
+        sequence: u64,
+        table_id: u64,
+        stamp: u64,
+    ) {
+        if self.touched.value_is_borrowed(index) {
+            // Preserve the accepted holder/report contract on uncertainty,
+            // without handing the core's borrowed owner to a caller's pool.
+            self.seal_uncertain_holder_value(holder, index, sequence, table_id, stamp);
+        } else {
+            holder.seal(&mut self.touched[index].value, sequence, table_id, stamp);
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn seal_uncertain_holder_value(
+        &self,
+        holder: &mut Holder,
+        index: usize,
+        sequence: u64,
+        table_id: u64,
+        stamp: u64,
+    ) {
+        let mut independent = self.touched[index].value.clone();
+        holder.seal(&mut independent, sequence, table_id, stamp);
     }
 
     /// Single-producer preselected one-put terminal sealing a holder.
@@ -1477,6 +1559,9 @@ impl<'db> Transaction<'db> {
                 });
                 return false;
             }
+            // The caller deliberately forgets this facade on success. Return
+            // owned wrapper buffers now; no destructor will run afterward.
+            self.recycle_touched();
             acknowledged.store(sequence.get(), Ordering::Release);
             return true;
         }
@@ -1492,11 +1577,16 @@ impl<'db> Transaction<'db> {
 impl Drop for Transaction<'_> {
     fn drop(&mut self) {
         if self.active {
-            self.abort_inner();
+            let _ = self.abort_inner();
             if worker::take_cleanup_failure(TestCleanupBoundary::Abort) {
+                self.touched.record_cleanup(false);
                 worker::poison_current_worker();
             }
         }
+        // All terminals have consumed the core transaction before returning
+        // this operation log to its worker. Retire every operation and keep
+        // only bounded backing storage for the next transaction.
+        self.recycle_touched();
     }
 }
 
@@ -1522,6 +1612,11 @@ where
         publication: ptr::null_mut(),
         observer: worker::observer(),
     };
+    #[cfg(feature = "test-hooks")]
+    let outcome = sto_core::test_install::with_observer(worker::observe_install, || {
+        inner.commit_with_hook(&mut driver)
+    });
+    #[cfg(not(feature = "test-hooks"))]
     let outcome = inner.commit_with_hook(&mut driver);
     // The driver is dropped after `commit_with_hook` returns, so a gate still
     // held by a validation abort is released only after every lock is.
@@ -1694,14 +1789,11 @@ enum Order {
     NativeLocked,
     /// Restricted `(timestamp, sequence)` pair after validation, no gate.
     RestrictedPair,
-    /// Restricted timestamp only after validation, no gate.
-    RestrictedStampOnly,
 }
 
 enum Sink {
     Callback,
     Preselected(CommitRecordTarget),
-    PreselectedHolder,
     Arena(TrustedNativeOrderedArenaControl),
     OrderedHolder(TrustedNativeOrderedHolderControl),
 }
@@ -1843,27 +1935,10 @@ where
                         }
                         OrderPairAllocation::GeneralLocked => spin_loop(),
                         OrderPairAllocation::TimestampExhausted => {
-                            return self.fail(Error::TimestampExhausted)
+                            return self.fail(Error::TimestampExhausted);
                         }
                         OrderPairAllocation::SequenceExhausted => {
-                            return self.fail(Error::CommitHookRejected)
-                        }
-                    }
-                }
-            }
-            Order::RestrictedStampOnly => {
-                if self.unhealthy() {
-                    return self.fail(Error::CommitHookRejected);
-                }
-                loop {
-                    match self.clock.try_allocate_restricted_timestamp() {
-                        StampAllocation::Accepted(stamp) => {
-                            self.minted_stamp = stamp;
-                            break;
-                        }
-                        StampAllocation::GeneralLocked => spin_loop(),
-                        StampAllocation::TimestampExhausted => {
-                            return self.fail(Error::TimestampExhausted)
+                            return self.fail(Error::CommitHookRejected);
                         }
                     }
                 }
@@ -1918,13 +1993,6 @@ where
                 self.bound = true;
                 self.written = true;
             }
-            Sink::PreselectedHolder => {
-                if self.unhealthy() {
-                    return self.fail(Error::CommitHookRejected);
-                }
-                self.timestamp_stamp = self.minted_stamp;
-                self.bound = true;
-            }
             _ => {}
         }
         // The ordered record is now bound; later transactions keep their own
@@ -1970,8 +2038,13 @@ where
                 // SAFETY: as above, plus the holder pool is live.
                 unsafe { self.bind_ordered_holder(&control) };
             }
-            Sink::Preselected(_) | Sink::PreselectedHolder => {}
+            Sink::Preselected(_) => {}
         }
+        #[cfg(feature = "test-hooks")]
+        worker::prepare_install_event(
+            self.observer.filter(|_| self.spec.ops.len() > 1),
+            Some(public),
+        );
         self.notify(TestCommitPhase::PreinstallAccepted, self.minted_stamp);
         Ok(())
     }
@@ -2075,6 +2148,9 @@ where
 {
     fn reserve_upper_metadata(&mut self) -> std::result::Result<(), CommitHookError> {
         self.notify(TestCommitPhase::WritesetLocked, 0);
+        if self.spec.order == Order::RestrictedPair {
+            crate::prefetch::restricted_clock(self.clock);
+        }
         if self.spec.gate != Gate::None && !self.spec.gate_after_validation {
             self.enter_gate();
         }
@@ -2093,6 +2169,8 @@ where
 
 impl<F> Drop for Driver<'_, '_, F> {
     fn drop(&mut self) {
+        #[cfg(feature = "test-hooks")]
+        worker::prepare_install_event(None, None);
         // A validation abort never reaches pre_install; release the gate only
         // now, after the core has released every write lock.
         if self.gate_held {

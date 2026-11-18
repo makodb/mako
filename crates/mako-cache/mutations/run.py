@@ -34,15 +34,19 @@ RUNNER_DIR = Path(__file__).resolve().parent
 ORIGINAL_CRATE = RUNNER_DIR.parent
 ORIGINAL_CRATES = ORIGINAL_CRATE.parent
 ORIGINAL_LOCKFILE = ORIGINAL_CRATES / "Cargo.lock"
+ORIGINAL_TOOLCHAIN = ORIGINAL_CRATES.parent / "rust-toolchain.toml"
 
 BASE_CARGO_ARGS = (
     "test",
     "--locked",
     "-p",
     "mako-cache",
-    "--features",
-    "test-support",
 )
+
+
+def cargo_args(engine: str) -> tuple[str, ...]:
+    feature = "engine-sto-test-hooks" if engine == "sto" else "engine-c-abi"
+    return (*BASE_CARGO_ARGS, "--no-default-features", "--features", f"{feature},test-support")
 
 
 @dataclasses.dataclass(frozen=True)
@@ -85,6 +89,37 @@ ACCEPTANCE_NATIVE = lambda name: TestTarget(
 
 
 MUTATIONS: tuple[Mutation, ...] = (
+    Mutation(
+        name="read-only-registration-bound-before-cut",
+        relative_path="src/lib.rs",
+        anchor="""    fn read_only_scan_bound(&self, order_validation_prefix: impl FnOnce()) -> usize {
+        order_validation_prefix();
+        // A prefix writer registered its slot before its packed Release RMW.
+        // The cut acquires that publication or its release sequence. Loading
+        // the monotone registration counter AFTER that cut therefore includes
+        // every prefix writer, even though registration itself was Relaxed.
+        // An Acquire load before the cut would not establish this guarantee.
+        // Slots are never reused and this counter never decreases or resets.
+        NEXT_COMMIT_FENCE_THREAD_SLOT.load(Ordering::Acquire)
+    }
+""",
+        anchor_sha256="01d39a283d41d8462f2062ffb3763d96fac0702c68aeaeae88b3db10facd5882",
+        replacement="""    fn read_only_scan_bound(&self, order_validation_prefix: impl FnOnce()) -> usize {
+        // MUTANT: an early bound can omit a writer included by the later cut.
+        let registered = NEXT_COMMIT_FENCE_THREAD_SLOT.load(Ordering::Acquire);
+        order_validation_prefix();
+        registered
+    }
+""",
+        test=TestTarget(
+            ("--lib",),
+            "tests::commit_fence_scan_bound_includes_registration_completed_inside_cut",
+        ),
+        breaks=(
+            "A prefix writer registered during the cut is omitted from "
+            "the reader's scan."
+        ),
+    ),
     Mutation(
         name="native-replay-drops-put-value",
         relative_path="src/record.rs",
@@ -443,13 +478,19 @@ def source_hashes() -> dict[str, str]:
 def dependency_hashes() -> dict[str, str]:
     # These remain path dependencies of every isolated copy. A storage adapter
     # change during the run must invalidate the evidence just like a cache edit.
-    crates = ("mrx-core", "mrx-rocks", "mako-history", "mako-local", "mako-local-sys")
+    crates = (
+        "mrx-core", "mrx-rocks", "mako-history", "mako-local", "mako-local-sys",
+        "mako-engine", "mako-engine-api", "mako-engine-sto", "mako-clock",
+        "sto-core", "sto-masstree", "masstree", "mtree-sys",
+    )
     files = [path for name in crates for path in source_files(ORIGINAL_CRATES / name)]
     files.append(ORIGINAL_LOCKFILE)
-    return {
+    hashes = {
         path.relative_to(ORIGINAL_CRATES).as_posix(): sha256_bytes(path.read_bytes())
         for path in sorted(files)
     }
+    hashes["../rust-toolchain.toml"] = sha256_bytes(ORIGINAL_TOOLCHAIN.read_bytes())
+    return hashes
 
 
 def tree_digest(hashes: dict[str, str]) -> str:
@@ -647,6 +688,8 @@ lto = false
         encoding="utf-8",
     )
     shutil.copy2(ORIGINAL_LOCKFILE, root / "Cargo.lock")
+    # Temporary workspaces must retain the repo's compiler selection, too.
+    shutil.copy2(ORIGINAL_TOOLCHAIN, root / "rust-toolchain.toml")
     target = root / "cargo-target-empty"
     if target.exists():
         raise HarnessFailure(f"new target directory unexpectedly exists: {target}")
@@ -782,10 +825,10 @@ def prepare_lockfile(
     }
 
 
-def test_command(cargo: str, target: TestTarget) -> list[str]:
+def test_command(cargo: str, target: TestTarget, engine: str = "c-abi") -> list[str]:
     return [
         cargo,
-        *BASE_CARGO_ARGS,
+        *cargo_args(engine),
         *target.cargo_selector,
         target.exact_name,
         "--",
@@ -802,7 +845,9 @@ def resolve_build_dirs(
     args: argparse.Namespace, selected: Sequence[Mutation]
 ) -> tuple[Path | None, bool]:
     hooks_needed = any(mutation.test.needs_hooks for mutation in selected)
-    native_needed = hooks_needed or any(mutation.test.needs_native for mutation in selected)
+    native_needed = args.engine == "sto" or hooks_needed or any(
+        mutation.test.needs_native for mutation in selected
+    )
 
     hook_value = args.hook_build_dir
     native_value = args.mako_build_dir
@@ -819,6 +864,16 @@ def resolve_build_dirs(
     else:
         chosen = None
         require_hooks = False
+
+    # Rust STO implements the observer hooks in Rust. Its Masstree archive
+    # must be genuine, but need not enable the C++ transaction test hooks.
+    if args.engine == "sto":
+        require_hooks = hooks_needed
+        if os.environ.get("MAKO_MTREE_NATIVE_INTEGRATION") != "1":
+            raise HarnessFailure("Rust STO mutations require MAKO_MTREE_NATIVE_INTEGRATION=1")
+        for name in ("MAKO_MTREE_NATIVE_LIB_DIRS", "MAKO_MTREE_NATIVE_LIBS"):
+            if not os.environ.get(name):
+                raise HarnessFailure(f"Rust STO mutations require {name}")
 
     if native_needed and chosen is None:
         raise HarnessFailure(
@@ -872,6 +927,15 @@ def mutate_copy(workspace: TempWorkspace, mutation: Mutation) -> dict[str, str]:
     }
 
 
+def native_profile(build: Path | None, engine: str, require_hooks: bool) -> dict[str, object]:
+    return {
+        "build_dir": str(build) if build else None,
+        "commit_hooks_required": require_hooks,
+        "hook_implementation": "rust" if engine == "sto" else "c++",
+        "hook_archive_required": require_hooks and engine == "c-abi",
+    }
+
+
 def run_baseline(
     args: argparse.Namespace,
     native_build: Path | None,
@@ -884,6 +948,14 @@ def run_baseline(
         env = cargo_environment(
             workspace, native_build=native_build, require_hooks=require_hooks
         )
+        toolchain = {}
+        for name, command in (("rustc", [env.get("RUSTC", "rustc"), "--version", "--verbose"]),
+                              ("cargo", [args.cargo, "--version", "--verbose"])):
+            version = command_result(command, cwd=workspace.root, env=env,
+                                     timeout=args.compile_timeout)
+            if version["timed_out"] or version["returncode"] != 0:
+                raise HarnessFailure(f"cannot identify baseline {name}", details=version)
+            toolchain[name] = str(version["stdout_tail"]).strip()
         lock_setup = prepare_lockfile(args, workspace, env)
         if (
             lock_setup["normalization"]["timed_out"]
@@ -897,7 +969,7 @@ def run_baseline(
                 "path_rewrites": rewrites,
                 "lock_setup": lock_setup,
             }
-        compile_command = [args.cargo, *BASE_CARGO_ARGS, "--no-run"]
+        compile_command = [args.cargo, *cargo_args(args.engine), "--no-run"]
         print(f"baseline compile: {command_display(compile_command)}", file=sys.stderr)
         compile_result = command_result(
             compile_command,
@@ -920,7 +992,7 @@ def run_baseline(
         # reason; preserve that contract in this isolated baseline too.
         test_command_line = [
             args.cargo,
-            *BASE_CARGO_ARGS,
+            *cargo_args(args.engine),
             "--",
             "--test-threads=1",
         ]
@@ -948,6 +1020,7 @@ def run_baseline(
         )
         return {
             "status": status,
+            "toolchain": toolchain,
             "reason": None if status == "green" else "baseline tests were not green",
             "workspace": str(workspace.root) if args.keep_workdirs else None,
             "path_rewrites": rewrites,
@@ -998,7 +1071,7 @@ def run_mutation(
             return base
         compile_command = [
             args.cargo,
-            *BASE_CARGO_ARGS,
+            *cargo_args(args.engine),
             *mutation.test.cargo_selector,
             "--no-run",
         ]
@@ -1020,7 +1093,7 @@ def run_mutation(
             )
             return base
 
-        command = test_command(args.cargo, mutation.test)
+        command = test_command(args.cargo, mutation.test, args.engine)
         print(
             f"{mutation.name}: test {mutation.test.exact_name}",
             file=sys.stderr,
@@ -1105,6 +1178,8 @@ def parser() -> argparse.ArgumentParser:
         help="validate names, exact anchors, digests, and source integrity without Cargo",
     )
     result.add_argument("--cargo", default="cargo", help="Cargo executable")
+    result.add_argument("--engine", choices=("c-abi", "sto"), default="c-abi",
+                        help="engine for both the unmutated baseline and every mutant")
     result.add_argument(
         "--mako-build-dir",
         help="CMake tree containing libmako.a for native tests (or MAKO_BUILD_DIR)",
@@ -1180,6 +1255,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "original_crate": str(ORIGINAL_CRATE),
         "temp_root": str(args.resolved_temp_root),
         "scope": "applied-to-Rocks; asynchronous and not a Rocks WAL durability claim",
+        "engine": args.engine,
+        "toolchain_pin_sha256": sha256_bytes(ORIGINAL_TOOLCHAIN.read_bytes()),
+        "rustup_toolchain_override": os.environ.get("RUSTUP_TOOLCHAIN"),
         "dependency_source_integrity": {"file_sha256": dependency_hashes()},
     }
     exit_code = 2
@@ -1219,10 +1297,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return finish(report, before, started, args.report, exit_code)
 
         native_build, require_hooks = resolve_build_dirs(args, selected)
-        report["native_profile"] = {
-            "build_dir": str(native_build) if native_build else None,
-            "hook_archive_required": require_hooks,
-        }
+        report["native_profile"] = native_profile(native_build, args.engine, require_hooks)
 
         baseline = run_baseline(args, native_build, require_hooks)
         report["baseline"] = baseline

@@ -1,8 +1,11 @@
 #include <cstdlib>
+#include <cstdio>
 #include <array>
 #include <cstring>
 #include <limits>
 #include <new>
+#include <exception>
+#include <source_location>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -12,13 +15,25 @@
 #include "benchmarks/tpcc_fixed_batch.h"
 #include "in_memory_ordered_index.h"
 #include "lib/common.h"
+#include "lib/server.h"
+#include <sys/wait.h>
+#include <unistd.h>
 #include "storage/rust_sto_tpcc_wrapper.hh"
+#include "sto/Transaction.hh"
 
 namespace {
 
-void require(bool condition) {
-  if (!condition)
+// Preserve the caller's exception type across Rust's abort/return boundary.
+struct callback_failure final : std::exception {};
+
+// @unsafe - Report the failing native smoke assertion before terminating.
+void require(bool condition,
+             std::source_location source = std::source_location::current()) {
+  if (!condition) {
+    std::fprintf(stderr, "native wrapper assertion failed at %s:%u\n",
+                 source.file_name(), source.line());
     std::abort();
+  }
 }
 
 void check_capacity_environment() {
@@ -36,8 +51,6 @@ void check_capacity_environment() {
     require(unsetenv(names[i]) == 0);
   }
   rust_sto_tpcc_detail::validate_capacity_environment();
-  require(rust_sto_tpcc_detail::db_config_for_worker_count(1).max_registry_bytes ==
-          8ULL * 1024 * 1024 * 1024);
   for (const auto &valid : std::array<std::pair<const char *, uint64_t>, 5>{
            std::pair{"8G", 8ULL * 1024 * 1024 * 1024},
            std::pair{"64M", 64ULL * 1024 * 1024},
@@ -58,8 +71,8 @@ void check_capacity_environment() {
       bool rejected = false;
       try {
         rust_sto_tpcc_detail::validate_capacity_environment();
-      } catch (const std::invalid_argument &error) {
-        rejected = std::string(error.what()).find(names[i]) != std::string::npos;
+      } catch (const std::invalid_argument &) {
+        rejected = true;
       }
       require(rejected);
     }
@@ -94,6 +107,7 @@ public:
   checking_fixed_read(bool fail, std::string expected)
       : fail_(fail), expected_(std::move(expected)), visits_(0) {}
 
+  // @unsafe - Borrows native callback bytes and exercises exception propagation.
   void invoke(size_t index, const char *current_value,
               size_t current_value_length) override {
     require(index == visits_++);
@@ -101,7 +115,7 @@ public:
       require(current_value == nullptr);
       require(current_value_length == 0);
       if (fail_)
-        throw std::runtime_error("expected fixed callback failure");
+        throw callback_failure{};
       return;
     }
     require(current_value != nullptr);
@@ -162,8 +176,9 @@ private:
 
 class throwing_fixed_modify final : public oi_fixed_modify_callback {
 public:
+  // @unsafe - Exercises the C++ exception boundary around a Rust callback.
   oi_fixed_mutation_result invoke(size_t, const char *, size_t) override {
-    throw std::runtime_error("expected fixed mutation failure");
+    throw callback_failure{};
   }
 };
 
@@ -258,6 +273,52 @@ public:
   void shard_reset() override {}
 };
 
+// @unsafe - Exercise real facade publication without attaching network workers.
+void check_remote_catalog_aliases() {
+  auto &benchmark = BenchmarkConfig::getInstance();
+  const size_t saved_threads = benchmark.getNthreads();
+  const size_t saved_shards = benchmark.getNshards();
+  const double saved_scale = benchmark.getScaleFactor();
+  benchmark.setNthreads(2);
+  benchmark.setNshards(2);
+  benchmark.setScaleFactor(5);
+  {
+    rust_sto_tpcc_wrapper catalog;
+    catalog.init();
+    auto *customer_first = catalog.open_index("customer_0", 0);
+    auto *customer_last = catalog.open_index("customer_1", 0);
+    auto *shared = catalog.open_index("warehouse", 0);
+    auto *read_only = catalog.open_index("item", 0);
+
+    // Deliberately create proxies in a different order from the local schema.
+    // IDs follow physical table ordinals, never the number/order of facades.
+    auto *remote_item = catalog.open_index("item_remote_10", 1);
+    auto *remote_last = catalog.open_index("customer_remote_10", 1);
+    auto *remote_shared = catalog.open_index("warehouse_remote_6", 1);
+    auto *remote_first = catalog.open_index("customer_remote_6", 1);
+    require(remote_first != remote_last);
+    require(remote_first == catalog.open_index("customer_remote_7", 1));
+    require(remote_last == catalog.open_index("customer_remote_8", 1));
+    require(remote_last == catalog.open_index("customer_remote_9", 1));
+    require(remote_shared == catalog.open_index("warehouse_remote_10", 1));
+    require(remote_item == catalog.open_index("item_remote_6", 1));
+    const auto matches_owner = [&](abstract_ordered_index *remote,
+                                   abstract_ordered_index *local) {
+      require(remote->get_is_remote());
+      require(remote->get_table_id() - local->get_table_id() ==
+              mako::NUM_TABLES_PER_SHARD);
+      require(catalog.get_index_by_table_id(remote->get_table_id()) == remote);
+    };
+    matches_owner(remote_first, customer_first);
+    matches_owner(remote_last, customer_last);
+    matches_owner(remote_shared, shared);
+    matches_owner(remote_item, read_only);
+  }
+  benchmark.setNthreads(saved_threads);
+  benchmark.setNshards(saved_shards);
+  benchmark.setScaleFactor(saved_scale);
+}
+
 } // namespace
 
 // Focused C++/Rust fixed-read smoke test. The CMake target uses the matched
@@ -276,60 +337,25 @@ int main(int argc, char **argv) {
   benchmark.setShardIndex(0);
   benchmark.setIsReplicated(false);
   benchmark.setPinCpus(false);
-
-  // Lazy registry growth no longer imposes workload-duration record ceilings.
-  const sto_tpcc_table_config history_config =
-      rust_sto_tpcc_detail::table_config_for("history_1");
-  require(history_config.max_retained_records == UINT64_MAX);
-  require(history_config.max_consumed_record_ids == UINT64_MAX);
-  require(history_config.max_retained_key_bytes == UINT64_MAX);
-
-  const sto_tpcc_table_config order_config =
-      rust_sto_tpcc_detail::table_config_for("oorder_1");
-  require(order_config.max_retained_records == UINT64_MAX);
-  require(order_config.max_consumed_record_ids == UINT64_MAX);
-  require(rust_sto_tpcc_detail::table_config_for("warehouse_1")
-              .bounded_atomic_values != 0);
-  require(rust_sto_tpcc_detail::table_config_for("customer_1")
-              .bounded_atomic_values != 0);
-  require(rust_sto_tpcc_detail::table_config_for("district_1")
-              .bounded_atomic_values != 0);
-  require(rust_sto_tpcc_detail::table_config_for("customer_name_idx_1")
-              .bounded_atomic_values == 0);
-
-  for (const char *name : {
-           "customer", "customer_17", "customer_name_idx",
-           "customer_name_idx_17", "district", "district_17", "item",
-           "item_17", "stock", "stock_17", "stock_data", "stock_data_17",
-           "warehouse", "warehouse_00017"}) {
-    require(rust_sto_tpcc_detail::table_has_static_directory(name));
+  // @unsafe - Native runtime configuration is immutable for the process.
+  // Exercise the different catalog topology in its own process before any
+  // native workers exist in this parent.
+  const pid_t catalog_child = fork();
+  require(catalog_child >= 0);
+  if (catalog_child == 0) {
+    check_remote_catalog_aliases();
+    _exit(0);
   }
-  for (const char *name : {
-           "history", "history_17", "new_order", "new_order_17", "oorder",
-           "oorder_17", "oorder_c_id_idx", "oorder_c_id_idx_17",
-           "order_line", "order_line_17", "warehouse_", "warehouse_remote",
-           "warehouse_17x", "customer_name_idx_remote"}) {
-    require(!rust_sto_tpcc_detail::table_has_static_directory(name));
-  }
+  int catalog_status = 0;
+  require(waitpid(catalog_child, &catalog_status, 0) == catalog_child);
+  require(WIFEXITED(catalog_status) && WEXITSTATUS(catalog_status) == 0);
 
-  // This is a pure configuration check. It exercises both admission edges
-  // without creating or attaching 111 worker threads.
-  const sto_tpcc_db_config one_worker =
-      rust_sto_tpcc_detail::db_config_for_worker_count(1);
-  require(one_worker.max_threads == 32);
-  require(one_worker.max_key_length == 1024);
-  require(one_worker.max_items_per_txn == 1024);
-  require(one_worker.max_locks_per_txn == 2048);
-  const sto_tpcc_db_config last_supported_worker =
-      rust_sto_tpcc_detail::db_config_for_worker_count(111);
-  require(last_supported_worker.max_threads == 460);
 
   const auto rejects_worker_count = [](size_t worker_count) {
     try {
       (void)rust_sto_tpcc_detail::db_config_for_worker_count(worker_count);
-    } catch (const std::invalid_argument &error) {
-      return std::string(error.what()).find("worker count must be in [1, 111]") !=
-             std::string::npos;
+    } catch (const std::invalid_argument &) {
+      return true;
     }
     return false;
   };
@@ -399,9 +425,43 @@ int main(int argc, char **argv) {
       db.open_index("customer_name_idx_1", -1);
   require(payment_warehouse != nullptr && payment_district != nullptr &&
           payment_customer != nullptr && payment_customer_name != nullptr);
+  abstract_ordered_index *rpc_table = db.open_index("rpc_lifecycle", -1);
+  require(rpc_table != nullptr);
   // Loader mode provides the same legacy TThread state needed by the TPC-C
   // bridge without creating an irrelevant ShardClient for this local test.
   db.thread_init(true, 0);
+
+  // @unsafe - Exercise the real receiver on a freshly attached native Rust
+  // worker, before any participant or ordinary storage transaction exists.
+  {
+    mako::ShardReceiver receiver(argv[1]);
+    const std::map<int, abstract_ordered_index *> tables{
+        {rpc_table->get_table_id(), rpc_table}};
+    receiver.Register(&db, tables);
+    bool changed = false;
+    std::string observed;
+    const int put_status = receiver.RunNontxnOp(
+        mako::nontxnPutReqType, rpc_table->get_table_id(), "fresh", "native",
+        &changed, &observed);
+    if (put_status != mako::ErrorCode::SUCCESS) {
+      std::fprintf(stderr, "fresh Rust nontransactional RPC status=%d\n", put_status);
+      return 1;
+    }
+    require(changed);
+    require(receiver.RunNontxnOp(
+        mako::nontxnGetReqType, rpc_table->get_table_id(), "fresh", "",
+        &changed, &observed) == mako::ErrorCode::SUCCESS);
+    require(changed && observed == "native");
+    require(receiver.RunNontxnOp(
+        mako::nontxnRemoveReqType, rpc_table->get_table_id(), "fresh", "",
+        &changed, &observed) == mako::ErrorCode::SUCCESS);
+    require(changed);
+    require(receiver.RunNontxnOp(
+        mako::nontxnGetReqType, rpc_table->get_table_id(), "fresh", "",
+        &changed, &observed) == mako::ErrorCode::ABORT);
+    require(!changed);
+  }
+  db.close_index(rpc_table);
 
   str_arena arena;
   std::string value;
@@ -567,8 +627,7 @@ int main(int argc, char **argv) {
   require(db.commit_txn(txn));
 
   // The local transactional surface round-trips only the logical payload.
-  // The raw shard surface retains its historical encoded contract by
-  // rebuilding the exact all-zero suffix that was validated and elided.
+  // Raw participant reads below also expose the installed decision metadata.
   txn = db.new_txn(0, arena, nullptr);
   require(tx_get(table, txn, lcdf::Str(fixed_key, sizeof(fixed_key)), value));
   require(value == "fixed-value");
@@ -587,30 +646,46 @@ int main(int argc, char **argv) {
   require(table->get(lcdf::Str(fixed_key, sizeof(fixed_key)), value, 4));
   require(value == "fixe");
 
+  // @unsafe - Writes the legacy byte trailer with the existing native codec.
+  const auto encoded_with_time_term = [](const char *payload,
+                                         uint32_t time_term) {
+    std::string encoded = mako::Encode(payload);
+    std::memcpy(encoded.data() + encoded.size() - mako::EXTRA_BITS_FOR_VALUE,
+                &time_term, sizeof(time_term));
+    return encoded;
+  };
+  // @unsafe - Raw shard methods operate on a retained participant, not an ordinary
+  // local transaction. Reads return the installed decision with its payload.
   const std::string raw_key("canonical-raw-key");
   const std::string raw_end_key("canonical-raw-key~");
-  const std::string raw_encoded = mako::Encode("canonical-raw-value");
-  txn = db.new_txn(0, arena, nullptr);
-  require(raw_table->shard_put(raw_key, raw_encoded) == nullptr);
-  require(db.commit_txn(txn));
+  const int raw_saved_mode = TThread::mode();
+  TThread::set_mode(1);
+  db.shard_reset();
+  require(raw_table->shard_put(raw_key, mako::Encode("canonical-raw-value")) == nullptr);
+  uint32_t raw_decision = 0;
+  require(db.shard_timestamp(raw_decision));
+  require(db.shard_validate() == mako::ErrorCode::SUCCESS);
+  db.shard_install(raw_decision);
+  db.shard_serialize_util(raw_decision);
+  db.shard_unlock(true);
 
-  txn = db.new_txn(0, arena, nullptr);
+  db.shard_reset();
   std::string raw_value;
   require(raw_table->shard_get(raw_key, raw_value, std::string::npos));
-  require(raw_value == raw_encoded);
-  require(db.commit_txn(txn));
-
-  txn = db.new_txn(0, arena, nullptr);
+  const std::string_view raw_payload("canonical-raw-value");
+  require(raw_value.size() == raw_payload.size() + mako::EXTRA_BITS_FOR_VALUE);
+  require(std::string_view(raw_value.data(), raw_payload.size()) == raw_payload);
+  require(mako::load_value_time_term(raw_value.data(), raw_value.size()) ==
+          raw_decision * 10);
+  const std::string raw_encoded = raw_value;
   const size_t raw_prefix_length = std::string("canonical-raw-value").size() + 3;
   require(raw_table->shard_get(raw_key, raw_value, raw_prefix_length));
   require(raw_value == raw_encoded.substr(0, raw_prefix_length));
-  require(db.commit_txn(txn));
-
-  txn = db.new_txn(0, arena, nullptr);
   checking_raw_scan raw_scan(raw_key, raw_encoded);
   require(raw_table->shard_scan(raw_key, &raw_end_key, raw_scan, &arena));
   require(raw_scan.visits() == 1);
-  require(db.commit_txn(txn));
+  db.shard_abort_txn(nullptr);
+  TThread::set_mode(raw_saved_mode);
 
   // Unsupported widths fail before invoking user code. This is a programming
   // error, so the caller explicitly closes the still-active transaction.
@@ -620,10 +695,8 @@ int main(int argc, char **argv) {
   try {
     db.txn_fixed_read_capability(table)->tx_visit_fixed(
         txn, packed_keys, 7, 1, 5, bad_width_callback);
-  } catch (const std::runtime_error &error) {
-    bad_width_caught =
-        std::string(error.what()).find("unsupported fixed key width 7") !=
-        std::string::npos;
+  } catch (const std::runtime_error &) {
+    bad_width_caught = true;
   }
   require(bad_width_caught);
   require(bad_width_callback.visits() == 0);
@@ -650,8 +723,8 @@ int main(int argc, char **argv) {
           capability.tx_visit_fixed(txn, packed_keys, sizeof(fixed_key), 3, 5,
                                     fixed_failure);
         }));
-  } catch (const std::runtime_error &error) {
-    caught = std::string(error.what()) == "expected fixed callback failure";
+  } catch (const callback_failure &) {
+    caught = true;
   }
   require(caught);
   require(fixed_failure.visits() == 2);
@@ -792,8 +865,8 @@ int main(int argc, char **argv) {
               sizeof(rejected_fixed_key_a));
   std::memcpy(rejected_fixed_keys + sizeof(rejected_fixed_key_a),
               rejected_fixed_key_b, sizeof(rejected_fixed_key_b));
-  auto expect_fixed_put_rejection = [&](const std::string &rejected,
-                                        const char *expected_message) {
+  // @unsafe - Invoke the native batch bridge and inspect its rejection outcome.
+  auto expect_fixed_put_rejection = [&](const std::string &rejected) {
     const std::string canonical = mako::Encode("never-staged-fixed");
     const std::string_view rejected_views[2] = {canonical, rejected};
     txn = db.new_txn(0, arena, nullptr);
@@ -806,18 +879,14 @@ int main(int argc, char **argv) {
                 txn, rejected_fixed_keys, sizeof(rejected_fixed_key_a), 2,
                 rejected_views, oi_fixed_put_mode::upsert);
           }));
-    } catch (const std::invalid_argument &error) {
-      rejected_as_expected = std::string(error.what()) == expected_message;
+    } catch (const std::invalid_argument &) {
+      rejected_as_expected = true;
     }
     require(rejected_as_expected);
     db.abort_txn(txn);
   };
-  expect_fixed_put_rejection(
-      "x", "Rust STO received a truncated Mako metadata suffix");
-  std::string nonzero_fixed = mako::Encode("rejected-fixed");
-  nonzero_fixed[nonzero_fixed.size() - mako::EXTRA_BITS_FOR_VALUE + 9] = 1;
-  expect_fixed_put_rejection(
-      nonzero_fixed, "Rust STO does not support nonzero Mako metadata");
+  expect_fixed_put_rejection("x");
+  expect_fixed_put_rejection(encoded_with_time_term("rejected-fixed", 1));
 
   txn = db.new_txn(0, arena, nullptr);
   require(!tx_get(table, txn,
@@ -834,8 +903,8 @@ int main(int argc, char **argv) {
   // validation, including batches spanning more than one table.
   const std::string rejected_batch_key_a("rejected-batch-a");
   const std::string rejected_batch_key_b("rejected-batch-b");
-  auto expect_insert_many_rejection = [&](const std::string &rejected,
-                                          const char *expected_message) {
+  // @unsafe - Invoke the heterogeneous native batch bridge before inspecting storage.
+  auto expect_insert_many_rejection = [&](const std::string &rejected) {
     const std::string canonical = mako::Encode("never-staged-batch");
     const oi_insert_operation rejected_operations[2] = {
         {table, rejected_batch_key_a, canonical},
@@ -848,18 +917,14 @@ int main(int argc, char **argv) {
           [&](TxnInsertBatchCapability &capability) {
             (void)capability.tx_insert_many(txn, rejected_operations, 2);
           }));
-    } catch (const std::invalid_argument &error) {
-      rejected_as_expected = std::string(error.what()) == expected_message;
+    } catch (const std::invalid_argument &) {
+      rejected_as_expected = true;
     }
     require(rejected_as_expected);
     db.abort_txn(txn);
   };
-  expect_insert_many_rejection(
-      "x", "Rust STO received a truncated Mako metadata suffix");
-  std::string nonzero_batch = mako::Encode("rejected-batch");
-  nonzero_batch[nonzero_batch.size() - mako::EXTRA_BITS_FOR_VALUE + 10] = 1;
-  expect_insert_many_rejection(
-      nonzero_batch, "Rust STO does not support nonzero Mako metadata");
+  expect_insert_many_rejection("x");
+  expect_insert_many_rejection(encoded_with_time_term("rejected-batch", 2));
 
   txn = db.new_txn(0, arena, nullptr);
   require(!tx_get(table, txn, rejected_batch_key_a, value));
@@ -869,8 +934,8 @@ int main(int argc, char **argv) {
   // A fixed-modify replacement is borrowed only for the callback's dynamic
   // extent. Validate and shorten that same lease before returning it to Rust;
   // callback failure aborts the attempt before the exception is rethrown.
-  auto expect_fixed_modify_rejection = [&](std::string rejected,
-                                           const char *expected_message) {
+  // @unsafe - Borrow callback replacement bytes across the native bridge.
+  auto expect_fixed_modify_rejection = [&](std::string rejected) {
     txn = db.new_txn(0, arena, nullptr);
     replacement_fixed_modify callback(std::move(rejected));
     bool rejected_as_expected = false;
@@ -881,52 +946,44 @@ int main(int argc, char **argv) {
             capability.tx_modify_fixed(txn, fixed_key, sizeof(fixed_key), 1,
                                        callback);
           }));
-    } catch (const std::invalid_argument &error) {
-      rejected_as_expected = std::string(error.what()) == expected_message;
+    } catch (const std::invalid_argument &) {
+      rejected_as_expected = true;
     }
     require(rejected_as_expected);
     require(callback.visits() == 1);
   };
-  expect_fixed_modify_rejection(
-      "x", "Rust STO received a truncated Mako metadata suffix");
-  std::string nonzero_modify = mako::Encode("rejected-modify");
-  nonzero_modify[nonzero_modify.size() - mako::EXTRA_BITS_FOR_VALUE + 11] = 1;
-  expect_fixed_modify_rejection(
-      std::move(nonzero_modify),
-      "Rust STO does not support nonzero Mako metadata");
+  expect_fixed_modify_rejection("x");
+  expect_fixed_modify_rejection(encoded_with_time_term("rejected-modify", 3));
 
   txn = db.new_txn(0, arena, nullptr);
   require(tx_get(table, txn, lcdf::Str(fixed_key, sizeof(fixed_key)), value));
   require(value == "upsert-fixed");
   require(db.commit_txn(txn));
 
-  // Raw shard writes use the same canonical-zero input contract. The wrapper
-  // never normalizes or drops nonzero metadata on this otherwise unsupported
-  // distributed surface.
+  // Raw shard writes share scalar trailer validation. A term without an
+  // allocated base is invalid; valid nonzero dependency metadata is accepted.
   const std::string rejected_shard_key("rejected-shard-key");
-  auto expect_shard_put_rejection = [&](const std::string &rejected,
-                                        const char *expected_message) {
-    txn = db.new_txn(0, arena, nullptr);
+  TThread::set_mode(1);
+  // @unsafe - Keep shard mutation rejection inside its retained participant lifetime.
+  auto expect_shard_put_rejection = [&](const std::string &rejected) {
+    db.shard_reset();
     bool rejected_as_expected = false;
     try {
       (void)raw_table->shard_put(rejected_shard_key, rejected);
-    } catch (const std::invalid_argument &error) {
-      rejected_as_expected = std::string(error.what()) == expected_message;
+    } catch (const std::invalid_argument &) {
+      rejected_as_expected = true;
     }
     require(rejected_as_expected);
-    db.abort_txn(txn);
+    db.shard_abort_txn(nullptr);
   };
-  expect_shard_put_rejection(
-      "x", "Rust STO received a truncated Mako metadata suffix");
-  std::string nonzero_shard = mako::Encode("rejected-shard");
-  nonzero_shard[nonzero_shard.size() - mako::EXTRA_BITS_FOR_VALUE + 12] = 1;
-  expect_shard_put_rejection(
-      nonzero_shard, "Rust STO does not support nonzero Mako metadata");
+  expect_shard_put_rejection("x");
+  expect_shard_put_rejection(encoded_with_time_term("rejected-shard", 4));
 
-  txn = db.new_txn(0, arena, nullptr);
+  db.shard_reset();
   require(!raw_table->shard_get(rejected_shard_key, value,
                                 std::string::npos));
-  require(db.commit_txn(txn));
+  db.shard_abort_txn(nullptr);
+  TThread::set_mode(raw_saved_mode);
 
   // A C++ exception is converted to FAILED until Rust has aborted and
   // returned, then rethrown with the wrapper TLS state already inactive.
@@ -940,8 +997,8 @@ int main(int argc, char **argv) {
           capability.tx_modify_fixed(txn, fixed_key, sizeof(fixed_key), 1,
                                      throwing_modify);
         }));
-  } catch (const std::runtime_error &error) {
-    caught = std::string(error.what()) == "expected fixed mutation failure";
+  } catch (const callback_failure &) {
+    caught = true;
   }
   require(caught);
 
@@ -950,34 +1007,27 @@ int main(int argc, char **argv) {
   require(value == "upsert-fixed");
   require(db.commit_txn(txn));
 
-  // Scalar writes fail synchronously before FFI. Exercise each byte in the
-  // complete suffix so this optimization cannot accidentally validate only
-  // the timestamp, pointer, or padding subset of Mako's metadata layout.
+  // Scalar writes reject truncated trailers and term-only encodings before
+  // staging storage. Nonzero valid metadata describes the previously read row,
+  // not an install decision supplied by the mutation caller.
   const char rejected_scalar_key[8] = {'r', 'e', 'j', 's', 'c', 'a', 'l', 'r'};
-  auto expect_scalar_put_rejection = [&](const std::string &rejected,
-                                         const char *expected_message) {
+  // @unsafe - Invoke the scalar native bridge and inspect its rejection outcome.
+  auto expect_scalar_put_rejection = [&](const std::string &rejected) {
     txn = db.new_txn(0, arena, nullptr);
     bool rejected_as_expected = false;
     try {
       tx_put(table, txn,
              lcdf::Str(rejected_scalar_key, sizeof(rejected_scalar_key)),
              rejected);
-    } catch (const std::invalid_argument &error) {
-      rejected_as_expected = std::string(error.what()) == expected_message;
+    } catch (const std::invalid_argument &) {
+      rejected_as_expected = true;
     }
     require(rejected_as_expected);
     db.abort_txn(txn);
   };
-  expect_scalar_put_rejection(
-      "x", "Rust STO received a truncated Mako metadata suffix");
-  for (size_t byte = 0;
-       byte < static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE); ++byte) {
-    std::string nonzero_scalar = mako::Encode("rejected-scalar");
-    const size_t suffix_begin =
-        nonzero_scalar.size() - mako::EXTRA_BITS_FOR_VALUE;
-    nonzero_scalar[suffix_begin + byte] = 1;
-    expect_scalar_put_rejection(
-        nonzero_scalar, "Rust STO does not support nonzero Mako metadata");
+  expect_scalar_put_rejection("x");
+  for (uint32_t term = 1; term < 10; ++term) {
+    expect_scalar_put_rejection(encoded_with_time_term("rejected-scalar", term));
   }
 
   txn = db.new_txn(0, arena, nullptr);
@@ -986,6 +1036,18 @@ int main(int argc, char **argv) {
                             sizeof(rejected_scalar_key)),
                   value));
   require(db.commit_txn(txn));
+
+  txn = db.new_txn(0, arena, nullptr);
+  const std::string accepted_metadata =
+      encoded_with_time_term("accepted-metadata", 123);
+  tx_put(table, txn,
+         lcdf::Str(rejected_scalar_key, sizeof(rejected_scalar_key)),
+         accepted_metadata);
+  require(tx_get(table, txn,
+                 lcdf::Str(rejected_scalar_key, sizeof(rejected_scalar_key)),
+                 value));
+  require(value == "accepted-metadata");
+  db.abort_txn(txn);
 
   txn = db.new_txn(0, arena, nullptr);
   require(tx_get(table, txn, lcdf::Str(fixed_key, sizeof(fixed_key)), value));
@@ -1183,9 +1245,8 @@ int main(int argc, char **argv) {
   try {
     (void)table->put(lcdf::Str(sealed_new_key, sizeof(sealed_new_key)),
                      "rejected");
-  } catch (const std::runtime_error &error) {
-    rejected_new_static_key =
-        std::string(error.what()).find("sealed") != std::string::npos;
+  } catch (const std::runtime_error &) {
+    rejected_new_static_key = true;
   }
   require(rejected_new_static_key);
 

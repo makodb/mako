@@ -1127,9 +1127,9 @@ fn post_cut_conflicting_writer_is_validated_before_read_only_success() {
     // Reproduce the public read-only commit path up to its native terminal.
     // Starting the writer after this returns makes its validation ticket and
     // worker generation unambiguously post-cut.
-    let mut read_only_fence = Some(cache.commit_fence.close_for_read_only(|| {
+    cache.commit_fence.close_for_read_only(|| {
         cache.local.order_record_validation_prefix();
-    }));
+    });
 
     std::thread::scope(|scope| {
         let (result_tx, result_rx) = mpsc::sync_channel(1);
@@ -1142,9 +1142,6 @@ fn post_cut_conflicting_writer_is_validated_before_read_only_success() {
         let writer_result = match result_rx.recv_timeout(Duration::from_secs(5)) {
             Ok(result) => result,
             Err(error) => {
-                // Release the fence before joining so an admission regression
-                // fails this test instead of stranding its scoped worker.
-                drop(read_only_fence.take());
                 writer
                     .join()
                     .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
@@ -1161,8 +1158,6 @@ fn post_cut_conflicting_writer_is_validated_before_read_only_success() {
         crate::finish_read_only(native_reader),
         Err(Error::Native(LocalError::Conflict))
     ));
-    drop(read_only_fence.take());
-    drop(read_only_fence);
     assert_eq!(
         cache.get(KEY).expect("read committed writer").as_deref(),
         Some(UPDATED)

@@ -1,12 +1,131 @@
 # Rust cache over Rust STO: the engine cutover
 
-Status: in progress, 2026-09-12. Starting revision is the merge commit
+Status: in progress, 2026-09-13. Starting revision is the merge commit
 `7de836393` (`worktree-masstree-rocks` + `codex/sto-rust`). Phases 0 to 2 are
-implemented; Phases 3 and 4 are not. This is Milestone 4 of
+implemented; Phase 3's functional checks pass, performance acceptance remains
+open, and Phase 4 has not started. This is Milestone 4 of
 [the transaction-cache roadmap](rust-mako-transaction-cache.md) made concrete
-now that a native Rust STO exists; it also discharges the one deferred item
-the [Rust STO design contract](../architecture/rust-sto.md) calls "upper
-`mako-local`/cache cutover".
+now that a native Rust STO exists. Its implemented upper integration is recorded
+in [Rust STO Appendix M](../architecture/rust-sto.md#appendix-m-mako-and-upper-layer-integration);
+default-engine acceptance remains a separate gate.
+
+### Integration acceptance, 2026-09-13
+
+The Git merge is complete. The remaining work is the engine cutover, not
+another branch merge. The current default remains the C ABI engine until
+the checks below pass on the combined implementation.
+
+The [functional qualification record](../testing/mako-cache-rust-sto-2026-09-13/README.md)
+preserves the current candidate's source identities, mutation reports,
+cross-engine recovery cases, and sanitizer inventories.
+
+- Full Rust STO cache library suite passes without skips, including the two
+  corrected GC fixtures. The out-of-order replay fixture now checks the
+  largest timestamp wins, rather than the last log position. The empty
+  database fixture distinguishes records reclaimed in one collection from
+  the lifetime reclaimed count.
+- Real core cleanup and hook failures now retire the affected worker and
+  make subsequent begin/attach attempts report the poisoned runtime. Known
+  committed outcomes remain committed even when their cleanup fails.
+  `CacheStatus::engine_runtime_healthy` makes a poisoned Rust STO database
+  unhealthy, including when status is read from a different healthy worker.
+  The diagnostic query adds no runtime-health load to successful commits.
+- The adapter's nine native-free ownership, holder, buffer-pool, and prefetch
+  tests pass under pinned Miri without disabling leak checks. The Rust cache
+  library suite passes all 206 tests; the C ABI reference passes 205.
+  A test-only core observer now fires
+  after the first actual write installation, so the partial-install crash
+  point is exercised rather than skipped.
+- Cross-engine recovery passes 12 sampled workloads and 16 exact-state
+  cases in both directions, including checkpoint-only databases after full
+  log GC. Four wrong-checksum tripwires are rejected. The engine's 19
+  mutations, clock's 12 mutations, and cache's 15 mutations are killed.
+  The final engine/cache runs verify that their original source and
+  dependency trees did not change during the campaigns.
+- ASan, TSan, and native-C++ UBSan pass the focused adapter/cache lane.
+  [The sanitizer scope](../../scripts/ci/rust_sto_cache_sanitizers.md)
+  records the two exact process-lifetime worker allocation exceptions,
+  separate intentional-poison runs, ASan/TSan Loom runtime separation, and
+  the required lost-transaction-log leak tripwire. These results do not
+  claim instrumentation of the system RocksDB library. The latest focused
+  lane covers 278 positives per profile. TSan instruments 270 production and
+  native cases; all eight unbounded Loom models run separately because their
+  generator runtime lacks sanitizer fiber bookkeeping.
+- CI selects backend features explicitly. Cargo's additive `--all-features`
+  cannot be used on the facade/cache packages because it enables both
+  mutually exclusive engines. Both engines retain their own test targets.
+
+Benchmark acceptance compares direct engine, engine plus log encoding,
+foreground cache ACK, and sustained RocksDB application separately. Use
+zoo-002 with boost disabled and identical CPU placement, workload, allocator,
+compiler settings, and RocksDB libraries for both arms. A short ACK-only
+sample is not evidence of sustainable persistence throughput.
+The [paired performance investigation](../performance/mako-cache-rust-sto-2026-09-12.md)
+records the retained optimizations and the remaining gap. The C ABI stays
+the default while that acceptance work is open.
+
+The [final production-source comparison](../performance/mako-cache-rust-sto-2026-09-12/final-production-2026-09-13/README.md)
+completed 132 paired benchmark cells with boost disabled. All 60 foreground
+cells passed count/value checks; the other 72 cells each passed a full drain
+and fresh-process exact-state recovery. Source and native-input hashes stayed
+unchanged. These compare the same Rust cache over either C++ STO through the
+C ABI or Rust STO, not the distributed Mako server.
+
+Rust STO's foreground one-put ACK throughput is 0.732 versus 1.159 million
+commits/s at one worker, and 16.869 versus 20.142 million at 32 workers.
+Those are deficits of 36.8% and 16.2%. The engine-only deficit is 41.9% to
+50.9% across the five worker counts, so the remaining cost is not confined to
+RocksDB writeback. In the separate CRC32C workload, four-key writes remain
+37.1% to 42.4% slower and RMW workloads remain 31.6% to 38.4% slower. Its
+allocation, timing, and CPU-placement protocol differs from the foreground
+diagnostic; do not compare their absolute throughputs as one test.
+
+Functional integration and the measurement campaign are complete. Performance
+acceptance and a default switch are not. No acceptable regression budget has
+been agreed. The next decision is whether to accept these measured costs for
+an opt-in Rust engine or continue Rust core/adapter optimization before
+cutover. The raw-STO diagnostic identifies combined adapter overhead, not a
+proven benefit from any one ownership redesign. Keep the C++ implementation
+and its differential tests until that decision and the compatibility release.
+
+The first full sweep exposed a version-policy difference: non-opaque C++
+MassTrans increments locked row versions, while the initial Rust adapter
+allocated a shared ordered commit ID on every write. The new opt-in
+[record-local version policy](../architecture/rust-sto.md#e11-opt-in-record-local-versions)
+removes that requirement for the cache's non-opaque tables. Default core and
+TPC-C bindings remain ordered; mixed transactions preserve both domains.
+Core and native table tests, leak-checked Miri, the facade's mixed-domain
+test, the required C++ differential, and the full cache suite pass on this
+candidate. The final engine and cache mutation campaigns also pass with
+unchanged source and dependency hashes. The tests catch loss of
+the facade's local-version opt-in and incorrect reporting or decoding of
+terminal version exhaustion. ASan, TSan, native-C++ UBSan, and fresh
+cross-engine recovery also pass on this candidate. Performance acceptance
+remains open. The report labels the earlier policy baselines, private
+experiments, and final combined-source measurements separately.
+
+### Concurrent read commits
+
+Readers now take independent ordering cuts instead of holding one shared
+reader mutex. Each reader takes the existing packed Acquire cut, then loads
+the number of writer slots ever registered in this process. It scans only
+those slots, using the same Acquire generation loads, exact-generation waits,
+unknown-outcome rejection, and final engine validation as before.
+
+The order of those two steps is required. A prefix writer registers before
+its packed Release publication. Acquiring that publication before loading the
+monotone registration count guarantees that the scan includes the writer.
+Loading the count first can omit a writer even if that load uses Acquire.
+Slots never reset or recycle, and writers need no additional shared atomic
+operation. The bound counts historical registrations, not active threads;
+after enough thread churn it can still reach the full 460-slot limit.
+
+The [ordering proof and negative controls](../testing/mako-cache-rust-sto-2026-09-13/reader-bound-proof/PROOF.md)
+separate weak-memory models from the actual helper's call-order regression.
+The source-isolated mutation moves the count load before the cut and must
+fail that regression. Independent readers must also reject an unresolved
+prefix outcome. A post-cut conflicting writer remains subject to engine
+validation. The single-producer lease path is unchanged.
 
 ## Decision
 
@@ -19,7 +138,7 @@ STO engine is then built behind the same trait, proven against the C ABI
 engine with the existing differential corpus, history oracle, crash matrix,
 mutation campaign, and zoo-002 performance sweep, and only then becomes the
 default. The C++ engine stays available for one compatibility release as
-the oracle, exactly as roadmap Milestone 4 step 6 and Rust STO §19.2 require.
+the oracle, exactly as roadmap Milestone 4 step 6 and Rust STO Appendix O.2 require.
 
 The C++ Masstree index stays under the Rust STO through the `mt_*` C ABI.
 Replacing the index is a separate step (roadmap Milestone 4 step 3) and is
@@ -279,9 +398,11 @@ Decisions taken here:
    the time. The gate is held only across directory publication, never
    across a transaction lock, so waiting cannot deadlock.
 3. `Features::TEST_COMMIT_MID_INSTALL_OBSERVER` (bit 8) says the test
-   observer reports `FirstWriteInstalled`. The C ABI engine sets it with its
-   observer; this engine cannot (sto-core installs every write inside its
-   core), so the crash matrix skips that one point on engines without it.
+   observer reports `FirstWriteInstalled`. Both engines now provide it in
+   their hook-enabled builds. Rust STO's scoped test-only observer runs
+   after each actual installation inside the core; the adapter emits the
+   first-write phase once. The production core has no observer calls or
+   additional loads. Engines without the feature still skip that point.
 4. The physical clock stays `SystemTime`; RDTSCP is deferred to the perf
    sweep.
 5. `sto-core`/`sto-masstree` change (for review): a transaction's own
@@ -292,16 +413,16 @@ Decisions taken here:
    differential caught it on the first seeded script. `sto-masstree` now
    moves the transaction's own directory (and trusted scan) observation
    forward by one per own publication, through a new
-   `sto_core::Entry::replace_read`, so validation still fails on every
+   `sto_core::TransProxy::replace_read`, so validation still fails on every
    foreign publication but not on the transaction's own. Fixed-key batch
    publication (`fixed-u64`) does not account this way; the cache does not
    use it.
 
-Gates in place: `crates/mako-engine-sto/tests/native.rs` (11 end-to-end
-tests over every terminal against the native Masstree); the complete
-`mako-cache` library and integration suites built with `engine-sto`
-(200 of 202 library tests and every integration suite; the two failures are the pre-existing G4 cases
-that also fail on the C ABI engine); `mako-engine-sto/tests/differential.rs`,
+Gates in place: `crates/mako-engine-sto/tests/native.rs` covers every terminal
+against the native Masstree; the complete `mako-cache` library and integration
+suites built with `engine-sto` pass (206 library tests, including the two
+corrected G4 fixtures and runtime-health propagation);
+`mako-engine-sto/tests/differential.rs`,
 the fourth executor of the shared corpus (`crates/mako-differential`),
 compared against the C ABI executor with only the `features` lines masked.
 The engine's test binaries need the CMake archives; run them with the
@@ -344,7 +465,11 @@ wrapper knows:
   timestamp exhausted) is a definite abort, matching `hook_rejected` and
   `timestamp_exhausted` today.
 - Restricted profile (exactly one put, no reads): use `sto-core`'s direct
-  commit lane; `reserve_upper_metadata` does nothing; `pre_install` performs
+  commit lane; `reserve_upper_metadata` allocates no order metadata. On
+  supported x86 CPUs it issues an optional write-prefetch hint for the HLC
+  after acquiring write locks, before validation. The hint cannot allocate
+  a timestamp, sequence, or gate and is a no-op on other targets and in Miri.
+  `pre_install` performs
   the restricted allocation (spin on `general_locked`, never take the gate),
   seals the one-put value into the sink, and reports `(seq, ts, bytes)`.
   This is the `accept_ordered` path of C++ and the hot path of the cache.
@@ -360,12 +485,11 @@ fingerprint; the cache's format record does not change.
 
 Required `sto-core` changes, kept small and listed so the Rust STO owners can
 review them separately:
-1. Worker-scoped quarantine. A cleanup or hook failure on one worker must
-   quarantine that worker, not poison the runtime, or the cache's
-   `quarantined_worker_count`, cleanup gates, and fixed-worker retry policy
-   cannot be honored. Decision needed: add owner-scoped poison to
-   `sto-core`, or redefine the cache's cleanup semantics for the Rust engine
-   as process restart. This plan assumes the former.
+1. Quarantine decision: retain `sto-core`'s runtime-wide fail-stop behavior.
+   Uncertain cleanup requires retiring the database and restarting from its
+   applied backend state. Do not pretend that replacing one worker restores
+   a poisoned Rust runtime. Per-worker quarantine counters remain useful
+   diagnostics; cache health also reports the runtime state.
 2. Optional: pass `&CommitShape` (has_writes, single_write, has_predicates)
    and `OccCommitId` into hook callbacks. Not required if the wrapper tracks
    shape itself, but it removes a class of divergence bugs.
@@ -382,16 +506,24 @@ thousand lines) plus tests.
 
 ## Phase 3: prove equivalence
 
-Status: in progress. Done with Phase 2: item 1's fourth executor
+Status: functional qualification complete; performance acceptance remains
+open. Done with Phase 2: item 1's fourth executor
 (`crates/mako-differential` holds the corpus, parser, generators, and a
 replay generic over `EngineDb`; `mako-local/tests/differential.rs` now uses
 it for the three-way gate, and `mako-engine-sto/tests/differential.rs` runs
 the Rust engine against the C ABI driver on the same corpus, injected-op
 tripwire included; it found the own-publication scan conflict on its first
 run). Item 3's acceptance suite and crash matrix run on the Rust engine as
-part of the cache suites (`run_mako_engine_sto_tests`), the crash matrix
-minus the mid-install point. Remaining: the composition-matrix and
-scan-bounds corpus extension, item 2, cross-engine reopen, items 4 to 6.
+part of the cache suites (`run_mako_engine_sto_tests`), including the genuine
+mid-install point. The composition-matrix and binary scan-bounds corpus
+extensions landed in `9cd856c18`. Cross-engine reopen, engine mutations,
+Miri, all three mutation campaigns, and the qualified sanitizer lanes now
+pass. One paired 960-second W32 GC run also passed on the immutable pre-format
+candidate binaries, including drain, log reclamation, fresh-process recovery,
+all 8,192 keys, and a post-reopen write on each engine. The
+[saved pair](../performance/mako-cache-rust-sto-2026-09-12/sustained-record-local-960-results.json)
+is not a repeated full-worker-count sweep. Performance acceptance remains
+open and the C ABI stays the default.
 
 1. Differential corpus. Add the Rust engine as a fourth executor to
    `crates/mako-local/tests/differential.rs` (direct C++, raw C ABI, safe
@@ -399,15 +531,17 @@ scan-bounds corpus extension, item 2, cross-engine reopen, items 4 to 6.
    `tests/data/mako_local_differential_v1.txt`, the seeded replay, and the
    injected-op mode. Extend the corpus with the MassTrans composition matrix
    and the scan bounds cases.
-2. History oracle. Run `mako-history`'s application checker over concurrent
-   cache histories on both engines (the harness exists in
-   `application_history_tests.rs`); run `sto-masstree`'s own history oracle
-   through the engine wrapper.
+2. History oracle. Both engine wrappers run the shared forced read-write,
+   write-write, and phantom histories through `mako-history`'s
+   strict-serializability checker. The native `sto-masstree` table separately
+   runs its 128-seed history corpus; that corpus does not use the wrapper.
+   Cache application histories on both engines additionally check visible,
+   acknowledged, and backend-applied state in `application_history_tests.rs`.
 3. Recovery and GC. The milestone-1 acceptance suite, crash matrix, and GC
    soak protocol (`crates/mako-cache-bench/gc-soak.md`) on the Rust engine,
    including reopen of a database written by the C ABI engine and vice versa
    (same record format, so this must work).
-4. Mutation campaign. Re-run the 14-mutant campaign against the Rust engine;
+4. Mutation campaign. Run the 15-mutant cache campaign against the Rust engine;
    add mutants for the new code (drop the gate leave, allocate sequence
    before stamp, skip insert-then-remove elision, wrong `created` bit).
 5. Memory safety. Miri on `mako-engine-sto` with `masstree` faked (the
@@ -423,13 +557,13 @@ scan-bounds corpus extension, item 2, cross-engine reopen, items 4 to 6.
 
 ## Phase 4: cutover and removal
 
-Precondition found during Phase 2: two `mako-cache` library tests fail on
+Precondition found during Phase 2: two `mako-cache` library tests failed on
 both engines and on the pre-merge tree
 (`gc_stops_at_first_unexpired_record_in_untagged_stream_despite_later_expired_records`,
 `recovered_empty_database_advances_hlc_and_lane_ids_past_checkpoint_state`);
-the existing CI never ran the cache library suite. `run_mako_engine_sto_tests`
-skips exactly those two by name. Fix them (or retire them with a reason)
-before the default engine switches.
+the existing CI never ran the cache library suite. Their fixture and
+expectation errors are fixed, and `run_mako_engine_sto_tests` no longer
+skips them. Both remain required coverage.
 
 1. Default `E = mako-engine-sto` in `mako-cache-bench` and the acceptance
    docs; keep `mako-local` selectable for one compatibility release.
@@ -444,7 +578,8 @@ before the default engine switches.
 
 ## Risks and open decisions
 
-- Quarantine model (Phase 2, item 1). Must be decided before Phase 2 starts.
+- Quarantine model is runtime-wide for Rust STO and worker-local for C++ STO.
+  Recovery after a Rust runtime failure uses the applied backend state.
 - Process-global clock versus per-runtime clock. Global keeps parity and the
   one-namespace rule; it also means both engines cannot run in one process,
   which the differential harness must respect by using separate processes.
@@ -455,6 +590,16 @@ before the default engine switches.
 - No reclamation on either side. Tombstones and consumed registry slots grow
   for the process lifetime in `sto-masstree`, as MassTrans rows do today.
   Bounded values and eviction (roadmap 1G) remain deferred.
+- Each Rust engine worker/database pair retains its native worker and STO
+  context for the process lifetime. Wrapper canonical touch-log buffers retain
+  at most 64 entries and 64 KiB per pair. The core also retains reusable
+  transaction storage sized by admitted work and configuration, without that
+  byte ceiling. Creating arbitrarily many database instances in one process
+  is not globally bounded. Use one database with
+  long-lived worker threads and restart the process for a new runtime epoch.
+  The inline atomic value optimization grows stable entries from 64 to 192
+  bytes and applies to values through 160 bytes; larger values still use
+  the shared representation.
 - Performance under locks. The Rust engine serializes the record in
   `pre_install` with locks held, as C++ does in `after_leave`; keep sinks
   preallocated and never allocate in a hook.

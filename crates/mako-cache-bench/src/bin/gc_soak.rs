@@ -55,7 +55,15 @@ fn main_result() -> Result<()> {
     if mode != "run" {
         return Err("expected run or verify".into());
     }
+    let features = mako_engine::features()?;
+    if features.test_commit_observer()
+        || features.test_cleanup_failures()
+        || features.test_timestamp_clock()
+    {
+        return Err("performance binary must not enable engine test hooks".into());
+    }
     let workers = number(&mut flags, "--workers", 1)? as usize;
+    let worker_cpu_arg = flags.remove("--worker-cpus");
     let seconds = number(&mut flags, "--seconds", 960)?;
     let sample_seconds = number(&mut flags, "--sample-seconds", 10)?;
     let keys = number(&mut flags, "--keys-per-worker", 256)?;
@@ -77,14 +85,51 @@ fn main_result() -> Result<()> {
     {
         return Err("invalid worker, key, value, or duration setting".into());
     }
+    let worker_cpus = match worker_cpu_arg {
+        Some(value) => value
+            .split(',')
+            .map(|cpu| {
+                if cpu.is_empty() || !cpu.bytes().all(|byte| byte.is_ascii_digit()) {
+                    return Err("worker CPUs must be comma-separated unsigned CPU IDs".into());
+                }
+                Ok(cpu.parse::<usize>()?)
+            })
+            .collect::<Result<Vec<_>>>()?,
+        None => (0..workers).collect(),
+    };
+    if worker_cpus.len() != workers {
+        return Err("worker CPUs must contain exactly one CPU per worker".into());
+    }
+    let mut cpu_set = CpuSet::new();
+    cpu_set.set(writeback_cpu)?;
+    for (index, &cpu) in worker_cpus.iter().enumerate() {
+        cpu_set.set(cpu)?;
+        if cpu == writeback_cpu || worker_cpus[..index].contains(&cpu) {
+            return Err("worker CPUs must be unique and disjoint from the writeback CPU".into());
+        }
+    }
     if path.exists() || manifest.exists() {
         return Err("run requires fresh database and manifest paths".into());
     }
     if fs::read_to_string("/sys/devices/system/cpu/cpufreq/boost")?.trim() != "0" {
         return Err("CPU boost must be disabled before benchmarking".into());
     }
+    // Probe every requested CPU before opening the database, then restore the
+    // disjoint helper mask inherited from the launcher, including on failure.
+    let helper_affinity = nix::sched::sched_getaffinity(Pid::from_raw(0))?;
+    let affinity_result = (|| -> Result<()> {
+        for cpu in worker_cpus.iter().copied().chain(std::iter::once(writeback_cpu)) {
+            let mut selected = CpuSet::new();
+            selected.set(cpu)?;
+            sched_setaffinity(Pid::from_raw(0), &selected)?;
+        }
+        Ok(())
+    })();
+    sched_setaffinity(Pid::from_raw(0), &helper_affinity)?;
+    affinity_result?;
     println!(
-        "{{\"event\":\"protocol\",\"version\":1,\"workers\":{workers},\"seconds\":{seconds},\"keys_per_worker\":{keys},\"value_bytes\":{value_bytes},\"rate_per_worker\":{rate},\"queue_capacity_per_worker\":{},\"max_batch_records\":{},\"writeback_cpu\":{writeback_cpu},\"checksum\":\"crc32c\",\"wal\":true,\"sync\":false,\"latency_sample_stride\":{LATENCY_SAMPLE_STRIDE},\"options\":{}}}",
+        "{{\"event\":\"protocol\",\"version\":2,\"engine\":{},\"workers\":{workers},\"worker_cpus\":{worker_cpus:?},\"seconds\":{seconds},\"keys_per_worker\":{keys},\"value_bytes\":{value_bytes},\"rate_per_worker\":{rate},\"queue_capacity_per_worker\":{},\"max_batch_records\":{},\"writeback_cpu\":{writeback_cpu},\"checksum\":\"crc32c\",\"wal\":true,\"sync\":false,\"latency_sample_stride\":{LATENCY_SAMPLE_STRIDE},\"options\":{}}}",
+        json_string(mako_cache::engine_name()),
         options.cache.writeback.capacity,
         options.cache.writeback.max_batch_records,
         json_string(&format!("{options:?}")),
@@ -94,7 +139,7 @@ fn main_result() -> Result<()> {
     let started = Arc::new(AtomicBool::new(false));
     let stop = Arc::new(AtomicBool::new(false));
     let mut handles = Vec::with_capacity(workers);
-    for worker in 0..workers {
+    for (worker, &worker_cpu) in worker_cpus.iter().enumerate() {
         let db = Arc::clone(&db);
         let barrier = Arc::clone(&barrier);
         let started = Arc::clone(&started);
@@ -102,7 +147,7 @@ fn main_result() -> Result<()> {
         handles.push(thread::spawn(move || -> Result<WorkerResult> {
             let mut cpus = CpuSet::new();
             let pinned = cpus
-                .set(worker)
+                .set(worker_cpu)
                 .and_then(|()| sched_setaffinity(Pid::from_raw(0), &cpus));
             // Always rendezvous even if affinity failed, so another worker
             // cannot hang at the barrier while its peer has already returned.
@@ -220,8 +265,8 @@ fn main_result() -> Result<()> {
     }
     let disk_bytes = disk_usage(&path)?;
     println!(
-        "{{\"event\":\"drained\",\"commits\":{commits},\"ack_seconds\":{ack_seconds:.6},\"applied_seconds\":{applied_seconds:.6},\"drain_seconds\":{drain_seconds:.6},\"ack_tps\":{:.3},\"applied_tps\":{:.3},\"ack_p99_upper_ns\":{},\"ack_latency_samples\":{},\"conflicts\":{conflicts},\"maximum_sampled_queue\":{maximum_queue},\"disk_bytes\":{disk_bytes},\"process_write_bytes\":{},\"status\":{}}}",
-        commits as f64 / ack_seconds, commits as f64 / applied_seconds,
+        "{{\"event\":\"drained\",\"engine\":{},\"commits\":{commits},\"ack_seconds\":{ack_seconds:.6},\"applied_seconds\":{applied_seconds:.6},\"drain_seconds\":{drain_seconds:.6},\"ack_tps\":{:.3},\"applied_tps\":{:.3},\"ack_p99_upper_ns\":{},\"ack_latency_samples\":{},\"conflicts\":{conflicts},\"maximum_sampled_queue\":{maximum_queue},\"disk_bytes\":{disk_bytes},\"process_write_bytes\":{},\"status\":{}}}",
+        json_string(mako_cache::engine_name()), commits as f64 / ack_seconds, commits as f64 / applied_seconds,
         percentile_upper(&histogram, 99), histogram.iter().sum::<u64>(),
         io_written().saturating_sub(io_before), json_string(&format!("{status:?}")),
     );
@@ -292,8 +337,8 @@ fn verify(path: &Path, manifest: &Path, options: Options) -> Result<()> {
     }
     let status = db.status()?;
     println!(
-        "{{\"event\":\"verified\",\"workers\":{workers},\"commits\":{expected_total},\"keys\":{},\"open_seconds\":{open_seconds:.6},\"validation_seconds\":{validation_seconds:.6},\"disk_bytes\":{},\"status\":{}}}",
-        keys * workers as u64, disk_usage(path)?, json_string(&format!("{status:?}")),
+        "{{\"event\":\"verified\",\"engine\":{},\"workers\":{workers},\"commits\":{expected_total},\"keys\":{},\"open_seconds\":{open_seconds:.6},\"validation_seconds\":{validation_seconds:.6},\"disk_bytes\":{},\"status\":{}}}",
+        json_string(mako_cache::engine_name()), keys * workers as u64, disk_usage(path)?, json_string(&format!("{status:?}")),
     );
     db.close()?;
     Ok(())

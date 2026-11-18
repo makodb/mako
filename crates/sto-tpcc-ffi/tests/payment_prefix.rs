@@ -189,7 +189,6 @@ fn payment_prefix_commits_aborts_scans_and_fails_atomically() {
             max_retained_records: 128,
             max_retained_key_bytes: 8_192,
             max_consumed_record_ids: 256,
-            trusted_scan_value_generation: 1,
             ..StoTpccTableConfig::default()
         };
         let mut warehouse = ptr::null_mut();

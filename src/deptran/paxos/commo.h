@@ -25,7 +25,8 @@ class PaxosAcceptQuorumEvent : public QuorumEventBase {
  public:
   using QuorumEventBase::QuorumEventBase;
 
-  void FeedResponse(bool accepted) {
+  // @safe - Quorum counters and readiness use synchronized interior mutation.
+  void FeedResponse(bool accepted) const {
     if (accepted) {
       q().n_voted_yes_.set(q().n_voted_yes_.get() + 1);
     } else {
@@ -51,8 +52,7 @@ class MultiPaxosCommo : public Communicator {
       parid_t par_id,
       uint64_t slot,
       ballot_t ballot,
-      const janus::Command& cmd,
-      const std::function<void(uint64_t, ballot_t)>& cb);
+      const janus::Command& cmd);
 
   void BroadcastDecide(
       parid_t par_id,
@@ -70,15 +70,11 @@ class MultiPaxosCommo : public Communicator {
       const janus::Command& cmd,
       const std::function<void(ballot_t, int)>& cb);
 
-  shared_ptr<PaxosAcceptQuorumEvent> BroadcastBulkAccept(
+  rusty::Arc<PaxosAcceptQuorumEvent> BroadcastBulkAccept(
       parid_t par_id,
-      const janus::Command& cmd,
-      const std::function<void(ballot_t, int)>& cb);
+      const janus::Command& cmd);
 
-  shared_ptr<PaxosAcceptQuorumEvent> BroadcastBulkDecide(
-      parid_t par_id,
-      const janus::Command& cmd,
-      const std::function<void(ballot_t, int)>& cb);
+  void BroadcastBulkDecide(parid_t par_id, const janus::Command& cmd);
 };
 
 }  // namespace janus

@@ -193,19 +193,31 @@ serialization prefix and do not claim disk sync. A post-bind unknown outcome
 or permanent record failure latches cache-wide fail-stop state, retains the
 affected lane's obligation, and rejects work in every lane.
 
-The current recovery contract depends on retaining all commit logs, including
-deletes, so reopen can reconstruct the per-key timestamp index. Log pruning is
-deferred until materialized values and tombstones persist their winning
-timestamps. Recovery of an acknowledged but unapplied memory tail, and of an
+Recovery uses checkpointed values and tombstones with their winning timestamps,
+plus the retained transaction-log suffix. Age-based log GC defaults to five
+minutes and only removes applied records covered by the backend checkpoint.
+The [GC design](plans/mako-cache-log-gc.md) describes the persisted lane
+frontiers and exact retries. Recovery of an acknowledged but unapplied memory tail, and of an
 applied RocksDB tail not synced by `sync=false`, is also deferred.
 
 The release surface is a library component. A service host must recover the
 database before reporting ready, use a fixed pool of long-lived STO workers,
 and poll `Db::status()` while serving. `Degraded` identifies active retry or a
 backend call older than its stall threshold; `Unhealthy` identifies a stopped
-writer or latched fail-stop state. Readiness must also include
-`pool.metrics().healthy_workers > 0`: `quarantined_workers`
-is process-wide, informational, and does not affect cache health. The host must
+writer, latched fail-stop state, or poisoned Rust STO runtime. A false
+`engine_runtime_healthy` requires retiring that database and restarting from
+its applied backend state. The Rust engine checks both its core runtime and
+the process-wide native Masstree runtime, even before a point operation maps
+native poison into the core. A native health-query error also reports
+unhealthy. This status query does not attach or quarantine its caller, and
+does not change the outcome of a known-clean core abort. Native poison can
+affect every Rust STO database in the process; the host must stop serving and
+restart that process. Replacing one worker does not repair a poisoned
+runtime. The C++ engine's quarantine remains worker-local. Readiness
+must also require at least one healthy request worker. Hosts using the C ABI
+`mako_local::FixedWorkerPool` can check `pool.metrics().healthy_workers > 0`;
+that helper is not an engine-neutral pool for Rust STO. `quarantined_workers`
+is process-wide and informational, rather than a cache-health predicate. The host must
 stop admission before shutdown, join request workers, release all shared
 database owners, and call `Db::close()`. A successful close drains and joins
 the writer but does not fsync the WAL. An error after the synchronous retry

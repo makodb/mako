@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 // bench.h first: its textual std/rcu/ticker includes must precede
 // any header that opens namespace std into the global namespace
@@ -11,43 +12,45 @@
 #include "benchmarks/bench.h"
 #include "ThreadPool.h"
 #include "replay_record.h"
-#include "storage/mbta_wrapper.hh"  // mbta_ordered_index (put_mbta cast)
 #include "lib/common.h"
 
 import std;
 
-thread_local str_arena arena;
-thread_local void *buf = NULL;
-thread_local string obj_k;
-thread_local string obj_v;
+thread_local ThreadDBWrapperMbta::replay_attachment
+    ThreadDBWrapperMbta::replay_thread_attachment_;
 static thread_local std::vector<mako::ReplayRecordView> replay_records;
-static thread_local std::vector<mbta_ordered_index*> replay_tables;
-
-bool cmpFunc2_v2(const std::string& newValue,
-                 const std::string& oldValue);
 
 namespace {
 
-class transaction_epoch_quiesce_guard {
-public:
-    transaction_epoch_quiesce_guard() = default;
-    transaction_epoch_quiesce_guard(
-        const transaction_epoch_quiesce_guard&) = delete;
-    transaction_epoch_quiesce_guard& operator=(
-        const transaction_epoch_quiesce_guard&) = delete;
+// @unsafe - Opt-in functional-test receipt after the selected backend consumed
+// a nonempty batch. This is not a payload digest: replay may compare-skip an
+// already newer version. Native integration tests check exact payload/metadata.
+void emit_protocol_replay_receipt(size_t processed_records,
+                                  uint32_t recovered_time_term) {
+    static const bool enabled = [] {
+        const char* value = getenv("MAKO_STO_PROTOCOL_RECEIPTS");
+        return value != nullptr && strcmp(value, "1") == 0;
+    }();
+    static thread_local bool emitted = false;
+    if (!enabled || emitted || processed_records == 0 || recovered_time_term == 0)
+        return;
+    const auto& config = BenchmarkConfig::getInstance();
+    fprintf(stderr,
+            "STO_PROTOCOL_REPLAY_RESULT {\"schema_version\":1,"
+            "\"engine\":\"%s\",\"shard\":%zu,"
+            "\"processed_records\":%zu,\"recovered_time_term\":%u}\n",
+            config.getStorageEngine().c_str(), config.getShardIndex(),
+            processed_records, recovered_time_term);
+    fflush(stderr);
+    emitted = true;
+}
 
-    ~transaction_epoch_quiesce_guard() {
-        Transaction::rcu_quiesce();
-    }
-};
-
+// @unsafe - Resolve every table before applying any record in the batch.
 void resolve_replay_tables(const std::vector<mako::ReplayRecordView>& records,
                            abstract_db* db) {
     if (db == nullptr) {
         Panic("replay requires a database");
     }
-    replay_tables.clear();
-    replay_tables.reserve(records.size());
     for (const auto& record : records) {
         abstract_ordered_index* const index =
             db->get_index_by_table_id(record.table_id);
@@ -55,16 +58,10 @@ void resolve_replay_tables(const std::vector<mako::ReplayRecordView>& records,
             Panic("replay table_id is not registered: %u",
                   static_cast<unsigned>(record.table_id));
         }
-        mbta_ordered_index* const table =
-            dynamic_cast<mbta_ordered_index*>(index);
-        if (table == nullptr) {
-            Panic("replay table_id %u is not an mbta table",
-                  static_cast<unsigned>(record.table_id));
-        }
-        replay_tables.push_back(table);
     }
 }
 
+// @unsafe - Calls the backend's source-metadata replay capability.
 size_t apply_replay_records(
     const std::vector<mako::ReplayRecordView>& records,
     size_t first_record_index, size_t record_count, uint32_t cid,
@@ -73,25 +70,10 @@ size_t apply_replay_records(
     for (size_t record_index = first_record_index;
          record_index < first_record_index + record_count; ++record_index) {
         const auto& record = records[record_index];
-        obj_k.assign(record.key.data(), record.key.size());
-        mako::materialize_replay_value(
-            obj_v, record.value, record.is_delete, cid);
-
-        int try_cnt = 1;
-        while (1) {
-            try {
-                void *txn = db->new_txn(
-                    0, arena, buf, abstract_db::HINT_DEFAULT);
-                replay_tables[record_index]->put_mbta(
-                    txn, obj_k, cmpFunc2_v2, obj_v);
-                db->commit_txn_no_paxos(txn);
-                if (try_cnt > 1 && try_cnt % 20 == 0) {
-                    std::cout << "succeed at retry#:" << try_cnt << std::endl;
-                }
-                break;
-            } catch (...) {
-                ++try_cnt;
-            }
+        // false means a definite conflict before publication. Fatal and
+        // indeterminate outcomes must escape, never enter the retry loop.
+        while (!db->replay_apply_record(
+            record.table_id, record.key, record.value, record.is_delete, cid)) {
         }
         ++put_ops;
     }
@@ -100,19 +82,6 @@ size_t apply_replay_records(
 
 }  // namespace
 
-// @unsafe: reads metadata through a raw byte pointer
-inline uint32_t keystore_decode3_v2(const std::string& s){
-    return mako::load_value_time_term(s.data(), s.length());
-}
-
-// @unsafe: calls unsafe keystore_decode3_v2
-bool cmpFunc2_v2(const std::string& newValue,const std::string& oldValue)
-{
-    uint32_t commit_id_new = keystore_decode3_v2(newValue);
-    uint32_t commit_id_old = keystore_decode3_v2(oldValue);
-
-    return (commit_id_new%10 > commit_id_old%10) || (commit_id_new/10 > commit_id_old/10);
-}
 
 // @unsafe: parses and copies a raw replay buffer
 size_t getFileContentNew_OneLogOptimized_mbta_v2(const char *buffer, /* K-V pairs */
@@ -120,17 +89,21 @@ size_t getFileContentNew_OneLogOptimized_mbta_v2(const char *buffer, /* K-V pair
                                                  unsigned short int count,
                                                  unsigned int len,
                                                  abstract_db* db) {
+    if (!mako::valid_replay_time_term(cid)) {
+        Panic("invalid replay source timestamp: %u", cid);
+    }
     if (!mako::parse_replay_record_batch(
             buffer, len, count, replay_records)) {
         Panic("malformed replay record batch: count=%u len=%u",
               static_cast<unsigned>(count), len);
     }
     resolve_replay_tables(replay_records, db);
-    transaction_epoch_quiesce_guard quiesce_on_exit;
+    db->observe_replay_timestamp(cid);
     return apply_replay_records(
         replay_records, 0, replay_records.size(), cid, db);
 }
 
+// @unsafe - Apply a fully validated log with original source metadata.
 size_t replay_validated_mbta_v2(const mako::ReplayLogView& log,
                                 abstract_db* db) {
     size_t next_record_index = 0;
@@ -147,12 +120,15 @@ size_t replay_validated_mbta_v2(const mako::ReplayLogView& log,
     }
 
     resolve_replay_tables(log.records, db);
-    transaction_epoch_quiesce_guard quiesce_on_exit;
+    // Observe even an empty log's footer and transactions that compare/skip.
+    // Recovery must never admit a new coordinator below any recovered source.
+    db->observe_replay_timestamp(log.recovered_time_term);
     size_t put_ops = 0;
     for (const auto& transaction : log.transactions) {
         put_ops += apply_replay_records(
             log.records, transaction.first_record_index,
             transaction.record_count, transaction.time_term, db);
     }
+    emit_protocol_replay_receipt(put_ops, log.recovered_time_term);
     return put_ops;
 }

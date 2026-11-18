@@ -21,6 +21,7 @@ pub(crate) fn report_is_well_formed(report: &CommitReport) -> bool {
             Error::Conflict
                 | Error::CommitHookRejected
                 | Error::TimestampExhausted
+                | Error::VersionExhausted
                 | Error::InvalidArgument
                 | Error::OutOfMemory
                 | Error::Internal
@@ -66,6 +67,12 @@ impl TrustedUncheckedOnePutRecordOutcome {
     pub fn into_report(self) -> CommitRecordReport {
         let mut contract_valid =
             report_is_well_formed(&self.report) && (!self.record_written || self.record_bound);
+        // OCC capacity is checked before pre-install record acquisition.
+        if self.report.disposition == CommitDisposition::Aborted(Error::VersionExhausted)
+            && (self.record_bound || self.record_written)
+        {
+            contract_valid = false;
+        }
         if self.report.disposition == CommitDisposition::Committed && !self.record_written {
             contract_valid = false;
         }
@@ -148,6 +155,12 @@ impl TrustedNativeOrderedOnePutRecordOutcome {
             || (self.inner.record_written && !self.target_bound)
             || self.native_holder_ready > 1
             || (self.native_holder_ready == 1 && !self.is_committed())
+            || (self.inner.report.disposition
+                == CommitDisposition::Aborted(Error::VersionExhausted)
+                && (self.ordered_sequence != 0
+                    || self.timestamp_stamp != 0
+                    || self.target_bound
+                    || self.native_holder_ready != 0))
         {
             report.completion_contract_valid = false;
             report.record_written = false;

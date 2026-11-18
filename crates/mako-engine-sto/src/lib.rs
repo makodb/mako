@@ -38,6 +38,11 @@
 //! its runtime, every later worker of that database reports the same
 //! quarantine. This is the conservative reading of the open decision in the
 //! cutover plan.
+//!
+//! Database health also includes the process-wide native Masstree runtime.
+//! Its poison can be visible before a point operation propagates it into a
+//! database's core runtime. The diagnostic only observes these states; it
+//! does not attach a worker or change transaction admission and cleanup.
 
 #![warn(missing_docs)]
 
@@ -45,7 +50,9 @@ mod db;
 mod engine;
 mod holder;
 mod outcome;
+mod prefetch;
 mod record;
+mod touched;
 mod txn;
 mod worker;
 

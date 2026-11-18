@@ -299,7 +299,12 @@ run_mako_local_abi_gates() {
         test_mako_local_abi_c11 \
         test_mako_local_abi_cpp_conformance \
         run_mako_local_rust_tests \
-        run_mako_engine_sto_tests
+        run_mako_engine_integration_driver_tests \
+        run_mako_engine_sto_tests \
+        run_mako_engine_sto_mutation_tests \
+        run_mako_cache_sto_mutation_tests \
+        run_mako_clock_mutation_tests \
+        run_mako_engine_cross_reopen_tests
     local boundary_test
     for boundary_test in \
         MakoLocalAbiTests \

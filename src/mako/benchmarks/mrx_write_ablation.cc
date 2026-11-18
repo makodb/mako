@@ -138,6 +138,17 @@ enum class Mode {
   // masstree templates.
   kIndexAbiVer,
   kIndexAbiVerBare,
+  // ---- read ladder, mirroring write_scaling's `rd_*` rungs ----
+  // rd_index  one short region + mrx_lookup only: the masstree search.
+  // rd_entry  + the entry's CLOCK bit and one acquire load of the val
+  //           pointer with its kind test. No copy, no handle taken.
+  // rd_value  + mrx_val_copy_out into a REUSED std::string, which is what
+  //           the real C++ read does and where the Rust port currently
+  //           allocates a fresh Vec instead (see write_scaling's
+  //           `rd_reuse`, the same rung with the allocation removed).
+  kRdIndex,
+  kRdEntry,
+  kRdValue,
 };
 
 // The counter home Rust's ladder used. `Arc<AtomicU64>` is one heap
@@ -325,6 +336,35 @@ void OpWrite(const std::string &key, const std::string &value,
 }
 
 // ---------------------------------------------------------------------------
+// Read ladder. Same tree/entry/val shapes the cache uses; every rung
+// holds one short region, exactly as mrx_cache_probe does.
+// ---------------------------------------------------------------------------
+
+/// Stop the compiler from discarding a loaded pointer.
+#define MRX_SINK(p) __asm__ __volatile__("" : : "r"(p) : "memory")
+
+// @unsafe - raw tree and record access under an RCU region
+template <Mode M>
+void OpRead(const std::string &key, std::string &out) {
+  const auto region = mrx_rcu_region();
+  mrx_entry *e = mrx_lookup(g_tree, KeyOf(key));
+  if (e == nullptr) return;
+  if constexpr (M == Mode::kRdIndex) {
+    MRX_SINK(e);
+    return;
+  }
+  e->referenced.store(1, std::memory_order_relaxed);
+  mrx_val *cur = e->val.load(std::memory_order_acquire);
+  if constexpr (M == Mode::kRdEntry) {
+    MRX_SINK(cur);
+    return;
+  }
+  if (cur->tombstone) return;
+  if (!cur->resident) return;
+  mrx_val_copy_out(cur, out, std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
 // Driver.
 // ---------------------------------------------------------------------------
 
@@ -336,11 +376,14 @@ std::atomic<bool> g_go{false};
 // @unsafe - dispatches into the raw-pointer layers
 template <Mode M>
 void RunOps(const std::vector<std::string> &keys, uint64_t &local_ver,
-            int tid = 0) {
+            int tid = 0, std::string *out = nullptr) {
   const int n = static_cast<int>(keys.size());
   for (int i = 0; i < n; i++) {
     const std::string &k = keys[i];
-    if constexpr (M == Mode::kIndex) {
+    if constexpr (M == Mode::kRdIndex || M == Mode::kRdEntry ||
+                  M == Mode::kRdValue) {
+      OpRead<M>(k, *out);
+    } else if constexpr (M == Mode::kIndex) {
       OpIndex(k, static_cast<uint64_t>(i) + 1);
     } else if constexpr (M == Mode::kIndexAbi) {
       OpIndexAbi(k, static_cast<uint64_t>(i) + 1);
@@ -382,6 +425,8 @@ void Worker(int t) {
     keys.push_back(g_keys[rng.Next() % g_keyspace]);
   }
   uint64_t local_ver = 0;
+  // Reused across every read, as the benchmark's own read lambda does.
+  std::string out;
 
   // WARM-UP, untimed. At the ladder's usual 50k ops/thread a 16-thread
   // run lasts ~0.03 s, and in 0.03 s the transients ARE the measurement:
@@ -403,7 +448,7 @@ void Worker(int t) {
   // So `full` must be quoted WITH its write count, and warming it moves
   // that count.
   for (int w = 0; w < g_warmup; w++) {
-    RunOps<M>(keys, local_ver, t);
+    RunOps<M>(keys, local_ver, t, &out);
   }
 
   g_ready.fetch_add(1, std::memory_order_release);
@@ -411,7 +456,7 @@ void Worker(int t) {
     ::sched_yield();
   }
 
-  RunOps<M>(keys, local_ver, t);
+  RunOps<M>(keys, local_ver, t, &out);
 }
 
 // CPU-seconds burned during the timed region, divided by wall seconds:
@@ -488,6 +533,9 @@ int main(int argc, char **argv) {
     }
   }
 
+  const bool read_mode =
+      (mode == "rd_index" || mode == "rd_entry" || mode == "rd_value");
+
   std::string db_dir;
   if (mode == "full") {
     char tmpl[] = "/tmp/mrx_abl_XXXXXX";
@@ -514,6 +562,21 @@ int main(int argc, char **argv) {
     // The shared slot comes out of the same registry, so it is the same
     // kind of memory as a per-thread one -- only the sharing differs.
     g_shared_writer = mrx_writer_for(g_store);
+  }
+
+  if (read_mode) {
+    // Populate exactly what write_scaling's rd_* rungs populate: one
+    // resident record per key, and one entry holding it. No store, no
+    // log, no RocksDB -- the same shape on both sides.
+    const auto region = mrx_rcu_region();
+    for (int i = 0; i < g_keyspace; i++) {
+      const lcdf::Str k = KeyOf(g_keys[i]);
+      mrx_val *v = mrx_val_new(1, /*tombstone=*/false, /*resident=*/true,
+                               g_value);
+      mrx_entry *e = mrx_entry_alloc(v, k);
+      tree.insert_if_absent(mrx_key(k),
+                            reinterpret_cast<concurrent_btree::value_type>(e));
+    }
   }
 
   if (mode == "ver_ring") {
@@ -574,6 +637,12 @@ int main(int argc, char **argv) {
     secs = Run<Mode::kVerRing>();
   } else if (mode == "log") {
     secs = Run<Mode::kLog>();
+  } else if (mode == "rd_index") {
+    secs = Run<Mode::kRdIndex>();
+  } else if (mode == "rd_entry") {
+    secs = Run<Mode::kRdEntry>();
+  } else if (mode == "rd_value") {
+    secs = Run<Mode::kRdValue>();
   } else if (mode == "full") {
     secs = Run<Mode::kFull>();
   } else {

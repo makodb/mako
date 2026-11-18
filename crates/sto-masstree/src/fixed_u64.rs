@@ -20,14 +20,14 @@ use masstree::{
 use masstree::{PublicationDisposition, Runtime as MasstreeRuntime};
 use sto_core::{
     AccessError, AcquireContext, AcquireError, Active, AdapterFault, AdapterFaultKind,
-    AdapterPhase, AtomicVersion, CapacityError, CheckError, Conflict, DetachedVersionGuard, Entry,
-    ExecutionCheckContext, FinishContext, FinishDisposition, FinishItem, InstallContext,
+    AdapterPhase, AtomicVersion, CapacityError, CheckError, Conflict, DetachedVersionGuard, TransProxy,
+    ExecutionCheckContext, CleanupContext, CleanupDisposition, CleanupItem, InstallContext,
     InstallItem, LockClass, LockDisposition, LockIdentity, LockNamespaceId, LockRequest, LockUse,
     NoPredicate, ObjectId, ObservationOrder, ObservationRef, OccVersion, OpacityToken,
-    PredicateContext, PreflightContext, PreflightFreeReadCapability,
+    PredicateContext, LockContext, PreflightFreeReadCapability,
     PreflightFreeValidationContext, PreflightItem, PrepareError, RegisteredResource,
     RegistrationError, ReleaseContext, ResourceClass, Runtime, TerminalReadBatchCapability,
-    TerminalReadOpen, TerminalReadTransaction, Transaction, TransactionLock, TransactionalResource,
+    TerminalReadOpen, TerminalReadTransaction, Transaction, TransactionLock, TObject,
     UniqueItemKeys, ValidationContext,
 };
 
@@ -173,6 +173,7 @@ impl FixedU64Table {
         native_worker: &Worker,
         config: TableConfig,
     ) -> Result<Self, FixedU64CreateError> {
+        Self::validate_version_policy(config)?;
         let tree = native_runtime.create_tree(native_worker)?;
         Self::with_directory(runtime, Directory::Native(NativeDirectory { tree }), config)
             .map_err(Into::into)
@@ -183,6 +184,7 @@ impl FixedU64Table {
         directory: Directory,
         config: TableConfig,
     ) -> Result<Self, RegistrationError> {
+        Self::validate_version_policy(config)?;
         let object = runtime.register_object()?;
         let namespace = LockNamespaceId::new(object.object_id().get())
             .expect("nonzero ObjectId always forms a lock namespace");
@@ -212,6 +214,17 @@ impl FixedU64Table {
             },
         )?;
         Ok(Self { record_resource })
+    }
+
+    fn validate_version_policy(config: TableConfig) -> Result<(), RegistrationError> {
+        if config.record_local_versions() {
+            return Err(RegistrationError::Unsupported(
+                sto_core::Unsupported::Capability(
+                    "fixed-u64 tables require ordered commit versions",
+                ),
+            ));
+        }
+        Ok(())
     }
 
     /// Publishes one immutable key/ID binding during the untimed loading phase.
@@ -308,7 +321,7 @@ impl FixedU64Table {
             &batch.record_ids,
             |index, entry| {
                 let (observation, value) = adapter.snapshot(*entry.key())?;
-                entry.record_read(observation)?;
+                entry.add_read(observation)?;
                 visit(index, value);
                 Ok(())
             },
@@ -381,7 +394,7 @@ impl FixedU64Table {
                 match modify(index, current) {
                     FixedU64Mutation::Keep => {}
                     FixedU64Mutation::Put(value) if value != current => {
-                        entry.stage(())?;
+                        entry.add_write(())?;
                         *entry.local_mut() = value;
                     }
                     FixedU64Mutation::Put(_) => {}
@@ -1236,13 +1249,13 @@ impl FixedAdapter {
     fn prepare_access(
         &self,
         id: RecordId,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
     ) -> Result<u64, AccessError> {
         match entry.observation() {
             ObservationRef::Unobserved => {
                 let (observation, value) = self.snapshot(id)?;
                 *entry.local_mut() = value;
-                entry.record_read(observation)?;
+                entry.add_read(observation)?;
                 Ok(value)
             }
             ObservationRef::Read(_) | ObservationRef::UpgradedPredicate(_) => Ok(*entry.local()),
@@ -1294,7 +1307,7 @@ impl FixedAdapter {
     }
 }
 
-impl TransactionalResource for FixedAdapter {
+impl TObject for FixedAdapter {
     type Key = RecordId;
     type Local = u64;
     type Observation = FixedObservation;
@@ -1314,11 +1327,11 @@ impl TransactionalResource for FixedAdapter {
         Some(&FIXED_TERMINAL_READ)
     }
 
-    fn preflight(
+    fn lock(
         &self,
         key: &Self::Key,
         item: PreflightItem<'_, Self>,
-        cx: &mut PreflightContext<'_>,
+        cx: &mut LockContext<'_>,
     ) -> Result<Self::Prepared, PrepareError> {
         if !matches!(
             item.observation(),
@@ -1342,7 +1355,7 @@ impl TransactionalResource for FixedAdapter {
             self.table.record_lock_class,
             key.get(),
         );
-        let lock_use = cx.require_lock(LockRequest::new(identity, Arc::clone(lock_segment)))?;
+        let lock_use = cx.try_lock(LockRequest::new(identity, Arc::clone(lock_segment)))?;
         Ok(FixedPrepared::Write { lock_use })
     }
 
@@ -1364,7 +1377,7 @@ impl TransactionalResource for FixedAdapter {
         match *predicate {}
     }
 
-    fn upgrade_predicate(
+    fn check_predicate(
         &self,
         _key: &Self::Key,
         predicate: &Self::Predicate,
@@ -1374,7 +1387,7 @@ impl TransactionalResource for FixedAdapter {
         match *predicate {}
     }
 
-    fn validate_read(
+    fn check(
         &self,
         key: &Self::Key,
         observation: &Self::Observation,
@@ -1412,13 +1425,13 @@ impl TransactionalResource for FixedAdapter {
         record.value.store(*item.local_mut(), Ordering::Relaxed);
     }
 
-    fn finish(
+    fn cleanup(
         &self,
         _key: &Self::Key,
-        _item: FinishItem<'_, Self>,
+        _item: CleanupItem<'_, Self>,
         _prepared: Option<&mut Self::Prepared>,
-        _disposition: FinishDisposition,
-        _cx: &mut FinishContext<'_>,
+        _disposition: CleanupDisposition,
+        _cx: &mut CleanupContext<'_>,
     ) {
     }
 }
@@ -1465,12 +1478,26 @@ mod tests {
     }
 
     #[test]
+    fn local_version_option_is_rejected_before_object_registration() {
+        let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+        assert!(matches!(
+            FixedU64Table::with_directory(
+                &runtime,
+                Directory::Memory(MemoryDirectory::default()),
+                TableConfig::default().with_record_local_versions(true),
+            ),
+            Err(RegistrationError::Unsupported(_))
+        ));
+        assert_eq!(runtime.register_object().unwrap().object_id().get(), 1);
+    }
+
+    #[test]
     fn hot_record_and_batch_layout_are_pinned() {
         assert_eq!(std::mem::size_of::<FixedRecord>(), 16);
         assert_eq!(std::mem::align_of::<FixedRecord>(), 8);
         assert_eq!(std::mem::size_of::<FixedU64Batch>(), 72);
         assert_eq!(
-            std::mem::size_of::<Option<<FixedAdapter as TransactionalResource>::Intent>>(),
+            std::mem::size_of::<Option<<FixedAdapter as TObject>::Intent>>(),
             1
         );
     }

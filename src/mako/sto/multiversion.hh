@@ -159,9 +159,10 @@ public:
         }
     }
 
+    // @unsafe - Traverse legacy RCU history using an immutable atomic snapshot.
     static bool mvGET(string& val,
                       uint8_t current_term,
-                      std::unordered_map<int, uint32_t> hist_timestamp) {
+                      const sync_util::history_timestamp_snapshot &hist_timestamp) {
         uint32_t time_term = mako::load_value_time_term(
             val.data(), val.length());
 
@@ -172,7 +173,7 @@ public:
             
 #if defined(FAIL_NEW_VERSION)
             // It's possible that hist_timestamp is not updated yet, and return it directly; and the remote server would do a check
-            if  (hist_timestamp.find(time_term % 10)==hist_timestamp.end()) {
+            if (!hist_timestamp.known(time_term % 10)) {
                 return !isDeleted(val);
             }
             // check if the stored value is below the cached watermark

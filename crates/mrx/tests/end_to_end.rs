@@ -14,8 +14,8 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Barrier;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Barrier;
 
 use mrx::{Db, Options, WriteBatch};
 

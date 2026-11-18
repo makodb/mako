@@ -161,7 +161,6 @@ fn full_delivery_preserves_scalar_empty_zero_line_and_rollback_semantics() {
             max_retained_records: 512,
             max_retained_key_bytes: 32_768,
             max_consumed_record_ids: 1_024,
-            trusted_scan_value_generation: 1,
             bounded_atomic_values: 1,
             ..StoTpccTableConfig::default()
         };

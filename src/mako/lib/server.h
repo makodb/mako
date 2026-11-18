@@ -100,6 +100,10 @@ namespace mako
 
         // @safe - Get database reference
         abstract_db* GetDb() const { return db; }
+        // @safe - A sealed empty frame still owes its coordinator a terminal.
+        bool CanParkParticipant() const noexcept {
+            return (!participant_sealed || participant_terminal) && !participant_unknown;
+        }
 
         // ============================================================================
         // Client Transaction API (for MakoClientService to use)
@@ -155,6 +159,20 @@ namespace mako
         string obj_v;
 
         int current_term ;
+        ParticipantIdentity admitted_identity{};
+        bool participant_terminal = false;
+        bool participant_committed = false;
+        bool participant_sealed = false;
+        bool participant_unknown = false;
+        uint8_t cached_request_type = 0;
+        size_t cached_response_size = 0;
+        char cached_response[sizeof(get_response_t)]{};
+
+        bool AdmitParticipant(uint8_t type, char *request, char *response,
+                              size_t &response_size);
+        void CompleteParticipant(uint8_t type, char *response, size_t response_size);
+        size_t RejectParticipant(uint8_t type, const basic_request_t &request,
+                                 char *response, int status);
 
         // Client API: Transaction state management
         // Maps client txn_id -> transaction counter (for generating unique server txn IDs)

@@ -59,6 +59,8 @@ if [ -z "$TEMP_PAXOS_DIR" ]; then
     exit 1
 fi
 export MAKO_PAXOS_CONFIG_DIR="$TEMP_PAXOS_DIR"
+# Every peer loads this same shard-ordered topology; -L/-s selects ownership.
+export MAKO_FULL_REPLICATION_TOPOLOGY=1
 echo "paxos replication config dir: $MAKO_PAXOS_CONFIG_DIR"
 
 LEADER_PID=""
@@ -172,6 +174,7 @@ cleanup_processes() {
         rm -rf "$TEMP_PAXOS_DIR"
     fi
     unset MAKO_PAXOS_CONFIG_DIR
+    unset MAKO_FULL_REPLICATION_TOPOLOGY
 }
 
 handle_interrupt() {

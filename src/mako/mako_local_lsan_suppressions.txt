@@ -4,7 +4,9 @@
 # that worker's lifetime. The boundary deliberately has no RCU-safe detach or
 # epoch teardown yet, so short-lived test threads leave these arenas reachable
 # only through retired TLS state at process exit.
-leak:Sto::transaction
+# The cold allocation helper remains visible even when the fast accessor is
+# inlined. Do not match the whole begin path or transaction-buffer allocations.
+leak:Sto::allocate_process_lifetime_transaction
 
 # Revision 0 also defines table/epoch state as process-lifetime. db_close ends
 # admissions and handle use but cannot destroy a MassTrans table until a tested

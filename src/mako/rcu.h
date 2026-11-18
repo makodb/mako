@@ -8,6 +8,7 @@
 #include <vector>
 #include <list>
 #include <utility>
+#include <type_traits>
 
 #include "allocator.h"
 #include "counter.h"
@@ -29,7 +30,7 @@ class SiloRuntime;
  * Use SiloRuntime::Current()->get_rcu() to get the correct rcu instance.
  */
 class rcu {
-  template <bool> friend class scoped_rcu_base;
+  template <bool, bool> friend class scoped_rcu_base;
 public:
   class sync;
   typedef uint64_t epoch_t;
@@ -102,7 +103,7 @@ public:
   // this is also serving as a memory allocator for the time being
   class sync {
     friend class rcu;
-    template <bool> friend class scoped_rcu_base;
+    template <bool, bool> friend class scoped_rcu_base;
   public:
     // @unsafe - raw queues of pending frees; guarded by depth_/ticker
     px_queue queue_;
@@ -246,6 +247,41 @@ public:
     free_with_fn(p, deleter_array<T>);
   }
 
+  // A non-owning, immutable handle to an already resolved current-thread
+  // slot. It holds no guard and pins no epoch. The owner must outlive every
+  // use and the exact thread/runtime/core assignment must still match.
+  class local_handle {
+    friend class rcu;
+    template <bool, bool> friend class scoped_rcu_base;
+    rcu *rcu_;
+    sync *sync_;
+    ticker *ticker_;
+    uint64_t core_;
+
+    local_handle(rcu &owner, sync &local, ticker &clock, uint64_t core)
+      : rcu_(&owner), sync_(&local), ticker_(&clock), core_(core) {}
+
+  public:
+    // Preserve the legacy scoped_rcu_base exclusion using the identical
+    // depth cell. The native boundary proves assignment before this query.
+    bool in_rcu_region() const {
+      INVARIANT(core_ == coreid::core_id());
+      const bool has_depth = sync_->depth_ != 0;
+      INVARIANT(!has_depth || ticker_->is_guarded_at(core_));
+      return has_depth;
+    }
+
+    uint64_t core() const { return core_; }
+  };
+
+  local_handle resolve_local() {
+    const uint64_t core = coreid::core_id();
+    INVARIANT(core < NMAXCORES);
+    // Construction can allocate queue storage. Callers must contain failure
+    // before publishing the handle and must not reuse a failed lazy slot.
+    return local_handle(*this, syncs_.get(core, this), get_ticker(), core);
+  }
+
   // the tick is in units of rcu ticks
   inline bool
   in_rcu_region(uint64_t &rcu_tick) const
@@ -315,7 +351,11 @@ private:
   percore_lazy<sync> syncs_;
 };
 
-template <bool DoCleanup>
+// CaptureStartTime=false is for private native operations with no consumer of
+// the outermost start timestamp, including inside their nested helper scopes.
+// It changes neither epoch admission nor the exit/cleanup schedule. Existing
+// callers, controlled scopes, and legacy logger transactions remain timed.
+template <bool DoCleanup, bool CaptureStartTime = true>
 class scoped_rcu_base {
 public:
 
@@ -329,7 +369,7 @@ public:
   scoped_rcu_base()
     : rcu_(&rcu::s_instance),
       sync_(&rcu::s_instance.mysync()),
-      guard_(ticker::s_instance)
+      guard_(ticker::s_instance, CaptureStartTime)
   {
     sync_->depth_++;
   }
@@ -338,7 +378,14 @@ public:
   explicit scoped_rcu_base(rcu& rcu_instance)
     : rcu_(&rcu_instance),
       sync_(&rcu_instance.mysync()),
-      guard_(rcu_instance.get_ticker())
+      guard_(rcu_instance.get_ticker(), CaptureStartTime)
+  {
+    sync_->depth_++;
+  }
+
+  explicit scoped_rcu_base(const rcu::local_handle &local)
+    : rcu_(local.rcu_), sync_(local.sync_),
+      guard_(*local.ticker_, local.core_, CaptureStartTime)
   {
     sync_->depth_++;
   }
@@ -354,6 +401,9 @@ public:
     sync_->do_cleanup();
   }
 
+  // An untimed scope cannot lend its guard to a timestamp consumer.
+  template <bool Enabled = CaptureStartTime,
+            typename std::enable_if<Enabled && CaptureStartTime, int>::type = 0>
   inline ticker::guard *
   guard()
   {

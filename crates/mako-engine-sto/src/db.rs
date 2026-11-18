@@ -74,7 +74,11 @@ fn map_registration(error: RegistrationError) -> Error {
         ) => Error::Busy,
         RegistrationError::Capacity(_) => Error::OutOfMemory,
         RegistrationError::InvalidUse(_) => Error::InvalidArgument,
-        RegistrationError::Poisoned(_) => Error::WorkerPoisoned,
+        RegistrationError::Unsupported(_) => Error::FeatureUnavailable,
+        RegistrationError::Poisoned(_) => {
+            worker::poison_current_worker();
+            Error::WorkerPoisoned
+        }
     }
 }
 
@@ -109,6 +113,38 @@ impl LocalDb {
 
     pub(crate) fn runtime_id(&self) -> RuntimeId {
         self.sto.id()
+    }
+
+    /// Whether both the core and shared native directory runtimes are healthy.
+    ///
+    /// Native poison can precede its propagation to this core runtime. A
+    /// failed native health query also reports unhealthy. This diagnostic
+    /// neither attaches nor quarantines the calling worker.
+    pub fn runtime_is_healthy(&self) -> bool {
+        self.sto.health() == sto_core::RuntimeHealth::Healthy
+            && matches!(
+                self.directory.health(),
+                Ok(masstree::RuntimeHealth::Healthy)
+            )
+    }
+
+    /// Explicit core abort contains cleanup panics and exposes them through
+    /// runtime health, not `AbortInfo`. Observe that state before reporting
+    /// successful cleanup or permitting this worker to use another database.
+    pub(crate) fn check_abort_cleanup(&self) -> Result<()> {
+        // Cleanup certainty belongs to the core transaction. Unrelated native
+        // directory poison must not turn a known-clean abort into uncertainty.
+        if self.sto.health() == sto_core::RuntimeHealth::Healthy {
+            Ok(())
+        } else {
+            worker::poison_current_worker();
+            Err(Error::WorkerPoisoned)
+        }
+    }
+
+    #[cfg(all(test, feature = "test-hooks", not(miri)))]
+    pub(crate) fn runtime_for_test(&self) -> &Arc<sto_core::Runtime> {
+        &self.sto
     }
 
     pub(crate) fn attach(&self) -> Result<Attachment> {
@@ -181,7 +217,16 @@ impl LocalDb {
             .with_max_consumed_record_ids(TABLE_MAX_CONSUMED_RECORD_IDS)
             // The cache contract never surfaces a conflict for two inserters
             // of distinct keys; wait for structural admission like MassTrans.
-            .with_blocking_structural_admission(true);
+            .with_blocking_structural_admission(true)
+            // Common cache values avoid an allocation and ArcSwap
+            // publication. Stable entries use 192 bytes instead of 64;
+            // values larger than 160 bytes retain the shared fallback.
+            .with_bounded_atomic_values(true)
+            // This engine is non-opaque, like the supported C++ MassTrans
+            // reference. Row-local OCC generations avoid a shared commit-ID
+            // allocation. Mako HLC timestamps and cache lane sequences remain
+            // separate and retain their existing validated commit protocol.
+            .with_record_local_versions(true);
         let table = sto_masstree::Table::new_direct_with_budget(
             &self.sto,
             &self.directory,
@@ -331,6 +376,49 @@ impl LocalDb {
     }
 }
 
+#[cfg(all(
+    test,
+    feature = "test-hooks",
+    mako_native_runtime_health_proof,
+    not(miri)
+))]
+#[path = "db_native_health_tests.rs"]
+mod native_health_tests;
+
+#[cfg(all(test, feature = "test-hooks", not(miri)))]
+mod tests {
+    use super::*;
+    use mako_engine_api::WorkerHealth;
+
+    #[test]
+    fn healthy_runtime_diagnostic_does_not_attach_or_quarantine() {
+        std::thread::spawn(|| {
+            assert_eq!(worker::health(), WorkerHealth::NotAttached);
+            let db = Arc::new(LocalDb::open().unwrap());
+            assert!(db.runtime_is_healthy());
+            assert_eq!(worker::health(), WorkerHealth::Healthy);
+            let observer = Arc::clone(&db);
+            std::thread::spawn(move || {
+                assert_eq!(worker::health(), WorkerHealth::NotAttached);
+                assert!(observer.runtime_is_healthy());
+                assert_eq!(worker::health(), WorkerHealth::NotAttached);
+            })
+            .join()
+            .unwrap();
+            let transaction = db.transaction().unwrap();
+            assert!(db.runtime_is_healthy());
+            transaction.abort().unwrap();
+            assert_eq!(worker::health(), WorkerHealth::Healthy);
+            drop(db);
+            // SAFETY: the DB and transaction are retired, and the observer
+            // never attached. This fresh thread has no other fixture users.
+            unsafe { worker::drop_healthy_test_attachments() };
+        })
+        .join()
+        .unwrap();
+    }
+}
+
 impl Drop for LocalDb {
     fn drop(&mut self) {
         let mut claim = recover(&NAMESPACE_CLAIM);
@@ -353,6 +441,9 @@ impl mako_engine_api::EngineDb for LocalDb {
 
     fn open() -> Result<Self> {
         Self::open()
+    }
+    fn runtime_is_healthy(&self) -> bool {
+        Self::runtime_is_healthy(self)
     }
     unsafe fn claim_cache_order_namespace(&self, mode: CacheOrderMode) -> Result<()> {
         // SAFETY: forwarded unchanged.

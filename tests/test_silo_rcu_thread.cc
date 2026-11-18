@@ -172,6 +172,188 @@ protected:
 };
 
 // Test RCU region entry/exit
+namespace {
+
+template <typename Scope, typename = void>
+struct exposes_ticker_guard : std::false_type {};
+
+template <typename Scope>
+struct exposes_ticker_guard<
+    Scope, std::void_t<decltype(std::declval<Scope&>().guard())>>
+    : std::true_type {};
+
+static_assert(exposes_ticker_guard<scoped_rcu_region>::value);
+static_assert(exposes_ticker_guard<scoped_rcu_base<false>>::value);
+static_assert(!exposes_ticker_guard<scoped_rcu_base<true, false>>::value);
+static_assert(!exposes_ticker_guard<scoped_rcu_base<false, false>>::value);
+static_assert(sizeof(scoped_rcu_region) ==
+              sizeof(scoped_rcu_base<true, false>));
+
+struct UntimedRetirementProbe {
+    std::shared_ptr<std::atomic<bool>> destroyed;
+};
+
+void destroy_untimed_retirement_probe(void* pointer) {
+    auto* probe = static_cast<UntimedRetirementProbe*>(pointer);
+    probe->destroyed->store(true, std::memory_order_release);
+    delete probe;
+}
+
+template <typename Predicate>
+bool wait_for_rcu_test(Predicate predicate,
+                       std::chrono::steady_clock::time_point deadline) {
+    while (!predicate()) {
+        if (std::chrono::steady_clock::now() >= deadline) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    return true;
+}
+
+}  // namespace
+
+TEST_F(SiloRCUTest, UntimedTickerCapturesNoWallStart) {
+    {
+        ticker::guard untimed(ticker::s_instance, false);
+        // This test inspects the sentinel; production internal scopes never
+        // expose it to latency accounting or use it as an epoch predicate.
+        EXPECT_EQ(untimed.start_us(), 0U);
+        EXPECT_TRUE(ticker::s_instance.is_locally_guarded());
+        ticker::guard nested(ticker::s_instance);
+        EXPECT_EQ(nested.start_us(), 0U);
+        EXPECT_EQ(nested.tick(), untimed.tick());
+        EXPECT_EQ(nested.depth(), 2U);
+    }
+    EXPECT_FALSE(ticker::s_instance.is_locally_guarded());
+}
+
+TEST_F(SiloRCUTest, UntimedInnerPreservesPreciseOuterStart) {
+    const uint64_t before = util::timer::cur_usec();
+    {
+        scoped_rcu_region outer;
+        const uint64_t started = outer.guard()->start_us();
+        EXPECT_GE(started, before);
+        EXPECT_LE(started, util::timer::cur_usec());
+        {
+            scoped_rcu_base<true, false> inner;
+            EXPECT_EQ(inner.sync()->depth(), 2U);
+            // Mirrors a nested simple_threadinfo::rcu_register scope.
+            scoped_rcu_base<false> nested;
+            EXPECT_EQ(nested.sync()->depth(), 3U);
+            EXPECT_EQ(nested.guard()->start_us(), started);
+        }
+        EXPECT_EQ(outer.sync()->depth(), 1U);
+        EXPECT_EQ(outer.guard()->start_us(), started);
+    }
+    EXPECT_FALSE(rcu::s_instance.in_rcu_region());
+}
+
+TEST_F(SiloRCUTest, UntimedOuterPreservesNestedProtectionAndRestoresTiming) {
+    {
+        scoped_rcu_base<true, false> outer;
+        uint64_t pinned = 0;
+        ASSERT_TRUE(ticker::s_instance.is_locally_guarded(pinned));
+        EXPECT_EQ(outer.sync()->depth(), 1U);
+        {
+            // This helper enqueues deferred work but consumes no start time.
+            scoped_rcu_base<false> nested;
+            EXPECT_EQ(nested.sync()->depth(), 2U);
+            EXPECT_EQ(nested.guard()->tick(), pinned);
+            EXPECT_TRUE(rcu::s_instance.in_rcu_region());
+        }
+        EXPECT_EQ(outer.sync()->depth(), 1U);
+        EXPECT_TRUE(rcu::s_instance.in_rcu_region());
+    }
+    EXPECT_FALSE(rcu::s_instance.in_rcu_region());
+    const uint64_t before = util::timer::cur_usec();
+    scoped_rcu_region timed_again;
+    EXPECT_GE(timed_again.guard()->start_us(), before);
+    EXPECT_LE(timed_again.guard()->start_us(), util::timer::cur_usec());
+}
+
+TEST_F(SiloRCUTest, UntimedRegionPinsEpochAndReclaimsAfterExit) {
+    auto destroyed = std::make_shared<std::atomic<bool>>(false);
+    uint64_t pinned = 0;
+    {
+        scoped_rcu_base<true, false> guard;
+        ASSERT_TRUE(ticker::s_instance.is_locally_guarded(pinned));
+        rcu::s_instance.free_with_fn(
+            new UntimedRetirementProbe{destroyed},
+            destroy_untimed_retirement_probe);
+        // Deliberately hold the test reader while the ticker advances. The
+        // production per-operation policy never adds this wait or scope span.
+        EXPECT_TRUE(wait_for_rcu_test(
+            [&] { return ticker::s_instance.global_current_tick() > pinned; },
+            std::chrono::steady_clock::now() + std::chrono::seconds(5)));
+        EXPECT_LT(ticker::s_instance.global_last_tick_inclusive(), pinned);
+        EXPECT_FALSE(destroyed->load(std::memory_order_acquire));
+    }
+    EXPECT_FALSE(rcu::s_instance.in_rcu_region());
+    EXPECT_TRUE(wait_for_rcu_test(
+        [&] {
+            // Cleanup remains automatic on each ordinary outermost exit.
+            { scoped_rcu_base<true, false> guard; }
+            return destroyed->load(std::memory_order_acquire);
+        },
+        std::chrono::steady_clock::now() + std::chrono::seconds(5)));
+}
+
+TEST_F(SiloRCUTest, CachedHandleResolvesWithoutEnteringAndSeesLegacyRegions) {
+    const auto handle = rcu::s_instance.resolve_local();
+    EXPECT_FALSE(handle.in_rcu_region());
+    EXPECT_FALSE(ticker::s_instance.is_locally_guarded());
+    {
+        scoped_rcu_region legacy;
+        const uint64_t started = legacy.guard()->start_us();
+        EXPECT_TRUE(handle.in_rcu_region());
+        {
+            scoped_rcu_base<true, false> cached(handle);
+            EXPECT_EQ(cached.sync(), legacy.sync());
+            EXPECT_EQ(cached.sync()->depth(), 2U);
+            EXPECT_TRUE(handle.in_rcu_region());
+            EXPECT_EQ(legacy.guard()->start_us(), started);
+        }
+        EXPECT_EQ(legacy.sync()->depth(), 1U);
+    }
+    EXPECT_FALSE(handle.in_rcu_region());
+    EXPECT_FALSE(ticker::s_instance.is_locally_guarded());
+    {
+        scoped_rcu_base<true, false> cached(handle);
+        EXPECT_TRUE(handle.in_rcu_region());
+        scoped_rcu_base<false> registration;
+        EXPECT_EQ(cached.sync(), registration.sync());
+        EXPECT_EQ(registration.guard()->start_us(), 0U);
+    }
+    EXPECT_FALSE(handle.in_rcu_region());
+}
+
+TEST_F(SiloRCUTest, CachedHandlePinsAndReclaimsWithoutAnIdleRegion) {
+    const auto handle = rcu::s_instance.resolve_local();
+    auto destroyed = std::make_shared<std::atomic<bool>>(false);
+    uint64_t pinned = 0;
+    {
+        scoped_rcu_base<true, false> cached(handle);
+        ASSERT_TRUE(ticker::s_instance.is_locally_guarded(pinned));
+        rcu::s_instance.free_with_fn(new UntimedRetirementProbe{destroyed},
+                                   destroy_untimed_retirement_probe);
+        EXPECT_TRUE(wait_for_rcu_test(
+            [&] { return ticker::s_instance.global_current_tick() > pinned; },
+            std::chrono::steady_clock::now() + std::chrono::seconds(5)));
+        EXPECT_LT(ticker::s_instance.global_last_tick_inclusive(), pinned);
+        EXPECT_FALSE(destroyed->load(std::memory_order_acquire));
+    }
+    EXPECT_FALSE(handle.in_rcu_region());
+    EXPECT_FALSE(ticker::s_instance.is_locally_guarded());
+    EXPECT_TRUE(wait_for_rcu_test(
+        [&] {
+            { scoped_rcu_base<true, false> cached(handle); }
+            EXPECT_FALSE(handle.in_rcu_region());
+            return destroyed->load(std::memory_order_acquire);
+        },
+        std::chrono::steady_clock::now() + std::chrono::seconds(5)));
+}
+
 TEST_F(SiloRCUTest, RCURegion_BasicEnterExit) {
     EXPECT_FALSE(rcu::s_instance.in_rcu_region());
     

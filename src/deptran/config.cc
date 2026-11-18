@@ -287,6 +287,33 @@ Config::Config(char           *ctrl_hostname,
 {
 }
 
+// @unsafe - Mako supplies immutable ownership before replication setup.
+vector<Config::SiteInfo> Config::GetMyServers() {
+  auto servers = SitesByProcessName(proc_name_, SERVER);
+  if (mako_partitions_per_shard_ == 0)
+    return servers;
+  if (replica_groups_.size() == mako_partitions_per_shard_) {
+    const char* full_topology = std::getenv("MAKO_FULL_REPLICATION_TOPOLOGY");
+    if (mako_hosted_shards_.size() != 1 ||
+        (mako_shard_count_ > 1 && full_topology && std::string(full_topology) == "1"))
+      throw std::runtime_error(
+          "colocated replication requires the same full ordered topology on every peer");
+    return servers;
+  }
+  if (replica_groups_.size() !=
+      size_t(mako_partitions_per_shard_) * mako_shard_count_)
+    throw std::runtime_error("replication topology must contain W or nshards*W partitions");
+  servers.erase(std::remove_if(servers.begin(), servers.end(),
+      [](const SiteInfo& site) {
+        const int shard = site.partition_id_ / mako_partitions_per_shard_;
+        return std::find(mako_hosted_shards_.begin(), mako_hosted_shards_.end(),
+                         shard) == mako_hosted_shards_.end();
+      }), servers.end());
+  if (servers.size() != mako_hosted_shards_.size() * mako_partitions_per_shard_)
+    throw std::runtime_error("replication topology lacks an owned shard/partition");
+  return servers;
+}
+
 void Config::Load() {
   for (auto &name: config_paths_) {
     if (name.ends_with("yml")) {
@@ -301,6 +328,9 @@ void Config::Load() {
 void Config::LoadYML(std::string &filename) {
   Log_info("{}: {}", __FUNCTION__, filename.c_str());
   const YAML::Node yaml_config = YAML::LoadFile(filename);
+  // Per-shard generators reuse site/process names. A file with new sites
+  // assigns only those sites; a host/process-only file remains an override.
+  const uint32_t first_site = yaml_config["site"] ? sites_.size() : 0;
 
   if (yaml_config["process"]) {
     BuildSiteProcMap(yaml_config["process"]);
@@ -309,10 +339,10 @@ void Config::LoadYML(std::string &filename) {
     LoadSiteYML(yaml_config["site"]);
   }
   if (yaml_config["process"]) {
-    LoadProcYML(yaml_config["process"]);
+    LoadProcYML(yaml_config["process"], first_site);
   }
   if (yaml_config["host"]) {
-    LoadHostYML(yaml_config["host"]);
+    LoadHostYML(yaml_config["host"], first_site);
   }
   if (yaml_config["mode"]) {
     LoadModeYML(yaml_config["mode"]);
@@ -425,32 +455,31 @@ void Config::BuildSiteProcMap(YAML::Node process) {
   }
 }
 
-void Config::LoadProcYML(YAML::Node config) {
+void Config::LoadProcYML(YAML::Node config, uint32_t first_site) {
   for (auto it = config.begin(); it != config.end(); it++) {
     auto site_name = it->first.as<string>();
     auto proc_name = it->second.as<string>();
-    auto info = SiteByName(site_name);
-//    verify(info != nullptr);
-    if (info != nullptr && proc_name != "") {
-      info->proc_name = proc_name;
+    for (auto& info : sites_) {
+      if (info.id >= first_site && info.name == site_name && !proc_name.empty())
+        info.proc_name = proc_name;
     }
   }
 }
 
-void Config::LoadHostYML(YAML::Node config) {
+void Config::LoadHostYML(YAML::Node config, uint32_t first_site) {
   for (auto it = config.begin(); it != config.end(); it++) {
     auto proc_name = it->first.as<string>();
     auto host_name = it->second.as<string>();
     proc_host_map_[proc_name] = host_name;
     for (auto& group : replica_groups_) {
       for (auto& server : group.replicas) {
-        if (server->proc_name == proc_name) {
+        if (server->id >= first_site && server->proc_name == proc_name) {
           server->host = host_name;
         }
       }
     }
     for (auto& client : par_clients_) {
-        if (client.proc_name == proc_name) {
+        if (client.id >= first_site && client.proc_name == proc_name) {
           client.host = host_name;
         }
     }

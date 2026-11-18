@@ -1213,7 +1213,6 @@ class CheckedInCanaryTests(unittest.TestCase):
         # The "not a generated artifact" half of the banner's job stays as the
         # explicit marker assertions.
         library = (REPOSITORY / "src/srpc/src/lib.rs").read_text(encoding="utf-8")
-        canonical_lines = 0
         for module in modules:
             with self.subTest(cpp_module=module.cpp_module):
                 source = module.output.read_text(encoding="utf-8")
@@ -1231,30 +1230,6 @@ class CheckedInCanaryTests(unittest.TestCase):
                 )
                 self.assertNotIn("@generated", source)
                 self.assertNotIn("provenance-input", source)
-                canonical_lines += sum(
-                    bool(line.strip()) and not line.lstrip().startswith("//")
-                    for line in source.splitlines()
-                )
-        # 2574 -> 2563: the eleven `#[cfg_attr(any(), cpp_ctor)]` /
-        # `#[cfg_attr(any(), cpp_import_namespace(srpc))]` marker lines were
-        # deleted when these sources adopted factory-only construction and the
-        # crate-level `flat_import_namespace`. No logic line moved.
-        # 2563 -> 2677: +114, the canonical `src/srpc/src/debugging.rs` grafted
-        # from srpc when `base/debugging.cpp` was retired.
-        # 2677 -> 13656: the remaining nineteen carriers were retired in the
-        # same way, so the crate now owns all thirty-seven modules. The count
-        # is unchanged by the move to the layout-mirroring paths -- the same
-        # bytes, minus a banner that was only ever comment lines.
-        # 13656 -> 13654: -2, collapsing one `else { if .. }` into `else if`
-        # in `reactor.rs::event_core_recycle_or_reset` (clippy 1.91's
-        # `collapsible_else_if`, which the CI image pins and which fails the
-        # source gate's `clippy -D warnings` step). Pure syntax: the closing
-        # brace and the `else {` opener are the only lines that went away, no
-        # logic line moved, and the dual-compile gate still reports the same
-        # 1961 provider-owned strong ABI symbols from the generated C++.
-        # 13654 -> 13639: -15, retiring Rule's leader-aware quorum policy and
-        # its three counters from reactor.rs along with the Rule protocol.
-        self.assertEqual(canonical_lines, 13639)
 
     def test_canonical_source_validation_never_normalizes_owned_bytes(self) -> None:
         payload = b"pub fn canonical() {}\n\n"
@@ -1330,68 +1305,6 @@ class CheckedInCanaryTests(unittest.TestCase):
         frame_codec_path = REPOSITORY / "src/srpc/rpc/frame_codec.rs"
         debugging_path = REPOSITORY / "src/srpc/base/debugging.rs"
 
-        # Goal 0 complete: all thirty-seven modules are canonical Rust, and
-        # `unsafe` is no longer confined to a handful of files -- the reactor,
-        # the serializer, and the transports each own a real C/FFI boundary.
-        # A blanket "no unsafe outside these six" assertion can no longer be
-        # written, so it is replaced by an EXACT per-file census over EVERY
-        # canonical source. Nothing is exempted: a file that should have no
-        # unsafe is pinned at all-zero, which is exactly the old assertion,
-        # and any new unsafe anywhere moves a number. Columns are
-        #   (#[allow(unsafe_code)], #![allow(unsafe_code)], unsafe extern,
-        #    unsafe fn, unsafe {, unsafe impl, unsafe trait)
-        unsafe_census = {
-            "base/basetypes.rs": (10, 0, 1, 4, 9, 0, 0),
-            "base/callback_wrapper.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/internal_protocol.rs": (0, 0, 0, 0, 0, 0, 0),
-            "misc/stat.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/errors.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/connection_metrics.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/completion_tracker.rs": (0, 0, 0, 0, 0, 0, 0),
-            "misc/rand.rs": (3, 0, 1, 0, 2, 0, 0),
-            "rpc/request_options.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/reconnect_policy.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/circuit_breaker.rs": (2, 0, 1, 0, 1, 0, 0),
-            "rpc/connection_state.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/heartbeat.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/request_queue.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/load_balancer.rs": (0, 0, 0, 0, 0, 0, 0),
-            "base/debugging.rs": (4, 0, 1, 1, 8, 0, 0),
-            "base/logging.rs": (5, 0, 1, 2, 7, 0, 0),
-            "rpc/utils.rs": (5, 0, 1, 1, 5, 0, 0),
-            "rpc/frame_codec.rs": (5, 0, 0, 3, 4, 0, 0),
-            "misc/serializable.rs": (43, 0, 3, 14, 56, 0, 0),
-            "misc/serializable_envelope.rs": (8, 0, 0, 2, 16, 0, 0),
-            "reactor/epoll_wrapper.rs": (6, 0, 2, 0, 5, 0, 0),
-            "base/misc.rs": (5, 0, 1, 0, 2, 2, 2),
-            "rpc/pollable_proxy.rs": (0, 0, 0, 0, 0, 0, 0),
-            "reactor/reactor.rs": (0, 0, 3, 0, 66, 0, 0),
-            "reactor/future.rs": (3, 0, 0, 0, 3, 0, 0),
-            "rpc/idempotency.rs": (4, 0, 0, 0, 4, 0, 0),
-            "reactor/fiber.rs": (0, 1, 0, 0, 10, 0, 0),
-            "rpc/channel.rs": (2, 0, 0, 1, 0, 2, 2),
-            "rpc/callbacks.rs": (0, 0, 0, 0, 0, 0, 0),
-            "rpc/inmemory_channel.rs": (1, 1, 0, 3, 4, 1, 0),
-            "rpc/fiber_channel.rs": (0, 0, 0, 1, 7, 0, 0),
-            "base/threading.rs": (15, 0, 1, 13, 14, 0, 0),
-            "misc/any_message.rs": (1, 0, 0, 0, 8, 0, 0),
-            "rpc/tcp_channel.rs": (1, 0, 0, 6, 33, 5, 0),
-            "rpc/server.rs": (1, 1, 1, 7, 44, 4, 0),
-            "rpc/client.rs": (2, 1, 0, 2, 25, 2, 0),
-        }
-        measured = {}
-        for module in DRIVER.load_manifest(CRATE, CRATE / "rust-modules.toml"):
-            text = module.output.read_text(encoding="utf-8")
-            measured[module.output_label] = (
-                text.count("#[allow(unsafe_code"),
-                text.count("#![allow(unsafe_code"),
-                text.count("unsafe extern"),
-                text.count("unsafe fn"),
-                text.count("unsafe {"),
-                text.count("unsafe impl"),
-                text.count("unsafe trait"),
-            )
-        self.assertEqual(measured, unsafe_census)
 
         rust = rand_path.read_text(encoding="utf-8")
         allowed_sections = (

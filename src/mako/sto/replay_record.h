@@ -28,6 +28,8 @@ struct ReplayTransactionView {
 struct ReplayLogView {
     std::vector<ReplayTransactionView> transactions;
     std::vector<ReplayRecordView> records;
+    // Largest source base (and its encoded term), not merely the batch tail.
+    uint32_t recovered_time_term = 0;
     uint32_t latest_time_term = 0;
     uint32_t latency_tracker = 0;
 };
@@ -87,6 +89,20 @@ inline bool valid_replay_table_id(uint16_t table_id) noexcept {
     return table_id != 0 && table_id <= 10000;
 }
 
+// @safe - The decimal source clock reserves zero for bootstrap/no decision.
+inline bool valid_replay_time_term(uint32_t time_term) noexcept {
+    constexpr uint32_t max_base = (UINT32_MAX - 9U) / 10U;
+    return time_term == 0 ||
+           (time_term >= 10 && time_term / 10 <= max_base);
+}
+
+// @safe - Preserve the legacy compare/apply rule, not lexicographic ordering.
+inline bool replay_source_is_newer(uint32_t incoming,
+                                   uint32_t existing) noexcept {
+    return incoming % 10 > existing % 10 ||
+           incoming / 10 > existing / 10;
+}
+
 inline bool append_replay_record_batch(
     const char* buffer, size_t buffer_size, uint16_t record_count,
     std::vector<ReplayRecordView>& records) {
@@ -117,6 +133,7 @@ inline bool parse_replay_record_batch(
         buffer, buffer_size, record_count, records);
 }
 
+// @unsafe - Reads checked unaligned fields from caller-owned log storage.
 inline bool parse_replay_transaction(const char* buffer, size_t buffer_size,
                                      size_t& offset,
                                      ReplayTransactionView& transaction) noexcept {
@@ -134,7 +151,8 @@ inline bool parse_replay_transaction(const char* buffer, size_t buffer_size,
     cursor += sizeof(record_count);
     const uint32_t records_size = load_unaligned<uint32_t>(buffer + cursor);
     cursor += sizeof(records_size);
-    if (buffer_size - cursor < records_size) {
+    if (!valid_replay_time_term(time_term) ||
+        buffer_size - cursor < records_size) {
         return false;
     }
 
@@ -148,12 +166,14 @@ inline bool parse_replay_transaction(const char* buffer, size_t buffer_size,
 
 // Parse and validate the complete persisted replay unit before a caller
 // publishes its commit timestamp or applies any contained transaction.
+// @unsafe - Retains bounded views into the caller-owned validated byte buffer.
 inline bool parse_replay_log(const char* buffer, size_t buffer_size,
                              ReplayLogView& log) {
     constexpr size_t footer_size = 2 * sizeof(uint32_t);
     log.transactions.clear();
     log.records.clear();
     log.latest_time_term = 0;
+    log.recovered_time_term = 0;
     log.latency_tracker = 0;
     if (buffer == nullptr || buffer_size < footer_size) {
         return false;
@@ -189,6 +209,19 @@ inline bool parse_replay_log(const char* buffer, size_t buffer_size,
         load_unaligned<uint32_t>(buffer + transaction_bytes);
     log.latency_tracker = load_unaligned<uint32_t>(
         buffer + transaction_bytes + sizeof(log.latest_time_term));
+    if (!valid_replay_time_term(log.latest_time_term)) {
+        log.transactions.clear();
+        log.records.clear();
+        log.latest_time_term = 0;
+        log.latency_tracker = 0;
+        return false;
+    }
+    log.recovered_time_term = log.latest_time_term;
+    for (const auto& transaction : log.transactions) {
+        if (transaction.time_term > log.recovered_time_term) {
+            log.recovered_time_term = transaction.time_term;
+        }
+    }
     return true;
 }
 

@@ -9,7 +9,7 @@
 //
 // The client's table objects carry is_remote=true, so the non-txn ops
 // take the Phase-2 remote branch (nontxnPut/nontxnInsert/nontxnRemove
-// RPCs + remoteGet), travel over the loopback UDP fake transport, and
+// RPCs + remoteGet), travel over the real loopback SRPC transport, and
 // land in ShardReceiver::HandleNontxnWriteRequest, which runs the op
 // through the server-side LOCAL non-txn path (one-op OCC txn).
 // Verification reads go directly to the server-view table object.
@@ -19,6 +19,7 @@
 
 #include <stdlib.h>
 #include <unistd.h>
+#include <rusty/thread.hpp>
 
 #include "benchmarks/bench.h"
 #include "storage/mbta_wrapper.hh"
@@ -56,10 +57,12 @@ mbta_ordered_index* g_server_tbl = nullptr;  // is_remote=false → local store
 
 class QueuedGetRequest final : public mako::TransportRequestHandle {
 public:
+    // @unsafe - Owns the same native wire bytes consumed by the helper queue.
     QueuedGetRequest(uint32_t request_number, uint16_t table_id,
-                     const std::string& key) {
+                     const std::string& key, uint64_t attempt = 0) {
         EXPECT_LE(key.size(), mako::max_key_length);
         request_.req_nr = request_number;
+        request_.identity = {77, attempt ? attempt : request_number, request_number, 0};
         request_.table_id = table_id;
         request_.len = static_cast<uint16_t>(key.size());
         std::memcpy(request_.key, key.data(), key.size());
@@ -121,7 +124,7 @@ void set_server_table_multiversion_mode() {
 #endif
 }
 
-// Binds the fake (UDP) transport to shard 1's URI, wires the helper
+// Binds SRPC to shard 1's URI, wires the helper
 // queues for client warehouse 0, and runs the event loop. Mirrors the
 // production rpc_server in benchmarks/rpc_setup.cc (handler range
 // 1..17 inclusive covers the non-txn types 14-17; rpc id = warehouses
@@ -304,6 +307,67 @@ TEST_F(MakoNontxnDistributed, RemoteGetReadsServerState) {
     EXPECT_EQ(out, long_val);
 }
 
+// @unsafe - Reuses a real SRPC lane only after its previous terminal is acknowledged.
+TEST_F(MakoNontxnDistributed, ConfirmedParticipantSurvivesClientReattachment) {
+    const std::string key = "__reattached_participant__";
+    const std::string value = "same-lane-new-attempt";
+    ASSERT_TRUE(g_server_tbl->put(lcdf::Str(key), value));
+    for (int attachment = 0; attachment != 2; ++attachment) {
+        TThread::sclient->beginAttempt(0);
+        std::string observed;
+        EXPECT_EQ(TThread::sclient->remoteGet(kRemoteTableId, key, observed),
+                  mako::ErrorCode::SUCCESS);
+        EXPECT_EQ(observed.substr(0, value.size()), value);
+        EXPECT_EQ(TThread::sclient->remoteAbort(), mako::ErrorCode::SUCCESS);
+        if (attachment == 0) {
+            delete TThread::sclient;
+            TThread::sclient = nullptr;
+            TThread::sclient = new mako::ShardClient(
+                g_config->configFile, "localhost", kClientShard, kParId);
+        }
+    }
+}
+
+// @unsafe - Real RPC fencing on an isolated worker; quarantine cannot leak
+// into the fixture's coordinator thread or depend on test execution order.
+TEST_F(MakoNontxnDistributed, UnconfirmedTerminalSurvivesClientDestruction) {
+    const std::string key = "__quarantined_participant__";
+    ASSERT_TRUE(g_server_tbl->put(lcdf::Str(key), "owner"));
+    TThread::sclient->beginAttempt(0);
+    std::string observed;
+    ASSERT_EQ(TThread::sclient->remoteGet(kRemoteTableId, key, observed),
+              mako::ErrorCode::SUCCESS);
+    ASSERT_EQ(TThread::sclient->remoteAbort(), mako::ErrorCode::SUCCESS);
+    // Release this lane's listening port while the isolated worker uses it.
+    delete TThread::sclient;
+    TThread::sclient = nullptr;
+
+    auto worker = rusty::thread::spawn([&] {
+        TThread::set_shard_index(kClientShard);
+        TThread::set_pid(kParId);
+        TThread::set_nshards(g_config->nshards);
+        {
+            mako::ShardClient client(g_config->configFile, "localhost", kClientShard, kParId);
+            client.beginAttempt(0);
+            std::string value;
+            // Another incarnation cannot take over this lane in the same term.
+            EXPECT_EQ(client.remoteGet(kRemoteTableId, key, value), mako::ErrorCode::ABORT);
+            EXPECT_TRUE(client.hasTouchedParticipants());
+            // Deliberately omit ABORT: no terminal acknowledgement was received.
+        }
+        mako::ShardClient replacement(g_config->configFile, "localhost", kClientShard, kParId);
+        EXPECT_THROW(replacement.beginAttempt(0), std::logic_error);
+    });
+    worker.join().unwrap();
+    TThread::sclient = new mako::ShardClient(
+        g_config->configFile, "localhost", kClientShard, kParId);
+
+    TThread::sclient->beginAttempt(0);
+    ASSERT_EQ(TThread::sclient->remoteGet(kRemoteTableId, key, observed),
+              mako::ErrorCode::SUCCESS);
+    EXPECT_EQ(TThread::sclient->remoteAbort(), mako::ErrorCode::SUCCESS);
+}
+
 // ---------------------------------------------------------------------------
 // Mixed: interleave remote non-txn ops and confirm the sequence is
 // observed consistently on the owning shard.
@@ -411,14 +475,17 @@ TEST_F(MakoNontxnDistributed, L7RemoteTableNontxn) {
     tcp->Stop();
 }
 
+// @unsafe - Exercises the real helper and C++ participant against stored rows.
 TEST_F(MakoNontxnDistributed,
-       HelperResetsInactiveParticipantBetweenQueuedRequests) {
+       HelperRetainsAbsenceDependencyBetweenQueuedReads) {
+    const std::string present_key = "__helper_real_following_row__";
+    g_server_tbl->put(lcdf::Str(present_key), "present");
     mako::HelperQueue request_queue(0, true);
     mako::HelperQueue response_queue(0, false);
     QueuedGetRequest missing(
         1001, kRemoteTableId,
-        "__helper_reset_inactive_participant_missing_1001__");
-    QueuedGetRequest following(1002, 0, "mock-value");
+        "__helper_retained_absence_missing_1001__", 1);
+    QueuedGetRequest following(1002, kRemoteTableId, present_key, 1);
 
     ASSERT_TRUE(request_queue.add_one_req(
         missing.GetOpaqueHandle(), sizeof(mako::get_request_t)));
@@ -427,7 +494,7 @@ TEST_F(MakoNontxnDistributed,
     // Run() must still drain requests that were queued before shutdown.
     request_queue.request_stop();
 
-    std::thread helper([&] {
+    auto helper = rusty::thread::spawn([&] {
         scoped_db_thread_ctx ctx(g_db, true, 1);
         TThread::set_mode(1);
         set_server_table_multiversion_mode();
@@ -441,13 +508,14 @@ TEST_F(MakoNontxnDistributed,
         tables[kRemoteTableId] = g_server_tbl;
         server.Register(g_db, &request_queue, &response_queue, tables);
         server.Run();
+        if (g_db->shard_participant_active()) g_db->shard_abort_txn(nullptr);
     });
-    helper.join();
+    helper.join().unwrap();
 
     ASSERT_EQ(missing.response_count(), 1U);
     EXPECT_EQ(missing.response().status,
-              static_cast<int>(mako::ErrorCode::ABORT));
-    EXPECT_FALSE(missing.transaction_active_at_response());
+              static_cast<int>(mako::ErrorCode::NOT_FOUND));
+    EXPECT_TRUE(missing.transaction_active_at_response());
 
     ASSERT_EQ(following.response_count(), 1U);
     EXPECT_EQ(following.response().status,
@@ -455,6 +523,106 @@ TEST_F(MakoNontxnDistributed,
     EXPECT_TRUE(following.transaction_active_at_response());
     EXPECT_GT(following.response_size(),
               sizeof(mako::get_response_t) - mako::max_value_length);
+}
+
+// @unsafe - Actual receiver admission wraps the retained C++ participant.
+TEST_F(MakoNontxnDistributed, LateTerminalsCannotFinishTheNextParticipant) {
+    const std::string key = "__participant_terminal_fence_row__";
+    g_server_tbl->put(lcdf::Str(key), "retained");
+    auto helper = rusty::thread::spawn([&] {
+        scoped_db_thread_ctx ctx(g_db, true, 1);
+        TThread::set_mode(1);
+        set_server_table_multiversion_mode();
+        TThread::set_shard_index(kServerShard);
+        TThread::set_pid(kParId);
+        TThread::set_nshards(g_config->nshards);
+        mako::ShardReceiver receiver(g_config->configFile);
+        std::map<int, abstract_ordered_index*> tables{{kRemoteTableId, g_server_tbl}};
+        receiver.Register(g_db, tables);
+
+        mako::get_request_t read{};
+        read.identity = {88, 1, 1, 0};
+        read.req_nr = 1;
+        read.table_id = kRemoteTableId;
+        read.len = key.size();
+        std::memcpy(read.key, key.data(), key.size());
+        mako::get_response_t read_reply{};
+        receiver.ReceiveRequest(mako::getReqType, reinterpret_cast<char*>(&read),
+                                reinterpret_cast<char*>(&read_reply));
+        ASSERT_EQ(read_reply.status, mako::ErrorCode::SUCCESS);
+
+        mako::basic_request_t prepare{};
+        prepare.identity = {88, 1, 2, 0};
+        prepare.req_nr = 2;
+        mako::get_int_response_t prepared{};
+        receiver.ReceiveRequest(mako::getTimestampReqType,
+                                reinterpret_cast<char*>(&prepare),
+                                reinterpret_cast<char*>(&prepared));
+        ASSERT_EQ(prepared.status, mako::ErrorCode::SUCCESS);
+        const uint32_t timestamp = prepared.result;
+        prepare.identity.sequence = 3;
+        prepare.req_nr = 3;
+        receiver.ReceiveRequest(mako::validateReqType, reinterpret_cast<char*>(&prepare),
+                                reinterpret_cast<char*>(&prepared));
+        ASSERT_EQ(prepared.status, mako::ErrorCode::SUCCESS);
+
+        mako::vector_int_request_t install{};
+        install.identity = {88, 1, 4, 0};
+        install.req_nr = 4;
+        install.len = sizeof(timestamp);
+        std::memcpy(install.value, &timestamp, sizeof(timestamp));
+        mako::basic_response_t terminal{};
+        receiver.ReceiveRequest(mako::installReqType, reinterpret_cast<char*>(&install),
+                                reinterpret_cast<char*>(&terminal));
+        ASSERT_EQ(terminal.status, mako::ErrorCode::SUCCESS);
+        receiver.ReceiveRequest(mako::installReqType, reinterpret_cast<char*>(&install),
+                                reinterpret_cast<char*>(&terminal));
+        EXPECT_EQ(terminal.status, mako::ErrorCode::SUCCESS);
+        EXPECT_FALSE(g_db->shard_participant_active());
+
+        read.identity = {88, 2, 5, 0};
+        read.req_nr = 5;
+        receiver.ReceiveRequest(mako::getReqType, reinterpret_cast<char*>(&read),
+                                reinterpret_cast<char*>(&read_reply));
+        ASSERT_EQ(read_reply.status, mako::ErrorCode::SUCCESS);
+        ASSERT_TRUE(g_db->shard_participant_active());
+        receiver.ReceiveRequest(mako::installReqType, reinterpret_cast<char*>(&install),
+                                reinterpret_cast<char*>(&terminal));
+        EXPECT_EQ(terminal.status, mako::ErrorCode::UNKNOWN);
+        EXPECT_TRUE(g_db->shard_participant_active());
+        prepare.identity = {88, 1, 6, 0};
+        prepare.req_nr = 6;
+        receiver.ReceiveRequest(mako::abortReqType, reinterpret_cast<char*>(&prepare),
+                                reinterpret_cast<char*>(&terminal));
+        EXPECT_EQ(terminal.status, mako::ErrorCode::ABORT);
+        EXPECT_TRUE(g_db->shard_participant_active());
+        prepare.identity = {88, 2, 7, 0};
+        prepare.req_nr = 7;
+        receiver.ReceiveRequest(mako::abortReqType, reinterpret_cast<char*>(&prepare),
+                                reinterpret_cast<char*>(&terminal));
+        EXPECT_EQ(terminal.status, mako::ErrorCode::SUCCESS);
+        EXPECT_FALSE(g_db->shard_participant_active());
+        prepare.identity = {88, 3, 8, 1};
+        prepare.req_nr = 8;
+        receiver.ReceiveRequest(mako::getTimestampReqType,
+                                reinterpret_cast<char*>(&prepare),
+                                reinterpret_cast<char*>(&prepared));
+        ASSERT_EQ(prepared.status, mako::ErrorCode::SUCCESS);
+        ASSERT_TRUE(g_db->shard_participant_active());
+        prepare.identity = {88, 3, 9, 0};
+        prepare.req_nr = 9;
+        receiver.ReceiveRequest(mako::abortReqType, reinterpret_cast<char*>(&prepare),
+                                reinterpret_cast<char*>(&terminal));
+        EXPECT_EQ(terminal.status, mako::ErrorCode::ABORT);
+        EXPECT_TRUE(g_db->shard_participant_active());
+        prepare.identity = {88, 3, 10, 1};
+        prepare.req_nr = 10;
+        receiver.ReceiveRequest(mako::abortReqType, reinterpret_cast<char*>(&prepare),
+                                reinterpret_cast<char*>(&terminal));
+        EXPECT_EQ(terminal.status, mako::ErrorCode::SUCCESS);
+        EXPECT_FALSE(g_db->shard_participant_active());
+    });
+    helper.join().unwrap();
 }
 
 }  // namespace

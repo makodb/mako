@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <memory>
+#include <rusty/cell.hpp>
 
 #include "lib/fasttransport.h"
 #include "lib/promise.h"
@@ -18,6 +19,11 @@ import std;
 namespace mako
 {
     using namespace std;
+
+    namespace {
+        // @safe - Unconfirmed obligations quarantine the OS thread permanently.
+        thread_local rusty::Cell<bool> participant_lane_quarantined{false};
+    }
 
     /**
      * file: configuration fileName
@@ -58,7 +64,16 @@ namespace mako
         client = client_owner.release();
     }
 
+    // @unsafe - The transport and participant sets are confined to this worker.
+    void ShardClient::beginAttempt(uint32_t term) {
+        if (participant_lane_quarantined.get() || touched_shards)
+            throw std::logic_error("previous remote attempt has no confirmed terminal");
+        client->BeginAttempt(term);
+    }
+
+    // @unsafe - Preserve unresolved obligations before releasing legacy transport.
     ShardClient::~ShardClient() {
+        if (touched_shards) participant_lane_quarantined.set(true);
         stop();
         delete client;
         client = nullptr;
@@ -135,38 +150,45 @@ namespace mako
         }
     }
 
+    // @unsafe - Counts one decoded SRPC completion.
     void ShardClient::SendToAllStatusCallBack(char *respBuf) {
         auto *resp = reinterpret_cast<mako::basic_response_t *>(respBuf);
-        status_received.push_back((int) resp->status);
+        ++num_response_received;
+        responses_successful &= resp->status == ErrorCode::SUCCESS;
     }
 
+    // @unsafe - Counts and records one decoded SRPC completion.
     void ShardClient::SendToAllIntCallBack(char *respBuf) {
         auto *resp = reinterpret_cast<mako::get_int_response_t *>(respBuf);
-        status_received.push_back((int) resp->status);
+        ++num_response_received;
+        responses_successful &= resp->status == ErrorCode::SUCCESS;
         if (resp->shard_index>=TThread::get_nshards()||resp->shard_index<0){
+            responses_successful = false;
             Warning("In SendToAllIntCallBack, the shard_idx is overflow: %d", resp->shard_index);
         }else{
             int_received[resp->shard_index] = resp->result;
         }
     }
 
+    // @safe - Marks an incomplete fanout unsuccessful.
     void ShardClient::SendToAllGiveUpTimeout() {
-        status_received.push_back((int) ErrorCode::TIMEOUT);
+        responses_successful = false;
     }
 
-    bool ShardClient::is_all_response_ok() {
-        bool ok = true;
-        for (auto code: status_received) ok &= (code == ErrorCode::SUCCESS);
-        status_received.clear();
-        for (int i=0;i<(int)int_received.size(); i++)
-            int_received[i] = 0;
+    // @safe - Missing destinations cannot turn an empty response set into success.
+    int ShardClient::is_all_response_ok() {
+        const bool ok = responses_successful &&
+                        num_response_received == num_response_waiting;
+        for (auto &value : int_received) value = 0;
         return ok ? ErrorCode::SUCCESS : ErrorCode::ERROR;
     }
 
-    void ShardClient::calculate_num_response_waiting(int shards_to_send_bits) {
-        int num_response_waiting = 0;
+    // @unsafe - Mirrors the destinations sent by the transport.
+    void ShardClient::calculate_num_response_waiting(uint64_t shards_to_send_bits) {
+        num_response_waiting = 0;
+        num_response_received = 0;
+        responses_successful = true;
         for (int dstShardIndex = 0; dstShardIndex < config.nshards; dstShardIndex++) {
-            if (dstShardIndex == shardIndex) continue;
             if ((shards_to_send_bits >> dstShardIndex) % 2 == 0) continue;
             num_response_waiting ++;
         }
@@ -174,8 +196,11 @@ namespace mako
     }
 
     // without skipping
-    void ShardClient::calculate_num_response_waiting_no_skip(int shards_to_send_bits) {
-        int num_response_waiting = 0;
+    // @unsafe - Control fanout includes this shard.
+    void ShardClient::calculate_num_response_waiting_no_skip(uint64_t shards_to_send_bits) {
+        num_response_waiting = 0;
+        num_response_received = 0;
+        responses_successful = true;
         for (int dstShardIndex = 0; dstShardIndex < config.nshards; dstShardIndex++) {
             if ((shards_to_send_bits >> dstShardIndex) % 2 == 0) continue;
             num_response_waiting ++;
@@ -184,6 +209,7 @@ namespace mako
     }
 
 
+    // @unsafe - Synchronous remote read retaining a participant obligation.
     int ShardClient::remoteScan(int remote_table_id, std::string start_key, std::string end_key, std::string &value) {
 
         int table_id = remote_table_id;
@@ -191,6 +217,7 @@ namespace mako
         int dstShardIndex = compute_shard_for_key(table_id, start_key);
 
         TThread::readset_shard_bits |= (1 << dstShardIndex);
+        touched_shards |= uint64_t{1} << dstShardIndex;
         Promise promise(GET_TIMEOUT);
         waiting = &promise;
 
@@ -225,6 +252,7 @@ namespace mako
         transport->Statistics();
     }
 
+    // @unsafe - Synchronous remote read retaining a participant obligation.
     int ShardClient::remoteGet(int remote_table_id, std::string key, std::string &value) {
 
         int table_id = remote_table_id;
@@ -232,6 +260,7 @@ namespace mako
         int dstShardIndex = compute_shard_for_key(table_id, key);
 
         TThread::readset_shard_bits |= (1 << dstShardIndex) ;
+        touched_shards |= uint64_t{1} << dstShardIndex;
         Promise promise(GET_TIMEOUT);
         waiting = &promise;
 
@@ -362,13 +391,19 @@ namespace mako
                            std::string(), op_result);
     }
 
+    // @unsafe - Stages explicit mutation kinds through the native wire boundary.
     int ShardClient::remoteBatchLock(
         vector<int> &remote_table_id_batch,
         vector<string> &key_batch,
-        vector<string> &value_batch
+        vector<string> &value_batch,
+        const vector<uint8_t> *operations
     ) {
         if (remote_table_id_batch.empty())
             return ErrorCode::SUCCESS;
+        if (key_batch.size() != remote_table_id_batch.size() ||
+            value_batch.size() != key_batch.size() ||
+            (operations && operations->size() != key_batch.size()))
+            throw std::invalid_argument("inconsistent remote mutation batch");
 
         map<int, BatchLockRequestWrapper> request_batch_per_shard;
         uint16_t server_id = shardIndex * config.warehouses + par_id;
@@ -381,9 +416,12 @@ namespace mako
 
             // after combine remoteLock + remoteValidate, this step might need to be skipped
             TThread::writeset_shard_bits |= (1 << dst_shard_idx) ;
+            touched_shards |= uint64_t{1} << dst_shard_idx;
             
             shards_to_send_bits |= (1 << dst_shard_idx);
-            request_batch_per_shard[dst_shard_idx].add_request(key_batch[i], value_batch[i], table_id, server_id);
+            request_batch_per_shard[dst_shard_idx].add_request(
+                key_batch[i], value_batch[i], table_id, server_id,
+                operations ? (*operations)[i] : 0);
         }
 
         Promise promise(BASIC_TIMEOUT);
@@ -432,8 +470,9 @@ namespace mako
         return promise.GetReply();
     }
 
+    // @unsafe - Certifies every touched participant, including read-only shards.
     int ShardClient::remoteValidate(uint32_t &watermark) {
-        int shards_to_send_bits = TThread::writeset_shard_bits;
+        int shards_to_send_bits = touched_shards;
         if (!shards_to_send_bits) return ErrorCode::SUCCESS;
         calculate_num_response_waiting(shards_to_send_bits);
         uint16_t server_id = shardIndex * config.warehouses + par_id;
@@ -455,23 +494,25 @@ namespace mako
         return is_all_response_ok();
     }
 
+    // @unsafe - Once INSTALL is sent, any uncertain acknowledgement is terminal.
     int ShardClient::remoteInstall(uint32_t timestamp) {
-        // Single timestamp encoding - no vector needed
-        char *cc = encode_single_timestamp(timestamp);
-        int shards_to_send_bits = TThread::writeset_shard_bits;
+        const int shards_to_send_bits = touched_shards;
         if (!shards_to_send_bits) return ErrorCode::SUCCESS;
         calculate_num_response_waiting(shards_to_send_bits);
-        uint16_t server_id = shardIndex * config.warehouses + par_id;
-
-        client->InvokeInstall(++tid,  // txn_nr
-                            shards_to_send_bits,
-                            server_id,
-                            cc,
-                            bind(&ShardClient::SendToAllStatusCallBack, this, placeholders::_1),
-                            bind(&ShardClient::SendToAllGiveUpTimeout, this),
-                            BASIC_TIMEOUT);
-        free(cc);
-        return is_all_response_ok();
+        const uint16_t server_id = shardIndex * config.warehouses + par_id;
+        try {
+            client->InvokeInstall(++tid, shards_to_send_bits, server_id,
+                                  reinterpret_cast<char *>(&timestamp),
+                                  bind(&ShardClient::SendToAllStatusCallBack, this, placeholders::_1),
+                                  bind(&ShardClient::SendToAllGiveUpTimeout, this),
+                                  BASIC_TIMEOUT);
+        } catch (...) {
+            return ErrorCode::UNKNOWN;
+        }
+        if (is_all_response_ok() != ErrorCode::SUCCESS)
+            return ErrorCode::UNKNOWN;
+        touched_shards = 0;
+        return ErrorCode::SUCCESS;
     }
 
     int ShardClient::warmupRequest(uint32_t req_val, uint8_t centerId, uint32_t &ret_value, uint64_t set_bits) {
@@ -583,8 +624,9 @@ namespace mako
         return is_all_response_ok();
     }
 
+    // @unsafe - Includes remote scan/absence dependencies in clock proposals.
     int ShardClient::remoteGetTimestamp(uint32_t &timestamp) {
-        int shards_to_send_bits = TThread::writeset_shard_bits;
+        int shards_to_send_bits = touched_shards;
         if (!shards_to_send_bits) return ErrorCode::SUCCESS;
         calculate_num_response_waiting(shards_to_send_bits);
         uint16_t server_id = shardIndex * config.warehouses + par_id;
@@ -625,11 +667,9 @@ namespace mako
         return is_all_response_ok();
     }
 
+    // @unsafe - Clears obligations only after all terminal acknowledgements.
     int ShardClient::remoteAbort() {
-        int shards_to_send_bits = TThread::writeset_shard_bits | TThread::readset_shard_bits;
-        if (TThread::trans_nosend_abort > 0){
-            shards_to_send_bits = shards_to_send_bits ^ TThread::trans_nosend_abort;
-        }
+        int shards_to_send_bits = touched_shards;
         if (!shards_to_send_bits) return ErrorCode::SUCCESS;
         calculate_num_response_waiting(shards_to_send_bits);
         uint16_t server_id = shardIndex * config.warehouses + par_id;
@@ -640,6 +680,8 @@ namespace mako
                             bind(&ShardClient::SendToAllStatusCallBack, this, placeholders::_1),
                             bind(&ShardClient::SendToAllGiveUpTimeout, this),
                             ABORT_TIMEOUT);
-        return is_all_response_ok();
+        const int status = is_all_response_ok();
+        if (status == ErrorCode::SUCCESS) touched_shards = 0;
+        return status;
     }
 }

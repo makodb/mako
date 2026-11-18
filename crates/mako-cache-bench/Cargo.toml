@@ -8,8 +8,18 @@ publish.workspace = true
 description = "Reproducible Milestone 1 comparison for mako-cache, mrx, and RocksDB"
 build = "build.rs"
 
+[features]
+# Which local engine the benchmarked cache is compiled against. Build the
+# Rust STO arm with `--no-default-features --features engine-sto`.
+default = ["engine-c-abi"]
+engine-c-abi = ["mako-cache/engine-c-abi", "mako-engine/c-abi"]
+engine-sto = ["mako-cache/engine-sto", "mako-engine/sto"]
+# Allocator diagnostics are separate builds and are never throughput samples.
+allocation-profile = []
+
 [dependencies]
-mako-cache = { path = "../mako-cache" }
+mako-cache = { path = "../mako-cache", default-features = false }
+mako-engine = { path = "../mako-engine", default-features = false }
 mrx = { path = "../mrx" }
 mrx-core = { path = "../mrx-core" }
 mrx-rocks = { path = "../mrx-rocks" }

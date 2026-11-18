@@ -68,6 +68,17 @@ impl LocalEngine for MakoLocalEngine {
     }
 }
 
+impl LocalDb {
+    /// Whether the database runtime can still admit transactions.
+    ///
+    /// The C ABI engine quarantines individual workers and has no shared
+    /// runtime poison state. Query worker health separately for admission on
+    /// the current thread.
+    pub fn runtime_is_healthy(&self) -> bool {
+        true
+    }
+}
+
 impl EngineDb for LocalDb {
     type Engine = MakoLocalEngine;
     type Table<'db>
@@ -81,6 +92,9 @@ impl EngineDb for LocalDb {
 
     fn open() -> Result<Self> {
         LocalDb::open()
+    }
+    fn runtime_is_healthy(&self) -> bool {
+        LocalDb::runtime_is_healthy(self)
     }
     unsafe fn claim_cache_order_namespace(&self, mode: CacheOrderMode) -> Result<()> {
         // SAFETY: forwarded unchanged.

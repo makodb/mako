@@ -461,6 +461,13 @@ std::vector<std::string> setup(int argc, char* argv[]) {
   }
 
   auto server_infos = Config::GetConfig()->GetMyServers();
+  // @unsafe - A shared topology spans independently owned shard replicas.
+  // One process-wide Raft group would replicate foreign writes to shard zero.
+  if (Config::mako_partitions_per_shard_ != 0 &&
+      config->GetNumPartition() > Config::mako_partitions_per_shard_) {
+    raft_group_mode_g = RaftGroupMode::kPerPartitionGroup;
+    Log_info("[RAFT-SETUP] Full Mako topology uses one group per partition");
+  }
 
   raft_workers_g.clear();
   workers_by_partition_g.clear();

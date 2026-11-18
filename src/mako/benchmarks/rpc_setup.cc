@@ -7,6 +7,7 @@
 
 #include <pthread.h>
 #include <unistd.h>
+#include <rusty/mutex.hpp>
 
 #include "benchmark_config.h"
 #include "lib/common.h"
@@ -22,11 +23,15 @@ using namespace mako;
 
 namespace {
 
-std::mutex g_helper_mu;
-std::vector<mako::ShardServer *> g_helper_servers;
-std::vector<std::thread> g_helper_threads;
+rusty::Mutex<bool> g_helper_mu{false};
+struct ShardRpcThreads {
+  std::vector<mako::ShardServer *> helpers;
+  std::vector<std::thread> helper_threads;
+  std::vector<std::thread> server_threads;
+};
+// @unsafe - Lifecycle calls are serialized; entries outlive their affine threads.
+std::map<int, ShardRpcThreads> g_shard_rpc_threads;
 std::mutex g_rpc_server_mu;
-std::vector<std::thread> g_rpc_server_threads;
 
 static inline size_t NumWarehouses() {
   return (size_t) BenchmarkConfig::getInstance().getScaleFactor();
@@ -50,6 +55,14 @@ void helper_server(
   std::map<int, abstract_ordered_index *> open_tables,
   spin_barrier *barrier_ready)
 {
+  // @unsafe - Establish the owning shard before creating backend TLS state.
+  BenchmarkConfig::setThreadLocalShardIndex(running_shardIndex);
+  auto* shard = BenchmarkConfig::getInstance().getShardContext(running_shardIndex);
+  if (shard && shard->runtime.get())
+    const_cast<SiloRuntime*>(shard->runtime.get())->BindToCurrentThread();
+  TThread::set_shard_index(running_shardIndex);
+  TThread::set_pid((g_wid - 1) % num_warehouses);
+  TThread::set_nshards(config->nshards);
   scoped_db_thread_ctx ctx(db, true, 1);
   TThread::set_mode(1);
 #if defined(DISABLE_MULTI_VERSION)
@@ -67,8 +80,8 @@ void helper_server(
     config->configFile, running_shardIndex, shardIdx, par_id);
   ss->Register(db, queue, queue_response, open_tables);
   {
-    std::lock_guard<std::mutex> lock(g_helper_mu);
-    g_helper_servers.push_back(ss);
+    auto lock = g_helper_mu.lock().unwrap();
+    g_shard_rpc_threads.at(running_shardIndex).helpers.push_back(ss);
   }
 
   // Signal that this helper is ready before starting the event loop
@@ -89,6 +102,7 @@ void rpc_server(
   std::vector<FastTransport*> &server_transports,
   std::atomic<int> &set_server_transport)
 {
+  BenchmarkConfig::setThreadLocalShardIndex(running_shardIndex);
   std::string local_uri = config->shard(running_shardIndex, mako::convertCluster(cluster)).host;
   int base = 5;
   int id = num_warehouses + base + alpha;
@@ -132,13 +146,14 @@ void mako::setup_helper(
   abstract_db *db,
   const std::map<int, abstract_ordered_index *> &open_tables)
 {
+  auto &cfg = BenchmarkConfig::getInstance();
+  auto &state = g_shard_rpc_threads.at(cfg.getShardIndex());
   {
-    std::lock_guard<std::mutex> lock(g_helper_mu);
-    if (!g_helper_servers.empty() || !g_helper_threads.empty()) {
+    auto lock = g_helper_mu.lock().unwrap();
+    if (!state.helpers.empty() || !state.helper_threads.empty()) {
       Panic("setup_helper called while previous helpers are live");
     }
   }
-  auto &cfg = BenchmarkConfig::getInstance();
   auto &queue_holders = cfg.getQueueHolders();
   auto &queue_holders_response = cfg.getQueueHoldersResponse();
 
@@ -157,7 +172,7 @@ void mako::setup_helper(
     if (i / (int)NumWarehouses() == (int)cfg.getShardIndex())
       continue;
 
-    g_helper_threads.emplace_back(
+    state.helper_threads.emplace_back(
       helper_server,
       i + 1,
       cfg.getCluster(),
@@ -169,7 +184,7 @@ void mako::setup_helper(
       queue_holders_response[i],
       open_tables,
       &barrier_ready);
-    auto &t = g_helper_threads.back();
+    auto &t = state.helper_threads.back();
 #if defined(__APPLE__)
     // macOS pthread_setname_np() only supports naming the *current* thread.
 #else
@@ -182,13 +197,20 @@ void mako::setup_helper(
   barrier_ready.wait_for();
 }
 
+// @unsafe - Publish to existing legacy helpers under their lifecycle lock.
 void mako::setup_update_table(int table_id, abstract_ordered_index *table)
 {
   if (!table)
     return;
 
-  std::lock_guard<std::mutex> lock(g_helper_mu);
-  for (auto *server : g_helper_servers) {
+  auto lock = g_helper_mu.lock().unwrap();
+  const auto found = g_shard_rpc_threads.find(
+      BenchmarkConfig::getInstance().getShardIndex());
+  // Tables may be created before RPC startup, or without any RPC server in
+  // local-only runs. setup_helper receives the complete catalog at startup.
+  if (found == g_shard_rpc_threads.end())
+    return;
+  for (auto *server : found->second.helpers) {
     server->UpdateTable(table_id, table);
   }
 }
@@ -196,23 +218,27 @@ void mako::setup_update_table(int table_id, abstract_ordered_index *table)
 void mako::stop_helper()
 {
   auto &cfg = BenchmarkConfig::getInstance();
+  auto found = g_shard_rpc_threads.find(cfg.getShardIndex());
+  if (found == g_shard_rpc_threads.end())
+    return;
+  auto &state = found->second;
   auto &queue_holders = cfg.getQueueHolders();
   for (auto &entry : queue_holders) {
     if (entry.second) {
       entry.second->request_stop();
     } 
   }
-  for (auto &helper_thread : g_helper_threads) {
+  for (auto &helper_thread : state.helper_threads) {
     if (helper_thread.joinable()) {
       helper_thread.join();
     }
   }
-  g_helper_threads.clear();
+  state.helper_threads.clear();
 
   std::vector<mako::ShardServer *> helper_servers;
   {
-    std::lock_guard<std::mutex> lock(g_helper_mu);
-    helper_servers.swap(g_helper_servers);
+    auto lock = g_helper_mu.lock().unwrap();
+    helper_servers.swap(state.helpers);
   }
   for (mako::ShardServer *server : helper_servers) {
     delete server;
@@ -226,16 +252,18 @@ void mako::setup_rpc_server()
   auto &server_transports = cfg.getServerTransports();
   auto &queue_holders = cfg.getQueueHolders();
   auto &queue_holders_response = cfg.getQueueHoldersResponse();
-  auto &set_server_transport = cfg.getServerTransportReadyCounter();
+  auto &state = g_shard_rpc_threads[cfg.getShardIndex()];
+  // rpc_server accesses this only through its final readiness publication.
+  std::atomic<int> set_server_transport{0};
 
-  if (!g_rpc_server_threads.empty() || !server_transports.empty()) {
+  if (!state.server_threads.empty() || !server_transports.empty()) {
     Panic("setup_rpc_server called while a previous RPC server is live");
   }
   set_server_transport.store(0, std::memory_order_release);
   server_transports.resize(cfg.getNumRpcServer(), nullptr);
-  g_rpc_server_threads.reserve(cfg.getNumRpcServer());
+  state.server_threads.reserve(cfg.getNumRpcServer());
   for (int i = 0; i < (int)cfg.getNumRpcServer(); ++i) {
-    g_rpc_server_threads.emplace_back(
+    state.server_threads.emplace_back(
       rpc_server,
       cfg.getCluster(),
       (int)cfg.getShardIndex(),
@@ -244,7 +272,7 @@ void mako::setup_rpc_server()
       i,
       std::ref(server_transports),
       std::ref(set_server_transport));
-    auto &t = g_rpc_server_threads.back();
+    auto &t = state.server_threads.back();
 #if defined(__APPLE__)
     // macOS pthread_setname_np() only supports naming the *current* thread.
 #else
@@ -265,11 +293,16 @@ void mako::setup_rpc_server()
   }
 }
 
-void mako::stop_rpc_server()
+// @unsafe - Called only after all workers which may contact this shard joined.
+static void stop_shard_rpc_server()
 {
   std::lock_guard<std::mutex> lifecycle_lock(g_rpc_server_mu);
   auto &cfg = BenchmarkConfig::getInstance();
   auto &server_transports = cfg.getServerTransports();
+  auto found = g_shard_rpc_threads.find(cfg.getShardIndex());
+  if (found == g_shard_rpc_threads.end())
+    return;
+  auto &state = found->second;
 
   // Use actual vector size to avoid out-of-bounds access
   // In multi-shard mode, server_transports may be empty while getNumRpcServer() > 0
@@ -286,12 +319,12 @@ void mako::stop_rpc_server()
                              << " stopped" << std::endl;
     }
   }
-  for (auto &server_thread : g_rpc_server_threads) {
+  for (auto &server_thread : state.server_threads) {
     if (server_thread.joinable()) {
       server_thread.join();
     }
   }
-  g_rpc_server_threads.clear();
+  state.server_threads.clear();
 
   stop_helper();
   for (FastTransport *transport : server_transports) {
@@ -308,9 +341,27 @@ void mako::stop_rpc_server()
     delete queue;
   }
   cfg.getQueueHoldersResponse().clear();
-  cfg.getServerTransportReadyCounter().store(0, std::memory_order_release);
   mako::benchmark_cerr() << "[STOP_SERVER] All server transports stopped"
                          << std::endl;
+}
+
+// @unsafe - Single-shard shutdown; colocated shards share a join boundary.
+void mako::stop_rpc_server() {
+  const auto* config = BenchmarkConfig::getInstance().getConfig();
+  if (config && config->multi_shard_mode)
+    return;
+  stop_shard_rpc_server();
+}
+
+// @unsafe - The caller has joined every colocated runner before releasing RPC.
+void mako::stop_all_rpc_servers() {
+  auto &cfg = BenchmarkConfig::getInstance();
+  const int previous_shard = cfg.getShardIndex();
+  for (const auto &entry : g_shard_rpc_threads) {
+    BenchmarkConfig::setThreadLocalShardIndex(entry.first);
+    stop_shard_rpc_server();
+  }
+  BenchmarkConfig::setThreadLocalShardIndex(previous_shard);
 }
 
 // ============================================================================
@@ -340,14 +391,8 @@ bool mako::setup_client_tcp_server(int port)
     return false;
   }
 
-  // Get the first available ShardReceiver from helper servers
-  ShardReceiver* receiver = nullptr;
-  {
-    std::lock_guard<std::mutex> helper_lock(g_helper_mu);
-    if (!g_helper_servers.empty()) {
-      receiver = g_helper_servers[0]->GetReceiver();
-    }
-  }
+  // Borrow a receiver from this shard, never another colocated shard's helpers.
+  ShardReceiver* receiver = get_shard_receiver();
 
   if (!receiver) {
     mako::benchmark_cerr()
@@ -449,9 +494,11 @@ void mako::stop_client_tcp_server()
 // Get the ShardReceiver instance for the current shard
 ShardReceiver* mako::get_shard_receiver()
 {
-  std::lock_guard<std::mutex> lock(g_helper_mu);
-  if (!g_helper_servers.empty()) {
-    return g_helper_servers[0]->GetReceiver();
+  auto lock = g_helper_mu.lock().unwrap();
+  const auto found = g_shard_rpc_threads.find(
+      BenchmarkConfig::getInstance().getShardIndex());
+  if (found != g_shard_rpc_threads.end() && !found->second.helpers.empty()) {
+    return found->second.helpers.front()->GetReceiver();
   }
   return nullptr;
 }

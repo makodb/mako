@@ -361,27 +361,29 @@ void submit(const char* log, int len, uint32_t par_id) {
 // but no production reader or writer anywhere.  The only `debug`
 // reference was a `// marker:ansh for debug` line comment inside
 // the also-dead `electionMonitor` (deleted alongside).
-void add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
+// @unsafe - Serialize admission against the legacy partition submission queue.
+bool add_log_to_nc(const char* log, int len, uint32_t par_id, int batch_size) {
   // Find the worker for this partition by iterating, don't assume index == partition_id
   for (auto& worker : pxs_workers_g) {
     if (worker->site_info_->partition_id_ != par_id) {
       continue;
     }
-
-    // Check if this worker is the leader for this partition
-    if(!worker->is_leader){
-      if(es->machine_id != 0)
-        Log_info("Did not find to be leader, len: {},par_id:{}",len,par_id);
-      return;
-    }
-
     // Submit the log
-    add_log_without_queue((char*)log, len, par_id);
-    return;
+    std::unique_lock<std::mutex> lock(worker->condition_mutex);
+    worker->election_state_lock.lock();
+    if (!worker->is_leader) {
+      worker->election_state_lock.unlock();
+      return false;
+    }
+    worker->election_state_lock.unlock();
+    worker->IncSubmit();
+    worker->Submit(log, len, par_id);
+    return true;
   }
 
   // If we get here, no worker found for this partition
   Log_error("add_log_to_nc: no worker found for par_id {}", par_id);
+  return false;
 }
 
 // removed `void* PollSubQNc(void*)` — body
@@ -538,7 +540,8 @@ void stuff_todo_learner_upgrade(){
 void* heartbeatBackground(void* arg) {
   auto poll_arc = PollThread::create();
   auto rpc_cli = srpc::Client::create(poll_arc);
-  auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(0);
+  auto site_leader = Config::GetConfig()->LeaderSiteByPartitionId(
+      pxs_workers_g.front()->site_info_->partition_id_);
   // get the leader's host + port
   auto port = site_leader.port + PaxosWorker::CtrlPortDelta;
   std::string addr_port = site_leader.GetHostAddr(PaxosWorker::CtrlPortDelta);

@@ -4,12 +4,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/* Closed, lockstep C bridge for the sto_tpcc_bench comparison target. Its
- * supported profile is exactly one local, non-replicated shard with a bounded
- * fixed set of long-lived OS workers. It is not a stable generic STO ABI and
- * does not provide remote indexes, distributed commit, or replication. Create
- * the database and complete table set during startup, before worker attachment
- * or concurrent table use. */
+/* Lockstep native STO bridge. Local fast-path transactions and retained
+ * distributed participants share the same worker/runtime and table storage.
+ * Create the database and complete table set before worker attachment.
+ * Handles and retained participants are OS-thread affine. */
 
 #ifdef __cplusplus
 #define STO_TPCC_NOEXCEPT noexcept
@@ -32,6 +30,8 @@ enum {
   STO_TPCC_BUFFER_TOO_SMALL = 4,
   STO_TPCC_FATAL = 5,
   STO_TPCC_RESOURCE_EXHAUSTED = 6,
+  STO_TPCC_UNKNOWN = 7,
+  STO_TPCC_COMMITTED_ERROR = 8,
 };
 
 /* Pointer safety contract for every function below: each non-NULL handle,
@@ -43,6 +43,92 @@ enum {
  * overlap one another unless an operation states a stricter rule. NULL is
  * accepted only where the operation explicitly permits it. Violating these
  * requirements is outside the C ABI contract. */
+
+/* Protocol reports survive terminal failures: only ABORTED + RETRY may retry.
+ * UNKNOWN and COMMITTED_ERROR must fail-stop at the legacy C++ boundary. */
+enum { STO_TPCC_ACTIVE = 0, STO_TPCC_ABORTED = 1,
+       STO_TPCC_COMMITTED = 2, STO_TPCC_INDETERMINATE = 3 };
+typedef struct sto_tpcc_protocol_report {
+  uint32_t disposition;
+  uint32_t phase; /* 0 idle, 1 collecting, 2 validated, 3 installed */
+  uint32_t time_term;
+  uint32_t read_dependency; /* base, never encoded */
+} sto_tpcc_protocol_report;
+
+/* Callback return values use sto_tpcc_status, not legacy ErrorCode.
+ * All callbacks are synchronous, must not unwind or reenter the handle.
+ * STAGE sends one copied remote mutation and acquires its participant lock.
+ * TIMESTAMP returns the maximum touched-participant proposal via timestamp,
+ * including read-only participants and their complete scan dependencies.
+ * VALIDATE/INSTALL/ABORT address every touched participant including readers.
+ * LOG receives a complete one-transaction legacy batch, including footer. */
+enum { STO_TPCC_PROTOCOL_STAGE = 0, STO_TPCC_PROTOCOL_TIMESTAMP = 1,
+       STO_TPCC_PROTOCOL_VALIDATE = 2, STO_TPCC_PROTOCOL_INSTALL = 3,
+       STO_TPCC_PROTOCOL_ABORT = 4, STO_TPCC_PROTOCOL_LOG = 5 };
+typedef struct sto_tpcc_protocol_request {
+  uint32_t action;
+  uint32_t shard;
+  uint16_t table_id;
+  uint8_t operation; /* 0 upsert, 1 conditional insert, 2 delete */
+  const uint8_t *key;
+  size_t key_length;
+  const uint8_t *value;
+  size_t value_length;
+  uint32_t timestamp; /* base on timestamp/install, encoded on log */
+} sto_tpcc_protocol_request;
+typedef sto_tpcc_status (*sto_tpcc_protocol_callback)(
+    void *, sto_tpcc_protocol_request *);
+typedef int32_t (*sto_tpcc_versioned_scan_callback)(
+    void *, const uint8_t *, size_t, const uint8_t *, size_t, uint32_t);
+
+sto_tpcc_status sto_tpcc_protocol_begin(sto_tpcc_thread *, uint32_t term);
+sto_tpcc_status sto_tpcc_protocol_state(sto_tpcc_thread *,
+    sto_tpcc_protocol_report *, uint32_t *empty);
+/* UINT32_MAX marks a local dependency; zero time_term is bootstrap. */
+sto_tpcc_status sto_tpcc_protocol_observe_read(sto_tpcc_thread *,
+    uint32_t shard, uint32_t time_term);
+/* known_mask distinguishes unknown watermark from known bootstrap zero.
+ * Watermarks are base units; failure_bound_known is zero or one. */
+sto_tpcc_status sto_tpcc_protocol_visibility(sto_tpcc_thread *,
+    const uint32_t *stable_through_10, uint32_t known_mask,
+    uint32_t failure_bound, uint32_t failure_bound_known);
+sto_tpcc_status sto_tpcc_protocol_get(sto_tpcc_thread *, const sto_tpcc_table *,
+    const uint8_t *, size_t, uint8_t *, size_t, size_t *, uint32_t *);
+sto_tpcc_status sto_tpcc_protocol_scan(sto_tpcc_thread *, const sto_tpcc_table *,
+    int32_t direction, int32_t lower_kind, const uint8_t *, size_t,
+    int32_t upper_kind, const uint8_t *, size_t, size_t limit,
+    sto_tpcc_versioned_scan_callback, void *, size_t *);
+/* Reserves strictly above this participant's complete read dependency. */
+sto_tpcc_status sto_tpcc_protocol_timestamp(sto_tpcc_thread *, uint32_t *base);
+/* Monotonic authoritative stable-history pruning floor in BASE units;
+ * zero means no known stability and leaves retention unchanged. */
+sto_tpcc_status sto_tpcc_table_history_floor(const sto_tpcc_table *, uint32_t base);
+/* Flushes only new/changed remote mutations through STAGE. Use before remote
+ * reads, scans, and conditional mutation returns to preserve read-your-writes. */
+sto_tpcc_status sto_tpcc_protocol_flush_remote(sto_tpcc_thread *,
+    sto_tpcc_protocol_callback, void *);
+sto_tpcc_status sto_tpcc_protocol_mutate(sto_tpcc_thread *, const sto_tpcc_table *,
+    uint16_t table_id, uint8_t operation, const uint8_t *, size_t,
+    const uint8_t *, size_t, uint32_t lock_now);
+sto_tpcc_status sto_tpcc_protocol_stage_remote(sto_tpcc_thread *, uint32_t shard,
+    uint16_t table_id, uint8_t operation, const uint8_t *, size_t,
+    const uint8_t *, size_t);
+sto_tpcc_status sto_tpcc_protocol_lock(sto_tpcc_thread *);
+sto_tpcc_status sto_tpcc_protocol_validate(sto_tpcc_thread *);
+sto_tpcc_status sto_tpcc_protocol_install(sto_tpcc_thread *, uint32_t base);
+sto_tpcc_status sto_tpcc_protocol_finish(sto_tpcc_thread *, uint32_t committed,
+    sto_tpcc_protocol_report *);
+sto_tpcc_status sto_tpcc_protocol_log(sto_tpcc_thread *, uint32_t latency_millis,
+    sto_tpcc_protocol_callback, void *);
+sto_tpcc_status sto_tpcc_protocol_commit(sto_tpcc_thread *, uint32_t latency_millis,
+    sto_tpcc_protocol_callback, void *, sto_tpcc_protocol_report *);
+sto_tpcc_status sto_tpcc_distributed_timestamp(uint32_t *base);
+sto_tpcc_status sto_tpcc_observe_timestamp(uint32_t time_term);
+/* Replay compares source metadata, applies without logging and closes its own
+ * attempt. Requires an idle handle; false conflicts are RETRY only. */
+sto_tpcc_status sto_tpcc_replay_apply(sto_tpcc_thread *, const sto_tpcc_table *,
+    const uint8_t *, size_t, const uint8_t *, size_t,
+    uint32_t is_delete, uint32_t source_time_term);
 
 /* A zero field selects the Rust runtime's bounded default. */
 typedef struct sto_tpcc_db_config {
@@ -73,7 +159,9 @@ typedef struct sto_tpcc_table_usage_info {
   uint64_t max_consumed_record_ids;
 } sto_tpcc_table_usage_info;
 
-/* A zero field selects sto-masstree's bounded default for that field. */
+/* A zero field selects sto-masstree's bounded default for that field.
+ * Tables always use record-local OCC and record/predicate scan certification;
+ * ordered-commit trusted scan generations are not supported by this FFI. */
 typedef struct sto_tpcc_table_config {
   uint64_t max_retained_records;
   uint64_t max_retained_key_bytes;
@@ -83,36 +171,12 @@ typedef struct sto_tpcc_table_config {
   size_t scan_max_key_arena_bytes;
   size_t max_scan_chunks;
   size_t max_scan_physical_records;
-  /* Nonzero enables one table-wide value-generation RMW per committed row so
-   * trusted scans can retain one conservative STO observation. Leave zero for
-  * point-only tables. */
-  uint32_t trusted_scan_value_generation;
   /* Nonzero selects a 192-byte registry entry whose atomic payload stores
    * committed values through 160 bytes without ArcSwap publication.
-   *
-   * ABI note: this field consumes the four bytes that were trailing padding
-   * in the preceding definition. Its addition does not change sizeof on the
-   * supported 64-bit ABI, but every caller must be rebuilt so those bytes are
-   * initialized rather than carrying indeterminate former padding. */
+   * All callers must rebuild against this definition; configuration structs
+   * are passed directly across the native ABI. */
   uint32_t bounded_atomic_values;
 } sto_tpcc_table_config;
-
-#if UINTPTR_MAX == UINT64_MAX
-#ifdef __cplusplus
-static_assert(offsetof(sto_tpcc_table_config, trusted_scan_value_generation) ==
-              64);
-static_assert(offsetof(sto_tpcc_table_config, bounded_atomic_values) == 68);
-static_assert(sizeof(sto_tpcc_table_config) == 72);
-#else
-_Static_assert(offsetof(sto_tpcc_table_config,
-                        trusted_scan_value_generation) == 64,
-               "sto_tpcc_table_config trusted-scan offset changed");
-_Static_assert(offsetof(sto_tpcc_table_config, bounded_atomic_values) == 68,
-               "sto_tpcc_table_config bounded-value offset changed");
-_Static_assert(sizeof(sto_tpcc_table_config) == 72,
-               "sto_tpcc_table_config size changed");
-#endif
-#endif
 
 /* Full retains the worker-local direct-mapped cache and scan population.
  * LastOnly probes and updates just the most recent exact point resolution;

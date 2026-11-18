@@ -449,10 +449,10 @@ static bool run_workers_multi_shard(const vector<int>& shard_indices)
     Notice("Created bench_runner for shard %d", shard_idx);
   }
 
-  // Wire up cross-shard tables for local access (multi-shard mode only)
-  // Each runner needs tables from all OTHER local shards
+  // Only unreplicated colocated transactions can share direct table pointers.
+  // Replicated transactions retain proxies so foreign writes use their own log.
   Notice("Wiring up cross-shard tables for %zu runners", runners.size());
-  for (size_t i = 0; i < runners.size(); i++) {
+  for (size_t i = 0; !benchConfig.getIsReplicated() && i < runners.size(); i++) {
     // Wire up tables from all other shards
     for (size_t j = 0; j < runners.size(); j++) {
       if (i == j) continue;  // Skip self
@@ -506,6 +506,8 @@ static bool run_workers_multi_shard(const vector<int>& shard_indices)
   for (auto& t : shard_threads) {
     t.join();
   }
+  // No shard may destroy helpers while another shard can still call them.
+  mako::stop_all_rpc_servers();
 
   // Cleanup
   if (benchConfig.getSlowExit()) {
@@ -621,18 +623,8 @@ main(int argc, char **argv)
   }
 
 #if defined(MAKO_RUST_STO_TPCC)
-  // Keep this capability check ahead of init_env(): the Rust comparison
-  // adapter deliberately implements one non-replicated shard and no remote
-  // indexes or distributed commit. It also has a finite shared native/C++
-  // attachment budget. The wrapper repeats both checks as defense in depth,
-  // but CLI misuse must fail cleanly before allocating a database.
-  if (benchConfig.getStorageEngine() == "rust" &&
-      (benchConfig.getNshards() != 1 || benchConfig.getIsReplicated())) {
-    mako::benchmark_cerr()
-        << "[ERROR] Rust STO TPC-C comparison supports one non-replicated shard"
-        << endl;
-    return 2;
-  }
+  // Reject invalid native attachment budgets before allocating the backend.
+  // Rust participants use the same shard RPC and replication topology as C++.
   if (benchConfig.getStorageEngine() == "rust") {
     try {
       (void)rust_sto_tpcc_detail::db_config_for_worker_count(
@@ -665,8 +657,19 @@ main(int argc, char **argv)
     // the same SiloRuntime so that cross-shard local table access works correctly.
     // Otherwise, a transaction from shard 0's worker accessing shard 1's tables
     // would use the wrong transaction context and fail.
-    rusty::Arc<SiloRuntime> shared_runtime = SiloRuntime::Create();
+    // @safe - The Rust Masstree ABI is bound to the process-global runtime.
+    // Retain that same owner so runner/loader binding cannot select a foreign one.
+    const bool rust_backend = benchConfig.getStorageEngine() == "rust";
+    rusty::Arc<SiloRuntime> shared_runtime =
+        rust_backend
+            ? SiloRuntime::GlobalDefaultOwner().clone()
+            : SiloRuntime::Create();
     Notice("Created shared SiloRuntime %d for multi-shard mode", shared_runtime->id());
+    if (rust_backend) {
+      // @unsafe - Native Masstree uses this runtime's pinned loader arenas.
+      SiloRuntime::BindCurrentThread(shared_runtime.as_ptr());
+      initialize_benchmark_allocator();
+    }
 
     for (int shard_idx : benchConfig.getConfig()->local_shard_indices) {
       ShardContext ctx;

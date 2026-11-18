@@ -39,6 +39,9 @@ void setup_rpc_server();
 // Stop all RPC servers previously started by setup_rpc_server().
 void stop_rpc_server();
 
+// Stop colocated shards after every runner has joined (also safe in single mode).
+void stop_all_rpc_servers();
+
 // Start TCP server for remote client connections.
 // The TCP server listens on the specified port and routes client API
 // requests (BeginTxn, Commit, Put, Get, etc.) to the ShardReceiver handlers.

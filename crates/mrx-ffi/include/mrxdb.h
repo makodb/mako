@@ -134,6 +134,17 @@ void mrxdb_close(mrxdb_t *db, char **errptr);
 char *mrxdb_get(mrxdb_t *db, const char *key, size_t keylen, size_t *vallen,
                 char **errptr);
 
+/* Read a key into a caller-owned buffer, with no allocation.
+ *
+ * Returns 1 if the key is live (and sets *outlen), 0 if it is absent or
+ * deleted, -1 on failure. A value larger than `cap` is an error rather
+ * than a silent truncation, so *errptr says so and nothing is written.
+ *
+ * Use this, not mrxdb_get, in a read loop: it neither allocates a copy
+ * nor makes the caller copy and free one. */
+int mrxdb_get_into(mrxdb_t *db, const char *key, size_t keylen, char *buf,
+                   size_t cap, size_t *outlen, char **errptr);
+
 /* Write. Returns once VISIBLE, not once durable. */
 void mrxdb_put(mrxdb_t *db, const char *key, size_t keylen, const char *val,
                size_t vallen, char **errptr);

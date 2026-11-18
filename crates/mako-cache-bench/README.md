@@ -27,14 +27,53 @@ The accepted zoo-002 run is retained in the
 with its complete
 [machine-readable report](../../docs/benchmarks/mako-cache-milestone1-zoo-002.json).
 
-The asynchronous arms share a fixed `2^18`-mutation capacity budget. MRX
-uses `2^18` mutation-ticket slots; Mako uses
-`ceil(2^18 / transaction_size)` transaction-record slots. The largest timed
-acceptance phase is exactly `2^18` mutations, so neither arm can win ACK
-throughput merely by buffering more than the other. Seed and warmup work are
-each drained through the applied barrier before timing begins. The measured
-applied barrier runs immediately after the ACK interval, before background
-record validation, so its drain cannot hide behind untimed validation work.
+The asynchronous arms of that acceptance benchmark share a fixed
+`2^18`-mutation capacity budget. MRX uses `2^18` mutation-ticket slots; Mako
+uses `ceil(2^18 / transaction_size)` transaction-record slots. The largest
+timed acceptance phase is exactly `2^18` mutations, so neither arm can win
+ACK throughput merely by buffering more than the other. Seed and warmup
+work are each drained through the applied barrier before timing begins.
+The measured applied barrier runs immediately after the ACK interval,
+before background record validation, so its drain cannot hide behind
+untimed validation work.
+
+The sample and recovery checks verify each key's expected final counter for
+reads, writes, and serializable RMW. They account for warmup and measurement
+starting their key schedules separately. A matching aggregate checksum cannot
+hide a mutation applied to the wrong key. Contended MRX and raw RocksDB RMW
+remain weaker baselines and retain aggregate lost-update bounds instead.
+
+## Comparing the transaction engines
+
+The benchmark can select either `engine-c-abi` or `engine-sto`. Build each
+with `--no-default-features`, the explicit engine feature, and a separate
+`CARGO_TARGET_DIR`. The Rust STO build also needs the native Masstree library
+environment used by CMake's `run_mako_engine_sto_tests` target. Both builds
+must use the same verified native source, allocator, compiler settings, and
+RocksDB libraries. Copying a binary to zoo-002 does not make a different
+system library version equivalent.
+
+`engine_compare` separates three measurements in fresh processes:
+
+- `engine` commits in memory without a cache log or RocksDB.
+- `engine-logged` also encodes the restricted one-put log record, but does
+  not replay it to RocksDB.
+- `cache-ack` includes the cache and its background RocksDB writer. Its
+  queue can hold every measured write. It checks visible values and queue
+  accounting, then discards the unapplied tail. It does not measure
+  sustainable persistence throughput.
+
+All use the same 128-byte values and 256 disjoint keys per worker. The
+checksum is disabled for these foreground comparisons. `--perf 1` records
+worker cycles, instructions, and the PMU running ratio. Build the optional
+`allocation-profile` feature separately to count Rust allocations, never
+mix those timings with the ordinary throughput results.
+
+Use [`gc_soak`](gc-soak.md) for bounded-queue, sustained RocksDB application
+with production CRC, complete drain, and a fresh-process reopen. Its v2
+protocol and completion records identify the selected engine. Keep boost
+disabled on zoo-002 and report ACK throughput separately from fully applied
+throughput. Neither measurement promises WAL fsync.
 
 ## Zoo-002 acceptance run
 

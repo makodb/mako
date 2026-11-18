@@ -109,10 +109,7 @@ impl Blobs for BlockingBlobs {
         self.inner.for_each_key(callback)
     }
 
-    fn for_each_entry(
-        &self,
-        callback: &mut EntryVisitor<'_>,
-    ) -> Result<(), BlobError> {
+    fn for_each_entry(&self, callback: &mut EntryVisitor<'_>) -> Result<(), BlobError> {
         self.inner.for_each_entry(callback)
     }
 }
@@ -944,10 +941,7 @@ impl Blobs for AmbiguousGcBlobs {
     fn for_each_key(&self, callback: &mut dyn FnMut(&[u8])) -> Result<(), BlobError> {
         self.inner.for_each_key(callback)
     }
-    fn for_each_entry(
-        &self,
-        callback: &mut EntryVisitor<'_>,
-    ) -> Result<(), BlobError> {
+    fn for_each_entry(&self, callback: &mut EntryVisitor<'_>) -> Result<(), BlobError> {
         self.inner.for_each_entry(callback)
     }
     fn write_batch(&self, operations: &[BlobOp<'_>]) -> Result<(), BlobError> {
@@ -1052,6 +1046,13 @@ fn gc_stops_at_first_unexpired_record_in_untagged_stream_despite_later_expired_r
     // the first unexpired record and preserve the dense suffix, even when
     // later records in lane order are expired.
     let backend = Arc::new(MemBlobs::new());
+    let format = checkpoint::encode_format().unwrap();
+    backend
+        .write_batch(&[BlobOp::Put {
+            key: checkpoint::FORMAT_KEY,
+            val: &format,
+        }])
+        .unwrap();
     let coordinator = ApplyCoordinator::empty();
     // Lane 0 (untagged): sequence 1, 2, 3 with reversed timestamps.
     for (sequence, physical_us) in [(1, 1_000), (2, 3_000), (3, 2_000)] {
@@ -1065,21 +1066,34 @@ fn gc_stops_at_first_unexpired_record_in_untagged_stream_despite_later_expired_r
             CoordinatorApplyOutcome::Applied
         ));
     }
-    // Cutoff at 1,500: record 1 (1,000) is expired, record 2 (3,000) is
+    // Cutoff at 2,500: record 1 (1,000) is expired, record 2 (3,000) is
     // unexpired, record 3 (2,000) is expired but after the unexpired one.
     let step = coordinator
-        .gc_step(&*backend, 1_500, WritebackConfig::default().max_record_bytes)
+        .gc_step(
+            &*backend,
+            2_500,
+            WritebackConfig::default().max_record_bytes,
+        )
         .unwrap();
     assert!(
         matches!(step, crate::writeback::GcStep::Progress { records: 1, .. }),
         "expected exactly one reclaimed record, got {step:?}"
     );
-    // The dense suffix (2, 3] must remain.
+    // Both positions in the dense suffix (1, 3] must remain.
     assert_eq!(retained_log_count(&backend), 2);
-    let metadata = checkpoint::LaneMetadata::decode(
-        &backend.get(&checkpoint::lane_key(0)).unwrap().unwrap(),
-    )
-    .unwrap();
+    assert!(backend
+        .get(&checkpoint::log_key(0, 1).unwrap())
+        .unwrap()
+        .is_none());
+    for sequence in [2, 3] {
+        assert!(backend
+            .get(&checkpoint::log_key(0, sequence).unwrap())
+            .unwrap()
+            .is_some());
+    }
+    let metadata =
+        checkpoint::LaneMetadata::decode(&backend.get(&checkpoint::lane_key(0)).unwrap().unwrap())
+            .unwrap();
     assert_eq!(metadata.reclaimed, 1);
     assert_eq!(metadata.applied, 3);
 
@@ -1088,7 +1102,7 @@ fn gc_stops_at_first_unexpired_record_in_untagged_stream_despite_later_expired_r
     assert_eq!(cache.applied_sequence(), 3);
     assert_eq!(
         cache.get(b"untagged-gc/key").unwrap().as_deref(),
-        Some(&3_u64.to_be_bytes()[..])
+        Some(&2_u64.to_be_bytes()[..])
     );
     cache.close().unwrap();
 }
@@ -1105,7 +1119,8 @@ fn recovered_empty_database_advances_hlc_and_lane_ids_past_checkpoint_state() {
     assert_eq!(cache.writeback.collect_expired_at(u64::MAX).unwrap(), 1);
     assert!(cache.delete(b"empty/sole").unwrap());
     cache.wait_applied().unwrap();
-    assert_eq!(cache.writeback.collect_expired_at(u64::MAX).unwrap(), 2);
+    assert_eq!(cache.writeback.collect_expired_at(u64::MAX).unwrap(), 1);
+    assert_eq!(cache.status().unwrap().log_gc.reclaimed_records, 2);
     assert_eq!(retained_log_count(&backend), 0);
     let before_watermark = cache.applied_watermark();
     let before_sequence = cache.applied_sequence();

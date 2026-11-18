@@ -19,6 +19,7 @@ pub fn features() -> Result<Features> {
         | Features::SCAN_READ_MY_WRITES;
     if cfg!(feature = "test-hooks") {
         bits |= Features::TEST_COMMIT_OBSERVER
+            | Features::TEST_COMMIT_MID_INSTALL_OBSERVER
             | Features::TEST_CLEANUP_FAILURES
             | Features::TEST_TIMESTAMP_CLOCK;
     }

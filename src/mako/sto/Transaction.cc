@@ -771,30 +771,24 @@ void Transaction::finish(bool committed) noexcept {
     participant_phase_ = p_none;
 }
 
-// @safe
+// @unsafe - Legacy datatype locks remain owned by this worker across RPCs.
 bool Transaction::shard_try_lock_last_writeset() {
     assert(TThread::id() == threadid_);
-
-    // find the last TransItem
-    TransItem* it = nullptr;
-    if (tset_size_ == 0) return true;
-    for (unsigned tidx = tset_size_-1; tidx >= 0; --tidx) {
-        auto base = tset_[tidx / tset_chunk];
-        it = base + tidx % tset_chunk;
-        if (it->has_write()) {
-            if (!it->owner()->lock(*it, *this)) {
+    // A repeated mutation can update an earlier item, not the final item in
+    // the transaction set. Retain existing locks and acquire every new write.
+    for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
+        TransItem* it = &tset_[tidx / tset_chunk][tidx % tset_chunk];
+        if (it->has_write() && !it->needs_unlock()) {
+            if (!it->owner()->lock(*it, *this))
                 return false;
-            }
             it->__or_flags(TransItem::lock_bit);
             state_ = s_committing_locked;
-            break;
         }
-        if (tidx == 0) break;
     }
     return true;
 }
 
-// @safe
+// @unsafe - Certifies legacy datatype observations on the participant worker.
 int Transaction::shard_validate() {
     //print_stats();
     assert(TThread::id() == threadid_);
@@ -810,6 +804,10 @@ int Transaction::shard_validate() {
                 return 1;
             }
         }
+        else if (it->has_predicate() &&
+                 !it->owner()->check_predicate(*it, *this, true)) {
+            return 1;
+        }
         if (tidx == 0) break;
     }
     return 0;
@@ -817,6 +815,8 @@ int Transaction::shard_validate() {
 
 // @unsafe: calls unsafe serialize_util function
 void Transaction::shard_serialize_util(uint32_t timestamp) {
+    if (!any_writes_)
+        return;
     if (!BenchmarkConfig::getInstance().getIsReplicated()) {return ;}
     #if defined(SIMPLE_WORKLOAD)
         int small_batch_num=2;
@@ -826,13 +826,13 @@ void Transaction::shard_serialize_util(uint32_t timestamp) {
     serialize_util(1 /* anything > 0 */, true, MAX_ARRAY_SIZE_IN_BYTES_SMALL, small_batch_num, timestamp);
 }
 
-// @safe
+// @unsafe - Samples the legacy term callback once per attempt, including zero.
 uint8_t Transaction::get_current_term() const {
-    if(callback_ != nullptr){
-        if(!current_term_)
-            current_term_ = callback_();
-    }else{
-        current_term_ = 0;
+    if (current_term_ == std::numeric_limits<uint8_t>::max()) {
+        const int term = callback_ != nullptr ? callback_() : 0;
+        if (term < 0 || term > 9)
+            std::terminate();
+        current_term_ = static_cast<uint8_t>(term);
     }
     return current_term_;
 }
@@ -1118,8 +1118,13 @@ bool Transaction::try_commit(bool no_paxos,
     if (any_nonopaque_)
         TXP_INCREMENT(txp_commit_time_nonopaque);
 #if !CONSISTENCY_CHECK
-    // commit immediately if read-only transaction with opacity
-    if (!any_writes_ && !any_nonopaque_) {
+    // Opacity certifies only local observations. A remote read still needs
+    // participant validation and a terminal INSTALL even with no local writes.
+    if (!any_writes_ && !any_nonopaque_ &&
+        (TThread::sclient == nullptr ||
+         !TThread::sclient->hasTouchedParticipants()) &&
+        TThread::readset_shard_bits == 0 &&
+        TThread::writeset_shard_bits == 0) {
         stop(true, nullptr, 0);
         return true;
     }
@@ -1142,9 +1147,12 @@ bool Transaction::try_commit(bool no_paxos,
     //phase1
     TransItem* it = nullptr;
 
+    // @unsafe - ShardClient's existing serialization boundary takes STL
+    // vectors/strings; keep their ownership here until synchronous RPC returns.
     std::vector<int> remote_table_id_batch;
     std::vector<std::string> key_batch;
     std::vector<std::string> value_batch;
+    std::vector<uint8_t> operation_batch;
 
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
         it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
@@ -1153,33 +1161,34 @@ bool Transaction::try_commit(bool no_paxos,
             std::string key = "", val = "";
             if (hasInsertOp(it)) {  // key_write_value_type
                 key = (*it).write_value<std::string>();
-                versioned_str_struct *vvx = (*it).key<versioned_str_struct *>();
-                const auto snapshot = vvx->read_value();
-                val.assign(snapshot.data(), snapshot.length());
+                if (!hasDeleteOp(it)) {
+                    versioned_str_struct *vvx = (*it).key<versioned_str_struct *>();
+                    const auto snapshot = vvx->read_value();
+                    val.assign(snapshot.data(), snapshot.length());
+                }
             } else {
                 key = it->extra;
-                val = (*it).template write_value<std::string>();
+                if (!hasDeleteOp(it))
+                    val = (*it).template write_value<std::string>();
             }
             remote_table_id_batch.push_back(it->owner()->get_table_id());
-            key_batch.push_back(key);
-            value_batch.push_back(val);
+            key_batch.push_back(std::move(key));
+            value_batch.push_back(std::move(val));
+            // MassTrans's insert flag describes the coordinator proxy row,
+            // not an INSERT precondition on the owning shard.
+            operation_batch.push_back(hasDeleteOp(it) ? 2 : 0);
         }
     }
 
     if (!remote_table_id_batch.empty()) {
         if (TThread::sclient == nullptr) {
-            if (!no_paxos) {
-                Warning("Missing ShardClient for remoteBatchLock in paxos path; aborting transaction");
-                goto abort;
-            }
-            // Replay/no-paxos path may not have an initialized ShardClient.
-            // Skip remote lock RPCs and continue applying local effects.
-        } else {
-            int ret = TThread::sclient->remoteBatchLock(remote_table_id_batch, key_batch, value_batch);
-            if (ret > 0) {
-                goto abort;
-            }
+            Warning("Missing ShardClient for remoteBatchLock; aborting transaction");
+            goto abort;
         }
+        if (TThread::sclient->remoteBatchLock(
+                remote_table_id_batch, key_batch, value_batch,
+                &operation_batch) != mako::ErrorCode::SUCCESS)
+            goto abort;
     }
 
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
@@ -1262,6 +1271,8 @@ bool Transaction::try_commit(bool no_paxos,
 
     needs_mako_timestamp =
         BenchmarkConfig::getInstance().getIsReplicated() ||
+        (TThread::sclient != nullptr &&
+         TThread::sclient->hasTouchedParticipants()) ||
         TThread::writeset_shard_bits != 0 ||
         TThread::readset_shard_bits != 0 || maxTimestampReadSet != 0;
     if (!no_paxos && needs_mako_timestamp) {
@@ -1337,24 +1348,23 @@ bool Transaction::try_commit(bool no_paxos,
         }
     }
 
-    if (TThread::readset_shard_bits > 0) {
-        if (TThread::sclient == nullptr) {
-            if (!no_paxos) {
-                Warning("Missing ShardClient for remoteValidate in paxos path; aborting transaction");
-                goto abort;
-            }
-        } else {
-            // Single timestamp system: pass and receive single watermark
-            int ret=TThread::sclient->remoteValidate(watermarkTimestamp);
-            uint32_t currentWatermark = sync_util::sync_logger::single_watermark_.load(memory_order_acquire);
-            if(watermarkTimestamp > currentWatermark) {
-                // Update single watermark
-                sync_util::sync_logger::single_watermark_.store(watermarkTimestamp, memory_order_release);
-            }
-            if (ret > 0) {
-                goto abort;
-            }
-        }
+    if (TThread::sclient != nullptr &&
+        TThread::sclient->hasTouchedParticipants()) {
+        // A no-paxos commit is local-only: it cannot send a zero-timestamp
+        // decision or silently drop a participant touched by an earlier read.
+        if (no_paxos)
+            goto abort;
+        if (TThread::sclient->remoteValidate(watermarkTimestamp) !=
+            mako::ErrorCode::SUCCESS)
+            goto abort;
+        uint32_t currentWatermark = sync_util::sync_logger::single_watermark_.load(memory_order_acquire);
+        if (watermarkTimestamp > currentWatermark)
+            sync_util::sync_logger::single_watermark_.store(watermarkTimestamp, memory_order_release);
+    } else if (TThread::writeset_shard_bits != 0 ||
+               TThread::readset_shard_bits != 0) {
+        // A stale/missing touched set must never turn required fanout into
+        // vacuous success.
+        goto abort;
     }
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
@@ -1452,7 +1462,8 @@ bool Transaction::try_commit(bool no_paxos,
     // A remote/read-set maximum may have raised the selected legacy timestamp
     // above this coordinator's ticket. Floor the next-to-return clock before
     // either phase-3 write-set layout installs data.
-    if (nwriteset)
+    if (nwriteset || (TThread::sclient != nullptr &&
+                     TThread::sclient->hasTouchedParticipants()))
         observe_legacy_distributed_timestamp(tid_unique_);
 
     // Phase 3 begins the irreversible commit decision. No exception or
@@ -1512,23 +1523,19 @@ bool Transaction::try_commit(bool no_paxos,
             }
 #endif
         }
-        if (TThread::writeset_shard_bits > 0||TThread::readset_shard_bits>0) {
-            if (TThread::sclient == nullptr) {
-                if (!no_paxos) {
-                    Warning("Missing ShardClient after commit decision; failing stop");
-                    goto abort;
-                }
-            } else {
-            // Any non-success after INSTALL is indeterminate: some remote
-            // participants may already have committed. Fail-stop instead of
-            // returning a false abort and inviting an unsafe retry.
-            if (TThread::sclient->remoteInstall(tid_unique_) !=
-                mako::ErrorCode::SUCCESS)
-                std::terminate();
-            }
-        }
     }
 #endif
+
+    // Both write-set layouts and wholly read-only distributed attempts take
+    // this single terminal path. Mark the decision before sending: a missing
+    // reply can conceal a committed participant even with no local writes.
+    if (TThread::sclient != nullptr &&
+        TThread::sclient->hasTouchedParticipants()) {
+        irreversible_decision = true;
+        if (TThread::sclient->remoteInstall(tid_unique_) !=
+            mako::ErrorCode::SUCCESS)
+            std::terminate();
+    }
 
 #if defined(MAKO_LOCAL_TEST_HOOKS)
     if (nwriteset != 0 && has_test_commit_observer) {
@@ -1560,17 +1567,17 @@ bool Transaction::try_commit(bool no_paxos,
         }
     }
 
+    // Cleanup failures after a local or remote decision must not escape to a
+    // retrying caller, nor leave rollback cleanup available on the live set.
+    stop(true, writeset, nwriteset);
+
     } catch (...) {
         if (irreversible_decision)
             std::terminate();
         throw;
     }
 
-    stop(true, writeset, nwriteset);
     irreversible_decision = false;
-    // if (TThread::writeset_shard_bits > 0) {
-    //     TThread::sclient->remoteUnLock();
-    // }
     return true;
 
 abort:
@@ -1582,7 +1589,8 @@ abort:
     // lock. If stop unwinds, the scope destructor still retires the turn so a
     // quarantined worker cannot strand the database-wide record pipeline.
     validation_gate_scope.release();
-    if ((TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0) && TThread::sclient != nullptr) {
+    if (TThread::sclient != nullptr &&
+        TThread::sclient->hasTouchedParticipants()) {
         TThread::sclient->remoteAbort();
     }
     if (timestamp_exhausted)
@@ -1727,32 +1735,14 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
 
           instance->update_ptr(pos);
 
-          /*
-          // Use local partition ID for Paxos workers
-          int outstanding = get_outstanding_logs(TThread::getLocalPartitionID()) ;
-          if (outstanding>20){
-           usleep(10*1000); // wait 1 Paxos log time
-          }
 
-          while ((TThread::sclient == NULL) || !TThread::sclient->stopped) {
-            if (outstanding>20) {
-                usleep(50);
-            } else {
-                break;
-            }
-            outstanding = get_outstanding_logs(TThread::getLocalPartitionID()) ;
-          }
-          Warning("outstanding request: %d, par_id: %d", outstanding, TThread::getLocalPartitionID());
-
-          // deal with logs from its corresponding threads
-          if (TThread::in_loading_phase){
-            Warning("add a log to nc, par_id:%d,", TThread::getLocalPartitionID());
-            usleep(10*1000);
-          }*/
-
-        // FIX me: merge the logs from helper threads instead of a separate log
-        // Use local partition ID for Paxos workers (they are indexed 0 to warehouses-1 per shard)
-        add_log_to_nc((char *)queueLog, pos, TThread::getLocalPartitionID(), batch_size); // the partitionID for the helper thread
+        // @unsafe - Helpers and workers submit to the participant's owning stream.
+        const auto& cfg = BenchmarkConfig::getInstance();
+        const int shard = TThread::get_shard_index();
+        const int local_partition = TThread::getLocalPartitionID();
+        if (!add_log_to_nc((char *)queueLog, pos,
+                cfg.getReplicationPartition(shard, local_partition), batch_size))
+            Panic("replication rejected installed transaction log");
 
 #ifndef DISABLE_DISK
         // Asynchronously persist to RocksDB
@@ -1768,11 +1758,13 @@ inline void Transaction::serialize_util(unsigned nwriteset, bool on_remote, int 
         // Use local partition ID for RocksDB persistence (per-shard storage)
         int partition_id = TThread::getLocalPartitionID();
 
+        const int watermark_partition =
+            cfg.getReplicationWatermarkPartition(shard, local_partition);
         persistence.persistAsync((const char*)queueLog, pos, shard_id, partition_id,
-            [persist_timestamp, partition_id](bool success) {
+            [persist_timestamp, partition_id, watermark_partition](bool success) {
                 if (success) {
                     // Update disk persistence timestamp for this partition
-                    sync_util::sync_logger::updateDiskTimestamp(partition_id, persist_timestamp);
+                    sync_util::sync_logger::updateDiskTimestamp(watermark_partition, persist_timestamp);
 
                     uint64_t count = per_partition_success[partition_id].fetch_add(1, std::memory_order_relaxed) + 1;
                     // Log every successful persist

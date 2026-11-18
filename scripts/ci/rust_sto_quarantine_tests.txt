@@ -1,6 +1,6 @@
 # Intentional transaction-frame quarantine cases.
 #
-# Format: package|integration-test-suite|exact-test-name
+# Format: package|integration-test-suite-or-lib|exact-test-name
 # Keep each test name globally unique: ASan's workspace sweep applies the
 # test harness's substring-based --skip option across all selected targets.
 sto-core|commit_hook|post_install_hook_panic_is_indeterminate
@@ -26,6 +26,12 @@ sto-core|failure_protocol|pooled_adapter_destructor_panic_is_contained_when_work
 sto-core|failure_protocol|preflight_free_committed_finish_panic_is_definitely_committed_and_poisoned
 sto-core|failure_protocol|release_panic_quarantines_uncertain_frame_and_advances_remaining_guards
 sto-core|failure_protocol|rollback_panic_during_acquisition_quarantines_items_and_releases_other_guards
+# Audited pre-migration on 2026-09-24: these existing singleton-view cases
+# deliberately quarantine state after injected target/install/release/cleanup
+# failures. The baseline inventory correction was explicitly user-approved.
+sto-core|failure_protocol|singleton_view::singleton_changed_targets_keep_each_failure_phase
+sto-core|failure_protocol|singleton_view::singleton_target_borrow_panics_keep_each_failure_phase
+sto-core|failure_protocol|singleton_view::singleton_guard_and_finish_panics_keep_cleanup_boundaries
 sto-core|failure_protocol|target_destructor_runs_after_its_guard_and_stops_before_another_frame
 sto-core|failure_protocol|terminal_read_pool_contains_adapter_panic_when_worker_drops
 sto-core|failure_protocol|terminal_read_post_certification_drop_panic_is_definitely_committed
@@ -33,3 +39,8 @@ sto-core|failure_protocol|typed_batch_materialization_preserves_ordinary_pool_ta
 sto-core|failure_protocol|typed_unique_batch_pool_contains_adapter_panic_when_worker_drops
 sto-core|failure_protocol|unique_batch_install_and_finish_panics_keep_boundary_classification
 sto-core|failure_protocol|unique_batch_preflight_free_path_is_typed_ordered_and_contained
+sto-core|failure_protocol|install_observer::typed_batch_stops_after_one_of_two_real_installs
+sto-core|failure_protocol|install_observer::materialized_batch_stops_after_one_of_two_real_installs
+sto-core|failure_protocol|install_observer::borrowed_direct_batches_stop_after_one_of_two_real_installs
+sto-core|failure_protocol|install_observer::owned_direct_batch_stops_after_one_of_two_real_installs
+sto-masstree|lib|local_version_tests::indeterminate_local_release_ignores_mixed_ordered_id

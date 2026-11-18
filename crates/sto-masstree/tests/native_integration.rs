@@ -14,6 +14,99 @@ use sto_masstree::{
 };
 
 #[test]
+fn native_distributed_history_replay_and_retained_participant() {
+    use mako_clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
+    use sto_masstree::ReadVisibility;
+
+    let decision = |base, term| DistributedTimeTerm::new(
+        DistributedTimestamp::new(base).unwrap(),
+        DistributedTerm::new(term).unwrap(),
+    );
+    let native_runtime = MasstreeRuntime::new(MasstreeRuntimeConfig::new()).unwrap();
+    let native_worker = native_runtime.attach().unwrap();
+    let sto_runtime = Runtime::new(RuntimeConfig::default()).unwrap();
+    for direct in [false, true] {
+        let config = TableConfig::default()
+            .with_record_local_versions(true)
+            .with_distributed_history(true);
+        let table = if direct {
+            Table::new_direct(&sto_runtime, &native_runtime, &native_worker, config).unwrap()
+        } else {
+            let tree = native_runtime.create_tree(&native_worker).unwrap();
+            Table::new(&sto_runtime, tree, config).unwrap()
+        };
+        let mut owner = sto_runtime.attach().unwrap();
+        for (value, source) in [(Some(Value::from(&b"stable"[..])), decision(10, 0)), (None, decision(20, 0))] {
+            let mut replay = owner.begin().unwrap();
+            assert!(table.stage_replay(&mut replay, &native_worker, b"key", value, source).unwrap());
+            assert!(matches!(replay.commit().unwrap(), CommitOutcome::Committed(_)));
+        }
+        let mut participant = owner.begin().unwrap().into_participant();
+        participant.with_transaction(|txn| {
+            table.put(txn, &native_worker, b"key", b"first")?;
+            Ok(())
+        }).unwrap();
+        participant.lock_writes().unwrap();
+        participant.with_transaction(|txn| {
+            table.put(txn, &native_worker, b"key", b"final")?;
+            Ok(())
+        }).unwrap();
+        participant.validate().unwrap();
+        participant.install(decision(30, 0)).unwrap();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                let native_observer = native_runtime.attach().unwrap();
+                let mut observer = sto_runtime.attach().unwrap();
+                let mut blocked = observer.begin().unwrap();
+                assert!(table.get_versioned(&mut blocked, &native_observer, b"key",
+                    ReadVisibility::latest(decision(1, 0).term())).is_err());
+                blocked.abort();
+                native_observer.quiesce().unwrap();
+            }).join().unwrap();
+        });
+        assert!(matches!(participant.finish(false).unwrap(), CommitOutcome::Committed(_)));
+
+        let mut policy = ReadVisibility::latest(decision(1, 1).term());
+        policy.stable_through[0] = Some(10);
+        let mut scan = owner.begin().unwrap();
+        let rows = table.scan_versioned(&mut scan, &native_worker, ScanRequest::new(ScanDirection::Forward, 1), policy).unwrap();
+        assert_eq!(rows.rows.len(), 1);
+        assert_eq!(rows.rows[0].value.as_ref(), b"stable");
+        assert_eq!(rows.rows[0].metadata, Some(decision(10, 0)));
+        assert_eq!(rows.dependency, Some(decision(10, 0).timestamp()));
+        assert!(matches!(scan.commit().unwrap(), CommitOutcome::Committed(_)));
+
+        policy.stable_through[0] = Some(20);
+        let mut read = owner.begin().unwrap();
+        let selected = table.get_versioned(&mut read, &native_worker, b"key", policy).unwrap();
+        assert_eq!(selected.value, None);
+        assert_eq!(selected.metadata, Some(decision(20, 0)));
+        assert!(matches!(read.commit().unwrap(), CommitOutcome::Committed(_)));
+
+        let mut read = owner.begin().unwrap();
+        let selected = table.get_versioned(&mut read, &native_worker, b"key", ReadVisibility::latest(decision(1, 0).term())).unwrap();
+        assert_eq!(selected.value.unwrap().as_ref(), b"final");
+        assert_eq!(selected.metadata, Some(decision(30, 0)));
+        assert!(matches!(read.commit().unwrap(), CommitOutcome::Committed(_)));
+
+        table.advance_history_retention_floor(decision(20, 0).timestamp());
+        let mut replay = owner.begin().unwrap();
+        assert!(table.stage_replay(&mut replay, &native_worker, b"key", Some(Value::from(&b"pruned"[..])), decision(40, 0)).unwrap());
+        assert!(matches!(replay.commit().unwrap(), CommitOutcome::Committed(_)));
+        let mut read = owner.begin().unwrap();
+        let selected = table.get_versioned(&mut read, &native_worker, b"key", policy).unwrap();
+        assert_eq!(selected.value, None);
+        assert_eq!(selected.metadata, Some(decision(20, 0)));
+        assert!(matches!(read.commit().unwrap(), CommitOutcome::Committed(_)));
+        policy.stable_through[0] = Some(10);
+        let mut discarded = owner.begin().unwrap();
+        assert!(table.get_versioned(&mut discarded, &native_worker, b"key", policy).is_err());
+        discarded.abort();
+    }
+    native_worker.quiesce().unwrap();
+}
+
+#[test]
 fn native_directory_seal_preserves_records_and_rejects_scalar_and_fixed_misses() {
     let native_runtime = MasstreeRuntime::new(MasstreeRuntimeConfig::new()).unwrap();
     let native_worker = native_runtime.attach().unwrap();

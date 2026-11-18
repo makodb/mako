@@ -35,7 +35,6 @@ transport::Configuration *sync_util::sync_logger::config = nullptr;
 bool sync_util::sync_logger::toLeader = false;
 std::mutex sync_util::sync_logger::m;
 std::condition_variable sync_util::sync_logger::cv;
-std::unordered_map<int, uint32_t> sync_util::sync_logger::hist_timestamp = {};
 std::atomic<uint32_t> sync_util::sync_logger::noops_cnt{0};
 std::atomic<uint32_t> sync_util::sync_logger::noops_cnt_hole{0};
 int sync_util::sync_logger::exchange_refresh_cnt = 0;

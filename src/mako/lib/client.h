@@ -165,6 +165,8 @@ namespace mako
         size_t ReceiveRequest(uint8_t reqType, char *reqBuf, char *respBuf) override { PPanic("Not implemented."); };
         bool Blocked() override { return blocked; };
         void SetNumResponseWaiting(int num_response_waiting) { this->num_response_waiting = num_response_waiting; };
+        // @unsafe - Starts one coordinator attempt on this affine RPC lane.
+        void BeginAttempt(uint32_t term);
 
     protected:
         struct PendingRequest
@@ -207,7 +209,6 @@ namespace mako
         };
 
         transport::Configuration config;
-        std::atomic<uint32_t> lastReqId;
         PendingRequestK crtReqK;
         Transport *transport;
         uint64_t clientid;
@@ -215,6 +216,21 @@ namespace mako
         int num_response_waiting;
         
         int current_term;
+        ParticipantIdentity attempt_identity{};
+        ParticipantIdentity pending_identity{};
+
+        // @unsafe - Advances the checked OS-thread request sequence.
+        uint64_t NextRequestSequence();
+
+        // @unsafe - Marshals the same identity into all destinations' buffers.
+        template <typename Request>
+        void StampRequest(Request *request, uint64_t sequence) {
+            request->req_nr = static_cast<uint32_t>(sequence);
+            request->identity = attempt_identity;
+            request->identity.sequence = sequence;
+            pending_identity = request->identity;
+            crtReqK.req_nr = request->req_nr;
+        }
     };
 
 }

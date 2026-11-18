@@ -1,11 +1,10 @@
 #pragma once
 
 #include <stdexcept>
+#include <exception>
 
-#include "silo_runtime.h"
 #include "storage/abstract_db.h"
 #include "function_pool.h"
-#include "thread_registration.hh"
 
 // @unsafe
 size_t getFileContentNew_OneLogOptimized_mbta_v2(const char *buffer, /* K-V pairs */
@@ -17,56 +16,48 @@ size_t getFileContentNew_OneLogOptimized_mbta_v2(const char *buffer, /* K-V pair
 class ThreadDBWrapperMbta {
 protected:
     int thread_id;
-    inline static thread_local bool replay_thread_initialized_ = false;
+    struct replay_attachment {
+        abstract_db* db = nullptr;
+
+        // @unsafe - The process-lifetime replay database outlives its workers.
+        ~replay_attachment() {
+            if (db != nullptr) {
+                try {
+                    db->thread_end();
+                } catch (...) {
+                    // Cleanup failure is terminal, not an invitation to replay.
+                    std::terminate();
+                }
+            }
+        }
+    };
+    static thread_local replay_attachment replay_thread_attachment_;
 
 public:
     static abstract_db* replay_thread_wrapper_db;
     ThreadDBWrapperMbta() = delete;
-    ThreadDBWrapperMbta(int thread_id){
+    // @safe - The partition is independent of the OS-thread worker identity.
+    explicit ThreadDBWrapperMbta(int thread_id){
         this->thread_id = thread_id;
     }
-    abstract_db * getDB(){ // have to be initialized inside each replay thread
-        // Replay tables are created by DB::Open under the process-global Silo
-        // runtime. A replay participant must join that same Masstree epoch
-        // domain before threadinfo::make() publishes it to a registry. The
-        // shared STO registration binds exactly that context and starts the
-        // one process-wide epoch advancer.
-        SiloRuntime* const runtime = SiloRuntime::GlobalDefault();
-        if (SiloRuntime::Current() != runtime) {
+    // @unsafe - Calls the selected backend's worker-affine attachment bridge.
+    abstract_db* getDB() {
+        abstract_db* const db = replay_thread_wrapper_db;
+        if (db == nullptr) {
+            throw std::logic_error("replay database is not initialized");
+        }
+        auto& attachment = replay_thread_attachment_;
+        if (attachment.db != nullptr && attachment.db != db) {
             throw std::logic_error(
-                "Masstree replay thread is bound to a non-default Silo runtime");
+                "replay OS thread cannot switch database runtimes");
         }
-        if (actual_directs::mythreadinfo.ti != nullptr &&
-            actual_directs::mythreadinfo.ti->context() !=
-                runtime->masstree_context()) {
-            throw std::logic_error(
-                "Masstree replay thread already owns a foreign epoch participant");
+        if (attachment.db == nullptr) {
+            db->replay_thread_init();
+            attachment.db = db;
         }
-        ALWAYS_ASSERT(mako::silo::claim_thread_runtime(
-            mako::silo::thread_runtime::native_mako));
-        ALWAYS_ASSERT(mako::silo::ensure_epoch_runtime());
-
-        // The replay partition is not a transaction-thread identity. Restore
-        // this OS thread's stable STO/RCU slot and the selected replay
-        // partition on every call: single-Raft can alternate partitions on
-        // one OS thread, and callbacks may be dispatched by a fixed pool.
-        const int registered_id = mako::silo::try_allocate_thread_id();
-        ALWAYS_ASSERT(registered_id >= 0);
-        TThread::set_id(registered_id);
-        TThread::set_pid(this->thread_id);
-        TThread::disable_multiversion(); // on the follower, disable multi-version
-        Sto::update_threadid();
-        if (!replay_thread_initialized_) {
-            actual_directs::thread_init();
-            replay_thread_initialized_ = true;
-        }
-        if (actual_directs::mythreadinfo.ti == nullptr ||
-            actual_directs::mythreadinfo.ti->context() !=
-                runtime->masstree_context()) {
-            throw std::logic_error(
-                "Masstree replay thread failed to join the default epoch domain");
-        }
-        return replay_thread_wrapper_db;
+        // Single-Raft may alternate partitions on this same attached worker.
+        db->replay_thread_select_partition(thread_id);
+        return db;
     }
 };
 

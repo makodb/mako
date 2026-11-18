@@ -10,6 +10,7 @@
 #include "abstract_ordered_index.h"
 #include "sto/Transaction.hh"
 #include "sto/thread_registration.hh"
+#include "sto/replay_record.h"
 #include "sto/MassTrans.hh"
 #include "sto/Hashtable.hh"
 #include "sto/simple_str.hh"
@@ -1657,6 +1658,82 @@ class mbta_wrapper : public abstract_db {
 public:
   inline static thread_local bool tls_benchmark_thread_attached_ = false;
 
+  // @unsafe - Apply a source record through this backend's concrete catalog.
+  // Only a definite predecision conflict requests retry. Other failures escape.
+  bool replay_apply_record(uint16_t table_id, std::string_view key,
+                           std::string_view payload, bool is_delete,
+                           uint32_t source_time_term) override {
+    observe_replay_timestamp(source_time_term);
+    if (table_id >= global_table_instances.size() ||
+        global_table_instances[table_id] == nullptr) {
+      throw std::logic_error("unregistered native replay table");
+    }
+    static thread_local str_arena replay_arena;
+    static thread_local std::string replay_value;
+    mako::materialize_replay_value(
+        replay_value, payload, is_delete, source_time_term);
+    struct quiesce_guard {
+      // @unsafe - The replay transaction has ended before its RCU slot retires.
+      ~quiesce_guard() {
+        if (TThread::txn == nullptr || !TThread::txn->has_active_state())
+          Transaction::rcu_quiesce();
+      }
+    } quiesce;
+    void* txn = new_txn(0, replay_arena, nullptr, HINT_DEFAULT);
+    try {
+      global_table_instances[table_id]->put_mbta(
+          txn, lcdf::Str(key.data(), key.size()),
+          [](const std::string& incoming, const std::string& existing) {
+            return mako::replay_source_is_newer(
+                mako::load_value_time_term(incoming.data(), incoming.size()),
+                mako::load_value_time_term(existing.data(), existing.size()));
+          },
+          replay_value);
+      return commit_txn_no_paxos(txn);
+    } catch (const abstract_abort_exception&) {
+      abort_txn_local(txn);
+      return false;
+    }
+  }
+
+  // @unsafe - Attach the ordinary native backend without a coordinator client.
+  void replay_thread_init() override {
+    thread_init(true, 2);
+    TThread::disable_multiversion();
+  }
+  // @unsafe - A replay partition is not this OS thread's STO/RCU identity.
+  void replay_thread_select_partition(int partition) override {
+    TThread::set_pid(partition);
+    Sto::update_threadid();
+  }
+  // @unsafe - Floor only the distributed clock, never the OCC or cache HLC.
+  void observe_replay_timestamp(uint32_t source_time_term) override {
+    if (!mako::valid_replay_time_term(source_time_term))
+      throw std::logic_error("invalid replay source timestamp");
+    Transaction::observe_legacy_distributed_timestamp(source_time_term / 10);
+  }
+
+  // @safe - Inspect only this OS thread's participant state.
+  bool shard_participant_active() const noexcept override {
+    return TThread::txn != nullptr && TThread::txn->has_active_state();
+  }
+  // @safe - Inspect only this OS thread's staged frame.
+  bool shard_participant_empty() const noexcept override {
+    return TThread::txn == nullptr || !TThread::txn->has_staged_items();
+  }
+  // @unsafe - Uses the legacy process-wide atomic distributed clock.
+  bool shard_timestamp(uint32_t& timestamp) override {
+    return Transaction::try_allocate_legacy_distributed_timestamp(timestamp);
+  }
+  // @unsafe - The receiver admits the term before any participant operation.
+  void shard_set_term(uint32_t term) override {
+    if (term > 9 || TThread::txn == nullptr ||
+        !TThread::txn->has_active_state()) {
+      throw std::logic_error("invalid native participant term or state");
+    }
+    TThread::txn->current_term_ = static_cast<uint8_t>(term);
+  }
+
   // Fixed native catalog: NUM_TABLES_PER_SHARD IDs are preallocated per shard.
   // One logical name consumes one ID on every configured shard; IDs are not
   // reclaimed. Opening beyond the budget returns nullptr.
@@ -2006,21 +2083,10 @@ public:
     return true;
   }
 
+  // @unsafe - Shared legacy cleanup closes the complete touched-participant set.
   void abort_txn(void *txn) {
-    const bool transaction_active =
-        TThread::txn != nullptr && TThread::txn->has_active_state();
-    const bool needs_remote_abort = transaction_active &&
-        (TThread::writeset_shard_bits > 0 || TThread::readset_shard_bits > 0);
-    Sto::silent_abort();
-    if (needs_remote_abort) {
-      // A distributed transaction must retain its client until remote abort
-      // completes. Null is valid only for standalone one-shard transactions,
-      // whose remote shard-bit sets remain empty.
-      ALWAYS_ASSERT(TThread::sclient != nullptr);
-      TThread::sclient->remoteAbort();
-      TThread::writeset_shard_bits = 0;
-      TThread::readset_shard_bits = 0;
-    }
+    (void)txn;
+    Sto::abort_without_throw();
   }
 
   void abort_txn_local(void *txn) {
@@ -2035,6 +2101,29 @@ public:
       TThread::txn->silent_abort();
     }
     Sto::start_transaction();
+  }
+
+  // @unsafe - Bridges admitted wire operations to the retained legacy STO set.
+  void shard_mutate(uint16_t table_id, lcdf::Str key,
+                    const std::string &value, uint8_t operation) override {
+    auto *index = get_index_by_table_id(table_id);
+    if (index == nullptr || index->get_is_remote())
+      throw abstract_db::abstract_abort_exception();
+    switch (operation) {
+      case 0:
+        index->shard_put(key, value);
+        return;
+      case 1:
+        index->tx_insert(nullptr, key, value);
+        break;
+      case 2:
+        index->tx_remove(nullptr, key);
+        break;
+      default:
+        throw abstract_db::abstract_abort_exception();
+    }
+    if (!Sto::shard_try_lock_last_writeset())
+      throw abstract_db::abstract_abort_exception();
   }
 
   int shard_validate() {
@@ -2188,12 +2277,12 @@ public:
 
       // Determine if this table is local
       bool is_local = false;
-      if (multi_shard_mode) {
-        // In multi-shard mode, all shards in local_shard_indices are local
+      if (multi_shard_mode && !benchConfig.getIsReplicated()) {
+        // Only unreplicated colocated tables may bypass the owning participant.
         const auto& local_shards = config->local_shard_indices;
         is_local = (std::find(local_shards.begin(), local_shards.end(), shard_index) != local_shards.end());
       } else {
-        // Single-shard mode: only current shard is local
+        // Replicated tables retain shard ownership regardless of address space.
         is_local = (shard_index == static_cast<int>(benchConfig.getShardIndex()));
       }
 

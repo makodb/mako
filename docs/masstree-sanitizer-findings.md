@@ -57,6 +57,20 @@ insert-then-delete and resurrection-then-delete MV regressions. Leak reporting
 is disabled for those process-lifetime MassTrans invocations; address errors
 remain fatal.
 
+The Linux sanitizer recipe explicitly selects the GNU unwinder for both
+Rust-owned and native executable/shared/module links, while retaining Clang's
+single sanitizer runtime. Its generated `clang-gnu-unwind.cfg` puts `gcc_s`
+before libc++'s linker-script dependency on LLVM libunwind; the gate records
+and checks the configuration's hash. This avoids
+[LLVM #226351](https://github.com/llvm/llvm-project/issues/226351): LLVM's slow
+unwinder can scan beyond Ubuntu 26.04's unterminated loader `.eh_frame` and
+crash during ASan initialization, before `main`. It is not an additional
+suppression or a runtime preload. Leak detection, slow malloc unwinding and
+the native ABI's exact one-owned-buffer, 1301-byte negative control remain
+required. The fresh native-control diagnostic passed with this link
+configuration; complete sanitizer qualification is recorded separately in
+`docs/plans/rust-sto-cpp-shape.md`.
+
 ---
 
 ## Finding 1 — `kpermuter::value_from` shift-exponent

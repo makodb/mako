@@ -39,6 +39,7 @@ extern "C" int mallctl(const char *name, void *oldp, size_t *oldlenp, void *newp
 #endif
 
 import std;
+import rusty;
 
 using namespace std;
 using namespace util;
@@ -50,6 +51,85 @@ std::mutex shardClientAllMutex;
 std::unordered_map<int, Transaction*> shardTxnAll;
 
 namespace {
+
+
+// Filesystem/threading kernel for the existing NFS benchmark lifecycle.
+// A peer acknowledges our fresh nonce only AFTER joining its workers. Old
+// completion files therefore cannot authorize shutdown in a reused sync dir.
+class CoordinatorDrain {
+  struct Peer {
+    int shard;
+    int role = -1;
+    mako::NFSSync::DrainHandshake::Peer barrier;
+  };
+
+  const BenchmarkConfig &config_;
+  mako::NFSSync::DrainHandshake barrier_;
+  std::string identity_;
+  rusty::Vec<Peer> peers_;
+
+public:
+  // @unsafe - Announces one runner incarnation before admitting worker activity.
+  explicit CoordinatorDrain(const BenchmarkConfig &config)
+      : config_(config),
+        peers_(rusty::Vec<Peer>::with_capacity(
+            config.getNshards() > 1 ? config.getNshards() - 1 : 0)) {
+    if (config_.getNshards() <= 1)
+      return;
+    const std::string prefix = mako::NFSSync::drain_prefix(config_);
+    identity_ = config_.getCluster() + "_" + std::to_string(config_.getShardIndex());
+    barrier_.announce(prefix, identity_);
+    for (size_t shard = 0; shard < config_.getNshards(); ++shard) {
+      if (shard != static_cast<size_t>(config_.getShardIndex()))
+        peers_.push(Peer{static_cast<int>(shard)});
+    }
+  }
+
+  // @unsafe - Called after local joins, with all RPC helpers/transports alive.
+  // This is a bounded completion handshake, not a retry of transaction effects.
+  void wait() {
+    if (config_.getNshards() <= 1)
+      return;
+    const auto deadline = std::chrono::steady_clock::now() +
+        std::chrono::seconds(std::max(1, config_.getNfsSyncTimeoutSec()));
+    for (;;) {
+      const int failed_shard = sync_util::sync_logger::failed_shard_index.load();
+      const int own_role = config_.getClusterRole();
+      if ((own_role == mako::LOCALHOST_CENTER_INT &&
+           failed_shard == config_.getShardIndex()) ||
+          (own_role == mako::LEARNER_CENTER_INT &&
+           failed_shard != config_.getShardIndex()))
+        Panic("coordinator ownership changed before drain: %s", identity_.c_str());
+      bool all_drained = true;
+      for (auto &peer : peers_) {
+        // Match SrpcRpcBackend::GetOrCreateClient's current failover routing.
+        int role = own_role;
+        if (failed_shard >= 0) {
+          if (own_role == mako::LEARNER_CENTER_INT)
+            role = mako::LOCALHOST_CENTER_INT;
+          else if (own_role == mako::LOCALHOST_CENTER_INT &&
+                   peer.shard == failed_shard)
+            role = mako::LEARNER_CENTER_INT;
+        }
+        if (peer.role != role) {
+          peer.role = role;
+          const std::string identity = mako::convertClusterRole(role) + "_" +
+              std::to_string(peer.shard);
+          barrier_.bind(peer.barrier, identity);
+        }
+        if (!barrier_.acknowledge(peer.barrier))
+          all_drained = false;
+      }
+      if (all_drained &&
+          failed_shard == sync_util::sync_logger::failed_shard_index.load())
+        return;
+      if (std::chrono::steady_clock::now() >= deadline)
+        Panic("coordinator drain timed out with RPC still active: %s",
+              identity_.c_str());
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+};
 
 // Multi-shard runs execute one bench_runner per shard concurrently.  Build the
 // machine record off-stream, then publish the complete, short line with one
@@ -266,7 +346,10 @@ bench_worker::run_body(bool &startup_barrier_entered)
 
         string log = "no-ops:" + to_string(get_epoch());
         for(int i = 0; i < benchConfig.getNthreads(); i++){
-          add_log_to_nc(log.c_str(), log.size(), i);
+          // @unsafe - Epoch markers belong to the current shard's streams.
+          if (!add_log_to_nc(log.c_str(), log.size(),
+                  benchConfig.getReplicationPartition(benchConfig.getShardIndex(), i)))
+            Panic("replication rejected required epoch marker");
         }
 
         set_epoch();
@@ -334,7 +417,10 @@ bench_worker::run_body(bool &startup_barrier_entered)
         // 4. issue no-ops within the old epoch
         string log = "no-ops:" + to_string(get_epoch());
         for(int i = 0; i < benchConfig.getNthreads(); i++){
-          add_log_to_nc(log.c_str(), log.size(), i);
+          // @unsafe - Never report an epoch transition after lost submission.
+          if (!add_log_to_nc(log.c_str(), log.size(),
+                  benchConfig.getReplicationPartition(benchConfig.getShardIndex(), i)))
+            Panic("replication rejected required epoch marker");
         }
         // 2. increase the epoch
         set_epoch();
@@ -640,7 +726,10 @@ bench_runner::run()
           << BenchmarkConfig::getInstance().getNthreads() << " partitions"
           << std::endl;
       for(int i=0;i<BenchmarkConfig::getInstance().getNthreads();i++) {
-        add_log_to_nc(log.c_str(), log.size(), i); // notify others start a advancer
+        // @unsafe - Start each owning replica's advancer, not shard zero's.
+        if (!add_log_to_nc(log.c_str(), log.size(),
+                cfg.getReplicationPartition(cfg.getShardIndex(), i)))
+          Panic("replication rejected required advancer marker");
         mako::benchmark_cout()
             << "[ADVANCER-SEND] Sent ADVANCER_MARKER to partition " << i
             << std::endl;
@@ -659,6 +748,7 @@ bench_runner::run()
     }
     db->report_capacity_usage("load_complete");
   }
+  CoordinatorDrain coordinator_drain(BenchmarkConfig::getInstance());
   const vector<bench_worker *> workers = make_workers();
   ALWAYS_ASSERT(!workers.empty());
   Transaction::clear_stats();
@@ -744,11 +834,6 @@ bench_runner::run()
         << endl;
     benchConfig.setRunning(false);  // stop database worker threads
   }
-  mako::benchmark_cerr()
-      << "[SHUTDOWN] Calling first stop() to stop client transports" << endl;
-  stop(); // stop rpc clients (unblocks outstanding RPCs)
-  mako::benchmark_cerr() << "[SHUTDOWN] First stop() completed" << endl;
-  __sync_synchronize();
 
   mako::benchmark_cerr() << "[SHUTDOWN] Joining "
                          << BenchmarkConfig::getInstance().getNthreads()
@@ -760,14 +845,19 @@ bench_runner::run()
   }
   mako::benchmark_cerr() << "[SHUTDOWN] All workers joined" << endl;
 
+  // A local join is insufficient: other shard coordinators may still be
+  // installing here, and stop() also owns every colocated shard's clients.
+  coordinator_drain.wait();
+  mako::benchmark_cerr() << "[SHUTDOWN] All shard coordinators drained" << endl;
+
   // Stop server transports AFTER workers exit to ensure they can finish processing
   mako::benchmark_cerr() << "[SHUTDOWN] Calling stop_rpc_server()" << endl;
   mako::stop_rpc_server();
   mako::benchmark_cerr() << "[SHUTDOWN] stop_rpc_server() completed" << endl;
 
-  mako::benchmark_cerr() << "[SHUTDOWN] Calling second stop()" << endl;
-  stop(); // ensure transports are torn down after workers exit
-  mako::benchmark_cerr() << "[SHUTDOWN] Second stop() completed" << endl;
+  mako::benchmark_cerr() << "[SHUTDOWN] Stopping drained client transports" << endl;
+  stop();
+  mako::benchmark_cerr() << "[SHUTDOWN] Client transports stopped" << endl;
   const unsigned long measured_nosync = t_nosync.lap();
   const unsigned long elapsed_nosync = measured_nosync > 1'000'000
       ? measured_nosync - 1'000'000 : 0; // normal workers sleep(1) on exit

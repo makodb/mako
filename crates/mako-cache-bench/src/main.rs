@@ -24,10 +24,12 @@ use mrx::{Db as MrxDb, Options as MrxOptions, WriteBatch as MrxWriteBatch};
 use mrx_core::{BlobOp, Blobs};
 use mrx_rocks::{Durability, RocksBlobs};
 
-const REPORT_PROTOCOL: &str = "mako-milestone1-benchmark-v2";
-const SAMPLE_PROTOCOL: &str = "mako-m1-sample-v2";
-const RECOVERY_PROTOCOL: &str = "mako-m1-recovery-v1";
-const CHECKPOINT_PROTOCOL: &str = "mako-m1-checkpoint-v2";
+mod cross_engine;
+
+const REPORT_PROTOCOL: &str = "mako-milestone1-benchmark-v3";
+const SAMPLE_PROTOCOL: &str = "mako-m1-sample-v3";
+const RECOVERY_PROTOCOL: &str = "mako-m1-recovery-v2";
+const CHECKPOINT_PROTOCOL: &str = "mako-m1-checkpoint-v3";
 const CHECKPOINT_RESULT_PROTOCOL: &str = "mako-m1-checkpoint-result-v1";
 const CHECKPOINT_RUN_PROTOCOL: &str = "mako-m1-checkpoint-run-v1";
 const VALUE_BYTES: usize = 128;
@@ -241,11 +243,13 @@ struct BackendStats {
     log_key_bytes: u64,
     log_value_bytes: u64,
     data_keys: u64,
+    metadata_keys: u64,
     physical_bytes: u64,
 }
 
 #[derive(Clone, Debug)]
 struct SampleResult {
+    engine: String,
     configuration: Configuration,
     target_commits: u64,
     warmup_commits: u64,
@@ -263,6 +267,7 @@ struct SampleResult {
 
 #[derive(Clone, Debug)]
 struct RecoveryResult {
+    engine: String,
     configuration: Configuration,
     keyspace: usize,
     open_ns: u64,
@@ -449,6 +454,7 @@ fn real_main() -> AnyResult<()> {
             println!("{}", encode_recovery_protocol(&result));
             Ok(())
         }
+        Some("__cross_engine") => cross_engine::run(&arguments[1..]),
         _ => Err(usage()),
     }
 }
@@ -991,6 +997,55 @@ fn elapsed_ns(start: Instant) -> u64 {
         .max(1)
 }
 
+/// Expected final counter for one key, independent of retries and worker order.
+/// Warmup and measurement each restart their successful-commit index at zero.
+/// Only the deliberately weaker, contended nontransactional RMW arms lack an
+/// exact result. Their aggregate lost-update bounds are checked separately.
+fn expected_counter(
+    configuration: Configuration,
+    index: usize,
+    warmup_commits: u64,
+    measured_commits: u64,
+) -> AnyResult<Option<u64>> {
+    if index >= configuration.keyspace() {
+        return Err("expected-state key is outside the configured keyspace".to_owned());
+    }
+    if configuration.workload == Workload::Read {
+        return Ok(Some(0));
+    }
+    if configuration.workload == Workload::Rmw
+        && configuration.contention == Contention::High
+        && configuration.arm != Arm::Mako
+    {
+        return Ok(None);
+    }
+    let visits = match configuration.contention {
+        Contention::High => warmup_commits
+            .checked_add(measured_commits)
+            .and_then(|count| count.checked_mul(configuration.workers as u64)),
+        Contention::Low => {
+            let window = configuration.keyspace() / configuration.workers;
+            let offset = (index % window) as u64;
+            let visits_in_phase = |commits: u64| {
+                commits
+                    .checked_mul(configuration.transaction_size as u64)
+                    .map(|mutations| {
+                        mutations / window as u64 + u64::from(offset < mutations % window as u64)
+                    })
+            };
+            visits_in_phase(warmup_commits)
+                .zip(visits_in_phase(measured_commits))
+                .and_then(|(warmup, measured)| warmup.checked_add(measured))
+        }
+    }
+    .ok_or_else(|| "expected per-key counter overflow".to_owned())?;
+    Ok(Some(match configuration.workload {
+        Workload::Write => u64::from(visits != 0),
+        Workload::Rmw => visits,
+        Workload::Read => unreachable!("read-only counters were handled above"),
+    }))
+}
+
 fn validate_database(
     database: &Database,
     configuration: Configuration,
@@ -1003,17 +1058,14 @@ fn validate_database(
             .get(index)?
             .ok_or_else(|| format!("validation found missing key {index}"))?;
         let counter = decode_value(&value)?;
-        match configuration.workload {
-            Workload::Read if counter != 0 => {
+        if let Some(expected) =
+            expected_counter(configuration, index, warmup_commits, measured_commits)?
+        {
+            if counter != expected {
                 return Err(format!(
-                    "read-only workload changed key {index} to {counter}"
+                    "validation found counter {counter} at key {index}, expected {expected}"
                 ));
             }
-            Workload::Write if counter > 1 => {
-                return Err(format!("write workload produced invalid counter {counter}"));
-            }
-            Workload::Read | Workload::Write => {}
-            Workload::Rmw => {}
         }
         checksum = checksum
             .checked_add(counter)
@@ -1046,17 +1098,11 @@ fn validate_database(
 fn validate_recovered(
     database: &Database,
     configuration: Configuration,
+    warmup_commits: u64,
+    measured_commits: u64,
     expected_checksum: u64,
 ) -> AnyResult<u64> {
-    let mut checksum = 0u64;
-    for index in 0..configuration.keyspace() {
-        let value = database
-            .get(index)?
-            .ok_or_else(|| format!("recovery validation found missing key {index}"))?;
-        checksum = checksum
-            .checked_add(decode_value(&value)?)
-            .ok_or_else(|| "recovery checksum overflow".to_owned())?;
-    }
+    let checksum = validate_database(database, configuration, warmup_commits, measured_commits)?;
     if checksum != expected_checksum {
         return Err(format!(
             "recovery checksum {checksum} differs from pre-close checksum {expected_checksum}"
@@ -1130,6 +1176,7 @@ fn run_sample(spec: ChildSpec) -> AnyResult<SampleResult> {
         .ok_or_else(|| "live user byte count overflow".to_owned())?;
 
     Ok(SampleResult {
+        engine: mako_cache::engine_name().to_owned(),
         configuration: spec.configuration,
         target_commits: spec.target_commits,
         warmup_commits: spec.warmup_commits,
@@ -1154,11 +1201,18 @@ fn run_recovery(spec: ChildSpec, expected_checksum: u64) -> AnyResult<RecoveryRe
     let database = Database::open(spec.configuration, &spec.path)?;
     let open_ns = elapsed_ns(open_start);
     let validation_start = Instant::now();
-    let checksum = validate_recovered(&database, spec.configuration, expected_checksum)?;
+    let checksum = validate_recovered(
+        &database,
+        spec.configuration,
+        spec.warmup_commits,
+        spec.target_commits,
+        expected_checksum,
+    )?;
     let validation_ns = elapsed_ns(validation_start);
     database.wait_applied()?;
     database.close()?;
     Ok(RecoveryResult {
+        engine: mako_cache::engine_name().to_owned(),
         configuration: spec.configuration,
         keyspace: spec.configuration.keyspace(),
         open_ns,
@@ -1198,6 +1252,7 @@ fn inspect_backend(path: &Path, arm: Arm) -> AnyResult<BackendStats> {
         {
             // Version-2 checkpoint metadata; counts toward total keys but is
             // neither a user data row nor a transaction log.
+            stats.metadata_keys += 1;
         } else if arm == Arm::Mako {
             return Err("mako-cache backend contained a foreign key".to_owned());
         } else {
@@ -1234,7 +1289,8 @@ fn encode_sample_protocol(result: &SampleResult) -> String {
     let configuration = result.configuration;
     write!(
         &mut output,
-        "{SAMPLE_PROTOCOL} arm={} workload={} tx={} contention={} workers={} target={} warmup={} keyspace={} warmup_conflicts={} duration_ns={} foreground_cpu_ns={} commits={} conflicts={} attempt_p50_ns={} attempt_p99_ns={} logical_p50_ns={} logical_p99_ns={} drain_ns={} logical_ops={} measured_mutation_bytes={} total_mutation_bytes={} live_user_bytes={} checksum={} backend_keys={} backend_key_bytes={} backend_value_bytes={} log_keys={} log_key_bytes={} log_value_bytes={} data_keys={} physical_bytes={}",
+        "{SAMPLE_PROTOCOL} engine={} arm={} workload={} tx={} contention={} workers={} target={} warmup={} keyspace={} warmup_conflicts={} duration_ns={} foreground_cpu_ns={} commits={} conflicts={} attempt_p50_ns={} attempt_p99_ns={} logical_p50_ns={} logical_p99_ns={} drain_ns={} logical_ops={} measured_mutation_bytes={} total_mutation_bytes={} live_user_bytes={} checksum={} backend_keys={} backend_key_bytes={} backend_value_bytes={} log_keys={} log_key_bytes={} log_value_bytes={} data_keys={} metadata_keys={} physical_bytes={}",
+        result.engine,
         configuration.arm.name(),
         configuration.workload.name(),
         configuration.transaction_size,
@@ -1265,6 +1321,7 @@ fn encode_sample_protocol(result: &SampleResult) -> String {
         result.backend.log_key_bytes,
         result.backend.log_value_bytes,
         result.backend.data_keys,
+        result.backend.metadata_keys,
         result.backend.physical_bytes,
     )
     .expect("writing to String cannot fail");
@@ -1273,6 +1330,7 @@ fn encode_sample_protocol(result: &SampleResult) -> String {
 
 fn parse_sample_protocol(text: &str) -> AnyResult<SampleResult> {
     let mut fields = protocol_fields(text, SAMPLE_PROTOCOL)?;
+    let engine = take_engine(&mut fields)?;
     let configuration = Configuration {
         arm: Arm::parse(take_field(&mut fields, "arm")?)?,
         workload: Workload::parse(take_field(&mut fields, "workload")?)?,
@@ -1281,6 +1339,7 @@ fn parse_sample_protocol(text: &str) -> AnyResult<SampleResult> {
         workers: take_usize(&mut fields, "workers")?,
     };
     let result = SampleResult {
+        engine,
         configuration,
         target_commits: take_number(&mut fields, "target")?,
         warmup_commits: take_number(&mut fields, "warmup")?,
@@ -1310,6 +1369,7 @@ fn parse_sample_protocol(text: &str) -> AnyResult<SampleResult> {
             log_key_bytes: take_number(&mut fields, "log_key_bytes")?,
             log_value_bytes: take_number(&mut fields, "log_value_bytes")?,
             data_keys: take_number(&mut fields, "data_keys")?,
+            metadata_keys: take_number(&mut fields, "metadata_keys")?,
             physical_bytes: take_number(&mut fields, "physical_bytes")?,
         },
     };
@@ -1323,7 +1383,8 @@ fn encode_recovery_protocol(result: &RecoveryResult) -> String {
     let configuration = result.configuration;
     write!(
         &mut output,
-        "{RECOVERY_PROTOCOL} arm={} workload={} tx={} contention={} workers={} keyspace={} open_ns={} validation_ns={} checksum={}",
+        "{RECOVERY_PROTOCOL} engine={} arm={} workload={} tx={} contention={} workers={} keyspace={} open_ns={} validation_ns={} checksum={}",
+        result.engine,
         configuration.arm.name(),
         configuration.workload.name(),
         configuration.transaction_size,
@@ -1340,6 +1401,7 @@ fn encode_recovery_protocol(result: &RecoveryResult) -> String {
 
 fn parse_recovery_protocol(text: &str) -> AnyResult<RecoveryResult> {
     let mut fields = protocol_fields(text, RECOVERY_PROTOCOL)?;
+    let engine = take_engine(&mut fields)?;
     let configuration = Configuration {
         arm: Arm::parse(take_field(&mut fields, "arm")?)?,
         workload: Workload::parse(take_field(&mut fields, "workload")?)?,
@@ -1348,6 +1410,7 @@ fn parse_recovery_protocol(text: &str) -> AnyResult<RecoveryResult> {
         workers: take_usize(&mut fields, "workers")?,
     };
     let result = RecoveryResult {
+        engine,
         configuration,
         keyspace: take_usize(&mut fields, "keyspace")?,
         open_ns: take_number(&mut fields, "open_ns")?,
@@ -1387,6 +1450,18 @@ fn protocol_fields<'a>(text: &'a str, protocol: &str) -> AnyResult<BTreeMap<&'a 
         }
     }
     Ok(fields)
+}
+
+fn take_engine<'a>(fields: &mut BTreeMap<&'a str, &'a str>) -> AnyResult<String> {
+    let engine = take_field(fields, "engine")?;
+    if engine.is_empty()
+        || !engine
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_/".contains(&byte))
+    {
+        return Err("child protocol carries a malformed engine name".to_owned());
+    }
+    Ok(engine.to_owned())
 }
 
 fn take_field<'a>(fields: &mut BTreeMap<&'a str, &'a str>, key: &str) -> AnyResult<&'a str> {
@@ -1459,7 +1534,9 @@ fn validate_sample_result(result: &SampleResult) -> AnyResult<()> {
     {
         return Err("a no-log baseline reported commit-log bytes".to_owned());
     }
-    if result.backend.keys != result.backend.log_keys + result.backend.data_keys {
+    if result.backend.keys
+        != result.backend.log_keys + result.backend.data_keys + result.backend.metadata_keys
+    {
         return Err("backend key classification is incomplete".to_owned());
     }
     let expected_operations = result
@@ -1616,9 +1693,15 @@ impl Checkpoint {
                         format!("checkpoint {} line {}: {error}", path.display(), index + 2)
                     })?);
                 } else {
-                    results.push(parse_checkpoint_result(line).map_err(|error| {
+                    let result = parse_checkpoint_result(line).map_err(|error| {
                         format!("checkpoint {} line {}: {error}", path.display(), index + 2)
-                    })?);
+                    })?;
+                    if result.sample.engine != mako_cache::engine_name() {
+                        return Err(
+                            "checkpoint contains results from a different cache engine".to_owned()
+                        );
+                    }
+                    results.push(result);
                 }
             }
             if let Some(previous_run_root) = previous_run_root {
@@ -1720,7 +1803,8 @@ fn checkpoint_header(options: &RunOptions) -> String {
         .canonicalize()
         .unwrap_or_else(|_| options.data_root.clone());
     format!(
-        "{CHECKPOINT_PROTOCOL} profile={} binary={} host={} affinity={} writeback_cpu={} record_checksum={} data_root={} git={} fingerprint={}",
+        "{CHECKPOINT_PROTOCOL} engine={} profile={} binary={} host={} affinity={} writeback_cpu={} record_checksum={} data_root={} git={} fingerprint={}",
+        mako_cache::engine_name(),
         options.profile.name(),
         executable_digest(),
         hex_encode(read_trimmed("/etc/hostname").as_bytes()),
@@ -1778,7 +1862,8 @@ fn parse_checkpoint_result(line: &str) -> AnyResult<CombinedResult> {
     reject_remaining_fields(fields)?;
     let sample = parse_sample_protocol(&sample)?;
     let recovery = parse_recovery_protocol(&recovery)?;
-    if sample.configuration != recovery.configuration
+    if sample.engine != recovery.engine
+        || sample.configuration != recovery.configuration
         || sample.keyspace != recovery.keyspace
         || sample.checksum != recovery.checksum
     {
@@ -1913,6 +1998,9 @@ fn run_orchestrator_inner(
             if sample.configuration != configuration {
                 return Err("sample child returned the wrong configuration".to_owned());
             }
+            if sample.engine != mako_cache::engine_name() {
+                return Err("sample child ran a different cache engine".to_owned());
+            }
             let recovery_output = run_child(
                 &executable,
                 &recovery_arguments(&spec, sample.checksum),
@@ -1921,7 +2009,8 @@ fn run_orchestrator_inner(
                 options.record_checksum,
             )?;
             let recovery = parse_recovery_protocol(&recovery_output)?;
-            if recovery.configuration != configuration
+            if recovery.engine != sample.engine
+                || recovery.configuration != configuration
                 || recovery.keyspace != sample.keyspace
                 || recovery.checksum != sample.checksum
             {
@@ -2378,6 +2467,7 @@ fn encode_report(
         thread::available_parallelism().map_or(0, usize::from) as u64,
         false,
     );
+    json_string_field(&mut output, "engine", mako_cache::engine_name(), false);
     json_string_field(
         &mut output,
         "git_head",
@@ -2711,6 +2801,8 @@ fn encode_combined_json(output: &mut String, result: &CombinedResult) {
     );
     json_number_field(output, "backend_keys", sample.backend.keys, false);
     json_number_field(output, "commit_records", sample.backend.log_keys, false);
+    json_number_field(output, "data_keys", sample.backend.data_keys, false);
+    json_number_field(output, "metadata_keys", sample.backend.metadata_keys, false);
     json_number_field(output, "validation_checksum", sample.checksum, false);
     output.push('}');
 }
@@ -3026,6 +3118,7 @@ mod tests {
             + warmup_commits * configuration.workers as u64
             + commits;
         SampleResult {
+            engine: mako_cache::engine_name().to_owned(),
             configuration,
             target_commits,
             warmup_commits,
@@ -3057,6 +3150,7 @@ mod tests {
                 log_key_bytes: 2_000,
                 log_value_bytes: 40_000,
                 data_keys: keyspace as u64,
+                metadata_keys: 0,
                 physical_bytes: 131_072,
             },
         }
@@ -3065,6 +3159,7 @@ mod tests {
     fn combined() -> CombinedResult {
         let sample = sample();
         let recovery = RecoveryResult {
+            engine: sample.engine.clone(),
             configuration: sample.configuration,
             keyspace: sample.keyspace,
             open_ns: 123,
@@ -3105,10 +3200,129 @@ mod tests {
     }
 
     #[test]
+    fn exact_counters_match_independent_successful_operation_schedules() {
+        for transaction_size in [1, 3, 4, 65, 129] {
+            for contention in [Contention::Low, Contention::High] {
+                for workload in Workload::ALL {
+                    let configuration = Configuration {
+                        arm: Arm::Mako,
+                        workload,
+                        transaction_size,
+                        contention,
+                        workers: 3,
+                    };
+                    // Unequal non-round phases catch an oracle that forgets
+                    // that the measured key schedule starts again at zero.
+                    let (warmup, measured) = (7, 273);
+                    let mut expected = vec![0; configuration.keyspace()];
+                    for commits in [warmup, measured] {
+                        for worker in 0..configuration.workers {
+                            for committed in 0..commits {
+                                for key in selected_keys(configuration, worker, committed) {
+                                    match workload {
+                                        Workload::Read => {}
+                                        Workload::Write => expected[key] = 1,
+                                        Workload::Rmw => expected[key] += 1,
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    for (key, counter) in expected.into_iter().enumerate() {
+                        assert_eq!(
+                            expected_counter(configuration, key, warmup, measured).unwrap(),
+                            Some(counter),
+                            "{configuration:?}, key {key}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn exact_write_counters_distinguish_untouched_seed_keys() {
+        let configuration = sample().configuration;
+        assert_eq!(expected_counter(configuration, 0, 1, 2).unwrap(), Some(1));
+        assert_eq!(expected_counter(configuration, 7, 1, 2).unwrap(), Some(1));
+        assert_eq!(expected_counter(configuration, 8, 1, 2).unwrap(), Some(0));
+        assert_eq!(expected_counter(configuration, 256, 1, 2).unwrap(), Some(1));
+        assert_eq!(expected_counter(configuration, 264, 1, 2).unwrap(), Some(0));
+    }
+
+    #[test]
+    fn exact_counter_oracle_preserves_weaker_baselines_and_rejects_overflow() {
+        let mut configuration = sample().configuration;
+        configuration.workload = Workload::Rmw;
+        configuration.contention = Contention::High;
+        for arm in [Arm::Mrx, Arm::Rocks] {
+            configuration.arm = arm;
+            assert_eq!(expected_counter(configuration, 0, 1, 2).unwrap(), None);
+        }
+        configuration.arm = Arm::Mako;
+        assert_eq!(expected_counter(configuration, 0, 1, 2).unwrap(), Some(6));
+        assert!(expected_counter(configuration, 0, u64::MAX, 1).is_err());
+        configuration.contention = Contention::Low;
+        assert!(expected_counter(configuration, 0, 0, u64::MAX).is_err());
+        assert!(expected_counter(configuration, configuration.keyspace(), 0, 1).is_err());
+    }
+
+    #[test]
+    fn recovery_verifier_rejects_balanced_per_key_corruption() {
+        let path = temporary_directory("exact-recovery");
+        let configuration = Configuration {
+            arm: Arm::Rocks,
+            workload: Workload::Rmw,
+            transaction_size: 1,
+            contention: Contention::Low,
+            workers: 1,
+        };
+        let database = Database::open(configuration, &path).unwrap();
+        database.seed(configuration.keyspace()).unwrap();
+        let Database::Rocks(backend) = &database else {
+            unreachable!();
+        };
+        let (first, second) = (key_bytes(0), key_bytes(1));
+        let (zero, one) = (value_bytes(0), value_bytes(1));
+        backend
+            .write_batch(&[BlobOp::Put {
+                key: &first,
+                val: &one,
+            }])
+            .unwrap();
+        assert_eq!(
+            validate_recovered(&database, configuration, 0, 1, 1).unwrap(),
+            1
+        );
+        backend
+            .write_batch(&[
+                BlobOp::Put {
+                    key: &first,
+                    val: &zero,
+                },
+                BlobOp::Put {
+                    key: &second,
+                    val: &one,
+                },
+            ])
+            .unwrap();
+        // Both rows are well formed and their sum is still one. A checksum-
+        // only verifier would accept this move to the wrong key.
+        let error = validate_recovered(&database, configuration, 0, 1, 1).unwrap_err();
+        assert!(error.contains("key 0, expected 1"), "{error}");
+        database.close().unwrap();
+        fs::remove_dir_all(path).unwrap();
+    }
+
+    #[test]
     fn child_sample_protocol_round_trips_and_is_strict() {
-        let expected = sample();
+        let mut expected = sample();
+        expected.backend.metadata_keys = 3;
+        expected.backend.keys += 3;
         let encoded = encode_sample_protocol(&expected);
         let actual = parse_sample_protocol(&(encoded.clone() + "\n")).unwrap();
+        assert_eq!(actual.engine, expected.engine);
+        assert_eq!(actual.backend.metadata_keys, 3);
         assert_eq!(actual.configuration, expected.configuration);
         assert_eq!(actual.phase.commits, expected.phase.commits);
         assert_eq!(
@@ -3128,6 +3342,7 @@ mod tests {
     #[test]
     fn child_recovery_protocol_round_trips() {
         let expected = RecoveryResult {
+            engine: "fixture-engine".to_owned(),
             configuration: sample().configuration,
             keyspace: sample().keyspace,
             open_ns: 123,
@@ -3136,9 +3351,29 @@ mod tests {
         };
         let actual =
             parse_recovery_protocol(&(encode_recovery_protocol(&expected) + "\n")).unwrap();
+        assert_eq!(actual.engine, expected.engine);
         assert_eq!(actual.configuration, expected.configuration);
         assert_eq!(actual.open_ns, 123);
         assert_eq!(actual.checksum, 789);
+    }
+
+    #[test]
+    fn checkpoint_rejects_a_different_recovery_engine() {
+        let mut result = combined();
+        result.recovery.engine = "different-engine".to_owned();
+        assert!(parse_checkpoint_result(&encode_checkpoint_result(&result)).is_err());
+    }
+
+    #[test]
+    fn child_engine_name_must_be_a_protocol_token() {
+        let encoded = encode_sample_protocol(&sample());
+        for invalid in ["", "engine=forged", "engine?other", "enginé"] {
+            let bad = encoded.replace(
+                &format!("engine={}", mako_cache::engine_name()),
+                &format!("engine={invalid}"),
+            );
+            assert!(parse_sample_protocol(&bad).is_err(), "accepted {invalid:?}");
+        }
     }
 
     #[test]

@@ -173,7 +173,6 @@ fn full_stock_level_matches_scalar_scan_dedup_threshold_and_failure_semantics() 
             max_retained_records: 1_024,
             max_retained_key_bytes: 64 * 1_024,
             max_consumed_record_ids: 2_048,
-            trusted_scan_value_generation: 1,
             bounded_atomic_values: 1,
             ..StoTpccTableConfig::default()
         };

@@ -40,6 +40,18 @@ while IFS= read -r QUARANTINE_CASE || [[ -n "${QUARANTINE_CASE}" ]]; do
     fi
     IFS='|' read -r QUARANTINE_PACKAGE QUARANTINE_SUITE QUARANTINE_NAME \
         <<<"${QUARANTINE_CASE}"
+    if [[ "${QUARANTINE_SUITE}" == "lib" ]]; then
+        # Library ordinary tests run only in the explicit lanes below. An
+        # unknown package here would otherwise run its exact quarantine case
+        # while silently omitting the rest of its library.
+        case "${QUARANTINE_PACKAGE}" in
+            masstree|sto-core|mako-engine-sto|sto-tpcc-ffi|sto-masstree) ;;
+            *)
+                echo "quarantine library package has no dedicated Miri lane: ${QUARANTINE_PACKAGE}" >&2
+                exit 2
+                ;;
+        esac
+    fi
     if [[ -n "${QUARANTINE_IDENTITIES_SEEN[${QUARANTINE_CASE}]:-}" ]]; then
         echo "duplicate Rust STO quarantine identity: ${QUARANTINE_CASE}" >&2
         exit 2
@@ -88,15 +100,40 @@ run_miri_with_quarantine_leaks() {
         --locked --manifest-path "${MANIFEST}" "$@"
 }
 
+run_miri_library() {
+    local package="$1"
+    shift
+    local identity name
+    local skip_args=()
+    for identity in "${QUARANTINE_CASES[@]}"; do
+        if [[ "${identity}" == "${package}|lib|"* ]]; then
+            IFS='|' read -r _ _ name <<<"${identity}"
+            skip_args+=(--skip "${name}")
+        fi
+    done
+    # Callers supply `--` before their harness arguments. Append only this
+    # package's audited library skips, never an unrelated package's names.
+    run_miri -p "${package}" "$@" "${skip_args[@]}"
+}
+
 audit_miri_suite_quarantine() {
     local package="$1"
     local suite="$2"
     shift 2
     local list_dir="${CARGO_TARGET_DIR}/quarantine-audit"
     local list_log="${list_dir}/${package}-${suite}.log"
+    local feature_args=()
+    local target_args=(--test "${suite}")
+    if [[ "${suite}" == "lib" ]]; then
+        target_args=(--lib)
+        feature_args+=(--all-features)
+    fi
+    if [[ "${package}|${suite}" == "sto-core|failure_protocol" ]]; then
+        feature_args+=(--features test-install-observer)
+    fi
 
     mkdir -p "${list_dir}"
-    run_miri -p "${package}" --test "${suite}" -- \
+    run_miri -p "${package}" "${feature_args[@]}" "${target_args[@]}" -- \
         --list --format terse 2>&1 | tee "${list_log}"
     python3 - "${list_log}" "$@" <<'PY'
 import pathlib
@@ -145,14 +182,28 @@ for QUARANTINE_CASE in "${QUARANTINE_CASES[@]}"; do
         "${QUARANTINE_SUITE}" "${SUITE_CASES[@]}"
 done
 
-run_miri -p masstree --lib
-run_miri -p sto-core --lib
+run_miri_library masstree --lib --
+run_miri_library sto-core --lib --
+run_miri -p sto-core --test local_versions
+
+# The engine adapter's record encoder and cross-thread holder/publication
+# generation test require no native calls. Keep leak checking enabled.
+run_miri_library mako-engine-sto --lib --
 
 for QUARANTINE_SUITE_KEY in "${QUARANTINE_SUITE_KEYS[@]}"; do
     IFS='|' read -r QUARANTINE_PACKAGE QUARANTINE_SUITE \
         <<<"${QUARANTINE_SUITE_KEY}"
     SUITE_CASES=()
     SUITE_SKIP_ARGS=()
+    SUITE_FEATURE_ARGS=()
+    SUITE_TARGET_ARGS=(--test "${QUARANTINE_SUITE}")
+    if [[ "${QUARANTINE_SUITE}" == "lib" ]]; then
+        SUITE_TARGET_ARGS=(--lib)
+        SUITE_FEATURE_ARGS+=(--all-features)
+    fi
+    if [[ "${QUARANTINE_SUITE_KEY}" == "sto-core|failure_protocol" ]]; then
+        SUITE_FEATURE_ARGS+=(--features test-install-observer)
+    fi
     for SUITE_CASE in "${QUARANTINE_CASES[@]}"; do
         if [[ "${SUITE_CASE}" == "${QUARANTINE_SUITE_KEY}|"* ]]; then
             SUITE_CASES+=("${SUITE_CASE}")
@@ -160,12 +211,17 @@ for QUARANTINE_SUITE_KEY in "${QUARANTINE_SUITE_KEYS[@]}"; do
             SUITE_SKIP_ARGS+=(--skip "${SUITE_TEST}")
         fi
     done
-    run_miri -p "${QUARANTINE_PACKAGE}" --test "${QUARANTINE_SUITE}" -- \
-        "${SUITE_SKIP_ARGS[@]}"
+    # Library ordinary tests run in their dedicated package lanes above or
+    # below, retaining their existing expensive-test exclusions. Do not run
+    # the full sto-masstree library again here without those exclusions.
+    if [[ "${QUARANTINE_SUITE}" != "lib" ]]; then
+        run_miri -p "${QUARANTINE_PACKAGE}" "${SUITE_FEATURE_ARGS[@]}" \
+            "${SUITE_TARGET_ARGS[@]}" -- "${SUITE_SKIP_ARGS[@]}"
+    fi
     for SUITE_CASE in "${SUITE_CASES[@]}"; do
         IFS='|' read -r _ _ SUITE_TEST <<<"${SUITE_CASE}"
         run_miri_with_quarantine_leaks -p "${QUARANTINE_PACKAGE}" \
-            --test "${QUARANTINE_SUITE}" "${SUITE_TEST}" -- \
+            "${SUITE_FEATURE_ARGS[@]}" "${SUITE_TARGET_ARGS[@]}" "${SUITE_TEST}" -- \
                 --exact --include-ignored
     done
 done
@@ -174,14 +230,14 @@ done
 # ownership, panic containment, and every hostile raw-range validator without
 # asking Miri to execute the external Masstree library. The skipped statistical
 # hash-distribution loop has no unsafe access and remains in the native gate.
-run_miri -p sto-tpcc-ffi --lib -- \
+run_miri_library sto-tpcc-ffi --lib -- \
     --skip resolved_cache_hash_distributes_big_endian_customer_ids
 
 # The 128-seed history sweep and three high-iteration concurrency stress tests
 # belong in the native/TSan gate and are prohibitively slow under the
 # interpreter. The remaining tests retain the smaller concurrency cases
 # plus registry, publication, record-address, scan, and ownership coverage.
-run_miri -p sto-masstree --all-features --lib -- \
+run_miri_library sto-masstree --all-features --lib -- \
     --skip history_tests:: \
     --skip tests::concurrent_inline_and_shared_publications_never_expose_torn_bytes \
     --skip tests::concurrent_bounded_publications_never_expose_torn_bytes \

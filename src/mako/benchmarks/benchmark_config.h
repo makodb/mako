@@ -137,7 +137,7 @@ class BenchmarkConfig {
       std::vector<FastTransport*> server_transports_;
       std::unordered_map<uint16_t, mako::HelperQueue*> queue_holders_;
       std::unordered_map<uint16_t, mako::HelperQueue*> queue_holders_response_;
-      std::atomic<int> set_server_transport_{0};
+      bool global_replication_partitions_{false};
 
       // Multi-shard support: per-shard contexts
       std::map<int, ShardContext> shard_contexts_;
@@ -221,16 +221,49 @@ class BenchmarkConfig {
       // @safe
       int getLeaderConfig() const { return paxos_proc_name_==mako::LOCALHOST_CENTER; }
       const std::vector<std::string>& getPaxosConfigFile() const { return paxos_config_file_; }
+      // @safe - A full shared topology keeps partition identities on every peer.
+      bool usesGlobalReplicationPartitions() const {
+        return global_replication_partitions_;
+      }
+      void setGlobalReplicationPartitions(bool enabled) {
+        global_replication_partitions_ = enabled;
+      }
+      uint32_t getReplicationPartition(int shard, int local_partition) const {
+        return global_replication_partitions_
+            ? shard * nthreads_ + local_partition : local_partition;
+      }
+      // @safe - Colocated shards have distinct slots in the process watermark.
+      uint32_t getReplicationWatermarkPartition(int shard, int local_partition) const {
+        return config_ && config_->multi_shard_mode
+            ? shard * nthreads_ + local_partition : local_partition;
+      }
       
       // Runtime TPCC wiring getters
-      std::vector<FastTransport*>& getServerTransports() { return server_transports_; }
-      const std::vector<FastTransport*>& getServerTransports() const { return server_transports_; }
-      std::unordered_map<uint16_t, mako::HelperQueue*>& getQueueHolders() { return queue_holders_; }
-      const std::unordered_map<uint16_t, mako::HelperQueue*>& getQueueHolders() const { return queue_holders_; }
-      std::unordered_map<uint16_t, mako::HelperQueue*>& getQueueHoldersResponse() { return queue_holders_response_; }
-      const std::unordered_map<uint16_t, mako::HelperQueue*>& getQueueHoldersResponse() const { return queue_holders_response_; }
-      std::atomic<int>& getServerTransportReadyCounter() { return set_server_transport_; }
-      const std::atomic<int>& getServerTransportReadyCounter() const { return set_server_transport_; }
+      // @unsafe - Startup owns the catalog; worker threads only borrow their shard.
+      std::vector<FastTransport*>& getServerTransports() {
+        auto* shard = getShardContext(getShardIndex());
+        return shard ? shard->server_transports : server_transports_;
+      }
+      const std::vector<FastTransport*>& getServerTransports() const {
+        auto* shard = getShardContext(getShardIndex());
+        return shard ? shard->server_transports : server_transports_;
+      }
+      std::unordered_map<uint16_t, mako::HelperQueue*>& getQueueHolders() {
+        auto* shard = getShardContext(getShardIndex());
+        return shard ? shard->queue_holders : queue_holders_;
+      }
+      const std::unordered_map<uint16_t, mako::HelperQueue*>& getQueueHolders() const {
+        auto* shard = getShardContext(getShardIndex());
+        return shard ? shard->queue_holders : queue_holders_;
+      }
+      std::unordered_map<uint16_t, mako::HelperQueue*>& getQueueHoldersResponse() {
+        auto* shard = getShardContext(getShardIndex());
+        return shard ? shard->queue_holders_response : queue_holders_response_;
+      }
+      const std::unordered_map<uint16_t, mako::HelperQueue*>& getQueueHoldersResponse() const {
+        auto* shard = getShardContext(getShardIndex());
+        return shard ? shard->queue_holders_response : queue_holders_response_;
+      }
 
       // Setters
       void setNthreads(size_t n) { nthreads_ = n; setScaleFactor(n); }

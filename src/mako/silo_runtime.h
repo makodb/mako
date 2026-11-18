@@ -114,6 +114,10 @@ public:
     // Get the default global runtime (for backward compatibility)
     static SiloRuntime* GlobalDefault();
 
+    // @safe - Borrow the process-lifetime owner; clone to retain shared ownership.
+    // Native Masstree ABI users must share this runtime, not a Create() instance.
+    static const rusty::Arc<SiloRuntime>& GlobalDefaultOwner();
+
     // @safe
     // Accessors - const methods for reading state
     int id() const { return runtime_id_; }

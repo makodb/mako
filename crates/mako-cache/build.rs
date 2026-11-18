@@ -14,6 +14,8 @@ fn main() {
         "MAKO_LOCAL_REQUIRE_NATIVE",
         "ROCKSDB_LIB_DIR",
         "LIBCXX_DIR",
+        "MAKO_MTREE_NATIVE_INTEGRATION",
+        "MAKO_MTREE_NATIVE_LIBS",
     ] {
         println!("cargo:rerun-if-env-changed={variable}");
     }
@@ -24,7 +26,7 @@ fn main() {
         Some(build) => configure_mako(&build),
         None if native_is_required() || std::env::var_os("MAKO_BUILD_DIR").is_some() => {
             panic!(
-                "mako-cache native tests require a CMake build containing libmako.a; \
+                "mako-cache native tests require a CMake build containing the selected native archive; \
                  set MAKO_BUILD_DIR to a valid build tree"
             );
         }
@@ -49,7 +51,7 @@ fn configure_mako(build: &Path) {
     let cache_path = build.join("CMakeCache.txt");
     println!(
         "cargo:rerun-if-changed={}",
-        build.join("libmako.a").display()
+        build.join(native_archive_name()).display()
     );
     println!("cargo:rerun-if-changed={}", cache_path.display());
 
@@ -65,7 +67,10 @@ fn configure_mako(build: &Path) {
     let yaml = cmake_value(&cache, "YAML_CPP_BINARY_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| build.join("third-party/yaml-cpp"));
-    if yaml.join("libyaml-cpp.so").exists() {
+    if std::env::var_os("CARGO_FEATURE_ENGINE_STO").is_some() {
+        // Rust STO does not link C++ transaction or yaml-cpp code. Its native
+        // archive is still required below, including in focused sanitizer builds.
+    } else if yaml.join("libyaml-cpp.so").exists() {
         println!("cargo:rustc-link-search=native={}", yaml.display());
         println!("cargo:rustc-link-arg=-Wl,-rpath,{}", yaml.display());
     } else {
@@ -91,17 +96,34 @@ fn configure_mako(build: &Path) {
 fn mako_build_dir() -> Option<PathBuf> {
     if let Ok(dir) = std::env::var("MAKO_BUILD_DIR") {
         let path = PathBuf::from(dir);
-        return path.join("libmako.a").exists().then_some(path);
+        return path.join(native_archive_name()).is_file().then_some(path);
     }
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent()?.parent()?;
     ["build_mrx", "build_c22", "build", "build_docker"]
         .iter()
         .map(|dir| root.join(dir))
-        .find(|path| path.join("libmako.a").exists())
+        .find(|path| path.join(native_archive_name()).is_file())
+}
+
+fn native_archive_name() -> &'static str {
+    if std::env::var_os("CARGO_FEATURE_ENGINE_STO").is_some()
+        && std::env::var("MAKO_MTREE_NATIVE_INTEGRATION").is_ok_and(|value| value == "1")
+        && std::env::var("MAKO_MTREE_NATIVE_LIBS").is_ok_and(|value| {
+            value
+                .split(',')
+                .any(|library| library == "static=mako_mtree_boundary")
+        })
+    {
+        "libmako_mtree_boundary.a"
+    } else {
+        "libmako.a"
+    }
 }
 
 fn native_is_required() -> bool {
     std::env::var("MAKO_LOCAL_REQUIRE_NATIVE").is_ok_and(|value| value == "1")
+        || (std::env::var_os("CARGO_FEATURE_ENGINE_STO").is_some()
+            && std::env::var("MAKO_MTREE_NATIVE_INTEGRATION").is_ok_and(|value| value == "1"))
 }
 
 fn rocksdb_dir() -> Option<PathBuf> {

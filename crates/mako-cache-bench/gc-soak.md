@@ -20,7 +20,8 @@ helper threads inherit CPUs 0-39. These are distinct physical cores on zoo-002.
 The launcher refuses to run with CPU boost enabled and checks it again after
 each run. It records the governor but does not change it.
 
-Build with the same required-native environment used by the other benchmarks:
+Build and run inside the approved Docker environment, with the same
+required-native environment used by the other benchmarks:
 
 ```bash
 cargo build --locked --release --manifest-path crates/Cargo.toml \
@@ -43,6 +44,32 @@ The default sweep is 1, 4, 8, 16, and 32 workers. Set
 smoke. `MAKO_GC_SOAK_RATE_PER_WORKER` optionally caps each producer's rate; zero
 means unrestricted writes subject to normal queue backpressure. Rate-capped
 samples are storage-capacity observations, not peak throughput measurements.
+
+For noncontiguous placement, `gc_soak run --worker-cpus 0,2,3,5 --workers 4`
+pins logical workers 0 through 3 to those CPUs in that order. The argument is
+an ordered comma-separated list of unsigned CPU IDs, not range syntax. It must
+contain exactly one distinct, usable CPU per worker and exclude
+`--writeback-cpu`. Invalid placement fails before database creation. Omitting
+the list preserves worker-index placement; logical worker keys and counters
+never depend on the selected CPU number. The protocol event records
+`worker_cpus` in logical-worker order. Do not pass this run-only option to
+`gc_soak verify`.
+
+The paired `scripts/run_mako_engine_soak.py` runner accepts an ordered
+`--worker-cpus` pool, taking the worker-count prefix for each cell, plus
+`--helper-affinity` and `--writeback-cpu`. The pool must cover the largest
+requested worker count. Worker, helper and writeback sets must be disjoint and
+available inside Docker. Unlike the legacy shell launcher's overlapping
+helper mask above, the paired runner defaults to helpers 33–63, workers
+0 through 31, and writeback 32.
+
+`engine_compare` and its paired/variant runners also accept `--worker-cpus`.
+It conflicts with an explicitly supplied `--worker-cpu-start`; the existing
+contiguous/default mode remains supported. Explicit-mode results report the
+ordered `worker_cpus` and `worker_cpu_start: null`, not a fictitious contiguous
+base. Keep the same mapping in every matched source label and profile. Sparse
+placement alone does not establish quiet workers, idle SMT siblings or an
+interference-free host; retain the campaign's applicable runtime guards.
 
 Every ten seconds, each `run.jsonl` reports ACK and applied counters, queue
 occupancy, cache health including GC status, physical database file blocks,

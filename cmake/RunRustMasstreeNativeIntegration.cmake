@@ -294,6 +294,7 @@ set(_masstree_native_expected_tests
     worker_rcu_scope_spans_trees_and_drops_during_unwind)
 set(_sto_masstree_native_expected_tests
     native_directory_seal_preserves_records_and_rejects_scalar_and_fixed_misses
+    native_distributed_history_replay_and_retained_participant
     native_point_commit_read_and_abort_round_trip
     native_scalar_borrowed_modify_resolves_and_reuses_the_record_token
     private_direct_tree_tokens_survive_segment_growth_batches_and_wrong_table_rejection
@@ -336,6 +337,18 @@ _mako_run_native_suite(
     TARGET history_oracle
     EXPECTED_VARIABLE _sto_masstree_history_expected_tests
     ALL_FEATURES)
+
+set(_sto_tpcc_protocol_expected_tests
+    historical_mutations_publish_tombstones_without_corrupting_physical_cardinality
+    remote_unconditional_put_supersedes_an_unsent_duplicate_insert
+    retained_participant_repeated_locking_installs_copied_final_payload_and_metadata
+    coordinator_final_write_log_replays_original_decision_without_relogging
+    coordinator_log_uncertainty_cannot_be_retried_or_aborted_after_publication)
+_mako_run_native_suite(
+    LABEL "Rust STO distributed protocol integration"
+    PACKAGE sto-tpcc-ffi
+    TARGET protocol
+    EXPECTED_VARIABLE _sto_tpcc_protocol_expected_tests)
 
 if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
         AND NOT "${MAKO_STO_TPCC_NATIVE_TEST}" STREQUAL "")
@@ -385,8 +398,6 @@ if(DEFINED MAKO_STO_TPCC_NATIVE_TEST
         tests::stable_status_numbers_match_header
         tests::terminal_capacity_exhaustion_is_fatal_not_retryable
         tests::thread_affinity_cookie_is_stable_and_distinct
-        tests::tpcc_table_config_c_layout_appends_the_bounded_value_flag
-        tests::tpcc_table_configuration_always_selects_unique_lock_requests
         tests::worker_owner_runtime_id_remains_accessible_during_transaction)
     execute_process(
         COMMAND "${CMAKE_COMMAND}" -E env ${_native_environment}

@@ -18,6 +18,7 @@
 #include <chrono>
 #include <ctime>
 #include <string>
+#include <stdexcept>
 #include <sstream>
 #include <iomanip>
 #include <random>
@@ -392,10 +393,26 @@ namespace mako
     const size_t max_batch_size = 100; 
   #endif
 
+    // Helper routing identifies the worker lane; this identity fences its
+    // persistent participant before any storage operation.
+    struct ParticipantIdentity {
+        uint64_t incarnation = 0;
+        uint64_t attempt = 0;
+        uint64_t sequence = 0;
+        uint32_t term = 0;
+
+        // @safe - Scalar identity comparison.
+        bool operator==(const ParticipantIdentity &other) const noexcept {
+            return incarnation == other.incarnation && attempt == other.attempt &&
+                   sequence == other.sequence && term == other.term;
+        }
+    };
+
     struct vector_int_request_t
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint16_t len;
         char value[max_vector_int_length];
     };
@@ -404,6 +421,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint16_t table_id;
         uint16_t len;
         char key[max_key_length];
@@ -413,6 +431,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint16_t table_id;
         uint16_t slen;
         uint16_t elen;
@@ -422,6 +441,7 @@ namespace mako
     struct get_response_t
     {
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint16_t len;
         int status;
         char value[max_value_length];
@@ -430,6 +450,7 @@ namespace mako
     struct scan_response_t
     {
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint16_t len;
         int status;
         char value[max_value_length];
@@ -439,6 +460,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         int control;
         uint64_t value;
     };
@@ -447,6 +469,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint32_t req_val;
     };
 
@@ -454,6 +477,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-65,535) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint16_t table_id;
         uint16_t klen;
         uint16_t vlen;
@@ -463,9 +487,11 @@ namespace mako
     struct batch_lock_request_t {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint16_t batch_size;
         char data[
             sizeof(uint16_t) * max_batch_size // the table_id sequence
+            + sizeof(uint8_t) * max_batch_size // explicit mutation kind
             + (sizeof(uint16_t) + max_key_length) * max_batch_size // the (klen, kdata) sequence
             + (sizeof(uint16_t) + max_value_length) * max_batch_size // the (vlen, vdata) sequence
         ];
@@ -494,8 +520,12 @@ namespace mako
                 delete request;
         }
 
-        // Note the string copy in this step could be avoided
-        void add_request(std::string &key, std::string& value, uint16_t table_id, uint16_t server_id) {
+        // @unsafe - Bounded legacy wire serialization, copying owned RPC bytes.
+        void add_request(std::string &key, std::string& value, uint16_t table_id,
+                         uint16_t server_id, uint8_t operation = 0) {
+            if (request->batch_size >= max_batch_size || operation > 2 ||
+                key.size() > max_key_length || value.size() > max_value_length)
+                throw std::length_error("invalid participant mutation batch");
             request->batch_size ++;
             request->targert_server_id = server_id;
             uint16_t klen = key.size(), vlen = value.size();
@@ -504,6 +534,8 @@ namespace mako
 
             memcpy(ptr, &table_id, bytes_shift);
             ptr += bytes_shift, msg_len += bytes_shift;
+            memcpy(ptr, &operation, sizeof(operation));
+            ptr += sizeof(operation), msg_len += sizeof(operation);
             memcpy(ptr, &klen, bytes_shift);
             ptr += bytes_shift, msg_len += bytes_shift;
             memcpy(ptr, key.c_str(), klen);
@@ -514,9 +546,6 @@ namespace mako
             ptr += vlen, msg_len += vlen;
         }
 
-        void set_req_nr(uint64_t req_nr) {
-            request->req_nr = req_nr;
-        }
 
         size_t get_msg_len() {
             return msg_len + offsetof(batch_lock_request_t, data);
@@ -530,10 +559,15 @@ namespace mako
             return num_request_handled == request->batch_size;
         }
 
-        void read_one_request(char **key, uint16_t *klen, char **value, uint16_t *vlen, uint16_t *table_id) {
+        // @unsafe - Parses the bounded batch produced by add_request.
+        void read_one_request(char **key, uint16_t *klen, char **value,
+                              uint16_t *vlen, uint16_t *table_id,
+                              uint8_t *operation = nullptr) {
             auto bytes_shift = sizeof(uint16_t);
             memcpy((char*)table_id, data_ptr, bytes_shift);
             data_ptr += bytes_shift;
+            if (operation) memcpy(operation, data_ptr, sizeof(uint8_t));
+            data_ptr += sizeof(uint8_t);
             memcpy((char*)klen, data_ptr, bytes_shift);
             data_ptr += bytes_shift;
             *key = data_ptr;
@@ -558,12 +592,14 @@ namespace mako
     struct basic_response_t
     {
         uint32_t req_nr;
+        ParticipantIdentity identity;
         int status;
     };
 
     struct get_int_response_t
     {
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint32_t result;
         int shard_index;
         int status;
@@ -573,6 +609,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
     };
 
     // --------------------------- Remote client API structures
@@ -613,6 +650,7 @@ namespace mako
     {
         uint16_t targert_server_id; // requesting client's global warehouse id
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint16_t table_id;          // target table
         uint16_t klen;              // key length
         uint16_t vlen;              // value length (0 for remove)
@@ -645,11 +683,13 @@ namespace mako
     class ErrorCode
     {
     public:
-        static const int SUCCESS = 0;
-        static const int TIMEOUT = 1;
-        static const int ERROR = 2;
-        static const int ABORT = 3;
-        static const int SERVER_BUSY = 4;  // All workers occupied
+        static constexpr int SUCCESS = 0;
+        static constexpr int TIMEOUT = 1;
+        static constexpr int ERROR = 2;
+        static constexpr int ABORT = 3;
+        static constexpr int SERVER_BUSY = 4;  // All workers occupied
+        static constexpr int UNKNOWN = 5; // Decision may have published; never retry.
+        static constexpr int NOT_FOUND = 6; // Successful absence read; participant stays live.
     };
 
     using resp_continuation_t =

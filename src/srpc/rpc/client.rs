@@ -62,7 +62,7 @@ use rusty as cpp;
 #[allow(unused_imports)]
 use cpp::srpc::callback_wrapper as _;
 #[allow(unused_imports)]
-use cpp::srpc::reactor as _;
+use cpp::srpc::reactor as cpp_reactor;
 #[allow(unused_imports)]
 use cpp::srpc::serializable as cpp_serializable;
 use rusty::RustyCellGet as _;
@@ -1336,6 +1336,14 @@ impl ClientConnection {
     // --- generic request trio ---
     fn request<F>(&self, rpc_id: i32, attr: &FutureAttr, write_fn: F) -> FutureResult
     where F: FnMut(&mut BinaryWriteArchive) { clientconn_request_via_channel(self, rpc_id, attr, write_fn) }
+    /// Wait cooperatively for channel admission, never retrying an accepted frame.
+    /// A positive timeout requires a running fiber and a retained connection;
+    /// callers must not hold a Client or peer lock across this call.
+    fn request_with_admission<F>(&self, rpc_id: i32, attr: &FutureAttr,
+                                 admission_timeout_us: u64, write_fn: F) -> FutureResult
+    where F: FnMut(&mut BinaryWriteArchive) {
+        clientconn_request_inner(self, rpc_id, attr, admission_timeout_us, write_fn)
+    }
     fn request_with_options<F>(&self, rpc_id: i32, options: &RequestOptions, attr: &FutureAttr, write_fn: F) -> FutureResult
     where F: FnMut(&mut BinaryWriteArchive) { clientconn_request_with_options(self, rpc_id, options, attr, write_fn) }
     fn request_async<F>(&self, rpc_id: i32, write_fn: F, on_reply: AsyncReplyCallback) -> Result<(), i32>
@@ -2097,19 +2105,30 @@ pub fn clientconn_reconnect(self_: &ClientConnection, mut on_complete: OnReconne
     complete_reconnect(false, result)
 }
 
-// clippy::borrowed_box -- the concrete Box spelling is load-bearing: through &T the pointer-like check fails and the calls lower to `.` instead of `->` (docs 7.50); measured. See the Task-2 measurement block above.
-// clippy::explicit_auto_deref -- measured: 42 of the 68 sites change emitted C++ (std::move out of an Arc field, a by-value bind of a borrow guard, a pointer where a value was passed). See the Task-2 measurement block above.
-#[allow(clippy::borrowed_box, clippy::explicit_auto_deref)]
 pub fn clientconn_request_via_channel<F>(conn: &ClientConnection, rpc_id: i32,
-                                     attr: &FutureAttr, mut write_fn: F) -> FutureResult
+                                     attr: &FutureAttr, write_fn: F) -> FutureResult
 where F: FnMut(&mut BinaryWriteArchive) {
+    clientconn_request_inner(conn, rpc_id, attr, 0u64, write_fn)
+}
+
+// These allowances preserve the measured provider pointer/borrow lowering.
+#[allow(clippy::borrowed_box, clippy::explicit_auto_deref)]
+fn clientconn_request_inner<F>(conn: &ClientConnection, rpc_id: i32,
+                              attr: &FutureAttr, admission_timeout_us: u64,
+                              mut write_fn: F) -> FutureResult
+where F: FnMut(&mut BinaryWriteArchive) {
+    // SAFETY: inspecting the current fiber has no caller-side precondition.
+    if admission_timeout_us > 0u64 && unsafe { Fiber::current_fiber() }.is_none() {
+        return FutureResult::Err(CLIENT_ERR_INVALID_ARGUMENT);
+    }
     if !conn.allow_request_with_circuit_metrics() {
         return FutureResult::Err(CLIENT_ERR_BUSY);
     }
     conn.pending_queue_.expire_stale();
     if !conn.state_machine_.is_connected() {
         let buffering_cfg = conn.buffering_config_.get();
-        if buffering_cfg.enabled && buffering_cfg.behavior == DisconnectBehavior::QUEUE {
+        if admission_timeout_us == 0u64 && buffering_cfg.enabled
+            && buffering_cfg.behavior == DisconnectBehavior::QUEUE {
             let fu = Future::create(conn.xid_counter_.next(1i64), attr.clone());
             let fu_for_cb = fu.clone();
             let mut qr = QueuedRequest::new();
@@ -2182,16 +2201,53 @@ where F: FnMut(&mut BinaryWriteArchive) {
     crate::serializable::Serialize_::serialize(&rpc_id, ar);
     write_fn(ar);
 
-    let ch_err = unsafe {
-        conn.dispatch_frame_via_channel(body_sink.bytes.as_ptr(), body_sink.bytes.len())
-    };
-    if ch_err != ChannelError::None {
-        {
-            let mut pending_guard2 = conn.pending_fu_.lock().unwrap();
-            (*pending_guard2).remove(&(*fu).xid_);
+    let admission_start = if admission_timeout_us > 0u64 { Time::now(true) } else { 0u64 };
+    // A statement loop preserves the outer FutureResult return in generated C++.
+    let mut ch_err: ChannelError;
+    loop {
+        // Closing the connection owns completion after taking this future from
+        // pending_fu_. Do not dispatch it on a subsequently reconnected channel.
+        if admission_timeout_us > 0u64 && (*fu).ready() {
+            return FutureResult::Ok(fu);
         }
-        conn.record_circuit_result(CLIENT_ERR_IO);
-        return FutureResult::Err(CLIENT_ERR_IO);
+        // SAFETY: the encoded buffer remains live, and send_frame copies it only
+        // on admission. WouldBlock guarantees that no bytes were accepted.
+        ch_err = unsafe {
+            conn.dispatch_frame_via_channel(body_sink.bytes.as_ptr(), body_sink.bytes.len())
+        };
+        if ch_err != ChannelError::WouldBlock || admission_timeout_us == 0u64 {
+            break;
+        }
+        let elapsed = Time::now(true) - admission_start;
+        if elapsed >= admission_timeout_us {
+            break;
+        }
+        let delay = (admission_timeout_us - elapsed).min(1000u64);
+        // SAFETY: a running fiber was checked before creating the request.
+        // No channel or pending-future lock is held while the poller drains it.
+        unsafe { cpp_reactor::fiber_sleep(delay) };
+    }
+    if ch_err != ChannelError::None {
+        let removed = {
+            let mut pending_guard2 = conn.pending_fu_.lock().unwrap();
+            (*pending_guard2).remove(&(*fu).xid_)
+        };
+        let error = if ch_err == ChannelError::WouldBlock {
+            CLIENT_ERR_AGAIN
+        } else {
+            CLIENT_ERR_IO
+        };
+        conn.record_circuit_result(error);
+        if admission_timeout_us > 0u64 {
+            // Taking the map entry transfers the right to notify. A concurrent
+            // close/reply that already took it is responsible for completion.
+            if removed.is_some() {
+                (*fu).error_code_.set(error);
+                (*fu).notify_ready(fu.clone());
+            }
+            return FutureResult::Ok(fu);
+        }
+        return FutureResult::Err(error);
     }
 
     conn.metrics_.record_request_sent();

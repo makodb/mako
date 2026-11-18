@@ -1,19 +1,25 @@
-//! Transactional Silo/MassTrans write-back cache over RocksDB.
+//! Transactional STO write-back cache over RocksDB.
 //!
-//! Native C++ Silo is the authoritative live state while this process runs.
-//! Before commit, STO sizes and seals its canonical final write set while Rust
-//! claims bounded capacity in the current worker's SPSC writeback lane. Native
-//! coordinates Mako timestamp assignment with final validation while Silo
-//! holds the complete write set. A failed validation may leave a timestamp gap
-//! but never a physical log record. Native writes the complete record directly
-//! into lane-owned storage before installing the writes. A successful worker
+//! The selected engine is the authoritative live state while this process
+//! runs. Feature `engine-c-abi` (default) uses C++ STO/MassTrans; `engine-sto`
+//! uses Rust STO over the native C++ Masstree index. Select exactly one engine,
+//! using `default-features = false` when selecting `engine-sto`.
+//!
+//! Before commit, the engine sizes and seals its canonical final write set
+//! while the cache claims bounded capacity in the current worker's SPSC
+//! writeback lane. The engine coordinates Mako timestamp assignment with
+//! final validation while holding the complete write set's locks. A failed
+//! validation may leave a timestamp gap but never a physical log record. The
+//! engine seals the record or its owned deferred one-put payload in lane-owned
+//! storage before installing the writes. A successful worker
 //! acknowledges as soon as its own record is Ready, without waiting for another
 //! lane. The background writer polls lanes in round-robin order and applies a
 //! bounded contiguous prefix from one lane in each atomic RocksDB
 //! `WriteBatch`. Because physical batch order may differ from serialization
 //! order, a shared coordinator uses Mako timestamps to prevent an older record
-//! from replacing a newer materialized value. Every transaction's log record
-//! is retained.
+//! from replacing a newer materialized value. Applied log records remain
+//! available for recovery until checkpoint-backed, age-based GC reclaims
+//! them; the default retention is five minutes.
 //!
 //! [`Cache::wait_applied`] and [`Cache::close`] drain acknowledged work into
 //! RocksDB, but neither operation adds a separate WAL flush or disk sync. The
@@ -46,7 +52,7 @@ use std::num::{NonZeroU32, NonZeroU64};
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use mako_engine::{CommitDisposition, LocalDb};
@@ -81,6 +87,14 @@ mod application_history_tests;
 mod milestone1_acceptance_tests;
 
 pub use mako_engine::{CommitRecordChecksum as RecordChecksum, Error as LocalError, MakoTimestamp};
+
+/// Name of the local transaction engine this cache was compiled against.
+///
+/// Validation binaries record it so a database written by one engine build
+/// can be reopened by the other and the two builds can be told apart.
+pub fn engine_name() -> &'static str {
+    <mako_engine::Engine as mako_engine::LocalEngine>::NAME
+}
 pub use mrx_rocks::Durability;
 pub use record::{CommitSeq, RecordError};
 pub use writeback::{
@@ -157,7 +171,7 @@ impl CommitWriterSlot {
 
 const _: () = assert!(std::mem::size_of::<CommitWriterSlot>() == 64);
 
-/// An asymmetric outcome fence for common writers and rare read-only commits.
+/// An asymmetric outcome fence for writers and read-only commits.
 ///
 /// Each attached writer modifies only its own cache line before entering the
 /// native packed cache-order protocol. A read-only commit marks a cut in that
@@ -167,7 +181,6 @@ const _: () = assert!(std::mem::size_of::<CommitWriterSlot>() == 64);
 /// read-only transaction or rejects read-only validation on a conflicting
 /// lock, version, or predicate.
 struct CommitFence {
-    read_only_serial: Mutex<()>,
     writers: Box<[CommitWriterSlot]>,
 }
 
@@ -177,10 +190,7 @@ impl CommitFence {
             .map(|_| CommitWriterSlot::new())
             .collect::<Vec<_>>()
             .into_boxed_slice();
-        Self {
-            read_only_serial: Mutex::new(()),
-            writers,
-        }
+        Self { writers }
     }
 
     #[inline(always)]
@@ -225,14 +235,23 @@ impl CommitFence {
         }
     }
 
-    fn close_for_read_only(
-        &self,
-        order_validation_prefix: impl FnOnce(),
-    ) -> CommitReadOnlyGuard<'_> {
-        let serial = self
-            .read_only_serial
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+    #[inline]
+    fn read_only_scan_bound(&self, order_validation_prefix: impl FnOnce()) -> usize {
+        order_validation_prefix();
+        // A prefix writer registered its slot before its packed Release RMW.
+        // The cut acquires that publication or its release sequence. Loading
+        // the monotone registration counter AFTER that cut therefore includes
+        // every prefix writer, even though registration itself was Relaxed.
+        // An Acquire load before the cut would not establish this guarantee.
+        // Slots are never reused and this counter never decreases or resets.
+        NEXT_COMMIT_FENCE_THREAD_SLOT.load(Ordering::Acquire)
+    }
+
+    fn close_for_read_only(&self, order_validation_prefix: impl FnOnce()) {
+        // Each reader owns its cut and its observed generations. Readers
+        // neither change a writer slot nor consume another reader's result.
+        // Their Acquire RMWs remain members of the packed word's release
+        // sequence, so overlapping readers preserve the same prefix proof.
         // A writer's odd-generation Release publication precedes its packed
         // assignment or general-lock Release RMW. The callback's Acquire RMW
         // reads that modification or a later member of its release sequence.
@@ -246,14 +265,13 @@ impl CommitFence {
         // STO validation therefore either rejects this read-only transaction
         // on a conflicting lock/predicate, or admits the reader-before-writer
         // serialization. Missing that post-cut generation is safe.
-        order_validation_prefix();
+        let registered = self.read_only_scan_bound(order_validation_prefix);
 
         let mut spins = 0;
-        for writer in &self.writers {
+        for writer in &self.writers[..registered] {
             let observed = writer.generation.load(Ordering::Acquire);
             writer.drain_observed(observed, &mut spins);
         }
-        CommitReadOnlyGuard { _serial: serial }
     }
 }
 
@@ -293,10 +311,6 @@ impl Drop for CommitWriterGuard<'_> {
             .generation
             .store(self.active_generation.wrapping_add(1), Ordering::Release);
     }
-}
-
-struct CommitReadOnlyGuard<'a> {
-    _serial: MutexGuard<'a, ()>,
 }
 
 /// Foreground transaction concurrency accepted by one cache instance.
@@ -487,6 +501,14 @@ pub struct BackendWriteInProgress {
 pub struct CacheStatus {
     /// Overall operational classification for this snapshot.
     pub health: CacheHealth,
+    /// Whether the engine runtime can still admit transactions.
+    ///
+    /// Rust STO reports both core-runtime failure after uncertain cleanup and
+    /// shared native-directory poison, even before a point operation maps it
+    /// into this database's core runtime. C++ STO quarantines individual
+    /// workers instead, so its runtime stays healthy.
+    /// Reading this field neither attaches nor quarantines the calling worker.
+    pub engine_runtime_healthy: bool,
     /// Whether the dedicated background writer has not stopped or unwound.
     pub background_writer_running: bool,
     /// Backend-application failures observed by any consumer since startup.
@@ -884,8 +906,8 @@ pub struct Cache<B: Blobs + 'static> {
     /// itself is thread-affine, so ordinary transactions pay no owner atomic.
     single_producer_claimed: AtomicBool,
     // Common writers publish only to their thread-private fence cache line.
-    // Read-only/no-op commits close admission and drain those lines so they
-    // cannot pass a writer whose post-install outcome is still unresolved.
+    // Read-only/no-op commits take independent order cuts and drain registered
+    // slots so they cannot pass an unresolved prefix writer's outcome.
     commit_fence: CommitFence,
 }
 
@@ -1115,7 +1137,8 @@ impl<B: Blobs + 'static> Cache<B> {
         let backend_stalled = apply
             .in_progress
             .is_some_and(|(_, elapsed)| elapsed >= self.backend_stall_threshold);
-        let health = if !runtime.running || writeback_error.is_some() {
+        let engine_runtime_healthy = self.local.runtime_is_healthy();
+        let health = if !engine_runtime_healthy || !runtime.running || writeback_error.is_some() {
             CacheHealth::Unhealthy
         } else if runtime.consecutive_failures != 0
             || apply.pending_retry.is_some()
@@ -1134,6 +1157,7 @@ impl<B: Blobs + 'static> Cache<B> {
 
         Ok(CacheStatus {
             health,
+            engine_runtime_healthy,
             background_writer_running: runtime.running,
             backend_failures: apply.backend_failures,
             record_failures: apply.record_failures,
@@ -1664,7 +1688,7 @@ impl<'db, B: Blobs + 'static> Transaction<'db, B> {
                 // writer ordered before it. A later writer may proceed: STO
                 // either orders it after this read-only transaction or makes
                 // the read-set/predicate validation reject this commit.
-                let _fence = self.cache.commit_fence.close_for_read_only(|| {
+                self.cache.commit_fence.close_for_read_only(|| {
                     self.cache.local.order_record_validation_prefix();
                 });
                 if let Err(error) = self.cache.writeback.ensure_no_unknown() {
@@ -2408,7 +2432,10 @@ fn finish_read_only(native: mako_engine::Transaction<'_>) -> Result<(), Error> {
 /// Returning the preparation error is correct only when native cleanup is
 /// known complete. A cleanup failure quarantines the worker and is the more
 /// severe result, matching mako-local's own fail-closed preflight behavior.
-fn abort_after_precommit_failure(native: mako_engine::Transaction<'_>, preparation: Error) -> Error {
+fn abort_after_precommit_failure(
+    native: mako_engine::Transaction<'_>,
+    preparation: Error,
+) -> Error {
     match native.abort() {
         Ok(()) => preparation,
         Err(cleanup) => Error::Native(cleanup),
@@ -2579,7 +2606,8 @@ mod tests {
         let fence = Arc::new(CommitFence::new());
         let payload = Arc::new(AtomicUsize::new(0));
         let validation_next = Arc::new(AtomicUsize::new(0));
-        let writer = fence.enter_writer_slot(0);
+        let slot = CommitFence::current_thread_slot();
+        let writer = fence.enter_writer_slot(slot);
         validation_next.fetch_add(1, Ordering::Release);
         payload.store(17, Ordering::Relaxed);
 
@@ -2589,7 +2617,7 @@ mod tests {
         let (cut_tx, cut_rx) = channel();
         let (entered_tx, entered_rx) = channel();
         let reader = std::thread::spawn(move || {
-            let _reader = reader_fence.close_for_read_only(|| {
+            reader_fence.close_for_read_only(|| {
                 reader_validation_next.fetch_add(0, Ordering::Acquire);
                 cut_tx.send(()).unwrap();
             });
@@ -2609,21 +2637,71 @@ mod tests {
     }
 
     #[test]
+    fn commit_fence_readers_take_independent_cuts_and_drain_the_same_writer() {
+        use std::sync::mpsc::{channel, TryRecvError};
+        use std::time::Duration;
+
+        let fence = Arc::new(CommitFence::new());
+        let order = Arc::new(AtomicUsize::new(0));
+        let payload = Arc::new(AtomicUsize::new(0));
+        let slot = CommitFence::current_thread_slot();
+        let writer = fence.enter_writer_slot(slot);
+        order.fetch_add(1, Ordering::Release);
+        payload.store(17, Ordering::Relaxed);
+        let (cuts_tx, cuts_rx) = channel();
+        let (done_tx, done_rx) = channel();
+        let mut releases = Vec::new();
+        let mut readers = Vec::new();
+        for _ in 0..2 {
+            let fence = Arc::clone(&fence);
+            let order = Arc::clone(&order);
+            let payload = Arc::clone(&payload);
+            let cuts_tx = cuts_tx.clone();
+            let done_tx = done_tx.clone();
+            let (release_tx, release_rx) = channel();
+            releases.push(release_tx);
+            readers.push(std::thread::spawn(move || {
+                fence.close_for_read_only(|| {
+                    order.fetch_add(0, Ordering::Acquire);
+                    cuts_tx.send(()).unwrap();
+                    release_rx.recv_timeout(Duration::from_secs(20)).unwrap();
+                });
+                done_tx.send(payload.load(Ordering::Relaxed)).unwrap();
+            }));
+        }
+        let first_cut = cuts_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+        let second_cut = cuts_rx.recv_timeout(Duration::from_secs(5)).is_ok();
+        assert_eq!(done_rx.try_recv(), Err(TryRecvError::Empty));
+        // Always release and join both children before asserting the overlap.
+        // Restoring the old mutex must fail this test without stranding a thread.
+        for release in releases {
+            let _ = release.send(());
+        }
+        drop(writer);
+        for reader in readers {
+            reader.join().unwrap();
+        }
+        assert_eq!(done_rx.recv_timeout(Duration::from_secs(5)), Ok(17));
+        assert_eq!(done_rx.recv_timeout(Duration::from_secs(5)), Ok(17));
+        assert!(first_cut && second_cut, "read-only cuts were serialized");
+    }
+
+    #[test]
     fn commit_fence_writer_after_validation_cut_is_not_blocked() {
         let fence = CommitFence::new();
         let validation_next = AtomicUsize::new(0);
-        let reader = fence.close_for_read_only(|| {
+        fence.close_for_read_only(|| {
             validation_next.fetch_add(0, Ordering::Acquire);
         });
 
-        let writer = fence.enter_writer_slot(1);
+        let slot = CommitFence::current_thread_slot();
+        let writer = fence.enter_writer_slot(slot);
         validation_next.fetch_add(1, Ordering::Release);
         assert!(
-            fence.writers[1].generation.load(Ordering::Acquire) & 1 != 0,
+            fence.writers[slot].generation.load(Ordering::Acquire) & 1 != 0,
             "a post-cut writer should enter without waiting for the reader"
         );
         drop(writer);
-        drop(reader);
     }
 
     #[test]
@@ -2633,7 +2711,8 @@ mod tests {
 
         let fence = Arc::new(CommitFence::new());
         let validation_next = Arc::new(AtomicUsize::new(0));
-        let first = fence.enter_writer_slot(2);
+        let slot = CommitFence::current_thread_slot();
+        let first = fence.enter_writer_slot(slot);
         validation_next.fetch_add(1, Ordering::Release);
 
         let reader_fence = Arc::clone(&fence);
@@ -2643,12 +2722,14 @@ mod tests {
         let (drained_tx, drained_rx) = channel();
         let reader = std::thread::spawn(move || {
             reader_validation_next.fetch_add(0, Ordering::Acquire);
-            let observed = reader_fence.writers[2].generation.load(Ordering::Acquire);
+            let observed = reader_fence.writers[slot]
+                .generation
+                .load(Ordering::Acquire);
             assert_eq!(observed & 1, 1);
             observed_tx.send(observed).unwrap();
             reused_rx.recv().unwrap();
             let mut spins = 0;
-            reader_fence.writers[2].drain_observed(observed, &mut spins);
+            reader_fence.writers[slot].drain_observed(observed, &mut spins);
             drained_tx.send(()).unwrap();
         });
 
@@ -2656,10 +2737,10 @@ mod tests {
             .recv_timeout(Duration::from_secs(5))
             .expect("reader did not observe the first active generation");
         drop(first);
-        let second = fence.enter_writer_slot(2);
+        let second = fence.enter_writer_slot(slot);
         validation_next.fetch_add(1, Ordering::Release);
         assert_ne!(
-            fence.writers[2].generation.load(Ordering::Acquire),
+            fence.writers[slot].generation.load(Ordering::Acquire),
             first_generation
         );
         reused_tx.send(()).unwrap();
@@ -2669,9 +2750,39 @@ mod tests {
 
         // The reader returned while the deliberately post-cut successor still
         // owned the same worker slot.
-        assert_eq!(fence.writers[2].generation.load(Ordering::Acquire) & 1, 1);
+        assert_eq!(
+            fence.writers[slot].generation.load(Ordering::Acquire) & 1,
+            1
+        );
         drop(second);
         reader.join().unwrap();
+    }
+
+    #[test]
+    fn commit_fence_scan_bound_includes_registration_completed_inside_cut() {
+        let fence = CommitFence::new();
+        let allocated = Cell::new(None);
+        let order = Arc::new(AtomicUsize::new(0));
+        let bound = fence.read_only_scan_bound(|| {
+            let writer_order = Arc::clone(&order);
+            let slot = std::thread::spawn(move || {
+                let slot = CommitFence::current_thread_slot();
+                writer_order.fetch_add(1, Ordering::Release);
+                slot
+            })
+            .join()
+            .unwrap();
+            allocated.set(Some(slot));
+            order.fetch_add(0, Ordering::Acquire);
+        });
+        // This checks the production helper's call order deterministically.
+        // The Loom models separately check weak-memory publication without
+        // depending on the test's join synchronization.
+        assert!(
+            bound > allocated.get().unwrap(),
+            "the scan bound omitted a registration completed before the cut"
+        );
+        assert!(bound <= fence.writers.len());
     }
 
     #[test]
@@ -4096,6 +4207,160 @@ mod tests {
                 ApplyError::UnknownOutcome { sequence }
             ))) if sequence == pinned
         ));
+    }
+
+    #[cfg(have_mako)]
+    #[test]
+    fn two_readers_drain_one_pinned_writer_and_reject_unknown_outcome() {
+        use std::sync::mpsc::{channel, TryRecvError};
+
+        use mrx_core::fakes::MemBlobs;
+
+        let cache = Arc::new(
+            Cache::from_backend(Arc::new(MemBlobs::new()), CacheOptions::default()).unwrap(),
+        );
+        // Attach the owner and allocate its physical lane without publishing
+        // a committed record. This fixture drives the same pin_unknown path
+        // as the single-reader test, not a simulated native core panic.
+        drop(cache.transaction().unwrap());
+        let slot = CommitFence::current_thread_slot();
+        let writer = cache.commit_fence.enter_writer_slot(slot);
+        let lane = cache.writeback.lane(slot).unwrap();
+        let mut reserved = lane
+            .writeback()
+            .reserve_single(
+                lane.producer(),
+                vec![Mutation::Put {
+                    table_id: DEFAULT_TABLE_ID,
+                    key: b"uncertain-two-readers".to_vec(),
+                    value: b"value".to_vec(),
+                }],
+            )
+            .unwrap()
+            .bind(test_timestamp(1))
+            .unwrap();
+
+        let (cut_tx, cut_rx) = channel();
+        let (done_tx, done_rx) = channel();
+        let mut readers = Vec::new();
+        for reader_id in 0..2 {
+            let cache = Arc::clone(&cache);
+            let cut_tx = cut_tx.clone();
+            let done_tx = done_tx.clone();
+            readers.push(std::thread::spawn(move || {
+                let in_flight = cache.transaction().unwrap();
+                // Drive the real fence explicitly so both cuts are observable
+                // without adding a process-global test hook. The following
+                // public commit also executes its own fence and health check.
+                cache.commit_fence.close_for_read_only(|| {
+                    cache.local.order_record_validation_prefix();
+                    cut_tx.send(reader_id).unwrap();
+                });
+                let result = in_flight.commit();
+                done_tx.send(reader_id).unwrap();
+                result
+            }));
+        }
+        drop(cut_tx);
+        drop(done_tx);
+        let first_cut = cut_rx.recv_timeout(Duration::from_secs(5));
+        let second_cut = cut_rx.recv_timeout(Duration::from_secs(5));
+        let blocked_before_pin = matches!(done_rx.try_recv(), Err(TryRecvError::Empty));
+        let pinned = reserved.pin_unknown().unwrap();
+        drop(reserved);
+        let blocked_until_release = matches!(done_rx.try_recv(), Err(TryRecvError::Empty));
+        assert!(matches!(
+            cache.transaction(),
+            Err(Error::Apply(ApplyError::UnknownOutcome { sequence })) if sequence == pinned
+        ));
+        // Release and join before checking rendezvous assertions. Restoring
+        // the old reader mutex must fail without leaving blocked children.
+        drop(writer);
+        let outcomes: Vec<_> = readers
+            .into_iter()
+            .map(|reader| reader.join().unwrap())
+            .collect();
+        assert!(first_cut.is_ok() && second_cut.is_ok());
+        assert_ne!(first_cut.unwrap(), second_cut.unwrap());
+        assert!(blocked_before_pin && blocked_until_release);
+        for outcome in outcomes {
+            assert!(matches!(
+                outcome,
+                Err(Error::Apply(ApplyError::UnknownOutcome { sequence })) if sequence == pinned
+            ));
+        }
+        let status = cache.status().unwrap();
+        assert_eq!(status.health, CacheHealth::Unhealthy);
+        assert_eq!(status.applied_watermark.sequence(), 0);
+        assert_eq!(status.acknowledged_transactions, 0);
+        assert_eq!(status.queued_transactions, 1);
+        assert!(matches!(
+            status.writeback_error,
+            Some(ApplyError::UnknownOutcome { sequence }) if sequence == pinned
+        ));
+        let cache = Arc::try_unwrap(cache).ok().unwrap();
+        assert!(matches!(
+            cache.close(),
+            Err(Error::Runtime(RuntimeError::Apply(ApplyError::UnknownOutcome { sequence })))
+                if sequence == pinned
+        ));
+    }
+
+    #[cfg(all(have_mako, feature = "engine-sto-test-hooks", panic = "unwind"))]
+    #[test]
+    fn poisoned_sto_runtime_makes_cache_unhealthy_from_another_worker() {
+        const ROLE: &str = "MAKO_CACHE_RUNTIME_HEALTH_ROLE";
+        if std::env::var_os(ROLE).is_none() {
+            let status = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "tests::poisoned_sto_runtime_makes_cache_unhealthy_from_another_worker",
+                ])
+                .env(ROLE, "1")
+                .status()
+                .expect("run runtime-health subprocess");
+            assert!(
+                status.success(),
+                "runtime-health subprocess failed: {status}"
+            );
+            return;
+        }
+
+        fn fail_after_validation(phase: mako_engine::TestCommitPhase, _: Option<MakoTimestamp>) {
+            if phase == mako_engine::TestCommitPhase::MakoTimestampAllocated {
+                panic!("injected actual STO commit-hook failure");
+            }
+        }
+
+        let cache = Cache::from_backend(
+            std::sync::Arc::new(mrx_core::fakes::MemBlobs::new()),
+            CacheOptions::default(),
+        )
+        .unwrap();
+        assert!(cache.status().unwrap().engine_runtime_healthy);
+        std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    mako_engine::install_test_commit_observer(fail_after_validation).unwrap();
+                    assert!(cache.put(b"poison-runtime", b"uncommitted").is_err());
+                    mako_engine::clear_test_commit_observer().unwrap();
+                })
+                .join()
+                .unwrap();
+        });
+        let status = cache.status().unwrap();
+        assert!(!status.engine_runtime_healthy);
+        assert_eq!(status.health, CacheHealth::Unhealthy);
+        assert_eq!(status.acknowledged_transactions, 0);
+        assert_eq!(
+            mako_engine::worker_health().unwrap(),
+            mako_engine::WorkerHealth::Healthy
+        );
+        assert!(matches!(
+            cache.transaction(),
+            Err(Error::Native(LocalError::WorkerPoisoned))
+        ));
+        let _ = cache.close();
     }
 
     #[cfg(have_mako)]

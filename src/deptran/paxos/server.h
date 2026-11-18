@@ -54,6 +54,8 @@ class PaxosServer : public TxLogServer {
   static constexpr const char* META_MAX_EXECUTED = "max_executed_slot";
 
  private:
+  // @unsafe - Ordered access to the legacy log map and application callback.
+  void ApplyCommittedPrefix();
   // @unsafe - Uses LogStorage which has non-borrow-checked operations
   void PersistEpoch();
   // @unsafe - Uses LogStorage which has non-borrow-checked operations

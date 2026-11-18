@@ -16,6 +16,49 @@
 
 namespace {
 
+// @unsafe - Exercises the production batch encoder/decoder's native byte seam.
+TEST(MakoParticipantWire, RepeatedKeyRetainsMutationOrderAndKinds) {
+    mako::BatchLockRequestWrapper outgoing;
+    std::string key("key\0suffix", 10);
+    std::string inserted("first\0value", 11);
+    std::string replaced = "replacement";
+    std::string removed;
+    outgoing.add_request(key, inserted, 201, 7, 1);
+    outgoing.add_request(key, replaced, 201, 7, 0);
+    outgoing.add_request(key, removed, 201, 7, 2);
+
+    auto *request = outgoing.get_request_ptr();
+    request->identity = {41, 9, 123, 4};
+    mako::BatchLockRequestWrapper incoming(reinterpret_cast<char *>(request));
+    const std::array<uint8_t, 3> kinds{1, 0, 2};
+    const std::array<std::string, 3> values{inserted, replaced, removed};
+    for (size_t i = 0; i < kinds.size(); ++i) {
+        ASSERT_FALSE(incoming.all_request_handled());
+        char *wire_key = nullptr, *wire_value = nullptr;
+        uint16_t key_size = 0, value_size = 0, table = 0;
+        uint8_t kind = 255;
+        incoming.read_one_request(&wire_key, &key_size, &wire_value,
+                                  &value_size, &table, &kind);
+        EXPECT_EQ(table, 201);
+        EXPECT_EQ(kind, kinds[i]);
+        EXPECT_EQ(std::string_view(wire_key, key_size), key);
+        EXPECT_EQ(std::string_view(wire_value, value_size), values[i]);
+    }
+    EXPECT_TRUE(incoming.all_request_handled());
+}
+
+// @unsafe - Verifies the encoder rejects overflow before touching the buffer.
+TEST(MakoParticipantWire, RejectsOverflowWithoutAppendingPartialMutation) {
+    mako::BatchLockRequestWrapper outgoing;
+    std::string key = "key", value = "value";
+    for (size_t i = 0; i < mako::max_batch_size; ++i)
+        outgoing.add_request(key, value, 201, 7);
+    const size_t full_size = outgoing.get_msg_len();
+    EXPECT_THROW(outgoing.add_request(key, value, 201, 7), std::length_error);
+    EXPECT_EQ(outgoing.get_msg_len(), full_size);
+    EXPECT_EQ(outgoing.get_request_ptr()->batch_size, mako::max_batch_size);
+}
+
 TEST(MakoValueMetadata, EncodeInitializesCanonicalSuffixAtEveryAlignment) {
     std::array<bool, alignof(mako::Node)> observed_node_alignments{};
 
@@ -263,6 +306,63 @@ TEST(MakoReplayLog, ProductionParserValidatesCompleteMultiTransactionFrame) {
     EXPECT_EQ(parsed.records[0].key, "key");
     EXPECT_EQ(parsed.records[1].key, "odd");
 
+}
+
+// @unsafe - Exercise production framing with caller-owned serialized storage.
+TEST(MakoReplayLog, RecoveryFloorIncludesEarlierTransactionsAndEmptyFooter) {
+    std::vector<char> records;
+    append_replay_record(records, "key", "value", 7);
+    std::vector<char> log;
+    append_replay_transaction(log, 9002, records, 1);
+    append_replay_transaction(log, 8009, records, 1);
+    append_u32(log, 7005);
+    append_u32(log, 0);
+    mako::ReplayLogView parsed;
+    ASSERT_TRUE(mako::parse_replay_log(log.data(), log.size(), parsed));
+    EXPECT_EQ(parsed.latest_time_term, 7005U);
+    EXPECT_EQ(parsed.recovered_time_term, 9002U);
+
+    log.clear();
+    constexpr uint32_t maximum = ((UINT32_MAX - 9U) / 10U) * 10U + 9U;
+    append_u32(log, maximum);
+    append_u32(log, 0);
+    ASSERT_TRUE(mako::parse_replay_log(log.data(), log.size(), parsed));
+    EXPECT_TRUE(parsed.transactions.empty());
+    EXPECT_EQ(parsed.recovered_time_term, maximum);
+}
+
+// @unsafe - Invalid source clocks must fail before replay can publish metadata.
+TEST(MakoReplayLog, RejectsInvalidSourceClockInTransactionOrFooter) {
+    std::vector<char> records;
+    append_replay_record(records, "key", "value", 7);
+    for (const uint32_t invalid : {1U, 9U, UINT32_MAX}) {
+        SCOPED_TRACE(invalid);
+        std::vector<char> log;
+        append_replay_transaction(log, invalid, records, 1);
+        append_u32(log, 100);
+        append_u32(log, 0);
+        mako::ReplayLogView parsed;
+        EXPECT_FALSE(mako::parse_replay_log(log.data(), log.size(), parsed));
+        EXPECT_TRUE(parsed.records.empty());
+        EXPECT_EQ(parsed.recovered_time_term, 0U);
+
+        log.clear();
+        append_replay_transaction(log, 100, records, 1);
+        append_u32(log, invalid);
+        append_u32(log, 0);
+        EXPECT_FALSE(mako::parse_replay_log(log.data(), log.size(), parsed));
+        EXPECT_TRUE(parsed.records.empty());
+        EXPECT_EQ(parsed.recovered_time_term, 0U);
+    }
+}
+
+// @safe - The legacy replay relation intentionally accepts either newer axis.
+TEST(MakoReplayFields, CompareApplyPreservesTermOrBaseSemantics) {
+    EXPECT_TRUE(mako::replay_source_is_newer(101, 200));
+    EXPECT_TRUE(mako::replay_source_is_newer(200, 109));
+    EXPECT_FALSE(mako::replay_source_is_newer(109, 109));
+    EXPECT_FALSE(mako::replay_source_is_newer(108, 209));
+    EXPECT_TRUE(mako::valid_replay_time_term(0));
 }
 
 TEST(MakoReplayLog, RejectsShortFooterPartialHeaderAndInvalidRecordBlock) {

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 import importlib.util
 import io
 import json
@@ -27,38 +28,11 @@ class ZooGuardTests(unittest.TestCase):
         after = RUNNER.CpuTimes(total=1_200, idle=990)
         self.assertEqual(RUNNER.cpu_idle_percent(before, after), 95.0)
 
-    def test_host_gate_reports_every_preflight_violation(self) -> None:
-        args = SimpleNamespace(
-            guard_load1_max=4.0,
-            guard_cpu_idle_min=95.0,
-            guard_stability_seconds=2.0,
-        )
-        sample = {
-            "restart_count_before": 10,
-            "restart_count_after": 11,
-            "load1_before": 3.0,
-            "load1_after": 4.0,
-            "cpu": 0,
-            "cpu_idle_percent": 94.99,
-            "competing_before": [],
-            "competing_after": [{"pid": 123}],
-            "observed_seconds": 1.99,
-        }
-        self.assertEqual(
-            RUNNER.host_gate_violations(sample, args),
-            [
-                "lxd NRestarts changed during the stability window",
-                "load1 was not below 4",
-                "CPU 0 idle was below 95%",
-                "a competing STO/perf job was present",
-                "the LXD observation window was too short",
-            ],
-        )
 
     def test_guard_rejects_both_rows_and_reuses_logical_slots(self) -> None:
         args = SimpleNamespace(guard_max_attempts=2, guard_retry_delay_ms=0)
-        cpp = Path("/bench/cpp")
-        rust = Path("/bench/rust")
+        cpp = RUNNER.Variant("cpp", Path("/bench/cpp"), "cpp", "baseline")
+        rust = RUNNER.Variant("rust", Path("/bench/rust"), "rust", "candidate")
         scenario = RUNNER.Scenario("read10", 10, 0)
         metadata = {
             "pair_attempts": [],
@@ -148,7 +122,10 @@ class ZooGuardTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "benchmark defect"):
                     RUNNER.run_guarded_pair(
                         args,
-                        [Path("/bench/cpp"), Path("/bench/rust")],
+                        [
+                            RUNNER.Variant("cpp", Path("/bench/cpp"), "cpp", "baseline"),
+                            RUNNER.Variant("rust", Path("/bench/rust"), "rust", "candidate"),
+                        ],
                         RUNNER.Scenario("read10", 10, 0),
                         threads=1,
                         repetition=0,
@@ -159,6 +136,73 @@ class ZooGuardTests(unittest.TestCase):
                         guard_metadata_path=Path(directory) / "guard.json",
                         rejected_output=io.StringIO(),
                     )
+
+    def test_two_rust_variants_keep_engine_identity_and_separate_summaries(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            baseline = root / "baseline"
+            candidate = root / "candidate"
+            baseline.write_bytes(b"baseline executable")
+            candidate.write_bytes(b"candidate executable")
+            args = SimpleNamespace(
+                seed=1,
+                taskset="taskset",
+                physical_cpus=[0],
+                keyspace=10,
+                warmup_ms=0,
+                duration_ms=10,
+                rust_value_mode="binary",
+                timeout_seconds=10,
+            )
+            variants = [
+                RUNNER.Variant("R0", baseline, "rust", "baseline"),
+                RUNNER.Variant("R1", candidate, "rust", "candidate"),
+            ]
+            payload = {
+                "engine": "rust-sto-masstree",
+                "threads": 1,
+                "keyspace": 10,
+                "ops_per_txn": 1,
+                "write_percent": 0,
+                "warmup_ms": 0,
+                "duration_ms": 10,
+                "seed": 1,
+                "commits": 10,
+                "attempts": 10,
+                "aborts": 0,
+                "logical_ops": 10,
+                "elapsed_ns": 100_000_000,
+                "txn_per_sec": 100.0,
+                "ops_per_sec": 100.0,
+            }
+            slower = dict(payload, elapsed_ns=125_000_000, txn_per_sec=80.0, ops_per_sec=80.0)
+            completed = [
+                SimpleNamespace(
+                    returncode=0,
+                    stdout=RUNNER.RESULT_PREFIX + json.dumps(record),
+                    stderr="",
+                )
+                for record in (payload, slower)
+            ]
+            with mock.patch.object(RUNNER.subprocess, "run", side_effect=completed):
+                records = [
+                    RUNNER.run_one(args, variant, RUNNER.Scenario("read", 1, 0), 1, 0, order)
+                    for order, variant in enumerate(variants, start=1)
+                ]
+            summary = root / "summary.csv"
+            RUNNER.write_summary(summary, records)
+            with summary.open(newline="", encoding="utf-8") as source:
+                rows = list(csv.DictReader(source))
+
+        self.assertEqual([record["engine"] for record in records], ["rust-sto-masstree"] * 2)
+        self.assertNotEqual(
+            records[0]["binary_fingerprint"]["sha256"],
+            records[1]["binary_fingerprint"]["sha256"],
+        )
+        self.assertEqual(
+            {row["variant"]: float(row["median_txn_per_sec"]) for row in rows},
+            {"R0": 100.0, "R1": 80.0},
+        )
 
 
 if __name__ == "__main__":

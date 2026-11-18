@@ -294,6 +294,25 @@ fn one_put_candidate_tracks_the_direct_witness() {
     );
     tx.abort().unwrap();
 
+    // A candidate taken before a read is stale: the trusted one-put terminal
+    // refuses it before acquiring storage instead of serializing a one-put
+    // record for a transaction that also read.
+    let (table, mut tx) = db.trusted_bound_transaction().unwrap();
+    tx.put(&table, b"key", b"value").unwrap();
+    let stale = tx.unchecked_one_put_record_candidate().unwrap();
+    tx.get(&table, b"key").unwrap();
+    let mut acquired = false;
+    let report = unsafe {
+        tx.commit_report_with_unchecked_one_put_record_target(stale, |_timestamp, _plan| {
+            acquired = true;
+            None
+        })
+    };
+    assert!(!acquired, "a stale one-put candidate reached acquire");
+    assert!(report.completion_contract_valid);
+    assert!(!report.record_bound && !report.record_written);
+    assert_ne!(report.commit.disposition, CommitDisposition::Committed);
+
     let (table, mut tx) = db.trusted_bound_transaction().unwrap();
     tx.put(&table, b"key", b"value").unwrap();
     let candidate = tx.unchecked_one_put_record_candidate().unwrap();
@@ -685,6 +704,47 @@ fn per_worker_holder_terminal_uses_the_restricted_and_general_profiles() {
         Err(Error::Busy)
     );
     db.order_record_validation_prefix();
+}
+
+#[test]
+fn item_budget_bounds_a_transaction() {
+    let _serial = serial();
+    let db = LocalDb::open().unwrap();
+    let table = db.open_table("budget", 12).unwrap();
+    // A read costs one credit; the budget is 512 credits, exactly as in the
+    // C++ engine. The transaction is aborted at the first excess operation.
+    let mut tx = db.transaction().unwrap();
+    for ordinal in 0..mako_engine_sto::TRANSACTION_ITEM_BUDGET {
+        assert_eq!(
+            tx.get(&table, format!("k{ordinal}").as_bytes()).unwrap(),
+            None
+        );
+    }
+    assert_eq!(
+        tx.get(&table, b"one-too-many").err(),
+        Some(Error::TransactionTooLarge)
+    );
+    assert_eq!(
+        tx.get(&table, b"after").err(),
+        Some(Error::TransactionFinished)
+    );
+    assert_eq!(
+        tx.commit_report().disposition,
+        CommitDisposition::Aborted(Error::TransactionFinished)
+    );
+
+    // A write costs four credits plus one per eight key bytes.
+    let mut tx = db.transaction().unwrap();
+    let key = [b'k'; 16];
+    for ordinal in 0..(mako_engine_sto::TRANSACTION_ITEM_BUDGET / 6) {
+        let mut key = key;
+        key[..2].copy_from_slice(&(ordinal as u16).to_be_bytes());
+        tx.put(&table, &key, b"v").unwrap();
+    }
+    assert_eq!(
+        tx.put(&table, &key, b"v").err(),
+        Some(Error::TransactionTooLarge)
+    );
 }
 
 #[test]

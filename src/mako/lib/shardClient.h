@@ -18,6 +18,10 @@ namespace mako
     public:
         ShardClient(std::string file, string cluster, int shardIndex, int par_id);
         ~ShardClient();
+        // @unsafe - Begin once before the first remote operation of an attempt.
+        void beginAttempt(uint32_t term);
+        // @safe - Includes read-only participants until terminal cleanup.
+        bool hasTouchedParticipants() const noexcept { return touched_shards != 0; }
         int remoteGet(int remote_table_id, std::string key, std::string &value);
         int remoteScan(int remote_table_id, std::string start_key, std::string end_key, std::string &value);
 
@@ -42,7 +46,9 @@ namespace mako
         int remoteControl(int control, uint32_t value, uint32_t &ret_value, uint64_t set_bits);
         int remoteAbort();
         int remoteLock(int remote_table_id, std::string key, std::string &value);
-        int remoteBatchLock(vector<int> &remote_table_id_batch, vector<string> &key_batch, vector<string> &value_batch);
+        int remoteBatchLock(vector<int> &remote_table_id_batch, vector<string> &key_batch,
+                            vector<string> &value_batch,
+                            const vector<uint8_t> *operations = nullptr);
         int remoteValidate(uint32_t &watermark);
         int remoteInstall(uint32_t timestamp);
         int remoteUnLock();
@@ -69,9 +75,11 @@ namespace mako
         int par_id;  // in mako, each worker thread has a partition
         Promise *waiting; // waiting thread
         int tid;
+        uint64_t touched_shards = 0;
 
-        int num_response_waiting;
-        vector<int> status_received;
+        int num_response_waiting = 0;
+        int num_response_received = 0;
+        bool responses_successful = true;
         vector<uint64_t> int_received; // indexed by shard
 
         /* Callbacks for hearing back from a shard for an operation. */
@@ -92,9 +100,9 @@ namespace mako
         void SendToAllStatusCallBack(char *respBuf);
         void SendToAllIntCallBack(char *respBuf);
         void SendToAllGiveUpTimeout();
-        bool is_all_response_ok();
-        void calculate_num_response_waiting(int shards_to_send_bits);
-        void calculate_num_response_waiting_no_skip(int shards_to_send_bits);
+        int is_all_response_ok();
+        void calculate_num_response_waiting(uint64_t shards_to_send_bits);
+        void calculate_num_response_waiting_no_skip(uint64_t shards_to_send_bits);
 
     };
 

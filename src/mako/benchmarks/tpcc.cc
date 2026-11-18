@@ -4245,13 +4245,13 @@ private:
       int s_idx = i / NumWarehouses() ;
       if (s_idx == BenchmarkConfig::getInstance().getShardIndex()) {
         // Local to current shard - do nothing
-      } else if (multi_shard_mode &&
+      } else if (multi_shard_mode && !BenchmarkConfig::getInstance().getIsReplicated() &&
                  std::find(local_shards.begin(), local_shards.end(), s_idx) != local_shards.end()) {
         // Multi-shard mode and target shard is local: leave nullptr
         // Will be filled in later with actual local tables from other shard
         Notice("Remote table %s for wid %d: target shard %d is local, skipping RPC proxy",
                name, global_wid, s_idx);
-      } else { // create remote tables for truly remote shards (different process)
+      } else { // Replicated accesses retain an owning-shard affine participant.
         abstract_ordered_index *idx = db->open_index(
           s_name + "_remote_" + to_string(global_wid),
           s_idx);
@@ -4695,11 +4695,11 @@ tpcc_do_test(abstract_db *db, int argc, char **argv, int run, bench_runner *rc, 
   // Create bench_runner with shard_index for multi-shard mode
   tpcc_bench_runner *r = new tpcc_bench_runner(db, shard_index, f_mode==1);
 
-  // In multi-shard single-process mode, skip RPC setup since all shards are local
-  // Cross-shard access will use local tables directly
+  // @unsafe - Replication keeps one affine helper/transport set per owning shard.
+  // Only unreplicated colocated transactions bypass RPC with direct tables.
   auto* config = BenchmarkConfig::getInstance().getConfig();
   bool multi_shard_mode = config && config->multi_shard_mode;
-  if (!multi_shard_mode) {
+  if (!multi_shard_mode || BenchmarkConfig::getInstance().getIsReplicated()) {
     mako::setup_rpc_server();
     std::map<int, abstract_ordered_index *> open_tables_by_id;
     for (const auto &entry : r->get_open_tables_ref()) {

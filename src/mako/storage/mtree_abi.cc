@@ -137,6 +137,8 @@ struct mt_thread {
   mt_runtime *runtime;
   std::thread::id owner;
   int native_core_id;
+  /* No live guard: these process-lifetime slots are resolved before publish. */
+  std::optional<rcu::local_handle> native_rcu;
   /* Owner-thread-only mirror; native TLS remains the scope authority. */
   bool controlled_rcu_active;
   /* Immutable after release-publication through runtime.thread_registry. */
@@ -525,11 +527,11 @@ thread_local rcu_scope_state tls_rcu_scope;
  */
 class operation_rcu_guard final {
 public:
-  explicit operation_rcu_guard(bool covered) {
+  explicit operation_rcu_guard(const mt_thread &thread, bool covered) {
     if (covered) {
-      INVARIANT(rcu::s_instance.in_rcu_region());
+      INVARIANT(thread.native_rcu->in_rcu_region());
     } else {
-      local_.emplace();
+      local_.emplace(*thread.native_rcu);
     }
   }
 
@@ -537,7 +539,12 @@ public:
   operation_rcu_guard &operator=(const operation_rcu_guard &) = delete;
 
 private:
-  std::optional<scoped_rcu_region> local_;
+  // This closed native operation owns no legacy transaction logger and never
+  // exposes a ticker guard/start timestamp. Nested rcu_register helpers only
+  // enqueue frees. Actual deferred callbacks run later under do_cleanup's
+  // ordinary timed guard, after this region exits. Keep DoCleanup=true and
+  // every epoch/lock/publication transition; omit only unused wall-time input.
+  std::optional<scoped_rcu_base<true, false>> local_;
 };
 
 mt_runtime &singleton_runtime() noexcept {
@@ -689,14 +696,14 @@ mt_status checked_thread(mt_runtime *expected_runtime, mt_thread *candidate,
   INVARIANT(candidate->controlled_rcu_active ==
             tls_rcu_scope.matches(expected_runtime, candidate));
   INVARIANT(!candidate->controlled_rcu_active ||
-            rcu::s_instance.in_rcu_region());
+            candidate->native_rcu->in_rcu_region());
   const bool controlled_rcu =
       allow_controlled_rcu && candidate->controlled_rcu_active;
   if (controlled_rcu_out != nullptr) {
     *controlled_rcu_out = controlled_rcu;
   }
   if (reject_active_rcu && !controlled_rcu &&
-      (tls_read_scope.active() || rcu::s_instance.in_rcu_region())) {
+      (tls_read_scope.active() || candidate->native_rcu->in_rcu_region())) {
     return MT_ERR_ACTIVE_GUARDS;
   }
   return MT_OK;
@@ -916,11 +923,11 @@ mt_status trusted_operation(mt_tree &tree, mt_thread &thread,
   INVARIANT(thread.controlled_rcu_active ==
             tls_rcu_scope.matches(runtime, &thread));
   INVARIANT(!thread.controlled_rcu_active ||
-            rcu::s_instance.in_rcu_region());
+            thread.native_rcu->in_rcu_region());
 
   controlled_rcu_out = thread.controlled_rcu_active;
   if (!controlled_rcu_out &&
-      (tls_read_scope.active() || rcu::s_instance.in_rcu_region())) {
+      (tls_read_scope.active() || thread.native_rcu->in_rcu_region())) {
     return MT_ERR_ACTIVE_GUARDS;
   }
   if (runtime->health.load(std::memory_order_acquire) != MT_RUNTIME_HEALTHY) {
@@ -945,7 +952,7 @@ mt_status point_get_validated(mt_tree &tree, mt_thread &thread,
         return MT_ERR_POISONED;
       }
       try {
-        operation_rcu_guard region(controlled_rcu);
+        operation_rcu_guard region(thread, controlled_rcu);
         const varkey native_key = make_key(key, key_length);
         mt_record_id value = MT_RECORD_ID_NONE;
         if (tree.native.search(native_key, value)) {
@@ -987,7 +994,7 @@ mt_status point_get_strided_validated(mt_tree &tree, mt_thread &thread,
         return MT_ERR_POISONED;
       }
       try {
-        operation_rcu_guard region(controlled_rcu);
+        operation_rcu_guard region(thread, controlled_rcu);
         const mt_status status = search_strided(
             tree, runtime, cursor, key_count, key_length, key_stride, out);
         if (status != MT_OK) {
@@ -1042,7 +1049,7 @@ mt_status get_or_insert_validated(mt_tree &tree, mt_thread &thread,
         return MT_ERR_POISONED;
       }
       try {
-        operation_rcu_guard region(controlled_rcu);
+        operation_rcu_guard region(thread, controlled_rcu);
         const varkey native_key = make_key(key, key_length);
         mt_record_id winner = MT_RECORD_ID_NONE;
 
@@ -1138,7 +1145,7 @@ mt_status get_or_insert_strided_trusted_validated(
         return MT_ERR_POISONED;
       }
       try {
-        operation_rcu_guard region(controlled_rcu);
+        operation_rcu_guard region(thread, controlled_rcu);
         for (current = 0; current != key_count; ++current) {
           publication_attempted = false;
           publication_classified = false;
@@ -1405,7 +1412,7 @@ mt_status copied_scan_validated(mt_tree &tree, mt_thread &thread,
         return MT_ERR_POISONED;
       }
       try {
-        operation_rcu_guard region(controlled_rcu);
+        operation_rcu_guard region(thread, controlled_rcu);
         if (direction == MT_SCAN_FORWARD) {
           const varkey native_lower =
               bound_is_present(lower) ? make_key(lower.key, lower.key_length)
@@ -1554,7 +1561,7 @@ mt_status trusted_record_id_scan_validated(
         return MT_ERR_POISONED;
       }
       try {
-        operation_rcu_guard region(controlled_rcu);
+        operation_rcu_guard region(thread, controlled_rcu);
         const varkey native_lower = make_key(lower, lower_length);
         const varkey native_upper = make_key(upper, upper_length);
         tree.native.search_range_call_bounded(native_lower, native_upper,
@@ -1921,6 +1928,21 @@ extern "C" mt_status mt_thread_attach(mt_runtime *runtime_candidate,
       return MT_ERR_INTERNAL;
     }
     pending->native_core_id = native_core_id;
+    try {
+      // Match the existing standalone path's GLOBAL rcu/ticker, not the
+      // owning runtime's per-runtime objects. This resolves storage only;
+      // attach does not enter a region or retain an epoch across idle time.
+      pending->native_rcu.emplace(rcu::s_instance.resolve_local());
+    } catch (...) {
+      // percore_lazy marks its slot before construction, which can allocate.
+      // Quarantine this native runtime before exposing any partial handle.
+      // The reserved core ID is never reused. status_boundary preserves the
+      // existing OOM/exception result after this Release fail-stop store.
+      poison(runtime);
+      throw;
+    }
+    INVARIANT(pending->native_rcu->core() ==
+              static_cast<uint64_t>(native_core_id));
     runtime->threads.push_back(pending.get());
     pending->registry_next =
         runtime->thread_registry.load(std::memory_order_relaxed);

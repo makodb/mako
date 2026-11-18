@@ -308,6 +308,10 @@ void PrintRow(const char *label, const Result &mt, const Result &mrx,
 
 // --- the Rust cache, wrapped so the arms read alike ---------------------
 
+/// Read buffer per worker. Comfortably above this benchmark's 128-byte
+/// values; the ABI refuses rather than truncating if one ever exceeds it.
+constexpr size_t kReadBuffer = 4096;
+
 class RustCache {
  public:
   bool Open(const std::string &path, uint64_t capacity) {
@@ -327,12 +331,22 @@ class RustCache {
     mrxdb_put(db_, k.data(), k.size(), v.data(), v.size(), nullptr);
   }
 
+  // The read loop's shape: one caller-owned buffer, reused, and no
+  // malloc per read. `mrxdb_get` would hand back a malloc'd copy that
+  // this function then had to copy again and free.
   bool Get(const std::string &k, std::string &out) {
+    static thread_local char buf[kReadBuffer];
     size_t len = 0;
-    char *p = mrxdb_get(db_, k.data(), k.size(), &len, nullptr);
-    if (p == nullptr) return false;
-    out.assign(p, len);
-    mrxdb_free(p);
+    char *err = nullptr;
+    const int found =
+        mrxdb_get_into(db_, k.data(), k.size(), buf, sizeof(buf), &len, &err);
+    if (err != nullptr) {
+      fprintf(stderr, "mrxdb_get_into: %s\n", err);
+      mrxdb_free(err);
+      return false;
+    }
+    if (found != 1) return false;
+    out.assign(buf, len);
     return true;
   }
 

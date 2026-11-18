@@ -8,6 +8,8 @@
 #include <functional>
 #include <map>
 #include <string>
+#include <string_view>
+#include <stdexcept>
 
 #include "abstract_ordered_index.h"
 #include "../str_arena.h"
@@ -256,6 +258,46 @@ public:
   // Called while workers are quiescent. Backends with bounded resources may
   // report usage and configured limits without adding transaction-path work.
   virtual void report_capacity_usage(const char *phase) const { (void)phase; }
+
+  // @safe - Backends expose their own worker-affine participant, never another
+  // engine's TLS transaction. Empty participants may release their RCU scope.
+  virtual bool shard_participant_active() const noexcept { return false; }
+  virtual bool shard_participant_empty() const noexcept { return true; }
+  // @unsafe - Unsupported legacy boundary; concrete engines override.
+  virtual bool shard_timestamp(uint32_t &) {
+    throw std::logic_error("backend has no distributed timestamp authority");
+  }
+  // @unsafe - Unsupported legacy boundary; called only after admission.
+  virtual void shard_set_term(uint32_t) {
+    throw std::logic_error("backend has no participant term support");
+  }
+
+  // @unsafe - Owned RPC payloads are staged by the selected backend.
+  virtual void shard_mutate(uint16_t table_id, lcdf::Str key,
+                            const std::string &value, uint8_t operation) {
+    auto *index = get_index_by_table_id(table_id);
+    if (!index || operation != 0)
+      throw std::logic_error("backend has no participant mutation capability");
+    index->shard_put(key, value);
+  }
+
+  // @unsafe - Replay must select an explicit backend implementation.
+  virtual bool replay_apply_record(uint16_t, std::string_view, std::string_view,
+                                   bool, uint32_t) {
+    throw std::logic_error("backend has no replay support");
+  }
+  // @unsafe - Replay attachment is backend-specific.
+  virtual void replay_thread_init() {
+    throw std::logic_error("backend has no replay thread attachment");
+  }
+  // @unsafe - Replay attachment is backend-specific.
+  virtual void replay_thread_select_partition(int) {
+    throw std::logic_error("backend has no replay partition selection");
+  }
+  // @unsafe - Replay clocks are backend-specific.
+  virtual void observe_replay_timestamp(uint32_t) {
+    throw std::logic_error("backend has no replay timestamp authority");
+  }
 };
 
 #endif /* _ABSTRACT_DB_H_ */

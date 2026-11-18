@@ -114,8 +114,8 @@
 //! number. Default here is 0, meaning all-distinct; pass the bench's
 //! 200000 to match it.
 
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// CPU seconds this process has burned, from /proc/self/stat.
@@ -279,6 +279,17 @@ enum Prebuilt {
     Ring(Vec<Vec<Record>>),
 }
 
+thread_local! {
+    /// Reused read buffer for the `rd_reuse` rung.
+    static OUT: std::cell::RefCell<Vec<u8>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+thread_local! {
+    /// Scratch batch for the `epoch_batch` rung. Bare `u64`s on purpose:
+    /// the rung prices the epoch and thread-local machinery, not records.
+    static GRAVE: std::cell::RefCell<Vec<u64>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 /// Records per thread in [`Prebuilt::Ring`]. 64 x ~150 B is under
 /// 10 KiB, so a thread's ring stays in L1 and the reuse does not itself
 /// turn into a cache-miss ablation.
@@ -317,15 +328,38 @@ enum Work {
     Spin,
     /// (index, table, how far to go: 0 = lookup, 1 = +load, 2 = +copy)
     Read(Arc<MasstreeIndex>, Arc<EntryTable>, u8),
+    /// The production read: `Store::get_into` with a reused buffer, i.e.
+    /// one masstree region covering the lookup and the copy, the entry
+    /// resolved from its address, and no allocation.
+    GetInto(Arc<Store<MasstreeIndex, MemBlobs>>),
     Floors(
         Arc<MasstreeIndex>,
         Arc<EntryTable>,
         Arc<AtomicU64>,
         Arc<Writers>,
     ),
+    /// The epoch machinery on its own, for pricing it against the mutex
+    /// slot it replaced: `epoch_pin` is the guard, `epoch_defer` adds one
+    /// deferred closure per op, `epoch_batch` adds a thread-local batch
+    /// flushed through `defer` every `RING` ops. None of them touch a
+    /// record, so `entry` minus these is the slot's own cost.
+    EpochPin,
+    EpochDefer,
+    EpochBatch,
+    /// Every thread reads the SAME key. `rd_*` spreads threads over the
+    /// whole keyspace, where a per-entry lock is nearly uncontended even
+    /// at four threads; this is the workload that can tell the two slots
+    /// apart.
+    ReadSameKey(Arc<MasstreeIndex>, Arc<EntryTable>, u8),
 }
 
 impl Work {
+    /// Whether this rung hammers one shared key rather than the calling
+    /// thread's own sequence.
+    fn same_key(&self) -> bool {
+        matches!(self, Work::ReadSameKey(..))
+    }
+
     /// `tid` and `seq` are the calling thread's index and its op
     /// number, both computed by the caller with no atomics — so a mode
     /// that needs a unique value per op does not draw one from a shared
@@ -373,28 +407,30 @@ impl Work {
                 }
             }
             Work::IndexVer(idx, ver) => {
-                // The rung `index` used to hide. Until this was split
-                // out, the baseline the whole ladder was measured
-                // against included a contended counter, so every layer
-                // above had that cost silently subtracted back out of
-                // it: the ladder charged masstree 90 ns and the version
-                // draw nothing, where masstree is 25 ns and the draw is
-                // most of the rest.
-                idx.get_or_insert(key, seq);
+                // Same lookup-first shape as `index`: the draw is the
+                // only added work. An unconditional get_or_insert costs
+                // two traversals on an existing key since ABI v3 dropped
+                // the leading probe, which charged this rung a tree walk
+                // it was supposed to isolate out.
+                if idx.get(key).is_none() {
+                    idx.get_or_insert(key, seq);
+                }
                 ver.fetch_add(1, Ordering::SeqCst);
             }
             Work::IndexVerStore(idx, s) => {
                 // Byte-for-byte the rung above, except for WHERE the
                 // counter lives. See `StoreLike`.
-                idx.get_or_insert(key, seq);
+                if idx.get(key).is_none() {
+                    idx.get_or_insert(key, seq);
+                }
                 s.version_ctr.0.fetch_add(1, Ordering::SeqCst);
             }
-            Work::Read(idx, table, depth) => {
+            Work::Read(idx, _table, depth) => {
                 let Some(word) = idx.get(key) else { return };
                 if *depth == 0 {
                     return;
                 }
-                let e = table.get((word - 1) as u32);
+                let e = mrx_core::EntryTable::entry_of(word);
                 // `load` is the Arc clone + drop and the slot lock: the
                 // exact pair that epoch reclamation would replace with a
                 // plain atomic load.
@@ -403,6 +439,20 @@ impl Work {
                     e.with_value(|v| {
                         if let Some(b) = v.bytes() {
                             std::hint::black_box(b.to_vec());
+                        }
+                    });
+                    return;
+                }
+                if *depth == 4 {
+                    // Copy out under the slot into a buffer the caller
+                    // reuses, without allocating or taking a handle.
+                    e.with_value(|v| {
+                        if let Some(b) = v.bytes() {
+                            OUT.with(|o| {
+                                let mut o = o.borrow_mut();
+                                o.clear();
+                                o.extend_from_slice(b);
+                            });
                         }
                     });
                     return;
@@ -416,6 +466,70 @@ impl Work {
                     std::hint::black_box(b.to_vec());
                 }
             }
+            Work::ReadSameKey(idx, _table, depth) => {
+                let Some(word) = idx.get(key) else { return };
+                if *depth == 0 {
+                    // Index only: the control. This arm is identical in
+                    // both slots, so it must measure the same in both.
+                    return;
+                }
+                let e = mrx_core::EntryTable::entry_of(word);
+                if *depth == 3 {
+                    e.with_value(|v| {
+                        if let Some(b) = v.bytes() {
+                            std::hint::black_box(b.to_vec());
+                        }
+                    });
+                    return;
+                }
+                if *depth == 4 {
+                    // Copy out under the slot into a buffer the caller
+                    // reuses, without allocating or taking a handle.
+                    e.with_value(|v| {
+                        if let Some(b) = v.bytes() {
+                            OUT.with(|o| {
+                                let mut o = o.borrow_mut();
+                                o.clear();
+                                o.extend_from_slice(b);
+                            });
+                        }
+                    });
+                    return;
+                }
+                let cur = e.load_touched();
+                if *depth == 1 {
+                    return;
+                }
+                if let Some(b) = cur.bytes() {
+                    std::hint::black_box(b.to_vec());
+                }
+            }
+            Work::GetInto(store) => {
+                OUT.with(|o| {
+                    store
+                        .get_into(key, &mut o.borrow_mut())
+                        .expect("get_into");
+                });
+            }
+            Work::EpochPin => {
+                let guard = crossbeam_epoch::pin();
+                std::hint::black_box(&guard);
+            }
+            Work::EpochDefer => {
+                let guard = crossbeam_epoch::pin();
+                guard.defer(|| {});
+            }
+            Work::EpochBatch => {
+                let guard = crossbeam_epoch::pin();
+                GRAVE.with(|cell| {
+                    let mut g = cell.borrow_mut();
+                    g.push(1u64);
+                    if g.len() >= RING {
+                        let batch = std::mem::take(&mut *g);
+                        guard.defer(move || drop(batch));
+                    }
+                });
+            }
             Work::Floors(idx, table, ver, writers) => {
                 // One slot per thread, exactly as `Store::writer` hands
                 // them out. Sharing one slot here measured 16-way false
@@ -426,11 +540,10 @@ impl Work {
                     Some(w) => w,
                     None => {
                         let e = mrx_core::Entry::new(key, Record::tombstone(0));
-                        let i = table.push(e);
-                        idx.get_or_insert(key, u64::from(i) + 1)
+                        idx.get_or_insert(key, table.push(e))
                     }
                 };
-                let e = table.get((word - 1) as u32);
+                let e = mrx_core::EntryTable::entry_of(word);
                 // The real write path's ordering, minus the ticket: arm
                 // the announce floor (a seq_cst STORE, i.e. a full fence
                 // on x86), draw a version, publish, release the floor.
@@ -447,22 +560,28 @@ impl Work {
                     Some(w) => w,
                     None => {
                         let e = mrx_core::Entry::new(key, Record::tombstone(0));
-                        let idx_new = table.push(e);
-                        idx.get_or_insert(key, u64::from(idx_new) + 1)
+                        idx.get_or_insert(key, table.push(e))
                     }
                 };
-                let e = table.get((word - 1) as u32);
+                let e = mrx_core::EntryTable::entry_of(word);
                 let v = ver.fetch_add(1, Ordering::SeqCst);
-                // Every variant publishes under the SAME single
-                // acquisition of the entry lock. An earlier version read
-                // the current value first, which took the lock twice and
+                // Every variant publishes through the SAME single
+                // acquisition of the entry slot. An earlier version read
+                // the current value first, which took the slot twice and
                 // charged the difference to allocation.
-                let nv = match prebuilt {
-                    Prebuilt::Fresh => Record::resident(v, value),
-                    Prebuilt::Shared(one) => one.clone(),
-                    Prebuilt::Ring(rings) => rings[tid][(seq as usize) % RING].clone(),
-                };
-                e.with_slot(|_| (Some(nv), ()));
+                //
+                // The record is built INSIDE the closure: the slot may
+                // re-run it if another writer wins the compare-and-swap
+                // in between, so an attempt must produce its own record —
+                // exactly as the production write path does.
+                e.with_slot(|_| {
+                    let nv = match prebuilt {
+                        Prebuilt::Fresh => Record::resident(v, value),
+                        Prebuilt::Shared(one) => one.clone(),
+                        Prebuilt::Ring(rings) => rings[tid][(seq as usize) % RING].clone(),
+                    };
+                    (Some(nv), ())
+                });
             }
         }
     }
@@ -535,7 +654,8 @@ fn main() {
     };
 
     let counter = Arc::new(AtomicU64::new(1));
-    let (work, mut rt) = match mode {
+    let mode_name: &str = mode;
+    let (work, mut rt) = match mode_name {
         "atomic" => (Work::Atomic(Arc::clone(&counter)), None),
         "spin" => (Work::Spin, None),
         "index" => (
@@ -556,6 +676,38 @@ fn main() {
             ),
             None,
         ),
+        "rd_store" => {
+            let blobs = MemBlobs::new();
+            let store = Arc::new(
+                Store::open(cfg, MasstreeIndex::new().expect("masstree"), blobs)
+                    .expect("open"),
+            );
+            let seen =
+                std::collections::HashSet::<&[u8]>::from_iter(keys.iter().map(|k| k.as_slice()));
+            for k in seen {
+                store.put(k, &[b'v'; 100]);
+            }
+            (Work::GetInto(store), None)
+        }
+        "rd_hot1_value" | "rd_hot1_entry" | "rd_hot1_index" => {
+            // One key, shared by every thread: the same key sequence for
+            // all of them, so `Work::run`'s index-based key lookup is the
+            // same entry on every thread.
+            let idx = Arc::new(MasstreeIndex::new().expect("masstree"));
+            let table = Arc::new(EntryTable::new());
+            let shared: &[u8] = b"k0000000";
+            let word = table.push(mrx_core::Entry::new(
+                shared,
+                Record::resident(1, &[b'v'; 100]),
+            ));
+            idx.get_or_insert(shared, word);
+            let depth = match mode_name {
+                "rd_hot1_index" => 0,
+                "rd_hot1_entry" => 1,
+                _ => 3,
+            };
+            (Work::ReadSameKey(idx, table, depth), None)
+        }
         m if m.starts_with("rd_") => {
             // Populate first, then measure reads over the same key set.
             let idx = Arc::new(MasstreeIndex::new().expect("masstree"));
@@ -563,17 +715,24 @@ fn main() {
             let seen =
                 std::collections::HashSet::<&[u8]>::from_iter(keys.iter().map(|k| k.as_slice()));
             for k in seen {
-                let i = table.push(mrx_core::Entry::new(k, Record::resident(1, &[b'v'; 100])));
-                idx.get_or_insert(k, u64::from(i) + 1);
+                let word = table.push(mrx_core::Entry::new(k, Record::resident(1, &[b'v'; 100])));
+                idx.get_or_insert(k, word);
             }
-            let depth = match m {
+            let depth = match mode_name {
                 "rd_index" => 0,
                 "rd_entry" => 1,
                 "rd_value" => 3,
+                // copy into a REUSED buffer: the shape the C++ read has,
+                // and the one the Rust API would have if it did not
+                // allocate a fresh Vec per read.
+                "rd_reuse" => 4,
                 _ => 2,
             };
             (Work::Read(idx, table, depth), None)
         }
+        "epoch_pin" => (Work::EpochPin, None),
+        "epoch_defer" => (Work::EpochDefer, None),
+        "epoch_batch" => (Work::EpochBatch, None),
         "floors" => (
             Work::Floors(
                 Arc::new(MasstreeIndex::new().expect("masstree")),
@@ -661,10 +820,12 @@ fn main() {
                     // (its ticket ring is 1<<20 and its flusher falls a
                     // full ring behind past ~2.5 laps). Quote a `full`
                     // number WITH its write count.
+                    let hot = [b"k0000000".to_vec()];
                     for _ in 0..warmup {
                         for i in 0..ops {
                             let n = t * ops + i;
-                            work.run(t, n as u64 + 1, &keys[n], value);
+                            let k: &[u8] = if work.same_key() { &hot[0] } else { &keys[n] };
+                            work.run(t, n as u64 + 1, k, value);
                         }
                     }
                     // Announce, then SPIN. No parking, so this thread is
@@ -673,10 +834,12 @@ fn main() {
                     while !go.load(Ordering::Acquire) {
                         std::hint::spin_loop();
                     }
+                    let hot = [b"k0000000".to_vec()];
                     let t0 = Instant::now();
                     for i in 0..ops {
                         let n = t * ops + i;
-                        work.run(t, n as u64 + 1, &keys[n], value);
+                        let k: &[u8] = if work.same_key() { &hot[0] } else { &keys[n] };
+                        work.run(t, n as u64 + 1, k, value);
                     }
                     t0.elapsed().as_secs_f64()
                 })

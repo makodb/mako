@@ -2,6 +2,8 @@
 #include <stddef.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdexcept>
+#include <rusty/cell.hpp>
 
 #include "lib/fasttransport.h"
 #include "lib/client.h"
@@ -22,27 +24,63 @@ namespace mako
 {
     using namespace std;
 
+    namespace {
+        // @safe - Affine lane identity and counters outlive Client attachments.
+        thread_local rusty::Cell<uint64_t> anonymous_incarnation{0};
+        thread_local rusty::Cell<uint64_t> lane_attempt{0};
+        thread_local rusty::Cell<uint64_t> lane_sequence{0};
+    }
+
+    // @unsafe - Attaches the legacy transport to this OS thread's RPC identity.
     Client::Client(std::string file,
                    Transport *transport,
                    uint64_t clientid) : config(file),
-                                        lastReqId(0),
                                         transport(transport)
     {
         this->clientid = clientid;
-        // Randomly generate a client ID
-        while (this->clientid == 0)
-        {
-            std::random_device rd;
-            std::mt19937_64 gen(rd());
-            std::uniform_int_distribution<uint64_t> dis;
-            this->clientid = dis(gen);
+        if (this->clientid == 0) {
+            if (anonymous_incarnation.get() == 0) {
+                std::random_device rd;
+                std::mt19937_64 gen(rd());
+                std::uniform_int_distribution<uint64_t> dis;
+                uint64_t incarnation = 0;
+                while (incarnation == 0) incarnation = dis(gen);
+                anonymous_incarnation.set(incarnation);
+            }
+            this->clientid = anonymous_incarnation.get();
             Debug("start a Client ID: %lu", this->clientid);
         }
         current_term = 0;
     }
 
+    // @unsafe - Affine legacy RPC boundary; one begin per coordinator attempt.
+    void Client::BeginAttempt(uint32_t term) {
+        if (term > 9 || lane_attempt.get() == UINT64_MAX)
+            throw std::overflow_error("RPC attempt identity exhausted");
+        lane_attempt.set(lane_attempt.get() + 1);
+        attempt_identity.incarnation = clientid;
+        attempt_identity.attempt = lane_attempt.get();
+        attempt_identity.term = term;
+        current_term = term;
+    }
+
+    // @unsafe - The affine caller must never reuse a wrapped sequence.
+    uint64_t Client::NextRequestSequence() {
+        if (lane_sequence.get() == UINT64_MAX)
+            throw std::overflow_error("RPC request sequence exhausted");
+        lane_sequence.set(lane_sequence.get() + 1);
+        return lane_sequence.get();
+    }
+
+    // @unsafe - Reads native wire headers before invoking legacy continuations.
     void Client::ReceiveResponse(uint8_t reqType, char *respBuf)
     {
+        // @unsafe - Every participant response has this fixed header prefix.
+        if (reqType >= getReqType && reqType <= batchLockReqType) {
+            const auto *response = reinterpret_cast<const basic_response_t *>(respBuf);
+            if (!(response->identity == pending_identity) || !num_response_waiting)
+                return;
+        }
         Debug("[%lu] received response, type: %d", clientid, reqType);
         switch (reqType)
         {
@@ -99,6 +137,7 @@ namespace mako
     // there are two purposes:
     //  1. validate in the commit phase
     //  2. attache watermark in the result
+    // @unsafe - Marshals native SRPC buffers on the affine coordinator lane.
     void Client::InvokeValidate(uint64_t txn_nr,
                                 int dstShardIdx,
                                 uint16_t server_id,
@@ -107,8 +146,8 @@ namespace mako
                                 uint32_t timeout)
     {
         Debug("invoke InvokeValidate\n");
-        uint32_t reqId = ++lastReqId;
-        reqId *= 10;
+        uint64_t reqId = NextRequestSequence();
+        
 
         crtReqK =
             PendingRequestK("InvokeValidate",
@@ -123,16 +162,17 @@ namespace mako
                 sizeof(basic_request_t),
                 sizeof(get_int_response_t)));
         reqBuf->targert_server_id = server_id;
-        reqBuf->req_nr = reqId + current_term;
+        StampRequest(reqBuf, reqId);
         blocked = true;
-        transport->SendRequestToAll(this,
+        if (!transport->SendRequestToAll(this,
                                       validateReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       sizeof(get_int_response_t),
-                                      sizeof(basic_request_t));
+                                      sizeof(basic_request_t)) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
     }
 
+    // @unsafe - Marshals native SRPC buffers on the affine coordinator lane.
     void Client::InvokeGetTimestamp(uint64_t txn_nr,
                                 int dstShardIdx,
                                 uint16_t server_id,
@@ -141,8 +181,8 @@ namespace mako
                                 uint32_t timeout)
     {
         Debug("invoke InvokeGetTimestamp\n");
-        uint32_t reqId = ++lastReqId;
-        reqId *= 10;
+        uint64_t reqId = NextRequestSequence();
+        
 
         crtReqK =
             PendingRequestK("InvokeGetTimestamp",
@@ -157,16 +197,17 @@ namespace mako
                 sizeof(basic_request_t),
                 sizeof(get_int_response_t)));
         reqBuf->targert_server_id = server_id;
-        reqBuf->req_nr = reqId + current_term;
+        StampRequest(reqBuf, reqId);
         blocked = true;
-        transport->SendRequestToAll(this,
+        if (!transport->SendRequestToAll(this,
                                       getTimestampReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       sizeof(get_int_response_t),
-                                      sizeof(basic_request_t));
+                                      sizeof(basic_request_t)) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
     }
 
+    // @unsafe - Marshals native SRPC control buffers.
     void Client::InvokeControl(uint64_t txn_nr,
                                int control,
                                uint64_t value,
@@ -177,8 +218,8 @@ namespace mako
                                uint32_t timeout)
     {
         Debug("invoke InvokeControl\n");
-        uint32_t reqId = ++lastReqId;
-        reqId *= 10;
+        uint64_t reqId = NextRequestSequence();
+        
 
         bool is_datacenter_failure = control >= 4;
 
@@ -198,19 +239,20 @@ namespace mako
         if (is_datacenter_failure){
             reqBuf->targert_server_id = 10000; // reserved for the datacenter failure
         }
-        reqBuf->req_nr = reqId + current_term;
+        StampRequest(reqBuf, reqId);
         reqBuf->control = control;
         reqBuf->value = value;
         blocked = true;
-        transport->SendRequestToAll(this,
+        if (!transport->SendRequestToAll(this,
                                     controlReqType,
                                     dstShardIdx,
                                     is_datacenter_failure? config.warehouses+1: 
                                         config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                     sizeof(get_int_response_t),
-                                    sizeof(control_request_t)); 
+                                    sizeof(control_request_t)) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); } 
     }
 
+    // @unsafe - Marshals native SRPC control buffers.
     void Client::InvokeWarmup(uint64_t txn_nr,
                                uint32_t req_val,
                                uint8_t centerId,
@@ -221,8 +263,8 @@ namespace mako
                                uint32_t timeout)
     {
        Debug("invoke InvokeWarmup\n");
-       uint32_t reqId = ++lastReqId;
-       reqId *= 10;
+       uint64_t reqId = NextRequestSequence();
+       
 
         crtReqK =
             PendingRequestK("InvokeWarmup",
@@ -238,18 +280,19 @@ namespace mako
                 sizeof(get_int_response_t)));
         reqBuf->targert_server_id = server_id;
         reqBuf->req_val = req_val;
-        reqBuf->req_nr = reqId + current_term;
+        StampRequest(reqBuf, reqId);
         blocked = true;
-        transport->SendRequestToAll(this,
+        if (!transport->SendRequestToAll(this,
                                     warmupReqType,
                                     dstShardIdx,
                                     config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                     sizeof(get_int_response_t),
                                     sizeof(warmup_request_t),
-                                    centerId); 
+                                    centerId) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); } 
     }
 
 
+    // @unsafe - Marshals native SRPC control buffers.
     void Client::InvokeExchangeWatermark(uint64_t txn_nr,
                                 int dstShardIdx,
                                 uint16_t server_id,
@@ -258,8 +301,8 @@ namespace mako
                                 uint32_t timeout)
     {
         Debug("invoke InvokeExchangeWatermark\n");
-        uint32_t reqId = ++lastReqId;
-        reqId *= 10;
+        uint64_t reqId = NextRequestSequence();
+        
 
         crtReqK =
             PendingRequestK("InvokeExchangeWatermark",
@@ -274,16 +317,17 @@ namespace mako
                 sizeof(basic_request_t),
                 sizeof(get_int_response_t)));
         reqBuf->targert_server_id = server_id;
-        reqBuf->req_nr = reqId + current_term;
+        StampRequest(reqBuf, reqId);
         blocked = true;
-        transport->SendRequestToAll(this,
+        if (!transport->SendRequestToAll(this,
                                     watermarkReqType,
                                     dstShardIdx,
                                     config.warehouses+1,
                                     sizeof(get_int_response_t),
-                                    sizeof(basic_request_t));
+                                    sizeof(basic_request_t)) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
     }
 
+    // @unsafe - Sends the irreversible decision through native SRPC.
     void Client::InvokeInstall(uint64_t txn_nr,
                                int dstShardIdx,
                                uint16_t server_id,
@@ -293,8 +337,8 @@ namespace mako
                                uint32_t timeout)
     {
         Debug("invoke InvokeInstall\n");
-        uint32_t reqId = ++lastReqId;
-        reqId *= 10;
+        uint64_t reqId = NextRequestSequence();
+        
 
         crtReqK =
             PendingRequestK("InvokeInstall",
@@ -309,7 +353,7 @@ namespace mako
                 sizeof(vector_int_request_t),
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
-        reqBuf->req_nr = reqId + current_term;
+        StampRequest(reqBuf, reqId);
         // `cc` is a 4-byte buffer produced by encode_single_timestamp() (see
         // common.h:482 and shardClient.cc:333-335) — a single uint32_t. The
         // receiver's HandleInstallRequest() (server.cc:153-174) reads exactly
@@ -328,14 +372,15 @@ namespace mako
         memcpy(reqBuf->value, cc, sizeof(uint32_t));
         blocked = true;
         size_t bytes_used = sizeof(vector_int_request_t) - max_vector_int_length + sizeof(uint32_t);
-        transport->SendRequestToAll(this,
+        if (!transport->SendRequestToAll(this,
                                       installReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       sizeof(basic_response_t),
-                                      bytes_used);
+                                      bytes_used) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
     }
 
+    // @unsafe - Legacy serialization RPC boundary.
     void Client::InvokeSerializeUtil(uint64_t txn_nr,
                             int dstShardIdx,
                             uint16_t server_id,
@@ -344,8 +389,8 @@ namespace mako
                             error_continuation_t error_continuation,
                             uint32_t timeout) {
         Debug("invoke InvokeSerializeUtil\n");
-        uint32_t reqId = ++lastReqId;
-        reqId *= 10;
+        uint64_t reqId = NextRequestSequence();
+        
 
         crtReqK =
             PendingRequestK("InvokeSerializeUtil",
@@ -360,21 +405,22 @@ namespace mako
                 sizeof(vector_int_request_t),
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
-        reqBuf->req_nr = reqId + current_term;
+        StampRequest(reqBuf, reqId);
         reqBuf->len = sizeof(uint64_t)*config.nshards;
         memcpy(reqBuf->value, cc, sizeof(uint64_t)*config.nshards);
         blocked = true;
         size_t bytes_used = sizeof(vector_int_request_t) - max_vector_int_length + sizeof(uint64_t)*config.nshards;
 
-        transport->SendRequestToAll(this,
+        if (!transport->SendRequestToAll(this,
                                       serializeUtilReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       sizeof(basic_response_t),
-                                      bytes_used);
+                                      bytes_used) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
 
     }
 
+    // @unsafe - Legacy unlock RPC boundary.
     void Client::InvokeUnLock(uint64_t txn_nr,
                               int dstShardIdx,
                               uint16_t server_id,
@@ -383,8 +429,8 @@ namespace mako
                               uint32_t timeout)
     {
         Debug("invoke InvokeUnLock\n");
-        uint32_t reqId = ++lastReqId;
-        reqId *= 10;
+        uint64_t reqId = NextRequestSequence();
+        
 
         crtReqK =
             PendingRequestK("InvokeUnLock",
@@ -399,16 +445,17 @@ namespace mako
                 sizeof(basic_request_t),
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
-        reqBuf->req_nr = reqId + current_term;
+        StampRequest(reqBuf, reqId);
         blocked = true;
-        transport->SendRequestToAll(this,
+        if (!transport->SendRequestToAll(this,
                                       unLockReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                       sizeof(basic_response_t),
-                                      sizeof(basic_request_t));
+                                      sizeof(basic_request_t)) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
     }
 
+    // @unsafe - Shares one identity across owned per-destination wire batches.
     void Client::InvokeBatchLock(
         uint64_t txn_nr,
         uint16_t server_id,
@@ -418,8 +465,8 @@ namespace mako
         uint32_t timeout
     ) {
         Debug("invoke InvokeBatchLock\n");
-        uint32_t reqId = ++lastReqId;
-        reqId *= 10;
+        uint64_t reqId = NextRequestSequence();
+        
 
         crtReqK =
             PendingRequestK("batchLock",
@@ -432,21 +479,20 @@ namespace mako
         map<int, pair<char*, size_t>> data_to_send;
 
         for (auto &it: request_batch_per_shard) {
-            it.second.set_req_nr(reqId + current_term);
+            StampRequest(it.second.get_request_ptr(), reqId);
             data_to_send[it.first] = make_pair((char*)it.second.get_request_ptr(), it.second.get_msg_len());
         }
         blocked = true;
 
         //reqBuf->targert_server_id = server_id;
-        transport->SendBatchRequestToAll(
-            this,
-            batchLockReqType,
-            config.warehouses+5+server_id%TThread::get_num_rpc_server(),
-            sizeof(basic_response_t),
-            data_to_send
-        );
+        if (!transport->SendBatchRequestToAll(this,
+        batchLockReqType,
+        config.warehouses+5+server_id%TThread::get_num_rpc_server(),
+        sizeof(basic_response_t),
+        data_to_send) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
     }
 
+    // @unsafe - Legacy lock RPC boundary.
     void Client::InvokeLock(uint64_t txn_nr,
                             int dstShardIdx,
                             uint16_t server_id,
@@ -458,8 +504,8 @@ namespace mako
                             uint32_t timeout)
     {
         Debug("invoke InvokeLock\n");
-        uint32_t reqId = ++lastReqId;
-        reqId *= 10;
+        uint64_t reqId = NextRequestSequence();
+        
 
         crtReqK =
             PendingRequestK(key,
@@ -477,7 +523,7 @@ namespace mako
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
 
-        reqBuf->req_nr = reqId + current_term;
+        StampRequest(reqBuf, reqId);
         reqBuf->klen = key.size();
         memcpy(reqBuf->key_and_value, key.c_str(), key.size());
         reqBuf->vlen = value.size();
@@ -487,13 +533,14 @@ namespace mako
         blocked = true;
 
         size_t used_bytes = sizeof(lock_request_t) - max_key_length - max_value_length + key.size() + value.size();
-        transport->SendRequestToShard(this,
+        if (!transport->SendRequestToShard(this,
                                       lockReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
-                                      used_bytes);
+                                      used_bytes) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
     }
 
+    // @unsafe - Marshals native SRPC buffers on the affine coordinator lane.
     void Client::InvokeScan(uint64_t txn_nr,
                            int dstShardIdx,
                            uint16_t server_id,
@@ -505,8 +552,8 @@ namespace mako
                            uint32_t timeout)
     {
         Debug("invoke InvokeScan: %d\n", server_id);
-        uint32_t reqId = ++lastReqId;
-        reqId *= 10;
+        uint64_t reqId = NextRequestSequence();
+        
 
         crtReqK =
             PendingRequestK(start_key,
@@ -523,7 +570,7 @@ namespace mako
                 sizeof(scan_request_t),
                 sizeof(scan_response_t)));
         reqBuf->targert_server_id = server_id;
-        reqBuf->req_nr = reqId + current_term;
+        StampRequest(reqBuf, reqId);
         reqBuf->slen = start_key.size();
         memcpy(reqBuf->start_end_key, start_key.c_str(), start_key.size());
         reqBuf->elen = end_key.size();
@@ -532,13 +579,14 @@ namespace mako
         ASSERT_LT(end_key.size()+start_key.size()-1, 128);
 
         blocked = true;
-        transport->SendRequestToShard(this,
+        if (!transport->SendRequestToShard(this,
                                       scanReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
-                                      sizeof(scan_request_t));
+                                      sizeof(scan_request_t)) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
     }
 
+    // @unsafe - Marshals native SRPC buffers on the affine coordinator lane.
     void Client::InvokeGet(uint64_t txn_nr,
                            int dstShardIdx,
                            uint16_t server_id,
@@ -548,8 +596,8 @@ namespace mako
                            error_continuation_t error_continuation,
                            uint32_t timeout)
     {
-        uint32_t reqId = ++lastReqId;
-        reqId *= 10;
+        uint64_t reqId = NextRequestSequence();
+        
 
         //Warning("invoke InvokeGet,txn_nr:%d,par_id:%d,id:%d",txn_nr,TThread::getGlobalPartitionID(),TThread::id());
         Debug("invoke InvokeGet\n");
@@ -561,16 +609,12 @@ namespace mako
                             continuation,
                             error_continuation);
 
-        // We intialize epoch number once a remoteGET is called as we have it for every transaction.
-#if defined(FAIL_NEW_VERSION)
-        current_term = sc_callback_();
-#endif
         auto *reqBuf = reinterpret_cast<get_request_t *>(
             transport->GetRequestBuf(
                 sizeof(get_request_t),
                 sizeof(get_response_t)));
         reqBuf->targert_server_id = server_id;
-        reqBuf->req_nr = reqId + current_term;
+        StampRequest(reqBuf, reqId);
         reqBuf->len = key.size();
         ASSERT_LT(key.size(), max_key_length);
 
@@ -580,11 +624,11 @@ namespace mako
         size_t bytes_used = sizeof(get_request_t) - max_key_length + reqBuf->len;
 
         blocked = true;
-        transport->SendRequestToShard(this,
+        if (!transport->SendRequestToShard(this,
                                       getReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
-                                      bytes_used);
+                                      bytes_used) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
     }
 
     // @unsafe - raw transport buffers
@@ -599,8 +643,8 @@ namespace mako
                                    error_continuation_t error_continuation,
                                    uint32_t timeout)
     {
-        uint32_t reqId = ++lastReqId;
-        reqId *= 10;
+        uint64_t reqId = NextRequestSequence();
+        
 
         Debug("invoke InvokeNontxnWrite type=%d\n", reqType);
         crtReqK =
@@ -616,7 +660,7 @@ namespace mako
                 sizeof(nontxn_write_request_t),
                 sizeof(client_kv_response_t)));
         reqBuf->targert_server_id = server_id;
-        reqBuf->req_nr = reqId + current_term;
+        StampRequest(reqBuf, reqId);
         reqBuf->table_id = table_id;
         ASSERT_LT(key.size(), max_key_length);
         ASSERT_LT(value.size(), max_value_length);
@@ -630,13 +674,14 @@ namespace mako
             + reqBuf->klen + reqBuf->vlen;
 
         blocked = true;
-        transport->SendRequestToShard(this,
+        if (!transport->SendRequestToShard(this,
                                       reqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
-                                      bytes_used);
+                                      bytes_used) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
     }
 
+    // @unsafe - Requests predecision cleanup; missing replies remain failures.
     void Client::InvokeAbort(uint64_t txn_nr,
                              int dstShardIdx,
                              uint16_t server_id,
@@ -645,8 +690,8 @@ namespace mako
                              uint32_t timeout)
     {
         Debug("invoke InvokeAbort\n");
-        uint32_t reqId = ++lastReqId;
-        reqId *= 10;
+        uint64_t reqId = NextRequestSequence();
+        
 
         crtReqK =
             PendingRequestK("InvokeAbort",
@@ -661,15 +706,15 @@ namespace mako
                 sizeof(basic_request_t),
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
-        reqBuf->req_nr = reqId + current_term;
+        StampRequest(reqBuf, reqId);
         blocked = true;
         try {
-            transport->SendRequestToAll(this,
+            if (!transport->SendRequestToAll(this,
                                         abortReqType,
                                         dstShardIdx,
                                         config.warehouses+5+server_id%TThread::get_num_rpc_server(),
                                         sizeof(basic_response_t),
-                                        sizeof(basic_request_t));
+                                        sizeof(basic_request_t)) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
         } catch(int n) {
             // for abort itself, we do nothing
         }

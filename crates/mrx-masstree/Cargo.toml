@@ -13,6 +13,10 @@ mtx-sys = { path = "../mtx-sys" }
 # See crates/Cargo.toml: profiles live at the workspace root.
 
 [dev-dependencies]
+# For the `epoch_*` rungs of examples/write_scaling.rs, which price the
+# epoch machinery the entry slot is built on against the mutex slot it
+# replaced. Nothing in the library depends on it.
+crossbeam-epoch = "0.9"
 # For write_scaling's `full_rocks` rung ONLY. The ladder's `full` mode
 # runs the store over `MemBlobs`, i.e. with no durable store at all,
 # while the C++ ladder's `full` runs over real RocksDB -- so the two

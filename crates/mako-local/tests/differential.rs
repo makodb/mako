@@ -184,8 +184,18 @@ fn differential_safe_replay_role() {
         .expect("read differential corpus from parent");
     let corpus = parse_corpus(&corpus_text).expect("parse differential corpus");
     let capabilities = features().expect("native feature bits");
+    // The transcript uses C ABI capability bits. The facade additionally
+    // advertises a derived Rust-only mid-install observer capability; check
+    // that relationship before projecting back to the native capability word.
+    assert_eq!(
+        capabilities.test_commit_mid_install_observer(),
+        capabilities.test_commit_observer()
+    );
+    let native_capabilities = mako_engine_api::Features::from_bits(
+        capabilities.bits() & !mako_engine_api::Features::TEST_COMMIT_MID_INSTALL_OBSERVER,
+    );
     let transcript =
-        replay::<LocalDb>(&corpus, capabilities).expect("safe Rust differential replay");
+        replay::<LocalDb>(&corpus, native_capabilities).expect("safe Rust differential replay");
     let output = std::env::var_os(SAFE_OUTPUT_ENV).expect("safe output path from parent");
     let mut file = std::fs::OpenOptions::new()
         .write(true)

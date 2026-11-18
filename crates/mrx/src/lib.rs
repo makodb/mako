@@ -47,7 +47,7 @@ use mrx_core::{Config, Runtime, Store};
 use mrx_masstree::MasstreeIndex;
 use mrx_rocks::RocksBlobs;
 
-pub use mrx_core::{BlobError, WriteOutcome};
+pub use mrx_core::{BlobError, CopyOutcome, WriteOutcome};
 pub use mrx_rocks::Durability;
 
 mod batch;
@@ -159,6 +159,19 @@ impl Db {
     /// Read a key.
     pub fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>, Error> {
         Ok(self.store.get(key)?)
+    }
+
+    /// Read a key into `out`, reusing its capacity.
+    ///
+    /// For callers that read in a loop: no allocation per read, and the
+    /// bytes land directly in the buffer they already own.
+    pub fn get_into(&self, key: &[u8], out: &mut Vec<u8>) -> Result<bool, Error> {
+        Ok(self.store.get_into(key, out)?)
+    }
+
+    /// Read a key into a fixed slice: no buffer of our own at all.
+    pub fn copy_value_into(&self, key: &[u8], out: &mut [u8]) -> Result<CopyOutcome, Error> {
+        Ok(self.store.copy_value_into(key, out)?)
     }
 
     /// Write a key. Returns once the value is visible, **not** once it is

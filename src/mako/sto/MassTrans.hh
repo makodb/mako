@@ -192,7 +192,7 @@ public:
         if (TThread::is_multiversion())
           return MultiVersionValue::mvGET(
               retval, TThread::txn->get_current_term(),
-              sync_util::sync_logger::hist_timestamp);
+              sync_util::sync_logger::history_snapshot());
       }
     } else {
       //Warning("Not found a value");
@@ -257,7 +257,7 @@ public:
           item.observe(tversion_type(observed_version));
           if (!MultiVersionValue::mvGET(
                   visible_value, TThread::txn->get_current_term(),
-                  sync_util::sync_logger::hist_timestamp))
+                  sync_util::sync_logger::history_snapshot()))
             return false;
         } else {
           item.observe(tversion_type(v));
@@ -312,11 +312,12 @@ private:
     return true;
   }
 
+  // @unsafe - Borrows legacy Masstree records under the transaction's epoch.
   template <typename ValueType>
   bool compare_published(
       versioned_value *e, const ValueType& value,
-      bool(*compar)(const std::string& newValue,
-                    const std::string& oldValue)) {
+      bool(*compar)(const value_type& newValue,
+                    const value_type& oldValue)) {
     auto item = t_item(e);
 #if READ_MY_WRITES
     if (readMyWritesEnabled() && has_insert(item)) {
@@ -358,11 +359,12 @@ private:
     }
   }
 
+  // @unsafe - Mutates legacy Masstree cursors and transaction-owned items.
   template <bool INSERT, bool SET, typename StringType, typename ValueType>
   bool trans_write(
       const StringType& key, const ValueType& value,
-      bool(*compar)(const std::string& newValue,
-                    const std::string& oldValue),
+      bool(*compar)(const value_type& newValue,
+                    const value_type& oldValue),
       threadinfo_type& ti = mythreadinfo,
       Transaction::canonical_write_view* canonical_write_out = nullptr) {
     if (canonical_write_out != nullptr)
@@ -481,9 +483,10 @@ public:
         k, v, nullptr, ti, canonical_write_out);
   }
 
+  // @unsafe - Forwards a typed comparison into the legacy transaction kernel.
   template <typename KT, typename VT>
   bool transPutMbta(const KT& k, const VT& v,
-                    bool(*compar)(const std::string& newValue,const std::string& oldValue),
+                    bool(*compar)(const value_type& newValue,const value_type& oldValue),
                     threadinfo_type& ti = mythreadinfo) {
       return trans_write</*insert*/true, /*set*/true>(k, v, compar, ti);
   }
@@ -614,7 +617,7 @@ protected:
         // key and val are both only guaranteed until callback returns
         bool ret = MultiVersionValue::mvGET(val,
                                             TThread::txn->get_current_term(),
-                                            sync_util::sync_logger::hist_timestamp);
+                                            sync_util::sync_logger::history_snapshot());
         if (ret){
           return callback(key, val);
         }else {
@@ -722,7 +725,7 @@ protected:
 
         bool ret = MultiVersionValue::mvGET(val,
                                             TThread::txn->get_current_term(),
-                                            sync_util::sync_logger::hist_timestamp);
+                                            sync_util::sync_logger::history_snapshot());
         if (ret)
           return callback(key, val);
         else {
@@ -1299,7 +1302,7 @@ protected:
         item.observe(tversion_type(observed_version));
         const bool logically_present = MultiVersionValue::mvGET(
             visible_value, TThread::txn->get_current_term(),
-            sync_util::sync_logger::hist_timestamp);
+            sync_util::sync_logger::history_snapshot());
         if (!logically_present) {
           if constexpr (!INSERT) {
             return false;

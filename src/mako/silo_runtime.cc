@@ -83,11 +83,17 @@ SiloRuntime* SiloRuntime::Current() {
 // @unsafe - Returns raw pointer for legacy compatibility
 // @lifetime: &'static
 SiloRuntime* SiloRuntime::GlobalDefault() {
+    return GlobalDefaultOwner().as_ptr();
+}
+
+// @unsafe - Retain the native runtime owner for detached process-lifetime threads.
+// @lifetime: &'static
+const rusty::Arc<SiloRuntime>& SiloRuntime::GlobalDefaultOwner() {
     // Function-local initialization is thread-safe.  Keep the Arc owner alive
     // for the process lifetime: a runtime may own detached background threads,
     // so static teardown must not reclaim it while those threads still run.
     static const auto* const owner = new rusty::Arc<SiloRuntime>(Create());
-    return owner->as_ptr();
+    return *owner;
 }
 
 // =========================================================================

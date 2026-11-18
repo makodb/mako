@@ -4,7 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
-#include <memory>
+#include <rusty/box.hpp>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -48,11 +48,8 @@ size_t destroyed_table_count_for_testing() noexcept;
 
 } // namespace rust_sto_tpcc_detail
 
-// FullOrderedIndex bridge used only by the matched TPC-C comparison target.
-// The supported topology is exactly one local, non-replicated shard: remote
-// indexes, replication, and distributed commit are unsupported. The
-// application and record encoders remain the existing C++ TPC-C code; all
-// transactional storage operations below cross the narrow Rust C ABI.
+// Native Rust storage with affine participants and a narrow legacy RPC/log
+// bridge. Remote facades carry routing IDs, never independent local rows.
 class rust_sto_tpcc_ordered_index final : public FullOrderedIndex,
                                           public TxnFixedReadCapability,
                                           public TxnFixedModifyCapability,
@@ -111,6 +108,8 @@ public:
                   oi_scan_callback &callback, str_arena *arena) override;
 
 private:
+  // @unsafe - Colocated replicated rows still use their owning participant.
+  bool routes_remotely() const noexcept;
   rust_sto_tpcc_wrapper *owner_;
   sto_tpcc_table *table_;
   int32_t table_id_;
@@ -193,15 +192,30 @@ public:
   void shard_serialize_util(uint32_t timestamp) override;
   void shard_unlock(bool committed) override;
   void shard_reset() override;
+  void shard_mutate(uint16_t table_id, lcdf::Str key,
+                    const std::string &value, uint8_t operation) override;
+  // @unsafe - Affine native participant and legacy replay boundary.
+  bool shard_participant_active() const noexcept override;
+  bool shard_participant_empty() const noexcept override;
+  bool shard_timestamp(uint32_t &timestamp) override;
+  void shard_set_term(uint32_t term) override;
+  bool replay_apply_record(uint16_t table_id, std::string_view key,
+                           std::string_view payload, bool is_delete,
+                           uint32_t source_time_term) override;
+  void replay_thread_init() override;
+  void replay_thread_select_partition(int partition) override;
+  void observe_replay_timestamp(uint32_t source_time_term) override;
 
 private:
   sto_tpcc_db *db_;
-  int32_t next_table_id_;
+  std::map<int, int32_t> next_table_ids_;
+  bool protocol_mode_ = false;
+  bool replicated_ = false;
   // open_index returns borrowed pointers. This wrapper owns every facade until
   // close_index removes it or the wrapper itself is destroyed. Publication is
   // all-or-nothing: a C++ exception after FFI creation destroys that table and
   // does not consume its ID or leave a partial catalog entry.
-  std::vector<std::unique_ptr<rust_sto_tpcc_ordered_index>> tables_;
+  std::vector<rusty::Box<rust_sto_tpcc_ordered_index>> tables_;
   std::unordered_map<int32_t, rust_sto_tpcc_ordered_index *> tables_by_id_;
   std::map<std::tuple<std::string, int>, rust_sto_tpcc_ordered_index *>
       tables_by_name_;
@@ -209,6 +223,11 @@ private:
   static thread_local sto_tpcc_thread *tls_thread_;
   static thread_local bool tls_transaction_active_;
   static thread_local bool tls_benchmark_thread_initialized_;
+  static thread_local rust_sto_tpcc_wrapper *tls_owner_;
+  static thread_local uint32_t tls_term_;
+  static thread_local bool tls_protocol_;
+  static thread_local bool tls_suppress_log_;
+  static thread_local uint32_t tls_last_read_time_term_;
   static thread_local std::vector<sto_tpcc_fixed_value> tls_fixed_values_;
   static thread_local std::vector<sto_tpcc_insert_operation>
       tls_insert_operations_;
@@ -219,6 +238,15 @@ private:
   static void require_txn_handle(c_void *txn);
   static void begin_current_transaction();
   static void abort_current_transaction_noexcept();
+  // @unsafe - Synchronous legacy transport/replication callbacks never unwind.
+  static sto_tpcc_status protocol_callback(
+      void *context, sto_tpcc_protocol_request *request) noexcept;
+  static void mutate_protocol(const rust_sto_tpcc_ordered_index &index,
+                              lcdf::Str key, const std::string &value,
+                              uint8_t operation, bool lock_now);
+  static bool remote_get(const rust_sto_tpcc_ordered_index &index,
+                         lcdf::Str key, std::string &value,
+                         size_t max_bytes_read);
 
   bool get_raw(const sto_tpcc_table *table, lcdf::Str key,
                std::string &encoded_value,

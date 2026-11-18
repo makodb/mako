@@ -29,13 +29,13 @@
 // for, and these types are never used from Rust as Rust.
 #![allow(non_camel_case_types)]
 
-use std::ffi::{CStr, c_char, c_int, c_uchar, c_void};
-use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::ffi::{c_char, c_int, c_uchar, c_void, CStr};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::path::PathBuf;
 use std::ptr;
 use std::sync::Arc;
 
-use mrx::{Db, Durability, MrxStore, Options, WriteBatch};
+use mrx::{CopyOutcome, Db, Durability, MrxStore, Options, WriteBatch};
 
 extern "C" {
     fn malloc(n: usize) -> *mut c_void;
@@ -309,6 +309,54 @@ pub unsafe extern "C" fn mrxdb_get(
             Err(e) => {
                 set_err(errptr, &format!("mrxdb_get: {e}"));
                 ptr::null_mut()
+            }
+        }
+    })
+}
+
+/// Read a key into a caller-owned buffer.
+///
+/// The read path with no allocation in it: the caller keeps one buffer
+/// and reuses it, instead of receiving a `malloc`'d copy it has to copy
+/// again and free. Returns 1 if the key is live and `*outlen` bytes were
+/// written, 0 if it is absent or deleted, and -1 on failure (including a
+/// value larger than `cap` — this refuses rather than truncating).
+#[no_mangle]
+pub unsafe extern "C" fn mrxdb_get_into(
+    db: *mut mrxdb_t,
+    key: *const c_char,
+    keylen: usize,
+    buf: *mut c_char,
+    cap: usize,
+    outlen: *mut usize,
+    errptr: *mut *mut c_char,
+) -> c_int {
+    guard(errptr, "mrxdb_get_into", -1, || {
+        if db.is_null() || buf.is_null() || outlen.is_null() {
+            set_err(errptr, "mrxdb_get_into: null argument");
+            return -1;
+        }
+        *outlen = 0;
+        // SAFETY: the caller owns `cap` writable bytes at `buf`; the
+        // slice is rebuilt from that same pointer and length and is not
+        // used past this call.
+        let out = std::slice::from_raw_parts_mut(buf.cast::<u8>(), cap);
+        match (*db).db.copy_value_into(slice(key, keylen), out) {
+            Ok(CopyOutcome::Absent) => 0,
+            Ok(CopyOutcome::Copied(n)) => {
+                *outlen = n;
+                1
+            }
+            Ok(CopyOutcome::TooSmall(n)) => {
+                set_err(
+                    errptr,
+                    &format!("mrxdb_get_into: value of {n} bytes exceeds the {cap}-byte buffer"),
+                );
+                -1
+            }
+            Err(e) => {
+                set_err(errptr, &format!("mrxdb_get_into: {e}"));
+                -1
             }
         }
     })

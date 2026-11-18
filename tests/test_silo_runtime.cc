@@ -9,6 +9,7 @@
 #include <stdint.h>
 
 #include <gtest/gtest.h>
+#include <rusty/thread.hpp>
 
 
 #include "silo_runtime.h"
@@ -623,7 +624,13 @@ TEST(MassTransEpochIntegrationTest,
         std::atomic<bool>& reclaimed_;
     };
 
-    std::thread replay_thread([&] {
+    // @unsafe - Select the real replay backend before attachment, as startup does.
+    // It outlives the replay thread, including that thread's TLS cleanup.
+    mbta_wrapper replay_db;
+    abstract_db* const prior_replay_db = ThreadDBWrapperMbta::replay_thread_wrapper_db;
+    ThreadDBWrapperMbta::replay_thread_wrapper_db = &replay_db;
+
+    auto replay_thread = rusty::thread::spawn([&] {
         try {
             // Explicitly clear inherited assumptions: std::thread begins with
             // fresh TLS, and getDB() itself must establish both bindings.
@@ -658,16 +665,14 @@ TEST(MassTransEpochIntegrationTest,
             ti->rcu_stop();
             Transaction::rcu_quiesce();
 
-            delete TThread::txn;
-            TThread::txn = nullptr;
-            SiloRuntime::BindCurrentThread(nullptr);
         } catch (const std::exception& error) {
             failure = error.what();
         } catch (...) {
             failure = "unknown replay-thread exception";
         }
     });
-    replay_thread.join();
+    replay_thread.join().unwrap();
+    ThreadDBWrapperMbta::replay_thread_wrapper_db = prior_replay_db;
 
     EXPECT_TRUE(failure.empty()) << failure;
     EXPECT_EQ(observed_runtime, runtime);

@@ -42,7 +42,7 @@ Welcome to the Mako documentation.
   - [Client-Server Roadmap](architecture/client-server-roadmap.md)
 - **[Multi-Shard Single Process](architecture/multi-shard.md)** - Running multiple shards in one process
 - **[Design Principles](architecture/design-principles.md)** - Core design philosophy and principles
-- **[Rust STO Design](architecture/rust-sto.md)** - Living design and implementation contract for native Rust STO and the Masstree C ABI
+- **[Rust STO Paper / Whitepaper](architecture/rust-sto.md)** - Paper-style narrative following the original EuroSys 2016 STO paper, plus current implementation contracts and evaluation
 - **[Speculative 2PC](architecture/speculative-2pc.md)** - Speculative two-phase commit protocol
 - **[Paxos](architecture/paxos.md)** - Paxos benchmarking commands
 

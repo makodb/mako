@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <charconv>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <exception>
@@ -18,6 +20,9 @@
 #include "rcu.h"
 #include "mbta_wrapper.hh"
 #include "mtree_abi.h"
+#include <rusty/mutex.hpp>
+#include "deptran/replication_helper.h"
+#include "rocksdb_persistence_fwd.h"
 
 // Wrapper-private fast lane implemented by sto-tpcc-ffi. These symbols stay
 // out of the installed C header: this wrapper establishes their live-handle,
@@ -320,6 +325,14 @@ extern "C" sto_tpcc_status mako_sto_tpcc_stock_level_full_trusted(
 
 namespace {
 
+// @unsafe - The C ABI owner is shared only at process startup/teardown.
+// All wrappers therefore open tables in the same native runtime; same-process
+// cross-shard facade wiring never hands a worker a foreign runtime resource.
+struct process_database {
+  sto_tpcc_db *handle = nullptr;
+  size_t owners = 0;
+};
+rusty::Mutex<process_database> shared_database(process_database{});
 #ifdef MAKO_RUST_STO_TEST_HOOKS
 thread_local rust_sto_tpcc_detail::open_index_fault_stage
     pending_open_index_fault =
@@ -345,10 +358,12 @@ void destroy_ffi_table_noexcept(sto_tpcc_table *table) noexcept {
 #endif
 }
 
-struct ffi_table_deleter {
-  void operator()(sto_tpcc_table *table) const noexcept {
-    destroy_ffi_table_noexcept(table);
-  }
+// @unsafe - Opaque Rust ownership must be returned through its C destructor,
+// not C++ delete. This stack guard adds no allocation.
+struct ffi_table_owner {
+  sto_tpcc_table *table;
+  ~ffi_table_owner() noexcept { destroy_ffi_table_noexcept(table); }
+  void release() noexcept { table = nullptr; }
 };
 
 constexpr size_t kTpccMinimumAttachmentSlots = 32;
@@ -457,6 +472,7 @@ static_assert(tpcc_resolved_cache_policy_for("history_1") ==
 static_assert(tpcc_resolved_cache_policy_for("order_line_1") ==
               STO_TPCC_RESOLVED_CACHE_NONE);
 
+// @safe - Match native record-local OCC without ordered scan generations.
 constexpr sto_tpcc_table_config
 tpcc_table_config_for(std::string_view index_name) {
   const std::string_view tablespace = tpcc_tablespace_name(index_name);
@@ -472,12 +488,6 @@ tpcc_table_config_for(std::string_view index_name) {
   config.scan_max_key_arena_bytes = 64 * 1024;
   config.max_scan_chunks = 32'768;
   config.max_scan_physical_records = 4'000'000;
-  // Only standard TPC-C range-scan tables pay the table-wide value-generation
-  // increment on committed row publication. Point-only tables keep the write
-  // path free of this shared atomic RMW.
-  config.trusted_scan_value_generation =
-      tablespace == "customer_name_idx" || tablespace == "oorder_c_id_idx" ||
-      tablespace == "new_order" || tablespace == "order_line";
   // Payment rewrites warehouse, district, and customer rows on its critical
   // path, while NewOrder also rewrites district. Keep the 160-byte atomic cell
   // scoped to these frequently updated point tables. District has only ten
@@ -488,30 +498,6 @@ tpcc_table_config_for(std::string_view index_name) {
                                  tablespace == "warehouse";
   return config;
 }
-
-constexpr sto_tpcc_table_config kHistoryCapacityRegression =
-    tpcc_table_config_for("history_1");
-static_assert(kHistoryCapacityRegression.max_retained_records ==
-              std::numeric_limits<uint64_t>::max());
-static_assert(kHistoryCapacityRegression.max_consumed_record_ids ==
-              std::numeric_limits<uint64_t>::max());
-
-constexpr sto_tpcc_table_config kOrderCapacityRegression =
-    tpcc_table_config_for("oorder_1");
-static_assert(kOrderCapacityRegression.max_retained_records ==
-              std::numeric_limits<uint64_t>::max());
-static_assert(kOrderCapacityRegression.max_consumed_record_ids ==
-              std::numeric_limits<uint64_t>::max());
-static_assert(kOrderCapacityRegression.trusted_scan_value_generation == 0);
-static_assert(tpcc_table_config_for("oorder_c_id_idx_1")
-                  .trusted_scan_value_generation != 0);
-static_assert(
-    tpcc_table_config_for("warehouse_1").trusted_scan_value_generation == 0);
-static_assert(tpcc_table_config_for("warehouse_1").bounded_atomic_values != 0);
-static_assert(tpcc_table_config_for("customer_1").bounded_atomic_values != 0);
-static_assert(tpcc_table_config_for("district_1").bounded_atomic_values != 0);
-static_assert(
-    tpcc_table_config_for("customer_name_idx_1").bounded_atomic_values == 0);
 
 std::string last_rust_error() {
   size_t required = sto_tpcc_last_error_length();
@@ -529,32 +515,28 @@ std::string last_rust_error() {
 constexpr size_t kMakoValueMetadataBytes =
     static_cast<size_t>(mako::EXTRA_BITS_FOR_VALUE);
 
-// This wrapper is intentionally limited to one local, non-replicated shard
-// (enforced by init()). It therefore never consumes Mako's timestamp/Node
-// suffix. The C++ transactional ABI still supplies mako::Encode()d values, so
-// its supported representation is deliberately narrow and lossless:
-//
-//   logical payload || EXTRA_BITS_FOR_VALUE zero bytes
-//
-// Strip that canonical suffix before crossing into Rust. Fail closed on a
-// short or nonzero suffix so meaningful native/distributed metadata is never
-// silently discarded. Raw shard reads reconstruct the same canonical zeros.
+// @unsafe - Decode legacy byte framing; Rust owns all record/history metadata.
+// Mutation trailers describe the previously read value, not a new decision.
 std::string_view canonical_local_mako_payload(std::string_view encoded_value) {
   if (encoded_value.size() < kMakoValueMetadataBytes)
     throw std::invalid_argument(
         "Rust STO received a truncated Mako metadata suffix");
 
   const size_t payload_size = encoded_value.size() - kMakoValueMetadataBytes;
-  const std::string_view metadata = encoded_value.substr(payload_size);
-  if (!std::all_of(metadata.begin(), metadata.end(),
-                   [](char byte) { return byte == '\0'; }))
-    throw std::invalid_argument(
-        "Rust STO does not support nonzero Mako metadata");
+  const uint32_t time_term =
+      mako::load_value_time_term(encoded_value.data(), encoded_value.size());
+  if (time_term != 0 && time_term / 10 == 0)
+    throw std::invalid_argument("invalid Mako distributed metadata");
   return encoded_value.substr(0, payload_size);
 }
 
-void append_canonical_mako_metadata(std::string &payload) {
+// @unsafe - Preserve the native wire layout without exporting a history pointer.
+void append_mako_metadata(std::string &payload, uint32_t time_term) {
+  const size_t offset = payload.size();
   payload.append(kMakoValueMetadataBytes, '\0');
+  mako::store_unaligned(payload.data() + offset, time_term);
+  mako::store_unaligned(payload.data() + offset + sizeof(uint32_t),
+                        time_term / 10);
 }
 
 struct scan_bridge {
@@ -564,9 +546,10 @@ struct scan_bridge {
   std::exception_ptr failure;
 };
 
-int32_t invoke_scan_bridge(void *context, const uint8_t *key,
-                           size_t key_length, const uint8_t *value,
-                           size_t value_length) {
+// @unsafe - Callback borrows synchronous Rust row bytes and catches exceptions.
+int32_t invoke_versioned_scan_bridge(void *context, const uint8_t *key,
+                                    size_t key_length, const uint8_t *value,
+                                    size_t value_length, uint32_t time_term) {
   auto *bridge = static_cast<scan_bridge *>(context);
   try {
     const char *callback_value = reinterpret_cast<const char *>(value);
@@ -575,7 +558,7 @@ int32_t invoke_scan_bridge(void *context, const uint8_t *key,
       bridge->canonical_value.clear();
       if (value_length != 0)
         bridge->canonical_value.assign(callback_value, value_length);
-      append_canonical_mako_metadata(bridge->canonical_value);
+      append_mako_metadata(bridge->canonical_value, time_term);
       callback_value = bridge->canonical_value.data();
       callback_value_length = bridge->canonical_value.size();
     }
@@ -590,6 +573,14 @@ int32_t invoke_scan_bridge(void *context, const uint8_t *key,
     bridge->failure = std::current_exception();
     return 1;
   }
+}
+
+// @unsafe - Local-only bootstrap reads have no distributed metadata.
+int32_t invoke_scan_bridge(void *context, const uint8_t *key,
+                          size_t key_length, const uint8_t *value,
+                          size_t value_length) {
+  return invoke_versioned_scan_bridge(context, key, key_length, value,
+                                      value_length, 0);
 }
 
 struct fixed_read_bridge {
@@ -800,6 +791,11 @@ thread_local sto_tpcc_thread *rust_sto_tpcc_wrapper::tls_thread_ = nullptr;
 thread_local bool rust_sto_tpcc_wrapper::tls_transaction_active_ = false;
 thread_local bool rust_sto_tpcc_wrapper::tls_benchmark_thread_initialized_ =
     false;
+thread_local rust_sto_tpcc_wrapper *rust_sto_tpcc_wrapper::tls_owner_ = nullptr;
+thread_local uint32_t rust_sto_tpcc_wrapper::tls_term_ = 0;
+thread_local bool rust_sto_tpcc_wrapper::tls_protocol_ = false;
+thread_local bool rust_sto_tpcc_wrapper::tls_suppress_log_ = false;
+thread_local uint32_t rust_sto_tpcc_wrapper::tls_last_read_time_term_ = 0;
 thread_local std::vector<sto_tpcc_fixed_value>
     rust_sto_tpcc_wrapper::tls_fixed_values_;
 thread_local std::vector<sto_tpcc_insert_operation>
@@ -818,50 +814,65 @@ rust_sto_tpcc_ordered_index::~rust_sto_tpcc_ordered_index() noexcept {
   }
 }
 
+// @unsafe - One-operation legacy facade; only definite aborts are retried.
 bool rust_sto_tpcc_ordered_index::get(lcdf::Str key, std::string &value,
                                       size_t max_bytes_read) {
   while (true) {
     owner_->begin_current_transaction();
     try {
-      const bool found =
-          owner_->get_raw(table_, key, value, max_bytes_read);
+      const bool found = tx_get(owner_->tls_thread_, key, value, max_bytes_read);
       if (!owner_->commit_txn(owner_->tls_thread_))
         continue;
       return found;
     } catch (const abstract_db::abstract_abort_exception &) {
-      owner_->abort_current_transaction_noexcept();
+      owner_->abort_txn(owner_->tls_thread_);
     } catch (...) {
-      owner_->abort_current_transaction_noexcept();
+      owner_->abort_txn(owner_->tls_thread_);
       throw;
     }
   }
 }
 
+// @unsafe - Encode legacy bytes and drive the native scalar terminal.
 bool rust_sto_tpcc_ordered_index::put(lcdf::Str key,
                                       const std::string &value) {
   while (true) {
     owner_->begin_current_transaction();
     try {
       std::string ignored;
-      const bool existed = owner_->get_raw(table_, key, ignored, 0);
+      const bool existed = tx_get(owner_->tls_thread_, key, ignored, 0);
       const std::string encoded = mako::Encode(value);
-      owner_->put_raw(table_, key, encoded, false);
+      if (owner_->tls_protocol_)
+        owner_->mutate_protocol(*this, key, encoded, 0, false);
+      else
+        owner_->put_raw(table_, key, encoded, false);
       owner_->commit_txn(owner_->tls_thread_);
       return !existed;
     } catch (const abstract_db::abstract_abort_exception &) {
-      owner_->abort_current_transaction_noexcept();
+      owner_->abort_txn(owner_->tls_thread_);
     } catch (...) {
-      owner_->abort_current_transaction_noexcept();
+      owner_->abort_txn(owner_->tls_thread_);
       throw;
     }
   }
 }
 
+// @unsafe - Preserve conditional-insert results across the legacy boundary.
 bool rust_sto_tpcc_ordered_index::insert(lcdf::Str key,
                                          const std::string &value) {
   while (true) {
     owner_->begin_current_transaction();
     try {
+      if (owner_->tls_protocol_) {
+        std::string ignored;
+        if (tx_get(owner_->tls_thread_, key, ignored, 0)) {
+          owner_->commit_txn(owner_->tls_thread_);
+          return false;
+        }
+        owner_->mutate_protocol(*this, key, mako::Encode(value), 1, false);
+        owner_->commit_txn(owner_->tls_thread_);
+        return true;
+      }
       const std::string encoded = mako::Encode(value);
       const std::string_view payload = canonical_local_mako_payload(encoded);
       const sto_tpcc_status status = mako_sto_tpcc_insert_trusted(
@@ -876,25 +887,31 @@ bool rust_sto_tpcc_ordered_index::insert(lcdf::Str key,
       owner_->commit_txn(owner_->tls_thread_);
       return true;
     } catch (const abstract_db::abstract_abort_exception &) {
-      owner_->abort_current_transaction_noexcept();
+      owner_->abort_txn(owner_->tls_thread_);
     } catch (...) {
-      owner_->abort_current_transaction_noexcept();
+      owner_->abort_txn(owner_->tls_thread_);
       throw;
     }
   }
 }
 
+// @unsafe - Preserve remove presence while Rust owns the mutation and decision.
 bool rust_sto_tpcc_ordered_index::remove(lcdf::Str key) {
   while (true) {
     owner_->begin_current_transaction();
     try {
-      const bool existed = owner_->remove_raw(table_, key);
+      std::string ignored;
+      const bool existed = owner_->tls_protocol_
+          ? tx_get(owner_->tls_thread_, key, ignored, 0)
+          : owner_->remove_raw(table_, key);
+      if (owner_->tls_protocol_ && existed)
+        owner_->mutate_protocol(*this, key, {}, 2, false);
       owner_->commit_txn(owner_->tls_thread_);
       return existed;
     } catch (const abstract_db::abstract_abort_exception &) {
-      owner_->abort_current_transaction_noexcept();
+      owner_->abort_txn(owner_->tls_thread_);
     } catch (...) {
-      owner_->abort_current_transaction_noexcept();
+      owner_->abort_txn(owner_->tls_thread_);
       throw;
     }
   }
@@ -904,6 +921,8 @@ void rust_sto_tpcc_ordered_index::scan(const std::string &start_key,
                                        const std::string *end_key,
                                        oi_scan_callback &callback,
                                        str_arena *) {
+  if (routes_remotely())
+    throw std::invalid_argument("remote ranges use tx_scan_remote_one");
   while (true) {
     owner_->begin_current_transaction();
     try {
@@ -911,9 +930,9 @@ void rust_sto_tpcc_ordered_index::scan(const std::string &start_key,
       owner_->commit_txn(owner_->tls_thread_);
       return;
     } catch (const abstract_db::abstract_abort_exception &) {
-      owner_->abort_current_transaction_noexcept();
+      owner_->abort_txn(owner_->tls_thread_);
     } catch (...) {
-      owner_->abort_current_transaction_noexcept();
+      owner_->abort_txn(owner_->tls_thread_);
       throw;
     }
   }
@@ -923,6 +942,8 @@ void rust_sto_tpcc_ordered_index::rscan(const std::string &start_key,
                                         const std::string *end_key,
                                         oi_scan_callback &callback,
                                         str_arena *) {
+  if (routes_remotely())
+    throw std::invalid_argument("remote ranges use tx_scan_remote_one");
   while (true) {
     owner_->begin_current_transaction();
     try {
@@ -930,9 +951,9 @@ void rust_sto_tpcc_ordered_index::rscan(const std::string &start_key,
       owner_->commit_txn(owner_->tls_thread_);
       return;
     } catch (const abstract_db::abstract_abort_exception &) {
-      owner_->abort_current_transaction_noexcept();
+      owner_->abort_txn(owner_->tls_thread_);
     } catch (...) {
-      owner_->abort_current_transaction_noexcept();
+      owner_->abort_txn(owner_->tls_thread_);
       throw;
     }
   }
@@ -940,18 +961,31 @@ void rust_sto_tpcc_ordered_index::rscan(const std::string &start_key,
 
 size_t rust_sto_tpcc_ordered_index::size() const {
   uint64_t rows = 0;
+  if (is_remote_)
+    return 0; // A proxy owns no local rows; remote cardinality is not cached.
   owner_->require_ok("table_size", sto_tpcc_table_size(table_, &rows));
   return static_cast<size_t>(rows);
 }
 
 oi_stats_map rust_sto_tpcc_ordered_index::clear() { return {}; }
 int32_t rust_sto_tpcc_ordered_index::get_table_id() { return table_id_; }
-bool rust_sto_tpcc_ordered_index::get_is_remote() { return is_remote_; }
+// @unsafe - Live colocated replicas must use the owning affine participant.
+bool rust_sto_tpcc_ordered_index::routes_remotely() const noexcept {
+  return is_remote_ || (owner_->replicated_ && owner_->tls_thread_ &&
+      (table_id_ - 1) / mako::NUM_TABLES_PER_SHARD !=
+          TThread::get_shard_index());
+}
 
+// @unsafe - Legacy workload dispatch observes the same routing as the verbs.
+bool rust_sto_tpcc_ordered_index::get_is_remote() { return routes_remotely(); }
+
+// @unsafe - Dispatch the affine native read or the legacy remote proxy.
 bool rust_sto_tpcc_ordered_index::tx_get(c_void *txn, lcdf::Str key,
                                          std::string &value,
                                          size_t max_bytes_read) {
   owner_->require_txn_handle(txn);
+  if (routes_remotely())
+    return owner_->remote_get(*this, key, value, max_bytes_read);
   return owner_->get_active_raw(table_, key, value, max_bytes_read);
 }
 
@@ -1046,21 +1080,38 @@ oi_fixed_put_result rust_sto_tpcc_ordered_index::tx_put_fixed(
   return {raw_result.inserted, raw_result.first_duplicate};
 }
 
+// @unsafe - Protocol intents copy bytes; the local fast lane borrows its arena.
 void rust_sto_tpcc_ordered_index::tx_put(c_void *txn, lcdf::Str key,
                                          const std::string &value) {
   owner_->require_txn_handle(txn);
-  owner_->put_active_raw(table_, key, value, false);
+  if (owner_->tls_protocol_)
+    owner_->mutate_protocol(*this, key, value, 0, false);
+  else
+    owner_->put_active_raw(table_, key, value, false);
 }
 
+// @unsafe - Inserts copy loader/arena bytes before the caller reuses them.
 void rust_sto_tpcc_ordered_index::tx_insert(c_void *txn, lcdf::Str key,
                                             const std::string &value) {
   owner_->require_txn_handle(txn);
-  owner_->put_active_raw(table_, key, value, true);
+  if (routes_remotely()) {
+    std::string ignored;
+    if (owner_->remote_get(*this, key, ignored, 0))
+      return;
+  }
+  if (owner_->tls_protocol_)
+    owner_->mutate_protocol(*this, key, value, 1, false);
+  else
+    owner_->put_active_raw(table_, key, value, true);
 }
 
+// @unsafe - Route delete semantics without synthesizing an ordinary PUT.
 void rust_sto_tpcc_ordered_index::tx_remove(c_void *txn, lcdf::Str key) {
   owner_->require_txn_handle(txn);
-  (void)owner_->remove_active_raw(table_, key);
+  if (owner_->tls_protocol_)
+    owner_->mutate_protocol(*this, key, {}, 2, false);
+  else
+    (void)owner_->remove_active_raw(table_, key);
 }
 
 void rust_sto_tpcc_ordered_index::tx_scan(c_void *txn,
@@ -1069,6 +1120,8 @@ void rust_sto_tpcc_ordered_index::tx_scan(c_void *txn,
                                           oi_scan_callback &callback,
                                           str_arena *) {
   owner_->require_txn_handle(txn);
+  if (routes_remotely())
+    throw std::invalid_argument("remote ranges use tx_scan_remote_one");
   owner_->scan_active_raw(table_, false, start_key, end_key, callback, true);
 }
 
@@ -1078,13 +1131,39 @@ void rust_sto_tpcc_ordered_index::tx_rscan(c_void *txn,
                                            oi_scan_callback &callback,
                                            str_arena *) {
   owner_->require_txn_handle(txn);
+  if (routes_remotely())
+    throw std::invalid_argument("remote ranges use tx_scan_remote_one");
   owner_->scan_active_raw(table_, true, start_key, end_key, callback, true);
 }
 
+// @unsafe - Existing remote scan contract returns the lower median payload.
 void rust_sto_tpcc_ordered_index::tx_scan_remote_one(
     c_void *txn, const std::string &start_key, const std::string &end_key,
     std::string &value) {
   owner_->require_txn_handle(txn);
+  if (routes_remotely()) {
+    if (!TThread::sclient)
+      throw std::logic_error("Rust STO remote scan has no shard client");
+    owner_->require_ok("flush remote scan", sto_tpcc_protocol_flush_remote(
+        owner_->tls_thread_, owner_->protocol_callback, owner_));
+    const int status = TThread::sclient->remoteScan(
+        table_id_, start_key, end_key, value);
+    if (status != mako::ErrorCode::SUCCESS &&
+        status != mako::ErrorCode::NOT_FOUND)
+      throw abstract_db::abstract_abort_exception();
+    uint32_t time_term = 0;
+    if (status == mako::ErrorCode::SUCCESS) {
+      const auto payload = canonical_local_mako_payload(value);
+      time_term = mako::load_value_time_term(value.data(), value.size());
+      value.resize(payload.size());
+    } else {
+      value.clear();
+    }
+    owner_->require_ok("remote scan dependency", sto_tpcc_protocol_observe_read(
+        owner_->tls_thread_, (table_id_ - 1) / mako::NUM_TABLES_PER_SHARD,
+        time_term));
+    return;
+  }
   class first_value_callback final : public oi_scan_callback {
   public:
     explicit first_value_callback(std::string &target) : target_(target) {}
@@ -1100,12 +1179,13 @@ void rust_sto_tpcc_ordered_index::tx_scan_remote_one(
   owner_->scan_active_raw(table_, false, start_key, &end_key, callback, true);
 }
 
+// @unsafe - Materialize metadata captured with the selected native payload.
 bool rust_sto_tpcc_ordered_index::shard_get(lcdf::Str key,
                                             std::string &value,
                                             size_t max_bytes_read) {
   const bool found = owner_->get_raw(table_, key, value);
   if (found) {
-    append_canonical_mako_metadata(value);
+    append_mako_metadata(value, owner_->tls_last_read_time_term_);
     if (value.size() > max_bytes_read)
       value.resize(max_bytes_read);
   }
@@ -1114,7 +1194,7 @@ bool rust_sto_tpcc_ordered_index::shard_get(lcdf::Str key,
 
 const c_char *rust_sto_tpcc_ordered_index::shard_put(
     lcdf::Str key, const std::string &value) {
-  owner_->put_raw(table_, key, value, false);
+  owner_->mutate_protocol(*this, key, value, 0, true);
   return nullptr;
 }
 
@@ -1125,33 +1205,93 @@ bool rust_sto_tpcc_ordered_index::shard_scan(
   return true;
 }
 
-rust_sto_tpcc_wrapper::rust_sto_tpcc_wrapper()
-    : db_(nullptr), next_table_id_(1) {}
+// @unsafe - Owns one reference to the process native runtime.
+rust_sto_tpcc_wrapper::rust_sto_tpcc_wrapper() : db_(nullptr) {}
 
 rust_sto_tpcc_wrapper::~rust_sto_tpcc_wrapper() noexcept {
   tables_by_name_.clear();
   tables_by_id_.clear();
   tables_.clear();
   if (db_) {
-    (void)sto_tpcc_db_destroy(db_);
+    auto shared = shared_database.lock().unwrap();
+    if (--shared->owners == 0) {
+      (void)sto_tpcc_db_destroy(shared->handle);
+      shared->handle = nullptr;
+    }
     db_ = nullptr;
   }
 }
 
+// @unsafe - Configuration and native C ABI startup boundary.
 void rust_sto_tpcc_wrapper::init() {
   auto &config = BenchmarkConfig::getInstance();
-  if (config.getNshards() != 1 || config.getIsReplicated())
-    throw std::runtime_error(
-        "Rust STO TPC-C comparison supports one non-replicated shard");
-
-  const sto_tpcc_db_config ffi_config =
-      rust_sto_tpcc_detail::db_config_for_worker_count(config.getNthreads());
-  require_ok("db_create", sto_tpcc_db_create(&ffi_config, &db_));
+  protocol_mode_ = config.getNshards() != 1 || config.getIsReplicated();
+  replicated_ = config.getIsReplicated();
+  const size_t shards = config.getNshards();
+  const size_t workers = config.getNthreads();
+  if (shards == 0 || workers == 0 ||
+      shards > std::numeric_limits<size_t>::max() / workers)
+    throw std::invalid_argument("invalid Rust STO process worker topology");
+  // Four slots per shard/warehouse cover foreground, loader, participant and
+  // replay lanes; the fixed reserve covers service/maintenance attachment.
+  sto_tpcc_db_config ffi_config =
+      rust_sto_tpcc_detail::db_config_for_worker_count(shards * workers);
+  const auto *transport = config.getConfig();
+  const size_t local_shards = transport && !transport->local_shard_indices.empty()
+      ? transport->local_shard_indices.size() : 1;
+  const size_t warehouses = transport
+      ? static_cast<size_t>(transport->warehouses) : workers;
+  const size_t limit =
+      std::min<size_t>(mt_max_threads(), static_cast<size_t>(MAX_THREADS));
+  // Helpers remain resident during loading. The parallel loader has three
+  // warehouse-sized groups plus warehouse/item/district lanes; foreground
+  // workers replace loaders, while replay attachments can coexist with either.
+  if (warehouses == 0 || shards > limit / warehouses ||
+      local_shards > limit || workers > limit / 2 ||
+      warehouses > (limit - 3) / 3)
+    throw std::invalid_argument("Rust STO process attachment budget exhausted");
+  const size_t loaders = config.getEnableParallelLoading()
+      ? 3 * warehouses + 3 : 6;
+  const size_t per_shard =
+      shards * warehouses + workers + std::max(workers, loaders);
+  if (per_shard > (limit - kTpccReservedAttachmentSlots) / local_shards)
+    throw std::invalid_argument("Rust STO helpers/replay exceed worker capacity");
+  ffi_config.max_threads = static_cast<uint32_t>(std::max<size_t>(
+      ffi_config.max_threads,
+      local_shards * per_shard + kTpccReservedAttachmentSlots));
+  auto shared = shared_database.lock().unwrap();
+  if (db_ != nullptr)
+    throw std::logic_error("Rust STO database initialized twice");
+  if (shared->handle == nullptr)
+    require_ok("db_create", sto_tpcc_db_create(&ffi_config, &shared->handle));
+  db_ = shared->handle;
+  ++shared->owners;
+  if (config.getIsReplicated() && !config.getLeaderConfig()) {
+    // Followers receive loading logs before a workload constructs named
+    // tables. Native tree creation needs a quiescent startup thread.
+    const int shard = static_cast<int>(config.getShardIndex());
+    for (int ordinal = 1; ordinal <= mako::NUM_TABLES_PER_SHARD; ++ordinal) {
+      const int id = shard * mako::NUM_TABLES_PER_SHARD + ordinal;
+      sto_tpcc_table *table = nullptr;
+      const auto table_config = rust_sto_tpcc_detail::table_config_for("replay");
+      require_ok("replay table create", sto_tpcc_table_create_with_cache_policy(
+          db_, &table_config, STO_TPCC_RESOLVED_CACHE_NONE, &table));
+      ffi_table_owner pending{table};
+      auto index = rusty::Box<rust_sto_tpcc_ordered_index>(
+          new rust_sto_tpcc_ordered_index(
+              this, table, id, std::string{}, false));
+      pending.release();
+      auto *raw = index.get();
+      tables_.push_back(std::move(index));
+      tables_by_id_.emplace(id, raw);
+      mako::setup_update_table(id, raw);
+    }
+  }
 }
 
 void rust_sto_tpcc_wrapper::on_load_complete() {
   for (const auto &table : tables_) {
-    if (!tpcc_table_has_static_directory(table->name_))
+    if (table->is_remote_ || !tpcc_table_has_static_directory(table->name_))
       continue;
     require_ok("table_seal_directory_structure",
                sto_tpcc_table_seal_directory_structure(table->table_));
@@ -1170,6 +1310,8 @@ void rust_sto_tpcc_wrapper::report_capacity_usage(const char *phase) const {
          << (db_usage.max_registry_bytes - db_usage.allocated_registry_bytes)
          << '\n';
   for (const auto &table : tables_) {
+    if (table->is_remote_)
+      continue;
     sto_tpcc_table_usage_info usage{};
     require_ok("table_usage", sto_tpcc_table_usage(table->table_, &usage));
     output << "STO_TPCC_CAPACITY phase=" << phase << " table=" << table->name_
@@ -1192,6 +1334,7 @@ size_t rust_sto_tpcc_wrapper::sizeof_txn_object(uint64_t txn_flags) const {
   return 1;
 }
 
+// @unsafe - One native worker and one legacy attachment on this OS thread.
 void rust_sto_tpcc_wrapper::thread_init(bool loader, int source) {
   if (tls_thread_)
     throw std::runtime_error("Rust STO thread was initialized twice");
@@ -1203,16 +1346,20 @@ void rust_sto_tpcc_wrapper::thread_init(bool loader, int source) {
     mbta_wrapper::benchmark_thread_end();
     tls_benchmark_thread_initialized_ = false;
     require_ok("thread_create", status);
+  } else {
+    tls_owner_ = this;
   }
 }
 
+// @unsafe - Resolve native state before destroying its worker/RCU attachment.
 void rust_sto_tpcc_wrapper::thread_end() {
   if (tls_transaction_active_)
-    abort_current_transaction_noexcept();
+    abort_txn(tls_thread_);
   sto_tpcc_status destroy_status = STO_TPCC_OK;
   if (tls_thread_) {
     destroy_status = sto_tpcc_thread_destroy(tls_thread_);
     tls_thread_ = nullptr;
+    tls_owner_ = nullptr;
   }
   if (tls_benchmark_thread_initialized_) {
     mbta_wrapper::benchmark_thread_end();
@@ -1228,32 +1375,56 @@ void *rust_sto_tpcc_wrapper::new_txn(uint64_t txn_flags, str_arena &, void *,
   return tls_thread_;
 }
 
+// @unsafe - Rust owns the decision; only a definite predecision abort retries.
 bool rust_sto_tpcc_wrapper::commit_txn(void *txn) {
   require_txn_handle(txn);
-  const sto_tpcc_status status =
-      mako_sto_tpcc_txn_commit_trusted(tls_thread_);
+  sto_tpcc_protocol_report report{};
+  const sto_tpcc_status status = tls_protocol_
+      ? sto_tpcc_protocol_commit(tls_thread_, mako::getCurrentTimeMillis(),
+                                 protocol_callback, this, &report)
+      : mako_sto_tpcc_txn_commit_trusted(tls_thread_);
   tls_transaction_active_ = false;
-  if (status == STO_TPCC_RETRY)
-    throw abstract_abort_exception();
+  if (tls_protocol_ && status == STO_TPCC_RETRY &&
+      report.disposition != STO_TPCC_ABORTED)
+    throw_fatal("non-aborted retry disposition", STO_TPCC_UNKNOWN);
   require_ok("txn_commit", status);
   return true;
 }
 
+// @unsafe - Same terminal protocol, without resubmitting a local legacy log.
 bool rust_sto_tpcc_wrapper::commit_txn_no_paxos(void *txn) {
-  return commit_txn(txn);
+  const bool saved = std::exchange(tls_suppress_log_, true);
+  try {
+    const bool committed = commit_txn(txn);
+    tls_suppress_log_ = saved;
+    return committed;
+  } catch (...) {
+    tls_suppress_log_ = saved;
+    throw;
+  }
 }
 
+// @unsafe - Resolve every touched helper before releasing coordinator state.
 void rust_sto_tpcc_wrapper::abort_txn(void *txn) {
   if (txn && txn != tls_thread_)
     throw std::runtime_error("foreign Rust STO transaction handle");
+  if (tls_protocol_ && TThread::mode() == 0 && TThread::sclient &&
+      TThread::sclient->hasTouchedParticipants()) {
+    const int result = TThread::sclient->remoteAbort();
+    if (result != mako::ErrorCode::SUCCESS)
+      throw_fatal("remote abort cleanup", STO_TPCC_FATAL);
+  }
   abort_current_transaction_noexcept();
 }
 
-void rust_sto_tpcc_wrapper::abort_txn_local(void *txn) { abort_txn(txn); }
+// @unsafe - Local abort never sends a remote participant terminal.
+void rust_sto_tpcc_wrapper::abort_txn_local(void *) {
+  abort_current_transaction_noexcept();
+}
 
 TxnFixedReadCapability *rust_sto_tpcc_wrapper::txn_fixed_read_capability(
     abstract_ordered_index *index) noexcept {
-  if (index == nullptr)
+  if (protocol_mode_ || index == nullptr)
     return nullptr;
 #ifndef NDEBUG
   const auto owned = std::find_if(
@@ -1270,7 +1441,7 @@ TxnFixedReadCapability *rust_sto_tpcc_wrapper::txn_fixed_read_capability(
 
 TxnFixedModifyCapability *rust_sto_tpcc_wrapper::txn_fixed_modify_capability(
     abstract_ordered_index *index) noexcept {
-  if (index == nullptr)
+  if (protocol_mode_ || index == nullptr)
     return nullptr;
 #ifndef NDEBUG
   const auto owned = std::find_if(
@@ -1284,7 +1455,7 @@ TxnFixedModifyCapability *rust_sto_tpcc_wrapper::txn_fixed_modify_capability(
 
 TxnFixedPutCapability *rust_sto_tpcc_wrapper::txn_fixed_put_capability(
     abstract_ordered_index *index) noexcept {
-  if (index == nullptr)
+  if (protocol_mode_ || index == nullptr)
     return nullptr;
 #ifndef NDEBUG
   const auto owned = std::find_if(
@@ -1298,31 +1469,31 @@ TxnFixedPutCapability *rust_sto_tpcc_wrapper::txn_fixed_put_capability(
 
 TxnInsertBatchCapability *
 rust_sto_tpcc_wrapper::txn_insert_batch_capability() noexcept {
-  return this;
+  return protocol_mode_ ? nullptr : this;
 }
 
 TxnTpccPaymentCapability *
 rust_sto_tpcc_wrapper::txn_tpcc_payment_capability() noexcept {
-  return kDisablePaymentPrefix ? nullptr : this;
+  return protocol_mode_ || kDisablePaymentPrefix ? nullptr : this;
 }
 
 TxnTpccNewOrderCapability *
 rust_sto_tpcc_wrapper::txn_tpcc_new_order_capability() noexcept {
-  return kDisableNewOrderFull ? nullptr : this;
+  return protocol_mode_ || kDisableNewOrderFull ? nullptr : this;
 }
 
 TxnTpccDeliveryCapability *
 rust_sto_tpcc_wrapper::txn_tpcc_delivery_capability() noexcept {
-  return kDisableDeliveryFull ? nullptr : this;
+  return protocol_mode_ || kDisableDeliveryFull ? nullptr : this;
 }
 
 TxnTpccStockLevelCapability *
 rust_sto_tpcc_wrapper::txn_tpcc_stock_level_capability() noexcept {
-  return kDisableStockLevelFull ? nullptr : this;
+  return protocol_mode_ || kDisableStockLevelFull ? nullptr : this;
 }
 
 bool rust_sto_tpcc_wrapper::payment_full_enabled() const noexcept {
-  return !kDisablePaymentFull;
+  return !protocol_mode_ && !kDisablePaymentFull;
 }
 
 tpcc_fixed_batch::payment_full_result
@@ -1765,25 +1936,76 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
   return open_index(name, -1);
 }
 
+// @unsafe - Startup-only catalog publication and native C ABI table creation.
 abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
     const std::string &name, int shard_index) {
   auto &config = BenchmarkConfig::getInstance();
   if (shard_index == -1)
     shard_index = static_cast<int>(config.getShardIndex());
-  if (shard_index != static_cast<int>(config.getShardIndex()))
-    throw std::runtime_error(
-        "Rust STO TPC-C comparison does not support remote indexes");
+  if (shard_index < 0 ||
+      static_cast<size_t>(shard_index) >= config.getNshards())
+    throw std::invalid_argument("Rust STO table shard is out of range");
+  const bool remote = shard_index != static_cast<int>(config.getShardIndex());
 
   const auto key = std::make_tuple(name, shard_index);
   if (const auto found = tables_by_name_.find(key);
       found != tables_by_name_.end())
     return found->second;
 
-  if (next_table_id_ == std::numeric_limits<int32_t>::max())
-    throw std::length_error("Rust STO table ID capacity exhausted");
-  const int32_t table_id = next_table_id_;
-  if (tables_by_id_.find(table_id) != tables_by_id_.end())
-    throw std::logic_error("Rust STO table ID is already present");
+  auto [next, inserted] = next_table_ids_.try_emplace(
+      shard_index, shard_index * mako::NUM_TABLES_PER_SHARD + 1);
+  int32_t table_id = next->second;
+  if (remote) {
+    std::string local_name = name;
+    const size_t marker = name.rfind("_remote_");
+    if (marker != std::string::npos) {
+      size_t warehouse = 0;
+      const char *first = name.data() + marker + sizeof("_remote_") - 1;
+      const char *last = name.data() + name.size();
+      const auto parsed = std::from_chars(first, last, warehouse);
+      const size_t warehouses = static_cast<size_t>(config.getScaleFactor());
+      if (parsed.ec != std::errc{} || parsed.ptr != last || warehouse == 0 ||
+          warehouses == 0 || (warehouse - 1) / warehouses !=
+              static_cast<size_t>(shard_index))
+        throw std::invalid_argument("invalid Rust STO remote warehouse name");
+      local_name.resize(marker);
+      const size_t local_warehouse = (warehouse - 1) % warehouses;
+      const size_t workers = config.getNthreads();
+      const size_t partition = warehouses <= workers ? local_warehouse
+          : std::min(local_warehouse / (warehouses / workers), workers - 1);
+      const std::string partitioned =
+          local_name + "_" + std::to_string(partition);
+      if (tables_by_name_.find(std::make_tuple(
+              partitioned, static_cast<int>(config.getShardIndex()))) !=
+          tables_by_name_.end())
+        local_name = partitioned;
+    }
+    const auto local = tables_by_name_.find(std::make_tuple(
+        local_name, static_cast<int>(config.getShardIndex())));
+    if (local != tables_by_name_.end())
+      table_id = shard_index * mako::NUM_TABLES_PER_SHARD +
+          (local->second->table_id_ - 1) % mako::NUM_TABLES_PER_SHARD + 1;
+  }
+  if (table_id > (shard_index + 1) * mako::NUM_TABLES_PER_SHARD ||
+      table_id >= (1 << 15))
+    throw std::length_error("Rust STO shard table ID capacity exhausted");
+  if (const auto existing = tables_by_id_.find(table_id);
+      existing != tables_by_id_.end()) {
+    auto *index = existing->second;
+    if (remote && index->is_remote_) {
+      // Several warehouses can share one local physical tree. Their remote
+      // aliases must name that same participant table, not consume extra IDs.
+      tables_by_name_.emplace(key, index);
+      return index;
+    }
+    if (!index->name_.empty())
+      throw std::logic_error("Rust STO table ID is already present");
+    tables_by_name_.emplace(key, index);
+    index->name_ = name;
+    mako::get_table_registry().register_table(table_id, name);
+    ++next->second;
+    return index;
+  }
   if (tables_.size() == tables_.max_size() ||
       tables_by_id_.size() == tables_by_id_.max_size() ||
       tables_by_name_.size() == tables_by_name_.max_size())
@@ -1813,18 +2035,19 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
   const sto_tpcc_resolved_cache_policy cache_policy =
       tpcc_resolved_cache_policy_for(name);
   sto_tpcc_table *table = nullptr;
-  require_ok("table_create_with_cache_policy",
-             sto_tpcc_table_create_with_cache_policy(
-                 db_, &table_config, cache_policy, &table));
+  if (!remote)
+    require_ok("table_create_with_cache_policy",
+               sto_tpcc_table_create_with_cache_policy(
+                   db_, &table_config, cache_policy, &table));
 
-  std::unique_ptr<sto_tpcc_table, ffi_table_deleter> table_owner(table);
+  ffi_table_owner table_owner{table};
 #ifdef MAKO_RUST_STO_TEST_HOOKS
   inject_open_index_fault_if_requested(
       rust_sto_tpcc_detail::open_index_fault_stage::after_table_create);
 #endif
 
-  auto index = std::make_unique<rust_sto_tpcc_ordered_index>(
-      this, table, table_id, name, false);
+  auto index = rusty::Box<rust_sto_tpcc_ordered_index>(
+      new rust_sto_tpcc_ordered_index(this, table, table_id, name, remote));
   table_owner.release();
 #ifdef MAKO_RUST_STO_TEST_HOOKS
   inject_open_index_fault_if_requested(
@@ -1879,7 +2102,10 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
     throw;
   }
 
-  ++next_table_id_;
+  mako::get_table_registry().register_table(table_id, name);
+  if (!remote)
+    mako::setup_update_table(table_id, raw);
+  next->second = std::max(next->second, table_id + 1);
   return raw;
 }
 
@@ -1907,30 +2133,164 @@ void rust_sto_tpcc_wrapper::close_index(abstract_ordered_index *idx) {
   tables_.erase(owned);
 }
 
-void rust_sto_tpcc_wrapper::shard_abort_txn(void *txn) { abort_txn(txn); }
+// @unsafe - Participant cleanup never sends coordinator RPCs.
+void rust_sto_tpcc_wrapper::shard_abort_txn(void *) {
+  abort_current_transaction_noexcept();
+}
 
+// @unsafe - Native participant validation seals its operation phase.
 int rust_sto_tpcc_wrapper::shard_validate() {
-  throw std::runtime_error("Rust STO comparison has no distributed 2PC");
+  const auto status = sto_tpcc_protocol_validate(tls_thread_);
+  if (status == STO_TPCC_RETRY)
+    return mako::ErrorCode::ABORT;
+  require_ok("participant validate", status);
+  return mako::ErrorCode::SUCCESS;
 }
-void rust_sto_tpcc_wrapper::shard_install(uint32_t) {
-  throw std::runtime_error("Rust STO comparison has no distributed 2PC");
+
+// @unsafe - Irreversible installation; failures may never become retry.
+void rust_sto_tpcc_wrapper::shard_install(uint32_t timestamp) {
+  require_ok("participant install",
+             sto_tpcc_protocol_install(tls_thread_, timestamp));
 }
+
+// @unsafe - Rust serializes its own final write ledger, not C++ TransItems.
 void rust_sto_tpcc_wrapper::shard_serialize_util(uint32_t) {
-  throw std::runtime_error("Rust STO comparison has no distributed 2PC");
+  require_ok("participant log", sto_tpcc_protocol_log(
+      tls_thread_, mako::getCurrentTimeMillis(), protocol_callback, this));
 }
-void rust_sto_tpcc_wrapper::shard_unlock(bool) {
-  throw std::runtime_error("Rust STO comparison has no distributed 2PC");
+
+// @unsafe - Consumes the retained participant and resolves committed cleanup.
+void rust_sto_tpcc_wrapper::shard_unlock(bool committed) {
+  sto_tpcc_protocol_report report{};
+  const auto status = sto_tpcc_protocol_finish(tls_thread_, committed, &report);
+  tls_transaction_active_ = false;
+  require_ok("participant finish", status);
 }
-void rust_sto_tpcc_wrapper::shard_reset() { begin_current_transaction(); }
+
+// @unsafe - Resolve the preceding affine attempt before admitting another.
+void rust_sto_tpcc_wrapper::shard_reset() {
+  abort_current_transaction_noexcept();
+  begin_current_transaction();
+}
+
+// @unsafe - RPC buffers are copied by Rust before returning to the server.
+void rust_sto_tpcc_wrapper::shard_mutate(
+    uint16_t table_id, lcdf::Str key, const std::string &value,
+    uint8_t operation) {
+  auto *index = static_cast<rust_sto_tpcc_ordered_index *>(
+      get_index_by_table_id(table_id));
+  if (!index || index->is_remote_)
+    throw std::invalid_argument("invalid Rust STO participant table");
+  mutate_protocol(*index, key, value, operation, true);
+}
+
+// @unsafe - Read-only affine FFI inspection; failure is conservatively active.
+bool rust_sto_tpcc_wrapper::shard_participant_active() const noexcept {
+  if (!tls_thread_)
+    return false;
+  if (!tls_protocol_)
+    return tls_transaction_active_;
+  sto_tpcc_protocol_report report{};
+  uint32_t empty = 0;
+  if (sto_tpcc_protocol_state(tls_thread_, &report, &empty) != STO_TPCC_OK)
+    return true;
+  return report.phase != 0;
+}
+
+// @unsafe - Unknown state must not be parked as empty.
+bool rust_sto_tpcc_wrapper::shard_participant_empty() const noexcept {
+  sto_tpcc_protocol_report report{};
+  uint32_t empty = 0;
+  return tls_thread_ && tls_protocol_ &&
+      sto_tpcc_protocol_state(tls_thread_, &report, &empty) == STO_TPCC_OK &&
+      empty != 0;
+}
+
+// @unsafe - Same process Rust authority serves coordinator and timestamp RPC.
+bool rust_sto_tpcc_wrapper::shard_timestamp(uint32_t &timestamp) {
+  const auto status = tls_thread_ && tls_protocol_
+      ? sto_tpcc_protocol_timestamp(tls_thread_, &timestamp)
+      : sto_tpcc_distributed_timestamp(&timestamp);
+  if (status == STO_TPCC_RESOURCE_EXHAUSTED)
+    return false;
+  require_ok("distributed timestamp", status);
+  return true;
+}
+
+// @unsafe - Admission has already checked request identity before this hook.
+void rust_sto_tpcc_wrapper::shard_set_term(uint32_t term) {
+  if (term > 9)
+    throw std::invalid_argument("Rust STO decimal term out of range");
+  if (tls_term_ == term)
+    return;
+  const bool active = shard_participant_active();
+  if (active && !shard_participant_empty())
+    throw std::logic_error("term changed inside a Rust STO participant");
+  if (active)
+    abort_current_transaction_noexcept();
+  tls_term_ = term;
+  if (active)
+    begin_current_transaction();
+}
+
+// @unsafe - Replay owns its native worker and never initializes a shard client.
+void rust_sto_tpcc_wrapper::replay_thread_init() { thread_init(true, 0); }
+
+// @unsafe - Legacy partition is thread-affine log routing state.
+void rust_sto_tpcc_wrapper::replay_thread_select_partition(int partition) {
+  TThread::set_pid(partition);
+}
+
+// @unsafe - Observe recovered decisions before foreground promotion.
+void rust_sto_tpcc_wrapper::observe_replay_timestamp(uint32_t time_term) {
+  if (time_term != 0)
+    require_ok("replay clock floor", sto_tpcc_observe_timestamp(time_term));
+}
+
+// @unsafe - Replay FFI copies key/payload and consumes its private attempt.
+bool rust_sto_tpcc_wrapper::replay_apply_record(
+    uint16_t table_id, std::string_view key, std::string_view payload,
+    bool is_delete, uint32_t source_time_term) {
+  auto *index = static_cast<rust_sto_tpcc_ordered_index *>(
+      get_index_by_table_id(table_id));
+  if (!index || !index->table_)
+    throw std::invalid_argument("invalid Rust STO replay table");
+  if (TThread::should_reclaim())
+    require_ok("replay history floor", sto_tpcc_table_history_floor(
+        index->table_, sync_util::sync_logger::retrieveShardW() / 10));
+  const auto status = sto_tpcc_replay_apply(
+      tls_thread_, index->table_,
+      reinterpret_cast<const uint8_t *>(key.data()), key.size(),
+      reinterpret_cast<const uint8_t *>(payload.data()), payload.size(),
+      is_delete, source_time_term);
+  if (status == STO_TPCC_RETRY)
+    return false;
+  require_ok("replay apply", status);
+  return true;
+}
 
 [[noreturn]] void rust_sto_tpcc_wrapper::throw_fatal(
     const char *operation, sto_tpcc_status status) {
   const std::string message = std::string("Rust STO ") + operation +
                              " failed (status " + std::to_string(status) +
                              "): " + last_rust_error();
+  if (status == STO_TPCC_UNKNOWN || status == STO_TPCC_COMMITTED_ERROR ||
+      (tls_protocol_ && status == STO_TPCC_FATAL)) {
+    // Legacy benchmark catch-all handlers retry. Publication uncertainty or
+    // committed cleanup failure must instead stop this process.
+    mako::benchmark_cerr() << message << std::endl;
+    std::terminate();
+  }
   if (status == STO_TPCC_RESOURCE_EXHAUSTED) {
-    // The FFI ends the attempt before reporting resource exhaustion. Keep the
-    // wrapper's transaction state consistent so thread_end remains safe.
+    if (tls_protocol_ && tls_thread_) {
+      if (TThread::mode() == 0 && TThread::sclient &&
+          TThread::sclient->hasTouchedParticipants() &&
+          TThread::sclient->remoteAbort() != mako::ErrorCode::SUCCESS)
+        std::terminate();
+      sto_tpcc_protocol_report report{};
+      if (sto_tpcc_protocol_finish(tls_thread_, 0, &report) != STO_TPCC_OK)
+        std::terminate();
+    }
     tls_transaction_active_ = false;
     throw storage_resource_exhausted(message);
   }
@@ -1951,19 +2311,53 @@ void rust_sto_tpcc_wrapper::require_txn_handle(c_void *txn) {
     throw std::runtime_error("invalid or inactive Rust STO transaction handle");
 }
 
+// @unsafe - Begin only Rust state; the inactive C++ transaction is not started.
 void rust_sto_tpcc_wrapper::begin_current_transaction() {
   if (!tls_thread_)
     throw std::runtime_error("Rust STO operation on an unattached thread");
   if (tls_transaction_active_)
     throw std::runtime_error("nested Rust STO transaction");
-  require_ok("txn_begin", mako_sto_tpcc_txn_begin_trusted(tls_thread_));
+  tls_protocol_ = tls_owner_->protocol_mode_ || TThread::mode() == 1;
+  if (tls_protocol_) {
+    if (TThread::mode() == 0) {
+      const int term = BenchmarkConfig::getInstance().getIsReplicated()
+          ? get_epoch() : 0;
+      if (term < 0 || term > 9)
+        throw std::invalid_argument("Rust STO decimal term out of range");
+      tls_term_ = static_cast<uint32_t>(term);
+      if (TThread::sclient)
+        TThread::sclient->beginAttempt(tls_term_);
+    }
+    require_ok("protocol begin", sto_tpcc_protocol_begin(tls_thread_, tls_term_));
+    const auto history = sync_util::sync_logger::history_snapshot();
+    const uint32_t failure_bound =
+        sync_util::sync_logger::failed_shard_ts.load(std::memory_order_acquire);
+    const bool bounded_failure =
+        BenchmarkConfig::getInstance().getControlMode() == 1 &&
+        failure_bound != std::numeric_limits<uint32_t>::max();
+    require_ok("protocol visibility", sto_tpcc_protocol_visibility(
+        tls_thread_, history.values.data(), history.known_mask,
+        bounded_failure ? failure_bound : 0, bounded_failure));
+  } else {
+    require_ok("txn_begin", mako_sto_tpcc_txn_begin_trusted(tls_thread_));
+  }
   tls_transaction_active_ = true;
 }
 
+// @unsafe - Consume affine state; uncertain/failed committed cleanup fail-stops.
 void rust_sto_tpcc_wrapper::abort_current_transaction_noexcept() {
   if (!tls_thread_ || !tls_transaction_active_)
     return;
-  (void)sto_tpcc_txn_abort(tls_thread_);
+  if (tls_protocol_) {
+    sto_tpcc_protocol_report report{};
+    const auto status = sto_tpcc_protocol_finish(tls_thread_, 0, &report);
+    if (status != STO_TPCC_OK)
+      std::terminate();
+  } else {
+    const auto status = sto_tpcc_txn_abort(tls_thread_);
+    if (status == STO_TPCC_UNKNOWN || status == STO_TPCC_COMMITTED_ERROR)
+      std::terminate();
+  }
   tls_transaction_active_ = false;
 }
 
@@ -1975,20 +2369,30 @@ bool rust_sto_tpcc_wrapper::get_raw(const sto_tpcc_table *table,
   return get_active_raw(table, key, encoded_value, max_bytes_read);
 }
 
+// @unsafe - Copy one coherent Rust payload/metadata result to legacy storage.
 bool rust_sto_tpcc_wrapper::get_active_raw(
     const sto_tpcc_table *table, lcdf::Str key,
     std::string &encoded_value, size_t max_bytes_read) {
   sto_tpcc_status status = STO_TPCC_OK;
   size_t actual = 0;
+  tls_last_read_time_term_ = 0;
+  const auto read_value = [&](uint8_t *output, size_t capacity) {
+    return tls_protocol_
+        ? sto_tpcc_protocol_get(
+              tls_thread_, table, reinterpret_cast<const uint8_t *>(key.data()),
+              key.length(), output, capacity, &actual,
+              &tls_last_read_time_term_)
+        : mako_sto_tpcc_get_trusted(
+              tls_thread_, table, reinterpret_cast<const uint8_t *>(key.data()),
+              key.length(), output, capacity, &actual);
+  };
 
   // A zero-byte read still observes the row and distinguishes presence from
   // absence, but needs no temporary value allocation. The Rust ABI reports a
   // live nonempty row as BUFFER_TOO_SMALL with its exact logical length.
   if (max_bytes_read == 0) {
     encoded_value.clear();
-    status = mako_sto_tpcc_get_trusted(
-        tls_thread_, table, reinterpret_cast<const uint8_t *>(key.data()),
-        key.length(), nullptr, 0, &actual);
+    status = read_value(nullptr, 0);
     if (status == STO_TPCC_MISS)
       return false;
     if (status == STO_TPCC_OK || status == STO_TPCC_BUFFER_TOO_SMALL)
@@ -2000,10 +2404,7 @@ bool rust_sto_tpcc_wrapper::get_active_raw(
   const auto fetch = [&](size_t requested) {
     encoded_value.resize_and_overwrite(requested, [&](char *output,
                                                        size_t capacity) {
-      status = mako_sto_tpcc_get_trusted(
-          tls_thread_, table, reinterpret_cast<const uint8_t *>(key.data()),
-          key.length(), reinterpret_cast<uint8_t *>(output), capacity,
-          &actual);
+      status = read_value(reinterpret_cast<uint8_t *>(output), capacity);
       return status == STO_TPCC_OK ? actual : size_t{0};
     });
   };
@@ -2111,31 +2512,188 @@ void rust_sto_tpcc_wrapper::scan_raw(const sto_tpcc_table *table,
                   strip_value_metadata);
 }
 
+// @unsafe - Rust keeps row borrows live for the synchronous callback only.
 void rust_sto_tpcc_wrapper::scan_active_raw(
     const sto_tpcc_table *table, bool reverse,
     const std::string &start_key, const std::string *end_key,
     oi_scan_callback &callback, bool strip_value_metadata) {
+  if (table == nullptr)
+    throw std::invalid_argument(
+        "remote range wire returns one median value; use tx_scan_remote_one");
   scan_bridge bridge{&callback, !strip_value_metadata, {}, {}};
   size_t visited = 0;
   const auto *start = reinterpret_cast<const uint8_t *>(start_key.data());
   const auto *end = end_key
                         ? reinterpret_cast<const uint8_t *>(end_key->data())
                         : nullptr;
-  const sto_tpcc_status status = mako_sto_tpcc_scan_trusted(
-      tls_thread_, table,
-      reverse ? STO_TPCC_SCAN_REVERSE : STO_TPCC_SCAN_FORWARD,
-      reverse ? (end_key ? STO_TPCC_BOUND_EXCLUDED
-                         : STO_TPCC_BOUND_UNBOUNDED)
-              : STO_TPCC_BOUND_INCLUDED,
-      reverse ? end : start, reverse ? (end_key ? end_key->size() : 0)
-                                    : start_key.size(),
-      reverse ? STO_TPCC_BOUND_INCLUDED
-              : (end_key ? STO_TPCC_BOUND_EXCLUDED
-                         : STO_TPCC_BOUND_UNBOUNDED),
-      reverse ? start : end,
-      reverse ? start_key.size() : (end_key ? end_key->size() : 0),
-      callback.max_records_hint(), invoke_scan_bridge, &bridge, &visited);
+  const auto direction = reverse ? STO_TPCC_SCAN_REVERSE : STO_TPCC_SCAN_FORWARD;
+  const auto lower_kind = reverse
+      ? (end_key ? STO_TPCC_BOUND_EXCLUDED : STO_TPCC_BOUND_UNBOUNDED)
+      : STO_TPCC_BOUND_INCLUDED;
+  const auto upper_kind = reverse ? STO_TPCC_BOUND_INCLUDED
+      : (end_key ? STO_TPCC_BOUND_EXCLUDED : STO_TPCC_BOUND_UNBOUNDED);
+  const auto *lower = reverse ? end : start;
+  const auto *upper = reverse ? start : end;
+  const size_t lower_size = reverse ? (end_key ? end_key->size() : 0)
+                                    : start_key.size();
+  const size_t upper_size = reverse ? start_key.size()
+                                    : (end_key ? end_key->size() : 0);
+  const sto_tpcc_status status = tls_protocol_
+      ? sto_tpcc_protocol_scan(
+            tls_thread_, table, direction, lower_kind, lower, lower_size,
+            upper_kind, upper, upper_size, callback.max_records_hint(),
+            invoke_versioned_scan_bridge, &bridge, &visited)
+      : mako_sto_tpcc_scan_trusted(
+            tls_thread_, table, direction, lower_kind, lower, lower_size,
+            upper_kind, upper, upper_size, callback.max_records_hint(),
+            invoke_scan_bridge, &bridge, &visited);
   if (bridge.failure)
     std::rethrow_exception(bridge.failure);
   require_ok(reverse ? "reverse scan" : "scan", status);
+}
+
+// @unsafe - Copy RPC-owned bytes and arena-owned protocol intents into Rust.
+void rust_sto_tpcc_wrapper::mutate_protocol(
+    const rust_sto_tpcc_ordered_index &index, lcdf::Str key,
+    const std::string &value, uint8_t operation, bool lock_now) {
+  const std::string_view payload = operation == 2
+      ? std::string_view{} : canonical_local_mako_payload(value);
+  const auto *key_bytes = reinterpret_cast<const uint8_t *>(key.data());
+  const auto *value_bytes = reinterpret_cast<const uint8_t *>(payload.data());
+  const bool remote = index.routes_remotely();
+  if (!remote && TThread::should_reclaim())
+    require_ok("history floor", sto_tpcc_table_history_floor(
+        index.table_, sync_util::sync_logger::retrieveShardW() / 10));
+  const auto status = remote
+      ? sto_tpcc_protocol_stage_remote(
+            tls_thread_, (index.table_id_ - 1) / mako::NUM_TABLES_PER_SHARD,
+            index.table_id_, operation, key_bytes, key.length(),
+            value_bytes, payload.size())
+      : sto_tpcc_protocol_mutate(
+            tls_thread_, index.table_, index.table_id_, operation,
+            key_bytes, key.length(), value_bytes, payload.size(), lock_now);
+  if ((status == STO_TPCC_DUPLICATE && operation == 1) ||
+      (status == STO_TPCC_MISS && operation == 2))
+    return;
+  require_ok("protocol mutation", status);
+  if (remote)
+    require_ok("remote incremental lock", sto_tpcc_protocol_flush_remote(
+        tls_thread_, protocol_callback, tls_owner_));
+}
+
+// @unsafe - Legacy response bytes are copied before releasing the RPC buffer.
+bool rust_sto_tpcc_wrapper::remote_get(
+    const rust_sto_tpcc_ordered_index &index, lcdf::Str key,
+    std::string &value, size_t max_bytes_read) {
+  if (!TThread::sclient)
+    throw std::logic_error("Rust STO remote read has no shard client");
+  require_ok("flush remote read", sto_tpcc_protocol_flush_remote(
+      tls_thread_, protocol_callback, tls_owner_));
+  const int status = TThread::sclient->remoteGet(
+      index.table_id_, std::string(key.data(), key.length()), value);
+  if (status != mako::ErrorCode::SUCCESS &&
+      status != mako::ErrorCode::NOT_FOUND)
+    throw abstract_abort_exception();
+  uint32_t time_term = 0;
+  if (status == mako::ErrorCode::SUCCESS) {
+    const auto payload = canonical_local_mako_payload(value);
+    time_term = mako::load_value_time_term(value.data(), value.size());
+    value.resize(std::min(payload.size(), max_bytes_read));
+  } else {
+    value.clear();
+  }
+  require_ok("remote read dependency", sto_tpcc_protocol_observe_read(
+      tls_thread_, (index.table_id_ - 1) / mako::NUM_TABLES_PER_SHARD, time_term));
+  return status == mako::ErrorCode::SUCCESS;
+}
+
+// @unsafe - The only coordinator bridge: Rust drives phases and final writes;
+// this callback translates legacy transport and asynchronous log submission.
+sto_tpcc_status rust_sto_tpcc_wrapper::protocol_callback(
+    void *, sto_tpcc_protocol_request *request) noexcept {
+  try {
+    int result = mako::ErrorCode::SUCCESS;
+    switch (request->action) {
+    case STO_TPCC_PROTOCOL_STAGE: {
+      if (!TThread::sclient)
+        return STO_TPCC_FATAL;
+      // These std containers are the existing ShardClient wire API boundary.
+      std::vector<int> tables{request->table_id};
+      std::vector<std::string> keys{
+          std::string(reinterpret_cast<const char *>(request->key),
+                      request->key_length)};
+      std::string value;
+      if (request->value_length)
+        value.assign(reinterpret_cast<const char *>(request->value),
+                     request->value_length);
+      append_mako_metadata(value, 0);
+      std::vector<std::string> values{std::move(value)};
+      std::vector<uint8_t> operations{request->operation};
+      result = TThread::sclient->remoteBatchLock(
+          tables, keys, values, &operations);
+      break;
+    }
+    case STO_TPCC_PROTOCOL_TIMESTAMP:
+      if (TThread::sclient && TThread::sclient->hasTouchedParticipants())
+        result = TThread::sclient->remoteGetTimestamp(request->timestamp);
+      break;
+    case STO_TPCC_PROTOCOL_VALIDATE:
+      if (TThread::sclient && TThread::sclient->hasTouchedParticipants()) {
+        uint32_t watermark = 0;
+        result = TThread::sclient->remoteValidate(watermark);
+      }
+      break;
+    case STO_TPCC_PROTOCOL_INSTALL:
+      if (TThread::sclient && TThread::sclient->hasTouchedParticipants())
+        result = TThread::sclient->remoteInstall(request->timestamp);
+      if (result != mako::ErrorCode::SUCCESS)
+        return STO_TPCC_UNKNOWN;
+      break;
+    case STO_TPCC_PROTOCOL_ABORT:
+      if (TThread::sclient && TThread::sclient->hasTouchedParticipants())
+        result = TThread::sclient->remoteAbort();
+      if (result != mako::ErrorCode::SUCCESS)
+        return STO_TPCC_FATAL;
+      break;
+    case STO_TPCC_PROTOCOL_LOG: {
+      if (tls_suppress_log_ ||
+          !BenchmarkConfig::getInstance().getIsReplicated())
+        return STO_TPCC_OK;
+      if (request->value_length > static_cast<size_t>(INT_MAX))
+        return STO_TPCC_COMMITTED_ERROR;
+      const auto *bytes = reinterpret_cast<const char *>(request->value);
+      const int local_partition = TThread::getLocalPartitionID();
+      const int replication_partition =
+          BenchmarkConfig::getInstance().getReplicationPartition(
+              TThread::get_shard_index(), local_partition);
+      if (!add_log_to_nc(bytes, static_cast<int>(request->value_length),
+                         replication_partition, 1))
+        return STO_TPCC_COMMITTED_ERROR;
+#ifndef DISABLE_DISK
+      const uint32_t time_term = request->timestamp;
+      const int watermark_partition =
+          BenchmarkConfig::getInstance().getReplicationWatermarkPartition(
+              TThread::get_shard_index(), local_partition);
+      mako::RocksDBPersistence::getInstance().persistAsync(
+          bytes, request->value_length, TThread::get_shard_index(), local_partition,
+          [watermark_partition, time_term](bool success) {
+            if (success)
+              sync_util::sync_logger::updateDiskTimestamp(watermark_partition, time_term);
+            else
+              std::terminate();
+          });
+#endif
+      return STO_TPCC_OK;
+    }
+    default:
+      return STO_TPCC_FATAL;
+    }
+    return result == mako::ErrorCode::SUCCESS ? STO_TPCC_OK : STO_TPCC_RETRY;
+  } catch (...) {
+    if (request->action == STO_TPCC_PROTOCOL_INSTALL)
+      return STO_TPCC_UNKNOWN;
+    if (request->action == STO_TPCC_PROTOCOL_LOG)
+      return STO_TPCC_COMMITTED_ERROR;
+    return STO_TPCC_FATAL;
+  }
 }

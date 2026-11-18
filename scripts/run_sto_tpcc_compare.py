@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run matched C++ and Rust STO/Masstree TPC-C trials."""
+"""Run matched STO/Masstree TPC-C trials for two executable/backend variants."""
 
 from __future__ import annotations
 
@@ -18,6 +18,7 @@ import sys
 import time
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -139,6 +140,21 @@ BUILD_PROCESS_NAMES = (
     "clang++",
 )
 BUILD_COMMAND_MARKERS = ("mako", "sto", "masstree", "tpcc")
+
+@dataclass(frozen=True)
+class Variant:
+    name: str
+    executable: Path
+    backend: str
+    role: str
+
+
+def parse_variant(text: str) -> tuple[str, Path]:
+    name, separator, path = text.partition("=")
+    if not separator or not path or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name) is None:
+        raise argparse.ArgumentTypeError("variant must be NAME=PATH with a filename-safe NAME")
+    return name, Path(path)
+
 
 
 def positive_int(text: str) -> int:
@@ -293,7 +309,11 @@ def recorded_environment_overrides(environment: dict[str, str]) -> dict[str, str
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--binary", required=True, type=Path)
+    parser.add_argument("--binary", type=Path)
+    parser.add_argument("--baseline", type=parse_variant, metavar="NAME=PATH")
+    parser.add_argument("--candidate", type=parse_variant, metavar="NAME=PATH")
+    parser.add_argument("--baseline-backend", choices=ENGINES)
+    parser.add_argument("--candidate-backend", choices=ENGINES)
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--site", default="local_s0")
     parser.add_argument("--output-dir", required=True, type=Path)
@@ -370,6 +390,28 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     args = parser.parse_args()
+    if args.baseline is not None or args.candidate is not None:
+        if args.binary is not None:
+            parser.error("--baseline/--candidate cannot be combined with --binary")
+        if args.baseline is None or args.candidate is None:
+            parser.error("--baseline and --candidate must be supplied together")
+        if args.baseline_backend is None or args.candidate_backend is None:
+            parser.error("explicit variants require --baseline-backend and --candidate-backend")
+        if args.baseline[0] == args.candidate[0]:
+            parser.error("baseline and candidate names must differ")
+        args.variants = [
+            Variant(*args.baseline, args.baseline_backend, "baseline"),
+            Variant(*args.candidate, args.candidate_backend, "candidate"),
+        ]
+    else:
+        if args.binary is None:
+            parser.error("supply --binary, or --baseline and --candidate")
+        if args.baseline_backend is not None or args.candidate_backend is not None:
+            parser.error("backend options require --baseline and --candidate")
+        args.variants = [
+            Variant("cpp", args.binary, "cpp", "baseline"),
+            Variant("rust", args.binary, "rust", "candidate"),
+        ]
 
     try:
         ensure_tpcc_diagnostic_fallbacks_unset(os.environ)
@@ -388,8 +430,10 @@ def parse_args() -> argparse.Namespace:
             "--guard-lxd-during-measurement requires --align-between-engines"
         )
 
-    if not args.binary.is_file() or not os.access(args.binary, os.X_OK):
-        parser.error(f"benchmark is not executable: {args.binary}")
+    for variant in args.variants:
+        executable = variant.executable
+        if not executable.is_file() or not os.access(executable, os.X_OK):
+            parser.error(f"benchmark is not executable: {executable}")
     if not args.config.is_file():
         parser.error(f"configuration does not exist: {args.config}")
     if args.physical_cpus is None:
@@ -632,9 +676,42 @@ def matches_process_name(
     )
 
 
+def invoked_program_name(argv: Sequence[str]) -> str:
+    """Identify the executed script, not filenames passed to a launcher or as data."""
+    arguments = iter(argv)
+    program = Path(next(arguments, "")).name
+    python = re.fullmatch(r"python(?:\d+(?:\.\d+)*)?", program) is not None
+    shell = program in ("sh", "bash", "dash")
+    if not python and not shell:
+        return program
+    for argument in arguments:
+        if argument == "--":
+            return Path(next(arguments, "")).name
+        if python:
+            if argument in ("-c", "-"):
+                return ""
+            if argument == "-m":
+                module = next(arguments, "")
+                return module.rsplit(".", 1)[-1] + ".py" if module else ""
+            if argument in ("-W", "-X", "--check-hash-based-pycs"):
+                next(arguments, None)
+                continue
+        else:
+            if argument.startswith("-") and not argument.startswith("--"):
+                if "c" in argument or "s" in argument:
+                    return ""
+            if argument in ("-o", "-O", "+o", "+O", "--rcfile", "--init-file"):
+                next(arguments, None)
+                continue
+        if argument.startswith("-") or (shell and argument.startswith("+")):
+            continue
+        return Path(argument).name
+    return ""
+
+
 def find_competing_processes(args: argparse.Namespace) -> list[dict[str, object]]:
     ignored = ancestor_pids()
-    target_executable = str(args.binary.resolve())
+    target_executables = {str(variant.executable.resolve()) for variant in args.variants}
     matches: list[dict[str, object]] = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdecimal():
@@ -661,10 +738,8 @@ def find_competing_processes(args: argparse.Namespace) -> list[dict[str, object]
             executable = ""
         argv0_name = Path(argv[0]).name if argv else ""
         is_perf = comm == "perf" or comm.startswith("perf-")
-        is_target = executable == target_executable
-        is_runner = any(
-            Path(argument).name in RUNNER_PROCESS_NAMES for argument in argv
-        )
+        is_target = executable in target_executables
+        is_runner = invoked_program_name(argv) in RUNNER_PROCESS_NAMES
         is_benchmark = matches_process_name(
             comm,
             argv0_name,
@@ -862,7 +937,7 @@ def captured_output_text(output: bytes | str | None) -> str:
 
 def run_one(
     args: argparse.Namespace,
-    engine: str,
+    variant: Variant,
     threads: int,
     repetition: int,
     run_order: int,
@@ -872,12 +947,15 @@ def run_one(
 ) -> dict[str, object]:
     if pair_attempt <= 0:
         raise ValueError("pair_attempt must be positive")
+    engine = variant.backend
+    executable = variant.executable.resolve()
+    fingerprint = file_fingerprint(executable)
     cpu_affinity = affinity(args.physical_cpus, threads)
     command = [
         args.taskset,
         "-c",
         cpu_affinity,
-        str(args.binary),
+        str(executable),
         "--num-threads",
         str(threads),
         "--shard-config",
@@ -894,7 +972,7 @@ def run_one(
         args.allocator_memory,
         getattr(args, "rust_registry_memory", DEFAULT_RUST_REGISTRY_MEMORY),
     )
-    log_stem = f"{run_order:03d}-{pair_id}-attempt{pair_attempt:02d}-{engine}"
+    log_stem = f"{run_order:03d}-{pair_id}-attempt{pair_attempt:02d}-{variant.name}"
     stdout_path = args.output_dir / f"{log_stem}.stdout.log"
     stderr_path = args.output_dir / f"{log_stem}.stderr.log"
     started = datetime.now(timezone.utc)
@@ -931,6 +1009,11 @@ def run_one(
                 else "after_measurement_start"
             ),
             "engine": engine,
+            "variant": variant.name,
+            "pair_role": variant.role,
+            "backend": engine,
+            "binary": str(executable),
+            "binary_fingerprint": fingerprint,
             "threads": threads,
             "warehouses": threads,
             "repetition": repetition,
@@ -983,6 +1066,11 @@ def run_one(
     result.update(
         {
             "host": socket.gethostname(),
+            "variant": variant.name,
+            "pair_role": variant.role,
+            "backend": engine,
+            "binary": str(executable),
+            "binary_fingerprint": fingerprint,
             "repetition": repetition,
             "run_order": run_order,
             "pair_id": pair_id,
@@ -1003,7 +1091,7 @@ def run_one(
 
 def run_guarded_pair(
     args: argparse.Namespace,
-    engines: list[str],
+    variants: list[Variant],
     threads: int,
     repetition: int,
     pair_id: str,
@@ -1022,7 +1110,8 @@ def run_guarded_pair(
         execution_error: Exception | None = None
         intermediate_rejection_reasons: list[str] = []
         engine_windows: list[dict[str, object]] = []
-        for pair_position, engine in enumerate(engines):
+        for pair_position, variant in enumerate(variants):
+            engine = variant.backend
             if pair_position and getattr(args, "align_between_engines", False):
                 window = wait_for_aligned_quiet_window(
                     args, threads, pair_id, pair_attempt
@@ -1031,13 +1120,14 @@ def run_guarded_pair(
             engine_windows.append(
                 {
                     "engine": engine,
+                    "variant": variant.name,
                     "pre_run_window": window,
                     "restart_count_before_run": restart_before,
                 }
             )
             logical_run_order = first_run_order + pair_position
             print(
-                f"[{logical_run_order}] {engine} TPC-C "
+                f"[{logical_run_order}] {variant.name} ({engine}) TPC-C "
                 f"threads=warehouses={threads} repetition={repetition} "
                 f"pair_attempt={pair_attempt}",
                 flush=True,
@@ -1046,7 +1136,7 @@ def run_guarded_pair(
                 attempted_results.append(
                     run_one(
                         args,
-                        engine,
+                        variant,
                         threads,
                         repetition,
                         logical_run_order,
@@ -1146,7 +1236,7 @@ def run_guarded_pair(
         if execution_error is not None and not rejection_reasons:
             raise execution_error
         if not rejection_reasons:
-            if len(attempted_results) != len(engines):
+            if len(attempted_results) != len(variants):
                 raise RuntimeError(f"pair {pair_id} completed with the wrong result count")
             guard = {
                 "accepted_pair_attempt": pair_attempt,
@@ -1167,11 +1257,19 @@ def run_guarded_pair(
                 "completed_engines": [
                     str(result["engine"]) for result in attempted_results
                 ],
+                "completed_variants": [
+                    str(result["variant"]) for result in attempted_results
+                ],
                 "completed_run_provenance": [
                     {
                         key: result[key]
                         for key in (
                             "engine",
+                            "variant",
+                            "pair_role",
+                            "backend",
+                            "binary",
+                            "binary_fingerprint",
                             "run_order",
                             "pair_attempt",
                             "started_at_utc",
@@ -1205,23 +1303,36 @@ def run_guarded_pair(
 
 
 def summarize(results: list[dict[str, object]]) -> list[dict[str, object]]:
-    groups: dict[tuple[int, str], list[dict[str, object]]] = defaultdict(list)
+    groups: dict[tuple[int, str, str, str], list[dict[str, object]]] = defaultdict(list)
     pairs: dict[str, dict[str, dict[str, object]]] = defaultdict(dict)
     for result in results:
-        groups[(int(result["threads"]), str(result["engine"]))].append(result)
-        pairs[str(result["pair_id"])][str(result["engine"])] = result
+        groups[(
+            int(result["threads"]),
+            str(result["variant"]),
+            str(result["engine"]),
+            str(result["pair_role"]),
+        )].append(result)
+        pairs[str(result["pair_id"])][str(result["pair_role"])] = result
 
     ratios: dict[int, list[float]] = defaultdict(list)
+    cpp_ratios: dict[int, list[float]] = defaultdict(list)
     for pair in pairs.values():
-        if set(pair) != set(ENGINES):
+        if set(pair) != {"baseline", "candidate"}:
             continue
-        cpp = float(pair["cpp"]["throughput_txn_s"])
-        rust = float(pair["rust"]["throughput_txn_s"])
-        if cpp > 0:
-            ratios[int(pair["cpp"]["threads"])].append(100.0 * rust / cpp)
+        baseline = pair["baseline"]
+        candidate = pair["candidate"]
+        baseline_tps = float(baseline["throughput_txn_s"])
+        candidate_tps = float(candidate["throughput_txn_s"])
+        threads = int(baseline["threads"])
+        if baseline_tps > 0:
+            ratios[threads].append(100.0 * candidate_tps / baseline_tps)
+        if baseline["engine"] == "cpp" and candidate["engine"] == "rust" and baseline_tps > 0:
+            cpp_ratios[threads].append(100.0 * candidate_tps / baseline_tps)
+        elif baseline["engine"] == "rust" and candidate["engine"] == "cpp" and candidate_tps > 0:
+            cpp_ratios[threads].append(100.0 * baseline_tps / candidate_tps)
 
     rows: list[dict[str, object]] = []
-    for (threads, engine), samples in sorted(groups.items()):
+    for (threads, variant, engine, role), samples in sorted(groups.items()):
         throughputs = [float(sample["throughput_txn_s"]) for sample in samples]
         abort_percent = [
             100.0 * int(sample["aborts"]) / max(1, int(sample["attempts"]))
@@ -1230,6 +1341,8 @@ def summarize(results: list[dict[str, object]]) -> list[dict[str, object]]:
         rows.append(
             {
                 "engine": engine,
+                "variant": variant,
+                "pair_role": role,
                 "threads": threads,
                 "warehouses": threads,
                 "repetitions": len(samples),
@@ -1238,6 +1351,9 @@ def summarize(results: list[dict[str, object]]) -> list[dict[str, object]]:
                 "max_txn_per_sec": max(throughputs),
                 "median_abort_percent": statistics.median(abort_percent),
                 "median_rust_percent_of_cpp": (
+                    statistics.median(cpp_ratios[threads]) if cpp_ratios[threads] else None
+                ),
+                "median_candidate_percent_of_baseline": (
                     statistics.median(ratios[threads]) if ratios[threads] else None
                 ),
             }
@@ -1248,6 +1364,8 @@ def summarize(results: list[dict[str, object]]) -> list[dict[str, object]]:
 def write_summary(path: Path, results: list[dict[str, object]]) -> None:
     rows = summarize(results)
     columns = [
+        "variant",
+        "pair_role",
         "engine",
         "threads",
         "warehouses",
@@ -1257,6 +1375,7 @@ def write_summary(path: Path, results: list[dict[str, object]]) -> None:
         "max_txn_per_sec",
         "median_abort_percent",
         "median_rust_percent_of_cpp",
+        "median_candidate_percent_of_baseline",
     ]
     with path.open("w", newline="", encoding="utf-8") as output:
         writer = csv.DictWriter(output, fieldnames=columns)
@@ -1269,6 +1388,7 @@ def write_summary(path: Path, results: list[dict[str, object]]) -> None:
                 "max_txn_per_sec",
                 "median_abort_percent",
                 "median_rust_percent_of_cpp",
+                "median_candidate_percent_of_baseline",
             ):
                 value = formatted[field]
                 formatted[field] = "" if value is None else f"{float(value):.6f}"
@@ -1311,8 +1431,19 @@ def main() -> int:
         "schema_version": 1,
         "host": socket.gethostname(),
         "started_at_utc": datetime.now(timezone.utc).isoformat(),
-        "binary": str(args.binary.resolve()),
-        "binary_fingerprint": file_fingerprint(args.binary),
+        "binary": str(args.binary.resolve()) if args.binary is not None else None,
+        "binary_fingerprint": file_fingerprint(args.binary) if args.binary is not None else None,
+        "variants": [
+            {
+                "variant": variant.name,
+                "pair_role": variant.role,
+                "backend": variant.backend,
+                "engine": variant.backend,
+                "binary": str(variant.executable.resolve()),
+                "binary_fingerprint": file_fingerprint(variant.executable),
+            }
+            for variant in args.variants
+        ],
         "config": str(args.config.resolve()),
         "config_fingerprint": file_fingerprint(args.config),
         "site": args.site,
@@ -1352,8 +1483,8 @@ def main() -> int:
         "uname": command_output(["uname", "-a"]),
         "lscpu": command_output(["lscpu"]),
         "protocol": (
-            "For each repetition, shuffle thread-count cells; run cpp/rust "
-            "adjacently and alternate which engine runs first. Each process "
+            "For each repetition, shuffle thread-count cells; run the two variants "
+            "adjacently and alternate which variant runs first. Each process "
             "loads a fresh database. Throughput is the benchmark's measured "
             "interval, excluding its deliberate shutdown sleep. Before each "
             "pair, require a two-second quiet window with stable LXD restarts, "
@@ -1412,12 +1543,12 @@ def main() -> int:
             rng.shuffle(cells)
             for cell_index, threads in enumerate(cells):
                 pair_id = f"r{repetition:02d}-c{cell_index:02d}-{threads}t"
-                engines = list(ENGINES)
+                variants = list(args.variants)
                 if (repetition + cell_index) % 2:
-                    engines.reverse()
+                    variants.reverse()
                 pair_results = run_guarded_pair(
                     args,
-                    engines,
+                    variants,
                     threads,
                     repetition,
                     pair_id,

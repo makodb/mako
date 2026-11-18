@@ -38,7 +38,7 @@ mod sto_worker_owner {
     use std::{marker::PhantomData, mem, mem::MaybeUninit, ptr::NonNull};
 
     use sto_core::{
-        Active, BeginError, InvalidUse, RuntimeHealth, RuntimeId, Transaction, WorkerContext,
+        Active, BeginError, InvalidUse, Participant, RuntimeHealth, RuntimeId, Transaction, WorkerContext,
     };
 
     type ActiveTransaction = Transaction<'static, Active>;
@@ -52,6 +52,7 @@ mod sto_worker_owner {
     /// retag the exclusive worker reference, and callers cannot reach the worker.
     pub(super) struct StoWorkerOwner {
         transaction: MaybeUninit<ActiveTransaction>,
+        participant: Option<Participant<'static>>,
         worker: NonNull<WorkerContext>,
         runtime_id: RuntimeId,
         active: bool,
@@ -70,6 +71,7 @@ mod sto_worker_owner {
                 .expect("Box::into_raw never returns null");
             Self {
                 transaction: MaybeUninit::uninit(),
+                participant: None,
                 worker,
                 runtime_id,
                 active: false,
@@ -83,12 +85,16 @@ mod sto_worker_owner {
         }
 
         pub(super) const fn is_active(&self) -> bool {
-            self.active
+            self.active || self.participant.is_some()
+        }
+
+        pub(super) fn has_participant(&self) -> bool {
+            self.participant.is_some()
         }
 
         /// Begins and stores a transaction whose worker borrow stays private.
         pub(super) fn begin_erased(&mut self) -> Result<(), BeginError> {
-            if self.active {
+            if self.is_active() {
                 return Err(InvalidUse::WorkerBusy.into());
             }
             // SAFETY: The inactive state proves that no stored transaction
@@ -142,8 +148,41 @@ mod sto_worker_owner {
             Some(operation(transaction))
         }
 
+        /// Transfers the existing worker borrow; never creates a second borrow.
+        pub(super) fn promote(&mut self) -> bool {
+            if !self.active || self.participant.is_some() {
+                return false;
+            }
+            self.active = false;
+            // SAFETY: The initialized transaction is consumed exactly once,
+            // and the retained participant has the identical worker lifetime.
+            let transaction = unsafe { self.transaction.assume_init_read() };
+            self.participant = Some(transaction.into_participant());
+            true
+        }
+
+        pub(super) fn with_participant<R>(
+            &mut self,
+            operation: impl for<'borrow> FnOnce(&'borrow mut Participant<'borrow>) -> R,
+        ) -> Option<R> {
+            let participant = self.participant.as_mut()?;
+            // SAFETY: As with borrow_active, both lifetimes are shortened to
+            // this exclusive owner borrow. HRTB prevents either from escaping.
+            let participant = unsafe {
+                mem::transmute::<&mut Participant<'static>, &mut Participant<'_>>(participant)
+            };
+            Some(operation(participant))
+        }
+
+        pub(super) fn finish_participant<R>(
+            &mut self,
+            operation: impl for<'borrow> FnOnce(Participant<'borrow>) -> R,
+        ) -> Option<R> {
+            self.participant.take().map(operation)
+        }
+
         pub(super) fn inactive_runtime_health(&self) -> Option<RuntimeHealth> {
-            if self.active {
+            if self.is_active() {
                 return None;
             }
             // SAFETY: This owner retains the worker allocation, and no active
@@ -186,6 +225,7 @@ mod sto_worker_owner {
             let _ = self.finish_active(|transaction| {
                 let _ = transaction.abort();
             });
+            let _ = self.finish_participant(|participant| participant.abort());
             // SAFETY: `new` obtained this pointer from exactly one Box. The
             // transaction slot is uninitialized and no worker borrow remains.
             drop(unsafe { Box::from_raw(self.worker.as_ptr()) });
@@ -224,6 +264,8 @@ enum Status {
     BufferTooSmall = 4,
     Fatal = 5,
     ResourceExhausted = 6,
+    Unknown = 7,
+    CommittedError = 8,
 }
 
 impl Status {
@@ -401,7 +443,6 @@ pub struct StoTpccTableConfig {
     pub scan_max_key_arena_bytes: usize,
     pub max_scan_chunks: usize,
     pub max_scan_physical_records: usize,
-    pub trusted_scan_value_generation: u32,
     pub bounded_atomic_values: u32,
 }
 
@@ -1148,6 +1189,7 @@ pub struct StoTpccThread {
     // Directory results, exact-alias validation order, and STO point scratch
     // are retained for fixed-width TPC-C point-read batches.
     point_batch: PointReadBatch,
+    protocol: protocol::ProtocolState,
 }
 
 impl StoTpccThread {
@@ -1223,6 +1265,9 @@ macro_rules! with_active_transaction {
     };
 }
 
+mod protocol;
+pub use protocol::*;
+
 fn abort_active_attempt_after_fatal(handle: &mut StoTpccThread) -> FfiResult<()> {
     let ActiveAttempt { rcu_scope } = handle
         .active
@@ -1275,6 +1320,7 @@ impl Drop for StoTpccThread {
             let _ = self.sto_worker.finish_active(|transaction| {
                 let _ = transaction.abort();
             });
+            let _ = self.sto_worker.finish_participant(|participant| participant.abort());
             drop(rcu_scope);
         }
         self.pending_size.clear();
@@ -1567,7 +1613,12 @@ fn table_config(raw: StoTpccTableConfig) -> TableConfig {
     // deduplication gives each table/record and table/membership identity at
     // most one request, while table namespaces keep different handles
     // distinct. The transaction-wide unique-lock contract therefore holds.
-    let mut config = TableConfig::new().with_unique_lock_requests(true);
+    // Record-local versions certify scans through record and predicate items;
+    // the ordered-commit trusted generation protocol is not an FFI option.
+    let mut config = TableConfig::new()
+        .with_unique_lock_requests(true)
+        .with_record_local_versions(true)
+        .with_distributed_history(true);
     if raw.max_retained_records != 0 {
         config = config.with_max_retained_records(raw.max_retained_records);
     }
@@ -1591,9 +1642,6 @@ fn table_config(raw: StoTpccTableConfig) -> TableConfig {
     }
     if raw.max_scan_physical_records != 0 {
         config = config.with_max_scan_physical_records(raw.max_scan_physical_records);
-    }
-    if raw.trusted_scan_value_generation != 0 {
-        config = config.with_trusted_scan_value_generation(true);
     }
     if raw.bounded_atomic_values != 0 {
         config = config.with_bounded_atomic_values(true);
@@ -1879,6 +1927,7 @@ pub unsafe extern "C" fn sto_tpcc_thread_create(
             resolved_cache: ResolvedCache::default(),
             scan_scratch: ScanScratch::default(),
             point_batch: PointReadBatch::with_capacity(300),
+            protocol: protocol::ProtocolState::default(),
         }));
         Ok(Status::Ok)
     })
@@ -1908,7 +1957,11 @@ pub unsafe extern "C" fn sto_tpcc_thread_destroy(thread_handle: *mut StoTpccThre
 /// `thread_handle` must be a live, exclusively accessed, same-thread handle.
 #[inline(always)]
 fn txn_begin_impl(handle: &mut StoTpccThread) -> FfiResult<Status> {
+    if handle.protocol.is_uncertain() {
+        return Err(Status::Unknown);
+    }
     if handle.active.is_some() || handle.sto_worker.is_active() {
+        // Protocol attempts are resolved through their explicit terminal API.
         return Err(fatal(format_args!("a transaction is already active")));
     }
     handle.pending_size.clear();
@@ -1980,6 +2033,9 @@ fn txn_commit_impl_with_observer(
     handle: &mut StoTpccThread,
     after_core_commit: impl FnOnce(),
 ) -> FfiResult<Status> {
+    if handle.sto_worker.has_participant() {
+        return Err(fatal(format_args!("retained participant requires protocol terminal")));
+    }
     let ActiveAttempt { rcu_scope } = handle
         .active
         .take()
@@ -2009,7 +2065,7 @@ fn txn_commit_impl_with_observer(
     match outcome {
         Ok(CommitOutcome::Committed(_)) => {
             handle.pending_size.clear();
-            scope_result?;
+            scope_result.map_err(|_| Status::CommittedError)?;
             Ok(Status::Ok)
         }
         Ok(CommitOutcome::Aborted(reason)) => {
@@ -2019,15 +2075,12 @@ fn txn_commit_impl_with_observer(
         }
         Err(error @ CommitFailure::Poisoned { .. }) => {
             handle.pending_size.clear();
-            scope_result?;
-            Err(fatal(format_args!("transaction commit failed: {error}")))
+            Err(protocol::failure_status(error))
         }
         Err(error @ CommitFailure::Indeterminate(_)) => {
             handle.pending_size.clear();
-            scope_result?;
-            Err(fatal(format_args!(
-                "transaction outcome is indeterminate: {error}"
-            )))
+            set_last_error(format_args!("transaction outcome is indeterminate: {error}"));
+            Err(Status::Unknown)
         }
     }
 }
@@ -2066,6 +2119,9 @@ pub unsafe extern "C" fn sto_tpcc_txn_abort(thread_handle: *mut StoTpccThread) -
     boundary("sto_tpcc_txn_abort", || {
         let handle = unsafe { required_mut(thread_handle, "thread")? };
         handle.ensure_owner()?;
+        if handle.sto_worker.has_participant() {
+            return protocol::finish(handle, false);
+        }
         if let Some(ActiveAttempt { rcu_scope }) = handle.active.take() {
             handle
                 .sto_worker
@@ -8041,7 +8097,7 @@ mod tests {
                 ),
                 Status::Ok.code()
             );
-            assert_eq!(sto_tpcc_txn_commit(worker), Status::Fatal.code());
+            assert_eq!(sto_tpcc_txn_commit(worker), Status::Unknown.code());
             assert_eq!((*db).sto.health(), sto_core::RuntimeHealth::Indeterminate);
             assert!((*worker).active.is_none());
             assert!((*worker).pending_size.is_empty());
@@ -9737,52 +9793,6 @@ mod tests {
             assert_eq!(sto_tpcc_table_destroy(stock), Status::Ok.code());
             assert_eq!(sto_tpcc_db_destroy(db), Status::Ok.code());
         }
-    }
-
-    #[test]
-    fn tpcc_table_configuration_always_selects_unique_lock_requests() {
-        let defaults = table_config(StoTpccTableConfig::default());
-        assert!(defaults.unique_lock_requests());
-        assert!(!defaults.trusted_scan_value_generation());
-        assert!(!defaults.bounded_atomic_values());
-
-        let configured = table_config(StoTpccTableConfig {
-            max_retained_records: 17,
-            max_retained_key_bytes: 29,
-            max_consumed_record_ids: 41,
-            trusted_scan_value_generation: 1,
-            bounded_atomic_values: 7,
-            ..StoTpccTableConfig::default()
-        });
-        assert!(configured.unique_lock_requests());
-        assert_eq!(configured.max_retained_records(), 17);
-        assert_eq!(configured.max_retained_key_bytes(), 29);
-        assert_eq!(configured.max_consumed_record_ids(), 41);
-        assert!(configured.trusted_scan_value_generation());
-        assert!(configured.bounded_atomic_values());
-    }
-
-    #[test]
-    #[cfg(target_pointer_width = "64")]
-    fn tpcc_table_config_c_layout_appends_the_bounded_value_flag() {
-        assert_eq!(mem::offset_of!(StoTpccDbConfig, max_registry_bytes), 24);
-        assert_eq!(mem::size_of::<StoTpccDbConfig>(), 32);
-        assert_eq!(mem::size_of::<StoTpccDbUsageInfo>(), 16);
-        assert_eq!(mem::size_of::<StoTpccTableUsageInfo>(), 56);
-        assert_eq!(
-            mem::offset_of!(StoTpccTableUsageInfo, max_consumed_record_ids),
-            48
-        );
-        assert_eq!(
-            mem::offset_of!(StoTpccTableConfig, trusted_scan_value_generation),
-            64
-        );
-        assert_eq!(
-            mem::offset_of!(StoTpccTableConfig, bounded_atomic_values),
-            68
-        );
-        assert_eq!(mem::size_of::<StoTpccTableConfig>(), 72);
-        assert_eq!(mem::align_of::<StoTpccTableConfig>(), 8);
     }
 
     #[test]

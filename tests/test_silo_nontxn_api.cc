@@ -1379,6 +1379,8 @@ TEST_F(SiloNonTxnApi, AbortedMvDeletePreservesValueAndCount) {
     EXPECT_EQ(out.substr(0, 7), "present");
 }
 
+#if READ_MY_WRITES
+// @unsafe - Exercises legacy native MV composition in its supported local RYW profile.
 TEST_F(SiloNonTxnApi, MvInsertedValueCanGrowBeforeCommitOrCleanup) {
     ScopedMultiversionMode multiversion;
     mbta_type& mt = make_masstrans(9016, "mt_mv_insert_growth");
@@ -1401,15 +1403,14 @@ TEST_F(SiloNonTxnApi, MvInsertedValueCanGrowBeforeCommitOrCleanup) {
     Sto::silent_abort();
     EXPECT_FALSE(mt.get(lcdf::Str("abort"), out));
 
-#if READ_MY_WRITES
     Sto::start_transaction();
     EXPECT_FALSE(mt.transInsert(lcdf::Str("delete"), small));
     EXPECT_TRUE(mt.transPut(lcdf::Str("delete"), large));
     EXPECT_TRUE(mt.transDelete(lcdf::Str("delete")));
     ASSERT_TRUE(Sto::try_commit());
     EXPECT_FALSE(mt.get(lcdf::Str("delete"), out));
-#endif
 }
+#endif
 
 TEST_F(SiloNonTxnApi, MvOversizedValueIsRejectedBeforeStaging) {
     ScopedMultiversionMode multiversion;

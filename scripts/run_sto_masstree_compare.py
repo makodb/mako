@@ -1,14 +1,16 @@
 #!/usr/bin/env python3
-"""Run and summarize the matched C++/Rust STO Masstree benchmark."""
+"""Run and summarize matched STO Masstree benchmark variants."""
 
 from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import math
 import os
 import random
+import re
 import socket
 import statistics
 import subprocess
@@ -44,6 +46,34 @@ class Scenario:
     name: str
     ops_per_txn: int
     write_percent: int
+
+@dataclass(frozen=True)
+class Variant:
+    name: str
+    executable: Path
+    backend: str
+    role: str
+
+
+def parse_variant(text: str) -> tuple[str, Path]:
+    name, separator, path = text.partition("=")
+    if not separator or not path or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name) is None:
+        raise argparse.ArgumentTypeError("variant must be NAME=PATH with a filename-safe NAME")
+    return name, Path(path)
+
+
+def file_fingerprint(path: Path) -> dict[str, object]:
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    stat = path.stat()
+    return {
+        "sha256": digest.hexdigest(),
+        "size_bytes": stat.st_size,
+        "mtime_ns": stat.st_mtime_ns,
+    }
+
 
 
 def positive_int(text: str) -> int:
@@ -117,8 +147,12 @@ def parse_scenario(text: str) -> Scenario:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cpp", type=Path, required=True)
-    parser.add_argument("--rust", type=Path, required=True)
+    parser.add_argument("--cpp", type=Path)
+    parser.add_argument("--rust", type=Path)
+    parser.add_argument("--baseline", type=parse_variant, metavar="NAME=PATH")
+    parser.add_argument("--candidate", type=parse_variant, metavar="NAME=PATH")
+    parser.add_argument("--baseline-backend", choices=("cpp", "rust"))
+    parser.add_argument("--candidate-backend", choices=("cpp", "rust"))
     parser.add_argument(
         "--rust-value-mode",
         choices=tuple(RUST_ENGINES),
@@ -200,6 +234,28 @@ def parse_args() -> argparse.Namespace:
         help="delay between rejected guard attempts (default: 250)",
     )
     args = parser.parse_args()
+    if args.baseline is not None or args.candidate is not None:
+        if args.cpp is not None or args.rust is not None:
+            parser.error("--baseline/--candidate cannot be combined with --cpp/--rust")
+        if args.baseline is None or args.candidate is None:
+            parser.error("--baseline and --candidate must be supplied together")
+        if args.baseline_backend is None or args.candidate_backend is None:
+            parser.error("explicit variants require --baseline-backend and --candidate-backend")
+        if args.baseline[0] == args.candidate[0]:
+            parser.error("baseline and candidate names must differ")
+        args.variants = [
+            Variant(*args.baseline, args.baseline_backend, "baseline"),
+            Variant(*args.candidate, args.candidate_backend, "candidate"),
+        ]
+    else:
+        if args.cpp is None or args.rust is None:
+            parser.error("supply --cpp and --rust, or --baseline and --candidate")
+        if args.baseline_backend is not None or args.candidate_backend is not None:
+            parser.error("backend options require --baseline and --candidate")
+        args.variants = [
+            Variant("cpp", args.cpp, "cpp", "baseline"),
+            Variant("rust", args.rust, "rust", "candidate"),
+        ]
     if args.scenarios is None:
         args.scenarios = [
             Scenario("read10", 10, 0),
@@ -210,7 +266,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("thread count exceeds the supplied physical CPU list")
     if max(scenario.ops_per_txn for scenario in args.scenarios) > args.keyspace:
         parser.error("keyspace must be at least the largest operations-per-transaction value")
-    for executable in (args.cpp, args.rust):
+    for variant in args.variants:
+        executable = variant.executable
         if not executable.is_file() or not os.access(executable, os.X_OK):
             parser.error(f"benchmark is not executable: {executable}")
     return args
@@ -317,7 +374,7 @@ def ancestor_pids() -> set[int]:
 
 def find_competing_processes(args: argparse.Namespace) -> list[dict[str, object]]:
     ignored = ancestor_pids()
-    target_executables = {str(args.cpp.resolve()), str(args.rust.resolve())}
+    target_executables = {str(variant.executable.resolve()) for variant in args.variants}
     matches: list[dict[str, object]] = []
     for entry in Path("/proc").iterdir():
         if not entry.name.isdecimal():
@@ -493,13 +550,15 @@ def wait_for_pair_window(
 
 def run_one(
     args: argparse.Namespace,
-    executable: Path,
+    variant: Variant,
     scenario: Scenario,
     threads: int,
     repetition: int,
     run_order: int,
 ) -> dict[str, object]:
     seed = args.seed + repetition
+    executable = variant.executable.resolve()
+    fingerprint = file_fingerprint(executable)
     command = [
         args.taskset,
         "-c",
@@ -521,7 +580,7 @@ def run_one(
         str(seed),
     ]
     expected_engine = CPP_ENGINE
-    if executable == args.rust:
+    if variant.backend == "rust":
         expected_engine = RUST_ENGINES[args.rust_value_mode]
         if args.rust_value_mode != "binary":
             command.extend(["--value-mode", args.rust_value_mode])
@@ -565,6 +624,13 @@ def run_one(
     result.update(
         {
             "scenario": scenario.name,
+            "variant": variant.name,
+            "pair_role": variant.role,
+            "backend": variant.backend,
+            "binary": str(executable),
+            "binary_fingerprint": fingerprint,
+            "stdout": completed.stdout,
+            "stderr": completed.stderr,
             "repetition": repetition,
             "run_order": run_order,
             "cpu_affinity": affinity(args.physical_cpus, threads),
@@ -623,7 +689,7 @@ def new_guard_metadata(args: argparse.Namespace, rejected_path: Path) -> dict[st
 
 def run_guarded_pair(
     args: argparse.Namespace,
-    executables: list[Path],
+    variants: list[Variant],
     scenario: Scenario,
     threads: int,
     repetition: int,
@@ -648,19 +714,19 @@ def run_guarded_pair(
         pair_started = utc_now()
         attempted_results: list[dict[str, object]] = []
         execution_error: Exception | None = None
-        for pair_position, executable in enumerate(executables):
+        for pair_position, variant in enumerate(variants):
             execution_order += 1
             logical_run_order = first_run_order + pair_position
             print(
                 f"[execution {execution_order}; accepted slot {logical_run_order}] "
-                f"{executable.name} {scenario.name} threads={threads} "
+                f"{variant.name} {scenario.name} threads={threads} "
                 f"repetition={repetition} pair_attempt={pair_attempt}",
                 flush=True,
             )
             try:
                 result = run_one(
                     args,
-                    executable,
+                    variant,
                     scenario,
                     threads,
                     repetition,
@@ -709,6 +775,7 @@ def run_guarded_pair(
             "engine_order": [
                 str(result["engine"]) for result in attempted_results
             ],
+            "variant_order": [variant.name for variant in variants],
             "started_at_utc": pair_started,
             "finished_at_utc": utc_now(),
             "restart_count_before": restart_before,
@@ -762,10 +829,11 @@ def run_guarded_pair(
 def write_summary(path: Path, results: list[dict[str, object]]) -> None:
     groups: dict[tuple[object, ...], list[dict[str, object]]] = defaultdict(list)
     for result in results:
-        key = (result["engine"], result["scenario"], result["threads"])
+        key = (result["variant"], result["engine"], result["scenario"], result["threads"])
         groups[key].append(result)
 
     columns = [
+        "variant",
         "engine",
         "scenario",
         "threads",
@@ -779,7 +847,7 @@ def write_summary(path: Path, results: list[dict[str, object]]) -> None:
     with path.open("w", newline="", encoding="utf-8") as output:
         writer = csv.DictWriter(output, fieldnames=columns)
         writer.writeheader()
-        for key in sorted(groups, key=lambda item: (str(item[1]), int(item[2]), str(item[0]))):
+        for key in sorted(groups, key=lambda item: (str(item[2]), int(item[3]), str(item[0]))):
             samples = groups[key]
             ops = [float(sample["ops_per_sec"]) for sample in samples]
             txns = [float(sample["txn_per_sec"]) for sample in samples]
@@ -789,9 +857,10 @@ def write_summary(path: Path, results: list[dict[str, object]]) -> None:
             ]
             writer.writerow(
                 {
-                    "engine": key[0],
-                    "scenario": key[1],
-                    "threads": key[2],
+                    "variant": key[0],
+                    "engine": key[1],
+                    "scenario": key[2],
+                    "threads": key[3],
                     "repetitions": len(samples),
                     "median_txn_per_sec": f"{statistics.median(txns):.3f}",
                     "median_ops_per_sec": f"{statistics.median(ops):.3f}",
@@ -820,8 +889,19 @@ def main() -> int:
     metadata = {
         "host": socket.gethostname(),
         "started_at_utc": datetime.now(timezone.utc).isoformat(),
-        "cpp": str(args.cpp.resolve()),
-        "rust": str(args.rust.resolve()),
+        "cpp": str(args.cpp.resolve()) if args.cpp is not None else None,
+        "rust": str(args.rust.resolve()) if args.rust is not None else None,
+        "variants": [
+            {
+                "variant": variant.name,
+                "pair_role": variant.role,
+                "backend": variant.backend,
+                "engine": CPP_ENGINE if variant.backend == "cpp" else RUST_ENGINES[args.rust_value_mode],
+                "binary": str(variant.executable.resolve()),
+                "binary_fingerprint": file_fingerprint(variant.executable),
+            }
+            for variant in args.variants
+        ],
         "rust_value_mode": args.rust_value_mode,
         "threads": args.threads,
         "scenarios": [scenario.__dict__ for scenario in args.scenarios],
@@ -860,24 +940,26 @@ def main() -> int:
                 ]
                 rng.shuffle(cells)
                 for cell_index, (scenario, threads) in enumerate(cells):
-                    executables = [args.cpp, args.rust]
+                    variants = list(args.variants)
                     if (repetition + cell_index) % 2:
-                        executables.reverse()
-                    for executable in executables:
+                        variants.reverse()
+                    pair_id = f"r{repetition:03d}-c{cell_index:03d}-{scenario.name}-{threads}t"
+                    for pair_position, variant in enumerate(variants):
                         run_order += 1
                         print(
-                            f"[{run_order}] {executable.name} {scenario.name} "
+                            f"[{run_order}] {variant.name} {scenario.name} "
                             f"threads={threads} repetition={repetition}",
                             flush=True,
                         )
                         result = run_one(
                             args,
-                            executable,
+                            variant,
                             scenario,
                             threads,
                             repetition,
                             run_order,
                         )
+                        result.update({"pair_id": pair_id, "pair_position": pair_position})
                         raw_output.write(json.dumps(result, sort_keys=True) + "\n")
                         raw_output.flush()
                         results.append(result)
@@ -904,16 +986,16 @@ def main() -> int:
                 ]
                 rng.shuffle(cells)
                 for cell_index, (scenario, threads) in enumerate(cells):
-                    executables = [args.cpp, args.rust]
+                    variants = list(args.variants)
                     if (repetition + cell_index) % 2:
-                        executables.reverse()
+                        variants.reverse()
                     pair_id = (
                         f"r{repetition:03d}-c{cell_index:03d}-"
                         f"{scenario.name}-{threads}t"
                     )
                     pair_results, execution_order = run_guarded_pair(
                         args,
-                        executables,
+                        variants,
                         scenario,
                         threads,
                         repetition,

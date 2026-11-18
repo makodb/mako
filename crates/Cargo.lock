@@ -89,6 +89,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-epoch"
+version = "0.9.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d6914041f254d6e9176c01941b21115dcfb7089e55135a35411081bd106ef3f"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-utils"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61803da095bee82a81bb1a452ecc25d3b2f1416d1897eb86430c6159ef717c17"
+
+[[package]]
 name = "either"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -216,6 +231,7 @@ name = "mako-cache-bench"
 version = "0.1.0"
 dependencies = [
  "mako-cache",
+ "mako-engine",
  "mrx",
  "mrx-core",
  "mrx-rocks",
@@ -324,6 +340,9 @@ dependencies = [
 [[package]]
 name = "mrx-core"
 version = "0.1.0"
+dependencies = [
+ "crossbeam-epoch",
+]
 
 [[package]]
 name = "mrx-ffi"
@@ -336,6 +355,7 @@ dependencies = [
 name = "mrx-masstree"
 version = "0.1.0"
 dependencies = [
+ "crossbeam-epoch",
  "mrx",
  "mrx-core",
  "mtx-sys",
@@ -557,6 +577,7 @@ name = "sto-core"
 version = "0.0.0"
 dependencies = [
  "arc-swap",
+ "mako-clock",
  "trybuild",
 ]
 
@@ -565,6 +586,7 @@ name = "sto-masstree"
 version = "0.0.0"
 dependencies = [
  "arc-swap",
+ "mako-clock",
  "mako-history",
  "masstree",
  "sto-core",
@@ -583,6 +605,7 @@ dependencies = [
 name = "sto-tpcc-ffi"
 version = "0.0.0"
 dependencies = [
+ "mako-clock",
  "masstree",
  "sto-core",
  "sto-masstree",

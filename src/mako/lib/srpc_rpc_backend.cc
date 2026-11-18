@@ -23,6 +23,7 @@
 #include <inttypes.h>
 
 import std;
+import rusty;
 
 using namespace mako;
 
@@ -333,7 +334,7 @@ bool SrpcRpcBackend::SendToShard(TransportReceiver* src,
     return !stop_;
 }
 
-// Send request to multiple shards
+// @unsafe - Native SRPC boundary; each destination must produce a reply.
 bool SrpcRpcBackend::SendToAll(TransportReceiver* src,
                               uint8_t req_type,
                               int shards_bit_set,
@@ -353,10 +354,13 @@ bool SrpcRpcBackend::SendToAll(TransportReceiver* src,
     if (!shards_bit_set) return true;
 
     // Prepare futures for all shards
-    std::vector<rusty::Arc<srpc::Future>> futures;
+    auto futures = rusty::Vec<rusty::Arc<srpc::Future>>::with_capacity(config_.nshards);
+    size_t expected = 0;
+    size_t delivered = 0;
 
     for (int shard_idx = 0; shard_idx < config_.nshards; shard_idx++) {
         if ((shards_bit_set >> shard_idx) % 2 == 0) continue;
+        ++expected;
 
         Debug("SrpcRpcBackend::SendToAll: Sending to shard %d", shard_idx);
 
@@ -383,7 +387,7 @@ bool SrpcRpcBackend::SendToAll(TransportReceiver* src,
 
         Debug("SrpcRpcBackend::SendToAll: Request sent to shard %d", shard_idx);
 
-        futures.push_back(std::move(fu));
+        futures.push(std::move(fu));
     }
 
     Debug("SrpcRpcBackend::SendToAll: Sent to %zu shards, waiting for responses", futures.size());
@@ -422,16 +426,17 @@ bool SrpcRpcBackend::SendToAll(TransportReceiver* src,
         // Deliver response (only if not stopping and src is valid)
         if (!stop_ && src) {
             src->ReceiveResponse(req_type, resp_buffer.data());
+            ++delivered;
         }
 
         // Arc auto-released at end of loop iteration
     }
 
     // All Arcs auto-released when futures vector destroyed
-    return !stop_;
+    return !stop_ && delivered == expected;
 }
 
-// Send batch request to multiple shards
+// @unsafe - Native SRPC boundary; a failed send is a missing acknowledgement.
 bool SrpcRpcBackend::SendBatchToAll(TransportReceiver* src,
                                    uint8_t req_type,
                                    uint16_t server_id,
@@ -443,7 +448,8 @@ bool SrpcRpcBackend::SendBatchToAll(TransportReceiver* src,
         return false;
     }
 
-    std::vector<rusty::Arc<srpc::Future>> futures;
+    auto futures = rusty::Vec<rusty::Arc<srpc::Future>>::with_capacity(data.size());
+    size_t delivered = 0;
 
     for (auto& entry : data) {
         int shard_idx = entry.first;
@@ -463,7 +469,7 @@ bool SrpcRpcBackend::SendBatchToAll(TransportReceiver* src,
         msg_size_req_sent_.fetch_add(req_len, std::memory_order_relaxed);
         msg_counter_req_sent_.fetch_add(1, std::memory_order_relaxed);
 
-        futures.push_back(std::move(fu));
+        futures.push(std::move(fu));
     }
 
     // Wait for all responses
@@ -500,13 +506,14 @@ bool SrpcRpcBackend::SendBatchToAll(TransportReceiver* src,
         // Deliver response (only if not stopping and src is valid)
         if (!stop_ && src) {
             src->ReceiveResponse(req_type, resp_buffer.data());
+            ++delivered;
         }
 
         // Arc auto-released at end of loop iteration
     }
 
     // All Arcs auto-released when futures vector destroyed
-    return !stop_;
+    return !stop_ && delivered == data.size();
 }
 
 // Run event loop
@@ -687,6 +694,7 @@ void SrpcRpcBackend::PrintStats() {
 }
 
 // Static request handler for srpc::Server
+// @unsafe - SRPC ABI decoding and affine helper-queue handoff.
 void SrpcRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<srpc::Request> req, srpc::WeakServerConnection weak_sconn, SrpcRpcBackend* backend) {
     if (!backend) {
         Warning("RequestHandler called with null backend pointer!");
@@ -715,9 +723,10 @@ void SrpcRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<srpc::Request> 
         req->src.read_bytes(reinterpret_cast<std::uint8_t*>(&basic_req), sizeof(basic_req));
 
         // Prepare response
-        get_int_response_t resp;
+        get_int_response_t resp{};
         resp.result = sync_util::sync_logger::retrieveShardW();
         resp.req_nr = basic_req.req_nr;
+        resp.identity = basic_req.identity;
         resp.status = ErrorCode::SUCCESS;
         resp.shard_index = TThread::get_shard_index();
 
@@ -737,9 +746,10 @@ void SrpcRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<srpc::Request> 
         warmup_request_t warmup_req;
         req->src.read_bytes(reinterpret_cast<std::uint8_t*>(&warmup_req), sizeof(warmup_req));
 
-        get_int_response_t resp;
+        get_int_response_t resp{};
         resp.result = 1;
         resp.req_nr = warmup_req.req_nr;
+        resp.identity = warmup_req.identity;
         resp.status = ErrorCode::SUCCESS;
         resp.shard_index = TThread::get_shard_index();
 
@@ -767,9 +777,10 @@ void SrpcRpcBackend::RequestHandler(uint8_t req_type, rusty::Box<srpc::Request> 
             invoke_fasttransport_for_bench(ctrl_req.control, ctrl_req.value);
         }
 
-        get_int_response_t resp;
+        get_int_response_t resp{};
         resp.result = 0;
         resp.req_nr = ctrl_req.req_nr;
+        resp.identity = ctrl_req.identity;
         resp.status = ErrorCode::SUCCESS;
         resp.shard_index = TThread::get_shard_index();
 

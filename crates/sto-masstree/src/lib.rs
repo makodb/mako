@@ -23,6 +23,14 @@ mod history_tests;
 #[cfg(test)]
 mod registry_growth_tests;
 
+#[cfg(test)]
+mod local_version_tests;
+
+mod distributed;
+pub use distributed::{ReadVisibility, VersionedRead, VersionedScan, VersionedScanRecord};
+use distributed::{DistributedVersion, publish_distributed_if_needed};
+use mako_clock::distributed::DistributedTimeTerm;
+
 #[cfg(feature = "fixed-u64")]
 mod fixed_u64;
 
@@ -35,7 +43,7 @@ use std::{
     fmt,
     ops::Deref,
     sync::{
-        atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, Ordering},
         Arc, Mutex, OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard, TryLockError,
     },
 };
@@ -62,17 +70,18 @@ pub use masstree::{KeyBound as ScanBound, ScanDirection};
 use sto_core::{
     AccessError, AcquireContext, AcquireError, Active, AdapterFault, AdapterFaultKind,
     AdapterPhase, AtomicVersion, BorrowedInjectiveLockCommitCapability, BorrowedLockToken,
-    CapacityError, CheckError, Conflict, DetachedVersionGuard, DirectBorrowedLockTarget,
-    DirectCommitCapability, DirectInstallContext, DirectLockMut, DirectLockRef, DirectTokenLock,
-    DirectValidationContext, DirectValidationItem, Entry, ErasedLockUse, ExecutionCheckContext,
-    FinishContext, FinishDisposition, FinishItem, InstallContext, InstallItem, InvalidUse,
-    ItemBatchControl, ItemBatchOutcome, LockClass, LockDisposition, LockIdentity, LockNamespaceId,
-    LockRequest, NoPredicate, ObjectId, ObjectRegistration, ObservationOrder, ObservationRef,
-    OccCommitId, OccVersion, OpacityToken, OwnerId, PredicateContext, PreflightContext,
-    PreflightFreeReadCapability, PreflightFreeValidationContext, PreflightItem, PrepareError,
-    RegisteredResource, RegistrationError, ReleaseContext, ResourceClass, Runtime, RuntimeId,
+    BorrowedTokenCommitOperations, CapacityError, CheckError, CommitVersionRequirement, Conflict,
+    DetachedVersionGuard, DirectBorrowedLockTarget, DirectCommitCapability, DirectInstallContext,
+    DirectLockMut, DirectLockRef, DirectTokenLock, DirectValidationContext, DirectValidationItem,
+    TransProxy, ErasedLockUse, ExecutionCheckContext, CleanupContext, CleanupDisposition, CleanupItem,
+    InstallContext, InstallItem, InvalidUse, ItemBatchControl, ItemBatchOutcome, LockClass,
+    LockDisposition, LockIdentity, LockNamespaceId, LockRequest, NoPredicate, ObjectId,
+    ObjectRegistration, ObservationOrder, ObservationRef, OccCommitId, OccVersion, OpacityToken,
+    OwnerId, PredicateContext, LockContext, PreflightFreeReadCapability,
+    PreflightFreeValidationContext, PreflightItem, PrepareError, RegisteredResource,
+    RegistrationError, ReleaseContext, ResourceClass, Runtime, RuntimeId,
     TerminalReadBatchCapability, TerminalReadOpen, TerminalReadReady, TerminalReadTransaction,
-    Transaction, TransactionLock, TransactionalResource, UniqueItemKeyIndex, UniqueItemKeys,
+    Transaction, TransactionLock, TObject, UniqueItemKeyIndex, UniqueItemKeys,
     Unsupported, ValidationContext,
 };
 #[cfg(not(test))]
@@ -103,6 +112,7 @@ const RECORD_STATE_TOMBSTONE: u16 = 0;
 const RECORD_STATE_SHARED: u16 = 1;
 const RECORD_STATE_INLINE_BASE: u16 = 2;
 const RECORD_STATE_STABLE_BASE: u16 = 0x0100;
+const RECORD_STATE_DISTRIBUTED_TOMBSTONE: u16 = 0x0200;
 const RECORD_STATE_UPDATING: u16 = u16::MAX - 1;
 const RECORD_STATE_POISONED: u16 = u16::MAX;
 const RECORD_STATE_DESCRIPTOR_SHIFT: u32 = 48;
@@ -220,6 +230,7 @@ enum SharedValue {
         bytes: [u8; SHARED_INLINE_VALUE_CAPACITY],
     },
     Heap(Vec<u8>),
+    Distributed(DistributedVersion),
 }
 
 impl SharedValue {
@@ -256,6 +267,7 @@ impl SharedValue {
         match self {
             Self::Medium { len, bytes } => &bytes[..usize::from(*len)],
             Self::Heap(bytes) => bytes.as_slice(),
+            Self::Distributed(version) => version.state.value().map_or(&[], Value::as_ref),
         }
     }
 }
@@ -757,6 +769,8 @@ pub struct TableConfig {
     trusted_scan_value_generation: bool,
     bounded_atomic_values: bool,
     blocking_structural_admission: bool,
+    record_local_versions: bool,
+    distributed_history: bool,
 }
 
 impl TableConfig {
@@ -776,7 +790,21 @@ impl TableConfig {
             trusted_scan_value_generation: false,
             bounded_atomic_values: false,
             blocking_structural_admission: false,
+            record_local_versions: false,
+            distributed_history: false,
         }
+    }
+
+    /// Enables decision metadata and selected-version history. Bootstrap writes
+    /// without a decision keep the local fast path until the first decision.
+    /// Versioned reads accept an explicit replication visibility policy.
+    pub const fn with_distributed_history(mut self, enabled: bool) -> Self {
+        self.distributed_history = enabled;
+        self
+    }
+
+    pub const fn distributed_history(self) -> bool {
+        self.distributed_history
     }
 
     pub const fn with_max_retained_records(mut self, maximum: u64) -> Self {
@@ -805,14 +833,14 @@ impl TableConfig {
         self
     }
 
-    /// Selects transaction-wide unique, request-order physical lock planning.
+    /// Selects transaction-wide unique, request-order physical locking.
     ///
     /// This is an integration contract, not a table-local hint. When enabled,
     /// every lock-emitting adapter that may share a transaction with this table
-    /// must also use [`PreflightContext::require_unique_lock`], and every
+    /// must also use [`LockContext::try_unique_lock`], and every
     /// emitted [`LockIdentity`] must be distinct. Mixing this table with a
     /// canonical lock request, or emitting the same physical identity twice,
-    /// makes preflight fail closed. The default is `false`.
+    /// makes locking fail closed. The default is `false`.
     pub const fn with_unique_lock_requests(mut self, enabled: bool) -> Self {
         self.unique_lock_requests = enabled;
         self
@@ -879,6 +907,21 @@ impl TableConfig {
         self
     }
 
+    /// Uses independently checked record generations instead of runtime commit IDs.
+    ///
+    /// This fixed table policy preserves serializable OCC and read-your-writes,
+    /// but its observations are unordered with respect to the runtime clock.
+    /// Mixed transactions still allocate an ordered ID for other writing
+    /// resources; this table ignores that ID and increments each locked record.
+    /// Ordinary scans remain supported. Combining this option with
+    /// [`Self::with_trusted_scan_value_generation`] is rejected at construction.
+    /// The default is `false`. `FixedU64Table` does not support this policy
+    /// and rejects the enabled option.
+    pub const fn with_record_local_versions(mut self, enabled: bool) -> Self {
+        self.record_local_versions = enabled;
+        self
+    }
+
     pub const fn max_retained_records(self) -> u64 {
         self.max_retained_records
     }
@@ -930,6 +973,10 @@ impl TableConfig {
 
     pub const fn blocking_structural_admission(self) -> bool {
         self.blocking_structural_admission
+    }
+
+    pub const fn record_local_versions(self) -> bool {
+        self.record_local_versions
     }
 }
 
@@ -1179,17 +1226,21 @@ impl RegistryAccounting {
         self.used.fetch_add(bytes, Ordering::AcqRel);
         Ok(RegistryCharge {
             accounting: Arc::clone(self),
-            bytes,
+            bytes: AtomicU64::new(bytes),
         })
     }
 }
 
 struct RegistryCharge {
     accounting: Arc<RegistryAccounting>,
-    bytes: u64,
+    bytes: AtomicU64,
 }
 
 impl RegistryCharge {
+    fn bytes(&self) -> u64 {
+        self.bytes.load(Ordering::Relaxed)
+    }
+
     /// Transfer part of an admitted reservation to its allocation owner.
     /// Splitting changes neither accounting counter: the outstanding parent
     /// and child charges still sum to the original reservation.
@@ -1197,27 +1248,38 @@ impl RegistryCharge {
         let bytes = u64::try_from(bytes).map_err(|_| CapacityError::BufferLimit)?;
         let remaining = self
             .bytes
+            .get_mut()
             .checked_sub(bytes)
             .ok_or(CapacityError::BufferLimit)?;
-        self.bytes = remaining;
+        *self.bytes.get_mut() = remaining;
         Ok(Self {
             accounting: Arc::clone(&self.accounting),
-            bytes,
+            bytes: AtomicU64::new(bytes),
         })
+    }
+
+    /// Retain an additional allocation for this owner's lifetime. Both
+    /// charges are already admitted against the same bounded counter, so
+    /// their sum cannot overflow and no budget is released during transfer.
+    fn absorb(&self, mut other: Self) {
+        assert!(Arc::ptr_eq(&self.accounting, &other.accounting));
+        let bytes = std::mem::take(other.bytes.get_mut());
+        self.bytes.fetch_add(bytes, Ordering::Relaxed);
     }
 }
 
 impl Drop for RegistryCharge {
     fn drop(&mut self) {
-        if self.bytes == 0 {
+        let bytes = *self.bytes.get_mut();
+        if bytes == 0 {
             return;
         }
-        self.accounting.used.fetch_sub(self.bytes, Ordering::AcqRel);
+        self.accounting.used.fetch_sub(bytes, Ordering::AcqRel);
         self.accounting
             .budget
             .shared
             .used
-            .fetch_sub(self.bytes, Ordering::AcqRel);
+            .fetch_sub(bytes, Ordering::AcqRel);
     }
 }
 
@@ -1567,6 +1629,11 @@ impl Table {
         config: TableConfig,
         budget: RegistryBudget,
     ) -> Result<AdmittedTable, RegistrationError> {
+        if config.record_local_versions && config.trusted_scan_value_generation {
+            return Err(RegistrationError::Unsupported(Unsupported::Capability(
+                "record-local versions cannot use trusted scan generations",
+            )));
+        }
         let object = runtime.register_object()?;
         let namespace = LockNamespaceId::new(object.object_id().get())
             .expect("nonzero ObjectId always forms a lock namespace");
@@ -1620,6 +1687,7 @@ impl Table {
             record_lock_class,
             directory_generation: AtomicU64::new(0),
             scan_generation: AtomicU64::new(0),
+            history_retention_floor: AtomicU32::new(0),
             scan_publication_owners,
         });
 
@@ -2098,7 +2166,6 @@ impl Table {
     ) -> Result<bool, AccessError> {
         self.put_presence_inner(txn, Some(worker), key, self.borrowed_staging_input(value))
     }
-
     /// Stages an unconditional live value through a previously resolved
     /// record identity and reports whether its prior abstract value existed.
     /// This skips only directory lookup; OCC and commit behavior are identical
@@ -2132,7 +2199,6 @@ impl Table {
     ) -> Result<bool, AccessError> {
         self.put_resolved_presence_inner(txn, resolved, self.borrowed_staging_input(value))
     }
-
     /// Stages a value only when the transaction-local record is absent.
     #[inline]
     pub fn insert(
@@ -2211,6 +2277,32 @@ impl Table {
         key: &[u8],
     ) -> Result<bool, AccessError> {
         self.remove_presence_inner(txn, Some(worker), key)
+    }
+
+    /// Unconditionally stages a tombstone and reports prior physical/staged
+    /// presence, independently of the version selected by a historical read.
+    ///
+    /// Distributed callers evaluate conditional DELETE semantics against their
+    /// selected version first, then use this result for physical cardinality.
+    #[inline]
+    pub fn stage_tombstone_with_previous_presence(
+        &self,
+        txn: &mut Transaction<'_, Active>,
+        worker: &Worker,
+        key: &[u8],
+    ) -> Result<bool, AccessError> {
+        let adapter = self.record_resource.adapter();
+        self.with_key_record_lookup(
+            txn,
+            Some(worker),
+            key,
+            || self.shared().lookup(Some(worker), key),
+            |entry, access| {
+                let previous_present = adapter.prepare_resolved_presence_access(access, entry)?;
+                stage_record_state(adapter, access, entry, RecordState::tombstone())?;
+                Ok(previous_present)
+            },
+        )
     }
 
     /// Stages a tombstone through a previously resolved record identity and
@@ -2722,7 +2814,7 @@ impl Table {
     unsafe fn finish_try_modify_borrowed(
         &self,
         access: RecordAccess<'_>,
-        entry: &mut Entry<'_, TableAdapter>,
+        entry: &mut TransProxy<'_, TableAdapter>,
         copied: ValueCopyOutcome,
         output: &mut [u8],
         modify: impl for<'buffer> FnOnce(&'buffer mut [u8], usize) -> Result<usize, AccessError>,
@@ -3072,8 +3164,9 @@ impl Table {
                     adapter.prepare_terminal_read_access(access)?;
                 // Transfer the OCC token to core before calling user code, so
                 // an unwind leaves a complete prefix for definite cleanup.
-                entry.record_read(TableObservation::Record(RecordObservation {
+                entry.add_read(TableObservation::Record(RecordObservation {
                     version,
+                    record_local: adapter.table.registry.config.record_local_versions,
                     original_live: snapshot.is_live(),
                     old_was_shared,
                 }))?;
@@ -4114,7 +4207,7 @@ impl Table {
     where
         F: for<'entry, 'record> FnMut(
             &[u8],
-            &mut Entry<'entry, TableAdapter>,
+            &mut TransProxy<'entry, TableAdapter>,
             RecordAccess<'record>,
         ) -> Result<Option<ScanControl>, AccessError>,
     {
@@ -4168,7 +4261,7 @@ impl Table {
     where
         F: for<'entry, 'record> FnMut(
             &[u8],
-            &mut Entry<'entry, TableAdapter>,
+            &mut TransProxy<'entry, TableAdapter>,
             RecordAccess<'record>,
         ) -> Result<Option<ScanControl>, AccessError>,
     {
@@ -4305,7 +4398,7 @@ impl Table {
     where
         F: for<'entry, 'record> FnMut(
             &[u8],
-            &mut Entry<'entry, TableAdapter>,
+            &mut TransProxy<'entry, TableAdapter>,
             RecordAccess<'record>,
         ) -> Result<Option<ScanControl>, AccessError>,
     {
@@ -4426,7 +4519,7 @@ impl Table {
         key: &[u8],
         lookup: impl FnOnce() -> Result<Option<RecordId>, AccessError>,
         operation: impl for<'entry, 'record> FnOnce(
-            &mut Entry<'entry, TableAdapter>,
+            &mut TransProxy<'entry, TableAdapter>,
             RecordAccess<'record>,
         ) -> Result<R, AccessError>,
     ) -> Result<R, AccessError> {
@@ -5920,6 +6013,8 @@ struct TableShared {
     // row snapshots with it and retain the observed value in one scan-role STO
     // item.
     scan_generation: AtomicU64,
+    // Monotone authoritative BASE watermark; zero disables reclamation.
+    history_retention_floor: AtomicU32,
     // A commit ID never repeats within this table's runtime. An owner-local
     // match therefore proves that this transaction already performed its
     // table-wide committed-publication invalidation.
@@ -5927,6 +6022,17 @@ struct TableShared {
 }
 
 impl TableShared {
+    #[inline(always)]
+    fn admits_commit_version(&self, before: OccVersion, commit_id: Option<OccCommitId>) -> bool {
+        if self.registry.config.record_local_versions {
+            // Local acquisition already checked this exact held generation.
+            // A mixed transaction's ordered ID belongs only to other resources.
+            before.checked_next().is_some()
+        } else {
+            commit_id.is_some_and(|commit_id| commit_id.to_version() > before)
+        }
+    }
+
     #[inline(always)]
     fn advance_scan_generation(&self) {
         if !self.registry.config.trusted_scan_value_generation {
@@ -5943,10 +6049,11 @@ impl TableShared {
     }
 
     #[inline(always)]
-    fn advance_scan_generation_for_commit(&self, owner: OwnerId, commit_id: OccCommitId) {
+    fn advance_scan_generation_for_commit(&self, owner: OwnerId, commit_id: Option<OccCommitId>) {
         if !self.registry.config.trusted_scan_value_generation {
             return;
         }
+        let commit_id = commit_id.expect("trusted scan publication requires an ordered commit ID");
         let Some(publication) = self.scan_publication_owners.get(owner.get() as usize) else {
             self.poison();
             panic!("sto-masstree scan publication owner exceeds the table runtime");
@@ -6012,7 +6119,7 @@ impl TableShared {
             .store(TABLE_PUBLICATION_UNKNOWN, Ordering::Release);
     }
 
-    #[inline]
+    #[inline(always)]
     fn lookup(&self, worker: Option<&Worker>, key: &[u8]) -> Result<Option<RecordId>, AccessError> {
         self.ensure_healthy()?;
         self.directory
@@ -7057,6 +7164,7 @@ struct RecordLockDomain {
     runtime_id: sto_core::RuntimeId,
     namespace: LockNamespaceId,
     lock_class: LockClass,
+    record_local_versions: bool,
 }
 
 enum RegistryStorage {
@@ -7084,6 +7192,8 @@ struct RegistryArenaOwner {
 enum RegistryArenaStorage {
     Standard(Box<[RegistryEntry]>),
     Stable160(Box<[StableRegistryEntry]>),
+    // Allocation follows the claiming thread; ownership remains cross-thread.
+    WorkerLocalStable160(Box<[OnceLock<Box<[StableRegistryEntry; 1]>>]>),
 }
 
 #[derive(Clone, Copy)]
@@ -7094,6 +7204,15 @@ struct RegistrySlotAccess<'slot> {
 }
 
 impl<'slot> RegistrySlotAccess<'slot> {
+    #[inline(always)]
+    fn stable(entry: &'slot StableRegistryEntry) -> Self {
+        Self {
+            entry: &entry.base,
+            stable: Some(&entry.cell),
+            element_address: std::ptr::from_ref(entry).expose_provenance(),
+        }
+    }
+
     #[inline(always)]
     fn record(self) -> &'slot Record {
         &self.entry.record
@@ -7123,7 +7242,7 @@ impl RegistryArena {
                 slot_count,
                 bounded_atomic_values
             )?),
-            Ok(charge.bytes),
+            Ok(charge.bytes()),
         );
         #[cfg(test)]
         registry_growth_tests::allocation_checkpoint()?;
@@ -7139,6 +7258,55 @@ impl RegistryArena {
             }),
             len: slot_count,
         })
+    }
+
+    fn allocate_worker_local_prepaid(
+        slot_count: usize,
+        charge: RegistryCharge,
+    ) -> Result<Self, CapacityError> {
+        debug_assert_eq!(
+            u64::try_from(worker_local_registry_arena_accounted_bytes(slot_count)?),
+            Ok(charge.bytes()),
+        );
+        #[cfg(test)]
+        registry_growth_tests::allocation_checkpoint()?;
+        let mut slots = Vec::new();
+        slots
+            .try_reserve_exact(slot_count)
+            .map_err(|_| CapacityError::BufferLimit)?;
+        slots.resize_with(slot_count, OnceLock::new);
+        Ok(Self {
+            storage: Arc::new(RegistryArenaOwner {
+                slots: RegistryArenaStorage::WorkerLocalStable160(slots.into_boxed_slice()),
+                _charge: charge,
+            }),
+            len: slot_count,
+        })
+    }
+
+    /// Called under the segmented registry's growth lock. The inserting
+    /// thread allocates and first-touches the record, while the shared arena
+    /// retains its stable address and exact allocation charge.
+    fn initialize_worker_local_slot(&self, index: usize) -> Result<(), CapacityError> {
+        let RegistryArenaStorage::WorkerLocalStable160(slots) = &self.storage.slots else {
+            return Ok(());
+        };
+        let slot = slots.get(index).ok_or(CapacityError::BufferLimit)?;
+        if slot.get().is_none() {
+            let charge = self
+                .storage
+                ._charge
+                .accounting
+                .reserve(std::mem::size_of::<StableRegistryEntry>())?;
+            #[cfg(test)]
+            registry_growth_tests::allocation_checkpoint()?;
+            let entries = allocate_stable_registry_slots(1)?
+                .try_into()
+                .unwrap_or_else(|_| unreachable!("one-entry allocation"));
+            assert!(slot.set(entries).is_ok());
+            self.storage._charge.absorb(charge);
+        }
+        Ok(())
     }
 
     #[inline(always)]
@@ -7157,11 +7325,11 @@ impl RegistryArena {
                 })
             }
             RegistryArenaStorage::Stable160(slots) => {
-                slots.get(index).map(|entry| RegistrySlotAccess {
-                    entry: &entry.base,
-                    stable: Some(&entry.cell),
-                    element_address: std::ptr::from_ref(entry).expose_provenance(),
-                })
+                slots.get(index).map(RegistrySlotAccess::stable)
+            }
+            RegistryArenaStorage::WorkerLocalStable160(slots) => {
+                let entry = &slots.get(index)?.get()?[0];
+                Some(RegistrySlotAccess::stable(entry))
             }
         }
     }
@@ -7176,27 +7344,21 @@ impl RegistryArena {
         match &self.storage.slots {
             RegistryArenaStorage::Standard(slots) => registry_slice_owns_address(slots, address),
             RegistryArenaStorage::Stable160(slots) => registry_slice_owns_address(slots, address),
+            RegistryArenaStorage::WorkerLocalStable160(slots) => slots
+                .iter()
+                .filter_map(OnceLock::get)
+                .any(|slot| registry_slice_owns_address(slot.as_ref(), address)),
         }
-    }
-
-    #[cfg(test)]
-    fn is_stable(&self) -> bool {
-        matches!(&self.storage.slots, RegistryArenaStorage::Stable160(_))
     }
 
     #[cfg(test)]
     fn standard_slots(&self) -> &[RegistryEntry] {
         match &self.storage.slots {
             RegistryArenaStorage::Standard(slots) => slots,
-            RegistryArenaStorage::Stable160(_) => {
+            RegistryArenaStorage::Stable160(_) | RegistryArenaStorage::WorkerLocalStable160(_) => {
                 panic!("test expected the standard registry arena")
             }
         }
-    }
-
-    #[cfg(test)]
-    fn shares_allocation_with(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.storage, &other.storage)
     }
 }
 
@@ -7241,6 +7403,7 @@ impl Registry {
             runtime_id,
             namespace,
             lock_class,
+            record_local_versions: config.record_local_versions,
         };
         let accounting = Arc::new(RegistryAccounting {
             budget,
@@ -7512,7 +7675,13 @@ impl Registry {
                 let first_segment = first_index / REGISTRY_SEGMENT_SLOTS;
                 let last_segment = last_index / REGISTRY_SEGMENT_SLOTS;
                 for segment_index in first_segment..=last_segment {
-                    storage.ensure_segment(segment_index, self.lock_domain)?;
+                    let segment = storage.ensure_segment(segment_index, self.lock_domain)?;
+                    if self.config.bounded_atomic_values {
+                        let segment_start = segment_index * REGISTRY_SEGMENT_SLOTS;
+                        let first = first_index.saturating_sub(segment_start);
+                        let end = (last_index - segment_start + 1).min(REGISTRY_SEGMENT_SLOTS);
+                        storage.initialize_worker_local_slots(&segment.arena, first..end)?;
+                    }
                 }
                 Ok(())
             }
@@ -7877,15 +8046,37 @@ impl SegmentedRegistry {
             .ok_or_else(|| table_fault("record registry segment publication failed"))
     }
 
+    fn initialize_worker_local_slots(
+        &self,
+        arena: &RegistryArena,
+        slots: std::ops::Range<usize>,
+    ) -> Result<(), AccessError> {
+        // Scalar claims own their ID, but a batch can preflight the same
+        // unclaimed range before its CAS. Serialize initialization so losing
+        // contenders cannot temporarily double-charge the shared budget.
+        let _growth = self
+            .growth
+            .lock()
+            .map_err(|_| table_fault("record registry growth is poisoned"))?;
+        for index in slots {
+            arena.initialize_worker_local_slot(index)?;
+        }
+        Ok(())
+    }
+
     fn claim_access(
         &self,
         index: usize,
         lock_domain: RecordLockDomain,
     ) -> Result<RegistrySlotAccess<'_>, AccessError> {
         let segment = self.ensure_segment(index / REGISTRY_SEGMENT_SLOTS, lock_domain)?;
+        let slot_index = index % REGISTRY_SEGMENT_SLOTS;
+        if self.bounded_atomic_values && segment.arena.get(slot_index).is_none() {
+            self.initialize_worker_local_slots(&segment.arena, slot_index..slot_index + 1)?;
+        }
         segment
             .arena
-            .get(index % REGISTRY_SEGMENT_SLOTS)
+            .get(slot_index)
             .ok_or_else(|| CapacityError::BufferLimit.into())
     }
 
@@ -8061,6 +8252,15 @@ fn registry_arena_accounted_bytes(
         .ok_or(CapacityError::BufferLimit)
 }
 
+fn worker_local_registry_arena_accounted_bytes(slot_count: usize) -> Result<usize, CapacityError> {
+    let arena_owner_bytes =
+        2 * std::mem::size_of::<usize>() + std::mem::size_of::<RegistryArenaOwner>();
+    slot_count
+        .checked_mul(std::mem::size_of::<OnceLock<Box<[StableRegistryEntry; 1]>>>())
+        .and_then(|bytes| bytes.checked_add(arena_owner_bytes))
+        .ok_or(CapacityError::BufferLimit)
+}
+
 fn record_lock_accounted_bytes() -> usize {
     std::mem::size_of::<RecordLockSegment>() + 2 * std::mem::size_of::<usize>()
 }
@@ -8183,27 +8383,37 @@ impl RegistrySegment {
         let logical_base = segment_index
             .checked_mul(REGISTRY_SEGMENT_SLOTS)
             .ok_or(CapacityError::BufferLimit)?;
-        // Admit the complete segment in one shared-budget operation. Each
-        // allocation still owns its exact charge, so failure unwinds the
-        // unspent balance and detached targets retain only their live bytes.
-        let mut prepaid = accounting.reserve(eager_registry_accounted_bytes(
-            REGISTRY_SEGMENT_SLOTS,
-            bounded_atomic_values,
-        )?)?;
-        let arena_charge = prepaid.split_off(registry_arena_accounted_bytes(
-            REGISTRY_SEGMENT_SLOTS,
-            bounded_atomic_values,
-        )?)?;
-        let arena = RegistryArena::allocate_prepaid(
-            REGISTRY_SEGMENT_SLOTS,
-            bounded_atomic_values,
-            arena_charge,
-        )?;
+        // Admit the complete directory and its lock targets together. Stable
+        // records in lazy segments are separately charged on the inserting
+        // thread, rather than interleaved in one global record allocation.
+        let contiguous_arena_bytes =
+            registry_arena_accounted_bytes(REGISTRY_SEGMENT_SLOTS, bounded_atomic_values)?;
+        let arena_bytes = if bounded_atomic_values {
+            worker_local_registry_arena_accounted_bytes(REGISTRY_SEGMENT_SLOTS)?
+        } else {
+            contiguous_arena_bytes
+        };
+        let segment_bytes =
+            eager_registry_accounted_bytes(REGISTRY_SEGMENT_SLOTS, bounded_atomic_values)?
+                .checked_sub(contiguous_arena_bytes)
+                .and_then(|bytes| bytes.checked_add(arena_bytes))
+                .ok_or(CapacityError::BufferLimit)?;
+        let mut prepaid = accounting.reserve(segment_bytes)?;
+        let arena_charge = prepaid.split_off(arena_bytes)?;
+        let arena = if bounded_atomic_values {
+            RegistryArena::allocate_worker_local_prepaid(REGISTRY_SEGMENT_SLOTS, arena_charge)?
+        } else {
+            RegistryArena::allocate_prepaid(
+                REGISTRY_SEGMENT_SLOTS,
+                bounded_atomic_values,
+                arena_charge,
+            )?
+        };
         let lock_segments =
             build_record_lock_segments_with_charge(&arena, logical_base, lock_domain, |bytes| {
                 prepaid.split_off(bytes)
             })?;
-        debug_assert_eq!(prepaid.bytes, 0);
+        debug_assert_eq!(prepaid.bytes(), 0);
         debug_assert_eq!(
             lock_segments.len(),
             RECORD_LOCK_SEGMENTS_PER_REGISTRY_SEGMENT
@@ -8331,7 +8541,11 @@ impl TransactionLock for RecordLockSegment {
     ) -> Result<Self::Guard, AcquireError> {
         let (record_id, slot) = self.identity_record_slot(identity, AdapterPhase::Acquire)?;
         let record = self.record_at(slot, AdapterPhase::Acquire)?;
-        let detached = record.version.try_acquire_detached(cx.owner())?;
+        let detached = if self.lock_domain.record_local_versions {
+            record.version.try_acquire_local_detached(cx.owner())?
+        } else {
+            record.version.try_acquire_detached(cx.owner())?
+        };
         Ok(RecordLockGuard {
             record_id,
             slot,
@@ -8368,6 +8582,12 @@ impl TransactionLock for RecordLockSegment {
                     .detached
                     .release_abort_stable_target(&record.version)
                     .map(|()| None),
+                LockDisposition::Committed { .. } if self.lock_domain.record_local_versions => {
+                    guard
+                        .detached
+                        .release_local_commit_stable_target(&record.version)
+                        .map(Some)
+                }
                 LockDisposition::Committed {
                     occ_commit_id: Some(commit_id),
                 } => guard
@@ -8379,7 +8599,14 @@ impl TransactionLock for RecordLockSegment {
                 } => panic!("sto-masstree committed record write has no OCC commit ID"),
                 LockDisposition::Indeterminate { occ_commit_id } => guard
                     .detached
-                    .release_indeterminate_stable_target(&record.version, occ_commit_id)
+                    .release_indeterminate_stable_target(
+                        &record.version,
+                        if self.lock_domain.record_local_versions {
+                            None
+                        } else {
+                            occ_commit_id
+                        },
+                    )
                     .map(Some),
             }
         };
@@ -8479,7 +8706,14 @@ impl TransactionLock for TableShared {
         cx: &AcquireContext<'_>,
     ) -> Result<Self::Guard, AcquireError> {
         let access = self.direct_identity_record(identity, AdapterPhase::Acquire)?;
-        let detached = access.record.version.try_acquire_detached(cx.owner())?;
+        let detached = if self.registry.config.record_local_versions {
+            access
+                .record
+                .version
+                .try_acquire_local_detached(cx.owner())?
+        } else {
+            access.record.version.try_acquire_detached(cx.owner())?
+        };
         Ok(DirectRecordLockGuard {
             record_token: access.record_id,
             record: direct_record::CachedRecord::new(access),
@@ -8517,6 +8751,12 @@ impl TransactionLock for TableShared {
                     .detached
                     .release_abort_stable_target(&record.version)
                     .map(|()| None),
+                LockDisposition::Committed { .. } if self.registry.config.record_local_versions => {
+                    guard
+                        .detached
+                        .release_local_commit_stable_target(&record.version)
+                        .map(Some)
+                }
                 LockDisposition::Committed {
                     occ_commit_id: Some(commit_id),
                 } => guard
@@ -8528,7 +8768,14 @@ impl TransactionLock for TableShared {
                 } => panic!("sto-masstree committed direct record write has no OCC commit ID"),
                 LockDisposition::Indeterminate { occ_commit_id } => guard
                     .detached
-                    .release_indeterminate_stable_target(&record.version, occ_commit_id)
+                    .release_indeterminate_stable_target(
+                        &record.version,
+                        if self.registry.config.record_local_versions {
+                            None
+                        } else {
+                            occ_commit_id
+                        },
+                    )
                     .map(Some),
             }
         };
@@ -8574,10 +8821,17 @@ unsafe impl DirectTokenLock for TableShared {
             .record
             .get(&self.registry, record_id)
             .map_err(|_| AdapterFault::invariant(AdapterPhase::Acquire))?;
-        let detached = access
-            .record
-            .version
-            .try_acquire_detached_observed(observed, cx.owner())?;
+        let detached = if self.registry.config.record_local_versions {
+            access
+                .record
+                .version
+                .try_acquire_local_detached_observed(observed, cx.owner())?
+        } else {
+            access
+                .record
+                .version
+                .try_acquire_detached_observed(observed, cx.owner())?
+        };
         Ok(DirectRecordLockGuard {
             record_token: record_id,
             record: record_token.record,
@@ -8680,10 +8934,17 @@ impl StableAtomicValueCell {
             self.suffix[index].store(word, Ordering::Relaxed);
         }
         if !tail.is_empty() {
-            let mut word = [0_u8; std::mem::size_of::<u64>()];
-            word[..tail.len()].copy_from_slice(tail);
-            self.suffix[suffix.len() / std::mem::size_of::<u64>()]
-                .store(u64::from_ne_bytes(word), Ordering::Relaxed);
+            // The bounded value contains at least 39 immutable staging bytes,
+            // so its last full word is in bounds even for a one-byte suffix.
+            // Extract the partial word in registers instead of copying into
+            // a stack temporary; committed payload access remains atomic.
+            let last = u64::from_le_bytes(
+                *bytes
+                    .last_chunk::<8>()
+                    .expect("bounded value has a full word"),
+            );
+            let word = (last >> ((8 - tail.len()) * u8::BITS as usize)).to_le();
+            self.suffix[suffix.len() / std::mem::size_of::<u64>()].store(word, Ordering::Relaxed);
         }
     }
 
@@ -8959,6 +9220,10 @@ impl CommittedRecordState {
                 live: false,
                 shared: false,
             }),
+            RECORD_STATE_DISTRIBUTED_TOMBSTONE => CommittedStateMetadataLoad::Complete(RecordStateMetadata {
+                live: false,
+                shared: true,
+            }),
             RECORD_STATE_SHARED => CommittedStateMetadataLoad::Complete(RecordStateMetadata {
                 live: true,
                 shared: true,
@@ -9017,6 +9282,10 @@ impl CommittedRecordState {
             RECORD_STATE_TOMBSTONE => CommittedStateLoad::Complete {
                 state: RecordState::Tombstone,
                 shared: false,
+            },
+            RECORD_STATE_DISTRIBUTED_TOMBSTONE => CommittedStateLoad::Complete {
+                state: RecordState::Tombstone,
+                shared: true,
             },
             RECORD_STATE_SHARED => match self.shared.load_full() {
                 Some(bytes) => CommittedStateLoad::Complete {
@@ -9081,7 +9350,7 @@ impl CommittedRecordState {
         }
 
         match descriptor {
-            RECORD_STATE_TOMBSTONE => {
+            RECORD_STATE_TOMBSTONE | RECORD_STATE_DISTRIBUTED_TOMBSTONE => {
                 CommittedStateLeaseLoad::Complete(CommittedStateLease::Tombstone)
             }
             RECORD_STATE_SHARED => {
@@ -9295,7 +9564,7 @@ impl CommittedStatePublication<'_> {
         replacement: &RecordState,
         old_was_shared: bool,
         owner: OwnerId,
-        commit_id: OccCommitId,
+        commit_id: Option<OccCommitId>,
     ) {
         self.table
             .advance_scan_generation_for_commit(owner, commit_id);
@@ -9580,6 +9849,44 @@ static DIRECTORY_PREFLIGHT_FREE_READ: PreflightFreeReadCapability<TableAdapter> 
     // equality validation is its complete commit protocol.
     PreflightFreeReadCapability::new_drop_only(validate_directory_preflight_free_read);
 
+struct RecordDirectOperations;
+
+impl BorrowedTokenCommitOperations<TableAdapter, TableShared> for RecordDirectOperations {
+    #[inline(always)]
+    fn prepare(
+        &self,
+        adapter: &TableAdapter,
+        key: &TableKey,
+        item: PreflightItem<'_, TableAdapter>,
+    ) -> Result<Option<BorrowedLockToken<DirectRecordLockToken>>, PrepareError> {
+        prepare_direct_item(adapter, key, item)
+    }
+
+    #[inline]
+    fn validate(
+        &self,
+        adapter: &TableAdapter,
+        key: &TableKey,
+        item: DirectValidationItem<'_, TableAdapter>,
+        lock: Option<DirectLockRef<'_, TableShared>>,
+        cx: &DirectValidationContext,
+    ) -> Result<(), CheckError> {
+        validate_direct_item(adapter, key, item, lock, cx)
+    }
+
+    #[inline(always)]
+    fn install(
+        &self,
+        adapter: &TableAdapter,
+        key: &TableKey,
+        item: InstallItem<'_, TableAdapter>,
+        lock: DirectLockMut<'_, TableShared>,
+        cx: &mut DirectInstallContext,
+    ) {
+        install_direct_record(adapter, key, item, lock, cx);
+    }
+}
+
 #[allow(
     unsafe_code,
     reason = "the adjacent proof binds write observations to exact token acquisition"
@@ -9587,6 +9894,7 @@ static DIRECTORY_PREFLIGHT_FREE_READ: PreflightFreeReadCapability<TableAdapter> 
 static RECORD_DIRECT_INJECTIVE_LOCKS: BorrowedInjectiveLockCommitCapability<
     TableAdapter,
     TableShared,
+    RecordDirectOperations,
 > = {
     // SAFETY: prepare_direct_item stores the record observation in the private
     // token after checking every item shape. TableShared acquires the exact
@@ -9594,12 +9902,8 @@ static RECORD_DIRECT_INJECTIVE_LOCKS: BorrowedInjectiveLockCommitCapability<
     // excludes writers through installation and release. install_direct_record
     // checks the target, record, owner, held state, and commit generation again.
     unsafe {
-        BorrowedInjectiveLockCommitCapability::new(
-            prepare_direct_item,
-            validate_direct_item,
-            install_direct_record,
-        )
-        .with_write_acquisition_certification()
+        BorrowedInjectiveLockCommitCapability::new(RecordDirectOperations)
+            .with_write_acquisition_certification()
     }
 };
 
@@ -9636,11 +9940,13 @@ static RECORD_DIRECT_COMMIT: DirectCommitCapability<TableAdapter> = {
     // ordinary mode, pointer-shape, registry-state, and OCC acquisition checks
     // before caching a record. No callback-visible state changes this map.
     unsafe { DirectCommitCapability::borrowed_injective_token_lock(&RECORD_DIRECT_INJECTIVE_LOCKS) }
-        .with_drop_only_committed_finish()
+        .with_drop_only_committed_cleanup()
 };
 
 struct RecordObservation {
     version: OccVersion,
+    // Ordering policy is fixed at table creation, including terminal reads.
+    record_local: bool,
     // Committed snapshots live only for the operation that reloads them.
     // These two bits describe the first version-sandwiched state and suffice
     // for repeated presence-only access and embedded shared-slot cleanup.
@@ -9661,7 +9967,10 @@ enum TableObservation {
 impl OpacityToken for TableObservation {
     fn observation_order(&self) -> ObservationOrder {
         match self {
-            Self::Record(observation) => ObservationOrder::Ordered(observation.version),
+            Self::Record(observation) if !observation.record_local => {
+                ObservationOrder::Ordered(observation.version)
+            }
+            Self::Record(_) => ObservationOrder::Unordered,
             // Physical publication attempts are independent of the runtime's
             // OCC commit clock and require conservative full revalidation.
             Self::Directory(_) => ObservationOrder::Unordered,
@@ -9671,6 +9980,14 @@ impl OpacityToken for TableObservation {
 
 enum TableIntent {
     Record { replacement: RecordState },
+    // Replay alone pays for source metadata ownership. Ordinary local and
+    // distributed intents keep the existing compact inline representation.
+    Replay(Box<ReplayIntent>),
+}
+
+struct ReplayIntent {
+    replacement: RecordState,
+    source: DistributedTimeTerm,
 }
 
 impl TableIntent {
@@ -9678,16 +9995,19 @@ impl TableIntent {
     fn record_state(&self) -> &RecordState {
         match self {
             Self::Record { replacement, .. } => replacement,
+            Self::Replay(replay) => &replay.replacement,
         }
     }
 
     #[inline(always)]
     fn replace_record_state(&mut self, replacement: RecordState) {
+        *self = Self::Record { replacement };
+    }
+
+    fn source(&self) -> Option<DistributedTimeTerm> {
         match self {
-            Self::Record {
-                replacement: current,
-                ..
-            } => *current = replacement,
+            Self::Record { .. } => None,
+            Self::Replay(replay) => Some(replay.source),
         }
     }
 }
@@ -9730,6 +10050,7 @@ fn validate_directory_preflight_free_read(
     }
 }
 
+#[inline(always)]
 fn prepare_direct_item(
     adapter: &TableAdapter,
     key: &TableKey,
@@ -9776,7 +10097,7 @@ fn prepare_direct_item(
     };
     match item.intent() {
         None => Ok(None),
-        Some(TableIntent::Record { .. }) => {
+        Some(_) => {
             let access = adapter
                 .table
                 .resolve_directory_access(*record_id)
@@ -9822,7 +10143,6 @@ fn validate_direct_item(
     };
     if adapter.table.record_token_mode != RecordTokenMode::DirectRecordPointer
         || *item.local() != AdapterRole::Record
-        || !matches!(item.intent(), None | Some(TableIntent::Record { .. }))
     {
         return Err(adapter.type_mismatch(AdapterPhase::Validation).into());
     }
@@ -9867,6 +10187,7 @@ fn validate_direct_item(
     }
 }
 
+#[inline(always)]
 fn install_direct_record(
     adapter: &TableAdapter,
     key: &TableKey,
@@ -9879,14 +10200,11 @@ fn install_direct_record(
     };
     if adapter.table.record_token_mode != RecordTokenMode::DirectRecordPointer
         || *item.local_mut() != AdapterRole::Record
-        || !matches!(item.intent(), TableIntent::Record { .. })
         || !std::ptr::eq(lock.target(), adapter.table.as_ref())
     {
         adapter.panic_type_mismatch("direct install item");
     }
-    let commit_id = cx
-        .occ_commit_id()
-        .expect("sto-masstree direct record write has no OCC commit ID");
+    let commit_id = cx.occ_commit_id();
     let owner = cx.owner();
     let guard = lock.guard_mut();
     let publication_access = guard
@@ -9896,7 +10214,9 @@ fn install_direct_record(
     if !guard.is_held()
         || !guard.is_for(*record_id, &record.version)
         || guard.owner() != owner
-        || commit_id.to_version() <= guard.before()
+        || !adapter
+            .table
+            .admits_commit_version(guard.before(), commit_id)
     {
         panic!("sto-masstree direct install received the wrong version guard");
     }
@@ -9908,6 +10228,14 @@ fn install_direct_record(
         _ => adapter.panic_type_mismatch("direct install observation"),
     };
     let replacement = item.intent().record_state();
+    if adapter.table.registry.config.distributed_history
+        && publish_distributed_if_needed(
+            publication_access, adapter.table.as_ref(), replacement,
+            item.intent().source().or(cx.distributed_time_term()), owner, commit_id,
+        )
+    {
+        return;
+    }
     record
         .state
         .begin_publication(adapter.table.as_ref(), publication_access.stable)
@@ -9923,13 +10251,13 @@ impl TableAdapter {
     #[inline(always)]
     fn require_physical_lock<L: TransactionLock>(
         &self,
-        cx: &mut PreflightContext<'_>,
+        cx: &mut LockContext<'_>,
         request: LockRequest<L>,
     ) -> Result<ErasedLockUse, PrepareError> {
         let lock_use = if self.table.registry.config.unique_lock_requests {
-            cx.require_unique_lock(request)?
+            cx.try_unique_lock(request)?
         } else {
-            cx.require_lock(request)?
+            cx.try_lock(request)?
         };
         Ok(lock_use.erase())
     }
@@ -9991,7 +10319,7 @@ impl TableAdapter {
     fn prepare_access(
         &self,
         record_id: RecordId,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
     ) -> Result<Option<RecordState>, AccessError> {
         self.prepare_access_inner(record_id, None, entry)
     }
@@ -10000,7 +10328,7 @@ impl TableAdapter {
     fn prepare_resolved_access(
         &self,
         access: RecordAccess<'_>,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
     ) -> Result<Option<RecordState>, AccessError> {
         self.prepare_access_inner(access.record_id, Some(access), entry)
     }
@@ -10009,7 +10337,7 @@ impl TableAdapter {
     fn visit_access_bytes<R>(
         &self,
         record_id: RecordId,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
         visit: impl for<'value> FnOnce(Option<&'value [u8]>) -> R,
     ) -> Result<R, AccessError> {
         self.visit_access_bytes_inner(record_id, None, entry, visit)
@@ -10019,7 +10347,7 @@ impl TableAdapter {
     fn visit_resolved_access_bytes<R>(
         &self,
         access: RecordAccess<'_>,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
         visit: impl for<'value> FnOnce(Option<&'value [u8]>) -> R,
     ) -> Result<R, AccessError> {
         self.visit_access_bytes_inner(access.record_id, Some(access), entry, visit)
@@ -10052,7 +10380,7 @@ impl TableAdapter {
     fn copy_resolved_access(
         &self,
         access: RecordAccess<'_>,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
         output: &mut [u8],
     ) -> Result<ValueCopyOutcome, AccessError> {
         self.copy_access_inner(access.record_id, Some(access), entry, output)
@@ -10063,7 +10391,7 @@ impl TableAdapter {
         &self,
         record_id: RecordId,
         access: Option<RecordAccess<'_>>,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
         output: &mut [u8],
     ) -> Result<ValueCopyOutcome, AccessError> {
         self.ensure_role(AdapterRole::Record)?;
@@ -10091,7 +10419,7 @@ impl TableAdapter {
                     output,
                 ));
             }
-            Some(TableIntent::Record { .. }) => {
+            Some(_) => {
                 self.table.poison();
                 return Err(table_fault("staged record has no read observation"));
             }
@@ -10116,8 +10444,9 @@ impl TableAdapter {
 
         if usize::from(inline_length) <= INLINE_VALUE_CAPACITY {
             if prior_version.is_none() {
-                entry.record_read(TableObservation::Record(RecordObservation {
+                entry.add_read(TableObservation::Record(RecordObservation {
                     version: observed,
+                    record_local: self.table.registry.config.record_local_versions,
                     original_live: true,
                     old_was_shared: false,
                 }))?;
@@ -10140,8 +10469,9 @@ impl TableAdapter {
                 );
             };
             if prior_version.is_none() {
-                entry.record_read(TableObservation::Record(RecordObservation {
+                entry.add_read(TableObservation::Record(RecordObservation {
                     version: observed,
+                    record_local: self.table.registry.config.record_local_versions,
                     original_live: true,
                     old_was_shared: false,
                 }))?;
@@ -10157,12 +10487,13 @@ impl TableAdapter {
         }
 
         match descriptor {
-            RECORD_STATE_TOMBSTONE => {
+            RECORD_STATE_TOMBSTONE | RECORD_STATE_DISTRIBUTED_TOMBSTONE => {
                 if prior_version.is_none() {
-                    entry.record_read(TableObservation::Record(RecordObservation {
+                    entry.add_read(TableObservation::Record(RecordObservation {
                         version: observed,
+                        record_local: self.table.registry.config.record_local_versions,
                         original_live: false,
-                        old_was_shared: false,
+                        old_was_shared: descriptor == RECORD_STATE_DISTRIBUTED_TOMBSTONE,
                     }))?;
                 }
                 if !record.version.validate(observed) {
@@ -10172,8 +10503,9 @@ impl TableAdapter {
             }
             RECORD_STATE_SHARED => {
                 if prior_version.is_none() {
-                    entry.record_read(TableObservation::Record(RecordObservation {
+                    entry.add_read(TableObservation::Record(RecordObservation {
                         version: observed,
+                        record_local: self.table.registry.config.record_local_versions,
                         original_live: true,
                         old_was_shared: true,
                     }))?;
@@ -10231,7 +10563,7 @@ impl TableAdapter {
         &self,
         record_id: RecordId,
         access: Option<RecordAccess<'_>>,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
         visit: impl for<'value> FnOnce(Option<&'value [u8]>) -> R,
     ) -> Result<R, AccessError> {
         self.ensure_role(AdapterRole::Record)?;
@@ -10256,7 +10588,7 @@ impl TableAdapter {
             Some(intent) if prior_version.is_some() => {
                 return Ok(visit(intent.record_state().value().map(Value::as_ref)));
             }
-            Some(TableIntent::Record { .. }) => {
+            Some(_) => {
                 self.table.poison();
                 return Err(table_fault("staged record has no read observation"));
             }
@@ -10277,8 +10609,9 @@ impl TableAdapter {
         };
         let lease = self.snapshot_state_lease(access, observed)?;
         if prior_version.is_none() {
-            entry.record_read(TableObservation::Record(RecordObservation {
+            entry.add_read(TableObservation::Record(RecordObservation {
                 version: observed,
+                record_local: self.table.registry.config.record_local_versions,
                 original_live: lease.is_live(),
                 old_was_shared: lease.uses_shared_storage(),
             }))?;
@@ -10291,7 +10624,7 @@ impl TableAdapter {
         &self,
         record_id: RecordId,
         access: Option<RecordAccess<'_>>,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
     ) -> Result<Option<RecordState>, AccessError> {
         self.ensure_role(AdapterRole::Record)?;
         self.table.ensure_healthy()?;
@@ -10312,8 +10645,8 @@ impl TableAdapter {
         };
 
         match entry.intent() {
-            Some(TableIntent::Record { .. }) if prior_version.is_some() => return Ok(None),
-            Some(TableIntent::Record { .. }) => {
+            Some(_) if prior_version.is_some() => return Ok(None),
+            Some(_) => {
                 self.table.poison();
                 return Err(table_fault("staged record has no read observation"));
             }
@@ -10334,8 +10667,9 @@ impl TableAdapter {
         };
         let (snapshot, old_was_shared) = self.snapshot_state(access, observed)?;
         if prior_version.is_none() {
-            entry.record_read(TableObservation::Record(RecordObservation {
+            entry.add_read(TableObservation::Record(RecordObservation {
                 version: observed,
+                record_local: self.table.registry.config.record_local_versions,
                 original_live: snapshot.is_live(),
                 old_was_shared,
             }))?;
@@ -10352,7 +10686,7 @@ impl TableAdapter {
     fn prepare_resolved_presence_access(
         &self,
         access: RecordAccess<'_>,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
     ) -> Result<bool, AccessError> {
         self.prepare_presence_access_inner(access.record_id, Some(access), entry)
     }
@@ -10362,7 +10696,7 @@ impl TableAdapter {
         &self,
         record_id: RecordId,
         access: Option<RecordAccess<'_>>,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
     ) -> Result<bool, AccessError> {
         self.ensure_role(AdapterRole::Record)?;
         self.table.ensure_healthy()?;
@@ -10384,7 +10718,7 @@ impl TableAdapter {
 
         match entry.intent() {
             Some(intent) if prior_live.is_some() => return Ok(intent.record_state().is_live()),
-            Some(TableIntent::Record { .. }) => {
+            Some(_) => {
                 self.table.poison();
                 return Err(table_fault("staged record has no read observation"));
             }
@@ -10404,8 +10738,9 @@ impl TableAdapter {
             .observe()
             .map_err(|_| AccessError::from(Conflict::LockBusy))?;
         let metadata = self.snapshot_metadata(access, observed)?;
-        entry.record_read(TableObservation::Record(RecordObservation {
+        entry.add_read(TableObservation::Record(RecordObservation {
             version: observed,
+            record_local: self.table.registry.config.record_local_versions,
             original_live: metadata.live,
             old_was_shared: metadata.shared,
         }))?;
@@ -10560,13 +10895,21 @@ impl DirectBorrowedLockTarget<TableShared> for TableAdapter {
     }
 }
 
-impl TransactionalResource for TableAdapter {
+impl TObject for TableAdapter {
     type Key = TableKey;
     type Local = AdapterRole;
     type Observation = TableObservation;
     type Predicate = NoPredicate;
     type Intent = TableIntent;
     type Prepared = TablePrepared;
+
+    fn commit_version_requirement(&self) -> CommitVersionRequirement {
+        if self.table.registry.config.record_local_versions {
+            CommitVersionRequirement::AdapterLocal
+        } else {
+            CommitVersionRequirement::Ordered
+        }
+    }
 
     #[inline(always)]
     fn new_local(&self, key: &Self::Key) -> Result<Self::Local, sto_core::ItemInitError> {
@@ -10594,11 +10937,11 @@ impl TransactionalResource for TableAdapter {
             .then_some(&RECORD_DIRECT_COMMIT)
     }
 
-    fn preflight(
+    fn lock(
         &self,
         key: &Self::Key,
         item: PreflightItem<'_, Self>,
-        cx: &mut PreflightContext<'_>,
+        cx: &mut LockContext<'_>,
     ) -> Result<Self::Prepared, PrepareError> {
         match (self.role, key) {
             (AdapterRole::Record, TableKey::Record(record_id)) => {
@@ -10651,7 +10994,7 @@ impl TransactionalResource for TableAdapter {
         match *predicate {}
     }
 
-    fn upgrade_predicate(
+    fn check_predicate(
         &self,
         _key: &Self::Key,
         predicate: &Self::Predicate,
@@ -10661,7 +11004,7 @@ impl TransactionalResource for TableAdapter {
         match *predicate {}
     }
 
-    fn validate_read(
+    fn check(
         &self,
         key: &Self::Key,
         observation: &Self::Observation,
@@ -10708,13 +11051,13 @@ impl TransactionalResource for TableAdapter {
         }
     }
 
-    fn finish(
+    fn cleanup(
         &self,
         key: &Self::Key,
-        mut item: FinishItem<'_, Self>,
+        mut item: CleanupItem<'_, Self>,
         _prepared: Option<&mut Self::Prepared>,
-        _disposition: FinishDisposition,
-        _cx: &mut FinishContext<'_>,
+        _disposition: CleanupDisposition,
+        _cx: &mut CleanupContext<'_>,
     ) {
         let local_matches = match (self.role, key) {
             (AdapterRole::Record, TableKey::Record(_)) => *item.local_mut() == AdapterRole::Record,
@@ -10726,12 +11069,8 @@ impl TransactionalResource for TableAdapter {
             }
             _ => false,
         };
-        let intent_matches = item.take_remaining_intent().is_none_or(|intent| {
-            matches!(
-                (self.role, intent),
-                (AdapterRole::Record, TableIntent::Record { .. })
-            )
-        });
+        let intent_matches = item.take_remaining_intent()
+            .is_none_or(|_| self.role == AdapterRole::Record);
         if !(local_matches && intent_matches) {
             self.table.poison();
         }
@@ -10743,7 +11082,7 @@ impl TableAdapter {
         &self,
         record_id: RecordId,
         item: PreflightItem<'_, Self>,
-        cx: &mut PreflightContext<'_>,
+        cx: &mut LockContext<'_>,
     ) -> Result<TablePrepared, PrepareError> {
         match item.observation() {
             ObservationRef::Read(TableObservation::Record(_))
@@ -10765,10 +11104,7 @@ impl TableAdapter {
         }
         // Match C++ MassTrans: recording a write makes this a writer even if
         // its bytes equal the observed value or later return to those bytes.
-        let writes_record = match item.intent() {
-            Some(TableIntent::Record { .. }) => true,
-            None => false,
-        };
+        let writes_record = item.intent().is_some();
         if writes_record {
             let lock_identity = LockIdentity::new(
                 self.table.runtime_id,
@@ -10828,19 +11164,16 @@ impl TableAdapter {
         prepared: &mut TablePrepared,
         cx: &mut InstallContext<'_>,
     ) {
-        if *item.local_mut() != AdapterRole::Record
-            || !matches!(item.intent(), TableIntent::Record { .. })
-        {
+        if *item.local_mut() != AdapterRole::Record {
             self.panic_type_mismatch("record install item");
         }
         let lock_use = prepared
             .lock_use
             .as_ref()
             .expect("sto-masstree record write has no planned lock");
-        let commit_id = cx
-            .occ_commit_id()
-            .expect("sto-masstree record write has no OCC commit ID");
+        let commit_id = cx.occ_commit_id();
         let owner = cx.owner();
+        let distributed_time_term = cx.distributed_time_term();
         let publication_access = match self.table.record_token_mode {
             RecordTokenMode::RegistryId => {
                 let (lock_segment, guard) = cx
@@ -10855,7 +11188,7 @@ impl TableAdapter {
                 if !guard.is_held()
                     || !guard.is_for(record_id, &record.version)
                     || guard.owner() != owner
-                    || commit_id.to_version() <= guard.before()
+                    || !self.table.admits_commit_version(guard.before(), commit_id)
                 {
                     panic!("sto-masstree record install received the wrong version guard");
                 }
@@ -10880,7 +11213,7 @@ impl TableAdapter {
                 if !guard.is_held()
                     || !guard.is_for(record_id, &record.version)
                     || guard.owner() != owner
-                    || commit_id.to_version() <= guard.before()
+                    || !self.table.admits_commit_version(guard.before(), commit_id)
                 {
                     panic!("sto-masstree direct install received the wrong version guard");
                 }
@@ -10902,6 +11235,14 @@ impl TableAdapter {
         // keeps any operation-local old snapshot alive across replacement;
         // the observation needs only the old storage-class bit for cleanup.
         let replacement = item.intent().record_state();
+        if self.table.registry.config.distributed_history
+            && publish_distributed_if_needed(
+                publication_access, self.table.as_ref(), replacement,
+                item.intent().source().or(distributed_time_term), owner, commit_id,
+            )
+        {
+            return;
+        }
         record
             .state
             .begin_publication(self.table.as_ref(), publication_access.stable)
@@ -10919,7 +11260,7 @@ impl TableAdapter {
 #[inline(always)]
 fn visit_fixed_value<const CAPTURE_VALUE: bool>(
     adapter: &TableAdapter,
-    entry: &mut Entry<'_, TableAdapter>,
+    entry: &mut TransProxy<'_, TableAdapter>,
     access: RecordAccess<'_>,
     index: usize,
     visit: &mut impl for<'value> FnMut(usize, Option<&'value Value>),
@@ -10937,7 +11278,7 @@ fn visit_fixed_value<const CAPTURE_VALUE: bool>(
 #[inline(always)]
 fn visit_fixed_bytes_value(
     adapter: &TableAdapter,
-    entry: &mut Entry<'_, TableAdapter>,
+    entry: &mut TransProxy<'_, TableAdapter>,
     access: RecordAccess<'_>,
     index: usize,
     resolved: ResolvedRecord,
@@ -10949,7 +11290,7 @@ fn visit_fixed_bytes_value(
 #[inline(always)]
 fn apply_fixed_mutation<const CAPTURE_VALUE: bool>(
     adapter: &TableAdapter,
-    entry: &mut Entry<'_, TableAdapter>,
+    entry: &mut TransProxy<'_, TableAdapter>,
     access: RecordAccess<'_>,
     index: usize,
     resolved: ResolvedRecord,
@@ -10983,7 +11324,7 @@ fn apply_fixed_mutation<const CAPTURE_VALUE: bool>(
 
 #[inline(always)]
 fn current_state<'state>(
-    entry: &'state Entry<'_, TableAdapter>,
+    entry: &'state TransProxy<'_, TableAdapter>,
     loaded: Option<&'state RecordState>,
 ) -> Result<&'state RecordState, AccessError> {
     if *entry.local() != AdapterRole::Record {
@@ -10999,7 +11340,7 @@ fn current_state<'state>(
 
 #[inline(always)]
 fn current_state_snapshot<'state>(
-    entry: &'state Entry<'_, TableAdapter>,
+    entry: &'state TransProxy<'_, TableAdapter>,
     loaded: Option<&'state RecordState>,
 ) -> Result<&'state RecordState, AccessError> {
     current_state(entry, loaded)
@@ -11009,7 +11350,7 @@ fn current_state_snapshot<'state>(
 fn stage_record_state(
     _adapter: &TableAdapter,
     _access: RecordAccess<'_>,
-    entry: &mut Entry<'_, TableAdapter>,
+    entry: &mut TransProxy<'_, TableAdapter>,
     replacement: RecordState,
 ) -> Result<(), AccessError> {
     if *entry.local() != AdapterRole::Record {
@@ -11022,13 +11363,13 @@ fn stage_record_state(
         return Ok(());
     }
 
-    entry.stage(TableIntent::Record { replacement })
+    entry.add_write(TableIntent::Record { replacement })
 }
 
 impl TableAdapter {
     fn observe_directory_generation(
         &self,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
     ) -> Result<u64, AccessError> {
         self.ensure_role(AdapterRole::Directory)?;
         if *entry.local() != AdapterRole::Directory {
@@ -11048,7 +11389,7 @@ impl TableAdapter {
             }
         }
         let observed = self.table.directory_generation.load(Ordering::Acquire);
-        entry.record_read(TableObservation::Directory(DirectoryObservation {
+        entry.add_read(TableObservation::Directory(DirectoryObservation {
             generation: observed,
         }))?;
         Ok(observed)
@@ -11057,7 +11398,7 @@ impl TableAdapter {
     /// Account for one publication the observing transaction itself made.
     fn advance_own_directory_observation(
         &self,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
     ) -> Result<(), AccessError> {
         if !self.role.is_generation() || *entry.local() != self.role {
             return Err(self.type_mismatch(AdapterPhase::Execute).into());
@@ -11080,7 +11421,7 @@ impl TableAdapter {
 
     fn observe_trusted_scan_generation(
         &self,
-        entry: &mut Entry<'_, Self>,
+        entry: &mut TransProxy<'_, Self>,
     ) -> Result<DirectoryObservation, AccessError> {
         self.ensure_role(AdapterRole::Scan)?;
         if *entry.local() != AdapterRole::Scan {
@@ -11107,7 +11448,7 @@ impl TableAdapter {
         let observation = DirectoryObservation {
             generation: self.table.scan_generation.load(Ordering::Acquire),
         };
-        entry.record_read(TableObservation::Directory(observation))?;
+        entry.add_read(TableObservation::Directory(observation))?;
         Ok(observation)
     }
 }
@@ -12769,148 +13110,6 @@ mod tests {
     }
 
     #[test]
-    #[cfg(target_pointer_width = "64")]
-    fn eager_registry_entries_preserve_the_measured_slot_stride() {
-        let registry = isolated_registry(
-            TableConfig::new()
-                .with_max_retained_records(1)
-                .with_max_retained_key_bytes(1)
-                .with_max_consumed_record_ids(2),
-        );
-        let segment = registry.ensure_segment(0).unwrap();
-        let slots = segment.arena.standard_slots();
-        assert_eq!(slots.len(), REGISTRY_SEGMENT_SLOTS);
-        assert_eq!(slots.as_ptr().addr() % 64, 0);
-        assert_eq!(
-            std::mem::size_of::<RegistryEntry>(),
-            REGISTRY_ENTRY_SLOT_BYTES
-        );
-        assert_eq!(
-            (&slots[1] as *const RegistryEntry as usize)
-                - (&slots[0] as *const RegistryEntry as usize),
-            REGISTRY_ENTRY_SLOT_BYTES
-        );
-        assert!(slots
-            .iter()
-            .all(|entry| entry.state.load(Ordering::Acquire) == SLOT_UNALLOCATED));
-    }
-
-    #[test]
-    #[cfg(target_pointer_width = "64")]
-    fn bounded_registry_layout_is_extended_without_changing_the_standard_slot() {
-        assert_eq!(std::mem::size_of::<RegistryEntry>(), 64);
-        assert_eq!(std::mem::align_of::<RegistryEntry>(), 64);
-        assert_eq!(std::mem::size_of::<StableAtomicValueCell>(), 128);
-        assert_eq!(std::mem::size_of::<StableRegistryEntry>(), 192);
-        assert_eq!(std::mem::align_of::<StableRegistryEntry>(), 64);
-        assert_eq!(std::mem::offset_of!(StableRegistryEntry, base), 0);
-        assert_eq!(std::mem::offset_of!(StableRegistryEntry, cell), 64);
-
-        const SLOTS: usize = 33;
-        let standard = eager_registry_accounted_bytes(SLOTS, false).unwrap();
-        let stable = eager_registry_accounted_bytes(SLOTS, true).unwrap();
-        assert_eq!(stable - standard, SLOTS * 128);
-
-        let registry = isolated_registry(
-            TableConfig::new()
-                .with_max_retained_records(1)
-                .with_max_retained_key_bytes(1)
-                .with_max_consumed_record_ids(1)
-                .with_bounded_atomic_values(true),
-        );
-        assert!(registry.ensure_segment(0).unwrap().arena.is_stable());
-    }
-
-    #[test]
-    #[cfg(target_pointer_width = "64")]
-    fn bounded_direct_tokens_name_concrete_extended_entries_at_their_real_stride() {
-        let registry = isolated_registry(
-            TableConfig::new()
-                .with_max_retained_records(2)
-                .with_max_retained_key_bytes(2)
-                .with_max_consumed_record_ids(2)
-                .with_bounded_atomic_values(true),
-        );
-        let (_first, first_token) = registry
-            .reserve_candidate_with_mode(b"a", RecordTokenMode::DirectRecordPointer)
-            .unwrap();
-        let (_second, second_token) = registry
-            .reserve_candidate_with_mode(b"b", RecordTokenMode::DirectRecordPointer)
-            .unwrap();
-        assert_eq!(
-            second_token.get().checked_sub(first_token.get()).unwrap(),
-            std::mem::size_of::<StableRegistryEntry>() as u64
-        );
-
-        let first = registry.resolve_direct_access(first_token).unwrap();
-        let second = registry.resolve_direct_access(second_token).unwrap();
-        assert!(first.stable.is_some());
-        assert!(second.stable.is_some());
-        assert_eq!(first.element_address as u64, first_token.get());
-        assert_eq!(second.element_address as u64, second_token.get());
-        assert_eq!(direct_record::encode(first).unwrap(), first_token);
-
-        let RegistryStorage::LazySegmented(storage) = &registry.storage else {
-            panic!("the test uses the default segmented registry");
-        };
-        let segment = storage.segment(0).unwrap();
-        let RegistryArenaStorage::Stable160(slots) = &segment.arena.storage.slots else {
-            panic!("bounded tables must allocate extended entries");
-        };
-        assert!(std::ptr::eq(first.entry, &slots[0].base));
-        assert!(std::ptr::eq(first.stable.unwrap(), &slots[0].cell));
-        assert!(std::ptr::eq(second.entry, &slots[1].base));
-        assert!(std::ptr::eq(second.stable.unwrap(), &slots[1].cell));
-    }
-
-    #[test]
-    #[cfg(target_pointer_width = "64")]
-    fn contiguous_registry_allocates_one_exact_stable_arena_and_all_lock_targets() {
-        const SLOTS: usize = 33;
-        let required_bytes = eager_registry_accounted_bytes(SLOTS, false).unwrap();
-        let registry = isolated_registry(eager_registry_config(SLOTS));
-        let RegistryStorage::EagerContiguous(storage) = &registry.storage else {
-            panic!("explicit eager configuration must not fall back to segmented storage");
-        };
-
-        let slots = storage.arena.standard_slots();
-        assert_eq!(slots.len(), SLOTS);
-        assert_eq!(slots.as_ptr().addr() % 64, 0);
-        assert_eq!(
-            std::mem::size_of::<RegistryEntry>(),
-            REGISTRY_ENTRY_SLOT_BYTES
-        );
-        assert_eq!(
-            (&slots[1] as *const RegistryEntry as usize)
-                - (&slots[0] as *const RegistryEntry as usize),
-            REGISTRY_ENTRY_SLOT_BYTES
-        );
-        assert_eq!(
-            storage.lock_segments.len(),
-            record_lock_segment_count(SLOTS).unwrap()
-        );
-        assert_eq!(
-            eager_registry_accounted_bytes(slots.len(), false).unwrap(),
-            required_bytes
-        );
-        #[cfg(not(miri))]
-        assert_eq!(
-            eager_registry_accounted_bytes(100_000, false).unwrap(),
-            7_000_056
-        );
-        #[cfg(not(miri))]
-        assert!(eager_registry_accounted_bytes(100_000, false).unwrap() <= 8 * 1024 * 1024);
-        assert!(slots
-            .iter()
-            .all(|entry| entry.state.load(Ordering::Acquire) == SLOT_UNALLOCATED));
-        for (index, target) in storage.lock_segments.iter().enumerate() {
-            assert!(storage.arena.shares_allocation_with(&target.arena));
-            assert_eq!(target.logical_base, index * RECORD_LOCK_SEGMENT_SLOTS);
-            assert_eq!(target.physical_base, index * RECORD_LOCK_SEGMENT_SLOTS);
-        }
-    }
-
-    #[test]
     fn contiguous_registry_resolves_direct_slots_and_preserves_terminal_states() {
         let registry = isolated_registry(eager_registry_config(3));
         let first_id = RecordId::new(1).unwrap();
@@ -13802,36 +14001,6 @@ mod tests {
     }
 
     #[test]
-    fn bounded_tables_use_private_exact_staging_only_inside_the_cell_range() {
-        let inline = Value::from_staging_slice(&[0x11; INLINE_VALUE_CAPACITY], true);
-        assert!(matches!(inline.repr, ValueRepr::Inline { .. }));
-
-        for length in [INLINE_VALUE_CAPACITY + 1, STABLE_ATOMIC_VALUE_CAPACITY] {
-            let bytes = vec![length as u8; length];
-            let staged = Value::from_staging_slice(&bytes, true);
-            let cloned = staged.clone();
-            let (ValueRepr::Staged(staged_bytes), ValueRepr::Staged(cloned_bytes)) =
-                (&staged.repr, &cloned.repr)
-            else {
-                panic!("an opted-in bounded write must use private staging");
-            };
-            assert_eq!(staged_bytes.len(), length);
-            assert_eq!(staged_bytes.as_ref(), bytes);
-            assert_ne!(staged_bytes.as_ptr(), cloned_bytes.as_ptr());
-            assert_eq!(cloned_bytes.as_ref(), bytes);
-        }
-
-        assert!(matches!(
-            Value::from_staging_slice(&[0x22; INLINE_VALUE_CAPACITY + 1], false).repr,
-            ValueRepr::Shared(_)
-        ));
-        assert!(matches!(
-            Value::from_staging_slice(&[0x33; STABLE_ATOMIC_VALUE_CAPACITY + 1], true).repr,
-            ValueRepr::Shared(_)
-        ));
-    }
-
-    #[test]
     fn borrowed_staging_is_transaction_local_and_clones_into_owned_storage() {
         let runtime = Runtime::new(RuntimeConfig::default()).unwrap();
         let mut worker = runtime.attach().unwrap();
@@ -13853,7 +14022,6 @@ mod tests {
         }
         let oversized = vec![0x91; STABLE_ATOMIC_VALUE_CAPACITY + 1];
         let fallback = Value::from(table.borrowed_staging_input(&oversized));
-        assert!(matches!(fallback.repr, ValueRepr::Shared(_)));
         assert_eq!(fallback.as_ref(), oversized);
 
         let key = b"bounded/borrowed-staging";
@@ -13866,7 +14034,7 @@ mod tests {
             .put_presence_inner(&mut write, None, key, table.borrowed_staging_input(&source),)
             .unwrap());
         let record_id = table.shared().lookup(None, key).unwrap().unwrap();
-        write
+        let owned_clone = write
             .with_item(
                 &table.record_resource,
                 TableKey::Record(record_id),
@@ -13883,16 +14051,14 @@ mod tests {
                         ValueRepr::BorrowedStaged(bytes)
                             if bytes.as_ptr() == source.as_ptr() && bytes.len() == 159
                     ));
-                    let cloned = staged.clone();
-                    assert_eq!(cloned.as_ref(), expected);
-                    assert!(matches!(cloned.repr, ValueRepr::Shared(_)));
-                    Ok(())
+                    Ok(staged.clone())
                 },
             )
             .unwrap();
         committed(write.commit());
 
         source.fill(0xee);
+        assert_eq!(owned_clone.as_ref(), expected);
         let mut verify = worker.begin().unwrap();
         assert_eq!(
             table.get_inner(&mut verify, None, key).unwrap().as_deref(),
@@ -14803,6 +14969,7 @@ mod tests {
                         assert!(length > SHARED_INLINE_VALUE_CAPACITY);
                         assert_eq!(heap, &bytes);
                     }
+                    SharedValue::Distributed(_) => panic!("plain value constructor created history"),
                 }
             }
         }
@@ -14961,7 +15128,10 @@ mod tests {
 
     #[test]
     fn bounded_copy_preserves_suffix_word_boundaries_and_output_remainder() {
-        for length in [39, 46, 47, 158, STABLE_ATOMIC_VALUE_CAPACITY] {
+        // Every suffix remainder, including one shorter than a full word,
+        // must survive publication; reading the preceding bytes must not
+        // change the reconstructed value or the caller's output remainder.
+        for length in (39..=54).chain([158, STABLE_ATOMIC_VALUE_CAPACITY]) {
             let state = CommittedRecordState::tombstone();
             let cell = StableAtomicValueCell::empty();
             let value = (0..length)
@@ -17771,18 +17941,10 @@ mod tests {
         let (second_record, second_segment) = registry.resolve_with_segment(second_id).unwrap();
         let (next_lock_record, next_lock_segment) =
             registry.resolve_with_segment(next_lock_segment_id).unwrap();
-        let (next_registry_record, next_registry_segment) = registry
-            .resolve_with_segment(next_registry_segment_id)
-            .unwrap();
+        let next_registry_record = registry.resolve(next_registry_segment_id).unwrap();
 
         assert!(Arc::ptr_eq(first_segment, second_segment));
         assert!(!Arc::ptr_eq(first_segment, next_lock_segment));
-        assert!(first_segment
-            .arena
-            .shares_allocation_with(&next_lock_segment.arena));
-        assert!(!first_segment
-            .arena
-            .shares_allocation_with(&next_registry_segment.arena));
         assert!(!std::ptr::eq(first_record, second_record));
         assert!(!std::ptr::eq(first_record, next_lock_record));
         assert!(!std::ptr::eq(first_record, next_registry_record));

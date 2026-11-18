@@ -119,8 +119,13 @@ void modeMonitorRun(abstract_db *db, int thread_nums, bench_runner * R) {
     if (BenchmarkConfig::getInstance().getIsReplicated()) {
         Warning("######--------------###### send endLlogs #####---------------######");
         std::string endLogInd = "";
-        for (int i = 0; i < BenchmarkConfig::getInstance().getNthreads(); i++)
-            add_log_to_nc((char *)endLogInd.c_str(), 0, i);
+        // @unsafe - Promotion retains the configured shard's wire partitions.
+        const auto& cfg = BenchmarkConfig::getInstance();
+        for (int i = 0; i < cfg.getNthreads(); i++) {
+            if (!add_log_to_nc(endLogInd.c_str(), 0,
+                    cfg.getReplicationPartition(cfg.getShardIndex(), i)))
+                Panic("replication rejected required promoted end marker");
+        }
     }
 
     lk.unlock();
@@ -136,6 +141,6 @@ void modeMonitor(abstract_db *db, int thread_nums, bench_runner *R) {
     mimic_thread.detach();  // thread detach
 }
 
-abstract_db *ThreadDBWrapperMbta::replay_thread_wrapper_db = new mbta_wrapper; // include just once!
+abstract_db *ThreadDBWrapperMbta::replay_thread_wrapper_db = nullptr; // selected by init_env
 
 #endif // SILO_STO_COMMON_2_H
