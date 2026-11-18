@@ -1,0 +1,43 @@
+{
+  "kind": "read-only profile attribution, not an optimization result",
+  "binary_sha256": "e487077485d4de795266e5224265e468418e6513fb507b70a8445cb4d49a59b6",
+  "symbol": "engine_compare::run::closure::closure::closure::hee4946b43bbea348",
+  "symbol_start_hex": "0x55a60",
+  "source": "preserved record-local pre-format candidate",
+  "method": "perf script -G -F tid,period,ip,sym,symoff,dso; filter exact foreground TID and symbol; sum recorded cycle periods by symbol-relative sample IP",
+  "ranges": {
+    "prologue_and_key_value_setup": "[0x0, 0x66)",
+    "return_epilogue": "[0x818, 0x82d)",
+    "inlined_api_and_call_return_plumbing": "remaining sampled offsets of this symbol"
+  },
+  "caveats": [
+    "These whole-worker profiles include warmup and verification.",
+    "Cycle-sample IP has PMU skid; the groups are code-range attribution, not exact individual instruction latency.",
+    "The benchmark closure contains inlined cache and facade work, including returned transaction copies; it is not all workload generation.",
+    "Launch-to-after-snapshot wall time includes startup, warmup, verification, teardown, and the environment snapshot. That wall duration is not the throughput or PMU denominator."
+  ],
+  "profiles": {
+    "engine-w1": {
+      "tid": 333125,
+      "all_foreground_period": 33185402970,
+      "closure_period": 1733638295,
+      "prologue_and_key_value_setup_period": 48185212,
+      "return_epilogue_period": 656843826,
+      "inlined_api_and_call_return_plumbing_period": 1028609257
+    },
+    "cache-ack-w1": {
+      "tid": 333517,
+      "all_foreground_period": 11350724257,
+      "closure_period": 574661631,
+      "prologue_and_key_value_setup_period": 12206331,
+      "return_epilogue_period": 165398138,
+      "inlined_api_and_call_return_plumbing_period": 397057162
+    }
+  },
+  "direct_prefetch_pair_median_seconds": {
+    "w1_c_abi": {"launch_to_after_snapshot": 0.953286, "max_worker_interval": 0.227634},
+    "w1_sto": {"launch_to_after_snapshot": 1.104399, "max_worker_interval": 0.360459},
+    "w32_c_abi": {"launch_to_after_snapshot": 4.511530, "max_worker_interval": 0.423599},
+    "w32_sto": {"launch_to_after_snapshot": 6.417644, "max_worker_interval": 0.495202}
+  }
+}

@@ -1,0 +1,62 @@
+{
+  "command": [
+    "env",
+    "MAKO_CACHE_BENCH_WRITEBACK_CPU=32",
+    "MAKO_CACHE_BENCH_RECORD_CHECKSUM=crc32c",
+    "taskset",
+    "-c",
+    "0",
+    "/var/tmp/mako-engine-perf-20260912.iz63eX/mako-cache-bench-sto-final-production",
+    "__recover",
+    "mako",
+    "read",
+    "4",
+    "low",
+    "1",
+    "262144",
+    "65536",
+    "/var/tmp/mako-engine-perf-20260912.iz63eX/final-main-pairs/r1-read-tx4-low-w1-sto.587ncgxf/rocks",
+    "0"
+  ],
+  "completed": true,
+  "memory_samples": [
+    {
+      "VmHWM": 163840,
+      "VmRSS": 163840,
+      "VmSize": 446464,
+      "elapsed_seconds": 0.0010537798516452312
+    },
+    {
+      "VmHWM": 20971520,
+      "VmRSS": 20893696,
+      "VmSize": 91238400,
+      "elapsed_seconds": 0.051396224182099104
+    },
+    {
+      "VmHWM": 20971520,
+      "VmRSS": 20893696,
+      "VmSize": 91238400,
+      "elapsed_seconds": 0.10174034722149372
+    },
+    {
+      "VmHWM": 20971520,
+      "VmRSS": 20946944,
+      "VmSize": 91238400,
+      "elapsed_seconds": 0.15207649022340775
+    },
+    {
+      "VmHWM": 21385216,
+      "VmRSS": 21385216,
+      "VmSize": 94384128,
+      "elapsed_seconds": 0.2025035680271685
+    },
+    {
+      "VmHWM": 42487808,
+      "VmRSS": 42487808,
+      "VmSize": 142073856,
+      "elapsed_seconds": 0.2528645130805671
+    }
+  ],
+  "returncode": 0,
+  "wall_seconds": 0.30320754600688815
+}

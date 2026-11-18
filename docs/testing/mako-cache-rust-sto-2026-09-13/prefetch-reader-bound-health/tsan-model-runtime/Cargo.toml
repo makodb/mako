@@ -1,0 +1,10 @@
+[package]
+name = "mako-tsan-loom-diagnostic"
+version = "0.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+loom = "=0.7.2"
+

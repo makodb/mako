@@ -1,0 +1,50 @@
+
+running 1 test
+test tests::put_resolving_cold_lookup_once_and_hits_keep_current_occ_state ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 221 filtered out; finished in 1.75s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.18s
+     Running unittests src/lib.rs (/var/tmp/mako-private-resolved-miri.vR9DWr/target/miri/x86_64-unknown-linux-gnu/debug/build/sto-masstree/04f2008cc68a12b6/out/sto_masstree-04f2008cc68a12b6)
+warning: integer-to-pointer cast
+   --> sto-masstree/src/direct_record.rs:187:21
+    |
+187 |         let entry = ptr::with_exposed_provenance::<RegistryEntry>(address);
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ integer-to-pointer cast
+    |
+    = help: this program is using integer-to-pointer casts or (equivalently) `ptr::with_exposed_provenance`, which means that Miri might miss pointer bugs in this program
+    = help: see https://doc.rust-lang.org/nightly/std/ptr/fn.with_exposed_provenance.html for more details on that operation
+    = help: to ensure that Miri does not miss bugs in your program, use Strict Provenance APIs (https://doc.rust-lang.org/nightly/std/ptr/index.html#strict-provenance, https://crates.io/crates/sptr) instead
+    = help: you can then set `MIRIFLAGS=-Zmiri-strict-provenance` to ensure you are not relying on `with_exposed_provenance` semantics
+    = help: alternatively, `MIRIFLAGS=-Zmiri-permissive-provenance` disables this warning
+    = note: this is on thread `tests::put_reso`
+    = note: stack backtrace:
+            0: direct_record::resolve
+                at sto-masstree/src/direct_record.rs:187:21: 187:75
+            1: Registry::resolve_direct_access
+                at sto-masstree/src/lib.rs:7777:22: 7777:57
+            2: TableShared::resolve_directory_access
+                at sto-masstree/src/lib.rs:6572:53: 6572:99
+            3: Table::with_key_record_lookup::<std::option::Option<Value>, {closure@sto-masstree/src/lib.rs:3495:61: 3495:63}, {closure@sto-masstree/src/lib.rs:3582:63: 3582:83}>::{closure#1}
+                at sto-masstree/src/lib.rs:4550:30: 4550:72
+            4: sto_core::transaction::with_resolved_item_inner_validated::<TableAdapter, RecordAccess<'_>, std::option::Option<Value>, {closure@sto-masstree/src/lib.rs:4537:13: 4537:15}, {closure@sto-masstree/src/lib.rs:4547:13: 4547:15}, {closure@sto-masstree/src/lib.rs:3582:63: 3582:83}>
+                at sto-core/src/transaction.rs:1669:9: 1669:17
+            5: sto_core::Transaction::<'_>::with_resolved_item::<TableAdapter, RecordAccess<'_>, std::option::Option<Value>, {closure@sto-masstree/src/lib.rs:4537:13: 4537:15}, {closure@sto-masstree/src/lib.rs:4547:13: 4547:15}, {closure@sto-masstree/src/lib.rs:3582:63: 3582:83}>::{closure#0}
+                at sto-core/src/transaction.rs:1388:13: 1388:91
+            6: sto_core::Transaction::<'_>::with_resolved_item::<TableAdapter, RecordAccess<'_>, std::option::Option<Value>, {closure@sto-masstree/src/lib.rs:4537:13: 4537:15}, {closure@sto-masstree/src/lib.rs:4547:13: 4547:15}, {closure@sto-masstree/src/lib.rs:3582:63: 3582:83}>
+                at sto-core/src/transaction.rs:1383:22: 1389:13
+            7: Table::with_key_record_lookup::<std::option::Option<Value>, {closure@sto-masstree/src/lib.rs:3495:61: 3495:63}, {closure@sto-masstree/src/lib.rs:3582:63: 3582:83}>
+                at sto-masstree/src/lib.rs:4535:22: 4554:10
+            8: Table::put_inner_with_lookup_and_result::<std::option::Option<Value>, std::sync::Arc<[u8]>, {closure@sto-masstree/src/lib.rs:3566:13: 3566:23}, {closure@sto-masstree/src/lib.rs:3495:61: 3495:63}>
+                at sto-masstree/src/lib.rs:3582:9: 3589:11
+            9: Table::put_inner_with_lookup::<std::sync::Arc<[u8]>, {closure@sto-masstree/src/lib.rs:3495:61: 3495:63}>
+                at sto-masstree/src/lib.rs:3561:9: 3568:10
+            10: Table::put_inner::<std::sync::Arc<[u8]>>
+                at sto-masstree/src/lib.rs:3495:9: 3497:11
+            11: tests::seed
+                at sto-masstree/src/lib.rs:11442:13: 11443:67
+            12: tests::put_resolving_cold_lookup_once_and_hits_keep_current_occ_state
+                at sto-masstree/src/lib.rs:12198:13: 12198:71
+            13: tests::put_resolving_cold_lookup_once_and_hits_keep_current_occ_state::{closure#0}
+                at sto-masstree/src/lib.rs:12189:72: 12189:72
+

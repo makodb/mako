@@ -1,14 +1,16 @@
-# Why the Rust STO singleton-put lane is still ~24% slower
+# Rust STO singleton-put: attribution and performance fixes
 
-Measured 2026-09-17 on `zoo-002` (AMD EPYC 7702P, 2 threads/core, boost off,
-`schedutil`), matched controls at 1 worker, engine-only mode, 256 keys, 128-byte
-values, checksum disabled. This report explains the mechanism behind the
-remaining gap on the residual report's own cells. It changes no production code.
+This report retains the 2026-09-17 single-worker attribution and subsequent
+historical experiments in sections 1–9. The original controls ran on `zoo-002`
+(AMD EPYC 7702P, boost off, `schedutil`), with 256 keys, 128-byte values,
+checksum disabled, and engine-only execution. Historical source-line anchors
+refer to the corresponding old implementations. Section 10 records the
+2026-09-23 production fixes and full 1–32-worker comparison.
 
-## Verdict
+## Historical verdict (2026-09-17)
 
-The Rust lane does not lose to stalls, cache behaviour, or branch prediction. It
-retires **819 more instructions per transaction (2597 -> 3416, +31.5%) at the
+The measured single-worker Rust lane did not lose primarily to stalls, cache
+behaviour, or branch prediction. It retired **819 more instructions per transaction (2597 -> 3416, +31.5%) at the
 same IPC (~2.3)**, with *fewer* branch misses and *fewer* L1 misses per
 instruction. The 25% throughput deficit is that extra work, almost exactly:
 
@@ -45,7 +47,7 @@ admission, staged copies, driver/state-machine steps — that a one-item
 transaction runs exactly once and cannot amortize; the same engine amortizes it
 across a batch (section 5).
 
-## 1 Matched controls, reproduced today
+## 1 Matched controls, reproduced 2026-09-17
 
 Frozen ThinLTO pair from the preceding optimization campaign
 (`/var/tmp/mako-w1-fixes.ShjYqz/cpp-thin` sha256 `69e58f4b…`, `stage3-thin`
@@ -700,3 +702,217 @@ in `src/mako/storage/mako_local_abi.cc` (begin 1345, put 3367, commit 4676) ->
 `src/mako/sto/stuffed_str.hh:166-180`) -> `Transaction::stop` (`Transaction.cc:672`)
 -> `rcu_stop` through the `MassTrans::thread_init()` callbacks
 (`MassTrans.hh:121-146`).
+
+## 10 Production fixes and scaling verification (2026-09-23)
+
+The acceptance target is a Rust throughput deficit below 3% at most worker
+counts from 1 through 32. The measured workload is existing-key singleton
+updates: 256 disjoint keys per worker, 128-byte values, checksum disabled,
+engine-only mode. This is not a claim about insertion throughput, other value
+sizes, logging throughput, or every Cargo optimization profile.
+
+### Final measured matrix
+
+**The requested “most cases” target is met.** Median throughput differs by
+less than 3% in **29 of 32** worker counts. Rust is no more than 3% behind
+in **30 of 32**: the remaining deficits are 3.18% at 12 workers and 3.11%
+at 13; at 22 workers Rust is 3.17% faster. The median signed Rust deficit
+across all 32 counts is **1.89%**.
+
+The final comparison uses 255 clean samples from 564 total executions,
+with at least three clean samples per lane at every worker count. Throughput
+columns are medians in millions of transactions/second. Deficit is
+`100 * (1 - Rust / C++)`; negative means Rust is faster. Sample counts are
+Rust/C++. These are measured medians, not confidence bounds or a guarantee
+for every individual run.
+
+For sensitivity, the initial unfiltered sweep was within ±3% at 23/32 counts;
+pooling **all** original and repeated samples without filtering gives 28/32.
+The initial unfiltered deficits are included below rather than hiding the
+large, bidirectional shared-host interference.
+
+| Workers | C++ clean M tx/s | Rust clean M tx/s | Rust deficit | Clean samples R/C | Initial unfiltered deficit |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 1.882 | 1.831 | +2.71% | 6/6 | +3.10% |
+| 2 | 3.740 | 3.647 | +2.50% | 4/4 | +2.50% |
+| 3 | 5.533 | 5.474 | +1.08% | 4/4 | +1.08% |
+| 4 | 7.391 | 7.243 | +2.00% | 4/4 | +2.00% |
+| 5 | 9.191 | 8.999 | +2.09% | 4/4 | +2.09% |
+| 6 | 10.833 | 10.784 | +0.45% | 4/3 | +0.81% |
+| 7 | 12.768 | 12.554 | +1.68% | 4/4 | +1.68% |
+| 8 | 14.471 | 14.272 | +1.38% | 4/4 | +1.38% |
+| 9 | 16.361 | 15.981 | +2.32% | 4/3 | +1.96% |
+| 10 | 18.143 | 17.785 | +1.98% | 3/4 | +1.89% |
+| 11 | 20.040 | 19.510 | +2.64% | 3/4 | +4.10% |
+| 12 | 21.885 | 21.188 | +3.18% | 3/3 | +3.58% |
+| 13 | 23.628 | 22.892 | +3.11% | 4/5 | +2.27% |
+| 14 | 25.302 | 24.848 | +1.79% | 4/5 | +2.24% |
+| 15 | 27.185 | 26.642 | +2.00% | 3/4 | +2.15% |
+| 16 | 28.933 | 28.224 | +2.45% | 4/5 | +2.04% |
+| 17 | 30.762 | 30.063 | +2.27% | 3/3 | +21.67% |
+| 18 | 32.393 | 31.655 | +2.28% | 4/3 | -0.58% |
+| 19 | 34.140 | 33.539 | +1.76% | 4/4 | -2.68% |
+| 20 | 36.049 | 35.258 | +2.19% | 3/10 | +5.42% |
+| 21 | 37.782 | 37.110 | +1.78% | 9/4 | -15.47% |
+| 22 | 37.627 | 38.820 | -3.17% | 3/3 | -1.03% |
+| 23 | 41.375 | 40.802 | +1.39% | 3/4 | +1.57% |
+| 24 | 43.191 | 42.442 | +1.73% | 3/3 | +1.83% |
+| 25 | 44.998 | 44.254 | +1.65% | 3/3 | +2.29% |
+| 26 | 46.681 | 45.692 | +2.12% | 3/6 | +1.10% |
+| 27 | 48.375 | 47.843 | +1.10% | 3/4 | +1.73% |
+| 28 | 50.111 | 49.484 | +1.25% | 3/4 | +3.76% |
+| 29 | 51.921 | 51.209 | +1.37% | 3/5 | +14.82% |
+| 30 | 53.755 | 52.949 | +1.50% | 3/3 | +1.24% |
+| 31 | 55.641 | 54.793 | +1.52% | 4/8 | +1.97% |
+| 32 | 57.395 | 55.964 | +2.49% | 3/3 | -17.53% |
+
+### Retained changes
+
+- The singleton protocol uses concrete preparation/body/teardown paths and
+  one-element arrays rather than a dynamically sized generic plan.
+  `BorrowedTokenCommitOperations<A, L>` makes the operation provider a static
+  type parameter. Release and panic containment remain part of the protocol.
+- Checked typed-batch reuse keeps the owning `Box` in place. `TouchLog` moves
+  as an owning handle rather than copying its scratch state; the worker reuses
+  that state, with borrowed-staging and retirement state reset between
+  transactions.
+- Bounded atomic suffix packing reads an in-bounds final word and masks the
+  unused prefix instead of assembling the tail byte by byte.
+- Selective inlining covers concrete Masstree preparation/install and
+  `BorrowedTokenLockFrame::acquire`. Observed-version acquisition keeps its
+  direct compare-exchange; an extra unconditional load was not retained.
+- Lazy, bounded-value registries allocate each stable record on its claiming
+  thread. The former shared contiguous arena interleaved records inserted by
+  different workers; the C++ control already allocated rows on the inserting
+  thread. The new allocation policy removes that placement mismatch without
+  serializing worker startup or changing the timed workload.
+
+The last change is allocation locality, **not thread-local ownership**.
+`WorkerLocalStable160` retains each `Box<[StableRegistryEntry; 1]>` through the
+registry arena's `OnceLock` directory. Records remain stable and usable across
+threads; detached targets retain the arena. Growth serialization also covers
+lazy row initialization, including batch preflight. Row allocation charges
+transfer to the arena owner without releasing the shared budget prematurely.
+Allocation failure releases its charge and retained-record quota while
+preserving monotonically consumed record IDs.
+
+On this 64-bit ABI, the ownership directory costs 16 bytes per capacity slot
+and initialized rows cost 192 bytes each. Full occupancy adds about 8.3%
+directory overhead relative to contiguous rows, before unchanged structural
+allocations; partially occupied segments avoid allocating unclaimed rows.
+These are requested layout bytes, not a measurement of allocator fragmentation.
+Standard unbounded-value and eager-contiguous registries keep their prior
+allocation policies. The [architecture reference](../architecture/rust-sto.md)
+describes the API and lifetime/accounting contracts.
+
+### Diagnosis and rejected alternatives
+
+The original one-worker instruction attribution does not explain every
+high-worker result. Subsequent profiling found strongly uneven Rust worker
+costs, with L2 misses and non-speculative lock activity concentrated around
+record-version acquisition. Non-precise event samples can skid; the data does
+not establish a particular hardware prefetch or cache-set mechanism.
+
+Delaying worker creation improved the old arena's scaling, which motivated
+the allocation-placement investigation. That delay was diagnostic only:
+all final measurements use ordinary concurrent startup
+(`creation_delay_ms=0`). Wider alignment, slot skew, write prefetching, and
+forced facade `put` inlining were rejected. The latter regressed the
+single-worker result to roughly 1,255 cycles/transaction versus 1,090 for the
+then-current worker-local candidate. None of those alternatives is retained.
+
+### Frozen controls and measurement rules
+
+Both lanes use Rust 1.95.0, release opt-level 3, one codegen unit, panic abort,
+ThinLTO, `-C target-cpu=znver1 -C force-frame-pointers=yes -C debuginfo=1`,
+and the same native libraries and jemalloc preload. Native ABI enforcement
+remains enabled; the fake ABI is disabled. The matched ThinLTO configuration
+is explicit rather than a change to the workspace's default release profile.
+
+Frozen SHA-256 values:
+
+```text
+final-locality      641dbaf2bd51049b31d12064b6d532ef353602d78a95b960930b72dda91cd468
+cpp-final-locality  5d4ae9e028026ec4e8d08baf9996c3ab3b1c47ded10de84c28b1800dad2d9cc7
+```
+
+Executions run inside `jetpack-zoo-build:latest`, one at a time, without
+concurrent builds or tests. Workers occupy physical CPUs 32–63, helpers
+CPUs 1–31, and the writeback CPU is 0. Boost was already disabled; the runner
+temporarily selects the performance governor and records restoration.
+Each sample has 1,048,576 warmup and 4,194,304 measured transactions per worker.
+Lane order is balanced forward/reverse, not best-of selection.
+
+The first complete sweep contains four samples per lane at every worker count.
+On this shared host, another user's CPU-bound task sometimes occupied a worker
+SMT sibling throughout a sample. All raw results are retained. Before analyzing
+that sweep, a symmetric clean-sample rule was fixed: maximum worker-sibling
+utilization at most 1%, and maximum worker off-CPU fraction at most 1%.
+Additional balanced rounds fill cells with fewer than three clean samples
+per lane. One additional balanced round checks the borderline single-worker
+estimate; subsequent stopping depends only on clean-sample counts, not on
+throughput or the winner. Aggregate throughput remains total commits divided
+by the slowest worker's measured wall time; mean worker cycles do not replace it.
+
+Each sample checks all 256 keys per worker and requires PMU running time of at
+least 98%. Allocation profiling is disabled in these binaries: their zero
+allocation-counter fields are **not** evidence of zero allocations.
+
+### Correctness evidence and artifacts
+
+The final formatted source passes all 22 Docker test executables for
+`sto-core`, `sto-masstree`, and `mako-engine-sto`: 565 tests passed and one was
+ignored. Coverage includes native integration, transaction/failure protocols,
+version-exhaustion precedence, borrowed staging, growth races, budget
+accounting, and allocation-failure recovery.
+
+Targeted Docker Miri runs pass 69 tests: 68 with leak checking enabled, plus
+the intentional panic-quarantine test with `-Zmiri-ignore-leaks`. Existing
+integer-to-pointer warnings remain in the direct-record machinery; this is
+not a strict-provenance proof or a Miri execution of the native C++ index.
+
+The frozen binaries also pass 36 Docker smoke executions: four-item `engine`,
+singleton `engine-logged`, and singleton `cache-ack`, each in both lanes at
+1, 8, and 32 workers with balanced repetitions. Each mode verifies 41,984
+key values across its executions. The cache mode additionally checks health
+and exact acknowledged-transaction accounting against fresh RocksDB paths.
+It ends with `Db::abort`, not a drain/reopen cycle, so this is not a durability
+or recovery test.
+
+These short runs check correctness, **not performance parity** for additional
+workloads. Multi-item engine and cache-ack throughput still trail C++ in these
+checks; the singleton engine matrix above is the scope of the parity result.
+The frozen probe explicitly rejects `--items > 1` outside engine mode; an
+attempted logged multi-item smoke stopped at that CLI check before executing
+transactions. No multi-item logging/cache result is claimed.
+
+Artifacts are retained on `zoo-002` under
+`/var/tmp/mako-gap-fix-20260923`:
+
+- `build-final-locality/` and `build-cpp-final-locality/`: build commands,
+  environment overrides, logs, and source snapshots.
+- `bins/`: the frozen executables above.
+- `run-20260923T092741/`: the complete initial 1–32 sweep, including manifests,
+  raw stdout/stderr, per-worker counters, sibling utilization, and `rows.json`.
+- `final-coverage.json`: additional run directories and clean-sample counts;
+  `final-summary.json`: full-precision clean and unfiltered medians.
+- `tests-final-locality/` and `miri-locality-final/`: final validation output.
+- `run-20260923T103503/`, `run-20260923T103545/`, and
+  `run-20260923T103827/`: multi-item engine, singleton logged-engine, and
+  singleton cache-ack smoke results, respectively.
+- `clock-control-*.json`: governor save/restore records.
+
+The executable runner is `/var/tmp/mako-gap-fix.py`; the fixed filtering and
+coverage collectors are `/var/tmp/mako-gap-summarize.py` and
+`/var/tmp/mako-gap-final-coverage.py`. They are measurement artifacts outside
+the repository, not new production dependencies.
+
+To repeat the complete frozen-binary sweep:
+
+```bash
+ssh zoo-002 python3 /var/tmp/mako-gap-fix.py sweep \
+  final-locality cpp-final-locality \
+  --workers 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32 \
+  --rounds 2 --iterations 4194304 --warmup 1048576 \
+  --fixed-clocks --cpu-start 32
+```

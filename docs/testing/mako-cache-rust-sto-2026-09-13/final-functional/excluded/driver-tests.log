@@ -1,0 +1,29 @@
+EE.............................
+======================================================================
+ERROR: test_mako_cache_cross_engine_reopen (unittest.loader._FailedTest.test_mako_cache_cross_engine_reopen)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_mako_cache_cross_engine_reopen
+Traceback (most recent call last):
+  File "/home/users/shuai/.linuxbrew/Cellar/python@3.14/3.14.6/lib/python3.14/unittest/loader.py", line 137, in loadTestsFromName
+    module = __import__(module_name)
+  File "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/scripts/test_mako_cache_cross_engine_reopen.py", line 13, in <module>
+    import mako_cache_cross_engine_reopen as driver
+ModuleNotFoundError: No module named 'mako_cache_cross_engine_reopen'
+
+
+======================================================================
+ERROR: test_mako_engine_benchmark_drivers (unittest.loader._FailedTest.test_mako_engine_benchmark_drivers)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_mako_engine_benchmark_drivers
+Traceback (most recent call last):
+  File "/home/users/shuai/.linuxbrew/Cellar/python@3.14/3.14.6/lib/python3.14/unittest/loader.py", line 137, in loadTestsFromName
+    module = __import__(module_name)
+  File "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/scripts/test_mako_engine_benchmark_drivers.py", line 15, in <module>
+    import run_mako_engine_compare as compare
+ModuleNotFoundError: No module named 'run_mako_engine_compare'
+
+
+----------------------------------------------------------------------
+Ran 31 tests in 0.955s
+
+FAILED (errors=2)

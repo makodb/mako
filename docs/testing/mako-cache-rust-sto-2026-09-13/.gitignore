@@ -1,0 +1,2 @@
+# Preserve the reviewed machine-readable acceptance reports in this directory.
+!*.json

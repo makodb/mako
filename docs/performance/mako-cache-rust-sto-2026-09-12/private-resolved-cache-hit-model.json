@@ -1,0 +1,60 @@
+{
+  "assumptions": "W1 fresh private cache, table object IDs1..tables, all puts succeed, exact current hash and schedule, no interleaved operations",
+  "entries": 512,
+  "iterations_per_worker": 262144,
+  "kind": "source-model-not-measured-counters",
+  "results": {
+    "cycle16k": {
+      "long_key_bypass": false,
+      "modeled_measured_hit_fraction": 0.0,
+      "modeled_measured_hits": 0
+    },
+    "hot1024": {
+      "long_key_bypass": false,
+      "modeled_measured_hit_fraction": 0.140625,
+      "modeled_measured_hits": 36864
+    },
+    "hot256": {
+      "long_key_bypass": false,
+      "modeled_measured_hit_fraction": 0.59765625,
+      "modeled_measured_hits": 156672
+    },
+    "mixed2": {
+      "long_key_bypass": false,
+      "modeled_measured_hit_fraction": 0.37890625,
+      "modeled_measured_hits": 99328
+    },
+    "skew16k": {
+      "long_key_bypass": false,
+      "modeled_measured_hit_fraction": 0.84527587890625,
+      "modeled_measured_hits": 221584
+    },
+    "stream": {
+      "long_key_bypass": false,
+      "modeled_measured_hit_fraction": 0.0,
+      "modeled_measured_hits": 0
+    },
+    "uniform16k": {
+      "long_key_bypass": false,
+      "modeled_measured_hit_fraction": 0.031707763671875,
+      "modeled_measured_hits": 8312
+    },
+    "width32": {
+      "long_key_bypass": false,
+      "modeled_measured_hit_fraction": 0.6171875,
+      "modeled_measured_hits": 161792
+    },
+    "width33": {
+      "long_key_bypass": true,
+      "modeled_measured_hit_fraction": 0.0,
+      "modeled_measured_hits": 0
+    },
+    "width64": {
+      "long_key_bypass": true,
+      "modeled_measured_hit_fraction": 0.0,
+      "modeled_measured_hits": 0
+    }
+  },
+  "storage_bytes_per_worker": 32768,
+  "warmup_per_worker": 65536
+}

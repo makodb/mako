@@ -1,0 +1,384 @@
+{
+  "arm": "c-abi",
+  "attempts": {
+    "recover": {
+      "command": [
+        "env",
+        "MAKO_CACHE_BENCH_WRITEBACK_CPU=32",
+        "MAKO_CACHE_BENCH_RECORD_CHECKSUM=crc32c",
+        "taskset",
+        "-c",
+        "0-3",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/mako-cache-bench-c-abi-final-production",
+        "__recover",
+        "mako",
+        "read",
+        "4",
+        "low",
+        "4",
+        "262144",
+        "65536",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/final-main-pairs/r3-read-tx4-low-w4-c-abi.9wkxbgoi/rocks",
+        "0"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 167936,
+          "VmRSS": 167936,
+          "VmSize": 446464,
+          "elapsed_seconds": 0.0014462079852819443
+        },
+        {
+          "VmHWM": 21270528,
+          "VmRSS": 21270528,
+          "VmSize": 103538688,
+          "elapsed_seconds": 0.05175960808992386
+        },
+        {
+          "VmHWM": 21270528,
+          "VmRSS": 21270528,
+          "VmSize": 103538688,
+          "elapsed_seconds": 0.10209369892254472
+        },
+        {
+          "VmHWM": 21291008,
+          "VmRSS": 21291008,
+          "VmSize": 103538688,
+          "elapsed_seconds": 0.15242714993655682
+        },
+        {
+          "VmHWM": 21729280,
+          "VmRSS": 21729280,
+          "VmSize": 106684416,
+          "elapsed_seconds": 0.20275909081101418
+        },
+        {
+          "VmHWM": 22519808,
+          "VmRSS": 22519808,
+          "VmSize": 106684416,
+          "elapsed_seconds": 0.2530999928712845
+        },
+        {
+          "VmHWM": 22683648,
+          "VmRSS": 22683648,
+          "VmSize": 106684416,
+          "elapsed_seconds": 0.30341082299128175
+        },
+        {
+          "VmHWM": 43991040,
+          "VmRSS": 37285888,
+          "VmSize": 190558208,
+          "elapsed_seconds": 0.3537224028259516
+        },
+        {
+          "VmHWM": 43991040,
+          "VmRSS": 37285888,
+          "VmSize": 190558208,
+          "elapsed_seconds": 0.40408125473186374
+        },
+        {
+          "VmHWM": 43991040,
+          "VmRSS": 37113856,
+          "VmSize": 173772800,
+          "elapsed_seconds": 0.4543930049985647
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 0.5047407769598067
+    },
+    "sample": {
+      "command": [
+        "env",
+        "MAKO_CACHE_BENCH_WRITEBACK_CPU=32",
+        "MAKO_CACHE_BENCH_RECORD_CHECKSUM=crc32c",
+        "taskset",
+        "-c",
+        "0-3",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/mako-cache-bench-c-abi-final-production",
+        "__sample",
+        "mako",
+        "read",
+        "4",
+        "low",
+        "4",
+        "262144",
+        "65536",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/final-main-pairs/r3-read-tx4-low-w4-c-abi.9wkxbgoi/rocks"
+      ],
+      "completed": true,
+      "memory_samples": [
+        {
+          "VmHWM": 86016,
+          "VmRSS": 86016,
+          "VmSize": 446464,
+          "elapsed_seconds": 0.0010860799811780453
+        },
+        {
+          "VmHWM": 19300352,
+          "VmRSS": 19300352,
+          "VmSize": 65773568,
+          "elapsed_seconds": 0.05142568191513419
+        },
+        {
+          "VmHWM": 19369984,
+          "VmRSS": 19369984,
+          "VmSize": 65773568,
+          "elapsed_seconds": 0.10176854394376278
+        },
+        {
+          "VmHWM": 19369984,
+          "VmRSS": 19369984,
+          "VmSize": 65773568,
+          "elapsed_seconds": 0.15209793485701084
+        },
+        {
+          "VmHWM": 19369984,
+          "VmRSS": 19369984,
+          "VmSize": 65773568,
+          "elapsed_seconds": 0.2024126648902893
+        },
+        {
+          "VmHWM": 20451328,
+          "VmRSS": 20451328,
+          "VmSize": 99344384,
+          "elapsed_seconds": 0.2527272547595203
+        },
+        {
+          "VmHWM": 20451328,
+          "VmRSS": 20451328,
+          "VmSize": 99344384,
+          "elapsed_seconds": 0.30303615471348166
+        },
+        {
+          "VmHWM": 20500480,
+          "VmRSS": 20500480,
+          "VmSize": 99344384,
+          "elapsed_seconds": 0.35339524783194065
+        },
+        {
+          "VmHWM": 21630976,
+          "VmRSS": 21630976,
+          "VmSize": 106684416,
+          "elapsed_seconds": 0.4036770169623196
+        },
+        {
+          "VmHWM": 80318464,
+          "VmRSS": 80318464,
+          "VmSize": 296026112,
+          "elapsed_seconds": 0.45401347801089287
+        },
+        {
+          "VmHWM": 130445312,
+          "VmRSS": 130445312,
+          "VmSize": 484769792,
+          "elapsed_seconds": 0.5043671098537743
+        },
+        {
+          "VmHWM": 130445312,
+          "VmRSS": 130445312,
+          "VmSize": 484769792,
+          "elapsed_seconds": 0.5546749797649682
+        },
+        {
+          "VmHWM": 130445312,
+          "VmRSS": 130445312,
+          "VmSize": 484769792,
+          "elapsed_seconds": 0.6049852296710014
+        },
+        {
+          "VmHWM": 130383872,
+          "VmRSS": 130383872,
+          "VmSize": 484720640,
+          "elapsed_seconds": 0.6553395027294755
+        },
+        {
+          "VmHWM": 206577664,
+          "VmRSS": 206577664,
+          "VmSize": 702873600,
+          "elapsed_seconds": 0.7056468417868018
+        },
+        {
+          "VmHWM": 216506368,
+          "VmRSS": 216506368,
+          "VmSize": 702873600,
+          "elapsed_seconds": 0.7559562530368567
+        },
+        {
+          "VmHWM": 218476544,
+          "VmRSS": 218476544,
+          "VmSize": 702873600,
+          "elapsed_seconds": 0.8063054839149117
+        },
+        {
+          "VmHWM": 220217344,
+          "VmRSS": 220217344,
+          "VmSize": 702873600,
+          "elapsed_seconds": 0.8566194148734212
+        },
+        {
+          "VmHWM": 224489472,
+          "VmRSS": 224489472,
+          "VmSize": 702873600,
+          "elapsed_seconds": 0.9069313849322498
+        },
+        {
+          "VmHWM": 225730560,
+          "VmRSS": 225730560,
+          "VmSize": 702873600,
+          "elapsed_seconds": 0.9572854470461607
+        },
+        {
+          "VmHWM": 226967552,
+          "VmRSS": 226967552,
+          "VmSize": 702873600,
+          "elapsed_seconds": 1.0075960070826113
+        },
+        {
+          "VmHWM": 234508288,
+          "VmRSS": 234508288,
+          "VmSize": 702873600,
+          "elapsed_seconds": 1.0579036269336939
+        },
+        {
+          "VmHWM": 237854720,
+          "VmRSS": 237854720,
+          "VmSize": 702873600,
+          "elapsed_seconds": 1.1082574087195098
+        },
+        {
+          "VmHWM": 239095808,
+          "VmRSS": 239095808,
+          "VmSize": 702873600,
+          "elapsed_seconds": 1.1585667389445007
+        },
+        {
+          "VmHWM": 240336896,
+          "VmRSS": 240336896,
+          "VmSize": 702873600,
+          "elapsed_seconds": 1.2088773399591446
+        },
+        {
+          "VmHWM": 241586176,
+          "VmRSS": 241586176,
+          "VmSize": 702873600,
+          "elapsed_seconds": 1.2592325620353222
+        },
+        {
+          "VmHWM": 242831360,
+          "VmRSS": 242831360,
+          "VmSize": 702873600,
+          "elapsed_seconds": 1.3095463518984616
+        },
+        {
+          "VmHWM": 241238016,
+          "VmRSS": 240308224,
+          "VmSize": 702861312,
+          "elapsed_seconds": 1.3598580118268728
+        },
+        {
+          "VmHWM": 247734272,
+          "VmRSS": 247734272,
+          "VmSize": 713310208,
+          "elapsed_seconds": 1.410208913963288
+        },
+        {
+          "VmHWM": 252239872,
+          "VmRSS": 232636416,
+          "VmSize": 713297920,
+          "elapsed_seconds": 1.4605217739008367
+        },
+        {
+          "VmHWM": 252239872,
+          "VmRSS": 101285888,
+          "VmSize": 715386880,
+          "elapsed_seconds": 1.5108356438577175
+        },
+        {
+          "VmHWM": 252239872,
+          "VmRSS": 101429248,
+          "VmSize": 715386880,
+          "elapsed_seconds": 1.5611509447917342
+        },
+        {
+          "VmHWM": 252239872,
+          "VmRSS": 101429248,
+          "VmSize": 715386880,
+          "elapsed_seconds": 1.6114855958148837
+        },
+        {
+          "VmHWM": 252239872,
+          "VmRSS": 101445632,
+          "VmSize": 715386880,
+          "elapsed_seconds": 1.6617981856688857
+        },
+        {
+          "elapsed_seconds": 1.7121139457449317
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 1.762422847095877
+    }
+  },
+  "completed": true,
+  "configuration": {
+    "arm": "mako",
+    "contention": "low",
+    "keyspace": 1024,
+    "target": 262144,
+    "tx": 4,
+    "warmup": 65536,
+    "workers": 4,
+    "workload": "read"
+  },
+  "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/final-main-pairs/r3-read-tx4-low-w4-c-abi.9wkxbgoi",
+  "recovery": {
+    "arm": "mako",
+    "checksum": 0,
+    "contention": "low",
+    "engine": "mako-local/sto-masstrans",
+    "keyspace": 1024,
+    "open_ns": 292055694,
+    "tx": 4,
+    "validation_ns": 12070192,
+    "workers": 4,
+    "workload": "read"
+  },
+  "repetition": 3,
+  "sample": {
+    "arm": "mako",
+    "attempt_p50_ns": 2320,
+    "attempt_p99_ns": 3380,
+    "backend_key_bytes": 31102,
+    "backend_keys": 1042,
+    "backend_value_bytes": 336644,
+    "checksum": 0,
+    "commits": 1048576,
+    "conflicts": 0,
+    "contention": "low",
+    "data_keys": 1024,
+    "drain_ns": 149967,
+    "duration_ns": 771500935,
+    "engine": "mako-local/sto-masstrans",
+    "foreground_cpu_ns": 2806898255,
+    "keyspace": 1024,
+    "live_user_bytes": 139264,
+    "log_key_bytes": 352,
+    "log_keys": 16,
+    "log_value_bytes": 157344,
+    "logical_ops": 4194304,
+    "logical_p50_ns": 2480,
+    "logical_p99_ns": 3680,
+    "measured_mutation_bytes": 0,
+    "metadata_keys": 2,
+    "physical_bytes": 118784,
+    "target": 262144,
+    "total_mutation_bytes": 139264,
+    "tx": 4,
+    "warmup": 65536,
+    "warmup_conflicts": 0,
+    "workers": 4,
+    "workload": "read"
+  },
+  "scratch_cleaned": true
+}

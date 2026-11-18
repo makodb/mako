@@ -1,0 +1,15 @@
+{
+  "completed": false,
+  "included_in_final_medians": false,
+  "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/current-policy-main-pairs",
+  "completed_sample_recovery_pairs": 10,
+  "planned_pairs": 72,
+  "launcher_exit_code": 1,
+  "stopped_directory": "r1-write-tx4-low-w1-c-abi.8eldlwpf",
+  "stopped_sample_child_exit_code": 0,
+  "stopped_sample_exact_state_validation": "passed inside the frozen child",
+  "recovery_attempted_for_stopped_sample": false,
+  "scratch_retained": true,
+  "reason": "Launcher v1 incorrectly required one persisted write lane. Concurrent cache uses engine PerWorker ordering, and seed plus separate warmup/measured threads each persist a lane. Actual write4/W1 metadata is format plus3lanes, or4keys,62keybytes,208valuebytes.",
+  "resolution": "Corrected launcher v2 derives lanes=1+2W for writing workloads, lanes=1 for read-only. Six mocked test methods include independent exact metadata formulas for W1/2/4/8/16/32 and rejection of the old coherent single-lane totals. Restart all72pairs in a fresh directory; do not relabel or silently discard this attempt."
+}

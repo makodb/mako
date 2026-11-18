@@ -1,0 +1,35 @@
+{
+  "base_revision": "9cd856c18107db33c868ee4e57f631e2577e6d4f",
+  "source_policy": "record-local adapter candidate, pooled owned values, no borrowed staging or private inlining changes",
+  "source_archive": "/var/tmp/mako-engine-perf-20260912.trsFuD/source-record-local-candidate-v2.tar.gz",
+  "source_archive_sha256": "6cae477532e9ebffec8150e8825fc1af5274d501e8bf5e06c5d3b2e2a2b7b503",
+  "archive_note": "Snapshot after executable build; production source was unchanged at capture, though some test-only modules had been formatted. A later workspace-wide cargo fmt pass is outside this preserved pre-format snapshot. The measurements use the listed immutable pre-format binaries, not a relabeled rebuild. An earlier archive attempt without excluding target.rootowned was interrupted and is not this snapshot.",
+  "build_log": "/var/tmp/mako-engine-perf-20260912.trsFuD/build-sto-local-versions.log",
+  "build_directory": "/var/tmp/mako-engine-perf-20260912.trsFuD/target-sto-local-versions",
+  "rustc": "1.95.0",
+  "rustflags": "-C target-cpu=znver1 -C force-frame-pointers=yes -C debuginfo=1 -C linker=/var/tmp/mako-engine-perf-20260912.trsFuD/linker.sh",
+  "release_profile": {"opt_level": 3, "codegen_units": 1, "lto": false, "panic": "abort"},
+  "feature": "engine-sto",
+  "allocation_profile": false,
+  "test_hooks": false,
+  "c_abi_reference": "Unchanged frozen executables and as-built native identity in frozen-build.json; later manifest refreshes do not relabel these binaries.",
+  "rocksdb": "8.9.1, copied from zoo-002 before local link",
+  "jemalloc_sha256": "51952ffe97354b56197c9b765582023d435cfbe1930b0c03b778bdb5faa1fff5",
+  "remote_artifact_directory": "/var/tmp/mako-engine-perf-20260912.iz63eX",
+  "executables": {
+    "engine-compare-sto-local-versions": "e487077485d4de795266e5224265e468418e6513fb507b70a8445cb4d49a59b6",
+    "gc-soak-sto-local-versions": "9eeb54fdec1d6c5f1a04bb2356d05317e297b78ecd403485b821bbd682f62d8e"
+  },
+  "source_sha256": {
+    "crates/sto-core/src/transaction.rs": "e87f825195b456ad977241a2cb5d3069c641b699fd7e988b38bd1397325bbb79",
+    "crates/sto-core/src/runtime.rs": "065f26c64db71f1bff3c6326a70a8923f683c5261504247bfe550e10037807b1",
+    "crates/sto-masstree/src/lib.rs": "3dd2be1d6ffb753c59935ad4b6c39e73d59f103858ec8ea6ed8404938998ab53",
+    "crates/mako-engine-sto/src/db.rs": "40602d64f5c8c03af972e4083ecbcd6b28a5319a40b7b80fd953a6c26485017d",
+    "crates/mako-engine-sto/src/outcome.rs": "48739b692b48e4be9584cd4897b0d6b5637cd594a38513aad7c7b46c44b4a94c",
+    "crates/mako-engine-sto/src/txn.rs": "c940d977f33f03c279f1f136537b03fbcca4a5f82db5e7bc32396f75a0021ea8",
+    "crates/mako-engine-sto/src/touched.rs": "e12eeb47509dddbd2502f33ecda71f7b99189b1a08a7adb86065434113d9de62",
+    "crates/mako-engine-sto/src/worker.rs": "79ab6a1a73d7dd853b75abf79111e6af886c38dfdd0c258a753c458a1c8fdb70",
+    "crates/mako-cache-bench/src/bin/engine_compare.rs": "db4d143ac669a7daea76e9dad09cc7d5a88147c002206af875e9515706d6b6ca",
+    "crates/mako-cache-bench/src/bin/gc_soak.rs": "38e02a294771b6950c00ec3cf67834167cca963d9960e75176552355da17c408"
+  }
+}

@@ -1,0 +1,29 @@
+   Compiling mako-clock v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-clock)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.75s
+     Running unittests src/lib.rs (/var/tmp/mako-sto-integration.UdvOQE/target/debug/deps/mako_clock-cc69b90889612f98)
+
+running 21 tests
+test tests::backward_physical_clock_cannot_move_hlc_backward ... ok
+test tests::expand_round_trips_through_the_public_timestamp ... ok
+test tests::concurrent_sequence_stops_at_rust_lane_boundary ... ok
+test tests::global_clock_is_shared_across_the_process ... ok
+test tests::observe_stamp_ignores_invalid_and_older_stamps ... ok
+test tests::order_pair_allocates_the_timestamp_before_the_sequence ... ok
+test tests::recovery_floor_never_lowers_the_clock ... ok
+test tests::recovery_floor_is_not_raised_for_a_greater_origin_at_the_same_tuple ... ok
+test tests::first_allocation_takes_the_physical_reading ... ok
+test tests::origin_is_one_and_constants_match_the_public_timestamp ... ok
+test tests::recovery_floor_precedes_next_allocation ... ok
+test tests::recovery_leaves_the_final_timestamp_mintable ... ok
+test tests::recovery_floor_carries_submillisecond_and_wide_logical_bounds ... ok
+test tests::recovery_past_the_final_timestamp_reports_exhaustion ... ok
+test tests::reseed_is_refused_while_the_gate_is_held ... ok
+test tests::restricted_allocation_refuses_while_the_general_gate_is_held ... ok
+test tests::unreadable_physical_clock_is_reported_as_exhaustion ... ok
+test tests::validation_prefix_preserves_hlc_gate_and_sequence ... ok
+test tests::general_gate_is_mutually_exclusive_under_contention ... ok
+test tests::concurrent_hlc_allocation_is_unique_and_contiguous ... ok
+test tests::enter_general_waits_for_the_holder ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+

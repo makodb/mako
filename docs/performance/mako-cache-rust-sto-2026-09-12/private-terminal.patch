@@ -1,0 +1,65 @@
+--- a/crates/sto-core/src/transaction.rs
++++ b/crates/sto-core/src/transaction.rs
+@@ -1523,6 +1523,7 @@
+     }
+ 
+     /// Attempts the full preflight/lock/validate/install/publication protocol.
++    #[inline]
+     pub fn commit(mut self) -> Result<CommitOutcome, CommitFailure> {
+         self.commit_with_optional_hook(None)
+     }
+@@ -1533,6 +1534,7 @@
+     /// transaction its reservation callback runs after all planned locks are
+     /// acquired, its pre-install callback runs after final validation, and its
+     /// post-install callback runs after installation but before lock release.
++    #[inline]
+     pub fn commit_with_hook<H: CommitHook>(
+         mut self,
+         hook: &mut H,
+@@ -1540,6 +1542,7 @@
+         self.commit_with_optional_hook(Some(hook))
+     }
+ 
++    #[inline]
+     fn commit_with_optional_hook(
+         &mut self,
+         hook: Option<&mut dyn CommitHook>,
+@@ -1552,14 +1555,7 @@
+             .frame
+             .take()
+             .expect("active transaction always retains its frame");
+-        let mut driver = CommitDriver::new(worker, frame, hook);
+-        match catch_unwind(AssertUnwindSafe(|| driver.run())) {
+-            Ok(result) => result,
+-            Err(_) => match catch_unwind(AssertUnwindSafe(|| driver.contain_unexpected_unwind())) {
+-                Ok(result) => result,
+-                Err(_) => driver.emergency_failure(),
+-            },
+-        }
++        commit_detached_parts(worker, frame, hook)
+     }
+ 
+     /// Explicitly aborts and finishes every inserted item exactly once.
+@@ -1576,6 +1572,22 @@
+     }
+ }
+ 
++#[inline(never)]
++fn commit_detached_parts(
++    worker: &mut WorkerContext,
++    frame: TransactionFrame,
++    hook: Option<&mut dyn CommitHook>,
++) -> Result<CommitOutcome, CommitFailure> {
++    let mut driver = CommitDriver::new(worker, frame, hook);
++    match catch_unwind(AssertUnwindSafe(|| driver.run())) {
++        Ok(result) => result,
++        Err(_) => match catch_unwind(AssertUnwindSafe(|| driver.contain_unexpected_unwind())) {
++            Ok(result) => result,
++            Err(_) => driver.emergency_failure(),
++        },
++    }
++}
++
+ impl TerminalReadTransaction<'_, TerminalReadReady> {
+     /// Certifies and commits the terminal read batch without constructing a
+     /// lock plan or invoking any general item callback.

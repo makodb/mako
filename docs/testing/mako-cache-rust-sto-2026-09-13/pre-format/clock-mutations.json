@@ -1,0 +1,167 @@
+{
+  "baseline": [
+    {
+      "ok": true,
+      "seconds": 1.289,
+      "test": "backward_physical_clock_cannot_move_hlc_backward"
+    },
+    {
+      "ok": true,
+      "seconds": 0.059,
+      "test": "concurrent_sequence_stops_at_rust_lane_boundary"
+    },
+    {
+      "ok": true,
+      "seconds": 0.262,
+      "test": "enter_general_waits_for_the_holder"
+    },
+    {
+      "ok": true,
+      "seconds": 0.057,
+      "test": "observe_stamp_ignores_invalid_and_older_stamps"
+    },
+    {
+      "ok": true,
+      "seconds": 0.059,
+      "test": "order_pair_allocates_the_timestamp_before_the_sequence"
+    },
+    {
+      "ok": true,
+      "seconds": 0.059,
+      "test": "recovery_floor_carries_submillisecond_and_wide_logical_bounds"
+    },
+    {
+      "ok": true,
+      "seconds": 0.061,
+      "test": "recovery_floor_precedes_next_allocation"
+    },
+    {
+      "ok": true,
+      "seconds": 0.061,
+      "test": "recovery_leaves_the_final_timestamp_mintable"
+    },
+    {
+      "ok": true,
+      "seconds": 0.058,
+      "test": "reseed_is_refused_while_the_gate_is_held"
+    },
+    {
+      "ok": true,
+      "seconds": 0.067,
+      "test": "restricted_allocation_refuses_while_the_general_gate_is_held"
+    },
+    {
+      "ok": true,
+      "seconds": 0.061,
+      "test": "validation_prefix_preserves_hlc_gate_and_sequence"
+    }
+  ],
+  "crate": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-clock",
+  "killed": 12,
+  "mutations": [
+    {
+      "breaks": "Two commits share one Mako timestamp after the wall clock steps back.",
+      "name": "stamp-reuse",
+      "outcome": "killed",
+      "seconds": 1.321,
+      "test": "backward_physical_clock_cannot_move_hlc_backward",
+      "workspace": null
+    },
+    {
+      "breaks": "The last representable timestamp can never be committed.",
+      "name": "final-stamp-unmintable",
+      "outcome": "killed",
+      "seconds": 1.291,
+      "test": "recovery_leaves_the_final_timestamp_mintable",
+      "workspace": null
+    },
+    {
+      "breaks": "A one-put commit can take a stamp inside a general commit's certification window.",
+      "name": "restricted-ignores-gate",
+      "outcome": "killed",
+      "seconds": 1.41,
+      "test": "restricted_allocation_refuses_while_the_general_gate_is_held",
+      "workspace": null
+    },
+    {
+      "breaks": "Leaving the gate rewinds the HLC to zero; later commits reuse old timestamps.",
+      "name": "leave-general-drops-stamp",
+      "outcome": "killed",
+      "seconds": 1.256,
+      "test": "validation_prefix_preserves_hlc_gate_and_sequence",
+      "workspace": null
+    },
+    {
+      "breaks": "Two general commits certify concurrently; the gate no longer excludes.",
+      "name": "enter-general-never-waits",
+      "outcome": "killed",
+      "seconds": 1.354,
+      "test": "enter_general_waits_for_the_holder",
+      "workspace": null
+    },
+    {
+      "breaks": "Namespace admission rewrites the dense sequence under a live committer.",
+      "name": "reseed-under-gate",
+      "outcome": "killed",
+      "seconds": 1.3,
+      "test": "reseed_is_refused_while_the_gate_is_held",
+      "workspace": null
+    },
+    {
+      "breaks": "A cache sequence overflows into the worker-lane bits of the Rust sequence word.",
+      "name": "sequence-past-lane-boundary",
+      "outcome": "killed",
+      "seconds": 1.299,
+      "test": "concurrent_sequence_stops_at_rust_lane_boundary",
+      "workspace": null
+    },
+    {
+      "breaks": "A failed timestamp leaves a hole in the dense queue instead of a harmless stamp gap.",
+      "name": "order-pair-sequence-first",
+      "outcome": "killed",
+      "seconds": 1.282,
+      "test": "order_pair_allocates_the_timestamp_before_the_sequence",
+      "workspace": null
+    },
+    {
+      "breaks": "Observing an older remote stamp moves the local clock backward.",
+      "name": "observe-lowers-clock",
+      "outcome": "killed",
+      "seconds": 1.268,
+      "test": "observe_stamp_ignores_invalid_and_older_stamps",
+      "workspace": null
+    },
+    {
+      "breaks": "After recovery the clock can mint a timestamp that precedes a recovered record.",
+      "name": "floor-ignores-submillisecond",
+      "outcome": "killed",
+      "seconds": 1.251,
+      "test": "recovery_floor_carries_submillisecond_and_wide_logical_bounds",
+      "workspace": null
+    },
+    {
+      "breaks": "Recovery burns one timestamp per restart and the Rust and C++ clocks diverge.",
+      "name": "floor-off-by-one",
+      "outcome": "killed",
+      "seconds": 1.265,
+      "test": "recovery_floor_precedes_next_allocation",
+      "workspace": null
+    },
+    {
+      "breaks": "A recovered (tuple, origin 1) record can be re-minted as the same tuple.",
+      "name": "floor-ignores-foreign-origin",
+      "outcome": "killed",
+      "seconds": 1.847,
+      "test": "recovery_floor_precedes_next_allocation",
+      "workspace": null
+    }
+  ],
+  "source_sha256": "6cdc4d95c07394bf7024995da70d94e451a170ba388f85e2553fa433b710e3b7",
+  "total": 12,
+  "verdict": "pass",
+  "artifact": {
+    "source_report": "/var/tmp/mako-sto-integration.UdvOQE/clock-mutations.json",
+    "source_report_sha256": "06134372bfac7dd14e01586f545dbdabbece18888682f1b84cf7fc3b5c1bb7bd",
+    "note": "Captured child output streams omitted; commands, outcomes and source integrity retained."
+  }
+}

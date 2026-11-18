@@ -1,0 +1,5 @@
+!*.json
+!*.log
+!*.patch
+!Cargo.lock
+/tsan-model-runtime/target/

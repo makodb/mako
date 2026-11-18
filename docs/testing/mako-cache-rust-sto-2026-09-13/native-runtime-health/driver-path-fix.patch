@@ -1,0 +1,23 @@
+--- a/scripts/ci/run_mako_engine_native_health_proof.py
++++ b/scripts/ci/run_mako_engine_native_health_proof.py
+@@ -54,9 +54,10 @@
+     parser = argparse.ArgumentParser(description=__doc__)
+     parser.add_argument("--build-dir", type=Path, required=True)
+     parser.add_argument("--libcxx-dir", type=Path, required=True)
++    parser.add_argument("--repo-root", type=Path, default=Path(__file__).resolve().parents[2])
+     parser.add_argument("--output-dir", type=Path)
+     args = parser.parse_args()
+-    repo = Path(__file__).resolve().parents[2]
++    repo = args.repo_root.resolve(strict=True)
+     build = args.build_dir.resolve(strict=True)
+     libcxx = args.libcxx_dir.resolve(strict=True)
+     if args.output_dir:
+@@ -69,7 +70,7 @@
+     inputs = set(production + [source, Path(__file__).resolve(),
+                               repo / "src/mako/storage/mtree_abi.cc",
+                               build / "compile_commands.json", repo / "crates/Cargo.lock",
+-                              repo / "crates/rust-toolchain.toml"])
++                              repo / "rust-toolchain.toml"])
+     for crate in ("mako-engine-sto", "mako-engine-api", "mako-clock", "sto-core",
+                   "sto-masstree", "masstree", "mtree-sys", "mako-differential", "mako-history"):
+         inputs.update((repo / "crates" / crate).rglob("*.rs"))

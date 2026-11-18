@@ -23,7 +23,7 @@ The implementation is on [PR #91](https://github.com/makodb/mako/pull/91):
   logging cannot split its marker. It adds a deterministic regression test.
 
 The [design](../../architecture/rust-sto.md) defines the registry contract in
-section 14.2 and the integration contract in section 17.1.
+Appendix J.2 and the integration contract in Appendix M.1.
 The [operations guide](../sto-tpcc-rust-pgo.md) documents the settings.
 
 ## Limits and failure behavior

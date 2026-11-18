@@ -1,0 +1,36 @@
+{
+  "command": [
+    "perf",
+    "script",
+    "-i",
+    "/var/tmp/mako-engine-perf-20260912.trsFuD/profile-record-local/engine-w1/perf.data",
+    "--tid",
+    "333125",
+    "-F",
+    "period,ip,sym,symoff,dso"
+  ],
+  "scope": "one-worker historical record-local engine capture; includes warmup and verification; exact hot libc IP only, not all memcpy-family execution",
+  "libc_build_id": "a4a7992a8e66555c8141ab2a08a8465ff6e0ea65",
+  "matched_ip": "0x77642e188e35",
+  "libc_offset": "0x188e35",
+  "resolved_symbol": "__memcpy_avx_unaligned_erms",
+  "all_worker_period": 33185402970,
+  "matched_period": 805343826,
+  "matched_samples": 837,
+  "worker_percent": 2.4268014064136585,
+  "nearest_retained_callers": [
+    {
+      "symbol": "sto_core::transaction::with_item_inner_validated",
+      "period": 487045946,
+      "all_worker_percent": 1.467651143004939,
+      "matched_percent": 60.4767715696128
+    },
+    {
+      "symbol": "engine_compare::run::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closure$u7d$$u7d$::hee4946b43bbea348",
+      "period": 318297880,
+      "all_worker_percent": 0.9591502634087195,
+      "matched_percent": 39.5232284303872
+    }
+  ],
+  "caveat": "Nearest retained frame is not necessarily the lexical caller: inlining, tail calls, missing frames and PMU skid limit attribution. This is not a duplicate-payload-copy speedup estimate."
+}

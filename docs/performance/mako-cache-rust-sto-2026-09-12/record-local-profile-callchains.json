@@ -1,0 +1,34 @@
+{
+  "method": "perf script --tid FOREGROUND_TIDS -i perf.data -F tid,period,ip,sym,symoff,dso; sum each sample's period once. Self means the first IP; inclusive means any recorded frame matches. Denominator includes every parsed foreground sample, not perf report's smaller filtered symbol-table total.",
+  "scope": "Same captures and foreground TIDs as record-local-profiles.json. These include worker warmup and verification. Inclusive path cost is not a promised optimization gain.",
+  "engine-w1": {
+    "all_period": 33185402970,
+    "hlc_self_period": 0,
+    "vdso_self_period": 1597077590,
+    "vdso_under_native_point_period": 1597077590,
+    "native_point_inclusive_period": 5678674069,
+    "trusted_bridge_inclusive_period": 6719829833
+  },
+  "cache-ack-w1": {
+    "all_period": 11350724257,
+    "hlc_self_period": 102798117,
+    "vdso_self_period": 862532597,
+    "vdso_under_native_point_period": 436872186,
+    "native_point_inclusive_period": 1521956985,
+    "trusted_bridge_inclusive_period": 1758807399
+  },
+  "cache-ack-w32": {
+    "all_period": 93153461694,
+    "hlc_self_period": 42587253917,
+    "vdso_self_period": 3723931217,
+    "vdso_under_native_point_period": 1856076635,
+    "native_point_inclusive_period": 7077118782,
+    "trusted_bridge_inclusive_period": 8088177031
+  },
+  "symbol_resolution": {
+    "libc_build_id": "a4a7992a8e66555c8141ab2a08a8465ff6e0ea65",
+    "libc_offset_0x188e35": "__memcpy_avx_unaligned_erms, memmove-vec-unaligned-erms.S:381",
+    "vdso_build_id": "43ed9c604c106bb4538ee7027402bfc4492b9301",
+    "vdso_offset_0x86c": "Instruction immediately after RDTSCP at 0x869 in the internal time helper; caller attribution comes from sampled stacks."
+  }
+}

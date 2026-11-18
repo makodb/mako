@@ -1,0 +1,10 @@
+   Compiling private-mako-fence-bound-model v0.0.0 (/var/tmp/mako-fence-bound-model.deVBaQ)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.87s
+     Running unittests src/lib.rs (/var/tmp/mako-fence-bound-model.deVBaQ/target/debug/deps/private_mako_fence_bound_model-5cbc66667b3ae84e)
+
+running 2 tests
+test tests::bound_after_cut_covers_out_of_order_slot_and_packed_publication ... ok
+test tests::bound_after_cut_covers_relaxed_registration_and_completed_outcome ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 180.71s
+

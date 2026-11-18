@@ -1,0 +1,17 @@
+   Compiling mako-local-sys v0.1.0 (/var/tmp/mako-read-fence.rNqyuM/base-crates/mako-local-sys)
+   Compiling mako-local v0.1.0 (/var/tmp/mako-read-fence.rNqyuM/base-crates/mako-local)
+error: failed to run custom build command for `mako-local-sys v0.1.0 (/var/tmp/mako-read-fence.rNqyuM/base-crates/mako-local-sys)`
+
+Caused by:
+  process didn't exit successfully: `/var/tmp/mako-engine-perf-20260912.trsFuD/target-c-abi-main/release/build/mako-local-sys-92a736f4b382eede/build-script-build` (exit status: 101)
+  --- stdout
+  cargo:rerun-if-changed=/var/tmp/mako-read-fence.rNqyuM/base-crates/mako-local-sys/../../src/mako/storage/mako_local_abi.h
+  cargo:rerun-if-changed=/var/tmp/mako-read-fence.rNqyuM/base-crates/mako-local-sys/../../src/mako/storage/mako_timestamp.h
+  cargo:rerun-if-env-changed=LIBCLANG_PATH
+
+  --- stderr
+
+  thread 'main' (1656488) panicked at mako-local-sys/build.rs:179:9:
+  mako-local-sys binding generation failed: could not read /var/tmp/mako-read-fence.rNqyuM/base-crates/mako-local-sys/../../src/mako/storage/mako_local_abi.h: No such file or directory (os error 2)
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+warning: build failed, waiting for other jobs to finish...

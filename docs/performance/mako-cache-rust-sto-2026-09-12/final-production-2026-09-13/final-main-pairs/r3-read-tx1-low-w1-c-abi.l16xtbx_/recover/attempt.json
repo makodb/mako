@@ -1,0 +1,68 @@
+{
+  "command": [
+    "env",
+    "MAKO_CACHE_BENCH_WRITEBACK_CPU=32",
+    "MAKO_CACHE_BENCH_RECORD_CHECKSUM=crc32c",
+    "taskset",
+    "-c",
+    "0",
+    "/var/tmp/mako-engine-perf-20260912.iz63eX/mako-cache-bench-c-abi-final-production",
+    "__recover",
+    "mako",
+    "read",
+    "1",
+    "low",
+    "1",
+    "262144",
+    "65536",
+    "/var/tmp/mako-engine-perf-20260912.iz63eX/final-main-pairs/r3-read-tx1-low-w1-c-abi.l16xtbx_/rocks",
+    "0"
+  ],
+  "completed": true,
+  "memory_samples": [
+    {
+      "VmHWM": 155648,
+      "VmRSS": 155648,
+      "VmSize": 446464,
+      "elapsed_seconds": 0.0012817000970244408
+    },
+    {
+      "VmHWM": 20971520,
+      "VmRSS": 20869120,
+      "VmSize": 90955776,
+      "elapsed_seconds": 0.05162285268306732
+    },
+    {
+      "VmHWM": 20971520,
+      "VmRSS": 20869120,
+      "VmSize": 90955776,
+      "elapsed_seconds": 0.10196234611794353
+    },
+    {
+      "VmHWM": 20971520,
+      "VmRSS": 20914176,
+      "VmSize": 90955776,
+      "elapsed_seconds": 0.15229643788188696
+    },
+    {
+      "VmHWM": 21815296,
+      "VmRSS": 21815296,
+      "VmSize": 94101504,
+      "elapsed_seconds": 0.20262390095740557
+    },
+    {
+      "VmHWM": 105148416,
+      "VmRSS": 57868288,
+      "VmSize": 371974144,
+      "elapsed_seconds": 0.25293111288920045
+    },
+    {
+      "VmHWM": 105148416,
+      "VmRSS": 24125440,
+      "VmSize": 355176448,
+      "elapsed_seconds": 0.30329094687476754
+    }
+  ],
+  "returncode": 0,
+  "wall_seconds": 0.3536357609555125
+}

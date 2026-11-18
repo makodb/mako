@@ -1,0 +1,119 @@
+{
+  "schema": "mako-tsan-loom-runtime-diagnostic-v1",
+  "verdict": "reproduced_tsan_shadow_call_stack_exhaustion",
+  "worktree": "/home/users/shuai/mako/.claude/worktrees/masstree-rocks",
+  "failing_test": "concurrent_reader_cuts_preserve_each_prefix_publication",
+  "production_model_sha256": "82dc9d80a4f762e14b385e435a6c228f8a62109dce985c77a2b209071c3de68c",
+  "production_test_binary": {
+    "path": "/var/tmp/mako-cross-validation.n9NQZF/sanitizer-local2-tsan/rust-cache-target/x86_64-unknown-linux-gnu/debug/build/mako-cache/22ff5955ce83291a/out/commit_fence_loom-22ff5955ce83291a",
+    "sha256": "268a50626d12a1b801b79392632b0084e0d4ba1900195772f5f539f1e1b19887"
+  },
+  "standalone_binary": {
+    "path": "/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/target/x86_64-unknown-linux-gnu/debug/build/mako-tsan-loom-diagnostic/21439951f0950de7/out/mako_tsan_loom_diagnostic-21439951f0950de7",
+    "sha256": "a6c2f0e08d54ac01015c0ba14d148706786e0b874ec88bf08279cb13965bd5f3",
+    "direct_dependency": "loom =0.7.2",
+    "generator_version": "0.8.9",
+    "mako_or_native_dependencies": false,
+    "source_is_byte_identical_model": true
+  },
+  "instrumentation": {
+    "rust_toolchain": "nightly-2026-08-12",
+    "target": "x86_64-unknown-linux-gnu",
+    "rebuild_std": true,
+    "linker": "/home/users/shuai/.linuxbrew/opt/llvm@22/bin/clang-22",
+    "rustflags": "-Zsanitizer=thread -Zexternal-clangrt -C force-frame-pointers=yes -C link-arg=-fsanitize=thread",
+    "tsan_options": "",
+    "model_schedule_bounds": null,
+    "model_environment_overrides": []
+  },
+  "runs": [
+    {
+      "kind": "original focused gate",
+      "returncode": 1,
+      "report": "/var/tmp/mako-final-sanitizers.gUWiIn/sanitizer-tsan.json",
+      "log": "/var/tmp/mako-final-sanitizers.gUWiIn/sanitizer-tsan.log",
+      "qualification": "252 tests passed before model binary SIGSEGV; not an acceptance pass"
+    },
+    {
+      "kind": "exact immutable test, timed",
+      "returncode": 139,
+      "signal": 11,
+      "seconds": 82.53,
+      "log": "exact-timed.log"
+    },
+    {
+      "kind": "exact immutable test under gdb",
+      "debugger_returncode": 0,
+      "inferior_signal": "SIGSEGV",
+      "log": "gdb-second.log",
+      "qualification": "Debugger exit0 only means debugger commands completed, not that the test passed"
+    },
+    {
+      "kind": "standalone Loom-only exact model",
+      "returncode": 139,
+      "signal": 11,
+      "seconds": 91.64,
+      "log": "standalone-exact.log",
+      "qualification": "GNU time footer says Exit status0 after signal; actual wrapper status139 and signal11 are authoritative"
+    },
+    {
+      "kind": "first debugger attempt",
+      "log": "/var/tmp/mako-final-sanitizers.gUWiIn/tsan-model-gdb.log",
+      "qualification": "Manually interrupted while still exploring. No pass or crash classification."
+    },
+    {
+      "kind": "private driver regressions",
+      "passed": 15,
+      "failed": 0,
+      "log": "driver-tests.log"
+    }
+  ],
+  "fault": {
+    "function": "__tsan_func_entry / FuncEntry",
+    "source_line": ".compiler-rt/lib/tsan/rtl/tsan_rtl.h:799",
+    "instruction": "mov %rsi,(%rax)",
+    "shadow_stack_position": "0x7ffff6700000",
+    "preceding_writable_mapping": [
+      "0x7ffff6600000",
+      "0x7ffff6700000"
+    ],
+    "native_rsp": "0x7ffff6727b88",
+    "native_coroutine_mapping": [
+      "0x7ffff6721000",
+      "0x7ffff6729000"
+    ],
+    "race_warning_emitted": false,
+    "model_assertion_failed": false
+  },
+  "interpretation": "The fault is the TSan shadow call-stack push beyond mapped memory, not native coroutine-stack overflow. generator switches CPU stacks with swap_registers but has no TSan fiber hooks. Installed TSan API requires switch_to_fiber immediately before stack switching. The standalone reproduction excludes Mako/native code. No patched generator or fiber-hook repair was tested; the proposed gate separates this unsupported instrumented model runtime rather than claiming a runtime fix.",
+  "proposed_gate": {
+    "patch": "driver-proposal.patch",
+    "git_apply_check_passed": true,
+    "exact_unsanitized_binaries": [
+      "commit_fence_loom",
+      "occupancy_credit_loom"
+    ],
+    "required_models": 8,
+    "schedule_bound": null,
+    "production_native_tsan_instrumentation_retained": true,
+    "data_race_suppressions": [],
+    "production_files_modified": false
+  },
+  "file_sha256": {
+    "/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/Cargo.toml": "3bef5a2150155c7995800dc9b1448eb99984584070563544250faa9a5586eaca",
+    "/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/Cargo.lock": "37f012db50cdffaf386a0c613526776e3d09999aed0cebd6553dc5111646b08a",
+    "/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/src/lib.rs": "82dc9d80a4f762e14b385e435a6c228f8a62109dce985c77a2b209071c3de68c",
+    "/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/build.log": "1b9ef517640bf31f1d0666fa73f644cd243ccf5d5825f6b140095ff86f8cd944",
+    "/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/gdb-second.log": "b5a4d1e71d2f90615c62c64945269076306c816b0820c3b43a7c2129e6beeb53",
+    "/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/exact-timed.log": "9e294b31782d047c47e5177746c5cebba0b336bfceffa17989474c6ab7e223bb",
+    "/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/standalone-exact.log": "c9b43e577bf61e007ee61a4c7a7a3a3cbf38379328e2f960dfddd8d911f27863",
+    "/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/run_rust_sto_cache_tests.py": "1ddedb1ed62e3b6099e3806b0f64b9097a3d5cb2f5620cd9043c82ded3a9a857",
+    "/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/test_run_rust_sto_cache_tests.py": "3fcb6b75884272dc1c3601aaaaefabb3b089abc81ac848051ba44f5c270a7ab7",
+    "/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/test_run_rust_sto_cache_tests.proposed.py": "740ea332dfd47f435a141ce3407306ddab4e06fe5a30cc0cc8816f44167b9d77",
+    "/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/driver-proposal.patch": "5b5a08f8dc7166609cf82951ebbd54484b757db81d8dc3b6a832fddbdf908d04",
+    "/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/driver-tests.log": "209145240e67afc7cd6e1612593a061307ba60f9c2fa716c3a14a04853ff3921",
+    "/home/users/shuai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/generator-0.8.9/src/reg_context.rs": "4d60beb5400c4f3c2fde6f6b6be09a75928a061908f08e42778c86c5745d8893",
+    "/home/users/shuai/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/loom-0.7.2/src/rt/scheduler.rs": "476febbf4593d79d35d59a1438f4b9f3797e653da0e4fb6fd3280703f0b76a96",
+    "/home/users/shuai/.linuxbrew/opt/llvm@22/lib/clang/22/include/sanitizer/tsan_interface.h": "f91dbdf74ce69e8b8ae227c5e169a35025b24e0db6dfa31cff33b643bf7d9968"
+  }
+}

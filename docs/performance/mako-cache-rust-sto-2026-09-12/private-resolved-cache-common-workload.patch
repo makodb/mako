@@ -1,0 +1,456 @@
+diff --git a/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-cache-bench/src/bin/engine_compare.rs b/var/tmp/mako-resolved-cache.ujOM1G/base/crates/mako-cache-bench/src/bin/engine_compare.rs
+index 4342c5abf..e6eafb4c8 100644
+--- a/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-cache-bench/src/bin/engine_compare.rs
++++ b/var/tmp/mako-resolved-cache.ujOM1G/base/crates/mako-cache-bench/src/bin/engine_compare.rs
+@@ -18,7 +18,8 @@ use nix::sched::{sched_setaffinity, CpuSet};
+ use nix::unistd::Pid;
+ 
+ type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
+-const KEYS: u64 = 256;
++mod engine_compare_workload;
++use engine_compare_workload::Workload;
+ const VALUE_BYTES: usize = 128;
+ 
+ #[cfg(feature = "allocation-profile")]
+@@ -159,10 +160,6 @@ fn pin(cpu: usize) -> Result<()> {
+     Ok(())
+ }
+ 
+-fn key(worker: usize, iteration: u64) -> [u8; 8] {
+-    ((worker as u64) * KEYS + iteration % KEYS).to_be_bytes()
+-}
+-
+ fn value(worker: usize, iteration: u64) -> [u8; VALUE_BYTES] {
+     let mut bytes = [0x5au8; VALUE_BYTES];
+     bytes[..8].copy_from_slice(&(worker as u64).to_be_bytes());
+@@ -170,10 +167,6 @@ fn value(worker: usize, iteration: u64) -> [u8; VALUE_BYTES] {
+     bytes
+ }
+ 
+-fn expected_iteration(key: u64, final_count: u64) -> u64 {
+-    final_count - 1 - (final_count - 1 - key) % KEYS
+-}
+-
+ fn number(flags: &mut BTreeMap<String, String>, name: &str, default: u64) -> Result<u64> {
+     flags
+         .remove(name)
+@@ -203,19 +196,40 @@ fn run() -> Result<()> {
+             return Err("duplicate flag".into());
+         }
+     }
+-    let workers = number(&mut flags, "--workers", 1)? as usize;
++    let workers = usize::try_from(number(&mut flags, "--workers", 1)?)?;
+     let iterations = number(&mut flags, "--iterations", 262144)?;
+     let warmup = number(&mut flags, "--warmup", 65536)?;
+-    let writeback_cpu = number(&mut flags, "--writeback-cpu", 32)? as usize;
+-    let use_perf = number(&mut flags, "--perf", 1)? != 0;
++    let writeback_cpu = usize::try_from(number(&mut flags, "--writeback-cpu", 32)?)?;
++    let perf_flag = number(&mut flags, "--perf", 1)?;
++    let use_perf = perf_flag == 1;
+     let path = flags.remove("--path").map(PathBuf::from);
+-    if !flags.is_empty() || workers == 0 || workers > 32 || iterations == 0 || warmup < KEYS {
+-        return Err("invalid arguments, workers must be 1..32 and warmup at least 256".into());
+-    }
+     let total_per_worker = warmup.checked_add(iterations).ok_or("iteration overflow")?;
++    if workers == 0 || workers > 32 || iterations == 0 || warmup < 256 || perf_flag > 1 {
++        return Err(
++            "invalid arguments, workers must be 1..32, warmup at least 256, and perf 0 or 1".into(),
++        );
++    }
++    let workload = Workload::parse(&mut flags, &mode, workers, total_per_worker)?;
++    if !flags.is_empty() {
++        return Err("unknown argument".into());
++    }
++    total_per_worker
++        .checked_mul(workers as u64)
++        .ok_or("total operation overflow")?;
+     let queue_capacity = usize::try_from(total_per_worker)?
+         .checked_next_power_of_two()
+         .ok_or("queue overflow")?;
++    let queued_slots = (queue_capacity as u64)
++        .checked_mul(workers as u64)
++        .ok_or("queue slot overflow")?;
++    let nominal_queue_bytes = queued_slots
++        .checked_mul(workload.key_bytes as u64 + 256)
++        .ok_or("queue byte overflow")?;
++    if queued_slots > (1 << 25) || nominal_queue_bytes > (16 << 30) {
++        return Err(
++            "private benchmark exceeds 32M queue slots or 16GiB nominal queue bytes".into(),
++        );
++    }
+     let features = mako_engine::features()?;
+     if features.test_commit_observer()
+         || features.test_cleanup_failures()
+@@ -239,6 +253,9 @@ fn run() -> Result<()> {
+     let engine = if cache.is_none() {
+         let db = LocalDb::open()?;
+         db.bind_trusted_table("compare", 1)?;
++        for table in 1..workload.tables {
++            db.open_table(format!("compare-{table}"), table as u64 + 1)?;
++        }
+         // SAFETY: this fresh facade has no transactions or other owners yet.
+         unsafe { db.claim_cache_order_namespace(CacheOrderMode::PerWorker)? };
+         Some(Arc::new(db))
+@@ -258,16 +275,39 @@ fn run() -> Result<()> {
+             let result = (|| -> Result<_> {
+                 pin(worker)?;
+                 let perf = use_perf.then(Perf::open).transpose()?;
+-                let mut record = [0u8; 256];
++                let tables = engine
++                    .as_ref()
++                    .map(|db| {
++                        (0..workload.tables)
++                            .map(|table| {
++                                let name = if table == 0 {
++                                    "compare".to_owned()
++                                } else {
++                                    format!("compare-{table}")
++                                };
++                                db.open_table(name, table as u64 + 1)
++                            })
++                            .collect::<std::result::Result<Vec<_>, _>>()
++                    })
++                    .transpose()?;
++                let mut record = [0u8; 2048];
++                let mut key_buffer = [0x5au8; mako_engine::MAX_KEY_BYTES];
+                 let mut put = |iteration| -> Result<()> {
+-                    let key = key(worker, iteration);
++                    let (table_index, key_index) = workload.identity(iteration);
++                    let key = &mut key_buffer[..workload.key_bytes];
++                    workload.encode_key(worker, key_index, key);
+                     let value = value(worker, iteration);
+                     if let Some(db) = &cache {
+-                        db.put(&key, &value)?;
++                        db.put(key, &value)?;
+                     } else {
+-                        let (table, mut tx) =
+-                            engine.as_ref().unwrap().trusted_bound_transaction()?;
+-                        tx.put(&table, &key, &value)?;
++                        let db = engine.as_ref().unwrap();
++                        let table = &tables.as_ref().unwrap()[table_index];
++                        let mut tx = if workload.tables == 1 {
++                            db.trusted_bound_transaction()?.1
++                        } else {
++                            db.trusted_transaction(table)?
++                        };
++                        tx.put(table, key, &value)?;
+                         if logged {
+                             let candidate = tx
+                                 .unchecked_one_put_record_candidate()
+@@ -327,22 +367,36 @@ fn run() -> Result<()> {
+                 measured_done.wait();
+                 // Verify every final key after the measured region, on the same
+                 // attached worker, without flushing the ACK benchmark's queue.
+-                for index in 0..KEYS {
+-                    let expected = value(worker, expected_iteration(index, total_per_worker));
++                let expected_schedule = workload.expected(total_per_worker);
++                let mut verified = 0u64;
++                for (identity, last_iteration) in expected_schedule.into_iter().enumerate() {
++                    let Some(last_iteration) = last_iteration else {
++                        continue;
++                    };
++                    let table_index = identity / workload.keys as usize;
++                    let key_index = (identity % workload.keys as usize) as u64;
++                    let key = &mut key_buffer[..workload.key_bytes];
++                    workload.encode_key(worker, key_index, key);
++                    let expected = value(worker, last_iteration);
+                     let actual = if let Some(db) = &cache {
+-                        db.get(&key(worker, index))?
++                        db.get(key)?
+                     } else {
+-                        let (table, mut tx) =
+-                            engine.as_ref().unwrap().trusted_bound_transaction()?;
+-                        let actual = tx.get(&table, &key(worker, index))?;
++                        let db = engine.as_ref().unwrap();
++                        let table = &tables.as_ref().unwrap()[table_index];
++                        let mut tx = db.trusted_transaction(table)?;
++                        let actual = tx.get(table, key)?;
+                         tx.commit()?;
+                         actual
+                     };
+                     if actual.as_deref() != Some(expected.as_slice()) {
+-                        return Err(format!("value mismatch worker {worker} key {index}").into());
++                        return Err(format!(
++                            "value mismatch worker {worker} table {table_index} key {key_index}"
++                        )
++                        .into());
+                     }
++                    verified += 1;
+                 }
+-                Ok((nanoseconds, counts, allocated))
++                Ok((nanoseconds, counts, allocated, verified))
+             })();
+             if let Err(error) = &result {
+                 // A pre-barrier failure must terminate the sample instead
+@@ -360,8 +414,10 @@ fn run() -> Result<()> {
+     let mut min_running_ratio = 1.0f64;
+     let mut allocation_count = 0;
+     let mut allocation_bytes = 0;
++    let mut verified_keys = 0;
+     for handle in handles {
+-        let (elapsed, counts, allocated) = handle.join().expect("worker panicked")?;
++        let (elapsed, counts, allocated, verified) = handle.join().expect("worker panicked")?;
++        verified_keys += verified;
+         nanoseconds = nanoseconds.max(elapsed);
+         cycles += counts[3];
+         instructions += counts[4];
+@@ -387,11 +443,20 @@ fn run() -> Result<()> {
+     } else {
+         (total_per_worker * workers as u64, 0, 0)
+     };
+-    println!("{{\"mode\":\"{mode}\",\"engine\":\"{}\",\"workers\":{workers},\"iterations_per_worker\":{iterations},\"warmup_per_worker\":{warmup},\"keys_per_worker\":{KEYS},\"value_bytes\":{VALUE_BYTES},\"checksum\":\"none\",\"queue_capacity_per_worker\":{queue_capacity},\"commits\":{commits},\"max_worker_nanoseconds\":{nanoseconds},\"transactions_per_second\":{:.3},\"cycles_per_commit\":{:.3},\"instructions_per_commit\":{:.3},\"pmu_min_running_ratio\":{min_running_ratio:.8},\"perf_enabled\":{use_perf},\"allocation_profile\":{},\"rust_allocations_per_commit\":{:.3},\"rust_allocated_bytes_per_commit\":{:.3},\"acknowledged\":{acknowledged},\"applied_before_abort\":{applied},\"queued_before_abort\":{queued},\"verified_keys\":{},\"drained\":false}}",
++    let keys = workload.keys;
++    let requested_keys = workload
++        .requested_keys
++        .map_or_else(|| "null".to_owned(), |v| v.to_string());
++    let key_bytes = workload.key_bytes;
++    let tables = workload.tables;
++    let seed = workload.seed;
++    let distribution = workload.name();
++    let distinct_per_worker = verified_keys / workers as u64;
++    println!("{{\"workload_protocol\":\"resolved-cache-v1\",\"mode\":\"{mode}\",\"engine\":\"{}\",\"workers\":{workers},\"iterations_per_worker\":{iterations},\"warmup_per_worker\":{warmup},\"keys_per_worker\":{keys},\"effective_keys_per_worker\":{keys},\"requested_keys_per_worker\":{requested_keys},\"key_bytes\":{key_bytes},\"tables\":{tables},\"seed\":{seed},\"distribution\":\"{distribution}\",\"distinct_identities_per_worker\":{distinct_per_worker},\"value_bytes\":{VALUE_BYTES},\"checksum\":\"none\",\"queue_capacity_per_worker\":{queue_capacity},\"commits\":{commits},\"max_worker_nanoseconds\":{nanoseconds},\"transactions_per_second\":{:.3},\"cycles_per_commit\":{:.3},\"instructions_per_commit\":{:.3},\"pmu_min_running_ratio\":{min_running_ratio:.8},\"perf_enabled\":{use_perf},\"allocation_profile\":{},\"rust_allocations_per_commit\":{:.3},\"rust_allocated_bytes_per_commit\":{:.3},\"acknowledged\":{acknowledged},\"applied_before_abort\":{applied},\"queued_before_abort\":{queued},\"verified_keys\":{verified_keys},\"drained\":false}}",
+         mako_cache::engine_name(), commits as f64 * 1e9 / nanoseconds as f64,
+         cycles as f64 / commits as f64, instructions as f64 / commits as f64,
+         cfg!(feature = "allocation-profile"), allocation_count as f64 / commits as f64,
+-        allocation_bytes as f64 / commits as f64, workers as u64 * KEYS);
++        allocation_bytes as f64 / commits as f64);
+     if let Some(db) = cache {
+         Arc::try_unwrap(db)
+             .map_err(|_| "live cache owner after workers joined")?
+diff --git a/var/tmp/mako-resolved-cache.ujOM1G/base/crates/mako-cache-bench/src/bin/engine_compare_workload/mod.rs b/var/tmp/mako-resolved-cache.ujOM1G/base/crates/mako-cache-bench/src/bin/engine_compare_workload/mod.rs
+new file mode 100644
+index 000000000..3f18ad325
+--- /dev/null
++++ b/var/tmp/mako-resolved-cache.ujOM1G/base/crates/mako-cache-bench/src/bin/engine_compare_workload/mod.rs
+@@ -0,0 +1,230 @@
++//! Private cache experiment workload. This module is identical in both arms.
++
++use std::collections::BTreeMap;
++
++use super::{number, Result};
++
++pub const MAX_IDENTITIES: u64 = 1 << 22;
++const MAX_DOMAIN_BYTES: u64 = 1 << 30;
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub enum Distribution {
++    HotCycle,
++    Uniform,
++    Stream,
++    Skew,
++}
++
++#[derive(Clone, Copy, Debug)]
++pub struct Workload {
++    pub requested_keys: Option<u64>,
++    pub keys: u64,
++    pub key_bytes: usize,
++    pub tables: usize,
++    pub seed: u64,
++    pub distribution: Distribution,
++}
++
++impl Workload {
++    pub fn parse(
++        flags: &mut BTreeMap<String, String>,
++        mode: &str,
++        workers: usize,
++        total: u64,
++    ) -> Result<Self> {
++        let explicit_keys = flags.remove("--keys-per-worker");
++        let distribution = match flags
++            .remove("--distribution")
++            .as_deref()
++            .unwrap_or("hot-cycle")
++        {
++            "hot-cycle" => Distribution::HotCycle,
++            "uniform" => Distribution::Uniform,
++            "stream" => Distribution::Stream,
++            "skew" => Distribution::Skew,
++            _ => return Err("unknown distribution".into()),
++        };
++        let requested_keys = if distribution == Distribution::Stream {
++            if explicit_keys.is_some() {
++                return Err("stream rejects --keys-per-worker".into());
++            }
++            None
++        } else {
++            Some(explicit_keys.map(|v| v.parse()).transpose()?.unwrap_or(256))
++        };
++        let keys = requested_keys.unwrap_or(total);
++        let key_bytes = usize::try_from(number(flags, "--key-bytes", 8)?)?;
++        let tables = usize::try_from(number(flags, "--tables", 1)?)?;
++        let seed = number(flags, "--seed", 0x1234_5678_9abc_def0)?;
++        if keys == 0
++            || !(8..=mako_engine::MAX_KEY_BYTES).contains(&key_bytes)
++            || !(1..=16).contains(&tables)
++        {
++            return Err("keys must be positive, key bytes 8..1024, and tables 1..16".into());
++        }
++        if mode == "cache-ack" && tables != 1 {
++            return Err("cache-ack supports only one table".into());
++        }
++        let identities = keys
++            .checked_mul(tables as u64)
++            .and_then(|n| n.checked_mul(workers as u64))
++            .ok_or("identity overflow")?;
++        let bytes = identities
++            .checked_mul(key_bytes as u64 + 256)
++            .ok_or("domain byte overflow")?;
++        if identities > MAX_IDENTITIES || bytes > MAX_DOMAIN_BYTES || total >= (1 << 48) {
++            return Err("private benchmark domain exceeds 4M identities, 1GiB nominal bytes, or lane sequence limit".into());
++        }
++        Ok(Self {
++            requested_keys,
++            keys,
++            key_bytes,
++            tables,
++            seed,
++            distribution,
++        })
++    }
++
++    pub fn name(self) -> &'static str {
++        match self.distribution {
++            Distribution::HotCycle => "hot-cycle",
++            Distribution::Uniform => "uniform",
++            Distribution::Stream => "stream",
++            Distribution::Skew => "skew",
++        }
++    }
++
++    /// Draws are pure functions of iteration and seed, with wrapping u64 arithmetic.
++    /// SplitMix64's finalizer receives three independent Weyl-sequence lanes.
++    #[inline]
++    pub fn identity(self, iteration: u64) -> (usize, u64) {
++        if self.distribution == Distribution::HotCycle {
++            return (
++                ((iteration / self.keys) % self.tables as u64) as usize,
++                iteration % self.keys,
++            );
++        }
++        let draw = |lane: u64| {
++            mix(self
++                .seed
++                .wrapping_add(iteration.wrapping_mul(0x9e37_79b9_7f4a_7c15))
++                .wrapping_add(lane.wrapping_mul(0xd1b5_4a32_d192_ed03)))
++        };
++        let table = (draw(2) % self.tables as u64) as usize;
++        let index = match self.distribution {
++            Distribution::Stream => iteration,
++            Distribution::Uniform => draw(0) % self.keys,
++            Distribution::Skew => {
++                draw(0)
++                    % if draw(1) % 10 < 9 {
++                        self.keys.min(16)
++                    } else {
++                        self.keys
++                    }
++            }
++            Distribution::HotCycle => unreachable!(),
++        };
++        (table, index)
++    }
++
++    /// The caller initializes one buffer per worker. No allocation occurs here.
++    #[inline]
++    pub fn encode_key(self, worker: usize, index: u64, output: &mut [u8]) {
++        debug_assert_eq!(output.len(), self.key_bytes);
++        output[..8].copy_from_slice(&((worker as u64) * self.keys + index).to_be_bytes());
++        // Fixed suffix preserves exact binary-key length as a separate dimension.
++        // The prefix already uniquely identifies every worker/key pair.
++    }
++
++    pub fn expected(self, total: u64) -> Vec<Option<u64>> {
++        let mut expected = vec![None; self.keys as usize * self.tables];
++        for iteration in 0..total {
++            let (table, key) = self.identity(iteration);
++            expected[table * self.keys as usize + key as usize] = Some(iteration);
++        }
++        expected
++    }
++}
++
++fn mix(mut value: u64) -> u64 {
++    value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
++    value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
++    value ^ (value >> 31)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn parse(args: &[(&str, &str)], total: u64) -> Result<Workload> {
++        Workload::parse(
++            &mut args
++                .iter()
++                .map(|(k, v)| (k.to_string(), v.to_string()))
++                .collect(),
++            "engine",
++            1,
++            total,
++        )
++    }
++
++    #[test]
++    fn default_and_mixed_cycle_cover_the_full_domain() {
++        let default = parse(&[], 1024).unwrap();
++        assert_eq!(default.keys, 256);
++        let mixed = parse(&[("--tables", "2")], 1024).unwrap();
++        assert_eq!(
++            mixed.expected(1024).iter().filter(|v| v.is_some()).count(),
++            512
++        );
++        assert_eq!(mixed.identity(256), (1, 0));
++        assert_eq!(mixed.identity(512), (0, 0));
++        assert_eq!(default.expected(1024)[0], Some(768));
++    }
++
++    #[test]
++    fn stream_and_bounds_fail_before_open() {
++        assert!(parse(
++            &[("--distribution", "stream"), ("--keys-per-worker", "256")],
++            1024
++        )
++        .is_err());
++        let stream = parse(&[("--distribution", "stream")], 1024).unwrap();
++        assert_eq!(stream.requested_keys, None);
++        assert_eq!(
++            stream.expected(1024).iter().filter(|v| v.is_some()).count(),
++            1024
++        );
++        assert!(parse(&[("--keys-per-worker", "18446744073709551615")], 1024).is_err());
++        assert!(parse(&[("--key-bytes", "1025")], 1024).is_err());
++    }
++
++    #[test]
++    fn random_schedules_replay_and_keys_remain_disjoint() {
++        for distribution in ["uniform", "skew"] {
++            let workload = parse(
++                &[
++                    ("--distribution", distribution),
++                    ("--keys-per-worker", "100"),
++                    ("--tables", "2"),
++                ],
++                1024,
++            )
++            .unwrap();
++            let expected = workload.expected(1024);
++            for (identity, last) in expected.iter().enumerate() {
++                if let Some(last) = last {
++                    assert_eq!(
++                        workload.identity(*last),
++                        (identity / 100, (identity % 100) as u64)
++                    );
++                }
++            }
++            let mut first = [0x5a; 8];
++            let mut second = [0x5a; 8];
++            workload.encode_key(0, 99, &mut first);
++            workload.encode_key(1, 0, &mut second);
++            assert_ne!(first, second);
++        }
++    }
++}
+

@@ -1,0 +1,2708 @@
+[
+  {
+    "arm": "c-abi",
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w1-c-abi.dz_jslbt",
+    "drained": {
+      "ack_latency_samples": 33107,
+      "ack_p99_upper_ns": 786431,
+      "ack_seconds": 120.003472,
+      "ack_tps": 70482.361,
+      "applied_seconds": 120.018434,
+      "applied_tps": 70473.574,
+      "commits": 8458128,
+      "conflicts": 0,
+      "disk_bytes": 556892160,
+      "drain_seconds": 0.01496,
+      "engine": "mako-local/sto-masstrans",
+      "event": "drained",
+      "maximum_sampled_queue": 1024,
+      "process_write_bytes": 5636214784,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8458128, mako_timestamp: Some(MakoTimestamp { physical_us: 1789273343332000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8458128, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8458128, retained_bytes: 1835413776, expired_backlog_lower_bound: 0, observed_cutoff_us: Some(1789273043339600), reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: Some(MakoTimestamp { physical_us: 1789273223337000, logical: 0, origin: 1 }), errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 2.547758ms, last_progress: None, last_error: None }, quarantined_workers: 0 }"
+    },
+    "drained_and_verified": true,
+    "protocol": {
+      "checksum": "crc32c",
+      "engine": "mako-local/sto-masstrans",
+      "event": "protocol",
+      "keys_per_worker": 256,
+      "latency_sample_stride": 256,
+      "max_batch_records": 64,
+      "options": "Options { durability: Wal, cache: CacheOptions { writeback: WritebackConfig { capacity: 1024, max_record_bytes: 8388608, max_batch_records: 64, max_batch_bytes: 1048576, max_apply_retries: 8, retry_delay: 1ms }, log_retention: 300s, gc_interval: 10s, foreground_mode: Concurrent, record_checksum: Crc32c, writeback_cpu: Some(32), backend_stall_threshold: 30s, require_read_my_writes: true, isolation: StrictSerializable } }",
+      "queue_capacity_per_worker": 1024,
+      "rate_per_worker": 0,
+      "seconds": 120,
+      "sync": false,
+      "value_bytes": 128,
+      "version": 2,
+      "wal": true,
+      "workers": 1,
+      "writeback_cpu": 32
+    },
+    "repetition": 1,
+    "run": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-c-abi-final",
+        "run",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w1-c-abi.dz_jslbt/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w1-c-abi.dz_jslbt/expected.txt",
+        "--writeback-cpu",
+        "32",
+        "--workers",
+        "1",
+        "--seconds",
+        "120",
+        "--sample-seconds",
+        "10",
+        "--keys-per-worker",
+        "256",
+        "--value-bytes",
+        "128",
+        "--rate-per-worker",
+        "0",
+        "--disk-limit-bytes",
+        "103079215104",
+        "--minimum-free-bytes",
+        "85899345920"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 155648,
+          "VmRSS": 155648,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0011185621842741966
+        },
+        {
+          "VmHWM": 110551040,
+          "VmRSS": 108818432,
+          "VmSize": 233811968,
+          "elapsed_seconds": 10.141571248881519
+        },
+        {
+          "VmHWM": 120545280,
+          "VmRSS": 108113920,
+          "VmSize": 249540608,
+          "elapsed_seconds": 20.280258337967098
+        },
+        {
+          "VmHWM": 135458816,
+          "VmRSS": 123146240,
+          "VmSize": 265269248,
+          "elapsed_seconds": 30.419464983977377
+        },
+        {
+          "VmHWM": 135458816,
+          "VmRSS": 126824448,
+          "VmSize": 265269248,
+          "elapsed_seconds": 40.557290740311146
+        },
+        {
+          "VmHWM": 142581760,
+          "VmRSS": 122802176,
+          "VmSize": 300920832,
+          "elapsed_seconds": 50.69400538131595
+        },
+        {
+          "VmHWM": 142581760,
+          "VmRSS": 128458752,
+          "VmSize": 304590848,
+          "elapsed_seconds": 60.84255170216784
+        },
+        {
+          "VmHWM": 162660352,
+          "VmRSS": 124493824,
+          "VmSize": 304590848,
+          "elapsed_seconds": 70.9786329800263
+        },
+        {
+          "VmHWM": 162660352,
+          "VmRSS": 135282688,
+          "VmSize": 317173760,
+          "elapsed_seconds": 81.11652989592403
+        },
+        {
+          "VmHWM": 162660352,
+          "VmRSS": 160763904,
+          "VmSize": 317173760,
+          "elapsed_seconds": 91.25515180127695
+        },
+        {
+          "VmHWM": 166150144,
+          "VmRSS": 131424256,
+          "VmSize": 317173760,
+          "elapsed_seconds": 101.4197121122852
+        },
+        {
+          "VmHWM": 166150144,
+          "VmRSS": 133615616,
+          "VmSize": 317173760,
+          "elapsed_seconds": 111.57617821311578
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 121.71529621398076
+    },
+    "scratch_cleaned": true,
+    "verified": {
+      "commits": 8458128,
+      "disk_bytes": 456777728,
+      "engine": "mako-local/sto-masstrans",
+      "event": "verified",
+      "keys": 256,
+      "open_seconds": 106.374387,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8458129, mako_timestamp: Some(MakoTimestamp { physical_us: 1789273450838000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8458129, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8458129, retained_bytes: 1835413879, expired_backlog_lower_bound: 0, observed_cutoff_us: None, reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: None, errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 0ns, last_progress: None, last_error: None }, quarantined_workers: 0 }",
+      "validation_seconds": 0.000472,
+      "workers": 1
+    },
+    "verify": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-c-abi-final",
+        "verify",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w1-c-abi.dz_jslbt/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w1-c-abi.dz_jslbt/expected.txt",
+        "--writeback-cpu",
+        "32"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 81920,
+          "VmRSS": 81920,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.001226356253027916
+        },
+        {
+          "VmHWM": 120508416,
+          "VmRSS": 110964736,
+          "VmSize": 287264768,
+          "elapsed_seconds": 10.137936961837113
+        },
+        {
+          "VmHWM": 120508416,
+          "VmRSS": 91832320,
+          "VmSize": 287264768,
+          "elapsed_seconds": 20.274224792141467
+        },
+        {
+          "VmHWM": 247099392,
+          "VmRSS": 221954048,
+          "VmSize": 551505920,
+          "elapsed_seconds": 30.41003808612004
+        },
+        {
+          "VmHWM": 378191872,
+          "VmRSS": 326828032,
+          "VmSize": 853495808,
+          "elapsed_seconds": 40.549573357217014
+        },
+        {
+          "VmHWM": 378191872,
+          "VmRSS": 326828032,
+          "VmSize": 853495808,
+          "elapsed_seconds": 50.688171291258186
+        },
+        {
+          "VmHWM": 640352256,
+          "VmRSS": 536563712,
+          "VmSize": 1463767040,
+          "elapsed_seconds": 60.82634996017441
+        },
+        {
+          "VmHWM": 640352256,
+          "VmRSS": 536563712,
+          "VmSize": 1463767040,
+          "elapsed_seconds": 70.96627582609653
+        },
+        {
+          "VmHWM": 640352256,
+          "VmRSS": 536563712,
+          "VmSize": 1463767040,
+          "elapsed_seconds": 81.10239652125165
+        },
+        {
+          "VmHWM": 1164664832,
+          "VmRSS": 956010496,
+          "VmSize": 2671726592,
+          "elapsed_seconds": 91.24020987004042
+        },
+        {
+          "VmHWM": 1164664832,
+          "VmRSS": 117149696,
+          "VmSize": 2671726592,
+          "elapsed_seconds": 101.37780293496326
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 106.51529730902985
+    },
+    "workers": 1
+  },
+  {
+    "arm": "sto",
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w1-sto.6tsg3uv8",
+    "drained": {
+      "ack_latency_samples": 33389,
+      "ack_p99_upper_ns": 655359,
+      "ack_seconds": 120.002719,
+      "ack_tps": 71098.673,
+      "applied_seconds": 120.016409,
+      "applied_tps": 71090.563,
+      "commits": 8532034,
+      "conflicts": 0,
+      "disk_bytes": 568082432,
+      "drain_seconds": 0.013687,
+      "engine": "sto",
+      "event": "drained",
+      "maximum_sampled_queue": 1024,
+      "process_write_bytes": 5714038784,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8532034, mako_timestamp: Some(MakoTimestamp { physical_us: 1789273571818000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8532034, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8532034, retained_bytes: 1851451378, expired_backlog_lower_bound: 0, observed_cutoff_us: Some(1789273271823740), reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: Some(MakoTimestamp { physical_us: 1789273451817000, logical: 0, origin: 1 }), errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 3.0028ms, last_progress: None, last_error: None }, quarantined_workers: 0 }"
+    },
+    "drained_and_verified": true,
+    "protocol": {
+      "checksum": "crc32c",
+      "engine": "sto",
+      "event": "protocol",
+      "keys_per_worker": 256,
+      "latency_sample_stride": 256,
+      "max_batch_records": 64,
+      "options": "Options { durability: Wal, cache: CacheOptions { writeback: WritebackConfig { capacity: 1024, max_record_bytes: 8388608, max_batch_records: 64, max_batch_bytes: 1048576, max_apply_retries: 8, retry_delay: 1ms }, log_retention: 300s, gc_interval: 10s, foreground_mode: Concurrent, record_checksum: Crc32c, writeback_cpu: Some(32), backend_stall_threshold: 30s, require_read_my_writes: true, isolation: StrictSerializable } }",
+      "queue_capacity_per_worker": 1024,
+      "rate_per_worker": 0,
+      "seconds": 120,
+      "sync": false,
+      "value_bytes": 128,
+      "version": 2,
+      "wal": true,
+      "workers": 1,
+      "writeback_cpu": 32
+    },
+    "repetition": 1,
+    "run": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-sto-final",
+        "run",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w1-sto.6tsg3uv8/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w1-sto.6tsg3uv8/expected.txt",
+        "--writeback-cpu",
+        "32",
+        "--workers",
+        "1",
+        "--seconds",
+        "120",
+        "--sample-seconds",
+        "10",
+        "--keys-per-worker",
+        "256",
+        "--value-bytes",
+        "128",
+        "--rate-per-worker",
+        "0",
+        "--disk-limit-bytes",
+        "103079215104",
+        "--minimum-free-bytes",
+        "85899345920"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 143360,
+          "VmRSS": 143360,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0011582537554204464
+        },
+        {
+          "VmHWM": 104587264,
+          "VmRSS": 96788480,
+          "VmSize": 228249600,
+          "elapsed_seconds": 10.137785778846592
+        },
+        {
+          "VmHWM": 113020928,
+          "VmRSS": 112889856,
+          "VmSize": 243978240,
+          "elapsed_seconds": 20.274275402072817
+        },
+        {
+          "VmHWM": 120905728,
+          "VmRSS": 120700928,
+          "VmSize": 251318272,
+          "elapsed_seconds": 30.41401008190587
+        },
+        {
+          "VmHWM": 122638336,
+          "VmRSS": 94507008,
+          "VmSize": 259706880,
+          "elapsed_seconds": 40.55039870319888
+        },
+        {
+          "VmHWM": 135659520,
+          "VmRSS": 121057280,
+          "VmSize": 280678400,
+          "elapsed_seconds": 50.68781857797876
+        },
+        {
+          "VmHWM": 135659520,
+          "VmRSS": 112652288,
+          "VmSize": 294834176,
+          "elapsed_seconds": 60.8282543187961
+        },
+        {
+          "VmHWM": 135659520,
+          "VmRSS": 109768704,
+          "VmSize": 311611392,
+          "elapsed_seconds": 70.96535297110677
+        },
+        {
+          "VmHWM": 135659520,
+          "VmRSS": 122245120,
+          "VmSize": 311611392,
+          "elapsed_seconds": 81.11195489019156
+        },
+        {
+          "VmHWM": 147439616,
+          "VmRSS": 128598016,
+          "VmSize": 311611392,
+          "elapsed_seconds": 91.24922130303457
+        },
+        {
+          "VmHWM": 148013056,
+          "VmRSS": 116465664,
+          "VmSize": 311611392,
+          "elapsed_seconds": 101.38394244480878
+        },
+        {
+          "VmHWM": 148013056,
+          "VmRSS": 123518976,
+          "VmSize": 311611392,
+          "elapsed_seconds": 111.5209602098912
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 121.6589677571319
+    },
+    "scratch_cleaned": true,
+    "verified": {
+      "commits": 8532034,
+      "disk_bytes": 465301504,
+      "engine": "sto",
+      "event": "verified",
+      "keys": 256,
+      "open_seconds": 108.564516,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8532035, mako_timestamp: Some(MakoTimestamp { physical_us: 1789273681651000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8532035, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8532035, retained_bytes: 1851451481, expired_backlog_lower_bound: 0, observed_cutoff_us: None, reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: None, errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 0ns, last_progress: None, last_error: None }, quarantined_workers: 0 }",
+      "validation_seconds": 0.000484,
+      "workers": 1
+    },
+    "verify": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-sto-final",
+        "verify",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w1-sto.6tsg3uv8/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w1-sto.6tsg3uv8/expected.txt",
+        "--writeback-cpu",
+        "32"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 90112,
+          "VmRSS": 90112,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0012326166033744812
+        },
+        {
+          "VmHWM": 103489536,
+          "VmRSS": 103489536,
+          "VmSize": 225603584,
+          "elapsed_seconds": 10.136887431610376
+        },
+        {
+          "VmHWM": 103526400,
+          "VmRSS": 103526400,
+          "VmSize": 225603584,
+          "elapsed_seconds": 20.2726437789388
+        },
+        {
+          "VmHWM": 239788032,
+          "VmRSS": 215105536,
+          "VmSize": 491941888,
+          "elapsed_seconds": 30.411958526819944
+        },
+        {
+          "VmHWM": 370880512,
+          "VmRSS": 319979520,
+          "VmSize": 793931776,
+          "elapsed_seconds": 40.55035755969584
+        },
+        {
+          "VmHWM": 370880512,
+          "VmRSS": 319979520,
+          "VmSize": 793931776,
+          "elapsed_seconds": 50.686797288712114
+        },
+        {
+          "VmHWM": 633040896,
+          "VmRSS": 529711104,
+          "VmSize": 1397911552,
+          "elapsed_seconds": 60.82301626494154
+        },
+        {
+          "VmHWM": 633040896,
+          "VmRSS": 529711104,
+          "VmSize": 1397911552,
+          "elapsed_seconds": 70.96071214601398
+        },
+        {
+          "VmHWM": 633040896,
+          "VmRSS": 529711104,
+          "VmSize": 1397911552,
+          "elapsed_seconds": 81.09609927795827
+        },
+        {
+          "VmHWM": 1157349376,
+          "VmRSS": 949161984,
+          "VmSize": 2612162560,
+          "elapsed_seconds": 91.24864578293636
+        },
+        {
+          "VmHWM": 1157349376,
+          "VmRSS": 110411776,
+          "VmSize": 2612162560,
+          "elapsed_seconds": 101.38423217786476
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 109.5209135916084
+    },
+    "workers": 1
+  },
+  {
+    "arm": "c-abi",
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w4-c-abi.o0h2e324",
+    "drained": {
+      "ack_latency_samples": 33015,
+      "ack_p99_upper_ns": 753663,
+      "ack_seconds": 120.047868,
+      "ack_tps": 70249.236,
+      "applied_seconds": 120.060823,
+      "applied_tps": 70241.656,
+      "commits": 8433271,
+      "conflicts": 0,
+      "disk_bytes": 501452800,
+      "drain_seconds": 0.012952,
+      "engine": "mako-local/sto-masstrans",
+      "event": "drained",
+      "maximum_sampled_queue": 4096,
+      "process_write_bytes": 5768175616,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8433271, mako_timestamp: Some(MakoTimestamp { physical_us: 1789273803441000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8433271, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8433271, retained_bytes: 1830019807, expired_backlog_lower_bound: 0, observed_cutoff_us: Some(1789273503407296), reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: Some(MakoTimestamp { physical_us: 1789273683402000, logical: 0, origin: 1 }), errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 7.410681ms, last_progress: None, last_error: None }, quarantined_workers: 0 }"
+    },
+    "drained_and_verified": true,
+    "protocol": {
+      "checksum": "crc32c",
+      "engine": "mako-local/sto-masstrans",
+      "event": "protocol",
+      "keys_per_worker": 256,
+      "latency_sample_stride": 256,
+      "max_batch_records": 64,
+      "options": "Options { durability: Wal, cache: CacheOptions { writeback: WritebackConfig { capacity: 1024, max_record_bytes: 8388608, max_batch_records: 64, max_batch_bytes: 1048576, max_apply_retries: 8, retry_delay: 1ms }, log_retention: 300s, gc_interval: 10s, foreground_mode: Concurrent, record_checksum: Crc32c, writeback_cpu: Some(32), backend_stall_threshold: 30s, require_read_my_writes: true, isolation: StrictSerializable } }",
+      "queue_capacity_per_worker": 1024,
+      "rate_per_worker": 0,
+      "seconds": 120,
+      "sync": false,
+      "value_bytes": 128,
+      "version": 2,
+      "wal": true,
+      "workers": 4,
+      "writeback_cpu": 32
+    },
+    "repetition": 1,
+    "run": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-c-abi-final",
+        "run",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w4-c-abi.o0h2e324/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w4-c-abi.o0h2e324/expected.txt",
+        "--writeback-cpu",
+        "32",
+        "--workers",
+        "4",
+        "--seconds",
+        "120",
+        "--sample-seconds",
+        "10",
+        "--keys-per-worker",
+        "256",
+        "--value-bytes",
+        "128",
+        "--rate-per-worker",
+        "0",
+        "--disk-limit-bytes",
+        "103079215104",
+        "--minimum-free-bytes",
+        "85899345920"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 163840,
+          "VmRSS": 163840,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.001067028846591711
+        },
+        {
+          "VmHWM": 119869440,
+          "VmRSS": 114671616,
+          "VmSize": 269512704,
+          "elapsed_seconds": 10.141693332698196
+        },
+        {
+          "VmHWM": 129167360,
+          "VmRSS": 117284864,
+          "VmSize": 285241344,
+          "elapsed_seconds": 20.28086462803185
+        },
+        {
+          "VmHWM": 143912960,
+          "VmRSS": 129589248,
+          "VmSize": 300969984,
+          "elapsed_seconds": 30.418798711616546
+        },
+        {
+          "VmHWM": 143912960,
+          "VmRSS": 121741312,
+          "VmSize": 300969984,
+          "elapsed_seconds": 40.556117004714906
+        },
+        {
+          "VmHWM": 153718784,
+          "VmRSS": 122531840,
+          "VmSize": 321941504,
+          "elapsed_seconds": 50.692526754923165
+        },
+        {
+          "VmHWM": 153718784,
+          "VmRSS": 145059840,
+          "VmSize": 332427264,
+          "elapsed_seconds": 60.830640560016036
+        },
+        {
+          "VmHWM": 153718784,
+          "VmRSS": 131981312,
+          "VmSize": 345010176,
+          "elapsed_seconds": 70.96805379167199
+        },
+        {
+          "VmHWM": 153718784,
+          "VmRSS": 132939776,
+          "VmSize": 348680192,
+          "elapsed_seconds": 81.105985453818
+        },
+        {
+          "VmHWM": 159666176,
+          "VmRSS": 135786496,
+          "VmSize": 348680192,
+          "elapsed_seconds": 91.24437412573025
+        },
+        {
+          "VmHWM": 159666176,
+          "VmRSS": 135991296,
+          "VmSize": 348680192,
+          "elapsed_seconds": 101.38301231665537
+        },
+        {
+          "VmHWM": 159666176,
+          "VmRSS": 142376960,
+          "VmSize": 348680192,
+          "elapsed_seconds": 111.51961912261322
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 121.70541612477973
+    },
+    "scratch_cleaned": true,
+    "verified": {
+      "commits": 8433271,
+      "disk_bytes": 449667072,
+      "engine": "mako-local/sto-masstrans",
+      "event": "verified",
+      "keys": 1024,
+      "open_seconds": 107.039394,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8433272, mako_timestamp: Some(MakoTimestamp { physical_us: 1789273911805000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8433272, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8433272, retained_bytes: 1830019910, expired_backlog_lower_bound: 0, observed_cutoff_us: None, reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: None, errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 0ns, last_progress: None, last_error: None }, quarantined_workers: 0 }",
+      "validation_seconds": 0.001568,
+      "workers": 4
+    },
+    "verify": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-c-abi-final",
+        "verify",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w4-c-abi.o0h2e324/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w4-c-abi.o0h2e324/expected.txt",
+        "--writeback-cpu",
+        "32"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 262144,
+          "VmRSS": 262144,
+          "VmSize": 438272,
+          "elapsed_seconds": 0.0011375430040061474
+        },
+        {
+          "VmHWM": 110391296,
+          "VmRSS": 110391296,
+          "VmSize": 228544512,
+          "elapsed_seconds": 10.138346372172236
+        },
+        {
+          "VmHWM": 108277760,
+          "VmRSS": 73113600,
+          "VmSize": 228544512,
+          "elapsed_seconds": 20.276947862003
+        },
+        {
+          "VmHWM": 228061184,
+          "VmRSS": 203325440,
+          "VmSize": 511660032,
+          "elapsed_seconds": 30.41590353799984
+        },
+        {
+          "VmHWM": 359153664,
+          "VmRSS": 308199424,
+          "VmSize": 813649920,
+          "elapsed_seconds": 40.55484841018915
+        },
+        {
+          "VmHWM": 359153664,
+          "VmRSS": 308199424,
+          "VmSize": 813649920,
+          "elapsed_seconds": 50.69534878293052
+        },
+        {
+          "VmHWM": 621322240,
+          "VmRSS": 517943296,
+          "VmSize": 1423921152,
+          "elapsed_seconds": 60.83134122611955
+        },
+        {
+          "VmHWM": 621322240,
+          "VmRSS": 517943296,
+          "VmSize": 1423921152,
+          "elapsed_seconds": 70.96819950593635
+        },
+        {
+          "VmHWM": 621322240,
+          "VmRSS": 517943296,
+          "VmSize": 1423921152,
+          "elapsed_seconds": 81.10620647808537
+        },
+        {
+          "VmHWM": 1145626624,
+          "VmRSS": 937385984,
+          "VmSize": 2631880704,
+          "elapsed_seconds": 91.24316693004221
+        },
+        {
+          "VmHWM": 1145626624,
+          "VmRSS": 98537472,
+          "VmSize": 2631880704,
+          "elapsed_seconds": 101.3814160390757
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 107.52361025009304
+    },
+    "workers": 4
+  },
+  {
+    "arm": "sto",
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w4-sto.o3kqijvb",
+    "drained": {
+      "ack_latency_samples": 33047,
+      "ack_p99_upper_ns": 688127,
+      "ack_seconds": 120.049607,
+      "ack_tps": 70201.379,
+      "applied_seconds": 120.061725,
+      "applied_tps": 70194.294,
+      "commits": 8427648,
+      "conflicts": 0,
+      "disk_bytes": 501059584,
+      "drain_seconds": 0.012114,
+      "engine": "sto",
+      "event": "drained",
+      "maximum_sampled_queue": 4096,
+      "process_write_bytes": 5763121152,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8427648, mako_timestamp: Some(MakoTimestamp { physical_us: 1789274033109000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8427648, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8427648, retained_bytes: 1828799616, expired_backlog_lower_bound: 0, observed_cutoff_us: Some(1789273733071601), reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: Some(MakoTimestamp { physical_us: 1789273913062000, logical: 0, origin: 1 }), errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 7.560419ms, last_progress: None, last_error: None }, quarantined_workers: 0 }"
+    },
+    "drained_and_verified": true,
+    "protocol": {
+      "checksum": "crc32c",
+      "engine": "sto",
+      "event": "protocol",
+      "keys_per_worker": 256,
+      "latency_sample_stride": 256,
+      "max_batch_records": 64,
+      "options": "Options { durability: Wal, cache: CacheOptions { writeback: WritebackConfig { capacity: 1024, max_record_bytes: 8388608, max_batch_records: 64, max_batch_bytes: 1048576, max_apply_retries: 8, retry_delay: 1ms }, log_retention: 300s, gc_interval: 10s, foreground_mode: Concurrent, record_checksum: Crc32c, writeback_cpu: Some(32), backend_stall_threshold: 30s, require_read_my_writes: true, isolation: StrictSerializable } }",
+      "queue_capacity_per_worker": 1024,
+      "rate_per_worker": 0,
+      "seconds": 120,
+      "sync": false,
+      "value_bytes": 128,
+      "version": 2,
+      "wal": true,
+      "workers": 4,
+      "writeback_cpu": 32
+    },
+    "repetition": 1,
+    "run": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-sto-final",
+        "run",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w4-sto.o3kqijvb/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w4-sto.o3kqijvb/expected.txt",
+        "--writeback-cpu",
+        "32",
+        "--workers",
+        "4",
+        "--seconds",
+        "120",
+        "--sample-seconds",
+        "10",
+        "--keys-per-worker",
+        "256",
+        "--value-bytes",
+        "128",
+        "--rate-per-worker",
+        "0",
+        "--disk-limit-bytes",
+        "103079215104",
+        "--minimum-free-bytes",
+        "85899345920"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 81920,
+          "VmRSS": 81920,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0012542377226054668
+        },
+        {
+          "VmHWM": 107130880,
+          "VmRSS": 99160064,
+          "VmSize": 262373376,
+          "elapsed_seconds": 10.139953915029764
+        },
+        {
+          "VmHWM": 117776384,
+          "VmRSS": 110063616,
+          "VmSize": 278102016,
+          "elapsed_seconds": 20.275146218948066
+        },
+        {
+          "VmHWM": 131854336,
+          "VmRSS": 116559872,
+          "VmSize": 329482240,
+          "elapsed_seconds": 30.41183868981898
+        },
+        {
+          "VmHWM": 131854336,
+          "VmRSS": 116178944,
+          "VmSize": 329482240,
+          "elapsed_seconds": 40.551043367013335
+        },
+        {
+          "VmHWM": 139759616,
+          "VmRSS": 126492672,
+          "VmSize": 329482240,
+          "elapsed_seconds": 50.691365513950586
+        },
+        {
+          "VmHWM": 139759616,
+          "VmRSS": 130150400,
+          "VmSize": 333152256,
+          "elapsed_seconds": 60.830323605798185
+        },
+        {
+          "VmHWM": 139759616,
+          "VmRSS": 111919104,
+          "VmSize": 345735168,
+          "elapsed_seconds": 70.96681376174092
+        },
+        {
+          "VmHWM": 139759616,
+          "VmRSS": 119267328,
+          "VmSize": 345735168,
+          "elapsed_seconds": 81.10427633067593
+        },
+        {
+          "VmHWM": 139849728,
+          "VmRSS": 126623744,
+          "VmSize": 345735168,
+          "elapsed_seconds": 91.24156993208453
+        },
+        {
+          "VmHWM": 142663680,
+          "VmRSS": 122695680,
+          "VmSize": 345735168,
+          "elapsed_seconds": 101.37866962188855
+        },
+        {
+          "VmHWM": 142663680,
+          "VmRSS": 123707392,
+          "VmSize": 360415232,
+          "elapsed_seconds": 111.5183960320428
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 121.65694259479642
+    },
+    "scratch_cleaned": true,
+    "verified": {
+      "commits": 8427648,
+      "disk_bytes": 448987136,
+      "engine": "sto",
+      "event": "verified",
+      "keys": 1024,
+      "open_seconds": 108.725418,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8427649, mako_timestamp: Some(MakoTimestamp { physical_us: 1789274143125000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8427649, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8427649, retained_bytes: 1828799719, expired_backlog_lower_bound: 0, observed_cutoff_us: None, reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: None, errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 0ns, last_progress: None, last_error: None }, quarantined_workers: 0 }",
+      "validation_seconds": 0.001626,
+      "workers": 4
+    },
+    "verify": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-sto-final",
+        "verify",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w4-sto.o3kqijvb/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w4-sto.o3kqijvb/expected.txt",
+        "--writeback-cpu",
+        "32"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 86016,
+          "VmRSS": 86016,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0012558591552078724
+        },
+        {
+          "VmHWM": 101986304,
+          "VmRSS": 79101952,
+          "VmSize": 225603584,
+          "elapsed_seconds": 10.140117146074772
+        },
+        {
+          "VmHWM": 101986304,
+          "VmRSS": 68804608,
+          "VmSize": 225603584,
+          "elapsed_seconds": 20.27786914119497
+        },
+        {
+          "VmHWM": 223166464,
+          "VmRSS": 197943296,
+          "VmSize": 491941888,
+          "elapsed_seconds": 30.415890006814152
+        },
+        {
+          "VmHWM": 354254848,
+          "VmRSS": 302817280,
+          "VmSize": 793931776,
+          "elapsed_seconds": 40.55663523823023
+        },
+        {
+          "VmHWM": 354254848,
+          "VmRSS": 302817280,
+          "VmSize": 793931776,
+          "elapsed_seconds": 50.6946440609172
+        },
+        {
+          "VmHWM": 616415232,
+          "VmRSS": 512552960,
+          "VmSize": 1404203008,
+          "elapsed_seconds": 60.832475484814495
+        },
+        {
+          "VmHWM": 616415232,
+          "VmRSS": 512552960,
+          "VmSize": 1404203008,
+          "elapsed_seconds": 70.97074060793966
+        },
+        {
+          "VmHWM": 616415232,
+          "VmRSS": 512552960,
+          "VmSize": 1404203008,
+          "elapsed_seconds": 81.10864128218964
+        },
+        {
+          "VmHWM": 1140727808,
+          "VmRSS": 932003840,
+          "VmSize": 2612162560,
+          "elapsed_seconds": 91.2455294597894
+        },
+        {
+          "VmHWM": 1140727808,
+          "VmRSS": 93241344,
+          "VmSize": 2612162560,
+          "elapsed_seconds": 101.38332749716938
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 109.52137698978186
+    },
+    "workers": 4
+  },
+  {
+    "arm": "c-abi",
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w8-c-abi.38rvb3va",
+    "drained": {
+      "ack_latency_samples": 32569,
+      "ack_p99_upper_ns": 786431,
+      "ack_seconds": 120.111419,
+      "ack_tps": 69238.446,
+      "applied_seconds": 120.125824,
+      "applied_tps": 69230.143,
+      "commits": 8316328,
+      "conflicts": 0,
+      "disk_bytes": 556802048,
+      "drain_seconds": 0.014399,
+      "engine": "mako-local/sto-masstrans",
+      "event": "drained",
+      "maximum_sampled_queue": 8192,
+      "process_write_bytes": 5556957184,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8316328, mako_timestamp: Some(MakoTimestamp { physical_us: 1789274264786000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8316328, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8316328, retained_bytes: 1804643176, expired_backlog_lower_bound: 0, observed_cutoff_us: Some(1789273964689901), reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: Some(MakoTimestamp { physical_us: 1789274144681000, logical: 0, origin: 1 }), errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 12.197787ms, last_progress: None, last_error: None }, quarantined_workers: 0 }"
+    },
+    "drained_and_verified": true,
+    "protocol": {
+      "checksum": "crc32c",
+      "engine": "mako-local/sto-masstrans",
+      "event": "protocol",
+      "keys_per_worker": 256,
+      "latency_sample_stride": 256,
+      "max_batch_records": 64,
+      "options": "Options { durability: Wal, cache: CacheOptions { writeback: WritebackConfig { capacity: 1024, max_record_bytes: 8388608, max_batch_records: 64, max_batch_bytes: 1048576, max_apply_retries: 8, retry_delay: 1ms }, log_retention: 300s, gc_interval: 10s, foreground_mode: Concurrent, record_checksum: Crc32c, writeback_cpu: Some(32), backend_stall_threshold: 30s, require_read_my_writes: true, isolation: StrictSerializable } }",
+      "queue_capacity_per_worker": 1024,
+      "rate_per_worker": 0,
+      "seconds": 120,
+      "sync": false,
+      "value_bytes": 128,
+      "version": 2,
+      "wal": true,
+      "workers": 8,
+      "writeback_cpu": 32
+    },
+    "repetition": 1,
+    "run": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-c-abi-final",
+        "run",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w8-c-abi.38rvb3va/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w8-c-abi.38rvb3va/expected.txt",
+        "--writeback-cpu",
+        "32",
+        "--workers",
+        "8",
+        "--seconds",
+        "120",
+        "--sample-seconds",
+        "10",
+        "--keys-per-worker",
+        "256",
+        "--value-bytes",
+        "128",
+        "--rate-per-worker",
+        "0",
+        "--disk-limit-bytes",
+        "103079215104",
+        "--minimum-free-bytes",
+        "85899345920"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 98304,
+          "VmRSS": 98304,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0012133559212088585
+        },
+        {
+          "VmHWM": 132321280,
+          "VmRSS": 130400256,
+          "VmSize": 311521280,
+          "elapsed_seconds": 10.13757207384333
+        },
+        {
+          "VmHWM": 139153408,
+          "VmRSS": 129937408,
+          "VmSize": 327249920,
+          "elapsed_seconds": 20.27447789721191
+        },
+        {
+          "VmHWM": 143974400,
+          "VmRSS": 132968448,
+          "VmSize": 334589952,
+          "elapsed_seconds": 30.41400931123644
+        },
+        {
+          "VmHWM": 145641472,
+          "VmRSS": 133828608,
+          "VmSize": 342978560,
+          "elapsed_seconds": 40.55082163820043
+        },
+        {
+          "VmHWM": 162848768,
+          "VmRSS": 132374528,
+          "VmSize": 378105856,
+          "elapsed_seconds": 50.68842038093135
+        },
+        {
+          "VmHWM": 162848768,
+          "VmRSS": 143372288,
+          "VmSize": 390688768,
+          "elapsed_seconds": 60.82624172186479
+        },
+        {
+          "VmHWM": 162848768,
+          "VmRSS": 154533888,
+          "VmSize": 390688768,
+          "elapsed_seconds": 70.96128635527566
+        },
+        {
+          "VmHWM": 163557376,
+          "VmRSS": 151207936,
+          "VmSize": 390688768,
+          "elapsed_seconds": 81.09793955087662
+        },
+        {
+          "VmHWM": 168767488,
+          "VmRSS": 142471168,
+          "VmSize": 390688768,
+          "elapsed_seconds": 91.234216039069
+        },
+        {
+          "VmHWM": 168767488,
+          "VmRSS": 142983168,
+          "VmSize": 390688768,
+          "elapsed_seconds": 101.37169727124274
+        },
+        {
+          "VmHWM": 171839488,
+          "VmRSS": 132308992,
+          "VmSize": 390688768,
+          "elapsed_seconds": 111.50910986028612
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 121.64560024393722
+    },
+    "scratch_cleaned": true,
+    "verified": {
+      "commits": 8316328,
+      "disk_bytes": 456241152,
+      "engine": "mako-local/sto-masstrans",
+      "event": "verified",
+      "keys": 2048,
+      "open_seconds": 106.767554,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8316329, mako_timestamp: Some(MakoTimestamp { physical_us: 1789274372783000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8316329, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8316329, retained_bytes: 1804643279, expired_backlog_lower_bound: 0, observed_cutoff_us: None, reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: None, errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 0ns, last_progress: None, last_error: None }, quarantined_workers: 0 }",
+      "validation_seconds": 0.002928,
+      "workers": 8
+    },
+    "verify": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-c-abi-final",
+        "verify",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w8-c-abi.38rvb3va/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w8-c-abi.38rvb3va/expected.txt",
+        "--writeback-cpu",
+        "32"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 90112,
+          "VmRSS": 90112,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.001191984862089157
+        },
+        {
+          "VmHWM": 117620736,
+          "VmRSS": 102924288,
+          "VmSize": 287789056,
+          "elapsed_seconds": 10.137185965664685
+        },
+        {
+          "VmHWM": 117620736,
+          "VmRSS": 91676672,
+          "VmSize": 287789056,
+          "elapsed_seconds": 20.27413305081427
+        },
+        {
+          "VmHWM": 217030656,
+          "VmRSS": 211935232,
+          "VmSize": 552030208,
+          "elapsed_seconds": 30.408516024705023
+        },
+        {
+          "VmHWM": 374865920,
+          "VmRSS": 325607424,
+          "VmSize": 854020096,
+          "elapsed_seconds": 40.5455808728002
+        },
+        {
+          "VmHWM": 374865920,
+          "VmRSS": 325607424,
+          "VmSize": 854020096,
+          "elapsed_seconds": 50.681822791695595
+        },
+        {
+          "VmHWM": 637030400,
+          "VmRSS": 535343104,
+          "VmSize": 1464291328,
+          "elapsed_seconds": 60.816432155668736
+        },
+        {
+          "VmHWM": 637030400,
+          "VmRSS": 535343104,
+          "VmSize": 1464291328,
+          "elapsed_seconds": 70.95280413888395
+        },
+        {
+          "VmHWM": 637030400,
+          "VmRSS": 535343104,
+          "VmSize": 1464291328,
+          "elapsed_seconds": 81.08883008593693
+        },
+        {
+          "VmHWM": 1161334784,
+          "VmRSS": 954789888,
+          "VmSize": 2672250880,
+          "elapsed_seconds": 91.22973741777241
+        },
+        {
+          "VmHWM": 1161334784,
+          "VmRSS": 115970048,
+          "VmSize": 2672250880,
+          "elapsed_seconds": 101.36683658370748
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 107.50308548705652
+    },
+    "workers": 8
+  },
+  {
+    "arm": "sto",
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w8-sto.rpovt21i",
+    "drained": {
+      "ack_latency_samples": 33283,
+      "ack_p99_upper_ns": 688127,
+      "ack_seconds": 120.108744,
+      "ack_tps": 70798.318,
+      "applied_seconds": 120.12446,
+      "applied_tps": 70789.055,
+      "commits": 8503497,
+      "conflicts": 0,
+      "disk_bytes": 568995840,
+      "drain_seconds": 0.01571,
+      "engine": "sto",
+      "event": "drained",
+      "maximum_sampled_queue": 8192,
+      "process_write_bytes": 5667201024,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8503497, mako_timestamp: Some(MakoTimestamp { physical_us: 1789274494642000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8503497, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8503497, retained_bytes: 1845258849, expired_backlog_lower_bound: 0, observed_cutoff_us: Some(1789274194550150), reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: Some(MakoTimestamp { physical_us: 1789274374536000, logical: 0, origin: 1 }), errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 12.993103ms, last_progress: None, last_error: None }, quarantined_workers: 0 }"
+    },
+    "drained_and_verified": true,
+    "protocol": {
+      "checksum": "crc32c",
+      "engine": "sto",
+      "event": "protocol",
+      "keys_per_worker": 256,
+      "latency_sample_stride": 256,
+      "max_batch_records": 64,
+      "options": "Options { durability: Wal, cache: CacheOptions { writeback: WritebackConfig { capacity: 1024, max_record_bytes: 8388608, max_batch_records: 64, max_batch_bytes: 1048576, max_apply_retries: 8, retry_delay: 1ms }, log_retention: 300s, gc_interval: 10s, foreground_mode: Concurrent, record_checksum: Crc32c, writeback_cpu: Some(32), backend_stall_threshold: 30s, require_read_my_writes: true, isolation: StrictSerializable } }",
+      "queue_capacity_per_worker": 1024,
+      "rate_per_worker": 0,
+      "seconds": 120,
+      "sync": false,
+      "value_bytes": 128,
+      "version": 2,
+      "wal": true,
+      "workers": 8,
+      "writeback_cpu": 32
+    },
+    "repetition": 1,
+    "run": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-sto-final",
+        "run",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w8-sto.rpovt21i/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w8-sto.rpovt21i/expected.txt",
+        "--writeback-cpu",
+        "32",
+        "--workers",
+        "8",
+        "--seconds",
+        "120",
+        "--sample-seconds",
+        "10",
+        "--keys-per-worker",
+        "256",
+        "--value-bytes",
+        "128",
+        "--rate-per-worker",
+        "0",
+        "--disk-limit-bytes",
+        "103079215104",
+        "--minimum-free-bytes",
+        "85899345920"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 12288,
+          "VmRSS": 12288,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0010387878865003586
+        },
+        {
+          "VmHWM": 113278976,
+          "VmRSS": 108896256,
+          "VmSize": 314343424,
+          "elapsed_seconds": 10.137984924949706
+        },
+        {
+          "VmHWM": 120586240,
+          "VmRSS": 113299456,
+          "VmSize": 330072064,
+          "elapsed_seconds": 20.2737198760733
+        },
+        {
+          "VmHWM": 131633152,
+          "VmRSS": 125341696,
+          "VmSize": 362577920,
+          "elapsed_seconds": 30.411422655917704
+        },
+        {
+          "VmHWM": 133484544,
+          "VmRSS": 133484544,
+          "VmSize": 362577920,
+          "elapsed_seconds": 40.547715831082314
+        },
+        {
+          "VmHWM": 145612800,
+          "VmRSS": 136753152,
+          "VmSize": 374636544,
+          "elapsed_seconds": 50.68780865194276
+        },
+        {
+          "VmHWM": 145612800,
+          "VmRSS": 120135680,
+          "VmSize": 397705216,
+          "elapsed_seconds": 60.82302497513592
+        },
+        {
+          "VmHWM": 145612800,
+          "VmRSS": 118525952,
+          "VmSize": 397705216,
+          "elapsed_seconds": 70.95782463811338
+        },
+        {
+          "VmHWM": 148688896,
+          "VmRSS": 124395520,
+          "VmSize": 397705216,
+          "elapsed_seconds": 81.09670583112165
+        },
+        {
+          "VmHWM": 154955776,
+          "VmRSS": 134410240,
+          "VmSize": 397705216,
+          "elapsed_seconds": 91.23424000106752
+        },
+        {
+          "VmHWM": 154955776,
+          "VmRSS": 128880640,
+          "VmSize": 397705216,
+          "elapsed_seconds": 101.37172023719177
+        },
+        {
+          "VmHWM": 154955776,
+          "VmRSS": 148000768,
+          "VmSize": 397705216,
+          "elapsed_seconds": 111.51041440898553
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 121.64893331192434
+    },
+    "scratch_cleaned": true,
+    "verified": {
+      "commits": 8503497,
+      "disk_bytes": 463917056,
+      "engine": "sto",
+      "event": "verified",
+      "keys": 2048,
+      "open_seconds": 107.554542,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8503498, mako_timestamp: Some(MakoTimestamp { physical_us: 1789274603165000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8503498, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8503498, retained_bytes: 1845258952, expired_backlog_lower_bound: 0, observed_cutoff_us: None, reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: None, errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 0ns, last_progress: None, last_error: None }, quarantined_workers: 0 }",
+      "validation_seconds": 0.003113,
+      "workers": 8
+    },
+    "verify": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-sto-final",
+        "verify",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w8-sto.rpovt21i/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w8-sto.rpovt21i/expected.txt",
+        "--writeback-cpu",
+        "32"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 98304,
+          "VmRSS": 98304,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0012420671992003918
+        },
+        {
+          "VmHWM": 99590144,
+          "VmRSS": 95252480,
+          "VmSize": 274362368,
+          "elapsed_seconds": 10.136224676389247
+        },
+        {
+          "VmHWM": 99590144,
+          "VmRSS": 95289344,
+          "VmSize": 274362368,
+          "elapsed_seconds": 20.273268080316484
+        },
+        {
+          "VmHWM": 243167232,
+          "VmRSS": 219901952,
+          "VmSize": 570060800,
+          "elapsed_seconds": 30.409533837344497
+        },
+        {
+          "VmHWM": 374259712,
+          "VmRSS": 324775936,
+          "VmSize": 872050688,
+          "elapsed_seconds": 40.54666790412739
+        },
+        {
+          "VmHWM": 374259712,
+          "VmRSS": 324775936,
+          "VmSize": 872050688,
+          "elapsed_seconds": 50.68710450315848
+        },
+        {
+          "VmHWM": 636424192,
+          "VmRSS": 534519808,
+          "VmSize": 1482321920,
+          "elapsed_seconds": 60.82622260134667
+        },
+        {
+          "VmHWM": 636424192,
+          "VmRSS": 534519808,
+          "VmSize": 1482321920,
+          "elapsed_seconds": 70.96228563738987
+        },
+        {
+          "VmHWM": 636424192,
+          "VmRSS": 534519808,
+          "VmSize": 1482321920,
+          "elapsed_seconds": 81.09660149225965
+        },
+        {
+          "VmHWM": 1160740864,
+          "VmRSS": 953970688,
+          "VmSize": 2690281472,
+          "elapsed_seconds": 91.2341952980496
+        },
+        {
+          "VmHWM": 1160740864,
+          "VmRSS": 115318784,
+          "VmSize": 2690281472,
+          "elapsed_seconds": 101.37211308814585
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 108.51232503214851
+    },
+    "workers": 8
+  },
+  {
+    "arm": "c-abi",
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w16-c-abi.p8jw8b02",
+    "drained": {
+      "ack_latency_samples": 33094,
+      "ack_p99_upper_ns": 753663,
+      "ack_seconds": 120.224862,
+      "ack_tps": 70262.614,
+      "applied_seconds": 120.255256,
+      "applied_tps": 70244.855,
+      "commits": 8447313,
+      "conflicts": 0,
+      "disk_bytes": 566218752,
+      "drain_seconds": 0.030382,
+      "engine": "mako-local/sto-masstrans",
+      "event": "drained",
+      "maximum_sampled_queue": 16384,
+      "process_write_bytes": 5675065344,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8447313, mako_timestamp: Some(MakoTimestamp { physical_us: 1789274725102000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8447313, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8447313, retained_bytes: 1833066921, expired_backlog_lower_bound: 0, observed_cutoff_us: Some(1789274424903032), reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: Some(MakoTimestamp { physical_us: 1789274604885000, logical: 0, origin: 1 }), errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 23.833975ms, last_progress: None, last_error: None }, quarantined_workers: 0 }"
+    },
+    "drained_and_verified": true,
+    "protocol": {
+      "checksum": "crc32c",
+      "engine": "mako-local/sto-masstrans",
+      "event": "protocol",
+      "keys_per_worker": 256,
+      "latency_sample_stride": 256,
+      "max_batch_records": 64,
+      "options": "Options { durability: Wal, cache: CacheOptions { writeback: WritebackConfig { capacity: 1024, max_record_bytes: 8388608, max_batch_records: 64, max_batch_bytes: 1048576, max_apply_retries: 8, retry_delay: 1ms }, log_retention: 300s, gc_interval: 10s, foreground_mode: Concurrent, record_checksum: Crc32c, writeback_cpu: Some(32), backend_stall_threshold: 30s, require_read_my_writes: true, isolation: StrictSerializable } }",
+      "queue_capacity_per_worker": 1024,
+      "rate_per_worker": 0,
+      "seconds": 120,
+      "sync": false,
+      "value_bytes": 128,
+      "version": 2,
+      "wal": true,
+      "workers": 16,
+      "writeback_cpu": 32
+    },
+    "repetition": 1,
+    "run": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-c-abi-final",
+        "run",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w16-c-abi.p8jw8b02/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w16-c-abi.p8jw8b02/expected.txt",
+        "--writeback-cpu",
+        "32",
+        "--workers",
+        "16",
+        "--seconds",
+        "120",
+        "--sample-seconds",
+        "10",
+        "--keys-per-worker",
+        "256",
+        "--value-bytes",
+        "128",
+        "--rate-per-worker",
+        "0",
+        "--disk-limit-bytes",
+        "103079215104",
+        "--minimum-free-bytes",
+        "85899345920"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 86016,
+          "VmRSS": 86016,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0012394068762660027
+        },
+        {
+          "VmHWM": 148361216,
+          "VmRSS": 146657280,
+          "VmSize": 395538432,
+          "elapsed_seconds": 10.136458301916718
+        },
+        {
+          "VmHWM": 161730560,
+          "VmRSS": 158564352,
+          "VmSize": 411267072,
+          "elapsed_seconds": 20.271983420010656
+        },
+        {
+          "VmHWM": 172167168,
+          "VmRSS": 161202176,
+          "VmSize": 426995712,
+          "elapsed_seconds": 30.407976458780468
+        },
+        {
+          "VmHWM": 172167168,
+          "VmRSS": 163749888,
+          "VmSize": 426995712,
+          "elapsed_seconds": 40.545883636921644
+        },
+        {
+          "VmHWM": 176132096,
+          "VmRSS": 176132096,
+          "VmSize": 426995712,
+          "elapsed_seconds": 50.68433638988063
+        },
+        {
+          "VmHWM": 186671104,
+          "VmRSS": 186671104,
+          "VmSize": 441151488,
+          "elapsed_seconds": 60.81982005480677
+        },
+        {
+          "VmHWM": 177266688,
+          "VmRSS": 164007936,
+          "VmSize": 441151488,
+          "elapsed_seconds": 70.95521534513682
+        },
+        {
+          "VmHWM": 177266688,
+          "VmRSS": 165306368,
+          "VmSize": 441151488,
+          "elapsed_seconds": 81.09234961494803
+        },
+        {
+          "VmHWM": 189902848,
+          "VmRSS": 176472064,
+          "VmSize": 462123008,
+          "elapsed_seconds": 91.22944498388097
+        },
+        {
+          "VmHWM": 189902848,
+          "VmRSS": 172707840,
+          "VmSize": 466317312,
+          "elapsed_seconds": 101.3686828231439
+        },
+        {
+          "VmHWM": 189902848,
+          "VmRSS": 180559872,
+          "VmSize": 466317312,
+          "elapsed_seconds": 111.5035477168858
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 121.64007659815252
+    },
+    "scratch_cleaned": true,
+    "verified": {
+      "commits": 8447313,
+      "disk_bytes": 463515648,
+      "engine": "mako-local/sto-masstrans",
+      "event": "verified",
+      "keys": 4096,
+      "open_seconds": 107.884988,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8447314, mako_timestamp: Some(MakoTimestamp { physical_us: 1789274834116000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8447314, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8447314, retained_bytes: 1833067024, expired_backlog_lower_bound: 0, observed_cutoff_us: None, reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: None, errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 0ns, last_progress: None, last_error: None }, quarantined_workers: 0 }",
+      "validation_seconds": 0.005961,
+      "workers": 16
+    },
+    "verify": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-c-abi-final",
+        "verify",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w16-c-abi.p8jw8b02/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w16-c-abi.p8jw8b02/expected.txt",
+        "--writeback-cpu",
+        "32"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 180224,
+          "VmRSS": 180224,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0011203219182789326
+        },
+        {
+          "VmHWM": 117624832,
+          "VmRSS": 106172416,
+          "VmSize": 291983360,
+          "elapsed_seconds": 10.13922828482464
+        },
+        {
+          "VmHWM": 117624832,
+          "VmRSS": 92413952,
+          "VmSize": 291983360,
+          "elapsed_seconds": 20.276667978148907
+        },
+        {
+          "VmHWM": 178642944,
+          "VmRSS": 168792064,
+          "VmSize": 422006784,
+          "elapsed_seconds": 30.415338627062738
+        },
+        {
+          "VmHWM": 375808000,
+          "VmRSS": 326111232,
+          "VmSize": 874991616,
+          "elapsed_seconds": 40.55235434975475
+        },
+        {
+          "VmHWM": 375808000,
+          "VmRSS": 326111232,
+          "VmSize": 874991616,
+          "elapsed_seconds": 50.689575370866805
+        },
+        {
+          "VmHWM": 637972480,
+          "VmRSS": 535846912,
+          "VmSize": 1485262848,
+          "elapsed_seconds": 60.828083941712976
+        },
+        {
+          "VmHWM": 637972480,
+          "VmRSS": 535846912,
+          "VmSize": 1485262848,
+          "elapsed_seconds": 70.96779899811372
+        },
+        {
+          "VmHWM": 637972480,
+          "VmRSS": 535846912,
+          "VmSize": 1485262848,
+          "elapsed_seconds": 81.10626912675798
+        },
+        {
+          "VmHWM": 1162067968,
+          "VmRSS": 955293696,
+          "VmSize": 2693222400,
+          "elapsed_seconds": 91.24336019111797
+        },
+        {
+          "VmHWM": 1162067968,
+          "VmRSS": 99459072,
+          "VmSize": 2693222400,
+          "elapsed_seconds": 101.38182066893205
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 108.5169182610698
+    },
+    "workers": 16
+  },
+  {
+    "arm": "sto",
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w16-sto.40jw2nfn",
+    "drained": {
+      "ack_latency_samples": 32401,
+      "ack_p99_upper_ns": 720895,
+      "ack_seconds": 120.219996,
+      "ack_tps": 68877.427,
+      "applied_seconds": 120.233527,
+      "applied_tps": 68869.676,
+      "commits": 8280444,
+      "conflicts": 0,
+      "disk_bytes": 499073024,
+      "drain_seconds": 0.01352,
+      "engine": "sto",
+      "event": "drained",
+      "maximum_sampled_queue": 16384,
+      "process_write_bytes": 5668196352,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8280444, mako_timestamp: Some(MakoTimestamp { physical_us: 1789274955732000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8280444, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8280444, retained_bytes: 1796856348, expired_backlog_lower_bound: 0, observed_cutoff_us: Some(1789274655565059), reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: Some(MakoTimestamp { physical_us: 1789274835515000, logical: 0, origin: 1 }), errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 24.149318ms, last_progress: None, last_error: None }, quarantined_workers: 0 }"
+    },
+    "drained_and_verified": true,
+    "protocol": {
+      "checksum": "crc32c",
+      "engine": "sto",
+      "event": "protocol",
+      "keys_per_worker": 256,
+      "latency_sample_stride": 256,
+      "max_batch_records": 64,
+      "options": "Options { durability: Wal, cache: CacheOptions { writeback: WritebackConfig { capacity: 1024, max_record_bytes: 8388608, max_batch_records: 64, max_batch_bytes: 1048576, max_apply_retries: 8, retry_delay: 1ms }, log_retention: 300s, gc_interval: 10s, foreground_mode: Concurrent, record_checksum: Crc32c, writeback_cpu: Some(32), backend_stall_threshold: 30s, require_read_my_writes: true, isolation: StrictSerializable } }",
+      "queue_capacity_per_worker": 1024,
+      "rate_per_worker": 0,
+      "seconds": 120,
+      "sync": false,
+      "value_bytes": 128,
+      "version": 2,
+      "wal": true,
+      "workers": 16,
+      "writeback_cpu": 32
+    },
+    "repetition": 1,
+    "run": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-sto-final",
+        "run",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w16-sto.40jw2nfn/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w16-sto.40jw2nfn/expected.txt",
+        "--writeback-cpu",
+        "32",
+        "--workers",
+        "16",
+        "--seconds",
+        "120",
+        "--sample-seconds",
+        "10",
+        "--keys-per-worker",
+        "256",
+        "--value-bytes",
+        "128",
+        "--rate-per-worker",
+        "0",
+        "--disk-limit-bytes",
+        "103079215104",
+        "--minimum-free-bytes",
+        "85899345920"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 139264,
+          "VmRSS": 139264,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0011067809537053108
+        },
+        {
+          "VmHWM": 120000512,
+          "VmRSS": 119771136,
+          "VmSize": 415137792,
+          "elapsed_seconds": 10.138118741102517
+        },
+        {
+          "VmHWM": 134959104,
+          "VmRSS": 127049728,
+          "VmSize": 445546496,
+          "elapsed_seconds": 20.276788908056915
+        },
+        {
+          "VmHWM": 147148800,
+          "VmRSS": 147148800,
+          "VmSize": 471760896,
+          "elapsed_seconds": 30.416628438048065
+        },
+        {
+          "VmHWM": 146771968,
+          "VmRSS": 130424832,
+          "VmSize": 471760896,
+          "elapsed_seconds": 40.5553455860354
+        },
+        {
+          "VmHWM": 150970368,
+          "VmRSS": 133730304,
+          "VmSize": 475430912,
+          "elapsed_seconds": 50.69326365739107
+        },
+        {
+          "VmHWM": 150970368,
+          "VmRSS": 136740864,
+          "VmSize": 488013824,
+          "elapsed_seconds": 60.82975599216297
+        },
+        {
+          "VmHWM": 163127296,
+          "VmRSS": 157036544,
+          "VmSize": 488013824,
+          "elapsed_seconds": 71.02432019729167
+        },
+        {
+          "VmHWM": 163749888,
+          "VmRSS": 151687168,
+          "VmSize": 488013824,
+          "elapsed_seconds": 81.16371244704351
+        },
+        {
+          "VmHWM": 163749888,
+          "VmRSS": 130629632,
+          "VmSize": 488013824,
+          "elapsed_seconds": 91.30164680723101
+        },
+        {
+          "VmHWM": 163749888,
+          "VmRSS": 136687616,
+          "VmSize": 488013824,
+          "elapsed_seconds": 101.43906345404685
+        },
+        {
+          "VmHWM": 163749888,
+          "VmRSS": 149270528,
+          "VmSize": 488013824,
+          "elapsed_seconds": 111.57490691915154
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 120.71018877299502
+    },
+    "scratch_cleaned": true,
+    "verified": {
+      "commits": 8280444,
+      "disk_bytes": 444239872,
+      "engine": "sto",
+      "event": "verified",
+      "keys": 4096,
+      "open_seconds": 105.508426,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8280445, mako_timestamp: Some(MakoTimestamp { physical_us: 1789275061409000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8280445, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8280445, retained_bytes: 1796856451, expired_backlog_lower_bound: 0, observed_cutoff_us: None, reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: None, errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 0ns, last_progress: None, last_error: None }, quarantined_workers: 0 }",
+      "validation_seconds": 0.006528,
+      "workers": 16
+    },
+    "verify": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-sto-final",
+        "verify",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w16-sto.40jw2nfn/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w16-sto.40jw2nfn/expected.txt",
+        "--writeback-cpu",
+        "32"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 77824,
+          "VmRSS": 77824,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.001226627267897129
+        },
+        {
+          "VmHWM": 118419456,
+          "VmRSS": 118419456,
+          "VmSize": 262828032,
+          "elapsed_seconds": 10.137809444218874
+        },
+        {
+          "VmHWM": 113274880,
+          "VmRSS": 84127744,
+          "VmSize": 262828032,
+          "elapsed_seconds": 20.273244947195053
+        },
+        {
+          "VmHWM": 236027904,
+          "VmRSS": 214589440,
+          "VmSize": 545943552,
+          "elapsed_seconds": 30.413547535892576
+        },
+        {
+          "VmHWM": 367128576,
+          "VmRSS": 319471616,
+          "VmSize": 847933440,
+          "elapsed_seconds": 40.55090817902237
+        },
+        {
+          "VmHWM": 367128576,
+          "VmRSS": 319471616,
+          "VmSize": 847933440,
+          "elapsed_seconds": 50.68735882919282
+        },
+        {
+          "VmHWM": 629288960,
+          "VmRSS": 529207296,
+          "VmSize": 1458204672,
+          "elapsed_seconds": 60.82363139092922
+        },
+        {
+          "VmHWM": 629288960,
+          "VmRSS": 529207296,
+          "VmSize": 1458204672,
+          "elapsed_seconds": 70.96076503302902
+        },
+        {
+          "VmHWM": 629288960,
+          "VmRSS": 529207296,
+          "VmSize": 1458204672,
+          "elapsed_seconds": 81.09953866899014
+        },
+        {
+          "VmHWM": 1153601536,
+          "VmRSS": 948658176,
+          "VmSize": 2666164224,
+          "elapsed_seconds": 91.24095255928114
+        },
+        {
+          "VmHWM": 1153601536,
+          "VmRSS": 109985792,
+          "VmSize": 2666164224,
+          "elapsed_seconds": 101.37721344921738
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 106.51623663399369
+    },
+    "workers": 16
+  },
+  {
+    "arm": "c-abi",
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w32-c-abi.5zd0fjc6",
+    "drained": {
+      "ack_latency_samples": 32690,
+      "ack_p99_upper_ns": 786431,
+      "ack_seconds": 120.267154,
+      "ack_tps": 69444.605,
+      "applied_seconds": 120.489136,
+      "applied_tps": 69316.665,
+      "commits": 8351905,
+      "conflicts": 0,
+      "disk_bytes": 570339328,
+      "drain_seconds": 0.221962,
+      "engine": "mako-local/sto-masstrans",
+      "event": "drained",
+      "maximum_sampled_queue": 32768,
+      "process_write_bytes": 5581049856,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8351905, mako_timestamp: Some(MakoTimestamp { physical_us: 1789275183470000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8351905, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8351905, retained_bytes: 1812363385, expired_backlog_lower_bound: 0, observed_cutoff_us: Some(1789274883308878), reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: Some(MakoTimestamp { physical_us: 1789275063209000, logical: 0, origin: 1 }), errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 51.78218ms, last_progress: None, last_error: None }, quarantined_workers: 0 }"
+    },
+    "drained_and_verified": true,
+    "protocol": {
+      "checksum": "crc32c",
+      "engine": "mako-local/sto-masstrans",
+      "event": "protocol",
+      "keys_per_worker": 256,
+      "latency_sample_stride": 256,
+      "max_batch_records": 64,
+      "options": "Options { durability: Wal, cache: CacheOptions { writeback: WritebackConfig { capacity: 1024, max_record_bytes: 8388608, max_batch_records: 64, max_batch_bytes: 1048576, max_apply_retries: 8, retry_delay: 1ms }, log_retention: 300s, gc_interval: 10s, foreground_mode: Concurrent, record_checksum: Crc32c, writeback_cpu: Some(32), backend_stall_threshold: 30s, require_read_my_writes: true, isolation: StrictSerializable } }",
+      "queue_capacity_per_worker": 1024,
+      "rate_per_worker": 0,
+      "seconds": 120,
+      "sync": false,
+      "value_bytes": 128,
+      "version": 2,
+      "wal": true,
+      "workers": 32,
+      "writeback_cpu": 32
+    },
+    "repetition": 1,
+    "run": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-c-abi-final",
+        "run",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w32-c-abi.5zd0fjc6/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w32-c-abi.5zd0fjc6/expected.txt",
+        "--writeback-cpu",
+        "32",
+        "--workers",
+        "32",
+        "--seconds",
+        "120",
+        "--sample-seconds",
+        "10",
+        "--keys-per-worker",
+        "256",
+        "--value-bytes",
+        "128",
+        "--rate-per-worker",
+        "0",
+        "--disk-limit-bytes",
+        "103079215104",
+        "--minimum-free-bytes",
+        "85899345920"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 163840,
+          "VmRSS": 163840,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.001262687612324953
+        },
+        {
+          "VmHWM": 203456512,
+          "VmRSS": 203456512,
+          "VmSize": 563572736,
+          "elapsed_seconds": 10.140177461784333
+        },
+        {
+          "VmHWM": 210386944,
+          "VmRSS": 210386944,
+          "VmSize": 593981440,
+          "elapsed_seconds": 20.275891546625644
+        },
+        {
+          "VmHWM": 220504064,
+          "VmRSS": 217645056,
+          "VmSize": 616001536,
+          "elapsed_seconds": 30.412692091893405
+        },
+        {
+          "VmHWM": 221573120,
+          "VmRSS": 219090944,
+          "VmSize": 616001536,
+          "elapsed_seconds": 40.54864730685949
+        },
+        {
+          "VmHWM": 231796736,
+          "VmRSS": 225017856,
+          "VmSize": 616001536,
+          "elapsed_seconds": 50.686870036646724
+        },
+        {
+          "VmHWM": 231796736,
+          "VmRSS": 217894912,
+          "VmSize": 630157312,
+          "elapsed_seconds": 60.82839856063947
+        },
+        {
+          "VmHWM": 231796736,
+          "VmRSS": 230739968,
+          "VmSize": 630157312,
+          "elapsed_seconds": 70.97938918182626
+        },
+        {
+          "VmHWM": 238034944,
+          "VmRSS": 217661440,
+          "VmSize": 630157312,
+          "elapsed_seconds": 81.11587043199688
+        },
+        {
+          "VmHWM": 241942528,
+          "VmRSS": 220545024,
+          "VmSize": 630157312,
+          "elapsed_seconds": 91.2643481856212
+        },
+        {
+          "VmHWM": 245514240,
+          "VmRSS": 241586176,
+          "VmSize": 630157312,
+          "elapsed_seconds": 101.40353784104809
+        },
+        {
+          "VmHWM": 245514240,
+          "VmRSS": 233377792,
+          "VmSize": 630157312,
+          "elapsed_seconds": 111.54040136700496
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 121.67739197798073
+    },
+    "scratch_cleaned": true,
+    "verified": {
+      "commits": 8351905,
+      "disk_bytes": 460955648,
+      "engine": "mako-local/sto-masstrans",
+      "event": "verified",
+      "keys": 8192,
+      "open_seconds": 106.597703,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8351906, mako_timestamp: Some(MakoTimestamp { physical_us: 1789275291149000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8351906, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8351906, retained_bytes: 1812363488, expired_backlog_lower_bound: 0, observed_cutoff_us: None, reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: None, errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 0ns, last_progress: None, last_error: None }, quarantined_workers: 0 }",
+      "validation_seconds": 0.011698,
+      "workers": 32
+    },
+    "verify": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-c-abi-final",
+        "verify",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w32-c-abi.5zd0fjc6/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w32-c-abi.5zd0fjc6/expected.txt",
+        "--writeback-cpu",
+        "32"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 147456,
+          "VmRSS": 147456,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0011081211268901825
+        },
+        {
+          "VmHWM": 102465536,
+          "VmRSS": 100102144,
+          "VmSize": 256331776,
+          "elapsed_seconds": 10.137004564050585
+        },
+        {
+          "VmHWM": 102465536,
+          "VmRSS": 100360192,
+          "VmSize": 256331776,
+          "elapsed_seconds": 20.273421918973327
+        },
+        {
+          "VmHWM": 242401280,
+          "VmRSS": 217116672,
+          "VmSize": 537350144,
+          "elapsed_seconds": 30.410257983021438
+        },
+        {
+          "VmHWM": 373493760,
+          "VmRSS": 321990656,
+          "VmSize": 839340032,
+          "elapsed_seconds": 40.547419123351574
+        },
+        {
+          "VmHWM": 373493760,
+          "VmRSS": 321990656,
+          "VmSize": 839340032,
+          "elapsed_seconds": 50.68582310015336
+        },
+        {
+          "VmHWM": 635658240,
+          "VmRSS": 531726336,
+          "VmSize": 1449611264,
+          "elapsed_seconds": 60.822170332074165
+        },
+        {
+          "VmHWM": 635658240,
+          "VmRSS": 531726336,
+          "VmSize": 1449611264,
+          "elapsed_seconds": 70.96055014804006
+        },
+        {
+          "VmHWM": 635658240,
+          "VmRSS": 531726336,
+          "VmSize": 1449611264,
+          "elapsed_seconds": 81.09743725415319
+        },
+        {
+          "VmHWM": 1159962624,
+          "VmRSS": 951173120,
+          "VmSize": 2657570816,
+          "elapsed_seconds": 91.2345207799226
+        },
+        {
+          "VmHWM": 1159962624,
+          "VmRSS": 103960576,
+          "VmSize": 2657570816,
+          "elapsed_seconds": 101.37196610216051
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 107.51172999106348
+    },
+    "workers": 32
+  },
+  {
+    "arm": "sto",
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w32-sto.6mkaroa7",
+    "drained": {
+      "ack_latency_samples": 32605,
+      "ack_p99_upper_ns": 688127,
+      "ack_seconds": 120.353444,
+      "ack_tps": 69084.379,
+      "applied_seconds": 120.531483,
+      "applied_tps": 68982.334,
+      "commits": 8314543,
+      "conflicts": 0,
+      "disk_bytes": 560594944,
+      "drain_seconds": 0.178016,
+      "engine": "sto",
+      "event": "drained",
+      "maximum_sampled_queue": 32768,
+      "process_write_bytes": 5569671168,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8314543, mako_timestamp: Some(MakoTimestamp { physical_us: 1789275413205000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8314543, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8314543, retained_bytes: 1804255831, expired_backlog_lower_bound: 0, observed_cutoff_us: Some(1789275112894812), reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: Some(MakoTimestamp { physical_us: 1789275292855000, logical: 0, origin: 1 }), errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 46.410579ms, last_progress: None, last_error: None }, quarantined_workers: 0 }"
+    },
+    "drained_and_verified": true,
+    "protocol": {
+      "checksum": "crc32c",
+      "engine": "sto",
+      "event": "protocol",
+      "keys_per_worker": 256,
+      "latency_sample_stride": 256,
+      "max_batch_records": 64,
+      "options": "Options { durability: Wal, cache: CacheOptions { writeback: WritebackConfig { capacity: 1024, max_record_bytes: 8388608, max_batch_records: 64, max_batch_bytes: 1048576, max_apply_retries: 8, retry_delay: 1ms }, log_retention: 300s, gc_interval: 10s, foreground_mode: Concurrent, record_checksum: Crc32c, writeback_cpu: Some(32), backend_stall_threshold: 30s, require_read_my_writes: true, isolation: StrictSerializable } }",
+      "queue_capacity_per_worker": 1024,
+      "rate_per_worker": 0,
+      "seconds": 120,
+      "sync": false,
+      "value_bytes": 128,
+      "version": 2,
+      "wal": true,
+      "workers": 32,
+      "writeback_cpu": 32
+    },
+    "repetition": 1,
+    "run": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-sto-final",
+        "run",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w32-sto.6mkaroa7/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w32-sto.6mkaroa7/expected.txt",
+        "--writeback-cpu",
+        "32",
+        "--workers",
+        "32",
+        "--seconds",
+        "120",
+        "--sample-seconds",
+        "10",
+        "--keys-per-worker",
+        "256",
+        "--value-bytes",
+        "128",
+        "--rate-per-worker",
+        "0",
+        "--disk-limit-bytes",
+        "103079215104",
+        "--minimum-free-bytes",
+        "85899345920"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 12288,
+          "VmRSS": 12288,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0010210671462118626
+        },
+        {
+          "VmHWM": 140783616,
+          "VmRSS": 140783616,
+          "VmSize": 604667904,
+          "elapsed_seconds": 10.135850659105927
+        },
+        {
+          "VmHWM": 151236608,
+          "VmRSS": 151236608,
+          "VmSize": 624066560,
+          "elapsed_seconds": 20.272026570979506
+        },
+        {
+          "VmHWM": 153186304,
+          "VmRSS": 150536192,
+          "VmSize": 631406592,
+          "elapsed_seconds": 30.408618413843215
+        },
+        {
+          "VmHWM": 165453824,
+          "VmRSS": 161873920,
+          "VmSize": 671252480,
+          "elapsed_seconds": 40.54506984911859
+        },
+        {
+          "VmHWM": 171573248,
+          "VmRSS": 160387072,
+          "VmSize": 671252480,
+          "elapsed_seconds": 50.68763634888455
+        },
+        {
+          "VmHWM": 171573248,
+          "VmRSS": 162328576,
+          "VmSize": 671252480,
+          "elapsed_seconds": 60.82712454488501
+        },
+        {
+          "VmHWM": 175267840,
+          "VmRSS": 175267840,
+          "VmSize": 674922496,
+          "elapsed_seconds": 71.02979516796768
+        },
+        {
+          "VmHWM": 184246272,
+          "VmRSS": 176103424,
+          "VmSize": 687505408,
+          "elapsed_seconds": 81.16926133213565
+        },
+        {
+          "VmHWM": 184246272,
+          "VmRSS": 174309376,
+          "VmSize": 687505408,
+          "elapsed_seconds": 91.30812762025744
+        },
+        {
+          "VmHWM": 189616128,
+          "VmRSS": 172969984,
+          "VmSize": 687505408,
+          "elapsed_seconds": 101.44502596510574
+        },
+        {
+          "VmHWM": 189616128,
+          "VmRSS": 159215616,
+          "VmSize": 687505408,
+          "elapsed_seconds": 111.58345209201798
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 121.72176453284919
+    },
+    "scratch_cleaned": true,
+    "verified": {
+      "commits": 8314543,
+      "disk_bytes": 456491008,
+      "engine": "sto",
+      "event": "verified",
+      "keys": 8192,
+      "open_seconds": 107.397846,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8314544, mako_timestamp: Some(MakoTimestamp { physical_us: 1789275521633000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8314544, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8314544, retained_bytes: 1804255934, expired_backlog_lower_bound: 0, observed_cutoff_us: None, reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: None, errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 0ns, last_progress: None, last_error: None }, quarantined_workers: 0 }",
+      "validation_seconds": 0.012365,
+      "workers": 32
+    },
+    "verify": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-sto-final",
+        "verify",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w32-sto.6mkaroa7/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r1-w32-sto.6mkaroa7/expected.txt",
+        "--writeback-cpu",
+        "32"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 81920,
+          "VmRSS": 81920,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0013231011107563972
+        },
+        {
+          "VmHWM": 114814976,
+          "VmRSS": 95727616,
+          "VmSize": 284848128,
+          "elapsed_seconds": 10.139946807175875
+        },
+        {
+          "VmHWM": 114814976,
+          "VmRSS": 89268224,
+          "VmSize": 284848128,
+          "elapsed_seconds": 20.27590118907392
+        },
+        {
+          "VmHWM": 175730688,
+          "VmRSS": 166359040,
+          "VmSize": 398094336,
+          "elapsed_seconds": 30.415419325232506
+        },
+        {
+          "VmHWM": 372895744,
+          "VmRSS": 323678208,
+          "VmSize": 851079168,
+          "elapsed_seconds": 40.5526746972464
+        },
+        {
+          "VmHWM": 372895744,
+          "VmRSS": 323678208,
+          "VmSize": 851079168,
+          "elapsed_seconds": 50.690060744062066
+        },
+        {
+          "VmHWM": 635056128,
+          "VmRSS": 533413888,
+          "VmSize": 1461350400,
+          "elapsed_seconds": 60.82804080005735
+        },
+        {
+          "VmHWM": 635056128,
+          "VmRSS": 533413888,
+          "VmSize": 1461350400,
+          "elapsed_seconds": 70.96734501607716
+        },
+        {
+          "VmHWM": 635056128,
+          "VmRSS": 533413888,
+          "VmSize": 1461350400,
+          "elapsed_seconds": 81.10416192701086
+        },
+        {
+          "VmHWM": 1159368704,
+          "VmRSS": 952864768,
+          "VmSize": 2669309952,
+          "elapsed_seconds": 91.24005182506517
+        },
+        {
+          "VmHWM": 1159368704,
+          "VmRSS": 114618368,
+          "VmSize": 2669309952,
+          "elapsed_seconds": 101.3762718392536
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 107.5105354920961
+    },
+    "workers": 32
+  },
+  {
+    "arm": "sto",
+    "directory": "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r2-w1-sto.k5_f2fxz",
+    "drained": {
+      "ack_latency_samples": 33081,
+      "ack_p99_upper_ns": 688127,
+      "ack_seconds": 120.003496,
+      "ack_tps": 70427.29,
+      "applied_seconds": 120.018277,
+      "applied_tps": 70418.616,
+      "commits": 8451521,
+      "conflicts": 0,
+      "disk_bytes": 444329984,
+      "drain_seconds": 0.014779,
+      "engine": "sto",
+      "event": "drained",
+      "maximum_sampled_queue": 1024,
+      "process_write_bytes": 5771935744,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8451521, mako_timestamp: Some(MakoTimestamp { physical_us: 1789275642532000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8451521, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8451521, retained_bytes: 1833980057, expired_backlog_lower_bound: 0, observed_cutoff_us: Some(1789275332550337), reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: Some(MakoTimestamp { physical_us: 1789275522531000, logical: 0, origin: 1 }), errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 2.690505ms, last_progress: None, last_error: None }, quarantined_workers: 0 }"
+    },
+    "drained_and_verified": true,
+    "protocol": {
+      "checksum": "crc32c",
+      "engine": "sto",
+      "event": "protocol",
+      "keys_per_worker": 256,
+      "latency_sample_stride": 256,
+      "max_batch_records": 64,
+      "options": "Options { durability: Wal, cache: CacheOptions { writeback: WritebackConfig { capacity: 1024, max_record_bytes: 8388608, max_batch_records: 64, max_batch_bytes: 1048576, max_apply_retries: 8, retry_delay: 1ms }, log_retention: 300s, gc_interval: 10s, foreground_mode: Concurrent, record_checksum: Crc32c, writeback_cpu: Some(32), backend_stall_threshold: 30s, require_read_my_writes: true, isolation: StrictSerializable } }",
+      "queue_capacity_per_worker": 1024,
+      "rate_per_worker": 0,
+      "seconds": 120,
+      "sync": false,
+      "value_bytes": 128,
+      "version": 2,
+      "wal": true,
+      "workers": 1,
+      "writeback_cpu": 32
+    },
+    "repetition": 2,
+    "run": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-sto-final",
+        "run",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r2-w1-sto.k5_f2fxz/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r2-w1-sto.k5_f2fxz/expected.txt",
+        "--writeback-cpu",
+        "32",
+        "--workers",
+        "1",
+        "--seconds",
+        "120",
+        "--sample-seconds",
+        "10",
+        "--keys-per-worker",
+        "256",
+        "--value-bytes",
+        "128",
+        "--rate-per-worker",
+        "0",
+        "--disk-limit-bytes",
+        "103079215104",
+        "--minimum-free-bytes",
+        "85899345920"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 135168,
+          "VmRSS": 135168,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0014898288063704967
+        },
+        {
+          "VmHWM": 103329792,
+          "VmRSS": 90304512,
+          "VmSize": 228249600,
+          "elapsed_seconds": 10.140680829063058
+        },
+        {
+          "VmHWM": 112209920,
+          "VmRSS": 104632320,
+          "VmSize": 243978240,
+          "elapsed_seconds": 20.278220852836967
+        },
+        {
+          "VmHWM": 125202432,
+          "VmRSS": 119246848,
+          "VmSize": 270192640,
+          "elapsed_seconds": 30.416498251724988
+        },
+        {
+          "VmHWM": 125202432,
+          "VmRSS": 116994048,
+          "VmSize": 270192640,
+          "elapsed_seconds": 40.55534207681194
+        },
+        {
+          "VmHWM": 140603392,
+          "VmRSS": 126377984,
+          "VmSize": 295358464,
+          "elapsed_seconds": 50.69338374398649
+        },
+        {
+          "VmHWM": 140603392,
+          "VmRSS": 111771648,
+          "VmSize": 295358464,
+          "elapsed_seconds": 60.83023916603997
+        },
+        {
+          "VmHWM": 140603392,
+          "VmRSS": 102871040,
+          "VmSize": 295358464,
+          "elapsed_seconds": 70.96659215493128
+        },
+        {
+          "VmHWM": 140603392,
+          "VmRSS": 103882752,
+          "VmSize": 299028480,
+          "elapsed_seconds": 81.10196903767064
+        },
+        {
+          "VmHWM": 145829888,
+          "VmRSS": 145829888,
+          "VmSize": 299028480,
+          "elapsed_seconds": 91.2400300046429
+        },
+        {
+          "VmHWM": 141807616,
+          "VmRSS": 121507840,
+          "VmSize": 299028480,
+          "elapsed_seconds": 101.38064784090966
+        },
+        {
+          "VmHWM": 141807616,
+          "VmRSS": 115982336,
+          "VmSize": 299028480,
+          "elapsed_seconds": 111.516608112026
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 120.65261984197423
+    },
+    "scratch_cleaned": true,
+    "verified": {
+      "commits": 8451521,
+      "disk_bytes": 450244608,
+      "engine": "sto",
+      "event": "verified",
+      "keys": 256,
+      "open_seconds": 106.412548,
+      "status": "CacheStatus { health: Healthy, engine_runtime_healthy: true, background_writer_running: true, backend_failures: 0, record_failures: 0, runtime_loop_panics: 0, consecutive_background_failures: 0, pending_backend_retry: None, active_retryable_failures: [], backend_write_in_progress: None, backend_stall_threshold: 30s, last_failure: None, writeback_error: None, applied_watermark: AppliedWatermark { sequence: 8451522, mako_timestamp: Some(MakoTimestamp { physical_us: 1789275749256000, logical: 0, origin: 1 }) }, acknowledged_transactions: 8451522, queued_transactions: 0, log_gc: LogGcStatus { retained_records: 8451522, retained_bytes: 1833980160, expired_backlog_lower_bound: 0, observed_cutoff_us: None, reclaimed_records: 0, reclaimed_bytes: 0, oldest_retained_timestamp: None, errors: 0, active_error: false, pending_retry: false, pending_sequence: None, in_progress: None, total_duration: 0ns, last_progress: None, last_error: None }, quarantined_workers: 0 }",
+      "validation_seconds": 0.000504,
+      "workers": 1
+    },
+    "verify": {
+      "command": [
+        "taskset",
+        "-c",
+        "33-63",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/gc-soak-sto-final",
+        "verify",
+        "--path",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r2-w1-sto.k5_f2fxz/rocks",
+        "--manifest",
+        "/var/tmp/mako-engine-perf-20260912.iz63eX/sustained-final-120-v2/r2-w1-sto.k5_f2fxz/expected.txt",
+        "--writeback-cpu",
+        "32"
+      ],
+      "memory_samples": [
+        {
+          "VmHWM": 110592,
+          "VmRSS": 110592,
+          "VmSize": 430080,
+          "elapsed_seconds": 0.0012030163779854774
+        },
+        {
+          "VmHWM": 107008000,
+          "VmRSS": 107008000,
+          "VmSize": 225603584,
+          "elapsed_seconds": 10.13839031336829
+        },
+        {
+          "VmHWM": 105205760,
+          "VmRSS": 68562944,
+          "VmSize": 225603584,
+          "elapsed_seconds": 20.27689035097137
+        },
+        {
+          "VmHWM": 222154752,
+          "VmRSS": 197804032,
+          "VmSize": 508719104,
+          "elapsed_seconds": 30.41615190403536
+        },
+        {
+          "VmHWM": 353247232,
+          "VmRSS": 302678016,
+          "VmSize": 810708992,
+          "elapsed_seconds": 40.55326216807589
+        },
+        {
+          "VmHWM": 353247232,
+          "VmRSS": 302678016,
+          "VmSize": 810708992,
+          "elapsed_seconds": 50.69313639914617
+        },
+        {
+          "VmHWM": 615354368,
+          "VmRSS": 512413696,
+          "VmSize": 1420980224,
+          "elapsed_seconds": 60.830443372018635
+        },
+        {
+          "VmHWM": 615354368,
+          "VmRSS": 512413696,
+          "VmSize": 1420980224,
+          "elapsed_seconds": 70.9678046470508
+        },
+        {
+          "VmHWM": 615354368,
+          "VmRSS": 512413696,
+          "VmSize": 1420980224,
+          "elapsed_seconds": 81.10360188921914
+        },
+        {
+          "VmHWM": 1139666944,
+          "VmRSS": 931864576,
+          "VmSize": 2628939776,
+          "elapsed_seconds": 91.24443194409832
+        },
+        {
+          "VmHWM": 1139666944,
+          "VmRSS": 93122560,
+          "VmSize": 2628939776,
+          "elapsed_seconds": 101.38248282112181
+        }
+      ],
+      "returncode": 0,
+      "wall_seconds": 106.51757505023852
+    },
+    "workers": 1
+  }
+]

@@ -1,0 +1,296 @@
+rustc 1.95.0 (59807616e 2026-04-14)
+binary: rustc
+commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860
+commit-date: 2026-04-14
+host: x86_64-unknown-linux-gnu
+release: 1.95.0
+LLVM version: 22.1.2
+   Compiling proc-macro2 v1.0.107
+   Compiling quote v1.0.47
+   Compiling unicode-ident v1.0.24
+   Compiling glob v0.3.4
+   Compiling clang-sys v1.9.1
+   Compiling prettyplease v0.2.37
+   Compiling libc v0.2.189
+   Compiling minimal-lexical v0.2.1
+   Compiling memchr v2.8.3
+   Compiling regex-syntax v0.8.11
+   Compiling cfg-if v1.0.4
+   Compiling libloading v0.8.9
+   Compiling nom v7.1.3
+   Compiling regex-automata v0.4.18
+   Compiling syn v2.0.119
+   Compiling bindgen v0.72.1
+   Compiling either v1.18.0
+   Compiling itertools v0.13.0
+   Compiling regex v1.13.1
+   Compiling cexpr v0.6.0
+   Compiling rustc-hash v2.1.3
+   Compiling rustversion v1.0.23
+   Compiling bitflags v2.13.1
+   Compiling log v0.4.34
+   Compiling shlex v1.3.0
+   Compiling find-msvc-tools v0.1.11
+   Compiling once_cell v1.21.4
+   Compiling shlex v2.0.1
+   Compiling cc v1.4.4
+   Compiling tracing-core v0.1.36
+   Compiling mako-local-sys v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-reader-layout-reader-probe.vRyHuR/mako-local-sys)
+   Compiling generator v0.8.9
+   Compiling pin-project-lite v0.2.17
+   Compiling cfg_aliases v0.2.2
+   Compiling mako-local v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-reader-layout-reader-probe.vRyHuR/mako-local)
+   Compiling lazy_static v1.5.0
+   Compiling sharded-slab v0.1.7
+   Compiling nix v0.30.1
+   Compiling tracing v0.1.44
+   Compiling matchers v0.2.0
+   Compiling tracing-log v0.2.0
+   Compiling thread_local v1.1.10
+   Compiling nu-ansi-term v0.50.3
+   Compiling mrx-rocks v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-reader-layout-reader-probe.vRyHuR/mrx-rocks)
+   Compiling smallvec v1.15.2
+   Compiling mako-engine-api v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-reader-layout-reader-probe.vRyHuR/mako-engine-api)
+   Compiling tracing-subscriber v0.3.23
+   Compiling scoped-tls v1.0.1
+   Compiling mrx-core v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-reader-layout-reader-probe.vRyHuR/mrx-core)
+   Compiling mako-cache v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-reader-layout-reader-probe.vRyHuR/mako-cache)
+   Compiling loom v0.7.2
+   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-reader-layout-reader-probe.vRyHuR/mako-history)
+   Compiling mako-engine v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/.mako-reader-layout-reader-probe.vRyHuR/mako-engine)
+warning: field `slot` is never read
+   --> mako-cache/src/lib.rs:277:5
+    |
+276 | struct CommitWriterGuard<'a> {
+    |        ----------------- field in this struct
+277 |     slot: usize,
+    |     ^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: method `slot` is never used
+   --> mako-cache/src/lib.rs:284:8
+    |
+282 | impl CommitWriterGuard<'_> {
+    | -------------------------- method in this implementation
+283 |     #[inline(always)]
+284 |     fn slot(&self) -> usize {
+    |        ^^^^
+
+warning: function `finish_trusted_one_put_concurrent` is never used
+    --> mako-cache/src/lib.rs:1903:4
+     |
+1903 | fn finish_trusted_one_put_concurrent<'cache, 'db, B: Blobs + 'static>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `finish_trusted_one_put_arena_single` is never used
+    --> mako-cache/src/lib.rs:2303:4
+     |
+2303 | fn finish_trusted_one_put_arena_single<'cache, 'db, B: Blobs + 'static>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `finish_unwritten_native_arena` is never used
+    --> mako-cache/src/lib.rs:2526:4
+     |
+2526 | fn finish_unwritten_native_arena<B: Blobs>(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `post_native_commit_observer_installed` is never used
+   --> mako-cache/src/failpoint.rs:168:15
+    |
+168 | pub(crate) fn post_native_commit_observer_installed() -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `install_post_native_holder_ready_observer` is never used
+   --> mako-cache/src/failpoint.rs:178:15
+    |
+178 | pub(crate) fn install_post_native_holder_ready_observer(observer: impl FnOnce() + 'static) {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `observe_post_native_holder_ready` is never used
+   --> mako-cache/src/failpoint.rs:188:15
+    |
+188 | pub(crate) fn observe_post_native_holder_ready() {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `post_native_holder_ready_observer_installed` is never used
+   --> mako-cache/src/failpoint.rs:196:15
+    |
+196 | pub(crate) fn post_native_holder_ready_observer_installed() -> bool {
+    |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `is_armed` is never used
+   --> mako-cache/src/failpoint.rs:218:15
+    |
+218 | pub(crate) fn is_armed(point: Point) -> bool {
+    |               ^^^^^^^^
+
+warning: method `backend_op_count` is never used
+   --> mako-cache/src/record.rs:998:19
+    |
+807 | impl CommitRecord {
+    | ----------------- method in this implementation
+...
+998 |     pub(crate) fn backend_op_count(&self) -> usize {
+    |                   ^^^^^^^^^^^^^^^^
+
+warning: function `native_holder_record_supported` is never used
+   --> mako-cache/src/writeback.rs:136:21
+    |
+136 | pub(crate) const fn native_holder_record_supported(exact_record_bytes: usize) -> bool {
+    |                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `tagged_native_holder_extent` is never used
+   --> mako-cache/src/writeback.rs:141:4
+    |
+141 | fn tagged_native_holder_extent(exact_record_bytes: usize) -> usize {
+    |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `attach_holder_ready` and `attach_holder_written` are never used
+    --> mako-cache/src/writeback.rs:1857:8
+     |
+1623 | impl PublicationCell {
+     | -------------------- methods in this implementation
+...
+1857 |     fn attach_holder_ready(
+     |        ^^^^^^^^^^^^^^^^^^^
+...
+1888 |     fn attach_holder_written(
+     |        ^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `atomic` is never used
+    --> mako-cache/src/writeback.rs:2461:14
+     |
+2407 | impl CacheLineAtomicU64 {
+     | ----------------------- method in this implementation
+...
+2461 |     const fn atomic(&self) -> &AtomicU64 {
+     |              ^^^^^^
+
+warning: methods `native_ordering_words`, `native_ordered_arena_control`, `native_ordered_holder_control`, `native_holder_pool`, and `bind_single_reserved_sequence_after_acceptance` are never used
+    --> mako-cache/src/writeback.rs:3284:19
+     |
+2922 | impl<B: Blobs> Writeback<B> {
+     | --------------------------- methods in this implementation
+...
+3284 |     pub(crate) fn native_ordering_words(&self) -> (&AtomicU64, &AtomicBool) {
+     |                   ^^^^^^^^^^^^^^^^^^^^^
+...
+3304 |     pub(crate) unsafe fn native_ordered_arena_control(
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3343 |     pub(crate) unsafe fn native_ordered_holder_control(
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+3372 |     pub(crate) fn native_holder_pool(&self) -> Option<&TrustedOnePutHolderPool> {
+     |                   ^^^^^^^^^^^^^^^^^^
+...
+4407 |     unsafe fn bind_single_reserved_sequence_after_acceptance(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `native` is never read
+    --> mako-cache/src/writeback.rs:5788:5
+     |
+5787 | pub(crate) struct NativeArenaPreselectedTarget {
+     |                   ---------------------------- field in this struct
+5788 |     native: CommitRecordTarget,
+     |     ^^^^^^
+     |
+     = note: `NativeArenaPreselectedTarget` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: method `native` is never used
+    --> mako-cache/src/writeback.rs:5795:25
+     |
+5793 | impl NativeArenaPreselectedTarget {
+     | --------------------------------- method in this implementation
+5794 |     #[inline(always)]
+5795 |     pub(crate) const fn native(self) -> CommitRecordTarget {
+     |                         ^^^^^^
+
+warning: methods `bind_preselected_after_native` and `acknowledge_native_holder_ready_concurrent_nonblocking` are never used
+    --> mako-cache/src/writeback.rs:5856:26
+     |
+5800 | impl<'a, B: Blobs> NativeArenaPermit<'a, B> {
+     | ------------------------------------------- methods in this implementation
+...
+5856 |     pub(crate) unsafe fn bind_preselected_after_native(
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+6162 |     pub(crate) unsafe fn acknowledge_native_holder_ready_concurrent_nonblocking(
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `native_record_target`, `publish_holder_completed_concurrent_nonblocking`, and `pin_holder_completed_unknown` are never used
+    --> mako-cache/src/writeback.rs:6223:26
+     |
+6211 | impl<B: Blobs> NativeArenaBoundReservation<'_, B> {
+     | ------------------------------------------------- methods in this implementation
+...
+6223 |     pub(crate) unsafe fn native_record_target(&mut self) -> CommitRecordTarget {
+     |                          ^^^^^^^^^^^^^^^^^^^^
+...
+6294 |     pub(crate) unsafe fn publish_holder_completed_concurrent_nonblocking(
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+6340 |     pub(crate) unsafe fn pin_holder_completed_unknown(
+     |                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `max_record_bytes` is never used
+   --> mako-cache/src/writeback_set.rs:249:19
+    |
+106 | impl<B: Blobs + 'static> WritebackSet<B> {
+    | ---------------------------------------- method in this implementation
+...
+249 |     pub(crate) fn max_record_bytes(&self) -> usize {
+    |                   ^^^^^^^^^^^^^^^^
+
+warning: calls to `std::mem::drop` with a value that implements `Copy` does nothing
+    --> mako-cache/src/application_history_tests.rs:1147:17
+     |
+1147 |                 drop(read_only_fence.take());
+     |                 ^^^^^----------------------^
+     |                      |
+     |                      argument has type `Option<()>`
+     |
+     = note: `#[warn(dropping_copy_types)]` on by default
+help: use `let _ = ...` to ignore the expression or result
+     |
+1147 -                 drop(read_only_fence.take());
+1147 +                 let _ = read_only_fence.take();
+     |
+
+warning: calls to `std::mem::drop` with a value that implements `Copy` does nothing
+    --> mako-cache/src/application_history_tests.rs:1164:5
+     |
+1164 |     drop(read_only_fence.take());
+     |     ^^^^^----------------------^
+     |          |
+     |          argument has type `Option<()>`
+     |
+help: use `let _ = ...` to ignore the expression or result
+     |
+1164 -     drop(read_only_fence.take());
+1164 +     let _ = read_only_fence.take();
+     |
+
+warning: calls to `std::mem::drop` with a value that implements `Copy` does nothing
+    --> mako-cache/src/application_history_tests.rs:1165:5
+     |
+1165 |     drop(read_only_fence);
+     |     ^^^^^---------------^
+     |          |
+     |          argument has type `Option<()>`
+     |
+help: use `let _ = ...` to ignore the expression or result
+     |
+1165 -     drop(read_only_fence);
+1165 +     let _ = read_only_fence;
+     |
+
+warning: `mako-cache` (lib test) generated 24 warnings
+    Finished `release` profile [optimized] target(s) in 2m 15s
+     Running unittests src/lib.rs (/var/tmp/mako-reader-layout.XBkX12/target-probe-reader-c-abi/release/deps/mako_cache-894f1a176441dcb8)
+/var/tmp/mako-reader-layout.XBkX12/target-probe-reader-c-abi/release/deps/mako_cache-894f1a176441dcb8: error while loading shared libraries: librocksdb.so.8.9: cannot open shared object file: No such file or directory
+error: test failed, to rerun pass `-p mako-cache --lib`
+
+Caused by:
+  process didn't exit successfully: `/var/tmp/mako-reader-layout.XBkX12/target-probe-reader-c-abi/release/deps/mako_cache-894f1a176441dcb8 'private_layout_probe::fence_and_cache_offsets' --exact --nocapture --test-threads=1` (exit status: 127)

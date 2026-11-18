@@ -1,0 +1,1438 @@
+diff --git a/crates/mako-clock/src/lib.rs b/crates/mako-clock/src/lib.rs
+index 2a3b9df22..49266ff2b 100644
+--- a/crates/mako-clock/src/lib.rs
++++ b/crates/mako-clock/src/lib.rs
+@@ -190,6 +190,18 @@ impl Clock {
+         &self.physical
+     }
+ 
++    /// Opaque address of the packed HLC word for a non-binding cache hint.
++    ///
++    /// The address is valid only while this exact `Clock` remains alive and
++    /// unmoved. It grants no permission to load, store, or dereference the
++    /// word. Callers may only submit a non-faulting hardware prefetch hint;
++    /// timestamp and gate operations must still use the clock methods.
++    #[doc(hidden)]
++    #[inline]
++    pub fn prefetch_address(&self) -> *const u8 {
++        std::ptr::from_ref(&self.hlc).cast()
++    }
++
+     /// Current stamp, or zero if nothing was ever allocated.
+     pub fn current_stamp(&self) -> u64 {
+         stamp_of(self.hlc.load(Ordering::Acquire))
+diff --git a/crates/mako-engine-sto/Cargo.toml b/crates/mako-engine-sto/Cargo.toml
+index 2ce42a33d..f90b9739e 100644
+--- a/crates/mako-engine-sto/Cargo.toml
++++ b/crates/mako-engine-sto/Cargo.toml
+@@ -10,7 +10,7 @@ description = "Mako's local engine contract implemented over the native Rust STO
+ [features]
+ # Test-only commit observer, simulated cleanup failures, and the pinned
+ # physical clock. Never enable in production.
+-test-hooks = ["mako-clock/test-hooks", "sto-core/test-install-observer"]
++test-hooks = ["mako-clock/test-hooks", "sto-core/test-install-observer", "masstree/test-runtime-health"]
+ 
+ [dependencies]
+ mako-clock = { path = "../mako-clock" }
+@@ -24,3 +24,4 @@ mako-differential = { path = "../mako-differential" }
+ 
+ [lints.rust]
+ unsafe_op_in_unsafe_fn = "deny"
++unexpected_cfgs = { level = "warn", check-cfg = ["cfg(mako_native_health_proof)"] }
+diff --git a/crates/mako-engine-sto/src/lib.rs b/crates/mako-engine-sto/src/lib.rs
+index 0721c3923..08a39ebc7 100644
+--- a/crates/mako-engine-sto/src/lib.rs
++++ b/crates/mako-engine-sto/src/lib.rs
+@@ -45,10 +45,12 @@ mod db;
+ mod engine;
+ mod holder;
+ mod outcome;
++mod prefetch;
+ mod record;
+ mod touched;
+ mod txn;
+ mod worker;
++mod resolved_cache;
+ 
+ pub use mako_engine_api::{
+     record_format, CacheOrderMode, CommitDisposition, CommitHolderReport, CommitRecordChecksum,
+diff --git a/crates/mako-engine-sto/src/prefetch.rs b/crates/mako-engine-sto/src/prefetch.rs
+new file mode 100644
+index 000000000..ef67d4e5a
+--- /dev/null
++++ b/crates/mako-engine-sto/src/prefetch.rs
+@@ -0,0 +1,87 @@
++//! Private experiment: issue the same optional HLC write hint as C++ STO.
++
++use mako_clock::Clock;
++
++/// Resolve the optional CPU capability on the cold worker-attachment path.
++pub(crate) fn initialize() {
++    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), not(miri)))]
++    let _ = supported();
++}
++
++/// Hint only. No timestamp, gate, or application value is read or modified.
++#[inline]
++pub(crate) fn restricted_clock(clock: &Clock) {
++    #[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), not(miri)))]
++    if supported() {
++        let address = clock.prefetch_address();
++        // SAFETY: `clock` remains borrowed, alive and unmoved through this
++        // instruction. PRFCHW was checked below. PREFETCHW is a non-faulting
++        // cache hint, not an access to or mutation of the packed clock word.
++        unsafe {
++            core::arch::asm!(
++                "prefetchw [{address}]",
++                address = in(reg) address,
++                options(nostack, preserves_flags, readonly)
++            );
++        }
++    }
++    #[cfg(any(not(any(target_arch = "x86", target_arch = "x86_64")), miri))]
++    let _ = clock;
++}
++
++#[cfg(all(any(target_arch = "x86", target_arch = "x86_64"), not(miri)))]
++#[allow(unused_unsafe)]
++#[inline]
++fn supported() -> bool {
++    use std::sync::atomic::{AtomicU8, Ordering};
++
++    // Do not introduce a hot capability read on the packed HLC's cache line.
++    #[repr(align(128))]
++    struct Support(AtomicU8);
++    static SUPPORT: Support = Support(AtomicU8::new(0));
++
++    match SUPPORT.0.load(Ordering::Relaxed) {
++        1 => false,
++        2 => true,
++        _ => {
++            #[cfg(target_arch = "x86")]
++            use core::arch::x86::__cpuid;
++            #[cfg(target_arch = "x86_64")]
++            use core::arch::x86_64::__cpuid;
++
++            // SAFETY: supported Rust x86 targets have CPUID. Query the
++            // extended feature leaf only when its maximum admits it.
++            let maximum = unsafe { __cpuid(0x8000_0000) }.eax;
++            let has_hint = maximum >= 0x8000_0001
++                && unsafe { __cpuid(0x8000_0001) }.ecx & (1 << 8) != 0;
++            SUPPORT
++                .0
++                .store(if has_hint { 2 } else { 1 }, Ordering::Relaxed);
++            has_hint
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    #[test]
++    fn hint_does_not_allocate_a_stamp_or_change_the_gate() {
++        let clock = mako_clock::Clock::new();
++        super::initialize();
++        super::restricted_clock(&clock);
++        assert_eq!(clock.current_stamp(), 0);
++        assert!(!clock.general_gate_held());
++        let stamp = clock.try_allocate_timestamp().unwrap();
++        assert!(stamp > 0);
++        assert_eq!(clock.try_allocate_sequence(), Some(1));
++        super::restricted_clock(&clock);
++        assert_eq!(clock.current_stamp(), stamp);
++        assert_eq!(clock.try_allocate_sequence(), Some(2));
++        clock.enter_general();
++        super::restricted_clock(&clock);
++        assert_eq!(clock.current_stamp(), stamp);
++        assert!(clock.general_gate_held());
++        assert_eq!(clock.try_allocate_sequence(), Some(3));
++        clock.leave_general();
++    }
++}
+diff --git a/crates/mako-engine-sto/src/resolved_cache.rs b/crates/mako-engine-sto/src/resolved_cache.rs
+new file mode 100644
+index 000000000..8dc1a4d74
+--- /dev/null
++++ b/crates/mako-engine-sto/src/resolved_cache.rs
+@@ -0,0 +1,125 @@
++//! Private bounded identity cache. No OCC token, value, or presence is cached.
++//!
++//! Entries are owned by one thread-affine WorkerSlot, whose process-lifetime
++//! retention matches the existing worker contract. Historical DB epochs are not
++//! globally bounded, though each live DB admits at most MAX_WORKERS slots.
++
++use std::collections::TryReserveError;
++use sto_masstree::{ResolvedRecord, Table};
++
++pub(crate) const ENTRIES: usize = 512;
++pub(crate) const KEY_BYTES: usize = 32;
++pub(crate) const STORAGE_BYTES: usize = 32 * 1024;
++
++#[derive(Clone, Copy)]
++#[repr(align(64))]
++struct Entry {
++    key: [u8; KEY_BYTES],
++    record: Option<ResolvedRecord>,
++    length: u8,
++}
++
++const EMPTY: Entry = Entry {
++    key: [0; KEY_BYTES],
++    record: None,
++    length: 0,
++};
++const _: () = assert!(std::mem::size_of::<Entry>() * ENTRIES == STORAGE_BYTES);
++
++pub(crate) struct ResolvedCache {
++    entries: Vec<Entry>,
++}
++
++#[derive(Clone, Copy, Debug, Eq, PartialEq)]
++pub(crate) enum Probe {
++    Bypass,
++    Miss(usize),
++    Hit(ResolvedRecord),
++}
++
++impl ResolvedCache {
++    pub(crate) fn try_new() -> Option<Self> {
++        Self::try_new_with(|entries| entries.try_reserve_exact(ENTRIES))
++    }
++
++    fn try_new_with(
++        reserve: impl FnOnce(&mut Vec<Entry>) -> Result<(), TryReserveError>,
++    ) -> Option<Self> {
++        let mut entries = Vec::new();
++        reserve(&mut entries).ok()?;
++        // The allocator may reserve more than requested. Do not grow or shrink
++        // on that path; disabling preserves this cache's explicit byte ceiling.
++        if entries.capacity() != ENTRIES {
++            return None;
++        }
++        entries.resize(ENTRIES, EMPTY);
++        Some(Self { entries })
++    }
++
++    #[inline]
++    pub(crate) fn probe(&self, table: &Table, key: &[u8]) -> Probe {
++        if key.len() > KEY_BYTES {
++            return Probe::Bypass;
++        }
++        let bucket = bucket(table.object_id().get(), key);
++        let entry = &self.entries[bucket];
++        if entry.length as usize == key.len() && &entry.key[..key.len()] == key {
++            if let Some(record) = entry.record.filter(|record| table.owns_resolved(*record)) {
++                return Probe::Hit(record);
++            }
++        }
++        Probe::Miss(bucket)
++    }
++
++    #[inline]
++    pub(crate) fn remember(
++        &mut self,
++        bucket: usize,
++        table: &Table,
++        key: &[u8],
++        record: ResolvedRecord,
++    ) {
++        // Even an internally stale probe may only evict another exact entry.
++        // No caller may place a foreign identity behind a matching byte key.
++        assert!(key.len() <= KEY_BYTES && bucket < ENTRIES && table.owns_resolved(record));
++        let entry = &mut self.entries[bucket];
++        entry.key[..key.len()].copy_from_slice(key);
++        entry.length = key.len() as u8;
++        entry.record = Some(record);
++    }
++}
++
++fn bucket(table: u64, key: &[u8]) -> usize {
++    let mut hash = table ^ 0x9e37_79b9_7f4a_7c15;
++    for chunk in key.chunks(8) {
++        let mut bytes = [0; 8];
++        bytes[..chunk.len()].copy_from_slice(chunk);
++        hash ^= u64::from_le_bytes(bytes);
++        hash = hash.wrapping_mul(0xbf58_476d_1ce4_e5b9);
++        hash ^= hash >> 27;
++    }
++    hash ^= key.len() as u64;
++    hash = (hash ^ (hash >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
++    hash = (hash ^ (hash >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
++    ((hash ^ (hash >> 31)) as usize) & (ENTRIES - 1)
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn allocation_failure_disables_and_storage_cannot_grow() {
++        let cache = ResolvedCache::try_new().unwrap();
++        assert_eq!(cache.entries.len(), ENTRIES);
++        assert_eq!(
++            cache.entries.capacity() * std::mem::size_of::<Entry>(),
++            STORAGE_BYTES
++        );
++        // A real TryReserveError takes exactly the allocation-failure branch.
++        assert!(
++            ResolvedCache::try_new_with(|entries| entries.try_reserve_exact(usize::MAX)).is_none()
++        );
++        assert!(ResolvedCache::try_new_with(|_| Ok(())).is_none());
++    }
++}
+diff --git a/crates/mako-engine-sto/src/txn.rs b/crates/mako-engine-sto/src/txn.rs
+index 4ef00a06f..950993412 100644
+--- a/crates/mako-engine-sto/src/txn.rs
++++ b/crates/mako-engine-sto/src/txn.rs
+@@ -59,6 +59,14 @@ mod pool_tests;
+ #[path = "txn_local_version_tests.rs"]
+ mod local_version_tests;
+ 
++#[cfg(all(test, feature = "test-hooks", not(miri)))]
++#[path = "txn_resolved_cache_tests.rs"]
++mod resolved_cache_tests;
++
++#[cfg(all(test, feature = "test-hooks", mako_native_health_proof, not(miri)))]
++#[path = "txn_native_health_proof.rs"]
++mod native_health_proof;
++
+ #[cfg(test)]
+ #[path = "txn_ownership_tests.rs"]
+ mod ownership_tests;
+@@ -484,11 +492,30 @@ impl<'db> Transaction<'db> {
+             return self.fail_closed(Error::TransactionTooLarge);
+         }
+         let worker = self.attachment.worker;
+-        let result =
+-            table
++        // The short cache borrow ends before entering STO or any callback.
++        // A hit only skips directory lookup, never row observation/validation.
++        let result = match self.attachment.slot.probe_resolved(&table.entry.table, key) {
++            crate::resolved_cache::Probe::Bypass => {
++                table
++                    .entry
++                    .table
++                    .put_with_previous_presence(self.inner_mut(), worker, key, value)
++            }
++            crate::resolved_cache::Probe::Hit(record) => table
+                 .entry
+                 .table
+-                .put_with_previous_presence(self.inner_mut(), worker, key, value);
++                .put_resolved_with_previous_presence_checked(self.inner_mut(), record, value),
++            crate::resolved_cache::Probe::Miss(bucket) => table
++                .entry
++                .table
++                .put_resolving_with_previous_presence(self.inner_mut(), worker, key, value)
++                .map(|(present, record)| {
++                    self.attachment
++                        .slot
++                        .remember_resolved(bucket, &table.entry.table, key, record);
++                    present
++                }),
++        };
+         let existed = match result {
+             Ok(existed) => existed,
+             Err(error) => return self.fail_access(error),
+@@ -2089,6 +2116,12 @@ where
+ {
+     fn reserve_upper_metadata(&mut self) -> std::result::Result<(), CommitHookError> {
+         self.notify(TestCommitPhase::WritesetLocked, 0);
++        if matches!(
++            self.spec.order,
++            Order::RestrictedPair | Order::RestrictedStampOnly
++        ) {
++            crate::prefetch::restricted_clock(self.clock);
++        }
+         if self.spec.gate != Gate::None && !self.spec.gate_after_validation {
+             self.enter_gate();
+         }
+diff --git a/crates/mako-engine-sto/src/txn_native_health_proof.rs b/crates/mako-engine-sto/src/txn_native_health_proof.rs
+new file mode 100644
+index 000000000..94af65317
+--- /dev/null
++++ b/crates/mako-engine-sto/src/txn_native_health_proof.rs
+@@ -0,0 +1,107 @@
++//! Real native singleton poison proof, isolated to one exact test subprocess.
++//! This module and the private native helper are absent from release builds.
++
++use super::*;
++use crate::resolved_cache::Probe;
++use std::process::{Command, Stdio};
++use std::sync::{mpsc, Arc};
++use std::time::{Duration, Instant};
++
++const CHILD: &str = "MAKO_NATIVE_HEALTH_PROOF_CHILD";
++const TEST: &str = "txn::native_health_proof::global_native_poison_rejects_cross_db_cached_put";
++
++unsafe extern "C" {
++    fn mako_native_health_proof_poison() -> i32;
++}
++
++fn child_case(scenario: &str) {
++    assert!(matches!(scenario, "hit-active" | "hit-fresh" | "miss-active" | "miss-fresh"));
++    let origin = Arc::new(LocalDb::open().unwrap());
++    let target = LocalDb::open().unwrap();
++    let origin_table = origin.open_table("origin", 1).unwrap();
++    let target_table = target.open_table("target", 1).unwrap();
++    for (db, table) in [(&*origin, &origin_table), (&target, &target_table)] {
++        let mut seed = db.transaction().unwrap();
++        seed.put(table, b"cached", b"before").unwrap();
++        seed.commit().unwrap();
++    }
++    let attachment = target.attach().unwrap();
++    assert!(matches!(attachment.slot.probe_resolved(&target_table.entry.table, b"cached"), Probe::Hit(_)));
++    assert!(matches!(attachment.slot.probe_resolved(&target_table.entry.table, b"cold-miss"), Probe::Miss(_)));
++    let native = masstree::Runtime::new(masstree::RuntimeConfig::new()
++        .with_max_threads(mako_engine_api::MAX_WORKERS as u32)).unwrap();
++    assert_eq!(native.health().unwrap(), masstree::RuntimeHealth::Healthy);
++    let mut transaction = scenario.ends_with("active").then(|| target.transaction().unwrap());
++    let (poisoned_tx, poisoned_rx) = mpsc::channel();
++    let (retire_tx, retire_rx) = mpsc::channel();
++    let origin_worker = Arc::clone(&origin);
++    let producer = std::thread::spawn(move || {
++        // Bind another real native worker to the first DB, then stop after
++        // native poison and before any STO access-error mapping can run.
++        origin_worker.attach().unwrap();
++        // SAFETY: this exact subprocess links the macro-guarded proof TU.
++        // Its helper performs the production atomic Release transition only.
++        assert_eq!(unsafe { mako_native_health_proof_poison() }, 0);
++        poisoned_tx.send(()).unwrap();
++        let _ = retire_rx.recv_timeout(Duration::from_secs(15));
++    });
++    poisoned_rx.recv_timeout(Duration::from_secs(10)).unwrap();
++    assert_eq!(native.health().unwrap(), masstree::RuntimeHealth::Poisoned);
++    assert_eq!(origin.runtime_for_test().health(), sto_core::RuntimeHealth::Healthy);
++    assert_eq!(target.runtime_for_test().health(), sto_core::RuntimeHealth::Healthy);
++    assert_eq!(target_table.entry.table.health(), sto_masstree::TableHealth::Healthy);
++    println!("NATIVE_HEALTH_REAL_POISON_BEFORE_RUST_MAPPING {scenario}");
++    let mut transaction = transaction.take().unwrap_or_else(|| target.transaction().unwrap());
++    let key: &[u8] = if scenario.starts_with("hit") { b"cached" } else { b"cold-miss" };
++    let put = transaction.put(&target_table, key, b"must-not-commit");
++    if put.is_ok() {
++        let report = transaction.commit_report();
++        if report.disposition == CommitDisposition::Committed && report.cleanup.is_ok() {
++            println!("NATIVE_HEALTH_BYPASS_COMMITTED {scenario}");
++        }
++        panic!("poisoned native runtime accepted PUT: {report:?}");
++    }
++    assert_eq!(put, Err(Error::WorkerPoisoned));
++    assert_ne!(transaction.commit_report().disposition, CommitDisposition::Committed);
++    assert_eq!(target_table.entry.table.health(), sto_masstree::TableHealth::Poisoned);
++    assert_eq!(target.runtime_for_test().health(), sto_core::RuntimeHealth::Poisoned);
++    // The native fault is global, but Rust propagation is per core runtime.
++    assert_eq!(origin.runtime_for_test().health(), sto_core::RuntimeHealth::Healthy);
++    assert!(matches!(target.transaction(), Err(Error::WorkerPoisoned)));
++    retire_tx.send(()).unwrap();
++    producer.join().unwrap();
++    println!("NATIVE_HEALTH_REJECTED {scenario}");
++    // No reset and no healthy-fixture teardown. This child's poisoned native
++    // singleton and intentional worker retention end only at process exit.
++}
++
++#[test]
++fn global_native_poison_rejects_cross_db_cached_put() {
++    if let Ok(scenario) = std::env::var(CHILD) {
++        return child_case(&scenario);
++    }
++    for scenario in ["hit-active", "hit-fresh", "miss-active", "miss-fresh"] {
++        let mut child = Command::new(std::env::current_exe().unwrap())
++            .args(["--exact", TEST, "--test-threads=1", "--nocapture"])
++            .env(CHILD, scenario)
++            .stdout(Stdio::piped())
++            .stderr(Stdio::piped())
++            .spawn().unwrap();
++        let deadline = Instant::now() + Duration::from_secs(25);
++        loop {
++            if child.try_wait().unwrap().is_some() { break; }
++            if Instant::now() >= deadline {
++                let _ = child.kill();
++                let output = child.wait_with_output().unwrap();
++                panic!("native health child timed out: {scenario}: {output:?}");
++            }
++            std::thread::sleep(Duration::from_millis(10));
++        }
++        let output = child.wait_with_output().unwrap();
++        let stdout = String::from_utf8_lossy(&output.stdout);
++        let stderr = String::from_utf8_lossy(&output.stderr);
++        assert!(output.status.success(), "{scenario}: {stdout}\n{stderr}");
++        assert!(stdout.contains(&format!("NATIVE_HEALTH_REJECTED {scenario}")), "{stdout}");
++        println!("{stdout}");
++    }
++}
+diff --git a/crates/mako-engine-sto/src/txn_pool_tests.rs b/crates/mako-engine-sto/src/txn_pool_tests.rs
+index 1fd04ad5c..731bd2f91 100644
+--- a/crates/mako-engine-sto/src/txn_pool_tests.rs
++++ b/crates/mako-engine-sto/src/txn_pool_tests.rs
+@@ -28,7 +28,10 @@ fn fused_success_recycles_owned_log_before_caller_forgets_facade() {
+         let mut retained_key = None;
+         for sequence in 1..=32u64 {
+             let (table, mut tx) = db.trusted_bound_transaction().unwrap();
+-            let key = sequence.to_be_bytes();
++            let key = 7_u64.to_be_bytes();
++            if sequence > 1 {
++                assert!(matches!(tx.attachment.slot.probe_resolved(&table.entry.table,&key),crate::resolved_cache::Probe::Hit(_)));
++            }
+             let value = vec![sequence as u8; 128];
+             tx.put(&table, &key, &value).unwrap();
+             if let Some(pointer) = retained_key {
+diff --git a/crates/mako-engine-sto/src/txn_resolved_cache_tests.rs b/crates/mako-engine-sto/src/txn_resolved_cache_tests.rs
+new file mode 100644
+index 000000000..5421eb02c
+--- /dev/null
++++ b/crates/mako-engine-sto/src/txn_resolved_cache_tests.rs
+@@ -0,0 +1,355 @@
++use super::*;
++use crate::resolved_cache::Probe;
++use std::sync::Arc;
++
++#[test]
++fn resolved_cache_checked_hit_routes_injected_tree_health_to_table_and_core() {
++    std::thread::spawn(|| {
++        let db = LocalDb::open().unwrap();
++        let table = db.open_table("checked-health", 1).unwrap();
++        let mut seed = db.transaction().unwrap();
++        seed.put(&table, b"key", b"before").unwrap();
++        seed.commit().unwrap();
++        let mut active = db.transaction().unwrap();
++        assert!(matches!(
++            active
++                .attachment
++                .slot
++                .probe_resolved(&table.entry.table, b"key"),
++            Probe::Hit(_)
++        ));
++        struct Reset;
++        impl Drop for Reset {
++            fn drop(&mut self) {
++                masstree::set_tree_runtime_health_for_test(None);
++            }
++        }
++        let _reset = Reset;
++        assert_eq!(
++            masstree::set_tree_runtime_health_for_test(Some(masstree::RuntimeHealth::Poisoned)),
++            None
++        );
++        // Exact Tree method-boundary injection. The native flag is unchanged.
++        assert_eq!(
++            table.entry.table.health(),
++            sto_masstree::TableHealth::Healthy
++        );
++        assert!(db.runtime_is_healthy());
++        assert_eq!(
++            active.put(&table, b"key", b"must-not-stage"),
++            Err(Error::WorkerPoisoned)
++        );
++        assert_eq!(
++            table.entry.table.health(),
++            sto_masstree::TableHealth::Poisoned
++        );
++        assert_eq!(
++            db.runtime_for_test().health(),
++            sto_core::RuntimeHealth::Poisoned
++        );
++        assert!(!active.active && active.inner.is_none());
++        assert_eq!(db.transaction().unwrap_err(), Error::WorkerPoisoned);
++    })
++    .join()
++    .unwrap();
++}
++
++#[test]
++fn resolved_cache_checked_warm_tombstone_scan_and_new_db_epoch() {
++    fixture(|| {
++        {
++            let db = LocalDb::open().unwrap();
++            let table = db.open_table("epoch", 1).unwrap();
++            let mut seed = db.transaction().unwrap();
++            seed.put(&table, b"key", b"before").unwrap();
++            seed.commit().unwrap();
++            let mut delete = db.transaction().unwrap();
++            assert!(delete.remove(&table, b"key").unwrap());
++            delete.commit().unwrap();
++            let mut tx = db.transaction().unwrap();
++            assert!(matches!(
++                tx.attachment
++                    .slot
++                    .probe_resolved(&table.entry.table, b"key"),
++                Probe::Hit(_)
++            ));
++            assert_eq!(tx.scan(&table, b"", None).unwrap().count(), 0);
++            assert!(tx.put(&table, b"key", b"resurrected").unwrap());
++            let rows = tx
++                .scan(&table, b"", None)
++                .unwrap()
++                .collect::<Result<Vec<_>>>()
++                .unwrap();
++            assert_eq!(rows.len(), 1);
++            tx.commit().unwrap();
++        }
++        // The old worker slot/cache remains retained, but this new core
++        // runtime and new physical table receive a different attachment.
++        let db = LocalDb::open().unwrap();
++        let table = db.open_table("epoch", 1).unwrap();
++        let mut tx = db.transaction().unwrap();
++        assert!(matches!(
++            tx.attachment
++                .slot
++                .probe_resolved(&table.entry.table, b"key"),
++            Probe::Miss(_)
++        ));
++        assert!(tx.put(&table, b"key", b"new-epoch").unwrap());
++        tx.commit().unwrap();
++    });
++}
++
++#[test]
++fn resolved_cache_health_core_poison_allows_no_successful_terminal() {
++    // Intentional quarantine retention, not a healthy-fixture teardown case.
++    std::thread::spawn(|| {
++        let db = Arc::new(LocalDb::open().unwrap());
++        let table = db.open_table("health", 1).unwrap();
++        let mut seed = db.transaction().unwrap();
++        seed.put(&table, b"key", b"before").unwrap();
++        seed.commit().unwrap();
++        let mut active = db.transaction().unwrap();
++        assert!(matches!(
++            active
++                .attachment
++                .slot
++                .probe_resolved(&table.entry.table, b"key"),
++            Probe::Hit(_)
++        ));
++        let other = Arc::clone(&db);
++        std::thread::spawn(move || {
++            #[derive(Clone)]
++            struct PanicOnDrop(Arc<AtomicBool>);
++            impl Drop for PanicOnDrop {
++                fn drop(&mut self) {
++                    assert!(
++                        !self.0.swap(false, Ordering::AcqRel),
++                        "actual core cleanup failure"
++                    );
++                }
++            }
++            let cell = sto_core::TxnCell::new(
++                other.runtime_for_test(),
++                PanicOnDrop(Arc::new(AtomicBool::new(false))),
++            )
++            .unwrap();
++            let mut fail = other.transaction().unwrap();
++            cell.set(
++                fail.inner_mut(),
++                PanicOnDrop(Arc::new(AtomicBool::new(true))),
++            )
++            .unwrap();
++            assert_eq!(fail.abort(), Err(Error::WorkerPoisoned));
++        })
++        .join()
++        .unwrap();
++        assert_eq!(
++            db.runtime_for_test().health(),
++            sto_core::RuntimeHealth::Poisoned
++        );
++        assert_eq!(
++            table.entry.table.health(),
++            sto_masstree::TableHealth::Healthy
++        );
++        assert!(matches!(
++            active
++                .attachment
++                .slot
++                .probe_resolved(&table.entry.table, b"key"),
++            Probe::Hit(_)
++        ));
++        // Core access does not reload shared runtime health on an already
++        // active transaction. Commit-start admission still rejects it.
++        assert_eq!(active.put(&table, b"key", b"not-installed"), Ok(false));
++        let report = active.commit_report();
++        assert_eq!(
++            report.disposition,
++            CommitDisposition::Aborted(Error::Internal)
++        );
++        assert_eq!(report.cleanup, Err(Error::WorkerPoisoned));
++        assert_eq!(db.transaction().unwrap_err(), Error::WorkerPoisoned);
++        std::thread::spawn(move || {
++            assert_eq!(db.transaction().unwrap_err(), Error::WorkerPoisoned);
++        })
++        .join()
++        .unwrap();
++    })
++    .join()
++    .unwrap();
++}
++
++fn fixture(body: impl FnOnce() + Send + 'static) {
++    std::thread::spawn(move || {
++        body();
++        // SAFETY: the body has retired every database/table/transaction alias.
++        unsafe { worker::drop_healthy_test_attachments() };
++    })
++    .join()
++    .unwrap();
++}
++
++#[test]
++fn resolved_cache_hit_abort_repeated_write_delete_reinsert_and_bypass() {
++    fixture(|| {
++        let db = LocalDb::open().unwrap();
++        let table = db.open_table("resolved", 1).unwrap();
++        let attachment = db.attach().unwrap();
++        assert!(matches!(
++            attachment.slot.probe_resolved(&table.entry.table, b"key"),
++            Probe::Miss(_)
++        ));
++        let mut tx = db.transaction().unwrap();
++        assert!(tx.put(&table, b"key", b"abort").unwrap());
++        assert!(matches!(
++            attachment.slot.probe_resolved(&table.entry.table, b"key"),
++            Probe::Hit(_)
++        ));
++        tx.abort().unwrap();
++        let mut tx = db.transaction().unwrap();
++        assert!(tx.put(&table, b"key", b"first").unwrap());
++        assert!(!tx.put(&table, b"key", &[7; 1024]).unwrap());
++        assert_eq!(tx.get(&table, b"key").unwrap(), Some(vec![7; 1024]));
++        tx.commit().unwrap();
++        let mut tx = db.transaction().unwrap();
++        assert!(tx.remove(&table, b"key").unwrap());
++        tx.commit().unwrap();
++        let mut tx = db.transaction().unwrap();
++        assert!(tx.put(&table, b"key", b"reinsert").unwrap());
++        tx.commit().unwrap();
++        for length in [0, 8, 32, 33, 64, 1024] {
++            let key = vec![length as u8; length];
++            let mut tx = db.transaction().unwrap();
++            tx.put(&table, &key, b"length").unwrap();
++            tx.commit().unwrap();
++            let probe = attachment.slot.probe_resolved(&table.entry.table, &key);
++            assert_eq!(matches!(probe, Probe::Hit(_)), length <= 32);
++            assert_eq!(matches!(probe, Probe::Bypass), length > 32);
++        }
++        attachment.slot.disable_resolved_cache();
++        assert_eq!(
++            attachment.slot.probe_resolved(&table.entry.table, b"key"),
++            Probe::Bypass
++        );
++        let mut tx = db.transaction().unwrap();
++        tx.put(&table, b"key", b"disabled").unwrap();
++        tx.commit().unwrap();
++        let mut tx = db.transaction().unwrap();
++        assert_eq!(tx.get(&table, b"key").unwrap(), Some(b"disabled".to_vec()));
++        tx.commit().unwrap();
++    });
++}
++
++#[test]
++fn resolved_cache_collisions_mixed_tables_and_runtime_identity_are_exact() {
++    fixture(|| {
++        let db = LocalDb::open().unwrap();
++        let first = db.open_table("first", 1).unwrap();
++        let second = db.open_table("second", 2).unwrap();
++        let other = LocalDb::open().unwrap();
++        let foreign = other.open_table("first", 1).unwrap();
++        let attachment = db.attach().unwrap();
++        let mut buckets = std::collections::BTreeMap::new();
++        let (first_key, second_key) = (0..4096u64)
++            .find_map(|id| {
++                let key = id.to_be_bytes();
++                let Probe::Miss(bucket) = attachment.slot.probe_resolved(&first.entry.table, &key)
++                else {
++                    panic!("cache should be empty")
++                };
++                buckets.insert(bucket, key).map(|previous| (previous, key))
++            })
++            .expect("512 buckets force a collision");
++        for (key, value) in [(first_key, b"one" as &[u8]), (second_key, b"two")] {
++            let mut tx = db.transaction().unwrap();
++            tx.put(&first, &key, value).unwrap();
++            tx.commit().unwrap();
++        }
++        assert!(matches!(
++            attachment
++                .slot
++                .probe_resolved(&first.entry.table, &first_key),
++            Probe::Miss(_)
++        ));
++        assert!(matches!(
++            attachment
++                .slot
++                .probe_resolved(&first.entry.table, &second_key),
++            Probe::Hit(_)
++        ));
++        for (key, value) in [(first_key, b"one" as &[u8]), (second_key, b"two")] {
++            let mut tx = db.transaction().unwrap();
++            assert_eq!(tx.get(&first, &key).unwrap(), Some(value.to_vec()));
++            tx.commit().unwrap();
++        }
++        let mut tx = db.transaction().unwrap();
++        tx.put(&first, b"same", b"first").unwrap();
++        tx.put(&second, b"same", b"second").unwrap();
++        tx.commit().unwrap();
++        let Probe::Hit(token) = attachment.slot.probe_resolved(&second.entry.table, b"same") else {
++            panic!("second token missing")
++        };
++        assert!(!first.entry.table.owns_resolved(token));
++        assert!(!foreign.entry.table.owns_resolved(token));
++        let mut tx = other.transaction().unwrap();
++        tx.put(&foreign, b"same", b"foreign").unwrap();
++        tx.commit().unwrap();
++        for (table, value) in [(&first, b"first" as &[u8]), (&second, b"second")] {
++            let mut tx = db.transaction().unwrap();
++            assert_eq!(tx.get(table, b"same").unwrap(), Some(value.to_vec()));
++            tx.commit().unwrap();
++        }
++        // Streaming replacement cannot grow the fixed cache.
++        for id in 0..4096u64 {
++            let mut tx = db.transaction().unwrap();
++            tx.put(&first, &id.to_be_bytes(), b"stream").unwrap();
++            tx.commit().unwrap();
++        }
++    });
++}
++
++#[test]
++fn resolved_cache_hit_does_not_hide_another_workers_commit() {
++    fixture(|| {
++        let (published_tx, published_rx) = std::sync::mpsc::channel();
++        let (retire_tx, retire_rx) = std::sync::mpsc::channel();
++        let other_worker;
++        {
++            let db = Arc::new(LocalDb::open().unwrap());
++            let table = db.open_table("conflict", 1).unwrap();
++            let mut seed = db.transaction().unwrap();
++            seed.put(&table, b"key", b"seed").unwrap();
++            seed.commit().unwrap();
++            let mut stale = db.transaction().unwrap();
++            assert!(matches!(
++                stale
++                    .attachment
++                    .slot
++                    .probe_resolved(&table.entry.table, b"key"),
++                Probe::Hit(_)
++            ));
++            stale.put(&table, b"key", b"stale").unwrap();
++            let other = Arc::clone(&db);
++            other_worker = std::thread::spawn(move || {
++                {
++                    let table = other.open_table("conflict", 1).unwrap();
++                    let mut tx = other.transaction().unwrap();
++                    tx.put(&table, b"key", b"winner").unwrap();
++                    tx.commit().unwrap();
++                }
++                published_tx.send(()).unwrap();
++                retire_rx.recv().unwrap();
++                drop(other);
++                // SAFETY: the parent retired all DB/table/transaction aliases
++                // before sending the retirement signal, and this worker is idle.
++                unsafe { worker::drop_healthy_test_attachments() };
++            });
++            published_rx.recv().unwrap();
++            assert_eq!(stale.commit(), Err(Error::Conflict));
++            let mut read = db.transaction().unwrap();
++            assert_eq!(read.get(&table, b"key").unwrap(), Some(b"winner".to_vec()));
++            read.commit().unwrap();
++        }
++        retire_tx.send(()).unwrap();
++        other_worker.join().unwrap();
++    });
++}
+diff --git a/crates/mako-engine-sto/src/worker.rs b/crates/mako-engine-sto/src/worker.rs
+index 7df482e01..b20c63093 100644
+--- a/crates/mako-engine-sto/src/worker.rs
++++ b/crates/mako-engine-sto/src/worker.rs
+@@ -22,9 +22,45 @@ pub(crate) struct WorkerSlot {
+     runtime: RuntimeId,
+     active: Cell<bool>,
+     touched: Cell<TouchLog>,
++    resolved: RefCell<Option<crate::resolved_cache::ResolvedCache>>,
+ }
+ 
+ impl WorkerSlot {
++    #[inline]
++    pub(crate) fn probe_resolved(
++        &self,
++        table: &sto_masstree::Table,
++        key: &[u8],
++    ) -> crate::resolved_cache::Probe {
++        if key.len() > crate::resolved_cache::KEY_BYTES {
++            return crate::resolved_cache::Probe::Bypass;
++        }
++        self.resolved
++            .borrow()
++            .as_ref()
++            .map_or(crate::resolved_cache::Probe::Bypass, |cache| {
++                cache.probe(table, key)
++            })
++    }
++
++    #[inline]
++    pub(crate) fn remember_resolved(
++        &self,
++        bucket: usize,
++        table: &sto_masstree::Table,
++        key: &[u8],
++        record: sto_masstree::ResolvedRecord,
++    ) {
++        if let Some(cache) = self.resolved.borrow_mut().as_mut() {
++            cache.remember(bucket, table, key, record);
++        }
++    }
++
++    #[cfg(test)]
++    pub(crate) fn disable_resolved_cache(&self) {
++        self.resolved.borrow_mut().take();
++    }
++
+     /// Reserve the worker for one transaction.
+     ///
+     /// # Safety
+@@ -168,6 +204,7 @@ pub(crate) fn attach(
+         if let Some(slot) = state.slots.iter().find(|slot| slot.runtime == runtime_id) {
+             return Ok(Attachment { slot, worker });
+         }
++        crate::prefetch::initialize();
+         let context = match runtime.attach() {
+             Ok(context) => context,
+             Err(error) => {
+@@ -185,6 +222,7 @@ pub(crate) fn attach(
+             runtime: runtime_id,
+             active: Cell::new(false),
+             touched: Cell::new(TouchLog::default()),
++            resolved: RefCell::new(crate::resolved_cache::ResolvedCache::try_new()),
+         });
+         state.slots.push(slot);
+         Ok(Attachment { slot, worker })
+diff --git a/crates/masstree/Cargo.toml b/crates/masstree/Cargo.toml
+index ca02b6e9d..af9719695 100644
+--- a/crates/masstree/Cargo.toml
++++ b/crates/masstree/Cargo.toml
+@@ -10,6 +10,10 @@ build = "build.rs"
+ [lib]
+ path = "src/lib.rs"
+ 
++[features]
++# Private test-only status injection. Never enable in production.
++test-runtime-health = []
++
+ [dependencies]
+ mtree-sys = { path = "../mtree-sys" }
+ 
+diff --git a/crates/masstree/src/lib.rs b/crates/masstree/src/lib.rs
+index 1bd7ce0d5..7a0137c1f 100644
+--- a/crates/masstree/src/lib.rs
++++ b/crates/masstree/src/lib.rs
+@@ -361,6 +361,20 @@ pub enum RuntimeHealth {
+     Poisoned,
+ }
+ 
++#[cfg(feature = "test-runtime-health")]
++thread_local! {
++    static TEST_TREE_RUNTIME_HEALTH: std::cell::Cell<Option<RuntimeHealth>> = const { std::cell::Cell::new(None) };
++}
++
++/// Private test-only override of Tree::runtime_health on this worker thread.
++/// This does not poison or modify the actual native runtime. Runtime::health
++/// still queries the real ABI. Restore the previous value after each test.
++#[cfg(feature = "test-runtime-health")]
++#[doc(hidden)]
++pub fn set_tree_runtime_health_for_test(value: Option<RuntimeHealth>) -> Option<RuntimeHealth> {
++    TEST_TREE_RUNTIME_HEALTH.with(|status| status.replace(value))
++}
++
+ /// One worker bound to its creating thread and runtime.
+ ///
+ /// Drop permits another safe facade to attach on this thread; it does not
+@@ -523,6 +537,18 @@ impl fmt::Debug for Tree {
+ }
+ 
+ impl Tree {
++    /// Observe the native singleton health without traversing the directory.
++    /// This is an admission check, not a promise that another worker cannot
++    /// poison the singleton after this method returns.
++    #[inline]
++    pub fn runtime_health(&self) -> Result<RuntimeHealth, Error> {
++        #[cfg(feature = "test-runtime-health")]
++        if let Some(health) = TEST_TREE_RUNTIME_HEALTH.with(|status| status.get()) {
++            return Ok(health);
++        }
++        native::runtime_health(self.inner.runtime.raw)
++    }
++
+     /// Permanently prevents this directory's key set from growing.
+     ///
+     /// The native transition waits for current structural readers and is
+diff --git a/crates/sto-masstree/src/lib.rs b/crates/sto-masstree/src/lib.rs
+index 187dfd5f5..dea965e74 100644
+--- a/crates/sto-masstree/src/lib.rs
++++ b/crates/sto-masstree/src/lib.rs
+@@ -79,7 +79,6 @@ use sto_core::{
+     Transaction, TransactionLock, TransactionalResource, UniqueItemKeyIndex, UniqueItemKeys,
+     Unsupported, ValidationContext,
+ };
+-#[cfg(not(test))]
+ use sto_core::{FailurePhase, PoisonInfo};
+ 
+ const RECORD_RESOURCE_CLASS_VALUE: u32 = 1;
+@@ -2105,6 +2104,20 @@ impl Table {
+         self.put_presence_inner(txn, Some(worker), key, self.staging_input(value))
+     }
+ 
++    /// Upsert and return the stable identity found by the same directory lookup.
++    /// The token caches identity only. Later resolved access still observes the
++    /// current record and performs the usual transaction validation.
++    #[inline]
++    pub fn put_resolving_with_previous_presence(
++        &self,
++        txn: &mut Transaction<'_, Active>,
++        worker: &Worker,
++        key: &[u8],
++        value: &[u8],
++    ) -> Result<(bool, ResolvedRecord), AccessError> {
++        self.put_resolving_presence_inner(txn, Some(worker), key, self.staging_input(value))
++    }
++
+     /// Stages an unconditional live value without copying a caller-owned
+     /// buffer that is already guaranteed to outlive this transaction.
+     ///
+@@ -2143,6 +2156,40 @@ impl Table {
+         self.put_resolved_presence_inner(txn, resolved, self.staging_input(value))
+     }
+ 
++    /// Resolved upsert with native-runtime health admission before staging.
++    ///
++    /// This skips directory traversal while preserving the native singleton's
++    /// fail-stop state. It checks no native cursor/RCU scope because it opens
++    /// none. Operations overlapping a later poison transition may finish.
++    /// Health failures are returned through core's access boundary and poison
++    /// both this table and the current STO runtime.
++    #[inline]
++    pub fn put_resolved_with_previous_presence_checked(
++        &self,
++        txn: &mut Transaction<'_, Active>,
++        resolved: ResolvedRecord,
++        value: &[u8],
++    ) -> Result<bool, AccessError> {
++        let record_id = self.validate_resolved(resolved)?;
++        let adapter = self.record_resource.adapter();
++        txn.with_item(
++            &self.record_resource,
++            TableKey::Record(record_id),
++            |entry| {
++                self.shared().ensure_directory_healthy()?;
++                let access = self.shared().resolve_directory_access(record_id)?;
++                let previous_present = adapter.prepare_resolved_presence_access(access, entry)?;
++                stage_record_state(
++                    adapter,
++                    access,
++                    entry,
++                    RecordState::Live(self.staging_input(value).into()),
++                )?;
++                Ok(previous_present)
++            },
++        )
++    }
++
+     /// Borrowing counterpart to [`Self::put_resolved_with_previous_presence`].
+     ///
+     /// # Safety
+@@ -3463,6 +3510,28 @@ impl Table {
+         })
+     }
+ 
++    #[inline]
++    fn put_resolving_presence_inner<V: Into<Value>>(
++        &self,
++        txn: &mut Transaction<'_, Active>,
++        worker: Option<&Worker>,
++        key: &[u8],
++        value: V,
++    ) -> Result<(bool, ResolvedRecord), AccessError> {
++        let adapter = self.record_resource.adapter();
++        self.with_key_record_lookup(
++            txn,
++            worker,
++            key,
++            || self.shared().lookup(worker, key),
++            move |entry, access| {
++                let previous_present = adapter.prepare_resolved_presence_access(access, entry)?;
++                stage_record_state(adapter, access, entry, RecordState::Live(value.into()))?;
++                Ok((previous_present, self.mint_resolved(access.record_id)))
++            },
++        )
++    }
++
+     #[inline]
+     fn put_presence_inner_with_lookup<V: Into<Value>>(
+         &self,
+@@ -6050,6 +6119,22 @@ impl TableShared {
+         }
+     }
+ 
++    #[inline]
++    fn ensure_directory_healthy(&self) -> Result<(), AccessError> {
++        self.ensure_healthy()?;
++        let result = self
++            .directory
++            .runtime_health()
++            .and_then(|health| match health {
++                masstree::RuntimeHealth::Healthy => Ok(()),
++                masstree::RuntimeHealth::Poisoned => Err(AccessError::Poisoned(PoisonInfo::new(
++                    FailurePhase::Execution,
++                    "native Masstree runtime is poisoned",
++                ))),
++            });
++        result.inspect_err(|error| self.note_access_error(error))
++    }
++
+     fn mark_publication_unknown(&self) {
+         self.health
+             .store(TABLE_PUBLICATION_UNKNOWN, Ordering::Release);
+@@ -6688,6 +6773,20 @@ impl Directory {
+         }
+     }
+ 
++    #[inline]
++    fn runtime_health(&self) -> Result<masstree::RuntimeHealth, AccessError> {
++        match self {
++            #[cfg(not(test))]
++            Self::Native(directory) => directory.tree.runtime_health().map_err(map_masstree_error),
++            #[cfg(test)]
++            Self::Memory(directory) => Ok(if directory.native_poisoned.load(Ordering::Acquire) {
++                masstree::RuntimeHealth::Poisoned
++            } else {
++                masstree::RuntimeHealth::Healthy
++            }),
++        }
++    }
++
+     fn get_or_insert(
+         &self,
+         _worker: Option<&Worker>,
+@@ -6891,6 +6990,7 @@ impl NativeDirectory {
+ #[cfg(test)]
+ #[derive(Default)]
+ struct MemoryDirectory {
++    native_poisoned: AtomicBool,
+     entries: RwLock<std::collections::BTreeMap<Vec<u8>, RecordId>>,
+     first_miss_barrier: Option<Arc<std::sync::Barrier>>,
+     candidate_reservation_pause: Option<(Arc<std::sync::Barrier>, Arc<std::sync::Barrier>)>,
+@@ -6903,6 +7003,7 @@ struct MemoryDirectory {
+ impl MemoryDirectory {
+     fn with_first_miss_barrier(barrier: Arc<std::sync::Barrier>) -> Self {
+         Self {
++            native_poisoned: AtomicBool::new(false),
+             entries: RwLock::new(std::collections::BTreeMap::new()),
+             first_miss_barrier: Some(barrier),
+             candidate_reservation_pause: None,
+@@ -6917,6 +7018,7 @@ impl MemoryDirectory {
+         resume: Arc<std::sync::Barrier>,
+     ) -> Self {
+         Self {
++            native_poisoned: AtomicBool::new(false),
+             entries: RwLock::new(std::collections::BTreeMap::new()),
+             first_miss_barrier: None,
+             candidate_reservation_pause: Some((reserved, resume)),
+@@ -12083,6 +12185,303 @@ mod tests {
+         committed(verify.commit());
+     }
+ 
++    #[test]
++    fn put_resolving_cold_lookup_once_and_hits_keep_current_occ_state() {
++        for direct in [false, true] {
++            let (runtime, table) = runtime_and_table(TableConfig::default());
++            let table = if direct {
++                Table::new_memory_direct(&runtime, TableConfig::default())
++            } else {
++                table
++            };
++            let mut worker = runtime.attach().unwrap();
++            seed(&table, &mut worker, &[(b"resolved-put", b"before")]);
++            let lookup_count = || match &table.shared().directory {
++                Directory::Memory(directory) => directory.point_lookups.load(Ordering::Relaxed),
++            };
++            let before = lookup_count();
++            let mut txn = worker.begin().unwrap();
++            let (present, token) = table
++                .put_resolving_presence_inner(&mut txn, None, b"resolved-put", b"first" as &[u8])
++                .unwrap();
++            assert!(present);
++            assert_eq!(lookup_count(), before + 1);
++            assert!(table
++                .put_resolved_with_previous_presence(&mut txn, token, b"second")
++                .unwrap());
++            assert_eq!(lookup_count(), before + 1);
++            committed(txn.commit());
++
++            let mut stale = worker.begin().unwrap();
++            assert!(table
++                .put_resolved_with_previous_presence(&mut stale, token, b"stale")
++                .unwrap());
++            std::thread::scope(|scope| {
++                let table = table.clone();
++                let runtime = Arc::clone(&runtime);
++                scope
++                    .spawn(move || {
++                        let mut worker = runtime.attach().unwrap();
++                        let mut writer = worker.begin().unwrap();
++                        table
++                            .put_resolved_with_previous_presence(&mut writer, token, b"winner")
++                            .unwrap();
++                        committed(writer.commit());
++                    })
++                    .join()
++                    .unwrap();
++            });
++            assert!(matches!(
++                stale.commit().unwrap(),
++                CommitOutcome::Aborted(AbortReason::Conflict(_))
++            ));
++            let mut read = worker.begin().unwrap();
++            table
++                .visit_get_resolved(&mut read, token, |value| {
++                    assert_eq!(value.map(Value::as_ref), Some(&b"winner"[..]))
++                })
++                .unwrap();
++            committed(read.commit());
++        }
++    }
++
++    #[test]
++    fn put_resolving_publication_abort_and_foreign_tokens() {
++        for direct in [false, true] {
++            let (runtime, table) = runtime_and_table(TableConfig::default());
++            let table = if direct {
++                Table::new_memory_direct(&runtime, TableConfig::default())
++            } else {
++                table
++            };
++            let second = Table::new_memory(&runtime, TableConfig::default());
++            let (other_runtime, foreign) = runtime_and_table(TableConfig::default());
++            let mut worker = runtime.attach().unwrap();
++            let mut txn = worker.begin().unwrap();
++            let (present, token) = table
++                .put_resolving_presence_inner(&mut txn, None, b"new", b"aborted" as &[u8])
++                .unwrap();
++            assert!(!present);
++            txn.abort();
++            let mut retry = worker.begin().unwrap();
++            assert!(!table
++                .put_resolved_with_previous_presence(&mut retry, token, b"committed")
++                .unwrap());
++            committed(retry.commit());
++            let mut delete = worker.begin().unwrap();
++            assert!(table
++                .remove_resolved_with_previous_presence(&mut delete, token)
++                .unwrap());
++            committed(delete.commit());
++            let mut reinsert = worker.begin().unwrap();
++            assert!(!table
++                .put_resolved_with_previous_presence(&mut reinsert, token, b"reinserted")
++                .unwrap());
++            committed(reinsert.commit());
++            let mut wrong = worker.begin().unwrap();
++            assert!(!second.owns_resolved(token));
++            assert!(second
++                .put_resolved_with_previous_presence(&mut wrong, token, b"wrong")
++                .is_err());
++            wrong.abort();
++            let mut other_worker = other_runtime.attach().unwrap();
++            let mut wrong_runtime = other_worker.begin().unwrap();
++            assert!(!foreign.owns_resolved(token));
++            assert!(foreign
++                .put_resolved_with_previous_presence(&mut wrong_runtime, token, b"wrong")
++                .is_err());
++            wrong_runtime.abort();
++        }
++    }
++
++    #[test]
++    fn put_resolving_keeps_own_publication_and_foreign_phantom_accounting() {
++        for direct in [false, true] {
++            let (runtime, registry_table) = runtime_and_table(TableConfig::default());
++            let table = if direct {
++                Table::new_memory_direct(&runtime, TableConfig::default())
++            } else {
++                registry_table
++            };
++            let mut worker = runtime.attach().unwrap();
++            let mut own = worker.begin().unwrap();
++            assert!(table
++                .scan_inner(&mut own, None, ScanRequest::new(ScanDirection::Forward, 16))
++                .unwrap()
++                .is_empty());
++            table
++                .put_resolving_presence_inner(&mut own, None, b"own", b"value" as &[u8])
++                .unwrap();
++            committed(own.commit());
++
++            let mut scan = worker.begin().unwrap();
++            assert_eq!(
++                table
++                    .scan_inner(
++                        &mut scan,
++                        None,
++                        ScanRequest::new(ScanDirection::Forward, 16)
++                    )
++                    .unwrap()
++                    .len(),
++                1
++            );
++            std::thread::scope(|scope| {
++                let runtime = Arc::clone(&runtime);
++                let table = table.clone();
++                scope
++                    .spawn(move || {
++                        let mut worker = runtime.attach().unwrap();
++                        let mut foreign = worker.begin().unwrap();
++                        table
++                            .put_resolving_presence_inner(
++                                &mut foreign,
++                                None,
++                                b"foreign",
++                                b"value" as &[u8],
++                            )
++                            .unwrap();
++                        committed(foreign.commit());
++                    })
++                    .join()
++                    .unwrap();
++            });
++            table
++                .put_resolving_presence_inner(&mut scan, None, b"own-second", b"value" as &[u8])
++                .unwrap();
++            assert!(matches!(
++                scan.commit().unwrap(),
++                CommitOutcome::Aborted(AbortReason::Conflict(_))
++            ));
++        }
++    }
++
++    #[test]
++    fn put_resolving_health_rejects_poisoned_table_in_both_token_modes() {
++        for direct in [false, true] {
++            let (runtime, registry) = runtime_and_table(TableConfig::default());
++            let table = if direct {
++                Table::new_memory_direct(&runtime, TableConfig::default())
++            } else {
++                registry
++            };
++            let mut worker = runtime.attach().unwrap();
++            let mut seed = worker.begin().unwrap();
++            let (_, token) = table
++                .put_resolving_presence_inner(&mut seed, None, b"health", b"before" as &[u8])
++                .unwrap();
++            committed(seed.commit());
++            let mut active = worker.begin().unwrap();
++            table.shared().poison();
++            assert_eq!(table.health(), TableHealth::Poisoned);
++            assert_eq!(runtime.health(), sto_core::RuntimeHealth::Healthy);
++            assert!(matches!(
++                table.put_resolved_with_previous_presence_checked(
++                    &mut active,
++                    token,
++                    b"must-not-stage"
++                ),
++                Err(AccessError::Fault(_))
++            ));
++            assert_eq!(runtime.health(), sto_core::RuntimeHealth::Poisoned);
++            active.abort();
++        }
++    }
++
++    #[test]
++    fn put_resolving_checked_health_failure_poisons_table_and_core_before_staging() {
++        for direct in [false, true] {
++            let (runtime, registry) = runtime_and_table(TableConfig::default());
++            let table = if direct {
++                Table::new_memory_direct(&runtime, TableConfig::default())
++            } else {
++                registry
++            };
++            let mut worker = runtime.attach().unwrap();
++            let mut seed = worker.begin().unwrap();
++            let (_, token) = table
++                .put_resolving_presence_inner(&mut seed, None, b"health", b"before" as &[u8])
++                .unwrap();
++            committed(seed.commit());
++            let mut active = worker.begin().unwrap();
++            // Inject the result at Directory::runtime_health, not the native
++            // singleton state. Native subprocess coverage is separate.
++            let Directory::Memory(directory) = &table.shared().directory;
++            directory.native_poisoned.store(true, Ordering::Release);
++            assert_eq!(table.health(), TableHealth::Healthy);
++            assert_eq!(runtime.health(), sto_core::RuntimeHealth::Healthy);
++            assert!(matches!(
++                table.put_resolved_with_previous_presence_checked(
++                    &mut active,
++                    token,
++                    b"must-not-stage"
++                ),
++                Err(AccessError::Poisoned(_))
++            ));
++            assert_eq!(table.health(), TableHealth::Poisoned);
++            assert_eq!(runtime.health(), sto_core::RuntimeHealth::Poisoned);
++            assert!(active.is_doomed());
++            active.abort();
++        }
++    }
++
++    #[test]
++    fn put_resolving_checked_healthy_commit_abort_and_tombstone_both_policies() {
++        for direct in [false, true] {
++            for local in [false, true] {
++                let config = TableConfig::default().with_record_local_versions(local);
++                let (runtime, registry) = runtime_and_table(config);
++                let table = if direct {
++                    Table::new_memory_direct(&runtime, config)
++                } else {
++                    registry
++                };
++                let mut worker = runtime.attach().unwrap();
++                let mut seed = worker.begin().unwrap();
++                let (_, token) = table
++                    .put_resolving_presence_inner(&mut seed, None, b"key", b"before" as &[u8])
++                    .unwrap();
++                committed(seed.commit());
++                let mut aborted = worker.begin().unwrap();
++                assert!(table
++                    .put_resolved_with_previous_presence_checked(&mut aborted, token, b"discarded")
++                    .unwrap());
++                aborted.abort();
++                let mut update = worker.begin().unwrap();
++                table
++                    .visit_get_resolved(&mut update, token, |value| {
++                        assert_eq!(value.map(Value::as_ref), Some(&b"before"[..]))
++                    })
++                    .unwrap();
++                assert!(table
++                    .put_resolved_with_previous_presence_checked(&mut update, token, b"committed")
++                    .unwrap());
++                committed(update.commit());
++                let mut delete = worker.begin().unwrap();
++                assert!(table
++                    .remove_resolved_with_previous_presence(&mut delete, token)
++                    .unwrap());
++                committed(delete.commit());
++                let mut reinsert = worker.begin().unwrap();
++                assert!(!table
++                    .put_resolved_with_previous_presence_checked(
++                        &mut reinsert,
++                        token,
++                        b"resurrected"
++                    )
++                    .unwrap());
++                committed(reinsert.commit());
++                let mut read = worker.begin().unwrap();
++                table
++                    .visit_get_resolved(&mut read, token, |value| {
++                        assert_eq!(value.map(Value::as_ref), Some(&b"resurrected"[..]))
++                    })
++                    .unwrap();
++                committed(read.commit());
++            }
++        }
++    }
++
+     #[test]
+     fn presence_reads_cover_present_missing_resolved_and_staged_liveness() {
+         let (runtime, table) = runtime_and_table(TableConfig::default());

@@ -1,0 +1,152 @@
+--- a/mako-cache/src/lib.rs
++++ b/mako-cache/src/lib.rs
+@@ -235,6 +235,18 @@
+         }
+     }
+ 
++    #[inline]
++    fn read_only_scan_bound(&self, order_validation_prefix: impl FnOnce()) -> usize {
++        order_validation_prefix();
++        // A prefix writer registered its slot before its packed Release RMW.
++        // The cut acquires that publication or its release sequence. Loading
++        // the monotone registration counter AFTER that cut therefore includes
++        // every prefix writer, even though registration itself was Relaxed.
++        // An Acquire load before the cut would not establish this guarantee.
++        // Slots are never reused and this counter never decreases or resets.
++        NEXT_COMMIT_FENCE_THREAD_SLOT.load(Ordering::Acquire)
++    }
++
+     fn close_for_read_only(&self, order_validation_prefix: impl FnOnce()) {
+         // Each reader owns its cut and its observed generations. Readers
+         // neither change a writer slot nor consume another reader's result.
+@@ -253,10 +265,10 @@
+         // STO validation therefore either rejects this read-only transaction
+         // on a conflicting lock/predicate, or admits the reader-before-writer
+         // serialization. Missing that post-cut generation is safe.
+-        order_validation_prefix();
++        let registered = self.read_only_scan_bound(order_validation_prefix);
+ 
+         let mut spins = 0;
+-        for writer in &self.writers {
++        for writer in &self.writers[..registered] {
+             let observed = writer.generation.load(Ordering::Acquire);
+             writer.drain_observed(observed, &mut spins);
+         }
+@@ -2592,7 +2604,8 @@
+         let fence = Arc::new(CommitFence::new());
+         let payload = Arc::new(AtomicUsize::new(0));
+         let validation_next = Arc::new(AtomicUsize::new(0));
+-        let writer = fence.enter_writer_slot(0);
++        let slot = CommitFence::current_thread_slot();
++        let writer = fence.enter_writer_slot(slot);
+         validation_next.fetch_add(1, Ordering::Release);
+         payload.store(17, Ordering::Relaxed);
+ 
+@@ -2629,7 +2642,8 @@
+         let fence = Arc::new(CommitFence::new());
+         let order = Arc::new(AtomicUsize::new(0));
+         let payload = Arc::new(AtomicUsize::new(0));
+-        let writer = fence.enter_writer_slot(0);
++        let slot = CommitFence::current_thread_slot();
++        let writer = fence.enter_writer_slot(slot);
+         order.fetch_add(1, Ordering::Release);
+         payload.store(17, Ordering::Relaxed);
+         let (cuts_tx, cuts_rx) = channel();
+@@ -2678,10 +2692,11 @@
+             validation_next.fetch_add(0, Ordering::Acquire);
+         });
+ 
+-        let writer = fence.enter_writer_slot(1);
++        let slot = CommitFence::current_thread_slot();
++        let writer = fence.enter_writer_slot(slot);
+         validation_next.fetch_add(1, Ordering::Release);
+         assert!(
+-            fence.writers[1].generation.load(Ordering::Acquire) & 1 != 0,
++            fence.writers[slot].generation.load(Ordering::Acquire) & 1 != 0,
+             "a post-cut writer should enter without waiting for the reader"
+         );
+         drop(writer);
+@@ -2694,7 +2709,8 @@
+ 
+         let fence = Arc::new(CommitFence::new());
+         let validation_next = Arc::new(AtomicUsize::new(0));
+-        let first = fence.enter_writer_slot(2);
++        let slot = CommitFence::current_thread_slot();
++        let first = fence.enter_writer_slot(slot);
+         validation_next.fetch_add(1, Ordering::Release);
+ 
+         let reader_fence = Arc::clone(&fence);
+@@ -2704,12 +2720,14 @@
+         let (drained_tx, drained_rx) = channel();
+         let reader = std::thread::spawn(move || {
+             reader_validation_next.fetch_add(0, Ordering::Acquire);
+-            let observed = reader_fence.writers[2].generation.load(Ordering::Acquire);
++            let observed = reader_fence.writers[slot]
++                .generation
++                .load(Ordering::Acquire);
+             assert_eq!(observed & 1, 1);
+             observed_tx.send(observed).unwrap();
+             reused_rx.recv().unwrap();
+             let mut spins = 0;
+-            reader_fence.writers[2].drain_observed(observed, &mut spins);
++            reader_fence.writers[slot].drain_observed(observed, &mut spins);
+             drained_tx.send(()).unwrap();
+         });
+ 
+@@ -2717,10 +2735,10 @@
+             .recv_timeout(Duration::from_secs(5))
+             .expect("reader did not observe the first active generation");
+         drop(first);
+-        let second = fence.enter_writer_slot(2);
++        let second = fence.enter_writer_slot(slot);
+         validation_next.fetch_add(1, Ordering::Release);
+         assert_ne!(
+-            fence.writers[2].generation.load(Ordering::Acquire),
++            fence.writers[slot].generation.load(Ordering::Acquire),
+             first_generation
+         );
+         reused_tx.send(()).unwrap();
+@@ -2730,12 +2748,42 @@
+ 
+         // The reader returned while the deliberately post-cut successor still
+         // owned the same worker slot.
+-        assert_eq!(fence.writers[2].generation.load(Ordering::Acquire) & 1, 1);
++        assert_eq!(
++            fence.writers[slot].generation.load(Ordering::Acquire) & 1,
++            1
++        );
+         drop(second);
+         reader.join().unwrap();
+     }
+ 
+     #[test]
++    fn commit_fence_scan_bound_includes_registration_completed_inside_cut() {
++        let fence = CommitFence::new();
++        let allocated = Cell::new(None);
++        let order = Arc::new(AtomicUsize::new(0));
++        let bound = fence.read_only_scan_bound(|| {
++            let writer_order = Arc::clone(&order);
++            let slot = std::thread::spawn(move || {
++                let slot = CommitFence::current_thread_slot();
++                writer_order.fetch_add(1, Ordering::Release);
++                slot
++            })
++            .join()
++            .unwrap();
++            allocated.set(Some(slot));
++            order.fetch_add(0, Ordering::Acquire);
++        });
++        // This checks the production helper's call order deterministically.
++        // The Loom models separately check weak-memory publication without
++        // depending on the test's join synchronization.
++        assert!(
++            bound > allocated.get().unwrap(),
++            "the scan bound omitted a registration completed before the cut"
++        );
++        assert!(bound <= fence.writers.len());
++    }
++
++    #[test]
+     fn unbound_native_record_contract_violation_aborts_process() {
+         const ROLE: &str = "MAKO_CACHE_UNBOUND_RECORD_CONTRACT_VIOLATION_ROLE";
+         if std::env::var_os(ROLE).is_some() {

@@ -1,0 +1,9 @@
+test_missing_option_argument_is_rejected (__main__.NativeCommandTest.test_missing_option_argument_is_rejected) ... ok
+test_preserves_flags_and_redirects_only_output_dependencies (__main__.NativeCommandTest.test_preserves_flags_and_redirects_only_output_dependencies) ... ok
+test_shell_tokenization_preserves_include_space (__main__.NativeCommandTest.test_shell_tokenization_preserves_include_space) ... ok
+test_unknown_response_file_is_rejected (__main__.NativeCommandTest.test_unknown_response_file_is_rejected) ... ok
+
+----------------------------------------------------------------------
+Ran 4 tests in 0.001s
+
+OK

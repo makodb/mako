@@ -16,7 +16,7 @@ The later diagnostic fix required a fresh growth run and performance sweep,
 recorded in the current report.
 
 The design contract is in [rust-sto.md](../../architecture/rust-sto.md),
-sections 14.2 and 17. The operational settings are also described in
+Appendices J.2 and M. The operational settings are also described in
 [sto-tpcc-rust-pgo.md](../sto-tpcc-rust-pgo.md).
 
 To check the retained final correctness and growth evidence from a repository

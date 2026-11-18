@@ -1,0 +1,24 @@
+--- a/mako-cache/src/lib.rs
++++ b/mako-cache/src/lib.rs
+@@ -181,6 +181,9 @@
+ /// read-only transaction or rejects read-only validation on a conflicting
+ /// lock, version, or predicate.
+ struct CommitFence {
++    // Private object-layout control. This is never acquired or consulted.
++    #[allow(dead_code)]
++    read_only_serial: Mutex<()>,
+     writers: Box<[CommitWriterSlot]>,
+ }
+ 
+@@ -190,7 +193,10 @@
+             .map(|_| CommitWriterSlot::new())
+             .collect::<Vec<_>>()
+             .into_boxed_slice();
+-        Self { writers }
++        Self {
++            read_only_serial: Mutex::new(()),
++            writers,
++        }
+     }
+ 
+     #[inline(always)]

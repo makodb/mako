@@ -1,0 +1,27 @@
+   Compiling rustversion v1.0.23
+   Compiling masstree v0.0.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/masstree)
+   Compiling mako-engine-api v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine-api)
+   Compiling sto-masstree v0.0.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/sto-masstree)
+   Compiling mtree-sys v0.0.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mtree-sys)
+   Compiling mako-history v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-history)
+   Compiling mako-clock v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-clock)
+   Compiling arc-swap v1.9.2
+   Compiling sto-core v0.0.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/sto-core)
+   Compiling mako-differential v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-differential)
+   Compiling mako-engine-sto v0.1.0 (/home/users/shuai/mako/.claude/worktrees/masstree-rocks/crates/mako-engine-sto)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.18s
+     Running unittests src/lib.rs (/var/tmp/mako-final-integration.EqWvlp/miri/miri/x86_64-unknown-linux-gnu/debug/build/mako-engine-sto/684348d92f35130e/out/mako_engine_sto-684348d92f35130e)
+
+running 9 tests
+test prefetch::tests::hint_does_not_allocate_a_stamp_or_change_the_gate ... ok
+test record::tests::crc32c_matches_the_reference_vector ... ok
+test record::tests::encoding_refuses_a_wrong_extent ... ok
+test record::tests::one_put_v6_record_has_the_documented_layout ... ok
+test record::tests::v5_record_carries_a_crc_over_every_preceding_byte ... ok
+test touched::tests::recycled_log_forgets_effects_and_preserves_small_storage ... ok
+test touched::tests::recycling_caps_retained_transaction_memory ... ok
+test txn::ownership_tests::holder_publication_transfers_empty_and_overflow_values_across_ring_reuse ... ok
+test txn::ownership_tests::terminal_version_capacity_is_not_a_transaction_size_error ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 137.80s
+

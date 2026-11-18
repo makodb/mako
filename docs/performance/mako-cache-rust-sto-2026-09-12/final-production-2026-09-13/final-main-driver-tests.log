@@ -1,0 +1,11 @@
+test_every_recovery_field_is_checked (__main__.MainChecks.test_every_recovery_field_is_checked) ... ok
+test_exact_protocol_schema_and_canonical_integers (__main__.MainChecks.test_exact_protocol_schema_and_canonical_integers) ... ok
+test_exact_sample_configuration_accounting_and_durations (__main__.MainChecks.test_exact_sample_configuration_accounting_and_durations) ... ok
+test_failure_keeps_database_and_success_removes_it (__main__.MainChecks.test_failure_keeps_database_and_success_removes_it) ... ok
+test_fresh_phase_worker_lanes_have_exact_metadata_extents (__main__.MainChecks.test_fresh_phase_worker_lanes_have_exact_metadata_extents) ... ok
+test_matrix_and_bounded_counts (__main__.MainChecks.test_matrix_and_bounded_counts) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.029s
+
+OK
