@@ -15,25 +15,24 @@
     clippy::unnecessary_unwrap
 )]
 
-use cpp::srpc::debugging;
-use cpp::srpc::serializable;
-use rusty as cpp;
+use crate::debugging::verify_at;
+use crate::serializable::{SerializablePayload, SerializableProxy};
+use std::sync::Arc;
 use std::any::TypeId;
 
-type LegacyStdString = String;
 
 #[cfg_attr(not(any()), derive(Clone, Default))]
 pub struct AnyMessage {
-    pub type_name_: LegacyStdString,
-    pub payload_: Option<rusty::SerializableProxy>,
+    pub type_name_: String,
+    pub payload_: Option<SerializableProxy>,
 }
 
 impl AnyMessage {
-    pub fn save(&self, archive: &mut serializable::BinaryWriteArchive) {
-        unsafe { serializable::Serialize_::serialize(&self.type_name_, archive) };
+    pub fn save(&self, archive: &mut crate::serializable::BinaryWriteArchive) {
+        crate::serializable::Serialize_::serialize(&self.type_name_, archive);
         if self.payload_.is_some() {
             let payload = self.payload_.as_ref().unwrap();
-            let base = payload.get();
+            let base = Arc::as_ptr(payload);
             #[allow(unsafe_code)]
             unsafe {
                 (*base).save(archive);
@@ -41,12 +40,16 @@ impl AnyMessage {
         }
     }
 
-    pub fn load(&mut self, archive: &mut serializable::BinaryReadArchive) {
-        unsafe { serializable::Deserialize_::deserialize(&mut self.type_name_, archive) };
+    pub fn load(&mut self, archive: &mut crate::serializable::BinaryReadArchive) {
+        crate::serializable::Deserialize_::deserialize(&mut self.type_name_, archive);
+        if archive.failed() {
+            self.payload_ = None;
+            return;
+        }
         let proxy_option = any_message_registry::create(&self.type_name_);
-        unsafe { debugging::verify(proxy_option.is_some()) };
+        verify_at(proxy_option.is_some(), file!(), line!());
         let mut proxy = proxy_option.unwrap();
-        proxy.get_mut().unwrap().load(archive);
+        Arc::get_mut(&mut proxy).unwrap().load(archive);
         self.payload_ = Some(proxy);
     }
 
@@ -54,35 +57,36 @@ impl AnyMessage {
         anymessage_is_a::<T>(self)
     }
 
-    pub fn unpack<T: 'static>(&self) -> Option<rusty::Arc<T>> {
+    pub fn unpack<T: 'static>(&self) -> Option<Arc<T>> {
         anymessage_unpack::<T>(self)
     }
 
-    pub fn pack_as<T: 'static>(name: LegacyStdString, value: rusty::Arc<T>) -> AnyMessage {
+    pub fn pack_as<T: SerializablePayload + 'static>(name: String, value: Arc<T>) -> AnyMessage {
         anymessage_pack_as::<T>(name, value)
     }
 
-    pub fn pack<T: 'static>(value: rusty::Arc<T>) -> AnyMessage {
+    pub fn pack<T: SerializablePayload + 'static>(value: Arc<T>) -> AnyMessage {
         anymessage_pack::<T>(value)
     }
 }
 
 pub mod any_message_registry {
-    use super::{debugging, LegacyStdString};
+    use crate::debugging::verify_at;
+    use crate::serializable::SerializableProxy;
     use std::any::TypeId;
     use std::collections::HashMap;
     use std::sync::Mutex;
 
-    pub type Factory = Box<dyn FnMut() -> rusty::SerializableProxy + Send + Sync>;
+    pub type Factory = Box<dyn FnMut() -> SerializableProxy + Send + Sync>;
 
     struct RegistryMap {
-        by_name: HashMap<LegacyStdString, Factory>,
-        name_by_type: HashMap<TypeId, LegacyStdString>,
+        by_name: HashMap<String, Factory>,
+        name_by_type: HashMap<TypeId, String>,
     }
 
     static REGISTRY: Mutex<Option<RegistryMap>> = Mutex::new(None);
 
-    pub fn register_type(name: LegacyStdString, type_id: TypeId, factory: self::Factory) -> i32 {
+    pub fn register_type(name: String, type_id: TypeId, factory: self::Factory) -> i32 {
         let mut guard = REGISTRY.lock().unwrap();
         if guard.is_none() {
             *guard = Some(RegistryMap {
@@ -91,7 +95,7 @@ pub mod any_message_registry {
             });
         }
         let map = guard.as_mut().unwrap();
-        unsafe { debugging::verify(map.by_name.get(&name).is_none()) };
+        verify_at(map.by_name.get(&name).is_none(), file!(), line!());
         if map.name_by_type.get(&type_id).is_none() {
             map.name_by_type.insert(type_id, name.clone());
         }
@@ -99,7 +103,7 @@ pub mod any_message_registry {
         0_i32
     }
 
-    pub fn create(name: &LegacyStdString) -> Option<rusty::SerializableProxy> {
+    pub fn create(name: &str) -> Option<SerializableProxy> {
         let mut guard = REGISTRY.lock().unwrap();
         if guard.is_none() {
             *guard = Some(RegistryMap {
@@ -110,11 +114,11 @@ pub mod any_message_registry {
         let map = guard.as_mut().unwrap();
         let mut factory = map.by_name.remove(name)?;
         let payload = factory();
-        map.by_name.insert(name.clone(), factory);
+        map.by_name.insert(name.to_string(), factory);
         Some(payload)
     }
 
-    pub fn name_for_type_owned(type_id: TypeId) -> LegacyStdString {
+    pub fn name_for_type_owned(type_id: TypeId) -> String {
         let mut guard = REGISTRY.lock().unwrap();
         if guard.is_none() {
             *guard = Some(RegistryMap {
@@ -129,7 +133,7 @@ pub mod any_message_registry {
         }
     }
 
-    pub fn is_registered_name(name: &LegacyStdString) -> bool {
+    pub fn is_registered_name(name: &str) -> bool {
         let mut guard = REGISTRY.lock().unwrap();
         if guard.is_none() {
             *guard = Some(RegistryMap {
@@ -165,13 +169,13 @@ pub mod any_message_registry {
     }
 }
 
-pub fn reg_any_message_as<T>(name: LegacyStdString) -> i32
+pub fn reg_any_message_as<T>(name: String) -> i32
 where
-    T: Default + 'static,
+    T: SerializablePayload + Default + 'static,
 {
-    let factory: any_message_registry::Factory = Box::new(|| -> rusty::SerializableProxy {
-        let pointer = rusty::Arc::<T>::make(T::default());
-        rusty::Arc::<rusty::SerializableSharedPtrHolder<T>>::make(pointer)
+    let factory: any_message_registry::Factory = Box::new(|| -> SerializableProxy {
+        let pointer = Arc::new(T::default());
+        crate::serializable::make_serializable_proxy(pointer)
     });
     any_message_registry::register_type(name, TypeId::of::<T>(), factory)
 }
@@ -184,37 +188,37 @@ pub fn anymessage_is_a<T: 'static>(message: &AnyMessage) -> bool {
     message.type_name_ == name
 }
 
-pub fn anymessage_unpack<T: 'static>(message: &AnyMessage) -> Option<rusty::Arc<T>> {
+pub fn anymessage_unpack<T: 'static>(message: &AnyMessage) -> Option<Arc<T>> {
     if !anymessage_is_a::<T>(message) || message.payload_.is_none() {
         return None;
     }
-    let base = message.payload_.as_ref().unwrap().get();
-    let holder = unsafe { serializable::serializable_holder_of::<T>(base) };
+    let base = Arc::as_ptr(message.payload_.as_ref().unwrap());
+    let holder = unsafe { crate::serializable::serializable_holder_of::<T>(base) };
     if holder.is_null() {
         return None;
     }
     Some(unsafe { (*holder).ptr.clone() })
 }
 
-pub fn anymessage_pack_as<T: 'static>(name: LegacyStdString, value: rusty::Arc<T>) -> AnyMessage {
-    let payload: rusty::SerializableProxy =
-        rusty::Arc::<rusty::SerializableSharedPtrHolder<T>>::make(value);
+pub fn anymessage_pack_as<T: SerializablePayload + 'static>(name: String, value: Arc<T>) -> AnyMessage {
+    let payload: SerializableProxy =
+        crate::serializable::make_serializable_proxy(value);
     AnyMessage {
         type_name_: name,
         payload_: Some(payload),
     }
 }
 
-pub fn anymessage_pack<T: 'static>(value: rusty::Arc<T>) -> AnyMessage {
+pub fn anymessage_pack<T: SerializablePayload + 'static>(value: Arc<T>) -> AnyMessage {
     let name = any_message_registry::name_for_type_owned(TypeId::of::<T>());
-    unsafe { debugging::verify(!name.is_empty()) };
+    verify_at(!name.is_empty(), file!(), line!());
     anymessage_pack_as::<T>(name, value)
 }
 
-pub fn serialize(message: &AnyMessage, archive: &mut serializable::BinaryWriteArchive) {
+pub fn serialize(message: &AnyMessage, archive: &mut crate::serializable::BinaryWriteArchive) {
     message.save(archive);
 }
 
-pub fn deserialize(message: &mut AnyMessage, archive: &mut serializable::BinaryReadArchive) {
+pub fn deserialize(message: &mut AnyMessage, archive: &mut crate::serializable::BinaryReadArchive) {
     message.load(archive);
 }

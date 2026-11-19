@@ -138,8 +138,8 @@ int main(int argc, char **argv) {
     setup2(0, 0);
     cout << "[" << raft_proc_name << "] setup2() complete, waiting for leader election..." << endl;
 
-    // Give more time for leader election and transfer
-    // Initial election + transfer to preferred can take 3-5 seconds
+    // Give time for leader election
+    // The initial election can take a few seconds
     cout << "[" << raft_proc_name << "] Waiting for leader election (5 seconds)..." << endl;
     this_thread::sleep_for(chrono::seconds(5));
 

@@ -313,6 +313,6 @@ if (future->timed_wait(timeout_ms)) {
 
 ## See Also
 
-- [RPC API Reference](rpc_api.md) - Complete API documentation
-- [RPC Reliability Guide](rpc_reliability.md) - Architecture and design
-- [Transport Backends](transport_backends.md) - Backend comparison
+- [RPC API Reference](api.md) - Complete API documentation
+- [RPC Reliability Guide](reliability.md) - Architecture and design
+- [Transport Backends](../developer/transport-backends.md) - Backend comparison

@@ -205,5 +205,5 @@ bool isCpuThrottlingEnabled() const;  // Returns true if limit in (0, 100)
 
 ## See Also
 
-- [Multi-Shard Single Process Mode](multi_shard_single_process.md) - Running multiple shards in one process
+- [Multi-Shard Single Process Mode](../architecture/multi-shard.md) - Running multiple shards in one process
 - [CPU Limiting Plan](cpu_limiting_plan.md) - Original design document

@@ -36,7 +36,7 @@ void stop_helper();
 // Launch RPC server threads and wire up per-warehouse queues.
 void setup_rpc_server();
 
-// Stop all RPC servers previously started by setup_rpc_server().
+// Stop the current owner's RPC servers after the fixed-owner shutdown barrier.
 void stop_rpc_server();
 
 // Stop colocated shards after every runner has joined (also safe in single mode).

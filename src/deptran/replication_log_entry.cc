@@ -1,6 +1,6 @@
 #include "replication_log_entry.h"
 
-#include "srpc/misc/serializable.hpp"
+import srpc.serializable;
 
 namespace janus {
 

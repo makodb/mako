@@ -26,12 +26,12 @@
 
 
 #include "../srpc.hpp"
-#include "../misc/serializable.hpp"
-#include "../misc/serializable_envelope.hpp"
 
 import std;
 import rusty;
 import srpc.basetypes;
+import srpc.serializable;
+import srpc.serializable_envelope;
 
 namespace srpc {
 namespace {

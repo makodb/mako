@@ -78,7 +78,7 @@ pub struct mbta_sharded_ordered_index {
     shard_tables: shard_table_vec,
 }
 
-#[cpp_inherit]
+#[cfg_attr(any(), cpp_inherit)]
 impl FullOrderedIndex for mbta_sharded_ordered_index {
 }
 
@@ -217,7 +217,7 @@ impl mbta_sharded_ordered_index {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=mbta_sharded_ordered_index.1 version=1 rust_sha256=f093ce2d66028996019bbced45239b5cb2c7c964574ae4ce91c710b9584b6c4b*/
+/*RUSTYCPP:GEN-BEGIN id=mbta_sharded_ordered_index.1 version=1 rust_sha256=da5f1d6fc208dfb3a707d72bc7494b869bb6a5e9b86cfc3694ff627ca7d71a82*/
 struct mbta_sharded_ordered_index;
 
 struct mbta_sharded_ordered_index : public FullOrderedIndex {

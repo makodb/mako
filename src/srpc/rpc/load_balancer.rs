@@ -1,8 +1,33 @@
 // Canonical Rust source for the srpc.load_balancer module.
 // Compiled directly by rustc and translated by rusty-cpp crate mode.
-use rusty::{LoadBalancerClient as _, LoadBalancerMetrics as _};
 use std::cell::Cell;
 use std::ops::{Deref, Index};
+
+/// Contract for metric views used by the canonical load-balancer module.
+pub trait LoadBalancerMetrics {
+    fn in_flight_requests(&self) -> u64;
+    fn avg_latency_us(&self) -> u64;
+    fn requests_completed(&self) -> u64;
+}
+
+/// Contract for a client exposing a load-balancer metric view.
+pub trait LoadBalancerClient {
+    type Metrics: LoadBalancerMetrics;
+
+    fn metrics(&self) -> &Self::Metrics;
+}
+
+/// Contract for indexable client pools.
+#[allow(clippy::len_without_is_empty)]
+pub trait LoadBalancerClientVec: Index<usize> {
+    fn len(&self) -> usize;
+}
+
+impl<T> LoadBalancerClientVec for Vec<T> {
+    fn len(&self) -> usize {
+        Vec::len(self)
+    }
+}
 
 #[allow(non_camel_case_types)]
 #[cfg_attr(not(any()), derive(Clone, Copy, Debug, PartialEq, Eq))]
@@ -55,18 +80,18 @@ impl LoadBalancerState {
 
 pub fn lb_pool_size<ClientVec>(clients: &ClientVec) -> usize
 where
-    ClientVec: rusty::LoadBalancerClientVec,
-    <ClientVec as Index<usize>>::Output: rusty::LoadBalancerClientHandle,
-    <<ClientVec as Index<usize>>::Output as Deref>::Target: rusty::LoadBalancerClient,
+    ClientVec: LoadBalancerClientVec,
+    <ClientVec as Index<usize>>::Output: Deref,
+    <<ClientVec as Index<usize>>::Output as Deref>::Target: LoadBalancerClient,
 {
     clients.len()
 }
 
 pub fn lb_select_least_connections<ClientVec>(clients: &ClientVec) -> usize
 where
-    ClientVec: rusty::LoadBalancerClientVec,
-    <ClientVec as Index<usize>>::Output: rusty::LoadBalancerClientHandle,
-    <<ClientVec as Index<usize>>::Output as Deref>::Target: rusty::LoadBalancerClient,
+    ClientVec: LoadBalancerClientVec,
+    <ClientVec as Index<usize>>::Output: Deref,
+    <<ClientVec as Index<usize>>::Output as Deref>::Target: LoadBalancerClient,
 {
     let mut best_idx = 0usize;
     let mut min_pending = u64::MAX;
@@ -84,9 +109,9 @@ where
 
 pub fn lb_select_least_latency<ClientVec>(clients: &ClientVec) -> usize
 where
-    ClientVec: rusty::LoadBalancerClientVec,
-    <ClientVec as Index<usize>>::Output: rusty::LoadBalancerClientHandle,
-    <<ClientVec as Index<usize>>::Output as Deref>::Target: rusty::LoadBalancerClient,
+    ClientVec: LoadBalancerClientVec,
+    <ClientVec as Index<usize>>::Output: Deref,
+    <<ClientVec as Index<usize>>::Output as Deref>::Target: LoadBalancerClient,
 {
     let mut best_idx = 0usize;
     let mut min_latency = u64::MAX;
@@ -113,9 +138,9 @@ impl LoadBalancer {
         rand_value: usize,
     ) -> usize
     where
-        ClientVec: rusty::LoadBalancerClientVec,
-        <ClientVec as Index<usize>>::Output: rusty::LoadBalancerClientHandle,
-        <<ClientVec as Index<usize>>::Output as Deref>::Target: rusty::LoadBalancerClient,
+        ClientVec: LoadBalancerClientVec,
+        <ClientVec as Index<usize>>::Output: Deref,
+        <<ClientVec as Index<usize>>::Output as Deref>::Target: LoadBalancerClient,
     {
         let pool_size = lb_pool_size(clients);
         if pool_size == 0usize {

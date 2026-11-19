@@ -592,11 +592,11 @@ Error: Schema sharding references undefined shards
 
 ## Next Steps
 
-- **[Cluster Topology](topology.md)** - Detailed topology planning
-- **[Multi-Datacenter Setup](multi-dc.md)** - Geo-replication deployment
-- **[Performance Tuning](performance/tuning.md)** - Optimize configuration
-- **[EC2 Deployment](ec2.md)** - Deploy on AWS
+- **Cluster Topology** - Detailed topology planning
+- **Multi-Datacenter Setup** - Geo-replication deployment
+- **[Performance Profiling](../performance/profiling.md)** - Optimize configuration
+- **[EC2 Deployment (legacy)](../archive/ec2-legacy.md)** - Deploy on AWS
 
 ---
 
-**Next**: [Quick Start Tutorial](quickstart.md) | [Key Concepts](concepts.md) | [Running Tests](run.md)
+**Next**: [Quick Start Tutorial](../getting-started/quickstart.md) | [Key Concepts](../getting-started/concepts.md) | [Running Tests (legacy)](../archive/run-legacy.md)

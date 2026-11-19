@@ -1,0 +1,32 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: zyang2 <zyang2@zoo-003.maas>
+Date: Mon, 19 Oct 2026 00:41:00 +0000
+Subject: [PATCH 3/5] lib: leave the application ports out of Mako's spec
+ export
+
+The raft-rs, kad and other ports are not part of the Raft spec and no
+protocol module uses them. At 1bb2f142 the raft-rs port needs a vstd
+specification of HashSet::with_capacity_and_hasher that Verus
+0.2026.08.02.b677dd5 (Mako's pinned verifier) lacks, so the whole crate
+stops at that port. Without the ports the crate verifies on the pinned
+Verus: 1916 verified, 0 errors.
+
+Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+---
+ src/lib.rs | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/src/lib.rs b/src/lib.rs
+index 03e54059..e7e097c1 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -25,6 +25,9 @@ mod common;
+ mod examples;
+ mod generated;
+ mod implementation;
++// Mako's spec export leaves out the application ports (raft-rs, kad, ...):
++// the protocol modules do not use them, and they need a newer vstd.
++#[cfg(any())]
+ mod ports;
+ pub mod protocol;
+ mod services;

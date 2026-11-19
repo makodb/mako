@@ -17,6 +17,7 @@ pub mod detail {
             self.inner.is_some()
         }
 
+        // clippy::explicit_auto_deref -- measured 2026-09-11 (clippy 0.1.97, rusty-cpp 3e1d9505): taking it makes `callable()` return `this->inner.as_ref().unwrap()` -- the Box handle -- where `const F&` is declared; both deref_if_pointer_like unwraps are dropped (2 emitted lines in srpc.callback_wrapper.cppm).
         #[allow(clippy::explicit_auto_deref)]
         pub fn callable(&self) -> &F {
             &**self.inner.as_ref().unwrap()

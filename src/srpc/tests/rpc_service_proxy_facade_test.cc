@@ -38,7 +38,7 @@ class CountingService : public Service {
     return svr.reg_rpc(RPC_ID, svc_index);
   }
 
-  void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection) override {
+  void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection) const override {
     if (dispatch_calls_ != nullptr) {
       dispatch_calls_->fetch_add(1, std::memory_order_relaxed);
     }
@@ -83,7 +83,7 @@ class TypedCountingService {
     return svr.reg_rpc(RPC_ID, svc_index);
   }
 
-  void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection) {
+  void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection) const {
     if (dispatch_calls_ != nullptr) {
       dispatch_calls_->fetch_add(1, std::memory_order_relaxed);
     }

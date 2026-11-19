@@ -440,4 +440,4 @@ host:
 
 ---
 
-**Next**: [Configuration Reference](config.md) | [Architecture Overview](architecture.md) | [Quick Start](quickstart.md)
+**Next**: [Configuration Reference](../configuration/config.md) | [Architecture Overview](../architecture/overview.md) | [Quick Start](quickstart.md)

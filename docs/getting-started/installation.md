@@ -280,15 +280,15 @@ If you encounter issues not covered here:
 Now that Mako is installed, you can:
 
 1. **[Quick Start Tutorial](quickstart.md)** - Run your first Mako cluster
-2. **[Configuration Reference](config.md)** - Learn about configuration options
-3. **[Running Tests](run.md)** - Understand the test framework
-4. **[EC2 Deployment](ec2.md)** - Deploy Mako on AWS
+2. **[Configuration Reference](../configuration/config.md)** - Learn about configuration options
+3. **[Running Tests](../developer/development.md#running-tests)** - Understand the test framework
+4. **[EC2 Deployment](../archive/ec2-legacy.md)** - Deploy Mako on AWS (legacy guide)
 
 ## Advanced Installation
 
 ### Installing on Older Ubuntu Versions
 
-For Ubuntu 20.04 or older systems, see [Build Instructions](build.md) for Linuxbrew-based installation.
+For Ubuntu 20.04 or older systems, see [Legacy Build Instructions](../archive/build-legacy.md) for Linuxbrew-based installation.
 
 ### Docker Installation
 
@@ -299,9 +299,9 @@ For containerized deployments, see:
 ### Development Installation
 
 For Mako developers, see:
-- **[Development Setup](dev-setup.md)** - Setting up development environment
-- **[Build System](build-system.md)** - Understanding CMake configuration
+- **[Development Guide](../developer/development.md)** - Setting up development environment
+- **[Build System](../developer/development.md#build-system)** - Understanding CMake configuration
 
 ---
 
-**Next**: [Quick Start Tutorial](quickstart.md) | [Configuration Reference](config.md)
+**Next**: [Quick Start Tutorial](quickstart.md) | [Configuration Reference](../configuration/config.md)

@@ -200,5 +200,5 @@ _depend("test/benchmark_service.h", "test/benchmark_service.rpc",
 
 ## Related Documentation
 
-- [SRPC RPC Guide](srpc-rpc.md) - Complete RPC framework documentation
-- [Performance Profiling](profile.md) - General profiling guide
+- [SRPC RPC Guide](overview.md) - Complete RPC framework documentation
+- [Performance Profiling](../performance/profiling.md) - General profiling guide

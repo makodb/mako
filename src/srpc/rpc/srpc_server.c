@@ -1,39 +1,10 @@
-// Terminal C kernels for the canonical Rust `srpc.server` module.
-//
-// Both entry points exist because the operations have no spelling in the
-// canonical Rust the emitter accepts: `strtoll`'s `char**` out-parameter and
-// a seeded 64-bit draw. They mirror the exact semantics the retired inline
-// carrier had, so promoting the module changes no behaviour.
+// C library and entropy operations used by canonical rpc/server.rs.
+// Decimal parsing and acceptance policy live in the Rust source.
 
-#include <errno.h>
-#include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/random.h>
-
-// Parse a decimal port, mirroring std::stoi's accept/reject language:
-// "no conversion" and anything outside the int32 range are rejected.
-// Returns 0 and stores the value through `out` on success, -1 otherwise.
-int32_t srpc_parse_port(const uint8_t* text, size_t len, int32_t* out) {
-    if (text == NULL || out == NULL || len > 63) {
-        return -1;
-    }
-    char buffer[64];
-    memcpy(buffer, text, len);
-    buffer[len] = '\0';
-    char* end = NULL;
-    errno = 0;
-    long long value = strtoll(buffer, &end, 10);
-    if (end == buffer) {
-        return -1;
-    }
-    if (value < INT32_MIN || value > INT32_MAX) {
-        return -1;
-    }
-    *out = (int32_t)value;
-    return 0;
-}
 
 size_t srpc_cstr_len(const uint8_t* text) {
     if (text == NULL) {

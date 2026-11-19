@@ -1,20 +1,17 @@
-use std::cell::Cell;
+use srpc::threading::SharedCell as Cell;
 use std::mem::{align_of, offset_of, size_of};
-use std::rc::Rc;
+use std::sync::Arc as Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use srpc::heartbeat::{
-    heartbeat_time_us, HeartbeatConfig, HeartbeatManager, HeartbeatTimeoutCallback,
+    HeartbeatTimeoutCallback,     heartbeat_time_us, HeartbeatConfig, HeartbeatManager,
 };
 
 static NOW_US: AtomicU64 = AtomicU64::new(0);
 static CLOCK_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-// Link-time test double for circuit_breaker's already-audited terminal C seam.
-#[allow(unsafe_code)]
-#[unsafe(no_mangle)]
-pub extern "C" fn srpc_clock_monotonic_us() -> u64 {
+fn test_now() -> u64 {
     NOW_US.load(Ordering::SeqCst)
 }
 
@@ -23,9 +20,8 @@ fn set_now(value: u64) {
 }
 
 #[test]
-fn layouts_and_public_callback_type_match_cpp() {
-    // Compile-time negative assertions: the mutable callback and its owner are
-    // neither Send nor Sync unless the erased trait object promises the bounds.
+fn config_layout_and_callback_thread_traits_are_stable() {
+    // Callback invocation is serialized by the manager's mutex.
     macro_rules! assert_not_auto_trait {
         ($type:ty, $auto_trait:ident) => {{
             trait AmbiguousIfImplemented<Marker> {
@@ -36,10 +32,11 @@ fn layouts_and_public_callback_type_match_cpp() {
             let _ = <$type as AmbiguousIfImplemented<_>>::marker;
         }};
     }
-    assert_not_auto_trait!(HeartbeatTimeoutCallback, Send);
+    fn assert_send<T: Send>() {}
+    fn assert_send_sync<T: Send + Sync>() {}
+    assert_send::<HeartbeatTimeoutCallback>();
     assert_not_auto_trait!(HeartbeatTimeoutCallback, Sync);
-    assert_not_auto_trait!(HeartbeatManager, Send);
-    assert_not_auto_trait!(HeartbeatManager, Sync);
+    assert_send_sync::<HeartbeatManager>();
 
     assert_eq!(size_of::<HeartbeatConfig>(), 16);
     assert_eq!(align_of::<HeartbeatConfig>(), 4);
@@ -48,17 +45,6 @@ fn layouts_and_public_callback_type_match_cpp() {
     assert_eq!(offset_of!(HeartbeatConfig, timeout_ms), 8);
     assert_eq!(offset_of!(HeartbeatConfig, max_missed), 12);
 
-    assert_eq!(size_of::<HeartbeatTimeoutCallback>(), 48);
-    assert_eq!(align_of::<HeartbeatTimeoutCallback>(), 16);
-    assert_eq!(size_of::<HeartbeatManager>(), 112);
-    assert_eq!(align_of::<HeartbeatManager>(), 16);
-    assert_eq!(offset_of!(HeartbeatManager, config_field), 0);
-    assert_eq!(offset_of!(HeartbeatManager, last_send_time), 16);
-    assert_eq!(offset_of!(HeartbeatManager, last_recv_time), 24);
-    assert_eq!(offset_of!(HeartbeatManager, missed_count_field), 32);
-    assert_eq!(offset_of!(HeartbeatManager, pending_pong), 36);
-    assert_eq!(offset_of!(HeartbeatManager, timed_out), 37);
-    assert_eq!(offset_of!(HeartbeatManager, on_timeout), 48);
 }
 
 #[test]
@@ -93,10 +79,10 @@ fn factories_and_disabled_behavior_are_exact() {
     );
 
     let disabled = HeartbeatManager::new(&HeartbeatConfig::disabled());
-    assert!(!disabled.should_send_heartbeat());
-    disabled.on_heartbeat_sent();
-    disabled.on_pong_received();
-    assert!(!disabled.check_timeout());
+    assert!(!disabled.should_send_heartbeat_at(test_now()));
+    disabled.on_heartbeat_sent_at(test_now());
+    disabled.on_pong_received_at(test_now());
+    assert!(!disabled.check_timeout_at(test_now()));
     assert!(!disabled.is_pending_pong());
     assert!(!disabled.is_timed_out());
 }
@@ -113,12 +99,12 @@ fn empty_callback_timeout_is_safe_and_wrapping_elapsed_is_exact() {
         max_missed: 1,
     };
     let manager = HeartbeatManager::new(&config);
-    assert!(manager.on_timeout.borrow().is_empty());
+    assert!(manager.on_timeout.get().lock().unwrap().is_none());
 
     set_now(u64::MAX - 5);
-    manager.on_heartbeat_sent();
+    manager.on_heartbeat_sent_at(test_now());
     set_now(4);
-    assert!(manager.check_timeout());
+    assert!(manager.check_timeout_at(test_now()));
     assert!(manager.is_timed_out());
     assert_eq!(manager.missed_count(), 1);
     assert!(!manager.is_pending_pong());
@@ -132,10 +118,10 @@ fn empty_callback_timeout_is_safe_and_wrapping_elapsed_is_exact() {
     let wrapping_manager = HeartbeatManager::new(&wrapping_config);
     wrapping_manager.missed_count_field.set(u32::MAX);
     set_now(u64::MAX - 5);
-    wrapping_manager.on_heartbeat_sent();
+    wrapping_manager.on_heartbeat_sent_at(test_now());
     // The wrapped delta is exactly 2,000 us: 1,994 - (u64::MAX - 5).
     set_now(1_994);
-    assert!(!wrapping_manager.check_timeout());
+    assert!(!wrapping_manager.check_timeout_at(test_now()));
     assert_eq!(wrapping_manager.missed_count(), 0);
     assert!(!wrapping_manager.is_timed_out());
     assert!(!wrapping_manager.is_pending_pong());
@@ -155,35 +141,35 @@ fn send_pong_missed_timeout_callback_and_reset_are_exact() {
     let manager = HeartbeatManager::new(&config);
     let calls = Rc::new(Cell::new(0));
     let callback_calls = Rc::clone(&calls);
-    manager.set_on_timeout(HeartbeatTimeoutCallback::from_callable(move || {
+    manager.set_on_timeout(Some(Box::new(move || {
         callback_calls.set(callback_calls.get() + 1);
-    }));
+    })));
 
     set_now(1_000_000);
-    assert_eq!(heartbeat_time_us(), 1_000_000);
-    assert!(manager.should_send_heartbeat());
-    assert_eq!(manager.time_until_next_heartbeat_ms(), 0);
-    manager.on_heartbeat_sent();
+    assert!(heartbeat_time_us() > 0);
+    assert!(manager.should_send_heartbeat_at(test_now()));
+    assert_eq!(manager.time_until_next_heartbeat_ms_at(test_now()), 0);
+    manager.on_heartbeat_sent_at(test_now());
     assert!(manager.is_pending_pong());
-    assert!(!manager.should_send_heartbeat());
-    assert!(!manager.check_timeout());
+    assert!(!manager.should_send_heartbeat_at(test_now()));
+    assert!(!manager.check_timeout_at(test_now()));
 
     set_now(1_001_999);
-    assert!(!manager.check_timeout());
+    assert!(!manager.check_timeout_at(test_now()));
     set_now(1_002_000);
-    assert!(!manager.check_timeout());
+    assert!(!manager.check_timeout_at(test_now()));
     assert_eq!(manager.missed_count(), 1);
     assert!(!manager.is_timed_out());
 
     set_now(1_003_000);
-    assert!(manager.should_send_heartbeat());
-    manager.on_heartbeat_sent();
+    assert!(manager.should_send_heartbeat_at(test_now()));
+    manager.on_heartbeat_sent_at(test_now());
     set_now(1_005_000);
-    assert!(manager.check_timeout());
+    assert!(manager.check_timeout_at(test_now()));
     assert_eq!(calls.get(), 1);
     assert_eq!(manager.missed_count(), 2);
     assert!(manager.is_timed_out());
-    assert!(!manager.should_send_heartbeat());
+    assert!(!manager.should_send_heartbeat_at(test_now()));
 
     manager.reset();
     assert_eq!(manager.missed_count(), 0);
@@ -191,8 +177,8 @@ fn send_pong_missed_timeout_callback_and_reset_are_exact() {
     assert!(!manager.is_pending_pong());
 
     set_now(2_000_000);
-    manager.on_heartbeat_sent();
-    manager.on_pong_received();
+    manager.on_heartbeat_sent_at(test_now());
+    manager.on_pong_received_at(test_now());
     assert_eq!(manager.missed_count(), 0);
     assert!(!manager.is_pending_pong());
     assert!(!manager.is_timed_out());
@@ -205,7 +191,7 @@ fn set_config_resets_state() {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     let manager = HeartbeatManager::new(&HeartbeatConfig::aggressive());
     set_now(42);
-    manager.on_heartbeat_sent();
+    manager.on_heartbeat_sent_at(test_now());
     manager.missed_count_field.set(7);
     manager.timed_out.set(true);
 

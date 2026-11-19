@@ -1,19 +1,7 @@
 #define _GNU_SOURCE
 
-/* srpc_base.c — plain-C helpers for the base layer (Goal-0 C demotion).
- * Same convention as srpc_net.c / srpc_io.c: no header, and no C++ type
- * crosses this boundary. Callers declare these `extern "C"`.
- *
- * Everything here is libc surgery that could never be inline-Rust DSL
- * and does not need C++ either: the execinfo backtrace pair with its
- * malloc'd `char**` ownership contract, and a path-basename scan.
- *
- * NOTE on the split: capture stays here, RENDERING stays on the C++/DSL
- * side. The Linux path deliberately turns the symbols into a
- * rusty::Vec<std::string> that a DSL function formats, so pulling the
- * rendering down here as well would mean deleting working DSL to
- * replace it with C — the wrong direction for this campaign.
- */
+/* Libc adapters for stack capture, locale-independent formatting, and process
+ * resources. Canonical Rust owns formatting policy and backtrace rendering. */
 
 #include <execinfo.h>
 #include <locale.h>
@@ -67,8 +55,8 @@ int32_t srpc_format_fixed_2(double value, int8_t* output, size_t capacity) {
  * On success returns the frame count (>= 0) and stores the malloc'd
  * backtrace_symbols() array in *out_syms, which the caller must release
  * with srpc_backtrace_free. On failure returns -1 and sets *out_syms to
- * NULL. Splitting it this way keeps <execinfo.h>, the raw `char**` and
- * the free() out of the C++ translation unit entirely. */
+ * NULL. Canonical Rust owns backtrace rendering; this shared kernel keeps
+ * the platform capture and allocation behind the C ABI. */
 int srpc_backtrace_capture(char*** out_syms) {
     enum { kMaxTrace = 1024 };
     void* callstack[kMaxTrace];

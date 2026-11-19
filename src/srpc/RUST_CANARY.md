@@ -1,5 +1,12 @@
 # `srpc` canonical Rust canary
 
+> Historical canary notes. The module counts, compiler pin and partial-promotion
+> status below describe an earlier migration stage, not current acceptance criteria.
+> All 37 production modules are now canonical Rust, and Cargo uses std plus the
+> shared C/assembly kernel without a facade package or C++ runtime. Current status
+> and validation are tracked in
+> [Rust lane independence](docs/dev/facade-and-runtime-remaining.md).
+
 The Cargo package is the canonical source for twenty-three production modules:
 
 - `srpc.basetypes`
@@ -127,8 +134,6 @@ that cannot be inferred from ordinary Rust imports:
   `addrinfo*` ownership surface;
 - `srpc.frame_codec` receives direct `<vector>` and `<rusty/io.hpp>` includes
   for its legacy `std::vector<uint8_t>`-backed cursor surface.
-- `srpc.misc` receives the local `base/rustc_markers.hpp` compatibility macro
-  that preserves direct `OneTimeJob : Job` inheritance in generated C++.
 
 The gate requires each include exactly once, in the global module fragment,
 and rejects leakage into any sibling or the partial root. `srpc.rand` privately
@@ -144,35 +149,30 @@ legacy fixed `[0.5, 1.5]` jitter multiplier without reaching through the
 adapted `RandomGenerator` owner. The retry counter uses explicit wrapping so
 debug rustc and unsigned C++ agree at `u32::MAX`.
 
-`srpc.connection_state` and `srpc.heartbeat` use the exact local Cargo package
-`rusty` at `rusty-rustc` to make the runtime's move-only Function type
-rustc-visible. The facade represents a genuinely empty callback and the exact
-Fn/FnMut call distinction without emitting a duplicate C++ package: crate
-generation must omit both a `rusty` child and any CMake dependency edge.
+`srpc.connection_state` and `srpc.heartbeat` use standard Rust boxed callbacks. Optional
+callbacks use `Option<Box<dyn Fn...>>`, preserving absence in Rust and the existing
+nullable C++ callable through explicit compiler mappings. Cargo needs no facade package.
 Heartbeat privately imports `srpc.circuit_breaker` and delegates its public
 clock wrapper to the already-audited monotonic-clock seam, so it adds no unsafe
 Rust or second timing boundary.
 
 Basetypes retains the public primitive and `AtomicI64`/`Ordering` aliases,
 SparseInt's legacy wire representation, the `v32`/`v64`, `Counter`, `Time`,
-and `Timer` layouts, and its exact archive-visible length-eight quirk. The four
+and `Timer` layouts. (The former archive-visible length-eight quirk was FIXED -- see docs/testing-plan.md 4.1; the 0xFE rung is retired on the write side.) The four
 raw-pointer SparseInt codecs are explicit unsafe Rust APIs with caller storage
 contracts. Timing alone crosses the terminal `srpc_timing.h` C boundary.
 
 Request queue retains its public overflow enum, records, configuration,
 callback helper, and queue method surface while moving the queue storage and
 callback isolation into canonical Rust. It privately imports
-`srpc.circuit_breaker` for the established monotonic clock and uses the local
-rustc-only `rusty::Function<dyn FnMut(i32)>` facade without emitting another
-C++ provider. Strict `>` expiry, wrapping elapsed time, callback ordering,
+`srpc.circuit_breaker` for the established monotonic clock and uses standard Rust
+boxed callbacks, retaining the existing C++ callable profile. Strict `>` expiry, wrapping elapsed time, callback ordering,
 exception isolation, and the legacy lock-held versus post-unlock callback
 boundaries are pinned in both Rust and C++.
 
-`srpc.load_balancer` uses the same exact local package for rustc-only
-metrics/client/container traits. Those structural bounds validate the canonical
-generic Rust source but are erased during translation: generated C++ retains
-the legacy unconstrained `template<typename ClientVec>` surface and gains no
-concept, dependency import, facade type, or link seam.
+`srpc.load_balancer` defines its metrics and client-selection traits in canonical
+Rust. Generated C++ retains the existing structural templates. The compiler
+translates calls on the Rust traits into the corresponding C++ member calls.
 
 `srpc.utils` retains the move-only `AddrInfo` owner and the established terminal
 `srpc_find_open_port` C seam. A checked type map preserves exact `addrinfo*` and
@@ -183,33 +183,32 @@ valid NUL-terminated path; Utils passes null at all three audited sites. No
 facade name, exported import, namespace alias, or new ABI boundary leaks into
 the generated provider.
 
-`srpc.frame_codec` uses the rustc-only `rusty::StdVector<T>` facade and the
-`[rusty] StdVector = "std::vector"` source type-map entry while leaving the
-Utils mappings and indexed logging import intact. Its generated child privately
-imports `srpc.internal_protocol`; the public `FrameCursor`, POD layouts, spans,
-raw byte pointers, and zero-copy frame view remain unchanged. The three public
-raw-pointer APIs are explicit unsafe functions with precise caller contracts;
-four internal unsafe scopes perform only pointer offset/copy operations.
+`srpc.frame_codec` owns its bytes through the canonical `FrameBytes = Vec<u8>`
+alias. Its explicit C++ profile keeps `std::vector<uint8_t>`. The generated child
+privately imports `srpc.internal_protocol`; the public `FrameCursor`, POD layouts,
+spans, raw byte pointers, and zero-copy frame view remain unchanged. The three
+public raw-pointer APIs are explicit unsafe functions with precise caller
+contracts; four internal unsafe scopes perform only pointer offset/copy operations.
 
 `srpc.logging` retains the global level, exact level tags, basename/time helpers,
-line formatter, and stdout sink. The rustc facade maps its string carrier back
-to `std::string`, its C path-byte pointer back to the legacy `int8_t*` spelling,
-and the indexed `std::cout` boundary remains an explicit unsafe call.
+line formatter, and stdout sink. Canonical Rust writes through `std::io::Write`.
+The C++ compatibility mapping preserves the string and path-pointer spellings,
+and the compiler's standard stdout support preserves the byte and flush behavior.
 
 `srpc.idempotency` retains the historical key, configuration, response,
 generator, and LRU-cache layouts and method signatures. Its key archive format
-is exactly two native-endian `u64` fields in client/sequence order. The
-rustc-only archive facade exposes raw-memory operations as documented unsafe
-APIs, and the four canonical call sites use narrowly audited unsafe scopes.
+is exactly two native-endian `u64` fields in client/sequence order. Canonical
+archive traits expose raw-memory operations as documented unsafe APIs, and the
+four canonical call sites use narrowly audited unsafe scopes.
 The generator and cache use `Cell`, so the generated marker surface records
 the generator as Send but not Sync and deliberately grants neither marker to
 the cache; both require external synchronization when shared.
 
 `srpc.fiber` retains the `this_fiber` compatibility namespace and privately
 imports the existing `srpc.reactor` owner for current-fiber lookup, yielding,
-and sleep operations. The rustc-only reactor facade provides a scoped test
-fiber without emitting a second C++ provider; generated C++ keeps the
-historical `Option<Rc<Fiber>>`, `uint64_t`, and void function surfaces.
+and sleep operations. Canonical Rust owns the reactor state and fiber behavior;
+generated C++ keeps the historical `Option<Rc<Fiber>>`, `uint64_t`, and void
+function signatures.
 
 `srpc.misc` retains the heterogeneous `clamp` template, `Job`/`OneTimeJob`
 inheritance and callback state machine, CPU-count seam, and two-decimal
@@ -229,7 +228,7 @@ FrameCodec adds only its audited zero-copy view and raw-byte copy scopes.
 
 ## Verification boundary
 
-The Goal-0 source gate performs five distinct checks:
+The Goal-0 source gate checks the following:
 
 1. `srpc_dsl_check.sh` requires the exact 15-file/326-block surviving inline
    inventory before checking every block for emitter drift.
@@ -242,7 +241,12 @@ The Goal-0 source gate performs five distinct checks:
 4. The fail-closed contract suite negative-tests all 23 canonical ownership,
    import, output-surface, importer-use, preamble, and raw-ABI ratchets.
 5. Cargo test and clippy with `-D warnings` compile, test, and lint the whole
-   workspace, including the rustc-only runtime facade.
+   canonical workspace. The independent Cargo check repeats tests and doctests
+   in a copied tree with only Rust and the shared C/assembly kernel. It excludes
+   the vendored C++ runtime and supplies no C++ compiler.
+6. The canonical AST audit rejects missing implementations and checks the exact
+   reviewed constant-function inventory. Native ownership, ABI-binding, and
+   independence checks have separate negative-control suites.
 
 The C++ gate has two build paths, both sourced from rusty-cpp output:
 

@@ -96,9 +96,9 @@ class RecvDriverChannelStubAdapter : public ChannelConnectionBase {
  public:
     explicit RecvDriverChannelStubAdapter(std::shared_ptr<RecvDriverChannelStub> p)
         : stub_(std::move(p)) {}
-    ChannelError send_frame(const ChannelFrame& f) override { return stub_->send_frame(f); }
-    void   flush() override                   { stub_->flush(); }
-    void   close() override                   { stub_->close(); }
+    ChannelError send_frame(const ChannelFrame& f) const override { return stub_->send_frame(f); }
+    void   flush() const override                   { stub_->flush(); }
+    void   close() const override                   { stub_->close(); }
     bool   is_closed() const override         { return stub_->is_closed(); }
     std::string peer_address() const override { return stub_->peer_address(); }
     void set_on_frame (OnFrameCallback  cb) override { stub_->set_on_frame (std::move(cb)); }

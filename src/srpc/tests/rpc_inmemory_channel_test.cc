@@ -20,9 +20,9 @@
 #include <rusty/box.hpp>
 
 #include "../srpc.hpp"
-#include "../rpc/inmemory_channel.hpp"
 
 import std;
+import srpc.inmemory_channel;
 
 namespace srpc {
 namespace {

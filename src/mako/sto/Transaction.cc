@@ -7,6 +7,7 @@
 #include <limits>
 #include <mutex>
 #include <thread>
+#include <rusty/vec.hpp>
 
 #include "Transaction.hh"
 #include "MassTrans.hh"
@@ -21,10 +22,10 @@ import std;
 #define MAX(a,b) ((a)>(b)?(a):(b))
 #endif
 
-std::function<int()> callback_ = nullptr;
-// @safe
-void register_sync_util(std::function<int()> cb) {
-    callback_ = cb;
+rusty::Function<int()> callback_;
+// @safe - transfer ownership of the configured term callback.
+void register_sync_util(rusty::Function<int()> cb) {
+    callback_ = std::move(cb);
 }
 
 Transaction::testing_type Transaction::testing;
@@ -566,26 +567,113 @@ void Transaction::start_epoch_advancer() {
     (void)owner;
 }
 
-// @unsafe: uses usleep and global epoch manipulation
+// @unsafe - shared by ordinary, helper, transfer and replay initialization.
+// TThread::assign_stable_id owns the one process-wide STO/RCU slot counter
+// (also behind mako::silo::try_allocate_thread_id), so every adapter draws
+// from the same space and two workers can never publish to one tinfo slot.
+// Slots are never recycled while a prior worker might still publish to them.
+void Transaction::register_thread() {
+    (void)TThread::assign_stable_id();
+}
+
+// @unsafe - one worker owns its slot/depth. Sequential consistency orders entry
+// against cut scans: an announcement missed by a scan must fail the recheck.
+Transaction::epoch_type Transaction::epoch_enter() {
+    const int worker = TThread::id();
+    always_assert(worker >= 0 && worker < MAX_THREADS);
+    auto& thr = tinfo[worker];
+    if (thr.epoch_depth != 0) {
+        if (thr.epoch_depth == std::numeric_limits<unsigned>::max()) return 0;
+        ++thr.epoch_depth;
+        return thr.epoch.load(std::memory_order_seq_cst);
+    }
+    for (;;) {
+        const auto sampled = global_epochs.global_epoch.load(std::memory_order_seq_cst);
+        if (sampled == std::numeric_limits<epoch_type>::max()) return 0;
+        thr.epoch.store(sampled, std::memory_order_seq_cst);
+        if (global_epochs.global_epoch.load(std::memory_order_seq_cst) == sampled) {
+            thr.epoch_depth = 1;
+            return sampled;
+        }
+        thr.epoch.store(0, std::memory_order_seq_cst);
+    }
+}
+
+// @unsafe - the oldest announcement survives until every nested owner leaves.
+void Transaction::epoch_leave() {
+    const int worker = TThread::id();
+    always_assert(worker >= 0 && worker < MAX_THREADS);
+    auto& thr = tinfo[worker];
+    always_assert(thr.epoch_depth != 0);
+    if (--thr.epoch_depth == 0)
+        thr.epoch.store(0, std::memory_order_seq_cst);
+}
+
+// @safe - the timer and migration fences advance the same nonwrapping clock.
+Transaction::epoch_type Transaction::epoch_cut() {
+    auto old = global_epochs.global_epoch.load(std::memory_order_seq_cst);
+    for (;;) {
+        if (old == std::numeric_limits<epoch_type>::max()) return 0;
+        if (global_epochs.global_epoch.compare_exchange_weak(
+                old, old + 1, std::memory_order_seq_cst))
+            return old + 1;
+    }
+}
+
+// @safe - observes existing announcements without acquiring an epoch guard.
+bool Transaction::epoch_drained(epoch_type cut) {
+    if (cut == 0 || cut > epoch_current()) return false;
+    for (const auto& thr : tinfo) {
+        const auto announced = thr.epoch.load(std::memory_order_seq_cst);
+        if (announced != 0 && announced < cut) return false;
+    }
+    return true;
+}
+
+// @safe - observation is not admission; storage callers must enter a guard.
+Transaction::epoch_type Transaction::epoch_current() {
+    return global_epochs.global_epoch.load(std::memory_order_seq_cst);
+}
+
+// @unsafe - thread-owned engine state and legacy Masstree/RCU callbacks.
+void Transaction::ensure_epoch() {
+    if (engine_epoch_) return;
+    always_assert(TThread::id() == threadid_ && state_ < s_aborted);
+    if (epoch_enter() == 0) throw Abort();
+    engine_epoch_ = true;
+    auto& thr = tinfo[TThread::id()];
+    try {
+        thr.rcu_set.clean_until(global_epochs.active_epoch.load(std::memory_order_seq_cst));
+        if (thr.trans_start_callback)
+            thr.trans_start_callback();
+        // The engine start stage completed (a failed start callback unwinds
+        // above), so this attempt owes exactly one end callback, including to
+        // a datatype that registers only an end callback.
+        engine_callback_ = true;
+        mako::sharding_engine_start();
+    } catch (...) {
+        finish(false);
+        throw;
+    }
+}
+
+// @unsafe - process-wide timer owned by start_epoch_advancer(); reclamation
+// follows actual announcements, never an assumed grace period inferred from
+// elapsed timer ticks. The timer and migration fences advance the same clock
+// through epoch_cut(), so a concurrent cut is never overwritten.
 void Transaction::epoch_advancer_loop() {
 
-    // don't bother epoch'ing til things have picked up
     usleep(100000);
     while (global_epochs.run.load(std::memory_order_acquire)) {
-        const epoch_type g =
-            global_epochs.global_epoch.load(std::memory_order_seq_cst);
-        epoch_type e = g;
-        for (auto& t : tinfo) {
-            const epoch_type participant_epoch =
-                t.epoch.load(std::memory_order_seq_cst);
-            if (participant_epoch != 0
-                && signed_epoch_type(participant_epoch - e) < 0)
-                e = participant_epoch;
+        const epoch_type cut = epoch_cut();
+        if (cut == 0) break;
+        epoch_type oldest = cut;
+        for (const auto& thr : tinfo) {
+            const epoch_type announced =
+                thr.epoch.load(std::memory_order_seq_cst);
+            if (announced != 0 && announced < oldest) oldest = announced;
         }
-        const epoch_type next_epoch = std::max(g + 1, epoch_type(1));
-        global_epochs.global_epoch.store(next_epoch,
-                                         std::memory_order_seq_cst);
-        global_epochs.active_epoch.store(e, std::memory_order_seq_cst);
+        global_epochs.active_epoch.store(oldest, std::memory_order_seq_cst);
         global_epochs.recent_tid.store(
             Transaction::_TID.load(std::memory_order_acquire),
             std::memory_order_relaxed);
@@ -596,7 +684,7 @@ void Transaction::epoch_advancer_loop() {
             callback = epoch_advance_callback;
         }
         if (callback)
-            callback(next_epoch);
+            callback(cut);
 
         usleep(100000);
     }
@@ -759,14 +847,28 @@ after_unlock:
 // Finish a transaction whose item-specific unlock and cleanup work is done.
 // Participant shard_unlock() uses this directly because it owns that cleanup
 // loop rather than the coordinator writeset layout consumed by stop().
+// @unsafe - keep STO announced through the legacy end callback and sharding
+// completion, then release the engine epoch guard; ensure_epoch() also lands
+// here after a failed engine start. The end callback runs only if this attempt
+// completed its engine start: an idle mode-1 placeholder never entered Masstree
+// RCU, and a start callback that threw must not be paired with an end callback.
+// noexcept: a failure of the end callback or of sharding completion is
+// fail-stop, like every other post-decision cleanup failure.
 void Transaction::finish(bool committed) noexcept {
     assert(state_ < s_aborted);
     // TODO: this will probably mess up with nested transactions
     threadinfo_t& thr = tinfo[TThread::id()];
-    if (thr.trans_end_callback)
-        thr.trans_end_callback();
-    // XXX should reset trans_end_callback after calling it...
+    if (engine_callback_) {
+        engine_callback_ = false;
+        if (thr.trans_end_callback)
+            thr.trans_end_callback();
+    }
     state_ = s_aborted + committed;
+    mako::sharding_engine_complete();
+    if (engine_epoch_) {
+        engine_epoch_ = false;
+        epoch_leave();
+    }
     local_transaction_cleanup_in_progress = false;
     participant_phase_ = p_none;
 }
@@ -1070,6 +1172,8 @@ bool Transaction::try_commit(bool no_paxos,
                              preinstall_failure* failure,
                              const commit_validation_gate* validation_gate) {
     assert(TThread::id() == threadid_);
+    // @unsafe - abort can finish the local engine before remote receipts arrive.
+    mako::ShardingOperation sharding_operation;
 #if defined(MAKO_LOCAL_TEST_HOOKS)
     const bool has_test_commit_observer =
         test_commit_observer_registered();
@@ -1147,19 +1251,21 @@ bool Transaction::try_commit(bool no_paxos,
     //phase1
     TransItem* it = nullptr;
 
-    // @unsafe - ShardClient's existing serialization boundary takes STL
-    // vectors/strings; keep their ownership here until synchronous RPC returns.
-    std::vector<int> remote_table_id_batch;
-    std::vector<std::string> key_batch;
-    std::vector<std::string> value_batch;
-    std::vector<uint8_t> operation_batch;
+    // @unsafe - ShardClient's serialization boundary borrows these batches;
+    // keep their ownership here until the synchronous RPC returns.
+    rusty::Vec<int> remote_table_id_batch;
+    rusty::Vec<std::string> key_batch;
+    rusty::Vec<std::string> value_batch;
+    rusty::Vec<uint8_t> operation_batch;
 
     for (unsigned tidx = 0; tidx != tset_size_; ++tidx) {
         it = (tidx % tset_chunk ? it + 1 : tset_[tidx / tset_chunk]);
         bool isRemote = it->owner()->get_is_remote();
         if (it->has_write() && isRemote) {
             std::string key = "", val = "";
-            if (hasInsertOp(it)) {  // key_write_value_type
+            if (hasDeleteOp(it)) {
+                key = (*it).write_value<std::string>();
+            } else if (hasInsertOp(it)) {  // key_write_value_type
                 key = (*it).write_value<std::string>();
                 if (!hasDeleteOp(it)) {
                     versioned_str_struct *vvx = (*it).key<versioned_str_struct *>();
@@ -1171,23 +1277,25 @@ bool Transaction::try_commit(bool no_paxos,
                 if (!hasDeleteOp(it))
                     val = (*it).template write_value<std::string>();
             }
-            remote_table_id_batch.push_back(it->owner()->get_table_id());
-            key_batch.push_back(std::move(key));
-            value_batch.push_back(std::move(val));
+            remote_table_id_batch.push(it->owner()->get_table_id());
+            key_batch.push(std::move(key));
+            value_batch.push(std::move(val));
             // MassTrans's insert flag describes the coordinator proxy row,
-            // not an INSERT precondition on the owning shard.
-            operation_batch.push_back(hasDeleteOp(it) ? 2 : 0);
+            // not an INSERT precondition on the owning shard. ShardClient's
+            // engine API takes 0 for a put and nonzero for a delete, and sends
+            // a delete as participant wire kind 2 (abstract_db::shard_mutate).
+            operation_batch.push(hasDeleteOp(it) ? 2 : 0);
         }
     }
 
-    if (!remote_table_id_batch.empty()) {
+    if (!remote_table_id_batch.is_empty()) {
         if (TThread::sclient == nullptr) {
             Warning("Missing ShardClient for remoteBatchLock; aborting transaction");
             goto abort;
         }
         if (TThread::sclient->remoteBatchLock(
                 remote_table_id_batch, key_batch, value_batch,
-                &operation_batch) != mako::ErrorCode::SUCCESS)
+                operation_batch) != mako::ErrorCode::SUCCESS)
             goto abort;
     }
 
@@ -1527,8 +1635,11 @@ bool Transaction::try_commit(bool no_paxos,
 #endif
 
     // Both write-set layouts and wholly read-only distributed attempts take
-    // this single terminal path. Mark the decision before sending: a missing
-    // reply can conceal a committed participant even with no local writes.
+    // this single terminal path. A remote read-only participant still owns
+    // leases and an engine read set; INSTALL is its terminal read-scope
+    // cleanup too, so no separate abort follows a successful validation.
+    // Mark the decision before sending: a missing reply can conceal a
+    // committed participant even with no local writes.
     if (TThread::sclient != nullptr &&
         TThread::sclient->hasTouchedParticipants()) {
         irreversible_decision = true;

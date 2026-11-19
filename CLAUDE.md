@@ -68,6 +68,18 @@ make -j32
 ./docker_build.sh ci shard1ReplicationSimpleRaft
 ./docker_build.sh ci shard2ReplicationSimpleRaft
 
+# RaftLabTest: the Raft cluster correctness suite (Docker container; ci.sh
+# derives the expected case count from the init2 ids in the shell's lab
+# sources plus the TEST lines in raft-rt's lab_runtime.rs).
+# Configures its OWN build directory with -DMAKO_USE_RAFT=ON -DRAFT_TEST=ON,
+# because RAFT_TEST defines RAFT_TEST_CORO and changes RaftServer's behaviour;
+# it must not be folded into the build the other suites use.
+# docker_build.sh does not take it as a `ci` target, so:
+# 1) enter Docker dev environment
+./docker_build.sh enter
+# 2) inside container, run:
+BUILD_DIR=build_docker ./ci/ci.sh raftLabTest
+
 # RocksDB persistence and partitioned queues tests (Docker)
 ./docker_build.sh ci rocksdbTests
 
@@ -97,14 +109,18 @@ BUILD_DIR=build_docker ./ci/ci.sh shardFaultTolerance
 - `src/srpc/`: Custom RPC framework and networking layer
 - `config/`: YAML configuration files for experiments and cluster topology
 
-The `srpc` Rust package is rooted at `src/srpc/Cargo.toml`. The seventeen modules
-listed in `src/srpc/rust-modules.toml` are canonical `.rs` sources: rustc
-compiles them directly and rusty-cpp translates those same sources into the
-complete C++ module providers used in every production build. Edit those Rust
-files directly; their former hand-authored `.cpp` carriers have been deleted.
-The other 20 named modules still own 367 inline `RUSTYCPP_RUST` blocks, so a
-successful Cargo build proves only the current seventeen-module coverage, not full
-Goal 0. Never recreate a top-level `crates/srpc` hand port.
+The `srpc` Rust package is rooted at `src/srpc/Cargo.toml`. All 37 modules listed
+in `src/srpc/rust-modules.toml` are canonical `.rs` sources living at
+`src/srpc/{base,misc,reactor,rpc}/*.rs` (each module's `source =` field names its
+file): rustc compiles them directly, and rusty-cpp translates those same sources
+into the complete C++ module providers used in every production build
+(the crate-mode block in `src/srpc-cmake/CMakeLists.txt`, keyed on
+`SRPC_CARGO_EXECUTABLE` and `rust-modules.toml`). Edit those Rust files directly;
+their former hand-authored `.cpp` carriers have been deleted. The remaining
+hand-written production C++ provides native ABI declarations and serialization
+support. Measure it with `python3 scripts/srpc_handwritten_census.py --files`.
+The source gate requires zero inline Rust carriers in SRPC's production sources.
+Never recreate a top-level `crates/srpc` hand port.
 
 ### Key Protocol Implementations
 The system implements multiple distributed transaction protocols. The former
@@ -140,9 +156,16 @@ is `SrpcRequestHandle`.
 **See [docs/developer/transport-backends.md](docs/developer/transport-backends.md) for complete documentation.**
 
 **Legacy Deptran transports:**
-- Standard Ethernet via `src/srpc/` RPC framework
-- DPDK for kernel bypass (`DPDK_ENABLED` flag)
-- InfiniBand/RDMA support (`src/deptran/rcc_rpc.cpp`)
+- Standard Ethernet via the `src/srpc/` RPC framework — the only data path left.
+- No DPDK path. There is no `DPDK_ENABLED` flag (the string occurs nowhere in
+  this tree outside `third-party/`) and `src/` calls no `rte_*` API.
+  `pkg_check_modules(DPDK REQUIRED libdpdk)` (`CMakeLists.txt:231`) and the
+  whole-archive `${DPDK_LDFLAGS}` (`CMakeLists.txt:764-772`) are link-flag
+  leftovers of the removed eRPC flag sets, kept byte-for-byte: libdpdk must be
+  installed to configure, but nothing dispatches through it.
+- No InfiniBand/RDMA path. The file this bullet used to cite,
+  `src/deptran/rcc_rpc.cpp`, does not exist, and `src/deptran/` contains no
+  `ibv_*` or RDMA references.
 
 ### Configuration System
 - **Host configuration**: `config/hosts*.yml` defines cluster topology and network settings
@@ -151,7 +174,10 @@ is `SrpcRequestHandle`.
 
 ### Key Classes and Components
 - `Coordinator`: Coordinates distributed transactions across shards (protocol-specific subclasses like `CoordinatorMultiPaxos`)
-- `TxLogServer`: Shared base for the Paxos and Raft replication servers
+- `TxLogServer`: The replication-engine INTERFACE implemented by the Paxos and
+  Raft servers (`src/deptran/scheduler.h`). It holds no state: it was six
+  shared data members until they were moved down into the two
+  concrete servers, because implementation inheritance has no Rust spelling.
 - `Communicator`: Manages RPC communication between nodes
 - `Frame`: Protocol-specific transaction processing logic
 - `Masstree`: High-performance in-memory index structure (Mako)
@@ -168,19 +194,32 @@ is `SrpcRequestHandle`.
 
 #### Rust first (default for new code)
 
-**New code SHOULD be authored in Rust, not hand-written C++.** In one of the
-seventeen canonical `srpc` modules, edit its `src/srpc/src/*.rs` source directly.
-For a module that still uses an inline carrier, the DSL is the
-`#if RUSTYCPP_RUST pub trait/struct ... #endif` source block plus the generated
-`/*RUSTYCPP:GEN-BEGIN ... GEN-END*/` C++ the compiler sees. For a remaining
-`src/srpc` carrier, regenerate with the pinned transpiler:
-`third-party/rusty-cpp/target/release/rusty-cpp-transpiler inline-rust
---rewrite --files <carrier>`, then run `scripts/srpc_dsl_check.sh`. Storage
-headers use the separate `scripts/regen_storage_dsl.sh` workflow, whose ODR
-post-pass and file census are specific to those headers; do not add `src/srpc`
-module carriers to it. See [docs/storage-interface.md](docs/storage-interface.md)
-for the storage mechanics and [docs/srpc-book.md](docs/srpc-book.md) for the
-`srpc` module workflow.
+**New code SHOULD be authored in Rust, not hand-written C++.** In one of the 37
+canonical `srpc` modules, edit its `.rs` source directly under
+`src/srpc/{base,misc,reactor,rpc}/` — `src/srpc/rust-modules.toml` names the exact
+file in each module's `source =` field, and `src/srpc/src/` holds only the
+generated `lib.rs`. Nothing there is regenerated by hand: the build reruns crate
+mode whenever a canonical `.rs` changes, and gates it with `cargo test`/`clippy`
+(the source-gate and crate-mode blocks in `src/srpc-cmake/CMakeLists.txt`, keyed
+on `SRPC_CARGO_EXECUTABLE`, `rust-modules.toml` and
+`scripts/check_srpc_crate_mode.py`). SRPC no longer has production inline Rust
+carriers. `scripts/srpc_dsl_check.sh` delegates to the subtree's canonical source
+census. The same `srpc_goal0_source_gate` runs it with
+`scripts/extract_srpc_rust.py --check`, native ABI audits and contract tests on
+every build of `srpc`.
+The storage and `src/cluster` headers use the separate
+`scripts/regen_storage_dsl.sh` workflow instead, whose ODR post-pass and file
+census are specific to the files that script lists; do not add `src/srpc`
+carriers to it — and nothing runs *that* script's `--check` for you (it appears
+in no CMake target and no workflow), so run it by hand before committing a
+regenerated storage or cluster header. To learn what is still hand-written in
+`src/srpc`, measure it: `python3 scripts/srpc_handwritten_census.py --files` is
+the authoritative list, not any prose here. See
+[docs/porting-cpp-to-rust-dsl.md](docs/porting-cpp-to-rust-dsl.md) for the
+canonical how-to (per-class recipe §4, reshape-before-transpiler decision rule
+§5, §8 catalogue of dissolved floors and dated transpiler findings),
+[docs/storage-interface.md](docs/storage-interface.md) for the storage mechanics
+and [docs/srpc-book.md](docs/srpc-book.md) for the `srpc` module workflow.
 
 **Plain C++ is for bridging, not for new logic.** Reach for hand-written
 C++ only when:
@@ -203,6 +242,63 @@ misfills, so this is mandatory, not cosmetic), and struct fields whose
 names are Rust keywords (e.g. `type`) must be renamed or that type stays
 C++.
 
+**A trait impl WITHOUT `#[cpp_inherit]` lowers through `TraitAdapter<Self>`**
+and emits a by-value adapter specialization; for a move-only struct (anything
+holding a mutex, or inheriting a `pub trait` interface, whose copy/move are
+deleted) that is a hard compile error in every TU that includes the header.
+Put `#[cpp_inherit]` on EVERY trait impl of such a struct; the last one in the
+block supplies the single C++ base, so pin it with
+`static_assert(std::is_base_of_v<Base, Struct>)` next to the struct. The
+supertrait pair in `src/deptran/scheduler.h` (`RaftSpecific: TxLogServer`) is
+the worked example.
+
+**The Raft server is Rust, compiled by rustc.** `src/deptran/raft/shell/server_h.rs`
+and `server_cc.rs` are canonical Rust sources (edit them directly; nothing
+there is transpiled), built by cargo into `libraft_rt.a` (raft-rt, which
+contains them) in the build tree and linked by CMake (`raft_rust`). C++
+reaches the server only through
+`src/deptran/raft/server_exports.h` -- `extern "C"` functions defined in
+`server_cc.rs` -- and holds it only as `class RaftServer`, a pointer-holding
+shim over a forward-declared `struct RaftServerBase`. Do not add a method
+call, a field access, a cast or a derivation on the struct in C++; add an
+export instead: the exports (spliced between the markers in `server_cc.rs`),
+the header and the shim are all generated from one signature table by
+`scripts/raft_gen_exports.py` -- run `python3 scripts/raft_regen_exports.py`
+to regenerate all three -- and `scripts/raft_field_census.py` must keep
+exiting 0. The Rust side calls C++
+only through the kernels declared `extern "C"` in `server_h.rs` and defined
+in `server.cc`; a kernel is C++ that has a reason to be (reactor, threads,
+wire types, third-party APIs). The one inline block left in `server.h`, the
+kernel-result PODs, is still transpiled and extracted (`server_pods_h.rs`).
+
+**Raft's runtime is Rust.** Its RPC endpoint is raft-rt's transport
+(`raft_transport.h`); the C++ communicator and RPC service were deleted, as
+were the C++ and hybrid runtimes ("lanes", once chosen by `MAKO_RAFT_LANE`)
+and their switch. The snapshot store
+is Rust: `SnapshotStore` in `src/deptran/raft/rt/src/snapshot.rs`, reached
+through the SEAM kernels; `RaftSnapshotManagerPtr` is an opaque carrier, so
+a `SnapshotManager` call in `server.cc` does not compile. In memory the bytes
+are the state machine's, verbatim; disk builds (`-DMAKO_RAFT_DISK=ON`) also
+write them as image files.
+
+**`src/deptran/raft` holds the source and what checks it**: the crates (core,
+shell, rt, store, replay), the Verus proofs, and the C++ glue the build links.
+Test programs live with their drivers: the performance driver in
+`scripts/raft_perf/` (`raft_bench.cc`), the process-kill test in
+`scripts/raft_kill/` (`raft_kill_node.cc`, `run.py`, `check.py`).
+
+**`#[cpp_inherit]` requires `use rusty::cpp_inherit;` in the same DSL
+block, and fails SILENTLY without it.** The attribute is authenticated
+through the marker crate (`transpiler/src/codegen/predicates.rs:921-936`).
+Unauthenticated, inline mode emits the struct with NO base class and no
+diagnostic, and crate mode emits adapter classes instead of direct
+inheritance. Both compile; the type simply stops implementing its
+interface. `src/mako/storage/mbta_wrapper.hh` predates this requirement
+and carries no import, so it must keep being regenerated with the
+`a4bcff5f` transpiler `scripts/regen_storage_dsl.sh` pins, NOT the
+`7e0c201f` pin the Raft and srpc gates enforce, or it silently loses
+`: public FullOrderedIndex`.
+
 Everything below still applies — to the C++ that remains (bridges,
 kernels, and not-yet-converted files):
 
@@ -220,38 +316,41 @@ mention each migration in the commit message so bisection stays
 useful.
 
 Exceptions that stay std:
- - srpc framework boundary types (the generated `rcc_rpc.h` still uses
-   `std::string`, `std::shared_ptr<Marshallable>`, etc. on the wire).
-   Convert at the edge; isolate the conversion in one spot; annotate
-   the boundary `@unsafe`.
+ - srpc framework boundary types: the generated `rcc_rpc.h` still declares
+   its wire structs with `std::string`, `std::vector` and `std::map`
+   (`src/deptran/rcc_rpc.h:37`, `:61-66`, `:102` — rpcgen emits the header
+   from `src/deptran/rcc_rpc.rpc`, `CMakeLists.txt:966-967`). Convert at the
+   edge; isolate the conversion in one spot; annotate the boundary
+   `@unsafe`. The pointer half of this carve-out is **gone**: re-measured
+   2026-09-17, that header has 0 hits for `shared_ptr` (of any kind),
+   `Marshallable` and `MarshallDeputy` against 974 for `rusty::`, and
+   handles already arrive as `rusty::Box<srpc::Request>` (`:492`). A new
+   `std::shared_ptr<Marshallable>` is a bug, not a boundary.
  - Third-party APIs (rocksdb, lz4, yaml-cpp) — we don't control their
    signatures.
  - Pre-existing code not in your change's blast radius. File a
    follow-up if it's blocking something.
 
-**IMPORTANT**: For Goal 0 canonical-Rust production, the `third-party/rusty-cpp`
-gitlink is pinned to commit
-`fa7dd9d9612c0bcec695c3e391ace96b56498e74`, the tip of rusty-cpp's
-`main` branch. The Goal 0 work that used to live on the private
-`goal0-rustc-runtime-facade` branch has been merged into `main`, so the
-pin now tracks upstream directly rather than a side branch.
+For Goal 0 canonical Rust production, `third-party/rusty-cpp` is pinned to
+`7e0c201f1b0d548f0166dc9ee700f24bc18066a4`, matching SRPC's pin at
+`6f5ca63117158b4682738b5e63e8036291da6c5c`. The compiler commit is on upstream
+`main`. It descends from Mako's previous
+`1689f4380c25d13455cbe1f9eb8e5ff94e49861c` pin, with 43 additional commits.
+These add the lane SRPC's Lion runtime needs: `--verus-exec` and
+`--crate-graph` crate generation, plus the separately built
+`rusty-cpp-verus-erase` helper that erases Lion's `verus!` items. Use Mako's
+root submodule for its build. Of the subtree's nested submodules only
+`src/srpc/third-party/lion` is checked out, because SRPC's crate depends on
+Lion's crates; the other two remain disabled in `.gitmodules`.
 
-Lineage, so the move is auditable:
+SRPC now supplies its native source manifest at
+`src/srpc/scripts/native-kernel-sources.txt`. The C++ epoll implementation
+and the Rust facade crates are gone. Callers import `srpc.serializable`
+and related modules directly. RPC dispatch and service handlers take a
+const receiver, so handler state must use synchronized interior mutation.
+Regenerate checked-in bindings with `bin/rpcgen` when its generator changes.
 
- - The previous pin `ebb5161058a982145d253665ce9720f17224722e` is a
-   **strict ancestor** of `fa7dd9d9` (0 behind / 334 ahead). Nothing that
-   was reviewed under the old pin was dropped.
- - `goal0-rustc-runtime-facade` is **retired**. Its live tip
-   (`dc06d859c832979c723b39c474f43fa01c7e06df`) is four commits *behind*
-   `ebb51610` and does not contain it, so it can no longer describe any
-   pin this repository uses. Do not re-point the gitlink at it.
- - The old warning about `verify-stack` (the discarded parallel
-   `crates/srpc` pivot) is **not** a hazard on this lineage:
-   `verify-stack` is not an ancestor of `fa7dd9d9` — it diverged 13
-   commits ago and is 346 behind. Merging it in remains undesirable, but
-   the current pin does not contain it.
-
-Two consequences of `fa7dd9d9` that callers must know:
+Two consequences of `a1f8fef8` that callers must know:
 
  - `hashbrown_port` was **deleted** as a CMake target (upstream #177).
    `rusty::HashMap` / `rusty::HashSet` now come from `std_port` (the
@@ -269,7 +368,12 @@ commit to a reachable branch, and bump the gitlink in the same Mako
 commit. The pin attestation is triple-enforced — the gitlink, the
 submodule HEAD, and the transpiler's own `--build-info` `git_hash` must
 all agree, and the transpiler must be built from a clean tree so
-`git_dirty=false`. Never pin uncommitted local patches.
+`git_dirty=false`. That is enforced in code, not by convention:
+`scripts/extract_srpc_rust.py:672-724` checks all three against
+`REQUIRED_RUSTY_CPP_COMMIT` (`:49`) and rejects a submodule carrying tracked
+local changes, and the source gate above runs it on every build. Never pin
+uncommitted local patches: a transpiler binary parked outside the tree cannot
+pass this check unless it was built from the pinned, clean submodule anyway.
 
 #### Required Safety Annotations
 Every function and significant code block must have safety annotations:

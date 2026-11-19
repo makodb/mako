@@ -5,22 +5,40 @@ the actual Rust source authored there must compile both with rustc and through
 rusty-cpp. The old parallel hand-port was not that source and has
 been removed; it cannot be used as evidence for either half.
 
-## Current canonical-Rust ratchet (2026-08-12)
+## Current canonical-Rust ratchet (module counts refreshed 2026-09-17)
 
-The actual Cargo package starts at `src/srpc/Cargo.toml`. Seventeen checked-in
-modules below `src/srpc/src` are now canonical Rust, with their exact ownership
-recorded in `src/srpc/rust-modules.toml`: `basetypes`, `callback_wrapper`,
+The actual Cargo package starts at `src/srpc/Cargo.toml`. **All 37 modules named
+in `src/srpc/rust-modules.toml` are now canonical Rust**: `grep -c
+'^\[\[module\]\]' src/srpc/rust-modules.toml` returns 37 and every entry carries a
+`source = …rs` line. Those sources sit at layout-mirroring paths —
+`src/srpc/base/`, `src/srpc/misc/`, `src/srpc/reactor/`, `src/srpc/rpc/` — **not**
+below a flat `src/srpc/src`, which holds only `lib.rs`. (`.github/workflows/ci.yml`
+carries the same correction inline, and commit `435e3d6b3`, "ci: point the
+invalidation check at the real canonical-Rust path", exists for it.) rustc
+compiles those sources directly, and rusty-cpp translates the same bytes into
+their complete C++ module interfaces; every module's hand-authored `.cpp`
+carrier has been deleted and the generated children are the only C++
+production providers. One hand-authored module-source unit survives —
+`reactor/epoll_platform_linux.cc`, a platform `.cc` file that is **not** one of
+the 37 named modules (it has no `rust-modules.toml` entry) and still holds five
+inline DSL blocks; see **Current source boundary**.
+
+The per-module notes in the rest of this section were written at the
+2026-08-12 seventeen-module ratchet — `basetypes`, `callback_wrapper`,
 `internal_protocol`, `stat`, `errors`, `connection_metrics`,
 `completion_tracker`, `rand`, `request_options`, `reconnect_policy`,
 `circuit_breaker`, `connection_state`, `heartbeat`, `request_queue`,
-`load_balancer`, `utils`, and `frame_codec`. rustc compiles those
-sources directly, and rusty-cpp translates the same bytes into their complete
-C++ module interfaces. Their seventeen hand-authored `.cpp` carriers have been
-deleted, and the generated children are now the only C++ production providers
-for these modules. The former 79 inline blocks account for 2,283 lines in the
-fixed historical coverage baseline; the canonical files themselves contain
-2,574 nonblank, non-`//` Rust lines. They are source, not copied extraction
-outputs.
+`load_balancer`, `utils`, and `frame_codec`. They record what each of those
+modules pins (ABI, layout, behaviour) and remain accurate for them, but they
+are no longer the frontier and must not be read as current coverage. For
+current status run `python3 scripts/srpc_handwritten_census.py --files`, the
+enforced measurement; its 2026-09-17 output is transcribed under **Current
+source boundary** below.
+
+At that 2026-08-12 ratchet, the seventeen modules' former 79 inline blocks
+accounted for 2,283 lines in the fixed historical coverage baseline, and the
+canonical files themselves contained 2,574 nonblank, non-`//` Rust lines. They
+are source, not copied extraction outputs.
 Deleting the seventeen carriers removed 7,433 physical checked-in C++ source
 lines. Their classified nonblank, noncomment regions included 2,366 lines of
 inline Rust payload now owned by the canonical files, 2,498 lines of regenerable C++,
@@ -170,14 +188,18 @@ headers, payload/flag boundaries, transactional encoding, fragmented and
 coalesced input, zero-copy views, threshold compaction, invalid-status failure,
 and legacy signed wrapping.
 
-This is deliberately partial: seventeen of 38 named modules are canonical Rust,
-and seventeen of the original 39 hand-authored module-source units have been
-removed. The remaining 21 named modules and 22 module-source units still own
-367 inline DSL blocks and 9,199 nonblank, non-`//` DSL lines. The fixed
-pre-promotion baseline is 446 blocks and 11,482 lines. `cargo test
---manifest-path src/srpc/Cargo.toml` must never be reported as full Goal 0
-completion until the remaining graph is canonical Rust and the
-hand-written-C++ half below also reaches zero.
+That partiality is closed on the module axis, and this paragraph used to say
+otherwise — it read "seventeen of 38 named modules are canonical Rust" and
+projected 21 unconverted modules owning 367 inline DSL blocks. Measured
+2026-09-17: all 37 named modules are canonical Rust, and exactly one
+hand-authored module-source unit survives, `reactor/epoll_platform_linux.cc`.
+`grep -rn RUSTYCPP_RUST src/srpc` now returns 13 hits in five files — that
+platform file plus four test `.cc` files — so there is no set of unconverted
+named modules left to count. The fixed pre-promotion baseline of 446 blocks
+and 11,482 lines still stands as the denominator for how far that axis has
+moved. `cargo test --manifest-path src/srpc/Cargo.toml` still must not be
+reported as full Goal 0 completion on its own: the hand-written-C++ half below
+has not reached zero.
 
 ## Terminal states
 
@@ -202,46 +224,67 @@ every line sent to C is a line the eventual rustc pass can never cover.
 The executable C++ bodies have been burned down: an anchored delimiter census
 and line-level audit at `2f02672c` found **zero hand-written C++ function or
 object-definition bodies** outside the inline Rust and generated regions.
-What remains is still material Goal-0 work:
+What remains is still material Goal-0 work. Measured 2026-09-17 by
+`python3 scripts/srpc_handwritten_census.py --files`, which is the enforced
+measurement — re-run it rather than trusting these transcribed numbers:
 
-- 1,560 noncomment scaffold lines across the 22 remaining hand-authored
-  `.cpp`/`.cc` module-source units: 734 outer DSL fence directives plus 826
-  other module-frame/declaration/order/alias/macro lines outside DSL and GEN
-  regions; the seventeen canonical modules now contribute zero carrier lines;
-- 147 noncomment scaffold lines across 12 `.hpp` compatibility/import shims;
-- 87 noncomment C ABI header lines across `srpc_fiber.h`, `srpc_rand.h`, and
+- 20 noncomment scaffold lines in the **one** remaining hand-authored
+  module-source unit, `reactor/epoll_platform_linux.cc`: 10 outer DSL fence
+  directives plus 10 other module-frame lines; the 37 canonical modules
+  contribute zero carrier lines;
+- 148 noncomment scaffold lines across 12 `.hpp` compatibility/import shims;
+- 89 noncomment C ABI header lines across `srpc_fiber.h`, `srpc_rand.h`, and
   `srpc_timing.h`;
-- seven tolerated external-C kernels (410 noncomment code lines); and
-- 367 inline production DSL blocks (9,199 nonblank, non-`//` lines) not yet promoted
-  to canonical Rust.
+- eight tolerated external-C kernels (531 noncomment code lines); and
+- 52 nonblank, non-`//` lines of inline production DSL (against 61 generated)
+  not yet promoted to canonical Rust.
 
-The immediate path is to repeat the canonical-source promotion in batches:
-move each module's Rust into `src/srpc/src`, describe any required global-module
+The same run's legacy body classifier reports **168 hand-written C++ lines
+across nine production files**: `reactor/srpc_fiber.h` 56,
+`misc/serializable_support.hpp` 54, `rpc/srpc_connect.h` 19,
+`misc/srpc_timing.h` 15, `rpc/srpc_server.h` 10, `misc/srpc_rand.h` 9,
+`base/rustc_markers.hpp` 3, `reactor/epoll_platform_linux.cc` 1, and
+`srpc.hpp` 1. That is the number to drive to zero for the hand-written-C++
+half, and it is now dominated by terminal-C ABI declarations and boundary
+shims rather than by logic. The census also flags ~45 of those lines as
+sitting inside class templates — advisory only, and **not** a floor: it notes
+that `struct X<T>` + `impl<T>` was probed 2026-08-01 and lowers correctly.
+
+The immediate path for what is left is the same promotion move: put the
+module's Rust at its layout-mirroring path under
+`src/srpc/{base,misc,reactor,rpc}`, describe any required global-module
 fragment through structured preamble metadata, make the generated child its
 sole provider, and delete the old carrier. Compatibility headers follow once
 their direct consumers import modules instead. The C kernels and assembly
 remain explicit terminal-state exceptions; C++ scaffolding does not.
 
-The 2026-08-12 source-readiness audit deliberately stopped the same batch from
-silently changing public C++ types. `pollable_proxy` needs a rustc-visible
-shared-target bound, but the current lowering emits that helper interface and
-changes `PollableProxy`; `channel` still exposes exact `std::string` and
+The 2026-08-12 source-readiness audit (historical — all of its findings have
+since been closed) deliberately stopped that batch from silently changing
+public C++ types. It held back `pollable_proxy`, which needed a rustc-visible
+shared-target bound the lowering of the day could not give without changing
+`PollableProxy`, and `channel`, which exposes exact `std::string` and
 callback-wrapper types that plain Rust cannot spell without a source-level
-mapping. Load balancer's structural duck typing is now represented by the
+mapping. Load balancer's structural duck typing is represented by the
 rustc-only facade while rusty-cpp deliberately preserves the unconstrained
-C++ templates.
-The same audit found connection state's empty-callback gap and heartbeat's
-rustc-invisible monotonic-clock call. Those prerequisites are now closed by
-the exact rustc-only runtime facade and private canonical clock import. The
-remaining pollable/channel findings are recorded translator/
-source-shape prerequisites, not permission to preserve their carriers
-permanently.
+C++ templates. The same audit found connection state's empty-callback gap and
+heartbeat's rustc-invisible monotonic-clock call, closed by the exact
+rustc-only runtime facade and private canonical clock import.
+Both held-back modules have since been promoted and their carriers deleted:
+`src/srpc/rust-modules.toml` records `srpc.pollable_proxy` →
+`src/srpc/rpc/pollable_proxy.rs` and `srpc.channel` → `src/srpc/rpc/channel.rs`,
+and neither `pollable_proxy.cpp` nor `channel.cpp` exists. The audit's
+standing rule survives the promotion: a recorded translator/source-shape
+prerequisite is never permission to preserve a carrier permanently.
 
 ## Historical measurement (superseded)
 
-The remainder of this section records the earlier body-burndown campaign. Its
-line counts and phase ordering are historical and must not be used as the
-current Goal-0 status; the current boundary is the census above.
+Everything from here to the end of the document — including the "Phases" and
+"Phase 1 result" sections below, which are sibling headings rather than
+subsections — records the earlier body-burndown campaign. Its line counts,
+file rankings and phase ordering are historical and must not be used as the
+current Goal-0 status; the current boundary is the 2026-09-17 census above,
+and the live number is whatever `python3 scripts/srpc_handwritten_census.py
+--files` prints today.
 
 > **The kernel count below is the wrong metric and its file ranking is
 > wrong.** It counts lines matching `^inline|^static|^template<`, which
@@ -382,7 +425,7 @@ Every batch: regenerate → build → full gate → compare the failing **set**
 to baseline (`rpcbench` + 62 never-wired). Two independent lessons from
 this campaign apply to every step:
 
- - the transpiler suite cannot see breakage in the consumer (§7.50.3), so
+ - the transpiler suite cannot see breakage in the consumer (§8.50.3), so
    a transpiler change needs regenerate-and-build, not a green suite;
  - a non-baseline test failure is investigated, not assumed — twice this
    session it was the EADDRINUSE-under-`-j8` flake, and both times the
@@ -410,7 +453,7 @@ outside `src/srpc`.
 | 1 | `str_as_i8(const std::string&)` | **C after a call-site change** — pass `const char*` and it is C |
 | 2 | `make_pending_queue` (decl + defn) | returns a C++ type; DSL or stay |
 | 1 | `fut_secs(double)` | returns `std::chrono::duration`; DSL or stay |
-| 1 | `reply_buffer_empty()` | recheck against `Default::default()` — it survived the §7.53 sweep and may not need to have |
+| 1 | `reply_buffer_empty()` | recheck against `Default::default()` — it survived the §8.53 sweep and may not need to have |
 
 So `client.cpp` splits roughly: **8 hard**, **7 with a route**, **6 to
 recheck**. It will not reach zero without an API change, because four of
@@ -473,7 +516,7 @@ directory. It should run before any C demotion in every later phase.
 
 ## Phase 1 result — `tcp_channel.cpp` (10 kernels), and two corrections
 
-### My §7.53 sweep was incomplete
+### My §8.53 sweep was incomplete
 
 Five default-construction kernels survived it —
 `tcpconn_empty_buf`, `tcpconn_default_inbound`,

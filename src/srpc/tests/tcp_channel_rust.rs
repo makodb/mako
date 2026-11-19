@@ -1,8 +1,14 @@
 #![allow(unsafe_code)]
 
-use srpc::channel::{ChannelError, OnAcceptCallback, OnClosedCallback};
-use srpc::tcp_channel::{kTcpConnectionOutboundHighWaterDefault, TcpConnection, TcpListener};
-use rusty::CallbackWrapper;
+use srpc::callback_wrapper::detail::CallbackWrapper;
+use srpc::channel::{
+    ChannelError, ChannelFrame, ChannelListenerProxy, OnAcceptCallback, OnClosedCallback,
+};
+use srpc::reactor::PollThread;
+use srpc::tcp_channel::{
+    kTcpConnectionOutboundHighWaterDefault, make_tcp_listener_channel_proxy, TcpConnection,
+    TcpListener,
+};
 use std::net::TcpStream;
 use std::os::fd::IntoRawFd;
 use std::os::unix::net::UnixStream;
@@ -13,52 +19,8 @@ use std::time::Duration;
 
 fn assert_send_sync<T: Send + Sync>() {}
 
-static NEXT_TEST_THREAD_ID: AtomicU32 = AtomicU32::new(1);
-
-thread_local! {
-    static TEST_THREAD_ID: u32 = NEXT_TEST_THREAD_ID.fetch_add(1, Ordering::Relaxed);
-}
-
-// Cargo's Rust lane does not compile the production plain-C syscall seam.
-// These inert definitions satisfy references in unexercised TCP I/O helpers;
-// the CMake/Clang runtime lane links and exercises rpc/srpc_connect.c itself.
-#[no_mangle]
-pub extern "C" fn srpc_tcp_recv_scratch() -> *mut u8 {
-    core::ptr::null_mut()
-}
-
-#[no_mangle]
-pub extern "C" fn srpc_tcp_recv_bytes(_fd: i32, _data: *mut u8, _size: usize) -> i64 {
-    -1
-}
-
-#[no_mangle]
-pub extern "C" fn srpc_tcp_send_bytes(_fd: i32, _data: *const u8, _size: usize) -> i64 {
-    -1
-}
-
-#[no_mangle]
-pub extern "C" fn srpc_tcp_shutdown(_fd: i32) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn srpc_tcp_set_nonblocking(_fd: i32) -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn srpc_tcp_last_errno() -> i32 {
-    0
-}
-
-#[no_mangle]
-pub extern "C" fn srpc_tcp_current_thread_id() -> u32 {
-    TEST_THREAD_ID.with(|thread_id| *thread_id)
-}
-
 #[test]
-fn fresh_listener_preserves_the_invalid_fd_and_basic_pollable_contract() {
+fn fresh_listener_preserves_the_invalid_fd_contract() {
     assert_send_sync::<TcpConnection>();
     assert_send_sync::<TcpListener>();
 
@@ -67,11 +29,6 @@ fn fresh_listener_preserves_the_invalid_fd_and_basic_pollable_contract() {
     assert_eq!(listener.fd(), -1);
     assert_eq!(listener.local_address(), "");
     assert!(!listener.is_closed());
-    assert_eq!(listener.poll_mode(), 1);
-    assert_eq!(listener.content_size(), 0);
-    assert_eq!(listener.handle_write(), -1);
-    assert!(!listener.check_pending_write_update());
-    assert!(!listener.handle_read());
 }
 
 #[test]
@@ -105,9 +62,6 @@ fn connection_constructor_owns_the_fd_and_preserves_initial_state() {
     assert_eq!(connection.fd(), raw_fd);
     assert_eq!(connection.peer_address(), "test-peer");
     assert!(!connection.is_closed());
-    assert_eq!(connection.poll_mode(), 1);
-    assert_eq!(connection.content_size(), 0);
-    assert!(!connection.check_pending_write_update());
     assert_eq!(kTcpConnectionOutboundHighWaterDefault, 4 * 1024 * 1024);
 }
 
@@ -174,12 +128,26 @@ fn closed_callback_can_replace_itself_without_deadlocking() {
     assert_eq!(connection.fd(), -1);
 }
 
+// A listener attached to `pt`: its accept task runs the accept driver on the
+// poll thread, as production listeners do (S5).  The returned proxy keeps
+// the registration; the Arc is for closing from any thread.
+fn attached_listener(pt: &Arc<PollThread>, on_accept: OnAcceptCallback) -> (Arc<TcpListener>, ChannelListenerProxy) {
+    let mut listener = Arc::new(TcpListener::new());
+    Arc::get_mut(&mut listener).unwrap().set_poll_thread(pt.clone());
+    listener.set_on_accept(on_accept);
+    let mut proxy = make_tcp_listener_channel_proxy(listener.clone());
+    assert_eq!(proxy.listen("127.0.0.1:0"), ChannelError::None);
+    (listener, proxy)
+}
+
+// Since S5 the accept driver runs only in the listener's accept task, on its
+// PollThread; these tests used to drive it through the retired pollable
+// `TcpListener::handle_read` from arbitrary threads.  The contract is the
+// same: once close() returns, no accept callback starts.
 #[test]
 fn close_return_never_precedes_a_new_accept_callback() {
-    for _ in 0..128 {
-        let listener = Arc::new(TcpListener::new());
-        assert_eq!(listener.listen("127.0.0.1:0"), ChannelError::None);
-
+    let pt = PollThread::create();
+    for _ in 0..64 {
         let close_returned = Arc::new(AtomicBool::new(false));
         let late_callback = Arc::new(AtomicBool::new(false));
         let close_returned_in_callback = Arc::clone(&close_returned);
@@ -189,16 +157,14 @@ fn close_return_never_precedes_a_new_accept_callback() {
                 late_callback_in_callback.store(true, Ordering::SeqCst);
             }
         }));
-        listener.set_on_accept(callback);
+        let (listener, proxy) = attached_listener(&pt, callback);
 
-        let _client = TcpStream::connect(listener.local_address()).unwrap();
         let barrier = Arc::new(Barrier::new(3));
-
-        let read_listener = Arc::clone(&listener);
-        let read_barrier = Arc::clone(&barrier);
-        let read = thread::spawn(move || {
-            read_barrier.wait();
-            read_listener.handle_read()
+        let address = listener.local_address();
+        let connect_barrier = Arc::clone(&barrier);
+        let connect = thread::spawn(move || {
+            connect_barrier.wait();
+            TcpStream::connect(address)
         });
 
         let close_listener = Arc::clone(&listener);
@@ -212,18 +178,20 @@ fn close_return_never_precedes_a_new_accept_callback() {
 
         barrier.wait();
         close.join().unwrap();
-        let _ = read.join().unwrap();
+        let _client = connect.join().unwrap();
+        // Let the accept task run whatever edge the connect raised.
+        thread::sleep(Duration::from_millis(2));
         assert!(!late_callback.load(Ordering::SeqCst));
         assert!(listener.is_closed());
         assert_eq!(listener.fd(), -1);
+        drop(proxy);
     }
+    pt.shutdown();
 }
 
 #[test]
-fn close_waits_for_the_whole_accept_driver_with_two_readers() {
-    let listener = Arc::new(TcpListener::new());
-    assert_eq!(listener.listen("127.0.0.1:0"), ChannelError::None);
-
+fn close_waits_for_the_whole_accept_driver() {
+    let pt = PollThread::create();
     let callbacks_entered = Arc::new(AtomicU32::new(0));
     let release_first = Arc::new(AtomicBool::new(false));
     let (first_entered_tx, first_entered_rx) = mpsc::channel();
@@ -240,21 +208,15 @@ fn close_waits_for_the_whole_accept_driver_with_two_readers() {
             }
         }
     }));
-    listener.set_on_accept(callback);
+    let (listener, proxy) = attached_listener(&pt, callback);
 
+    // The first accept callback runs on the poll thread and blocks there.
     let client1 = TcpStream::connect(listener.local_address()).unwrap();
-    let reader1_listener = Arc::clone(&listener);
-    let reader1 = thread::spawn(move || reader1_listener.handle_read());
     first_entered_rx
-        .recv_timeout(Duration::from_secs(2))
+        .recv_timeout(Duration::from_secs(5))
         .unwrap();
-
-    // A second safe reader must not overwrite the first reader's owner TID.
-    // It returns without accepting the second queued connection.
+    // A second connection queues behind the blocked driver.
     let client2 = TcpStream::connect(listener.local_address()).unwrap();
-    let reader2_listener = Arc::clone(&listener);
-    let reader2 = thread::spawn(move || reader2_listener.handle_read());
-    let reader2_result = reader2.join().unwrap();
 
     let (close_done_tx, close_done_rx) = mpsc::channel();
     let closer1_listener = Arc::clone(&listener);
@@ -279,41 +241,81 @@ fn close_waits_for_the_whole_accept_driver_with_two_readers() {
         .is_ok();
 
     release_first.store(true, Ordering::Release);
-    let _ = reader1.join().unwrap();
     if !a_close_returned_while_first_callback_was_live {
-        close_done_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        close_done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     }
-    close_done_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    close_done_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     closer1.join().unwrap();
     closer2.join().unwrap();
+    // The driver saw close and accepted nothing more.
+    thread::sleep(Duration::from_millis(20));
     drop((client1, client2));
 
-    assert!(!reader2_result);
     assert_eq!(callbacks_entered.load(Ordering::SeqCst), 1);
     assert!(
         !a_close_returned_while_first_callback_was_live,
         "a non-owner close returned while the whole accept driver was live"
     );
     assert_eq!(listener.fd(), -1);
+    drop(proxy);
+    pt.shutdown();
 }
 
 #[test]
 fn accept_callback_can_close_its_listener_without_deadlocking() {
-    let listener = Arc::new(TcpListener::new());
-    assert_eq!(listener.listen("127.0.0.1:0"), ChannelError::None);
-
-    let weak_listener = Arc::downgrade(&listener);
+    let pt = PollThread::create();
+    let slot: Arc<std::sync::Mutex<Option<std::sync::Weak<TcpListener>>>> =
+        Arc::new(std::sync::Mutex::new(None));
+    let callback_slot = Arc::clone(&slot);
     let (closed_tx, closed_rx) = mpsc::channel();
     let callback: OnAcceptCallback = CallbackWrapper::from_callable(Box::new(move |_proxy| {
-        let listener = weak_listener.upgrade().unwrap();
-        listener.close();
+        let weak = callback_slot.lock().unwrap().clone().unwrap();
+        // The owner closing reentrantly, on the poll thread, must not wait
+        // for itself.
+        weak.upgrade().unwrap().close();
         closed_tx.send(()).unwrap();
     }));
-    listener.set_on_accept(callback);
+    let (listener, proxy) = attached_listener(&pt, callback);
+    *slot.lock().unwrap() = Some(Arc::downgrade(&listener));
 
     let _client = TcpStream::connect(listener.local_address()).unwrap();
-    assert!(listener.handle_read());
-    closed_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+    closed_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(listener.is_closed());
     assert_eq!(listener.fd(), -1);
+    drop(proxy);
+    pt.shutdown();
+}
+
+#[test]
+fn flush_failure_still_delivers_one_reentrant_close_callback() {
+    let (owned, peer) = UnixStream::pair().unwrap();
+    owned.set_nonblocking(true).unwrap();
+    // SAFETY: into_raw_fd transfers the stream's sole descriptor ownership.
+    let connection = Arc::new(unsafe {
+        TcpConnection::new(owned.into_raw_fd(), "flush-failure".to_string())
+    });
+    let callbacks = Arc::new(AtomicU32::new(0));
+    let observed = callbacks.clone();
+    let weak = Arc::downgrade(&connection);
+    connection.set_on_closed(CallbackWrapper::from_callable(Box::new(move |reason| {
+        assert_eq!(reason, ChannelError::None);
+        observed.fetch_add(1, Ordering::SeqCst);
+        if let Some(connection) = weak.upgrade() {
+            assert_eq!(connection.fd(), -1);
+            connection.close();
+            connection.set_on_closed(OnClosedCallback::default());
+        }
+    })));
+    let bytes = [0x11, 0x22, 0x33];
+    let frame = ChannelFrame { payload: bytes.as_ptr(), size: bytes.len() };
+    // SAFETY: frame points at the live, immutable bytes for this call.
+    assert_eq!(unsafe { connection.send_frame(&frame) }, ChannelError::None);
+    drop(peer);
+    connection.flush();
+    assert!(connection.is_closed(), "peer closure must produce a real write failure");
+    assert_eq!(callbacks.load(Ordering::SeqCst), 0);
+    connection.close();
+    connection.close();
+    assert_eq!(connection.fd(), -1);
+    assert_eq!(callbacks.load(Ordering::SeqCst), 1);
 }

@@ -289,10 +289,10 @@ The configuration file format used by Mako. Defines cluster topology, benchmarks
 
 ## See Also
 
-- [Architecture Overview](../architecture.md) - System design and components
-- [Key Concepts](../concepts.md) - Fundamental concepts explained
-- [Configuration Reference](../config.md) - YAML configuration options
+- [Architecture Overview](../architecture/overview.md) - System design and components
+- [Key Concepts](../getting-started/concepts.md) - Fundamental concepts explained
+- [Configuration Reference](../configuration/config.md) - YAML configuration options
 
 ---
 
-**Next**: [Architecture Overview](../architecture.md) | [Key Concepts](../concepts.md) | [FAQ](../faq/general.md)
+**Next**: [Architecture Overview](../architecture/overview.md) | [Key Concepts](../getting-started/concepts.md)

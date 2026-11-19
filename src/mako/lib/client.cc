@@ -90,6 +90,10 @@ namespace mako
         case scanReqType:
             HandleScanReply(respBuf);
             break;
+        case fullScanReqType:
+            // The generic reply handler reads only the shared req_nr prefix.
+            HandleBatchLockReply(respBuf);
+            break;
         case lockReqType:
             HandleLockReply(respBuf);
             break;
@@ -163,6 +167,7 @@ namespace mako
                 sizeof(get_int_response_t)));
         reqBuf->targert_server_id = server_id;
         StampRequest(reqBuf, reqId);
+        sharding_write_control_request(reqBuf->sharding);
         blocked = true;
         if (!transport->SendRequestToAll(this,
                                       validateReqType,
@@ -198,6 +203,7 @@ namespace mako
                 sizeof(get_int_response_t)));
         reqBuf->targert_server_id = server_id;
         StampRequest(reqBuf, reqId);
+        sharding_write_control_request(reqBuf->sharding);
         blocked = true;
         if (!transport->SendRequestToAll(this,
                                       getTimestampReqType,
@@ -318,6 +324,7 @@ namespace mako
                 sizeof(get_int_response_t)));
         reqBuf->targert_server_id = server_id;
         StampRequest(reqBuf, reqId);
+        sharding_write_control_request(reqBuf->sharding);
         blocked = true;
         if (!transport->SendRequestToAll(this,
                                     watermarkReqType,
@@ -354,6 +361,7 @@ namespace mako
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
         StampRequest(reqBuf, reqId);
+        sharding_write_control_request(reqBuf->sharding);
         // `cc` is a 4-byte buffer produced by encode_single_timestamp() (see
         // common.h:482 and shardClient.cc:333-335) — a single uint32_t. The
         // receiver's HandleInstallRequest() (server.cc:153-174) reads exactly
@@ -406,6 +414,7 @@ namespace mako
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
         StampRequest(reqBuf, reqId);
+        sharding_write_control_request(reqBuf->sharding);
         reqBuf->len = sizeof(uint64_t)*config.nshards;
         memcpy(reqBuf->value, cc, sizeof(uint64_t)*config.nshards);
         blocked = true;
@@ -446,6 +455,7 @@ namespace mako
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
         StampRequest(reqBuf, reqId);
+        sharding_write_control_request(reqBuf->sharding);
         blocked = true;
         if (!transport->SendRequestToAll(this,
                                       unLockReqType,
@@ -480,6 +490,7 @@ namespace mako
 
         for (auto &it: request_batch_per_shard) {
             StampRequest(it.second.get_request_ptr(), reqId);
+            sharding_write_control_request(it.second.get_request_ptr()->sharding);
             data_to_send[it.first] = make_pair((char*)it.second.get_request_ptr(), it.second.get_msg_len());
         }
         blocked = true;
@@ -492,61 +503,29 @@ namespace mako
         data_to_send) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
     }
 
-    // @unsafe - Legacy lock RPC boundary.
-    void Client::InvokeLock(uint64_t txn_nr,
-                            int dstShardIdx,
-                            uint16_t server_id,
-                            const string &key,
-                            const string &value,
-                            uint16_t table_id,
-                            resp_continuation_t continuation,
-                            error_continuation_t error_continuation,
-                            uint32_t timeout)
-    {
-        Debug("invoke InvokeLock\n");
-        uint64_t reqId = NextRequestSequence();
-        
-
-        crtReqK =
-            PendingRequestK(key,
-                            reqId,
-                            txn_nr,
-                            server_id,
-                            continuation,
-                            error_continuation);
-
-        // TODO: find a way to get sending errors (the backend's enqueue_request
-        // function does not return errors)
-        auto *reqBuf = reinterpret_cast<lock_request_t *>(
-            transport->GetRequestBuf(
-                sizeof(lock_request_t),
-                sizeof(basic_response_t)));
-        reqBuf->targert_server_id = server_id;
-
-        StampRequest(reqBuf, reqId);
-        reqBuf->klen = key.size();
-        memcpy(reqBuf->key_and_value, key.c_str(), key.size());
-        reqBuf->vlen = value.size();
-        ASSERT_LT(value.size()+key.size()-1, max_value_length);
-        memcpy(reqBuf->key_and_value+key.size(), value.c_str(), value.size());
-        reqBuf->table_id = table_id;
-        blocked = true;
-
-        size_t used_bytes = sizeof(lock_request_t) - max_key_length - max_value_length + key.size() + value.size();
-        if (!transport->SendRequestToShard(this,
-                                      lockReqType,
-                                      dstShardIdx,
-                                      config.warehouses+5+server_id%TThread::get_num_rpc_server(),
-                                      used_bytes) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
+    // @unsafe - a timeout, failed send, or reply rejected by the identity fence
+    // is an unknown outcome, never SUCCESS.
+    void Client::SendShardRequest(uint8_t kind, int shard, uint16_t server, size_t length) {
+        try {
+            if (transport->SendRequestToShard(this, kind, shard, server, length) && !blocked)
+                return;
+        } catch (int error) {
+            if (error != 1002) throw;
+        }
+        blocked = false;
+        crtReqK.error_continuation(crtReqK.request, ErrorCode{});
     }
 
-    // @unsafe - Marshals native SRPC buffers on the affine coordinator lane.
+
+    // @unsafe - Marshals native SRPC buffers on the affine coordinator lane;
+    // copies the captured scan envelope into the transport-owned buffer.
     void Client::InvokeScan(uint64_t txn_nr,
                            int dstShardIdx,
                            uint16_t server_id,
                            const string &start_key,
                            const string &end_key,
                            uint16_t table_id,
+                           const ShardingRequest& sharding,
                            resp_continuation_t continuation,
                            error_continuation_t error_continuation,
                            uint32_t timeout)
@@ -571,6 +550,7 @@ namespace mako
                 sizeof(scan_response_t)));
         reqBuf->targert_server_id = server_id;
         StampRequest(reqBuf, reqId);
+        reqBuf->sharding = sharding;
         reqBuf->slen = start_key.size();
         memcpy(reqBuf->start_end_key, start_key.c_str(), start_key.size());
         reqBuf->elen = end_key.size();
@@ -579,19 +559,56 @@ namespace mako
         ASSERT_LT(end_key.size()+start_key.size()-1, 128);
 
         blocked = true;
-        if (!transport->SendRequestToShard(this,
-                                      scanReqType,
+        SendShardRequest(scanReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
-                                      sizeof(scan_request_t)) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
+                                      sizeof(scan_request_t));
     }
 
-    // @unsafe - Marshals native SRPC buffers on the affine coordinator lane.
+    // @unsafe - transport owns the request buffer until synchronous completion.
+    void Client::InvokeFullScanPage(uint64_t txn_nr, int destination,
+                                   uint16_t server_id, int table_id,
+                                   const ShardingRequest& sharding,
+                                   const uint8_t* payload, size_t length,
+                                   resp_continuation_t continuation,
+                                   error_continuation_t error_continuation) {
+        if (length > full_scan_request_capacity) {
+            error_continuation("", ErrorCode{});
+            return;
+        }
+        // A page is a piece of the current participant attempt: it carries the
+        // same identity (and term) as the legacy 2PC requests.
+        const uint64_t sequence = NextRequestSequence();
+        crtReqK = PendingRequestK("", sequence, txn_nr, server_id,
+                                 continuation, error_continuation);
+        auto* request = reinterpret_cast<full_scan_request_t*>(
+            transport->GetRequestBuf(sizeof(full_scan_request_t),
+                                     sizeof(full_scan_response_t)));
+        *request = {};
+        request->targert_server_id = server_id;
+        StampRequest(request, sequence);
+        request->sharding = sharding;
+        request->table_id = table_id;
+        request->length = static_cast<uint32_t>(length);
+        std::memcpy(request->payload, payload, length);
+        blocked = true;
+        if (!transport->SendRequestToShard(this, fullScanReqType, destination,
+            config.warehouses + 5 + server_id % TThread::get_num_rpc_server(),
+            sizeof(full_scan_request_t)) || blocked) {
+            blocked = false;
+            crtReqK.req_nr = 0;
+            error_continuation("", ErrorCode{});
+        }
+    }
+
+    // @unsafe - Marshals native SRPC buffers on the affine coordinator lane;
+    // materializes the storage-selected scope directly in transport storage.
     void Client::InvokeGet(uint64_t txn_nr,
                            int dstShardIdx,
                            uint16_t server_id,
                            const string &key,
                            uint16_t table_id,
+                           const ShardingPoint& point,
                            resp_continuation_t continuation,
                            error_continuation_t error_continuation,
                            uint32_t timeout)
@@ -615,6 +632,7 @@ namespace mako
                 sizeof(get_response_t)));
         reqBuf->targert_server_id = server_id;
         StampRequest(reqBuf, reqId);
+        point.write_request(reqBuf->sharding);
         reqBuf->len = key.size();
         ASSERT_LT(key.size(), max_key_length);
 
@@ -624,24 +642,47 @@ namespace mako
         size_t bytes_used = sizeof(get_request_t) - max_key_length + reqBuf->len;
 
         blocked = true;
-        if (!transport->SendRequestToShard(this,
-                                      getReqType,
+        SendShardRequest(getReqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
-                                      bytes_used) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
+                                      bytes_used);
     }
 
-    // @unsafe - raw transport buffers
-    void Client::InvokeNontxnWrite(uint64_t txn_nr,
-                                   int dstShardIdx,
-                                   uint16_t server_id,
-                                   const string &key,
-                                   const string &value,
-                                   uint16_t table_id,
-                                   uint8_t reqType,
+    // @unsafe - materializes a local point only after allocating its transport buffer.
+    void Client::InvokeNontxnWrite(uint64_t txn_nr, int dstShardIdx,
+                                   uint16_t server_id, const string& key,
+                                   const string& value, uint16_t table_id,
+                                   const ShardingPoint& point, uint8_t reqType,
                                    resp_continuation_t continuation,
                                    error_continuation_t error_continuation,
-                                   uint32_t timeout)
+                                   uint32_t timeout) {
+        auto* request = PrepareNontxnWrite(txn_nr, server_id, key, value,
+            table_id, reqType, continuation, error_continuation);
+        point.write_request(request->sharding);
+        SendNontxnWrite(reqType, dstShardIdx, server_id, *request);
+    }
+
+    // @unsafe - preserves the forwarded wire grant, snapshot and transaction identity.
+    void Client::InvokeNontxnWrite(uint64_t txn_nr, int dstShardIdx,
+                                   uint16_t server_id, const string& key,
+                                   const string& value, uint16_t table_id,
+                                   const ShardingRequest& sharding, uint8_t reqType,
+                                   resp_continuation_t continuation,
+                                   error_continuation_t error_continuation,
+                                   uint32_t timeout) {
+        auto* request = PrepareNontxnWrite(txn_nr, server_id, key, value,
+            table_id, reqType, continuation, error_continuation);
+        request->sharding = sharding;
+        SendNontxnWrite(reqType, dstShardIdx, server_id, *request);
+    }
+
+    // @unsafe - packs shared fields; the caller fills sharding before sending.
+    nontxn_write_request_t* Client::PrepareNontxnWrite(
+                                   uint64_t txn_nr, uint16_t server_id,
+                                   const string& key, const string& value,
+                                   uint16_t table_id, uint8_t reqType,
+                                   const resp_continuation_t& continuation,
+                                   const error_continuation_t& error_continuation)
     {
         uint64_t reqId = NextRequestSequence();
         
@@ -668,17 +709,23 @@ namespace mako
         reqBuf->vlen = value.size();
         memcpy(reqBuf->key_and_value, key.data(), key.size());
         memcpy(reqBuf->key_and_value + key.size(), value.data(), value.size());
+        return reqBuf;
+    }
+
+    // @unsafe - sends the populated transport buffer without copying it.
+    void Client::SendNontxnWrite(uint8_t reqType, int dstShardIdx,
+                                 uint16_t server_id,
+                                 const nontxn_write_request_t& request) {
 
         size_t bytes_used = sizeof(nontxn_write_request_t)
             - (max_key_length + max_value_length)
-            + reqBuf->klen + reqBuf->vlen;
+            + request.klen + request.vlen;
 
         blocked = true;
-        if (!transport->SendRequestToShard(this,
-                                      reqType,
+        SendShardRequest(reqType,
                                       dstShardIdx,
                                       config.warehouses+5+server_id%TThread::get_num_rpc_server(),
-                                      bytes_used) || blocked) { blocked = false; crtReqK.error_continuation(crtReqK.request, ErrorCode{}); }
+                                      bytes_used);
     }
 
     // @unsafe - Requests predecision cleanup; missing replies remain failures.
@@ -707,6 +754,7 @@ namespace mako
                 sizeof(basic_response_t)));
         reqBuf->targert_server_id = server_id;
         StampRequest(reqBuf, reqId);
+        sharding_write_control_request(reqBuf->sharding);
         blocked = true;
         try {
             if (!transport->SendRequestToAll(this,

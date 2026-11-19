@@ -82,9 +82,9 @@ class FakeConnectionAdapter : public ChannelConnectionBase {
     explicit FakeConnectionAdapter(std::shared_ptr<FakeConnection> conn)
         : conn_(std::move(conn)) {}
 
-    ChannelError send_frame(const ChannelFrame& f) override { return conn_->send_frame(f); }
-    void   flush() override                                 { conn_->flush(); }
-    void   close() override                                 { conn_->close(); }
+    ChannelError send_frame(const ChannelFrame& f) const override { return conn_->send_frame(f); }
+    void   flush() const override                                 { conn_->flush(); }
+    void   close() const override                                 { conn_->close(); }
     bool   is_closed() const override                       { return conn_->is_closed(); }
     std::string peer_address() const override               { return conn_->peer_address(); }
     void set_on_frame(OnFrameCallback cb) override          { conn_->set_on_frame(std::move(cb)); }

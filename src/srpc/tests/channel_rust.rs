@@ -7,10 +7,11 @@ use srpc::channel::{
     OnFrameCallback,
 };
 use std::mem::{align_of, offset_of, size_of};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 struct RecordingConnection {
-    closed: bool,
-    sent_size: usize,
+    closed: AtomicBool,
+    sent_size: AtomicUsize,
     peer: String,
     on_frame: OnFrameCallback,
     on_closed: OnClosedCallback,
@@ -20,8 +21,8 @@ struct RecordingConnection {
 impl RecordingConnection {
     fn new(peer: &str) -> RecordingConnection {
         RecordingConnection {
-            closed: false,
-            sent_size: 0,
+            closed: AtomicBool::new(false),
+            sent_size: AtomicUsize::new(0),
             peer: peer.to_owned(),
             on_frame: OnFrameCallback::default(),
             on_closed: OnClosedCallback::default(),
@@ -31,22 +32,22 @@ impl RecordingConnection {
 }
 
 impl ChannelConnectionBase for RecordingConnection {
-    unsafe fn send_frame(&mut self, frame: &ChannelFrame) -> ChannelError {
-        if self.closed {
+    unsafe fn send_frame(&self, frame: &ChannelFrame) -> ChannelError {
+        if self.closed.load(Ordering::Acquire) {
             return ChannelError::ConnectionReset;
         }
-        self.sent_size = frame.size;
+        self.sent_size.store(frame.size, Ordering::Release);
         ChannelError::None
     }
 
-    fn flush(&mut self) {}
+    fn flush(&self) {}
 
-    fn close(&mut self) {
-        self.closed = true;
+    fn close(&self) {
+        self.closed.store(true, Ordering::Release);
     }
 
     fn is_closed(&self) -> bool {
-        self.closed
+        self.closed.load(Ordering::Acquire)
     }
 
     fn peer_address(&self) -> String {
@@ -236,9 +237,9 @@ fn listener_and_factory_proxies_preserve_ownership_and_results() {
     assert_eq!(listener.local_address(), "127.0.0.1:0");
 
     let accepted = OnAcceptCallback::from_callable(Box::new(|connection| {
-        assert_eq!(connection.peer_address(), "accepted");
+        assert_eq!(connection.unwrap().peer_address(), "accepted");
     }));
-    (accepted.callable())(Box::new(RecordingConnection::new("accepted")));
+    (accepted.callable())(Some(Box::new(RecordingConnection::new("accepted"))));
     listener.set_on_accept(accepted);
     listener.close();
     assert!(listener.is_closed());

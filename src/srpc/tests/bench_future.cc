@@ -20,7 +20,7 @@ public:
         ECHO = 0x2001,
     };
 
-    std::atomic<int> call_count{0};
+    mutable std::atomic<int> call_count{0};
 
     // Registers RPC IDs with server using service index
     // @safe
@@ -29,14 +29,14 @@ public:
     }
 
     // @safe - Virtual dispatch for RPC requests
-    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) override {
+    void __dispatch__(i32 rpc_id, rusty::Box<Request> req, WeakServerConnection weak_sconn) const override {
         if (rpc_id == ECHO) {
             echo_wrapper(std::move(req), weak_sconn);
         }
     }
 
 private:
-    void echo_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) {
+    void echo_wrapper(rusty::Box<Request> req, WeakServerConnection weak_sconn) const {
         call_count++;
         i32 input;
         srpc::BinaryReadArchive __req_ar__(srpc::make_source_proxy_buffer(&req->src));

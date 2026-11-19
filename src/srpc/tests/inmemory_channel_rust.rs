@@ -6,10 +6,11 @@ use srpc::channel::{
 use srpc::inmemory_channel;
 use srpc::inmemory_channel::{
     inmemory_channel_clear_fault_injection, inmemory_channel_inject_drop_next_sends,
+    inmemory_channel_inject_duplicate_next_sends,
     inmemory_channel_inject_send_error, make_channel_pair_for_testing, make_inmemory_factory_proxy,
     InMemoryFactory, InMemoryListener, InMemorySwitchboard,
 };
-use rusty::CallbackWrapper;
+use srpc::callback_wrapper::detail::CallbackWrapper;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -39,9 +40,9 @@ fn listen_and_connect(
     let mut listener: ChannelListenerProxy = factory.make_listener().unwrap();
     let accepted: Arc<AcceptedSlot> = Arc::new(AcceptedSlot(Mutex::new(None)));
     let accepted_for_callback = accepted.clone();
-    let accept_callable: Box<dyn Fn(ChannelConnectionProxy) + Send + Sync> =
-        Box::new(move |connection: ChannelConnectionProxy| {
-            *accepted_for_callback.0.lock().unwrap() = Some(connection);
+    let accept_callable: Box<dyn Fn(Option<ChannelConnectionProxy>) + Send + Sync> =
+        Box::new(move |connection: Option<ChannelConnectionProxy>| {
+            *accepted_for_callback.0.lock().unwrap() = connection;
         });
     let accept_callback: OnAcceptCallback = CallbackWrapper::from_callable(accept_callable);
     listener.set_on_accept(accept_callback);
@@ -103,7 +104,7 @@ fn direct_listener_without_self_weak_reports_internal() {
 #[test]
 fn connect_delivers_copied_bytes_and_peer_addresses_synchronously() {
     let mut factory = make_factory();
-    let (_listener, mut client, accepted) =
+    let (_listener, client, accepted) =
         listen_and_connect(&mut factory, "inmemory://copy-test");
     let mut server = accepted.0.lock().unwrap().take().unwrap();
 
@@ -236,7 +237,7 @@ fn close_is_peer_only_idempotent_and_kills_both_directions() {
 #[test]
 fn fault_injection_is_per_side_drop_first_and_clearable() {
     let (a, b) = make_channel_pair_for_testing("side-a".to_owned(), "side-b".to_owned());
-    let mut a_proxy = inmemory_channel::make_inmemory_channel_proxy(a.clone());
+    let a_proxy = inmemory_channel::make_inmemory_channel_proxy(a.clone());
     let mut b_proxy = inmemory_channel::make_inmemory_channel_proxy(b.clone());
     let delivered: Arc<AtomicU32> = Arc::new(AtomicU32::new(0_u32));
     let delivered_cb = delivered.clone();
@@ -272,4 +273,50 @@ fn fault_injection_is_per_side_drop_first_and_clearable() {
     inmemory_channel_inject_drop_next_sends(&b, 1_i32);
     inmemory_channel_clear_fault_injection(&b);
     assert_eq!(unsafe { b_proxy.send_frame(&frame) }, ChannelError::None);
+}
+
+#[test]
+#[allow(unsafe_code)]
+fn duplicate_injection_delivers_each_armed_send_twice_and_clears() {
+    // Tier 2.1 of docs/testing-plan.md: a duplicated frame is a real hazard on
+    // a retrying transport; the receiver's demux must tolerate it. This pins
+    // the injection primitive -- the armed sends reach the peer's on_frame
+    // twice, with identical bytes, and the arming is consumed then clearable.
+    let (a, b) = make_channel_pair_for_testing("dup-a".to_owned(), "dup-b".to_owned());
+    let a_proxy = inmemory_channel::make_inmemory_channel_proxy(a.clone());
+    let mut b_proxy = inmemory_channel::make_inmemory_channel_proxy(b.clone());
+
+    let deliveries: Arc<AtomicU32> = Arc::new(AtomicU32::new(0_u32));
+    let last_byte: Arc<AtomicU32> = Arc::new(AtomicU32::new(0_u32));
+    let d = deliveries.clone();
+    let lb = last_byte.clone();
+    let cb: Box<dyn Fn(&ChannelFrame) + Send + Sync> = Box::new(move |frame: &ChannelFrame| {
+        d.fetch_add(1_u32, Ordering::Relaxed);
+        // SAFETY: the frame's payload is valid for the callback's duration.
+        let bytes = unsafe { core::slice::from_raw_parts(frame.payload, frame.size) };
+        lb.store(*bytes.last().unwrap() as u32, Ordering::Relaxed);
+    });
+    b_proxy.set_on_frame(CallbackWrapper::from_callable(cb));
+
+    // Arm the next two A->B sends to duplicate.
+    inmemory_channel_inject_duplicate_next_sends(&a, 2_i32);
+
+    let bytes = [0x30_u8, 0x31_u8];
+    let frame = ChannelFrame { payload: bytes.as_ptr(), size: bytes.len() };
+
+    assert_eq!(unsafe { a_proxy.send_frame(&frame) }, ChannelError::None);
+    assert_eq!(deliveries.load(Ordering::Relaxed), 2_u32, "first armed send delivered twice");
+    assert_eq!(unsafe { a_proxy.send_frame(&frame) }, ChannelError::None);
+    assert_eq!(deliveries.load(Ordering::Relaxed), 4_u32, "second armed send delivered twice");
+    assert_eq!(last_byte.load(Ordering::Relaxed), 0x31_u32, "duplicate carries the same bytes");
+
+    // Arming consumed: the third send delivers once.
+    assert_eq!(unsafe { a_proxy.send_frame(&frame) }, ChannelError::None);
+    assert_eq!(deliveries.load(Ordering::Relaxed), 5_u32, "unarmed send delivers once");
+
+    // Re-arm then clear: clearing cancels the duplication.
+    inmemory_channel_inject_duplicate_next_sends(&a, 3_i32);
+    inmemory_channel_clear_fault_injection(&a);
+    assert_eq!(unsafe { a_proxy.send_frame(&frame) }, ChannelError::None);
+    assert_eq!(deliveries.load(Ordering::Relaxed), 6_u32, "cleared duplication delivers once");
 }

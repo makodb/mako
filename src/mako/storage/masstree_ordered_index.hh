@@ -164,7 +164,7 @@ pub struct masstree_ordered_index {
     tree: *mut concurrent_btree,
 }
 
-#[cpp_inherit]
+#[cfg_attr(any(), cpp_inherit)]
 impl OrderedIndex for masstree_ordered_index {
     fn get(&mut self, key: lcdf::Str, value: &mut std::string, max_bytes_read: usize) -> bool {
         let _guard = unsafe { oi_rcu_region() };
@@ -213,7 +213,7 @@ impl OrderedIndex for masstree_ordered_index {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=masstree_ordered_index.1 version=1 rust_sha256=52057791992e6c49a23cec4616869f1ff0ad9b2d2f5ed8b2228471e0dfeeb942*/
+/*RUSTYCPP:GEN-BEGIN id=masstree_ordered_index.1 version=1 rust_sha256=6e1869f36bf393929a9132f8327eb448ece300f006df4b8525b37443c881a488*/
 struct masstree_ordered_index;
 
 struct masstree_ordered_index : public OrderedIndex {

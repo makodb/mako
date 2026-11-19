@@ -804,5 +804,5 @@ server->graceful_shutdown(30000);
 
 ## See Also
 
-- [RPC Reliability Features](rpc_reliability.md) - Architecture overview
-- [Transport Backends](transport_backends.md) - Transport layer options
+- [RPC Reliability Features](reliability.md) - Architecture overview
+- [Transport Backends](../developer/transport-backends.md) - Transport layer options

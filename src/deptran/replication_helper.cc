@@ -237,6 +237,12 @@ void register_for_leader_par_id_return(
     DISPATCH_VOID_RAFT_OR_PAXOS(register_for_leader_par_id_return, cb, par_id);  // @unsafe
 }
 
+void register_snapshot_callbacks_for_partition(uint32_t par_id,
+                                               janus::RaftCreateSnapshotFn create,
+                                               janus::RaftPrepareSnapshotFn prepare) {
+    DISPATCH_VOID_RAFT_OR_PAXOS(register_snapshot_callbacks_for_partition, par_id, create, prepare);  // @unsafe
+}
+
 void submit(const char* data, int len, uint32_t par_id) {
     DISPATCH_VOID_RAFT_OR_PAXOS(submit, data, len, par_id);  // @unsafe
 }

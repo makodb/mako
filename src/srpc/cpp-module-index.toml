@@ -38,7 +38,7 @@ namespace = "srpc"
 
 [modules."srpc::logging".symbols.log_line]
 kind = "function"
-callable_signatures = ["void(int32_t,int32_t,const int8_t*,const std::string&)"]
+callable_signatures = ["void(int32_t,int32_t,const int8_t*,std::string_view)"]
 
 [modules."srpc::reactor"]
 cpp_module = "srpc.reactor"
@@ -177,22 +177,6 @@ namespace = "rusty"
 kind = "method"
 callable_signatures = ["const T*()"]
 
-[modules.rusty.symbols.arc_make_default]
-kind = "function_template"
-callable_signatures = ["rusty::Arc<T>()"]
-
-[modules.std]
-cpp_module = "std"
-namespace = "std"
-
-[modules.std.symbols.make_pair]
-kind = "function_template"
-callable_signatures = ["std::pair<A,B>(A,B)"]
-
-[modules.std.symbols.cout]
-kind = "object"
-callable_signatures = []
-
 [modules.rusty.symbols."os::fd::OwnedFd"]
 kind = "type"
 callable_signatures = []
@@ -200,35 +184,3 @@ callable_signatures = []
 [modules.rusty.symbols."os::fd::OwnedFd::from_raw_fd"]
 kind = "function"
 callable_signatures = ["OwnedFd(int)"]
-
-[modules.rusty.symbols.srpc_adl_serialize]
-kind = "function_template"
-callable_signatures = ["void(const T&,Archive&)"]
-
-[modules.rusty.symbols.srpc_adl_deserialize]
-kind = "function_template"
-callable_signatures = ["void(T&,Archive&)"]
-
-[modules.rusty.symbols.srpc_sink_write]
-kind = "function_template"
-callable_signatures = ["void(Sink&,const uint8_t*,size_t)"]
-
-[modules.rusty.symbols.srpc_source_read]
-kind = "function_template"
-callable_signatures = ["size_t(Source&,uint8_t*,size_t)"]
-
-[modules.rusty.symbols.srpc_arc_default]
-kind = "function_template"
-callable_signatures = ["rusty::Arc<T>()"]
-
-[modules.rusty.symbols.srpc_arc_copy]
-kind = "function_template"
-callable_signatures = ["rusty::Arc<T>(const T&)"]
-
-[modules.rusty.symbols.srpc_holder_proxy]
-kind = "function_template"
-callable_signatures = ["srpc::SerializableProxy(rusty::Arc<T>)"]
-
-[modules.rusty.symbols.srpc_factory_from_callable]
-kind = "function_template"
-callable_signatures = ["rusty::Function<R()>(Callable)"]

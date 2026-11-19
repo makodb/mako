@@ -1,0 +1,8 @@
+client:
+    type: open
+    rate: 1000
+    # Per-protocol max_undone (uniform-yml rule, set 2026-05-05).
+    # Sizing: aggregate offered tput = 60 × min(c, max_undone). Sized to the
+    # protocol's expected sat tput with ~1.5–2× headroom.
+    # Raft: ~12k r/s sat → 60×300 = 18k cluster cap.
+    max_undone: 300

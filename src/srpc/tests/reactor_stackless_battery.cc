@@ -2,15 +2,11 @@
 // @unsafe {
 /**
  * @file reactor_stackless_battery.cc
- * @brief Native promotion battery for the stackless waker (plan section 2.2,
- *        items 1-9).  Gates G6 (runtime), G7 (ASan) and G8 (TSan) run this.
+ * @brief Generated C++ stackless-waker runtime and sanitizer battery.
  *
- * These tests exist because the Cargo lane CANNOT prove any of this.  Cargo
- * sees the carrier's `#[cfg_attr(any(), thread_local)]` markers as ordinary
- * process-global statics, so the per-thread reactor/registry semantics that
- * the whole waker design rests on simply are not present under rustc.  The
- * Cargo tests pin source shape; correctness is decided here, on the generated
- * C++, or it is not decided at all.
+ * CMake registers this executable in the runtime_battery label. It exercises
+ * the generated implementation alongside the real Rust stackless-waker tests.
+ * Both lanes use canonical thread-local reactor and wake-registry state.
  *
  * Design under test (plan section 2.1, shape (ii) -- lifetime-tracked
  * thread-safe wake ingress):
@@ -24,11 +20,8 @@
  * EVERY test body opens with SRPC_TEST_WATCHDOG.  See reactor_watchdog.h for
  * why that is not optional here.
  *
- * NOTE ON RUNNABILITY: authored ahead of the compiling provider, per the plan
- * ("author now, run later").  This file cannot build until compiler tuple V11
- * clears the H2/H3/H4/H5 clusters and C6 (the boxed-callable coercion) -- C6
- * in particular is what makes `*ctx->waker` a copyable `std::function<void()>`,
- * which items 1-9 all depend on.
+ * Retained wakers must own their callback captures through task and reactor
+ * destruction. The sanitizer configurations run this same executable.
  */
 
 #include <atomic>
@@ -41,14 +34,17 @@
 #include <vector>
 
 #include <gtest/gtest.h>
+#include <sys/socket.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
+#include <rusty/arc.hpp>
 #include <rusty/async.hpp>
+#include <rusty/thread.hpp>
 #include <rusty/option.hpp>
 
-#include "../srpc.hpp"
 #include "reactor_watchdog.h"
+#include "../srpc.hpp"
 
 import std;
 
@@ -138,11 +134,25 @@ rusty::Task<int> gate_task(ManualGate* gate, int value) {
     co_return value;
 }
 
+struct NonDefaultOutput {
+    int value;
+    NonDefaultOutput() = delete;
+    explicit NonDefaultOutput(int number) : value(number) {}
+    NonDefaultOutput(NonDefaultOutput&&) = default;
+    NonDefaultOutput(const NonDefaultOutput&) = delete;
+};
+
+rusty::Task<NonDefaultOutput> nondefault_gate_task(ManualGate* gate) {
+    while (!gate->ready.load(std::memory_order_acquire)) {
+        co_await GateAwaiter{gate};
+    }
+    co_return NonDefaultOutput{42};
+}
+
 // The void lane has no on_ready callback, so it reports completion from inside
 // the coroutine.  It is worth its own coverage because
-// reactor_spawn_stackless_task_impl(const Reactor&, Task<void>) is one of the
-// 300 owned strong symbols -- its signature is frozen, unlike the generic
-// with_result spawn.
+// reactor_spawn_stackless_task_impl(const Reactor&, Task<void>) is a separate
+// non-generic entry point from the with_result spawn.
 rusty::Task<void> gate_task_void(ManualGate* gate, std::atomic<long>* done_tid) {
     while (!gate->ready.load(std::memory_order_acquire)) {
         co_await GateAwaiter{gate};
@@ -177,12 +187,49 @@ protected:
     void TearDown() override {
         // Drop the thread-local reactor between tests so each one gets a fresh
         // owner thread_id_, registry entry and slot space.
-        *srpc::sp_running_fiber_th_.borrow_mut() = rusty::None;
-        srpc::sp_reactor_th_ = rusty::None;
+        srpc::sp_running_fiber_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
+        srpc::sp_reactor_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
+        srpc::sp_disk_reactor_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
     }
 };
 
 }  // namespace
+
+TEST_F(StacklessBatteryTest, pollthread_counts_only_accepted_remove_commands) {
+    SRPC_TEST_WATCHDOG("pollthread_counts_only_accepted_remove_commands");
+    int sockets[2];
+    ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, sockets), 0);
+    auto poll_thread = PollThread::create();
+    std::vector<std::thread> callers;
+    for (int thread = 0; thread < 4; ++thread) {
+        callers.emplace_back([&poll_thread, &sockets] {
+            for (int request = 0; request < 8; ++request) {
+                poll_thread->remove_fd(sockets[0]);
+            }
+        });
+    }
+    for (auto& caller : callers) caller.join();
+    EXPECT_EQ(poll_thread->get_remove_count(), 32);
+    poll_thread->shutdown();
+    poll_thread->remove_fd(sockets[0]);
+    EXPECT_EQ(poll_thread->get_remove_count(), 32);
+    ::close(sockets[0]);
+    ::close(sockets[1]);
+}
+
+TEST_F(StacklessBatteryTest, stackless_pending_nondefault_output) {
+    SRPC_TEST_WATCHDOG("stackless_pending_nondefault_output");
+    auto reactor = Reactor::get_reactor();
+    ManualGate gate;
+    int result = 0;
+    reactor_spawn_stackless_task_with_result<NonDefaultOutput>(
+        *reactor, nondefault_gate_task(&gate),
+        [&result](NonDefaultOutput value) { result = value.value; });
+    EXPECT_EQ(result, 0);
+    gate.open_and_wake();
+    ASSERT_TRUE(drive_until(reactor, [&result] { return result != 0; }));
+    EXPECT_EQ(result, 42);
+}
 
 // ---------------------------------------------------------------------------
 // 1. Foreign-thread wake completes on the ORIGINAL OWNER TID.
@@ -406,8 +453,8 @@ TEST_F(StacklessBatteryTest, stackless_reactor_destruction_races_retained_waker)
     });
 
     // Destroy the reactor underneath the spinning waker.
-    *srpc::sp_running_fiber_th_.borrow_mut() = rusty::None;
-    srpc::sp_reactor_th_ = rusty::None;
+    srpc::sp_running_fiber_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
+    srpc::sp_reactor_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
 
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
     stop.store(true, std::memory_order_release);
@@ -416,6 +463,7 @@ TEST_F(StacklessBatteryTest, stackless_reactor_destruction_races_retained_waker)
     // Dropping the last waker copy must release the ingress and every ticket
     // it still held.  ASan is the real assertion here.
     retained = rusty::Waker{};
+    gate.waker = rusty::Waker{};
     SUCCEED();
 }
 
@@ -428,29 +476,21 @@ TEST_F(StacklessBatteryTest, stackless_pollthread_shutdown_races_waker) {
     ManualGate gate;
     rusty::Waker retained;
     std::atomic<bool> stop{false};
-    std::atomic<bool> spawned{false};
-
-    // A PollThread owns its own reactor on its own thread; the task must be
-    // registered from that thread, which is what makes this different from
-    // item 5 rather than a duplicate of it.
-    std::thread owner([&gate, &retained, &spawned]() {
+    const long caller_tid = current_tid();
+    std::atomic<long> owner_tid{0};
+    auto poll_thread = PollThread::create();
+    auto spawn = rusty::Arc<OneTimeJob>::new_(OneTimeJob::new_([&gate, &owner_tid]() {
         auto reactor = Reactor::get_reactor();
         reactor_spawn_stackless_task_with_result<int>(
             *reactor, gate_task(&gate, 6), [](int) {});
-        spawned.store(true, std::memory_order_release);
-        // Drain briefly, then let the thread exit so the TLS reactor and the
-        // wake registry are torn down in thread-exit order.
-        for (int i = 0; i < 50; ++i) {
-            (*reactor).process_stackless_tasks();
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        }
-        *srpc::sp_running_fiber_th_.borrow_mut() = rusty::None;
-        srpc::sp_reactor_th_ = rusty::None;
-    });
+        owner_tid.store(current_tid(), std::memory_order_release);
+    }));
+    poll_thread->add(std::move(spawn));
 
-    while (!spawned.load(std::memory_order_acquire)) {
+    while (owner_tid.load(std::memory_order_acquire) == 0) {
         std::this_thread::yield();
     }
+    ASSERT_NE(caller_tid, owner_tid.load(std::memory_order_acquire));
     gate.wait_for_waker();
     ASSERT_TRUE(gate.try_copy_waker(&retained));
 
@@ -460,12 +500,13 @@ TEST_F(StacklessBatteryTest, stackless_pollthread_shutdown_races_waker) {
         }
     });
 
-    owner.join();
+    poll_thread->shutdown();
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     stop.store(true, std::memory_order_release);
     foreign.join();
 
     retained = rusty::Waker{};
+    gate.waker = rusty::Waker{};
     SUCCEED();
 }
 
@@ -481,6 +522,19 @@ TEST_F(StacklessBatteryTest, stackless_direct_and_nonpollthread_reactors) {
     std::atomic<int> completed{0};
 
     std::thread plain([&completed]() {
+        // A directly constructed reactor has no thread-local owning handle.
+        auto direct = Reactor::new_();
+        ManualGate direct_gate;
+        reactor_spawn_stackless_task_with_result<int>(
+            direct, gate_task(&direct_gate, 0),
+            [&completed](int) { completed.fetch_add(1, std::memory_order_acq_rel); });
+        direct_gate.wait_for_waker();
+        std::thread direct_foreign([&direct_gate]() { direct_gate.open_and_wake(); });
+        drive_until(&direct, [&completed]() {
+            return completed.load(std::memory_order_acquire) >= 1;
+        });
+        direct_foreign.join();
+
         // Normal TLS reactor on a thread that is not a PollThread.
         auto reactor = Reactor::get_reactor();
         ManualGate gate;
@@ -491,7 +545,7 @@ TEST_F(StacklessBatteryTest, stackless_direct_and_nonpollthread_reactors) {
 
         std::thread foreign([&gate]() { gate.open_and_wake(); });
         drive_until(reactor, [&completed]() {
-            return completed.load(std::memory_order_acquire) >= 1;
+            return completed.load(std::memory_order_acquire) >= 2;
         });
         foreign.join();
 
@@ -504,17 +558,18 @@ TEST_F(StacklessBatteryTest, stackless_direct_and_nonpollthread_reactors) {
         disk_gate.wait_for_waker();
         std::thread disk_foreign([&disk_gate]() { disk_gate.open_and_wake(); });
         drive_until(disk, [&completed]() {
-            return completed.load(std::memory_order_acquire) >= 2;
+            return completed.load(std::memory_order_acquire) >= 3;
         });
         disk_foreign.join();
 
-        *srpc::sp_running_fiber_th_.borrow_mut() = rusty::None;
-        srpc::sp_reactor_th_ = rusty::None;
+        srpc::sp_running_fiber_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
+        srpc::sp_reactor_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
+        srpc::sp_disk_reactor_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
     });
     plain.join();
 
-    EXPECT_EQ(2, completed.load(std::memory_order_acquire))
-        << "a non-PollThread or disk-TLS reactor did not complete its task";
+    EXPECT_EQ(3, completed.load(std::memory_order_acquire))
+        << "a direct, non-PollThread, or disk-TLS reactor did not complete its task";
 }
 
 // ---------------------------------------------------------------------------
@@ -704,8 +759,8 @@ TEST_F(StacklessBatteryTest, stackless_client_hang_regression) {
         EXPECT_FALSE(a_errored.load(std::memory_order_acquire))
             << "variant (a): a normal completion reported an error";
 
-        *srpc::sp_running_fiber_th_.borrow_mut() = rusty::None;
-        srpc::sp_reactor_th_ = rusty::None;
+        srpc::sp_running_fiber_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
+        srpc::sp_reactor_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
     }
 
     // ---- variant (b): teardown between admission and wake -> ERROR, not hang
@@ -715,17 +770,19 @@ TEST_F(StacklessBatteryTest, stackless_client_hang_regression) {
         std::atomic<bool> a_returned{false};
         std::atomic<bool> a_errored{false};
 
-        const StacklessCancelReport before = stackless_cancel_report<rusty::Unit>();
+        const StacklessCancelReport before = stackless_cancel_report<rusty::thread::Unit>();
+        std::thread a;
 
         {
             auto reactor = Reactor::get_reactor();
-            auto handle = std::make_shared<CompletionHandle>(&waiter);
             reactor_spawn_stackless_task_with_result<int>(
                 *reactor, gate_task(&gate, 2),
-                [handle](int) { handle->fire(); });
+                [handle = std::make_shared<CompletionHandle>(&waiter)](int) {
+                    handle->fire();
+                });
             gate.wait_for_waker();
 
-            std::thread a([&waiter, &a_returned, &a_errored]() {
+            a = std::thread([&waiter, &a_returned, &a_errored]() {
                 const bool ok = waiter.wait_for(std::chrono::milliseconds(20000));
                 a_errored.store(waiter.errored, std::memory_order_release);
                 a_returned.store(ok, std::memory_order_release);
@@ -739,11 +796,12 @@ TEST_F(StacklessBatteryTest, stackless_client_hang_regression) {
                 copy.wake();
             }
 
-            *srpc::sp_running_fiber_th_.borrow_mut() = rusty::None;
-            srpc::sp_reactor_th_ = rusty::None;  // ~Reactor runs here
-
-            a.join();
+            srpc::sp_running_fiber_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
+            srpc::sp_reactor_th_.with([](auto& slot) { *slot.borrow_mut() = rusty::None; });
+            // Leaving this scope releases the last local reactor owner.
+            // The completion callback owns the only CompletionHandle.
         }
+        a.join();
 
         EXPECT_TRUE(a_returned.load(std::memory_order_acquire))
             << "variant (b): teardown left the close wait blocked forever -- "
@@ -754,7 +812,7 @@ TEST_F(StacklessBatteryTest, stackless_client_hang_regression) {
 
         // The carrier must also have RECORDED the cancellation, not just
         // happened to release the waiter through a destructor.
-        const StacklessCancelReport after = stackless_cancel_report<rusty::Unit>();
+        const StacklessCancelReport after = stackless_cancel_report<rusty::thread::Unit>();
         EXPECT_GT(after.teardown_tasks + after.admitted_completions +
                       after.pending_wakes + after.rejected_spawns,
                   before.teardown_tasks + before.admitted_completions +

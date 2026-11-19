@@ -1,3 +1,6 @@
+// Policy-only fixture: deterministic raw draws make range, scaling, and draw
+// counts exact. These symbols are local to this test executable. Production
+// entropy is exercised separately by rand_native_rust and rand_kernel_smoke.
 use std::panic::catch_unwind;
 use std::sync::{
     atomic::{AtomicI32, AtomicUsize, Ordering},
@@ -172,5 +175,17 @@ fn weighted_selection_preserves_boundaries_empty_sentinel_and_draw_counts() {
     let positive_boundary = vec![1.0, (i32::MAX - 1) as f64];
     install_raw(1);
     assert_eq!(RandomGenerator::weighted_select(&positive_boundary), 0);
+    assert_eq!(draws(), 1);
+}
+
+// Client selection must consume the same native draw as the canonical generator.
+#[test]
+fn client_random_selection_uses_the_canonical_range_algorithm() {
+    let _state_guard = RAND_STATE_TEST_GUARD.lock().unwrap_or_else(|p| p.into_inner());
+    install_raw(8);
+    assert_eq!(srpc::client::client_rand(0, 9), 8);
+    assert_eq!(draws(), 1);
+    install_raw(3);
+    assert_eq!(srpc::client::client_rand(0, 9), 3);
     assert_eq!(draws(), 1);
 }

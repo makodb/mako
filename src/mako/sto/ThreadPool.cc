@@ -13,6 +13,7 @@
 #include "ThreadPool.h"
 #include "replay_record.h"
 #include "lib/common.h"
+#include "lib/sharding_admission.h"
 
 import std;
 
@@ -89,6 +90,10 @@ size_t getFileContentNew_OneLogOptimized_mbta_v2(const char *buffer, /* K-V pair
                                                  unsigned short int count,
                                                  unsigned int len,
                                                  abstract_db* db) {
+    // @unsafe - this function is exclusively replication-log row application.
+    // Admission is outside the OCC retry loop: a forbidden replay is not a
+    // transient transaction conflict and must not spin forever.
+    mako::ShardingReplicationReplay replay;
     if (!mako::valid_replay_time_term(cid)) {
         Panic("invalid replay source timestamp: %u", cid);
     }
@@ -106,6 +111,9 @@ size_t getFileContentNew_OneLogOptimized_mbta_v2(const char *buffer, /* K-V pair
 // @unsafe - Apply a fully validated log with original source metadata.
 size_t replay_validated_mbta_v2(const mako::ReplayLogView& log,
                                 abstract_db* db) {
+    // @unsafe - replication-log application only: one native replay admission
+    // for the whole validated log, outside every per-record OCC retry loop.
+    mako::ShardingReplicationReplay replay;
     size_t next_record_index = 0;
     for (const auto& transaction : log.transactions) {
         if (transaction.first_record_index != next_record_index ||

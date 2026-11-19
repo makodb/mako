@@ -13,17 +13,15 @@ use std::sync::{Arc, Condvar, Mutex};
 // Rust enum for rustc callers; the checked type map preserves its public C++
 // spelling as `::srpc::RpcError`.
 #[allow(unused_imports)]
-use cpp::srpc::errors as cpp_errors;
-use rusty as cpp;
+use crate::errors as _;
 
 // Native Rust uses `String`. The SRPC consumer profile maps this private alias
 // to `std::string`, preserving the legacy callback and method signatures rather
 // than exposing rusty-cpp's distinct `rusty::String` type.
-type LegacyStdString = String;
 type LegacyRpcError = crate::errors::RpcError;
 
 pub type ConnectionCallback = Arc<Box<dyn Fn() + Send + Sync>>;
-pub type ErrorCallback = Arc<Box<dyn Fn(LegacyRpcError, &LegacyStdString) + Send + Sync>>;
+pub type ErrorCallback = Arc<Box<dyn Fn(LegacyRpcError, &str) + Send + Sync>>;
 pub type ReconnectCallback = Arc<Box<dyn Fn(bool) + Send + Sync>>;
 
 fn invoke_connection_callback_safely(callback: &ConnectionCallback) {
@@ -38,7 +36,7 @@ fn invoke_connection_callback_safely(callback: &ConnectionCallback) {
 fn invoke_error_callback_safely(
     callback: &ErrorCallback,
     error: LegacyRpcError,
-    message: &LegacyStdString,
+    message: &str,
 ) {
     let _ = catch_unwind(AssertUnwindSafe(|| {
         (**callback)(error, message);
@@ -130,7 +128,7 @@ impl CallbackManager {
     #[allow(clippy::type_complexity)]
     pub fn add_on_error(
         &self,
-        callback: Box<dyn Fn(LegacyRpcError, &LegacyStdString) + Send + Sync>,
+        callback: Box<dyn Fn(LegacyRpcError, &str) + Send + Sync>,
     ) {
         let callback: ErrorCallback = Arc::new(callback);
         let mut guard = self.callbacks_field.lock().unwrap();
@@ -179,7 +177,7 @@ impl CallbackManager {
         self.inflight_exit();
     }
 
-    pub fn invoke_on_error(&self, error: LegacyRpcError, message: &LegacyStdString) {
+    pub fn invoke_on_error(&self, error: LegacyRpcError, message: &str) {
         self.inflight_enter();
         let callbacks = {
             let guard = self.callbacks_field.lock().unwrap();

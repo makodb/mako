@@ -57,7 +57,7 @@ fn every_event_preserves_arguments_order_and_counts() {
     assert_eq!(manager.callback_count(), 5);
     manager.invoke_on_connected();
     manager.invoke_on_disconnected();
-    manager.invoke_on_error(RpcError::REQUEST_TIMEOUT, &"deadline".to_owned());
+    manager.invoke_on_error(RpcError::REQUEST_TIMEOUT, "deadline");
     manager.invoke_on_reconnecting();
     manager.invoke_on_reconnected(false);
 

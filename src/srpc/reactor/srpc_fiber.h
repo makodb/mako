@@ -3,8 +3,9 @@
  * here: the arch-specific callee-saved register bag (its field offsets
  * are the ABI contract with fiber_context_{x86_64,aarch64}.S), the
  * mmap+guard-page stack, the thread-local active-fiber slot, and the
- * resume/yield/finish state machine. The C++ side supplies exactly one
- * callback: entry_fn(entry_arg), invoked on the fiber stack.
+ * resume/yield/finish state machine. Canonical reactor/reactor.rs supplies
+ * entry_fn(entry_arg), invoked on the fiber stack in both builds, and owns
+ * fiber scheduling and task lifecycle policy.
  */
 #ifndef SRPC_FIBER_H
 #define SRPC_FIBER_H

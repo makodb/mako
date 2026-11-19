@@ -36,23 +36,33 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Rust workspace toolchain
+      # The source gates run ripgrep (src/srpc/scripts/srpc_dsl_check.sh).
+      # apt_packages.sh installs it, but this job pulls a published CI image,
+      # which is only rebuilt after a push to mako-dev, so install it here
+      # if the image predates that. Do NOT mark the checkout safe for git
+      # globally here: the gates vouch for exactly the directories they read
+      # (ownership_exception() in scripts/extract_srpc_rust.py, owned_git in
+      # scripts/raft_dsl.sh), and test_bare_git_really_is_refused asserts
+      # that bare git still refuses a foreign-owned checkout.
+      - name: Container prerequisites
         shell: bash
         run: |
           set -euo pipefail
-          if command -v rustc >/dev/null 2>&1 &&
-             command -v cargo >/dev/null 2>&1 &&
-             command -v rustfmt >/dev/null 2>&1; then
-            if rust_version="$(rustc --version 2>/dev/null | awk '{print $2}')" &&
-               rust_sysroot="$(rustc --print sysroot 2>/dev/null)" &&
-               [ "${rust_version}" = "1.95.0" ] &&
-               [ -r "${rust_sysroot}/lib/rustlib/src/rust/library/core/src/marker.rs" ] &&
-               cargo clippy --version >/dev/null 2>&1; then
-              exit 0
+          if ! command -v rg >/dev/null 2>&1; then
+            SUDO=""
+            if [ "$(id -u)" -ne 0 ]; then
+              command -v sudo >/dev/null 2>&1 || { echo "ripgrep missing and not root (uid $(id -u)), no sudo" >&2; exit 1; }
+              SUDO="sudo"
             fi
+            $SUDO apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq ripgrep
           fi
-          bash ./install_rustc.sh
-          echo "${HOME}/.local-rust/bin" >> "${GITHUB_PATH}"
+          rg --version | head -1
+
+      # PRs consume the last published image, not this checkout's Dockerfile.
+      # Provision the exact official toolchain required by native sharding/Verus.
+      - name: Install pinned Rust toolchain
+        run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
 
       - name: Configure canonical Rust providers
         run: >-
@@ -73,8 +83,17 @@ jobs:
         run: >-
           cmake --build "${GOAL0_BUILD_DIR}"
           --parallel "${CI_MAKE_JOBS}"
-          --target srpc_goal0_dual_compile test_client_service test_arc_mutex_thread test_txn_timeout test_raft_messages test_raft_quorum test_raft_channel_transport test_raft_transport_facade test_raft_dispatcher_facade test_raft_memory_snapshot_manager test_raft_test_cluster test_raft_srpc_transport_compile
+          --target srpc_goal0_dual_compile test_client_service test_arc_mutex_thread test_txn_timeout test_srpc_timeout_race
           -- -k 0
+
+      - name: Verify Raft inline Rust DSL provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          transpiler="$(cat "${GOAL0_BUILD_DIR}/src/srpc/goal0-transpiler-executable.txt")"
+          test -x "${transpiler}"
+          "${transpiler}" --build-info
+          bash scripts/raft_dsl.sh --check --transpiler "${transpiler}"
 
       - name: Verify emitter and canonical Rust invalidate crate generation
         shell: bash
@@ -86,7 +105,7 @@ jobs:
           # Canonical Rust lives at its layout-mirroring path (base/misc/reactor/
           # rpc), not a flat src/. Only lib.rs remains under src/.
           canonical_input="src/srpc/rpc/frame_codec.rs"
-          runtime_facade_input="src/srpc/rusty-rustc/src/lib.rs"
+          crate_manifest_input="src/srpc/Cargo.toml"
           type_map_input="src/srpc/rust-type-map.toml"
           module_index_input="src/srpc/cpp-module-index.toml"
 
@@ -95,14 +114,18 @@ jobs:
           # NEXT build die with no output (set -e aborts inside the command
           # substitution, before its printf). Fail loudly and early instead.
           for probe_input in "${emitter_input}" "${canonical_input}" \
-            "${runtime_facade_input}" "${type_map_input}" "${module_index_input}"; do
+            "${crate_manifest_input}" "${type_map_input}" "${module_index_input}"; do
             if [ ! -e "${probe_input}" ]; then
               echo "invalidation input does not exist: ${probe_input}" >&2
               exit 1
             fi
           done
 
-          steady_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
+          # Each build below prints its captured output before failing: under
+          # `set -e` a failing command substitution would otherwise exit
+          # with the output still in the variable, and the log shows nothing.
+          steady_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)" \
+            || { printf '%s\n' "${steady_output}"; exit 1; }
           printf '%s\n' "${steady_output}"
           if grep -Fq 'Generating Goal-0 srpc crate C++ child modules' <<<"${steady_output}"; then
             echo 'crate generation reran without an emitter or source change' >&2
@@ -124,7 +147,8 @@ jobs:
           assert_regenerated=(bash scripts/ci/assert_crate_codegen.sh)
 
           touch "${emitter_input}"
-          changed_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
+          changed_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)" \
+            || { printf '%s\n' "${changed_output}"; exit 1; }
           printf '%s\n' "${changed_output}"
 
           # The invariant here is mako's build graph: touching an emitter input
@@ -136,26 +160,29 @@ jobs:
           "${assert_regenerated[@]}" srpc.frame_codec.cppm <<<"${changed_output}"
 
           touch "${canonical_input}"
-          canonical_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
+          canonical_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)" \
+            || { printf '%s\n' "${canonical_output}"; exit 1; }
           printf '%s\n' "${canonical_output}"
 
           "${assert_regenerated[@]}" srpc.frame_codec.cppm <<<"${canonical_output}"
 
-          touch "${runtime_facade_input}"
-          facade_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
-          printf '%s\n' "${facade_output}"
+          touch "${crate_manifest_input}"
+          manifest_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)" \
+            || { printf '%s\n' "${manifest_output}"; exit 1; }
+          printf '%s\n' "${manifest_output}"
 
           "${assert_regenerated[@]}" \
             srpc.request_queue.cppm \
             srpc.load_balancer.cppm \
             srpc.utils.cppm \
             srpc.frame_codec.cppm \
-            <<<"${facade_output}"
+            <<<"${manifest_output}"
           test ! -e "${GOAL0_BUILD_DIR}/src/srpc/goal0-crate-cpp/rusty"
 
           for sidecar_input in "${type_map_input}" "${module_index_input}"; do
             touch "${sidecar_input}"
-            sidecar_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)"
+            sidecar_output="$(cmake --build "${GOAL0_BUILD_DIR}" --target srpc_goal0_crate_codegen -- -k 0 2>&1)" \
+              || { printf '%s\n' "${sidecar_output}"; exit 1; }
             printf '%s\n' "${sidecar_output}"
 
             "${assert_regenerated[@]}" srpc.utils.cppm srpc.frame_codec.cppm \
@@ -171,7 +198,7 @@ jobs:
           ctest --test-dir "${GOAL0_BUILD_DIR}"
           --output-on-failure
           --no-tests=error
-          -R '^(test_client_service|test_arc_mutex_thread|test_txn_timeout|test_raft_messages|test_raft_quorum|test_raft_channel_transport|test_raft_transport_facade|test_raft_dispatcher_facade|test_raft_memory_snapshot_manager|test_raft_test_cluster|test_raft_srpc_transport_compile)$'
+          -R '^(test_client_service|test_arc_mutex_thread|test_txn_timeout|test_srpc_timeout_race)$'
 
   build-and-test:
     runs-on: ubuntu-24.04
@@ -218,26 +245,65 @@ jobs:
         with:
           submodules: recursive  # if you use submodules (e.g., third-party libs)
 
-      # The current published image predates the Rust STO workspace MSRV.
-      # The compile-fail snapshots also need rust-src so standard-library spans
-      # render identically under rustup and the standalone CI toolchain.
-      - name: Install Rust workspace toolchain
+      # The source gates run ripgrep (src/srpc/scripts/srpc_dsl_check.sh).
+      # apt_packages.sh installs it, but this job pulls a published CI image,
+      # which is only rebuilt after a push to mako-dev, so install it here
+      # if the image predates that. Do NOT mark the checkout safe for git
+      # globally here: the gates vouch for exactly the directories they read
+      # (ownership_exception() in scripts/extract_srpc_rust.py, owned_git in
+      # scripts/raft_dsl.sh), and test_bare_git_really_is_refused asserts
+      # that bare git still refuses a foreign-owned checkout.
+      - name: Container prerequisites
         shell: bash
         run: |
           set -euo pipefail
-          if command -v rustc >/dev/null 2>&1 &&
-             command -v cargo >/dev/null 2>&1 &&
-             command -v rustfmt >/dev/null 2>&1; then
-            if rust_version="$(rustc --version 2>/dev/null | awk '{print $2}')" &&
-               rust_sysroot="$(rustc --print sysroot 2>/dev/null)" &&
-               [ "${rust_version}" = "1.95.0" ] &&
-               [ -r "${rust_sysroot}/lib/rustlib/src/rust/library/core/src/marker.rs" ] &&
-               cargo clippy --version >/dev/null 2>&1; then
-              exit 0
+          if ! command -v rg >/dev/null 2>&1; then
+            SUDO=""
+            if [ "$(id -u)" -ne 0 ]; then
+              command -v sudo >/dev/null 2>&1 || { echo "ripgrep missing and not root (uid $(id -u)), no sudo" >&2; exit 1; }
+              SUDO="sudo"
             fi
+            $SUDO apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq ripgrep
           fi
-          bash ./install_rustc.sh
-          echo "${HOME}/.local-rust/bin" >> "${GITHUB_PATH}"
+          rg --version | head -1
+
+      # PRs consume the last published image, not this checkout's Dockerfile.
+      # Provision the exact official toolchain required by native sharding/Verus;
+      # the Rust STO workspace (MSRV 1.95) builds with the same compiler.
+      - name: Install pinned Rust toolchain
+        run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
+
+      # The Rust STO compile-fail snapshots need rust-src so standard-library
+      # spans render identically under rustup and the standalone CI toolchain,
+      # and the workspace gates need clippy and rustfmt. The published image
+      # may predate Dockerfile.ubuntu24 installing rust-src, so add it here,
+      # verified against the checksum published beside the archive.
+      - name: Install Rust workspace components
+        shell: bash
+        run: |
+          set -euo pipefail
+          rust_version=1.97.1
+          [ "$(rustc --version | awk '{print $2}')" = "${rust_version}" ]
+          rust_sysroot="$(rustc --print sysroot)"
+          marker="${rust_sysroot}/lib/rustlib/src/rust/library/core/src/marker.rs"
+          if [ ! -r "${marker}" ]; then
+            work="$(mktemp -d)"
+            archive="rust-src-${rust_version}.tar.gz"
+            curl --proto '=https' --tlsv1.2 -fL --retry 3 \
+              --output "${work}/${archive}" \
+              "https://static.rust-lang.org/dist/${archive}"
+            curl --proto '=https' --tlsv1.2 -fL --retry 3 \
+              --output "${work}/${archive}.sha256" \
+              "https://static.rust-lang.org/dist/${archive}.sha256"
+            (cd "${work}" && sha256sum --check --strict "${archive}.sha256")
+            tar -xzf "${work}/${archive}" -C "${work}"
+            "${work}/rust-src-${rust_version}/install.sh" --prefix="${rust_sysroot}"
+            rm -rf "${work}"
+          fi
+          test -r "${marker}"
+          cargo clippy --version
+          cargo fmt --version
 
       - name: Environments
         run: |
@@ -267,8 +333,14 @@ jobs:
       - name: Check Rust workspace formatting
         run: cargo fmt --manifest-path crates/Cargo.toml --all -- --check
 
+      - name: Verify native sharding and independent negative controls
+        run: ./ci/ci.sh nativeShardingProof
+
       - name: Compile
         run: ./ci/ci.sh compile
+
+      - name: Run native sharding real-engine migration smoke
+        run: ./ci/ci.sh nativeShardingSmoke
 
       - name: Run tests - Mako local ABI boundary gates
         run: ./ci/ci.sh makoLocalAbiGates
@@ -304,7 +376,6 @@ jobs:
               "test_silo_transaction_set_capacity_exhaustion",
               "test_silo_transaction_set_exact_chunk_boundary",
               "test_silo_transitem_lifetime",
-              "test_srpc_epoll_platform",
               "test_sto_tpcc_ffi_c11_header",
               "test_benchmark_output",
               "test_sto_tpcc_cpp_wrapper_smoke",
@@ -418,7 +489,6 @@ jobs:
               "test_mako_value_metadata",
               "test_mtree_abi",
               "test_silo_nontxn_api",
-              "test_srpc_epoll_platform",
           }
           for name in sorted(required):
               test = by_name[name]
@@ -495,7 +565,7 @@ jobs:
           ctest --test-dir build
           --output-on-failure
           --no-tests=error
-          -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_silo_runtime_concurrency_lifecycle|test_silo_transaction_install_exception_fail_stop|test_silo_transaction_set_capacity_exhaustion|test_silo_transaction_set_exact_chunk_boundary|test_silo_transitem_lifetime|test_srpc_epoll_platform|test_sto_tpcc_ffi_c11_header|test_benchmark_output|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_startup_resource_exhausted|test_sto_tpcc_rust_load_resource_exhausted|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard|test_sto_tpcc_rejects_rust_replication|test_sto_tpcc_rejects_rust_worker_limit)$'
+          -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_silo_runtime_concurrency_lifecycle|test_silo_transaction_install_exception_fail_stop|test_silo_transaction_set_capacity_exhaustion|test_silo_transaction_set_exact_chunk_boundary|test_silo_transitem_lifetime|test_sto_tpcc_ffi_c11_header|test_benchmark_output|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_startup_resource_exhausted|test_sto_tpcc_rust_load_resource_exhausted|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard|test_sto_tpcc_rejects_rust_replication|test_sto_tpcc_rejects_rust_worker_limit)$'
 
       - name: Run Rust STO workspace tests in release mode
         run: >-
@@ -724,6 +794,27 @@ jobs:
         with:
           submodules: recursive
 
+      # Building `mako` runs the srpc source gate (ripgrep) and the native
+      # sharding / Raft cargo builds (official Rust 1.97.1); the published image
+      # may predate both, exactly as in the build-and-test job above.
+      - name: Container prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rg >/dev/null 2>&1; then
+            SUDO=""
+            if [ "$(id -u)" -ne 0 ]; then
+              command -v sudo >/dev/null 2>&1 || { echo "ripgrep missing and not root (uid $(id -u)), no sudo" >&2; exit 1; }
+              SUDO="sudo"
+            fi
+            $SUDO apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq ripgrep
+          fi
+          rg --version | head -1
+
+      - name: Install pinned Rust toolchain
+        run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
+
       - name: Install pinned Rust TSan toolchain
         if: matrix.sanitizer == 'tsan'
         run: |
@@ -741,6 +832,17 @@ jobs:
           RUSTUP_HOME="${tsan_rustup_home}" \
             "${tsan_cargo_home}/bin/rustup" toolchain install "${toolchain}" \
             --profile minimal --component rust-src --component rustfmt
+          # rust-toolchain.toml outranks the linked default inside the checkout,
+          # and mainline's srpc, Raft and native-sharding cargo edges all use it.
+          # Install it once here so parallel build edges cannot race to
+          # auto-install it in the shared RUSTUP_HOME.
+          workspace_toolchain="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          test -n "${workspace_toolchain}"
+          CARGO_HOME="${tsan_cargo_home}" \
+          RUSTUP_HOME="${tsan_rustup_home}" \
+            "${tsan_cargo_home}/bin/rustup" toolchain install "${workspace_toolchain}" \
+            --profile minimal --component clippy --component rustfmt \
+            --component rust-src
           CARGO_HOME="${tsan_cargo_home}" \
           RUSTUP_HOME="${tsan_rustup_home}" \
             "${tsan_cargo_home}/bin/rustup" toolchain link \
@@ -774,6 +876,27 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      # Building `mako` runs the srpc source gate (ripgrep) and the native
+      # sharding / Raft cargo builds (official Rust 1.97.1); the published image
+      # may predate both, exactly as in the build-and-test job above.
+      - name: Container prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rg >/dev/null 2>&1; then
+            SUDO=""
+            if [ "$(id -u)" -ne 0 ]; then
+              command -v sudo >/dev/null 2>&1 || { echo "ripgrep missing and not root (uid $(id -u)), no sudo" >&2; exit 1; }
+              SUDO="sudo"
+            fi
+            $SUDO apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq ripgrep
+          fi
+          rg --version | head -1
+
+      - name: Install pinned Rust toolchain
+        run: bash scripts/ci/install_rust_toolchain.sh 1.97.1 /opt/rust
 
       - name: Run hook-enabled cleanup/quarantine boundary gate
         run: ./ci/ci.sh makoLocalHookGates

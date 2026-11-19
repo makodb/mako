@@ -55,20 +55,27 @@ void helper_server(
   std::map<int, abstract_ordered_index *> open_tables,
   spin_barrier *barrier_ready)
 {
-  // @unsafe - Establish the owning shard before creating backend TLS state.
+  // @unsafe - Establish the owning shard and bind allocator/RCU state before
+  // creating backend TLS state or allocating the helper engine.
+  auto& cfg = BenchmarkConfig::getInstance();
   BenchmarkConfig::setThreadLocalShardIndex(running_shardIndex);
-  auto* shard = BenchmarkConfig::getInstance().getShardContext(running_shardIndex);
+  auto* shard = cfg.getShardContext(running_shardIndex);
   if (shard && shard->runtime.get())
     const_cast<SiloRuntime*>(shard->runtime.get())->BindToCurrentThread();
+  else
+    SiloRuntime::Current()->BindToCurrentThread();
   TThread::set_shard_index(running_shardIndex);
   TThread::set_pid((g_wid - 1) % num_warehouses);
   TThread::set_nshards(config->nshards);
   scoped_db_thread_ctx ctx(db, true, 1);
+  // @unsafe - helper initialization borrows loader allocation, never admission.
+  TThread::in_loading_phase = false;
   TThread::set_mode(1);
 #if defined(DISABLE_MULTI_VERSION)
   TThread::disable_multiversion();
 #else
-  TThread::enable_multiverison();
+  if (cfg.getIsReplicated()) TThread::enable_multiverison();
+  else TThread::disable_multiversion();
 #endif
   int shardIdx = (g_wid - 1) / num_warehouses;
   int par_id = (g_wid - 1) % num_warehouses;
@@ -110,9 +117,8 @@ void rpc_server(
     config->configFile,
     local_uri,
     cluster,
-    // Handler range is inclusive; 14-16 are the self-contained
-    // non-txn write ops (nontxnPut/Insert/Remove, common.h).
-    1, 17,
+    // Inclusive range includes nontransactional ops and full ordered scan pages.
+    1, mako::fullScanReqType,
     0, // physPort
     0, // numa node
     running_shardIndex,

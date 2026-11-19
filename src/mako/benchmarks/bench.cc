@@ -28,6 +28,7 @@
 #include "sto/sync_util.hh"
 #include "rpc_setup.h"
 #include "cpu_throttler.h"
+#include "cluster_bootstrap.h"
 
 #ifdef USE_JEMALLOC
 #include <jemalloc/jemalloc.h>
@@ -517,6 +518,9 @@ bench_worker::run_body(bool &startup_barrier_entered)
       retry:
         util::timer t(true);  // nano counter
         const unsigned long old_seed = r.get_seed();
+        // @unsafe - one coordinator identity outlives engine-local aborts and
+        // the workload's terminal remote cleanup, not just one OCC attempt.
+        mako::ShardingOperation sharding_operation;
         const auto ret = workload[i].fn(this);
         // if (control_mode==1){
         //   std::cout<<"one transaction2\n";
@@ -596,10 +600,18 @@ bench_runner::get_open_tables() {
 }
 
 void
-bench_runner::stop() { // invoke inside run function; stop all ShardClient instances
-  Warning("stop all rpc clients. set stop=false");
+bench_runner::stop() { // @unsafe - only this owner's already-joined clients
+  Warning("stopping drained owner RPC clients");
+  auto& benchConfig = BenchmarkConfig::getInstance();
+  // Registrations are keyed by global partition id; a colocated owner's
+  // clients are not this runner's to stop.
+  const int first_id = benchConfig.getShardIndex()
+      * benchConfig.getConfig()->warehouses;
+  const int last_id = first_id + static_cast<int>(benchConfig.getNthreads());
   std::lock_guard<std::mutex> lock(shardClientAllMutex);
   for (auto &[par_id, client] : shardClientAll) {
+    if (par_id < first_id || par_id >= last_id)
+      continue;
     if (client != nullptr)
       client->stop();
     else
@@ -690,6 +702,15 @@ bench_runner::run()
   }
   } // end of f_mode==0
 
+  // @unsafe - catalog/warehouse aliases were seeded by make_loaders(); native
+  // admission starts only after every physical loader has joined.
+  janus::BootstrapClusterConfig(db);
+  struct NativeStop {
+    uint32_t owner;
+    // @unsafe - exception paths must also join native jobs before DB teardown.
+    ~NativeStop() { janus::ShutdownClusterConfig(owner); }
+  } native_stop{static_cast<uint32_t>(BenchmarkConfig::getInstance().getShardIndex())};
+
   Warning("# of nthreads:%d",BenchmarkConfig::getInstance().getNthreads());
   map<string, size_t> table_sizes_before;
   if (BenchmarkConfig::getInstance().getVerbose()) {
@@ -748,6 +769,12 @@ bench_runner::run()
     }
     db->report_capacity_usage("load_complete");
   }
+  // @unsafe - shared loader markers can precede the native peer handshake.
+  // Admission failures must not escape a worker's initial new_txn call.
+  if (mako_sharding_enabled()
+      && mako_sharding_wait_ready(BenchmarkConfig::getInstance().getShardIndex())
+          != MAKO_SHARD_OK)
+    throw abstract_db::abstract_abort_exception();
   CoordinatorDrain coordinator_drain(BenchmarkConfig::getInstance());
   const vector<bench_worker *> workers = make_workers();
   ALWAYS_ASSERT(!workers.empty());
@@ -834,6 +861,7 @@ bench_runner::run()
         << endl;
     benchConfig.setRunning(false);  // stop database worker threads
   }
+  __sync_synchronize();
 
   mako::benchmark_cerr() << "[SHUTDOWN] Joining "
                          << BenchmarkConfig::getInstance().getNthreads()
@@ -849,6 +877,15 @@ bench_runner::run()
   // installing here, and stop() also owns every colocated shard's clients.
   coordinator_drain.wait();
   mako::benchmark_cerr() << "[SHUTDOWN] All shard coordinators drained" << endl;
+  // @unsafe - all fixed owners must finish terminal data RPCs before any
+  // listener stops. Rust retains the barrier on the existing shared filesystem
+  // so the last peer never needs to query an already-stopped control service.
+  if (mako_sharding_enabled()) {
+    const auto& directory = benchConfig.getNfsSyncDir();
+    const uint32_t status = mako_sharding_quiesce(native_stop.owner,
+        {reinterpret_cast<const uint8_t*>(directory.data()), directory.size()});
+    ALWAYS_ASSERT(status == MAKO_SHARD_OK);
+  }
 
   // Stop server transports AFTER workers exit to ensure they can finish processing
   mako::benchmark_cerr() << "[SHUTDOWN] Calling stop_rpc_server()" << endl;
@@ -1155,6 +1192,9 @@ bench_runner::run()
        it != open_tables.end(); ++it) {
     //it->second->print_stats();
   }
+
+  // @unsafe - stop native service/jobs before slow-exit can delete indexes.
+  janus::ShutdownClusterConfig(native_stop.owner);
 
   if (!BenchmarkConfig::getInstance().getSlowExit())
     return;

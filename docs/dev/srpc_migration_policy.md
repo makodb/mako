@@ -4,6 +4,20 @@ Step 1 is: `src/srpc` contains no hand-written C++ — every line is
 inline-Rust DSL, C++ generated from it, or external C behind
 `extern "C"`.
 
+> **Relation to the field guide.** This file is binding for `src/rrr`; the
+> general how-to is
+> [`docs/porting-cpp-to-rust-dsl.md`](../porting-cpp-to-rust-dsl.md), which
+> is codebase-agnostic and differently scoped. Its decision rule (§5 in the
+> guide's numbering as of 2026-09-16) orders *reshape → transpiler feature →
+> defer and keep hand-written* — not the same three options as the rule
+> below, and it ends in deferral rather than external C because it carries
+> no "zero hand-written C++" constraint. The two orderings answer different
+> questions and do not conflict: the guide's reshape-first governs a C++
+> *shape* that does not fit the DSL, while step 1 below governs a transpiler
+> that emits *wrong* output. Read the guide for how to shape C++ so it
+> converts (§3), the per-class recipe (§4) and the ledger of dated findings
+> (§8); apply the order below when the code is under `src/rrr`.
+
 ## THE DECISION RULE
 
 When a piece of C++ resists becoming DSL, apply these **in order** and

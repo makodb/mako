@@ -1,6 +1,7 @@
 // Canonical Rust source for the srpc.circuit_breaker module.
 // Compiled directly by rustc and translated by rusty-cpp crate mode.
-use std::cell::Cell;
+use crate::threading::SharedCell;
+use std::sync::Mutex;
 
 #[allow(unsafe_code)]
 unsafe extern "C" {
@@ -86,32 +87,40 @@ impl CircuitBreakerConfig {
 
 #[repr(C)]
 pub struct CircuitBreaker {
-    pub config_field: Cell<CircuitBreakerConfig>,
-    pub state_field: Cell<CircuitState>,
-    pub failure_count_field: Cell<u32>,
-    pub success_count_field: Cell<u32>,
-    pub last_failure_time: Cell<u64>,
-    pub probe_in_progress: Cell<bool>,
+    transition_lock_: Mutex<()>,
+    pub config_field: SharedCell<CircuitBreakerConfig>,
+    pub state_field: SharedCell<CircuitState>,
+    pub failure_count_field: SharedCell<u32>,
+    pub success_count_field: SharedCell<u32>,
+    pub last_failure_time: SharedCell<u64>,
+    pub probe_in_progress: SharedCell<bool>,
 }
 
 impl CircuitBreaker {
     pub fn new(config: self::CircuitBreakerConfig) -> CircuitBreaker {
         CircuitBreaker {
-            config_field: Cell::<CircuitBreakerConfig>::new(config),
-            state_field: Cell::<CircuitState>::new(CircuitState::CLOSED),
-            failure_count_field: Cell::<u32>::new(0u32),
-            success_count_field: Cell::<u32>::new(0u32),
-            last_failure_time: Cell::<u64>::new(0u64),
-            probe_in_progress: Cell::<bool>::new(false),
+            transition_lock_: Mutex::new(()),
+            config_field: SharedCell::<CircuitBreakerConfig>::new(config),
+            state_field: SharedCell::<CircuitState>::new(CircuitState::CLOSED),
+            failure_count_field: SharedCell::<u32>::new(0u32),
+            success_count_field: SharedCell::<u32>::new(0u32),
+            last_failure_time: SharedCell::<u64>::new(0u64),
+            probe_in_progress: SharedCell::<bool>::new(false),
         }
     }
 
     pub fn set_config(&self, config: self::CircuitBreakerConfig) {
+        let _transition = self.transition_lock_.lock().unwrap();
         self.config_field.set(config);
-        self.reset();
+        self.reset_state();
     }
 
     pub fn allow_request(&self) -> bool {
+        self.allow_request_at(current_time_us())
+    }
+
+    pub fn allow_request_at(&self, now: u64) -> bool {
+        let _transition = self.transition_lock_.lock().unwrap();
         if !self.config_field.get().enabled {
             return true;
         }
@@ -122,8 +131,7 @@ impl CircuitBreaker {
             return true;
         }
         if (current as i32) == (CircuitState::OPEN as i32) {
-            let now: u64 = current_time_us();
-            let last: u64 = self.last_failure_time.get();
+                let last: u64 = self.last_failure_time.get();
             let timeout_us: u64 = (self.config_field.get().timeout_ms as u64) * 1000u64;
 
             if now.wrapping_sub(last) >= timeout_us {
@@ -145,6 +153,7 @@ impl CircuitBreaker {
     }
 
     pub fn record_success(&self) {
+        let _transition = self.transition_lock_.lock().unwrap();
         if !self.config_field.get().enabled {
             return;
         }
@@ -174,6 +183,11 @@ impl CircuitBreaker {
     }
 
     pub fn record_failure(&self) {
+        self.record_failure_at(current_time_us())
+    }
+
+    pub fn record_failure_at(&self, now: u64) {
+        let _transition = self.transition_lock_.lock().unwrap();
         if !self.config_field.get().enabled {
             return;
         }
@@ -187,7 +201,7 @@ impl CircuitBreaker {
             if count >= self.config_field.get().failure_threshold {
                 let open: CircuitState = CircuitState::OPEN;
                 self.state_field.set(open);
-                self.last_failure_time.set(current_time_us());
+                self.last_failure_time.set(now);
                 self.failure_count_field.set(0u32);
                 self.success_count_field.set(0u32);
             }
@@ -197,12 +211,12 @@ impl CircuitBreaker {
             self.probe_in_progress.set(false);
             let open: CircuitState = CircuitState::OPEN;
             self.state_field.set(open);
-            self.last_failure_time.set(current_time_us());
+            self.last_failure_time.set(now);
             self.success_count_field.set(0u32);
             return;
         }
         if (current as i32) == (CircuitState::OPEN as i32) {
-            self.last_failure_time.set(current_time_us());
+            self.last_failure_time.set(now);
         }
     }
 
@@ -223,6 +237,11 @@ impl CircuitBreaker {
     }
 
     pub fn reset(&self) {
+        let _transition = self.transition_lock_.lock().unwrap();
+        self.reset_state();
+    }
+
+    fn reset_state(&self) {
         let closed: CircuitState = CircuitState::CLOSED;
         self.state_field.set(closed);
         self.failure_count_field.set(0u32);

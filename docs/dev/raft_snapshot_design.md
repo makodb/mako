@@ -46,16 +46,19 @@ covers, enabling log truncation and InstallSnapshot RPC.
 
 ## Architecture
 
-### Storage Layer (srpc namespace)
+### Storage layer
 
-Three layers of abstraction in `src/srpc/rpc/`:
+The store is memory-only on every lane and holds the latest snapshot only.
 
-1. **SnapshotManager** (interface) - Abstract API for snapshot CRUD operations
-2. **FileSnapshotManager** (implementation) - File-based storage with retention policy
-3. **SnapshotFormat** (utility) - Binary serialization/deserialization with CRC32
-
-File naming convention: `snapshot_<index>_<term>.snap` with `.tmp` suffix during writes.
-Atomic rename on finalize prevents partial snapshots from being visible.
+- **Rust lane:** `SnapshotStore` in `src/deptran/raft/rt/src/snapshot.rs`, a
+  single `Arc<Snapshot{index, term, bytes}>` slot. Readers take an `Arc`
+  clone, so an image stays stable while a later save replaces the slot.
+- **hybrid and cpp:** `MemorySnapshotManager`
+  (`src/deptran/raft/memory_snapshot_manager.hpp`) behind the `SnapshotManager`
+  interface (`snapshot_manager.hpp`).
+- `SnapshotFormat` (`snapshot_format.hpp`) is kept for the C++ unit tests and
+  is not on any production path: the stored and shipped bytes are the state
+  machine's, verbatim, on every lane.
 
 ### RaftServer Integration
 
@@ -63,13 +66,12 @@ The `snapshot_manager_` field in `RaftServer` (declared at `server.h:123`) is
 initialized during `Setup()` when `MAKO_RAFT_SNAPSHOTS=1` is set. The initialization:
 
 1. Reads configuration from environment variables
-2. Creates a `FileSnapshotManager` with appropriate storage path
+2. Keeps a store injected before `Setup()`, or creates an empty one
 3. Loads existing snapshot metadata into `snapidx_`/`snapterm_` fields
 4. These fields are used by `RequestVote` and `AppendEntries` for log consistency checks
 
 Environment variables:
 - `MAKO_RAFT_SNAPSHOTS=1` - Enable snapshot support
-- `MAKO_RAFT_SNAPSHOT_PATH` - Custom base path for snapshot storage
 - `MAKO_RAFT_SNAPSHOT_INTERVAL` - Entries between snapshots (default: 10000)
 
 ### Public API on RaftServer

@@ -8,22 +8,39 @@ cmake_minimum_required(VERSION 3.30)
 # into no-ops via the header guard. The UUID gates CMake's
 # experimental `import std;` materialization and must be set BEFORE
 # `project()`.
-# CMake intentionally rotates this experimental gate. Keep the established
-# 3.30/3.31 value while accepting the CMake 4.4 gate used by current developer
-# environments.
-if(CMAKE_VERSION VERSION_GREATER_EQUAL "4.4")
-    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "f35a9ac6-8463-4d38-8eec-5d6008153e7d")
-elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.3")
-    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "451f2fe2-a8a2-47c3-bc32-94786d8fc91b")
-elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0.3")
-    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
-elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "4.0")
-    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "a9e1cf81-9932-4810-974b-6eccaf14e457")
-elseif(CMAKE_VERSION VERSION_GREATER_EQUAL "3.31.8")
-    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "d0edc3af-4c50-42ea-a356-e2862fe7a444")
-else()
-    set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
+# The token that unlocks CMake's experimental `import std;` changes between
+# CMake releases, even between patch releases of one line (Help/dev/
+# experimental.rst per tag: 3.30.0-3.31.6 0e5b6991, 4.0.0 a9e1cf81, 3.31.8 and
+# 4.0.3-4.2.x d0edc3af, 4.3.x 451f2fe2, 4.4.x f35a9ac6), so no version table
+# stays right.
+# The running cmake carries its own token as a string in its executable
+# (Source/cmExperimental.cxx), so take whichever known token it contains.
+# An explicit -DCMAKE_EXPERIMENTAL_CXX_IMPORT_STD=... still wins.
+if(NOT DEFINED CMAKE_EXPERIMENTAL_CXX_IMPORT_STD)
+    set(_mako_import_std_tokens
+        "f35a9ac6-8463-4d38-8eec-5d6008153e7d"
+        "451f2fe2-a8a2-47c3-bc32-94786d8fc91b"
+        "d0edc3af-4c50-42ea-a356-e2862fe7a444"
+        "a9e1cf81-9932-4810-974b-6eccaf14e457"
+        "0e5b6991-d74f-4b3d-a41c-cf096e0b2508")
+    list(JOIN _mako_import_std_tokens "|" _mako_import_std_regex)
+    file(STRINGS "${CMAKE_COMMAND}" _mako_import_std_hits
+         REGEX "${_mako_import_std_regex}")
+    foreach(_mako_token IN LISTS _mako_import_std_tokens)
+        if(_mako_import_std_hits MATCHES "${_mako_token}")
+            set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD "${_mako_token}")
+            break()
+        endif()
+    endforeach()
+    if(NOT DEFINED CMAKE_EXPERIMENTAL_CXX_IMPORT_STD)
+        message(FATAL_ERROR
+            "CMake ${CMAKE_VERSION} (${CMAKE_COMMAND}) carries none of the known "
+            "`import std` experimental tokens. Find this release's token in its "
+            "Help/dev/experimental.rst and pass "
+            "-DCMAKE_EXPERIMENTAL_CXX_IMPORT_STD=<token>, or add it above.")
+    endif()
 endif()
+message(STATUS "import std token: ${CMAKE_EXPERIMENTAL_CXX_IMPORT_STD} (CMake ${CMAKE_VERSION})")
 
 # Suppress CMake policy warnings for deprecated modules
 # CMP0167: FindBoost module is removed in CMake 3.30+, but we still support older CMake
@@ -249,6 +266,24 @@ include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppSubmodul
 set(RUSTYCPP_BUILD_TYPE "release")  # or "debug"
 include(${CMAKE_CURRENT_SOURCE_DIR}/third-party/rusty-cpp/cmake/RustyCppTranspiler.cmake)
 create_rustycpp_transpiler_build_target()
+
+# Raft source-provenance gate. The Raft server is canonical Rust built into
+# libraft_rt.a; the C++ carriers that still hold inline Rust DSL blocks
+# compile the committed C++ generated next to each block. This target proves
+# those bytes are a fresh rendering of their blocks, that the shell crate's
+# extracted modules and lib.rs match the blocks, and that the crate builds and
+# passes clippy with -D warnings.
+add_custom_target(raft_goal0_source_gate
+    COMMAND ${CMAKE_COMMAND} -E env CARGO_TARGET_DIR=${CMAKE_BINARY_DIR}/raft-dsl-cargo
+        bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_dsl.sh"
+        --check
+        --transpiler "${RUSTYCPP_TRANSPILER}"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Checking Raft inline Rust DSL provenance"
+    USES_TERMINAL
+    VERBATIM
+)
+add_dependencies(raft_goal0_source_gate build_rusty_cpp_transpiler)
 
 # NOTE: RustyCppSubmodule.cmake already computes CPP_BORROW_CHECKER and creates
 # build targets. Do not override checker paths here or Docker CARGO_TARGET_DIR
@@ -476,6 +511,10 @@ option(CHECK_INVARIANTS "Enable invariant checking" OFF)
 option(COCO "Enable COCO" OFF)
 option(MAKO_USE_RAFT "Build Mako with the Raft replication helper" OFF)
 option(RAFT_TEST "Enable Raft lab testing fiber" OFF)
+# Raft disk persistence: a build switch,
+# not a run-time one. OFF is the memory-mode binary with the disk code
+# compiled out; ON turns on the raft crates' cargo feature `raft_disk`.
+option(MAKO_RAFT_DISK "Build the Raft write-ahead log and recovery (disk mode)" OFF)
 option(SINGLE_RAFT_INSTANCE "Default runtime Raft group mode (ON=single group, OFF=one group per partition)" ON)
 option(MAKO_LOCAL_TEST_HOOKS
        "Enable local test-only commit, cleanup, and timestamp-clock seams" OFF)
@@ -493,6 +532,10 @@ endif()
 if(RAFT_TEST)
   add_compile_definitions(RAFT_TEST_CORO=1)
   message(STATUS "Raft lab testing fiber enabled (note: REUSE_FIBER is always enabled)")
+endif()
+
+if(MAKO_RAFT_DISK)
+  message(STATUS "Raft disk mode enabled (cargo feature raft_disk)")
 endif()
 
 if(SINGLE_RAFT_INSTANCE)
@@ -1186,6 +1229,7 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/transport.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/fasttransport.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/srpc_rpc_backend.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/sharding_admission.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/multi_transport_manager.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/configuration.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/lib/timestamp.cc"
@@ -1206,6 +1250,9 @@ set(MAKO_SRCFILES
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/storage/mako_local_abi.cc"
   "${MAKO_LOCAL_BUILD_IDENTITY_CPP}"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/cluster_bootstrap.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/native_sharding_storage.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/mako/native_sharding_rpc.cc"
+  "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/gateway_receiver.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_service.cc"
   "${CMAKE_CURRENT_SOURCE_DIR}/src/rocks_interface/client_proxy.cc"
 )
@@ -1241,6 +1288,9 @@ add_custom_command(
   OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
   COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen --cpp src/deptran/rcc_rpc.rpc
   DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.rpc
+          ${CMAKE_CURRENT_SOURCE_DIR}/bin/rpcgen
+          ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/pylib/simplerpcgen/lang_cpp.py
+          ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/pylib/simplerpcgen/rpcgen.py
   WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
@@ -1298,25 +1348,16 @@ set(DEPTRAN_CORE_SRC
     src/deptran/paxos/service.cc
     src/deptran/paxos_worker.cc
     src/deptran/raft/application_log.cc
-    src/deptran/raft/commo.cc
     src/deptran/raft/frame.cc
+    src/deptran/raft/raft_transport.cc
     src/deptran/raft/raft_worker.cc
-    src/deptran/raft/replicated_db.cc
     src/deptran/raft/server.cc
-    src/deptran/raft/service.cc
     src/deptran/replication_log_entry.cc
     src/deptran/scheduler.cc
     src/deptran/tpc_command.cc
     src/deptran/tpcc_sharding.cc
     src/deptran/view_data.cc
 )
-
-if(RAFT_TEST)
-    list(APPEND DEPTRAN_CORE_SRC
-        src/deptran/raft/test.cc
-        src/deptran/raft/testconf.cc
-    )
-endif()
 
 # Runtime replication switching: compile BOTH Paxos and Raft helpers
 # The replication_helper.cc dispatcher routes calls based on runtime configuration
@@ -1326,25 +1367,58 @@ set(TXLOG_HELPER_SRC
     src/deptran/raft_main_helper.cc
 )
 
+# Native sharding is ordinary Rust, never a rusty-cpp/transpiler input. Keep its
+# Cargo output isolated from SRPC's independently pinned crate/toolchain.
+find_program(MAKO_SHARDING_CARGO cargo REQUIRED)
+# The Rust STO sanitizer lanes select one rustup toolchain
+# (MAKO_RUST_STO_RUSTUP_TOOLCHAIN) for every Cargo archive that reaches dbtest,
+# so the Rust staticlibs in one executable share a single std (see the std
+# member note in crates/mrx-core/Cargo.toml and the rust-lib command audit in
+# scripts/ci/run_rust_sto_sanitizer.sh). The native sharding and Raft archives
+# are part of that link now, so their Cargo commands below take the same
+# selection. It is empty, and this is a no-op, in every other build.
+set(MAKO_SHARDING_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/native-sharding")
+set(MAKO_SHARDING_ARCHIVE "${MAKO_SHARDING_TARGET_DIR}/release/libmako_sharding.a")
+file(GLOB_RECURSE MAKO_SHARDING_RUST_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/*.rs"
+    "${CMAKE_CURRENT_SOURCE_DIR}/tla/mako/src/*.rs")
+add_custom_command(
+    OUTPUT "${MAKO_SHARDING_ARCHIVE}"
+    COMMAND ${CMAKE_COMMAND} -E env
+        ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
+        "${MAKO_SHARDING_CARGO}" build --locked --release --lib
+        --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.toml"
+        --target-dir "${MAKO_SHARDING_TARGET_DIR}"
+    DEPENDS ${MAKO_SHARDING_RUST_SOURCES}
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.lock"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Building native Rust sharding staticlib (locked dependencies)"
+    VERBATIM)
+add_custom_target(mako_sharding_rust_build DEPENDS "${MAKO_SHARDING_ARCHIVE}")
+add_library(mako_sharding_native STATIC IMPORTED GLOBAL)
+set_target_properties(mako_sharding_native PROPERTIES
+    IMPORTED_LOCATION "${MAKO_SHARDING_ARCHIVE}"
+    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/src"
+    INTERFACE_LINK_LIBRARIES "rocksdb;pthread;${CMAKE_DL_LIBS};m;rt;util")
+add_dependencies(mako_sharding_native mako_sharding_rust_build)
+
+# Explicit Docker-only proof gate; it verifies the production crate, not a
+# separate executable model. The independent model/controls run in addition.
+add_custom_target(verify_native_sharding
+    COMMAND bash "${CMAKE_CURRENT_SOURCE_DIR}/scripts/verify_native_sharding.sh"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    USES_TERMINAL VERBATIM)
+
 # ---------------------------------------------------------------------------
-# `cluster` — Mako's config/sharding metadata + control-plane component,
-# authored as a C++23 named module. src/cluster/*.h are module partition
-# interface units (NOT headers — never #included); src/cluster/cluster.ccm is
-# the primary interface unit re-exporting them; the two .cc are module
-# implementation units. Mirrors the `srpc` module library: consumers write
-# `import cluster;` and link this target. See src/cluster/cluster.ccm.
+# `cluster` retains the configuration KV ports and the disabled/static engine
+# table-address bridge. Governed placement/admission/migration live exclusively
+# in the native Rust staticlib, not retired C++ policy/cache module partitions.
 set(CLUSTER_MODULE_INTERFACES
     ${CMAKE_SOURCE_DIR}/src/cluster/kv_store.h
     ${CMAKE_SOURCE_DIR}/src/cluster/in_memory_kv_store.h
     ${CMAKE_SOURCE_DIR}/src/cluster/remote_kv_store.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy_builder.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/sharding_policy_cache.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/shard.h
     ${CMAKE_SOURCE_DIR}/src/cluster/config_manager.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/cluster_config.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/config_watcher.h
-    ${CMAKE_SOURCE_DIR}/src/cluster/shard_manager.h
     ${CMAKE_SOURCE_DIR}/src/cluster/shard_router.h
     ${CMAKE_SOURCE_DIR}/src/cluster/cluster.ccm
 )
@@ -1353,7 +1427,6 @@ set(CLUSTER_MODULE_INTERFACES
 set_source_files_properties(${CLUSTER_MODULE_INTERFACES} PROPERTIES LANGUAGE CXX)
 # Module implementation units (module cluster;) — regular C++ sources.
 set(CLUSTER_MODULE_IMPLS
-    ${CMAKE_SOURCE_DIR}/src/cluster/cluster_config.cc
     ${CMAKE_SOURCE_DIR}/src/cluster/shard_router.cc
 )
 add_library(cluster STATIC ${CLUSTER_MODULE_IMPLS})
@@ -1373,7 +1446,119 @@ target_include_directories(cluster PUBLIC
 target_compile_options(cluster PUBLIC ${BENCH_CXXFLAGS})
 # std_port supersedes the deleted hashbrown_port target; it PUBLIC-links
 # std_port_hashbrown, so naming std_port pulls in both archives/BMIs.
-target_link_libraries(cluster PUBLIC srpc pthread btree_port vec_port rc_port std_port)
+target_link_libraries(cluster PUBLIC srpc pthread btree_port vec_port rc_port std_port mako_sharding_native)
+
+# The Raft server is Rust. src/deptran/raft is a
+# cargo staticlib: its C ABI (src/deptran/raft/server_exports.h) is what the C++
+# shim `class RaftServer` and the hand-written kernels in server.cc call, and it
+# calls those kernels back. cargo builds it into this build tree; the pinned
+# rusty-rustc facade (src/rusty-rustc) is its only dependency.
+# The Rust side of the Raft RPC service, from the same .rpc file rcc_rpc.h
+# comes from. Without this the checked-in rpc.rs is a snapshot that can drift
+# from the wire the C++ peers speak, and nothing would say so: the ids are not
+# recorded in the .rpc at all (rpcgen assigns them randomly and preserves them
+# only by scraping the header it previously wrote), so this reads them out of
+# rcc_rpc.h -- which is why it depends on that header and not just the .rpc.
+set(RAFT_RPC_RUST "${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/src/rpc.rs")
+add_custom_command(
+    OUTPUT ${RAFT_RPC_RUST}
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/rpcgen_rust.py
+            --service Raft
+            --rpc src/deptran/rcc_rpc.rpc
+            --ids src/deptran/raft/rpc_ids.txt
+            --ids-from src/deptran/rcc_rpc.h
+            --out src/deptran/raft/rt/src/rpc.rs
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.rpc
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/rcc_rpc.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rpc_ids.txt
+            ${CMAKE_CURRENT_SOURCE_DIR}/scripts/rpcgen_rust.py
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    COMMENT "rpcgen_rust: the Rust side of the Raft RPC service"
+    VERBATIM)
+
+set(RAFT_RUST_TARGET_DIR "${CMAKE_BINARY_DIR}/raft-cargo")
+# The linked artifact is raft-rt (libraft_rt.a), which contains the shell
+# crate (src/deptran/raft) and the core as rlibs.
+set(RAFT_RUST_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml")
+set(RAFT_RUST_LIB "${RAFT_RUST_TARGET_DIR}/release/libraft_rt.a")
+# The srpc crate is in here because raft-rt depends on it -- transport.rs
+# names srpc::client::Client. Without these, editing a canonical srpc .rs
+# leaves libraft_rt.a stale: ninja sees no changed dependency, never re-invokes
+# cargo, and cargo therefore never gets the chance to notice. The four module
+# directories are the ones src/srpc/rust-modules.toml names, plus the
+# generated lib.rs.
+file(GLOB RAFT_RUST_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/shell/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/replay/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-cpp-markers/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/base/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/misc/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/reactor/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/rpc/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/srpc/src/*.rs)
+# The Rust half of the lab build. -DRAFT_TEST=ON defines RAFT_TEST_CORO for
+# the C++ side; the crate needs the matching cargo feature or the two halves
+# disagree about whether they are in lab mode (the leader no-op and the lab's
+# initial role both branch on it). One switch, both languages.
+# -DMAKO_RAFT_DISK=ON adds the disk-mode feature the same way.
+set(RAFT_RUST_FEATURE_LIST)
+if(RAFT_TEST)
+    list(APPEND RAFT_RUST_FEATURE_LIST raft_test)
+endif()
+if(MAKO_RAFT_DISK)
+    list(APPEND RAFT_RUST_FEATURE_LIST raft_disk)
+endif()
+set(RAFT_RUST_FEATURES)
+if(RAFT_RUST_FEATURE_LIST)
+    list(JOIN RAFT_RUST_FEATURE_LIST "," RAFT_RUST_FEATURE_CSV)
+    set(RAFT_RUST_FEATURES --features ${RAFT_RUST_FEATURE_CSV})
+endif()
+add_custom_command(
+    OUTPUT ${RAFT_RUST_LIB}
+    # CC and AR are not decoration. src/srpc/build.rs compiles the nine C
+    # kernels with $CC, falling back to `cc`, while src/srpc-cmake builds the
+    # same manifest with CMAKE_C_COMPILER -- and srpc_rand.c:17 branches on
+    # __clang__. Unset, `cc` here is gcc, so the binary carried TWO different
+    # srpc_rand implementations (clang: a pthread_key_t seed freed at thread
+    # exit; gcc: a _Thread_local seed with no teardown) and the linker picked
+    # one by archive order. Passing the compiler through makes the two copies
+    # the same code; stage 0b removes the second copy.
+    # --locked here and in the cargo tests below: build what
+    # src/deptran/raft/Cargo.lock records, and fail on a stale lock rather
+    # than re-resolve it.
+    COMMAND ${CMAKE_COMMAND} -E env
+            "CC=${CMAKE_C_COMPILER}"
+            "AR=${CMAKE_AR}"
+            ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
+            cargo build --release --locked --quiet
+            --manifest-path ${RAFT_RUST_MANIFEST}
+            --target-dir ${RAFT_RUST_TARGET_DIR}
+            ${RAFT_RUST_FEATURES}
+    DEPENDS ${RAFT_RUST_SOURCES}
+            ${RAFT_RPC_RUST}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/replay/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/Cargo.toml
+    COMMENT "cargo build: the Raft core and raft-rt as ${RAFT_RUST_LIB}"
+    VERBATIM)
+add_custom_target(raft_rust_build DEPENDS ${RAFT_RUST_LIB})
+add_library(raft_rust STATIC IMPORTED GLOBAL)
+set_target_properties(raft_rust PROPERTIES
+    IMPORTED_LOCATION ${RAFT_RUST_LIB}
+    # what Rust's std needs from the platform
+    INTERFACE_LINK_LIBRARIES "pthread;dl;m;rt;util;gcc_s")
+
+# The Raft core every link site below uses (the rustc artifact), and what must
+# be built before anything that links it.
+set(RAFT_CORE_TARGET raft_rust)
+set(RAFT_CORE_DEPS raft_rust_build)
 
 # Build the replication core from the explicit manifest above.
 add_library(txlog_core_obj OBJECT
@@ -1386,10 +1571,11 @@ add_library(txlog_core_obj OBJECT
     # `txlog_core`'s PUBLIC link to the `srpc` target.
 )
 add_dependencies(txlog_core_obj rcc_rpc_gen)
+add_dependencies(txlog_core_obj raft_goal0_source_gate ${RAFT_CORE_DEPS})
 # Pull in srpc's PUBLIC include dirs + module BMI paths so deptran .cc files
 # that `#include "srpc/srpc.hpp"` find both the
 # umbrella header and the imports it references.
-target_link_libraries(txlog_core_obj PUBLIC srpc cluster)
+target_link_libraries(txlog_core_obj PUBLIC srpc cluster ${RAFT_CORE_TARGET})
 set_target_properties(txlog_core_obj PROPERTIES
     POSITION_INDEPENDENT_CODE ON
 )
@@ -1413,8 +1599,10 @@ endforeach()
 target_compile_definitions(txlog_core_obj PRIVATE CONFIG_H=\"${CONFIG_H}\")
 
 add_library(txlog_core STATIC $<TARGET_OBJECTS:txlog_core_obj>)
+add_dependencies(txlog_core ${RAFT_CORE_DEPS})
 target_link_libraries(txlog_core
     PUBLIC
+    ${RAFT_CORE_TARGET}
     srpc
     cluster
     yaml-cpp
@@ -1430,33 +1618,119 @@ target_include_directories(txlog_core PUBLIC
     src/deptran
 )
 
+# The archive and the Rust library need each other (kernels one way, exports the
+# other), so anything that links the archive links both in a rescan group.
 set(TXLOG_LINK_LIBS
-    txlog_core
+    "$<LINK_GROUP:RESCAN,txlog_core,${RAFT_CORE_TARGET}>"
 )
 set(TXLOG_BUILD_DEPS
-    txlog_core
+    txlog_core ${RAFT_CORE_DEPS}
 )
+
+# The kernel ABI's exactly-once check (scripts/raft_kernel_check.py), on every
+# build: each raft_* symbol the core imports is defined exactly once by the
+# host archive, and nothing the core defines (raft-rt's seam) is defined by
+# the host as well.
+set(RAFT_KERNEL_CHECK_COMMANDS
+    COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_kernel_check.py
+            --once "${RAFT_RUST_LIB}" "$<TARGET_FILE:txlog_core>")
+set(RAFT_KERNEL_CHECK_DEPS txlog_core ${RAFT_CORE_DEPS})
+# raft-rt's own tests (the snapshot store's unit
+# tests, the transport round trips, resend suppression, the frame cap) gate
+# the build too. A stamp keeps them from rerunning when nothing they cover
+# changed; this tree's feature set is passed so the tests see the lab or
+# production crate this tree links.
+file(GLOB RAFT_RT_TEST_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/tests/*.rs)
+set(RAFT_RT_TEST_STAMP "${CMAKE_BINARY_DIR}/raft_rt_test.stamp")
+add_custom_command(
+    OUTPUT ${RAFT_RT_TEST_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E env
+            "CC=${CMAKE_C_COMPILER}"
+            "AR=${CMAKE_AR}"
+            ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
+            cargo test --release --locked --quiet
+            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml
+            --target-dir ${RAFT_RUST_TARGET_DIR}
+            ${RAFT_RUST_FEATURES}
+    COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_RT_TEST_STAMP}
+    DEPENDS ${RAFT_RUST_SOURCES} ${RAFT_RT_TEST_SOURCES} ${RAFT_RUST_LIB}
+    COMMENT "cargo test: raft-rt"
+    VERBATIM)
+add_custom_target(raft_rt_test DEPENDS ${RAFT_RT_TEST_STAMP})
+list(APPEND RAFT_KERNEL_CHECK_DEPS raft_rt_test)
+# raft-store's tests (the WAL crash sweep, recovery, creation, the flusher,
+# the base's ops) gate the build in both modes; a disk build adds the RocksDB
+# base's (`--features rocksdb`, which links librocksdb as the binaries do).
+set(RAFT_STORE_TEST_FEATURES "")
+if(MAKO_RAFT_DISK)
+    set(RAFT_STORE_TEST_FEATURES --features rocksdb)
+endif()
+file(GLOB RAFT_STORE_TEST_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/tests/*.rs)
+set(RAFT_STORE_TEST_STAMP "${CMAKE_BINARY_DIR}/raft_store_test.stamp")
+add_custom_command(
+    OUTPUT ${RAFT_STORE_TEST_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E env
+            ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
+            cargo test --release --locked --quiet ${RAFT_STORE_TEST_FEATURES}
+            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/Cargo.toml
+            --target-dir ${RAFT_RUST_TARGET_DIR}
+    COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_STORE_TEST_STAMP}
+    DEPENDS ${RAFT_STORE_TEST_SOURCES}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/Cargo.toml
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/build.rs
+    COMMENT "cargo test: raft-store"
+    VERBATIM)
+add_custom_target(raft_store_test DEPENDS ${RAFT_STORE_TEST_STAMP})
+list(APPEND RAFT_KERNEL_CHECK_DEPS raft_store_test)
+# raft-core's and raft-replay's tests: they check every persist note on
+# recorded runs (core/tests/persist_note.rs, the replay's shadow), a runtime
+# check beside Verus's proof that each note is exact.
+file(GLOB RAFT_CORE_TEST_SOURCES CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/tests/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/core/tests/common/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/replay/src/*.rs
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/replay/tests/*.rs)
+set(RAFT_CORE_TEST_STAMP "${CMAKE_BINARY_DIR}/raft_core_test.stamp")
+add_custom_command(
+    OUTPUT ${RAFT_CORE_TEST_STAMP}
+    COMMAND ${CMAKE_COMMAND} -E env
+            ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
+            cargo test --release --locked --quiet -p raft-core -p raft-replay
+            --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
+            --target-dir ${RAFT_RUST_TARGET_DIR}
+    COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_CORE_TEST_STAMP}
+    DEPENDS ${RAFT_CORE_TEST_SOURCES}
+    COMMENT "cargo test: raft-core, raft-replay"
+    VERBATIM)
+add_custom_target(raft_core_test DEPENDS ${RAFT_CORE_TEST_STAMP})
+list(APPEND RAFT_KERNEL_CHECK_DEPS raft_core_test)
+add_custom_target(raft_kernel_check ALL
+    ${RAFT_KERNEL_CHECK_COMMANDS}
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/scripts/raft_kernel_check.py
+    COMMENT "Checking the Raft kernel ABI (exactly-once)"
+    VERBATIM)
+add_dependencies(raft_kernel_check ${RAFT_KERNEL_CHECK_DEPS})
 
 # Temporary Raft-only target for borrow checking
 file(GLOB RAFT_BORROW_SRC
     "src/deptran/raft/*.cc"
     "src/deptran/raft/*.cpp"
 )
-# Exclude test files from raft borrow checking:
-# - testconf.cc: Test infrastructure with class inheritance patterns not compatible with @safe code
-# - test.cc: Test harness that depends on testconf.h
+# Exclude test files from raft borrow checking. The lab suite is Rust
+# (src/deptran/raft/shell/lab*.rs, raft-rt's lab_runtime.rs); this filter is
+# kept for any C++ test file added here.
 # NOTE: raft_main_helper.cc is also excluded because it includes third-party headers
 # (YAML, etc.) that generate 1000+ false positive violations from header code.
-#   - replicated_db.cc: includes <rocksdb/c.h> third-party header that generates
-#     false positive violations from header code.
 list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*test(conf)?\\.cc$")
-list(FILTER RAFT_BORROW_SRC EXCLUDE REGEX ".*replicated_db\\.cc$")
-# Note: config_manager.cc / cluster_config.cc / config_watcher.cc moved to
-# src/cluster/ and are no longer part of RAFT_BORROW_SRC.
 
 if(RAFT_BORROW_SRC)
     add_library(raft_borrow OBJECT ${RAFT_BORROW_SRC})
     set_target_properties(raft_borrow PROPERTIES EXCLUDE_FROM_ALL YES)
+    add_dependencies(raft_borrow raft_goal0_source_gate)
 
     target_include_directories(raft_borrow PUBLIC
         src
@@ -1491,6 +1765,7 @@ if(RAFT_BORROW_SRC)
             DEPENDS ${RAFT_BORROW_STAMPS}
             COMMENT "Running borrow checker on Raft sources only"
         )
+        add_dependencies(borrow_check_raft raft_goal0_source_gate)
 
         if(TARGET build_rusty_cpp_checker)
             add_dependencies(borrow_check_raft build_rusty_cpp_checker)
@@ -1533,10 +1808,6 @@ set(DEPTRAN_BORROW_SRC
     src/deptran/paxos_worker.cc
     src/deptran/replication_helper.cc
     src/deptran/scheduler.cc
-    # Files below excluded due to violations from included headers (not the .cc files themselves):
-    # src/deptran/shard_router.cc           # 51 violations from masstree/sharding headers
-    # src/deptran/sharding_policy_cache.cc  # 14 violations from sharding/Mutex headers
-    # src/deptran/tpcc_sharding.cc          # 23 violations from sharding_policy_builder.h headers
 )
 
 if(DEPTRAN_BORROW_SRC)
@@ -1623,7 +1894,12 @@ target_compile_options(mako PUBLIC ${BENCH_CXXFLAGS})
 mako_force_include_masstree_config(${MAKO_SRCFILES})
 target_compile_definitions(mako PUBLIC CONFIG_H=\"${CONFIG_H}\")
 # Inherit srpc module BMI paths from txlog_core_obj.
-target_link_libraries(mako PUBLIC txlog_core_obj masstree mako_allocator)
+# A static library gets no objects from txlog_core_obj, only usage requirements;
+# executables that link mako alone (the gtest binaries) therefore need the
+# kernels' archive next to libraft_rt.a, in the same rescan group.
+target_link_libraries(mako PUBLIC txlog_core_obj masstree mako_allocator mako_sharding_native
+    "$<LINK_GROUP:RESCAN,txlog_core,${RAFT_CORE_TARGET}>")
+add_dependencies(mako rcc_rpc_gen)
 target_include_directories(mako PUBLIC ${LIBEVENT_INCLUDE_DIRS})
 set_target_properties(mako PROPERTIES OUTPUT_NAME "mako")
 
@@ -2115,9 +2391,11 @@ function(add_apps exec_name exec_path)
 endfunction()
 
 add_apps(dbtest src/mako/benchmarks/dbtest.cc)
+add_apps(mako_admin src/mako/mako_admin.cc)
+add_apps(native_sharding_smoke examples/native_sharding_smoke.cc)
 add_apps(simpleTransaction examples/simpleTransaction.cc
-    TXLOG_LIBS txlog_core
-    TXLOG_DEPS txlog_core
+    TXLOG_LIBS "$<LINK_GROUP:RESCAN,txlog_core,${RAFT_CORE_TARGET}>"
+    TXLOG_DEPS txlog_core ${RAFT_CORE_DEPS}
 )
 add_apps(simpleTransactionRep examples/simpleTransactionRep.cc)
 add_apps(continuousTransactions examples/continuousTransactions.cc)
@@ -2188,7 +2466,6 @@ if(MAKO_USE_RAFT)
   add_apps(testPreferredReplicaStartup examples/mako-raft-tests/testPreferredReplicaStartup.cc)
   add_apps(testPreferredReplicaLogReplication examples/mako-raft-tests/testPreferredReplicaLogReplication.cc)
   add_apps(testNoOps examples/mako-raft-tests/testNoOps.cc)
-  add_apps(read_raft_disk src/deptran/raft/read_raft_disk.cc)
 endif()
 
 # Borrow checking for dbtest DISABLED - uses STO (Software Transactional Objects)
@@ -2511,6 +2788,24 @@ if(MAKO_CARGO_EXECUTABLE)
 else()
     message(STATUS "Cargo not found; sto_tpcc_bench target is unavailable")
 endif()
+# raft_bench — standalone Raft performance driver,
+# beside the scripts that drive it (scripts/raft_perf/).
+# Registered the same way as paxos_async_commit_test above: it is an ordinary
+# app that links `mako` and drives the replication helper. It is deliberately
+# NOT inside the MAKO_USE_RAFT block, because that option only gates the extra
+# Raft example executables; the Raft helper itself is always compiled into
+# `mako` via TXLOG_HELPER_SRC, so the driver measures the production build.
+add_apps(raft_bench scripts/raft_perf/raft_bench.cc)
+# raft_kill_node -- one Raft replica for the process-kill tests, beside the
+# driver and checker that use it (scripts/raft_kill/).
+add_apps(raft_kill_node scripts/raft_kill/raft_kill_node.cc)
+# Provenance the record cannot otherwise obtain: neither MODE nor
+# CMAKE_BUILD_TYPE is a preprocessor macro, and a number is not interpretable
+# without knowing which build produced it.
+target_compile_definitions(raft_bench PRIVATE
+    RAFT_BENCH_BUILD_FLAVOUR="${MODE}"
+    RAFT_BENCH_CMAKE_BUILD_TYPE="${CMAKE_BUILD_TYPE}"
+)
 
 # ============================================================================
 # Test Configuration
@@ -3063,31 +3358,10 @@ if(BUILD_TESTS)
         ${LIBEVENT_LDFLAGS}
     )
 
-    # Linux epoll_event is packed on x86-64. Keep ADD and MOD coverage in a
-    # root-owned target because src/srpc's optional nested test dependencies
-    # are intentionally not initialized by the main repository checkout.
-    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-        add_executable(test_srpc_epoll_platform
-            tests/srpc_epoll_platform_test.cc)
-        target_include_directories(test_srpc_epoll_platform PRIVATE
-            ${TEST_INCLUDE_DIRS}
-            ${GTEST_INCLUDE_DIRS})
-        target_compile_options(test_srpc_epoll_platform PRIVATE
-            ${TEST_COMPILE_OPTIONS})
-        target_link_libraries(test_srpc_epoll_platform PRIVATE
-            ${TEST_LINK_LIBS}
-            ${GTEST_LIBRARIES}
-            ${GTEST_MAIN_LIBRARIES})
-        add_test(NAME test_srpc_epoll_platform
-            COMMAND test_srpc_epoll_platform --gtest_fail_if_no_test_selected)
-        set_tests_properties(test_srpc_epoll_platform PROPERTIES
-            LABELS "rust;srpc;epoll;ffi"
-            RUN_SERIAL TRUE
-            TIMEOUT 30)
-        if(TARGET rust_sto_integration)
-            add_dependencies(rust_sto_integration test_srpc_epoll_platform)
-        endif()
-    endif()
+    # test_srpc_epoll_platform (tests/srpc_epoll_platform_test.cc) is no longer
+    # built: it exercised srpc::epoll_open/epoll_add_impl/epoll_update_impl from
+    # the C++ epoll implementation, which the upstream srpc subtree deleted in
+    # favour of the token-based C kernel (src/srpc/reactor/srpc_epoll.c).
 
 
 
@@ -3099,7 +3373,7 @@ if(BUILD_TESTS)
     add_executable(test_client_service tests/test_client_service.cc)
     target_include_directories(test_client_service PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
     target_compile_options(test_client_service PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_client_service ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
+    target_link_libraries(test_client_service ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} mako_sharding_native pthread)
     add_test(NAME test_client_service COMMAND test_client_service)
 
     # HelperQueue carries opaque request tokens between the SRPC event loop
@@ -3119,42 +3393,12 @@ if(BUILD_TESTS)
         LABELS "concurrency;srpc;lifecycle"
         TIMEOUT 30)
 
-    # Sharding Policy Tests
-    #
-    # The policy value types now serialize via their srpc Serializable
-    # save()/load() DSL methods (BinaryWriteArchive), so the old free-function
-    # srpc::Marshal operators (sharding_policy_marshal.{h,cc}) are gone.
-    # sharding_policy.h pulls in the srpc.serializable module directly, so this
-    # test just compiles the one source file.
-    add_executable(test_sharding_policy
-        tests/sharding_policy_test.cc
-    )
-    target_include_directories(test_sharding_policy PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_sharding_policy PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_sharding_policy cluster ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
-    add_test(NAME test_sharding_policy COMMAND test_sharding_policy)
-
-    # Sharding Policy Cache Tests (requires txlog bench/core for ConfigClient)
-    add_executable(test_sharding_policy_cache tests/sharding_policy_cache_test.cc)
-    target_include_directories(test_sharding_policy_cache PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran)
-    target_compile_options(test_sharding_policy_cache PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_sharding_policy_cache ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_sharding_policy_cache COMMAND test_sharding_policy_cache)
-
-    # Shard Router Integration Tests (requires txlog bench/core for ShardingPolicyCache)
+    # Disabled/static physical table routing and table-registry tests.
     add_executable(test_shard_router tests/shard_router_test.cc)
     target_include_directories(test_shard_router PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako)
     target_compile_options(test_shard_router PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_shard_router ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
     add_test(NAME test_shard_router COMMAND test_shard_router)
-
-    # TPC-C Sharding Integration Tests (requires txlog bench/core for ShardingPolicyCache)
-    add_executable(test_tpcc_sharding tests/tpcc_sharding_test.cc)
-    target_include_directories(test_tpcc_sharding PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS} src/deptran src/mako)
-    target_compile_options(test_tpcc_sharding PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_tpcc_sharding ${TXLOG_LINK_LIBS} ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} rocksdb pthread)
-    add_test(NAME test_tpcc_sharding COMMAND test_tpcc_sharding)
-
 
     # ConfigKvService server-handler read-logic tests (Stage 3d). The
     # ConfigKvServiceImpl handler is generated from rcc_rpc.rpc, so this
@@ -3196,26 +3440,6 @@ if(BUILD_TESTS)
     )
     add_test(NAME test_config_manager COMMAND test_config_manager)
 
-    # ShardManager control-plane test — stub Shards (in-memory KV stand-ins
-    # for masstree shards) driven through the REAL ConfigManager/ClusterConfig
-    # reconfiguration verbs (add/kill/remove). Pure cluster like
-    # test_config_manager: no storage engine, no RPC.
-    add_executable(test_shard_manager
-        tests/shard_manager_test.cc
-    )
-    target_include_directories(test_shard_manager PRIVATE
-        src
-        ${GTEST_INCLUDE_DIRS}
-    )
-    target_link_options(test_shard_manager PRIVATE
-        "-L${_CXX_COMPILER_ROOT}/lib"
-        "-Wl,-rpath,${_CXX_COMPILER_ROOT}/lib"
-    )
-    target_link_libraries(test_shard_manager
-        cluster srpc ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} c++ pthread
-    )
-    add_test(NAME test_shard_manager COMMAND test_shard_manager)
-
     # OrderedIndexKvStore adapter test — the cluster<->mako binding seam.
     # Unlike test_config_manager (pure cluster), this TU pulls the
     # storage interface header + an in-memory FullOrderedIndex fake, so
@@ -3248,6 +3472,20 @@ if(BUILD_TESTS)
     if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_srpc)
         # Ensure regular test builds also gate on SRPC borrow-check status.
     endif()
+
+    # Reactor timeout events remain observable as TIMEOUT to the resumed
+    # fiber, but must leave the polling queues once terminal. Raft uses this
+    # path for its short submission-progress waits under saturation.
+    add_executable(test_srpc_timeout_race
+        src/srpc/tests/test_timeout_race.cc)
+    target_include_directories(test_srpc_timeout_race PRIVATE
+        ${TEST_INCLUDE_DIRS}
+        ${GTEST_INCLUDE_DIRS})
+    target_compile_options(test_srpc_timeout_race PRIVATE
+        ${TEST_COMPILE_OPTIONS})
+    target_link_libraries(test_srpc_timeout_race
+        ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
+    add_test(NAME test_srpc_timeout_race COMMAND test_srpc_timeout_race)
 
 
 
@@ -3312,11 +3550,6 @@ if(BUILD_TESTS)
     # SRPC_USE_CHANNEL/SRPC_DISABLE_CHANNEL migration switch and its
     # test-only override helpers. Channel mode is unconditional now.
 
-    add_executable(test_raft_messages tests/raft_messages_test.cc)
-    target_include_directories(test_raft_messages PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_messages PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_messages ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_messages COMMAND test_raft_messages)
 
     add_executable(test_raft_application_log tests/raft_application_log_test.cc)
     target_include_directories(test_raft_application_log PRIVATE
@@ -3334,65 +3567,13 @@ if(BUILD_TESTS)
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread txlog_core)
     add_test(NAME test_legacy_raft_log COMMAND test_legacy_raft_log)
 
-    add_executable(test_raft_transport_facade tests/raft_transport_facade_test.cc)
-    target_include_directories(test_raft_transport_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_transport_facade PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_transport_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_transport_facade COMMAND test_raft_transport_facade)
 
-    add_executable(test_raft_srpc_transport_compile tests/raft_srpc_transport_compile_test.cc)
-    target_include_directories(test_raft_srpc_transport_compile PRIVATE
-        ${TEST_INCLUDE_DIRS}
-        ${GTEST_INCLUDE_DIRS}
-        # raft_srpc_transport_compile_test.cc transitively pulls in
-        # deptran headers and `__dep__.h`, which includes
-        # `yaml-cpp/yaml.h`. Neither path is propagated through `srpc`,
-        # so add both explicitly here (same pattern as
-        # `txlog_core_obj`'s PUBLIC include set).
-        ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran
-        ${CMAKE_CURRENT_SOURCE_DIR}/third-party/yaml-cpp/include)
-    target_compile_options(test_raft_srpc_transport_compile PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_srpc_transport_compile ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_srpc_transport_compile COMMAND test_raft_srpc_transport_compile)
 
-    # Phase 8.1a — RaftQuorum<Reply> primitive (header-only template).
-    # Bootstraps an srpc::Reactor on the test thread to exercise the
-    # IntEvent-backed wait_until_quorum path; no heavy raft state needed.
-    add_executable(test_raft_quorum tests/raft_quorum_test.cc)
-    target_include_directories(test_raft_quorum PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_quorum PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_quorum ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_quorum COMMAND test_raft_quorum)
 
-    add_executable(test_raft_dispatcher_facade tests/raft_dispatcher_facade_test.cc)
-    target_include_directories(test_raft_dispatcher_facade PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_dispatcher_facade PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_dispatcher_facade ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_dispatcher_facade COMMAND test_raft_dispatcher_facade)
 
-    add_executable(test_raft_channel_transport tests/raft_channel_transport_test.cc)
-    target_include_directories(test_raft_channel_transport PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_channel_transport PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_channel_transport ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_channel_transport COMMAND test_raft_channel_transport)
 
-    add_executable(test_raft_memory_snapshot_manager tests/raft_memory_snapshot_manager_test.cc)
-    target_include_directories(test_raft_memory_snapshot_manager PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_memory_snapshot_manager PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_memory_snapshot_manager ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_memory_snapshot_manager COMMAND test_raft_memory_snapshot_manager)
 
-    add_executable(test_raft_test_cluster tests/raft_test_cluster_test.cc)
-    target_include_directories(test_raft_test_cluster PRIVATE ${TEST_INCLUDE_DIRS} ${GTEST_INCLUDE_DIRS})
-    target_compile_options(test_raft_test_cluster PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(test_raft_test_cluster ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
-    add_test(NAME test_raft_test_cluster COMMAND test_raft_test_cluster)
 
-    add_executable(raft_lab_standalone src/deptran/raft/raft_lab_standalone.cc)
-    target_include_directories(raft_lab_standalone PRIVATE ${TEST_INCLUDE_DIRS})
-    target_compile_options(raft_lab_standalone PRIVATE ${TEST_COMPILE_OPTIONS})
-    target_link_libraries(raft_lab_standalone pthread txlog_core_obj yaml-cpp rocksdb lz4 ${CMAKE_DL_LIBS} Python3::Python)
-    add_test(NAME raft_lab_standalone COMMAND raft_lab_standalone)
 
 
     # Service proxy facade guard tests (Phase 2 leaf 1)
@@ -3456,13 +3637,13 @@ if(BUILD_TESTS)
     # )
     # # Use RESOURCE_LOCK to prevent port conflicts with other Paxos tests (ports 17001-17xxx)
 
-    # Add a convenience target to run all tests
-    # The src/srpc/tests corpus belongs to srpc and is built and run there;
-    # mako no longer builds any of it, so this convenience target names only
-    # mako's own tests.
+    # Add a convenience target to run all tests. The full src/srpc/tests corpus
+    # belongs to srpc; Mako carries only the focused timeout-queue regression
+    # above because Raft exercises that reactor path under saturation.
     add_custom_target(run_tests
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
         DEPENDS test_masstree
+                test_srpc_timeout_race
                 test_silo_varint test_silo_rcu_thread test_silo_allocator
                 test_sto_transaction test_sto_transaction_real
                 simpleTransaction simplePaxos shard1ReplicationSimple
@@ -3471,6 +3652,7 @@ if(BUILD_TESTS)
     if(ENABLE_BORROW_CHECKING AND TARGET borrow_check_srpc)
         add_dependencies(run_tests borrow_check_srpc)
     endif()
+    add_dependencies(run_tests raft_goal0_source_gate)
     add_dependencies(run_tests srpc_goal0_dual_compile)
 
     # Add borrow checking for test files if enabled
@@ -4090,7 +4272,19 @@ if(BUILD_TESTS)
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES}
         yaml-cpp rocksdb lz4 numa event_pthreads
         pthread)
-    add_test(NAME test_mako_nontxn_distributed COMMAND test_mako_nontxn_distributed)
+    add_test(NAME test_mako_nontxn_distributed COMMAND test_mako_nontxn_distributed
+        --gtest_filter=-NativeMixedScan.*)
+    # Native actors are process-global; run mixed local/paged scans separately
+    # from the same executable's static-routing suite.
+    add_test(NAME test_mako_native_mixed_scan
+        COMMAND ${CMAKE_COMMAND} -E env
+            --unset=MAKO_SHARD_METADATA_DIR --unset=MAKO_SHARD_METADATA_INIT
+            MAKO_NATIVE_MIXED_SCAN=1 MAKO_CLUSTER_CONFIG=1
+            $<TARGET_FILE:test_mako_nontxn_distributed>
+            --gtest_filter=NativeMixedScan.LocalAndRemoteSegments)
+    set_tests_properties(test_mako_nontxn_distributed test_mako_native_mixed_scan
+        PROPERTIES RESOURCE_LOCK mako_distributed_loopback)
+    set_tests_properties(test_mako_native_mixed_scan PROPERTIES TIMEOUT 300)
     set_tests_properties(test_mako_nontxn_distributed PROPERTIES
         LABELS "silo;distributed"
         RUN_SERIAL TRUE
@@ -4179,6 +4373,19 @@ if(BUILD_TESTS)
         ${GTEST_INCLUDE_DIRS}
     )
     add_test(NAME STOTransactionRealTests COMMAND test_sto_transaction_real)
+
+    # Exercise the real process-wide clock/slots, nested retained guards, lazy
+    # helper activation, and reclamation callbacks through terminal cleanup.
+    add_executable(test_sto_epoch_rcu
+        src/mako/sto/unit-rcu.cc src/mako/sto/clp.c)
+    # CLP supports C++; the linked Masstree target propagates a C++ config header.
+    set_source_files_properties(src/mako/sto/clp.c PROPERTIES LANGUAGE CXX)
+    target_include_directories(test_sto_epoch_rcu PRIVATE ${TEST_INCLUDE_DIRS})
+    target_link_libraries(test_sto_epoch_rcu
+        mako ${TEST_LINK_LIBS} yaml-cpp rocksdb lz4 numa event_pthreads pthread)
+    add_test(NAME STOEpochRCUTests COMMAND test_sto_epoch_rcu)
+    set_tests_properties(STOEpochRCUTests PROPERTIES
+        ENVIRONMENT "MAKO_CLUSTER_CONFIG=0" TIMEOUT 120)
 
     if(CARGO_EXECUTABLE)
         set(MAKO_CACHE_NATIVE_CRASH_TEST_ENV)
@@ -4628,7 +4835,7 @@ if(BUILD_TESTS)
                 mako_local_thread_limit_probe
                 check_mako_local_build_fingerprint
                 check_mako_local_abi_symbols
-                test_sto_transaction test_sto_transaction_real
+                test_sto_transaction test_sto_transaction_real test_sto_epoch_rcu
         COMMENT "Running all Silo/STO tests"
         VERBATIM
     )
@@ -4675,12 +4882,14 @@ if(BUILD_TESTS)
     endif()
 
     # Keep this summary honest: it must name only targets this file actually
-    # defines. It went stale in 4a06ef0e (which stopped building srpc's
+    # defines. It went stale in 4a06ef0e (which stopped building the complete
     # `src/srpc/tests/` corpus) and then told CI logs that `test_timer`,
     # `test_marshal`, `test_rpc`, `test_rpc_extended`, `test_future`,
     # `test_reactor`, `test_reactor_extended` and `rpcbench` were configured
     # when ninja had no such targets.
     message(STATUS "Test targets configured:")
+    message(STATUS "  Reactor Tests:")
+    message(STATUS "    - test_srpc_timeout_race: terminal timeout queue cleanup")
     message(STATUS "  Masstree Tests:")
     message(STATUS "    - test_masstree: Core Masstree b-tree regression tests")
     message(STATUS "  Live Silo-support/STO Tests:")

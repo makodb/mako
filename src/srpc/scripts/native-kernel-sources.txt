@@ -1,0 +1,11 @@
+all base/srpc_base.c
+all misc/srpc_timing.c
+all misc/srpc_rand.c
+all misc/srpc_io.c
+all rpc/srpc_net.c
+all rpc/srpc_connect.c
+all rpc/srpc_server.c
+all reactor/srpc_fiber.c
+all reactor/srpc_epoll.c
+x86_64 reactor/fiber_context_x86_64.S
+aarch64 reactor/fiber_context_aarch64.S

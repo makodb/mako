@@ -295,7 +295,7 @@ template <> struct Container<USE_MASSTREE> {
         return v_.transUpdate(IntStr(key).str(), value);
     }
     static void init() {
-        Transaction::set_epoch_advance_callback([] (unsigned) {
+        Transaction::set_epoch_advance_callback([] (Transaction::epoch_type) {
             // just advance blindly because of the way Masstree uses epochs
             globalepoch++;
         });
@@ -341,7 +341,7 @@ template <> struct Container<USE_MASSTREE_STR> {
         return v_.transUpdate(IntStr(key).str(), valtostr(value));
     }
     static void init() {
-        Transaction::set_epoch_advance_callback([] (unsigned) {
+        Transaction::set_epoch_advance_callback([] (Transaction::epoch_type) {
             // just advance blindly because of the way Masstree uses epochs
             globalepoch++;
         });

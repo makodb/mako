@@ -1,6 +1,5 @@
-/* srpc_timing.c — cycle-counter read as plain C (Goal-0 C demotion:
- * inline asm will never be Rust DSL; the crate's fiber seam already
- * uses the shared-kernel pattern this mirrors).
+/* Native cycle-counter, clock, and scheduling operations shared by the
+ * rustc and generated C++ builds. Canonical Rust owns timing policy.
  */
 
 #include "srpc_timing.h"
@@ -39,9 +38,8 @@ uint64_t srpc_rdtsc(void) {
 #endif
 }
 
-/* Microseconds since an unspecified monotonic origin.  This is the plain-C
- * kernel seam used by canonical Rust modules that cannot call the C++
- * rusty::sys::time wrapper while they are also compiled by rustc. */
+/* Microseconds since an unspecified monotonic origin, read through the same
+ * C ABI operation by canonical Rust and its generated C++ modules. */
 uint64_t srpc_clock_monotonic_us(void) {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
@@ -74,42 +72,21 @@ void srpc_sleep_us(uint64_t microseconds) {
     nanosleep(&ts, NULL);
 }
 
-/* Wall-clock timestamp "YYYY-MM-DD HH:MM:SS.mmm" into a caller buffer of
- * at least 24 bytes (23 chars + NUL). Plain C: time/localtime_r/
- * gettimeofday syscalls + raw byte writing (Goal-0 C demotion; was
- * srpc::time_now_str + its make_int digit writer in base/misc.cpp). */
-static void srpc_write_int(char* str, int val, int digits) {
-    char* p = str + digits;
-    for (int i = 0; i < digits; i++) {
-        int d = val % 10;
-        val /= 10;
-        p--;
-        *p = (char)('0' + d);
-    }
-}
-
-void srpc_time_now_str(char* now) {
+/* Copy the platform calendar layout into six integer fields. Timestamp
+ * digit formatting and separators are owned by canonical base/logging.rs. */
+int32_t srpc_local_calendar_fields(int32_t* fields) {
     time_t seconds_since_epoch = time(NULL);
     struct tm local_calendar;
-    localtime_r(&seconds_since_epoch, &local_calendar);
-    srpc_write_int(now, local_calendar.tm_year + 1900, 4);
-    now[4] = '-';
-    srpc_write_int(now + 5, local_calendar.tm_mon + 1, 2);
-    now[7] = '-';
-    srpc_write_int(now + 8, local_calendar.tm_mday, 2);
-    now[10] = ' ';
-    srpc_write_int(now + 11, local_calendar.tm_hour, 2);
-    now[13] = ':';
-    srpc_write_int(now + 14, local_calendar.tm_min, 2);
-    now[16] = ':';
-    srpc_write_int(now + 17, local_calendar.tm_sec, 2);
-    now[19] = '.';
-    {
-        struct timeval tv;
-        gettimeofday(&tv, NULL);
-        srpc_write_int(now + 20, (int)(tv.tv_usec / 1000), 3);
+    if (localtime_r(&seconds_since_epoch, &local_calendar) == NULL) {
+        return -1;
     }
-    now[23] = '\0';
+    fields[0] = local_calendar.tm_year + 1900;
+    fields[1] = local_calendar.tm_mon + 1;
+    fields[2] = local_calendar.tm_mday;
+    fields[3] = local_calendar.tm_hour;
+    fields[4] = local_calendar.tm_min;
+    fields[5] = local_calendar.tm_sec;
+    return 0;
 }
 
 /* Spin-wait hint: x86 pause / arm yield / no-op. (Goal-0 C demotion;

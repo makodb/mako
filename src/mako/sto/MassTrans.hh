@@ -92,7 +92,7 @@ public:
   }
 
   static void static_init() {
-    Transaction::set_epoch_advance_callback([] (unsigned) {
+    Transaction::set_epoch_advance_callback([] (Transaction::epoch_type) {
       // just advance blindly because of the way Masstree uses epochs
       globalepoch++;
     });
@@ -149,6 +149,8 @@ public:
   template <typename ValType>
   bool transGet(Str key, ValType& retval, threadinfo_type& ti = mythreadinfo) {
     ensure_supported_runtime_mode();
+    // @unsafe - an idle helper must enter STO/RCU before looking up any node.
+    Sto::transaction()->ensure_epoch();
     // if false:
     //   1) not found a key
     //   2) found a key, but updated by other writes 
@@ -204,6 +206,8 @@ public:
   template <typename K>
   bool transDelete(const K& key, threadinfo_type& ti = mythreadinfo) {
     ensure_supported_runtime_mode();
+    // @unsafe - includes disabled-sharding helper requests.
+    Sto::transaction()->ensure_epoch();
     auto lp = unlocked_cursor_type::from_mutable_str(table_, key);
     bool found = lp.find_unlocked(*ti.ti);
     if (found) {
@@ -272,6 +276,18 @@ public:
       ensureNotFound(lp.node(), lp.full_version_value());
       return found;
     }
+  }
+
+  // @unsafe - stages only a proxy intent; the remote engine decides row existence.
+  // Unlike local insert-then-delete, this is valid with READ_MY_WRITES disabled.
+  template <typename K>
+  void transDeleteRemote(const K& key, threadinfo_type& ti = mythreadinfo) {
+    assert(get_is_remote());
+    // Keep a fully encoded carrier, including zeroed timestamp/Node metadata.
+    // The bytes are copied only when a new carrier is actually needed.
+    static constexpr char payload[1 + mako::EXTRA_BITS_FOR_VALUE] = {'B'};
+    trans_write</*INSERT*/true, /*SET*/true, /*DELETE*/true>(
+        key, Str(payload, sizeof(payload)), nullptr, ti);
   }
 
 private:
@@ -360,7 +376,8 @@ private:
   }
 
   // @unsafe - Mutates legacy Masstree cursors and transaction-owned items.
-  template <bool INSERT, bool SET, typename StringType, typename ValueType>
+  // Shares cursor insertion/OCC bookkeeping for puts and remote proxy intents.
+  template <bool INSERT, bool SET, bool DELETE = false, typename StringType, typename ValueType>
   bool trans_write(
       const StringType& key, const ValueType& value,
       bool(*compar)(const value_type& newValue,
@@ -370,6 +387,7 @@ private:
     if (canonical_write_out != nullptr)
       *canonical_write_out = Transaction::canonical_write_view{};
     ensure_supported_runtime_mode();
+    Sto::transaction()->ensure_epoch(); // @unsafe - before either cursor lookup
     if constexpr (supports_packed_multiversion) {
       if (!MultiVersionValue::validPackedSize(
               packed_value_size(value), TThread::is_multiversion())) {
@@ -388,8 +406,11 @@ private:
             return false;
           }
         }
-        return handlePutFound<INSERT, SET>(lp.value(), key, value,
-                                           canonical_write_out);
+        if constexpr (DELETE)
+          return stageRemoteDelete(lp.value(), key);
+        else
+          return handlePutFound<INSERT, SET>(lp.value(), key, value,
+                                             canonical_write_out);
       } else {
         if (!INSERT) {
           ensureNotFound(lp.node(), lp.full_version_value());
@@ -411,8 +432,11 @@ private:
           return false;
         }
       }
-      return handlePutFound<INSERT, SET>(e, key, value,
-                                         canonical_write_out);
+      if constexpr (DELETE)
+        return stageRemoteDelete(e, key);
+      else
+        return handlePutFound<INSERT, SET>(e, key, value,
+                                           canonical_write_out);
     } else {
       //      auto p = ti.ti->allocate(sizeof(versioned_value), memtag_value);
       versioned_value* val;
@@ -455,7 +479,8 @@ private:
       }
       // TransItem::key_ is actuall value, TransItem::wdata_ or rdata_ is actual key in write-set and read-set, respectively
       auto item = Sto::new_item(this, val);
-      item.template add_write<key_write_value_type>(key).add_flags(insert_bit);
+      item.template add_write<key_write_value_type>(key)
+          .add_flags(insert_bit | (DELETE ? delete_bit : 0));
       if (canonical_write_out != nullptr)
         (void)TThread::txn->export_local_canonical_write(
             item.item(), canonical_write_out);
@@ -517,11 +542,20 @@ public:
   }
 
   // range queries
+  // @unsafe - legacy Masstree cursor; exclusive starts implement binary paging.
+  // LockValues marks a transfer scan whose row copies must not race a
+  // concurrent writer. Rows are published atomically here (in-place atomic
+  // byte stores for single-version rows, immutable heads for multiversion
+  // rows), so atomicRead() already gives that copy: it aborts on a locked or
+  // invalid row and revalidates the version around the copy. The parameter is
+  // kept for the native sharding storage host and selects no separate path.
+  template <bool LockValues = false>
   void transQuery(Str begin, Str end, RangeCallback callback,
                   ValueAllocator *va = nullptr,
-                  threadinfo_type& ti = mythreadinfo) {
+                  threadinfo_type& ti = mythreadinfo,
+                  bool begin_inclusive = true) {
     (void)transQueryImpl(begin, end, callback,
-                         true /* begin inclusive */, false /* end exclusive */,
+                         begin_inclusive, false /* end exclusive */,
                          va, nullptr, ti);
   }
 
@@ -546,6 +580,8 @@ protected:
                       ValueAllocator *va,
                       size_t *remaining_items, threadinfo_type& ti) {
     ensure_supported_runtime_mode();
+    // @unsafe - an idle helper must enter STO/RCU before the forward cursor.
+    Sto::transaction()->ensure_epoch();
     bool budget_exhausted = false;
     auto reserve_item = [&] (auto key) {
       if (!remaining_items)
@@ -571,7 +607,6 @@ protected:
       if (reserve_item(tag_inter(node)))
         this->ensureNotFound(node, version);
     };
-    int deleted_cnt=0;
     auto value_callback = [&] (Str key, versioned_value* e) {
       if (budget_exhausted || !reserve_item(e))
         return false;
@@ -621,11 +656,8 @@ protected:
         if (ret){
           return callback(key, val);
         }else {
-          deleted_cnt++;
-          if (deleted_cnt>10){
-            return false; // TODO, it's better to keep new_order id for taking over
-          }
-          return true;//skip the deleted items
+          // Deleted MVCC versions do not certify exhaustion of the key range.
+          return true;
         }
       } else {
         return callback(key, val);
@@ -639,11 +671,13 @@ protected:
   }
 
 public:
+  // @unsafe - inclusive lower bound is used by normalized half-open scan pages.
   void transRQuery(Str begin, Str end, RangeCallback callback,
                    ValueAllocator *va = nullptr,
-                   threadinfo_type& ti = mythreadinfo) {
+                   threadinfo_type& ti = mythreadinfo,
+                   bool begin_inclusive = true, bool end_inclusive = false) {
     (void)transRQueryImpl(begin, end, callback,
-                          true /* begin inclusive */, false /* end exclusive */,
+                          begin_inclusive, end_inclusive,
                           va, nullptr, ti);
   }
 
@@ -663,6 +697,8 @@ protected:
                        ValueAllocator *va,
                        size_t *remaining_items, threadinfo_type& ti) {
     ensure_supported_runtime_mode();
+    // @unsafe - an idle helper must enter STO/RCU before the reverse cursor.
+    Sto::transaction()->ensure_epoch();
     bool budget_exhausted = false;
     auto reserve_item = [&] (auto key) {
       if (!remaining_items)
@@ -686,7 +722,6 @@ protected:
       if (reserve_item(tag_inter(node)))
         this->ensureNotFound(node, version);
     };
-    int deleted_cnt=0;
     auto value_callback = [&] (Str key, versioned_value* e) {
       if (budget_exhausted || !reserve_item(e))
         return false;
@@ -729,11 +764,8 @@ protected:
         if (ret)
           return callback(key, val);
         else {
-          deleted_cnt++;
-          if (deleted_cnt>10){
-            return false; // TODO, it's better to keep new_order id for taking over
-          }
-          return true;//skip the deleted items
+          // Continue to the actual boundary even across long deleted runs.
+          return true;
         }
       } else {
         return callback(key, val);
@@ -985,7 +1017,8 @@ public:
       if (!isInsert && !isResurrection) {
         size_count_.fetch_sub(1, std::memory_order_relaxed);
       }
-      if (!TThread::is_multiversion() || isInsert) {
+      // Proxies carry intents, never authoritative multiversion history.
+      if (!TThread::is_multiversion() || isInsert || get_is_remote()) {
         if (!isInsert) { // update
           assert(!(TransactionTid::atomic_load(
               e->version(), std::memory_order_relaxed) & invalid_bit));
@@ -1136,6 +1169,25 @@ protected:
   static void ensure_supported_runtime_mode() {
     if constexpr (!supports_packed_multiversion)
       always_assert(!TThread::is_multiversion());
+  }
+
+  // @unsafe - a proxy's own invalid insert is a carrier, not a local absent row.
+  // Preserve insert_bit so abort cleanup removes it and commit has zero size delta.
+  template <typename K>
+  bool stageRemoteDelete(versioned_value* e, const K& key) {
+    auto item = t_item(e);
+    Version v = load_version(e->version());
+    fence();
+    if ((v & invalid_bit) && !has_insert(item)) {
+      Sto::abort();
+      return false;
+    }
+    if (!has_insert(item))
+      item.observe(tversion_type(v));
+    // Replace any preceding update payload with the delete key; the operation
+    // byte in remoteBatchLock is selected from delete_bit.
+    item.template add_write<key_write_value_type>(key).add_flags(delete_bit);
+    return true;
   }
 
   // called once we've checked our own writes for a found put()

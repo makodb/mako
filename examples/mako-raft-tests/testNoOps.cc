@@ -24,8 +24,12 @@
  * - Phase 7: Verify logs replicated after watermark sync
  */
 
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include <mako.hh>
 #include <examples/common.h>
@@ -43,9 +47,15 @@ const int STARTUP_TIME_SEC = 2;       // Wait for cluster stabilization
 const int LEADER_WAIT_SEC = 3;        // Wait for preferred leader election
 const int NOOPS_WAIT_SEC = 5;         // Wait for NO-OPS propagation
 const int LOGS_WAIT_SEC = 5;          // Wait for regular logs
+const int DRAIN_LEADER_WAIT_SEC = 5;  // Leader's single all-replica ack deadline
+const int DRAIN_FOLLOWER_WAIT_SEC = 12; // Covers phase skew + leader deadline
 const int NUM_NOOPS = 5;              // Number of NO-OPS to send (epochs 0-4)
 const int NUM_REGULAR_LOGS = 10;      // Number of regular logs after NO-OPS
 const int BATCH_SIZE = 1;             // NO-OPS should not be batched
+constexpr char DRAIN_MARKER_PREFIX[] = "RAFT_TEST_DRAIN:";
+constexpr char DRAIN_SUCCESS_FILE[] = "release.success";
+constexpr char DRAIN_ABORT_FILE[] = "release.abort";
+constexpr const char* CLUSTER_ROLES[] = {"localhost", "p1", "p2", "p3", "p4"};
 
 // =============================================================================
 // Test State Tracking
@@ -53,6 +63,8 @@ const int BATCH_SIZE = 1;             // NO-OPS should not be batched
 atomic<bool> i_am_leader{false};
 atomic<int> noops_applied_count{0};
 atomic<int> regular_logs_applied_count{0};
+atomic<int> drain_markers_applied_count{0};
+atomic<bool> drain_ack_written{false};
 atomic<int> noops_submitted_count{0};
 atomic<int> regular_logs_submitted_count{0};
 atomic<uint64_t> first_noops_applied_time{0};
@@ -66,7 +78,10 @@ atomic<int> max_epoch_seen{-1};
 vector<atomic<bool>> epoch_received(NUM_NOOPS);
 
 mutex cout_mutex;
+mutex drain_state_mutex;
+string drain_run_dir;
 
+// @unsafe - Uses a legacy C++ mutex and iostreams for test diagnostics.
 void safe_print(const string& msg) {
     std::lock_guard<std::mutex> lock(cout_mutex);
     cout << msg << endl;
@@ -75,6 +90,7 @@ void safe_print(const string& msg) {
 // =============================================================================
 // Helper: Check if log is NO-OPS
 // =============================================================================
+// @unsafe - Reads a raw callback buffer after checking its exact length.
 int isNoopsLocal(const char* log, int len) {
     // NO-OPS format: "no-ops:X" where X is epoch digit (0-9)
     // Length should be 8 bytes
@@ -88,9 +104,58 @@ int isNoopsLocal(const char* log, int len) {
     return -1;
 }
 
+// @unsafe - Compares a bounded raw callback buffer with a test marker prefix.
+bool isDrainMarkerLocal(const char* log, int len) {
+    constexpr size_t prefix_len = sizeof(DRAIN_MARKER_PREFIX) - 1;
+    return len > static_cast<int>(prefix_len) &&
+           memcmp(log, DRAIN_MARKER_PREFIX, prefix_len) == 0;
+}
+
+// @unsafe - Test-only POSIX file creation used for cross-process coordination.
+bool touchFile(const string& path) {
+    int fd = open(path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) {
+        return false;
+    }
+    return close(fd) == 0;
+}
+
+// @unsafe - Test-only POSIX filesystem query.
+bool fileExists(const string& path) {
+    return access(path.c_str(), F_OK) == 0;
+}
+
+// @unsafe - Test-only filesystem quorum scan over the fixed local test roles.
+bool allRoleAcksExist(const string& dir) {
+    for (const char* role : CLUSTER_ROLES) {
+        if (!fileExists(dir + "/" + role + ".applied")) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// @unsafe - Test-only filesystem scan used to coordinate safe cleanup.
+bool followerAcksRemoved(const string& dir, const string& leader_role) {
+    for (const char* role : CLUSTER_ROLES) {
+        if (string(role) != leader_role &&
+            fileExists(dir + "/" + role + ".applied")) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// @unsafe - Test-only POSIX queries for either terminal drain outcome.
+bool drainTerminalExists(const string& dir) {
+    return fileExists(dir + "/" + DRAIN_SUCCESS_FILE) ||
+           fileExists(dir + "/" + DRAIN_ABORT_FILE);
+}
+
 // =============================================================================
 // Helper: Get elapsed time string
 // =============================================================================
+// @unsafe - Uses wall-clock time and legacy std::string formatting.
 string elapsed_str() {
     uint64_t now = duration_cast<milliseconds>(
         system_clock::now().time_since_epoch()).count();
@@ -101,6 +166,7 @@ string elapsed_str() {
 // =============================================================================
 // Main Test
 // =============================================================================
+// @unsafe - End-to-end integration harness over legacy Raft and POSIX APIs.
 int main(int argc, char **argv) {
     if (argc < 2) {
         cerr << "Usage: " << argv[0] << " <process_name>" << endl;
@@ -190,6 +256,29 @@ int main(int argc, char **argv) {
     // Log application callback - handles both NO-OPS and regular logs
     auto log_callback = [&](const char*& log, int len, int par_id, int slot_id,
                             queue<tuple<int, int, int, int, const char*>>& un_replay_logs_) {
+        // The marker carries a leader-generated token, making its filesystem
+        // acknowledgement directory unique even across overlapping test runs.
+        if (isDrainMarkerLocal(log, len)) {
+            constexpr size_t prefix_len = sizeof(DRAIN_MARKER_PREFIX) - 1;
+            string marker_token(log + prefix_len, len - prefix_len);
+            string callback_dir = "/tmp/mako-testNoOps-" + marker_token;
+            (void)mkdir(callback_dir.c_str(), 0700);
+            bool ack_written = touchFile(callback_dir + "/" + proc_name +
+                                         ".applied");
+            {
+                std::lock_guard<std::mutex> lock(drain_state_mutex);
+                drain_run_dir = callback_dir;
+            }
+            drain_ack_written.store(ack_written);
+
+            int current_count = ++drain_markers_applied_count;
+            safe_print("[" + proc_name + "] 🚧 Drain marker applied (slot=" +
+                      to_string(slot_id) + ", count=" + to_string(current_count) +
+                      ") at " + elapsed_str());
+            uint32_t timestamp = static_cast<uint32_t>(getCurrentTimeMillis());
+            return static_cast<int>(timestamp * 10 + 1);
+        }
+
         // Check if this is a NO-OPS message
         int epoch = isNoopsLocal(log, len);
 
@@ -436,7 +525,127 @@ int main(int argc, char **argv) {
     safe_print("");
 
     // =========================================================================
-    // Step 12: Final Results and Verification
+    // Step 12: Drain Cluster-Wide Workload Completion
+    // =========================================================================
+    // A leader-local apply does not imply that followers have learned the same
+    // commit index yet. The replicated drain marker contains a unique token;
+    // each role acknowledges it only from its apply callback. The leader keeps
+    // serving Raft until all five callbacks have run, then releases followers.
+    is_leader = i_am_leader.load();
+    string local_drain_dir;
+    if (is_leader) {
+        safe_print("[" + proc_name + "] Step 12: Draining cluster-wide completion...");
+        string drain_token = to_string(getpid()) + "-" +
+            to_string(duration_cast<microseconds>(
+                system_clock::now().time_since_epoch()).count());
+        local_drain_dir = "/tmp/mako-testNoOps-" + drain_token;
+        if (mkdir(local_drain_dir.c_str(), 0700) != 0 &&
+            !fileExists(local_drain_dir)) {
+            safe_print("[" + proc_name + "] ✗ Could not create drain directory");
+        } else {
+            {
+                std::lock_guard<std::mutex> lock(drain_state_mutex);
+                drain_run_dir = local_drain_dir;
+            }
+            string drain_marker = string(DRAIN_MARKER_PREFIX) + drain_token;
+            add_log_to_nc(drain_marker.c_str(), drain_marker.length(), 0, BATCH_SIZE);
+        }
+    } else {
+        safe_print("[" + proc_name + "] Step 12: Waiting for cluster drain marker...");
+    }
+
+    // @unsafe { test-only POSIX filesystem coordination }
+    bool all_roles_applied = false;
+    bool terminal_published = false;
+    bool success_observed = false;
+    bool abort_observed = false;
+    if (is_leader) {
+        // There is one leader deadline from marker submission through all five
+        // apply acknowledgements.  Waiting for the leader's local ack first
+        // used to consume a second full timeout and let early followers expire.
+        const auto ack_deadline = steady_clock::now() +
+                                  chrono::seconds(DRAIN_LEADER_WAIT_SEC);
+        while (steady_clock::now() < ack_deadline &&
+               !allRoleAcksExist(local_drain_dir)) {
+            this_thread::sleep_for(chrono::milliseconds(100));
+        }
+        all_roles_applied = allRoleAcksExist(local_drain_dir);
+        const char* terminal_name = all_roles_applied
+                                        ? DRAIN_SUCCESS_FILE
+                                        : DRAIN_ABORT_FILE;
+        terminal_published = touchFile(local_drain_dir + "/" + terminal_name);
+        success_observed = all_roles_applied && terminal_published;
+        abort_observed = !all_roles_applied && terminal_published;
+    } else {
+        // Use one longer absolute follower deadline for both marker arrival and
+        // the leader's terminal decision.  It covers process phase skew plus
+        // the complete leader acknowledgement deadline.
+        const auto follower_deadline = steady_clock::now() +
+            chrono::seconds(DRAIN_FOLLOWER_WAIT_SEC);
+        while (steady_clock::now() < follower_deadline &&
+               !drain_ack_written.load()) {
+            this_thread::sleep_for(chrono::milliseconds(100));
+        }
+        if (drain_ack_written.load()) {
+            {
+                std::lock_guard<std::mutex> lock(drain_state_mutex);
+                local_drain_dir = drain_run_dir;
+            }
+            while (steady_clock::now() < follower_deadline &&
+                   !drainTerminalExists(local_drain_dir)) {
+                this_thread::sleep_for(chrono::milliseconds(100));
+            }
+            success_observed =
+                fileExists(local_drain_dir + "/" + DRAIN_SUCCESS_FILE);
+            abort_observed =
+                fileExists(local_drain_dir + "/" + DRAIN_ABORT_FILE);
+        }
+    }
+
+    // On success, followers remove their acknowledgements only after observing
+    // release. On timeout they also remove them as best-effort cleanup.
+    if (!is_leader && drain_ack_written.load()) {
+        (void)unlink((local_drain_dir + "/" + proc_name + ".applied").c_str());
+        (void)rmdir(local_drain_dir.c_str());
+    }
+
+    bool followers_released = !is_leader;
+    if (is_leader && !local_drain_dir.empty()) {
+        const auto cleanup_deadline = steady_clock::now() +
+            chrono::seconds(DRAIN_FOLLOWER_WAIT_SEC);
+        while (terminal_published &&
+               steady_clock::now() < cleanup_deadline &&
+               !followerAcksRemoved(local_drain_dir, proc_name)) {
+            this_thread::sleep_for(chrono::milliseconds(100));
+        }
+        followers_released = followerAcksRemoved(local_drain_dir, proc_name);
+
+        // Best-effort cleanup on both success and failure. Paths are keyed by
+        // this run's unique replicated token, so stale files cannot collide.
+        for (const char* role : CLUSTER_ROLES) {
+            (void)unlink((local_drain_dir + "/" + role + ".applied").c_str());
+        }
+        (void)unlink((local_drain_dir + "/" + DRAIN_SUCCESS_FILE).c_str());
+        (void)unlink((local_drain_dir + "/" + DRAIN_ABORT_FILE).c_str());
+        (void)rmdir(local_drain_dir.c_str());
+    }
+
+    // An abort marker releases followers for cleanup but is never success.
+    // This prevents a responsive follower from reporting a false cluster-wide
+    // PASS when some other replica never applied the marker.
+    bool drain_complete = !abort_observed && success_observed &&
+                          (is_leader
+                               ? (all_roles_applied && terminal_published &&
+                                  followers_released)
+                               : drain_ack_written.load());
+    safe_print("[" + proc_name + "] " +
+               string(drain_complete ? "✓" : "✗") +
+               " Cluster drain " +
+               string(drain_complete ? "complete" : "timed out"));
+    safe_print("");
+
+    // =========================================================================
+    // Step 13: Final Results and Verification
     // =========================================================================
     safe_print("=================================================================");
     safe_print("[" + proc_name + "] FINAL TEST RESULTS");
@@ -458,6 +667,8 @@ int main(int argc, char **argv) {
     safe_print("[" + proc_name + "] Regular logs submit:  " + to_string(final_regular_submitted));
     safe_print("[" + proc_name + "] Regular logs applied: " + to_string(final_regular_applied) +
                "/" + to_string(NUM_REGULAR_LOGS));
+    safe_print("[" + proc_name + "] Drain markers applied: " +
+               to_string(drain_markers_applied_count.load()));
     safe_print("");
 
     // Calculate NO-OPS timing
@@ -482,6 +693,7 @@ int main(int argc, char **argv) {
     bool noops_pass = (final_noops_applied >= NUM_NOOPS) && all_epochs_received;
     bool logs_pass = (final_regular_applied >= NUM_REGULAR_LOGS);
     bool preferred_leader_pass = !is_preferred || final_is_leader;  // Preferred should be leader
+    bool drain_pass = drain_complete;
 
     if (noops_pass) {
         safe_print("[" + proc_name + "] ✅ PASS: NO-OPS test passed");
@@ -501,9 +713,15 @@ int main(int argc, char **argv) {
         safe_print("[" + proc_name + "] ❌ FAIL: Preferred leader is not leader!");
     }
 
+    if (drain_pass) {
+        safe_print("[" + proc_name + "] ✅ PASS: Cluster drain completed");
+    } else {
+        safe_print("[" + proc_name + "] ❌ FAIL: Cluster drain timed out");
+    }
+
     safe_print("");
 
-    bool overall_pass = noops_pass && logs_pass && preferred_leader_pass;
+    bool overall_pass = noops_pass && logs_pass && preferred_leader_pass && drain_pass;
     if (overall_pass) {
         safe_print("[" + proc_name + "] ✅✅✅ OVERALL: ALL TESTS PASSED ✅✅✅");
     } else {
@@ -513,7 +731,7 @@ int main(int argc, char **argv) {
     safe_print("=================================================================");
 
     // =========================================================================
-    // Step 13: Fast Exit
+    // Step 14: Fast Exit
     // =========================================================================
     int exit_code = overall_pass ? 0 : 1;
 

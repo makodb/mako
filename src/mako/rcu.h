@@ -120,8 +120,8 @@ public:
 
     // local memory allocator
     ssize_t pin_cpu_;
-    void *arenas_[allocator::MAX_ARENAS];
-    size_t deallocs_[allocator::MAX_ARENAS]; // keeps track of the number of
+    void *arenas_[::allocator::MAX_ARENAS];
+    size_t deallocs_[::allocator::MAX_ARENAS]; // keeps track of the number of
                                              // un-released deallocations
 
   public:
@@ -187,7 +187,7 @@ public:
       if (likely(arenas_[arena]))
         return;
       INVARIANT(pin_cpu_ >= 0);
-      arenas_[arena] = allocator::AllocateArenas(pin_cpu_, arena);
+      arenas_[arena] = ::allocator::AllocateArenas(pin_cpu_, arena);
     }
   };
 

@@ -1,0 +1,16 @@
+# LeakSanitizer suppressions for the SRPC runtime battery
+# (scripts/run_sanitizer_battery.sh passes this file to LSAN_OPTIONS).
+#
+# There are none. Every entry must name the allocation it hides and why that
+# retention is by design, and must be re-measured whenever the runtime or the
+# transpiler pin changes.
+#
+# History: five fiber-creation frames (srpc::fiber_install_task,
+# reactor_create_run_fiber, fiber_create_run_impl,
+# reactor_get_or_create_fiber_impl, fiber_run) used to be suppressed as the
+# reactor's by-design fiber retention. Part of what they hid was a real leak:
+# rusty-cpp's btree port copied a value out of a removed slot and never
+# destroyed the original, so each fibers_.remove left an Rc<Fiber> behind
+# (docs/dev/lion-runtime-plan.md, T7). rusty-cpp 400cb4d1 made those reads
+# relocate. With the transpiler at a130025e the ASan battery passes 35 of 35
+# with no suppression and no leak report, so all five were dropped.

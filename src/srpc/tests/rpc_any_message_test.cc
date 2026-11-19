@@ -19,11 +19,11 @@
 
 
 #include "../srpc.hpp"
-#include "../misc/any_message.hpp"
-#include "../misc/serializable.hpp"
 
 import std;
 import rusty;
+import srpc.any_message;
+import srpc.serializable;
 
 namespace srpc {
 namespace {
@@ -187,7 +187,7 @@ TEST(AnyMessageTest, PackAsAdHocName) {
   EXPECT_EQ(am.type_name_, "graph.alias.v1");
 
   // Wire roundtrip under the alias name.
-  AnyMessage outgoing = am;
+  AnyMessage outgoing = std::move(am);
   BufferSink sink;
   {
     BinaryWriteArchive writer(make_sink_proxy_buffer(&sink));
