@@ -117,7 +117,7 @@ def main():
             ):
                 env.pop(name)
         configured = {
-            "RUSTUP_TOOLCHAIN": "1.95.0", "CARGO_TARGET_DIR": str(output / "target"),
+            "RUSTUP_TOOLCHAIN": "1.97.1", "CARGO_TARGET_DIR": str(output / "target"),
             "MAKO_BUILD_DIR": str(build), "MAKO_MTREE_NATIVE_INTEGRATION": "1",
             "MAKO_MTREE_NATIVE_LIB_DIRS": os.pathsep.join(map(str, [output, build, build / "src/masstree", libcxx])),
             "MAKO_MTREE_NATIVE_LIBS": "static=mtree_runtime_health_proof,static=mako,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread",

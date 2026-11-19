@@ -359,6 +359,12 @@ export MAKO_MTREE_NATIVE_INTEGRATION=1
 export CARGO_INCREMENTAL=0
 export CARGO_PROFILE_RELEASE_OPT_LEVEL=${CARGO_PROFILE_RELEASE_OPT_LEVEL:-2}
 export CARGO_PROFILE_RELEASE_DEBUG=${CARGO_PROFILE_RELEASE_DEBUG:-1}
+# Fat LTO is safe here, unlike in build_sto_tpcc_pgo.sh: rustc drives this
+# link and sto_masstree_compare is its only Rust artifact, so there is one
+# copy of std. That holds while MAKO_MTREE_NATIVE_LIBS names no Rust staticlib
+# (libraft_rt.a, libmako_sharding.a). It need not: the mt_* ABI this benchmark
+# reaches in libmako.a pulls in neither (see MAKO_MTREE_RUST_NATIVE_LIBS in
+# CMakeLists.txt).
 export CARGO_PROFILE_RELEASE_LTO=${CARGO_PROFILE_RELEASE_LTO:-fat}
 export CARGO_PROFILE_RELEASE_CODEGEN_UNITS=${CARGO_PROFILE_RELEASE_CODEGEN_UNITS:-1}
 

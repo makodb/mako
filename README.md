@@ -37,6 +37,8 @@ bash apt_packages.sh
 # macOS (Homebrew):
 bash brew_packages.sh
 
+# Installs official Rust 1.97.1 (with rust-src, clippy and rustfmt) into
+# ~/.local-rust from static tarballs; no rustup.
 source install_rustc.sh
 bash src/mako/update_config.sh
 

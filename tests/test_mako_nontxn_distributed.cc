@@ -212,10 +212,10 @@ protected:
         BenchmarkConfig::getInstance().setIsReplicated(0);
         BenchmarkConfig::getInstance().setCluster("localhost");
 
-        // Under FAIL_NEW_VERSION, InvokeGet (client) and
-        // HandleGetRequest (server) consult the sync-util term
-        // callbacks; unregistered std::functions throw
-        // bad_function_call. No epoch changes in this test: term 0.
+        // The standalone non-txn request packer (client) and, under
+        // FAIL_NEW_VERSION, participant admission (server) consult the
+        // sync-util term callbacks when they are registered. No epoch
+        // changes in this test: term 0.
         register_sync_util_sc([]() { return 0; });
         register_sync_util_ss([]() { return 0; });
 
@@ -262,8 +262,11 @@ protected:
                                                  "localhost",
                                                  kClientShard,
                                                  kParId);
-        // Direct verification reads must decode the participant's retained versions.
-        TThread::enable_multiverison();
+        // Direct verification reads must decode the participant's retained
+        // versions in the helper's mode: the mode chosen above is still in
+        // force on this thread, so it is restated rather than overridden
+        // (an unconditional enable would diverge under DISABLE_MULTI_VERSION).
+        set_server_table_multiversion_mode();
     }
 
     static void TearDownTestSuite() {
@@ -351,10 +354,50 @@ TEST_F(MakoNontxnDistributed, RemoteTransactionalDeleteCommitsAndAborts) {
     EXPECT_EQ(value, "recreated");
     ASSERT_TRUE(remove(true, true));
     EXPECT_FALSE(g_server_tbl->get(key, value, std::string::npos));
+
+    const std::string small = mako::Encode(std::string_view("s"));
+    const std::string big_raw(96, 'L');
+    const std::string big = mako::Encode(std::string_view(big_raw));
+    // @unsafe - same public API and terminals as `remove` above.
+    auto rewrite = [&](bool delete_first) {
+        mako::ShardingOperation operation;
+        Sto::start_transaction();
+        try {
+            if (delete_first) g_client_tbl->tx_remove(nullptr, key);
+            else g_client_tbl->tx_put(nullptr, key, small);
+            g_client_tbl->tx_put(nullptr, key, big);
+            if (Sto::try_commit()) return true;
+            Sto::abort_without_throw();
+            return false;
+        } catch (...) {
+            Sto::abort_without_throw();
+            throw;
+        }
+    };
+    ASSERT_TRUE(rewrite(true));                 // delete -> put, unseen key
+    ASSERT_TRUE(g_server_tbl->get(key, value, std::string::npos));
+    EXPECT_EQ(value, big_raw);
+    ASSERT_TRUE(remove(true, false));           // drop the proxy row again
+    ASSERT_TRUE(rewrite(false));                // put -> growing put, unseen key
+    ASSERT_TRUE(g_server_tbl->get(key, value, std::string::npos));
+    EXPECT_EQ(value, big_raw);
+    // A local non-txn put reports "newly inserted": the committed row is
+    // still there, so this overwrite returns false.
+    EXPECT_FALSE(g_server_tbl->put(key, "reset"));
+    ASSERT_TRUE(g_server_tbl->get(key, value, std::string::npos));
+    EXPECT_EQ(value, "reset");
+    ASSERT_TRUE(rewrite(true));                 // delete -> put over an existing proxy row
+    ASSERT_TRUE(g_server_tbl->get(key, value, std::string::npos));
+    EXPECT_EQ(value, big_raw);
+    // Leave the key as this test always has: absent, with no proxy row.
+    ASSERT_TRUE(remove(true, false));
+    EXPECT_FALSE(g_server_tbl->get(key, value, std::string::npos));
 }
 
-// @unsafe - the static protocol treats a failed read reply as terminal and
-// deliberately sends no Abort RPC. Its next request needs a fresh idle helper.
+// @unsafe - on the static path a failed read reply ends the participant on the
+// receiver at once. The coordinator still sends its Abort to every touched shard
+// (ShardClient::remoteAbort), but the helper must already be idle for the next
+// attempt when that Abort is late or lost, so this test deliberately omits it.
 // Every participant request carries its coordinator attempt identity; an empty
 // scan is a successful absence read (NOT_FOUND), so the failed read here targets
 // a table this receiver never registered.

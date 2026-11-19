@@ -279,6 +279,13 @@ jobs:
       # and the workspace gates need clippy and rustfmt. The published image
       # may predate Dockerfile.ubuntu24 installing rust-src, so add it here,
       # verified against the checksum published beside the archive.
+      #
+      # Presence is not enough: the step above installs the compiler over an
+      # existing prefix and replaces only the components it carries, so an
+      # image built for another release would keep that release's standard
+      # library sources under this compiler. The sources carry no version of
+      # their own, so Dockerfile.ubuntu24 and this step record the release
+      # they installed in a stamp file and reinstall unless it matches.
       - name: Install Rust workspace components
         shell: bash
         run: |
@@ -287,7 +294,9 @@ jobs:
           [ "$(rustc --version | awk '{print $2}')" = "${rust_version}" ]
           rust_sysroot="$(rustc --print sysroot)"
           marker="${rust_sysroot}/lib/rustlib/src/rust/library/core/src/marker.rs"
-          if [ ! -r "${marker}" ]; then
+          stamp="${rust_sysroot}/lib/rustlib/src/mako-rust-src-version"
+          if [ ! -r "${marker}" ] \
+              || [ "$(cat "${stamp}" 2>/dev/null || true)" != "${rust_version}" ]; then
             work="$(mktemp -d)"
             archive="rust-src-${rust_version}.tar.gz"
             curl --proto '=https' --tlsv1.2 -fL --retry 3 \
@@ -299,9 +308,11 @@ jobs:
             (cd "${work}" && sha256sum --check --strict "${archive}.sha256")
             tar -xzf "${work}/${archive}" -C "${work}"
             "${work}/rust-src-${rust_version}/install.sh" --prefix="${rust_sysroot}"
+            printf '%s\n' "${rust_version}" > "${stamp}"
             rm -rf "${work}"
           fi
           test -r "${marker}"
+          [ "$(cat "${stamp}")" = "${rust_version}" ]
           cargo clippy --version
           cargo fmt --version
 
@@ -330,21 +341,98 @@ jobs:
           cmake --version
           clang --version
 
-      - name: Check Rust workspace formatting
-        run: cargo fmt --manifest-path crates/Cargo.toml --all -- --check
-
       - name: Verify native sharding and independent negative controls
         run: ./ci/ci.sh nativeShardingProof
 
       - name: Compile
+        id: compile
         run: ./ci/ci.sh compile
 
       - name: Run native sharding real-engine migration smoke
         run: ./ci/ci.sh nativeShardingSmoke
 
+      # The CTest sweep in srpcTests also selects the Rust STO C and C++
+      # boundary tests, whose binaries are opt-in targets outside `all`. Build
+      # just those binaries here, without the Cargo lint and test half of
+      # rust_sto_integration, so the sweep does not report them as "Not Run".
+      - name: Build Rust STO boundary test binaries
+        run: ./ci/ci.sh rustStoBoundaryBinaries
+
+      - name: Run tests - SRPC unit tests
+        run: ./ci/ci.sh srpcTests
+
+      - name: Run tests - simple transaction
+        run: ./ci/ci.sh simpleTransaction
+
+      - name: Run tests - client-server mode
+        run: ./ci/ci.sh clientServer
+
+      - name: Run tests - simple replication
+        run: ./ci/ci.sh simplePaxos 
+
+      - name: Run tests - simple 2 shards without replication (SRPC)
+        run: ./ci/ci.sh shardNoReplication
+
+      - name: Run tests - simple 1 shard with replication - dbtest
+        run: ./ci/ci.sh shard1Replication
+
+      - name: Run tests - simple 2 shard with replication - dbtest (SRPC)
+        run: ./ci/ci.sh shard2Replication
+
+      - name: Run tests - simple 1 shard with replication - simpleTransactionRep
+        run: ./ci/ci.sh shard1ReplicationSimple
+
+      - name: Run tests - simple 2 shard with replication - simpleTransactionRep
+        run: ./ci/ci.sh shard2ReplicationSimple
+
+      # =========================================
+      # Raft Replication Tests (after Paxos replication tests)
+      # =========================================
+      - name: Run tests - 1 shard with Raft replication - dbtest
+        run: ./ci/ci.sh shard1ReplicationRaft
+
+      - name: Run tests - 2 shard with Raft replication - dbtest
+        run: ./ci/ci.sh shard2ReplicationRaft
+
+      - name: Run tests - 1 shard with Raft replication - simpleTransactionRep
+        run: ./ci/ci.sh shard1ReplicationSimpleRaft
+
+      - name: Run tests - 2 shard with Raft replication - simpleTransactionRep
+        run: ./ci/ci.sh shard2ReplicationSimpleRaft
+
+      # =========================================
+      # Non-replication tests (run last)
+      # =========================================
+      - name: Run tests - RocksDB persistence and partitioned queues
+        run: ./ci/ci.sh rocksdbTests
+
+      - name: Run tests - multi-shard single process
+        run: ./ci/ci.sh multiShardSingleProcess
+
+      - name: Run tests - 2 shard single process (no replication)
+        run: ./ci/ci.sh shard2SingleProcess
+
+      - name: Run tests - 2 shard single process with replication
+        run: ./ci/ci.sh shard2SingleProcessReplication
+
+      # =========================================
+      # Rust-line gates (after the mainline suites)
+      # =========================================
+      # A failed step skips every later step that has no `if:`. These gates
+      # therefore run after the mainline suites, so a red gate cannot hide the
+      # replication matrix, and each carries its own condition, so a red suite
+      # or a red sibling gate cannot hide the others. A failing gate still
+      # fails the job: none of them is continue-on-error.
+      - name: Check Rust workspace formatting
+        if: ${{ !cancelled() }}
+        run: cargo fmt --manifest-path crates/Cargo.toml --all -- --check
+
       - name: Run tests - Mako local ABI boundary gates
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
         run: ./ci/ci.sh makoLocalAbiGates
+
       - name: Build Rust STO and Masstree integration
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
         run: >-
           cmake --build build
           --parallel "${CI_MAKE_JOBS}"
@@ -352,6 +440,7 @@ jobs:
           -- -k 0
 
       - name: Verify Rust STO boundary test inventory
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -390,8 +479,16 @@ jobs:
               "test_sto_tpcc_rust_concurrent_resource_exhausted",
               "test_sto_tpcc_rejects_duplicate_local_shards",
               "test_sto_tpcc_rejects_partial_local_shards",
-              "test_sto_tpcc_rejects_rust_distributed_shard",
-              "test_sto_tpcc_rejects_rust_replication",
+              # The Rust engine runs distributed and replicated shards now, so
+              # the two CTests that expected it to reject them are gone. Its
+              # protocol tests carry the rust label instead, and every
+              # rust-labeled CTest has to be named here (see below).
+              "test_sto_tpcc_protocol_rust_none",
+              "test_sto_tpcc_protocol_rust_none_colocated",
+              "test_sto_tpcc_protocol_rust_paxos",
+              "test_sto_tpcc_protocol_rust_paxos_colocated",
+              "test_sto_tpcc_protocol_rust_raft",
+              "test_sto_tpcc_protocol_rust_raft_colocated",
               "test_sto_tpcc_rejects_rust_worker_limit",
           }
           inventory = json.loads(
@@ -561,98 +658,61 @@ jobs:
       # here. Keep the selector explicit so a rename or lost registration
       # fails CI rather than silently reducing coverage.
       - name: Run Rust STO C and C++ boundary tests
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
         run: >-
           ctest --test-dir build
           --output-on-failure
           --no-tests=error
-          -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_silo_runtime_concurrency_lifecycle|test_silo_transaction_install_exception_fail_stop|test_silo_transaction_set_capacity_exhaustion|test_silo_transaction_set_exact_chunk_boundary|test_silo_transitem_lifetime|test_sto_tpcc_ffi_c11_header|test_benchmark_output|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_startup_resource_exhausted|test_sto_tpcc_rust_load_resource_exhausted|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard|test_sto_tpcc_rejects_rust_replication|test_sto_tpcc_rejects_rust_worker_limit)$'
+          -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_silo_runtime_concurrency_lifecycle|test_silo_transaction_install_exception_fail_stop|test_silo_transaction_set_capacity_exhaustion|test_silo_transaction_set_exact_chunk_boundary|test_silo_transitem_lifetime|test_sto_tpcc_ffi_c11_header|test_benchmark_output|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_startup_resource_exhausted|test_sto_tpcc_rust_load_resource_exhausted|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_protocol_rust_none|test_sto_tpcc_protocol_rust_none_colocated|test_sto_tpcc_protocol_rust_paxos|test_sto_tpcc_protocol_rust_paxos_colocated|test_sto_tpcc_protocol_rust_raft|test_sto_tpcc_protocol_rust_raft_colocated|test_sto_tpcc_rejects_rust_worker_limit)$'
 
       - name: Run Rust STO workspace tests in release mode
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
+        # The release twin of the rust_sto_integration workspace sweep in
+        # CMakeLists.txt, with the same two requirements. The cache crates'
+        # build scripts take the native archives from MAKO_BUILD_DIR and
+        # refuse to guess a build tree. And mako-engine's backends are
+        # mutually exclusive, so --all-features cannot build it or the crates
+        # that select one of its backends; run_mako_local_rust_tests and
+        # run_mako_engine_sto_tests (makoLocalAbiGates) test those with an
+        # explicit engine.
         run: >-
           cargo test
           --manifest-path crates/Cargo.toml
           --workspace
           --exclude sto-tpcc-ffi
+          --exclude mako-engine --exclude mako-engine-sto
+          --exclude mako-cache --exclude mako-cache-bench
           --all-targets
           --all-features
           --release
           --locked
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/build/rust-workspace-target
+          MAKO_BUILD_DIR: ${{ github.workspace }}/build
 
       - name: Build Rust STO workspace documentation
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
+        # Same native build tree and the same mutually exclusive backends as
+        # the release test sweep above.
         run: >-
           cargo doc
           --manifest-path crates/Cargo.toml
           --workspace
+          --exclude mako-engine --exclude mako-engine-sto
+          --exclude mako-cache --exclude mako-cache-bench
           --all-features
           --locked
           --no-deps
         env:
           CARGO_TARGET_DIR: ${{ github.workspace }}/build/rust-workspace-target
+          MAKO_BUILD_DIR: ${{ github.workspace }}/build
           RUSTDOCFLAGS: -D warnings
-
-      - name: Run tests - SRPC unit tests
-        run: ./ci/ci.sh srpcTests
-
-      - name: Run tests - simple transaction
-        run: ./ci/ci.sh simpleTransaction
-
-      - name: Run tests - client-server mode
-        run: ./ci/ci.sh clientServer
-
-      - name: Run tests - simple replication
-        run: ./ci/ci.sh simplePaxos 
-
-      - name: Run tests - simple 2 shards without replication (SRPC)
-        run: ./ci/ci.sh shardNoReplication
-
-      - name: Run tests - simple 1 shard with replication - dbtest
-        run: ./ci/ci.sh shard1Replication
-
-      - name: Run tests - simple 2 shard with replication - dbtest (SRPC)
-        run: ./ci/ci.sh shard2Replication
-
-      - name: Run tests - simple 1 shard with replication - simpleTransactionRep
-        run: ./ci/ci.sh shard1ReplicationSimple
-      
-      - name: Run tests - simple 2 shard with replication - simpleTransactionRep
-        run: ./ci/ci.sh shard2ReplicationSimple
-
-      # =========================================
-      # Raft Replication Tests (after Paxos replication tests)
-      # =========================================
-      - name: Run tests - 1 shard with Raft replication - dbtest
-        run: ./ci/ci.sh shard1ReplicationRaft
-
-      - name: Run tests - 2 shard with Raft replication - dbtest
-        run: ./ci/ci.sh shard2ReplicationRaft
-
-      - name: Run tests - 1 shard with Raft replication - simpleTransactionRep
-        run: ./ci/ci.sh shard1ReplicationSimpleRaft
-
-      - name: Run tests - 2 shard with Raft replication - simpleTransactionRep
-        run: ./ci/ci.sh shard2ReplicationSimpleRaft
-
-      # =========================================
-      # Non-replication tests (run last)
-      # =========================================
-      - name: Run tests - RocksDB persistence and partitioned queues
-        run: ./ci/ci.sh rocksdbTests
-
-      - name: Run tests - multi-shard single process
-        run: ./ci/ci.sh multiShardSingleProcess
-
-      - name: Run tests - 2 shard single process (no replication)
-        run: ./ci/ci.sh shard2SingleProcess
-
-      - name: Run tests - 2 shard single process with replication
-        run: ./ci/ci.sh shard2SingleProcessReplication
 
       # Run this profile last: changing READ_MY_WRITES requires a consistent
       # rebuild of libmako and its test consumer, and must not alter the
       # default-profile binaries used by the broader suite above.
       - name: Run STO read-my-writes MV regressions
+        if: ${{ !cancelled() && steps.compile.outcome == 'success' }}
         shell: bash
         run: |
           set -euo pipefail

@@ -17,7 +17,6 @@
 import std;
 import rusty;
 import srpc.tcp_channel;
-import srpc.pollable_proxy;
 
 namespace {
 
@@ -30,8 +29,12 @@ struct AdmissionResult {
   rusty::sync::atomic::AtomicI32 admission_error{0};
 };
 
-// @unsafe - Socketpair and explicit poll callbacks exercise the production TCP
-// queue without a background socket reader making the backpressure timing racy.
+// @unsafe - A socketpair TcpConnection with no PollThread exercises the
+// production TCP queue deterministically. On the Lion runtime such a connection
+// has no reader or writer task and no write-through (srpc
+// rpc/tcp_channel.rs, tcpconn_is_foreign_sender), so an accepted frame stays
+// queued until this test calls flush(), the same substrate as srpc's own
+// TcpConnectionTest. Before the Lion runtime the drain was handle_write().
 class ReplicationAdmissionTest : public ::testing::Test {
  protected:
   void SetUp() override {
@@ -48,6 +51,8 @@ class ReplicationAdmissionTest : public ::testing::Test {
     auto& client = const_cast<srpc::ClientConnection&>(*client_.as_ref().unwrap());
     client.bind_channel(srpc::make_tcp_connection_channel_proxy(tcp_.as_ref().unwrap().clone()));
     client.force_connected_for_testing();
+    // An empty queue accepts one complete frame, then rejects the next until
+    // flush() drains it.
     tcp().set_outbound_high_water(1);
     const uint8_t byte = 0x71;
     ASSERT_EQ(tcp().send_frame({&byte, 1}), srpc::ChannelError::None);
@@ -118,13 +123,13 @@ class ReplicationAdmissionTest : public ::testing::Test {
 TEST_F(ReplicationAdmissionTest, EncodesOnceAndAdmitsExactlyOneFrameAfterDrain) {
   start(100'000);
   EXPECT_FALSE(result_->done.load());
-  tcp().handle_write();
+  tcp().flush();
   std::array<uint8_t, 64> wire{};
   ASSERT_EQ(::read(peer_, wire.data(), wire.size()), 5);
   ASSERT_TRUE(finish());
   EXPECT_EQ(result_->admission_error.load(), 0);
   EXPECT_EQ(result_->serializations.load(), 1);
-  tcp().handle_write();
+  tcp().flush();
   const auto count = ::read(peer_, wire.data(), wire.size());
   ASSERT_GT(count, 4);
   int32_t body_length = 0;
@@ -152,7 +157,7 @@ TEST_F(ReplicationAdmissionTest, DeadlineCompletesWithoutSendingRejectedFrame) {
   EXPECT_EQ(result_->completions.load(), 1);
   EXPECT_EQ(result_->callback_error.load(), srpc::CLIENT_ERR_AGAIN);
   EXPECT_EQ(result_->admission_error.load(), 0);
-  tcp().handle_write();
+  tcp().flush();
   std::array<uint8_t, 64> wire{};
   EXPECT_EQ(::read(peer_, wire.data(), wire.size()), 5);
   EXPECT_EQ(::read(peer_, wire.data(), wire.size()), -1);
@@ -181,6 +186,8 @@ struct PollAdmissionResults {
   rusty::sync::atomic::AtomicBool timer_started{false};
   rusty::sync::atomic::AtomicBool child_started{false};
   rusty::sync::atomic::AtomicBool child_ran_inline{false};
+  rusty::sync::atomic::AtomicBool child_admitted{false};
+  rusty::sync::atomic::AtomicBool child_waited_for_admission{false};
   rusty::sync::atomic::AtomicBool finished{false};
 };
 
@@ -189,7 +196,22 @@ struct ReadyBaton {
   std::array<rusty::RefCell<rusty::Option<rusty::Arc<srpc::IntEvent>>>, 2> events;
 };
 
-// @unsafe - Real loopback TCP, registered with the production poll worker.
+// Every poll-owned request carries this much padding, so one accepted frame
+// alone takes the production outbound queue to its high-water mark. On the
+// Lion runtime a connection's reader and writer tasks are started only for a
+// connection srpc creates itself (TcpFactory::connect or the accept driver),
+// and such a connection keeps the default mark: set_outbound_high_water needs
+// the concrete TcpConnection, which the factory does not hand out. A sender on
+// the poll thread never writes through, so the frame stays queued until the
+// worker returns to its runtime and the writer task runs.
+constexpr size_t kAdmissionPadBytes = srpc::kTcpConnectionOutboundHighWaterDefault;
+// Request header (xid, rpc id, marker value) plus the padding's length prefix.
+constexpr size_t kAdmissionFrameSlackBytes = 64;
+
+// @unsafe - Real loopback TCP, owned by the production poll worker through the
+// production connect path (srpc::Client::connect: TcpFactory connect, reader
+// and writer tasks on the worker's Lion runtime, direct channel binding). This
+// is the path MultiPaxosCommo's request_replication uses.
 // The test thread is the independent peer/watchdog, never an owner-reactor
 // driver. The hard watchdog also bounds setup and shutdown if cleanup regresses.
 class PollOwnedAdmissionTest : public ::testing::Test {
@@ -206,27 +228,21 @@ class PollOwnedAdmissionTest : public ::testing::Test {
     socklen_t length = sizeof(address);
     ASSERT_EQ(::getsockname(listener_, reinterpret_cast<sockaddr*>(&address),
                             &length), 0);
-    outgoing_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    ASSERT_GE(outgoing_, 0);
-    ASSERT_EQ(::connect(outgoing_, reinterpret_cast<sockaddr*>(&address),
-                        sizeof(address)), 0);
+    const std::string endpoint =
+        "127.0.0.1:" + std::to_string(ntohs(address.sin_port));
+    poll_ = rusty::Some(srpc::PollThread::create());
+    rpc_client_ = rusty::Some(
+        srpc::Client::create(poll_.as_ref().unwrap().clone()));
+    auto rpc_client = rpc_client_.as_ref().unwrap().clone();
+    // Blocks this thread until the loopback handshake completes; the listen
+    // backlog holds the connection until accept() below.
+    ASSERT_EQ(rpc_client->connect(
+        reinterpret_cast<const int8_t*>(endpoint.c_str()), true), 0);
+    ASSERT_TRUE(rpc_client->connected());
+    client_ = rusty::Some(rpc_client->connection().unwrap());
     peer_ = ::accept(listener_, nullptr, nullptr);
     ASSERT_GE(peer_, 0);
-    ASSERT_EQ(::fcntl(outgoing_, F_SETFL, O_NONBLOCK), 0);
     ASSERT_EQ(::fcntl(peer_, F_SETFL, O_NONBLOCK), 0);
-    poll_ = rusty::Some(srpc::PollThread::create());
-    tcp_ = rusty::Some(rusty::Arc<srpc::TcpConnection>::new_(
-        srpc::TcpConnection::new_(outgoing_, "poll-admission-peer")));
-    outgoing_ = -1;  // TcpConnection now owns the descriptor.
-    auto& tcp = const_cast<srpc::TcpConnection&>(*tcp_.as_ref().unwrap());
-    tcp.set_poll_thread(poll_.as_ref().unwrap().clone());
-    // An empty queue accepts one complete frame, then rejects the next until
-    // handle_write runs. This creates admission pressure without socket floods.
-    tcp.set_outbound_high_water(1);
-    client_ = rusty::Some(rusty::Arc<srpc::ClientConnection>::new_(
-        srpc::ClientConnection::new_(poll_.as_ref().unwrap().clone())));
-    poll_.as_ref().unwrap()->add_proxy(
-        srpc::make_pollable_proxy_from_typed_arc(tcp_.as_ref().unwrap().clone()));
   }
 
   // @unsafe - Stop the producers independently of the stalled poll worker, then
@@ -246,6 +262,9 @@ class PollOwnedAdmissionTest : public ::testing::Test {
         ::usleep(1000);
       EXPECT_TRUE(closed->load()) << "owner cleanup did not run";
     }
+    // Client's Drop posts its own close job (redundant after the one above);
+    // release it while the poll worker still runs, as srpc's fixtures do.
+    rpc_client_ = rusty::None;
     if (poll_.is_some())
       poll_.as_ref().unwrap()->shutdown();
     // Closing must not complete any already-completed future a second time.
@@ -258,10 +277,8 @@ class PollOwnedAdmissionTest : public ::testing::Test {
           << "unexpected additional admitted frame bytes: " << count;
     }
     client_ = rusty::None;
-    tcp_ = rusty::None;
     poll_ = rusty::None;
     if (peer_ >= 0) ::close(peer_);
-    if (outgoing_ >= 0) ::close(outgoing_);
     if (listener_ >= 0) ::close(listener_);
   }
 
@@ -299,6 +316,9 @@ class PollOwnedAdmissionTest : public ::testing::Test {
           results->requests[index].serializations.fetch_add(1);
           srpc::Serialize_::serialize(
               index == 2 ? int32_t{0x7fffffff} : int32_t{index}, archive);
+          // Admission pressure: see kAdmissionPadBytes.
+          srpc::Serialize_::serialize(std::string(kAdmissionPadBytes, 'p'),
+                                      archive);
         });
     if (future.is_err())
       results->requests[index].admission_error.store(future.unwrap_err());
@@ -337,15 +357,14 @@ class PollOwnedAdmissionTest : public ::testing::Test {
     });
   }
 
-  // @unsafe - No local handle_write, flush, or manual reactor pump is permitted.
+  // @unsafe - No local flush or manual reactor pump is permitted: only the
+  // worker's own writer task may drain the queue.
   void exercise(bool stackless) {
     exercised_ = true;
     auto job = rusty::Arc<srpc::OneTimeJob>::new_(srpc::OneTimeJob::new_(
-        [client = client_.as_ref().unwrap().clone(),
-         tcp = tcp_.as_ref().unwrap().clone(), results = results_, stackless] {
-          auto& connection = const_cast<srpc::ClientConnection&>(*client);
-          connection.bind_channel_direct(srpc::make_tcp_connection_channel_proxy(tcp));
-          connection.force_connected_for_testing();
+        [client = client_.as_ref().unwrap().clone(), results = results_,
+         stackless] {
+          // SetUp connected and bound the channel through srpc::Client.
           auto gate = srpc::create_sp_int_event(1);
           if (!stackless)
             start_ready_pressure(results, gate);
@@ -372,9 +391,15 @@ class PollOwnedAdmissionTest : public ::testing::Test {
           srpc::Fiber::create_run([client, results, child_done] {
             results->child_started.store(true);
             request(client, results, 1);
+            results->child_admitted.store(true);
             child_done->set(1);
           });
           results->child_ran_inline.store(results->child_started.load());
+          // Request 0 filled the queue and nothing has drained it yet (this
+          // job has not yielded to the worker's runtime), so the child must
+          // be suspended in admission, not finished.
+          results->child_waited_for_admission.store(
+              !results->child_admitted.load());
           child_done->wait();
           request(client, results, 2);  // Terminal marker, after child admission.
           results->finished.store(true);
@@ -387,13 +412,16 @@ class PollOwnedAdmissionTest : public ::testing::Test {
     for (; received != 3; ++received) {
       int32_t length = 0;
       if (!transfer(&length, sizeof(length), false, deadline)) break;
-      std::array<uint8_t, 256> body{};
-      if (length <= 0 || static_cast<size_t>(length) > body.size()) {
+      if (length <= 0 || static_cast<size_t>(length) >
+                             kAdmissionPadBytes + kAdmissionFrameSlackBytes) {
         ADD_FAILURE() << "invalid production frame length " << length;
         break;
       }
-      if (!transfer(body.data(), length, false, deadline)) break;
-      srpc::BufferSource source(body.data(), length);
+      std::vector<uint8_t> body(static_cast<size_t>(length));
+      if (!transfer(body.data(), body.size(), false, deadline)) break;
+      EXPECT_GT(body.size(), kAdmissionPadBytes) << "request lost its padding";
+      // The header is read; the padding that follows it is not inspected.
+      srpc::BufferSource source(body.data(), body.size());
       srpc::BinaryReadArchive archive(srpc::make_source_proxy_buffer(&source));
       srpc::v64 xid;
       int32_t rpc = 0;
@@ -431,6 +459,8 @@ class PollOwnedAdmissionTest : public ::testing::Test {
     EXPECT_TRUE(results_->pressure_started.load());
     if (!stackless) EXPECT_TRUE(results_->timer_started.load());
     EXPECT_TRUE(results_->child_ran_inline.load());
+    EXPECT_TRUE(results_->child_waited_for_admission.load())
+        << "no admission pressure: the second request was admitted at once";
     for (const auto& result : results_->requests) {
       EXPECT_EQ(result.serializations.load(), 1);
       EXPECT_EQ(result.completions.load(), 1);
@@ -441,11 +471,10 @@ class PollOwnedAdmissionTest : public ::testing::Test {
 
   srpc_test::Watchdog watchdog_{"PollOwnedAdmissionTest"};
   int listener_ = -1;
-  int outgoing_ = -1;
   int peer_ = -1;
   bool exercised_ = false;
   rusty::Option<rusty::Arc<srpc::PollThread>> poll_;
-  rusty::Option<rusty::Arc<srpc::TcpConnection>> tcp_;
+  rusty::Option<rusty::Arc<srpc::Client>> rpc_client_;
   rusty::Option<rusty::Arc<srpc::ClientConnection>> client_;
   rusty::Arc<PollAdmissionResults> results_ = rusty::Arc<PollAdmissionResults>::make();
 };
@@ -467,7 +496,7 @@ TEST(PaxosLearnerPrefixTest, GapsDuplicatesAndReentrantDeliveryPreservePrefix) {
   janus::PaxosPrepCmd payload;
   payload.slots.push_back(77);
   janus::Command command(rusty::Arc<janus::PaxosPrepCmd>::make(std::move(payload)));
-  server.RegLearnerAction([&](int slot, janus::Command received) {
+  server.reg_learner_action([&](int slot, janus::Command received) {
     EXPECT_EQ(marshallable_cast<janus::PaxosPrepCmd>(received).unwrap()->slots[0], 77);
     applied.push(slot);
     if (slot == 1) {

@@ -323,9 +323,13 @@ record_native_archive_hashes() {
   local build_directory=$1
   local destination=$2
   local -a archives=()
+  # libraft_rt.a and libmako_sharding.a are the two Rust staticlibs that
+  # `mako` brings onto the sto_tpcc_bench link line next to libsto_tpcc_ffi.a.
   mapfile -d '' -t archives < <(
     find "$build_directory" -type f \
-      \( -name 'libmako.a' -o -name 'libmasstree.a' \) -print0 | sort -z
+      \( -name 'libmako.a' -o -name 'libmasstree.a' \
+         -o -name 'libraft_rt.a' -o -name 'libmako_sharding.a' \) -print0 |
+      sort -z
   )
   if [[ ${#archives[@]} -eq 0 ]]; then
     : >"$destination"
@@ -591,12 +595,25 @@ build_rust_archive() {
     --manifest-path "$repo_root/crates/Cargo.toml"
     --package sto-tpcc-ffi
   )
+  # Keep this environment identical to the sto-tpcc-ffi archive rule in
+  # CMakeLists.txt: the archive built here replaces that rule's output on the
+  # native build's recorded link line.
+  #
+  # LTO must stay off. sto_tpcc_bench links `mako`, which carries two more
+  # Rust staticlibs (raft-cargo/release/libraft_rt.a and
+  # native-sharding/release/libmako_sharding.a). A fat-LTO staticlib rewrites
+  # std into its own object, and that link then fails with multiple
+  # definitions of rust_eh_personality and std::panicking::EMPTY_PANIC.
+  # Turning it off costs nothing today: sto-tpcc-ffi declares
+  # crate-type = ["staticlib", "rlib"], and Cargo runs no LTO for a unit that
+  # also emits an rlib, so lto=fat only embedded unused bitcode in the same
+  # per-crate objects.
   local -a cargo_environment=(
     "CARGO_TARGET_DIR=$target_directory"
     CARGO_INCREMENTAL=0
     CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
     CARGO_PROFILE_RELEASE_DEBUG=1
-    CARGO_PROFILE_RELEASE_LTO=fat
+    CARGO_PROFILE_RELEASE_LTO=false
     CARGO_PROFILE_RELEASE_OPT_LEVEL=3
     CARGO_PROFILE_RELEASE_PANIC=unwind
     "RUSTFLAGS=$rustflags"

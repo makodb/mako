@@ -49,7 +49,7 @@ Coverage contract:
     STO/Masstree state for process lifetime. Four exact Rust TPC-C lifecycle
     tests use one checked-in LSan
     constructor suppression for native Masstree roots retained until exit.
-  * The UBSan job compiler-instruments native C and C++ code. Stable Rust 1.95
+  * The UBSan job compiler-instruments native C and C++ code. Stable Rust 1.97
     has no UBSan compiler mode, so Rust-owned test executables only link the
     same Clang UBSan runtime to exercise calls into instrumented native code.
   * ASan, UBSan, and TSan use the checked-in, sanitizer-specific Masstree
@@ -364,14 +364,14 @@ else
     selected_cargo="$(command -v cargo)"
     selected_rustc="$(command -v rustc)"
     stable_version="$("${selected_rustc}" --version | awk '{print $2}')"
-    if [[ "${stable_version}" != "1.95.0" ]]; then
-        echo "UBSan requires stable Rust 1.95.0, found ${stable_version}" >&2
+    if [[ "${stable_version}" != "1.97.1" ]]; then
+        echo "UBSan requires stable Rust 1.97.1, found ${stable_version}" >&2
         exit 2
     fi
     rustflags="-C force-frame-pointers=yes ${rust_link_flag}"
     rustdocflags="-C force-frame-pointers=yes ${rust_link_flag}"
     sto_tpcc_rustflags="${rust_link_flag}"
-    rust_instrumentation="none-stable-1.95"
+    rust_instrumentation="none-stable-1.97"
     rust_runtime="native-link-argument"
 fi
 if [[ "${sanitizer}" == "address" ]]; then
@@ -1396,7 +1396,6 @@ boundary_executables = (
     "test_silo_nontxn_api",
     "test_silo_runtime",
     "test_silo_varint",
-    "test_srpc_epoll_platform",
     "test_sto_tpcc_ffi_c11_header",
 )
 for executable in boundary_executables:
@@ -1487,9 +1486,7 @@ required_sources = {
     "src/mako/sto/Transaction.cc",
     "src/mako/storage/mtree_abi.cc",
     "src/mako/storage/rust_sto_tpcc_wrapper.cc",
-    "src/srpc/reactor/epoll_platform_linux.cc",
     "tests/mtree_abi_c11_header.c",
-    "tests/srpc_epoll_platform_test.cc",
     "tests/sto_tpcc_ffi_c11_header.c",
     "tests/test_benchmark_output.cc",
     "tests/test_mako_value_metadata.cc",
@@ -1567,7 +1564,6 @@ required = {
     "test_silo_transaction_set_capacity_exhaustion",
     "test_silo_transaction_set_exact_chunk_boundary",
     "test_silo_transitem_lifetime",
-    "test_srpc_epoll_platform",
     "test_sto_tpcc_ffi_c11_header",
     "test_benchmark_output",
     "test_sto_tpcc_cpp_wrapper_scan_smoke",
@@ -1582,8 +1578,6 @@ required = {
     "test_sto_tpcc_rust_concurrent_resource_exhausted",
     "test_sto_tpcc_rejects_duplicate_local_shards",
     "test_sto_tpcc_rejects_partial_local_shards",
-    "test_sto_tpcc_rejects_rust_distributed_shard",
-    "test_sto_tpcc_rejects_rust_replication",
     "test_sto_tpcc_rejects_rust_worker_limit",
 }
 missing = sorted(required - set(by_name))
@@ -1667,7 +1661,6 @@ fail_if_empty_gtests = set(exact_filters) | {
     "test_mako_value_metadata",
     "test_mtree_abi",
     "test_silo_nontxn_api",
-    "test_srpc_epoll_platform",
 }
 for name in sorted(audited_names):
     test = by_name[name]

@@ -38,6 +38,13 @@
 // Runtime replication switching - unified interface
 #include "deptran/replication_helper.h"
 #include "deptran/config.h"
+// deptran/config.h pulls in deptran/constants.h, whose object-like SUCCESS
+// macro would rewrite mako::ErrorCode::SUCCESS in any Mako header first
+// included after this point (the Rust line's simpleTransactionRep build broke
+// that way). Nothing reachable from here uses the deptran macro, so drop it.
+#ifdef SUCCESS
+#undef SUCCESS
+#endif
 
 // Cluster-config runtime bootstrap (shard-0 config service + watcher).
 #include "cluster_bootstrap.h"

@@ -2002,7 +2002,9 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
       throw std::logic_error("Rust STO table ID is already present");
     tables_by_name_.emplace(key, index);
     index->name_ = name;
-    mako::get_table_registry().register_table(table_id, name);
+    // No engine handle is published: native placement resolves MBTA indexes.
+    mako::get_table_registry().register_table(
+        table_id, name, shard_index, !index->is_remote_);
     ++next->second;
     return index;
   }
@@ -2102,7 +2104,9 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
     throw;
   }
 
-  mako::get_table_registry().register_table(table_id, name);
+  // No engine handle is published: native placement resolves MBTA indexes.
+  mako::get_table_registry().register_table(
+      table_id, name, shard_index, !remote);
   if (!remote)
     mako::setup_update_table(table_id, raw);
   next->second = std::max(next->second, table_id + 1);

@@ -729,7 +729,7 @@ timeout coverage) that previously had to rely on TCP timing.
 | ENOENT | RPC method not found |
 | EINVAL | Invalid call context/arguments or bad packet format |
 | ETIMEDOUT | Request timed out |
-| EAGAIN | Request rejected by queue policy or not admitted to a full channel queue |
+| EAGAIN | Request rejected by queue policy, or `request_with_admission` not admitted to a full channel queue before its deadline (a plain `request` refused by a full channel queue reports `EIO`) |
 
 ---
 
@@ -809,14 +809,22 @@ self-woken tasks remain queued for the next turn, so they cannot indefinitely
 prevent TCP polling or pending writable-interest updates. Creating a nested
 fiber still starts it inline, but does not recursively drain the reactor on a
 poll worker. Explicit non-poll `run_loop(false, true)` retains its full
-event-chain drain behavior.
+event-chain drain behavior. A Reactor the poll worker's driver does not drain
+(the disk reactor, or one constructed directly) keeps the full drain and the
+inline pump even on a poll thread. A Shutdown command restores the full drain
+for the driver's last poll, so work readied by a close job queued just before
+`PollThread::shutdown()` still runs.
 
 The native `test_mako_nontxn_distributed` executable includes real socketpair
 regressions for queue drain, deadline rejection without transmission, and close
 during admission, plus ordered learner delivery across gaps and duplicates.
 Its production-poller loopback cases exercise timed/ready-event pressure and
 stackless self-wakes while requiring ordered data/terminal frames and exactly
-one completion per request. The separate
+one completion per request. These cases connect through `srpc::Client::connect`
+and pad each request to the transport's default outbound high-water mark
+(4 MiB), because a factory-created connection does not expose
+`set_outbound_high_water`. `src/srpc/tests/mako_bounded_turn_rust.rs` covers the
+bounded turn and the shutdown drain in Rust. The separate
 `test_srpc_reactor_manual_compatibility` CTest retains the existing manual
 event-chain and nested-fiber contracts; it does not run the standalone load test.
 

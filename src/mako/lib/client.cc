@@ -702,6 +702,17 @@ namespace mako
                 sizeof(client_kv_response_t)));
         reqBuf->targert_server_id = server_id;
         StampRequest(reqBuf, reqId);
+        // A standalone request belongs to no participant attempt, so its term
+        // fence (ShardReceiver::ReceiveRequest) must see this sender's current
+        // term, sampled from the same source as Transaction::get_current_term,
+        // not the term of whichever attempt this lane began last. An ephemeral
+        // gateway forwarder never begins one and would stay at term 0 forever.
+        if (sc_callback_) {
+            const int term = sc_callback_();
+            if (term > current_term) current_term = term;
+        }
+        reqBuf->identity.term = static_cast<uint32_t>(current_term);
+        pending_identity = reqBuf->identity;
         reqBuf->table_id = table_id;
         ASSERT_LT(key.size(), max_key_length);
         ASSERT_LT(value.size(), max_value_length);

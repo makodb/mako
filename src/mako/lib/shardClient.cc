@@ -722,7 +722,10 @@ namespace mako
         return is_all_response_ok();
     }
 
-    // @unsafe - unlock is a terminal operation for read and write participants.
+    // @unsafe - Retired RPC: no caller remains and the receiver's handler is
+    // deprecated. It is not a participant terminal, so a successful unlock
+    // discharges nothing: touched participants stay owed until
+    // remoteInstall/remoteAbort confirm.
     int ShardClient::remoteUnLock() {
         const int shards = touched_shards;
         if (!shards) return ErrorCode::SUCCESS;
@@ -739,7 +742,6 @@ namespace mako
                 continue;
             }
             const int result = is_all_response_ok();
-            if (result == ErrorCode::SUCCESS) touched_shards = 0;
             if (result == ErrorCode::SUCCESS || !sharding_admission_enabled()) return result;
             usleep(1000);
         }

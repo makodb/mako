@@ -5657,9 +5657,14 @@ the unique transaction keys make that immaterial to abstract results.
 
 The run counts committed logical operations and includes retry cost, so abort
 rate is part of the result. It uses `taskset`, not per-worker pinning, on one
-shared non-isolated host with three repetitions. Both effective timed paths use
-native `-O2`; Rust uses fat LTO and one codegen unit while the C++ repository
-target does not use LTO. Latency percentiles, scans, misses and interning,
+shared non-isolated host with three repetitions. Both effective timed paths used
+native `-O2`; the measured Rust binary, the Cargo-built `sto_masstree_compare`,
+was built with fat LTO and one codegen unit, while the C++ repository target did
+not use LTO. That profile belongs to this archived run, not to the CMake
+`sto_tpcc_bench` target: its `sto-tpcc-ffi` adapter archive (the
+`sto_tpcc_rust_ffi` command in `CMakeLists.txt`) is built with `lto=false` and
+one codegen unit, because it shares the executable with the native sharding and
+Raft Rust staticlibs. Latency percentiles, scans, misses and interning,
 non-eight-byte values, allocations, lock-hold time, false-conflict cost, and
 application traces remain unmeasured.
 
@@ -5690,12 +5695,16 @@ follows:
 | Rust-default/production acceptance | Appendix O.2 | Not granted by feature availability, historical gate results, or a scoped performance comparison. |
 | Bounded point-workload performance characterization | [August point matrix](../performance/sto-rust-zoo2-optimized-2026-08-28/README.md) and [September singleton record](../performance/mako-cache-rust-sto-singleton-attribution-2026-09-17.md) | Historical profiles remain distinct; September engine-only singleton evidence is not production-wide budget acceptance. |
 
-The checked-in gate inventory includes Rust 1.95 formatting, Clippy, rustdoc,
+The checked-in gate inventory includes Rust formatting, Clippy, rustdoc,
 core/adapter tests, C11 header compilation, ABI negotiation and export checks,
 safe-wrapper/native integration, independent-oracle histories, closed TPC-C
 fixtures, and focused Miri/ASan/UBSan/TSan lanes. The public ABI gate checks its
 44-symbol allowlist, feature mask `0x3f7f`, and export-manifest fingerprint
 `0x8275e6faa88a4fe0`; hidden trusted symbols are outside that public contract.
+These gates were recorded on Rust 1.95, which is still the `crates/` workspace
+`rust-version`. The repository toolchain pin (`rust-toolchain.toml`,
+`install_rustc.sh`, the Docker image) is now `1.97.1`, the release the native
+sharding crate requires; the gate results above have not been re-recorded on it.
 
 Backend selection changes how these gates must run. Do not apply
 `--all-features` indiscriminately to `mako-engine` or `mako-cache`: both engines

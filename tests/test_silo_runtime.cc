@@ -821,7 +821,10 @@ TEST(StoEpochAdvancerLifecycleTest, ThreadEndDrainsOwnedMasstreeCallbacks) {
 
 TEST(StoEpochAdvancerLifecycleTest, ThreadEndStopsIdleModeOneMasstreeRcu) {
     // shard_reset() leaves an empty mode-1 participant transaction ready for
-    // the next RPC, but start() has still entered the Masstree RCU region.
+    // the next RPC. That idle placeholder enters neither the STO epoch nor the
+    // Masstree RCU region (an idle helper must not pin an epoch cut); the
+    // first real storage access enters both through ensure_epoch(), and
+    // thread_end() must then stop that region exactly once.
     SiloRuntime* const runtime = SiloRuntime::GlobalDefault();
     runtime->BindToCurrentThread();
     TThread::set_mode(0);
@@ -841,9 +844,10 @@ TEST(StoEpochAdvancerLifecycleTest, ThreadEndStopsIdleModeOneMasstreeRcu) {
 
     auto& end_callback =
         Transaction::tinfo[TThread::id()].trans_end_callback;
+    // The slot is mainline's move-only rusty::Function<void()>.
     struct callback_restore {
-        std::function<void(void)>& slot;
-        std::function<void(void)> original;
+        rusty::Function<void()>& slot;
+        rusty::Function<void()> original;
         ~callback_restore() { slot = std::move(original); }
     } restore{end_callback, std::move(end_callback)};
     size_t end_callback_count = 0;
@@ -860,8 +864,18 @@ TEST(StoEpochAdvancerLifecycleTest, ThreadEndStopsIdleModeOneMasstreeRcu) {
         EXPECT_FALSE(TThread::txn->has_staged_items());
     }
     EXPECT_NE(mbta_table::mythreadinfo.ti, nullptr);
-    if (mbta_table::mythreadinfo.ti != nullptr) {
+    if (TThread::txn != nullptr && mbta_table::mythreadinfo.ti != nullptr) {
+        // Idle placeholder: no epoch guard, no Masstree RCU, no callback owed.
+        EXPECT_FALSE(TThread::txn->has_epoch());
+        EXPECT_FALSE(mbta_table::mythreadinfo.ti->rcu_active());
+
+        // What every mode-1 storage entry point does before touching a tree.
+        TThread::txn->ensure_epoch();
+        EXPECT_TRUE(TThread::txn->has_epoch());
+        EXPECT_TRUE(TThread::txn->has_active_state());
+        EXPECT_FALSE(TThread::txn->has_staged_items());
         EXPECT_TRUE(mbta_table::mythreadinfo.ti->rcu_active());
+        EXPECT_EQ(end_callback_count, 0U);
     }
 
     db.thread_end();
@@ -1058,9 +1072,10 @@ TEST(StoEpochAdvancerLifecycleTest,
 
     auto& end_callback =
         Transaction::tinfo[TThread::id()].trans_end_callback;
+    // The slot is mainline's move-only rusty::Function<void()>.
     struct callback_restore {
-        std::function<void(void)>& slot;
-        std::function<void(void)> original;
+        rusty::Function<void()>& slot;
+        rusty::Function<void()> original;
         ~callback_restore() { slot = std::move(original); }
     } restore{end_callback, std::move(end_callback)};
     size_t end_callback_count = 0;
@@ -1072,6 +1087,10 @@ TEST(StoEpochAdvancerLifecycleTest,
 
     LocalTimestampBox box(0);
     Sto::start_transaction();
+    // A mode-1 start is an idle placeholder; the engine (and with it the one
+    // end callback this test counts) starts at the first storage access. A
+    // TBox is not a MassTrans entry point, so enter explicitly.
+    TThread::txn->ensure_epoch();
     box.write(7);
     const bool locked = Sto::shard_try_lock_last_writeset();
     EXPECT_TRUE(locked);
@@ -1401,6 +1420,9 @@ TEST(TransactionSetBoundaryTest, ParticipantAbortCleansExactChunkBoundaries) {
                 [&] { ++end_callback_count; };
 
             Sto::start_transaction();
+            // Mode-1 engine start is lazy: the end callback is owed only once
+            // the attempt entered the engine, as a real storage access does.
+            TThread::txn->ensure_epoch();
             object.stage_fresh_inserts(count);
             Sto::silent_abort();
 

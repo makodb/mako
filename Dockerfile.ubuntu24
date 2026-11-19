@@ -41,7 +41,10 @@ RUN bash /tmp/install_rust_toolchain.sh "${RUST_VERSION}" /opt/rust \
 # rust-src is a separate official component. Verify it against the checksum
 # published beside the archive, the same way install_rust_toolchain.sh
 # verifies the compiler, then prove the workspace's clippy/rustfmt gates and
-# the standard-library sources are really present.
+# the standard-library sources are really present. The sources carry no
+# version of their own, so a stamp file records the release they belong to;
+# the CI job reinstalls rust-src unless that stamp matches its compiler
+# (.github/workflows/ci.yml, "Install Rust workspace components").
 RUN set -eux; \
     rust_src_tarball="rust-src-${RUST_VERSION}.tar.gz"; \
     work="$(mktemp -d)"; \
@@ -55,6 +58,7 @@ RUN set -eux; \
     sha256sum --check --strict "${rust_src_tarball}.sha256"; \
     tar xzf "${rust_src_tarball}"; \
     "./rust-src-${RUST_VERSION}/install.sh" --prefix=/opt/rust; \
+    printf '%s\n' "${RUST_VERSION}" > /opt/rust/lib/rustlib/src/mako-rust-src-version; \
     cd /; \
     rm -rf "${work}"; \
     test -r /opt/rust/lib/rustlib/src/rust/library/core/src/marker.rs; \

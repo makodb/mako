@@ -12,7 +12,8 @@
 //! Every fallible `rocksdb_*` call takes a `char **errptr`. Non-null
 //! means failure and the caller owns the string. Forgetting to free it
 //! leaks on exactly the path where things are already going wrong, so
-//! every call here goes through [`Err0`], which frees on drop.
+//! every call here goes through the private `Err0` guard, which frees
+//! on drop.
 
 use std::ffi::{c_char, c_uchar, CStr, CString};
 use std::path::{Path, PathBuf};

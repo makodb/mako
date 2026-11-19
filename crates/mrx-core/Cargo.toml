@@ -2,10 +2,12 @@
 name = "mrx-core"
 version = "0.1.0"
 edition = "2021"
-# Matches Dockerfile.ubuntu24, which installs 1.91.0 from a tarball with no
-# rustup. Deliberately NO rust-toolchain.toml: with no rustup in CI it would
-# be silently ignored here and authoritative locally, i.e. the two would
-# disagree exactly when it matters.
+# The minimum this crate needs, not the toolchain it is built with:
+# Dockerfile.ubuntu24 and scripts/ci/install_rust_toolchain.sh install Rust
+# 1.97.1 from a tarball with no rustup, and the root rust-toolchain.toml pins
+# the same release for rustup-managed hosts. Keep those in step: CI ignores
+# rust-toolchain.toml (there is no rustup proxy to read it), so a mismatch
+# would have CI and local builds disagree exactly when it matters.
 rust-version = "1.91"
 description = "Masstree-over-RocksDB write-back cache: backend-agnostic core"
 license = "MIT"

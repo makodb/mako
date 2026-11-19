@@ -62,6 +62,25 @@ jobs:
         with:
           submodules: recursive
 
+      # Every lane builds `mako`, whose srpc source gate runs ripgrep; the
+      # pinned image predates apt_packages.sh installing it.
+      - name: Container prerequisites
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rg >/dev/null 2>&1; then
+            SUDO=""
+            if [ "$(id -u)" -ne 0 ]; then
+              command -v sudo >/dev/null 2>&1 || { echo "ripgrep missing and not root (uid $(id -u)), no sudo" >&2; exit 1; }
+              SUDO="sudo"
+            fi
+            $SUDO apt-get update -qq
+            DEBIAN_FRONTEND=noninteractive $SUDO apt-get install -y -qq ripgrep
+          fi
+          rg --version | head -1
+
+      # Stable must be the release mainline's native sharding crate requires
+      # (src/cluster/Cargo.toml rust-version = 1.97.1); `mako` links it.
       - name: Install Rust workspace toolchain
         if: matrix.sanitizer == 'undefined'
         shell: bash
@@ -71,7 +90,7 @@ jobs:
              command -v cargo >/dev/null 2>&1; then
             if rust_version="$(rustc --version 2>/dev/null | awk '{print $2}')" &&
                rust_sysroot="$(rustc --print sysroot 2>/dev/null)" &&
-               [ "${rust_version}" = "1.95.0" ] &&
+               [ "${rust_version}" = "1.97.1" ] &&
                [ -r "${rust_sysroot}/lib/rustlib/src/rust/library/core/src/marker.rs" ] &&
                cargo clippy --version >/dev/null 2>&1; then
               exit 0
@@ -89,6 +108,20 @@ jobs:
           bash ./scripts/ci/install_pinned_rustup.sh
           "${CARGO_HOME}/bin/rustup" toolchain install "${toolchain}" \
             --profile minimal --component clippy --component rust-src
+          # The Raft and native-sharding archives that reach dbtest are built
+          # with the selected sanitizer toolchain, like every other Cargo
+          # archive in that link (MAKO_CARGO_EXECUTABLE and
+          # MAKO_RUST_STO_RUSTUP_TOOLCHAIN in CMakeLists.txt). Mainline's
+          # other Cargo edges, SRPC's crate mode and the source gates, go
+          # through the rustup proxy and so use the workspace-default
+          # toolchain (rust-toolchain.toml). Install that one once here so
+          # parallel build edges cannot race to auto-install it in the shared
+          # RUSTUP_HOME.
+          workspace_toolchain="$(sed -n 's/^channel = "\(.*\)"$/\1/p' rust-toolchain.toml)"
+          test -n "${workspace_toolchain}"
+          "${CARGO_HOME}/bin/rustup" toolchain install "${workspace_toolchain}" \
+            --profile minimal --component clippy --component rustfmt \
+            --component rust-src
           echo "${CARGO_HOME}/bin" >>"${GITHUB_PATH}"
 
       - name: Run ${{ matrix.sanitizer }} gate

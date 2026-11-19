@@ -17,6 +17,9 @@ use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
 const NATIVE_LINK_ARCHIVES: &str = include_str!("../mako-local/native-link-archives.txt");
+const RUST_STATICLIB_KIND: &str = "rust-staticlib";
+const NATIVE_RUST_STATICLIB_SYSTEM_LIBS: [&str; 7] =
+    ["rocksdb", "pthread", "dl", "m", "rt", "util", "gcc_s"];
 
 fn main() {
     println!("cargo:rerun-if-env-changed=MAKO_BUILD_DIR");
@@ -46,7 +49,12 @@ fn main() {
     // anything specific to this project: an archive only resolves symbols
     // that are already undefined when the linker reaches it. mtx_abi.cc
     // (in libmako) pulls in masstree and srpc, so those must come after.
-    for (lib, rel) in native_link_archives() {
+    //
+    // The `rust-staticlib` rows (native sharding, the Raft runtime) are the
+    // exception: they are linked only through the trailing group emitted at
+    // the end of this function. See crates/mako-local/build.rs.
+    let archives = native_link_archives();
+    for &(lib, rel, rust_staticlib) in &archives {
         let path = build.join(rel);
         let dir = path
             .parent()
@@ -57,6 +65,9 @@ fn main() {
             path.display()
         );
         println!("cargo:rerun-if-changed={}", path.display());
+        if rust_staticlib {
+            continue;
+        }
         println!("cargo:rustc-link-search=native={}", dir.display());
         println!("cargo:rustc-link-lib=static={lib}");
     }
@@ -94,10 +105,38 @@ fn main() {
     println!("cargo:rustc-link-lib=dylib=c++");
     println!("cargo:rustc-link-lib=dylib=c++abi");
 
+    // libmako.a calls into two Cargo staticlibs (native sharding, the Raft
+    // runtime) that carry their own Rust std and a `panic = "abort"` runtime.
+    // They go after this executable's own std, in one trailing group that
+    // repeats the whole closure; `rustc-link-lib=static=` would put them
+    // before std and make every panic abort the test binary. The full
+    // rationale is in crates/mako-local/build.rs. Link arguments are
+    // package-local, so dependents with their own link targets (mrx) repeat
+    // this group.
+    if archives
+        .iter()
+        .any(|&(_, _, rust_staticlib)| rust_staticlib)
+    {
+        println!("cargo:rustc-link-arg=-Wl,--start-group");
+        for &(_, rel, _) in &archives {
+            // The linker resolves a path argument against its own working
+            // directory, so a relative MAKO_BUILD_DIR must not leak into it.
+            let path = build.join(rel);
+            let path = path.canonicalize().unwrap_or(path);
+            println!("cargo:rustc-link-arg={}", path.display());
+        }
+        println!("cargo:rustc-link-arg=-Wl,--end-group");
+        for library in NATIVE_RUST_STATICLIB_SYSTEM_LIBS {
+            println!("cargo:rustc-link-arg=-l{library}");
+        }
+    }
+
     println!("cargo:rustc-cfg=have_mako");
 }
 
-fn native_link_archives() -> Vec<(&'static str, &'static str)> {
+/// Rows of the shared manifest as (library name, path relative to the build
+/// directory, is a Cargo-built Rust staticlib).
+fn native_link_archives() -> Vec<(&'static str, &'static str, bool)> {
     let mut archives = Vec::new();
     let mut names = HashSet::new();
     let mut paths = HashSet::new();
@@ -107,13 +146,14 @@ fn native_link_archives() -> Vec<(&'static str, &'static str)> {
             continue;
         }
         let fields: Vec<_> = line.split_whitespace().collect();
-        assert_eq!(
-            fields.len(),
-            2,
-            "native-link-archives.txt:{} must contain a library name and path",
+        assert!(
+            fields.len() == 2 || (fields.len() == 3 && fields[2] == RUST_STATICLIB_KIND),
+            "native-link-archives.txt:{} must contain a library name and path, \
+             optionally followed by `{RUST_STATICLIB_KIND}`",
             index + 1
         );
         let (name, relative) = (fields[0], fields[1]);
+        let rust_staticlib = fields.len() == 3;
         assert!(
             name.chars()
                 .all(|character| character.is_ascii_alphanumeric() || character == '_'),
@@ -137,7 +177,7 @@ fn native_link_archives() -> Vec<(&'static str, &'static str)> {
             "native-link-archives.txt:{} repeats path {relative:?}",
             index + 1
         );
-        archives.push((name, relative));
+        archives.push((name, relative, rust_staticlib));
     }
     assert!(!archives.is_empty(), "native archive closure is empty");
     archives

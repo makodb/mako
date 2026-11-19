@@ -16,6 +16,9 @@ use native_allocator::{NativeAllocator, ResolvedAllocator, CONTRACT_RELATIVE_PAT
 
 const DEFAULT_BUILD_DIRS: [&str; 4] = ["build_mrx", "build_c22", "build", "build_docker"];
 const NATIVE_LINK_ARCHIVES: &str = include_str!("native-link-archives.txt");
+const RUST_STATICLIB_KIND: &str = "rust-staticlib";
+const NATIVE_RUST_STATICLIB_SYSTEM_LIBS: [&str; 7] =
+    ["rocksdb", "pthread", "dl", "m", "rt", "util", "gcc_s"];
 
 fn main() {
     println!("cargo:rerun-if-env-changed=MAKO_BUILD_DIR");
@@ -65,8 +68,9 @@ fn main() {
     // native executables. The smaller historical closure stopped working once
     // real transaction tests selected srpc/deptran objects whose out-of-line
     // implementations live in rusty-cpp port archives.
-    for (lib, rel) in native_link_archives() {
-        let path = build.join(rel);
+    let archives = native_link_archives();
+    for archive in &archives {
+        let path = build.join(archive.relative);
         let dir = path.parent().unwrap_or_else(|| {
             panic!(
                 "native archive path has no parent directory: {}",
@@ -80,8 +84,13 @@ fn main() {
             path.display()
         );
         println!("cargo:rerun-if-changed={}", path.display());
+        if archive.rust_staticlib {
+            // Linked only through the trailing group below; see
+            // emit_trailing_native_link_group.
+            continue;
+        }
         println!("cargo:rustc-link-search=native={}", dir.display());
-        println!("cargo:rustc-link-lib=static={lib}");
+        println!("cargo:rustc-link-lib=static={}", archive.name);
     }
 
     // Mako's in-tree yaml-cpp is built against the same libc++ as libmako.
@@ -124,7 +133,51 @@ fn main() {
     }
     println!("cargo:rustc-link-lib=dylib=c++");
     println!("cargo:rustc-link-lib=dylib=c++abi");
+    emit_trailing_native_link_group(&build, &archives);
     println!("cargo:rustc-cfg=have_mako");
+}
+
+/// Append libmako.a's Rust staticlibs (native sharding, the Raft runtime)
+/// to the end of this package's link lines.
+///
+/// libmako.a calls into `libmako_sharding.a` and `libraft_rt.a`, and
+/// `libraft_rt.a` calls back into kernels that live in libmako.a. Both are
+/// Cargo staticlibs: each carries a private copy of the Rust standard library
+/// and the panic runtime of its `panic = "abort"` profile. Declared as
+/// `rustc-link-lib=static=` they would sit BEFORE this executable's own std,
+/// the linker would take std and `panic_abort` from them, and every Rust
+/// panic (a failing assertion, `catch_unwind`, `#[should_panic]`) would abort
+/// the test binary instead of unwinding. `cargo:rustc-link-arg` arguments are
+/// placed after every library rustc adds, std included, so the executable
+/// keeps its own std and unwinding runtime and the staticlibs' crates bind to
+/// those (one toolchain builds all of them, so the std objects are the same
+/// bytes). The group repeats every archive of the closure because the
+/// staticlibs' callbacks may select libmako.a members, and through them
+/// other archives, that nothing earlier asked for; a GNU ld link does not
+/// revisit earlier archives on its own.
+///
+/// Link arguments are package-local: a dependent package that links its own
+/// tests or binaries against this closure must emit the same group (see the
+/// build scripts of mako-cache, mako-cache-bench, mrx and mrx-masstree).
+fn emit_trailing_native_link_group(build: &Path, archives: &[NativeArchive]) {
+    if !archives.iter().any(|archive| archive.rust_staticlib) {
+        return;
+    }
+    println!("cargo:rustc-link-arg=-Wl,--start-group");
+    for archive in archives {
+        println!(
+            "cargo:rustc-link-arg={}",
+            build.join(archive.relative).display()
+        );
+    }
+    println!("cargo:rustc-link-arg=-Wl,--end-group");
+    // What the staticlibs need from the platform (the INTERFACE_LINK_LIBRARIES
+    // of mako_sharding_native and raft_rust in CMakeLists.txt). They are
+    // repeated after the group because GNU ld drops an --as-needed library
+    // that nothing before it on the command line used.
+    for library in NATIVE_RUST_STATICLIB_SYSTEM_LIBS {
+        println!("cargo:rustc-link-arg=-l{library}");
+    }
 }
 
 fn configure_native_allocator(build: &Path) {
@@ -180,7 +233,15 @@ fn configure_native_allocator(build: &Path) {
     }
 }
 
-fn native_link_archives() -> Vec<(&'static str, &'static str)> {
+/// One row of native-link-archives.txt.
+struct NativeArchive {
+    name: &'static str,
+    relative: &'static str,
+    /// A Cargo-built Rust staticlib rather than an archive of C/C++ objects.
+    rust_staticlib: bool,
+}
+
+fn native_link_archives() -> Vec<NativeArchive> {
     let mut archives = Vec::new();
     let mut names = HashSet::new();
     let mut paths = HashSet::new();
@@ -190,13 +251,14 @@ fn native_link_archives() -> Vec<(&'static str, &'static str)> {
             continue;
         }
         let fields: Vec<_> = line.split_whitespace().collect();
-        assert_eq!(
-            fields.len(),
-            2,
-            "native-link-archives.txt:{} must contain exactly a library name and path",
+        assert!(
+            fields.len() == 2 || (fields.len() == 3 && fields[2] == RUST_STATICLIB_KIND),
+            "native-link-archives.txt:{} must contain exactly a library name and path, \
+             optionally followed by `{RUST_STATICLIB_KIND}`",
             index + 1
         );
         let (name, relative) = (fields[0], fields[1]);
+        let rust_staticlib = fields.len() == 3;
         assert!(
             name.chars()
                 .all(|character| character.is_ascii_alphanumeric() || character == '_'),
@@ -220,7 +282,11 @@ fn native_link_archives() -> Vec<(&'static str, &'static str)> {
             "native-link-archives.txt:{} repeats archive path {relative:?}",
             index + 1
         );
-        archives.push((name, relative));
+        archives.push(NativeArchive {
+            name,
+            relative,
+            rust_staticlib,
+        });
     }
     assert!(
         !archives.is_empty(),

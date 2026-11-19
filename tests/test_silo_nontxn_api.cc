@@ -966,10 +966,11 @@ TEST_F(SiloNonTxnApi, MassTransSameKeyCompositionExhaustiveTriples) {
     EXPECT_EQ(sequence_id, 864u);
 }
 
-// Own-write composition is a local-table feature: single-version rows use
+// Read-your-writes is a local-table feature: single-version rows use
 // the RYW overlay, multiversion rows use immutable private-row publication
-// (see the MV composition tests above). Remote proxies keep the historical
-// abort-on-own-invalid-row behavior and never see the staged overlay.
+// (see the MV composition tests above). Remote proxies never read or scan
+// the staged overlay; a write over the transaction's own proxy carrier is
+// re-staged (MassTrans::restageRemoteWrite).
 TEST_F(SiloNonTxnApi, MassTransRywCompositionExcludesRemoteTables) {
     mbta_type& mt = make_masstrans(9019, "mt_ryw_scope");
     const std::string initial = mako::Encode("i");
@@ -988,16 +989,12 @@ TEST_F(SiloNonTxnApi, MassTransRywCompositionExcludesRemoteTables) {
         }
     } restore{mt};
 
-    auto expect_growing_own_insert_to_abort = [&](const char* key) {
+    // A proxy's own carrier is re-stageable: a later put of the same key
+    // rewrites it (growing it if needed) instead of aborting the attempt.
+    auto expect_growing_own_insert_to_restage = [&](const char* key) {
         Sto::start_transaction();
         EXPECT_FALSE(mt.transInsert(lcdf::Str(key), StringWrapper(initial)));
-        bool aborted = false;
-        try {
-            (void)mt.transPut(lcdf::Str(key), StringWrapper(large));
-        } catch (const Transaction::Abort&) {
-            aborted = true;
-        }
-        EXPECT_TRUE(aborted);
+        EXPECT_TRUE(mt.transPut(lcdf::Str(key), StringWrapper(large)));
         Sto::silent_abort();
     };
 
@@ -1032,7 +1029,7 @@ TEST_F(SiloNonTxnApi, MassTransRywCompositionExcludesRemoteTables) {
     };
 
     mt.set_is_remote(true);
-    expect_growing_own_insert_to_abort("ryw-disabled-remote");
+    expect_growing_own_insert_to_restage("ryw-disabled-remote");
     expect_own_insert_read_to_abort("ryw-read-disabled-remote");
     expect_scan_without_overlay();
 
@@ -2137,7 +2134,9 @@ public:
     }
 
     ~ScopedUpdateVsRejectOnce() {
-        register_sync_util(std::function<int()>{});
+        // An empty rusty::Function, not an empty std::function: the latter
+        // would be wrapped as a non-null callback that throws when called.
+        register_sync_util(rusty::Function<int()>{});
         BenchmarkConfig::getInstance().setControlMode(previous_control_mode_);
         sync_util::sync_logger::failed_shard_ts.store(
             previous_failed_timestamp_, std::memory_order_relaxed);
@@ -2192,8 +2191,16 @@ TEST_F(SiloNonTxnApi, L3NonTxnScansRejectUpdateVsBeforeCallback) {
     std::string start = "key";
     std::string end = "kez";
 
+    // A non-txn scan is one logical OCC scan that never replays delivered
+    // callbacks: a rejected value resolves the attempt and surfaces as
+    // abstract_abort_exception, and the caller retries the whole scan.
     ScopedUpdateVsRejectOnce reject_once;
     CollectCallback forward;
+    EXPECT_THROW(table->scan(start, &end, forward, nullptr),
+                 abstract_db::abstract_abort_exception);
+    EXPECT_TRUE(forward.pairs.empty());
+    EXPECT_FALSE(TThread::txn->has_active_state());
+    EXPECT_FALSE(TThread::transget_without_throw);
     table->scan(start, &end, forward, nullptr);
     ASSERT_EQ(forward.pairs.size(), 1U);
     EXPECT_EQ(forward.pairs.front().second, "value");
@@ -2205,6 +2212,11 @@ TEST_F(SiloNonTxnApi, L3NonTxnScansRejectUpdateVsBeforeCallback) {
     CollectCallback reverse;
     std::string reverse_start = "kez";
     std::string reverse_end = "kea";
+    EXPECT_THROW(table->rscan(reverse_start, &reverse_end, reverse, nullptr),
+                 abstract_db::abstract_abort_exception);
+    EXPECT_TRUE(reverse.pairs.empty());
+    EXPECT_FALSE(TThread::txn->has_active_state());
+    EXPECT_FALSE(TThread::transget_without_throw);
     table->rscan(reverse_start, &reverse_end, reverse, nullptr);
     ASSERT_EQ(reverse.pairs.size(), 1U);
     EXPECT_EQ(reverse.pairs.front().second, "value");

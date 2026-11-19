@@ -335,6 +335,28 @@ compile() {
     bash ./src/mako/update_config.sh
 }
 
+# The CTest sweep in run_srpc_unit_tests also selects the Rust STO C/C++
+# boundary tests, whose binaries are opt-in targets outside `all`. Build
+# exactly those binaries here, without the Cargo lint/test half of the
+# rust_sto_integration aggregate, so the sweep never reports them as
+# "Not Run" and a failing Rust-line gate cannot hide the suites after it.
+build_rust_sto_boundary_binaries() {
+    echo "========================================="
+    echo "Running: ./ci/ci.sh rustStoBoundaryBinaries"
+    echo "========================================="
+    local jobs="${CI_BUILD_JOBS:-${CI_MAKE_JOBS:-32}}"
+    cmake --build "${BUILD_DIR}" --parallel "${jobs}" --target \
+        sto_tpcc_bench \
+        sto_tpcc_cpp_wrapper_smoke \
+        sto_tpcc_cpp_wrapper_scan_smoke \
+        rocksdbInterfaceTest \
+        test_benchmark_output \
+        test_mtree_abi_c11_header \
+        test_sto_tpcc_ffi_c11_header \
+        test_silo_runtime \
+        -- -k 0
+}
+
 # The Rust/C transaction boundary is a required-native gate: a compile-only
 # Cargo fallback, a missing native archive, or a skipped C/C++ probe must fail
 # CI instead of silently reducing coverage.
@@ -955,6 +977,9 @@ case "${1:-}" in
     compile)
         compile
         ;;
+    rustStoBoundaryBinaries)
+        build_rust_sto_boundary_binaries
+        ;;
     makoLocalAbiGates)
         run_mako_local_abi_gates
         ;;
@@ -1047,7 +1072,7 @@ case "${1:-}" in
         bash ./scripts/verify_native_sharding.sh
         compile
         bash ./examples/test_native_sharding.sh
-        run_mako_local_abi_gates
+        build_rust_sto_boundary_binaries
         run_srpc_unit_tests
         run_simple_transaction
         run_client_server_test
@@ -1069,13 +1094,18 @@ case "${1:-}" in
         run_multi_shard_single_process
         run_2shard_single_process
         run_2shard_single_process_replication
+        # The Rust/C boundary gate runs after the replication matrix: under
+        # `set -e` an earlier failure here would end the run before any of
+        # the suites above produced a result.
+        run_mako_local_abi_gates
         echo "All CI steps completed successfully!"
         ;;
     *)
         echo "Error: Unknown CI test target '${1:-}'"
         echo ""
         echo "Supported targets:"
-        echo "  compile, makoLocalAbiGates, makoLocalSanitizerGates,"
+        echo "  compile, rustStoBoundaryBinaries,"
+        echo "  makoLocalAbiGates, makoLocalSanitizerGates,"
         echo "  makoLocalHookGates, makoLocalMiriGate, cleanup,"
         echo "  simpleTransaction, simplePaxos,"
         echo "  shardNoReplication,"

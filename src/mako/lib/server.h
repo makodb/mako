@@ -190,6 +190,9 @@ namespace mako
                                  char *response, int status);
         // @unsafe - The sharding boundary ended the admitted attempt's frame.
         void TerminateParticipant(const ParticipantIdentity &identity);
+        // @unsafe - A standalone one-op transaction may neither run on nor end
+        // this lane's participant frame while this holds (see RunNontxnOp).
+        bool ParticipantFrameBusy() const;
 
     };
 
@@ -202,14 +205,19 @@ namespace mako
         ShardServer &operator=(const ShardServer &) = delete;
         ShardServer(ShardServer &&) = delete;
         ShardServer &operator=(ShardServer &&) = delete;
-        // Register the complete immutable table map before Run() starts.
+        // Register the startup table map before Run() starts. The receiver keeps
+        // its own synchronized copy, which UpdateTable extends at run time.
         void Register(abstract_db *db,
                  mako::HelperQueue *queue,
                  mako::HelperQueue *queue_res,
                  const map<int, abstract_ordered_index *> &open_tables /*,
                  const map<string, vector<abstract_ordered_index *>> &partitions,
                  const map<string, vector<abstract_ordered_index *>> &remote_partitions*/);
-        // Quiescence-only legacy hook; never call while Run() can read maps.
+        // Publishes one index opened after startup (lazily adopted native
+        // warehouse tables included) to the receiver's synchronized map while
+        // Run() may be serving. Callers serialize through setup_update_table's
+        // helper lifecycle lock: this object's own startup copy is unsynchronized
+        // and is never read by Run().
         void UpdateTable(int table_id, abstract_ordered_index *table);
         void Run();
 

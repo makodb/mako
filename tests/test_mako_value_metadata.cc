@@ -23,9 +23,12 @@ TEST(MakoParticipantWire, RepeatedKeyRetainsMutationOrderAndKinds) {
     std::string inserted("first\0value", 11);
     std::string replaced = "replacement";
     std::string removed;
-    outgoing.add_request(key, inserted, 201, 7, 1);
-    outgoing.add_request(key, replaced, 201, 7, 0);
-    outgoing.add_request(key, removed, 201, 7, 2);
+    // Native placement is disabled here: each row carries an empty route grant
+    // and the receiver keeps the sender's physical table id.
+    const mako::ShardingRequest grant{};
+    outgoing.add_request(key, inserted, 201, 7, grant, 1);
+    outgoing.add_request(key, replaced, 201, 7, grant, 0);
+    outgoing.add_request(key, removed, 201, 7, grant, 2);
 
     auto *request = outgoing.get_request_ptr();
     request->identity = {41, 9, 123, 4};
@@ -51,10 +54,11 @@ TEST(MakoParticipantWire, RepeatedKeyRetainsMutationOrderAndKinds) {
 TEST(MakoParticipantWire, RejectsOverflowWithoutAppendingPartialMutation) {
     mako::BatchLockRequestWrapper outgoing;
     std::string key = "key", value = "value";
+    const mako::ShardingRequest grant{};
     for (size_t i = 0; i < mako::max_batch_size; ++i)
-        outgoing.add_request(key, value, 201, 7);
+        outgoing.add_request(key, value, 201, 7, grant, 0);
     const size_t full_size = outgoing.get_msg_len();
-    EXPECT_THROW(outgoing.add_request(key, value, 201, 7), std::length_error);
+    EXPECT_THROW(outgoing.add_request(key, value, 201, 7, grant, 0), std::length_error);
     EXPECT_EQ(outgoing.get_msg_len(), full_size);
     EXPECT_EQ(outgoing.get_request_ptr()->batch_size, mako::max_batch_size);
 }

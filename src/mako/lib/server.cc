@@ -176,14 +176,18 @@ namespace mako
         const bool participant = IsParticipantRequest(kind);
         // Forwarded gateway calls retain their ingress sequence even with the
         // native directory disabled, so a lost reply cannot repeat an effect.
-        if (!sharding_admission_enabled()
+        const bool native = sharding_admission_enabled();
+        if (!native
             && !(standalone && (request.transaction.client & (uint64_t{1} << 63)))) {
             const size_t length = DispatchRequest(kind, input, output);
-            // Static callers treat an engine-aborted read reply as terminal and
-            // skip a second Abort RPC. Reset only after this request's physical
-            // effects, unlocks and cleanup have finished; the placeholder is idle.
-            // A participant with an unknown INSTALL outcome keeps its frame, and
-            // no backend's live participant frame is ever reset here.
+            // A static participant whose engine aborted a piece is terminal at
+            // once: the helper must be idle for the next attempt even when the
+            // coordinator's Abort for this one is late or lost (it is answered
+            // from the recorded terminal). Reset only after this request's
+            // physical effects, unlocks and cleanup have finished. A participant
+            // with an unknown INSTALL outcome keeps its frame, and no backend's
+            // live participant frame is ever reset here; the forwarded-standalone
+            // boundary below obeys the same rule through foreign_frame.
             if (TThread::mode() == 1 && TThread::txn && !TThread::txn->in_progress()
                 && !participant_unknown && !db->shard_participant_active())
                 db->shard_reset();
@@ -247,6 +251,16 @@ namespace mako
         peer.terminal = false;
         peer.aborted = false;
 
+        // A standalone op never owns this lane's participant frame. With the
+        // native directory disabled nothing above fences a forwarded gateway
+        // call from an admitted attempt: RunNontxnOp answers SERVER_BUSY without
+        // touching the engine, so this boundary must leave that attempt's reads,
+        // locks and placeholder alone as well and only retain the reply. (With
+        // native admission enabled a staged frame of another transaction has
+        // already failed sharding_bind_request, and an empty placeholder must
+        // still be ended below to release this request's binding.)
+        const bool foreign_frame = standalone && !native && ParticipantFrameBusy();
+
         size_t length;
         try {
             // Replace only the physical selector, never the canonical wire address
@@ -270,7 +284,7 @@ namespace mako
             }
             length = DispatchRequest(kind, input, output);
         } catch (const abstract_db::abstract_abort_exception&) {
-            db->shard_abort_txn(nullptr);
+            if (!foreign_frame) db->shard_abort_txn(nullptr);
             length = sharding_error_reply(kind, identity, number, ErrorCode::ERROR, output);
         }
 
@@ -278,8 +292,10 @@ namespace mako
         // until all physical unlock/cleanup effects have actually completed.
         const bool completed = terminal || !TThread::txn || !TThread::txn->in_progress();
         if (completed) {
-            // An INSTALL whose outcome is unknown keeps its quarantined frame.
-            if (!participant_unknown && TThread::txn && TThread::txn->in_progress())
+            // An INSTALL whose outcome is unknown keeps its quarantined frame, and
+            // a refused standalone op never ends another attempt's live frame.
+            if (!participant_unknown && !foreign_frame
+                && TThread::txn && TThread::txn->in_progress())
                 db->shard_abort_txn(nullptr);
             sharding_finish_request();
             // The frame may have ended outside CompleteParticipant (an exception
@@ -292,7 +308,8 @@ namespace mako
         peer.terminal = completed;
         peer.aborted = completed && kind != installReqType && !standalone;
         peer.reply.assign(output, length);
-        if (completed && TThread::mode() == 1 && !participant_unknown) db->shard_reset();
+        if (completed && TThread::mode() == 1 && !participant_unknown && !foreign_frame)
+            db->shard_reset();
         return length;
     }
 
@@ -432,6 +449,17 @@ namespace mako
             throw std::length_error("participant reply exceeds cache");
         memcpy(cached_response, response, response_size);
         cached_response_size = response_size;
+    }
+
+    // @unsafe - Reads this lane's participant state and the backend's affine
+    // frame. True while a standalone one-op transaction must not run on, abort
+    // or reset this thread's participant: its INSTALL outcome is unknown, it
+    // holds staged reads/writes/locks, or an admitted attempt still owes its
+    // coordinator a terminal.
+    bool ShardReceiver::ParticipantFrameBusy() const {
+        return participant_unknown ||
+            (db->shard_participant_active() && !db->shard_participant_empty()) ||
+            (admitted_identity.incarnation && !participant_terminal);
     }
 
     // @unsafe - The sharding boundary ended this attempt's engine frame outside
@@ -641,15 +669,42 @@ namespace mako
         // resp->req_nr = req->req_nr;
     }
 
-    // @unsafe - the selected backend owns staged values and real insert/delete
-    // items. The receiver's registered index must exist: a missing lazily
-    // adopted index is an explicit failed request. operation is the wire
-    // mutation kind (0 = put, 1 = insert, 2 = remove).
+    // @unsafe - the engine owns staged values and real insert/delete items.
+    // operation is the wire mutation kind (0 = put, 1 = insert, 2 = remove).
+    // The receiver's registered index is the authority: a row is staged on that
+    // exact object, never on one re-resolved from the database catalog, and a
+    // missing lazily adopted index is an explicit failed request. Only a backend
+    // without a native MassTrans index (Rust STO) stages through its own
+    // participant, which keeps no state in the receiver's index object.
     static void stage_batch_write(abstract_db* db, abstract_ordered_index* table,
                                   uint16_t table_id, lcdf::Str key,
                                   const std::string& value, uint8_t operation) {
         if (!table) throw abstract_db::abstract_abort_exception();
-        db->shard_mutate(table_id, key, value, operation);
+        auto* index = dynamic_cast<mbta_ordered_index*>(table);
+        if (!index) {
+            db->shard_mutate(table_id, key, value, operation);
+            return;
+        }
+        if (index->get_is_remote())
+            throw abstract_db::abstract_abort_exception();
+        switch (operation) {
+        case 0:
+            // Admits the point, stages the owned value and locks it.
+            index->shard_put(key, value);
+            return;
+        case 1:
+            // Same owner-side kernel as mbta_wrapper::shard_mutate: admits the
+            // point here instead of re-entering the coordinator-side resolver,
+            // stages the owned value as a real insert and locks it.
+            oi_mbta_shard_insert(index->mbta, key, value);
+            return;
+        case 2:
+            // Stages a real delete (including an absent-key read) and locks it.
+            oi_mbta_shard_remove(index->mbta, key);
+            return;
+        default:
+            throw abstract_db::abstract_abort_exception();
+        }
     }
 
     // @unsafe - Native benchmark batch decoding after identity admission; stop
@@ -1096,9 +1151,7 @@ namespace mako
         // threads' txns in_progress but EMPTY between 2PC transactions
         // — that state is safe to borrow (restored below). Only a txn
         // with staged items is busy.
-        if (participant_unknown ||
-            (db->shard_participant_active() && !db->shard_participant_empty()) ||
-            (admitted_identity.incarnation && !participant_terminal)) {
+        if (ParticipantFrameBusy()) {
             return ErrorCode::SERVER_BUSY;
         }
 

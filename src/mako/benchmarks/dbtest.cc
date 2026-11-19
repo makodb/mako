@@ -380,13 +380,11 @@ static void run_workers(abstract_db* db)
     db->report_capacity_usage("startup_failed");
     mako::stop_rpc_server();
     delete r;
-    mako::clear_tpcc_sharding_policy();
     throw;
   }
   if (benchConfig.getSlowExit() || benchConfig.hasResourceExhaustion())
     delete r;
   owned_db.reset();
-  mako::clear_tpcc_sharding_policy();
 }
 
 static bool run_workers_multi_shard(const vector<int>& shard_indices)
@@ -526,7 +524,6 @@ static bool run_workers_multi_shard(const vector<int>& shard_indices)
       ctx->db = nullptr;
     }
   }
-  mako::clear_tpcc_sharding_policy();
 
   Notice("Multi-shard workers completed");
   return true;

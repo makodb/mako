@@ -7,6 +7,7 @@ on:
       - Dockerfile.ubuntu24
       - apt_packages.sh
       - install_rustc.sh
+      - scripts/ci/install_rust_toolchain.sh
       - .github/workflows/ci-image.yml
   workflow_dispatch:
 

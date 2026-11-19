@@ -6,6 +6,13 @@ instrumentation PGO to the Rust `libsto_tpcc_ffi.a` used by
 remain ordinary Release objects. The resulting comparison therefore measures
 PGO of the Rust STO path rather than PGO of the TPC-C workload driver.
 
+The archive is built without LTO (`CARGO_PROFILE_RELEASE_LTO=false`, the same
+setting as the ordinary CMake archive rule); a fat-LTO Rust staticlib cannot
+share the benchmark link with the other Rust staticlibs, because LTO merges
+`std` into the crate's own object instead of leaving the precompiled `std`
+members that all Rust staticlibs share, and the link then fails with duplicate
+definitions.
+
 Install the LLVM tools for the exact Rust toolchain selected for the build:
 
 ```sh
@@ -48,8 +55,10 @@ Reuse-native mode does not invoke that build or change any file in it. It:
 
 1. builds the profile-generate Rust archive in `OUTPUT/cargo-generate`;
 2. extracts the one `sto_tpcc_bench` link command from Ninja;
-3. replaces only the Rust archive and output path, removes the Ninja depfile
-   side effect, and adds the Rust profile runtime;
+3. replaces only `libsto_tpcc_ffi.a` and the output path (the Raft and
+   native-sharding Rust archives that `mako` adds to the link line,
+   `libraft_rt.a` and `libmako_sharding.a`, stay as built), removes the Ninja
+   depfile side effect, and adds the Rust profile runtime;
 4. links `OUTPUT/sto_tpcc_bench-generate` and trains it;
 5. merges the raw profiles with the matching `llvm-profdata`;
 6. builds the profile-use archive in `OUTPUT/cargo-use`; and

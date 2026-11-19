@@ -85,6 +85,12 @@ bash apt_packages.sh
 source install_rustc.sh
 ```
 
+The script installs the official Rust `1.97.1` release from static tarballs
+into `$HOME/.local-rust`, together with `rust-src`, `clippy` and `rustfmt`, and
+puts `$HOME/.local-rust/bin` on `PATH`. It does not use rustup. `1.97.1` is the
+version in `rust-toolchain.toml`, and the release the native sharding build and
+its verification require.
+
 ### 4. Generate/update config artifacts
 
 ```bash
@@ -293,13 +299,24 @@ When using this format with `dbtest`, pass `--site-name` so the process can map 
 
 Note: `dbtest` does not currently expose a standard `--help` output.
 
-The ordinary `dbtest` target accepts only `--storage-engine cpp`; it rejects
+The ordinary `dbtest` target accepts only `--storage-engine cpp`: every path
+there uses STO `Transaction` with MassTrans through `mbta_wrapper`. It rejects
 `rust` and directs comparison runs to the separately built `sto_tpcc_bench`
-target. `sto_tpcc_bench` accepts `cpp` or `rust`, but its Rust adapter supports
-exactly one local, non-replicated shard. It has no remote indexes or distributed
-commit path. Paxos and Raft therefore remain C++-only. The original Silo/NDB
-transaction engine is retired; `SiloRuntime` remains allocator, RCU, and
-Masstree runtime support for the C++ path.
+target. `sto_tpcc_bench` is excluded from the default build; it compiles the
+same `dbtest.cc` with the Rust STO TPC-C adapter (`sto-tpcc-ffi`) and accepts
+`cpp` or `rust`.
+
+The Rust adapter serves TPC-C only. With one local, non-replicated shard it
+runs entirely in-process. With more than one shard, or with
+`--is-replicated`, it switches to a participant protocol mode with remote
+proxies, shard-RPC participants and replay tables, so it is no longer limited
+to a single local shard. It does not take part in native sharding: run it
+without `MAKO_CLUSTER_CONFIG`. C++ remains the default engine, and the Rust
+paths are not production-qualified; see
+[Rust STO](architecture/rust-sto.md) for scope and status.
+
+The original Silo/NDB transaction engine is retired. `SiloRuntime` remains
+allocator, RCU, and Masstree runtime support, for both engines.
 
 ## Transport Backends
 

@@ -2,19 +2,23 @@
 //!
 //! [`Transaction`](crate::Transaction) is deliberately not `Send`, so an async
 //! application must send owned application work to a long-lived OS worker
-//! instead of moving a transaction through an executor. [`FixedWorkerPool`]
-//! provides that boundary. A submitted closure runs to completion on one
-//! worker and receives a borrowed [`LocalDb`]; its result is delivered through
-//! a [`Task`] that can be awaited or synchronously waited on.
+//! instead of moving a transaction through an executor.
+//! [`FixedWorkerPool`](crate::worker::FixedWorkerPool) provides that boundary.
+//! A submitted closure runs to completion on one worker and receives a
+//! borrowed [`LocalDb`]; its result is delivered through a
+//! [`Task`](crate::worker::Task) that can be awaited or synchronously waited
+//! on.
 //!
 //! Worker queues are bounded. Dropping a task does not cancel accepted work:
 //! interrupting a closure while it owns native transaction state would make
 //! cleanup ambiguous. After every closure (including a panic when unwinding is
 //! enabled), the adapter checks native worker health before completing its
 //! task. A poisoned worker is permanently retired, its queued tasks fail, and
-//! the transition is visible in [`FixedWorkerPool::metrics`].
+//! the transition is visible in
+//! [`FixedWorkerPool::metrics`](crate::worker::FixedWorkerPool::metrics).
 //!
-//! Conflict retry is opt-in and bounded. [`retry_transaction`] reruns the whole
+//! Conflict retry is opt-in and bounded.
+//! [`retry_transaction`](crate::worker::retry_transaction) reruns the whole
 //! closure only for [`Error::Conflict`]; callers must keep externally visible
 //! side effects after the successful transaction or make them idempotent.
 //!

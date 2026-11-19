@@ -101,6 +101,7 @@
 #include <vector>
 
 #include <rusty/condvar.hpp>
+#include <rusty/dispatch.hpp>  // rusty::detail::rust_not, emitted in the GEN block for `!w.existed`
 #include <rusty/mutex.hpp>
 #include <rusty/option.hpp>
 #include <rusty/thread.hpp>
@@ -1534,7 +1535,7 @@ impl masstree_rocks_index {
     }
 }
 
-#[cpp_inherit]
+#[cfg_attr(any(), cpp_inherit)]
 impl OrderedIndex for masstree_rocks_index {
     // A tree miss is authoritative absence, so a miss here never
     // consults RocksDB. Only a NON-RESIDENT VALUE does.
@@ -1591,7 +1592,7 @@ impl OrderedIndex for masstree_rocks_index {
     }
 }
 #endif
-/*RUSTYCPP:GEN-BEGIN id=masstree_rocks_index.1 version=1 rust_sha256=1944aabb36725586e1843c335da2ed7c613b80ffa9b9647be7d83c43bfe8d8f8*/
+/*RUSTYCPP:GEN-BEGIN id=masstree_rocks_index.1 version=1 rust_sha256=f58fd38edea835d17d169a43a373f7b53f18ac461f639e188f059f85b2d7f513*/
 struct masstree_rocks_index;
 
 struct masstree_rocks_index : public OrderedIndex {
@@ -1633,10 +1634,9 @@ inline uint64_t masstree_rocks_index::resident_bytes() const {
 }
 
 inline bool masstree_rocks_index::get(lcdf::Str key, std::string& value, size_t max_bytes_read) {
-    const auto _guard = mrx_rcu_region();
-    const auto p = mrx_cache_probe(this->store, std::move(key), value, std::move(max_bytes_read));
-    if (p.done) {
-        return p.found;
+    auto p = mrx_cache_probe(this->store, std::move(key), value, std::move(max_bytes_read));
+    if ([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.done); }) { return (__r.done); } else if constexpr (requires { (__r.done_field); }) { return (__r.done_field); } else if constexpr (requires { ((*__r).done); }) { return ((*__r).done); } else { return ((*__r).done_field); } }(p)) {
+        return [&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.found); }) { return (__r.found); } else if constexpr (requires { (__r.found_field); }) { return (__r.found_field); } else if constexpr (requires { ((*__r).found); }) { return ((*__r).found); } else { return ((*__r).found_field); } }(p);
     }
     // @unsafe
     {
@@ -1645,21 +1645,18 @@ inline bool masstree_rocks_index::get(lcdf::Str key, std::string& value, size_t 
 }
 
 inline bool masstree_rocks_index::put(lcdf::Str key, const std::string& value) {
-    const auto _guard = mrx_rcu_region();
     const auto w = mrx_write(this->store, std::move(key), value, false, false, false);
-    return !w.existed;
+    return rusty::detail::rust_not([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.existed); }) { return (__r.existed); } else if constexpr (requires { (__r.existed_field); }) { return (__r.existed_field); } else if constexpr (requires { ((*__r).existed); }) { return ((*__r).existed); } else { return ((*__r).existed_field); } }(w));
 }
 
 inline bool masstree_rocks_index::insert(lcdf::Str key, const std::string& value) {
-    const auto _guard = mrx_rcu_region();
-    const auto w = mrx_write(this->store, std::move(key), value, false, true, false);
-    return std::move(w.wrote);
+    auto w = mrx_write(this->store, std::move(key), value, false, true, false);
+    return std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.wrote); }) { return (__r.wrote); } else if constexpr (requires { (__r.wrote_field); }) { return (__r.wrote_field); } else if constexpr (requires { ((*__r).wrote); }) { return ((*__r).wrote); } else { return ((*__r).wrote_field); } }(w));
 }
 
 inline bool masstree_rocks_index::remove(lcdf::Str key) {
-    const auto _guard = mrx_rcu_region();
-    const auto w = mrx_write(this->store, std::move(key), "", true, false, true);
-    return std::move(w.wrote);
+    auto w = mrx_write(this->store, std::move(key), "", true, false, true);
+    return std::move([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.wrote); }) { return (__r.wrote); } else if constexpr (requires { (__r.wrote_field); }) { return (__r.wrote_field); } else if constexpr (requires { ((*__r).wrote); }) { return ((*__r).wrote); } else { return ((*__r).wrote_field); } }(w));
 }
 
 inline void masstree_rocks_index::scan(const std::string& start_key, const std::string* end_key, oi_scan_callback& callback, str_arena* arena) {

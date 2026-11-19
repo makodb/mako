@@ -356,15 +356,14 @@ foreach(_rusty_port_target IN ITEMS
 endforeach()
 
 # RUST
-find_program(MAKO_CARGO_EXECUTABLE NAMES cargo)
-if(MAKO_CARGO_EXECUTABLE)
-    set(_MAKO_RUST_LIB_CARGO_EXECUTABLE "${MAKO_CARGO_EXECUTABLE}")
-else()
-    # Preserve configure-only and non-Rust target support on hosts without
-    # Cargo. The pre-existing rust_build target will fail at build time if it
-    # is selected without Cargo on PATH.
-    set(_MAKO_RUST_LIB_CARGO_EXECUTABLE cargo)
-endif()
+# Cargo is a configure-time requirement: the native sharding staticlib, the
+# Raft runtime and SRPC's crate mode (SRPC_CARGO_EXECUTABLE in
+# src/srpc-cmake) are all Cargo builds that every Mako executable links.
+# -DMAKO_CARGO_EXECUTABLE=<path> selects a specific Cargo (the Rust STO
+# sanitizer lanes pass their toolchain's own); every Cargo archive that
+# reaches dbtest is built with this one executable.
+find_program(MAKO_CARGO_EXECUTABLE NAMES cargo REQUIRED)
+set(_MAKO_RUST_LIB_CARGO_EXECUTABLE "${MAKO_CARGO_EXECUTABLE}")
 set(MAKO_RUST_STO_RUSTUP_TOOLCHAIN "" CACHE STRING
     "Rustup toolchain for Cargo targets selected by Rust STO sanitizer builds")
 
@@ -1370,23 +1369,28 @@ set(TXLOG_HELPER_SRC
 # Native sharding is ordinary Rust, never a rusty-cpp/transpiler input. Keep its
 # Cargo output isolated from SRPC's independently pinned crate/toolchain.
 find_program(MAKO_SHARDING_CARGO cargo REQUIRED)
-# The Rust STO sanitizer lanes select one rustup toolchain
-# (MAKO_RUST_STO_RUSTUP_TOOLCHAIN) for every Cargo archive that reaches dbtest,
-# so the Rust staticlibs in one executable share a single std (see the std
-# member note in crates/mrx-core/Cargo.toml and the rust-lib command audit in
-# scripts/ci/run_rust_sto_sanitizer.sh). The native sharding and Raft archives
-# are part of that link now, so their Cargo commands below take the same
-# selection. It is empty, and this is a no-op, in every other build.
 set(MAKO_SHARDING_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/native-sharding")
 set(MAKO_SHARDING_ARCHIVE "${MAKO_SHARDING_TARGET_DIR}/release/libmako_sharding.a")
 file(GLOB_RECURSE MAKO_SHARDING_RUST_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/*.rs"
     "${CMAKE_CURRENT_SOURCE_DIR}/tla/mako/src/*.rs")
+# Every Rust staticlib of one executable must come from one toolchain, so
+# that they share a single std: without LTO each archive ships the same
+# precompiled std objects and the linker takes them from the first archive
+# only (see the note in crates/mrx-core/Cargo.toml). The native sharding and
+# Raft archives are linked into every Mako executable, so their Cargo
+# commands use the same Cargo executable as rust-lib and the crates/
+# workspace (MAKO_CARGO_EXECUTABLE) and the same optional rustup selection
+# (MAKO_RUST_STO_RUSTUP_TOOLCHAIN, set only by the Rust STO sanitizer lanes;
+# see the command audit in scripts/ci/run_rust_sto_sanitizer.sh). They run
+# from the source root so that a rustup proxy resolves rust-toolchain.toml
+# exactly as it does for those other Cargo edges, wherever the build
+# directory is.
 add_custom_command(
     OUTPUT "${MAKO_SHARDING_ARCHIVE}"
     COMMAND ${CMAKE_COMMAND} -E env
         ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
-        "${MAKO_SHARDING_CARGO}" build --locked --release --lib
+        "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}" build --locked --release --lib
         --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.toml"
         --target-dir "${MAKO_SHARDING_TARGET_DIR}"
     DEPENDS ${MAKO_SHARDING_RUST_SOURCES}
@@ -1534,7 +1538,7 @@ add_custom_command(
             "CC=${CMAKE_C_COMPILER}"
             "AR=${CMAKE_AR}"
             ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
-            cargo build --release --locked --quiet
+            "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}" build --release --locked --quiet
             --manifest-path ${RAFT_RUST_MANIFEST}
             --target-dir ${RAFT_RUST_TARGET_DIR}
             ${RAFT_RUST_FEATURES}
@@ -1546,6 +1550,10 @@ add_custom_command(
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/replay/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/src/rusty-rustc/Cargo.toml
+    # The source root, so a rustup proxy applies rust-toolchain.toml here as
+    # it does for the sharding, rust-lib and crates/ Cargo edges (see the
+    # note above the native sharding command). Every path is absolute.
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     COMMENT "cargo build: the Raft core and raft-rt as ${RAFT_RUST_LIB}"
     VERBATIM)
 add_custom_target(raft_rust_build DEPENDS ${RAFT_RUST_LIB})
@@ -1649,12 +1657,13 @@ add_custom_command(
             "CC=${CMAKE_C_COMPILER}"
             "AR=${CMAKE_AR}"
             ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
-            cargo test --release --locked --quiet
+            "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}" test --release --locked --quiet
             --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/rt/Cargo.toml
             --target-dir ${RAFT_RUST_TARGET_DIR}
             ${RAFT_RUST_FEATURES}
     COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_RT_TEST_STAMP}
     DEPENDS ${RAFT_RUST_SOURCES} ${RAFT_RT_TEST_SOURCES} ${RAFT_RUST_LIB}
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     COMMENT "cargo test: raft-rt"
     VERBATIM)
 add_custom_target(raft_rt_test DEPENDS ${RAFT_RT_TEST_STAMP})
@@ -1674,13 +1683,14 @@ add_custom_command(
     OUTPUT ${RAFT_STORE_TEST_STAMP}
     COMMAND ${CMAKE_COMMAND} -E env
             ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
-            cargo test --release --locked --quiet ${RAFT_STORE_TEST_FEATURES}
+            "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}" test --release --locked --quiet ${RAFT_STORE_TEST_FEATURES}
             --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/Cargo.toml
             --target-dir ${RAFT_RUST_TARGET_DIR}
     COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_STORE_TEST_STAMP}
     DEPENDS ${RAFT_STORE_TEST_SOURCES}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/store/build.rs
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     COMMENT "cargo test: raft-store"
     VERBATIM)
 add_custom_target(raft_store_test DEPENDS ${RAFT_STORE_TEST_STAMP})
@@ -1699,11 +1709,12 @@ add_custom_command(
     OUTPUT ${RAFT_CORE_TEST_STAMP}
     COMMAND ${CMAKE_COMMAND} -E env
             ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
-            cargo test --release --locked --quiet -p raft-core -p raft-replay
+            "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}" test --release --locked --quiet -p raft-core -p raft-replay
             --manifest-path ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
             --target-dir ${RAFT_RUST_TARGET_DIR}
     COMMAND ${CMAKE_COMMAND} -E touch ${RAFT_CORE_TEST_STAMP}
     DEPENDS ${RAFT_CORE_TEST_SOURCES}
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     COMMENT "cargo test: raft-core, raft-replay"
     VERBATIM)
 add_custom_target(raft_core_test DEPENDS ${RAFT_CORE_TEST_STAMP})
@@ -1959,14 +1970,38 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${MAKO_LOCAL_RUST_LINK_ARCHIVE_MANIFEST}")
 file(STRINGS "${MAKO_LOCAL_RUST_LINK_ARCHIVE_MANIFEST}"
     MAKO_LOCAL_RUST_LINK_ARCHIVE_LINES)
+# Dependent Cargo packages (mako-cache, mako-cache-bench, mrx) repeat the
+# manifest's trailing link group, and can be built from an isolated copy of
+# their own crate directory (the mutation runners), where crates/mako-local
+# is not a sibling. Publish the manifest beside the archives it describes;
+# the configure dependency above refreshes the copy when the manifest changes.
+configure_file("${MAKO_LOCAL_RUST_LINK_ARCHIVE_MANIFEST}"
+    "${CMAKE_BINARY_DIR}/generated/mako_local_native_link_archives.txt"
+    COPYONLY)
+# A `<name> <path>` row names a CMake target that archives compiled objects.
+# A `<name> <path> rust-staticlib` row names a Cargo-built Rust staticlib that
+# libmako.a calls into: its CMake identity is an IMPORTED target whose name
+# differs from the library name, so the rows are bound here to the imported
+# target, to the custom target that runs Cargo, and to the archive path this
+# file configured. A row whose path drifts from that location fails the
+# configure instead of handing Cargo a stale or missing archive.
+set(MAKO_LOCAL_RUST_STATICLIB_NAMES mako_sharding raft_rt)
+set(MAKO_LOCAL_RUST_STATICLIB_TARGET_mako_sharding mako_sharding_native)
+set(MAKO_LOCAL_RUST_STATICLIB_BUILD_mako_sharding mako_sharding_rust_build)
+set(MAKO_LOCAL_RUST_STATICLIB_ARCHIVE_mako_sharding "${MAKO_SHARDING_ARCHIVE}")
+set(MAKO_LOCAL_RUST_STATICLIB_TARGET_raft_rt raft_rust)
+set(MAKO_LOCAL_RUST_STATICLIB_BUILD_raft_rt raft_rust_build)
+set(MAKO_LOCAL_RUST_STATICLIB_ARCHIVE_raft_rt "${RAFT_RUST_LIB}")
 set(MAKO_LOCAL_RUST_LINK_TARGETS "")
+set(MAKO_LOCAL_RUST_LINK_NAMES "")
+set(MAKO_LOCAL_RUST_STATICLIB_ROWS "")
 foreach(MAKO_LOCAL_RUST_LINK_ARCHIVE_LINE
         IN LISTS MAKO_LOCAL_RUST_LINK_ARCHIVE_LINES)
     if(MAKO_LOCAL_RUST_LINK_ARCHIVE_LINE MATCHES "^[ \t]*(#|$)")
         continue()
     endif()
     string(REGEX MATCH
-        "^([A-Za-z0-9_]+)[ \t]+([^ \t]+)$"
+        "^([A-Za-z0-9_]+)[ \t]+([^ \t]+)([ \t]+rust-staticlib)?[ \t]*$"
         MAKO_LOCAL_RUST_LINK_ARCHIVE_MATCH
         "${MAKO_LOCAL_RUST_LINK_ARCHIVE_LINE}")
     if(NOT MAKO_LOCAL_RUST_LINK_ARCHIVE_MATCH)
@@ -1974,26 +2009,68 @@ foreach(MAKO_LOCAL_RUST_LINK_ARCHIVE_LINE
             "Invalid mako-local native archive manifest line: "
             "${MAKO_LOCAL_RUST_LINK_ARCHIVE_LINE}")
     endif()
-    set(MAKO_LOCAL_RUST_LINK_TARGET "${CMAKE_MATCH_1}")
-    if(NOT TARGET "${MAKO_LOCAL_RUST_LINK_TARGET}")
-        message(FATAL_ERROR
-            "Mako-local native archive target does not exist: "
-            "${MAKO_LOCAL_RUST_LINK_TARGET}")
-    endif()
-    list(FIND MAKO_LOCAL_RUST_LINK_TARGETS
-        "${MAKO_LOCAL_RUST_LINK_TARGET}"
-        MAKO_LOCAL_RUST_LINK_TARGET_INDEX)
-    if(NOT MAKO_LOCAL_RUST_LINK_TARGET_INDEX EQUAL -1)
+    set(MAKO_LOCAL_RUST_LINK_NAME "${CMAKE_MATCH_1}")
+    set(MAKO_LOCAL_RUST_LINK_RELATIVE "${CMAKE_MATCH_2}")
+    set(MAKO_LOCAL_RUST_LINK_KIND "${CMAKE_MATCH_3}")
+    list(FIND MAKO_LOCAL_RUST_LINK_NAMES
+        "${MAKO_LOCAL_RUST_LINK_NAME}"
+        MAKO_LOCAL_RUST_LINK_NAME_INDEX)
+    if(NOT MAKO_LOCAL_RUST_LINK_NAME_INDEX EQUAL -1)
         message(FATAL_ERROR
             "Duplicate mako-local native archive target: "
-            "${MAKO_LOCAL_RUST_LINK_TARGET}")
+            "${MAKO_LOCAL_RUST_LINK_NAME}")
     endif()
+    list(APPEND MAKO_LOCAL_RUST_LINK_NAMES "${MAKO_LOCAL_RUST_LINK_NAME}")
+    if(MAKO_LOCAL_RUST_LINK_KIND STREQUAL "")
+        if(NOT TARGET "${MAKO_LOCAL_RUST_LINK_NAME}")
+            message(FATAL_ERROR
+                "Mako-local native archive target does not exist: "
+                "${MAKO_LOCAL_RUST_LINK_NAME}")
+        endif()
+        list(APPEND MAKO_LOCAL_RUST_LINK_TARGETS
+            "${MAKO_LOCAL_RUST_LINK_NAME}")
+        continue()
+    endif()
+    if(NOT MAKO_LOCAL_RUST_LINK_NAME IN_LIST MAKO_LOCAL_RUST_STATICLIB_NAMES)
+        message(FATAL_ERROR
+            "Mako-local native archive manifest names an unknown Rust "
+            "staticlib: ${MAKO_LOCAL_RUST_LINK_NAME}")
+    endif()
+    if(NOT TARGET
+            "${MAKO_LOCAL_RUST_STATICLIB_TARGET_${MAKO_LOCAL_RUST_LINK_NAME}}"
+            OR NOT TARGET
+            "${MAKO_LOCAL_RUST_STATICLIB_BUILD_${MAKO_LOCAL_RUST_LINK_NAME}}")
+        message(FATAL_ERROR
+            "Mako-local Rust staticlib targets do not exist for: "
+            "${MAKO_LOCAL_RUST_LINK_NAME}")
+    endif()
+    if(NOT "${CMAKE_BINARY_DIR}/${MAKO_LOCAL_RUST_LINK_RELATIVE}" STREQUAL
+            "${MAKO_LOCAL_RUST_STATICLIB_ARCHIVE_${MAKO_LOCAL_RUST_LINK_NAME}}")
+        message(FATAL_ERROR
+            "Mako-local native archive manifest places Rust staticlib "
+            "${MAKO_LOCAL_RUST_LINK_NAME} at "
+            "${MAKO_LOCAL_RUST_LINK_RELATIVE}, but this build produces "
+            "${MAKO_LOCAL_RUST_STATICLIB_ARCHIVE_${MAKO_LOCAL_RUST_LINK_NAME}}")
+    endif()
+    list(APPEND MAKO_LOCAL_RUST_STATICLIB_ROWS "${MAKO_LOCAL_RUST_LINK_NAME}")
+    # The custom target, not the IMPORTED library: a custom target's DEPENDS
+    # takes build targets, and this one is what runs Cargo.
     list(APPEND MAKO_LOCAL_RUST_LINK_TARGETS
-        "${MAKO_LOCAL_RUST_LINK_TARGET}")
+        "${MAKO_LOCAL_RUST_STATICLIB_BUILD_${MAKO_LOCAL_RUST_LINK_NAME}}")
 endforeach()
 if(NOT MAKO_LOCAL_RUST_LINK_TARGETS)
     message(FATAL_ERROR "Mako-local native archive manifest is empty")
 endif()
+# libmako.a cannot be linked without both staticlibs (see
+# target_link_libraries(mako ...) above), so a manifest that omits one would
+# only fail later, in every Cargo link, with undefined symbols.
+foreach(MAKO_LOCAL_RUST_STATICLIB_NAME IN LISTS MAKO_LOCAL_RUST_STATICLIB_NAMES)
+    if(NOT MAKO_LOCAL_RUST_STATICLIB_NAME IN_LIST MAKO_LOCAL_RUST_STATICLIB_ROWS)
+        message(FATAL_ERROR
+            "Mako-local native archive manifest lacks the rust-staticlib row "
+            "for ${MAKO_LOCAL_RUST_STATICLIB_NAME}")
+    endif()
+endforeach()
 add_custom_target(check_mako_local_build_fingerprint
     COMMAND "${MAKO_LOCAL_PYTHON_EXECUTABLE}"
             "${MAKO_LOCAL_FINGERPRINT_SCRIPT}"
@@ -2027,8 +2104,17 @@ add_custom_target(check_mtree_abi_exports
 # in ordinary Cargo builds. This opt-in target first builds the authoritative
 # CMake archives (so mtree_abi.cc sees the exact same generated config and
 # compile definitions as Mako), then runs the downstream Rust integration
-# test against those archive paths. It is not part of ALL and does not make
-# Cargo a configure-time requirement for non-Rust builds.
+# test against those archive paths. It is not part of ALL.
+#
+# The list names libmako.a without its Rust staticlibs (native sharding, the
+# Raft runtime) on purpose. The mt_* ABI selects only mtree_abi.cc and the
+# runtime objects that mako_mtree_boundary also archives (allocator, core,
+# counter, rcu, ticker, silo_runtime), none of which reaches sharding or
+# Raft. And a Rust staticlib must never appear in a rustc link-lib list: it
+# would precede the test executable's own std and replace its unwinding
+# panic runtime with the archive's panic=abort one. Links that do reach
+# those archives (mako_local_*, mtx_*) add them through the trailing group
+# described in crates/mako-local/native-link-archives.txt.
 set(MAKO_MTREE_RUST_NATIVE_LIBS
     "static=mako,static=masstree,dylib=c++,dylib=c++abi,dylib=numa,dylib=pthread"
     CACHE STRING
@@ -2293,8 +2379,24 @@ endif()
 find_program(CARGO_EXECUTABLE cargo)
 if (CARGO_EXECUTABLE)
     set(MRX_FFI_PROFILE "release")
+    # Cargo writes the archive under CARGO_TARGET_DIR when the environment
+    # sets one (docker_build.sh exports /workspace/target-docker) and under
+    # the workspace's own crates/target otherwise. Resolve the directory once,
+    # at configure time, and hand the same value to the Cargo command below,
+    # so the path CMake links and the path Cargo writes cannot disagree. A
+    # relative value is resolved against crates/, Cargo's working directory
+    # here.
+    if(DEFINED ENV{CARGO_TARGET_DIR}
+            AND NOT "$ENV{CARGO_TARGET_DIR}" STREQUAL "")
+        get_filename_component(MRX_FFI_TARGET_DIR "$ENV{CARGO_TARGET_DIR}"
+            ABSOLUTE BASE_DIR "${CMAKE_SOURCE_DIR}/crates")
+        message(STATUS
+            "Using CARGO_TARGET_DIR for crates/mrx-ffi: ${MRX_FFI_TARGET_DIR}")
+    else()
+        set(MRX_FFI_TARGET_DIR "${CMAKE_SOURCE_DIR}/crates/target")
+    endif()
     set(MRX_FFI_LIB
-        "${CMAKE_SOURCE_DIR}/crates/target/${MRX_FFI_PROFILE}/libmrxffi.a")
+        "${MRX_FFI_TARGET_DIR}/${MRX_FFI_PROFILE}/libmrxffi.a")
     # add_custom_target, NOT add_custom_command(OUTPUT ...): a
     # command with an OUTPUT is skipped once the file exists and its
     # declared DEPENDS are unchanged, and CMake cannot see the Rust
@@ -2307,6 +2409,7 @@ if (CARGO_EXECUTABLE)
         BYPRODUCTS ${MRX_FFI_LIB}
         COMMAND ${CMAKE_COMMAND} -E env
                 "MAKO_BUILD_DIR=${CMAKE_BINARY_DIR}"
+                "CARGO_TARGET_DIR=${MRX_FFI_TARGET_DIR}"
                 ${CARGO_EXECUTABLE} build --release -p mrx-ffi
         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/crates
         COMMENT "Building the Rust cache (crates/mrx-ffi -> libmrxffi.a)"
@@ -2460,6 +2563,8 @@ if(MAKO_USE_RAFT)
   if(RAFT_TEST)
     add_apps(deptran_server src/deptran/s_main.cc)
     target_sources(deptran_server PRIVATE src/deptran/server_worker.cc)
+    # add_apps force-includes Masstree's config for its one source only.
+    mako_force_include_masstree_config(src/deptran/server_worker.cc)
   endif()
   add_apps(simpleRaft examples/mako-raft-tests/simpleRaft.cc)
   add_apps(simpleTransactionRepRaft examples/mako-raft-tests/simpleTransactionRepRaft.cc)
@@ -2640,6 +2745,29 @@ if(MAKO_CARGO_EXECUTABLE)
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/sto-masstree/src/*.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/masstree/src/*.rs"
         "${CMAKE_CURRENT_SOURCE_DIR}/crates/mtree-sys/src/*.rs")
+    # LTO is off for this archive, and that is a link requirement, not a
+    # tuning choice. Every binary that links it also links `mako`, which now
+    # carries the native sharding and Raft staticlibs. Rust staticlibs can
+    # share one executable only while each ships the same precompiled std
+    # objects, so that the linker takes them from the first archive alone.
+    # LTO (fat or thin) rewrites std into this crate's own object, and the
+    # next archive's std member then collides with it. Measured with this
+    # toolchain (rustc 1.97.1, GNU ld 2.42): an lto=fat staticlib next to a
+    # plain one fails with "multiple definition of `rust_eh_personality'" and
+    # of std::panicking::EMPTY_PANIC; lto=false links. crates/mrx-core/Cargo.toml
+    # records the same failure for lto=thin. For this crate as declared
+    # (crate-type = ["staticlib", "rlib"]) Cargo runs no LTO at all, so the
+    # former lto=fat only embedded bitcode in the same objects; a real fat-LTO
+    # build (cargo rustc --crate-type staticlib) fails on the sto_tpcc_bench
+    # link line with multiple definitions of rust_eh_personality,
+    # std::panicking::EMPTY_PANIC and std::sys::args::unix::imp::ARGV_INIT_ARRAY.
+    #
+    # The archive must also stay FIRST among the Rust staticlibs on the link
+    # lines below: it is built with panic=unwind and catches panics at its C
+    # boundary, while the sharding and Raft archives are panic=abort. The
+    # first archive that supplies std also supplies the panic runtime for the
+    # whole executable, so listing it after `mako` would turn those catches
+    # into aborts.
     add_custom_command(
         OUTPUT "${STO_TPCC_RUST_ARCHIVE}"
         COMMAND "${CMAKE_COMMAND}" -E env
@@ -2650,7 +2778,7 @@ if(MAKO_CARGO_EXECUTABLE)
             "CARGO_INCREMENTAL=0"
             "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1"
             "CARGO_PROFILE_RELEASE_DEBUG=1"
-            "CARGO_PROFILE_RELEASE_LTO=fat"
+            "CARGO_PROFILE_RELEASE_LTO=false"
             "CARGO_PROFILE_RELEASE_OPT_LEVEL=3"
             "CARGO_PROFILE_RELEASE_PANIC=unwind"
             "RUSTFLAGS=${_STO_TPCC_RUSTFLAGS}"
@@ -4378,8 +4506,13 @@ if(BUILD_TESTS)
     # helper activation, and reclamation callbacks through terminal cleanup.
     add_executable(test_sto_epoch_rcu
         src/mako/sto/unit-rcu.cc src/mako/sto/clp.c)
-    # CLP supports C++; the linked Masstree target propagates a C++ config header.
+    # CLP supports C++, and it is compiled as C++ because both sources take
+    # Masstree's generated C++ config header as a forced include. `mako` no
+    # longer propagates that include as a target option (it would reach the
+    # synthetic std module unit), so attach it to the two sources directly.
     set_source_files_properties(src/mako/sto/clp.c PROPERTIES LANGUAGE CXX)
+    mako_force_include_masstree_config(
+        src/mako/sto/unit-rcu.cc src/mako/sto/clp.c)
     target_include_directories(test_sto_epoch_rcu PRIVATE ${TEST_INCLUDE_DIRS})
     target_link_libraries(test_sto_epoch_rcu
         mako ${TEST_LINK_LIBS} yaml-cpp rocksdb lz4 numa event_pthreads pthread)

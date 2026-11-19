@@ -97,11 +97,6 @@ inline void oi_mbta_throw_if_silent_abort() {
     throw abstract_db::abstract_abort_exception();
 }
 
-inline void oi_mbta_retry_if_silent_abort() {
-  if (oi_mbta_consume_silent_abort())
-    throw Transaction::Abort();
-}
-
 #define OP_LOGGING 0
 #if OP_LOGGING
 std::atomic<long> mt_get(0);
@@ -127,10 +122,11 @@ std::atomic<long> ht_del(0);
 // C++ stays where C++ must: the per-verb kernels below own the
 // exception boundary (Sto ops throw Transaction::Abort — STD_OP
 // translates it to abstract_db::abstract_abort_exception for the
-// txn'd/2PC families; the non-txn family catches and retries in
-// place), the UPDATE_VS read-set bookkeeping macro, and the RPC retry
-// loops. The DSL owns the class shape, the interface attachment, and
-// the remote/local dispatch.
+// txn'd/2PC families; the non-txn point verbs catch and retry in
+// place, the non-txn scans surface a conflict as an abort), the
+// UPDATE_VS read-set bookkeeping macro, and the RPC retry loops. The
+// DSL owns the class shape, the interface attachment, and the
+// remote/local dispatch.
 //
 // The index holds its MassTrans behind a raw pointer: MassTrans is
 // non-movable and DSL structs are move-only with a synthesized
@@ -635,6 +631,10 @@ inline void oi_mbta_tx_scan_one_remote(mbta_table *t,
   if (ret > 0) {
     // Match remote get failure semantics. Do not leave a live native attempt
     // for Commit to publish after this operation has reported an abort.
+    // This includes ErrorCode::NOT_FOUND: an empty range is a successful
+    // absence read on the participant (which therefore stays live and is
+    // resolved by the remoteAbort below), but this median-row verb has no
+    // row to return, so the attempt aborts as it does on both parent lines.
     Sto::abort_without_throw();
     throw abstract_db::abstract_abort_exception();
   }
@@ -695,6 +695,21 @@ inline void oi_mbta_shard_remove(mbta_table* t, lcdf::Str key) {
   });
 }
 
+// @unsafe - stage a real insert on the owner, then lock it.
+// Shared by mbta_wrapper::shard_mutate and the shard receiver's batch-lock
+// path (server.cc stage_batch_write), which must stay in step for wire kind 1.
+inline void oi_mbta_shard_insert(mbta_table* t, lcdf::Str key,
+                                 const std::string& value) {
+  mako::sharding_require_point(t->get_table_id(), key.data(), key.length());
+  STD_OP({
+    // RPC scratch strings are overwritten by the next piece; the engine owns
+    // the staged value until install/abort.
+    t->transInsert(key, value);
+    oi_mbta_throw_if_silent_abort();
+    if (!Sto::shard_try_lock_last_writeset()) throw Transaction::Abort();
+  });
+}
+
 // @unsafe - ambient-txn range read (raw stored bytes, no strip)
 inline bool oi_mbta_shard_scan(mbta_table *t, const std::string &start_key,
                                const std::string *end_key,
@@ -715,17 +730,19 @@ inline bool oi_mbta_shard_scan(mbta_table *t, const std::string &start_key,
 
 // ---- non-transactional verbs (Masstree-shape) -----------------------------
 //
-// Each local op delegates to MassTrans's one-op-txn variant and
-// retries on OCC abort, so callers get Masstree-parity "no spurious
-// failure" semantics. Values follow the raw-bytes convention:
-// writes are Encoded here, once, at the storage boundary; reads/scans
-// strip EXTRA_BITS_FOR_VALUE.
+// Each local point op (get/put/insert/remove) delegates to MassTrans's
+// one-op-txn variant and retries on OCC abort, so callers get
+// Masstree-parity "no spurious failure" semantics. Values follow the
+// raw-bytes convention: writes are Encoded here, once, at the storage
+// boundary; reads/scans strip EXTRA_BITS_FOR_VALUE.
 //
-// Scan/rscan deliver callbacks live during the attempt; if the one-op
-// txn aborts mid-scan the whole scan retries, so callbacks may observe
-// a repeated prefix. This matches the pre-existing
-// shard_scan-with-caller-retry behavior, just with the retry moved
-// inside.
+// Scan/rscan are one logical OCC scan (oi_mbta_nontxn_scan/rscan):
+// callbacks are delivered live and are never replayed. An OCC conflict,
+// a failed remote page, or a rejected value resolves the attempt
+// (Sto::abort_without_throw, which also sends the terminal to every
+// touched participant) and surfaces as abstract_db::abstract_abort_exception;
+// a caller that needs "no spurious failure" retries the whole scan itself
+// and must tolerate the prefix its callback already saw.
 
 // Shared retry driver for the remote non-txn write RPCs. Transient
 // failures (TIMEOUT: lost/late reply; SERVER_BUSY: the serving worker
@@ -2344,10 +2361,16 @@ public:
     // A lexical database-thread guard may unwind while its last transaction
     // is still open. Release its locks and remote state before retiring the
     // STO and Masstree RCU participants or destroying the shard client. This
-    // includes an empty mode-1 participant transaction: shard_reset() starts
-    // its Masstree RCU callback even when it has staged no items. If INSTALL
-    // has already made the participant commit irreversible, silent_abort()
-    // instead completes committed unlock/cleanup before ending the context.
+    // includes an empty mode-1 participant transaction: shard_reset() leaves
+    // an idle placeholder that has entered neither the STO epoch nor Masstree
+    // RCU (its first storage access does, through ensure_epoch()), so ending
+    // it owes no end callback, while one that did touch storage is stopped
+    // exactly once here. If INSTALL has already made the participant commit
+    // irreversible, silent_abort() instead completes committed unlock/cleanup
+    // before ending the context.
+    // An attempt that is no longer active sends nothing from here: if it
+    // still owes a touched participant a terminal, ~ShardClient quarantines
+    // that participant lane instead (benchmark_thread_end below).
     if (TThread::txn != nullptr && TThread::txn->has_active_state()) {
       abort_txn(nullptr);
     }
@@ -2431,23 +2454,19 @@ public:
     mbta_ordered_index *index = global_table_instances[table_id];
     if (index == nullptr || index->get_is_remote())
       throw abstract_db::abstract_abort_exception();
-    // The receiver executes on the owner: every case admits the point here
-    // (shard_put / oi_mbta_shard_remove / sharding_require_point) instead of
-    // re-entering the coordinator-side resolver behind tx_insert/tx_remove.
+    // The receiver executes on the owner: every case admits the point, stages
+    // and locks its write-set entry here (shard_put / oi_mbta_shard_insert /
+    // oi_mbta_shard_remove) instead of re-entering the coordinator-side
+    // resolver behind tx_insert/tx_remove. server.cc stage_batch_write runs
+    // the same three kernels on the receiver's registered index.
     switch (operation) {
       case 0:
         index->shard_put(key, value);
         return;
       case 1:
-        mako::sharding_require_point(index->get_table_id(), key.data(),
-                                     key.length());
-        // The engine owns the staged value until install/abort (RPC scratch
-        // strings are overwritten by the next piece).
-        STD_OP({
-          index->mbta->transInsert(key, value);
-          oi_mbta_throw_if_silent_abort();
-        });
-        break;
+        // Stages a real insert of an engine-owned value and locks it.
+        oi_mbta_shard_insert(index->mbta, key, value);
+        return;
       case 2:
         // Stages a real delete (including an absent-key read) and locks it.
         oi_mbta_shard_remove(index->mbta, key);
@@ -2455,8 +2474,6 @@ public:
       default:
         throw abstract_db::abstract_abort_exception();
     }
-    if (!Sto::shard_try_lock_last_writeset())
-      throw abstract_db::abstract_abort_exception();
   }
 
   int shard_validate() {
@@ -2548,9 +2565,15 @@ private:
     std::cout << "new table is created with name: " << name 
               << ", table-id: " << tbl->get_table_id()
               << ", on shard-server id:" << shard_index << std::endl;
-    // This legacy map update has no reader synchronization. The supported
-    // sharded/replicated profile reaches it only while constructing the same
-    // deterministic schema on every process, before helper or serving threads.
+    // Publish the new index to the helper receivers already running for this
+    // shard. setup_update_table holds the helper lifecycle lock and each
+    // receiver's table map is mutex-guarded, so this needs no quiescence. The
+    // static profile still reaches it only while every process constructs the
+    // same deterministic schema before helper or serving threads start (peers
+    // address tables by numeric id); native sharding also reaches it at run
+    // time when a governed warehouse index or origin-side proxy is opened
+    // lazily. A request naming an index its receiver has not yet learned
+    // fails as an aborted request.
     mako::setup_update_table(available_table_id, tbl);
     return tbl;
   }

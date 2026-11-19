@@ -874,7 +874,8 @@ bench_runner::run()
   mako::benchmark_cerr() << "[SHUTDOWN] All workers joined" << endl;
 
   // A local join is insufficient: other shard coordinators may still be
-  // installing here, and stop() also owns every colocated shard's clients.
+  // installing here. stop() below stops only this owner's client id range; a
+  // colocated owner's clients belong to that owner's runner.
   coordinator_drain.wait();
   mako::benchmark_cerr() << "[SHUTDOWN] All shard coordinators drained" << endl;
   // @unsafe - all fixed owners must finish terminal data RPCs before any

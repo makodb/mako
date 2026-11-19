@@ -36,7 +36,10 @@ duration of the Cargo link: the gate verifies every archive named by the
 ordered [native-link-archives.txt](../../crates/mako-local/native-link-archives.txt)
 manifest before linking, and the digest anchor pins `libmako.a`, but external
 concurrent replacement of separately linked dependency archives is outside the
-supported build protocol.
+supported build protocol. Rows marked `rust-staticlib` (`libmako_sharding.a`,
+`libraft_rt.a`) are Cargo-built archives that `libmako.a` calls into; they are
+checked for presence only and are linked after the executable's own Rust std
+through a trailing link group, not through `rustc-link-lib`.
 
 After the identity handshake, a caller must check
 `mako_local_abi_version()` and `mako_local_feature_bits()` before using an

@@ -1,6 +1,26 @@
 # Static CMake archives linked by mako-local, in consumer-before-provider order.
 # Paths are relative to MAKO_BUILD_DIR. This file is consumed by Cargo, CMake,
 # and the native content-fingerprint verifier; keep it as the single authority.
+#
+# A row is `<name> <path>` for an archive of compiled C/C++ objects whose CMake
+# target is <name> and whose file is lib<name>.a, or
+# `<name> <path> rust-staticlib` for a Cargo-built Rust staticlib that libmako.a
+# calls into. The two kinds are linked differently on the Cargo side:
+#
+#   * compiled archives are ordinary `rustc-link-lib=static=<name>` libraries.
+#   * a Rust staticlib carries its own copy of the Rust standard library and
+#     the panic runtime of its (panic = "abort") profile, so it must come
+#     AFTER the Rust executable's own std on the link line. Every package that
+#     links a test, binary or example against libmako.a therefore appends one
+#     trailing `--start-group <every archive in this file> --end-group` through
+#     `cargo:rustc-link-arg` (link arguments do not propagate between
+#     packages). Never give a rust-staticlib row to `rustc-link-lib`: the
+#     executable then takes its panic runtime from that archive and every
+#     panicking test aborts the whole test binary instead of unwinding.
+#
+# The CMake targets behind the rust-staticlib rows are mako_sharding_native
+# (libmako_sharding.a) and raft_rust (libraft_rt.a). CMakeLists.txt checks
+# both paths against its own archive locations.
 mako libmako.a
 cluster libcluster.a
 masstree src/masstree/libmasstree.a
@@ -18,3 +38,5 @@ std_port_hashbrown third-party/rusty-cpp/libstd_port_hashbrown.a
 btree_port third-party/rusty-cpp/libbtree_port.a
 rc_port third-party/rusty-cpp/librc_port.a
 vec_port third-party/rusty-cpp/libvec_port.a
+mako_sharding native-sharding/release/libmako_sharding.a rust-staticlib
+raft_rt raft-cargo/release/libraft_rt.a rust-staticlib

@@ -3,7 +3,7 @@
 # (docs/storage-interface.md). This wrapper is THE regeneration
 # path — not bare `inline-rust --rewrite` — because the transpiler
 # emits out-of-line method definitions without `inline` (correct for
-# its single-TU module precedent, an ODR violation in the four
+# its single-TU module precedent, an ODR violation in the five
 # multi-TU src/mako/storage headers); the post-pass below adds the
 # keyword inside the GEN regions. Deterministic for a fixed
 # transpiler: same input → same output.

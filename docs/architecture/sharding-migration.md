@@ -684,7 +684,7 @@ predicate, protected-view lifetime and receiver validation:
    not cached. A changed view clears borrowed mappings before binding owners.
    A mapping hit never grants ownership or bypasses incoming-envelope checks.
 
-The [storage contract](../storage-interface.md#tpcc-warehouse-handles) specifies
+The [storage contract](../storage-interface.md#tpc-c-warehouse-handles) specifies
 the lifetimes and invalidation rules.
 [Fresh runtime evidence](../../tla/mako/README.md#thin-descriptors-and-indexed-bindings-2026-10-24)
 covers deferred serialization through capture-vector growth, interleaved raw

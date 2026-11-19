@@ -92,14 +92,18 @@ class FingerprintError(RuntimeError):
     """A fingerprint cannot be computed or does not match."""
 
 
-def read_native_link_archives(path: Path) -> tuple[tuple[str, str], ...]:
+RUST_STATICLIB_KIND = "rust-staticlib"
+
+
+def _read_native_link_rows(path: Path) -> tuple[tuple[str, str, bool], ...]:
+    """Parse the manifest into ``(name, relative path, is Rust staticlib)``."""
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError as error:
         raise FingerprintError(
             f"cannot read native link archive manifest {path}: {error}"
         ) from error
-    archives: list[tuple[str, str]] = []
+    rows: list[tuple[str, str, bool]] = []
     names: set[str] = set()
     paths: set[str] = set()
     for line_number, raw_line in enumerate(lines, 1):
@@ -107,11 +111,13 @@ def read_native_link_archives(path: Path) -> tuple[tuple[str, str], ...]:
         if not line or line.startswith("#"):
             continue
         fields = line.split()
-        if len(fields) != 2:
+        rust_staticlib = len(fields) == 3 and fields[2] == RUST_STATICLIB_KIND
+        if len(fields) != 2 and not rust_staticlib:
             raise FingerprintError(
-                f"{path}:{line_number} must contain exactly a library name and path"
+                f"{path}:{line_number} must contain exactly a library name and path, "
+                f"optionally followed by {RUST_STATICLIB_KIND!r}"
             )
-        target, relative = fields
+        target, relative = fields[0], fields[1]
         relative_path = Path(relative)
         if not re.fullmatch(r"[A-Za-z0-9_]+", target):
             raise FingerprintError(
@@ -136,14 +142,32 @@ def read_native_link_archives(path: Path) -> tuple[tuple[str, str], ...]:
             )
         names.add(target)
         paths.add(relative)
-        archives.append((target, relative))
-    if not archives:
+        rows.append((target, relative, rust_staticlib))
+    if not rows:
         raise FingerprintError(f"native link archive manifest {path} is empty")
-    if archives[0] != ("mako", "libmako.a"):
+    if rows[0] != ("mako", "libmako.a", False):
         raise FingerprintError(
             f"native link archive manifest {path} must start with mako libmako.a"
         )
-    return tuple(archives)
+    return tuple(rows)
+
+
+def read_native_link_archives(path: Path) -> tuple[tuple[str, str], ...]:
+    """Archives of compiled C/C++ objects, each produced by one CMake target."""
+    return tuple(
+        (target, relative)
+        for target, relative, rust_staticlib in _read_native_link_rows(path)
+        if not rust_staticlib
+    )
+
+
+def read_native_rust_staticlibs(path: Path) -> tuple[tuple[str, str], ...]:
+    """Cargo-built Rust staticlibs that libmako.a calls into."""
+    return tuple(
+        (target, relative)
+        for target, relative, rust_staticlib in _read_native_link_rows(path)
+        if rust_staticlib
+    )
 
 
 # Cargo recreates this consumer-before-provider slice of CMake's native link
@@ -153,6 +177,16 @@ RUST_LINKED_ARCHIVES = read_native_link_archives(
 )
 RUST_LINKED_ARCHIVE_TARGETS = tuple(
     target for target, _relative in RUST_LINKED_ARCHIVES
+)
+
+# libmako.a also calls into Cargo-built Rust staticlibs (native sharding and
+# the Raft runtime). They have no compile-database members and are not
+# reproduced object by object, so the source fingerprint and the member/byte
+# comparison below do not cover them: Cargo owns their freshness, CMake
+# rebuilds them as dependencies of the mako target, and verification only
+# fails closed when one is missing or is not a readable archive.
+RUST_LINKED_STATICLIBS = read_native_rust_staticlibs(
+    Path(__file__).resolve().parents[1] / NATIVE_LINK_ARCHIVE_MANIFEST
 )
 
 # Selecting every matching output from compile_commands.json covers out-of-line
@@ -1003,6 +1037,11 @@ def verify_archive_composition(source_root: Path, build_dir: Path) -> None:
             members,
             Counter(Path(member).name for member in listed[relative]),
         )
+
+    # The Rust staticlibs of the closure must at least be present and readable
+    # before Cargo is allowed to link against this build tree.
+    for _target, relative in RUST_LINKED_STATICLIBS:
+        list_archive_members(archiver, build_dir / relative)
 
     expected_contents = hash_expected_archive_objects(expected_paths)
     for relative, contents in expected_contents.items():

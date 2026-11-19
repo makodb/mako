@@ -1147,7 +1147,9 @@ protected:
     // single-version rows through the RYW overlay and relocation logic,
     // multiversion rows through immutable private-row publication. Native
     // Mako's remote proxies have a different staging and lock-transfer
-    // protocol and keep the abort-on-own-invalid-row behavior.
+    // protocol: they are never read locally, and their write-after-own-write
+    // composition is stageRemoteDelete()/restageRemoteWrite(), not this
+    // overlay.
     return !is_remote;
 #else
     return false;
@@ -1190,6 +1192,42 @@ protected:
     return true;
   }
 
+  // @unsafe - re-stages this transaction's own proxy intent for one remote key.
+  // The owning shard decides row existence; the proxy only has to hand
+  // Transaction::try_commit one well-formed item per intent, in one of the
+  // three layouts its batch builder, install() and cleanup() understand:
+  //   delete_bit            write slot = key
+  //   insert_bit (carrier)  write slot = key, payload in the private row
+  //   neither (update)      extra = key, write slot = value
+  // A later put/insert over an own carrier or an own staged delete must land
+  // in one of those again. Like stageRemoteDelete this is independent of
+  // READ_MY_WRITES and bypasses validityCheck(): the carrier is this
+  // transaction's own invalid row, not another writer's.
+  template <bool INSERT, bool SET, typename ValueType>
+  bool restageRemoteWrite(
+      TransProxy& item, versioned_value* e, Str key, const ValueType& value,
+      Transaction::canonical_write_view* canonical_write_out) {
+    const bool deleted = has_delete(item);
+    // update-only after an own delete: absent to this transaction.
+    // insert-if-absent over an own staged put: present, first payload stays.
+    if (deleted ? !INSERT : !SET)
+      return !deleted;
+    if (deleted)
+      item.clear_flags(delete_bit);
+    // An own delete of a committed proxy row becomes a plain update: drop the
+    // delete's key payload so the write slot is rebuilt in the update layout
+    // (the delete's observation of the row is kept). A carrier keeps its key
+    // payload; reallyHandlePutFound() rewrites its private row in place and
+    // moves insert_bit with it if the row has to grow.
+    if (!has_insert(item))
+      item.clear_write();
+    reallyHandlePutFound(item, e, key, value);
+    if (canonical_write_out != nullptr)
+      (void)TThread::txn->export_local_canonical_write(
+          item.item(), canonical_write_out);
+    return !deleted;
+  }
+
   // called once we've checked our own writes for a found put()
   template <typename ValueType>
   void reallyHandlePutFound(TransProxy& item, versioned_value *e, Str key, const ValueType& value) {
@@ -1199,19 +1237,21 @@ protected:
     auto *new_location = e;
     bool needsResize = e->needsResize(storage_value);
     if (needsResize) {
-#if READ_MY_WRITES
       // Relocation changes the transaction-set key from the old allocation to
       // its replacement. Preserve an earlier point read's observed version so
       // read-then-grow still detects an intervening writer, and retire every
       // read/write flag that could otherwise dereference the old allocation at
       // commit. An inserted row additionally carries its cleanup key forward.
-      const bool preserve_ryw_state = readMyWritesEnabled();
+      // A proxy's own carrier (restageRemoteWrite) relocates the same way in
+      // every build: the batch builder reads the payload from the row that
+      // owns insert_bit, so that flag must follow the replacement allocation.
+      const bool preserve_ryw_state =
+          readMyWritesEnabled() || (is_remote && has_insert(item));
       const bool relocate_insert = preserve_ryw_state && has_insert(item);
       const bool relocate_read = preserve_ryw_state && item.has_read();
       Version relocated_read_version{};
       if (relocate_read)
         relocated_read_version = item.template read_value<Version>();
-#endif
       if (!has_insert(item)) {  // update
         // Allocate/copy while holding the old value lock, but do not invalidate
         // the published value until allocation has succeeded. In particular,
@@ -1259,7 +1299,6 @@ protected:
       // immediately so a later replacement-item allocation failure cannot
       // leak the now-unlinked allocation.
       e->deallocate_rcu(*mythreadinfo.ti);
-#if READ_MY_WRITES
       if (preserve_ryw_state) {
         auto relocated_item = Sto::new_item(this, new_location);
         if (relocate_read)
@@ -1282,9 +1321,6 @@ protected:
       } else {
         item = Sto::new_item(this, new_location);
       }
-#else
-      item = Sto::new_item(this, new_location);
-#endif
     }
     if (has_insert(item)) {
       if constexpr (supports_packed_multiversion) {
@@ -1316,6 +1352,9 @@ protected:
       versioned_value *e, Str key, const ValueType& value,
       Transaction::canonical_write_view* canonical_write_out = nullptr) {
     auto item = t_item(e);
+    if (is_remote && (has_insert(item) || has_delete(item)))
+      return restageRemoteWrite<INSERT, SET>(item, e, key, value,
+                                             canonical_write_out);
     if (!validityCheck(item, e)) {
       Sto::abort();
       return false;
@@ -1445,6 +1484,10 @@ protected:
       return item.flags() & delete_bit;
   }
 
+  // Local read/write/validation rule. On a proxy, a write over this
+  // transaction's own carrier is dispatched to restageRemoteWrite() /
+  // stageRemoteDelete() before this check; a local read of an own carrier
+  // on a proxy still fails it (proxies have no read-your-writes overlay).
   bool validityCheck(const TransItem& item, versioned_value *e) const {
     bool v =  //likely(has_insert(item)) || !(e->version & invalid_bit);
       likely(!(load_version(e->version()) & invalid_bit)) ||

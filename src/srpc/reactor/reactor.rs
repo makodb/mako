@@ -2270,7 +2270,15 @@ impl Reactor {
         // generation, so the Reactor a PollThread's driver drains runs one
         // pass per call here.  Explicit non-poll drivers still drain event
         // chains to quiescence (or keep looping when requested).
-        let bounded = poll_driver_wake_of(self).is_some();
+        //
+        // The bounded-turn predicate is the same at all three Mako-local
+        // sites (here, process_stackless_tasks and
+        // reactor_create_run_fiber_at_impl): "this is the Reactor this
+        // thread's driver drains".  Only that Reactor has a next turn to hand
+        // the rest of its work to.  A disk reactor or a directly constructed
+        // Reactor on a poll thread is drained by nobody else, so it keeps the
+        // unbounded behaviour everywhere.
+        let bounded: bool = poll_driver_wake_of(self).is_some();
         self.looping_.set(infinite);
         loop {
             let mut found_ready_events = true;
@@ -2361,6 +2369,13 @@ impl Reactor {
                 // queue costs one thread-local read and one length check per
                 // pass: create_run drains on every call, so this sits on the
                 // fiber-RPC path.
+                //
+                // Mako-local: for the Reactor a PollThread's driver drains,
+                // "the next pass" above is the driver's next turn, requested
+                // by the bounded block after dispatch (see `bounded` at the
+                // top of this function), and create_run no longer drains it
+                // (step 6 of reactor_create_run_fiber_at_impl).  Every other
+                // Reactor keeps both behaviours.
                 let state_ptr: *mut EventWakeState = event_wake_state_th_.with(|slot| slot.get());
                 if !state_ptr.is_null() {
                     let pending: usize = {
@@ -2438,8 +2453,10 @@ impl Reactor {
                     // it asks for the next turn itself.  Outside the driver's
                     // poll that is an ordinary wake.  Under it only the flag
                     // is set: the driver reads it after this pass, yields to
-                    // Lion and wakes itself once.  The wake comes first, since
-                    // a flag already set would suppress it.
+                    // Lion and wakes itself once (or, once a Shutdown command
+                    // has stopped it, runs the remaining passes itself; see
+                    // poll_driver_poll).  The wake comes first, since a flag
+                    // already set would suppress it.
                     if found_ready_events {
                         poll_driver_wake_owner();
                         let turn: Option<Arc<PollDriverWake>> = poll_driver_wake_of(self);
@@ -2636,9 +2653,10 @@ impl Reactor {
         // Mako-local: count the admitted FIFO generation without moving its
         // storage.  Poll-time enqueues append behind it and retain their
         // queued bit for the next I/O turn; foreign/self wakes in ingress stay
-        // there until the next call.  Non-poll callers retain the explicit
-        // drain behavior.
-        let bounded = pollworker_is_on_poll_thread();
+        // there until the next call.  Every other caller retains the explicit
+        // drain behavior.  Same predicate as Reactor::run_loop: only the
+        // Reactor this thread's driver drains has a next turn.
+        let bounded: bool = poll_driver_wake_of(self).is_some();
         let mut remaining = if bounded {
             self.ready_stackless_tasks_.borrow().len()
         } else {
@@ -4205,14 +4223,17 @@ fn reactor_create_run_fiber_at_impl(self_: &Reactor, func: FiberFn, file: SrcFil
         self_.recycle(fiber_ref);
     }
 
-    // Step 6 (Mako-local): only explicit non-poll drivers pump other events
-    // here.  The new fiber has already run to its first suspension/completion.
-    // Recursively draining on a poll worker would prevent socket writes and
-    // pending write-interest updates from running when a fiber keeps waking.
-    // There the pump is the driver's next turn: its own poll covers a fiber
-    // started under it, and one started from another task of the runtime
-    // wakes it.
-    if !pollworker_is_on_poll_thread() {
+    // Step 6 (Mako-local): only a Reactor no PollThread driver drains pumps
+    // other events here.  The new fiber has already run to its first
+    // suspension/completion.  Recursively draining the driver's Reactor would
+    // prevent socket writes and pending write-interest updates from running
+    // when a fiber keeps waking.  There the pump is the driver's next turn:
+    // its own poll covers a fiber started under it, and one started from
+    // another task of the runtime wakes it.  Same predicate as
+    // Reactor::run_loop, so a disk reactor or a directly constructed Reactor
+    // on a poll thread, which the driver never drains, is still pumped here.
+    let driven: bool = poll_driver_wake_of(self_).is_some();
+    if !driven {
         self_.run_loop(false, true);
     } else {
         poll_driver_wake_owner();
@@ -4374,6 +4395,15 @@ fn pollthread_drop(pt: &PollThread) {
 //   timer until event_next_deadline_us, rounded up to whole milliseconds
 //   (Lion's clock), or until woken.  Resumption stays in that drain, never in
 //   set(); Fiber::create_run and continue_fiber stay synchronous.
+//
+//   Mako-local (bounded poll turn): for the driver's Reactor that drain is
+//   one pass of run_loop per turn, not a drain to quiescence, and
+//   Fiber::create_run on this thread no longer pumps it.  A pass that found
+//   work leaves the wake flag set; the driver then returns to Lion with a
+//   self-wake, so descriptor readiness and the transport tasks run between
+//   turns even while fibers keep waking each other.  Only a Shutdown command
+//   restores the drain to quiescence, inside the driver's last poll.  See
+//   Reactor::run_loop and poll_driver_poll.
 //
 // * Each pollable registered with add_proxy gets a task (PollFdTask) that
 //   waits on its descriptor through Lion's AsyncFd and calls handle_read and
@@ -4580,6 +4610,9 @@ fn poll_driver_accepts_spawn(reactor: &Reactor) -> bool {
 
 // Wake this thread's driver from an owner-side edge (the ready queue), unless
 // the driver is draining, which serves the edge itself.
+// Mako-local: "serves" includes handing the edge to the driver's next turn.
+// The bounded pass in Reactor::run_loop sets the pending flag for every edge
+// taken during its dispatch, which is what makes skipping the wake here safe.
 fn poll_driver_wake_owner() {
     let local: *const PollDriver = poll_driver_th_.with(|slot| slot.get());
     if local.is_null() {
@@ -4644,6 +4677,10 @@ impl Future for PollDriverTask {
 }
 
 // One poll of the driver: drain until no wake is pending, then sleep.
+// Mako-local: "drain" is one bounded turn (commands, removals, jobs and one
+// pass of run_loop).  While a wake is pending the driver does not start
+// another turn in this poll; it yields to Lion and is polled again.  The one
+// exception is the stopping driver, which finishes the drain here.
 fn poll_driver_poll(driver: &Rc<PollDriver>, cx: &mut Context<'_>) -> Poll<()> {
     let reactor: Rc<Reactor> = Reactor::get_reactor();
     loop {
@@ -4656,6 +4693,22 @@ fn poll_driver_poll(driver: &Rc<PollDriver>, cx: &mut Context<'_>) -> Poll<()> {
         poll_driver_trigger_jobs(driver);
         (*reactor).run_loop(false, true);
         if driver.stop.get() {
+            // Mako-local: a stopping driver has no next turn, so the bounded
+            // pass above must not be its last word.  Before the bounded turn
+            // run_loop reached this check only after draining to quiescence,
+            // and teardown chains rely on that (a close job queued just
+            // before PollThread::shutdown(), and whatever its fibers wake).
+            // A bounded pass that found work leaves the flag set, exactly
+            // where the unbounded loop would have started another pass, so
+            // run those passes here.  The loop ends after the first pass that
+            // finds nothing ready, as the unbounded drain did; a wake from
+            // another thread costs at most one extra, empty pass.  Like that
+            // drain it does not yield to Lion and takes no further commands
+            // or jobs, and a fiber that wakes itself forever keeps it (and
+            // shutdown) from finishing.
+            while driver.wake.pending.swap(false, std::sync::atomic::Ordering::AcqRel) {
+                (*reactor).run_loop(false, true);
+            }
             poll_driver_disarm_timer(driver);
             return Poll::Ready(());
         }

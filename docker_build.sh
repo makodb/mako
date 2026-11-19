@@ -529,6 +529,11 @@ case "$ACTION" in
         fi
         echo -e "${YELLOW}Building Mako in container...${NC}"
         echo -e "${YELLOW}Docker CMake arg: ${DOCKER_CMAKE_BORROW_ARG}${NC}"
+        # Configure with Ninja, as ci.sh does: the tree sets CXX_MODULE_STD
+        # (`import std;`), which CMake supports only with the Ninja
+        # generators, and the image sets no CMAKE_GENERATOR. A cache written
+        # by the Makefile generator (it fails at generate, after writing the
+        # cache) is discarded below rather than reused.
         ensure_image
         normalize_script_build_ownership
         docker run --rm "${DOCKER_SCRIPT_USER_OPTS[@]}" "${DOCKER_SECURITY_OPTS[@]}" "${DOCKER_ENV_OPTS[@]}" -v "${WORKSPACE_ROOT}:/workspace" ${IMAGE_NAME} \
@@ -539,6 +544,9 @@ case "$ACTION" in
                          if ! grep -q '^CMAKE_HOME_DIRECTORY:INTERNAL=/workspace$' build_docker/CMakeCache.txt; then \
                              CACHE_INCOMPATIBLE=1; \
                              CACHE_REASON='CMAKE_HOME_DIRECTORY mismatch'; \
+                         elif ! grep -q '^CMAKE_GENERATOR:INTERNAL=Ninja$' build_docker/CMakeCache.txt; then \
+                             CACHE_INCOMPATIBLE=1; \
+                             CACHE_REASON='not a Ninja build tree'; \
                          else \
                              C_COMPILER=\$(grep -E '^CMAKE_C_COMPILER:(FILEPATH|STRING)=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
                              CXX_COMPILER=\$(grep -E '^CMAKE_CXX_COMPILER:(FILEPATH|STRING)=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
@@ -579,7 +587,7 @@ case "$ACTION" in
                      fi && \
                      if [ ! -f build_docker/CMakeCache.txt ]; then \
                          echo 'Configuring build_docker'; \
-                         cmake -S . -B build_docker -DCMAKE_BUILD_TYPE=Release ${DOCKER_CMAKE_BORROW_ARG}; \
+                         cmake -S . -B build_docker -G Ninja -DCMAKE_BUILD_TYPE=Release ${DOCKER_CMAKE_BORROW_ARG}; \
                      else \
                          echo 'Reusing existing build_docker CMake cache'; \
                      fi && \
@@ -737,6 +745,9 @@ case "$ACTION" in
                              if ! grep -q '^CMAKE_HOME_DIRECTORY:INTERNAL=/workspace$' build_docker/CMakeCache.txt; then \
                                  CACHE_INCOMPATIBLE=1; \
                                  CACHE_REASON='CMAKE_HOME_DIRECTORY mismatch'; \
+                             elif ! grep -q '^CMAKE_GENERATOR:INTERNAL=Ninja$' build_docker/CMakeCache.txt; then \
+                                 CACHE_INCOMPATIBLE=1; \
+                                 CACHE_REASON='not a Ninja build tree'; \
                              else \
                                  C_COMPILER=\$(grep -E '^CMAKE_C_COMPILER:(FILEPATH|STRING)=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
                                  CXX_COMPILER=\$(grep -E '^CMAKE_CXX_COMPILER:(FILEPATH|STRING)=' build_docker/CMakeCache.txt | head -n1 | cut -d= -f2-); \
@@ -770,7 +781,7 @@ case "$ACTION" in
                          fi && \
                          if [ ! -f build_docker/CMakeCache.txt ]; then \
                              echo 'Configuring build_docker'; \
-                             cmake -S . -B build_docker -DCMAKE_BUILD_TYPE=Release; \
+                             cmake -S . -B build_docker -G Ninja -DCMAKE_BUILD_TYPE=Release; \
                          else \
                              echo 'Reusing existing build_docker CMake cache'; \
                          fi && \
@@ -805,7 +816,7 @@ case "$ACTION" in
             exit 1
         fi
         case "${CI_TEST}" in
-            compile|cleanup|nativeShardingProof|nativeShardingSmoke|simpleTransaction|simplePaxos|shardNoReplication|shard1Replication|shard2Replication|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|srpcTests|cpuThrottlingScaling|clientServer|all)
+            compile|cleanup|nativeShardingProof|nativeShardingSmoke|rustStoBoundaryBinaries|makoLocalAbiGates|simpleTransaction|simplePaxos|shardNoReplication|shard1Replication|shard2Replication|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|srpcTests|cpuThrottlingScaling|clientServer|all)
                 ;;
             *)
                 echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"
@@ -1504,6 +1515,7 @@ case "$ACTION" in
         echo ""
         echo "CI Test Names:"
         echo "  all, compile, cleanup, simpleTransaction, simplePaxos,"
+        echo "  rustStoBoundaryBinaries, makoLocalAbiGates (ci only),"
         echo "  shardNoReplication,"
         echo "  shard1Replication, shard2Replication,"
         echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
