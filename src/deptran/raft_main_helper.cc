@@ -979,7 +979,7 @@ int shutdown_paxos() {
     std::lock_guard<std::mutex> guard(raft_launch_state_mutex);
     raft_launch_state = RaftLaunchState::kNotStarted;
   }
-  RandomGenerator::destroy();
+  // No RandomGenerator::destroy(); see shutdown_paxos in paxos_main_helper.cc.
   Config::DestroyConfig();
 
   Log_info("Raft helper shutdown complete.");

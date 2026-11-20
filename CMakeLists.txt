@@ -3727,6 +3727,15 @@ if(BUILD_TESTS)
         ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread srpc)
     add_test(NAME test_srpc_timeout_race COMMAND test_srpc_timeout_race)
 
+    # srpc's plain-C rand/timing kernel smoke, which also checks that
+    # srpc_rand_destroy() leaves pthread key 0 (in production, jemalloc's) and
+    # its own seed key alone. Every build
+    # already runs it from srpc_goal0_dual_compile; registering it here lets
+    # srpcTests report it by name. (src/srpc-cmake is added before
+    # enable_testing(), so an add_test there would never be generated.)
+    add_test(NAME srpc_goal0_rand_kernel_smoke
+        COMMAND srpc_goal0_rand_kernel_smoke)
+
 
 
 

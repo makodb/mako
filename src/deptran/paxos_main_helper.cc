@@ -264,7 +264,12 @@ int shutdown_paxos() {
 
     pxs_workers_g.clear();
 
-    RandomGenerator::destroy();
+    // No RandomGenerator::destroy(). The old srpc kernel deleted pthread key
+    // 0 (jemalloc's) when nothing had drawn yet; a later draw re-created key 0
+    // with free() as its destructor, and a thread that registered its jemalloc
+    // state after that freed jemalloc's static TLS at exit (SIGSEGV). Destroy
+    // is a no-op now (srpc_rand.c); keep the call out in case a subtree sync
+    // restores the old kernel.
     Config::DestroyConfig();
 
     Log_info("exit process.");

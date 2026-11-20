@@ -28,7 +28,7 @@
     },
     "misc/srpc_rand.c": {
       "role": "entropy",
-      "sha256": "9c184cc8b41d4cacdcd0f591eae0d932ca4a7ee7de9a1130c0310c08da207b35"
+      "sha256": "e507739fd74d68acbbe1590bc93e6d05791aaf4024e84979e86e035a15d8c930"
     },
     "misc/srpc_rand.h": {
       "role": "c-declarations",
