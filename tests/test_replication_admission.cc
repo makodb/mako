@@ -11,6 +11,7 @@
 #include <rusty/async.hpp>
 #include <rusty/refcell.hpp>
 #include <rusty/sync/atomic.hpp>
+#include "deptran/paxos/replication_outbox.h"
 #include "deptran/paxos/server.h"
 #include "srpc/tests/reactor_watchdog.h"
 
@@ -487,6 +488,436 @@ TEST_F(PollOwnedAdmissionTest, TimedReadyPressurePreservesAdmissionAndTerminalOr
 // @unsafe - Self-wakes must not turn a finite poll-worker turn into an inner drain.
 TEST_F(PollOwnedAdmissionTest, StacklessSelfWakePreservesAdmissionAndTerminalOrder) {
   exercise(true);
+}
+
+// @safe - Per-message outcomes, published from the owner poll thread.
+struct OutboxMessageResult {
+  rusty::sync::atomic::AtomicI32 serializations{0};
+  rusty::sync::atomic::AtomicI32 completions{0};
+  rusty::sync::atomic::AtomicI32 callback_error{0};
+  rusty::sync::atomic::AtomicI32 refusals{0};
+  rusty::sync::atomic::AtomicI32 refused_error{0};
+};
+
+// @safe - Only atomics cross the poll-worker/test-thread boundary.
+struct OutboxProbe {
+  static constexpr int kMessages = 8;
+  std::array<OutboxMessageResult, kMessages> messages;
+  rusty::sync::atomic::AtomicI32 admit_calls{0};
+  rusty::sync::atomic::AtomicI32 in_admit{0};
+  rusty::sync::atomic::AtomicI32 max_in_admit{0};
+  rusty::sync::atomic::AtomicBool every_admit_without_deadline{true};
+  rusty::sync::atomic::AtomicI32 stall_reports{0};
+  rusty::sync::atomic::AtomicI32 stall_bad_site{0};
+  rusty::sync::atomic::AtomicI32 stall_bad_rpc{0};
+  rusty::sync::atomic::AtomicU64 stall_min_waited_us{UINT64_MAX};
+  rusty::sync::atomic::AtomicU64 stall_max_waited_us{0};
+  rusty::sync::atomic::AtomicU64 stall_max_queued{0};
+};
+
+// @safe - Owner-thread observations of one outbox, published to the test.
+struct OutboxSnapshot {
+  rusty::sync::atomic::AtomicI32 queued{-1};
+  rusty::sync::atomic::AtomicBool pumping{false};
+  rusty::sync::atomic::AtomicBool watching{false};
+  rusty::sync::atomic::AtomicI32 in_admit{-1};
+  rusty::sync::atomic::AtomicU64 pump_starts{0};
+  rusty::sync::atomic::AtomicU64 watcher_starts{0};
+  rusty::sync::atomic::AtomicU64 stall_reports{0};
+};
+
+constexpr siteid_t kOutboxSite = 7;
+constexpr int32_t kOutboxRpcBase = 0x5800;
+
+// @unsafe - janus::ReplicationOutbox, the Paxos per-destination outbox, over
+// the same production poll-owned loopback connection: the admit function is
+// request_with_admission on that connection, as in commo.cc, plus in-flight
+// accounting. Every Send and every observation runs as a job on the owner
+// poll worker; the test thread is the peer. Each request carries
+// kAdmissionPadBytes, so one queued frame fills the channel until the worker
+// returns to its runtime.
+class ReplicationOutboxTest : public PollOwnedAdmissionTest {
+ protected:
+  // @unsafe - Run fn as a job on the owner poll thread and wait for it.
+  template <typename Fn>
+  bool on_owner(Fn fn) {
+    auto done = rusty::Arc<rusty::sync::atomic::AtomicBool>::make(false);
+    auto job = rusty::Arc<srpc::OneTimeJob>::new_(srpc::OneTimeJob::new_(
+        [fn, done]() mutable {
+          fn();
+          done->store(true);
+        }));
+    poll_.as_ref().unwrap()->add(rusty::Arc<srpc::Job>(job));
+    const auto deadline = srpc::Time::now(true) + 2'000'000;
+    while (!done->load() && srpc::Time::now(true) < deadline)
+      ::usleep(1000);
+    return done->load();
+  }
+
+  // @unsafe - The outbox under test; its stall reports land in probe_.
+  janus::ReplicationOutbox make_outbox(uint64_t stall_after_us) {
+    auto admit = [client = client_.as_ref().unwrap().clone(), probe = probe_](
+                     i32 rpc_id, const srpc::FutureAttr& attr,
+                     uint64_t timeout_us, janus::ReplicationWrite& write) {
+      probe->admit_calls.fetch_add(1);
+      probe->max_in_admit.fetch_max(probe->in_admit.fetch_add(1) + 1);
+      if (timeout_us != janus::ReplicationOutbox::kNoAdmissionDeadline)
+        probe->every_admit_without_deadline.store(false);
+      auto result = client->request_with_admission(
+          rpc_id, attr, timeout_us,
+          [&write](srpc::BinaryWriteArchive& archive) { write(archive); });
+      probe->in_admit.fetch_sub(1);
+      return result;
+    };
+    auto report = [probe = probe_](const janus::ReplicationStall& stall) {
+      probe->stall_reports.fetch_add(1);
+      if (stall.site_id != kOutboxSite)
+        probe->stall_bad_site.fetch_add(1);
+      if (stall.rpc_id < kOutboxRpcBase ||
+          stall.rpc_id >= kOutboxRpcBase + OutboxProbe::kMessages)
+        probe->stall_bad_rpc.fetch_add(1);
+      probe->stall_min_waited_us.fetch_min(stall.waited_us);
+      probe->stall_max_waited_us.fetch_max(stall.waited_us);
+      probe->stall_max_queued.fetch_max(stall.queued);
+      janus::LogReplicationStall(stall);
+    };
+    return janus::ReplicationOutbox(kOutboxSite, poll_.as_ref().unwrap().clone(),
+                                    admit, stall_after_us, report);
+  }
+
+  // @unsafe - Request `index`: rpc kOutboxRpcBase + index, value index.
+  janus::ReplicationMessage message(int index) const {
+    janus::ReplicationMessage request;
+    request.rpc_id = kOutboxRpcBase + index;
+    auto probe = probe_;
+    request.attr.callback = srpc::FutureCallback::from_callable(
+        [probe, index](rusty::Arc<srpc::Future> future) {
+          probe->messages[index].callback_error.store(future->get_error_code());
+          probe->messages[index].completions.fetch_add(1);
+        });
+    request.write = [probe, index](srpc::BinaryWriteArchive& archive) {
+      probe->messages[index].serializations.fetch_add(1);
+      srpc::Serialize_::serialize(int32_t{index}, archive);
+      srpc::Serialize_::serialize(std::string(kAdmissionPadBytes, 'p'), archive);
+    };
+    request.refused = [probe, index](i32 error) {
+      probe->messages[index].refused_error.store(error);
+      probe->messages[index].refusals.fetch_add(1);
+    };
+    return request;
+  }
+
+  // @unsafe - Owner-side state of outbox, read in a job.
+  rusty::Arc<OutboxSnapshot> snapshot(const janus::ReplicationOutbox& outbox) {
+    auto snap = rusty::Arc<OutboxSnapshot>::make();
+    EXPECT_TRUE(on_owner([outbox = outbox.clone(), snap, probe = probe_] {
+      store(outbox, *snap, *probe);
+    }));
+    return snap;
+  }
+
+  // @unsafe - Owner thread only.
+  static void store(const janus::ReplicationOutbox& outbox,
+                    const OutboxSnapshot& snap,
+                    const OutboxProbe& probe) {
+    snap.queued.store(static_cast<int32_t>(outbox.queued()));
+    snap.pumping.store(outbox.pumping());
+    snap.watching.store(outbox.watching());
+    snap.in_admit.store(probe.in_admit.load());
+    snap.pump_starts.store(outbox.pump_starts());
+    snap.watcher_starts.store(outbox.watcher_starts());
+    snap.stall_reports.store(outbox.stall_reports());
+  }
+
+  // @unsafe - Wait until the outbox has no pump, no watcher and no queue.
+  bool wait_idle(const janus::ReplicationOutbox& outbox) {
+    const auto deadline = srpc::Time::now(true) + 3'000'000;
+    while (srpc::Time::now(true) < deadline) {
+      auto snap = snapshot(outbox);
+      if (!snap->pumping.load() && !snap->watching.load() &&
+          snap->queued.load() == 0)
+        return true;
+      ::usleep(5000);
+    }
+    return false;
+  }
+
+  // @unsafe - Wait for every message in [first, last) to end exactly once.
+  bool wait_ended(int first, int last) {
+    const auto deadline = srpc::Time::now(true) + 3'000'000;
+    while (srpc::Time::now(true) < deadline) {
+      bool all = true;
+      for (int i = first; i != last; ++i)
+        all = all && probe_->messages[i].completions.load() +
+                         probe_->messages[i].refusals.load() != 0;
+      if (all) return true;
+      ::usleep(1000);
+    }
+    return false;
+  }
+
+  // @unsafe - Peer side: one request frame's header.
+  bool read_request(uint64_t deadline, int64_t* xid, int32_t* rpc,
+                    int32_t* value) {
+    int32_t length = 0;
+    if (!transfer(&length, sizeof(length), false, deadline)) return false;
+    if (length <= 0 || static_cast<size_t>(length) >
+                           kAdmissionPadBytes + kAdmissionFrameSlackBytes) {
+      ADD_FAILURE() << "invalid production frame length " << length;
+      return false;
+    }
+    std::vector<uint8_t> body(static_cast<size_t>(length));
+    if (!transfer(body.data(), body.size(), false, deadline)) return false;
+    EXPECT_GT(body.size(), kAdmissionPadBytes) << "request lost its padding";
+    srpc::BufferSource source(body.data(), body.size());
+    srpc::BinaryReadArchive archive(srpc::make_source_proxy_buffer(&source));
+    srpc::v64 wire_xid;
+    srpc::Deserialize_::deserialize(wire_xid, archive);
+    srpc::Deserialize_::deserialize(*rpc, archive);
+    srpc::Deserialize_::deserialize(*value, archive);
+    *xid = wire_xid.get();
+    return true;
+  }
+
+  // @unsafe - Peer side: a successful protocol reply to xid.
+  bool reply(int64_t xid, uint64_t deadline) {
+    srpc::BufferSink sink;
+    srpc::BinaryWriteArchive writer(srpc::make_sink_proxy_buffer(&sink));
+    srpc::Serialize_::serialize(srpc::v64(xid), writer);
+    srpc::Serialize_::serialize(srpc::v32(0), writer);
+    srpc::Serialize_::serialize(srpc::v64(1), writer);
+    int32_t reply_length = sink.bytes.len();
+    return transfer(&reply_length, sizeof(reply_length), true, deadline) &&
+           transfer(sink.bytes.data(), sink.bytes.len(), true, deadline);
+  }
+
+  // @unsafe - Read, check and answer requests first..first+count-1, which
+  // must arrive in exactly that order, each once.
+  void deliver_in_order(int first, int count) {
+    const auto deadline = srpc::Time::now(true) + 5'000'000;
+    for (int i = 0; i != count; ++i) {
+      int64_t xid = 0;
+      int32_t rpc = 0;
+      int32_t value = -1;
+      ASSERT_TRUE(read_request(deadline, &xid, &rpc, &value))
+          << "request " << first + i << " did not arrive";
+      EXPECT_EQ(value, first + i) << "outbox broke FIFO order";
+      EXPECT_EQ(rpc, kOutboxRpcBase + value);
+      for (const auto seen : xids_) EXPECT_NE(seen, xid) << "frame xid sent twice";
+      xids_.push_back(xid);
+      ASSERT_TRUE(reply(xid, deadline));
+    }
+  }
+
+  // @unsafe - Nothing beyond the delivered frames reached the peer.
+  void expect_no_more_frames() {
+    std::array<uint8_t, 256> extra{};
+    const auto count = ::recv(peer_, extra.data(), extra.size(), MSG_DONTWAIT);
+    EXPECT_TRUE(count == -1 && errno == EAGAIN)
+        << "unexpected additional admitted frame bytes: " << count;
+  }
+
+  // @unsafe - Each of [first, last) was admitted once, encoded once, and
+  // completed once without error.
+  void expect_delivered(int first, int last) {
+    for (int i = first; i != last; ++i) {
+      const auto& result = probe_->messages[i];
+      EXPECT_EQ(result.serializations.load(), 1) << "message " << i;
+      EXPECT_EQ(result.completions.load(), 1) << "message " << i;
+      EXPECT_EQ(result.callback_error.load(), 0) << "message " << i;
+      EXPECT_EQ(result.refusals.load(), 0) << "message " << i;
+    }
+  }
+
+  rusty::Arc<OutboxProbe> probe_ = rusty::Arc<OutboxProbe>::make();
+  std::vector<int64_t> xids_;
+};
+
+// @unsafe - A full channel queues behind one admission waiter, in FIFO order,
+// and Send never suspends its caller.
+TEST_F(ReplicationOutboxTest, FullChannelKeepsFifoOrderWithOneWaiter) {
+  constexpr int kCount = 5;
+  auto outbox = make_outbox(2'000'000);
+  auto sent = rusty::Arc<OutboxSnapshot>::make();
+  ASSERT_TRUE(on_owner([this, outbox = outbox.clone(), sent] {
+    for (int i = 0; i != kCount; ++i)
+      outbox.Send(message(i));
+    // Every Send returned to this job, which has not yielded to the worker's
+    // runtime. Request 0 met an empty channel, so its pump admitted it and
+    // ended inside the first Send; the second Send started the pump that now
+    // waits for space for request 1, and the rest are queued behind it.
+    store(outbox, *sent, *probe_);
+  }));
+  EXPECT_EQ(sent->queued.load(), kCount - 2);
+  EXPECT_TRUE(sent->pumping.load());
+  EXPECT_TRUE(sent->watching.load());
+  EXPECT_EQ(sent->in_admit.load(), 1);
+  EXPECT_EQ(sent->pump_starts.load(), 2u);
+
+  deliver_in_order(0, kCount);
+  ASSERT_TRUE(wait_ended(0, kCount));
+  ASSERT_TRUE(wait_idle(outbox));
+  expect_delivered(0, kCount);
+  EXPECT_EQ(probe_->admit_calls.load(), kCount);
+  EXPECT_EQ(probe_->max_in_admit.load(), 1) << "more than one admission waiter";
+  EXPECT_TRUE(probe_->every_admit_without_deadline.load());
+  EXPECT_EQ(probe_->stall_reports.load(), 0);
+  auto idle = snapshot(outbox);
+  EXPECT_EQ(idle->pump_starts.load(), 2u)
+      << "one pump admits every request queued behind a full channel";
+  EXPECT_EQ(idle->watcher_starts.load(), 1u);
+  expect_no_more_frames();
+}
+
+// @unsafe - The pump ends when the outbox empties and a later Send starts a
+// new one; a pump that never waited starts no watcher.
+TEST_F(ReplicationOutboxTest, PumpRestartsAfterOutboxEmpties) {
+  auto outbox = make_outbox(2'000'000);
+  for (int batch = 0; batch != 2; ++batch) {
+    auto sent = rusty::Arc<OutboxSnapshot>::make();
+    ASSERT_TRUE(on_owner([this, outbox = outbox.clone(), sent, batch] {
+      outbox.Send(message(2 * batch));
+      outbox.Send(message(2 * batch + 1));
+      store(outbox, *sent, *probe_);
+    }));
+    // Per batch: the first request's pump ends inside its Send, the second
+    // request's pump waits for channel space.
+    EXPECT_TRUE(sent->pumping.load()) << "batch " << batch;
+    EXPECT_EQ(sent->pump_starts.load(), static_cast<uint64_t>(2 * (batch + 1)));
+    deliver_in_order(2 * batch, 2);
+    ASSERT_TRUE(wait_ended(2 * batch, 2 * batch + 2));
+    ASSERT_TRUE(wait_idle(outbox)) << "batch " << batch;
+  }
+  // An empty channel admits at once: the pump starts and ends inside Send.
+  auto sent = rusty::Arc<OutboxSnapshot>::make();
+  ASSERT_TRUE(on_owner([this, outbox = outbox.clone(), sent] {
+    outbox.Send(message(4));
+    store(outbox, *sent, *probe_);
+  }));
+  EXPECT_FALSE(sent->pumping.load());
+  EXPECT_FALSE(sent->watching.load());
+  EXPECT_EQ(sent->queued.load(), 0);
+  EXPECT_EQ(sent->pump_starts.load(), 5u);
+  deliver_in_order(4, 1);
+  ASSERT_TRUE(wait_ended(4, 5));
+  ASSERT_TRUE(wait_idle(outbox));
+  expect_delivered(0, 5);
+  EXPECT_EQ(probe_->max_in_admit.load(), 1);
+  auto idle = snapshot(outbox);
+  EXPECT_EQ(idle->pump_starts.load(), 5u);
+  EXPECT_LE(idle->watcher_starts.load(), 2u);
+  expect_no_more_frames();
+}
+
+// @unsafe - Closing the connection completes the admitted and the waiting
+// request with an error and refuses every request behind them; a closed
+// connection refuses at once. Each request ends exactly once.
+TEST_F(ReplicationOutboxTest, ClosedConnectionEndsEveryRequestOnce) {
+  auto outbox = make_outbox(2'000'000);
+  auto sent = rusty::Arc<OutboxSnapshot>::make();
+  ASSERT_TRUE(on_owner([this, outbox = outbox.clone(), sent,
+                        client = client_.as_ref().unwrap().clone()] {
+    for (int i = 0; i != 4; ++i)
+      outbox.Send(message(i));
+    store(outbox, *sent, *probe_);
+    client->close();
+  }));
+  EXPECT_EQ(sent->queued.load(), 2);
+  EXPECT_TRUE(sent->pumping.load());
+  ASSERT_TRUE(wait_ended(0, 4));
+  ASSERT_TRUE(wait_idle(outbox));
+  for (int i = 0; i != 2; ++i) {
+    EXPECT_EQ(probe_->messages[i].completions.load(), 1) << "message " << i;
+    EXPECT_NE(probe_->messages[i].callback_error.load(), 0) << "message " << i;
+    EXPECT_EQ(probe_->messages[i].refusals.load(), 0) << "message " << i;
+  }
+  for (int i = 2; i != 4; ++i) {
+    EXPECT_EQ(probe_->messages[i].refusals.load(), 1) << "message " << i;
+    EXPECT_EQ(probe_->messages[i].refused_error.load(),
+              srpc::CLIENT_ERR_NOT_CONNECTED) << "message " << i;
+    EXPECT_EQ(probe_->messages[i].completions.load(), 0) << "message " << i;
+    EXPECT_EQ(probe_->messages[i].serializations.load(), 0) << "message " << i;
+  }
+
+  // Already closed: the refused hook runs inside Send's inline pump.
+  auto refused = rusty::Arc<rusty::sync::atomic::AtomicI32>::make(-1);
+  auto after = rusty::Arc<OutboxSnapshot>::make();
+  ASSERT_TRUE(on_owner([this, outbox = outbox.clone(), after, refused] {
+    outbox.Send(message(4));
+    refused->store(probe_->messages[4].refusals.load());
+    store(outbox, *after, *probe_);
+  }));
+  EXPECT_EQ(refused->load(), 1);
+  EXPECT_FALSE(after->pumping.load());
+  EXPECT_EQ(probe_->messages[4].refused_error.load(),
+            srpc::CLIENT_ERR_NOT_CONNECTED);
+  EXPECT_EQ(probe_->messages[4].completions.load(), 0);
+  ASSERT_TRUE(wait_idle(outbox));
+  for (int i = 0; i != 5; ++i)
+    EXPECT_EQ(probe_->messages[i].completions.load() +
+                  probe_->messages[i].refusals.load(), 1) << "message " << i;
+  EXPECT_EQ(probe_->max_in_admit.load(), 1);
+}
+
+// @unsafe - An admission that keeps waiting is reported at the threshold and
+// every threshold after it, and is still delivered once, unchanged, when the
+// peer drains: there is no deadline that could drop it.
+TEST_F(ReplicationOutboxTest, LongAdmissionWaitIsReportedAndNotDropped) {
+  constexpr uint64_t kStallAfterUs = 50'000;
+  // Far more padding than loopback socket buffers absorb, so some admission
+  // stays blocked while the peer does not read.
+  constexpr int kCount = 6;
+  auto outbox = make_outbox(kStallAfterUs);
+  const auto began = srpc::Time::now(true);
+  ASSERT_TRUE(on_owner([this, outbox = outbox.clone()] {
+    for (int i = 0; i != kCount; ++i)
+      outbox.Send(message(i));
+  }));
+  ::usleep(600'000);
+  // Nothing ended while the peer was not reading: no drop, no refusal.
+  for (int i = 0; i != kCount; ++i) {
+    EXPECT_EQ(probe_->messages[i].completions.load(), 0) << "message " << i;
+    EXPECT_EQ(probe_->messages[i].refusals.load(), 0) << "message " << i;
+  }
+  const int stalled_reports = probe_->stall_reports.load();
+  EXPECT_GE(stalled_reports, 2) << "a 600 ms wait must be reported repeatedly";
+
+  deliver_in_order(0, kCount);
+  ASSERT_TRUE(wait_ended(0, kCount));
+  ASSERT_TRUE(wait_idle(outbox));
+  const auto elapsed = srpc::Time::now(true) - began;
+  expect_delivered(0, kCount);
+  EXPECT_EQ(probe_->admit_calls.load(), kCount) << "a request was admitted twice";
+  EXPECT_EQ(probe_->max_in_admit.load(), 1);
+  EXPECT_TRUE(probe_->every_admit_without_deadline.load());
+  // Rate limit: one waiter at a time, one report per threshold of its wait.
+  EXPECT_LE(static_cast<uint64_t>(probe_->stall_reports.load()),
+            elapsed / kStallAfterUs);
+  EXPECT_EQ(probe_->stall_bad_site.load(), 0);
+  EXPECT_EQ(probe_->stall_bad_rpc.load(), 0);
+  EXPECT_GE(probe_->stall_min_waited_us.load(), kStallAfterUs);
+  EXPECT_GE(probe_->stall_max_waited_us.load(), 2 * kStallAfterUs);
+  EXPECT_LE(probe_->stall_max_queued.load(), static_cast<uint64_t>(kCount - 2));
+  auto idle = snapshot(outbox);
+  EXPECT_EQ(idle->stall_reports.load(),
+            static_cast<uint64_t>(probe_->stall_reports.load()));
+  EXPECT_EQ(idle->pump_starts.load(), 2u);
+  EXPECT_EQ(idle->watcher_starts.load(), 1u);
+  expect_no_more_frames();
+}
+
+// @unsafe - The outbox is unsynchronized; Send off its owner poll thread is a
+// verify failure, before anything is queued.
+TEST_F(ReplicationOutboxTest, SendOffTheOwnerThreadIsRejected) {
+  auto outbox = make_outbox(2'000'000);
+  EXPECT_THROW(outbox.Send(message(0)), std::exception);
+  auto snap = snapshot(outbox);
+  EXPECT_EQ(snap->queued.load(), 0);
+  EXPECT_FALSE(snap->pumping.load());
+  EXPECT_EQ(snap->pump_starts.load(), 0u);
+  EXPECT_EQ(probe_->admit_calls.load(), 0);
+  EXPECT_EQ(probe_->messages[0].completions.load() +
+                probe_->messages[0].refusals.load(), 0);
 }
 
 // @unsafe - Exercise the actual learner scheduler, not a forwarding mock.
