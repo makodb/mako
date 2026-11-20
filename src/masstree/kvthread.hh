@@ -327,6 +327,12 @@ class threadinfo {
     // register another callback concurrently. This waits for a full grace
     // period and returns with the participant inactive.
     void rcu_drain();
+    // Non-waiting form of rcu_drain() for detaching a thread that another
+    // participant may be waiting on (for example a reader joining it). Runs
+    // every callback whose grace period completes without waiting and leaves
+    // the rest queued on this participant; returns true iff none remain.
+    // Returns with the participant inactive.
+    bool rcu_try_drain();
     typedef ::mrcu_callback mrcu_callback;
     // @unsafe { record_rcu is not borrow-checked }
     void rcu_register(rusty::MutPtr<mrcu_callback> cb) {

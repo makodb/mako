@@ -406,6 +406,42 @@ TEST_F(MasstreeInternalsTest, RcuDrainWaitsAndEmptiesCrossGroupQueue) {
     EXPECT_FALSE(reclaimer->rcu_active());
 }
 
+// A detaching thread may be the one an older reader waits for (a scan
+// callback that joins a writer). rcu_try_drain runs on this same thread
+// while the blocker stays active, so a waiting drain would never return.
+TEST_F(MasstreeInternalsTest, RcuTryDrainKeepsPinnedCallbacksWithoutWaiting) {
+    threadinfo* reclaimer =
+        threadinfo::make(threadinfo::TI_PROCESS, 5005);
+    threadinfo* blocker =
+        threadinfo::make(threadinfo::TI_PROCESS, 5006);
+    ASSERT_NE(reclaimer, nullptr);
+    ASSERT_NE(blocker, nullptr);
+
+    auto calls = std::make_shared<std::vector<int>>();
+    reclaimer->rcu_start();
+    reclaimer->rcu_register(new RecordingRcuCallback(calls, 0));
+    ctx_->increment_epoch(2);
+    blocker->rcu_start();
+    // Retired in the blocker's epoch: the blocker may still reach it.
+    reclaimer->rcu_register(new RecordingRcuCallback(calls, 1));
+
+    EXPECT_FALSE(reclaimer->rcu_try_drain());
+    EXPECT_EQ(*calls, std::vector<int>({0}));
+    EXPECT_FALSE(reclaimer->rcu_active());
+
+    // Uncontended, it completes as many grace periods as the queue needs,
+    // including a callback that queues itself again.
+    auto counted = std::make_shared<std::atomic<unsigned>>(0);
+    reclaimer->rcu_start();
+    reclaimer->rcu_register(new RequeueOnceRcuCallback(counted));
+    reclaimer->rcu_stop();
+    blocker->rcu_stop();
+    EXPECT_TRUE(reclaimer->rcu_try_drain());
+    EXPECT_EQ(*calls, std::vector<int>({0, 1}));
+    EXPECT_EQ(counted->load(std::memory_order_acquire), 2U);
+    EXPECT_FALSE(reclaimer->rcu_active());
+}
+
 // Test 9: Thread Purposes
 TEST_F(MasstreeInternalsTest, ThreadPurposes) {
     // Test different thread purposes

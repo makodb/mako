@@ -201,6 +201,47 @@ void threadinfo::rcu_drain() {
     }
 }
 
+// @unsafe - owner-thread detach over raw epoch participants and callback
+// pointers. Same caller contract as rcu_drain(), but it never waits for
+// another participant: that reader may itself be waiting for this thread.
+bool threadinfo::rcu_try_drain() {
+    store_gc_epoch(0, std::memory_order_release);
+
+    while (limbo_epoch_ != 0) {
+        context_->increment_epoch(2);
+        const mrcu_epoch_type drain_epoch = context_->get_epoch();
+
+        bool older_reader_active = false;
+        for (rusty::MutPtr<threadinfo> ti = context_->get_allthreads();
+             ti; ti = ti->next()) {
+            const mrcu_epoch_type epoch =
+                ti->load_gc_epoch(std::memory_order_seq_cst);
+            if (epoch != 0
+                && mrcu_signed_epoch_type(epoch - drain_epoch) < 0) {
+                older_reader_active = true;
+                break;
+            }
+        }
+
+        // hard_rcu_quiesce() takes the minimum over every participant, so an
+        // older active reader keeps exactly the callbacks it may still reach;
+        // everything retired before it started runs now.
+        store_gc_epoch(drain_epoch, std::memory_order_seq_cst);
+        try {
+            hard_rcu_quiesce();
+        } catch (...) {
+            store_gc_epoch(0, std::memory_order_release);
+            throw;
+        }
+        store_gc_epoch(0, std::memory_order_release);
+        // Without an older reader this round was a full grace period; only
+        // follow-up callbacks can remain, so run another round for them.
+        if (older_reader_active)
+            break;
+    }
+    return limbo_epoch_ == 0;
+}
+
 // @unsafe - compares raw void* pointers and calls fprintf() for debug output
 void threadinfo::report_rcu(void *ptr) const
 {

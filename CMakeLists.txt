@@ -4438,9 +4438,12 @@ if(BUILD_TESTS)
 
     # Focused regression for an idle mode-1 helper pinning Masstree RCU while
     # a short-lived ClientTcpServer worker drains its callback queue at exit.
+    # thread_end() no longer waits for an older reader, so the L7 run alone
+    # cannot hang on that regression; ParkedIdleHelperLeavesMasstreeRcu
+    # checks the suspended helper's epochs directly.
     add_test(NAME test_mako_nontxn_distributed_rcu_shutdown
         COMMAND test_mako_nontxn_distributed
-            --gtest_filter=MakoNontxnDistributed.L7RemoteTableNontxn
+            --gtest_filter=MakoNontxnDistributed.L7RemoteTableNontxn:MakoNontxnDistributed.ParkedIdleHelperLeavesMasstreeRcu
             --gtest_fail_if_no_test_selected)
     set_tests_properties(test_mako_nontxn_distributed_rcu_shutdown PROPERTIES
         LABELS "silo;distributed;rcu;lifecycle"

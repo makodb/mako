@@ -2374,11 +2374,17 @@ public:
     if (TThread::txn != nullptr && TThread::txn->has_active_state()) {
       abort_txn(nullptr);
     }
-    // This worker owns every callback in its Masstree limbo queue. Complete a
-    // full grace period before ending the database-thread attachment so
-    // retired value chains cannot accumulate across detach and reattach.
+    // This worker owns every callback in its Masstree limbo queue. Run each
+    // one whose grace period is already complete, so an uncontended detach
+    // leaves none behind. Never wait for an older active reader: that reader
+    // may be blocked on this thread (a scan callback that joins a writer), so
+    // a blocking drain here deadlocks. Callbacks such a reader can still reach
+    // stay queued on this thread's threadinfo, which no other thread
+    // reclaims: they run only if this same OS thread later reattaches to the
+    // same MasstreeContext, and otherwise leak (a spawned writer or a
+    // per-connection worker that exits never reattaches).
     if (mbta_table::mythreadinfo.ti != nullptr) {
-      mbta_table::mythreadinfo.ti->rcu_drain();
+      (void)mbta_table::mythreadinfo.ti->rcu_try_drain();
     }
     benchmark_thread_end();
   }

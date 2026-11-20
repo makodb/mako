@@ -169,6 +169,9 @@ function(mako_add_masstree_tests)
     target_compile_options(test_masstree_internals PRIVATE ${TEST_COMPILE_OPTIONS})
     target_link_libraries(test_masstree_internals mako ${TEST_LINK_LIBS} ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES} pthread)
     add_test(NAME test_masstree_internals COMMAND test_masstree_internals)
+    # RcuTryDrainKeepsPinnedCallbacksWithoutWaiting fails by hanging if
+    # rcu_try_drain() ever waits for an active reader; bound it.
+    set_tests_properties(test_masstree_internals PROPERTIES TIMEOUT 60)
 
     # MasstreeContext multi-instance isolation stress.
     add_executable(test_masstree_multi_instance ${MASSTREE_TEST_DIR}/test_masstree_multi_instance.cc)

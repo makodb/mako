@@ -705,6 +705,90 @@ TEST_F(MakoNontxnDistributed,
               sizeof(mako::get_response_t) - mako::max_value_length);
 }
 
+// ShardServer::Run() parks an idle mode-1 participant before suspend() so a
+// waiting helper pins neither the STO epoch nor Masstree RCU. The original
+// detector (test_mako_nontxn_distributed_rcu_shutdown) only hung a departing
+// worker's blocking thread_end() drain; thread_end() no longer waits for an
+// older reader, so check the suspended helper directly. Its empty participant
+// has entered both, as every mode-1 storage access does first, and must leave
+// them before the helper suspends and be restored for the next request.
+// @unsafe - Exercises the real helper loop; reads the helper's published
+// Masstree and STO epochs only through their atomic accessors.
+TEST_F(MakoNontxnDistributed, ParkedIdleHelperLeavesMasstreeRcu) {
+    using helper_threadinfo = decltype(mbta_table::mythreadinfo.ti);
+    const std::string key = "__parked_idle_helper_row__";
+    g_server_tbl->put(lcdf::Str(key), "parked-helper-value");
+    mako::HelperQueue request_queue(0, true);
+    mako::HelperQueue response_queue(0, false);
+    std::atomic<helper_threadinfo> helper_ti{nullptr};
+    std::atomic<int> helper_id{-1};
+    std::atomic<bool> run_returned{false};
+
+    auto helper = rusty::thread::spawn([&] {
+        scoped_db_thread_ctx ctx(g_db, true, 1);
+        TThread::set_mode(1);
+        set_server_table_multiversion_mode();
+        TThread::set_shard_index(kServerShard);
+        TThread::set_pid(kParId);
+        TThread::set_nshards(g_config->nshards);
+
+        mako::ShardServer server(g_config->configFile,
+                                 kServerShard, kClientShard, kParId);
+        std::map<int, abstract_ordered_index*> tables;
+        tables[kRemoteTableId] = g_server_tbl;
+        // Registration resets the participant to a lazy placeholder that has
+        // entered neither epoch; give Run() the state its parking guards.
+        server.Register(g_db, &request_queue, &response_queue, tables);
+        TThread::txn->ensure_epoch();
+        EXPECT_TRUE(g_db->shard_participant_active());
+        EXPECT_TRUE(g_db->shard_participant_empty());
+        EXPECT_TRUE(mbta_table::mythreadinfo.ti->rcu_active());
+        helper_id.store(TThread::id(), std::memory_order_release);
+        helper_ti.store(mbta_table::mythreadinfo.ti, std::memory_order_release);
+        server.Run();
+        run_returned.store(true, std::memory_order_release);
+        if (g_db->shard_participant_active()) g_db->shard_abort_txn(nullptr);
+    });
+
+    // No request is queued, so the helper reaches suspend() and stays there.
+    // Unparked, it would keep both epochs published for as long as it waits.
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    helper_threadinfo ti = nullptr;
+    while ((ti = helper_ti.load(std::memory_order_acquire)) == nullptr &&
+           std::chrono::steady_clock::now() < deadline)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    bool left_rcu = false;
+    bool left_sto_epoch = false;
+    if (ti != nullptr) {
+        auto& sto_epoch =
+            Transaction::tinfo[helper_id.load(std::memory_order_acquire)].epoch;
+        do {
+            left_rcu = !ti->rcu_active();
+            left_sto_epoch = sto_epoch.load(std::memory_order_seq_cst) == 0;
+            if (left_rcu && left_sto_epoch) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        } while (std::chrono::steady_clock::now() < deadline);
+    }
+    EXPECT_NE(ti, nullptr);
+    EXPECT_TRUE(left_rcu) << "idle mode-1 helper suspended inside Masstree RCU";
+    EXPECT_TRUE(left_sto_epoch) << "idle mode-1 helper suspended inside the STO epoch";
+    EXPECT_FALSE(run_returned.load(std::memory_order_acquire));
+
+    // The parked helper restores its participant before serving a request.
+    QueuedGetRequest get(2001, kRemoteTableId, key, 1);
+    EXPECT_TRUE(request_queue.add_one_req(
+        get.GetOpaqueHandle(), sizeof(mako::get_request_t)));
+    request_queue.request_stop();
+    helper.join().unwrap();
+
+    EXPECT_TRUE(run_returned.load(std::memory_order_acquire));
+    ASSERT_EQ(get.response_count(), 1U);
+    EXPECT_EQ(get.response().status,
+              static_cast<int>(mako::ErrorCode::SUCCESS));
+    EXPECT_TRUE(get.transaction_active_at_response());
+}
+
 // @unsafe - Actual receiver admission wraps the retained C++ participant.
 TEST_F(MakoNontxnDistributed, LateTerminalsCannotFinishTheNextParticipant) {
     const std::string key = "__participant_terminal_fence_row__";
@@ -1319,7 +1403,10 @@ TEST(NativeMixedScan, LocalAndRemoteSegments) {
     item_micro::key micro_key;
     micro_key.i_id = 700001;
     std::string read_keys[] = {EncodeK(stock_key), EncodeK(micro_key)};
-    std::string batch_value = "uncommitted";
+    // An encoded tuple, as every engine write carries: MassTrans rejects a
+    // value without the metadata footer (std::length_error), which would end
+    // the insertion thread before it creates the conflicting rows.
+    std::string batch_value = mako::Encode("uncommitted");
     std::atomic<unsigned> insertion_state{0};
     auto insertion = rusty::thread::spawn([&] {
         try {
