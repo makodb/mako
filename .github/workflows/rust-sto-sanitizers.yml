@@ -106,8 +106,11 @@ jobs:
           set -euo pipefail
           toolchain="$(bash scripts/ci/run_rust_sto_sanitizer.sh --print-nightly-toolchain)"
           bash ./scripts/ci/install_pinned_rustup.sh
+          # mako-local-sys's build script runs bindgen, which formats its
+          # output with the rustfmt of the active (RUSTUP_TOOLCHAIN) toolchain.
           "${CARGO_HOME}/bin/rustup" toolchain install "${toolchain}" \
-            --profile minimal --component clippy --component rust-src
+            --profile minimal --component clippy --component rustfmt \
+            --component rust-src
           # The Raft and native-sharding archives that reach dbtest are built
           # with the selected sanitizer toolchain, against the one
           # instrumented std the gate builds from its rust-src, like every
