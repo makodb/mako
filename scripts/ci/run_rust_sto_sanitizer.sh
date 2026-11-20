@@ -35,10 +35,14 @@ Coverage contract:
   * Every registered CTest carrying the exact "rust" label runs. This picks
     up the Rust TPC-C slow-exit and workload smoke tests when CMake registers
     them, without maintaining a second test-name list here.
-  * ASan and TSan compiler-instrument first-party Rust code and a rebuilt Rust
-    standard library with the pinned nightly. Rust test binaries and native
-    executables use the external Clang sanitizer runtime so each mixed-language
-    process has one runtime.
+  * ASan and TSan compiler-instrument first-party Rust code and a Rust
+    standard library that the gate rebuilds once with the pinned nightly into
+    a private sysroot. Every Cargo command of the job compiles against that
+    sysroot, the Rust staticlibs libmako.a links included, so each executable
+    carries exactly one std; the symbol audit checks the archives and the
+    mixed-language executables. Rust test binaries and native executables use
+    the external Clang sanitizer runtime so each mixed-language process has
+    one runtime.
   * Linux links explicitly select the GNU unwinder through a retained Clang
     configuration; this does not replace the external Clang sanitizer runtime.
   * ASan leak detection remains enabled for the workspace sweep, native runner,
@@ -316,7 +320,9 @@ verify_unwind_config() {
 }
 
 rust_target=""
-rust_build_std="OFF"
+rust_std_source="toolchain-prebuilt"
+rust_std_sysroot=""
+rust_std_rustflags=""
 workspace_native_link="OFF"
 selected_rustup_toolchain=""
 asan_quarantine_names=()
@@ -346,13 +352,22 @@ if [[ "${rust_compiler_instrumented}" == "1" ]]; then
         exit 2
     fi
     rust_target="${rust_sanitizer_target}"
-    rust_build_std="ON"
     workspace_native_link="ON"
+    if [[ "${build_dir}" =~ [[:space:]] ]]; then
+        echo "the Rust sanitizer sysroot path must not contain whitespace: ${build_dir}" >&2
+        exit 2
+    fi
+    rust_std_source="instrumented-sysroot"
+    rust_std_sysroot="${build_dir}/rust-sanitizer-sysroot"
     rust_sanitizer_flags="-Zsanitizer=${sanitizer} -Zexternal-clangrt"
+    # The flags std itself is compiled with: those of every first-party crate,
+    # without link arguments and the sysroot it is about to become.
+    rust_std_rustflags="${rust_sanitizer_flags} -C force-frame-pointers=yes"
+    rust_sanitizer_flags+=" --sysroot=${rust_std_sysroot}"
     rustflags="${rust_sanitizer_flags} -C force-frame-pointers=yes ${rust_link_flag}"
     rustdocflags="${rust_sanitizer_flags} -C force-frame-pointers=yes ${rust_link_flag}"
     sto_tpcc_rustflags="${rust_sanitizer_flags}"
-    rust_instrumentation="${sanitizer}-nightly-build-std"
+    rust_instrumentation="${sanitizer}-nightly-sysroot"
     rust_runtime="external-clang"
 else
     for command_name in rustc cargo; do
@@ -439,7 +454,6 @@ run_asan_quarantine_tests() {
                 --manifest-path "${repo_root}/crates/Cargo.toml" \
                 --locked \
                 --target "${rust_target}" \
-                -Zbuild-std \
                 --package "${quarantine_package}" \
                 "${quarantine_target[@]}" \
                 --all-features \
@@ -472,7 +486,7 @@ run_native_abi_profile() {
         "CARGO_TARGET_DIR=${build_dir}/rust-workspace-target"
     )
     if [[ "${rust_compiler_instrumented}" == "1" ]]; then
-        platform=(--target "${rust_target}" -Zbuild-std)
+        platform=(--target "${rust_target}")
     fi
     local -a command=(
         "${selected_cargo}" test --manifest-path "${repo_root}/crates/Cargo.toml"
@@ -612,7 +626,6 @@ audit_asan_quarantine_skips() {
             --all-features \
             --locked \
             --target "${rust_target}" \
-            -Zbuild-std \
             -- \
             --list \
             --format terse
@@ -661,7 +674,6 @@ PY
                 --manifest-path "${repo_root}/crates/Cargo.toml" \
                 --locked \
                 --target "${rust_target}" \
-                -Zbuild-std \
                 --package "${quarantine_package}" \
                 "${quarantine_target[@]}" \
                 --all-features \
@@ -696,6 +708,242 @@ PY
     done
 }
 
+# An executable can hold only one Rust std, and libmako.a brings two Cargo
+# staticlibs (native sharding, the Raft runtime) into every native executable
+# and into the mako-local test executables. -Zbuild-std rebuilds std inside
+# each Cargo invocation with a crate hash taken from that invocation's profile,
+# so the release archives (sto-tpcc-ffi, native sharding, Raft, rust-lib) and
+# the dev-profile test executables would each carry a different std and fail
+# to link ("multiple definition of `rust_eh_personality'"). Build std once
+# instead, instrumented, into a sysroot that every Cargo command of this gate
+# selects with --sysroot (in RUSTFLAGS, beside an explicit --target, so build
+# scripts and proc-macros keep the toolchain's std). The profile keeps what
+# the former per-invocation stds checked: release optimization and line
+# tables (the sto-tpcc-ffi archive's std), debug assertions and overflow
+# checks (the dev-profile test std), panic = "unwind". The panic_abort runtime
+# is compiled with -C panic=abort, as rustc's bootstrap does for the shipped
+# std, so the panic = "abort" Raft and sharding archives link against the same
+# std as the unwinding test executables.
+build_rust_sanitizer_sysroot() {
+    local seed="${build_dir}/rust-sanitizer-sysroot-seed"
+    local wrapper="${build_dir}/rust-sanitizer-sysroot-rustc"
+    local artifacts="${build_dir}/sanitizer-logs/rust-sanitizer-sysroot-artifacts.json"
+    local build_log="${build_dir}/sanitizer-logs/rust-sanitizer-sysroot-cargo.log"
+    local lib_dir="${rust_std_sysroot}/lib/rustlib/${rust_target}/lib"
+
+    mkdir -p "${seed}/src" "${lib_dir}"
+    cat >"${seed}/Cargo.toml" <<'EOF'
+[package]
+name = "mako-sanitizer-sysroot-seed"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[lib]
+path = "src/lib.rs"
+
+[workspace]
+EOF
+    printf '#![no_std]\n' >"${seed}/src/lib.rs"
+    cat >"${wrapper}" <<'EOF'
+#!/bin/sh
+# RUSTC_WRAPPER for the sanitizer sysroot build only.
+rustc="$1"
+shift
+previous=""
+for argument in "$@"; do
+    if [ "${previous}" = "--crate-name" ] && [ "${argument}" = "panic_abort" ]; then
+        exec "${rustc}" "$@" -C panic=abort
+    fi
+    previous="${argument}"
+done
+exec "${rustc}" "$@"
+EOF
+    chmod +x "${wrapper}"
+
+    echo "Building the instrumented Rust std once into ${rust_std_sysroot}"
+    if ! env "RUSTUP_TOOLCHAIN=${selected_rustup_toolchain}" \
+            "RUSTC_WRAPPER=${wrapper}" \
+            "RUSTFLAGS=${rust_std_rustflags}" \
+            CARGO_INCREMENTAL=0 \
+            CARGO_PROFILE_RELEASE_OPT_LEVEL=3 \
+            CARGO_PROFILE_RELEASE_DEBUG=1 \
+            CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=true \
+            CARGO_PROFILE_RELEASE_OVERFLOW_CHECKS=true \
+            CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1 \
+            CARGO_PROFILE_RELEASE_LTO=false \
+            CARGO_PROFILE_RELEASE_PANIC=unwind \
+            "${selected_cargo}" build --release \
+                --manifest-path "${seed}/Cargo.toml" \
+                --target "${rust_target}" \
+                --target-dir "${build_dir}/rust-sanitizer-sysroot-target" \
+                -Zbuild-std=std,panic_abort,panic_unwind,test \
+                --message-format=json-render-diagnostics \
+                >"${artifacts}" 2>"${build_log}"; then
+        cat "${build_log}" >&2
+        echo "could not build the instrumented Rust std" >&2
+        return 1
+    fi
+    cat "${build_log}"
+    python3 - "${artifacts}" "${lib_dir}" <<'PY'
+import json
+import pathlib
+import shutil
+import sys
+
+artifacts = pathlib.Path(sys.argv[1])
+lib_dir = pathlib.Path(sys.argv[2])
+rlibs = {}
+for line in artifacts.read_text(encoding="utf-8").splitlines():
+    message = json.loads(line)
+    if message.get("reason") != "compiler-artifact":
+        continue
+    if "mako-sanitizer-sysroot-seed" in message["package_id"]:
+        continue
+    for filename in message["filenames"]:
+        if filename.endswith(".rlib"):
+            rlibs.setdefault(message["target"]["name"], []).append(pathlib.Path(filename))
+required = {"core", "alloc", "std", "compiler_builtins", "panic_abort",
+            "panic_unwind", "unwind", "test", "proc_macro"}
+missing = sorted(required - set(rlibs))
+if missing:
+    raise SystemExit(f"sanitizer sysroot build lacks {missing}")
+repeated = sorted(name for name, paths in rlibs.items() if len(paths) != 1)
+if repeated:
+    raise SystemExit(f"sanitizer sysroot build produced several rlibs for {repeated}")
+if any(lib_dir.iterdir()):
+    raise SystemExit(f"sanitizer sysroot library directory is not fresh: {lib_dir}")
+for name, (path,) in sorted(rlibs.items()):
+    shutil.copy2(path, lib_dir / path.name)
+print(f"sanitizer sysroot holds {len(rlibs)} crates: " + " ".join(sorted(rlibs)))
+PY
+    # rustc finds its self-contained linker (rust-lld, gcc-ld) under the
+    # sysroot it compiles against.
+    ln -s "${rust_sysroot}/lib/rustlib/${rust_target}/bin" \
+        "${rust_std_sysroot}/lib/rustlib/${rust_target}/bin"
+}
+
+if [[ -n "${rust_std_sysroot}" ]]; then
+    run_logged rust-sanitizer-sysroot build_rust_sanitizer_sysroot
+fi
+
+# An executable can hold one Rust std. Check it on the artifacts instead of
+# trusting the commands: every Rust archive and Rust executable of this job,
+# and every native executable that links Rust, must define symbols of exactly
+# the job's std (the sanitizer sysroot's, or the toolchain's prebuilt std for
+# UBSan) and, when linked, exactly one rust_eh_personality. v0 symbol names
+# spell std's crate disambiguator, so a second std, or any std other than the
+# job's (the toolchain's prebuilt std, a per-profile -Zbuild-std std), is
+# visible here. The crate hash does not cover RUSTFLAGS, so the sysroot's
+# instrumentation is checked separately. --must FILE: must carry the std.
+# --tree DIR: every ELF executable below DIR that carries Rust (a Rust
+# executable always defines std symbols), and at least one must. --may-dir
+# DIR: the executables directly in DIR, which may also carry no Rust.
+audit_one_rust_std() {
+    local label="$1"
+    shift
+    python3 - "${cmake_nm}" "${rust_std_libdir}" "${jobs}" \
+        "${build_dir}/sanitizer-logs/rust-std-${label}.txt" "$@" <<'PY' |
+import concurrent.futures
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+
+nm, libdir, jobs, report = sys.argv[1], pathlib.Path(sys.argv[2]), int(sys.argv[3]), pathlib.Path(sys.argv[4])
+std_pattern = re.compile(r"Cs[0-9A-Za-z]*_3std")
+
+
+def inspect(path):
+    stds = set()
+    personalities = 0
+    with tempfile.TemporaryFile(mode="w+") as errors:
+        with subprocess.Popen([nm, "--defined-only", str(path)], stdout=subprocess.PIPE,
+                              stderr=errors, text=True) as process:
+            for line in process.stdout:
+                stds.update(std_pattern.findall(line))
+                if line.rstrip("\n").endswith((" T rust_eh_personality", " t rust_eh_personality")):
+                    personalities += 1
+        if process.returncode != 0:
+            errors.seek(0)
+            raise SystemExit(f"{nm} failed on {path}: {errors.read().strip()}")
+    return sorted(stds), personalities
+
+
+def is_executable(path):
+    if path.is_symlink() or not path.is_file():
+        return False
+    if path.suffix in (".so", ".rlib", ".a", ".rmeta", ".d", ".o"):
+        return False
+    if path.name.startswith(("build-script", "build_script")) or not path.stat().st_mode & 0o111:
+        return False
+    with path.open("rb") as stream:
+        return stream.read(4) == b"\x7fELF"
+
+
+std_rlibs = sorted(libdir.glob("libstd-*.rlib"))
+if len(std_rlibs) != 1:
+    raise SystemExit(f"expected one libstd rlib in {libdir}, found {std_rlibs}")
+expected, _ = inspect(std_rlibs[0])
+if len(expected) != 1:
+    raise SystemExit(f"the job's std defines several crate identities: {expected}")
+expected_std = expected[0]
+
+artifacts = []
+trees = {}
+mode = None
+for argument in sys.argv[5:]:
+    if argument in ("--must", "--tree", "--may-dir"):
+        mode = argument
+        continue
+    path = pathlib.Path(argument)
+    if mode == "--must":
+        if not path.is_file():
+            raise SystemExit(f"Rust artifact is missing: {path}")
+        artifacts.append((path, True, None))
+    elif mode == "--tree":
+        if not path.is_dir():
+            raise SystemExit(f"Rust target directory is missing: {path}")
+        trees[path] = 0
+        artifacts.extend((candidate, False, path) for candidate in sorted(path.rglob("*"))
+                         if is_executable(candidate))
+    elif mode == "--may-dir":
+        artifacts.extend((candidate, False, None) for candidate in sorted(path.iterdir())
+                         if is_executable(candidate))
+    else:
+        raise SystemExit(f"internal error: artifact {argument} has no mode")
+
+failures = []
+lines = []
+with_rust = 0
+with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, jobs)) as pool:
+    results = pool.map(lambda item: (item, inspect(item[0])), artifacts)
+    for (path, must, tree), (stds, personalities) in results:
+        archive = path.suffix == ".a"
+        lines.append(f"{path} std={','.join(stds) or '-'} "
+                     f"rust_eh_personality={'n/a' if archive else personalities}")
+        if not stds:
+            if must:
+                failures.append(f"{path}: carries no Rust std")
+            continue
+        with_rust += 1
+        if tree is not None:
+            trees[tree] += 1
+        if stds != [expected_std]:
+            failures.append(f"{path}: std {stds}, expected [{expected_std}]")
+        elif not archive and personalities != 1:
+            failures.append(f"{path}: {personalities} rust_eh_personality definitions")
+failures.extend(f"{tree}: holds no Rust executable" for tree, count in trees.items() if not count)
+report.write_text("\n".join(lines) + "\n", encoding="utf-8")
+if failures:
+    raise SystemExit("artifacts do not carry exactly the job's Rust std:\n  " + "\n  ".join(failures))
+print(f"{len(artifacts)} artifacts, {with_rust} with Rust, all std {expected_std}")
+PY
+        tee "${build_dir}/sanitizer-logs/rust-std-${label}.log"
+    echo "rust_one_std_${label}=$(tail -n 1 "${build_dir}/sanitizer-logs/rust-std-${label}.log")" >>"${manifest}"
+}
+
 run_logged configure \
     cmake -S "${repo_root}" -B "${build_dir}" -G "${generator}" \
         -DCMAKE_BUILD_TYPE=Release \
@@ -708,7 +956,7 @@ run_logged configure \
         "-DMAKO_FUZZER:BOOL=OFF" \
         "-DMAKO_CARGO_EXECUTABLE:FILEPATH=${selected_cargo}" \
         "-DMAKO_RUST_STO_TARGET_TRIPLE:STRING=${rust_target}" \
-        "-DMAKO_RUST_STO_BUILD_STD:BOOL=${rust_build_std}" \
+        "-DMAKO_RUST_STO_SYSROOT:PATH=${rust_std_sysroot}" \
         "-DMAKO_RUST_STO_WORKSPACE_NATIVE_LINK:BOOL=${workspace_native_link}" \
         "-DMAKO_RUST_STO_SANITIZER_RUSTFLAGS:STRING=${rustflags}" \
         "-DMAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS:STRING=${rustdocflags}" \
@@ -808,6 +1056,35 @@ if [[ "${rust_linker_version}" != *"clang version"* ||
     echo "sanitizer C/C++ compiler executables do not identify as Clang" >&2
     exit 1
 fi
+cmake_nm="$(sed -n 's/^CMAKE_NM:[^=]*=//p' "${build_dir}/CMakeCache.txt" | head -n 1)"
+if [[ -z "${cmake_nm}" || ! -x "${cmake_nm}" ]]; then
+    echo "could not resolve CMake's symbol inspector" >&2
+    exit 1
+fi
+if [[ -n "${rust_std_sysroot}" ]]; then
+    rust_std_libdir="${rust_std_sysroot}/lib/rustlib/${rust_target}/lib"
+    # std's crate hash does not see RUSTFLAGS, so only its symbols show that
+    # the sysroot's std is instrumented.
+    if [[ "${sanitizer}" == "address" ]]; then
+        std_hook_pattern=' U __asan_report_(load|store)'
+    else
+        std_hook_pattern=' U __tsan_(read|write|func_entry)'
+    fi
+    std_undefined_symbols="${build_dir}/sanitizer-logs/rust-sysroot-std-undefined-symbols.txt"
+    if ! "${cmake_nm}" -u "${rust_std_libdir}"/libstd-*.rlib \
+            >"${std_undefined_symbols}" 2>"${std_undefined_symbols}.stderr"; then
+        cat "${std_undefined_symbols}.stderr" >&2
+        echo "could not inspect the Rust sanitizer sysroot's std" >&2
+        exit 1
+    fi
+    if ! grep -Eq "${std_hook_pattern}" "${std_undefined_symbols}"; then
+        echo "the Rust sanitizer sysroot's std lacks ${sanitizer} instrumentation" >&2
+        exit 1
+    fi
+    echo "verified ${sanitizer} instrumentation in the sanitizer sysroot's std"
+else
+    rust_std_libdir="$("${selected_rustc}" --print target-libdir)"
+fi
 rust_command_environment=(
     "${rust_linker_environment}=${rust_linker}"
     "RUSTFLAGS=${rustflags}"
@@ -821,8 +1098,13 @@ fi
 # command before starting the expensive build: every Cargo invocation must use
 # the already-selected executable, and nightly sanitizer jobs must pin the same
 # rustup toolchain. This prevents parallel build edges from racing to install
-# the workspace-default toolchain in the shared RUSTUP_HOME.
+# the workspace-default toolchain in the shared RUSTUP_HOME. The native
+# sharding and Raft staticlibs that libmako.a links follow the same rules, and
+# instrumented jobs build all three against the gate's sysroot: the job's
+# RUSTFLAGS (with --sysroot), an explicit --target, and a copy from
+# <triple>/release to the path CMake imports.
 rust_lib_command_log="${build_dir}/sanitizer-logs/rust-lib-build-command.txt"
+rust_staticlib_command_log="${build_dir}/sanitizer-logs/rust-staticlib-build-commands.txt"
 rust_lib_target_base="${repo_root}/rust-lib/target"
 if [[ -v CARGO_TARGET_DIR ]]; then
     rust_lib_target_base="${CARGO_TARGET_DIR}"
@@ -830,33 +1112,87 @@ if [[ -v CARGO_TARGET_DIR ]]; then
         rust_lib_target_base="${repo_root}/rust-lib/${rust_lib_target_base}"
     fi
 fi
+rust_staticlib_rustflags=""
+if [[ -n "${rust_std_sysroot}" ]]; then
+    rust_staticlib_rustflags="${rustflags}"
+fi
 ninja -C "${build_dir}" -t commands rust_build >"${rust_lib_command_log}"
-python3 - "${rust_lib_command_log}" "${repo_root}/rust-lib" \
-    "${selected_cargo}" "${selected_rustup_toolchain}" \
-    "${rust_lib_target_base}" <<'PY'
+ninja -C "${build_dir}" -t commands mako_sharding_rust_build raft_rust_build \
+    >"${rust_staticlib_command_log}"
+python3 - "${rust_lib_command_log}" "${rust_staticlib_command_log}" \
+    "${repo_root}" "${selected_cargo}" "${selected_rustup_toolchain}" \
+    "${rust_lib_target_base}" "${rust_staticlib_rustflags}" "${rust_target}" \
+    "${build_dir}" <<'PY'
 import pathlib
 import shlex
 import sys
 
-command_path = pathlib.Path(sys.argv[1])
-expected_working_directory = pathlib.Path(sys.argv[2]).resolve()
-expected_cargo = pathlib.Path(sys.argv[3]).resolve()
-expected_toolchain = sys.argv[4]
-expected_target_directory = pathlib.Path(sys.argv[5]).resolve()
+(rust_lib_log, staticlib_log, repo_root, cargo, toolchain, rust_lib_target,
+ rustflags, triple, build_dir) = sys.argv[1:]
+repo_root = pathlib.Path(repo_root).resolve()
+build_dir = pathlib.Path(build_dir).resolve()
+expected_cargo = pathlib.Path(cargo).resolve()
+expected_target_directory = pathlib.Path(rust_lib_target).resolve()
+toolchain_entries = [f"RUSTUP_TOOLCHAIN={toolchain}"] if toolchain else []
+sysroot_entries = [f"RUSTFLAGS={rustflags}"] if rustflags else []
+target_arguments = ["--target", triple] if rustflags else []
+
+
+def segments(line):
+    parts = [[]]
+    for token in shlex.split(line):
+        if token == "&&":
+            parts.append([])
+        else:
+            parts[-1].append(token)
+    return parts
+
+
+def split_cargo(label, segment):
+    if len(segment) < 4 or segment[1:3] != ["-E", "env"]:
+        raise SystemExit(f"{label} build does not use a scoped CMake environment")
+    cargo_indexes = [
+        index
+        for index, token in enumerate(segment)
+        if "=" not in token and pathlib.Path(token).name == "cargo"
+    ]
+    if len(cargo_indexes) != 1:
+        raise SystemExit(
+            f"{label} build must contain one Cargo executable, found {len(cargo_indexes)}"
+        )
+    index = cargo_indexes[0]
+    actual_cargo = pathlib.Path(segment[index]).resolve()
+    if actual_cargo != expected_cargo:
+        raise SystemExit(
+            f"{label} build selects {actual_cargo}, expected {expected_cargo}"
+        )
+    return segment[3:index], segment[index + 1 :]
+
+
+def check_copy(label, segment, source, destination):
+    if (
+        len(segment) != 5
+        or segment[1:3] != ["-E", "copy"]
+        or pathlib.Path(segment[3]).resolve() != source.resolve()
+        or pathlib.Path(segment[4]).resolve() != destination.resolve()
+    ):
+        raise SystemExit(
+            f"{label} must copy {source} to {destination}; found {segment!r}"
+        )
+
+
 commands = [
-    line for line in command_path.read_text(encoding="utf-8").splitlines() if line
+    line for line in pathlib.Path(rust_lib_log).read_text(encoding="utf-8").splitlines() if line
 ]
 if len(commands) != 1:
     raise SystemExit(
         f"expected one rust-lib build command, found {len(commands)}"
     )
-
-tokens = shlex.split(commands[0])
-try:
-    separator = tokens.index("&&")
-except ValueError as error:
-    raise SystemExit("rust-lib build command lacks an exact working directory") from error
-working_directory_tokens = tokens[:separator]
+parts = segments(commands[0])
+if len(parts) != (3 if rustflags else 2):
+    raise SystemExit(f"rust-lib build has unexpected commands: {parts!r}")
+working_directory_tokens = parts[0]
+expected_working_directory = (repo_root / "rust-lib").resolve()
 if (
     len(working_directory_tokens) != 2
     or working_directory_tokens[0] != "cd"
@@ -867,35 +1203,15 @@ if (
         f"rust-lib build directory is {working_directory_tokens!r}, "
         f"expected {str(expected_working_directory)!r}"
     )
-
-command = tokens[separator + 1 :]
-if len(command) < 7 or command[1:3] != ["-E", "env"]:
-    raise SystemExit("rust-lib build does not use a scoped CMake environment")
-
-cargo_indexes = [
-    index
-    for index, token in enumerate(command)
-    if "=" not in token and pathlib.Path(token).name == "cargo"
-]
-if len(cargo_indexes) != 1:
+environment, arguments = split_cargo("rust-lib", parts[1])
+if arguments != ["build", "--release", "--locked", *target_arguments]:
     raise SystemExit(
-        f"rust-lib build must contain one Cargo executable, found {len(cargo_indexes)}"
+        "rust-lib build must be an exact locked release build"
+        + (f" for --target {triple}" if rustflags else "")
+        + f"; found {arguments!r}"
     )
-cargo_index = cargo_indexes[0]
-actual_cargo = pathlib.Path(command[cargo_index]).resolve()
-if actual_cargo != expected_cargo:
-    raise SystemExit(
-        f"rust-lib build selects {actual_cargo}, expected {expected_cargo}"
-    )
-if command[cargo_index + 1 :] != ["build", "--release", "--locked"]:
-    raise SystemExit("rust-lib build must be an exact locked release build")
-
-environment = command[3:cargo_index]
 target_directory_entries = [
     entry for entry in environment if entry.startswith("CARGO_TARGET_DIR=")
-]
-toolchain_entries = [
-    entry for entry in environment if entry.startswith("RUSTUP_TOOLCHAIN=")
 ]
 if len(target_directory_entries) != 1:
     raise SystemExit(
@@ -910,17 +1226,89 @@ if actual_target_directory != expected_target_directory:
         f"rust-lib target directory is {actual_target_directory}, "
         f"expected {expected_target_directory}"
     )
-expected_entries = (
-    [f"RUSTUP_TOOLCHAIN={expected_toolchain}"] if expected_toolchain else []
-)
-if toolchain_entries != expected_entries:
-    raise SystemExit(
-        f"rust-lib toolchain selection is {toolchain_entries!r}, "
-        f"expected {expected_entries!r}"
-    )
-if len(environment) != 1 + len(expected_entries):
+other_entries = [
+    entry for entry in environment if not entry.startswith("CARGO_TARGET_DIR=")
+]
+if sorted(other_entries) != sorted(toolchain_entries + sysroot_entries):
     raise SystemExit(f"rust-lib build has unexpected environment: {environment!r}")
+if rustflags:
+    check_copy(
+        "rust-lib",
+        parts[2],
+        expected_target_directory / triple / "release/librust_redis.a",
+        expected_target_directory / "release/librust_redis.a",
+    )
 print("verified pinned rust-lib Cargo command")
+
+staticlibs = {
+    "native sharding": (
+        repo_root / "src/cluster/Cargo.toml",
+        build_dir / "native-sharding",
+        "libmako_sharding.a",
+    ),
+    "Raft runtime": (
+        repo_root / "src/deptran/raft/rt/Cargo.toml",
+        build_dir / "raft-cargo",
+        "libraft_rt.a",
+    ),
+}
+staticlib_lines = [
+    line
+    for line in pathlib.Path(staticlib_log).read_text(encoding="utf-8").splitlines()
+    if "--manifest-path" in line
+]
+for label, (manifest, target_directory, archive) in staticlibs.items():
+    matches = [
+        line
+        for line in staticlib_lines
+        if any(
+            token.startswith("/") and pathlib.Path(token).resolve() == manifest
+            for token in shlex.split(line)
+        )
+    ]
+    if len(matches) != 1:
+        raise SystemExit(f"expected one {label} Cargo command, found {len(matches)}")
+    parts = segments(matches[0])
+    if parts[0][:1] == ["cd"]:
+        parts = parts[1:]
+    if len(parts) != (2 if rustflags else 1):
+        raise SystemExit(f"{label} build has unexpected commands: {parts!r}")
+    environment, arguments = split_cargo(label, parts[0])
+    environment = [
+        entry for entry in environment if not entry.startswith(("CC=", "AR="))
+    ]
+    if sorted(environment) != sorted(toolchain_entries + sysroot_entries):
+        raise SystemExit(f"{label} build has unexpected environment: {environment!r}")
+    if (
+        arguments[:1] != ["build"]
+        or "--release" not in arguments
+        or "--locked" not in arguments
+        or "--profile" in arguments
+        or any(argument.startswith("-Zbuild-std") for argument in arguments)
+    ):
+        raise SystemExit(f"{label} must be a locked release build: {arguments!r}")
+    targets = [
+        arguments[index + 1]
+        for index, argument in enumerate(arguments[:-1])
+        if argument == "--target"
+    ]
+    if targets != target_arguments[1:]:
+        raise SystemExit(f"{label} builds for {targets!r}, expected {target_arguments[1:]!r}")
+    directories = [
+        pathlib.Path(arguments[index + 1]).resolve()
+        for index, argument in enumerate(arguments[:-1])
+        if argument == "--target-dir"
+    ]
+    if directories != [target_directory]:
+        raise SystemExit(f"{label} target directory is {directories!r}, expected {target_directory}")
+    if rustflags:
+        check_copy(
+            label,
+            parts[1],
+            target_directory / triple / "release" / archive,
+            target_directory / "release" / archive,
+        )
+print("verified native sharding and Raft runtime Cargo commands")
 PY
 
 workspace_native_environment=()
@@ -978,7 +1366,12 @@ manifest="${build_dir}/rust-sto-sanitizer-manifest.txt"
     echo "cargo=$("${selected_cargo}" --version)"
     echo "rust_compiler_instrumentation=${rust_instrumentation}"
     echo "rust_target=${rust_target:-host-default}"
-    echo "rust_build_std=${rust_build_std}"
+    echo "rust_std=${rust_std_source}"
+    echo "rust_sysroot=${rust_std_sysroot:-toolchain}"
+    if [[ -n "${rust_std_sysroot}" ]]; then
+        echo "rust_sysroot_profile=release;opt-level=3;debug=1;debug-assertions=on;overflow-checks=on;codegen-units=1;lto=off;panic=unwind;panic_abort=abort"
+        echo "rust_sysroot_rustflags=${rust_std_rustflags}"
+    fi
     echo "rust_workspace_native_link=${workspace_native_link}"
     echo "rustup_toolchain=${selected_rustup_toolchain:-workspace-pinned-stable}"
     echo "rust_runtime=${rust_runtime}"
@@ -1109,7 +1502,8 @@ python3 - "${build_dir}/sanitizer-logs/rust-sto-integration-build-commands.txt" 
     "${selected_rustup_toolchain}" "${workspace_native_lib_dirs}" \
     "${workspace_native_libs}" "${workspace_loader_environment}" \
     "${workspace_loader_value}" "${repo_root}" "${rustflags}" \
-    "${rustdocflags}" "${selected_cargo}" "${cxx_compiler}" <<'PY'
+    "${rustdocflags}" "${selected_cargo}" "${cxx_compiler}" \
+    "${rust_std_sysroot}" <<'PY'
 import pathlib
 import shlex
 import sys
@@ -1132,6 +1526,7 @@ rustflags = sys.argv[15]
 rustdocflags = sys.argv[16]
 selected_cargo = pathlib.Path(sys.argv[17]).resolve()
 cxx_compiler = pathlib.Path(sys.argv[18])
+rust_std_sysroot = sys.argv[19]
 build_dir = pathlib.Path(sys.argv[1]).resolve().parents[1]
 
 clippy_commands = [
@@ -1269,7 +1664,7 @@ if rust_compiler_instrumented:
         f"{loader_environment}={loader_value}",
         f"-Zsanitizer={sanitizer}",
         "-Zexternal-clangrt",
-        "-Zbuild-std",
+        f"--sysroot={rust_std_sysroot}",
         f"--target {rust_target}",
         f"RUSTUP_TOOLCHAIN={rustup_toolchain}",
     )
@@ -1282,9 +1677,17 @@ if rust_compiler_instrumented:
             )
         if "unsafe-allow-abi-mismatch" in command:
             raise SystemExit(f"workspace {label} command waives a sanitizer ABI mismatch")
+    # One std for the whole job: the shared sysroot, never a per-invocation
+    # -Zbuild-std std.
+    for label, command in (
+        ("Clippy", clippy_commands[0]),
+        ("test", test_commands[0]),
+        ("native runner", native_runner_command),
+    ):
+        if "-Zbuild-std" in command or "MAKO_RUST_BUILD_STD" in command:
+            raise SystemExit(f"workspace {label} command rebuilds its own std")
     expected_runner_definitions = {
         "MAKO_RUST_TARGET_TRIPLE": rust_target,
-        "MAKO_RUST_BUILD_STD": "ON",
         "MAKO_RUSTUP_TOOLCHAIN": rustup_toolchain,
     }
     for definition, expected_value in expected_runner_definitions.items():
@@ -1333,6 +1736,8 @@ if [[ "${sanitizer}" == "address" ]]; then
 fi
 
 run_native_abi_profile point
+audit_one_rust_std native-abi-point \
+    --tree "${build_dir}/rust-workspace-target/${rust_target:+${rust_target}/}"
 
 ninja -C "${build_dir}" -t commands rust_sto_integration dbtest \
     rocksdbInterfaceTest test_silo_nontxn_api test_silo_runtime \
@@ -1340,7 +1745,7 @@ ninja -C "${build_dir}" -t commands rust_sto_integration dbtest \
 python3 - "${build_dir}/sanitizer-logs/sto-tpcc-build-commands.txt" \
     "-fsanitize=${sanitizer}" "${rust_compiler_instrumented}" \
     "${rust_sanitizer_target}" "${rust_linker_environment}" \
-    "${rust_linker}" "${selected_rustup_toolchain}" <<'PY'
+    "${rust_linker}" "${selected_rustup_toolchain}" "${rust_std_sysroot}" <<'PY'
 import pathlib
 import re
 import sys
@@ -1352,6 +1757,7 @@ rust_target = sys.argv[4]
 linker_environment = sys.argv[5]
 rust_linker = sys.argv[6]
 rustup_toolchain = sys.argv[7]
+rust_std_sysroot = sys.argv[8]
 
 rust_builds = [line for line in commands if "--package sto-tpcc-ffi" in line]
 if len(rust_builds) != 1:
@@ -1367,7 +1773,7 @@ if rust_compiler_instrumented:
     required_rust_fragments = (
         f"-Zsanitizer={required_flag.removeprefix('-fsanitize=')}",
         "-Zexternal-clangrt",
-        "-Zbuild-std",
+        f"--sysroot={rust_std_sysroot}",
         f"--target {rust_target}",
         f"RUSTUP_TOOLCHAIN={rustup_toolchain}",
     )
@@ -1379,6 +1785,8 @@ if rust_compiler_instrumented:
         )
     if "unsafe-allow-abi-mismatch" in rust_build:
         raise SystemExit("sto-tpcc-ffi Rust build waives a sanitizer ABI mismatch")
+    if "-Zbuild-std" in rust_build:
+        raise SystemExit("sto-tpcc-ffi Rust build rebuilds its own std")
 else:
     if required_flag not in rust_build:
         raise SystemExit(f"sto-tpcc-ffi Rust build lacks linker flag {required_flag}")
@@ -1458,6 +1866,25 @@ if [[ "${rust_compiler_instrumented}" == "1" ]]; then
     fi
     echo "verified Rust ${sanitizer} hooks and external runtime ownership"
 fi
+
+# Rust artifacts of the build step (the workspace target directory is checked
+# with the native ABI suites below). Instrumented jobs pass --target, so their
+# target artifacts sit below <target-dir>/<triple>; build scripts and
+# proc-macros, which keep the toolchain's std, stay outside it.
+rust_target_subdir="${rust_target:+${rust_target}/}"
+sto_tpcc_target_dir="$(sed -n 's/^STO_TPCC_RUST_TARGET_DIR:[^=]*=//p' \
+    "${build_dir}/CMakeCache.txt" | head -n 1)"
+audit_one_rust_std build \
+    --must "${rust_lib_target_base}/release/librust_redis.a" \
+        "${build_dir}/native-sharding/release/libmako_sharding.a" \
+        "${build_dir}/raft-cargo/release/libraft_rt.a" \
+        "${sto_tpcc_target_dir}/${rust_target_subdir}release/libsto_tpcc_ffi.a" \
+        "${build_dir}/dbtest" "${build_dir}/sto_tpcc_bench" \
+        "${build_dir}/sto_tpcc_cpp_wrapper_smoke" \
+        "${build_dir}/sto_tpcc_cpp_wrapper_scan_smoke" \
+    --tree "${build_dir}/rust-native-target/${rust_target_subdir}" \
+        "${build_dir}/rust-cache-target/${rust_target_subdir}" \
+    --may-dir "${build_dir}"
 
 # Do not trust the toggle alone. Confirm that every boundary translation unit
 # actually received the sanitizer flag in this generated build.
@@ -1972,6 +2399,9 @@ print(f"verified {sys.argv[2]} STO_RMW profile: READ_MY_WRITES=1")
 PY
 
 run_native_abi_profile rmw
+audit_one_rust_std sto-rmw \
+    --tree "${build_dir}/rust-workspace-target/${rust_target:+${rust_target}/}" \
+    --may-dir "${build_dir}"
 
 # The growth fixture composes its own insert, so it belongs to the ON profile.
 # Run the whole existing CTest here rather than dropping its supported cases or

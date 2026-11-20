@@ -109,9 +109,11 @@ jobs:
           "${CARGO_HOME}/bin/rustup" toolchain install "${toolchain}" \
             --profile minimal --component clippy --component rust-src
           # The Raft and native-sharding archives that reach dbtest are built
-          # with the selected sanitizer toolchain, like every other Cargo
-          # archive in that link (MAKO_CARGO_EXECUTABLE and
-          # MAKO_RUST_STO_RUSTUP_TOOLCHAIN in CMakeLists.txt). Mainline's
+          # with the selected sanitizer toolchain, against the one
+          # instrumented std the gate builds from its rust-src, like every
+          # other Cargo archive and test executable of the job
+          # (MAKO_CARGO_EXECUTABLE, MAKO_RUST_STO_RUSTUP_TOOLCHAIN and
+          # MAKO_RUST_STO_SYSROOT in CMakeLists.txt). Mainline's
           # other Cargo edges, SRPC's crate mode and the source gates, go
           # through the rustup proxy and so use the workspace-default
           # toolchain (rust-toolchain.toml). Install that one once here so

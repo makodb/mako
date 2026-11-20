@@ -511,7 +511,7 @@ fn remote_unconditional_put_supersedes_an_unsent_duplicate_insert() {
                             )
                         };
                         match status {
-                            0 | 1 | 2 => unsafe { sto_tpcc_protocol_lock(remote.thread) },
+                            0..=2 => unsafe { sto_tpcc_protocol_lock(remote.thread) },
                             _ => status,
                         }
                     }

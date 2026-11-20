@@ -175,13 +175,20 @@ if(DEFINED MAKO_RUST_TARGET_TRIPLE
         AND NOT "${MAKO_RUST_TARGET_TRIPLE}" STREQUAL "")
     list(APPEND _cargo_platform_args --target "${MAKO_RUST_TARGET_TRIPLE}")
 endif()
+# An instrumented std arrives as `--sysroot=<dir>` in MAKO_RUSTFLAGS, shared
+# with every other Cargo build of the lane; a per-invocation -Zbuild-std std
+# would not link next to libmako.a's Rust staticlibs.
 if(DEFINED MAKO_RUST_BUILD_STD AND MAKO_RUST_BUILD_STD)
-    if(NOT DEFINED MAKO_RUST_TARGET_TRIPLE
-            OR "${MAKO_RUST_TARGET_TRIPLE}" STREQUAL "")
-        message(FATAL_ERROR
-            "MAKO_RUST_BUILD_STD requires MAKO_RUST_TARGET_TRIPLE")
-    endif()
-    list(APPEND _cargo_platform_args -Zbuild-std)
+    message(FATAL_ERROR
+        "MAKO_RUST_BUILD_STD is retired: pass the sanitizer sysroot as "
+        "--sysroot in MAKO_RUSTFLAGS (see MAKO_RUST_STO_SYSROOT)")
+endif()
+if(DEFINED MAKO_RUSTFLAGS AND MAKO_RUSTFLAGS MATCHES "(^|[ \t])--sysroot"
+        AND (NOT DEFINED MAKO_RUST_TARGET_TRIPLE
+             OR "${MAKO_RUST_TARGET_TRIPLE}" STREQUAL ""))
+    message(FATAL_ERROR
+        "A --sysroot in MAKO_RUSTFLAGS requires MAKO_RUST_TARGET_TRIPLE, so "
+        "build scripts and proc-macros keep the toolchain's std")
 endif()
 
 message(STATUS "Mako archive: ${MAKO_ARCHIVE}")

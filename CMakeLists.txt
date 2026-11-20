@@ -366,6 +366,76 @@ find_program(MAKO_CARGO_EXECUTABLE NAMES cargo REQUIRED)
 set(_MAKO_RUST_LIB_CARGO_EXECUTABLE "${MAKO_CARGO_EXECUTABLE}")
 set(MAKO_RUST_STO_RUSTUP_TOOLCHAIN "" CACHE STRING
     "Rustup toolchain for Cargo targets selected by Rust STO sanitizer builds")
+set(MAKO_RUST_STO_TARGET_TRIPLE "" CACHE STRING
+    "Explicit Cargo target for Rust STO integration builds")
+set(MAKO_RUST_STO_SANITIZER_RUSTFLAGS "" CACHE STRING
+    "Rust flags confined to sanitizer-instrumented Rust STO targets")
+# One Rust std per executable. A Cargo staticlib carries a copy of the std it
+# was compiled against, and an executable that links two copies with
+# different crate hashes fails with "multiple definition of
+# `rust_eh_personality'". libmako.a brings two such staticlibs (native
+# sharding, the Raft runtime), so every Rust archive and Cargo test
+# executable that is linked with it must use the same std. Ordinary builds
+# get that for free from the toolchain's prebuilt std. The ASan and TSan
+# lanes of scripts/ci/run_rust_sto_sanitizer.sh instrument std as well, and
+# -Zbuild-std cannot keep one std there: it hashes std by each invocation's
+# Cargo profile (opt-level, panic strategy, ...), and those lanes link
+# release staticlibs into dev-profile test executables. The gate therefore
+# rebuilds the pinned nightly's std ONCE, instrumented, into a private
+# sysroot, names it here, and passes `--sysroot=<it>` in
+# MAKO_RUST_STO_SANITIZER_RUSTFLAGS, which every Cargo command of such a
+# build uses, together with an explicit --target so that build scripts and
+# proc-macros keep the toolchain's std. Like the prebuilt std, the sysroot
+# holds both panic runtimes, so panic = "abort" crates (sharding, Raft) and
+# panic = "unwind" crates link against the same std. A directory configured
+# with it is for the gate's own targets.
+set(MAKO_RUST_STO_SYSROOT "" CACHE PATH
+    "Instrumented Rust sysroot shared by every Cargo command of a Rust STO sanitizer build")
+set(_MAKO_RUST_STO_SYSROOT_ENV "")
+set(_MAKO_RUST_STO_SYSROOT_TARGET_ARGS "")
+if(NOT "${MAKO_RUST_STO_SYSROOT}" STREQUAL "")
+    if(NOT IS_ABSOLUTE "${MAKO_RUST_STO_SYSROOT}"
+            OR MAKO_RUST_STO_SYSROOT MATCHES "[ \t;]")
+        message(FATAL_ERROR
+            "MAKO_RUST_STO_SYSROOT must be an absolute path without "
+            "whitespace (Cargo splits RUSTFLAGS on spaces): "
+            "${MAKO_RUST_STO_SYSROOT}")
+    endif()
+    if(MAKO_RUST_STO_TARGET_TRIPLE STREQUAL ""
+            OR MAKO_RUST_STO_RUSTUP_TOOLCHAIN STREQUAL "")
+        message(FATAL_ERROR
+            "MAKO_RUST_STO_SYSROOT requires MAKO_RUST_STO_TARGET_TRIPLE and "
+            "MAKO_RUST_STO_RUSTUP_TOOLCHAIN")
+    endif()
+    file(GLOB _MAKO_RUST_STO_SYSROOT_STD
+        "${MAKO_RUST_STO_SYSROOT}/lib/rustlib/${MAKO_RUST_STO_TARGET_TRIPLE}/lib/libstd-*.rlib")
+    list(LENGTH _MAKO_RUST_STO_SYSROOT_STD _MAKO_RUST_STO_SYSROOT_STD_COUNT)
+    if(NOT _MAKO_RUST_STO_SYSROOT_STD_COUNT EQUAL 1)
+        message(FATAL_ERROR
+            "MAKO_RUST_STO_SYSROOT must hold exactly one std for "
+            "${MAKO_RUST_STO_TARGET_TRIPLE}; found "
+            "${_MAKO_RUST_STO_SYSROOT_STD_COUNT} under ${MAKO_RUST_STO_SYSROOT}")
+    endif()
+    separate_arguments(_MAKO_RUST_STO_SYSROOT_FLAGS UNIX_COMMAND
+        "${MAKO_RUST_STO_SANITIZER_RUSTFLAGS}")
+    list(FILTER _MAKO_RUST_STO_SYSROOT_FLAGS INCLUDE REGEX "^--sysroot")
+    if(NOT _MAKO_RUST_STO_SYSROOT_FLAGS STREQUAL
+            "--sysroot=${MAKO_RUST_STO_SYSROOT}"
+            OR NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS MATCHES
+                "(^|[ \t])-Zsanitizer=(address|thread)($|[ \t])")
+        message(FATAL_ERROR
+            "MAKO_RUST_STO_SYSROOT requires MAKO_RUST_STO_SANITIZER_RUSTFLAGS "
+            "with -Zsanitizer=address or thread and exactly one "
+            "--sysroot=${MAKO_RUST_STO_SYSROOT}")
+    endif()
+    set(_MAKO_RUST_STO_SYSROOT_ENV
+        "RUSTFLAGS=${MAKO_RUST_STO_SANITIZER_RUSTFLAGS}")
+    set(_MAKO_RUST_STO_SYSROOT_TARGET_ARGS
+        --target "${MAKO_RUST_STO_TARGET_TRIPLE}")
+    message(STATUS
+        "Rust STO sanitizer sysroot for every Cargo staticlib: "
+        "${MAKO_RUST_STO_SYSROOT}")
+endif()
 
 # Respect CARGO_TARGET_DIR environment variable if set (for Docker builds)
 if(DEFINED ENV{CARGO_TARGET_DIR})
@@ -389,13 +459,33 @@ endif()
 file(GLOB_RECURSE RUST_LIB_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/src/*.rs")
 
+if("${MAKO_RUST_STO_SYSROOT}" STREQUAL "")
+    set(_MAKO_RUST_LIB_BUILD_COMMANDS
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "CARGO_TARGET_DIR=${RUST_LIB_TARGET_BASE}"
+            ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
+            "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}" build --release --locked)
+else()
+    # dbtest links this archive next to libmako.a's Rust staticlibs, so it
+    # uses the sanitizer sysroot too (MAKO_RUST_STO_SYSROOT above). --target
+    # moves Cargo's output under <triple>/; the copy keeps the one path that
+    # rust_lib imports.
+    set(_MAKO_RUST_LIB_BUILD_COMMANDS
+        COMMAND "${CMAKE_COMMAND}" -E env
+            "CARGO_TARGET_DIR=${RUST_LIB_TARGET_BASE}"
+            ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
+            ${_MAKO_RUST_STO_SYSROOT_ENV}
+            "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}" build --release --locked
+            ${_MAKO_RUST_STO_SYSROOT_TARGET_ARGS}
+        COMMAND "${CMAKE_COMMAND}" -E copy
+            "${RUST_LIB_TARGET_BASE}/${MAKO_RUST_STO_TARGET_TRIPLE}/release/lib${RUST_LIB_NAME}.a"
+            "${RUST_LIB_PATH}")
+endif()
+
 # Use add_custom_command instead of add_custom_target to avoid rebuilding every time
 add_custom_command(
     OUTPUT ${RUST_LIB_PATH}
-    COMMAND "${CMAKE_COMMAND}" -E env
-        "CARGO_TARGET_DIR=${RUST_LIB_TARGET_BASE}"
-        ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
-        "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}" build --release --locked
+    ${_MAKO_RUST_LIB_BUILD_COMMANDS}
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/Cargo.toml
             ${CMAKE_CURRENT_SOURCE_DIR}/rust-lib/Cargo.lock
@@ -888,8 +978,9 @@ endif()
 # this on. A plain MAKO_TSAN=1 build keeps the ordinary release staticlibs, so
 # executables that also link other Cargo staticlibs built with the ordinary
 # toolchain (dbtest's rust_redis, the Rust STO TPC-C adapter) still link. The
-# Rust STO sanitizer lanes select their own toolchain for these staticlibs
-# (MAKO_RUST_STO_RUSTUP_TOOLCHAIN below) and cannot use this switch.
+# Rust STO sanitizer lanes select their own toolchain and std for these
+# staticlibs (MAKO_RUST_STO_RUSTUP_TOOLCHAIN and MAKO_RUST_STO_SYSROOT above)
+# and cannot use this switch.
 option(MAKO_LOCAL_TSAN_RUST_STATICLIBS
     "Build the native sharding and Raft staticlibs against the mako-local Rust TSan std (mako-local TSan gate only)"
     OFF)
@@ -900,7 +991,7 @@ if(MAKO_LOCAL_TSAN_RUST_STATICLIBS)
             "MAKO_LOCAL_TSAN_RUST_STATICLIBS=ON requires MAKO_TSAN=1")
     endif()
     if(NOT "${MAKO_RUST_STO_RUSTUP_TOOLCHAIN}" STREQUAL ""
-            OR MAKO_RUST_STO_BUILD_STD
+            OR NOT "${MAKO_RUST_STO_SYSROOT}" STREQUAL ""
             OR NOT "${MAKO_RUST_STO_SANITIZER_RUSTFLAGS}" STREQUAL "")
         message(FATAL_ERROR
             "MAKO_LOCAL_TSAN_RUST_STATICLIBS=ON cannot be combined with the "
@@ -1434,8 +1525,9 @@ file(GLOB_RECURSE MAKO_SHARDING_RUST_SOURCES CONFIGURE_DEPENDS
 # see the command audit in scripts/ci/run_rust_sto_sanitizer.sh). They run
 # from the source root so that a rustup proxy resolves rust-toolchain.toml
 # exactly as it does for those other Cargo edges, wherever the build
-# directory is.
-if(NOT _MAKO_RUST_STATICLIB_TSAN_STD)
+# directory is. The ASan and TSan lanes also give them the lanes'
+# instrumented sysroot (MAKO_RUST_STO_SYSROOT).
+if(NOT _MAKO_RUST_STATICLIB_TSAN_STD AND "${MAKO_RUST_STO_SYSROOT}" STREQUAL "")
 add_custom_command(
     OUTPUT "${MAKO_SHARDING_ARCHIVE}"
     COMMAND ${CMAKE_COMMAND} -E env
@@ -1448,6 +1540,29 @@ add_custom_command(
         "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.lock"
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     COMMENT "Building native Rust sharding staticlib (locked dependencies)"
+    VERBATIM)
+elseif(NOT _MAKO_RUST_STATICLIB_TSAN_STD)
+# MAKO_RUST_STO_SYSROOT: the same release build (panic = "abort" as declared
+# in src/cluster/Cargo.toml) against the Rust STO sanitizer sysroot. --target
+# moves Cargo's output under <triple>/, and the copy restores the one path
+# that crates/mako-local/native-link-archives.txt and the imported target use.
+add_custom_command(
+    OUTPUT "${MAKO_SHARDING_ARCHIVE}"
+    COMMAND ${CMAKE_COMMAND} -E env
+        ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
+        ${_MAKO_RUST_STO_SYSROOT_ENV}
+        "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}" build --locked --release --lib
+        ${_MAKO_RUST_STO_SYSROOT_TARGET_ARGS}
+        --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.toml"
+        --target-dir "${MAKO_SHARDING_TARGET_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${MAKO_SHARDING_TARGET_DIR}/${MAKO_RUST_STO_TARGET_TRIPLE}/release/libmako_sharding.a"
+        "${MAKO_SHARDING_ARCHIVE}"
+    DEPENDS ${MAKO_SHARDING_RUST_SOURCES}
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.lock"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Building native Rust sharding staticlib against the Rust STO sanitizer sysroot"
     VERBATIM)
 else()
 # MAKO_LOCAL_TSAN_RUST_STATICLIBS: the Cargo command of the mako-local TSan
@@ -1609,7 +1724,7 @@ endif()
 # --locked here and in the cargo tests below: build what
 # src/deptran/raft/Cargo.lock records, and fail on a stale lock rather
 # than re-resolve it.
-if(NOT _MAKO_RUST_STATICLIB_TSAN_STD)
+if(NOT _MAKO_RUST_STATICLIB_TSAN_STD AND "${MAKO_RUST_STO_SYSROOT}" STREQUAL "")
     set(_RAFT_RUST_BUILD_COMMANDS
         COMMAND ${CMAKE_COMMAND} -E env
             "CC=${CMAKE_C_COMPILER}"
@@ -1619,6 +1734,25 @@ if(NOT _MAKO_RUST_STATICLIB_TSAN_STD)
             --manifest-path ${RAFT_RUST_MANIFEST}
             --target-dir ${RAFT_RUST_TARGET_DIR}
             ${RAFT_RUST_FEATURES})
+elseif(NOT _MAKO_RUST_STATICLIB_TSAN_STD)
+    # MAKO_RUST_STO_SYSROOT: the same release build, panic = "abort" as this
+    # workspace declares, against the Rust STO sanitizer sysroot, then copied
+    # from <triple>/release to the canonical path. As in the mako-local TSan
+    # mode below, the srpc C kernels stay out of this archive.
+    set(_RAFT_RUST_BUILD_COMMANDS
+        COMMAND ${CMAKE_COMMAND} -E env
+            "CC=${CMAKE_C_COMPILER}"
+            "AR=${CMAKE_AR}"
+            ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
+            ${_MAKO_RUST_STO_SYSROOT_ENV}
+            "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}" build --release --locked --quiet
+            ${_MAKO_RUST_STO_SYSROOT_TARGET_ARGS}
+            --manifest-path ${RAFT_RUST_MANIFEST}
+            --target-dir ${RAFT_RUST_TARGET_DIR}
+            ${RAFT_RUST_FEATURES}
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "${RAFT_RUST_TARGET_DIR}/${MAKO_RUST_STO_TARGET_TRIPLE}/release/libraft_rt.a"
+            "${RAFT_RUST_LIB}")
 else()
     # MAKO_LOCAL_TSAN_RUST_STATICLIBS: the Cargo command of the mako-local
     # TSan test executables, as for native sharding above. This workspace's
@@ -2232,14 +2366,8 @@ set(MAKO_MTREE_RUST_NATIVE_LIBS
     CACHE STRING
     "Comma-separated rustc native libraries for the Masstree ABI integration test"
 )
-set(MAKO_RUST_STO_TARGET_TRIPLE "" CACHE STRING
-    "Explicit Cargo target for Rust STO integration builds")
-option(MAKO_RUST_STO_BUILD_STD
-    "Rebuild the Rust standard library for Rust STO integration builds" OFF)
 option(MAKO_RUST_STO_WORKSPACE_NATIVE_LINK
     "Link sanitizer-instrumented Rust workspace checks to native Masstree" OFF)
-set(MAKO_RUST_STO_SANITIZER_RUSTFLAGS "" CACHE STRING
-    "Rust flags confined to sanitizer-instrumented Rust STO test targets")
 set(MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS "" CACHE STRING
     "Rustdoc flags confined to sanitizer-instrumented Rust STO test targets")
 set(MAKO_RUST_STO_CARGO_LINKER_ENV "" CACHE STRING
@@ -2248,16 +2376,35 @@ set(MAKO_RUST_STO_ASAN_NATIVE_QUARANTINE_TESTS "" CACHE STRING
     "Exact native FFI tests run with ASan leak reporting disabled")
 set(MAKO_RUST_STO_ASAN_OPTIONS "" CACHE STRING
     "ASan runtime options confined to Rust STO sanitizer targets")
-if(MAKO_RUST_STO_BUILD_STD AND MAKO_RUST_STO_TARGET_TRIPLE STREQUAL "")
+# Retired: -Zbuild-std rebuilt std inside every Cargo invocation with a crate
+# hash taken from that invocation's profile, and two such stds collide in any
+# executable that also links libmako.a's Rust staticlibs. An instrumented std
+# now comes from one prebuilt sysroot (MAKO_RUST_STO_SYSROOT above).
+if(MAKO_RUST_STO_BUILD_STD)
     message(FATAL_ERROR
-        "MAKO_RUST_STO_BUILD_STD requires MAKO_RUST_STO_TARGET_TRIPLE")
+        "MAKO_RUST_STO_BUILD_STD is retired: per-invocation -Zbuild-std stds "
+        "collide with libmako.a's Rust staticlibs. Build one instrumented std "
+        "into a sysroot and pass MAKO_RUST_STO_SYSROOT, as "
+        "scripts/ci/run_rust_sto_sanitizer.sh does")
 endif()
 if(MAKO_RUST_STO_WORKSPACE_NATIVE_LINK
         AND (MAKO_RUST_STO_TARGET_TRIPLE STREQUAL ""
-             OR NOT MAKO_RUST_STO_BUILD_STD))
+             OR MAKO_RUST_STO_SYSROOT STREQUAL ""))
     message(FATAL_ERROR
         "MAKO_RUST_STO_WORKSPACE_NATIVE_LINK is sanitizer-only and requires "
-        "MAKO_RUST_STO_TARGET_TRIPLE plus MAKO_RUST_STO_BUILD_STD=ON")
+        "MAKO_RUST_STO_TARGET_TRIPLE plus MAKO_RUST_STO_SYSROOT")
+endif()
+if(NOT MAKO_RUST_STO_SYSROOT STREQUAL "")
+    separate_arguments(_MAKO_RUST_STO_SYSROOT_DOC_FLAGS UNIX_COMMAND
+        "${MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS}")
+    list(FILTER _MAKO_RUST_STO_SYSROOT_DOC_FLAGS INCLUDE REGEX "^--sysroot")
+    if(NOT _MAKO_RUST_STO_SYSROOT_DOC_FLAGS STREQUAL
+            "--sysroot=${MAKO_RUST_STO_SYSROOT}")
+        message(FATAL_ERROR
+            "MAKO_RUST_STO_SYSROOT requires exactly one "
+            "--sysroot=${MAKO_RUST_STO_SYSROOT} in "
+            "MAKO_RUST_STO_SANITIZER_RUSTDOCFLAGS")
+    endif()
 endif()
 if(MAKO_RUST_STO_WORKSPACE_NATIVE_LINK
         AND (MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL ""
@@ -2310,12 +2457,6 @@ if(NOT MAKO_RUST_STO_SANITIZER_RUSTFLAGS STREQUAL "")
             "versions; found ${CMAKE_C_COMPILER_VERSION} and "
             "${CMAKE_CXX_COMPILER_VERSION}")
     endif()
-    if(MAKO_RUST_STO_BUILD_STD
-            AND MAKO_RUST_STO_RUSTUP_TOOLCHAIN STREQUAL "")
-        message(FATAL_ERROR
-            "Instrumented Rust standard-library builds require an explicit "
-            "MAKO_RUST_STO_RUSTUP_TOOLCHAIN")
-    endif()
     list(APPEND _MAKO_RUST_STO_SCOPED_TOOLCHAIN_LINK_ENV
         "${MAKO_RUST_STO_CARGO_LINKER_ENV}=${CMAKE_C_COMPILER}")
     if(NOT MAKO_RUST_STO_RUSTUP_TOOLCHAIN STREQUAL "")
@@ -2331,9 +2472,6 @@ set(_MAKO_RUST_STO_CARGO_PLATFORM_ARGS "")
 if(NOT MAKO_RUST_STO_TARGET_TRIPLE STREQUAL "")
     list(APPEND _MAKO_RUST_STO_CARGO_PLATFORM_ARGS
         --target "${MAKO_RUST_STO_TARGET_TRIPLE}")
-endif()
-if(MAKO_RUST_STO_BUILD_STD)
-    list(APPEND _MAKO_RUST_STO_CARGO_PLATFORM_ARGS -Zbuild-std)
 endif()
 if(MAKO_CARGO_EXECUTABLE)
     get_filename_component(_MAKO_CXX_COMPILER_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
@@ -2387,10 +2525,6 @@ if(MAKO_CARGO_EXECUTABLE)
     if(NOT MAKO_RUST_STO_TARGET_TRIPLE STREQUAL "")
         list(APPEND _MAKO_RUST_STO_NATIVE_PLATFORM_ARGS
             "-DMAKO_RUST_TARGET_TRIPLE=${MAKO_RUST_STO_TARGET_TRIPLE}")
-    endif()
-    if(MAKO_RUST_STO_BUILD_STD)
-        list(APPEND _MAKO_RUST_STO_NATIVE_PLATFORM_ARGS
-            "-DMAKO_RUST_BUILD_STD=ON")
     endif()
 
     add_custom_target(rust_masstree_native_integration
@@ -2776,6 +2910,21 @@ if(MAKO_CARGO_EXECUTABLE)
                 "-Zsanitizer and -Zexternal-clangrt in RUSTFLAGS")
         endif()
     endif()
+    if(NOT MAKO_RUST_STO_SYSROOT STREQUAL "")
+        # This archive shares its executables with libmako.a's staticlibs,
+        # so it must compile against the same sysroot (see
+        # MAKO_RUST_STO_SYSROOT).
+        separate_arguments(_STO_TPCC_SYSROOT_FLAGS UNIX_COMMAND
+            "${STO_TPCC_RUST_EXTRA_RUSTFLAGS}")
+        list(FILTER _STO_TPCC_SYSROOT_FLAGS INCLUDE REGEX "^--sysroot")
+        if(NOT _STO_TPCC_SYSROOT_FLAGS STREQUAL
+                "--sysroot=${MAKO_RUST_STO_SYSROOT}")
+            message(FATAL_ERROR
+                "MAKO_RUST_STO_SYSROOT requires exactly one "
+                "--sysroot=${MAKO_RUST_STO_SYSROOT} in "
+                "STO_TPCC_RUST_EXTRA_RUSTFLAGS")
+        endif()
+    endif()
     set(_MAKO_RUST_STO_WORKSPACE_TEST_ARGS "")
     if(_MAKO_RUST_STO_CONFIGURED_SANITIZER STREQUAL "address")
         if(MAKO_RUST_STO_ASAN_QUARANTINE_TESTS STREQUAL "")
@@ -2873,6 +3022,9 @@ if(MAKO_CARGO_EXECUTABLE)
     # build (cargo rustc --crate-type staticlib) fails on the sto_tpcc_bench
     # link line with multiple definitions of rust_eh_personality,
     # std::panicking::EMPTY_PANIC and std::sys::args::unix::imp::ARGV_INIT_ARRAY.
+    # The same holds for two different stds, which is why the ASan and TSan
+    # lanes build every Rust archive against one sysroot
+    # (MAKO_RUST_STO_SYSROOT) instead of -Zbuild-std.
     #
     # The archive must also stay FIRST among the Rust staticlibs on the link
     # lines below: it is built with panic=unwind and catches panics at its C
