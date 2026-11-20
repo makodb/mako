@@ -17,6 +17,7 @@ import json
 import math
 import os
 from pathlib import Path
+import random
 import re
 import resource
 import shutil
@@ -67,30 +68,91 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     return args
 
 
+# Lowest port handed to a child; keeps clear of common developer-machine services.
+MIN_LISTEN_PORT = 10000
+# Linux's default net.ipv4.ip_local_port_range, assumed when /proc is unreadable.
+DEFAULT_EPHEMERAL_RANGE = (32768, 60999)
+
+
+def parse_port_ranges(text: str) -> list[tuple[int, int]]:
+    """Parse ip_local_reserved_ports syntax: "a-b,c,d-e" (may be empty)."""
+    ranges = []
+    for item in text.replace("\n", ",").split(","):
+        item = item.strip()
+        if item:
+            low, _, high = item.partition("-")
+            ranges.append((int(low), int(high or low)))
+    return ranges
+
+
 class Ports:
     """Hold wildcard TCP reservations until all configuration has been written.
 
     Production SRPC listens on 0.0.0.0 even for loopback configurations. Reserve
-    on that same address, including worker and helper-server offsets. The small
-    release-to-exec race cannot be removed without listener FD handoff; a bind
-    failure fails the scenario rather than selecting a different peer silently.
+    on that same address, including worker and helper-server offsets.
+
+    The reservations are released before the children exec, and each child
+    binds its own listeners. Ports therefore come only from ports the kernel
+    never hands out by itself: outside net.ipv4.ip_local_port_range, or inside
+    net.ipv4.ip_local_reserved_ports. No outgoing connect() source port and no
+    bind() to port 0 (by a child or anything else) can take one between release
+    and exec. A port chosen by bind(0) would be in that ephemeral pool: under
+    CI's reserved-ports sysctl, bind(0) and connect() both crowd into the few
+    unreserved ports, and a peer's outgoing connection regularly took a
+    released port before its owner bound it. Only an explicit bind by an
+    unrelated process can still collide; a bind failure fails the scenario
+    rather than selecting a different peer silently. If the kernel leaves no
+    such ports (an ephemeral range covering everything), fall back to bind(0).
     """
 
     def __init__(self) -> None:
         self.sockets: list[socket.socket] = []
         self.allocated: set[int] = set()
+        self.random = random.SystemRandom()
+        self.ephemeral_range = DEFAULT_EPHEMERAL_RANGE
+        self.reserved_ranges: list[tuple[int, int]] = []
+        self.policy_source = "assumed default"
+        try:
+            low, high = map(int, Path("/proc/sys/net/ipv4/ip_local_port_range").read_text().split())
+            self.ephemeral_range = (low, high)
+            self.policy_source = "kernel"
+            self.reserved_ranges = parse_port_ranges(
+                Path("/proc/sys/net/ipv4/ip_local_reserved_ports").read_text())
+        except (OSError, ValueError):
+            # Treating nothing as reserved only shrinks the candidate set.
+            self.reserved_ranges = []
+        # kernel_assignable[port] is 1 when bind(0) or connect() may pick it.
+        self.kernel_assignable = bytearray(65536)
+        low, high = self.ephemeral_range
+        for port in range(max(low, 0), min(high, 65535) + 1):
+            self.kernel_assignable[port] = 1
+        for low, high in self.reserved_ranges:
+            for port in range(max(low, 0), min(high, 65535) + 1):
+                self.kernel_assignable[port] = 0
+        self.candidates: dict[tuple[int, ...], list[int]] = {}
+        self.fallback_blocks = 0
+
+    def candidate_bases(self, offsets: tuple[int, ...]) -> list[int]:
+        bases = self.candidates.get(offsets)
+        if bases is None:
+            assignable = self.kernel_assignable
+            bases = [base for base in range(MIN_LISTEN_PORT, 65536 - offsets[-1])
+                     if not any(assignable[base + offset] for offset in offsets)]
+            self.candidates[offsets] = bases
+        return bases
 
     def block(self, count: int = 1, *, control: bool = False) -> int:
         offsets = set(range(count))
         if control:
             # PaxosWorker and RaftWorker both use CtrlPortDelta = 10000.
             offsets.add(10000)
+        bases = self.candidate_bases(tuple(sorted(offsets)))
         for _ in range(200):
             held: list[socket.socket] = []
             try:
                 first = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 held.append(first)
-                first.bind(("0.0.0.0", 0))
+                first.bind(("0.0.0.0", self.random.choice(bases) if bases else 0))
                 base = first.getsockname()[1]
                 reserved = {base + offset for offset in offsets}
                 if any(port >= 65536 or port in self.allocated for port in reserved):
@@ -101,6 +163,8 @@ class Ports:
                     item.bind(("0.0.0.0", port))
                 self.sockets.extend(held)
                 self.allocated.update(reserved)
+                if not bases:
+                    self.fallback_blocks += 1
                 held = []
                 return base
             except OSError:
@@ -110,6 +174,14 @@ class Ports:
                     item.close()
         raise RuntimeError("could not reserve a unique loopback port block")
 
+    def description(self) -> dict[str, object]:
+        return {"ephemeral_range": list(self.ephemeral_range),
+                "reserved_ranges": [list(item) for item in self.reserved_ranges],
+                "policy_source": self.policy_source,
+                "kernel_assigned_fallback_blocks": self.fallback_blocks,
+                "kernel_assignable_allocated": sorted(
+                    port for port in self.allocated if self.kernel_assignable[port])}
+
     def close(self) -> None:
         for item in self.sockets:
             item.close()
@@ -118,7 +190,8 @@ class Ports:
 
 def write_configs(directory: Path, args: argparse.Namespace, ports: Ports) -> tuple[Path, list[Path], Path]:
     directory.mkdir()
-    # One worker binds offset 0; two RPC helper servers bind offsets 6 and 7.
+    # Children listen inside each 8-port block: the leader at offsets 0, 6 and
+    # 7, replicas at 2 and 3, and a Paxos learner at 2, 3, 6 and 7.
     transport = {role: [ports.block(8) for _ in range(args.shards)] for role in ROLES}
     lines = [f"shards: {args.shards}", "replicas: 3", "warehouses: 1"]
     for role in ROLES:
@@ -148,6 +221,7 @@ def write_configs(directory: Path, args: argparse.Namespace, ports: Ports) -> tu
     protocol = "raft" if args.replication == "raft" else "multi_paxos"
     mode.write_text(f"mode:\n  ab: {protocol}\n  batch: false\n  retry: 20\n", encoding="utf-8")
     dump_json(directory / "ports.json", sorted(ports.allocated))
+    dump_json(directory / "port_selection.json", ports.description())
     return shard_config, replication_configs, mode
 
 
@@ -313,6 +387,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         if soft < desired:
             resource.setrlimit(resource.RLIMIT_NOFILE, (desired, hard))
         config, replication, mode = write_configs(work / "configs", args, ports)
+        summary["port_selection"] = ports.description()
+        if ports.fallback_blocks:
+            print(f"warning: the kernel may assign every port >= {MIN_LISTEN_PORT}; "
+                  f"{ports.fallback_blocks} port blocks came from bind(0) and can race "
+                  "with outgoing connections", file=sys.stderr)
         environment = os.environ.copy()
         environment.update(MAKO_TPCC_WORKLOAD_MIX="50,50,0,0,0",
                            MAKO_STO_PROTOCOL_RECEIPTS="1",
