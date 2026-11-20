@@ -867,6 +867,55 @@ if(MAKO_LOCAL_SANITIZERS_ENABLED)
         "mako-local sanitizer gate enabled: ${MAKO_LOCAL_SANITIZER_LIST}")
 endif()
 
+# libmako.a calls into two Cargo staticlibs, native sharding and the Raft
+# runtime, and each carries a copy of the Rust std it was compiled against.
+# An executable can hold only one Rust std: when two copies have different
+# crate hashes, the linker extracts both and their unmangled symbols collide
+# ("multiple definition of `rust_eh_personality'"). Ordinarily one toolchain
+# builds everything, so the copies are the same prebuilt std. The mako-local
+# TSan gate is the exception: its Cargo test executables use a std that
+# -Zbuild-std rebuilds with -Zsanitizer=thread under the pinned nightly, and
+# Cargo hashes that std by the Cargo profile it was built with (opt-level,
+# panic strategy, ...; RUSTFLAGS do not enter the hash). With this switch the
+# two staticlibs are built exactly like those test executables -- same Cargo,
+# toolchain, -Zbuild-std, --target and RUSTFLAGS, and the dev profile with
+# panic = "unwind" that `cargo test` gives std -- so every executable of the
+# gate links one std, instrumented, and the staticlibs' own code is
+# instrumented too. In that mode they are unoptimized and keep debug
+# assertions and overflow checks.
+#
+# Only `./ci/ci.sh makoLocalSanitizerGates` (MAKO_LOCAL_SANITIZER=tsan) turns
+# this on. A plain MAKO_TSAN=1 build keeps the ordinary release staticlibs, so
+# executables that also link other Cargo staticlibs built with the ordinary
+# toolchain (dbtest's rust_redis, the Rust STO TPC-C adapter) still link. The
+# Rust STO sanitizer lanes select their own toolchain for these staticlibs
+# (MAKO_RUST_STO_RUSTUP_TOOLCHAIN below) and cannot use this switch.
+option(MAKO_LOCAL_TSAN_RUST_STATICLIBS
+    "Build the native sharding and Raft staticlibs against the mako-local Rust TSan std (mako-local TSan gate only)"
+    OFF)
+set(_MAKO_RUST_STATICLIB_TSAN_STD OFF)
+if(MAKO_LOCAL_TSAN_RUST_STATICLIBS)
+    if(NOT MAKO_TSAN_ENABLED)
+        message(FATAL_ERROR
+            "MAKO_LOCAL_TSAN_RUST_STATICLIBS=ON requires MAKO_TSAN=1")
+    endif()
+    if(NOT "${MAKO_RUST_STO_RUSTUP_TOOLCHAIN}" STREQUAL ""
+            OR MAKO_RUST_STO_BUILD_STD
+            OR NOT "${MAKO_RUST_STO_SANITIZER_RUSTFLAGS}" STREQUAL "")
+        message(FATAL_ERROR
+            "MAKO_LOCAL_TSAN_RUST_STATICLIBS=ON cannot be combined with the "
+            "Rust STO sanitizer configuration (MAKO_RUST_STO_*)")
+    endif()
+    set(_MAKO_RUST_STATICLIB_TSAN_STD ON)
+    # The test command's `--target <triple>`; Cargo writes the staticlibs
+    # under <target-dir>/<triple>/debug.
+    list(GET MAKO_LOCAL_SANITIZER_CARGO_TARGET_ARGS 1
+         _MAKO_RUST_STATICLIB_TSAN_TRIPLE)
+    message(STATUS
+        "Native sharding and Raft staticlibs: mako-local Rust TSan std "
+        "(${MAKO_LOCAL_RUST_TSAN_TOOLCHAIN}, -Zbuild-std, dev profile)")
+endif()
+
 # Add RAFT_TEST_CORO flag if enabled
 if(RAFT_TEST)
   message(STATUS "Raft lab testing fiber enabled")
@@ -1386,6 +1435,7 @@ file(GLOB_RECURSE MAKO_SHARDING_RUST_SOURCES CONFIGURE_DEPENDS
 # from the source root so that a rustup proxy resolves rust-toolchain.toml
 # exactly as it does for those other Cargo edges, wherever the build
 # directory is.
+if(NOT _MAKO_RUST_STATICLIB_TSAN_STD)
 add_custom_command(
     OUTPUT "${MAKO_SHARDING_ARCHIVE}"
     COMMAND ${CMAKE_COMMAND} -E env
@@ -1399,6 +1449,33 @@ add_custom_command(
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
     COMMENT "Building native Rust sharding staticlib (locked dependencies)"
     VERBATIM)
+else()
+# MAKO_LOCAL_TSAN_RUST_STATICLIBS: the Cargo command of the mako-local TSan
+# test executables (run_mako_local_sanitizer_tests), applied to this crate, in
+# its own target directory. The archive is then copied to the one path that
+# crates/mako-local/native-link-archives.txt and the imported target both use.
+set(_MAKO_SHARDING_TSAN_TARGET_DIR "${CMAKE_CURRENT_BINARY_DIR}/native-sharding-tsan")
+add_custom_command(
+    OUTPUT "${MAKO_SHARDING_ARCHIVE}"
+    COMMAND ${CMAKE_COMMAND} -E env
+        "RUSTFLAGS=${MAKO_LOCAL_SANITIZER_RUSTFLAGS}"
+        "CARGO_PROFILE_DEV_PANIC=unwind"
+        "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}"
+        ${MAKO_LOCAL_SANITIZER_CARGO_PREFIX}
+        build --locked --profile dev --lib
+        ${MAKO_LOCAL_SANITIZER_CARGO_TARGET_ARGS}
+        --manifest-path "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.toml"
+        --target-dir "${_MAKO_SHARDING_TSAN_TARGET_DIR}"
+    COMMAND ${CMAKE_COMMAND} -E copy
+        "${_MAKO_SHARDING_TSAN_TARGET_DIR}/${_MAKO_RUST_STATICLIB_TSAN_TRIPLE}/debug/libmako_sharding.a"
+        "${MAKO_SHARDING_ARCHIVE}"
+    DEPENDS ${MAKO_SHARDING_RUST_SOURCES}
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.toml"
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/cluster/Cargo.lock"
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Building native Rust sharding staticlib against the mako-local Rust TSan std"
+    VERBATIM)
+endif()
 add_custom_target(mako_sharding_rust_build DEPENDS "${MAKO_SHARDING_ARCHIVE}")
 add_library(mako_sharding_native STATIC IMPORTED GLOBAL)
 set_target_properties(mako_sharding_native PROPERTIES
@@ -1521,27 +1598,62 @@ if(RAFT_RUST_FEATURE_LIST)
     list(JOIN RAFT_RUST_FEATURE_LIST "," RAFT_RUST_FEATURE_CSV)
     set(RAFT_RUST_FEATURES --features ${RAFT_RUST_FEATURE_CSV})
 endif()
-add_custom_command(
-    OUTPUT ${RAFT_RUST_LIB}
-    # CC and AR are not decoration. src/srpc/build.rs compiles the nine C
-    # kernels with $CC, falling back to `cc`, while src/srpc-cmake builds the
-    # same manifest with CMAKE_C_COMPILER -- and srpc_rand.c:17 branches on
-    # __clang__. Unset, `cc` here is gcc, so the binary carried TWO different
-    # srpc_rand implementations (clang: a pthread_key_t seed freed at thread
-    # exit; gcc: a _Thread_local seed with no teardown) and the linker picked
-    # one by archive order. Passing the compiler through makes the two copies
-    # the same code; stage 0b removes the second copy.
-    # --locked here and in the cargo tests below: build what
-    # src/deptran/raft/Cargo.lock records, and fail on a stale lock rather
-    # than re-resolve it.
-    COMMAND ${CMAKE_COMMAND} -E env
+# CC and AR are not decoration. src/srpc/build.rs compiles the nine C
+# kernels with $CC, falling back to `cc`, while src/srpc-cmake builds the
+# same manifest with CMAKE_C_COMPILER -- and srpc_rand.c:17 branches on
+# __clang__. Unset, `cc` here is gcc, so the binary carried TWO different
+# srpc_rand implementations (clang: a pthread_key_t seed freed at thread
+# exit; gcc: a _Thread_local seed with no teardown) and the linker picked
+# one by archive order. Passing the compiler through makes the two copies
+# the same code; stage 0b removes the second copy.
+# --locked here and in the cargo tests below: build what
+# src/deptran/raft/Cargo.lock records, and fail on a stale lock rather
+# than re-resolve it.
+if(NOT _MAKO_RUST_STATICLIB_TSAN_STD)
+    set(_RAFT_RUST_BUILD_COMMANDS
+        COMMAND ${CMAKE_COMMAND} -E env
             "CC=${CMAKE_C_COMPILER}"
             "AR=${CMAKE_AR}"
             ${_MAKO_RUST_LIB_TOOLCHAIN_ENV}
             "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}" build --release --locked --quiet
             --manifest-path ${RAFT_RUST_MANIFEST}
             --target-dir ${RAFT_RUST_TARGET_DIR}
+            ${RAFT_RUST_FEATURES})
+else()
+    # MAKO_LOCAL_TSAN_RUST_STATICLIBS: the Cargo command of the mako-local
+    # TSan test executables, as for native sharding above. This workspace's
+    # dev profile says panic = "abort", which would give std a different
+    # hash; the override restores the profile `cargo test` builds std with.
+    # DECLARED DEVIATION, this lane only: Raft and the srpc code inside
+    # libraft_rt.a run with panic = "unwind" here, against the rule in
+    # src/deptran/raft/Cargo.toml that a panic must abort before it can cross
+    # a fiber switch. srpc's `let _ = catch_unwind(..)` sites (rpc/callbacks.rs,
+    # rpc/request_queue.rs) therefore swallow a callback panic that aborts in
+    # every other build, and the dev profile adds overflow checks and debug
+    # assertions, so this lane can pass where production would abort.
+    # The srpc C kernels stay out of this archive (srpc/build.rs links them
+    # -bundle), so the executables take them from the instrumented libsrpc.a.
+    set(_RAFT_RUST_TSAN_TARGET_DIR "${CMAKE_BINARY_DIR}/raft-cargo-tsan")
+    set(_RAFT_RUST_BUILD_COMMANDS
+        COMMAND ${CMAKE_COMMAND} -E env
+            "CC=${CMAKE_C_COMPILER}"
+            "AR=${CMAKE_AR}"
+            "RUSTFLAGS=${MAKO_LOCAL_SANITIZER_RUSTFLAGS}"
+            "CARGO_PROFILE_DEV_PANIC=unwind"
+            "${_MAKO_RUST_LIB_CARGO_EXECUTABLE}"
+            ${MAKO_LOCAL_SANITIZER_CARGO_PREFIX}
+            build --profile dev --locked --quiet
+            ${MAKO_LOCAL_SANITIZER_CARGO_TARGET_ARGS}
+            --manifest-path ${RAFT_RUST_MANIFEST}
+            --target-dir ${_RAFT_RUST_TSAN_TARGET_DIR}
             ${RAFT_RUST_FEATURES}
+        COMMAND ${CMAKE_COMMAND} -E copy
+            "${_RAFT_RUST_TSAN_TARGET_DIR}/${_MAKO_RUST_STATICLIB_TSAN_TRIPLE}/debug/libraft_rt.a"
+            "${RAFT_RUST_LIB}")
+endif()
+add_custom_command(
+    OUTPUT ${RAFT_RUST_LIB}
+    ${_RAFT_RUST_BUILD_COMMANDS}
     DEPENDS ${RAFT_RUST_SOURCES}
             ${RAFT_RPC_RUST}
             ${CMAKE_CURRENT_SOURCE_DIR}/src/deptran/raft/Cargo.toml
@@ -4812,7 +4924,28 @@ if(BUILD_TESTS)
             VERBATIM
         )
 
-        if(MAKO_LOCAL_SANITIZERS_ENABLED)
+        if(MAKO_LOCAL_SANITIZERS_ENABLED AND MAKO_TSAN_ENABLED
+                AND NOT _MAKO_RUST_STATICLIB_TSAN_STD)
+            # The Rust half of the TSan gate cannot link against release
+            # staticlibs built with the ordinary toolchain (see
+            # MAKO_LOCAL_TSAN_RUST_STATICLIBS). Fail at once instead of after
+            # the native build.
+            add_custom_target(run_mako_local_sanitizer_tests
+                COMMAND ${CMAKE_COMMAND} -E echo
+                        "run_mako_local_sanitizer_tests under MAKO_TSAN=1 needs -DMAKO_LOCAL_TSAN_RUST_STATICLIBS=ON (./ci/ci.sh makoLocalSanitizerGates passes it)"
+                COMMAND ${CMAKE_COMMAND} -E false
+                VERBATIM
+            )
+        elseif(MAKO_LOCAL_SANITIZERS_ENABLED)
+            if(_MAKO_RUST_STATICLIB_TSAN_STD
+                    AND NOT CARGO_EXECUTABLE STREQUAL MAKO_CARGO_EXECUTABLE)
+                # The staticlibs must resolve the same +toolchain through the
+                # same Cargo as the test executables below.
+                message(FATAL_ERROR
+                    "MAKO_LOCAL_TSAN_RUST_STATICLIBS=ON needs one Cargo: "
+                    "CARGO_EXECUTABLE=${CARGO_EXECUTABLE}, "
+                    "MAKO_CARGO_EXECUTABLE=${MAKO_CARGO_EXECUTABLE}")
+            endif()
             set(MAKO_LOCAL_SANITIZER_CARGO_ENV
                 ${MAKO_RUST_TOOLCHAIN_ENV}
                 ${MAKO_LOCAL_SANITIZER_RUNTIME_ENV}

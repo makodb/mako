@@ -400,6 +400,10 @@ run_mako_local_sanitizer_gates() {
     echo "========================================="
     local sanitizer="${MAKO_LOCAL_SANITIZER:-}"
     local sanitizer_toggle
+    # TSan rebuilds the Rust std with -Zbuild-std for the Cargo test
+    # executables; libmako's Rust staticlibs must be built against that same
+    # std (see MAKO_LOCAL_TSAN_RUST_STATICLIBS in CMakeLists.txt).
+    local tsan_rust_staticlibs=OFF
     case "${sanitizer}" in
         asan)
             sanitizer_toggle="MAKO_ASAN=1"
@@ -409,6 +413,7 @@ run_mako_local_sanitizer_gates() {
             ;;
         tsan)
             sanitizer_toggle="MAKO_TSAN=1"
+            tsan_rust_staticlibs=ON
             ;;
         *)
             echo "ERROR: MAKO_LOCAL_SANITIZER must be asan, ubsan, or tsan" >&2
@@ -423,7 +428,8 @@ run_mako_local_sanitizer_gates() {
     env "${sanitizer_toggle}" cmake -S . -B "${BUILD_DIR}" \
         -G "${generator}" -DCMAKE_BUILD_TYPE="${build_type}" \
         -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
-        -DMAKO_LOCAL_TEST_HOOKS=OFF
+        -DMAKO_LOCAL_TEST_HOOKS=OFF \
+        -DMAKO_LOCAL_TSAN_RUST_STATICLIBS="${tsan_rust_staticlibs}"
     env "${sanitizer_toggle}" cmake --build "${BUILD_DIR}" \
         --parallel "${jobs}" --target run_mako_local_sanitizer_tests
 }

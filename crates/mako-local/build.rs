@@ -151,7 +151,9 @@ fn main() {
 /// placed after every library rustc adds, std included, so the executable
 /// keeps its own std and unwinding runtime and the staticlibs' crates bind to
 /// those (one toolchain builds all of them, so the std objects are the same
-/// bytes). The group repeats every archive of the closure because the
+/// bytes; in the mako-local TSan gate CMake builds both staticlibs with the
+/// test executables' own -Zbuild-std std and `panic = "unwind"`, and copies
+/// them to the same `.../release/` paths). The group repeats every archive of the closure because the
 /// staticlibs' callbacks may select libmako.a members, and through them
 /// other archives, that nothing earlier asked for; a GNU ld link does not
 /// revisit earlier archives on its own.
