@@ -8,12 +8,11 @@
 #include <fcntl.h>
 #include <netinet/in.h>
 #include <netinet/tcp.h>
+#include <poll.h>
 #include <stdint.h>
 #include <string.h>
-#include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
-#include <sys/time.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -82,14 +81,18 @@ int32_t srpc_tcp_connect_once(int32_t fd, uint32_t addr_be, uint16_t port_be) {
     return result;
 }
 
+/* Mako-local (upstream to srpc): poll(), not select(). FD_SET on an fd at or
+ * above FD_SETSIZE (1024) writes past the fd_set, and select() then reads and
+ * rewrites that many bits of the caller's stack. A process with more than
+ * 1024 descriptors (the colocated two-shard replicated leader) had its saved
+ * registers and return address overwritten here. poll() has no fd ceiling;
+ * the contract is unchanged: >0 ready, 0 timeout, <0 with errno. */
 int32_t srpc_tcp_wait_writable_once(int32_t fd, int32_t timeout_ms) {
-    fd_set writable;
-    FD_ZERO(&writable);
-    FD_SET(fd, &writable);
-    struct timeval timeout;
-    timeout.tv_sec = timeout_ms / 1000;
-    timeout.tv_usec = (timeout_ms % 1000) * 1000;
-    const int result = select(fd + 1, NULL, &writable, NULL, &timeout);
+    struct pollfd writable;
+    writable.fd = fd;
+    writable.events = POLLOUT;
+    writable.revents = 0;
+    const int result = poll(&writable, 1, timeout_ms);
     srpc_tcp_io_errno = result < 0 ? errno : 0;
     return result;
 }

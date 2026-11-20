@@ -68,7 +68,7 @@
     },
     "rpc/srpc_connect.c": {
       "role": "os-leaf",
-      "sha256": "a9a9e7acd10d57a34cb61340bba32737bb507754564987cb7d38ad7bc954eb68"
+      "sha256": "10b18f3b3fcc3e8856072277968722d599ddd70b1483f2f01afeb357b96d17b2"
     },
     "rpc/srpc_connect.h": {
       "role": "c-declarations",
