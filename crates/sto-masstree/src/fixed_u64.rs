@@ -20,15 +20,15 @@ use masstree::{
 use masstree::{PublicationDisposition, Runtime as MasstreeRuntime};
 use sto_core::{
     AccessError, AcquireContext, AcquireError, Active, AdapterFault, AdapterFaultKind,
-    AdapterPhase, AtomicVersion, CapacityError, CheckError, Conflict, DetachedVersionGuard, TransProxy,
-    ExecutionCheckContext, CleanupContext, CleanupDisposition, CleanupItem, InstallContext,
-    InstallItem, LockClass, LockDisposition, LockIdentity, LockNamespaceId, LockRequest, LockUse,
-    NoPredicate, ObjectId, ObservationOrder, ObservationRef, OccVersion, OpacityToken,
-    PredicateContext, LockContext, PreflightFreeReadCapability,
-    PreflightFreeValidationContext, PreflightItem, PrepareError, RegisteredResource,
-    RegistrationError, ReleaseContext, ResourceClass, Runtime, TerminalReadBatchCapability,
-    TerminalReadOpen, TerminalReadTransaction, Transaction, TransactionLock, TObject,
-    UniqueItemKeys, ValidationContext,
+    AdapterPhase, AtomicVersion, CapacityError, CheckError, CleanupContext, CleanupDisposition,
+    CleanupItem, Conflict, DetachedVersionGuard, ExecutionCheckContext, InstallContext,
+    InstallItem, LockClass, LockContext, LockDisposition, LockIdentity, LockNamespaceId,
+    LockRequest, LockUse, NoPredicate, ObjectId, ObservationOrder, ObservationRef, OccVersion,
+    OpacityToken, PredicateContext, PreflightFreeReadCapability, PreflightFreeValidationContext,
+    PreflightItem, PrepareError, RegisteredResource, RegistrationError, ReleaseContext,
+    ResourceClass, Runtime, TObject, TerminalReadBatchCapability, TerminalReadOpen,
+    TerminalReadTransaction, TransProxy, Transaction, TransactionLock, UniqueItemKeys,
+    ValidationContext,
 };
 
 #[cfg(not(test))]

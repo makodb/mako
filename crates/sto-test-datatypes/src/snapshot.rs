@@ -5,12 +5,12 @@ use std::sync::Arc;
 use arc_swap::ArcSwap;
 use sto_core::{
     AccessError, Active, AdapterFault, AdapterFaultKind, AdapterPhase, AtomicVersion, CheckError,
-    Conflict, TransProxy, ExecutionCheckContext, CleanupContext, CleanupDisposition, CleanupItem,
-    InstallContext, InstallItem, LockClass, LockIdentity, LockNamespaceId, LockRequest, LockUse,
-    NoPredicate, ObjectId, ObservationOrder, ObservationRef, OccVersion, OpacityToken,
-    PredicateContext, LockContext, PreflightItem, PrepareError, RegisteredResource,
-    RegistrationError, ResourceClass, Runtime, Transaction, TObject,
-    ValidationContext, VersionLock,
+    CleanupContext, CleanupDisposition, CleanupItem, Conflict, ExecutionCheckContext,
+    InstallContext, InstallItem, LockClass, LockContext, LockIdentity, LockNamespaceId,
+    LockRequest, LockUse, NoPredicate, ObjectId, ObservationOrder, ObservationRef, OccVersion,
+    OpacityToken, PredicateContext, PreflightItem, PrepareError, RegisteredResource,
+    RegistrationError, ResourceClass, Runtime, TObject, TransProxy, Transaction, ValidationContext,
+    VersionLock,
 };
 
 const SNAPSHOT_RESOURCE_CLASS_VALUE: u32 = 1;

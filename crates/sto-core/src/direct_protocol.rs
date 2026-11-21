@@ -2,7 +2,7 @@
 
 use super::{CommitBoundary, ErasedItemBatch};
 use crate::{
-    object::TObject, direct_commit::ErasedDirectCommitPlan, trans_item::TransItemData,
+    direct_commit::ErasedDirectCommitPlan, object::TObject, trans_item::TransItemData,
     AcquireError, AdapterFault, CapacityError, CheckError, CommitHook, CommitHookError,
     FailurePhase, LockDisposition, OccCommitId, OwnerId, PrepareError, Runtime,
 };
@@ -74,9 +74,7 @@ struct ConcreteDirectPlan<'plan, A: TObject, P> {
     active_len: usize,
 }
 
-impl<A: TObject, P: ErasedDirectCommitPlan<A>> DirectCommitBody
-    for ConcreteDirectPlan<'_, A, P>
-{
+impl<A: TObject, P: ErasedDirectCommitPlan<A>> DirectCommitBody for ConcreteDirectPlan<'_, A, P> {
     fn acquire(&mut self, owner: OwnerId) -> Result<(), AcquireError> {
         self.plan.acquire_all(&self.items[..self.active_len], owner)
     }

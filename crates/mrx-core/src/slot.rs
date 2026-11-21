@@ -328,7 +328,8 @@ mod tests {
     #[test]
     fn with_value_borrows_without_taking_a_reference() {
         let slot = Slot::new(versioned(3));
-        let (refs_inside, bytes) = slot.with_value(|v| (v.refcount(), v.bytes().map(<[u8]>::to_vec)));
+        let (refs_inside, bytes) =
+            slot.with_value(|v| (v.refcount(), v.bytes().map(<[u8]>::to_vec)));
         assert_eq!(
             refs_inside, 1,
             "the borrowed handle owns no reference: only the slot's is counted"

@@ -21,12 +21,12 @@ use std::{
 use arc_swap::ArcSwap;
 use sto_core::{
     AccessError, Active, AdapterFault, AdapterFaultKind, AdapterPhase, AtomicVersion,
-    CapacityError, CheckError, Conflict, TransProxy, ExecutionCheckContext, CleanupContext,
-    CleanupDisposition, CleanupItem, InstallContext, InstallItem, LockClass, LockIdentity,
+    CapacityError, CheckError, CleanupContext, CleanupDisposition, CleanupItem, Conflict,
+    ExecutionCheckContext, InstallContext, InstallItem, LockClass, LockContext, LockIdentity,
     LockNamespaceId, LockRequest, LockUse, NoPredicate, ObjectId, ObservationOrder, ObservationRef,
-    OccVersion, OpacityToken, PredicateContext, LockContext, PreflightItem, PrepareError,
-    RegisteredResource, RegistrationError, ResourceClass, ResourceKey, Runtime, Transaction,
-    TObject, ValidationContext, VersionLock,
+    OccVersion, OpacityToken, PredicateContext, PreflightItem, PrepareError, RegisteredResource,
+    RegistrationError, ResourceClass, ResourceKey, Runtime, TObject, TransProxy, Transaction,
+    ValidationContext, VersionLock,
 };
 
 const HASH_MAP_RESOURCE_CLASS_VALUE: u32 = 1;

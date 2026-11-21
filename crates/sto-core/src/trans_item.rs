@@ -9,10 +9,6 @@ use std::{
 };
 
 use crate::{
-    object::{
-        CommitVersionRequirement, CleanupDisposition, CleanupItem, InstallItem, ObservationOrder,
-        ObservationRef, PreflightFreeReadCapability, PreflightItem, TObject,
-    },
     direct_commit::{DirectCommitCapability, DirectValidationItem, ErasedDirectCommitPlan},
     error::{
         AccessError, AcquireError, AdapterFault, AdapterPhase, CapacityError, CheckError,
@@ -20,8 +16,12 @@ use crate::{
     },
     identity::{ObjectId, OccCommitId, OwnerId, ResourceClass, RuntimeId},
     lock::{
-        ExecutionCheckContext, CleanupContext, InstallContext, LockDisposition, PredicateContext,
-        LockContext, PreflightFreeValidationContext, ValidationContext,
+        CleanupContext, ExecutionCheckContext, InstallContext, LockContext, LockDisposition,
+        PredicateContext, PreflightFreeValidationContext, ValidationContext,
+    },
+    object::{
+        CleanupDisposition, CleanupItem, CommitVersionRequirement, InstallItem, ObservationOrder,
+        ObservationRef, PreflightFreeReadCapability, PreflightItem, TObject,
     },
     runtime::RegisteredResource,
     transaction::{item_hash, DirectCommitContext, DirectCommitStepFailure},
@@ -2184,7 +2184,9 @@ mod tests {
             assert_eq!(std::mem::size_of::<TransItemData<Dummy>>(), 56);
             assert_eq!(std::mem::size_of::<TransItem<Dummy>>(), 128);
         }
-        assert!(std::mem::size_of::<TransItemData<Dummy>>() < std::mem::size_of::<TransItem<Dummy>>());
+        assert!(
+            std::mem::size_of::<TransItemData<Dummy>>() < std::mem::size_of::<TransItem<Dummy>>()
+        );
 
         let runtime =
             crate::runtime::Runtime::new(crate::runtime::RuntimeConfig::default()).unwrap();
@@ -2251,9 +2253,15 @@ mod tests {
             .unwrap();
         let mut batch = TypedTransItemBatch::<Dummy>::new();
         batch.try_reserve_for_len(2).unwrap();
-        batch.push_active::<true>(TransItemData::new(resource.clone(), 1, LayoutRole::Record), None);
+        batch.push_active::<true>(
+            TransItemData::new(resource.clone(), 1, LayoutRole::Record),
+            None,
+        );
         let binding_filter = batch.active_binding_filter;
-        batch.push_active::<false>(TransItemData::new(resource.clone(), 2, LayoutRole::Record), None);
+        batch.push_active::<false>(
+            TransItemData::new(resource.clone(), 2, LayoutRole::Record),
+            None,
+        );
         assert_eq!(batch.active_binding_filter, binding_filter);
         for slot in 0..2 {
             let (item, intent) = batch.active_item_parts_mut(slot);
@@ -2343,7 +2351,10 @@ mod tests {
         );
 
         let mut batch = TypedTransItemBatch::<Dummy>::new();
-        batch.push_active::<true>(TransItemData::new(first.clone(), 1, LayoutRole::Record), None);
+        batch.push_active::<true>(
+            TransItemData::new(first.clone(), 1, LayoutRole::Record),
+            None,
+        );
         assert!(batch.contains_active_binding(first));
         assert!(!batch.binding_definitely_absent(second));
         assert!(
@@ -2351,7 +2362,10 @@ mod tests {
             "a positive filter bit must still use exact binding equality"
         );
 
-        batch.push_active::<true>(TransItemData::new(second.clone(), 2, LayoutRole::Record), None);
+        batch.push_active::<true>(
+            TransItemData::new(second.clone(), 2, LayoutRole::Record),
+            None,
+        );
         assert!(batch.contains_active_binding(first));
         assert!(batch.contains_active_binding(second));
 

@@ -73,7 +73,7 @@ use crate::{
 };
 
 pub use crate::lock::{
-    ExecutionCheckContext, CleanupContext, InstallContext, PredicateContext, LockContext,
+    CleanupContext, ExecutionCheckContext, InstallContext, LockContext, PredicateContext,
     PreflightFreeValidationContext, ValidationContext,
 };
 

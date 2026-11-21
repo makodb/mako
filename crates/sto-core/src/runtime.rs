@@ -13,12 +13,12 @@ use std::{
 };
 
 use crate::{
-    object::{CommitVersionRequirement, TObject},
     error::{
         AttachError, BeginError, CapacityError, FailurePhase, InvalidUse, PoisonInfo,
         RegistrationError, RuntimeError, Unsupported,
     },
     identity::{ObjectId, OccCommitId, OwnerId, ResourceClass, RuntimeId},
+    object::{CommitVersionRequirement, TObject},
     transaction::{TerminalReadScratch, TransactionFrame},
 };
 
@@ -642,12 +642,12 @@ mod tests {
     use std::sync::atomic::AtomicUsize;
 
     use crate::{
-        AbortReason, AcquireContext, AcquireError, CheckError, CommitFailure, CommitOutcome,
-        Conflict, ExecutionCheckContext, CleanupContext, CleanupDisposition, CleanupItem,
-        InstallContext, InstallItem, ItemInitError, LockClass, LockDisposition, LockIdentity,
+        AbortReason, AcquireContext, AcquireError, CheckError, CleanupContext, CleanupDisposition,
+        CleanupItem, CommitFailure, CommitOutcome, Conflict, ExecutionCheckContext, InstallContext,
+        InstallItem, ItemInitError, LockClass, LockContext, LockDisposition, LockIdentity,
         LockNamespaceId, LockRequest, LockUse, NoPredicate, ObservationOrder, OpacityToken,
-        PredicateContext, LockContext, PreflightItem, PrepareError, ReleaseContext,
-        ResourceClass, TransactionLock, TObject, ValidationContext,
+        PredicateContext, PreflightItem, PrepareError, ReleaseContext, ResourceClass, TObject,
+        TransactionLock, ValidationContext,
     };
 
     const PREFLIGHT_SUCCEEDS: u8 = 0;

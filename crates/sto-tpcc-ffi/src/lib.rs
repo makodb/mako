@@ -38,7 +38,8 @@ mod sto_worker_owner {
     use std::{marker::PhantomData, mem, mem::MaybeUninit, ptr::NonNull};
 
     use sto_core::{
-        Active, BeginError, InvalidUse, Participant, RuntimeHealth, RuntimeId, Transaction, WorkerContext,
+        Active, BeginError, InvalidUse, Participant, RuntimeHealth, RuntimeId, Transaction,
+        WorkerContext,
     };
 
     type ActiveTransaction = Transaction<'static, Active>;
@@ -1320,7 +1321,9 @@ impl Drop for StoTpccThread {
             let _ = self.sto_worker.finish_active(|transaction| {
                 let _ = transaction.abort();
             });
-            let _ = self.sto_worker.finish_participant(|participant| participant.abort());
+            let _ = self
+                .sto_worker
+                .finish_participant(|participant| participant.abort());
             drop(rcu_scope);
         }
         self.pending_size.clear();
@@ -2034,7 +2037,9 @@ fn txn_commit_impl_with_observer(
     after_core_commit: impl FnOnce(),
 ) -> FfiResult<Status> {
     if handle.sto_worker.has_participant() {
-        return Err(fatal(format_args!("retained participant requires protocol terminal")));
+        return Err(fatal(format_args!(
+            "retained participant requires protocol terminal"
+        )));
     }
     let ActiveAttempt { rcu_scope } = handle
         .active
@@ -2079,7 +2084,9 @@ fn txn_commit_impl_with_observer(
         }
         Err(error @ CommitFailure::Indeterminate(_)) => {
             handle.pending_size.clear();
-            set_last_error(format_args!("transaction outcome is indeterminate: {error}"));
+            set_last_error(format_args!(
+                "transaction outcome is indeterminate: {error}"
+            ));
             Err(Status::Unknown)
         }
     }

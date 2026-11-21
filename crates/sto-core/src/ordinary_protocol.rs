@@ -22,7 +22,11 @@ impl CommitDriver<'_, '_> {
         // Retained participants must recheck on every separately invoked phase.
         if incremental {
             if self.frame().doomed {
-                let poison = self.worker.runtime.ensure_healthy(FailurePhase::Execution).err();
+                let poison = self
+                    .worker
+                    .runtime
+                    .ensure_healthy(FailurePhase::Execution)
+                    .err();
                 return Err(self.abort_commit(AbortReason::Doomed, poison));
             }
             if let Err(info) = self.frame().runtime.ensure_healthy(self.phase) {
@@ -36,7 +40,8 @@ impl CommitDriver<'_, '_> {
             if let Err(error) = result {
                 let poison = match error {
                     AccessError::Fault(fault) => Some(self.poison(
-                        adapter_failure_phase(fault), "participant item materialization fault",
+                        adapter_failure_phase(fault),
+                        "participant item materialization fault",
                     )),
                     AccessError::Poisoned(info) => Some(info),
                     AccessError::Internal(info) => Some(self.poison(info.phase(), info.reason())),
@@ -52,7 +57,8 @@ impl CommitDriver<'_, '_> {
                 Ok(nonce) => nonce,
                 Err(error) => return Err(self.abort_commit(error.into(), None)),
             };
-            let storage = std::mem::take(&mut self.frame.as_mut().expect("retained frame").lock_storage);
+            let storage =
+                std::mem::take(&mut self.frame.as_mut().expect("retained frame").lock_storage);
             let plan = match LockPlan::with_storage(runtime_id, max_locks, nonce, storage) {
                 Ok(plan) => plan,
                 Err(error) => return Err(self.abort_commit(error.into(), None)),
@@ -64,7 +70,11 @@ impl CommitDriver<'_, '_> {
             let (frame, locks) = self.parts_mut();
             let mut cx = locks.lock_context(owner, incremental)?;
             if frame.batch_active {
-                frame.unique_batch.as_mut().expect("active batch").preflight(&mut cx)?;
+                frame
+                    .unique_batch
+                    .as_mut()
+                    .expect("active batch")
+                    .preflight(&mut cx)?;
             } else {
                 for item in &mut frame.items[..frame.item_count] {
                     item.as_mut().expect("active item").preflight(&mut cx)?;
@@ -75,13 +85,21 @@ impl CommitDriver<'_, '_> {
         match result {
             Ok(Ok(())) => Ok(()),
             Ok(Err(error)) => Err(self.handle_prepare_error(error)),
-            Err(_) if self.locks.as_ref().is_some_and(LockPlan::has_uncertain_callback) => {
+            Err(_)
+                if self
+                    .locks
+                    .as_ref()
+                    .is_some_and(LockPlan::has_uncertain_callback) =>
+            {
                 Err(self.handle_acquire_panic())
             }
             Err(_) => {
                 let info = self.poison(FailurePhase::Preflight, "datatype lock callback panicked");
                 Err(self.abort_commit(
-                    AbortReason::Internal(InternalError::new(FailurePhase::Preflight, "datatype lock callback panicked")),
+                    AbortReason::Internal(InternalError::new(
+                        FailurePhase::Preflight,
+                        "datatype lock callback panicked",
+                    )),
                     Some(info),
                 ))
             }
@@ -93,7 +111,9 @@ impl CommitDriver<'_, '_> {
         if shape.has_writes && self.hook.is_some() {
             self.phase = FailurePhase::UpperMetadata;
             match catch_unwind(AssertUnwindSafe(|| {
-                self.hook.as_deref_mut().map_or(Ok(()), CommitHook::reserve_upper_metadata)
+                self.hook
+                    .as_deref_mut()
+                    .map_or(Ok(()), CommitHook::reserve_upper_metadata)
             })) {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => return Err(self.abort_for_hook_error(error)),
@@ -106,7 +126,11 @@ impl CommitDriver<'_, '_> {
                 let (frame, locks) = self.parts_mut();
                 let cx = locks.predicate_context().map_err(CheckError::from)?;
                 if frame.batch_active {
-                    frame.unique_batch.as_mut().expect("active batch").upgrade_predicates(&cx)
+                    frame
+                        .unique_batch
+                        .as_mut()
+                        .expect("active batch")
+                        .upgrade_predicates(&cx)
                 } else {
                     for item in &mut frame.items[..frame.item_count] {
                         item.as_mut().expect("active item").upgrade_predicate(&cx)?;
@@ -131,9 +155,15 @@ impl CommitDriver<'_, '_> {
         let commit_id = self.commit_id;
         let result = catch_unwind(AssertUnwindSafe(|| {
             let (frame, locks) = self.parts_mut();
-            let cx = locks.validation_context(commit_id).map_err(CheckError::from)?;
+            let cx = locks
+                .validation_context(commit_id)
+                .map_err(CheckError::from)?;
             if frame.batch_active {
-                frame.unique_batch.as_ref().expect("active batch").validate(&cx)
+                frame
+                    .unique_batch
+                    .as_ref()
+                    .expect("active batch")
+                    .validate(&cx)
             } else {
                 for item in &frame.items[..frame.item_count] {
                     item.as_ref().expect("active item").validate(&cx)?;
@@ -149,7 +179,9 @@ impl CommitDriver<'_, '_> {
         if shape.has_writes && self.hook.is_some() {
             self.phase = FailurePhase::PreinstallHook;
             match catch_unwind(AssertUnwindSafe(|| {
-                self.hook.as_deref_mut().map_or(Ok(()), CommitHook::pre_install)
+                self.hook
+                    .as_deref_mut()
+                    .map_or(Ok(()), CommitHook::pre_install)
             })) {
                 Ok(Ok(())) => {}
                 Ok(Err(error)) => return Err(self.abort_for_hook_error(error)),
@@ -167,15 +199,24 @@ impl CommitDriver<'_, '_> {
     ) -> DriverStep {
         // No fallible metadata allocation or abort is permitted beyond here.
         self.boundary = CommitBoundary::Irrevocable;
-        if self.certified_shape.expect("installation follows certification").has_writes {
+        if self
+            .certified_shape
+            .expect("installation follows certification")
+            .has_writes
+        {
             self.phase = FailurePhase::Install;
             let commit_id = self.commit_id;
             let result = catch_unwind(AssertUnwindSafe(|| {
                 let (frame, locks) = self.parts_mut();
-                let mut cx = locks.install_context_with_decision(commit_id, decision, retain_locks)
+                let mut cx = locks
+                    .install_context_with_decision(commit_id, decision, retain_locks)
                     .expect("certified plan retains held guards");
                 if frame.batch_active {
-                    frame.unique_batch.as_mut().expect("active batch").install(&mut cx);
+                    frame
+                        .unique_batch
+                        .as_mut()
+                        .expect("active batch")
+                        .install(&mut cx);
                 } else {
                     for item in &mut frame.items[..frame.item_count] {
                         let item = item.as_mut().expect("active item");
@@ -194,8 +235,13 @@ impl CommitDriver<'_, '_> {
                     if let Some(hook) = self.hook.as_deref_mut() {
                         hook.post_install();
                     }
-                })).is_err() {
-                    return Err(self.indeterminate(FailurePhase::PostInstallHook, "post-install hook panicked"));
+                }))
+                .is_err()
+                {
+                    return Err(self.indeterminate(
+                        FailurePhase::PostInstallHook,
+                        "post-install hook panicked",
+                    ));
                 }
             }
         }
@@ -204,25 +250,36 @@ impl CommitDriver<'_, '_> {
 
     pub(super) fn finish_ordinary(&mut self) -> Result<CommitOutcome, CommitFailure> {
         self.phase = FailurePhase::Release;
-        let disposition = LockDisposition::Committed { occ_commit_id: self.commit_id };
-        match catch_unwind(AssertUnwindSafe(|| self.locks_mut().release_all(disposition))) {
+        let disposition = LockDisposition::Committed {
+            occ_commit_id: self.commit_id,
+        };
+        match catch_unwind(AssertUnwindSafe(|| {
+            self.locks_mut().release_all(disposition)
+        })) {
             Ok(Ok(())) => {
                 self.boundary = CommitBoundary::Published;
                 if self.drop_released_lock_plan().is_err() {
                     return self.finish_committed_with_poison(PoisonInfo::new(
-                        FailurePhase::Release, "released lock-plan destruction panicked",
+                        FailurePhase::Release,
+                        "released lock-plan destruction panicked",
                     ));
                 }
             }
-            Ok(Err(_)) | Err(_) => return self.indeterminate_after_release_failure(
-                FailurePhase::Release, "lock release failed or panicked",
-            ),
+            Ok(Err(_)) | Err(_) => {
+                return self.indeterminate_after_release_failure(
+                    FailurePhase::Release,
+                    "lock release failed or panicked",
+                )
+            }
         }
         self.phase = FailurePhase::Finish;
         let commit_info = CommitInfo::new(self.commit_id);
         if let Err(info) = self.finish_items(CleanupDisposition::Committed, FailurePhase::Finish) {
             self.complete_worker();
-            return Err(CommitFailure::Poisoned { outcome: DefiniteOutcome::Committed(commit_info), info });
+            return Err(CommitFailure::Poisoned {
+                outcome: DefiniteOutcome::Committed(commit_info),
+                info,
+            });
         }
         self.recycle_frame();
         self.complete_worker();

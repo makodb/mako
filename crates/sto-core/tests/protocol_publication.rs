@@ -1,6 +1,9 @@
 #![cfg(feature = "test-install-observer")]
 
-use std::{cell::RefCell, sync::{Arc, Barrier}};
+use std::{
+    cell::RefCell,
+    sync::{Arc, Barrier},
+};
 use sto_core::{CommitOutcome, Conflict, Runtime, RuntimeConfig, TxnArray, TxnCell, TxnCounter};
 
 thread_local! {
@@ -49,9 +52,15 @@ fn cell_and_counter_publish_during_install_while_the_later_array_stays_locked() 
         assert_eq!(cell_value.unwrap(), 2);
         assert_eq!(counter_value.unwrap(), 15);
         assert_eq!(array_value, Err(Conflict::LockBusy.into()));
-        assert!(matches!(writer.join().unwrap().unwrap(), CommitOutcome::Committed(_)));
+        assert!(matches!(
+            writer.join().unwrap().unwrap(),
+            CommitOutcome::Committed(_)
+        ));
     });
     let mut read = reader_worker.begin().unwrap();
     assert_eq!(array.get(&mut read, 0).unwrap().unwrap(), 200);
-    assert!(matches!(read.commit().unwrap(), CommitOutcome::Committed(_)));
+    assert!(matches!(
+        read.commit().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
 }

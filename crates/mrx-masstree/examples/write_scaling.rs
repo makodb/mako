@@ -506,9 +506,7 @@ impl Work {
             }
             Work::GetInto(store) => {
                 OUT.with(|o| {
-                    store
-                        .get_into(key, &mut o.borrow_mut())
-                        .expect("get_into");
+                    store.get_into(key, &mut o.borrow_mut()).expect("get_into");
                 });
             }
             Work::EpochPin => {
@@ -679,8 +677,7 @@ fn main() {
         "rd_store" => {
             let blobs = MemBlobs::new();
             let store = Arc::new(
-                Store::open(cfg, MasstreeIndex::new().expect("masstree"), blobs)
-                    .expect("open"),
+                Store::open(cfg, MasstreeIndex::new().expect("masstree"), blobs).expect("open"),
             );
             let seen =
                 std::collections::HashSet::<&[u8]>::from_iter(keys.iter().map(|k| k.as_slice()));

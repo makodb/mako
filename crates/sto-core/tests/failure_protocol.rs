@@ -9,18 +9,17 @@ use std::{
 use sto_core::{
     AbortReason, AccessError, AcquireContext, AcquireError, Active, AdapterFault, AdapterFaultKind,
     AdapterPhase, BorrowedInjectiveLockCommitCapability, BorrowedLockToken,
-    BorrowedTokenCommitOperations, BorrowedUniqueLockCommitCapability, CheckError, CommitFailure,
-    CommitHook, CommitHookError, CommitOutcome, Conflict, DefiniteOutcome,
-    DirectBorrowedLockTarget, DirectCommitCapability, DirectInstallContext, DirectLockMut,
-    DirectLockRef, DirectTokenLock, DirectValidationContext, DirectValidationItem, TransProxy,
-    ExecutionCheckContext, FailurePhase, CleanupContext, CleanupDisposition, CleanupItem,
-    InstallContext, InstallItem, InternalError, InvalidUse, ItemInitError, LockClass,
-    LockDisposition, LockIdentity, LockNamespaceId, LockRequest, LockUse, NoPredicate,
-    ObservationOrder, OpacityToken, PoisonInfo, PredicateContext, LockContext,
-    PreflightFreeReadCapability, PreflightFreeValidationContext, PreflightItem, PrepareError,
-    RegisteredResource, ResourceClass, Runtime, RuntimeConfig, RuntimeHealth,
-    TerminalReadBatchCapability, Transaction, TransactionLock, TObject, TxnArray,
-    UniqueItemKeys, ValidationContext,
+    BorrowedTokenCommitOperations, BorrowedUniqueLockCommitCapability, CheckError, CleanupContext,
+    CleanupDisposition, CleanupItem, CommitFailure, CommitHook, CommitHookError, CommitOutcome,
+    Conflict, DefiniteOutcome, DirectBorrowedLockTarget, DirectCommitCapability,
+    DirectInstallContext, DirectLockMut, DirectLockRef, DirectTokenLock, DirectValidationContext,
+    DirectValidationItem, ExecutionCheckContext, FailurePhase, InstallContext, InstallItem,
+    InternalError, InvalidUse, ItemInitError, LockClass, LockContext, LockDisposition,
+    LockIdentity, LockNamespaceId, LockRequest, LockUse, NoPredicate, ObservationOrder,
+    OpacityToken, PoisonInfo, PredicateContext, PreflightFreeReadCapability,
+    PreflightFreeValidationContext, PreflightItem, PrepareError, RegisteredResource, ResourceClass,
+    Runtime, RuntimeConfig, RuntimeHealth, TObject, TerminalReadBatchCapability, TransProxy,
+    Transaction, TransactionLock, TxnArray, UniqueItemKeys, ValidationContext,
 };
 
 #[cfg(feature = "test-install-observer")]
@@ -4765,9 +4764,7 @@ fn terminal_read_pool_contains_adapter_panic_when_worker_drops() {
     let ready = worker
         .begin_terminal_read_batch()
         .unwrap()
-        .with_terminal_read_batch(&resource, &[1], |_, entry| {
-            entry.add_read(Token::inert())
-        })
+        .with_terminal_read_batch(&resource, &[1], |_, entry| entry.add_read(Token::inert()))
         .unwrap();
     assert!(matches!(
         ready.commit().unwrap(),
@@ -4796,17 +4793,23 @@ fn retained_participant_preserves_poisoned_and_unknown_outcomes() {
     let acquire = fixture(vec![(Callback::Acquire, 2, Action::Panic)]);
     let mut worker = acquire.runtime.attach().unwrap();
     let mut participant = worker.begin().unwrap().into_participant();
-    participant.with_transaction(|txn| {
-        stage_write(txn, &acquire.resource, 1);
-        stage_write(txn, &acquire.resource, 2);
-        Ok(())
-    }).unwrap();
+    participant
+        .with_transaction(|txn| {
+            stage_write(txn, &acquire.resource, 1);
+            stage_write(txn, &acquire.resource, 2);
+            Ok(())
+        })
+        .unwrap();
     let Err(ParticipantError::Failure(failure)) = participant.lock_writes() else {
         panic!("uncertain acquisition must poison a definite abort");
     };
-    assert!(matches!(failure, CommitFailure::Poisoned {
-        outcome: DefiniteOutcome::Aborted(_), ..
-    }));
+    assert!(matches!(
+        failure,
+        CommitFailure::Poisoned {
+            outcome: DefiniteOutcome::Aborted(_),
+            ..
+        }
+    ));
     assert_eq!(participant.phase(), ParticipantPhase::Finished);
     assert_eq!(participant.finish(true), Err(failure));
     assert_eq!(acquire.runtime.health(), RuntimeHealth::Poisoned);
@@ -4815,11 +4818,13 @@ fn retained_participant_preserves_poisoned_and_unknown_outcomes() {
     let install = fixture(vec![(Callback::Install, 2, Action::Panic)]);
     let mut worker = install.runtime.attach().unwrap();
     let mut participant = worker.begin().unwrap().into_participant();
-    participant.with_transaction(|txn| {
-        stage_write(txn, &install.resource, 1);
-        stage_write(txn, &install.resource, 2);
-        Ok(())
-    }).unwrap();
+    participant
+        .with_transaction(|txn| {
+            stage_write(txn, &install.resource, 1);
+            stage_write(txn, &install.resource, 2);
+            Ok(())
+        })
+        .unwrap();
     participant.validate().unwrap();
     let Err(ParticipantError::Failure(failure)) = participant.install(DistributedTimeTerm::new(
         DistributedTimestamp::new(21).unwrap(),
@@ -4839,17 +4844,25 @@ fn installed_participant_cleanup_failure_is_definitely_committed() {
     let fixture = fixture(vec![(Callback::Finish, 1, Action::Panic)]);
     let mut worker = fixture.runtime.attach().unwrap();
     let mut participant = worker.begin().unwrap().into_participant();
-    participant.with_transaction(|txn| {
-        stage_write(txn, &fixture.resource, 1);
-        Ok(())
-    }).unwrap();
+    participant
+        .with_transaction(|txn| {
+            stage_write(txn, &fixture.resource, 1);
+            Ok(())
+        })
+        .unwrap();
     participant.validate().unwrap();
-    participant.install(DistributedTimeTerm::new(
-        DistributedTimestamp::new(22).unwrap(),
-        DistributedTerm::new(3).unwrap(),
-    )).unwrap();
-    assert!(matches!(participant.finish(false), Err(CommitFailure::Poisoned {
-        outcome: DefiniteOutcome::Committed(_), ..
-    })));
+    participant
+        .install(DistributedTimeTerm::new(
+            DistributedTimestamp::new(22).unwrap(),
+            DistributedTerm::new(3).unwrap(),
+        ))
+        .unwrap();
+    assert!(matches!(
+        participant.finish(false),
+        Err(CommitFailure::Poisoned {
+            outcome: DefiniteOutcome::Committed(_),
+            ..
+        })
+    ));
     assert_eq!(fixture.runtime.health(), RuntimeHealth::Poisoned);
 }

@@ -100,7 +100,6 @@ fn frame_reuse_resets_metadata_after_typed_materialized_and_doomed_attempts() {
     assert_eq!(runtime.health(), RuntimeHealth::Healthy);
 }
 
-
 #[test]
 fn rejected_begin_leaves_the_idle_frame_owned_and_reusable() {
     let runtime = Runtime::new(RuntimeConfig::default()).unwrap();

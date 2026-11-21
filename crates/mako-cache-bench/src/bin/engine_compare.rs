@@ -160,7 +160,10 @@ fn pin(cpu: usize) -> Result<()> {
 }
 
 fn thread_cpu_nanoseconds() -> Result<u128> {
-    let mut time = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    let mut time = libc::timespec {
+        tv_sec: 0,
+        tv_nsec: 0,
+    };
     // SAFETY: time is writable and the thread CPU clock has no external state.
     if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut time) } != 0 {
         return Err(std::io::Error::last_os_error().into());
@@ -263,8 +266,12 @@ fn run() -> Result<()> {
         return Err("--items above one is available in engine mode only".into());
     }
     let total_per_worker = warmup.checked_add(iterations).ok_or("iteration overflow")?;
-    total_per_worker.checked_mul(items).ok_or("item schedule overflow")?;
-    total_per_worker.checked_mul(workers as u64).ok_or("commit count overflow")?;
+    total_per_worker
+        .checked_mul(items)
+        .ok_or("item schedule overflow")?;
+    total_per_worker
+        .checked_mul(workers as u64)
+        .ok_or("commit count overflow")?;
     if mode == "engine-logged" && total_per_worker >= (1 << 48) {
         return Err("logged sequence exceeds its worker lane".into());
     }
@@ -285,7 +292,9 @@ fn run() -> Result<()> {
         }
         cpus
     } else {
-        let end = worker_cpu_start.checked_add(workers).ok_or("CPU range overflow")?;
+        let end = worker_cpu_start
+            .checked_add(workers)
+            .ok_or("CPU range overflow")?;
         (worker_cpu_start..end).collect()
     };
     let mut requested_cpus = CpuSet::new();
@@ -462,7 +471,13 @@ fn run() -> Result<()> {
                         return Err(format!("value mismatch worker {worker} key {index}").into());
                     }
                 }
-                Ok((nanoseconds, counts, allocated, cpu_nanoseconds, diagnostic_nanoseconds))
+                Ok((
+                    nanoseconds,
+                    counts,
+                    allocated,
+                    cpu_nanoseconds,
+                    diagnostic_nanoseconds,
+                ))
             })();
             if let Err(error) = &result {
                 // A pre-barrier failure must terminate the sample instead

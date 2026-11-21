@@ -5,13 +5,12 @@ use std::sync::{
 
 use sto_core::{
     AccessError, AcquireContext, AcquireError, Active, AdapterFault, AdapterFaultKind,
-    AdapterPhase, AtomicVersion, CheckError, Conflict, DetachedVersionGuard, TransProxy,
-    ExecutionCheckContext, CleanupContext, CleanupDisposition, CleanupItem, InstallContext,
-    InstallItem, LockClass, LockDisposition, LockIdentity, LockNamespaceId, LockRequest, LockUse,
-    NoPredicate, ObservationOrder, ObservationRef, OccVersion, OpacityToken, PredicateContext,
-    LockContext, PreflightItem, PrepareError, RegisteredResource, ReleaseContext,
-    ResourceClass, Runtime, RuntimeConfig, Transaction, TransactionLock, TObject,
-    ValidationContext,
+    AdapterPhase, AtomicVersion, CheckError, CleanupContext, CleanupDisposition, CleanupItem,
+    Conflict, DetachedVersionGuard, ExecutionCheckContext, InstallContext, InstallItem, LockClass,
+    LockContext, LockDisposition, LockIdentity, LockNamespaceId, LockRequest, LockUse, NoPredicate,
+    ObservationOrder, ObservationRef, OccVersion, OpacityToken, PredicateContext, PreflightItem,
+    PrepareError, RegisteredResource, ReleaseContext, ResourceClass, Runtime, RuntimeConfig,
+    TObject, TransProxy, Transaction, TransactionLock, ValidationContext,
 };
 
 const FIRST_RESOURCE_CLASS: u32 = 41;
@@ -183,7 +182,10 @@ impl<const TAG: u32> TObject for ClassAdapter<TAG> {
         if let Some(use_) = lock_use.as_ref() {
             assert!(cx.guard(use_)?.inner.is_held(), "locking is synchronous");
         }
-        Ok(Prepared { lock_use, final_value: item.intent().copied() })
+        Ok(Prepared {
+            lock_use,
+            final_value: item.intent().copied(),
+        })
     }
 
     fn revalidate_read(
@@ -258,9 +260,13 @@ impl<const TAG: u32> TObject for ClassAdapter<TAG> {
         }
 
         assert_eq!(prepared.final_value, Some(*item.intent()));
-        let displaced = self.value.swap(prepared.final_value.unwrap(), Ordering::AcqRel);
+        let displaced = self
+            .value
+            .swap(prepared.final_value.unwrap(), Ordering::AcqRel);
         item.local_mut().displaced = Some(displaced);
-        let published = cx.try_publish_unlock(prepared.lock_use.as_ref().unwrap()).unwrap();
+        let published = cx
+            .try_publish_unlock(prepared.lock_use.as_ref().unwrap())
+            .unwrap();
         assert_eq!(self.version.observe().is_ok(), published);
     }
 
@@ -414,40 +420,57 @@ fn participant_refreshes_preparation_and_retains_aliased_guards_until_finish() {
     let (first, second) = register_two_classes(&runtime, 10, 100);
     let mut worker = runtime.attach().unwrap();
     let mut participant = worker.begin().unwrap().into_participant();
-    participant.with_transaction(|txn| first.set(txn, 11)).unwrap();
+    participant
+        .with_transaction(|txn| first.set(txn, 11))
+        .unwrap();
     participant.lock_writes().unwrap();
     std::thread::scope(|scope| {
-        scope.spawn(|| {
-            let mut competing = runtime.attach().unwrap();
-            let mut reader = competing.begin().unwrap();
-            assert_eq!(first.get(&mut reader), Err(Conflict::LockBusy.into()));
-            reader.abort();
-        }).join().unwrap();
+        scope
+            .spawn(|| {
+                let mut competing = runtime.attach().unwrap();
+                let mut reader = competing.begin().unwrap();
+                assert_eq!(first.get(&mut reader), Err(Conflict::LockBusy.into()));
+                reader.abort();
+            })
+            .join()
+            .unwrap();
     });
 
-    participant.with_transaction(|txn| {
-        first.set(txn, 12)?;
-        second.set(txn, 101)?;
-        assert_eq!(first.get(txn)?, 12);
-        Ok(())
-    }).unwrap();
+    participant
+        .with_transaction(|txn| {
+            first.set(txn, 12)?;
+            second.set(txn, 101)?;
+            assert_eq!(first.get(txn)?, 12);
+            Ok(())
+        })
+        .unwrap();
     participant.lock_writes().unwrap();
     participant.validate().unwrap();
     assert_eq!(participant.phase(), ParticipantPhase::Validated);
-    assert!(participant.with_transaction(|txn| first.set(txn, 99)).is_err());
-    participant.install(DistributedTimeTerm::new(
-        DistributedTimestamp::new(73).unwrap(),
-        DistributedTerm::new(4).unwrap(),
-    )).unwrap();
+    assert!(participant
+        .with_transaction(|txn| first.set(txn, 99))
+        .is_err());
+    participant
+        .install(DistributedTimeTerm::new(
+            DistributedTimestamp::new(73).unwrap(),
+            DistributedTerm::new(4).unwrap(),
+        ))
+        .unwrap();
     std::thread::scope(|scope| {
-        scope.spawn(|| {
-            let mut competing = runtime.attach().unwrap();
-            let mut reader = competing.begin().unwrap();
-            assert_eq!(second.get(&mut reader), Err(Conflict::LockBusy.into()));
-            reader.abort();
-        }).join().unwrap();
+        scope
+            .spawn(|| {
+                let mut competing = runtime.attach().unwrap();
+                let mut reader = competing.begin().unwrap();
+                assert_eq!(second.get(&mut reader), Err(Conflict::LockBusy.into()));
+                reader.abort();
+            })
+            .join()
+            .unwrap();
     });
     // Even an abort request after installation completes committed cleanup.
-    assert!(matches!(participant.abort().unwrap(), CommitOutcome::Committed(_)));
+    assert!(matches!(
+        participant.abort().unwrap(),
+        CommitOutcome::Committed(_)
+    ));
     assert_eq!(read_pair(&mut worker, &first, &second), (12, 101));
 }

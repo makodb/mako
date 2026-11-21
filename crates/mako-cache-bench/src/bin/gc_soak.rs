@@ -118,7 +118,11 @@ fn main_result() -> Result<()> {
     // disjoint helper mask inherited from the launcher, including on failure.
     let helper_affinity = nix::sched::sched_getaffinity(Pid::from_raw(0))?;
     let affinity_result = (|| -> Result<()> {
-        for cpu in worker_cpus.iter().copied().chain(std::iter::once(writeback_cpu)) {
+        for cpu in worker_cpus
+            .iter()
+            .copied()
+            .chain(std::iter::once(writeback_cpu))
+        {
             let mut selected = CpuSet::new();
             selected.set(cpu)?;
             sched_setaffinity(Pid::from_raw(0), &selected)?;

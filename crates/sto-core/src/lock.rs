@@ -4,10 +4,10 @@
 //! keeps stable typed [`LockUse`] tokens and acquires synchronously in item
 //! access order. Canonical identity sorting is only a deduplication index.
 
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::any::{Any, TypeId};
 use std::marker::PhantomData;
 use std::num::NonZeroUsize;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -872,7 +872,11 @@ impl LockPlan {
         }
         self.owner = Some(owner);
         self.state = PlanState::Held;
-        Ok(LockContext { plan: self, incremental, not_send_or_sync: PhantomData })
+        Ok(LockContext {
+            plan: self,
+            incremental,
+            not_send_or_sync: PhantomData,
+        })
     }
 
     pub(crate) fn finish_locking(&self) -> Result<(), PrepareError> {
@@ -887,7 +891,10 @@ impl LockPlan {
         self.callback_in_progress.is_some()
     }
 
-    fn acquire_requested<L: TransactionLock>(&mut self, use_: &LockUse<L>) -> Result<(), PrepareError> {
+    fn acquire_requested<L: TransactionLock>(
+        &mut self,
+        use_: &LockUse<L>,
+    ) -> Result<(), PrepareError> {
         // Unit tests can construct the private allocation-only preparation
         // context; production callbacks always enter with a retained owner.
         let Some(owner) = self.owner else {
@@ -902,7 +909,10 @@ impl LockPlan {
         }
         self.state = PlanState::Acquiring;
         self.callback_in_progress = Some(slot);
-        let cx = AcquireContext { owner: &owner, not_send_or_sync: PhantomData };
+        let cx = AcquireContext {
+            owner: &owner,
+            not_send_or_sync: PhantomData,
+        };
         let result = self.frames[slot].acquire(&self.identities[slot], &cx);
         self.callback_in_progress = None;
         self.state = PlanState::Held;
@@ -1402,7 +1412,9 @@ impl LockPlan {
         let frame = self.frames[slot]
             .as_any()
             .downcast_ref::<LockFrame<L>>()
-            .ok_or_else(|| AdapterFault::new(AdapterPhase::Install, AdapterFaultKind::TypeMismatch))?;
+            .ok_or_else(|| {
+                AdapterFault::new(AdapterPhase::Install, AdapterFaultKind::TypeMismatch)
+            })?;
         frame.guard(AdapterPhase::Install)?;
         if frame.shared {
             return Ok(false);
@@ -1672,11 +1684,7 @@ mod tests {
         let events = Arc::new(Mutex::new(Vec::new()));
         let (target, request) = request(17, 10, false, &events);
         let mut plan = LockPlan::new(runtime_id(), 1).unwrap();
-        let lock_use = plan
-            .preflight_context()
-            .unwrap()
-            .try_lock(request)
-            .unwrap();
+        let lock_use = plan.preflight_context().unwrap().try_lock(request).unwrap();
 
         plan.acquire_all(owner_id()).unwrap();
         {
@@ -2640,9 +2648,7 @@ mod tests {
 
         let (_, second_request) = request(2, 20, false, &events);
         assert!(matches!(
-            plan.preflight_context()
-                .unwrap()
-                .try_lock(second_request),
+            plan.preflight_context().unwrap().try_lock(second_request),
             Err(PrepareError::Capacity(CapacityError::LockLimit))
         ));
         assert_eq!(plan.len(), 1);
@@ -2658,10 +2664,7 @@ mod tests {
             panic_request(3, 3, true, false, &events),
             panic_request(4, 4, false, false, &events),
         ] {
-            plan.preflight_context()
-                .unwrap()
-                .try_lock(request)
-                .unwrap();
+            plan.preflight_context().unwrap().try_lock(request).unwrap();
         }
 
         assert!(catch_unwind(AssertUnwindSafe(|| plan.acquire_all(owner_id()))).is_err());
@@ -2691,10 +2694,7 @@ mod tests {
             panic_request(2, 2, false, true, &events),
             panic_request(3, 3, false, false, &events),
         ] {
-            plan.preflight_context()
-                .unwrap()
-                .try_lock(request)
-                .unwrap();
+            plan.preflight_context().unwrap().try_lock(request).unwrap();
         }
         plan.acquire_all(owner_id()).unwrap();
 

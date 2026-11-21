@@ -13,14 +13,14 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::{marker::PhantomData, ptr::NonNull, rc::Rc, sync::Arc};
 
 use crate::{
-    object::{InstallItem, NoPredicate, ObservationRef, PreflightItem, TObject},
     error::{
         AcquireError, AdapterFault, AdapterFaultKind, AdapterPhase, CapacityError, CheckError,
         PrepareError,
     },
     identity::{LockIdentity, OccCommitId, OwnerId, RuntimeId},
-    trans_item::TransItemData,
     lock::{AcquireContext, LockDisposition, LockRequest, ReleaseContext, TransactionLock},
+    object::{InstallItem, NoPredicate, ObservationRef, PreflightItem, TObject},
+    trans_item::TransItemData,
     transaction::{DirectCommitContext, DirectCommitStepFailure},
 };
 
@@ -201,9 +201,7 @@ impl<T: Copy> BorrowedLockToken<T> {
 /// The operation type remains concrete after the erased plan entry, so
 /// preparation and installation can inline without replacing core's guard
 /// ownership, failure recovery, or capability certification contracts.
-pub trait BorrowedTokenCommitOperations<A: TObject, L: DirectTokenLock>:
-    Sync + 'static
-{
+pub trait BorrowedTokenCommitOperations<A: TObject, L: DirectTokenLock>: Sync + 'static {
     fn prepare(
         &self,
         adapter: &A,
@@ -631,7 +629,11 @@ pub(crate) trait ErasedDirectCommitPlan<A: TObject> {
         runtime_id: RuntimeId,
         max_locks: usize,
     ) -> Result<(), PrepareError>;
-    fn acquire_all(&mut self, items: &[TransItemData<A>], owner: OwnerId) -> Result<(), AcquireError>;
+    fn acquire_all(
+        &mut self,
+        items: &[TransItemData<A>],
+        owner: OwnerId,
+    ) -> Result<(), AcquireError>;
     fn validate(
         &self,
         items: &[TransItemData<A>],
@@ -934,9 +936,7 @@ impl<A: TObject, L: TransactionLock> UniqueLockCommitPlan<A, L> {
     }
 }
 
-impl<A: TObject, L: TransactionLock> sealed::Capability<A>
-    for UniqueLockCommitCapability<A, L>
-{
+impl<A: TObject, L: TransactionLock> sealed::Capability<A> for UniqueLockCommitCapability<A, L> {
     fn create_plan(
         &'static self,
         public: &'static DirectCommitCapability<A>,
@@ -945,9 +945,7 @@ impl<A: TObject, L: TransactionLock> sealed::Capability<A>
     }
 }
 
-impl<A: TObject, L: TransactionLock> ErasedDirectCommitPlan<A>
-    for UniqueLockCommitPlan<A, L>
-{
+impl<A: TObject, L: TransactionLock> ErasedDirectCommitPlan<A> for UniqueLockCommitPlan<A, L> {
     fn run_single_item_direct(
         &mut self,
         items: &mut [TransItemData<A>; 1],
@@ -1079,7 +1077,11 @@ impl<A: TObject, L: TransactionLock> ErasedDirectCommitPlan<A>
         Ok(())
     }
 
-    fn acquire_all(&mut self, _items: &[TransItemData<A>], owner: OwnerId) -> Result<(), AcquireError> {
+    fn acquire_all(
+        &mut self,
+        _items: &[TransItemData<A>],
+        owner: OwnerId,
+    ) -> Result<(), AcquireError> {
         if self.state != PlanState::Planning || self.callback_in_progress.is_some() {
             return Err(AdapterFault::invariant(AdapterPhase::Acquire).into());
         }
@@ -1585,7 +1587,11 @@ impl<A: DirectBorrowedLockTarget<L>, L: TransactionLock> ErasedDirectCommitPlan<
         Ok(())
     }
 
-    fn acquire_all(&mut self, items: &[TransItemData<A>], owner: OwnerId) -> Result<(), AcquireError> {
+    fn acquire_all(
+        &mut self,
+        items: &[TransItemData<A>],
+        owner: OwnerId,
+    ) -> Result<(), AcquireError> {
         if self.state != PlanState::Planning || self.callback_in_progress.is_some() {
             return Err(AdapterFault::invariant(AdapterPhase::Acquire).into());
         }
@@ -2175,7 +2181,11 @@ impl<
         Ok(())
     }
 
-    fn acquire_all(&mut self, items: &[TransItemData<A>], owner: OwnerId) -> Result<(), AcquireError> {
+    fn acquire_all(
+        &mut self,
+        items: &[TransItemData<A>],
+        owner: OwnerId,
+    ) -> Result<(), AcquireError> {
         if self.state != PlanState::Planning {
             return Err(AdapterFault::invariant(AdapterPhase::Acquire).into());
         }

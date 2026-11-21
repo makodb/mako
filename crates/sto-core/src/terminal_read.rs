@@ -3,9 +3,9 @@
 use std::{any::Any, marker::PhantomData, rc::Rc};
 
 use crate::{
-    object::{TerminalReadBatchCapability, TObject},
     error::{AccessError, AdapterFault, AdapterPhase, CapacityError, CheckError, InvalidUse},
     lock::PreflightFreeValidationContext,
+    object::{TObject, TerminalReadBatchCapability},
     runtime::RegisteredResource,
 };
 

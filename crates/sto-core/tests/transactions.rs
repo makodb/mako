@@ -10,12 +10,12 @@ use std::{
 };
 
 use sto_core::{
-    AccessError, Active, CapacityError, CheckError, CommitOutcome, Conflict, TransProxy,
-    ExecutionCheckContext, CleanupContext, CleanupDisposition, CleanupItem, InstallContext,
-    InstallItem, InvalidUse, ItemBatchControl, ItemBatchOutcome, ItemInitError, NoPredicate,
-    ObservationOrder, ObservationRef, OpacityToken, PredicateContext, LockContext,
-    PreflightItem, PrepareError, ResourceClass, Runtime, RuntimeConfig, RuntimeHealth, Transaction,
-    TObject, TxnCell, UniqueItemKeyIndex, UniqueItemKeys, ValidationContext,
+    AccessError, Active, CapacityError, CheckError, CleanupContext, CleanupDisposition,
+    CleanupItem, CommitOutcome, Conflict, ExecutionCheckContext, InstallContext, InstallItem,
+    InvalidUse, ItemBatchControl, ItemBatchOutcome, ItemInitError, LockContext, NoPredicate,
+    ObservationOrder, ObservationRef, OpacityToken, PredicateContext, PreflightItem, PrepareError,
+    ResourceClass, Runtime, RuntimeConfig, RuntimeHealth, TObject, TransProxy, Transaction,
+    TxnCell, UniqueItemKeyIndex, UniqueItemKeys, ValidationContext,
 };
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
@@ -274,9 +274,11 @@ fn full_key_equality_survives_hash_collisions_and_reuses_items() {
 
     for key in [CollisionKey(1), CollisionKey(2), CollisionKey(1)] {
         transaction
-            .with_item(&resource, key, |_entry: &mut TransProxy<'_, FixtureAdapter>| {
-                Ok(())
-            })
+            .with_item(
+                &resource,
+                key,
+                |_entry: &mut TransProxy<'_, FixtureAdapter>| Ok(()),
+            )
             .unwrap();
     }
     assert_eq!(initialized.load(Ordering::Relaxed), 2);
@@ -291,9 +293,11 @@ fn full_key_equality_survives_hash_collisions_and_reuses_items() {
     let mut transaction = worker.begin().unwrap();
     for key in [CollisionKey(2), CollisionKey(3), CollisionKey(2)] {
         transaction
-            .with_item(&resource, key, |_entry: &mut TransProxy<'_, FixtureAdapter>| {
-                Ok(())
-            })
+            .with_item(
+                &resource,
+                key,
+                |_entry: &mut TransProxy<'_, FixtureAdapter>| Ok(()),
+            )
             .unwrap();
     }
     assert_eq!(initialized.load(Ordering::Relaxed), 4);

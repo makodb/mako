@@ -14,9 +14,7 @@ use crate::durability::{
 use crate::record::{Kind, Record};
 use crate::table::EntryTable;
 use crate::value::Entry;
-use crate::{
-    place, BlobOp, Blobs, CacheLine, Config, CopyOutcome, EntryWord, KeyIndex, Version,
-};
+use crate::{place, BlobOp, Blobs, CacheLine, Config, CopyOutcome, EntryWord, KeyIndex, Version};
 
 /// What a write did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -471,11 +469,7 @@ impl<K: KeyIndex, B: Blobs> Store<K, B> {
     }
 
     /// The slice flavour of the non-resident path.
-    fn fill_into_slice(
-        &self,
-        key: &[u8],
-        out: &mut [u8],
-    ) -> Result<CopyOutcome, crate::BlobError> {
+    fn fill_into_slice(&self, key: &[u8], out: &mut [u8]) -> Result<CopyOutcome, crate::BlobError> {
         let Some(word) = self.index.get(key) else {
             return Ok(CopyOutcome::Absent);
         };

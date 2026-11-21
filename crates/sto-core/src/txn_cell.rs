@@ -32,19 +32,19 @@ use std::sync::Arc;
 
 use arc_swap::ArcSwap;
 
-use crate::object::{
-    CleanupDisposition, CleanupItem, InstallItem, NoPredicate, ObservationOrder, OpacityToken,
-    PreflightItem, TObject,
-};
 use crate::error::{
     AccessError, AcquireError, AdapterFault, AdapterFaultKind, AdapterPhase, CheckError, Conflict,
     ItemInitError, PrepareError, RegistrationError,
 };
 use crate::identity::{LockClass, LockIdentity, LockNamespaceId, OccVersion, ResourceClass};
 use crate::lock::{
-    AcquireContext, ExecutionCheckContext, CleanupContext, InstallContext, LockDisposition,
-    LockRequest, LockUse, PredicateContext, LockContext, ReleaseContext, TransactionLock,
+    AcquireContext, CleanupContext, ExecutionCheckContext, InstallContext, LockContext,
+    LockDisposition, LockRequest, LockUse, PredicateContext, ReleaseContext, TransactionLock,
     ValidationContext,
+};
+use crate::object::{
+    CleanupDisposition, CleanupItem, InstallItem, NoPredicate, ObservationOrder, OpacityToken,
+    PreflightItem, TObject,
 };
 use crate::runtime::{RegisteredResource, Runtime};
 use crate::version::{AtomicVersion, DetachedVersionGuard};
@@ -376,8 +376,8 @@ impl<T: Clone + Send + Sync + 'static> TObject for CellAdapter<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::object::ObservationRef;
     use crate::error::{AbortReason, CommitOutcome};
+    use crate::object::ObservationRef;
     use crate::runtime::RuntimeConfig;
 
     fn assert_send_sync<T: Send + Sync>() {}

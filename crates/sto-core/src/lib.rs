@@ -7,13 +7,13 @@
 //! and commit callbacks. This crate is native Rust and is not translated into
 //! C++.
 
-pub mod object;
 pub mod direct_commit;
 pub mod error;
 pub mod hook;
 pub mod identity;
 pub mod legacy_tid;
 pub mod lock;
+pub mod object;
 pub mod runtime;
 pub mod transaction;
 pub mod txn_array;
@@ -24,15 +24,9 @@ pub mod version;
 #[cfg(feature = "test-install-observer")]
 pub mod test_install;
 
-mod trans_item;
 mod terminal_read;
+mod trans_item;
 
-pub use object::{
-    CommitVersionRequirement, CleanupDisposition, CleanupItem, InstallItem, NoPredicate,
-    ObservationOrder, ObservationRef, OpacityToken, PreflightFreeReadCapability,
-    PreflightFreeReadCleanup, PreflightFreeReadValidate, PreflightItem, ResourceKey,
-    TerminalReadBatchCapability, TerminalReadBatchValidate, TObject,
-};
 pub use direct_commit::{
     BorrowedDirectPrepare, BorrowedInjectiveLockCommitCapability, BorrowedLockToken,
     BorrowedTokenCommitOperations, BorrowedUniqueLockCommitCapability, DirectBorrowedLockTarget,
@@ -43,17 +37,23 @@ pub use direct_commit::{
 pub use error::*;
 pub use hook::{CommitHook, CommitHookError};
 pub use identity::*;
-pub use trans_item::TransProxy;
 pub use lock::{
-    AcquireContext, ErasedLockUse, ExecutionCheckContext, CleanupContext, InstallContext,
-    LockDisposition, LockRequest, LockUse, PredicateContext, LockContext,
+    AcquireContext, CleanupContext, ErasedLockUse, ExecutionCheckContext, InstallContext,
+    LockContext, LockDisposition, LockRequest, LockUse, PredicateContext,
     PreflightFreeValidationContext, ReleaseContext, TransactionLock, ValidationContext,
+};
+pub use object::{
+    CleanupDisposition, CleanupItem, CommitVersionRequirement, InstallItem, NoPredicate,
+    ObservationOrder, ObservationRef, OpacityToken, PreflightFreeReadCapability,
+    PreflightFreeReadCleanup, PreflightFreeReadValidate, PreflightItem, ResourceKey, TObject,
+    TerminalReadBatchCapability, TerminalReadBatchValidate,
 };
 pub use runtime::{
     IsolationMode, ObjectRegistration, RegisteredResource, Runtime, RuntimeConfig, RuntimeHealth,
     WorkerContext,
 };
 pub use terminal_read::TerminalReadProxy;
+pub use trans_item::TransProxy;
 pub use transaction::{
     Active, ItemBatchControl, ItemBatchOutcome, Participant, ParticipantError, ParticipantPhase,
     ResolvedItemSession, TerminalReadOpen, TerminalReadReady, TerminalReadTransaction, Transaction,

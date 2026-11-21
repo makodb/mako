@@ -11,7 +11,6 @@ use std::{
 };
 
 use crate::{
-    object::{CleanupDisposition, ResourceKey, TerminalReadBatchCapability, TObject},
     error::{
         AbortInfo, AbortReason, AccessError, AcquireError, AdapterFault, AdapterPhase, BeginError,
         CheckError, CommitFailure, CommitInfo, CommitOutcome, DefiniteOutcome, FailurePhase,
@@ -19,14 +18,16 @@ use crate::{
         Unsupported,
     },
     hook::{CommitHook, CommitHookError},
-    trans_item::{
-        BatchFinishStage, TransProxy, ErasedItem, ErasedItemBatch, TransItem, TransItemData, TypedTransItemBatch,
-    },
     lock::{
         CleanupContext, LockDisposition, LockPlan, LockPlanStorage, PreflightFreeValidationContext,
     },
+    object::{CleanupDisposition, ResourceKey, TObject, TerminalReadBatchCapability},
     runtime::{IsolationMode, RegisteredResource, Runtime, WorkerContext},
     terminal_read::{ErasedTerminalReadBatch, TerminalReadProxy, TypedTerminalReadBatch},
+    trans_item::{
+        BatchFinishStage, ErasedItem, ErasedItemBatch, TransItem, TransItemData, TransProxy,
+        TypedTransItemBatch,
+    },
 };
 
 #[path = "direct_protocol.rs"]
@@ -1294,10 +1295,13 @@ impl<'worker> TerminalReadTransaction<'worker, TerminalReadOpen> {
 impl<'worker> Transaction<'worker, Active> {
     /// Retains this exact frame for incremental distributed participant work.
     pub fn into_participant(mut self) -> Participant<'worker> {
-        let frame = self.take_owned_frame()
+        let frame = self
+            .take_owned_frame()
             .expect("a borrowed participant operation cannot transfer ownership");
         Participant::new(
-            self.worker.take().expect("active transaction retains worker"),
+            self.worker
+                .take()
+                .expect("active transaction retains worker"),
             frame,
         )
     }
@@ -1583,7 +1587,9 @@ impl<'worker> Transaction<'worker, Active> {
         hook: Option<&mut dyn CommitHook>,
     ) -> Result<CommitOutcome, CommitFailure> {
         let Some(frame) = self.take_owned_frame() else {
-            return Ok(CommitOutcome::Aborted(AbortReason::InvalidUse(InvalidUse::IllegalItemState)));
+            return Ok(CommitOutcome::Aborted(AbortReason::InvalidUse(
+                InvalidUse::IllegalItemState,
+            )));
         };
         let worker = self
             .worker
@@ -1612,7 +1618,11 @@ impl<'worker> Transaction<'worker, Active> {
     }
 
     fn take_owned_frame(&mut self) -> Option<Box<TransactionFrame>> {
-        match self.frame.take().expect("active transaction retains its frame") {
+        match self
+            .frame
+            .take()
+            .expect("active transaction retains its frame")
+        {
             TransactionFrameRef::Owned(frame) => Some(frame),
             TransactionFrameRef::Borrowed(frame) => {
                 frame.doomed = true;
@@ -2855,10 +2865,7 @@ fn initialize_local<A: TObject>(
 }
 
 #[inline]
-pub(crate) fn item_hash<A: TObject>(
-    resource: &RegisteredResource<A>,
-    key: &A::Key,
-) -> u64 {
+pub(crate) fn item_hash<A: TObject>(resource: &RegisteredResource<A>, key: &A::Key) -> u64 {
     let mut hasher = ItemHasher::for_resource(resource);
     key.hash(&mut hasher);
     hasher.finish()
@@ -2930,15 +2937,15 @@ mod frame_reuse_tests;
 mod item_index_tests {
     use super::{
         Active, ErasedTerminalReadBatch, ItemIndex, ItemIndexEntry, ItemIndexProbe,
-        TerminalReadFrame, TerminalReadScratch, Transaction, UniqueItemKeyIndex,
-        UniqueItemKeys, ValidatedBindings,
+        TerminalReadFrame, TerminalReadScratch, Transaction, UniqueItemKeyIndex, UniqueItemKeys,
+        ValidatedBindings,
     };
     use crate::{
-        AccessError, CapacityError, CheckError, ExecutionCheckContext, CleanupContext,
-        CleanupDisposition, CleanupItem, InstallContext, InstallItem, InvalidUse, ItemInitError,
-        NoPredicate, ObservationOrder, OpacityToken, PredicateContext, LockContext,
-        PreflightItem, PrepareError, RegisteredResource, ResourceClass, Runtime, RuntimeConfig,
-        TObject, TxnCell, ValidationContext,
+        AccessError, CapacityError, CheckError, CleanupContext, CleanupDisposition, CleanupItem,
+        ExecutionCheckContext, InstallContext, InstallItem, InvalidUse, ItemInitError, LockContext,
+        NoPredicate, ObservationOrder, OpacityToken, PredicateContext, PreflightItem, PrepareError,
+        RegisteredResource, ResourceClass, Runtime, RuntimeConfig, TObject, TxnCell,
+        ValidationContext,
     };
     use std::{
         num::NonZeroUsize,
@@ -3120,7 +3127,6 @@ mod item_index_tests {
         assert_eq!(std::mem::size_of::<ItemIndexEntry>(), 16);
         assert_eq!(std::mem::align_of::<ItemIndexEntry>(), 8);
     }
-
 
     #[test]
     fn validated_binding_cache_keeps_only_the_most_recent_binding() {
@@ -3503,7 +3509,8 @@ impl<'worker, 'hook> CommitDriver<'worker, 'hook> {
             return self.run_direct();
         }
 
-        let steps = self.lock_ordinary(false)
+        let steps = self
+            .lock_ordinary(false)
             .and_then(|()| self.certify_ordinary())
             .and_then(|()| self.install_ordinary(None, false));
         match steps {

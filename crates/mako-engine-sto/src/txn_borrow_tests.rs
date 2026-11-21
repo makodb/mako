@@ -108,7 +108,10 @@ struct CommitCleanupPanic(std::sync::Arc<AtomicBool>);
 
 impl Drop for CommitCleanupPanic {
     fn drop(&mut self) {
-        assert!(!self.0.swap(false, Ordering::AcqRel), "committed old-value cleanup panic");
+        assert!(
+            !self.0.swap(false, Ordering::AcqRel),
+            "committed old-value cleanup panic"
+        );
     }
 }
 
@@ -123,10 +126,16 @@ fn real_cleanup_panic_pins_original_for_abort_drop_operation_and_commit() {
             tx.put(&table, b"key", &[0xb9; 128]).unwrap();
             let original = tx.touched[0].value.as_ptr();
             if terminal == 3 {
-                let cell = sto_core::TxnCell::new(db.runtime_for_test(),
-                    CommitCleanupPanic(std::sync::Arc::new(AtomicBool::new(true)))).unwrap();
-                cell.set(tx.inner_mut(),
-                    CommitCleanupPanic(std::sync::Arc::new(AtomicBool::new(false)))).unwrap();
+                let cell = sto_core::TxnCell::new(
+                    db.runtime_for_test(),
+                    CommitCleanupPanic(std::sync::Arc::new(AtomicBool::new(true))),
+                )
+                .unwrap();
+                cell.set(
+                    tx.inner_mut(),
+                    CommitCleanupPanic(std::sync::Arc::new(AtomicBool::new(false))),
+                )
+                .unwrap();
             } else {
                 super::poison_tests::stage_cleanup_panic(&db, &mut tx);
             }
@@ -145,11 +154,19 @@ fn real_cleanup_panic_pins_original_for_abort_drop_operation_and_commit() {
                 }
                 _ => unreachable!(),
             }
-            assert_eq!(db.runtime_for_test().health(), sto_core::RuntimeHealth::Poisoned);
+            assert_eq!(
+                db.runtime_for_test().health(),
+                sto_core::RuntimeHealth::Poisoned
+            );
             // SAFETY: the failed cleanup may retain this core borrow forever;
             // the wrapper must pin its owner before any facade is destroyed.
-            assert_eq!(unsafe { std::slice::from_raw_parts(original, 128) }, [0xb9; 128]);
-        }).join().unwrap();
+            assert_eq!(
+                unsafe { std::slice::from_raw_parts(original, 128) },
+                [0xb9; 128]
+            );
+        })
+        .join()
+        .unwrap();
     }
 }
 

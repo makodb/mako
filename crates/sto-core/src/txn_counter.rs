@@ -34,18 +34,18 @@ use std::fmt;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
-use crate::object::{
-    CleanupDisposition, CleanupItem, InstallItem, NoPredicate, ObservationOrder, ObservationRef,
-    OpacityToken, PreflightItem, TObject,
-};
 use crate::error::{
     AccessError, AdapterFault, AdapterFaultKind, AdapterPhase, CheckError, Conflict, ItemInitError,
     PrepareError, RegistrationError,
 };
 use crate::identity::{LockClass, LockIdentity, LockNamespaceId, OccVersion, ResourceClass};
 use crate::lock::{
-    ExecutionCheckContext, CleanupContext, InstallContext, LockRequest, LockUse, PredicateContext,
-    LockContext, ValidationContext,
+    CleanupContext, ExecutionCheckContext, InstallContext, LockContext, LockRequest, LockUse,
+    PredicateContext, ValidationContext,
+};
+use crate::object::{
+    CleanupDisposition, CleanupItem, InstallItem, NoPredicate, ObservationOrder, ObservationRef,
+    OpacityToken, PreflightItem, TObject,
 };
 use crate::runtime::{RegisteredResource, Runtime};
 use crate::txn_cell::VersionLock;

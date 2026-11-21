@@ -21,11 +21,17 @@ pub struct ReadVisibility {
 
 impl ReadVisibility {
     pub const fn latest(current_term: DistributedTerm) -> Self {
-        Self { current_term, stable_through: [None; 10], failed_shard_through: None }
+        Self {
+            current_term,
+            stable_through: [None; 10],
+            failed_shard_through: None,
+        }
     }
 
     fn visible(self, metadata: Option<DistributedTimeTerm>) -> bool {
-        let Some(metadata) = metadata else { return true };
+        let Some(metadata) = metadata else {
+            return true;
+        };
         metadata.term() == self.current_term
             || self.stable_through[usize::from(metadata.term().get())]
                 .is_none_or(|watermark| metadata.timestamp().get() <= watermark)
@@ -84,7 +90,9 @@ impl Table {
     /// new head and the prior prefix at or above the floor, cutting the first
     /// older node and its tail. Existing owned snapshots remain unchanged.
     pub fn advance_history_retention_floor(&self, floor: DistributedTimestamp) {
-        self.shared().history_retention_floor.fetch_max(floor.get(), Ordering::AcqRel);
+        self.shared()
+            .history_retention_floor
+            .fetch_max(floor.get(), Ordering::AcqRel);
     }
 
     /// Reads a selected historical value and its own dependency metadata.
@@ -119,9 +127,13 @@ impl Table {
         visibility: ReadVisibility,
     ) -> Result<VersionedRead, AccessError> {
         let adapter = self.record_resource.adapter();
-        self.with_key_record_lookup(txn, worker, key, || self.shared().lookup(worker, key), |entry, access| {
-            adapter.selected_version(access, entry, visibility)
-        })
+        self.with_key_record_lookup(
+            txn,
+            worker,
+            key,
+            || self.shared().lookup(worker, key),
+            |entry, access| adapter.selected_version(access, entry, visibility),
+        )
     }
 
     /// Scans physical records through the normal directory/predicate machinery,
@@ -144,21 +156,41 @@ impl Table {
         visibility: ReadVisibility,
     ) -> Result<VersionedScan, AccessError> {
         let adapter = self.record_resource.adapter();
-        let mut result = VersionedScan { rows: Vec::new(), dependency: None };
+        let mut result = VersionedScan {
+            rows: Vec::new(),
+            dependency: None,
+        };
         let mut scratch = ScanScratch::default();
-        self.visit_scan_records(txn, worker, request, &mut scratch, &mut |key, entry, access| {
-            let selected = adapter.selected_version(access, entry, visibility)?;
-            if let Some(metadata) = selected.metadata {
-                result.dependency = Some(result.dependency.map_or(metadata.timestamp(), |old| old.max(metadata.timestamp())));
-            }
-            let Some(value) = selected.value else { return Ok(None) };
-            result.rows.try_reserve(1).map_err(|_| AccessError::from(CapacityError::BufferLimit))?;
-            result.rows.push(VersionedScanRecord {
-                key: Arc::from(key), value, metadata: selected.metadata,
-                resolved: self.mint_resolved(access.record_id),
-            });
-            Ok(Some(ScanControl::Continue))
-        })?;
+        self.visit_scan_records(
+            txn,
+            worker,
+            request,
+            &mut scratch,
+            &mut |key, entry, access| {
+                let selected = adapter.selected_version(access, entry, visibility)?;
+                if let Some(metadata) = selected.metadata {
+                    result.dependency = Some(
+                        result
+                            .dependency
+                            .map_or(metadata.timestamp(), |old| old.max(metadata.timestamp())),
+                    );
+                }
+                let Some(value) = selected.value else {
+                    return Ok(None);
+                };
+                result
+                    .rows
+                    .try_reserve(1)
+                    .map_err(|_| AccessError::from(CapacityError::BufferLimit))?;
+                result.rows.push(VersionedScanRecord {
+                    key: Arc::from(key),
+                    value,
+                    metadata: selected.metadata,
+                    resolved: self.mint_resolved(access.record_id),
+                });
+                Ok(Some(ScanControl::Continue))
+            },
+        )?;
         Ok(result)
     }
 
@@ -189,29 +221,45 @@ impl Table {
         source: DistributedTimeTerm,
     ) -> Result<bool, AccessError> {
         let adapter = self.record_resource.adapter();
-        self.with_key_record_lookup(txn, worker, key, || self.shared().lookup(worker, key), |entry, access| {
-            if !adapter.table.registry.config.distributed_history {
-                return Err(table_fault("replay requires distributed history mode"));
-            }
-            let selected = adapter.selected_version(access, entry, ReadVisibility::latest(source.term()))?;
-            if let Some(old) = selected.metadata {
-                if source.term() <= old.term() && source.timestamp() <= old.timestamp() {
-                    return Ok(false);
+        self.with_key_record_lookup(
+            txn,
+            worker,
+            key,
+            || self.shared().lookup(worker, key),
+            |entry, access| {
+                if !adapter.table.registry.config.distributed_history {
+                    return Err(table_fault("replay requires distributed history mode"));
                 }
-            }
-            let replacement = value.map_or(RecordState::Tombstone, RecordState::Live);
-            match entry.intent_mut() {
-                Some(TableIntent::Replay(replay)) => {
-                    replay.replacement = replacement;
-                    replay.source = source;
+                let selected = adapter.selected_version(
+                    access,
+                    entry,
+                    ReadVisibility::latest(source.term()),
+                )?;
+                if let Some(old) = selected.metadata {
+                    if source.term() <= old.term() && source.timestamp() <= old.timestamp() {
+                        return Ok(false);
+                    }
                 }
-                Some(intent) => {
-                    *intent = TableIntent::Replay(Box::new(ReplayIntent { replacement, source }));
+                let replacement = value.map_or(RecordState::Tombstone, RecordState::Live);
+                match entry.intent_mut() {
+                    Some(TableIntent::Replay(replay)) => {
+                        replay.replacement = replacement;
+                        replay.source = source;
+                    }
+                    Some(intent) => {
+                        *intent = TableIntent::Replay(Box::new(ReplayIntent {
+                            replacement,
+                            source,
+                        }));
+                    }
+                    None => entry.add_write(TableIntent::Replay(Box::new(ReplayIntent {
+                        replacement,
+                        source,
+                    })))?,
                 }
-                None => entry.add_write(TableIntent::Replay(Box::new(ReplayIntent { replacement, source })))?,
-            }
-            Ok(true)
-        })
+                Ok(true)
+            },
+        )
     }
 }
 
@@ -229,14 +277,21 @@ impl TableAdapter {
         if let Some(intent) = entry.intent() {
             let source = intent.source();
             visibility.certify(source)?;
-            return Ok(VersionedRead { value: intent.record_state().value().cloned(), metadata: source });
+            return Ok(VersionedRead {
+                value: intent.record_state().value().cloned(),
+                metadata: source,
+            });
         }
         let head = if self.table.registry.config.distributed_history {
             access.record.state.shared.load_full()
-        } else { None };
+        } else {
+            None
+        };
         let observed = match entry.observation() {
             ObservationRef::Read(TableObservation::Record(observation))
-            | ObservationRef::UpgradedPredicate(TableObservation::Record(observation)) => observation.version,
+            | ObservationRef::UpgradedPredicate(TableObservation::Record(observation)) => {
+                observation.version
+            }
             _ => return Err(table_fault("versioned read has no OCC observation")),
         };
         if !access.record.version.validate(observed) {
@@ -246,7 +301,10 @@ impl TableAdapter {
         while let Some(SharedValue::Distributed(version)) = cursor {
             if visibility.visible(version.metadata) {
                 visibility.certify(version.metadata)?;
-                return Ok(VersionedRead { value: version.state.value().cloned(), metadata: version.metadata });
+                return Ok(VersionedRead {
+                    value: version.state.value().cloned(),
+                    metadata: version.metadata,
+                });
             }
             cursor = version.previous.as_deref();
         }
@@ -260,7 +318,10 @@ impl TableAdapter {
             RecordState::Live(value) => Some(value),
             RecordState::Tombstone => None,
         };
-        Ok(VersionedRead { value, metadata: None })
+        Ok(VersionedRead {
+            value,
+            metadata: None,
+        })
     }
 }
 
@@ -298,26 +359,43 @@ pub(super) fn publish_distributed_if_needed(
             CommittedStateLoad::Incomplete(message) => panic!("{message}"),
         };
         Some(Arc::new(SharedValue::Distributed(DistributedVersion {
-            state, metadata: None, previous: None, pruned_through: 0,
+            state,
+            metadata: None,
+            previous: None,
+            pruned_through: 0,
         })))
     };
     // A legacy get may return a Value owning the whole history node. Retain
     // just its immutable payload rather than nesting another history in it.
     let state = match replacement {
-        RecordState::Live(Value { repr: ValueRepr::Shared(value) }) => match value.as_ref() {
+        RecordState::Live(Value {
+            repr: ValueRepr::Shared(value),
+        }) => match value.as_ref() {
             SharedValue::Distributed(version) => version.state.clone(),
             _ => replacement.clone(),
         },
         _ => replacement.clone(),
     };
-    let descriptor = if state.is_live() { RECORD_STATE_SHARED } else { RECORD_STATE_DISTRIBUTED_TOMBSTONE };
+    let descriptor = if state.is_live() {
+        RECORD_STATE_SHARED
+    } else {
+        RECORD_STATE_DISTRIBUTED_TOMBSTONE
+    };
     let version = Arc::new(SharedValue::Distributed(DistributedVersion {
-        state, metadata, previous, pruned_through: retention_floor,
+        state,
+        metadata,
+        previous,
+        pruned_through: retention_floor,
     }));
     let mut publication = access.record.state.begin_publication(table, access.stable);
-    publication.table.advance_scan_generation_for_commit(owner, commit_id);
+    publication
+        .table
+        .advance_scan_generation_for_commit(owner, commit_id);
     publication.state.shared.store(Some(version));
-    publication.state.tail_and_descriptor.store(pack_record_state_word(descriptor, 0), Ordering::Release);
+    publication
+        .state
+        .tail_and_descriptor
+        .store(pack_record_state_word(descriptor, 0), Ordering::Release);
     publication.completed = true;
     true
 }
@@ -331,7 +409,9 @@ fn prune_history(previous: Option<Arc<SharedValue>>, floor: u32) -> Option<Arc<S
     let Some(SharedValue::Distributed(head)) = previous.as_deref() else {
         return previous;
     };
-    let head_base = head.metadata.map_or(0, |metadata| metadata.timestamp().get());
+    let head_base = head
+        .metadata
+        .map_or(0, |metadata| metadata.timestamp().get());
     if head_base < floor {
         return None;
     }
@@ -345,7 +425,11 @@ fn prune_history(previous: Option<Arc<SharedValue>>, floor: u32) -> Option<Arc<S
     let mut cursor = previous.as_deref();
     let mut cutoff = false;
     while let Some(SharedValue::Distributed(version)) = cursor {
-        if version.metadata.map_or(0, |metadata| metadata.timestamp().get()) < floor {
+        if version
+            .metadata
+            .map_or(0, |metadata| metadata.timestamp().get())
+            < floor
+        {
             cutoff = true;
             break;
         }

@@ -27,8 +27,8 @@ mod registry_growth_tests;
 mod local_version_tests;
 
 mod distributed;
+use distributed::{publish_distributed_if_needed, DistributedVersion};
 pub use distributed::{ReadVisibility, VersionedRead, VersionedScan, VersionedScanRecord};
-use distributed::{DistributedVersion, publish_distributed_if_needed};
 use mako_clock::distributed::DistributedTimeTerm;
 
 #[cfg(feature = "fixed-u64")]
@@ -70,19 +70,19 @@ pub use masstree::{KeyBound as ScanBound, ScanDirection};
 use sto_core::{
     AccessError, AcquireContext, AcquireError, Active, AdapterFault, AdapterFaultKind,
     AdapterPhase, AtomicVersion, BorrowedInjectiveLockCommitCapability, BorrowedLockToken,
-    BorrowedTokenCommitOperations, CapacityError, CheckError, CommitVersionRequirement, Conflict,
-    DetachedVersionGuard, DirectBorrowedLockTarget, DirectCommitCapability, DirectInstallContext,
-    DirectLockMut, DirectLockRef, DirectTokenLock, DirectValidationContext, DirectValidationItem,
-    TransProxy, ErasedLockUse, ExecutionCheckContext, CleanupContext, CleanupDisposition, CleanupItem,
-    InstallContext, InstallItem, InvalidUse, ItemBatchControl, ItemBatchOutcome, LockClass,
-    LockDisposition, LockIdentity, LockNamespaceId, LockRequest, NoPredicate, ObjectId,
-    ObjectRegistration, ObservationOrder, ObservationRef, OccCommitId, OccVersion, OpacityToken,
-    OwnerId, PredicateContext, LockContext, PreflightFreeReadCapability,
+    BorrowedTokenCommitOperations, CapacityError, CheckError, CleanupContext, CleanupDisposition,
+    CleanupItem, CommitVersionRequirement, Conflict, DetachedVersionGuard,
+    DirectBorrowedLockTarget, DirectCommitCapability, DirectInstallContext, DirectLockMut,
+    DirectLockRef, DirectTokenLock, DirectValidationContext, DirectValidationItem, ErasedLockUse,
+    ExecutionCheckContext, InstallContext, InstallItem, InvalidUse, ItemBatchControl,
+    ItemBatchOutcome, LockClass, LockContext, LockDisposition, LockIdentity, LockNamespaceId,
+    LockRequest, NoPredicate, ObjectId, ObjectRegistration, ObservationOrder, ObservationRef,
+    OccCommitId, OccVersion, OpacityToken, OwnerId, PredicateContext, PreflightFreeReadCapability,
     PreflightFreeValidationContext, PreflightItem, PrepareError, RegisteredResource,
-    RegistrationError, ReleaseContext, ResourceClass, Runtime, RuntimeId,
+    RegistrationError, ReleaseContext, ResourceClass, Runtime, RuntimeId, TObject,
     TerminalReadBatchCapability, TerminalReadOpen, TerminalReadReady, TerminalReadTransaction,
-    Transaction, TransactionLock, TObject, UniqueItemKeyIndex, UniqueItemKeys,
-    Unsupported, ValidationContext,
+    TransProxy, Transaction, TransactionLock, UniqueItemKeyIndex, UniqueItemKeys, Unsupported,
+    ValidationContext,
 };
 #[cfg(not(test))]
 use sto_core::{FailurePhase, PoisonInfo};
@@ -9220,10 +9220,12 @@ impl CommittedRecordState {
                 live: false,
                 shared: false,
             }),
-            RECORD_STATE_DISTRIBUTED_TOMBSTONE => CommittedStateMetadataLoad::Complete(RecordStateMetadata {
-                live: false,
-                shared: true,
-            }),
+            RECORD_STATE_DISTRIBUTED_TOMBSTONE => {
+                CommittedStateMetadataLoad::Complete(RecordStateMetadata {
+                    live: false,
+                    shared: true,
+                })
+            }
             RECORD_STATE_SHARED => CommittedStateMetadataLoad::Complete(RecordStateMetadata {
                 live: true,
                 shared: true,
@@ -10230,8 +10232,12 @@ fn install_direct_record(
     let replacement = item.intent().record_state();
     if adapter.table.registry.config.distributed_history
         && publish_distributed_if_needed(
-            publication_access, adapter.table.as_ref(), replacement,
-            item.intent().source().or(cx.distributed_time_term()), owner, commit_id,
+            publication_access,
+            adapter.table.as_ref(),
+            replacement,
+            item.intent().source().or(cx.distributed_time_term()),
+            owner,
+            commit_id,
         )
     {
         return;
@@ -11069,7 +11075,8 @@ impl TObject for TableAdapter {
             }
             _ => false,
         };
-        let intent_matches = item.take_remaining_intent()
+        let intent_matches = item
+            .take_remaining_intent()
             .is_none_or(|_| self.role == AdapterRole::Record);
         if !(local_matches && intent_matches) {
             self.table.poison();
@@ -11237,8 +11244,12 @@ impl TableAdapter {
         let replacement = item.intent().record_state();
         if self.table.registry.config.distributed_history
             && publish_distributed_if_needed(
-                publication_access, self.table.as_ref(), replacement,
-                item.intent().source().or(distributed_time_term), owner, commit_id,
+                publication_access,
+                self.table.as_ref(),
+                replacement,
+                item.intent().source().or(distributed_time_term),
+                owner,
+                commit_id,
             )
         {
             return;
@@ -14969,7 +14980,9 @@ mod tests {
                         assert!(length > SHARED_INLINE_VALUE_CAPACITY);
                         assert_eq!(heap, &bytes);
                     }
-                    SharedValue::Distributed(_) => panic!("plain value constructor created history"),
+                    SharedValue::Distributed(_) => {
+                        panic!("plain value constructor created history")
+                    }
                 }
             }
         }
