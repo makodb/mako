@@ -300,7 +300,7 @@ impl Drop for Slot {
 mod tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, AtomicUsize};
-    use std::sync::Arc;
+    use std::time::{Duration, Instant};
 
     /// Every version carries its own version number as the payload, so a
     /// reader can tell a torn or recycled record from a valid one.
@@ -373,36 +373,78 @@ mod tests {
 
     /// The property the epoch exists for: readers never observe a freed or
     /// half-recycled record while writers displace them continuously.
+    ///
+    /// The writer keeps going until every reader has seen the published
+    /// version change `MIN_CHANGES_SEEN` times. A fixed number of writes
+    /// does not make the two sides overlap: on one busy CPU the writer can
+    /// finish all of them before a reader is first scheduled.
+    ///
+    /// `GIVE_UP` is far longer than a starved reader needs. It is there so
+    /// that a defect which hides the writes from a reader fails the test
+    /// instead of hanging it.
     #[test]
     fn concurrent_readers_and_writers_never_see_a_broken_record() {
-        const WRITES: u64 = 512;
-        let slot = Arc::new(Slot::new(versioned(0)));
-        let stop = Arc::new(AtomicBool::new(false));
-        let reads = Arc::new(AtomicUsize::new(0));
+        const READERS: usize = 3;
+        const WRITE_BURST: u64 = 512;
+        const MIN_CHANGES_SEEN: usize = 4;
+        const GIVE_UP: Duration = Duration::from_secs(60);
+        let slot = Slot::new(versioned(0));
+        let stop = AtomicBool::new(false);
+        let changes_seen: [AtomicUsize; READERS] = std::array::from_fn(|_| AtomicUsize::new(0));
+        let mut written = 0;
 
         std::thread::scope(|scope| {
-            for _ in 0..3 {
-                let slot = Arc::clone(&slot);
-                let stop = Arc::clone(&stop);
-                let reads = Arc::clone(&reads);
-                scope.spawn(move || {
-                    while !stop.load(Ordering::Relaxed) {
-                        assert_intact(&slot.load());
-                        slot.with_value(assert_intact);
-                        reads.fetch_add(1, Ordering::Relaxed);
-                    }
-                });
-            }
-            for version in 1..=WRITES {
-                slot.with_slot(|_| (Some(versioned(version)), ()));
+            let readers: Vec<_> = changes_seen
+                .iter()
+                .map(|seen| {
+                    let (slot, stop) = (&slot, &stop);
+                    scope.spawn(move || {
+                        let mut last = 0;
+                        while !stop.load(Ordering::Relaxed) {
+                            assert_intact(&slot.load());
+                            let version = slot.with_value(|record| {
+                                assert_intact(record);
+                                record.version()
+                            });
+                            assert!(version >= last, "the published version went backwards");
+                            if version != last {
+                                last = version;
+                                seen.fetch_add(1, Ordering::Relaxed);
+                            }
+                        }
+                    })
+                })
+                .collect();
+            let started = Instant::now();
+            loop {
+                // Back-to-back writes, with nothing else in the loop: a
+                // reclamation defect shows only when a block is freed and
+                // reused inside a reader's window.
+                for _ in 0..WRITE_BURST {
+                    written += 1;
+                    slot.with_slot(|_| (Some(versioned(written)), ()));
+                }
+                // A reader returns before `stop` only by panicking. Stop
+                // writing then, so the scope can report the panic.
+                if readers.iter().any(|reader| reader.is_finished()) {
+                    break;
+                }
+                let every_reader_overlapped = changes_seen
+                    .iter()
+                    .all(|seen| seen.load(Ordering::Relaxed) >= MIN_CHANGES_SEEN);
+                if every_reader_overlapped || started.elapsed() > GIVE_UP {
+                    break;
+                }
             }
             stop.store(true, Ordering::Relaxed);
         });
 
-        assert!(
-            reads.load(Ordering::Relaxed) > 0,
-            "the readers must actually have run"
-        );
-        assert_eq!(slot.load().version(), WRITES);
+        assert_eq!(slot.load().version(), written);
+        for seen in &changes_seen {
+            assert!(
+                seen.load(Ordering::Relaxed) >= MIN_CHANGES_SEEN,
+                "a reader did not see the writer's records change"
+            );
+        }
     }
 }
