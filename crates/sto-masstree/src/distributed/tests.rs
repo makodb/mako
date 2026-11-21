@@ -39,6 +39,26 @@ fn replay(
     commit(txn);
 }
 
+/// Runs `f` with a second worker of `runtime`, on a thread of its own.
+///
+/// A runtime accepts one attached worker per thread, so a test that needs a
+/// competing worker cannot attach it on the test thread.
+fn on_second_worker<R: Send>(
+    runtime: &Arc<Runtime>,
+    f: impl FnOnce(&mut WorkerContext) -> R + Send,
+) -> R {
+    std::thread::scope(|scope| {
+        let second = scope.spawn(|| {
+            let mut worker = runtime.attach().unwrap();
+            f(&mut worker)
+        });
+        match second.join() {
+            Ok(result) => result,
+            Err(panic) => std::panic::resume_unwind(panic),
+        }
+    })
+}
+
 fn read(
     table: &Table,
     worker: &mut WorkerContext,
@@ -284,7 +304,6 @@ fn stale_replay_comparison_and_unsafe_failure_reads_abort() {
     for direct in [false, true] {
         let (runtime, table) = table(direct);
         let mut first = runtime.attach().unwrap();
-        let mut second = runtime.attach().unwrap();
         replay(&table, &mut first, b"key", Some(b"first"), decision(10, 0));
         let mut stale = first.begin().unwrap();
         assert!(table
@@ -296,13 +315,9 @@ fn stale_replay_comparison_and_unsafe_failure_reads_abort() {
                 decision(20, 0)
             )
             .unwrap());
-        replay(
-            &table,
-            &mut second,
-            b"key",
-            Some(b"winner"),
-            decision(30, 0),
-        );
+        on_second_worker(&runtime, |second| {
+            replay(&table, second, b"key", Some(b"winner"), decision(30, 0));
+        });
         assert!(matches!(stale.commit(), Ok(CommitOutcome::Aborted(_))));
         let mut policy = ReadVisibility::latest(decision(1, 0).term());
         policy.failed_shard_through = Some(0);
@@ -350,7 +365,6 @@ fn participant_repeated_locked_writes_publish_one_decision_and_hold_until_finish
     for direct in [false, true] {
         let (runtime, table) = table(direct);
         let mut owner = runtime.attach().unwrap();
-        let mut competitor = runtime.attach().unwrap();
         replay(&table, &mut owner, b"a", Some(b"before"), decision(10, 0));
         let mut participant = owner.begin().unwrap().into_participant();
         participant
@@ -378,21 +392,23 @@ fn participant_repeated_locked_writes_publish_one_decision_and_hold_until_finish
         participant.lock_writes().unwrap();
         participant.validate().unwrap();
         participant.install(decision(50, 0)).unwrap();
-        let mut blocked = competitor.begin().unwrap();
-        assert!(table
-            .get_versioned_inner(
-                &mut blocked,
-                None,
-                b"a",
-                ReadVisibility::latest(decision(1, 0).term())
-            )
-            .is_err());
-        blocked.abort();
-        let mut blocked = competitor.begin().unwrap();
-        assert!(table
-            .put_presence_inner(&mut blocked, None, b"b", Value::from(&b"racer"[..]))
-            .is_err());
-        blocked.abort();
+        on_second_worker(&runtime, |competitor| {
+            let mut blocked = competitor.begin().unwrap();
+            assert!(table
+                .get_versioned_inner(
+                    &mut blocked,
+                    None,
+                    b"a",
+                    ReadVisibility::latest(decision(1, 0).term())
+                )
+                .is_err());
+            blocked.abort();
+            let mut blocked = competitor.begin().unwrap();
+            assert!(table
+                .put_presence_inner(&mut blocked, None, b"b", Value::from(&b"racer"[..]))
+                .is_err());
+            blocked.abort();
+        });
         // Abort after INSTALL is committed cleanup, never rollback.
         assert!(matches!(
             participant.finish(false),
@@ -419,7 +435,6 @@ fn partial_participant_lock_failure_preserves_payloads_and_history() {
     for direct in [false, true] {
         let (runtime, table) = table(direct);
         let mut owner = runtime.attach().unwrap();
-        let mut competitor = runtime.attach().unwrap();
         replay(&table, &mut owner, b"a", Some(b"old-a"), decision(10, 0));
         replay(&table, &mut owner, b"b", Some(b"old-b"), decision(11, 0));
         let mut participant = owner.begin().unwrap().into_participant();
@@ -436,23 +451,47 @@ fn partial_participant_lock_failure_preserves_payloads_and_history() {
                 Ok(())
             })
             .unwrap();
-        let mut blocker = competitor.begin().unwrap().into_participant();
-        blocker
-            .with_transaction(|txn| {
-                table.put_presence_inner(txn, None, b"b", Value::from(&b"also-never"[..]))?;
-                Ok(())
-            })
-            .unwrap();
-        blocker.lock_writes().unwrap();
-        assert!(participant.lock_writes().is_err());
-        assert!(matches!(
-            participant.finish(false),
-            Ok(CommitOutcome::Aborted(_))
-        ));
-        assert!(matches!(
-            blocker.finish(false),
-            Ok(CommitOutcome::Aborted(_))
-        ));
+        // The blocker holds its lock on `b`, on its own thread, until the
+        // owner has failed to lock and has finished.
+        std::thread::scope(|scope| {
+            let (locked_tx, locked_rx) = std::sync::mpsc::channel();
+            let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+            let (runtime, table) = (&runtime, &table);
+            let blocker = scope.spawn(move || {
+                let mut competitor = runtime.attach().unwrap();
+                let mut blocker = competitor.begin().unwrap().into_participant();
+                blocker
+                    .with_transaction(|txn| {
+                        table.put_presence_inner(
+                            txn,
+                            None,
+                            b"b",
+                            Value::from(&b"also-never"[..]),
+                        )?;
+                        Ok(())
+                    })
+                    .unwrap();
+                blocker.lock_writes().unwrap();
+                locked_tx.send(()).unwrap();
+                // The owner drops its sender when it is done, and also if one
+                // of its assertions unwinds, so the scoped join cannot hang.
+                let _ = release_rx.recv();
+                assert!(matches!(
+                    blocker.finish(false),
+                    Ok(CommitOutcome::Aborted(_))
+                ));
+            });
+            locked_rx.recv().unwrap();
+            assert!(participant.lock_writes().is_err());
+            assert!(matches!(
+                participant.finish(false),
+                Ok(CommitOutcome::Aborted(_))
+            ));
+            drop(release_tx);
+            if let Err(panic) = blocker.join() {
+                std::panic::resume_unwind(panic);
+            }
+        });
         for (key, expected, source) in [
             (b"a".as_slice(), b"old-a".as_slice(), decision(10, 0)),
             (b"b".as_slice(), b"old-b".as_slice(), decision(11, 0)),
