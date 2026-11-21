@@ -62,9 +62,11 @@ TEST_F(RealTransactionTest, ConcurrentTransactions) {
     
     for (int i = 0; i < num_threads; i++) {
         threads.emplace_back([&completed_txns]() {
-            // Ensure thread-local initialization
-            Sto::update_threadid();
-            
+            // Each thread needs its own STO slot: epoch_enter()/epoch_leave()
+            // keep a plain per-slot depth counter, and an unregistered thread
+            // has TThread::id() == 0, so all four would share slot 0.
+            Transaction::register_thread();
+
             for (int j = 0; j < 100; j++) {
                 TRANSACTION {
                     // Do nothing, just commit
