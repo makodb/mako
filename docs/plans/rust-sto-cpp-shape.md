@@ -736,6 +736,15 @@ the current Rust implementation's performance or safety properties.
   The revised Miri gate and all 38 exact ASan reruns passed, including the
   workspace audit of all 38 unique skip matches. Those focused results did not
   qualify the native sanitizer stages; complete execution is recorded below.
+- On 2026-11-21 the user approved two further identities (38 to 40):
+  `retained_participant_preserves_poisoned_and_unknown_outcomes` and
+  `installed_participant_cleanup_failure_is_definitely_committed`. Both arrived
+  with the retained participant API after the audit above and were never added
+  to the inventory. They inject a panic into a retained participant's acquire,
+  install and finish callbacks, the same faults as their listed local-commit
+  counterparts, and the 61 allocations that Miri and ASan reported for
+  `failure_protocol` are the transaction frames and lock plans those faults
+  quarantine. No other suppression was added.
 - The first runtime ASan baseline found two additional borrowed-owner fixtures
   missing from the separate adapter/cache inventory. Isolated runs attributed
   all 438 allocations (134,272 bytes) to

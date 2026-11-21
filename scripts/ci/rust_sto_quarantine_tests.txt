@@ -43,4 +43,10 @@ sto-core|failure_protocol|install_observer::typed_batch_stops_after_one_of_two_r
 sto-core|failure_protocol|install_observer::materialized_batch_stops_after_one_of_two_real_installs
 sto-core|failure_protocol|install_observer::borrowed_direct_batches_stop_after_one_of_two_real_installs
 sto-core|failure_protocol|install_observer::owned_direct_batch_stops_after_one_of_two_real_installs
+# Added on 2026-11-21, user-approved: the retained-participant counterparts of
+# the panic-injection cases above. They inject a panic into the acquire,
+# install and finish callbacks of a retained participant, and sto-core
+# quarantines the transaction frame in each case.
+sto-core|failure_protocol|retained_participant_preserves_poisoned_and_unknown_outcomes
+sto-core|failure_protocol|installed_participant_cleanup_failure_is_definitely_committed
 sto-masstree|lib|local_version_tests::indeterminate_local_release_ignores_mixed_ordered_id
