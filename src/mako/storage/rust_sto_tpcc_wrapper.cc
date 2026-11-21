@@ -1206,11 +1206,13 @@ bool rust_sto_tpcc_ordered_index::shard_scan(
 }
 
 // @unsafe - Owns one reference to the process native runtime.
-rust_sto_tpcc_wrapper::rust_sto_tpcc_wrapper() : db_(nullptr) {}
+rust_sto_tpcc_wrapper::rust_sto_tpcc_wrapper()
+    : db_(nullptr), tables_by_id_(static_cast<size_t>(kTableIdLimit)) {}
 
 rust_sto_tpcc_wrapper::~rust_sto_tpcc_wrapper() noexcept {
   tables_by_name_.clear();
-  tables_by_id_.clear();
+  for (const auto &slot : tables_by_id_)
+    slot.store(nullptr, rusty::sync::atomic::Ordering::Release);
   tables_.clear();
   if (db_) {
     auto shared = shared_database.lock().unwrap();
@@ -1272,6 +1274,8 @@ void rust_sto_tpcc_wrapper::init() {
     const int shard = static_cast<int>(config.getShardIndex());
     for (int ordinal = 1; ordinal <= mako::NUM_TABLES_PER_SHARD; ++ordinal) {
       const int id = shard * mako::NUM_TABLES_PER_SHARD + ordinal;
+      if (id >= kTableIdLimit)
+        throw std::length_error("Rust STO shard table ID capacity exhausted");
       sto_tpcc_table *table = nullptr;
       const auto table_config = rust_sto_tpcc_detail::table_config_for("replay");
       require_ok("replay table create", sto_tpcc_table_create_with_cache_policy(
@@ -1283,7 +1287,8 @@ void rust_sto_tpcc_wrapper::init() {
       pending.release();
       auto *raw = index.get();
       tables_.push_back(std::move(index));
-      tables_by_id_.emplace(id, raw);
+      tables_by_id_[static_cast<size_t>(id)].store(
+          raw, rusty::sync::atomic::Ordering::Release);
       mako::setup_update_table(id, raw);
     }
   }
@@ -1925,10 +1930,18 @@ oi_fixed_put_result rust_sto_tpcc_wrapper::tx_insert_many(
   return {raw_result.inserted, raw_result.first_duplicate};
 }
 
+// @unsafe - Safe against a concurrent open_index: see tables_by_id_.
+rust_sto_tpcc_ordered_index *rust_sto_tpcc_wrapper::table_by_id(
+    int32_t table_id) const noexcept {
+  if (table_id < 0 || table_id >= kTableIdLimit)
+    return nullptr;
+  return tables_by_id_[static_cast<size_t>(table_id)].load(
+      rusty::sync::atomic::Ordering::Acquire);
+}
+
 abstract_ordered_index *rust_sto_tpcc_wrapper::get_index_by_table_id(
     unsigned short table_id) {
-  const auto it = tables_by_id_.find(table_id);
-  return it == tables_by_id_.end() ? nullptr : it->second;
+  return table_by_id(table_id);
 }
 
 abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
@@ -1987,11 +2000,9 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
           (local->second->table_id_ - 1) % mako::NUM_TABLES_PER_SHARD + 1;
   }
   if (table_id > (shard_index + 1) * mako::NUM_TABLES_PER_SHARD ||
-      table_id >= (1 << 15))
+      table_id >= kTableIdLimit)
     throw std::length_error("Rust STO shard table ID capacity exhausted");
-  if (const auto existing = tables_by_id_.find(table_id);
-      existing != tables_by_id_.end()) {
-    auto *index = existing->second;
+  if (auto *index = table_by_id(table_id)) {
     if (remote && index->is_remote_) {
       // Several warehouses can share one local physical tree. Their remote
       // aliases must name that same participant table, not consume extra IDs.
@@ -2009,22 +2020,15 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
     return index;
   }
   if (tables_.size() == tables_.max_size() ||
-      tables_by_id_.size() == tables_by_id_.max_size() ||
       tables_by_name_.size() == tables_by_name_.max_size())
     throw std::length_error("Rust STO table catalog capacity exhausted");
 
   // Allocate every container slot before asking Rust for a table. Once the
-  // FFI handle exists, publication uses reserved vector capacity and detached
-  // map nodes. The catch block can restore the exact catalog contents without
-  // allocating.
+  // FFI handle exists, publication uses reserved vector capacity, the
+  // preallocated ID slot and a detached map node. The catch block can restore
+  // the exact catalog contents without allocating.
   tables_.reserve(tables_.size() + 1);
-  tables_by_id_.reserve(tables_by_id_.size() + 1);
-
-  decltype(tables_by_id_) staged_by_id;
-  const auto staged_id_position = staged_by_id.emplace(table_id, nullptr);
-  if (!staged_id_position.second)
-    throw std::logic_error("could not stage Rust STO table ID");
-  auto staged_id = staged_by_id.extract(staged_id_position.first);
+  const auto &id_slot = tables_by_id_[static_cast<size_t>(table_id)];
 
   decltype(tables_by_name_) staged_by_name;
   const auto staged_name_position = staged_by_name.emplace(key, nullptr);
@@ -2057,13 +2061,11 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
 #endif
 
   auto *raw = index.get();
-  staged_id.mapped() = raw;
   staged_name.mapped() = raw;
 
   bool table_inserted = false;
   bool id_inserted = false;
   bool name_inserted = false;
-  decltype(tables_by_id_)::iterator id_position = tables_by_id_.end();
   decltype(tables_by_name_)::iterator name_position = tables_by_name_.end();
   try {
     tables_.push_back(std::move(index));
@@ -2073,10 +2075,11 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
         rust_sto_tpcc_detail::open_index_fault_stage::after_tables_insert);
 #endif
 
-    auto id_result = tables_by_id_.insert(std::move(staged_id));
-    if (!id_result.inserted)
+    if (id_slot.compare_exchange(nullptr, raw,
+                                 rusty::sync::atomic::Ordering::AcqRel,
+                                 rusty::sync::atomic::Ordering::Acquire)
+            .is_err())
       throw std::logic_error("Rust STO table ID insertion conflicted");
-    id_position = id_result.position;
     id_inserted = true;
 #ifdef MAKO_RUST_STO_TEST_HOOKS
     inject_open_index_fault_if_requested(
@@ -2096,7 +2099,7 @@ abstract_ordered_index *rust_sto_tpcc_wrapper::open_index(
     if (name_inserted)
       tables_by_name_.erase(name_position);
     if (id_inserted)
-      tables_by_id_.erase(id_position);
+      id_slot.store(nullptr, rusty::sync::atomic::Ordering::Release);
     if (table_inserted) {
       assert(tables_.back().get() == raw);
       tables_.pop_back();
@@ -2126,7 +2129,8 @@ void rust_sto_tpcc_wrapper::close_index(abstract_ordered_index *idx) {
         "Rust STO close_index received an index from another database");
 
   auto *table = owned->get();
-  tables_by_id_.erase(table->table_id_);
+  tables_by_id_[static_cast<size_t>(table->table_id_)].store(
+      nullptr, rusty::sync::atomic::Ordering::Release);
   for (auto by_name = tables_by_name_.begin();
        by_name != tables_by_name_.end();) {
     if (by_name->second == table)

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <map>
 #include <rusty/box.hpp>
+#include <rusty/sync/atomic.hpp>
 #include <string>
 #include <string_view>
 #include <tuple>
@@ -207,6 +208,11 @@ public:
   void observe_replay_timestamp(uint32_t source_time_term) override;
 
 private:
+  // Table IDs are in [1, kTableIdLimit); tables_by_id_ has one slot for each.
+  static constexpr int32_t kTableIdLimit = 1 << 15;
+  // @unsafe - nullptr when the ID is out of range or not published.
+  rust_sto_tpcc_ordered_index *table_by_id(int32_t table_id) const noexcept;
+
   sto_tpcc_db *db_;
   std::map<int, int32_t> next_table_ids_;
   bool protocol_mode_ = false;
@@ -216,7 +222,15 @@ private:
   // all-or-nothing: a C++ exception after FFI creation destroys that table and
   // does not consume its ID or leave a partial catalog entry.
   std::vector<rusty::Box<rust_sto_tpcc_ordered_index>> tables_;
-  std::unordered_map<int32_t, rust_sto_tpcc_ordered_index *> tables_by_id_;
+  // A follower replays its leader's loading log while its own workload is
+  // still opening tables, so replay threads look IDs up while open_index
+  // publishes them. One slot per possible table ID, allocated once in the
+  // constructor: publication is one atomic store, lookup is one atomic load,
+  // and nothing is rehashed or moved under a reader. Unpublishing a slot
+  // (close_index, a failed open_index) still requires that no thread is using
+  // that index.
+  std::vector<rusty::sync::atomic::AtomicPtr<rust_sto_tpcc_ordered_index>>
+      tables_by_id_;
   std::map<std::tuple<std::string, int>, rust_sto_tpcc_ordered_index *>
       tables_by_name_;
 
