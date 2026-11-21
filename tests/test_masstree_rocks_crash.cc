@@ -20,10 +20,12 @@
 // textbook fork-in-a-threaded-process UB. Self-exec via /proc/self/exe
 // gives the child a clean single-threaded start.
 //
-// The child journals what it wrote into a MAP_SHARED file mapping,
-// which survives SIGKILL (it is page cache, not process memory), so the
-// parent can reconstruct the exact history and check it against what
-// recovery produced.
+// The child journals every op into a MAP_SHARED file mapping -- the op
+// itself before doing it, its version once it has returned. The mapping
+// survives SIGKILL (it is page cache, not process memory), so the
+// parent can reconstruct the exact history, including the op each
+// thread was in the middle of, and check it against what recovery
+// produced.
 
 #include <fcntl.h>
 #include <signal.h>
@@ -42,6 +44,7 @@
 #include "mako/storage/masstree_rocks_index.hh"
 
 #include <algorithm>
+#include <atomic>
 #include <map>
 #include <string>
 #include <thread>
@@ -55,8 +58,18 @@ namespace {
 
 static const uint64_t kMaxRecords = 1u << 20;
 
+// A record whose op was journaled but had not returned when the child
+// died. No real write is stamped with this version.
+static const uint64_t kPendingVersion = UINT64_MAX;
+
 struct CrashRec {
-  uint64_t version;  // version stamped on this write
+  // 0: the slot was reserved but never filled, or the op stamped no
+  //    version (a remove of a key that was never written).
+  // kPendingVersion: the op was started and may or may not have happened.
+  // Anything else: the version the completed op stamped.
+  // Atomic so that each store really reaches the mapping, in order: the
+  // only reader of the pending mark is another process.
+  std::atomic<uint64_t> version;
   uint32_t key_id;
   uint32_t val_id;   // which value variant; UINT32_MAX for a remove
 };
@@ -177,6 +190,23 @@ static int ChildWriter(const std::string &db_path, const std::string &jpath,
       const uint32_t val_id = static_cast<uint32_t>(i * threads + tid);
       const std::string key = KeyOf(key_id);
 
+      // Journal the op BEFORE doing it, as pending. Writeback persists a
+      // key's CURRENTLY PUBLISHED bytes, so an op can reach RocksDB the
+      // moment it is published -- before this thread has returned from
+      // it, let alone journaled it. When the record was written only
+      // afterwards, a kill in that gap left a recovered value the parent
+      // had never heard of, and it reported a lost write that was not
+      // one. The parent builds the history only after the child is
+      // dead, so the hazards are a kill before `version` is stored (the
+      // slot stays version 0 and the op was never started) and a kill
+      // before the real version replaces the pending one (handled by
+      // the parent).
+      const uint64_t my = j->n_records.fetch_add(1, std::memory_order_acq_rel);
+      if (my >= kMaxRecords) return;
+      j->recs[my].key_id = key_id;
+      j->recs[my].val_id = do_remove ? UINT32_MAX : val_id;
+      j->recs[my].version.store(kPendingVersion, std::memory_order_release);
+
       if (do_remove) {
         idx.remove(lcdf::Str(key.data(), static_cast<int>(key.size())));
       } else {
@@ -199,17 +229,10 @@ static int ChildWriter(const std::string &db_path, const std::string &jpath,
         }
       }
 
-      // Reserve a slot, fill it, and let the counter stand as the
-      // publish point. The parent reads only after the child is dead,
-      // so the only hazard is a kill between reserving and filling --
-      // which leaves a zeroed record below n_records. Zeroed records
-      // are version 0 / key 0, and the parent tolerates them because a
-      // version-0 op is never "covered" by a non-zero W.
-      const uint64_t my = j->n_records.fetch_add(1, std::memory_order_acq_rel);
-      if (my >= kMaxRecords) return;
-      j->recs[my].version = ver;
-      j->recs[my].key_id = key_id;
-      j->recs[my].val_id = do_remove ? UINT32_MAX : val_id;
+      // The op has returned: replace the pending mark with the version
+      // it stamped. A remove of a key that was never written stamps
+      // none, so this reads back 0 and the parent skips the record.
+      j->recs[my].version.store(ver, std::memory_order_release);
 
       // Periodically let the flusher breathe. Writing flat out, the
       // producer outruns RocksDB ingest, the dirty map grows without
@@ -331,7 +354,7 @@ class CrashTest : public ::testing::Test {
                            kMaxRecords);
     size_t c = 0;
     for (uint64_t i = 0; i < n; i++) {
-      const uint64_t v = j_->recs[i].version;
+      const uint64_t v = j_->recs[i].version.load(std::memory_order_acquire);
       if (v != 0 && v <= w) c++;
     }
     return c;
@@ -365,12 +388,17 @@ class CrashTest : public ::testing::Test {
         std::min<uint64_t>(j_->n_records.load(std::memory_order_acquire),
                            kMaxRecords);
     for (uint64_t i = 0; i < n; i++) {
-      // A kill between reserving a slot and filling it leaves the slot
-      // zeroed. Version 0 is never stamped by a real write (the counter
-      // starts at 1), so this cleanly identifies a torn record.
-      if (j_->recs[i].version == 0) continue;
-      h[j_->recs[i].key_id].push_back(
-          KeyOp{j_->recs[i].version, j_->recs[i].val_id});
+      // Version 0 is never stamped by a real write (the counter starts
+      // at 1): the slot was reserved but not filled, so its op was never
+      // started, or the op stamped no version. A pending record is kept.
+      // Its version sorts it last, which is where it belongs: a key has
+      // one writer, so the op in flight at the kill is that key's
+      // newest. The parent cannot know that op's real version, so it
+      // never requires its effect and always allows it; kPendingVersion
+      // is above every watermark a kill test observes.
+      const uint64_t v = j_->recs[i].version.load(std::memory_order_acquire);
+      if (v == 0) continue;
+      h[j_->recs[i].key_id].push_back(KeyOp{v, j_->recs[i].val_id});
     }
     for (auto &kv : h) {
       std::sort(kv.second.begin(), kv.second.end(),
@@ -462,14 +490,19 @@ static std::string Verify(const std::string &db_path,
     }
 
     if (!ok) {
+      const std::string newest =
+          ops.back().version == kPendingVersion
+              ? std::string("pending")
+              : std::to_string(ops.back().version);
       char buf[512];
       snprintf(buf, sizeof(buf),
                "key %u: expected %s, got %s (w=%llu, ops=%zu, "
-               "newest_version=%llu)",
+               "newest_version=%s)",
                key_id, expected_desc.c_str(),
-               present ? "a value" : "absent",
+               // The value's first 20 bytes name its key and val_id.
+               present ? got.substr(0, 20).c_str() : "absent",
                static_cast<unsigned long long>(w), ops.size(),
-               static_cast<unsigned long long>(ops.back().version));
+               newest.c_str());
       fail = buf;
       break;
     }
@@ -595,6 +628,12 @@ TEST_F(CrashTest, KillDuringConcurrentWrites) {
 TEST_F(CrashTest, RepeatedKillsAtVaryingDepths) {
   const std::string base_db = db_path_;
   for (int round = 0; round < 4; round++) {
+    // Clear the previous round's records, not only their count. The
+    // child reserves a slot before filling it, and a slot it never got
+    // to fill must read as version 0, not as last round's record.
+    const uint64_t used = std::min<uint64_t>(
+        j_->n_records.load(std::memory_order_acquire), kMaxRecords);
+    ::memset(static_cast<void *>(j_->recs), 0, used * sizeof(CrashRec));
     j_->n_records.store(0, std::memory_order_release);
     j_->w_observed.store(0, std::memory_order_release);
     j_->child_started.store(0, std::memory_order_release);
