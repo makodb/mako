@@ -18,10 +18,13 @@ invalidation check at the real canonical-Rust path", exists for it.) rustc
 compiles those sources directly, and rusty-cpp translates the same bytes into
 their complete C++ module interfaces; every module's hand-authored `.cpp`
 carrier has been deleted and the generated children are the only C++
-production providers. One hand-authored module-source unit survives —
-`reactor/epoll_platform_linux.cc`, a platform `.cc` file that is **not** one of
-the 37 named modules (it has no `rust-modules.toml` entry) and still holds five
-inline DSL blocks; see **Current source boundary**.
+production providers. At that refresh one hand-authored module-source unit
+survived — `reactor/epoll_platform_linux.cc`, a platform `.cc` file that was
+**not** one of the 37 named modules (it had no `rust-modules.toml` entry) and
+held five inline DSL blocks. That file has since been removed: the
+`srpc.epoll_wrapper` module is canonical `reactor/epoll_wrapper.rs`, and its
+syscalls live in the C kernel `reactor/srpc_epoll.c`. See **Current source
+boundary**.
 
 The per-module notes in the rest of this section were written at the
 2026-08-12 seventeen-module ratchet — `basetypes`, `callback_wrapper`,
@@ -192,10 +195,15 @@ That partiality is closed on the module axis, and this paragraph used to say
 otherwise — it read "seventeen of 38 named modules are canonical Rust" and
 projected 21 unconverted modules owning 367 inline DSL blocks. Measured
 2026-09-17: all 37 named modules are canonical Rust, and exactly one
-hand-authored module-source unit survives, `reactor/epoll_platform_linux.cc`.
-`grep -rn RUSTYCPP_RUST src/srpc` now returns 13 hits in five files — that
+hand-authored module-source unit survived, `reactor/epoll_platform_linux.cc`.
+`grep -rn RUSTYCPP_RUST src/srpc` then returned 13 hits in five files — that
 platform file plus four test `.cc` files — so there is no set of unconverted
-named modules left to count. The fixed pre-promotion baseline of 446 blocks
+named modules left to count. Re-measured 2026-11-18: the platform file is
+gone, and the same grep returns 10 hits in six files — the four test `.cc`
+files under `src/srpc/tests/` (two each) and two scripts that only name the
+marker (`src/srpc/scripts/srpc_dsl_check.sh`,
+`src/srpc/scripts/tests/test_goal0_standalone.py`). The fixed pre-promotion
+baseline of 446 blocks
 and 11,482 lines still stands as the denominator for how far that axis has
 moved. `cargo test --manifest-path src/srpc/Cargo.toml` still must not be
 reported as full Goal 0 completion on its own: the hand-written-C++ half below
@@ -228,10 +236,20 @@ What remains is still material Goal-0 work. Measured 2026-09-17 by
 `python3 scripts/srpc_handwritten_census.py --files`, which is the enforced
 measurement — re-run it rather than trusting these transcribed numbers:
 
-- 20 noncomment scaffold lines in the **one** remaining hand-authored
-  module-source unit, `reactor/epoll_platform_linux.cc`: 10 outer DSL fence
-  directives plus 10 other module-frame lines; the 37 canonical modules
-  contribute zero carrier lines;
+> **Correction (2026-11-18).** `reactor/epoll_platform_linux.cc` no longer
+> exists; `reactor/epoll_wrapper.rs` and the C kernel `reactor/srpc_epoll.c`
+> replaced it. The source gate (`src/srpc/scripts/srpc_dsl_check.sh`) now
+> requires zero inline carriers under `base/`, `misc/`, `reactor/` and `rpc/`.
+> The first bullet below, the last bullet (inline production DSL not yet
+> promoted, which that gate now holds at zero) and the
+> `reactor/epoll_platform_linux.cc` entry in the classifier list are therefore
+> history. The census was not re-run for this note, so every other number here
+> is still the 2026-09-17 transcription.
+
+- 20 noncomment scaffold lines in what was then the **one** remaining
+  hand-authored module-source unit, `reactor/epoll_platform_linux.cc`: 10 outer
+  DSL fence directives plus 10 other module-frame lines; the 37 canonical
+  modules contribute zero carrier lines;
 - 148 noncomment scaffold lines across 12 `.hpp` compatibility/import shims;
 - 89 noncomment C ABI header lines across `srpc_fiber.h`, `srpc_rand.h`, and
   `srpc_timing.h`;

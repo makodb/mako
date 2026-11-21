@@ -4,7 +4,10 @@
 > retained for disposition history; its per-file rows and provider-mode notes
 > predate the canonical-Rust carrier removals. The current exact boundary and
 > next-batch plan live in `docs/dev/goal0_completion_plan.md` and are enforced
-> by `scripts/srpc_handwritten_census.py`.
+> by `scripts/srpc_handwritten_census.py`. In particular, every
+> `reactor/epoll_platform_linux.cc` row below describes a file that has been
+> removed: the module is now canonical `reactor/epoll_wrapper.rs` over the C
+> kernel `reactor/srpc_epoll.c`.
 
 Historical tracker for the srpc campaign: eliminate hand-written C++ from
 `src/srpc` in favour of the inline-Rust DSL (plain C is tolerated).

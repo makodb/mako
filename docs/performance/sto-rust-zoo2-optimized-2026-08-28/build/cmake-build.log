@@ -1,0 +1,1702 @@
+[0/2] Re-checking globbed directories...
+[1/467] Building rusty-cpp-transpiler...
+warning: unnecessary parentheses around `let` scrutinee expression
+    --> transpiler/src/codegen/collect_passes.rs:4225:39
+     |
+4225 |                 if let Some(u_name) = (match fargs.args.first() {
+     |                                       ^
+...
+4230 |                 }) {
+     |                  ^
+     |
+     = note: `#[warn(unused_parens)]` (part of `#[warn(unused)]`) on by default
+help: remove these parentheses
+     |
+4225 ~                 if let Some(u_name) = match fargs.args.first() {
+4226 |                     Some(syn::GenericArgument::Type(ty)) if fargs.args.len() == 1 => {
+ ...
+4229 |                     _ => None,
+4230 ~                 }  {
+     |
+
+warning: variable does not need to be mutable
+    --> transpiler/src/codegen/mod.rs:4109:13
+     |
+4109 |         let mut global_rusty_ext = String::new();
+     |             ----^^^^^^^^^^^^^^^^
+     |             |
+     |             help: remove this `mut`
+     |
+     = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable pattern
+     --> transpiler/src/codegen/mod.rs:37422:13
+      |
+37289 |             syn::Pat::Reference(r) => {
+      |             ---------------------- matches all the relevant values
+...
+37422 |             syn::Pat::Reference(reference_pat) => {
+      |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+      |
+      = note: `#[warn(unreachable_patterns)]` (part of `#[warn(unused)]`) on by default
+
+warning: unreachable pattern
+     --> transpiler/src/codegen/mod.rs:37425:13
+      |
+37295 |             syn::Pat::Type(pt) => {
+      |             ------------------ matches all the relevant values
+...
+37425 |             syn::Pat::Type(type_pat) => {
+      |             ^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+
+warning: unreachable pattern
+     --> transpiler/src/codegen/mod.rs:37428:13
+      |
+37292 |             syn::Pat::Paren(paren) => {
+      |             ---------------------- matches all the relevant values
+...
+37428 |             syn::Pat::Paren(paren_pat) => {
+      |             ^^^^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+
+warning: variable does not need to be mutable
+     --> transpiler/src/codegen/mod.rs:54902:17
+      |
+54902 |             let mut record = |name: String,
+      |                 ----^^^^^^
+      |                 |
+      |                 help: remove this `mut`
+
+warning: unreachable pattern
+     --> transpiler/src/codegen/collect_passes.rs:11294:31
+      |
+11256 | ...                   | ("write", 0)
+      |                         ------------ matches all the relevant values
+...
+11294 | ...                   | ("write", 0)
+      |                         ^^^^^^^^^^^^ no value can reach this
+
+warning: variable does not need to be mutable
+   --> transpiler/src/codegen/emit_expr.rs:605:13
+    |
+605 |         let mut block_profile_mark = |label: &str| {
+    |             ----^^^^^^^^^^^^^^^^^^
+    |             |
+    |             help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> transpiler/src/codegen/emit_expr.rs:3752:21
+     |
+3752 |                 let mut inner = self.new_inner_for_block();
+     |                     ----^^^^^
+     |                     |
+     |                     help: remove this `mut`
+
+warning: variable does not need to be mutable
+    --> transpiler/src/codegen/emit_expr.rs:3767:21
+     |
+3767 |                 let mut inner = self.new_inner_for_block();
+     |                     ----^^^^^
+     |                     |
+     |                     help: remove this `mut`
+
+warning: variable does not need to be mutable
+     --> transpiler/src/codegen/emit_expr.rs:14004:21
+      |
+14004 |                 let mut inner = self.new_inner_for_block();
+      |                     ----^^^^^
+      |                     |
+      |                     help: remove this `mut`
+
+warning: variable does not need to be mutable
+     --> transpiler/src/codegen/emit_expr.rs:24344:33
+      |
+24344 | ...                   let mut emitted = self
+      |                           ----^^^^^^^
+      |                           |
+      |                           help: remove this `mut`
+
+warning: variable does not need to be mutable
+     --> transpiler/src/codegen/emit_expr.rs:24419:33
+      |
+24419 | ...                   let mut emitted = self
+      |                           ----^^^^^^^
+      |                           |
+      |                           help: remove this `mut`
+
+warning: unreachable pattern
+    --> transpiler/src/codegen/inference.rs:8054:13
+     |
+7809 |             syn::Expr::Field(field) => {
+     |             ----------------------- matches all the relevant values
+...
+8054 |             syn::Expr::Field(field) => match &field.member {
+     |             ^^^^^^^^^^^^^^^^^^^^^^^ no value can reach this
+
+warning: variable does not need to be mutable
+  --> transpiler/src/codegen/lookups.rs:85:13
+   |
+85 |         let mut flush = |buf: &mut String, out: &mut Vec<String>| {
+   |             ----^^^^^
+   |             |
+   |             help: remove this `mut`
+
+warning: type `codegen::VariantTypeContext` is more private than the item `codegen::CodeGen::const_value_ident_pattern_condition`
+     --> transpiler/src/codegen/mod.rs:33643:5
+      |
+33643 | /     pub(super) fn const_value_ident_pattern_condition(
+33644 | |         &self,
+33645 | |         ident: &syn::Ident,
+33646 | |         source_expr: &str,
+33647 | |         variant_ctx: Option<&VariantTypeContext>,
+33648 | |     ) -> String {
+      | |_______________^ method `codegen::CodeGen::const_value_ident_pattern_condition` is reachable at visibility `pub(crate)`
+      |
+note: but type `codegen::VariantTypeContext` is only usable at visibility `pub(self)`
+     --> transpiler/src/codegen/mod.rs:22:1
+      |
+   22 | struct VariantTypeContext {
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^
+      = note: `#[warn(private_interfaces)]` on by default
+
+warning: type `codegen::VariantTypeContext` is more private than the item `codegen::CodeGen::runtime_variant_match_condition_for_path`
+     --> transpiler/src/codegen/mod.rs:33670:5
+      |
+33670 | /     pub(super) fn runtime_variant_match_condition_for_path(
+33671 | |         &self,
+33672 | |         path: &syn::Path,
+33673 | |         variant_ctx: Option<&VariantTypeContext>,
+33674 | |         scrutinee_expr: &str,
+33675 | |     ) -> String {
+      | |_______________^ method `codegen::CodeGen::runtime_variant_match_condition_for_path` is reachable at visibility `pub(crate)`
+      |
+note: but type `codegen::VariantTypeContext` is only usable at visibility `pub(self)`
+     --> transpiler/src/codegen/mod.rs:22:1
+      |
+   22 | struct VariantTypeContext {
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: type `codegen::VariantTypeContext` is more private than the item `codegen::CodeGen::path_is_known_data_enum_variant_with_ctx`
+     --> transpiler/src/codegen/mod.rs:34064:5
+      |
+34064 | /     pub(super) fn path_is_known_data_enum_variant_with_ctx(
+34065 | |         &self,
+34066 | |         path: &syn::Path,
+34067 | |         variant_ctx: Option<&VariantTypeContext>,
+34068 | |     ) -> bool {
+      | |_____________^ method `codegen::CodeGen::path_is_known_data_enum_variant_with_ctx` is reachable at visibility `pub(crate)`
+      |
+note: but type `codegen::VariantTypeContext` is only usable at visibility `pub(self)`
+     --> transpiler/src/codegen/mod.rs:22:1
+      |
+   22 | struct VariantTypeContext {
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `preflight_cpp_abi_whole_dependency_closure` is never used
+    --> transpiler/src/main.rs:1083:4
+     |
+1083 | fn preflight_cpp_abi_whole_dependency_closure(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `validate_rustc_only_runtime_dependencies` is never used
+    --> transpiler/src/main.rs:1690:4
+     |
+1690 | fn validate_rustc_only_runtime_dependencies(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `transpile_crate` is never used
+    --> transpiler/src/main.rs:3811:4
+     |
+3811 | fn transpile_crate(
+     |    ^^^^^^^^^^^^^^^
+
+warning: field `0` is never read
+   --> transpiler/src/cmake.rs:141:11
+    |
+141 |     Table(toml::value::Table),
+    |     ----- ^^^^^^^^^^^^^^^^^^
+    |     |
+    |     field in this variant
+    |
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+    |
+141 -     Table(toml::value::Table),
+141 +     Table(()),
+    |
+
+warning: struct `OptionSomeNoneExprCollector` is never constructed
+    --> transpiler/src/codegen/mod.rs:1618:8
+     |
+1618 | struct OptionSomeNoneExprCollector {
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `saw_both` is never used
+    --> transpiler/src/codegen/mod.rs:1624:8
+     |
+1623 | impl OptionSomeNoneExprCollector {
+     | -------------------------------- method in this implementation
+1624 |     fn saw_both(&self) -> bool {
+     |        ^^^^^^^^
+
+warning: multiple associated items are never used
+     --> transpiler/src/codegen/mod.rs:4434:8
+      |
+ 3389 | impl CodeGen {
+      | ------------ associated items in this implementation
+...
+ 4434 |     fn relocate_rusty_ext_blocks(wrapped: &str) -> (String, String, String) {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 4500 |     fn globalize_rusty_ext_refs(text: &str, crate_name: &str) -> String {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 5259 |     pub fn set_infer_engine(&mut self, enabled: bool) {
+      |            ^^^^^^^^^^^^^^^^
+...
+ 5266 |     pub fn set_print_inference(&mut self, enabled: bool) {
+      |            ^^^^^^^^^^^^^^^^^^^
+...
+ 9831 |     fn module_directly_holds_test_markers(items: &[syn::Item]) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+13257 |     fn module_concrete_type_decl_count_recursive(m: &syn::ItemMod) -> usize {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+13742 |     fn pre_collect_trait_assoc_into(
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+14682 |     fn cpp_spelling_mentions_import_alias(&self, spelling: &str) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+14738 |     fn forward_decl_signature_mentions_unqualified_scope_import_name(
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+15354 |     fn apply_parallel_impl_substitutions_to_sig(
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+17978 |     fn trait_interface_is_plain_forward_declarable(t: &syn::ItemTrait) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+23664 |     fn hoist_self_before_dependent_defaults(generics: &mut syn::Generics) {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+30778 |     fn rewrite_rust_format_literal_for_cpp(&self, fmt: &str) -> String {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+32455 |     fn tuple_pattern_elem_supports_value_match(&self, pat: &syn::Pat) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+34369 |     fn if_let_unwrap_binding_should_preserve_reference(
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+39186 |     fn expr_chain_roots_in_type_param(&self, expr: &syn::Expr) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+40428 |     fn receiver_is_hashmap_like_expr(&self, receiver: &syn::Expr) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+42508 |     fn block_contains_option_some_and_none_exprs(&self, block: &syn::Block) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+42779 |     fn option_inner_needs_typed_make_optional(&self, inner_ty: &syn::Type) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+46046 |     fn expr_is_noreturn_panic_like(&self, expr: &syn::Expr) -> bool {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+50639 |     fn expected_type_owner_ident_for_hint(&self, ty: &syn::Type) -> Option<String> {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+50646 |     fn seed_block_local_hint_from_expected_type(
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+50879 |     fn emit_try_macro_invocation(&self, inner: &str) -> String {
+      |        ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `spec` is never read
+     --> transpiler/src/codegen/mod.rs:30989:13
+      |
+30987 |         struct Field {
+      |                ----- field in this struct
+30988 |             arg_part: String,
+30989 |             spec: Option<String>,
+      |             ^^^^
+
+warning: methods `emit_match_expr_switch`, `emit_binary_operand_expr`, and `emit_closure_to_string_with_iterator_map_context` are never used
+     --> transpiler/src/codegen/emit_expr.rs:3081:19
+      |
+   19 | impl CodeGen {
+      | ------------ methods in this implementation
+...
+ 3081 |     pub(super) fn emit_match_expr_switch(
+      |                   ^^^^^^^^^^^^^^^^^^^^^^
+...
+15803 |     pub(super) fn emit_binary_operand_expr(&self, expr: &syn::Expr) -> String {
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^
+...
+26443 |     pub(super) fn emit_closure_to_string_with_iterator_map_context(
+      |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `emit_stmt_to_string_with_expected` is never used
+    --> transpiler/src/codegen/emit_stmt.rs:7385:19
+     |
+   3 | impl CodeGen {
+     | ------------ method in this implementation
+...
+7385 |     pub(super) fn emit_stmt_to_string_with_expected(
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `maybe_guard_adapt` is never used
+   --> transpiler/src/codegen/guard_flow.rs:412:19
+    |
+ 81 | impl CodeGen {
+    | ------------ method in this implementation
+...
+412 |     pub(super) fn maybe_guard_adapt(&self, expr: &syn::Expr, emitted: String) -> String {
+    |                   ^^^^^^^^^^^^^^^^^
+
+warning: method `try_infer_ternary_arm_type` is never used
+  --> transpiler/src/codegen/inference.rs:92:19
+   |
+67 | impl CodeGen {
+   | ------------ method in this implementation
+...
+92 |     pub(crate) fn try_infer_ternary_arm_type(
+   |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: method `extract_tuple_struct_bindings` is never used
+    --> transpiler/src/codegen/lookups.rs:1423:19
+     |
+   3 | impl CodeGen {
+     | ------------ method in this implementation
+...
+1423 |     pub(super) fn extract_tuple_struct_bindings(
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: methods `is_empty` and `cpp_bindings_is_empty` are never used
+  --> transpiler/src/codegen/name_resolver.rs:62:19
+   |
+52 | impl NameResolver {
+   | ----------------- methods in this implementation
+...
+62 |     pub(crate) fn is_empty(&self) -> bool {
+   |                   ^^^^^^^^
+...
+78 |     pub(crate) fn cpp_bindings_is_empty(&self) -> bool {
+   |                   ^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated function `escape_cpp_qualified_name` is never used
+   --> transpiler/src/codegen/paths.rs:842:19
+    |
+  3 | impl CodeGen {
+    | ------------ associated function in this implementation
+...
+842 |     pub(super) fn escape_cpp_qualified_name(path: &str) -> String {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `has_forward_decl_items` and `should_skip_generic_serialize_extension_overload` are never used
+    --> transpiler/src/codegen/predicates.rs:312:19
+     |
+  37 | impl CodeGen {
+     | ------------ associated items in this implementation
+...
+ 312 |     pub(super) fn has_forward_decl_items(items: &[syn::Item]) -> bool {
+     |                   ^^^^^^^^^^^^^^^^^^^^^^
+...
+1585 |     pub(super) fn should_skip_generic_serialize_extension_overload(
+     |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: associated items `type_path_leaf_name` and `map_variant_ctor_param_type` are never used
+   --> transpiler/src/codegen/type_mapping.rs:151:19
+    |
+  3 | impl CodeGen {
+    | ------------ associated items in this implementation
+...
+151 |     pub(super) fn type_path_leaf_name(ty: &syn::Type) -> Option<String> {
+    |                   ^^^^^^^^^^^^^^^^^^^
+...
+449 |     pub(super) fn map_variant_ctor_param_type(&self, ty: &syn::Type, ctor_name: &str) -> String {
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `origin` is never read
+   --> transpiler/src/codegen/type_solver.rs:149:16
+    |
+146 | pub(crate) struct Constraint {
+    |                   ---------- field in this struct
+...
+149 |     pub(crate) origin: ConstraintOrigin,
+    |                ^^^^^^
+    |
+    = note: `Constraint` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `0` is never read
+   --> transpiler/src/codegen/type_solver.rs:159:15
+    |
+159 |     Synthetic(&'static str),
+    |     --------- ^^^^^^^^^^^^
+    |     |
+    |     field in this variant
+    |
+    = note: `ConstraintOrigin` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+help: consider changing the field to be of unit type to suppress this warning while preserving the field numbering, or remove the field
+    |
+159 -     Synthetic(&'static str),
+159 +     Synthetic(()),
+    |
+
+warning: variants `Return` and `StructFieldInit` are never constructed
+   --> transpiler/src/codegen/type_solver.rs:167:5
+    |
+156 | pub(crate) enum ConstraintOrigin {
+    |                 ---------------- variants in this enum
+...
+167 |     Return,
+    |     ^^^^^^
+...
+170 |     StructFieldInit,
+    |     ^^^^^^^^^^^^^^^
+    |
+    = note: `ConstraintOrigin` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: method `lookup` is never used
+   --> transpiler/src/codegen/type_solver.rs:191:19
+    |
+182 | impl Substitution {
+    | ----------------- method in this implementation
+...
+191 |     pub(crate) fn lookup(&self, v: TyVarId) -> Option<&TyTerm> {
+    |                   ^^^^^^
+
+warning: associated function `with_binders` is never used
+   --> transpiler/src/codegen/type_solver.rs:650:19
+    |
+637 | impl<'ctx, 'r> ConstraintCollector<'ctx, 'r> {
+    | -------------------------------------------- associated function in this implementation
+...
+650 |     pub(crate) fn with_binders(
+    |                   ^^^^^^^^^^^^
+
+warning: function `infer_branch_merge` is never used
+    --> transpiler/src/codegen/type_solver.rs:1612:15
+     |
+1612 | pub(crate) fn infer_branch_merge(
+     |               ^^^^^^^^^^^^^^^^^^
+
+warning: function `render_tyterm_for_cpp` is never used
+    --> transpiler/src/codegen/type_solver.rs:1652:15
+     |
+1652 | pub(crate) fn render_tyterm_for_cpp(term: &TyTerm) -> Option<String> {
+     |               ^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `element` is never read
+  --> transpiler/src/cpp_abi.rs:42:31
+   |
+42 |     ConstRef { alias: String, element: Type },
+   |     --------                  ^^^^^^^
+   |     |
+   |     field in this variant
+   |
+   = note: `ParamAdapter` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `key` is never read
+  --> transpiler/src/cpp_abi.rs:52:16
+   |
+51 | pub(crate) struct CallableContract {
+   |                   ---------------- field in this struct
+52 |     pub(crate) key: CallableKey,
+   |                ^^^
+   |
+   = note: `CallableContract` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: field `module` is never read
+  --> transpiler/src/cpp_abi.rs:59:16
+   |
+58 | pub(crate) struct VectorAliasContract {
+   |                   ------------------- field in this struct
+59 |     pub(crate) module: ModulePath,
+   |                ^^^^^^
+   |
+   = note: `VectorAliasContract` has derived impls for the traits `Debug` and `Clone`, but these are intentionally ignored during dead code analysis
+
+warning: function `preflight_crate_sources` is never used
+    --> transpiler/src/cpp_name.rs:1700:15
+     |
+1700 | pub(crate) fn preflight_crate_sources(
+     |               ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `rewrite_content` is never used
+    --> transpiler/src/inline_rust.rs:2544:4
+     |
+2544 | fn rewrite_content(path: &Path, content: &str, blocks: &[ParsedBlock]) -> Result<String, String> {
+     |    ^^^^^^^^^^^^^^^
+
+warning: function `rewrite_content_with_plan` is never used
+    --> transpiler/src/inline_rust.rs:2548:4
+     |
+2548 | fn rewrite_content_with_plan(
+     |    ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: field `targets` is never read
+   --> transpiler/src/metadata.rs:470:5
+    |
+464 | struct ResolvedPackage {
+    |        --------------- field in this struct
+...
+470 |     targets: Vec<Target>,
+    |     ^^^^^^^
+
+warning: function `inspect_resolved_extern_dependencies_with_context` is never used
+   --> transpiler/src/metadata.rs:860:8
+    |
+860 | pub fn inspect_resolved_extern_dependencies_with_context(
+    |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `resolve_effective_local_normal_dependency_graph` is never used
+    --> transpiler/src/metadata.rs:1991:8
+     |
+1991 | pub fn resolve_effective_local_normal_dependency_graph(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `discover_local_path_dependencies` is never used
+    --> transpiler/src/metadata.rs:2385:8
+     |
+2385 | pub fn discover_local_path_dependencies(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `collect_concrete_trait_impl_method_owners` is never used
+    --> transpiler/src/transpile.rs:2129:8
+     |
+2129 | pub fn collect_concrete_trait_impl_method_owners(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `transpile` is never used
+    --> transpiler/src/transpile.rs:2796:8
+     |
+2796 | pub fn transpile(rust_source: &str, module_name: Option<&str>) -> Result<String, String> {
+     |        ^^^^^^^^^
+
+warning: function `transpile_with_type_map` is never used
+    --> transpiler/src/transpile.rs:2801:8
+     |
+2801 | pub fn transpile_with_type_map(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `transpile_with_type_map_and_extension_hints` is never used
+    --> transpiler/src/transpile.rs:2816:8
+     |
+2816 | pub fn transpile_with_type_map_and_extension_hints(
+     |        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `transpile_full` is never used
+    --> transpiler/src/transpile.rs:2855:8
+     |
+2855 | pub fn transpile_full(
+     |        ^^^^^^^^^^^^^^
+
+warning: `rusty-cpp-transpiler` (bin "rusty-cpp-transpiler") generated 57 warnings (run `cargo fix --bin "rusty-cpp-transpiler" -p rusty-cpp-transpiler` to apply 10 suggestions)
+    Finished `release` profile [optimized] target(s) in 0.27s
+[1/467] Checking remaining inline Rust and canonical rustc crate sources
+
+checked 5 files, 0 with drift
+checked 37 manifest-owned Rust module(s) and lib.rs
+...............................................................................
+----------------------------------------------------------------------
+Ran 79 tests in 2.616s
+
+OK
+checked whole rrr crate (2 modules compiled, partial root compile-only, 0 hand slots), combined importer against generated objects and production library, CallbackWrapper C++ layout/runtime/move parity, AvgStat layout/runtime, RpcError runtime contracts, ConnectionMetrics layout/concurrent/wrapping runtime contracts, CompletionTracker C++ layout/thread-safe lifecycle/wrapping runtime contracts, RandomGenerator byte-adapter/single-evaluation/precondition/wrapping/empty-weight/C-FFI runtime contracts, RequestOptions layout/factory/retry/timeout/jitter runtime contracts, ReconnectPolicy layout/factory/backoff/retry/jitter runtime contracts, and CircuitBreaker layout/factory/state/timeout/wrapping runtime contracts, RequestQueue layout/FIFO/config/overflow/expiry/callback-isolation/wrapping runtime contracts, Basetypes aliases/layout/sparse-wire/atomic/timing runtime contracts, ConnectionState layout/empty-callback/transition runtime contracts, and Heartbeat layout/empty-and-moved-callback/timing/timeout/wrapping runtime contracts, LoadBalancer layout/strategy/selection/wrapping runtime contracts, Utils layout/move/teardown/port/hostname/logging runtime contracts, FrameCodec layout/wire/fragmentation/compaction/wrapping runtime contracts, Debugging branch-hint/verify/backtrace-render/panic-tail runtime contracts, and 1961 exact provider-owned strong ABI symbols
+checked whole rrr crate (2 modules compiled, partial root compile-only, 0 hand slots), combined importer against generated objects, CallbackWrapper C++ layout/runtime/move parity, AvgStat layout/runtime, RpcError runtime contracts, ConnectionMetrics layout/concurrent/wrapping runtime contracts, CompletionTracker C++ layout/thread-safe lifecycle/wrapping runtime contracts, RandomGenerator byte-adapter/single-evaluation/precondition/wrapping/empty-weight/C-FFI runtime contracts, RequestOptions layout/factory/retry/timeout/jitter runtime contracts, ReconnectPolicy layout/factory/backoff/retry/jitter runtime contracts, and CircuitBreaker layout/factory/state/timeout/wrapping runtime contracts, RequestQueue layout/FIFO/config/overflow/expiry/callback-isolation/wrapping runtime contracts, Basetypes aliases/layout/sparse-wire/atomic/timing runtime contracts, ConnectionState layout/empty-callback/transition runtime contracts, and Heartbeat layout/empty-and-moved-callback/timing/timeout/wrapping runtime contracts, LoadBalancer layout/strategy/selection/wrapping runtime contracts, Utils layout/move/teardown/port/hostname/logging runtime contracts, FrameCodec layout/wire/fragmentation/compaction/wrapping runtime contracts, Debugging branch-hint/verify/backtrace-render/panic-tail runtime contracts, and 1961 exact provider-owned strong ABI symbols
+wrote src/rrr/src/lib.rs
+wrote src/rrr/src/example.rs
+wrote src/rrr/src/lib.rs
+wrote src/rrr/src/example.rs
+wrote src/rrr/src/lib.rs
+wrote src/rrr/src/example.rs
+wrote src/rrr/src/lib.rs
+unchanged src/rrr/src/example.rs
+wrote src/rrr/src/lib.rs
+wrote src/rrr/src/example.rs
+checked 1 manifest-owned Rust module(s) and lib.rs
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.09s
+     Running unittests src/lib.rs (src/rrr/target/debug/deps/rrr-090edb963418ba33)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/basetypes_rust.rs (src/rrr/target/debug/deps/basetypes_rust-6359d8b1f58ea3e4)
+
+running 3 tests
+test aliases_layouts_and_traits_match_the_cpp_surface ... ok
+test values_counter_and_time_facades_preserve_behavior ... ok
+test sparse_int_boundaries_and_deterministic_wire_corpus ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.09s
+
+     Running tests/callback_wrapper_rust.rs (src/rrr/target/debug/deps/callback_wrapper_rust-3f715c1f886adac3)
+
+running 3 tests
+test clone_shares_even_a_non_clone_callable ... ok
+test from_callable_exposes_the_original_callable ... ok
+test public_layout_and_traits_match_the_single_field_contract ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/circuit_breaker_rust.rs (src/rrr/target/debug/deps/circuit_breaker_rust-10e21f7c3e12a27f)
+
+running 4 tests
+test closed_open_half_open_and_reset_transitions_are_exact ... ok
+test disabled_and_wrapping_boundaries_match_unsigned_cpp ... ok
+test factories_and_names_preserve_the_legacy_values ... ok
+test layouts_discriminants_and_thread_traits_match_the_cpp_surface ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/completion_tracker_rust.rs (src/rrr/target/debug/deps/completion_tracker_rust-d976fff057819e5e)
+
+running 5 tests
+test configuration_entry_and_query_contracts_match_production ... ok
+test public_record_enum_and_trait_contracts_are_pinned ... ok
+test tracking_expiry_eviction_and_configuration_preserve_behavior ... ok
+test relaxed_counters_have_unsigned_wrapping_and_reset_contracts ... ok
+test safe_rust_callers_can_repeat_the_mutating_api_across_threads ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/connection_metrics_rust.rs (src/rrr/target/debug/deps/connection_metrics_rust-99ef4c6af1f850d1)
+
+running 5 tests
+test fetch_add_has_unsigned_wrapping_parity ... ok
+test public_repr_c_layout_is_eighteen_atomic_u64_fields_in_order ... ok
+test transport_reliability_uptime_and_reset_metrics_preserve_behavior ... ok
+test request_and_latency_metrics_preserve_the_production_state_machine ... ok
+test concurrent_updates_are_atomic_and_in_flight_saturates ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/connection_state_rust.rs (src/rrr/target/debug/deps/connection_state_rust-0f7e5b724197c271)
+
+running 3 tests
+test default_empty_callback_and_installed_callback_preserve_state_behavior ... ok
+test layout_discriminants_and_callback_type_match_cpp ... ok
+test names_and_transition_table_are_exact ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/debugging_rust.rs (src/rrr/target/debug/deps/debugging_rust-360806a03ab92ef4)
+
+running 2 tests
+test branch_hints_preserve_boolean_identity ... ok
+test explicit_rust_source_location_drives_the_success_path ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/errors_rust.rs (src/rrr/target/debug/deps/errors_rust-2b7f282be5ce53c4)
+
+running 2 tests
+test categories_and_retry_predicates_match_the_numeric_ranges ... ok
+test discriminants_and_names_preserve_the_public_error_contract ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/frame_codec_rust.rs (src/rrr/target/debug/deps/frame_codec_rust-381f56a5536c7aea)
+
+running 2 tests
+test header_boundaries_and_transactional_encode ... ok
+test fragmented_coalesced_and_compacted_streams ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/heartbeat_rust.rs (src/rrr/target/debug/deps/heartbeat_rust-6c5cbee93bd4f7fa)
+
+running 5 tests
+test empty_callback_timeout_is_safe_and_wrapping_elapsed_is_exact ... ok
+test layouts_and_public_callback_type_match_cpp ... ok
+test factories_and_disabled_behavior_are_exact ... ok
+test send_pong_missed_timeout_callback_and_reset_are_exact ... ok
+test set_config_resets_state ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/internal_protocol_rust.rs (src/rrr/target/debug/deps/internal_protocol_rust-8edf2c8f8761fbbe)
+
+running 2 tests
+test constants_preserve_the_wire_contract ... ok
+test decode_and_encode_match_the_six_row_boundary_matrix ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/load_balancer_rust.rs (src/rrr/target/debug/deps/load_balancer_rust-b2bf7ddf4af80597)
+
+running 2 tests
+test all_selection_strategies_preserve_behavior ... ok
+test state_and_strategy_boundaries_are_exact ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/rand_rust.rs (src/rrr/target/debug/deps/rand_rust-b9955123b30f9b58)
+
+running 4 tests
+test byte_string_adapters_preserve_padding_truncation_and_binary_payloads ... ok
+test integer_formatting_matches_the_legacy_decimal_byte_contract ... ok
+test raw_kernel_range_math_and_destroy_have_exact_call_counts ... ok
+test weighted_selection_preserves_boundaries_empty_sentinel_and_draw_counts ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/reconnect_policy_rust.rs (src/rrr/target/debug/deps/reconnect_policy_rust-befe95f751c01272)
+
+running 6 tests
+test exponential_backoff_caps_and_peek_does_not_advance_state ... ok
+test factories_preserve_every_legacy_policy_value ... ok
+test jitter_uses_one_raw_draw_and_the_legacy_endpoints ... ok
+test limited_disabled_and_unlimited_retry_boundaries_are_distinct ... ok
+test repr_c_layouts_and_thread_traits_match_the_cpp_surface ... ok
+test retry_counter_wraps_exactly_like_the_unsigned_cpp_cell ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/request_options_rust.rs (src/rrr/target/debug/deps/request_options_rust-aa55f5e73c474a6b)
+
+running 4 tests
+test factories_retry_and_timeout_boundaries_are_exact ... ok
+test layouts_discriminants_and_traits_match_the_flat_cpp_surface ... ok
+test timeout_strings_cover_every_rust_constructible_variant ... ok
+test backoff_caps_before_jitter_and_draw_counts_are_deterministic ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/request_queue_rust.rs (src/rrr/target/debug/deps/request_queue_rust-8f82c758945746c3)
+
+running 6 tests
+test callbacks_observe_the_legacy_queue_lock_boundaries ... ok
+test constants_factories_and_names_preserve_legacy_values ... ok
+test fifo_capacity_default_ttl_and_config_updates_are_preserved ... ok
+test public_layout_discriminants_and_traits_match_the_cpp_surface ... ok
+test overflow_disabled_expiry_and_clear_callbacks_are_isolated ... ok
+test request_time_expiry_age_and_unsigned_wrap_are_exact ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/stat_rust.rs (src/rrr/target/debug/deps/stat_rust-b487ac6dfbde889e)
+
+running 2 tests
+test new_sample_and_clear_preserve_the_public_boundary ... ok
+test peek_and_reset_return_snapshots_without_layout_indirection ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/utils_rust.rs (src/rrr/target/debug/deps/utils_rust-9f8d3999831194e7)
+
+running 2 tests
+test addrinfo_layout_empty_state_and_rust_traits_are_pinned ... ok
+test port_contract_and_hostname_facade_are_rustc_exercised ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (src/rrr/target/debug/deps/rusty-434f7da692073f46)
+
+running 2 tests
+test tests::empty_and_layout_match_the_cpp_runtime ... ok
+test tests::fn_and_fn_mut_dispatch ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (src/rrr/target/debug/deps/rusty_cpp_markers-3d9664b9ea73eb80)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling rusty-cpp-markers v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/src/rrr/rusty-cpp-markers)
+    Checking rusty v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/src/rrr/rusty-rustc)
+    Checking rrr v0.0.0 (/home/users/shuai/mako/.claude/worktrees/sto-rust/src/rrr)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.94s
+[2/467] Fingerprinting the Goal-0 rusty-cpp emitter
+[3/467] Generating Goal-0 rrr crate C++ child modules
+Loaded 71 type mappings from /home/users/shuai/mako/.claude/worktrees/sto-rust/src/rrr/rust-type-map.toml
+warning: RandomGenerator::int2str_n: two impls collapse to a single C++ signature, so one body is kept and the other discarded — the port compiles and may do the wrong thing. Origin info unavailable at this call site; causes are TRAIT-ARG (hard C++ limit), SELF-TYPE (emitter gap), or DIFFERENT-TRAIT sharing a method name (emitter gap). See task #206.
+warning: RandomGenerator::weighted_select: two impls collapse to a single C++ signature, so one body is kept and the other discarded — the port compiles and may do the wrong thing. Origin info unavailable at this call site; causes are TRAIT-ARG (hard C++ limit), SELF-TYPE (emitter gap), or DIFFERENT-TRAIT sharing a method name (emitter gap). See task #206.
+
+Dependencies:
+  rusty (local: /home/users/shuai/mako/.claude/worktrees/sto-rust/src/rrr/rusty-rustc) — provided by the rusty C++ runtime; rustc facade is not generated
+
+Transpiling crate 'rrr' (38 source files)
+  src/any_message.rs → rrr.any_message.cppm (module: rrr.any_message)
+  src/basetypes.rs → rrr.basetypes.cppm (module: rrr.basetypes)
+  src/callback_wrapper.rs → rrr.callback_wrapper.cppm (module: rrr.callback_wrapper)
+  src/callbacks.rs → rrr.callbacks.cppm (module: rrr.callbacks)
+  src/channel.rs → rrr.channel.cppm (module: rrr.channel)
+  src/circuit_breaker.rs → rrr.circuit_breaker.cppm (module: rrr.circuit_breaker)
+  src/client.rs → rrr.client.cppm (module: rrr.client)
+  src/completion_tracker.rs → rrr.completion_tracker.cppm (module: rrr.completion_tracker)
+  src/connection_metrics.rs → rrr.connection_metrics.cppm (module: rrr.connection_metrics)
+  src/connection_state.rs → rrr.connection_state.cppm (module: rrr.connection_state)
+  src/debugging.rs → rrr.debugging.cppm (module: rrr.debugging)
+  src/epoll_wrapper.rs → rrr.epoll_wrapper.cppm (module: rrr.epoll_wrapper)
+  src/errors.rs → rrr.errors.cppm (module: rrr.errors)
+  src/fiber.rs → rrr.fiber.cppm (module: rrr.fiber)
+  src/fiber_channel.rs → rrr.fiber_channel.cppm (module: rrr.fiber_channel)
+  src/frame_codec.rs → rrr.frame_codec.cppm (module: rrr.frame_codec)
+  src/future.rs → rrr.future.cppm (module: rrr.future)
+  src/heartbeat.rs → rrr.heartbeat.cppm (module: rrr.heartbeat)
+  src/idempotency.rs → rrr.idempotency.cppm (module: rrr.idempotency)
+  src/inmemory_channel.rs → rrr.inmemory_channel.cppm (module: rrr.inmemory_channel)
+  src/internal_protocol.rs → rrr.internal_protocol.cppm (module: rrr.internal_protocol)
+  src/lib.rs → rrr.cppm (module: rrr)
+  src/load_balancer.rs → rrr.load_balancer.cppm (module: rrr.load_balancer)
+  src/logging.rs → rrr.logging.cppm (module: rrr.logging)
+  src/misc.rs → rrr.misc.cppm (module: rrr.misc)
+  src/pollable_proxy.rs → rrr.pollable_proxy.cppm (module: rrr.pollable_proxy)
+  src/rand.rs → rrr.rand.cppm (module: rrr.rand)
+  src/reactor.rs → rrr.reactor.cppm (module: rrr.reactor)
+  src/reconnect_policy.rs → rrr.reconnect_policy.cppm (module: rrr.reconnect_policy)
+  src/request_options.rs → rrr.request_options.cppm (module: rrr.request_options)
+  src/request_queue.rs → rrr.request_queue.cppm (module: rrr.request_queue)
+  src/serializable.rs → rrr.serializable.cppm (module: rrr.serializable)
+  src/serializable_envelope.rs → rrr.serializable_envelope.cppm (module: rrr.serializable_envelope)
+  src/server.rs → rrr.server.cppm (module: rrr.server)
+  src/stat.rs → rrr.stat.cppm (module: rrr.stat)
+  src/tcp_channel.rs → rrr.tcp_channel.cppm (module: rrr.tcp_channel)
+  src/threading.rs → rrr.threading.cppm (module: rrr.threading)
+  src/utils.rs → rrr.utils.cppm (module: rrr.utils)
+
+Generated /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/CMakeLists.txt
+Slot manifest: 0 slots — see /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rusty_hand_slots.md
+Done: 38 files transpiled, 0 errors
+[5/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.connection_metrics.cppm for CXX dependencies
+[6/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.load_balancer.cppm for CXX dependencies
+[7/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.heartbeat.cppm for CXX dependencies
+[8/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.completion_tracker.cppm for CXX dependencies
+[9/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reconnect_policy.cppm for CXX dependencies
+[10/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.circuit_breaker.cppm for CXX dependencies
+[11/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.connection_state.cppm for CXX dependencies
+[12/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.request_queue.cppm for CXX dependencies
+[13/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.stat.cppm for CXX dependencies
+[14/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.callback_wrapper.cppm for CXX dependencies
+[15/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.basetypes.cppm for CXX dependencies
+[16/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/rrr/reactor/epoll_platform_linux.cc for CXX dependencies
+[17/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.errors.cppm for CXX dependencies
+[18/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.rand.cppm for CXX dependencies
+[19/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.internal_protocol.cppm for CXX dependencies
+[20/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.request_options.cppm for CXX dependencies
+[21/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.pollable_proxy.cppm for CXX dependencies
+[22/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.utils.cppm for CXX dependencies
+[23/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.serializable_envelope.cppm for CXX dependencies
+[24/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.misc.cppm for CXX dependencies
+[25/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.debugging.cppm for CXX dependencies
+[26/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.future.cppm for CXX dependencies
+[27/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.logging.cppm for CXX dependencies
+[28/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.serializable.cppm for CXX dependencies
+[29/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.frame_codec.cppm for CXX dependencies
+[30/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.fiber.cppm for CXX dependencies
+[31/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.idempotency.cppm for CXX dependencies
+[32/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.channel.cppm for CXX dependencies
+[33/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm for CXX dependencies
+[34/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.epoll_wrapper.cppm for CXX dependencies
+[35/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.callbacks.cppm for CXX dependencies
+[36/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.inmemory_channel.cppm for CXX dependencies
+[37/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/kv_store.h for CXX dependencies
+[38/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/remote_kv_store.h for CXX dependencies
+[39/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/cluster_config.cc for CXX dependencies
+[40/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/shard_router.cc for CXX dependencies
+[41/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/config_manager.h for CXX dependencies
+[42/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/sharding_policy_builder.h for CXX dependencies
+[43/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/in_memory_kv_store.h for CXX dependencies
+[44/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/sharding_policy.h for CXX dependencies
+[45/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/sharding_policy_cache.h for CXX dependencies
+[46/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/cluster.ccm for CXX dependencies
+[47/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/shard.h for CXX dependencies
+[48/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/shard_router.h for CXX dependencies
+[49/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.fiber_channel.cppm for CXX dependencies
+[50/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.any_message.cppm for CXX dependencies
+[51/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.threading.cppm for CXX dependencies
+[52/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.client.cppm for CXX dependencies
+[53/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.server.cppm for CXX dependencies
+[54/467] Scanning /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.tcp_channel.cppm for CXX dependencies
+[55/467] Generating CXX dyndep file src/rrr/CMakeFiles/rrr.dir/CXX.dd
+[56/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/cluster_config.h for CXX dependencies
+[57/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/config_watcher.h for CXX dependencies
+[58/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/benchmark_registry.cc for CXX dependencies
+[59/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/shard_manager.h for CXX dependencies
+[60/467] Generating CXX dyndep file CMakeFiles/cluster.dir/CXX.dd
+[61/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/replication_helper.cc for CXX dependencies
+[62/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/2pl/tx.cc for CXX dependencies
+[63/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/raft_main_helper.cc for CXX dependencies
+[64/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/paxos_main_helper.cc for CXX dependencies
+[65/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/2pl/scheduler.cc for CXX dependencies
+[66/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/RW_command.cc for CXX dependencies
+[67/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/empty.cc for CXX dependencies
+[68/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/benchmark_control_rpc.cc for CXX dependencies
+[69/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/classic/tpc_command.cc for CXX dependencies
+[70/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/classic/scheduler.cc for CXX dependencies
+[71/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/classic/coordinator.cc for CXX dependencies
+[72/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/client_status.cc for CXX dependencies
+[73/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/client_worker.cc for CXX dependencies
+[74/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/command_marshaler.cc for CXX dependencies
+[75/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/communicator.cc for CXX dependencies
+[76/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/config.cc for CXX dependencies
+[77/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/coordinator.cc for CXX dependencies
+[78/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/copilot/commo.cc for CXX dependencies
+[79/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/copilot/frame.cc for CXX dependencies
+[80/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/copilot/coordinator.cc for CXX dependencies
+[81/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/copilot/server.cc for CXX dependencies
+[82/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/copilot/service.cc for CXX dependencies
+[83/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/executor.cc for CXX dependencies
+[84/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/extern_c/frame.cc for CXX dependencies
+[85/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/extern_c/sched.cc for CXX dependencies
+[86/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/fpga_raft/commo.cc for CXX dependencies
+[87/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/fpga_raft/coordinator.cc for CXX dependencies
+[88/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/fpga_raft/frame.cc for CXX dependencies
+[89/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/fpga_raft/server.cc for CXX dependencies
+[90/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/fpga_raft/service.cc for CXX dependencies
+[91/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/frame.cc for CXX dependencies
+[92/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/marshal-value.cc for CXX dependencies
+[93/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/helloworld_client/helloworld_impl.cc for CXX dependencies
+[94/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/multi_value.cc for CXX dependencies
+[95/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/network_client/network_impl.cc for CXX dependencies
+[96/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/none/coordinator.cc for CXX dependencies
+[97/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/none/scheduler.cc for CXX dependencies
+[98/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/none_copilot/commo.cc for CXX dependencies
+[99/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/occ/scheduler.cc for CXX dependencies
+[100/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/none_copilot/scheduler.cc for CXX dependencies
+[101/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/paxos/commo.cc for CXX dependencies
+[102/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/occ/tx.cc for CXX dependencies
+[103/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/paxos/exec.cc for CXX dependencies
+[104/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/paxos/coordinator.cc for CXX dependencies
+[105/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/paxos/frame.cc for CXX dependencies
+[106/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/paxos/server.cc for CXX dependencies
+[107/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/paxos/service.cc for CXX dependencies
+[108/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/paxos_worker.cc for CXX dependencies
+[109/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/procedure.cc for CXX dependencies
+[110/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/raft/commo.cc for CXX dependencies
+[111/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/raft/exec.cc for CXX dependencies
+[112/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/raft/coordinator.cc for CXX dependencies
+[113/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/raft/raft_worker.cc for CXX dependencies
+[114/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/raft/frame.cc for CXX dependencies
+[115/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/raft/replicated_db.cc for CXX dependencies
+[116/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/raft/server.cc for CXX dependencies
+[117/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/raft/service.cc for CXX dependencies
+[118/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/raft/testconf.cc for CXX dependencies
+[119/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/raft/test.cc for CXX dependencies
+[120/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/rcc/commo.cc for CXX dependencies
+[121/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/rcc/coord.cc for CXX dependencies
+[122/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/rcc/dep_graph.cc for CXX dependencies
+[123/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/rcc/graph_marshaler.cc for CXX dependencies
+[124/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/rcc/row.cc for CXX dependencies
+[125/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/rcc/frame.cc for CXX dependencies
+[126/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/rcc/server.cc for CXX dependencies
+[127/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/rcc/tx.cc for CXX dependencies
+[128/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/rule/coordinator.cc for CXX dependencies
+[129/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/rule/commo.cc for CXX dependencies
+[130/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/rule/frame.cc for CXX dependencies
+[131/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/scheduler.cc for CXX dependencies
+[132/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/txn_reg.cc for CXX dependencies
+[133/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/server_worker.cc for CXX dependencies
+[134/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/service.cc for CXX dependencies
+[135/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/sharding.cc for CXX dependencies
+[136/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/MurmurHash3.cc for CXX dependencies
+[137/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/snow/ro6_coord.cc for CXX dependencies
+[138/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/snow/ro6.cc for CXX dependencies
+[139/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/snow/ro6_row.cc for CXX dependencies
+[140/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/stats_registry.cc for CXX dependencies
+[141/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/tpcc_sharding.cc for CXX dependencies
+[142/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/tapir/commo.cc for CXX dependencies
+[143/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/tapir/frame.cc for CXX dependencies
+[144/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/tapir/coordinator.cc for CXX dependencies
+[145/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/xxhash.cc for CXX dependencies
+[146/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/schema.cc for CXX dependencies
+[147/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/row.cc for CXX dependencies
+[148/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/txn.cc for CXX dependencies
+[149/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/table.cc for CXX dependencies
+[150/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/tapir/scheduler.cc for CXX dependencies
+[151/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/txn_2pl.cc for CXX dependencies
+[152/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/memory.cc for CXX dependencies
+[153/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/txn_nested.cc for CXX dependencies
+[154/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/txn_occ.cc for CXX dependencies
+[155/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/utils.cc for CXX dependencies
+[156/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/tapir/tx.cc for CXX dependencies
+[157/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/txn_unsafe.cc for CXX dependencies
+[158/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/tx.cc for CXX dependencies
+[159/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/deptran/workload.cc for CXX dependencies
+[160/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/value.cc for CXX dependencies
+[161/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/rocksdb_persistence.cc for CXX dependencies
+[162/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/btree.cc for CXX dependencies
+[163/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/stats_server.cc for CXX dependencies
+[164/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/ticker.cc for CXX dependencies
+[165/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/allocator.cc for CXX dependencies
+[166/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/varint.cc for CXX dependencies
+[167/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/counter.cc for CXX dependencies
+[168/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/core.cc for CXX dependencies
+[169/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/tuple.cc for CXX dependencies
+[170/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/txn_btree.cc for CXX dependencies
+[171/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/rcu.cc for CXX dependencies
+[172/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/txn_proto2_impl.cc for CXX dependencies
+[173/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/txn.cc for CXX dependencies
+[174/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/thread.cc for CXX dependencies
+[175/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/sto/TRcu.cc for CXX dependencies
+[176/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/lookup3.cc for CXX dependencies
+[177/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/rust_wrapper.cc for CXX dependencies
+[178/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/silo_runtime.cc for CXX dependencies
+[179/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/memory.cc for CXX dependencies
+[180/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/message.cc for CXX dependencies
+[181/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/benchmarks/bench.cc for CXX dependencies
+[182/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/sto/Packer.cc for CXX dependencies
+[183/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/benchmarks/encstress.cc for CXX dependencies
+[184/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/kv_store.cc for CXX dependencies
+[185/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/transport.cc for CXX dependencies
+[186/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/benchmarks/bid.cc for CXX dependencies
+[187/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/timestamp.cc for CXX dependencies
+[188/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/benchmarks/rpc_setup.cc for CXX dependencies
+[189/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/helper_queue.cc for CXX dependencies
+[190/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/benchmarks/sync_util_init.cc for CXX dependencies
+[191/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/sto/MassTrans.cc for CXX dependencies
+[192/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/sto/common.cc for CXX dependencies
+[193/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/benchmarks/queue.cc for CXX dependencies
+[194/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/benchmarks/tpcc.cc for CXX dependencies
+[195/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/sto/Transaction.cc for CXX dependencies
+[196/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/sto/ThreadPool.cc for CXX dependencies
+[197/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/promise.cc for CXX dependencies
+[198/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/sto/ReplayDB.cc for CXX dependencies
+[199/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/MurmurHash3.cc for CXX dependencies
+[200/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/db.cc for CXX dependencies
+[201/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/fasttransport.cc for CXX dependencies
+[202/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/multi_transport_manager.cc for CXX dependencies
+[203/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/configuration.cc for CXX dependencies
+[204/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/rrr_rpc_backend.cc for CXX dependencies
+[205/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/storage/abstract_db.cc for CXX dependencies
+[206/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/schema.cc for CXX dependencies
+[207/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/table.cc for CXX dependencies
+[208/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/row.cc for CXX dependencies
+[209/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/txn.cc for CXX dependencies
+[210/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/txn_2pl.cc for CXX dependencies
+[211/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/xxhash.cc for CXX dependencies
+[212/467] Building ASM object src/rrr/CMakeFiles/rrr.dir/reactor/fiber_context_x86_64.S.o
+[213/467] Building C object src/rrr/CMakeFiles/rrr.dir/rpc/srpc_connect.c.o
+[214/467] Building ASM object src/rrr/CMakeFiles/rrr.dir/reactor/fiber_context_aarch64.S.o
+[215/467] Building C object src/rrr/CMakeFiles/rrr.dir/rpc/srpc_server.c.o
+[216/467] Building C object src/rrr/CMakeFiles/rrr.dir/misc/srpc_rand.c.o
+[217/467] Building C object src/rrr/CMakeFiles/rrr.dir/rpc/srpc_net.c.o
+[218/467] Building C object src/rrr/CMakeFiles/rrr.dir/misc/srpc_timing.c.o
+[219/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/client.cc for CXX dependencies
+[220/467] Building C object src/rrr/CMakeFiles/rrr.dir/misc/srpc_io.c.o
+[221/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/rocks_interface/client_service.cc for CXX dependencies
+[222/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/txn_nested.cc for CXX dependencies
+[223/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/shardClient.cc for CXX dependencies
+[224/467] Building C object src/rrr/CMakeFiles/rrr.dir/reactor/srpc_fiber.c.o
+[225/467] Building C object src/rrr/CMakeFiles/rrr.dir/base/srpc_base.c.o
+[226/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/utils.cc for CXX dependencies
+[227/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/txn_occ.cc for CXX dependencies
+[228/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/txn_unsafe.cc for CXX dependencies
+[229/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/rocks_interface/client_proxy.cc for CXX dependencies
+[230/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/storage/mtree_abi.cc for CXX dependencies
+[231/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/memdb/value.cc for CXX dependencies
+[232/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/lib/server.cc for CXX dependencies
+[233/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/cluster_bootstrap.cc for CXX dependencies
+[234/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/kv_store.h.o
+[235/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.stat.cppm.o
+[236/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.internal_protocol.cppm.o
+[237/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.circuit_breaker.cppm.o
+[238/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.callback_wrapper.cppm.o
+[239/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.pollable_proxy.cppm.o
+[240/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.basetypes.cppm.o
+[241/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/remote_kv_store.h.o
+[242/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.connection_metrics.cppm.o
+[243/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.load_balancer.cppm.o
+[244/467] Generating CXX dyndep file CMakeFiles/txlog_core_obj.dir/CXX.dd
+[245/467] Generating CXX dyndep file CMakeFiles/mako.dir/CXX.dd
+[246/467] Generating CXX dyndep file CMakeFiles/memdb.dir/CXX.dd
+[247/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.errors.cppm.o
+[248/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.connection_state.cppm.o
+[249/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/shard_router.h.o
+[250/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.misc.cppm.o
+[251/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/src/mako/benchmarks/sto_masstree_compare.cc for CXX dependencies
+[252/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.rand.cppm.o
+In module 'vec_port.vec' imported from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.rand.cppm:37:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:3727:22: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 3727 |     __builtin_assume(!this_.needs_to_grow(static_cast<size_t>(0), std::move(capacity), std::move(elem_layout)));
+      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:3725:307: note: while substituting into a lambda expression here
+ 3725 |         return [&]() -> RawVecInner<A> { auto&& _m = RawVecInner<A>::try_allocate_in(std::move(capacity), AllocInit_Uninitialized(), std::move(alloc), std::move(elem_layout)); if (_m.is_ok()) { auto&& _mv0 = _m.unwrap(); auto&& this_ = rusty::detail::deref_if_pointer(_mv0); return [&]() -> RawVecInner<A> { // @unsafe
+      |                                                                                                                                                                                                                                                                                                                   ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:3725:40: note: while substituting into a lambda expression here
+ 3725 |         return [&]() -> RawVecInner<A> { auto&& _m = RawVecInner<A>::try_allocate_in(std::move(capacity), AllocInit_Uninitialized(), std::move(alloc), std::move(elem_layout)); if (_m.is_ok()) { auto&& _mv0 = _m.unwrap(); auto&& this_ = rusty::detail::deref_if_pointer(_mv0); return [&]() -> RawVecInner<A> { // @unsafe
+      |                                        ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:4008:45: note: in instantiation of member function 'rusty::port::vec::RawVecInner<>::with_capacity_in' requested here
+ 4008 |         return RawVec<T, A>(RawVecInner<A>::with_capacity_in(std::move(capacity), std::move(alloc), rusty::clone(rusty::clone(rusty::alloc::Layout::new_<T>()))), rusty::PhantomData<T>{});
+      |                                             ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:4789:40: note: in instantiation of member function 'rusty::port::vec::RawVec<unsigned char>::with_capacity_in' requested here
+ 4789 |         return Vec<T, A>(RawVec<T, A>::with_capacity_in(std::move(capacity), std::move(alloc)), static_cast<size_t>(0));
+      |                                        ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:4748:27: note: in instantiation of member function 'rusty::port::vec::Vec<unsigned char>::with_capacity_in' requested here
+ 4748 |         return Vec<T, A>::with_capacity_in(std::move(capacity), rusty::alloc::Global{});
+      |                           ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.rand.cppm:47:44: note: in instantiation of member function 'rusty::port::vec::Vec<unsigned char>::with_capacity' requested here
+   47 |         auto output = rusty::Vec<uint8_t>::with_capacity(input.size());
+      |                                            ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.rand.cppm:37:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<unsigned char>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.rand.cppm:101:42: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<unsigned char>>' requested here
+  101 |     while (((static_cast<int32_t>(rusty::len(ret)))) < rusty::detail::deref_if_pointer_like(length)) {
+      |                                          ^
+2 warnings generated.
+[253/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/empty.cc.o
+[254/467] Scanning /home/users/shuai/mako/.claude/worktrees/sto-rust/tests/test_mtree_abi.cc for CXX dependencies
+[255/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.debugging.cppm.o
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.debugging.cppm:4989:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<std::basic_string<char>>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.debugging.cppm:5090:65: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<std::basic_string<char>>>' requested here
+ 5090 |     while (rusty::detail::deref_if_pointer_like(index) < rusty::len(capture.symbols)) {
+      |                                                                 ^
+1 warning generated.
+[256/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/txn_reg.cc.o
+[257/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.completion_tracker.cppm.o
+[258/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/config_manager.h.o
+[259/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/MurmurHash3.cc.o
+[260/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/xxhash.cc.o
+[261/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/benchmark_registry.cc.o
+[262/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.frame_codec.cppm.o
+[263/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/in_memory_kv_store.h.o
+[264/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/replication_helper.cc.o
+[265/467] Building CXX object CMakeFiles/mako.dir/src/mako/memory.cc.o
+[266/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.channel.cppm.o
+[267/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.heartbeat.cppm.o
+[268/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.epoll_wrapper.cppm.o
+[269/467] Building CXX object CMakeFiles/mako.dir/src/mako/allocator.cc.o
+[270/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.request_queue.cppm.o
+[271/467] Building CXX object CMakeFiles/mako.dir/src/mako/core.cc.o
+[272/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.reconnect_policy.cppm.o
+[273/467] Building CXX object CMakeFiles/mako.dir/src/mako/rocksdb_persistence.cc.o
+[274/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.request_options.cppm.o
+[275/467] Building CXX object CMakeFiles/mako.dir/src/mako/counter.cc.o
+[276/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.threading.cppm.o
+[277/467] Building CXX object CMakeFiles/mako.dir/src/mako/stats_server.cc.o
+[278/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.callbacks.cppm.o
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.callbacks.cppm:4987:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Arc<rusty::Function<void () const>>>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.callbacks.cppm:5088:22: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<rusty::Arc<rusty::Function<void () const>>>>' requested here
+ 5088 |     return (((rusty::len(this->on_connected) + rusty::len(this->on_disconnected)) + rusty::len(this->on_error)) + rusty::len(this->on_reconnecting)) + rusty::len(this->on_reconnected);
+      |                      ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.callbacks.cppm:4987:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Arc<rusty::Function<void (rrr::RpcError, const std::basic_string<char> &) const>>>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.callbacks.cppm:5088:92: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<rusty::Arc<rusty::Function<void (rrr::RpcError, const std::basic_string<char> &) const>>>>' requested here
+ 5088 |     return (((rusty::len(this->on_connected) + rusty::len(this->on_disconnected)) + rusty::len(this->on_error)) + rusty::len(this->on_reconnecting)) + rusty::len(this->on_reconnected);
+      |                                                                                            ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.callbacks.cppm:4987:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Arc<rusty::Function<void (bool) const>>>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.callbacks.cppm:5088:159: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<rusty::Arc<rusty::Function<void (bool) const>>>>' requested here
+ 5088 |     return (((rusty::len(this->on_connected) + rusty::len(this->on_disconnected)) + rusty::len(this->on_error)) + rusty::len(this->on_reconnecting)) + rusty::len(this->on_reconnected);
+      |                                                                                                                                                               ^
+In module 'vec_port.vec' imported from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.callbacks.cppm:4987:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:3727:22: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 3727 |     __builtin_assume(!this_.needs_to_grow(static_cast<size_t>(0), std::move(capacity), std::move(elem_layout)));
+      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:3725:307: note: while substituting into a lambda expression here
+ 3725 |         return [&]() -> RawVecInner<A> { auto&& _m = RawVecInner<A>::try_allocate_in(std::move(capacity), AllocInit_Uninitialized(), std::move(alloc), std::move(elem_layout)); if (_m.is_ok()) { auto&& _mv0 = _m.unwrap(); auto&& this_ = rusty::detail::deref_if_pointer(_mv0); return [&]() -> RawVecInner<A> { // @unsafe
+      |                                                                                                                                                                                                                                                                                                                   ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:3725:40: note: while substituting into a lambda expression here
+ 3725 |         return [&]() -> RawVecInner<A> { auto&& _m = RawVecInner<A>::try_allocate_in(std::move(capacity), AllocInit_Uninitialized(), std::move(alloc), std::move(elem_layout)); if (_m.is_ok()) { auto&& _mv0 = _m.unwrap(); auto&& this_ = rusty::detail::deref_if_pointer(_mv0); return [&]() -> RawVecInner<A> { // @unsafe
+      |                                        ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:4008:45: note: in instantiation of member function 'rusty::port::vec::RawVecInner<>::with_capacity_in' requested here
+ 4008 |         return RawVec<T, A>(RawVecInner<A>::with_capacity_in(std::move(capacity), std::move(alloc), rusty::clone(rusty::clone(rusty::alloc::Layout::new_<T>()))), rusty::PhantomData<T>{});
+      |                                             ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:4789:40: note: in instantiation of member function 'rusty::port::vec::RawVec<rusty::Arc<rusty::Function<void () const>>>::with_capacity_in' requested here
+ 4789 |         return Vec<T, A>(RawVec<T, A>::with_capacity_in(std::move(capacity), std::move(alloc)), static_cast<size_t>(0));
+      |                                        ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5434:31: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Arc<rusty::Function<void () const>>>::with_capacity_in' requested here
+ 5434 |         auto out = Vec<T, A>::with_capacity_in(this->len_field, std::move(alloc));
+      |                               ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/move.hpp:137:18: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Arc<rusty::Function<void () const>>>::clone' requested here
+  137 |         return t.clone();
+      |                  ^
+4 warnings generated.
+[279/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.logging.cppm.o
+[280/467] Building CXX object CMakeFiles/mako.dir/src/mako/ticker.cc.o
+[281/467] Building CXX object CMakeFiles/mako.dir/src/mako/rcu.cc.o
+[282/467] Building CXX object CMakeFiles/mako.dir/src/mako/btree.cc.o
+[283/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/reactor/epoll_platform_linux.cc.o
+[284/467] Building CXX object CMakeFiles/mako.dir/src/mako/varint.cc.o
+[285/467] Building CXX object CMakeFiles/mako.dir/src/mako/tuple.cc.o
+[286/467] Building CXX object CMakeFiles/mako.dir/src/mako/txn.cc.o
+[287/467] Building CXX object CMakeFiles/mako.dir/src/mako/thread.cc.o
+[288/467] Building CXX object CMakeFiles/mako.dir/src/mako/txn_proto2_impl.cc.o
+[289/467] Building CXX object CMakeFiles/mako.dir/src/mako/silo_runtime.cc.o
+[290/467] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/encstress.cc.o
+[291/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.inmemory_channel.cppm.o
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.inmemory_channel.cppm:4988:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<unsigned char>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.inmemory_channel.cppm:5275:111: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<unsigned char>>' requested here
+ 5275 |     const ::rrr::ChannelFrame delivered = ::rrr::ChannelFrame{.payload = rusty::as_ptr(bytes), .size = rusty::len(bytes)};
+      |                                                                                                               ^
+1 warning generated.
+[292/467] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/bid.cc.o
+[293/467] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/sync_util_init.cc.o
+[294/467] Building CXX object CMakeFiles/mako.dir/src/mako/sto/TRcu.cc.o
+[295/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/lookup3.cc.o
+[296/467] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/bench.cc.o
+[297/467] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/queue.cc.o
+[298/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/rust_wrapper.cc.o
+[299/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/memory.cc.o
+[300/467] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/rpc_setup.cc.o
+[301/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/message.cc.o
+[302/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/shard.h.o
+[303/467] Building CXX object CMakeFiles/mako.dir/src/mako/sto/Packer.cc.o
+[304/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/timestamp.cc.o
+[305/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.utils.cppm.o
+[306/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.serializable.cppm.o
+[307/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/transport.cc.o
+[308/467] Building CXX object CMakeFiles/mako.dir/src/mako/txn_btree.cc.o
+[309/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/promise.cc.o
+[310/467] Building CXX object CMakeFiles/mako.dir/src/mako/sto/MassTrans.cc.o
+[311/467] Building CXX object CMakeFiles/mako.dir/src/mako/sto/common.cc.o
+[312/467] Building CXX object CMakeFiles/mako.dir/src/mako/sto/Transaction.cc.o
+[313/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/helper_queue.cc.o
+[314/467] Building CXX object CMakeFiles/mako.dir/src/mako/db.cc.o
+[315/467] Building CXX object CMakeFiles/memdb.dir/src/memdb/MurmurHash3.cc.o
+[316/467] Building CXX object CMakeFiles/memdb.dir/src/memdb/xxhash.cc.o
+[317/467] Generating CXX dyndep file CMakeFiles/sto_masstree_cpp_bench.dir/CXX.dd
+[318/467] Generating CXX dyndep file CMakeFiles/test_mtree_abi.dir/CXX.dd
+[319/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/multi_transport_manager.cc.o
+[320/467] Building CXX object CMakeFiles/mako.dir/src/mako/storage/abstract_db.cc.o
+[321/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/configuration.cc.o
+[322/467] Building CXX object CMakeFiles/mako.dir/src/mako/sto/ReplayDB.cc.o
+[323/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/client.cc.o
+[324/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/kv_store.cc.o
+[325/467] Building CXX object CMakeFiles/mako.dir/src/mako/benchmarks/tpcc.cc.o
+[326/467] Building CXX object CMakeFiles/mako.dir/src/mako/sto/ThreadPool.cc.o
+[327/467] Building CXX object CMakeFiles/mako.dir/src/mako/storage/mtree_abi.cc.o
+[328/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/server.cc.o
+[329/467] Building CXX object CMakeFiles/sto_masstree_cpp_bench.dir/src/mako/benchmarks/sto_masstree_compare.cc.o
+[330/467] Building CXX object CMakeFiles/test_mtree_abi.dir/tests/test_mtree_abi.cc.o
+[331/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/sharding_policy.h.o
+In module 'rusty' imported from /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/sharding_policy.h:32:
+In module 'rusty.async' imported from /home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/rusty.cppm:92:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<janus::RangeMapping>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:4956:27: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<janus::RangeMapping>>' requested here
+ 4956 |         auto len = rusty::len((*this));
+      |                           ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:4949:33: note: in instantiation of member function 'rusty::port::vec::Vec<janus::RangeMapping>::insert_mut' requested here
+ 4949 |         static_cast<void>(this->insert_mut(std::move(index), std::move(element)));
+      |                                 ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/sharding_policy.h:378:22: note: in instantiation of member function 'rusty::port::vec::Vec<janus::RangeMapping>::insert' requested here
+  378 |     ((*this)).ranges.insert(std::move(idx), std::move(mapping));
+      |                      ^
+In module 'rusty' imported from /home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/sharding_policy.h:32:
+In module 'rusty.async' imported from /home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/rusty.cppm:92:
+In module 'vec_port.vec' imported from /home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/async.cppm:25:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:3727:22: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 3727 |     __builtin_assume(!this_.needs_to_grow(static_cast<size_t>(0), std::move(capacity), std::move(elem_layout)));
+      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:3725:307: note: while substituting into a lambda expression here
+ 3725 |         return [&]() -> RawVecInner<A> { auto&& _m = RawVecInner<A>::try_allocate_in(std::move(capacity), AllocInit_Uninitialized(), std::move(alloc), std::move(elem_layout)); if (_m.is_ok()) { auto&& _mv0 = _m.unwrap(); auto&& this_ = rusty::detail::deref_if_pointer(_mv0); return [&]() -> RawVecInner<A> { // @unsafe
+      |                                                                                                                                                                                                                                                                                                                   ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:3725:40: note: while substituting into a lambda expression here
+ 3725 |         return [&]() -> RawVecInner<A> { auto&& _m = RawVecInner<A>::try_allocate_in(std::move(capacity), AllocInit_Uninitialized(), std::move(alloc), std::move(elem_layout)); if (_m.is_ok()) { auto&& _mv0 = _m.unwrap(); auto&& this_ = rusty::detail::deref_if_pointer(_mv0); return [&]() -> RawVecInner<A> { // @unsafe
+      |                                        ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:4008:45: note: in instantiation of member function 'rusty::port::vec::RawVecInner<>::with_capacity_in' requested here
+ 4008 |         return RawVec<T, A>(RawVecInner<A>::with_capacity_in(std::move(capacity), std::move(alloc), rusty::clone(rusty::clone(rusty::alloc::Layout::new_<T>()))), rusty::PhantomData<T>{});
+      |                                             ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:4789:40: note: in instantiation of member function 'rusty::port::vec::RawVec<janus::RangeMapping>::with_capacity_in' requested here
+ 4789 |         return Vec<T, A>(RawVec<T, A>::with_capacity_in(std::move(capacity), std::move(alloc)), static_cast<size_t>(0));
+      |                                        ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5434:31: note: in instantiation of member function 'rusty::port::vec::Vec<janus::RangeMapping>::with_capacity_in' requested here
+ 5434 |         auto out = Vec<T, A>::with_capacity_in(this->len_field, std::move(alloc));
+      |                               ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:4608:39: note: in instantiation of member function 'rusty::port::vec::Vec<janus::RangeMapping>::clone' requested here
+ 4608 |     Vec(const Vec& other) : Vec(other.clone()) {}
+      |                                       ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/src/cluster/sharding_policy.h:338:8: note: in instantiation of member function 'rusty::port::vec::Vec<janus::RangeMapping>::Vec' requested here
+  338 | struct TableShardingPolicy {
+      |        ^
+2 warnings generated.
+[332/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.serializable_envelope.cppm.o
+[333/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.idempotency.cppm.o
+[334/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.any_message.cppm.o
+[335/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/sharding_policy_cache.h.o
+[336/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/sharding_policy_builder.h.o
+[337/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.reactor.cppm.o
+In module 'vec_port.vec' imported from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:4994:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:3727:22: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 3727 |     __builtin_assume(!this_.needs_to_grow(static_cast<size_t>(0), std::move(capacity), std::move(elem_layout)));
+      |                      ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:3725:307: note: while substituting into a lambda expression here
+ 3725 |         return [&]() -> RawVecInner<A> { auto&& _m = RawVecInner<A>::try_allocate_in(std::move(capacity), AllocInit_Uninitialized(), std::move(alloc), std::move(elem_layout)); if (_m.is_ok()) { auto&& _mv0 = _m.unwrap(); auto&& this_ = rusty::detail::deref_if_pointer(_mv0); return [&]() -> RawVecInner<A> { // @unsafe
+      |                                                                                                                                                                                                                                                                                                                   ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:3725:40: note: while substituting into a lambda expression here
+ 3725 |         return [&]() -> RawVecInner<A> { auto&& _m = RawVecInner<A>::try_allocate_in(std::move(capacity), AllocInit_Uninitialized(), std::move(alloc), std::move(elem_layout)); if (_m.is_ok()) { auto&& _mv0 = _m.unwrap(); auto&& this_ = rusty::detail::deref_if_pointer(_mv0); return [&]() -> RawVecInner<A> { // @unsafe
+      |                                        ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.raw_vec.cppm:4008:45: note: in instantiation of member function 'rusty::port::vec::RawVecInner<>::with_capacity_in' requested here
+ 4008 |         return RawVec<T, A>(RawVecInner<A>::with_capacity_in(std::move(capacity), std::move(alloc), rusty::clone(rusty::clone(rusty::alloc::Layout::new_<T>()))), rusty::PhantomData<T>{});
+      |                                             ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:4789:40: note: in instantiation of member function 'rusty::port::vec::RawVec<rusty::Arc<rrr::EventPollable>>::with_capacity_in' requested here
+ 4789 |         return Vec<T, A>(RawVec<T, A>::with_capacity_in(std::move(capacity), std::move(alloc)), static_cast<size_t>(0));
+      |                                        ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:4748:27: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Arc<rrr::EventPollable>>::with_capacity_in' requested here
+ 4748 |         return Vec<T, A>::with_capacity_in(std::move(capacity), rusty::alloc::Global{});
+      |                           ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:7575:91: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Arc<rrr::EventPollable>>::with_capacity' requested here
+ 7575 |     rusty::Vec<rusty::Arc<EventPollable>> events = rusty::Vec<rusty::Arc<EventPollable>>::with_capacity(rusty::len(evs));
+      |                                                                                           ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:4994:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Arc<rrr::EventPollable>>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:7575:112: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<rusty::Arc<rrr::EventPollable>>>' requested here
+ 7575 |     rusty::Vec<rusty::Arc<EventPollable>> events = rusty::Vec<rusty::Arc<EventPollable>>::with_capacity(rusty::len(evs));
+      |                                                                                                                ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:4994:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Arc<rrr::IntEvent>>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:7589:61: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<rusty::Arc<rrr::IntEvent>>>' requested here
+ 7589 |     while (rusty::detail::deref_if_pointer_like(i) < rusty::len((*sie_shadow1).events_)) {
+      |                                                             ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:4994:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<rrr::StacklessWakeOwner>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:7192:65: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<rrr::StacklessWakeOwner>>' requested here
+ 7192 |         while (rusty::detail::deref_if_pointer_like(i) < rusty::len(owners)) {
+      |                                                                 ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:7843:33: note: in instantiation of function template specialization 'rrr::stackless_wake_context_ptr<std::__1::tuple<>>' requested here
+ 7843 |     const auto ctx_ptr = ::rrr::stackless_wake_context_ptr<rusty::Unit>(r, std::move(idx));
+      |                                 ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:4994:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Option<rusty::Box<rrr::StacklessWakeBinding>>>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:7194:90: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<rusty::Option<rusty::Box<rrr::StacklessWakeBinding>>>>' requested here
+ 7194 |                 ::rrr::reactor_verify(rusty::detail::deref_if_pointer_like(idx) < rusty::len([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.bindings); }) { return (__r.bindings); } else if constexpr (requires { (__r.bindings_field); }) { return (__r.bindings_field); } else if constexpr (requires { ((*__r).bindings); }) { return ((*__r).bindings); } else { return ((*__r).bindings_field); } }(owners[i])));
+      |                                                                                          ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:7843:33: note: in instantiation of function template specialization 'rrr::stackless_wake_context_ptr<std::__1::tuple<>>' requested here
+ 7843 |     const auto ctx_ptr = ::rrr::stackless_wake_context_ptr<rusty::Unit>(r, std::move(idx));
+      |                                 ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:4994:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::port::rc::Rc<rrr::Fiber>>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5275:23: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<rusty::port::rc::Rc<rrr::Fiber>>>' requested here
+ 5275 |         return rusty::len((*this)) == static_cast<size_t>(0);
+      |                       ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1523:47: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::port::rc::Rc<rrr::Fiber>>::is_empty' requested here
+ 1523 |         return static_cast<bool>((*container).is_empty());
+      |                                               ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:7955:66: note: in instantiation of function template specialization 'rusty::is_empty<rusty::RefMut<rusty::port::vec::Vec<rusty::port::rc::Rc<rrr::Fiber>>>>' requested here
+ 7955 |     if (::rrr::reusing_fiber() && rusty::detail::rust_not(rusty::is_empty(available_guard))) {
+      |                                                                  ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:4994:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5205:34: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5205 |                 __builtin_assume(rusty::detail::deref_if_pointer_like(this->len_field) < this->capacity());
+      |                                  ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:7957:51: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::port::rc::Rc<rrr::Fiber>>::pop' requested here
+ 7957 |         rusty::Rc<Fiber> fiber = available_guard->pop().unwrap();
+      |                                                   ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:4994:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<int>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:8097:65: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<int>>' requested here
+ 8097 |         while (rusty::detail::deref_if_pointer_like(i) < rusty::len(fds)) {
+      |                                                                 ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:4994:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<rrr::StacklessTaskEntry>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1485:23: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<rrr::StacklessTaskEntry>>' requested here
+ 1485 |         return rusty::len(*container);
+      |                       ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:9322:65: note: in instantiation of function template specialization 'rusty::len<rusty::Ref<rusty::port::vec::Vec<rrr::StacklessTaskEntry>>>' requested here
+ 9322 |         if (rusty::detail::deref_if_pointer_like(idx) >= rusty::len(guard)) {
+      |                                                                 ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:4994:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<unsigned long>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5275:23: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<unsigned long>>' requested here
+ 5275 |         return rusty::len((*this)) == static_cast<size_t>(0);
+      |                       ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1523:47: note: in instantiation of member function 'rusty::port::vec::Vec<unsigned long>::is_empty' requested here
+ 1523 |         return static_cast<bool>((*container).is_empty());
+      |                                               ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:9354:44: note: in instantiation of function template specialization 'rusty::is_empty<rusty::RefMut<rusty::port::vec::Vec<unsigned long>>>' requested here
+ 9354 |         if (rusty::detail::rust_not(rusty::is_empty(free_guard))) {
+      |                                            ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:4994:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5205:34: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5205 |                 __builtin_assume(rusty::detail::deref_if_pointer_like(this->len_field) < this->capacity());
+      |                                  ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.reactor.cppm:9356:25: note: in instantiation of member function 'rusty::port::vec::Vec<unsigned long>::pop' requested here
+ 9356 |             free_guard->pop();
+      |                         ^
+11 warnings generated.
+[338/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/cluster_config.h.o
+[339/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.fiber.cppm.o
+[340/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.future.cppm.o
+[341/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/config_watcher.h.o
+[342/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.fiber_channel.cppm.o
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.fiber_channel.cppm:4987:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<unsigned char>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5366:33: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<unsigned char>>' requested here
+ 5366 |         const auto len = rusty::len((*this));
+      |                                 ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.fiber_channel.cppm:5083:21: note: in instantiation of member function 'rusty::port::vec::Vec<unsigned char>::resize' requested here
+ 5083 |         owned.bytes.resize(frame.size, static_cast<uint8_t>(0));
+      |                     ^
+1 warning generated.
+[343/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.tcp_channel.cppm.o
+[344/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/shard_manager.h.o
+[345/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/cluster.ccm.o
+[346/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tpcc_sharding.cc.o
+[347/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/cluster_config.cc.o
+[348/467] Building CXX object CMakeFiles/cluster.dir/src/cluster/shard_router.cc.o
+[349/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/shardClient.cc.o
+[350/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.server.cppm.o
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.server.cppm:4989:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<unsigned char>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.server.cppm:5679:138: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<unsigned char>>' requested here
+ 5679 |         ::rrr::sconn_dispatch_response_frame_via_channel(sconn, reinterpret_cast<const uint8_t*>(rusty::as_ptr(body_sink.bytes)), rusty::len(body_sink.bytes));
+      |                                                                                                                                          ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.server.cppm:4989:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Arc<rrr::ServerConnection>>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.server.cppm:6061:65: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<rusty::Arc<rrr::ServerConnection>>>' requested here
+ 6061 |         while (rusty::detail::deref_if_pointer_like(i) < rusty::len([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.conns); }) { return (__r.conns); } else if constexpr (requires { (__r.conns_field); }) { return (__r.conns_field); } else if constexpr (requires { ((*__r).conns); }) { return ((*__r).conns); } else { return ((*__r).conns_field); } }(guard))) {
+      |                                                                 ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.server.cppm:4989:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Box<rrr::Service>>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.server.cppm:6086:31: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<rusty::Box<rrr::Service>>>' requested here
+ 6086 |     size_t svc_index = rusty::len(this->pending_services_field);
+      |                               ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.server.cppm:4989:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::RefCell<rusty::Box<rrr::Service>>>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.server.cppm:6196:23: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<rusty::RefCell<rusty::Box<rrr::Service>>>>' requested here
+ 6196 |         return rusty::len([&](auto&& __r) -> decltype(auto) { if constexpr (requires { (__r.services); }) { return (__r.services); } else if constexpr (requires { (__r.services_field); }) { return (__r.services_field); } else if constexpr (requires { ((*__r).services); }) { return ((*__r).services); } else { return ((*__r).services_field); } }(ctx));
+      |                       ^
+4 warnings generated.
+[351/467] Building CXX object src/rrr/CMakeFiles/rrr.dir/goal0-crate-cpp/rrr.client.cppm.o
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.client.cppm:4987:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Arc<rrr::Client>>::len' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.client.cppm:6483:65: note: in instantiation of function template specialization 'rusty::len<rusty::port::vec::Vec<rusty::Arc<rrr::Client>>>' requested here
+ 6483 |         while (rusty::detail::deref_if_pointer_like(i) < rusty::len((clients))) {
+      |                                                                 ^
+In file included from /var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.client.cppm:4987:
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/transpiled/vec_port/vec_port.vec.cppm:5270:30: warning: assumption is ignored because it contains (potential) side-effects [-Wassume]
+ 5270 |             __builtin_assume(rusty::detail::deref_if_pointer_like(len) <= (rusty::mem::size_of<T>() == 0 ? std::numeric_limits<std::size_t>::max() : (static_cast<std::size_t>(std::numeric_limits<std::ptrdiff_t>::max()) / rusty::mem::size_of<T>())));
+      |                              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/mutex.hpp:125:82: note: in instantiation of member function 'rusty::port::vec::Vec<rusty::Option<rusty::Function<void (int, const unsigned char *, unsigned long)>>>::len' requested here
+  125 |     auto len() const -> decltype(std::declval<const U&>().len()) { return data_->len(); }
+      |                                                                                  ^
+/home/users/shuai/mako/.claude/worktrees/sto-rust/third-party/rusty-cpp/include/rusty/array.hpp:1419:46: note: in instantiation of function template specialization 'rusty::MutexGuard<rusty::port::vec::Vec<rusty::Option<rusty::Function<void (int, const unsigned char *, unsigned long)>>>>::len<rusty::port::vec::Vec<rusty::Option<rusty::Function<void (int, const unsigned char *, unsigned long)>>>>' requested here
+ 1419 |         return static_cast<size_t>(container.len());
+      |                                              ^
+/var/tmp/mako-sto-bench-20260827.J2TZj6/build/src/rrr/goal0-crate-cpp/rrr.client.cppm:7207:65: note: in instantiation of function template specialization 'rusty::len<rusty::MutexGuard<rusty::port::vec::Vec<rusty::Option<rusty::Function<void (int, const unsigned char *, unsigned long)>>>>>' requested here
+ 7207 |         while (rusty::detail::deref_if_pointer_like(i) < rusty::len(cb_guard)) {
+      |                                                                 ^
+2 warnings generated.
+[352/467] Linking CXX static library src/rrr/librrr.a
+[353/467] Linking CXX static library libcluster.a
+[354/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/client_status.cc.o
+[355/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/command_marshaler.cc.o
+[356/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/classic/tpc_command.cc.o
+[357/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/2pl/tx.cc.o
+[358/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/2pl/scheduler.cc.o
+[359/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/RW_command.cc.o
+[360/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/coordinator.cc.o
+[361/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/benchmark_control_rpc.cc.o
+[362/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/classic/scheduler.cc.o
+[363/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/config.cc.o
+[364/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/copilot/commo.cc.o
+[365/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/classic/coordinator.cc.o
+[366/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/client_worker.cc.o
+[367/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos_main_helper.cc.o
+[368/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft_main_helper.cc.o
+[369/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/executor.cc.o
+[370/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/copilot/service.cc.o
+[371/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/extern_c/sched.cc.o
+[372/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/copilot/coordinator.cc.o
+[373/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/extern_c/frame.cc.o
+[374/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/communicator.cc.o
+[375/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/copilot/frame.cc.o
+[376/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/copilot/server.cc.o
+[377/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/marshal-value.cc.o
+[378/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/multi_value.cc.o
+[379/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/fpga_raft/service.cc.o
+[380/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/helloworld_client/helloworld_impl.cc.o
+[381/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/fpga_raft/coordinator.cc.o
+[382/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/network_client/network_impl.cc.o
+[383/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/fpga_raft/frame.cc.o
+[384/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/fpga_raft/commo.cc.o
+[385/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/fpga_raft/server.cc.o
+[386/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/occ/tx.cc.o
+[387/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/occ/scheduler.cc.o
+[388/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/frame.cc.o
+[389/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/exec.cc.o
+[390/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/none/coordinator.cc.o
+[391/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/none/scheduler.cc.o
+[392/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/none_copilot/scheduler.cc.o
+[393/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/none_copilot/commo.cc.o
+[394/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/commo.cc.o
+[395/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/exec.cc.o
+[396/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/coordinator.cc.o
+[397/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/service.cc.o
+[398/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/frame.cc.o
+[399/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos/server.cc.o
+[400/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/coordinator.cc.o
+[401/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/procedure.cc.o
+[402/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/commo.cc.o
+[403/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/paxos_worker.cc.o
+[404/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/frame.cc.o
+[405/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/replicated_db.cc.o
+[406/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/test.cc.o
+[407/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/service.cc.o
+[408/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/raft_worker.cc.o
+[409/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/dep_graph.cc.o
+[410/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/testconf.cc.o
+[411/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/row.cc.o
+[412/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/graph_marshaler.cc.o
+[413/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/frame.cc.o
+[414/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/coord.cc.o
+[415/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/commo.cc.o
+[416/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/tx.cc.o
+[417/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/raft/server.cc.o
+[418/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rule/frame.cc.o
+[419/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/snow/ro6_row.cc.o
+[420/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rcc/server.cc.o
+[421/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/snow/ro6.cc.o
+[422/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rule/commo.cc.o
+[423/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/rule/coordinator.cc.o
+[424/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/sharding.cc.o
+[425/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/snow/ro6_coord.cc.o
+[426/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/service.cc.o
+[427/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/stats_registry.cc.o
+[428/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/server_worker.cc.o
+[429/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tapir/commo.cc.o
+[430/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/scheduler.cc.o
+[431/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/row.cc.o
+[432/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/txn.cc.o
+[433/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/utils.cc.o
+[434/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tapir/frame.cc.o
+[435/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/schema.cc.o
+[436/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tapir/coordinator.cc.o
+[437/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tx.cc.o
+[438/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/txn_2pl.cc.o
+[439/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/table.cc.o
+[440/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/txn_nested.cc.o
+[441/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/workload.cc.o
+[442/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tapir/scheduler.cc.o
+[443/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/value.cc.o
+[444/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/txn_unsafe.cc.o
+[445/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/deptran/tapir/tx.cc.o
+[446/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/fasttransport.cc.o
+[447/467] Building CXX object CMakeFiles/memdb.dir/src/memdb/utils.cc.o
+[448/467] Building CXX object CMakeFiles/txlog_core_obj.dir/src/memdb/txn_occ.cc.o
+[449/467] Building CXX object CMakeFiles/mako.dir/src/rocks_interface/client_proxy.cc.o
+[450/467] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn.cc.o
+[451/467] Building CXX object CMakeFiles/memdb.dir/src/memdb/schema.cc.o
+[452/467] Building CXX object CMakeFiles/memdb.dir/src/memdb/row.cc.o
+[453/467] Building CXX object CMakeFiles/mako.dir/src/rocks_interface/client_service.cc.o
+[454/467] Building CXX object CMakeFiles/memdb.dir/src/memdb/value.cc.o
+[455/467] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn_nested.cc.o
+[456/467] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn_2pl.cc.o
+[457/467] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn_unsafe.cc.o
+[458/467] Building CXX object CMakeFiles/memdb.dir/src/memdb/table.cc.o
+[459/467] Building CXX object CMakeFiles/mako.dir/src/mako/lib/rrr_rpc_backend.cc.o
+[460/467] Building CXX object CMakeFiles/memdb.dir/src/memdb/txn_occ.cc.o
+[461/467] Linking CXX static library libmemdb.a
+[462/467] Building CXX object CMakeFiles/mako.dir/src/mako/cluster_bootstrap.cc.o
+[463/467] Linking CXX static library libmako.a
+[464/467] Linking CXX executable test_mtree_abi
+[465/467] Checking the native Masstree ABI exported-symbol allowlist
+-- Masstree ABI exports exactly the 41 allowlisted mt_* symbols
+[466/467] Linking CXX executable sto_masstree_cpp_bench
+/usr/bin/ld: warning: fiber_context_x86_64.S.o: missing .note.GNU-stack section implies executable stack
+/usr/bin/ld: NOTE: This behaviour is deprecated and will be removed in a future version of the linker

@@ -1,0 +1,7 @@
+{
+  "archive": "/var/tmp/mako-read-bound.ueR48K/main-source.tar.gz",
+  "sha256": "092e544db224e39cb51e60531953c580bfdbc6cc8e71f1ec394333a57b3de4f3",
+  "source_files": 254,
+  "additional_noncompiled_files": 1,
+  "notes": "The archive matches main-build-inputs.json, including its documented pre-existing Python bytecode artifact. No probe code, prefetch, inert mutex field or build target is included. Design/build documents are the preserved pre-measurement handoff, not timing reports."
+}

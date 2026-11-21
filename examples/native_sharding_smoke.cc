@@ -1178,6 +1178,8 @@ int main(int argc, char** argv) {
         for (unsigned owner = first; owner < limit; ++owner) {
             select_owner(owner);
             raw[owner] = db.open_index("smoke_raw", int(owner));
+            // open_index reports catalog exhaustion as null instead of exiting.
+            require(raw[owner] != nullptr, "raw physical index open");
             if (owner == first)
                 require(mako::get_table_registry().bind_native("smoke_raw", raw_id, rusty::None),
                         "raw physical binding");
@@ -1186,6 +1188,8 @@ int main(int argc, char** argv) {
             for (unsigned wh = 1; wh <= 2; ++wh) {
                 const auto name = "smoke_warehouse_" + std::to_string(wh);
                 physical_warehouse[owner][wh - 1] = db.open_index(name, int(owner));
+                require(physical_warehouse[owner][wh - 1] != nullptr,
+                        "warehouse physical index open");
                 if (owner == first)
                     require(mako::get_table_registry().bind_native(name, warehouse_id,
                             rusty::Some(coordinate(wh))), "warehouse physical binding");

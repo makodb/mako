@@ -1,0 +1,55 @@
+[package]
+name = "mako-cache"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Transactional Mako write-back cache over RocksDB"
+license = "MIT"
+publish = false
+
+[features]
+# Exactly one local engine is compiled in. The default is the C ABI facade
+# over the C++ STO/MassTrans engine; `engine-sto` selects the native Rust STO.
+# Build the latter with `--no-default-features --features engine-sto`.
+default = ["engine-c-abi"]
+engine-c-abi = ["mako-engine/c-abi"]
+engine-sto = ["mako-engine/sto"]
+# Test-only observers and simulated cleanup failures of the Rust STO engine.
+engine-sto-test-hooks = ["engine-sto", "mako-engine/sto-test-hooks"]
+# Test-only backend injection and structural probes. This permits retained
+# writable backend handles for fault tests and must stay disabled in production.
+# Production builds contain no test probes or commit-path conditional branches.
+test-support = []
+
+[[test]]
+name = "native"
+required-features = ["test-support"]
+
+[[test]]
+name = "cleanup"
+required-features = ["test-support"]
+
+[[test]]
+name = "concurrent_holder"
+required-features = ["test-support"]
+
+[[test]]
+name = "timestamp"
+required-features = ["test-support"]
+
+[dependencies]
+mako-engine = { path = "../mako-engine", default-features = false }
+mrx-core = { path = "../mrx-core" }
+mrx-rocks = { path = "../mrx-rocks" }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Keep the cache crate free of direct unsafe affinity syscalls. `nix` exposes
+# the checked CpuSet wrapper and converts kernel errors into ordinary Results.
+nix = { version = "0.30.1", default-features = false, features = ["feature", "mman", "sched"] }
+
+[dev-dependencies]
+loom = "0.7"
+mako-history = { path = "../mako-history" }
+# Unit crash tests need deterministic wrapper-level RocksDB rendezvous points;
+# normal builds keep mrx-rocks' default, hook-free profile.
+mrx-rocks = { path = "../mrx-rocks", features = ["test-hooks"] }

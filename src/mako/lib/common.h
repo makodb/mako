@@ -5,9 +5,12 @@
 #include "lib/sharding_admission.h"
 
 #include <iostream>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <cstddef>
+#include <cstdint>
+#include <cstring>
 #include <functional>
 #include <sys/file.h>
 #include <mutex>
@@ -16,12 +19,14 @@
 #include <chrono>
 #include <ctime>
 #include <string>
+#include <stdexcept>
 #include <string_view>
 #include <sstream>
 #include <iomanip>
 #include <random>
 #include <functional>
 #include <thread>
+#include <type_traits>
 
 #if defined(__APPLE__)
 #include <mach/mach_time.h>
@@ -55,7 +60,9 @@ namespace mako
     };
 
     const int ADVANCER_MARKER_NUM = 2;
-    const int NUM_TABLES_PER_SHARD = 200; // for pre-allocated
+    // Hard catalog-ID budget per shard. One logical sharded table consumes one
+    // ID in every configured shard, and allocated IDs are not reclaimed.
+    const int NUM_TABLES_PER_SHARD = 200;
 
   #if defined(MEGA_BENCHMARK)
     const int mega_batch_size = 100; // no more than max_batch_size?
@@ -104,7 +111,13 @@ namespace mako
         std::cout << "[" << prefix << "] printStringAsBit:" << std::endl;
         for (size_t i = 0; i < len; ++i) {
             unsigned char c = str[i];
-            std::cout << std::hex << std::setw(2) << std::setfill('0') << static_cast<int>(c) << " ";
+            // snprintf, not `std::hex << setw(2) << setfill('0')`: under
+            // clang 22 with `import std` the iomanip manipulators lose
+            // their operator<< overloads ("invalid operands ... and
+            // '__iom_t6'").
+            char hexbuf[8];
+            snprintf(hexbuf, sizeof(hexbuf), "%02x ", static_cast<int>(c));
+            std::cout << hexbuf;
             
             // Print newline every 8 bytes
             if ((i + 1) % 8 == 0) {
@@ -136,6 +149,153 @@ namespace mako
     const int BITS_OF_NODE = sizeof(struct Node);
     const int BITS_OF_TT = sizeof(uint32_t);
 
+    // Stored metadata follows arbitrary-length user bytes and is therefore not
+    // naturally aligned. Keep all accesses in byte/memcpy form rather than
+    // forming misaligned uint32_t* or Node* pointers.
+    inline void ResetEncodedNodeState(char* encoded_value, size_t encoded_size) {
+        uint32_t timestamp = 0;
+        int16_t data_size = 0;
+        char* node_bytes = encoded_value + encoded_size - BITS_OF_NODE;
+        const char* timestamp_bytes = reinterpret_cast<const char*>(&timestamp);
+        for (size_t i = 0; i != sizeof(timestamp); ++i)
+            std::atomic_ref<char>(node_bytes[offsetof(Node, timestamp) + i])
+                .store(timestamp_bytes[i], std::memory_order_relaxed);
+        const char* size_bytes = reinterpret_cast<const char*>(&data_size);
+        for (size_t i = 0; i != sizeof(data_size); ++i)
+            std::atomic_ref<char>(node_bytes[offsetof(Node, data_size) + i])
+                .store(size_bytes[i], std::memory_order_relaxed);
+    }
+
+    static_assert(std::is_standard_layout<Node>::value,
+                  "value metadata Node must retain a stable member layout");
+    static_assert(std::is_trivially_copyable<Node>::value,
+                  "value metadata Node members must be byte-copyable");
+    static_assert(sizeof(Node) == 16,
+                  "changing Node size changes the stored-value wire layout");
+    static_assert(offsetof(Node, timestamp) == 0,
+                  "changing timestamp offset changes the value wire layout");
+    static_assert(offsetof(Node, data_size) == 4,
+                  "changing data_size offset changes the value wire layout");
+    static_assert(offsetof(Node, data) == 8,
+                  "changing data offset changes the value wire layout");
+    static_assert(EXTRA_BITS_FOR_VALUE == 20,
+                  "changing metadata size changes the stored-value wire layout");
+
+    // Stored values are byte strings, so their metadata trailer can begin at
+    // any alignment. Access each scalar/member through memcpy rather than
+    // forming a typed pointer into the trailer. Keeping these operations
+    // member-sized also preserves the existing independently updated fields.
+    template <typename T>
+    inline T load_unaligned(const void* address) noexcept {
+        static_assert(std::is_trivially_copyable<T>::value,
+                      "unaligned loads require a trivially copyable type");
+        T value{};
+        std::memcpy(&value, address, sizeof(value));
+        return value;
+    }
+
+    template <typename T>
+    inline void store_unaligned(void* address, T value) noexcept {
+        static_assert(std::is_trivially_copyable<T>::value,
+                      "unaligned stores require a trivially copyable type");
+        std::memcpy(address, &value, sizeof(value));
+    }
+
+    inline char* value_time_term_address(char* value,
+                                         size_t value_size) noexcept {
+        return value + value_size - EXTRA_BITS_FOR_VALUE;
+    }
+
+    inline const char* value_time_term_address(const char* value,
+                                               size_t value_size) noexcept {
+        return value + value_size - EXTRA_BITS_FOR_VALUE;
+    }
+
+    inline char* value_node_address(char* value, size_t value_size) noexcept {
+        return value + value_size - BITS_OF_NODE;
+    }
+
+    inline const char* value_node_address(const char* value,
+                                          size_t value_size) noexcept {
+        return value + value_size - BITS_OF_NODE;
+    }
+
+    inline uint32_t load_value_time_term(const char* value,
+                                         size_t value_size) noexcept {
+        return load_unaligned<uint32_t>(
+            value_time_term_address(value, value_size));
+    }
+
+    inline void store_value_time_term(char* value, size_t value_size,
+                                      uint32_t time_term) noexcept {
+        store_unaligned<uint32_t>(
+            value_time_term_address(value, value_size), time_term);
+    }
+
+    inline uint32_t load_node_timestamp(const char* node) noexcept {
+        return load_unaligned<uint32_t>(node + offsetof(Node, timestamp));
+    }
+
+    inline void store_node_timestamp(char* node, uint32_t timestamp) noexcept {
+        store_unaligned<uint32_t>(node + offsetof(Node, timestamp), timestamp);
+    }
+
+    inline int16_t load_node_data_size(const char* node) noexcept {
+        return load_unaligned<int16_t>(node + offsetof(Node, data_size));
+    }
+
+    inline void store_node_data_size(char* node, int16_t data_size) noexcept {
+        store_unaligned<int16_t>(node + offsetof(Node, data_size), data_size);
+    }
+
+    inline char* load_node_data(const char* node) noexcept {
+        return load_unaligned<char*>(node + offsetof(Node, data));
+    }
+
+    inline void store_node_data(char* node, char* data) noexcept {
+        store_unaligned<char*>(node + offsetof(Node, data), data);
+    }
+
+    inline uint32_t load_value_node_timestamp(const char* value,
+                                              size_t value_size) noexcept {
+        return load_node_timestamp(value_node_address(value, value_size));
+    }
+
+    inline void store_value_node_timestamp(char* value, size_t value_size,
+                                           uint32_t timestamp) noexcept {
+        store_node_timestamp(value_node_address(value, value_size), timestamp);
+    }
+
+    inline int16_t load_value_node_data_size(const char* value,
+                                             size_t value_size) noexcept {
+        return load_node_data_size(value_node_address(value, value_size));
+    }
+
+    inline void store_value_node_data_size(char* value, size_t value_size,
+                                           int16_t data_size) noexcept {
+        store_node_data_size(value_node_address(value, value_size), data_size);
+    }
+
+    inline char* load_value_node_data(const char* value,
+                                      size_t value_size) noexcept {
+        return load_node_data(value_node_address(value, value_size));
+    }
+
+    inline void store_value_node_data(char* value, size_t value_size,
+                                      char* data) noexcept {
+        store_node_data(value_node_address(value, value_size), data);
+    }
+
+    inline void initialize_value_metadata(char* value,
+                                          size_t value_size) noexcept {
+        std::memset(value_time_term_address(value, value_size), 0,
+                    EXTRA_BITS_FOR_VALUE);
+        store_value_time_term(value, value_size, 0);
+        store_value_node_timestamp(value, value_size, 0);
+        store_value_node_data_size(value, value_size, 0);
+        store_value_node_data(value, value_size, nullptr);
+    }
+
     // @unsafe - legacy encoded engine layout; accepts borrowed wire spans.
     inline std::string Encode(std::string_view value) {
         // Create string with exact size needed - single allocation
@@ -145,17 +305,7 @@ namespace mako
         // Copy the value to the beginning - single memory copy
         std::memcpy(encoded_value.data(), value.data(), value.size());
 
-        // Initialize timestamp/term to 0 (already zeroed by resize)
-        uint32_t* time_term = reinterpret_cast<uint32_t*>(
-            encoded_value.data() + encoded_value.size() - EXTRA_BITS_FOR_VALUE);
-        *time_term = 0;  // Redundant but explicit
-
-        // Initialize Node structure
-        Node* node = reinterpret_cast<Node*>(
-            encoded_value.data() + encoded_value.size() - BITS_OF_NODE);
-        node->timestamp = 0;
-        node->data_size = 0;
-        node->data = nullptr;
+        initialize_value_metadata(encoded_value.data(), encoded_value.size());
 
         return encoded_value;
     }
@@ -201,6 +351,21 @@ namespace mako
     const uint8_t nontxnRemoveReqType = 16;
     const uint8_t nontxnGetReqType = 17;
 
+    // Helper routing identifies the worker lane; this identity fences its
+    // persistent participant before any storage operation.
+    struct ParticipantIdentity {
+        uint64_t incarnation = 0;
+        uint64_t attempt = 0;
+        uint64_t sequence = 0;
+        uint32_t term = 0;
+
+        // @safe - Scalar identity comparison.
+        bool operator==(const ParticipantIdentity &other) const noexcept {
+            return incarnation == other.incarnation && attempt == other.attempt &&
+                   sequence == other.sequence && term == other.term;
+        }
+    };
+
     // Full ordered scans are transaction pieces, not the legacy median RPC.
     const uint8_t fullScanReqType = 18;
     const size_t full_scan_request_capacity = 1024;
@@ -208,6 +373,7 @@ namespace mako
     struct full_scan_request_t {
         uint16_t targert_server_id;
         uint32_t req_nr;
+        ParticipantIdentity identity;
         ShardingRequest sharding;
         int32_t table_id;
         uint32_t length;
@@ -272,6 +438,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         ShardingRequest sharding;
         uint16_t len;
         char value[max_vector_int_length];
@@ -281,6 +448,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         ShardingRequest sharding;
         uint16_t table_id;
         uint16_t len;
@@ -291,6 +459,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         ShardingRequest sharding;
         uint16_t table_id;
         uint16_t slen;
@@ -301,6 +470,7 @@ namespace mako
     struct get_response_t
     {
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint16_t len;
         int status;
         char value[max_value_length];
@@ -309,6 +479,7 @@ namespace mako
     struct scan_response_t
     {
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint16_t len;
         int status;
         char value[max_value_length];
@@ -318,6 +489,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         int control;
         uint64_t value;
     };
@@ -326,6 +498,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint32_t req_val;
     };
 
@@ -333,6 +506,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-65,535) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         ShardingRequest sharding;
         uint16_t table_id;
         uint16_t klen;
@@ -343,6 +517,7 @@ namespace mako
     struct batch_lock_request_t {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         ShardingRequest sharding;
         uint16_t batch_size;
         char data[
@@ -378,10 +553,15 @@ namespace mako
         }
 
         // Note the string copy in this step could be avoided
-        // @unsafe - serializes the captured sender grant with its row.
+        // @unsafe - Bounded legacy wire serialization: copies owned RPC bytes and
+        // serializes the captured sender grant with its row. operation is the
+        // explicit mutation kind (0 = put, 1 = insert, 2 = remove).
         void add_request(std::string &key, std::string& value, uint16_t table_id,
                          uint16_t server_id, const ShardingRequest& sharding,
                          uint8_t operation) {
+            if (request->batch_size >= max_batch_size || operation > 2 ||
+                key.size() > max_key_length || value.size() > max_value_length)
+                throw std::length_error("invalid participant mutation batch");
             request->batch_size ++;
             request->targert_server_id = server_id;
             uint16_t klen = key.size(), vlen = value.size();
@@ -404,9 +584,6 @@ namespace mako
             ptr += vlen, msg_len += vlen;
         }
 
-        void set_req_nr(uint64_t req_nr) {
-            request->req_nr = req_nr;
-        }
 
         size_t get_msg_len() {
             return msg_len + offsetof(batch_lock_request_t, data);
@@ -459,12 +636,14 @@ namespace mako
     struct basic_response_t
     {
         uint32_t req_nr;
+        ParticipantIdentity identity;
         int status;
     };
 
     struct get_int_response_t
     {
         uint32_t req_nr;
+        ParticipantIdentity identity;
         uint32_t result;
         int shard_index;
         int status;
@@ -474,6 +653,7 @@ namespace mako
     {
         uint16_t targert_server_id; // (0-255) <= warehouses * shards
         uint32_t req_nr;
+        ParticipantIdentity identity;
         ShardingRequest sharding;
     };
 
@@ -486,6 +666,7 @@ namespace mako
     {
         uint16_t targert_server_id; // requesting client's global warehouse id
         uint32_t req_nr;
+        ParticipantIdentity identity;
         ShardingRequest sharding;
         uint16_t table_id;          // target table
         uint16_t klen;              // key length
@@ -510,7 +691,8 @@ namespace mako
         static constexpr int ERROR = 2;
         static constexpr int ABORT = 3;
         static constexpr int SERVER_BUSY = 4;  // All workers occupied
-        static constexpr int NOT_FOUND = 5; // successful absent-key transactional read
+        static constexpr int NOT_FOUND = 5; // successful absent-key transactional read; participant stays live
+        static constexpr int UNKNOWN = 6; // Decision may have published; never retry.
     };
 
     using resp_continuation_t =
@@ -616,9 +798,11 @@ namespace mako
     }
 
     static std::string intToString(long long num) {
-        std::ostringstream ss;
-        ss << std::setw(16) << std::setfill('0') << num;
-        return ss.str();
+        // snprintf rather than setw/setfill: see the note above about
+        // iomanip under clang 22 + `import std`.
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%016lld", num);
+        return std::string(buf);
     }
 
     static size_t parse_memory_spec(const std::string &s)

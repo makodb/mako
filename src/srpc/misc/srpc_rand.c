@@ -18,14 +18,9 @@
 
 static pthread_key_t srpc_rand_seed_key;
 static pthread_once_t srpc_rand_seed_key_once = PTHREAD_ONCE_INIT;
-static pthread_once_t srpc_rand_delete_key_once = PTHREAD_ONCE_INIT;
 
 static void srpc_rand_create_key(void) {
     pthread_key_create(&srpc_rand_seed_key, free);
-}
-
-static void srpc_rand_delete_key(void) {
-    pthread_key_delete(srpc_rand_seed_key);
 }
 
 /* Returns this thread's seed slot, allocating and rdtsc-seeding it on
@@ -49,8 +44,15 @@ int srpc_rand_raw(void) {
     return rand_r(srpc_rand_get_seed());
 }
 
+/* Mako-local (upstream to srpc): a no-op, as in the branch below. Deleting
+ * the seed key was unsafe both ways. Before any draw the key is still its
+ * zero initializer, so pthread_key_delete removed pthread key 0, in Mako
+ * jemalloc's; a later draw then re-created key 0 with `free` as its
+ * destructor, and a thread that registered jemalloc state after that freed
+ * jemalloc's static TLS at exit (SIGSEGV). After a draw it deleted srpc's
+ * own key while other threads still drew from it. The key now lives for the
+ * process; each thread's seed is still freed by the key's destructor. */
 void srpc_rand_destroy(void) {
-    pthread_once(&srpc_rand_delete_key_once, srpc_rand_delete_key);
 }
 
 #else

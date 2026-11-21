@@ -1,0 +1,13 @@
+Internal ctest changing into directory: /dev/shm/sto-capacity-asan-20260909-v4
+Test project /dev/shm/sto-capacity-asan-20260909-v4
+    Start 17: test_mtree_abi_c11_header
+1/1 Test #17: test_mtree_abi_c11_header ........   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+abi         =   0.02 sec*proc (1 test)
+c11         =   0.02 sec*proc (1 test)
+masstree    =   0.02 sec*proc (1 test)
+
+Total Test time (real) =   0.02 sec

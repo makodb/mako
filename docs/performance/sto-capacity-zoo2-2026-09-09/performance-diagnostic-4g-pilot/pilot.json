@@ -1,0 +1,105 @@
+{
+  "accepted_samples": 4,
+  "complete_boundary_blocks": 1,
+  "native_allocator_usage": [
+    {
+      "engine": "cpp",
+      "minimum_remaining_bytes": 268435456,
+      "per_core_capacity_bytes": 268435456,
+      "remaining_bytes_by_cpu": {
+        "0": 268435456,
+        "1": 268435456,
+        "2": 268435456,
+        "3": 268435456,
+        "4": 268435456,
+        "5": 268435456,
+        "6": 268435456,
+        "7": 268435456,
+        "8": 268435456,
+        "9": 268435456,
+        "10": 268435456,
+        "11": 268435456,
+        "12": 268435456,
+        "13": 268435456,
+        "14": 268435456,
+        "15": 268435456
+      },
+      "variant": "new"
+    },
+    {
+      "engine": "rust",
+      "minimum_remaining_bytes": 130023424,
+      "per_core_capacity_bytes": 268435456,
+      "remaining_bytes_by_cpu": {
+        "0": 144703488,
+        "1": 146800640,
+        "2": 144703488,
+        "3": 148897792,
+        "4": 176160768,
+        "5": 148897792,
+        "6": 148897792,
+        "7": 146800640,
+        "8": 148897792,
+        "9": 176160768,
+        "10": 148897792,
+        "11": 148897792,
+        "12": 150994944,
+        "13": 171966464,
+        "14": 146800640,
+        "15": 130023424
+      },
+      "variant": "new"
+    },
+    {
+      "engine": "rust",
+      "minimum_remaining_bytes": 140509184,
+      "per_core_capacity_bytes": 268435456,
+      "remaining_bytes_by_cpu": {
+        "0": 146800640,
+        "1": 146800640,
+        "2": 153092096,
+        "3": 148897792,
+        "4": 148897792,
+        "5": 148897792,
+        "6": 153092096,
+        "7": 150994944,
+        "8": 150994944,
+        "9": 150994944,
+        "10": 150994944,
+        "11": 153092096,
+        "12": 150994944,
+        "13": 148897792,
+        "14": 148897792,
+        "15": 140509184
+      },
+      "variant": "old"
+    },
+    {
+      "engine": "cpp",
+      "minimum_remaining_bytes": 268435456,
+      "per_core_capacity_bytes": 268435456,
+      "remaining_bytes_by_cpu": {
+        "0": 268435456,
+        "1": 268435456,
+        "2": 268435456,
+        "3": 268435456,
+        "4": 268435456,
+        "5": 268435456,
+        "6": 268435456,
+        "7": 268435456,
+        "8": 268435456,
+        "9": 268435456,
+        "10": 268435456,
+        "11": 268435456,
+        "12": 268435456,
+        "13": 268435456,
+        "14": 268435456,
+        "15": 268435456
+      },
+      "variant": "old"
+    }
+  ],
+  "qualification": "One 16-worker block verifies normal completion and native allocator headroom for both binaries at 4G. This is preliminary throughput evidence, not a completed 30-sample sweep or an equivalence result. It is separate from the incomplete 2G protocol and any later rebuilt-candidate results.",
+  "sealed_at_utc": "2026-09-09T08:19:57.347490+00:00",
+  "status": "paused_pilot_superseded_by_cold_diagnostic_logging_rebuild"
+}

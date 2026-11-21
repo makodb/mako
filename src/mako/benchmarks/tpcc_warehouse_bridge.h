@@ -44,6 +44,9 @@ inline uint32_t tpcc_open_warehouse(void* context, uint64_t table, uint32_t ware
             + "_warehouse_" + std::to_string(warehouse)
             + "_owner_" + std::to_string(owner) + (proxy ? "_proxy" : "_bytes");
         auto* index = db->open_index(name, static_cast<int>(owner));
+        // Table-ID exhaustion, a bad owner index or an empty catalog slot is an
+        // ordinary open failure (null), not a process exit: report it to Rust.
+        if (!index) return MAKO_SHARD_IO;
         auto& registry = get_table_registry();
         if (registry.native_binding(index->get_table_id()).is_none()) {
             if (proxy) sharding_mark_proxy(index);

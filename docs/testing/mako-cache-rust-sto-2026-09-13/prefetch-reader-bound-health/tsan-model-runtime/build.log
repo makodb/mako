@@ -1,0 +1,51 @@
+     Locking 30 packages to highest Rust 1.99.0-nightly compatible versions
+   Compiling compiler_builtins v0.1.160 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/compiler-builtins/compiler-builtins)
+   Compiling core v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core)
+   Compiling libc v0.2.189
+   Compiling object v0.39.1
+   Compiling std v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std)
+   Compiling test v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/test)
+   Compiling rustversion v1.0.23
+   Compiling shlex v2.0.1
+   Compiling find-msvc-tools v0.1.12
+   Compiling cc v1.4.5
+   Compiling generator v0.8.9
+   Compiling rustc-std-workspace-core v1.99.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/rustc-std-workspace-core)
+   Compiling alloc v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc)
+   Compiling memchr v2.8.3
+   Compiling adler2 v2.0.1
+   Compiling cfg-if v1.0.4
+   Compiling rustc-demangle v0.1.28
+   Compiling panic_abort v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/panic_abort)
+   Compiling rustc-literal-escaper v0.0.8
+   Compiling unwind v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/unwind)
+   Compiling rustc-std-workspace-alloc v1.99.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/rustc-std-workspace-alloc)
+   Compiling panic_unwind v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/panic_unwind)
+   Compiling gimli v0.34.0
+   Compiling std_detect v0.1.5 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/std_detect)
+   Compiling miniz_oxide v0.9.1
+   Compiling hashbrown v0.17.1
+   Compiling addr2line v0.27.1
+   Compiling rustc-std-workspace-std v1.99.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/rustc-std-workspace-std)
+   Compiling proc_macro v0.0.0 (/home/users/shuai/.rustup/toolchains/nightly-2026-08-12-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/proc_macro)
+   Compiling getopts v0.2.24
+   Compiling once_cell v1.21.4
+   Compiling regex-syntax v0.8.11
+   Compiling log v0.4.34
+   Compiling pin-project-lite v0.2.17
+   Compiling lazy_static v1.5.0
+   Compiling nu-ansi-term v0.50.3
+   Compiling smallvec v1.16.0
+   Compiling scoped-tls v1.0.1
+   Compiling thread_local v1.1.10
+   Compiling sharded-slab v0.1.7
+   Compiling tracing-core v0.1.36
+   Compiling tracing-log v0.2.0
+   Compiling tracing v0.1.44
+   Compiling regex-automata v0.4.18
+   Compiling matchers v0.2.0
+   Compiling tracing-subscriber v0.3.23
+   Compiling loom v0.7.2
+   Compiling mako-tsan-loom-diagnostic v0.0.0 (/var/tmp/mako-tsan-loom-diagnostic.BTbc4I)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 42.35s
+  Executable unittests src/lib.rs (/var/tmp/mako-tsan-loom-diagnostic.BTbc4I/target/x86_64-unknown-linux-gnu/debug/build/mako-tsan-loom-diagnostic/21439951f0950de7/out/mako_tsan_loom_diagnostic-21439951f0950de7)

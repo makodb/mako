@@ -1,0 +1,28 @@
+prefetch::tests::hint_does_not_allocate_a_stamp_or_change_the_gate: test
+record::tests::crc32c_matches_the_reference_vector: test
+record::tests::encoding_refuses_a_wrong_extent: test
+record::tests::one_put_v6_record_has_the_documented_layout: test
+record::tests::v5_record_carries_a_crc_over_every_preceding_byte: test
+resolved_cache::tests::allocation_failure_disables_and_storage_cannot_grow: test
+touched::tests::recycled_log_forgets_effects_and_preserves_small_storage: test
+touched::tests::recycling_caps_retained_transaction_memory: test
+txn::ownership_tests::holder_publication_transfers_empty_and_overflow_values_across_ring_reuse: test
+txn::ownership_tests::terminal_version_capacity_is_not_a_transaction_size_error: test
+   Compiling mako-engine-api v0.1.0 (/var/tmp/mako-resolved-health.lt7kUf/cache-prefetch/crates/mako-engine-api)
+   Compiling sto-masstree v0.0.0 (/var/tmp/mako-resolved-health.lt7kUf/cache-prefetch/crates/sto-masstree)
+   Compiling mako-clock v0.1.0 (/var/tmp/mako-resolved-health.lt7kUf/cache-prefetch/crates/mako-clock)
+   Compiling mako-differential v0.1.0 (/var/tmp/mako-resolved-health.lt7kUf/cache-prefetch/crates/mako-differential)
+   Compiling mako-engine-sto v0.1.0 (/var/tmp/mako-resolved-health.lt7kUf/cache-prefetch/crates/mako-engine-sto)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.70s
+     Running unittests src/lib.rs (/var/tmp/mako-private-resolved-miri.vR9DWr/target/miri/x86_64-unknown-linux-gnu/debug/build/mako-engine-sto/684348d92f35130e/out/mako_engine_sto-684348d92f35130e)
+warning: method `disable_resolved_cache` is never used
+  --> mako-engine-sto/src/worker.rs:60:19
+   |
+28 | impl WorkerSlot {
+   | --------------- method in this implementation
+...
+60 |     pub(crate) fn disable_resolved_cache(&self) {
+   |                   ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+

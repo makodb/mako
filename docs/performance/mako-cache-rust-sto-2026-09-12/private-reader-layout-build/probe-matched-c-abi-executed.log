@@ -1,0 +1,9 @@
+
+running 1 test
+test private_layout_probe::fence_and_cache_offsets ... FENCE size=24 align=8 writers=0 serial=16 writer_size=64 writer_align=64
+CACHE backend=rocks size=136 align=8 local=16 writeback=40 runtime=72 record_checksum=128 foreground_mode=132 backend_stall_threshold=0 single_producer_claimed=133 commit_fence=48
+CACHE backend=mem size=136 align=8 local=16 writeback=40 runtime=72 record_checksum=128 foreground_mode=132 backend_stall_threshold=0 single_producer_claimed=133 commit_fence=48
+ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 204 filtered out; finished in 0.00s
+

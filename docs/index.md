@@ -42,6 +42,7 @@ Welcome to the Mako documentation.
   - [Client-Server Roadmap](architecture/client-server-roadmap.md)
 - **[Multi-Shard Single Process](architecture/multi-shard.md)** - Running multiple shards in one process
 - **[Design Principles](architecture/design-principles.md)** - Core design philosophy and principles
+- **[Rust STO Paper / Whitepaper](architecture/rust-sto.md)** - Paper-style narrative following the original EuroSys 2016 STO paper, plus current implementation contracts and evaluation
 - **[Speculative 2PC](architecture/speculative-2pc.md)** - Speculative two-phase commit protocol
 - **[Paxos](architecture/paxos.md)** - Paxos benchmarking commands
 - **[Sharding and Range Migration Design](architecture/sharding-migration.md)** - End-to-end protocol, transaction integration, storage requirements, recovery, and implementation status
@@ -104,6 +105,7 @@ Welcome to the Mako documentation.
 ## Performance
 
 - **[Profiling & Plotting](performance/profiling.md)** - CPU profiling, memory analysis, and plotting
+- **[Rust STO TPC-C PGO](performance/sto-tpcc-rust-pgo.md)** - Reproducible two-pass Rust-staticlib PGO build
 - **[CPU Throttling](performance/cpu_throttling.md)** - CPU throttling for scaling tests
   - [CPU Limiting Plan](performance/cpu_limiting_plan.md)
 
@@ -146,6 +148,10 @@ The plans below are the `@safe`/`@unsafe` borrow-checker and smart-pointer track
 ---
 
 ## Development Plans
+
+### Rust transaction cache
+
+- **[Silo-to-Mako transaction-cache roadmap](plans/rust-mako-transaction-cache.md)** — keep C++ Silo behind a C ABI first, add local transactional durability, port distributed Mako, then replace the local engine with native Rust.
 
 ### Config Node System
 
@@ -246,4 +252,4 @@ Legacy documentation kept for reference:
 
 ---
 
-*Last updated: April 2026*
+*Last updated: August 2026*

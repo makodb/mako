@@ -1,0 +1,92 @@
+/var/tmp/sto-cmake-3.31.6/bin/ctest --test-dir /var/tmp/sto-capacity-20260909.kKklOX/build --output-on-failure --no-tests=error -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_silo_runtime_concurrency_lifecycle|test_silo_transaction_install_exception_fail_stop|test_silo_transaction_set_capacity_exhaustion|test_silo_transaction_set_exact_chunk_boundary|test_silo_transitem_lifetime|test_srpc_epoll_platform|test_sto_tpcc_ffi_c11_header|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_startup_resource_exhausted|test_sto_tpcc_rust_load_resource_exhausted|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_rejects_rust_distributed_shard|test_sto_tpcc_rejects_rust_replication|test_sto_tpcc_rejects_rust_worker_limit)$'
+Internal ctest changing into directory: /var/tmp/sto-capacity-20260909.kKklOX/build
+Test project /var/tmp/sto-capacity-20260909.kKklOX/build
+      Start  1: test_rocksdb_interface_lifecycle
+ 1/30 Test  #1: test_rocksdb_interface_lifecycle ....................   Passed    0.23 sec
+      Start  2: test_sto_tpcc_cpp_wrapper_smoke
+ 2/30 Test  #2: test_sto_tpcc_cpp_wrapper_smoke .....................   Passed    0.07 sec
+      Start  3: test_sto_tpcc_cpp_wrapper_scan_smoke
+ 3/30 Test  #3: test_sto_tpcc_cpp_wrapper_scan_smoke ................   Passed    0.07 sec
+      Start  4: test_sto_tpcc_cpp_slow_exit
+ 4/30 Test  #4: test_sto_tpcc_cpp_slow_exit .........................   Passed    4.36 sec
+      Start  5: test_sto_tpcc_cpp_multishard_slow_exit
+ 5/30 Test  #5: test_sto_tpcc_cpp_multishard_slow_exit ..............   Passed    4.28 sec
+      Start  6: test_sto_tpcc_rust_slow_exit
+ 6/30 Test  #6: test_sto_tpcc_rust_slow_exit ........................   Passed    4.86 sec
+      Start  7: test_sto_tpcc_rust_concurrent
+ 7/30 Test  #7: test_sto_tpcc_rust_concurrent .......................   Passed   11.37 sec
+      Start  8: test_sto_tpcc_rust_startup_resource_exhausted
+ 8/30 Test  #8: test_sto_tpcc_rust_startup_resource_exhausted .......   Passed    0.13 sec
+      Start  9: test_sto_tpcc_rust_load_resource_exhausted
+ 9/30 Test  #9: test_sto_tpcc_rust_load_resource_exhausted ..........   Passed    0.13 sec
+      Start 10: test_sto_tpcc_rust_run_resource_exhausted
+10/30 Test #10: test_sto_tpcc_rust_run_resource_exhausted ...........   Passed    2.92 sec
+      Start 11: test_sto_tpcc_rust_concurrent_resource_exhausted
+11/30 Test #11: test_sto_tpcc_rust_concurrent_resource_exhausted ....   Passed   10.12 sec
+      Start 12: test_sto_tpcc_rejects_duplicate_local_shards
+12/30 Test #12: test_sto_tpcc_rejects_duplicate_local_shards ........   Passed    0.13 sec
+      Start 13: test_sto_tpcc_rejects_partial_local_shards
+13/30 Test #13: test_sto_tpcc_rejects_partial_local_shards ..........   Passed    0.13 sec
+      Start 14: test_sto_tpcc_rejects_rust_distributed_shard
+14/30 Test #14: test_sto_tpcc_rejects_rust_distributed_shard ........   Passed    0.13 sec
+      Start 15: test_sto_tpcc_rejects_rust_replication
+15/30 Test #15: test_sto_tpcc_rejects_rust_replication ..............   Passed    0.13 sec
+      Start 16: test_sto_tpcc_rejects_rust_worker_limit
+16/30 Test #16: test_sto_tpcc_rejects_rust_worker_limit .............   Passed    0.13 sec
+      Start 17: test_mtree_abi_c11_header
+17/30 Test #17: test_mtree_abi_c11_header ...........................   Passed    0.01 sec
+      Start 18: test_sto_tpcc_ffi_c11_header
+18/30 Test #18: test_sto_tpcc_ffi_c11_header ........................   Passed    0.01 sec
+      Start 19: test_srpc_epoll_platform
+19/30 Test #19: test_srpc_epoll_platform ............................   Passed    0.01 sec
+      Start 58: SiloVarintTests
+20/30 Test #58: SiloVarintTests .....................................   Passed    0.04 sec
+      Start 62: test_silo_runtime_concurrency_lifecycle
+21/30 Test #62: test_silo_runtime_concurrency_lifecycle .............   Passed    0.38 sec
+      Start 63: test_silo_transitem_lifetime
+22/30 Test #63: test_silo_transitem_lifetime ........................   Passed    0.06 sec
+      Start 64: test_silo_transaction_set_exact_chunk_boundary
+23/30 Test #64: test_silo_transaction_set_exact_chunk_boundary ......   Passed    0.06 sec
+      Start 65: test_silo_transaction_set_capacity_exhaustion
+24/30 Test #65: test_silo_transaction_set_capacity_exhaustion .......   Passed    0.06 sec
+      Start 66: test_silo_transaction_install_exception_fail_stop
+25/30 Test #66: test_silo_transaction_install_exception_fail_stop ...   Passed    0.06 sec
+      Start 67: test_mtree_abi
+26/30 Test #67: test_mtree_abi ......................................   Passed    0.60 sec
+      Start 68: test_mako_value_metadata
+27/30 Test #68: test_mako_value_metadata ............................   Passed    0.01 sec
+      Start 71: test_silo_nontxn_api
+28/30 Test #71: test_silo_nontxn_api ................................   Passed    0.14 sec
+      Start 72: test_silo_nontxn_api_mv_delete_delete_conflict
+29/30 Test #72: test_silo_nontxn_api_mv_delete_delete_conflict ......   Passed    0.06 sec
+      Start 73: test_silo_nontxn_api_mv_delete_update_conflict
+30/30 Test #73: test_silo_nontxn_api_mv_delete_update_conflict ......   Passed    0.06 sec
+
+100% tests passed, 0 tests failed out of 30
+
+Label Time Summary:
+abi                 =   0.61 sec*proc (2 tests)
+c11                 =   0.01 sec*proc (2 tests)
+capacity            =  13.30 sec*proc (4 tests)
+concurrency         =  22.00 sec*proc (5 tests)
+configuration       =   0.64 sec*proc (5 tests)
+cpp                 =   8.64 sec*proc (2 tests)
+epoll               =   0.01 sec*proc (1 test)
+ffi                 =  39.58 sec*proc (18 tests)
+lifecycle           =  39.28 sec*proc (18 tests)
+masstree            =  40.46 sec*proc (23 tests)
+metadata            =   0.01 sec*proc (1 test)
+multishard          =   4.28 sec*proc (1 test)
+mv                  =   0.12 sec*proc (2 tests)
+nontransactional    =   0.27 sec*proc (3 tests)
+replay              =   0.01 sec*proc (1 test)
+rocks               =   0.23 sec*proc (1 test)
+rust                =  30.98 sec*proc (18 tests)
+serializer          =   0.04 sec*proc (1 test)
+silo                =   1.53 sec*proc (10 tests)
+srpc                =   0.01 sec*proc (1 test)
+sto                 =  39.24 sec*proc (19 tests)
+tpcc                =  38.82 sec*proc (13 tests)
+transaction         =   0.24 sec*proc (4 tests)
+
+Total Test time (real) =  40.78 sec

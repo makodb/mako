@@ -710,6 +710,13 @@ std::vector<std::string> setup(int argc, char* argv[]) {
   }
 
   auto server_infos = Config::GetConfig()->GetMyServers();
+  // @unsafe - A shared topology spans independently owned shard replicas.
+  // One process-wide Raft group would replicate foreign writes to shard zero.
+  if (Config::mako_partitions_per_shard_ != 0 &&
+      config->GetNumPartition() > Config::mako_partitions_per_shard_) {
+    raft_group_mode_g = RaftGroupMode::kPerPartitionGroup;
+    Log_info("[RAFT-SETUP] Full Mako topology uses one group per partition");
+  }
 
   raft_workers_g.clear();
   {
@@ -972,7 +979,7 @@ int shutdown_paxos() {
     std::lock_guard<std::mutex> guard(raft_launch_state_mutex);
     raft_launch_state = RaftLaunchState::kNotStarted;
   }
-  RandomGenerator::destroy();
+  // No RandomGenerator::destroy(); see shutdown_paxos in paxos_main_helper.cc.
   Config::DestroyConfig();
 
   Log_info("Raft helper shutdown complete.");

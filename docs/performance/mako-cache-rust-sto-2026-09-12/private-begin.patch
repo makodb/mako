@@ -1,0 +1,25 @@
+--- a/crates/sto-core/src/transaction.rs
++++ b/crates/sto-core/src/transaction.rs
+@@ -753,6 +753,7 @@
+ }
+ 
+ impl TransactionFrame {
++    #[inline]
+     fn new(isolation: IsolationMode, mut scratch: TransactionScratch) -> Self {
+         scratch.item_index.begin_transaction();
+         debug_assert!(scratch
+@@ -1127,12 +1128,14 @@
+ 
+ impl WorkerContext {
+     /// Begins a transaction with the runtime's configured default isolation.
++    #[inline]
+     pub fn begin(&mut self) -> Result<Transaction<'_, Active>, BeginError> {
+         let isolation = self.runtime.config().default_isolation();
+         self.begin_with(isolation)
+     }
+ 
+     /// Begins a transaction with an explicitly selected isolation profile.
++    #[inline]
+     pub fn begin_with(
+         &mut self,
+         isolation: IsolationMode,

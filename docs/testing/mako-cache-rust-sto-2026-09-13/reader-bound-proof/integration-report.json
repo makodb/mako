@@ -1,0 +1,23 @@
+{
+  "schema": "private-mako-fence-bound-integration-model-v1",
+  "verdict": "pass",
+  "production_changed": false,
+  "patch_applied": false,
+  "patch": "integration.patch",
+  "patch_sha256": "a1ab1d92a7d05dca8ac83af5c2e3cee1585ee6b7fd7b51be1d134af04164b9e9",
+  "source": "integration-additions.rs",
+  "source_sha256": "b6a7b4c6f7a3f9f72823a7dbfbe7f9b56bd0828f20cf1af6d9a0e06deed67d21",
+  "log": "integration-positive.log",
+  "log_sha256": "7f8240d26e536253dbb5e0f8cb3d70f8571127159357061dacca86693bbd9813",
+  "rustup_toolchain": "1.95.0",
+  "command": ["env", "-u", "RUSTFLAGS", "-u", "RUSTDOCFLAGS", "-u", "CARGO_ENCODED_RUSTFLAGS", "-u", "CARGO_BUILD_TARGET", "RUSTUP_TOOLCHAIN=1.95.0", "CARGO_TARGET_DIR=/var/tmp/mako-fence-bound-model.deVBaQ/target", "cargo", "test", "--offline", "--manifest-path", "/var/tmp/mako-fence-bound-model.deVBaQ/integration-model/Cargo.toml", "--lib", "--", "--test-threads=1"],
+  "returncode": 0,
+  "passed": 2,
+  "failed": 0,
+  "ignored": 0,
+  "test_seconds": 47.03,
+  "preemption_bound": null,
+  "permutation_bound": null,
+  "two_writer_allocator_model": "Exactly two successful Relaxed fetch_add allocations with slot<2 assertions; exhaustion and wrap are impossible by model construction. The separate one-writer integration case and original180-second two-writer model retain capped fetch_update.",
+  "qualification": "Standalone Loom tests only, not native runtime execution or a performance claim. Existing private/native cache wiring and failure regressions remain required."
+}

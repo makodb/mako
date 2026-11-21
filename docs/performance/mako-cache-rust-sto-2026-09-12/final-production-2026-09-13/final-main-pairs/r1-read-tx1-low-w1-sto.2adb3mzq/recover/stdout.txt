@@ -1,0 +1,1 @@
+mako-m1-recovery-v2 engine=sto arm=mako workload=read tx=1 contention=low workers=1 keyspace=256 open_ns=210101785 validation_ns=46869673 checksum=0

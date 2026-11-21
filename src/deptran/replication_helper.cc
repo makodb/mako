@@ -262,8 +262,7 @@ bool add_log_to_nc(const char* data, int len, uint32_t par_id, int flag,
     if (type == janus::ReplicationType::RAFT) {
         return raft_impl::add_log_to_nc(data, len, par_id, flag, leader_hint_out);  // @unsafe
     } else {
-        paxos_impl::add_log_to_nc(data, len, par_id, flag);  // @unsafe
-        return true;  // Paxos always accepts (leader-only operation)
+        return paxos_impl::add_log_to_nc(data, len, par_id, flag);  // @unsafe
     }
 }
 

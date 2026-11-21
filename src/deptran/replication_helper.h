@@ -72,7 +72,7 @@ void register_snapshot_callbacks_for_partition(uint32_t par_id,
 void submit(const char*, int, uint32_t);
 void add_log(const char*, int, uint32_t);
 void add_log_without_queue(const char*, int, uint32_t);
-void add_log_to_nc(const char*, int, uint32_t, int);
+bool add_log_to_nc(const char*, int, uint32_t, int);
 void wait_for_submit(uint32_t);
 void pre_shutdown_step();
 int get_epoch();

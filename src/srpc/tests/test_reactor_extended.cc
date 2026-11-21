@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 #include <rusty/arc.hpp>
+// Mako-local: names rusty::sync::atomic::Ordering for the BoxEvent flag below.
+#include <rusty/sync/atomic.hpp>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>

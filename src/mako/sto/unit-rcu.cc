@@ -180,7 +180,7 @@ static const Clp_Option options[] = {
     { "nepochs", 'e', 'e', Clp_ValInt, 0 }
 };
 
-// @unsafe - joins real pthread workers and the advancer before final reclamation.
+// @unsafe - joins real pthread workers before the final reclamation scan.
 int main(int argc, char* argv[]) {
     unsigned nthreads = 4;
     TRcuSet::epoch_type nepochs = 10;
@@ -216,9 +216,10 @@ int main(int argc, char* argv[]) {
     pthread_t tids[nthreads];
     for (uintptr_t i = 0; i < nthreads; ++i)
         pthread_create(&tids[i], NULL, tracker_run, reinterpret_cast<void*>(i));
-    pthread_t advancer;
-    pthread_create(&advancer, NULL, Transaction::epoch_advancer, NULL);
-    // Join the advancer before the final reclamation scan.
+    // The process-wide advancer is owned and joined by Transaction at
+    // teardown; it only cuts the clock and reads announcements, so it may keep
+    // running across the final reclamation scan below.
+    Transaction::start_epoch_advancer();
 
     while (Transaction::epoch_current() < starting_epoch + nepochs)
         usleep(useconds_t(delay * 1e6));
@@ -226,8 +227,6 @@ int main(int argc, char* argv[]) {
 
     for (unsigned i = 0; i < nthreads; ++i)
         pthread_join(tids[i], NULL);
-    Transaction::global_epochs.run.store(false);
-    pthread_join(advancer, nullptr);
     const auto final_cut = Transaction::epoch_cut();
     assert(final_cut != 0 && Transaction::epoch_drained(final_cut));
 

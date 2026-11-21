@@ -1,0 +1,3 @@
+PASS: 255 source files and 21 native/link inputs match
+PASS: 255 source files and 21 native/link inputs match
+PASS: both engines, W1/W4, four exact samples and four fresh recoveries, no conflicts; source/native/helper hashes unchanged

@@ -1,0 +1,96 @@
+#[cfg(test)]
+mod registered_scan_bound {
+    use loom::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+    use loom::sync::Arc;
+    use loom::thread;
+
+    #[test]
+    fn post_cut_bound_includes_relaxed_registration_and_completed_outcome() {
+        loom::model(|| {
+            // Registration, packed order, slot generation, and outcome remain
+            // distinct atomics. One main-owned Arc avoids irrelevant lifetime
+            // interleavings; no scheduler exploration bound is imposed.
+            let state = Arc::new((
+                AtomicUsize::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+                AtomicU64::new(0),
+            ));
+            let writer_state = Arc::clone(&state);
+            let writer = thread::spawn(move || {
+                let slot = writer_state
+                    .0
+                    .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |next| {
+                        (next < 1).then_some(next + 1)
+                    })
+                    .unwrap();
+                assert_eq!(slot, 0);
+                writer_state.2.store(1, Ordering::Release);
+                writer_state.1.fetch_add(1, Ordering::AcqRel);
+                // A timestamp-only RMW remains in the release sequence.
+                writer_state.1.fetch_add(0, Ordering::Relaxed);
+                writer_state.3.store(17, Ordering::Relaxed);
+                writer_state.2.store(2, Ordering::Release);
+            });
+            let reader_state = Arc::clone(&state);
+            let reader = thread::spawn(move || {
+                let cut = reader_state.1.fetch_add(0, Ordering::Acquire);
+                let bound = reader_state.0.load(Ordering::Acquire);
+                if cut == 0 {
+                    return;
+                }
+                assert_eq!(bound, 1, "bounded scan omitted prefix slot");
+                let generation = reader_state.2.load(Ordering::Acquire);
+                assert_ne!(generation, 0, "reader missed prefix enrollment");
+                // Exact active-generation draining has a separate model.
+                if generation != 1 {
+                    assert_eq!(reader_state.3.load(Ordering::Relaxed), 17);
+                }
+            });
+            writer.join().unwrap();
+            reader.join().unwrap();
+        });
+    }
+
+    #[test]
+    fn post_cut_bound_covers_opposite_registration_and_publication_orders() {
+        loom::model(|| {
+            let state = Arc::new((AtomicUsize::new(0), AtomicU64::new(0)));
+            let writers = (0..2)
+                .map(|_| {
+                    let state = Arc::clone(&state);
+                    thread::spawn(move || {
+                        // Exactly two allocations fit the two modeled slots.
+                        // There is no exhaustion or wrap in this model, so
+                        // fetch_add represents the successful Relaxed allocator
+                        // RMW without modeling irrelevant CAS retry schedules.
+                        // The other model uses production's capped fetch_update.
+                        let slot = state.0.fetch_add(1, Ordering::Relaxed);
+                        assert!(slot < 2);
+                        let own_order = state.1.fetch_add(1, Ordering::AcqRel);
+                        (slot, own_order)
+                    })
+                })
+                .collect::<Vec<_>>();
+            let reader_state = Arc::clone(&state);
+            let reader = thread::spawn(move || {
+                let cut = reader_state.1.fetch_add(0, Ordering::Acquire);
+                let bound = reader_state.0.load(Ordering::Acquire);
+                (cut, bound)
+            });
+            let registered = writers
+                .into_iter()
+                .map(|writer| writer.join().unwrap())
+                .collect::<Vec<_>>();
+            let (cut, bound) = reader.join().unwrap();
+            assert!(bound <= 2);
+            for (slot, own_order) in registered {
+                if own_order < cut {
+                    // Compare only values sampled by the reader. Join cannot
+                    // repair a stale bound or add an omitted prefix slot.
+                    assert!(slot < bound, "bounded scan omitted prefix slot");
+                }
+            }
+        });
+    }
+}

@@ -189,6 +189,8 @@ public:
     }
     // @safe - engine thread registration belongs to the server worker.
     void InitThread() override {}
+    // Release thread state (no-op for remote, implements IDatabase).
+    void EndThread() override {}
 private:
     struct Connection {
         int fd = -1;
