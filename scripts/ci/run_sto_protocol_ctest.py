@@ -35,6 +35,9 @@ from run_sto_tpcc_ctest import RESULT_PREFIX, positive_int, validate_result
 
 REPLAY_PREFIX = "STO_PROTOCOL_REPLAY_RESULT "
 ROLES = ("localhost", "p1", "p2", "learner")
+# How much of a failed child's stdout and stderr is copied into the test output.
+TAIL_LINES = 40
+TAIL_BYTES = 16384
 
 
 def dump_json(path: Path, value: object) -> None:
@@ -237,6 +240,30 @@ class Child:
                          for name in ("stdout.log", "stderr.log"))
 
 
+def log_tail(path: Path) -> str:
+    """The last TAIL_LINES lines of a log, reading at most TAIL_BYTES of it."""
+    try:
+        with path.open("rb") as stream:
+            size = stream.seek(0, os.SEEK_END)
+            stream.seek(max(0, size - TAIL_BYTES))
+            lines = stream.read().decode("utf-8", errors="replace").splitlines()
+    except OSError as error:
+        return f"<unreadable: {error}>"
+    if size > TAIL_BYTES:
+        lines = lines[1:]  # the read started in the middle of this line
+    return "\n".join(lines[-TAIL_LINES:]) or "<empty>"
+
+
+def print_child_logs(children: list[Child]) -> None:
+    # CI keeps this process's output but not the evidence directory, so a
+    # child's last words are otherwise lost. Only the two log files are shown:
+    # env.json holds the caller's environment and must stay out of CI logs.
+    for child in children:
+        for name in ("stdout.log", "stderr.log"):
+            print(f"--- {child.directory.name}/{name}, last lines ---\n"
+                  f"{log_tail(child.directory / name)}", file=sys.stderr)
+
+
 def start_child(args: argparse.Namespace, shard: int, role: str, work: Path,
                 config: Path, replication: list[Path], mode: Path,
                 environment: dict[str, str]) -> Child:
@@ -368,6 +395,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     work = Path(tempfile.mkdtemp(prefix="work-", dir=args.output))
     (work / "sync").mkdir()
     children: list[Child] = []
+    # The children whose logs explain a failure. Chosen before cleanup(),
+    # which terminates every child and so makes them all look failed.
+    suspects: list[Child] = []
     ports = Ports()
     summary: dict[str, object] = {"schema_version": 1, "engine": args.engine,
                                   "shards": args.shards, "replication": args.replication,
@@ -416,15 +446,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             # a later peer's failure behind the scenario timeout.
             for child in children:
                 if child.process.poll() is None:
-                    pending.append(child.directory.name)
+                    pending.append(child)
                 if child.process.returncode not in (None, 0):
+                    suspects = [child]
                     raise RuntimeError(f"{child.directory.name} exited {child.process.returncode}; see its logs")
             if not pending:
                 break
             if time.monotonic() >= deadline:
-                raise RuntimeError(f"scenario timed out waiting for {', '.join(pending)}")
+                suspects = pending
+                names = ", ".join(child.directory.name for child in pending)
+                raise RuntimeError(f"scenario timed out waiting for {names}")
             time.sleep(0.2)
-        summary["receipts"] = [validate_child(child, args) for child in children]
+        receipts = []
+        for child in children:
+            suspects = [child]
+            receipts.append(validate_child(child, args))
+        suspects = []
+        summary["receipts"] = receipts
         summary["status"] = "passed"
     except (OSError, RuntimeError, ValueError) as error:
         summary["error"] = str(error)
@@ -443,6 +481,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if summary["status"] != "passed":
         print(f"STO protocol scenario failed: {summary.get('error', summary.get('cleanup_error'))}; "
               f"evidence: {args.output}", file=sys.stderr)
+        print_child_logs(suspects)
         return 1
     print(f"Validated {args.engine} STO/{args.replication}: {args.shards} shards, {summary['topology']}, "
           f"remote NewOrder/Payment commits and all required replica replay receipts; {args.output}")
