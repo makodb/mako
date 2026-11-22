@@ -156,7 +156,7 @@ A concurrency control method that assumes conflicts are rare and validates at co
 A logical subdivision of data within a shard. Each partition has its own Paxos/Raft group for replication.
 
 ### Paxos
-A consensus protocol for achieving agreement in distributed systems. Mako's Multi-Paxos log replication is deprecated: still built, no longer tested. Raft is the supported engine.
+A consensus protocol for achieving agreement in distributed systems. Mako's Multi-Paxos log replication is deprecated: still built, no longer tested, and run only when selected explicitly. Raft is the supported engine and the default.
 
 ### Persistence
 Writing data to durable storage (disk). Mako uses RocksDB for asynchronous persistence.
@@ -179,7 +179,7 @@ The minimum number of replicas required to make progress. For N replicas, quorum
 ## R
 
 ### Raft
-A consensus protocol similar to Paxos but designed for understandability. Raft is Mako's supported replication engine; Paxos is deprecated.
+A consensus protocol similar to Paxos but designed for understandability. Raft is Mako's supported replication engine and the default; Paxos is deprecated.
 
 ### Reactor
 The event loop pattern used in SRPC for handling I/O. Each reactor manages multiple coroutines in a single thread.

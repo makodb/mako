@@ -154,7 +154,7 @@ Results from OSDI'25 evaluation (TPC-C benchmark on Azure):
 
 - **Serializable Transactions** - Full ACID with strongest isolation
 - **Geo-Replication** - Multi-datacenter with configurable consistency
-- **Replication by Consensus** - Raft is the supported, tested engine; Paxos is deprecated (still built, still the default when no type is given, no longer tested)
+- **Replication by Consensus** - Raft is the supported, tested engine and the default; Paxos is deprecated (still built, no longer tested, runs only when selected explicitly)
 - **High-Performance Storage** - Masstree in-memory index, RocksDB persistence
 - **Horizontal Scalability** - Automatic sharding across nodes
 - **Advanced Networking** - DPDK/RDMA support for ultra-low latency

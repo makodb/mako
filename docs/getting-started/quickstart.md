@@ -114,7 +114,7 @@ When you run the tests, you'll see output like this:
 
 **Key components**:
 - **Server**: The main database server process (dbtest)
-- **Raft**: Consensus protocol for replication (Paxos is deprecated and no longer tested)
+- **Raft**: Consensus protocol for replication, and the default (Paxos is deprecated, no longer tested, and runs only when selected explicitly)
 - **Storage**: Masstree (in-memory) + RocksDB (disk)
 - **Client**: Test client executing transactions
 - **Transaction**: Individual transaction lifecycle

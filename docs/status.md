@@ -111,9 +111,11 @@ Suitable for development and small clusters (3-5 replicas). For production: impl
 **Status: Deprecated — still built, no longer tested**
 
 On 2026-11-22 the repository owner decided to remove every Paxos test and to
-mark all Paxos code deprecated. The source stays and still builds; it is still
-what a replicated run gets when no replication type is given, and such a run
-logs one `[PAXOS-DEPRECATED]` warning. See `src/deptran/paxos/DEPRECATED.md`.
+mark all Paxos code deprecated, and then to flip the default to Raft. The
+source stays and still builds, but a replicated run gets Paxos only when it
+selects it explicitly (`--replication paxos`, or a mode file whose `ab` says
+`paxos` or `multi_paxos`); such a run logs one `[PAXOS-DEPRECATED]` warning.
+See `src/deptran/paxos/DEPRECATED.md`.
 The assessment below (60%, not production-ready) predates that decision and is
 kept as the reason for it.
 

@@ -90,7 +90,7 @@ request-outcome rules, crash scenarios and evaluation.
 
 ## 1. Introduction
 
-Mako contains **two replication backends**: Raft, the supported and tested one, and Paxos, which is deprecated (still built and still the run-time default, but no longer tested; see `src/deptran/paxos/DEPRECATED.md`). This guide covers the Raft implementation in depth — the protocol, integration with Mako's transaction system, and practical development guidance.
+Mako contains **two replication backends**: Raft, the supported and tested one, and Paxos, which is deprecated (still built, but no longer tested and no longer the run-time default: Raft is, and Paxos runs only when selected explicitly; see `src/deptran/paxos/DEPRECATED.md`). This guide covers the Raft implementation in depth — the protocol, integration with Mako's transaction system, and practical development guidance.
 
 ### Raft in Mako
 

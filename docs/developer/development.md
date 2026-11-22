@@ -23,9 +23,9 @@ This document contains detailed information for developers working on Mako.
 ## Replication Layers
 
 Mako contains **two replication backends**. Raft is the supported, tested one.
-Paxos is **deprecated**: it is still built and is still what a replicated run
-gets when no type is given, but no test covers it any more
-(`src/deptran/paxos/DEPRECATED.md`).
+Raft is also the default: a replicated run that names no type gets it.
+Paxos is **deprecated**: it is still built, but no test covers it any more and
+it runs only when selected explicitly (`src/deptran/paxos/DEPRECATED.md`).
 
 | Replication | Build Command | Binary | Use Case |
 |-------------|---------------|--------|----------|

@@ -4,24 +4,37 @@ Decision by the repository owner, 2026-11-22, verbatim:
 
 > Remove entirely Paxos related tests, only keep Raft related code. Mark all Paxos code deprecated.
 
-Raft (`src/deptran/raft/`) is the supported and tested replication engine.
-The Multi-Paxos implementation stays in the tree and still builds, but it is
-deprecated: nothing tests it, nobody should extend it, and new work goes to
-Raft.
+Second decision by the repository owner, 2026-11-22, verbatim:
+
+> flip the default to Raft.
+
+Raft (`src/deptran/raft/`) is the supported and tested replication engine, and
+the default one. The Multi-Paxos implementation stays in the tree and still
+builds, but it is deprecated: nothing tests it, nobody should extend it, new
+work goes to Raft, and it runs only when a run names it.
 
 ## What "deprecated" means here
 
 - **Still built.** The Paxos sources are compiled into the same libraries as
   before (`DEPTRAN_CORE_SRC` and `TXLOG_HELPER_SRC` in the root
   `CMakeLists.txt`). No option turns them off.
-- **Still the run-time default.** A process starts with
-  `ReplicationType::PAXOS` (`g_replication_type` in
-  `src/deptran/replication_helper.cc`) and keeps it unless Raft is chosen with
-  `--replication raft`, with `set_replication_type`, or with a `-f`/`-F` mode
-  file that says `ab: raft` (`config/raft.yml`). The seventh argument of
-  `bash/shard.sh` and the optional sixth argument of
-  `examples/simpleTransactionRep.cc` also default to `paxos`. The defaults
-  were kept on purpose; changing them is a separate decision.
+- **Not the default; selectable only explicitly.** A process starts with
+  `ReplicationType::RAFT` (`g_replication_type` in
+  `src/deptran/replication_helper.cc`). Paxos runs only when a run names it,
+  in one of two ways:
+  - an explicit choice: `--replication paxos` on `dbtest` or
+    `sto_tpcc_bench`, a call to `set_replication_type*`, or a `--replication`
+    argument in the argv handed to `setup()`;
+  - a `-f`/`-F` mode file whose `mode.ab` says `paxos` or `multi_paxos`
+    (`config/paxos.yml` says `multi_paxos`).
+
+  An explicit choice wins over the mode files; a mode file wins over the
+  default. `ab: raft` (`config/raft.yml`) selects Raft the same way. The
+  seventh argument of `bash/shard.sh`, the optional replication type argument
+  of `examples/simpleTransactionRep.cc` and the third argument of
+  `make_paxos_replication_configs` default to `raft`; pass `paxos` to get the
+  deprecated engine. Before the second decision above all of these defaulted
+  to Paxos.
 - **Not tested.** The decision removes every test that ran Paxos replication:
   the `ci/ci.sh` suites `simplePaxos`, `shard1Replication`,
   `shard2Replication`, `shard1ReplicationSimple`, `shard2ReplicationSimple`
@@ -37,9 +50,11 @@ Raft.
   process has resolved to Paxos, so a Raft or an unreplicated process never
   prints it. No other statement prints the token: a log that lacks it comes
   from a run that did not start Paxos. Do not move the warning into the
-  dispatch macros or into `paxos_impl::register_*`; `init_env` in
-  `src/mako/mako.hh` registers the leader-election callback before it detects
-  the replication type, so those paths also run in Raft processes.
+  dispatch macros or into `paxos_impl::register_*`. `init_env` in
+  `src/mako/mako.hh` now detects the type from the mode files before it
+  registers the leader-election callback, but `setup()` parses `mode.ab`
+  itself and has the last word, so a registration can still reach an engine
+  that does not run (`init_env` then registers again with the right one).
 - **No `[[deprecated]]` attributes.** The build's flags start with `-w`, so an
   attribute would warn nobody today, and shared files name Paxos types
   (`src/deptran/frame.cc`, `src/deptran/replication_helper.cc`,
@@ -75,7 +90,11 @@ was added to them):
 Still needed to launch the deprecated engine by hand, and kept for that
 reason: `config/paxos.yml`, `config/1leader_2followers/generator.py` with its
 `template_paxos1_shardidx*.yml` templates, and `src/mako/update_config.sh`,
-which generates the untracked `paxos<N>_shardidx<S>.yml` files.
+which generates the untracked `paxos<N>_shardidx<S>.yml` files. A hand launch
+names the engine, for example `bash bash/shard.sh 1 0 <threads> <role> 0 1
+paxos` for each of the roles `localhost`, `learner`, `p2` and `p1`.
+`scripts/legacy/run_experiment.py` passes that seventh argument, because its
+four-role topology is the Paxos one.
 
 ## Shared with Raft: NOT deprecated, whatever the name says
 
@@ -91,7 +110,9 @@ path. They stay, and they are not deprecated:
   `setup2`, `shutdown_paxos`, `add_log_to_nc`, the `register_*` functions,
   `get_epoch` and the rest. Each one dispatches to `raft_impl` when the type
   is Raft. `shutdown_paxos()` is the Raft teardown too.
-- `ReplicationType::PAXOS` and the default initializer: the shared selector.
+- `enum ReplicationType`, `g_replication_type` and the functions around
+  them: the shared selector. Its default is `RAFT`; the `PAXOS` enumerator is
+  how the deprecated engine is named.
 - `register_paxos_leader_callback`, `setup_paxos_leader_callbacks`,
   `setup_paxos_follower_callbacks` and `prepare_paxos_args` in
   `src/mako/mako.hh`: called for both engines.

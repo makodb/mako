@@ -665,9 +665,9 @@ uint32_t computeGlobalWatermark() {
 
 ## 5. Replication and Consensus
 
-Mako contains two replication backends. Raft is the supported, tested one.
-Paxos is **deprecated**: still built, and still what a replicated run gets when
-no type is given, but no longer tested (`src/deptran/paxos/DEPRECATED.md`).
+Mako contains two replication backends. Raft is the supported, tested one, and
+the default. Paxos is **deprecated**: still built, but no longer tested, and run
+only when selected explicitly (`src/deptran/paxos/DEPRECATED.md`).
 
 | Replication | Build Command | Binary | Use Case |
 |-------------|---------------|--------|----------|
@@ -1941,7 +1941,7 @@ Use `rusty::Cell<T>` for global mutable state:
 ```cpp
 #include <rusty/cell.hpp>
 
-static rusty::Cell<ReplicationType> g_replication_type{ReplicationType::PAXOS};
+static rusty::Cell<ReplicationType> g_replication_type{ReplicationType::RAFT};
 
 // @safe
 ReplicationType get_replication_type() {

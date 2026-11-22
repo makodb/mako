@@ -83,7 +83,7 @@ mode:                         mode:
 |---------|-------------------|----------------------|
 | GDB support | Yes (`$GDB_PREFIX`) | No (direct `eval`) |
 | LD_LIBRARY_PATH setup | Yes (for libtxlog.so) | No |
-| Replication type param | 7th argument, defaults to "paxos" | Hardcoded to "raft" |
+| Replication type param | 7th argument, defaults to "raft" (was "paxos" until 2026-11-22) | Hardcoded to "raft" |
 | Config selection | Dynamic (supports both paxos/raft) | Hardcoded raft configs |
 
 ---
