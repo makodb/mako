@@ -665,16 +665,20 @@ uint32_t computeGlobalWatermark() {
 
 ## 5. Replication and Consensus
 
-Mako supports two pluggable replication backends:
+Mako contains two replication backends. Raft is the supported, tested one.
+Paxos is **deprecated**: still built, and still what a replicated run gets when
+no type is given, but no longer tested (`src/deptran/paxos/DEPRECATED.md`).
 
 | Replication | Build Command | Binary | Use Case |
 |-------------|---------------|--------|----------|
-| **Paxos** (default) | `make -j32` | `dbtest` | Production with Paxos consensus |
-| **Raft** | `make mako-raft -j64` | `dbtest` | Mako with Raft replication |
+| **Raft** | `make mako-raft -j64` | `dbtest` | Mako with Raft replication (supported) |
+| **Paxos** (deprecated) | `make -j32` | `dbtest` | Deprecated and untested; kept buildable |
 
-### Multi-Paxos
+### Multi-Paxos (deprecated)
 
-Mako uses Multi-Paxos for efficient replication:
+The original replication engine, described here because the code is still in
+the tree. It is deprecated and no test runs it. Multi-Paxos replicates as
+follows:
 - Stable leader proposes all values (skips PREPARE after first proposal)
 - Majority agreement (N/2 + 1) before commit
 - Each shard has its own independent Paxos group
@@ -688,7 +692,7 @@ Mako uses Multi-Paxos for efficient replication:
 
 ### Raft
 
-Raft provides an alternative consensus mechanism with clearer leader election semantics. Build and test with:
+Raft is the supported replication engine, with clearer leader election semantics. Build and test with:
 
 ```bash
 make mako-raft -j64
@@ -1815,7 +1819,7 @@ Port assignment: Shard N uses base_port + N*100 (e.g., 31000, 31100, 31200).
 
 | Target | Command | Description |
 |--------|---------|-------------|
-| Mako + Paxos | `make -j32` | Default build (~2-3 min) |
+| Default | `make -j32` | Default build (~2-3 min); contains Raft and the deprecated Paxos |
 | Mako + Raft | `make mako-raft -j64` | Raft replication |
 | Raft Lab Tests | `make raft-test -j32` | Only for `raft_lab_test.yml` |
 | Clean | `make clean` | Remove build artifacts |
@@ -1861,7 +1865,7 @@ make -j$(nproc)
 **All CI tests must be run via Docker:**
 
 ```bash
-./docker_build.sh ci all          # Run all 19 tests
+./docker_build.sh ci all          # Run every suite
 ./docker_build.sh ci <testname>   # Run specific test
 ```
 
@@ -1871,12 +1875,7 @@ make -j$(nproc)
 |------|-------------|
 | `srpcTests` | SRPC framework unit tests |
 | `simpleTransaction` | Basic transaction execution |
-| `simplePaxos` | Paxos replication |
 | `shardNoReplication` | 2 shards, no replication |
-| `shard1Replication` | 1 shard with Paxos replication |
-| `shard2Replication` | 2 shards with Paxos replication |
-| `shard1ReplicationSimple` | 1 shard, simple transaction + Paxos |
-| `shard2ReplicationSimple` | 2 shards, simple transaction + Paxos |
 | `shard1ReplicationRaft` | 1 shard with Raft |
 | `shard2ReplicationRaft` | 2 shards with Raft |
 | `shard1ReplicationSimpleRaft` | 1 shard, simple transaction + Raft |
