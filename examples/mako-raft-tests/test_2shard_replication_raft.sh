@@ -5,9 +5,9 @@
 # 1. Show "agg_persist_throughput" keyword
 # 2. Have NewOrder_remote_abort_ratio < 40%
 #
-# NOTE: This script mirrors test_2shard_replication.sh (Paxos) exactly
-# in duration, polling, shutdown, and validation — only the replication
-# layer differs (Raft 3 replicas vs Paxos 4 replicas with learner).
+# NOTE: This script was written to mirror the Paxos script test_2shard_replication.sh
+# (deleted when Paxos was deprecated) in duration, polling, shutdown, and validation;
+# only the replication layer differed (Raft: 3 replicas, no learner).
 
 echo "========================================="
 echo "Testing 2-shard setup with Raft replication"

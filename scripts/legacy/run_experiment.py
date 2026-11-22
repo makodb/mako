@@ -68,7 +68,7 @@ class ExperimentRunner:
         self.add_section_break()
         
         # Build targets
-        targets = ["dbtest"] #"basic", "paxos_async_commit_test"]
+        targets = ["dbtest"]  # "basic"
         for target in targets:
             if not self.run_command(f"make -j32 {target} VERBOSE=1", f"Build {target}"):
                 return False
@@ -119,7 +119,11 @@ class ExperimentRunner:
                 # Pass is_micro and is_replicated as 5th and 6th parameters
                 micro_flag = "1" if is_micro else "0"
                 replicated_flag = "1" if is_replicated else "0"
-                cmd = f"bash bash/shard.sh {shards} {shard} {threads} {role} {micro_flag} {replicated_flag}"
+                # The four roles above (with "learner") are the topology of the
+                # deprecated Paxos engine, so name it: bash/shard.sh defaults
+                # to raft (src/deptran/paxos/DEPRECATED.md).
+                replication_arg = " paxos" if is_replicated else ""
+                cmd = f"bash bash/shard.sh {shards} {shard} {threads} {role} {micro_flag} {replicated_flag}{replication_arg}"
                 log_file = f"./results/{role}-{shard}.log"
                 
                 # Always use SSH for consistency

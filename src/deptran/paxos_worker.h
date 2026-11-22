@@ -1,6 +1,6 @@
 #pragma once
 #include <rusty/arc.hpp>
-
+// DEPRECATED: Multi-Paxos replication (PaxosWorker and the Paxos payload classes) is deprecated and no longer tested; Raft (src/deptran/raft/) is the supported engine. ElectionState in this header is shared with Raft and is NOT deprecated. See src/deptran/paxos/DEPRECATED.md.
 #include "__dep__.h"
 #include "coordinator.h"
 #include "benchmark_control_rpc.h"

@@ -1,14 +1,14 @@
 
 # Profiling
 
-Mako uses the CMake-built `dbtest`, `simplePaxos`, and `simpleRaft` binaries.
+Mako uses the CMake-built `dbtest` and `simpleRaft` binaries.
 The former Waf/`run.py`/`deptran_server` benchmark workflow is retired.
 
 Build optimized binaries with debug symbols:
 
 ```shell
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo
-cmake --build build --target dbtest simplePaxos simpleRaft
+cmake --build build --target dbtest simpleRaft
 ```
 
 For a local workload, wrap the normal `dbtest` invocation with Linux `perf`:

@@ -11,6 +11,11 @@ Usage:
     [--output results/thesis_tables.txt]
 
 Any subset of backends can be provided (e.g., just --paxos for Act 1).
+
+The --paxos input is historical: the Paxos backend of the sweep
+(scripts/run_scalability_sweep.sh) was removed when Paxos was deprecated, so
+no current run produces that file. The option still reads a results.csv kept
+from an earlier sweep.
 """
 
 import argparse
@@ -134,7 +139,8 @@ def print_table(header, rows, col_widths=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Process Mako scalability sweep results")
-    parser.add_argument('--paxos', help='Path to Paxos results.csv')
+    parser.add_argument('--paxos', help='Path to a historical Paxos results.csv '
+                        '(the Paxos backend of the sweep was removed)')
     parser.add_argument('--raft-multi', help='Path to Multi-Raft results.csv')
     parser.add_argument('--raft-single', help='Path to Single-Raft results.csv')
     parser.add_argument('--output', '-o', help='Output file (default: stdout)')

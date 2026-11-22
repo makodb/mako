@@ -1,6 +1,8 @@
 #!/bin/bash
 # Comprehensive single-process throttling test
-# Tests various combinations of shards, threads, and replication modes
+# Tests various combinations of shards and threads, without replication.
+# (Its replicated phase ran the deprecated Paxos engine and was removed;
+# see src/deptran/paxos/DEPRECATED.md.)
 
 set -e
 
@@ -105,113 +107,12 @@ run_test_no_replication() {
     fi
 }
 
-run_test_with_replication() {
-    local shards=$1
-    local threads=$2
-    local test_name="shards${shards}_threads${threads}_repl"
-
-    test_num=$((test_num + 1))
-    echo ""
-    echo "--- Test $test_num: $shards shards, $threads threads/shard, WITH replication ---"
-
-    cleanup
-
-    local config="src/mako/config/local-shards${shards}-warehouses${threads}.yml"
-    local local_shards=$(gen_local_shards $shards)
-    local log_file="$LOG_DIR/${test_name}.log"
-
-    if [ ! -f "$config" ]; then
-        echo "  SKIP: Config $config not found"
-        results[$test_name]="SKIP"
-        return
-    fi
-
-    # Check paxos configs exist for all shards
-    for ((i=0; i<shards; i++)); do
-        local paxos_cfg="config/1leader_2followers/paxos${threads}_shardidx${i}.yml"
-        if [ ! -f "$paxos_cfg" ]; then
-            echo "  SKIP: Paxos config $paxos_cfg not found"
-            results[$test_name]="SKIP"
-            return
-        fi
-    done
-
-    # Start follower processes for each shard
-    echo "  Starting follower processes..."
-    for ((i=0; i<shards; i++)); do
-        nohup bash bash/shard.sh $shards $i $threads learner 0 1 > "$LOG_DIR/${test_name}_shard${i}_learner.log" 2>&1 &
-        nohup bash bash/shard.sh $shards $i $threads p2 0 1 > "$LOG_DIR/${test_name}_shard${i}_p2.log" 2>&1 &
-    done
-    sleep 1
-
-    for ((i=0; i<shards; i++)); do
-        nohup bash bash/shard.sh $shards $i $threads p1 0 1 > "$LOG_DIR/${test_name}_shard${i}_p1.log" 2>&1 &
-    done
-    sleep 3
-
-    # Build paxos config flags
-    local paxos_flags=""
-    for ((i=0; i<shards; i++)); do
-        paxos_flags="$paxos_flags -F config/1leader_2followers/paxos${threads}_shardidx${i}.yml"
-    done
-
-    # Start combined leader with replication
-    echo "  Starting combined leader..."
-    timeout $((RUNTIME + 30)) ./${BUILD_DIR:-build}/dbtest \
-        --num-threads $threads \
-        --shard-config "$config" \
-        $paxos_flags \
-        -F config/paxos.yml \
-        -P localhost \
-        -L "$local_shards" \
-        --cpu-limit $CPU_LIMIT \
-        --is-replicated \
-        2>&1 | tee "$log_file" &
-
-    LEADER_PID=$!
-
-    # Wait for completion or timeout
-    local wait_count=0
-    while [ $wait_count -lt $((RUNTIME + 20)) ]; do
-        if grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
-            sleep 2
-            break
-        fi
-        sleep 1
-        wait_count=$((wait_count + 1))
-    done
-
-    # Cleanup
-    kill $LEADER_PID 2>/dev/null || true
-    pkill -9 -f "bash/shard.sh" 2>/dev/null || true
-    pkill -9 dbtest 2>/dev/null || true
-    sleep 2
-
-    # Check results
-    if grep -q "agg_persist_throughput" "$log_file" 2>/dev/null; then
-        local throughput=$(grep "agg_persist_throughput" "$log_file" | tail -1 | grep -oP '\d+(?= ops/sec)' || echo "0")
-        if grep -q "PANIC\|SEGFAULT\|Assertion\|IT should never happen" "$log_file" 2>/dev/null; then
-            echo "  FAIL: Crashes/panics detected (throughput: $throughput)"
-            results[$test_name]="FAIL"
-            failed=$((failed + 1))
-        else
-            echo "  PASS: throughput=$throughput ops/sec"
-            results[$test_name]="PASS:$throughput"
-            passed=$((passed + 1))
-        fi
-    else
-        echo "  FAIL: No throughput output"
-        results[$test_name]="FAIL"
-        failed=$((failed + 1))
-    fi
-}
-
 # ============================================
 # Test Matrix
 # ============================================
 # Shards: 1, 2, 3, 4, 5
 # Threads per shard: 1, 2, 4, 6, 8, 12, 16
-# Replication: yes/no
+# Replication: no
 #
 # Memory estimation: ~500MB base + ~100MB per shard + ~50MB per thread
 # With 62GB RAM, we can safely test up to 5 shards x 16 threads
@@ -219,26 +120,13 @@ run_test_with_replication() {
 
 echo ""
 echo "========================================="
-echo "Phase 1: Tests WITHOUT Replication"
+echo "Tests WITHOUT Replication"
 echo "========================================="
 
-# Test without replication - wider range
+# Test without replication
 for shards in 1 2 3 4 5; do
     for threads in 1 2 4 6 8 12 16; do
         run_test_no_replication $shards $threads
-    done
-done
-
-echo ""
-echo "========================================="
-echo "Phase 2: Tests WITH Replication"
-echo "========================================="
-
-# Test with replication - more selective (replication adds overhead)
-# Using threads that have paxos configs (typically 1-16 in increments)
-for shards in 1 2 3; do
-    for threads in 1 2 4 6 8; do
-        run_test_with_replication $shards $threads
     done
 done
 

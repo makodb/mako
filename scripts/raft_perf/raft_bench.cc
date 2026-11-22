@@ -27,8 +27,8 @@
  * here understates replication latency for a geo-distributed deployment.
  *
  * PAYLOAD LAYOUT. Latency is measured by embedding the enqueue time in the
- * payload and reading it back in the apply callback — the technique already
- * used by src/mako/benchmarks/paxos_async_commit_test.cc. Every offered entry
+ * payload and reading it back in the apply callback — the technique of the
+ * former Paxos driver (paxos_async_commit_test, deleted). Every offered entry
  * is laid out as:
  *
  *     [ 0,  8)  magic "RBENCH01"     — lets the callback ignore Raft no-ops
@@ -1329,13 +1329,12 @@ int main(int argc, char** argv) {
   std::fflush(stdout);
 
   // Route the unqualified replication_helper entry points to raft_impl. This
-  // must happen before setup(); without it the default is PAXOS and setup()
-  // goes through paxos_main_helper, which does not disable Jetpack recovery
-  // and yields RPC handler mismatches at runtime.
+  // must happen before setup(). Raft is the default now, but the explicit call
+  // stays: a setup() that goes through paxos_main_helper does not disable
+  // Jetpack recovery and yields RPC handler mismatches at runtime.
   janus::set_replication_type(janus::ReplicationType::RAFT);
 
   // Build the replication argv by hand, mirroring
-  // src/mako/benchmarks/paxos_async_commit_test.cc and
   // examples/mako-raft-tests/simpleRaft.cc.
   //
   // -T is deliberately 0: RaftWorker::WaitForSubmit() spins while

@@ -159,7 +159,6 @@ warn_incomplete_build_docker() {
     local required_bins=(
         "build_docker/dbtest"
         "build_docker/simpleTransaction"
-        "build_docker/simplePaxos"
         "build_docker/simpleTransactionRep"
         "build_docker/continuousTransactions"
     )
@@ -610,7 +609,7 @@ case "$ACTION" in
                          echo 'Reusing existing build_docker CMake cache'; \
                      fi && \
                      cmake --build build_docker --parallel ${JOBS} --target \
-                         dbtest simpleTransaction simplePaxos simpleTransactionRep continuousTransactions \
+                         dbtest simpleTransaction simpleTransactionRep continuousTransactions \
                          test_rocksdb_persistence test_callback_demo test_ordered_callbacks \
                          test_partitioned_queues test_stress_partitioned_queues"
         echo -e "${GREEN}Build completed successfully!${NC}"
@@ -834,7 +833,7 @@ case "$ACTION" in
             exit 1
         fi
         case "${CI_TEST}" in
-            compile|cleanup|nativeShardingProof|nativeShardingSmoke|rocksdbRaft|rustStoBoundaryBinaries|makoLocalAbiGates|simpleTransaction|simplePaxos|shardNoReplication|shard1Replication|shard2Replication|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|srpcTests|cpuThrottlingScaling|clientServer|all)
+            compile|cleanup|nativeShardingProof|nativeShardingSmoke|rocksdbRaft|rustStoBoundaryBinaries|makoLocalAbiGates|simpleTransaction|shardNoReplication|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|srpcTests|cpuThrottlingScaling|clientServer|all)
                 ;;
             *)
                 echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"
@@ -897,7 +896,7 @@ case "$ACTION" in
                 echo -e "${YELLOW}Use './docker_build.sh ci ${CI_TEST}' instead.${NC}"
                 exit 1
                 ;;
-            nativeShardingSmoke|simpleTransaction|simplePaxos|shardNoReplication|shard1Replication|shard2Replication|shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|shard2SingleProcessReplication|cpuThrottlingScaling|clientServer)
+            nativeShardingSmoke|simpleTransaction|shardNoReplication|shard1ReplicationRaft|shard2ReplicationRaft|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|rocksdbTests|multiShardSingleProcess|shard2SingleProcess|cpuThrottlingScaling|clientServer)
                 ;;
             *)
                 echo -e "${RED}Error: Unknown CI test '${CI_TEST}'.${NC}"
@@ -914,9 +913,6 @@ case "$ACTION" in
             simpleTransaction)
                 REQUIRED_BINS=("build_docker/simpleTransaction")
                 ;;
-            simplePaxos)
-                REQUIRED_BINS=("build_docker/simplePaxos")
-                ;;
             rocksdbTests)
                 REQUIRED_BINS=(
                     "build_docker/test_rocksdb_persistence"
@@ -926,7 +922,7 @@ case "$ACTION" in
                     "build_docker/test_stress_partitioned_queues"
                 )
                 ;;
-            shard1ReplicationSimple|shard2ReplicationSimple|shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|clientServer)
+            shard1ReplicationSimpleRaft|shard2ReplicationSimpleRaft|clientServer)
                 REQUIRED_BINS=("build_docker/simpleTransactionRep")
                 ;;
         esac
@@ -969,7 +965,7 @@ case "$ACTION" in
             for bin in "${missing_bins[@]}"; do
                 echo -e "${RED}  - ${bin}${NC}"
             done
-            echo -e "${YELLOW}'build' compiles core runtime binaries (dbtest, simpleTransaction, simplePaxos, simpleTransactionRep, continuousTransactions)${NC}"
+            echo -e "${YELLOW}'build' compiles core runtime binaries (dbtest, simpleTransaction, simpleTransactionRep, continuousTransactions)${NC}"
             echo -e "${YELLOW}and RocksDB test binaries for ci-quick rocksdbTests.${NC}"
             echo -e "${YELLOW}Use './docker_build.sh build' to rebuild Docker binaries, then rerun './docker_build.sh ci-quick ${CI_TEST}'.${NC}"
             echo -e "${YELLOW}Or run './docker_build.sh ci ${CI_TEST}' to build and run this suite in one command.${NC}"
@@ -1539,16 +1535,14 @@ case "$ACTION" in
         echo "  compose-down - Stop persistent dev container"
         echo ""
         echo "CI Test Names:"
-        echo "  all, compile, cleanup, simpleTransaction, simplePaxos,"
+        echo "  all, compile, cleanup, simpleTransaction,"
         echo "  rustStoBoundaryBinaries, makoLocalAbiGates (ci only),"
         echo "  rocksdbRaft (isolated native Rust profile, includes build and runtime scenarios),"
         echo "  shardNoReplication,"
-        echo "  shard1Replication, shard2Replication,"
-        echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
         echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
         echo "  rocksdbTests, multiShardSingleProcess,"
-        echo "  shard2SingleProcess, shard2SingleProcessReplication,"
+        echo "  shard2SingleProcess,"
         echo "  srpcTests, cpuThrottlingScaling, clientServer"
         echo ""
         echo "Examples:"
@@ -1556,7 +1550,7 @@ case "$ACTION" in
         echo "  $0 ci 8                  # Build and run all CI tests with 8 build jobs"
         echo "  $0 ci shardNoReplication # Build and run shardNoReplication test"
         echo "  $0 ci shardNoReplication 8 # Use 8 build jobs for CI flow"
-        echo "  $0 ci-quick shard2Replication # Run shard2Replication without rebuild"
+        echo "  $0 ci-quick shard2ReplicationRaft # Run shard2ReplicationRaft without rebuild"
         exit 1
         ;;
 esac

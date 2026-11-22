@@ -120,7 +120,7 @@ fi
 # TCP-based client interface is intended for distributed multi-shard clusters.
 #
 # For multi-shard client-server testing, see:
-# - ci/ci.sh shard2Replication (tests 2-shard replication)
+# - ci/ci.sh shard2ReplicationRaft (tests 2-shard Raft replication)
 # - ci/ci.sh multiShardSingleProcess (tests 2 shards in single process)
 
 echo ""
@@ -139,7 +139,7 @@ echo "      - --server: Standalone server (wait for clients/shutdown)"
 echo "      - --client: Client mode (connect to remote server)"
 echo ""
 echo "      End-to-end client-server tests require multi-shard mode."
-echo "      Use 'ci/ci.sh shard2Replication' or 'ci/ci.sh multiShardSingleProcess'"
+echo "      Use 'ci/ci.sh shard2ReplicationRaft' or 'ci/ci.sh multiShardSingleProcess'"
 echo "      for multi-shard testing."
 
 exit 0

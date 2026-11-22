@@ -403,26 +403,11 @@ jobs:
       - name: Run tests - client-server mode
         run: ./ci/ci.sh clientServer
 
-      - name: Run tests - simple replication
-        run: ./ci/ci.sh simplePaxos 
-
       - name: Run tests - simple 2 shards without replication (SRPC)
         run: ./ci/ci.sh shardNoReplication
 
-      - name: Run tests - simple 1 shard with replication - dbtest
-        run: ./ci/ci.sh shard1Replication
-
-      - name: Run tests - simple 2 shard with replication - dbtest (SRPC)
-        run: ./ci/ci.sh shard2Replication
-
-      - name: Run tests - simple 1 shard with replication - simpleTransactionRep
-        run: ./ci/ci.sh shard1ReplicationSimple
-
-      - name: Run tests - simple 2 shard with replication - simpleTransactionRep
-        run: ./ci/ci.sh shard2ReplicationSimple
-
       # =========================================
-      # Raft Replication Tests (after Paxos replication tests)
+      # Raft Replication Tests
       # =========================================
       - name: Run tests - 1 shard with Raft replication - dbtest
         run: ./ci/ci.sh shard1ReplicationRaft
@@ -447,9 +432,6 @@ jobs:
 
       - name: Run tests - 2 shard single process (no replication)
         run: ./ci/ci.sh shard2SingleProcess
-
-      - name: Run tests - 2 shard single process with replication
-        run: ./ci/ci.sh shard2SingleProcessReplication
 
       # =========================================
       # Rust-line gates (after the mainline suites)
@@ -527,8 +509,6 @@ jobs:
               # rust-labeled CTest has to be named here (see below).
               "test_sto_tpcc_protocol_rust_none",
               "test_sto_tpcc_protocol_rust_none_colocated",
-              "test_sto_tpcc_protocol_rust_paxos",
-              "test_sto_tpcc_protocol_rust_paxos_colocated",
               "test_sto_tpcc_protocol_rust_raft",
               "test_sto_tpcc_protocol_rust_raft_colocated",
               "test_sto_tpcc_rejects_rust_worker_limit",
@@ -705,7 +685,7 @@ jobs:
           ctest --test-dir build
           --output-on-failure
           --no-tests=error
-          -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_silo_runtime_concurrency_lifecycle|test_silo_transaction_install_exception_fail_stop|test_silo_transaction_set_capacity_exhaustion|test_silo_transaction_set_exact_chunk_boundary|test_silo_transitem_lifetime|test_sto_tpcc_ffi_c11_header|test_benchmark_output|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_startup_resource_exhausted|test_sto_tpcc_rust_load_resource_exhausted|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_protocol_rust_none|test_sto_tpcc_protocol_rust_none_colocated|test_sto_tpcc_protocol_rust_paxos|test_sto_tpcc_protocol_rust_paxos_colocated|test_sto_tpcc_protocol_rust_raft|test_sto_tpcc_protocol_rust_raft_colocated|test_sto_tpcc_rejects_rust_worker_limit)$'
+          -R '^(SiloVarintTests|test_mako_value_metadata|test_mtree_abi|test_mtree_abi_c11_header|test_rocksdb_interface_lifecycle|test_silo_nontxn_api|test_silo_nontxn_api_mv_delete_delete_conflict|test_silo_nontxn_api_mv_delete_update_conflict|test_silo_runtime_concurrency_lifecycle|test_silo_transaction_install_exception_fail_stop|test_silo_transaction_set_capacity_exhaustion|test_silo_transaction_set_exact_chunk_boundary|test_silo_transitem_lifetime|test_sto_tpcc_ffi_c11_header|test_benchmark_output|test_sto_tpcc_cpp_wrapper_smoke|test_sto_tpcc_cpp_wrapper_scan_smoke|test_sto_tpcc_cpp_slow_exit|test_sto_tpcc_cpp_multishard_slow_exit|test_sto_tpcc_rust_slow_exit|test_sto_tpcc_rust_concurrent|test_sto_tpcc_rust_startup_resource_exhausted|test_sto_tpcc_rust_load_resource_exhausted|test_sto_tpcc_rust_run_resource_exhausted|test_sto_tpcc_rust_concurrent_resource_exhausted|test_sto_tpcc_rejects_duplicate_local_shards|test_sto_tpcc_rejects_partial_local_shards|test_sto_tpcc_protocol_rust_none|test_sto_tpcc_protocol_rust_none_colocated|test_sto_tpcc_protocol_rust_raft|test_sto_tpcc_protocol_rust_raft_colocated|test_sto_tpcc_rejects_rust_worker_limit)$'
 
       - name: Run Rust STO workspace tests in release mode
         if: ${{ !cancelled() && steps.compile.outcome == 'success' }}

@@ -1,5 +1,5 @@
 #pragma once
-
+// DEPRECATED: Multi-Paxos replication (MultiPaxosCommo) is deprecated and no longer tested; Raft (src/deptran/raft/) is the supported engine. enum PaxosStatus in this header is shared with Raft and is NOT deprecated. See src/deptran/paxos/DEPRECATED.md.
 #include <rusty/arc.hpp>
 
 #include "../__dep__.h"

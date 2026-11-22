@@ -3,7 +3,7 @@
 # simpleRaft.sh - Basic Raft replication test
 # Tests 3 Raft replicas: localhost (preferred leader), p1, p2
 # Note: Unlike Paxos which has a separate "learner", Raft treats all replicas equally
-# Configuration matches simplePaxos: 3 partitions, 100 logs each, 3KB logs, 5ms interval
+# Configuration: 3 partitions, 100 logs each, 3KB logs, 5ms interval
 
 # Expected: 100 logs * 3 partitions = 300 callbacks minimum
 EXPECTED_MIN_CALLBACKS=300
@@ -14,7 +14,7 @@ rm -f raft_a1.log raft_a2.log raft_a3.log
 killall simpleRaft 2>/dev/null
 sleep 1
 
-# Start followers first, leader last (same order as simplePaxos)
+# Start followers first, leader last
 echo "Starting p1 (follower)..."
 ./${BUILD_DIR:-build}/simpleRaft p1 > raft_a2.log 2>&1 &
 p1_pid=$!

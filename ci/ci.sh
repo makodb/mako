@@ -134,7 +134,7 @@ cleanup_processes() {
     ( source ./scripts/raft_disk/store_dir.sh && raft_store_sweep )
     echo "Cleaning up any lingering test processes..."
 
-    for proc in simpleTransactionRep dbtest simplePaxos simpleTransaction simpleRaft; do
+    for proc in simpleTransactionRep dbtest simpleTransaction simpleRaft; do
         while read -r pid; do
             if [ -z "$pid" ] || [ "$pid" = "1" ]; then
                 continue
@@ -156,10 +156,8 @@ cleanup_processes() {
         )
     done
 
-    # Kill test wrapper scripts (2shard tests with/without replication)
+    # Kill test wrapper scripts (the unreplicated 2-shard test, the shard launcher)
     pkill -9 -u "$user_name" -f "test_2shard_no_replication.sh" 2>/dev/null || true
-    pkill -9 -u "$user_name" -f "test_2shard_replication.sh" 2>/dev/null || true
-    pkill -9 -u "$user_name" -f "test_1shard_replication.sh" 2>/dev/null || true
     pkill -9 -u "$user_name" -f "bash/shard.sh" 2>/dev/null || true
 
     # Evict ANY of our processes still LISTENING in the test port
@@ -291,25 +289,6 @@ for group in ("localhost", "p1", "p2", "learner"):
 with open(dest_config, "w") as f:
     yaml.safe_dump(data, f, sort_keys=False)
 PY
-}
-
-# Run a command with memory limit (in KB)
-# Usage: run_with_memory_limit <limit_kb> <command...>
-# Example: run_with_memory_limit 31457280 bash ./examples/test.sh  # 30GB limit
-run_with_memory_limit() {
-    local limit_kb=$1
-    shift
-    local limit_gb=$((limit_kb / 1024 / 1024))
-    echo "[Memory limit] Setting virtual memory limit to ${limit_gb}GB (${limit_kb}KB)"
-
-    # Use ulimit to set virtual memory limit
-    # This prevents runaway memory usage from crashing CI servers
-    (
-        ulimit -v $limit_kb 2>/dev/null || {
-            echo "[Memory limit] Warning: Could not set ulimit -v, running without limit"
-        }
-        "$@"
-    )
 }
 
 # Function 1: Compile
@@ -482,23 +461,7 @@ run_simple_transaction() {
     return $result
 }
 
-# Function 3: Run simple Paxos test
-run_simple_paxos() {
-    echo "========================================="
-    echo "Running: ./ci/ci.sh simplePaxos"
-    echo "========================================="
-    cleanup_processes
-    bash ./src/mako/update_config.sh
-    set +e
-    bash ./examples/simplePaxos.sh
-    local test_result=$?
-    set -e
-    check_for_hanging_processes "simplePaxos"
-    local hanging_check=$?
-    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
-}
-
-# Function 4: Run 2-shard no replication test (SRPC transport)
+# Function 3: Run 2-shard no replication test (SRPC transport)
 run_2shard_no_replication() {
     echo "========================================="
     echo "Running: ./ci/ci.sh shardNoReplication"
@@ -522,94 +485,6 @@ run_2shard_no_replication() {
         attempt=$((attempt + 1))
     done
     return 1
-}
-
-run_1shard_replication() {
-    echo "========================================="
-    echo "Running: ./ci/ci.sh shard1Replication"
-    echo "========================================="
-    local attempt=1
-    local max_attempts=2
-    while [ $attempt -le $max_attempts ]; do
-        cleanup_processes
-        # Run test and capture exit code (set +e to prevent immediate exit)
-        set +e
-        bash ./examples/test_1shard_replication.sh
-        local test_result=$?
-        set -e
-        # Always check for hanging processes, even if test failed
-        check_for_hanging_processes "shard1Replication"
-        local hanging_check=$?
-        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
-            return 0
-        fi
-        if [ $attempt -lt $max_attempts ]; then
-            echo "Retrying shard1Replication (attempt $((attempt + 1))/$max_attempts)..."
-        fi
-        attempt=$((attempt + 1))
-    done
-    return 1
-}
-
-run_2shard_replication() {
-    echo "========================================="
-    echo "Running: ./ci/ci.sh shard2Replication"
-    echo "========================================="
-    local attempt=1
-    local max_attempts=2
-    while [ $attempt -le $max_attempts ]; do
-        cleanup_processes
-        # Run test and capture exit code (set +e to prevent immediate exit)
-        set +e
-        bash ./examples/test_2shard_replication.sh
-        local test_result=$?
-        set -e
-        # Always check for hanging processes, even if test failed
-        check_for_hanging_processes "shard2Replication"
-        local hanging_check=$?
-        if [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]; then
-            return 0
-        fi
-        if [ $attempt -lt $max_attempts ]; then
-            echo "Retrying shard2Replication (attempt $((attempt + 1))/$max_attempts)..."
-        fi
-        attempt=$((attempt + 1))
-    done
-    return 1
-}
-
-run_1shard_replication_simple() {
-    echo "========================================="
-    echo "Running: ./ci/ci.sh shard1ReplicationSimple"
-    echo "========================================="
-    cleanup_processes
-    # Run test and capture exit code (set +e to prevent immediate exit)
-    set +e
-    bash ./examples/test_1shard_replication_simple.sh
-    local test_result=$?
-    set -e
-    # Always check for hanging processes, even if test failed
-    check_for_hanging_processes "shard1ReplicationSimple"
-    local hanging_check=$?
-    # Return failure if either check failed
-    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
-}
-
-run_2shard_replication_simple() {
-    echo "========================================="
-    echo "Running: ./ci/ci.sh shard2ReplicationSimple"
-    echo "========================================="
-    cleanup_processes
-    # Run test and capture exit code (set +e to prevent immediate exit)
-    set +e
-    bash ./examples/test_2shard_replication_simple.sh
-    local test_result=$?
-    set -e
-    # Always check for hanging processes, even if test failed
-    check_for_hanging_processes "shard2ReplicationSimple"
-    local hanging_check=$?
-    # Return failure if either check failed
-    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
 }
 
 # ============================================================================
@@ -884,25 +759,6 @@ run_2shard_single_process() {
     [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
 }
 
-run_2shard_single_process_replication() {
-    echo "========================================="
-    echo "Running: ./ci/ci.sh shard2SingleProcessReplication"
-    echo "========================================="
-    cleanup_processes
-    set +e
-    # Memory limit: 50GB (50 * 1024 * 1024 KB = 52428800 KB)
-    # This test runs 7 processes and can consume significant memory.
-    # The leader process hosts 6 RocksDB partition databases in a single
-    # process (2 shards x 6 threads), each with up to 256MB x 6 write
-    # buffers = ~9GB for memtables alone.  30GB was consistently too low.
-    run_with_memory_limit 52428800 bash ./examples/test_2shard_single_process_replication.sh
-    local test_result=$?
-    set -e
-    check_for_hanging_processes "shard2SingleProcessReplication"
-    local hanging_check=$?
-    [ $test_result -eq 0 ] && [ $hanging_check -eq 0 ]
-}
-
 run_srpc_unit_tests() {
     echo "========================================="
     echo "Running: ./ci/ci.sh srpcTests"
@@ -1013,23 +869,8 @@ case "${1:-}" in
     simpleTransaction)
         run_simple_transaction
         ;;
-    simplePaxos)
-        run_simple_paxos
-        ;;
     shardNoReplication)
         run_2shard_no_replication
-        ;;
-    shard1Replication)
-        run_1shard_replication
-        ;;
-    shard2Replication)
-        run_2shard_replication
-        ;;
-    shard1ReplicationSimple)
-        run_1shard_replication_simple
-        ;;
-    shard2ReplicationSimple)
-        run_2shard_replication_simple
         ;;
     shard1ReplicationRaft)
         run_1shard_replication_raft
@@ -1064,9 +905,6 @@ case "${1:-}" in
     shard2SingleProcess)
         run_2shard_single_process
         ;;
-    shard2SingleProcessReplication)
-        run_2shard_single_process_replication
-        ;;
     srpcTests)
         run_srpc_unit_tests
         ;;
@@ -1085,13 +923,7 @@ case "${1:-}" in
         run_srpc_unit_tests
         run_simple_transaction
         run_client_server_test
-        run_simple_paxos
         run_2shard_no_replication
-        # Paxos replication tests
-        run_1shard_replication
-        run_2shard_replication
-        run_1shard_replication_simple
-        run_2shard_replication_simple
         # Raft replication tests
         run_1shard_replication_raft
         run_2shard_replication_raft
@@ -1102,7 +934,6 @@ case "${1:-}" in
         # run_shard_fault_tolerance  # DISABLED: test script not implemented
         run_multi_shard_single_process
         run_2shard_single_process
-        run_2shard_single_process_replication
         # The Rust/C boundary gate runs after the replication matrix: under
         # `set -e` an earlier failure here would end the run before any of
         # the suites above produced a result.
@@ -1116,16 +947,14 @@ case "${1:-}" in
         echo "  compile, rustStoBoundaryBinaries,"
         echo "  makoLocalAbiGates, makoLocalSanitizerGates,"
         echo "  makoLocalHookGates, makoLocalMiriGate, cleanup,"
-        echo "  simpleTransaction, simplePaxos,"
+        echo "  simpleTransaction,"
         echo "  shardNoReplication,"
         echo "  nativeShardingProof, nativeShardingSmoke,"
-        echo "  shard1Replication, shard2Replication,"
-        echo "  shard1ReplicationSimple, shard2ReplicationSimple,"
         echo "  shard1ReplicationRaft, shard2ReplicationRaft,"
         echo "  shard1ReplicationSimpleRaft, shard2ReplicationSimpleRaft,"
         echo "  raftLabTest, raftKillTest, shard1ReplicationRaftRestart (disk trees),"
         echo "  rocksdbTests, multiShardSingleProcess,"
-        echo "  shard2SingleProcess, shard2SingleProcessReplication,"
+        echo "  shard2SingleProcess,"
         echo "  srpcTests, cpuThrottlingScaling, clientServer, all"
         exit 1
         ;;

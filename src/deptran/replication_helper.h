@@ -1,9 +1,17 @@
 #pragma once
 
-// replication_helper.h - Runtime switching between Paxos and Raft replication
+// replication_helper.h - Runtime switching between Raft and Paxos replication
 //
-// This header provides a unified interface for replication that can be switched
-// at runtime using the --replication=paxos|raft command-line flag.
+// This header provides a unified interface for replication. The engine is
+// selected at run time, in this order of precedence:
+//   1. an explicit choice: set_replication_type*() (dbtest's
+//      --replication=raft|paxos flag calls it) or a --replication argument in
+//      the argv handed to setup();
+//   2. the mode.ab key of the replication config files: "raft" selects Raft,
+//      "paxos" or "multi_paxos" selects Paxos;
+//   3. the default, Raft.
+// Paxos is deprecated and runs only when 1 or 2 names it
+// (src/deptran/paxos/DEPRECATED.md).
 //
 // @safe - This module uses rusty::Cell for interior mutability of the global
 // replication type, ensuring safe mutation through a const-correct API.
@@ -28,12 +36,24 @@ enum class ReplicationType : int {
     RAFT = 1
 };
 
-// Get/set the current replication type (default: PAXOS)
+// Get/set the current replication type (default: RAFT)
 // @safe - uses Cell for interior mutability
 ReplicationType get_replication_type();
+// An explicit choice: it marks the type as chosen by the caller, so that no
+// config file can change it afterwards.
 void set_replication_type(ReplicationType type);
 void set_replication_type_from_string(const std::string& type_str);
 const char* replication_type_to_string(ReplicationType type);
+
+// True once set_replication_type*() has run in this process.
+// @safe - read-only accessor
+bool replication_type_is_explicit();
+
+// Applies the protocol named by a config file's mode.ab. It does not count as
+// an explicit choice. Returns false, and changes nothing, when an explicit
+// choice names the other protocol: the explicit choice wins.
+// @unsafe - mutation through Cell::set(), plus std::cerr output
+bool apply_config_replication_type(ReplicationType type);
 
 // Check if using specific replication type
 // @safe - read-only accessors

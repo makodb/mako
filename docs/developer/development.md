@@ -22,11 +22,14 @@ This document contains detailed information for developers working on Mako.
 
 ## Replication Layers
 
-Mako supports **two replication backends** that can be selected at build time:
+Mako contains **two replication backends**. Raft is the supported, tested one.
+Raft is also the default: a replicated run that names no type gets it.
+Paxos is **deprecated**: it is still built, but no test covers it any more and
+it runs only when selected explicitly (`src/deptran/paxos/DEPRECATED.md`).
 
 | Replication | Build Command | Binary | Use Case |
 |-------------|---------------|--------|----------|
-| **Paxos** (default) | `make -j32` | `dbtest` | Production Mako with Paxos consensus |
+| **Paxos** (deprecated) | `make -j32` | `dbtest` | Deprecated and untested; kept buildable |
 | **Raft** | `make mako-raft -j64` | `dbtest` | Mako with Raft as replication layer |
 
 The Raft lab harness runs without Mako transactions through a dedicated
@@ -40,8 +43,8 @@ The Raft lab harness runs without Mako transactions through a dedicated
 
 ### Understanding the Difference
 
-- **Mako + Paxos**: Original Mako system using Paxos for replication (`./ci/ci.sh`)
-- **Mako + Raft**: Mako transactions with Raft as the replication layer (`./ci/ci_mako_raft.sh`)
+- **Mako + Paxos**: Original Mako system using Paxos for replication. Deprecated; no test runs it
+- **Mako + Raft**: Mako transactions with Raft as the replication layer (`./ci/ci.sh`, `./ci/ci_mako_raft.sh`)
 - **Raft Lab Tests**: Coroutine-based Raft tests (`make raft-test`) - only for `raft_lab_test.yml`
 
 ---
@@ -52,7 +55,7 @@ The Raft lab harness runs without Mako transactions through a dedicated
 
 | Target | Command | Description |
 |--------|---------|-------------|
-| **Mako + Paxos** | `make -j32` | Default build with Paxos replication (~2-3 mins) |
+| **Default** | `make -j32` | Default build (~2-3 mins); contains Raft and the deprecated Paxos |
 | **Mako + Raft** | `make mako-raft -j32` | Mako with Raft replication and Raft test binaries |
 | **Raft Lab Tests** | `make raft-test -j32` | Raft with testing coroutines (only for `raft_lab_test.yml`) |
 | **Clean** | `make clean` | Remove all build artifacts |
@@ -83,23 +86,25 @@ The Raft lab harness runs without Mako transactions through a dedicated
 
 ## Running Tests
 
-### Mako + Paxos Tests
+### Main CI Suites
 
-Use `./ci/ci.sh` for testing Mako with **Paxos** replication:
+Use `./ci/ci.sh` for the main suites: unreplicated runs and **Raft**
+replication. The Paxos suites (`simplePaxos`, `shard1Replication`,
+`shard2Replication`, `shard1ReplicationSimple`, `shard2ReplicationSimple`,
+`shard2SingleProcessReplication`) were removed when Paxos was deprecated.
 
 ```bash
-# Run all Paxos CI tests
+# Run all main CI tests
 ./ci/ci.sh all
 
 # Individual tests
 ./ci/ci.sh simpleTransaction       # Simple transactions
-./ci/ci.sh simplePaxos             # Paxos replication
-./ci/ci.sh shard1Replication       # 1-shard with replication
-./ci/ci.sh shard2Replication       # 2-shards with replication
-./ci/ci.sh shard1ReplicationSimple
-./ci/ci.sh shard2ReplicationSimple
+./ci/ci.sh shardNoReplication      # 2 shards without replication
+./ci/ci.sh shard1ReplicationRaft   # 1-shard with Raft replication
+./ci/ci.sh shard2ReplicationRaft   # 2-shards with Raft replication
+./ci/ci.sh shard1ReplicationSimpleRaft
+./ci/ci.sh shard2ReplicationSimpleRaft
 ./ci/ci.sh rocksdbTests            # RocksDB persistence
-./ci/ci.sh shardFaultTolerance     # Fault tolerance
 ./ci/ci.sh multiShardSingleProcess
 ./ci/ci.sh cpuThrottlingScaling
 ```
@@ -155,13 +160,13 @@ cd tests && ./run_tests.sh all
 
 ---
 
-## Running Mako with Paxos
+## Running Mako with Replication on One Machine
 
-### Single Machine Setup (1 Leader + 2 Followers + 1 Learner)
+### Single Machine Setup (1 Leader + 2 Followers, Raft)
 
 ```bash
 cmake --build build --target dbtest -j
-BUILD_DIR=build bash examples/test_1shard_replication.sh 6
+BUILD_DIR=build bash examples/test_1shard_replication_raft.sh 6
 ```
 
 The maintained script generates isolated configs and launches the leader and
@@ -247,8 +252,8 @@ Key configuration directories:
 |-----------|---------|
 | `config/hosts*.yml` | Host topology |
 | `config/rw.yml`, `config/concurrent_*.yml` | Workload settings |
-| `config/paxos.yml`, `config/1leader_2followers/` | Paxos protocol |
-| `config/raft.yml` | Raft protocol |
+| `config/raft.yml`, `config/1leader_2followers/raft*` | Raft protocol |
+| `config/paxos.yml`, `config/1leader_2followers/template_paxos*` | Paxos protocol (deprecated) |
 
 ---
 
@@ -258,7 +263,7 @@ Key configuration directories:
 mako/
 ├── src/
 │   ├── deptran/           # Transaction protocols
-│   │   ├── paxos/         # Paxos replication
+│   │   ├── paxos/         # Paxos replication (deprecated)
 │   │   ├── raft/          # Raft replication
 │   │   └── ...
 │   ├── mako/              # Mako core (Masstree, watermarks)
@@ -266,7 +271,7 @@ mako/
 │   └── srpc/               # RPC framework
 ├── config/                # YAML configurations
 ├── ci/
-│   ├── ci.sh              # Mako + Paxos tests
+│   ├── ci.sh              # Main suites (unreplicated and Raft)
 │   └── ci_mako_raft.sh    # Mako + Raft tests
 ├── examples/
 │   └── mako-raft-tests/   # Mako-Raft test scripts

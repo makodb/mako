@@ -90,7 +90,7 @@ request-outcome rules, crash scenarios and evaluation.
 
 ## 1. Introduction
 
-Mako supports **two pluggable replication backends**: Paxos (default) and Raft. This guide covers the Raft implementation in depth — the protocol, integration with Mako's transaction system, and practical development guidance.
+Mako contains **two replication backends**: Raft, the supported and tested one, and Paxos, which is deprecated (still built, but no longer tested and no longer the run-time default: Raft is, and Paxos runs only when selected explicitly; see `src/deptran/paxos/DEPRECATED.md`). This guide covers the Raft implementation in depth — the protocol, integration with Mako's transaction system, and practical development guidance.
 
 ### Raft in Mako
 
@@ -904,7 +904,7 @@ uint64_t window = server->GetLogRetentionWindow();
 
 | Command | Description | Binary |
 |---------|-------------|--------|
-| `make -j32` | Default (Paxos) | `dbtest` |
+| `make -j32` | Default build (Raft and the deprecated Paxos) | `dbtest` |
 | `make mako-raft -j64` | Mako with Raft | `dbtest` + Raft test binaries |
 | `make raft-test -j32` | Raft lab tests only | `deptran_server` with test fibers |
 

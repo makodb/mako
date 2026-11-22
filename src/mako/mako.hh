@@ -11,6 +11,7 @@
 #include <set>
 #include "rocksdb_persistence_fwd.h"
 
+#include <ctype.h>
 #include <getopt.h>
 #include <stdlib.h>
 #include <unistd.h>
@@ -940,13 +941,17 @@ static void cleanup_and_shutdown()
   //std::quick_exit( EXIT_SUCCESS ); // don't exit early
 }
 
-// @safe - Scans config files for "ab: raft" to auto-detect replication type.
-// Called before setup() so the dispatcher routes to the correct implementation.
-// Only sets the type if the current type is still the default (PAXOS) and
-// no explicit --replication flag was provided.
+// @safe - Scans config files for a mode "ab:" line to auto-detect the
+// replication type: "raft" selects Raft; "paxos" or "multi_paxos"
+// (config/paxos.yml) selects the deprecated Paxos engine. With no such line
+// the type stays as it is (the default).
+// Called before the election callback is registered and before setup(), so
+// both go to the implementation that will run.
+// An explicit choice (--replication, set_replication_type*) wins over the
+// config files: the scan is skipped.
 static void detect_replication_type_from_config(const vector<string>& config_files) {
   // Don't override explicit CLI setting
-  if (janus::is_using_raft()) {
+  if (janus::replication_type_is_explicit()) {
     return;
   }
 
@@ -958,9 +963,12 @@ static void detect_replication_type_from_config(const vector<string>& config_fil
     }
     std::string line;
     while (std::getline(ifs, line)) {
-      // Look for "ab:" field in YAML - match patterns like "ab: raft", "ab:raft"
-      auto pos = line.find("ab:");
-      if (pos != std::string::npos) {
+      // Match a YAML line whose key is exactly "ab": "ab: raft", "ab:raft",
+      // `ab: "Raft"`. A comment line, or a key that merely ends in "ab", is
+      // not a selection. The value is compared without regard to case, as
+      // Config::LoadModeYML and replication_helper's YAML reader do.
+      auto pos = line.find_first_not_of(" \t");
+      if (pos != std::string::npos && line.compare(pos, 3, "ab:") == 0) {
         auto value = line.substr(pos + 3);
         // Trim leading whitespace
         auto start = value.find_first_not_of(" \t");
@@ -972,10 +980,24 @@ static void detect_replication_type_from_config(const vector<string>& config_fil
         if (end != std::string::npos) {
           value = value.substr(0, end);
         }
+        // Strip one pair of surrounding quotes.
+        if (value.size() >= 2 && (value.front() == '"' || value.front() == '\'') &&
+            value.back() == value.front()) {
+          value = value.substr(1, value.size() - 2);
+        }
+        for (auto& ch : value) {
+          ch = static_cast<char>(::tolower(static_cast<unsigned char>(ch)));
+        }
         if (value == "raft") {
           Notice("Auto-detected replication type '%s' from config file: %s",
                  value.c_str(), file_path.c_str());
-          janus::set_replication_type(janus::ReplicationType::RAFT);
+          janus::apply_config_replication_type(janus::ReplicationType::RAFT);  // @unsafe
+          return;
+        }
+        if (value == "paxos" || value == "multi_paxos") {
+          Notice("Auto-detected replication type '%s' from config file: %s",
+                 value.c_str(), file_path.c_str());
+          janus::apply_config_replication_type(janus::ReplicationType::PAXOS);  // @unsafe
           return;
         }
       }
@@ -1038,15 +1060,20 @@ static abstract_db * init_env() {
     ThreadDBWrapperMbta::replay_thread_wrapper_db = db;
     static TSharedThreadPoolMbta replicated_db(benchConfig.getNthreads() + 1);
 
+    // Auto-detect the replication type from the config files before anything
+    // goes through the dispatcher. register_leader_election_callback() hands
+    // the callback to whichever implementation is current at that moment, so
+    // the type has to be settled first; setup() then dispatches on it. (The
+    // scan used to run after the registration: a run selected only by its
+    // config registered its callback with the default implementation.)
+    // With an explicit --replication choice this is a no-op, as before.
+    detect_replication_type_from_config(benchConfig.getPaxosConfigFile());
+
     // failures handling callbacks
     setup_transport_callbacks();
     setup_leader_election_callbacks();
-
-
-    // Auto-detect replication type from config files before dispatching setup().
-    // This ensures dbtest uses the Raft code path when config says "ab: raft",
-    // even if --replication raft wasn't explicitly passed on the command line.
-    detect_replication_type_from_config(benchConfig.getPaxosConfigFile());
+    const janus::ReplicationType election_callback_type =
+        janus::get_replication_type();
 
     // Every peer in a colocated deployment loads the same ordered topology.
     // Ownership is a filter, never a renumbering of partition/site IDs.
@@ -1060,6 +1087,12 @@ static abstract_db * init_env() {
     int argc_paxos = 0;
     char** argv_paxos = prepare_paxos_args(benchConfig.getPaxosConfigFile(), benchConfig.getPaxosProcName(), argc_paxos);
     std::vector<std::string> ret = setup(argc_paxos, argv_paxos);
+    // setup() parses mode.ab as YAML and can read a spelling the line scan
+    // above missed (quoted, upper case). If it moved the type, register the
+    // election callback again, with the implementation that actually runs.
+    if (janus::get_replication_type() != election_callback_type) {
+      setup_leader_election_callbacks();
+    }
     if (ret.empty()) {
       Warning("paxos args errors");
       return db;

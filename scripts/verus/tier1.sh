@@ -10,10 +10,16 @@
 # other lane on this branch.
 #
 # ci.sh's cleanup_processes kill -9s EVERY process of this user named dbtest,
-# simpleTransactionRep, simplePaxos, simpleTransaction or simpleRaft, and
+# simpleTransactionRep, simpleTransaction or simpleRaft, kill -9s every
+# process of this user that LISTENS in the test port ranges whatever its name
+# (the listener sweep), and
 # deletes /tmp/$USER_mako_rocksdb_shard*. Other worktrees on this host may be
 # running those. So before each suite this waits until no such process runs
 # from a directory outside this worktree, and refuses to start after an hour.
+# The wait list in foreign_tests covers the listener sweep as well as the
+# by-name kill: it keeps simplePaxos, which this branch no longer builds or
+# kills by name, because worktrees on other branches still run it and it
+# listens in the swept range.
 set -uo pipefail
 P=${1:?usage: tier1.sh PHASE [rust|rustlab|rustdisk]...}; shift
 LANES=("$@"); [ ${#LANES[@]} -eq 0 ] && LANES=(rust)

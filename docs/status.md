@@ -28,7 +28,7 @@ Mako is a **research-grade distributed transactional datastore** with strong aca
 |-----------|--------|-------------------|
 | [RPC Framework (SRPC)](#1-rpc-framework-srpc) | 90% | Yes |
 | [Raft Consensus](#2-raft-consensus) | 70% | Partial |
-| [Paxos Consensus](#3-paxos-consensus) | 60% | No |
+| [Paxos Consensus](#3-paxos-consensus) | Deprecated | No |
 | [Masstree (In-Memory Storage)](#4-masstree-in-memory-storage) | 90% | Yes (in-memory only) |
 | [Transaction Engine](#5-transaction-engine) | 80% | Partial |
 | [RocksDB Persistence](#6-rocksdb-persistence) | 20% | No |
@@ -108,7 +108,16 @@ Suitable for development and small clusters (3-5 replicas). For production: impl
 
 ## 3. Paxos Consensus
 
-**Status: 60% — Not Production-Ready**
+**Status: Deprecated — still built, no longer tested**
+
+On 2026-11-22 the repository owner decided to remove every Paxos test and to
+mark all Paxos code deprecated, and then to flip the default to Raft. The
+source stays and still builds, but a replicated run gets Paxos only when it
+selects it explicitly (`--replication paxos`, or a mode file whose `ab` says
+`paxos` or `multi_paxos`); such a run logs one `[PAXOS-DEPRECATED]` warning.
+See `src/deptran/paxos/DEPRECATED.md`.
+The assessment below (60%, not production-ready) predates those decisions and
+is kept for the record.
 
 The Paxos implementation has more unfinished code paths than Raft.
 
@@ -131,7 +140,7 @@ The Paxos implementation has more unfinished code paths than Raft.
 
 ### Recommendation
 
-Functional for benchmarking under normal conditions. Not suitable for any deployment where failures may occur. Consider focusing development effort on Raft instead.
+Functional for benchmarking under normal conditions. Not suitable for any deployment where failures may occur. Consider focusing development effort on Raft instead. (Done: Raft is the supported engine and Paxos is deprecated.)
 
 ---
 

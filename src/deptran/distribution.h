@@ -1,5 +1,5 @@
 #pragma once
-
+// DEPRECATED: Multi-Paxos replication is deprecated and no longer tested; Raft (src/deptran/raft/) is the supported engine. This header is included only by paxos/server.h, so no Raft translation unit sees it. See src/deptran/paxos/DEPRECATED.md.
 #include <algorithm>
 #include <chrono>
 #include <cstddef>

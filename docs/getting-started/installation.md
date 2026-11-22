@@ -157,8 +157,8 @@ Run the test suite to verify everything works:
 
 # Or run specific tests
 ./ci/ci.sh simpleTransaction    # Simple transactions
-./ci/ci.sh simplePaxos           # Paxos replication
-./ci/ci.sh shard1Replication     # 1-shard with replication
+./ci/ci.sh shardNoReplication    # 2 shards without replication
+./ci/ci.sh shard1ReplicationRaft # 1-shard with Raft replication
 ```
 
 If tests pass, your installation is successful! 🎉

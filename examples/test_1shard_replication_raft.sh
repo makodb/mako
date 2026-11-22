@@ -28,7 +28,7 @@ rm -f nfs_sync_*
 USERNAME=${USER:-unknown}
 rm -rf /tmp/${USERNAME}_mako_rocksdb_shard*
 
-# Randomize raft replication ports — see test_2shard_replication.sh.
+# Randomize raft replication ports — see test_2shard_replication_raft.sh.
 TEMP_PAXOS_DIR=$(make_paxos_replication_configs 1 "$trd" raft)
 if [ -z "$TEMP_PAXOS_DIR" ]; then
     exit 1
@@ -90,18 +90,18 @@ if [ $wait_count -ge $max_wait ]; then
     echo "Warning: Benchmark did not complete within ${max_wait}s timeout"
 fi
 
-# Give the follower a grace window to DRAIN REPLAY LAG before we kill it —
-# same treatment as test_1shard_replication.sh: killing the moment the
-# leader finishes snapshots an arbitrary mid-lag replay_batch count.
+# Give the follower a grace window to DRAIN REPLAY LAG before we kill it:
+# killing the moment the leader finishes snapshots an arbitrary mid-lag
+# replay_batch count.
 # Progress-aware: wait while the counter still advances (wait_for_termination
 # keeps logging it while draining), stop early once it clears the threshold,
 # bail on a stall (drained-or-stuck).
 log_p1_drain="${script_name}_shard0-p1-$trd.log"
 drain_budget="${MAKO_REPLAY_DRAIN_SECONDS:-240}"
 drain_stall_budget="${MAKO_REPLAY_DRAIN_STALL_SECONDS:-20}"
-# Threshold rationale: see test_1shard_replication.sh — after draining, the
-# counter converges to the leader's total batch production (observed as low
-# as ~530 under the CI CPU throttle), so >500 left no margin.
+# Threshold rationale: after draining, the counter converges to the leader's
+# total batch production (observed as low as ~530 under the CI CPU
+# throttle), so >500 left no margin.
 replay_min="${MAKO_REPLAY_BATCH_MIN:-200}"
 drained=0
 last_rb=""

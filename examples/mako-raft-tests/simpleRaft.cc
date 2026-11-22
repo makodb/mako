@@ -86,8 +86,8 @@ int main(int argc, char **argv) {
 
     // Set replication type to Raft BEFORE setup() so the dispatcher routes
     // to raft_impl::setup() which disables Jetpack recovery (MAKO_DISABLE_JETPACK=1).
-    // Without this, the default is PAXOS and setup() goes through paxos_main_helper
-    // which does not disable Jetpack, causing RPC handler mismatches at runtime.
+    // Raft is the default now, but keep this explicit: paxos_main_helper's setup()
+    // does not disable Jetpack, causing RPC handler mismatches at runtime.
     janus::set_replication_type(janus::ReplicationType::RAFT);
 
     std::vector<string> ret = setup(18, argv_raft);

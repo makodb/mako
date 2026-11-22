@@ -1,7 +1,7 @@
 #pragma once
 #include <rusty/arc.hpp>
 #include <rusty/box.hpp>
-
+// DEPRECATED: Multi-Paxos replication is deprecated and no longer tested; Raft (src/deptran/raft/) is the supported engine. See src/deptran/paxos/DEPRECATED.md.
 #include <deptran/communicator.h>
 #include "../frame.h"
 #include "../constants.h"

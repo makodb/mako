@@ -1,5 +1,11 @@
 # Raft-Mako Thesis Documentation
 
+> **Dated note (2026-11-22).** These chapters describe the tree as it was when
+> Paxos was Mako's default replication engine and had its own test suites.
+> Since then Raft is the default, the Paxos tests were removed and the Paxos
+> implementation is deprecated; see `src/deptran/paxos/DEPRECATED.md`. The
+> chapters are kept as written.
+
 ## What This Document Covers
 
 This is the master table of contents and reading guide for the thesis documentation on **integrating Raft consensus into the Mako distributed transaction system**. The documentation covers the design, implementation, testing, and performance evaluation of a Raft replication module that operates as an alternative to Mako's existing Multi-Paxos atomic broadcast layer.

@@ -70,7 +70,7 @@ fi
 export MAKO_CONFIG="$TEMP_CONFIG"
 echo "simpleTransactionRep config: $MAKO_CONFIG"
 
-# Randomize raft replication ports — see test_2shard_replication.sh.
+# Randomize raft replication ports — see test_2shard_replication_raft.sh.
 TEMP_PAXOS_DIR=$(make_paxos_replication_configs 1 "$trd" raft)
 if [ -z "$TEMP_PAXOS_DIR" ]; then
     exit 1

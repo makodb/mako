@@ -47,12 +47,12 @@ Transaction committed successfully!
 The simplest deployment is a single shard on localhost:
 
 ```bash
-# Run the simple Paxos example
-./ci/ci.sh simplePaxos
+# Run one shard with Raft replication
+./ci/ci.sh shard1ReplicationRaft
 ```
 
 This starts:
-- 1 server shard with Paxos replication
+- 1 server shard with Raft replication
 - Executes sample transactions
 - Verifies results
 
@@ -61,12 +61,12 @@ This starts:
 Run a 2-shard cluster with replication:
 
 ```bash
-./ci/ci.sh shard2Replication
+./ci/ci.sh shard2ReplicationRaft
 ```
 
 This demonstrates:
 - Data sharding across 2 partitions
-- Paxos consensus for each shard
+- Raft consensus for each shard
 - Distributed transactions across shards
 - Automatic failover
 
@@ -101,7 +101,7 @@ When you run the tests, you'll see output like this:
 ```
 [Server] Starting Mako server on shard 0...
 [Server] Listening on 127.0.0.1:8100
-[Paxos] Initialized with 3 replicas
+[Raft] Initialized with 3 replicas
 [Storage] Using Masstree in-memory storage
 [Storage] RocksDB persistence enabled
 [Client] Connected to server
@@ -114,7 +114,7 @@ When you run the tests, you'll see output like this:
 
 **Key components**:
 - **Server**: The main database server process (dbtest)
-- **Paxos**: Consensus protocol for replication
+- **Raft**: Consensus protocol for replication, and the default (Paxos is deprecated, no longer tested, and runs only when selected explicitly)
 - **Storage**: Masstree (in-memory) + RocksDB (disk)
 - **Client**: Test client executing transactions
 - **Transaction**: Individual transaction lifecycle
@@ -232,14 +232,15 @@ mako/
 │   │   ├── Transaction.cc  # Transaction logic
 │   │   └── masstree/   # Masstree storage engine
 │   ├── deptran/        # Transaction protocols
-│   │   └── paxos/      # Paxos consensus
+│   │   ├── raft/       # Raft replication
+│   │   └── paxos/      # Paxos replication (deprecated)
 │   └── srpc/            # RPC framework
 ├── config/             # Configuration files
 │   ├── 1c1s1p.yml      # 1 client, 1 shard, 1 partition
 │   └── ...
 ├── examples/           # Example scripts
-│   ├── simplePaxos.sh
-│   ├── test_2shard_replication.sh
+│   ├── test_1shard_replication_raft.sh
+│   ├── test_2shard_replication_raft.sh
 │   └── test_shard_fault_tolerance.sh
 └── ci/                 # CI/test scripts
     └── ci.sh           # Main test runner
@@ -248,7 +249,7 @@ mako/
 **Key files to explore**:
 - `src/mako/mako.cc` - Server initialization and main loop
 - `src/mako/Transaction.cc` - Transaction execution logic
-- `src/deptran/paxos/` - Paxos consensus implementation
+- `src/deptran/raft/` - Raft replication (`src/deptran/paxos/` is the deprecated Paxos implementation)
 - `config/*.yml` - Configuration examples
 
 ## Next Steps

@@ -13,18 +13,48 @@ namespace janus {
 // @safe - Using rusty::Cell for thread-safe interior mutability of Copy type.
 // The replication type is set once during initialization and read many times,
 // making Cell an appropriate choice (no runtime borrow checking overhead).
-static rusty::Cell<ReplicationType> g_replication_type{ReplicationType::PAXOS};
+// Raft is the default. The deprecated Paxos engine runs only when a caller or
+// a config file names it (src/deptran/paxos/DEPRECATED.md).
+static rusty::Cell<ReplicationType> g_replication_type{ReplicationType::RAFT};
+
+// Whether a caller named the protocol through set_replication_type*().
+// @safe - Using rusty::Cell for interior mutability of a Copy type; written
+// during initialization only, like g_replication_type.
+// A config file's mode.ab does not set it (apply_config_replication_type),
+// which is what lets an explicit choice win over the config files.
+static rusty::Cell<bool> g_replication_type_explicit{false};
 
 // @safe - Read-only access through Cell::get()
 ReplicationType get_replication_type() {
     return g_replication_type.get();
 }
 
+// @safe - Read-only access through Cell::get()
+bool replication_type_is_explicit() {
+    return g_replication_type_explicit.get();
+}
+
 // @unsafe - Mutation through Cell::set(), plus std::cerr output
-void set_replication_type(ReplicationType type) {
+static void store_replication_type(ReplicationType type) {
     g_replication_type.set(type);
     // @unsafe { std::cerr output is not borrow-checked }
     std::cerr << "Replication type set to: " << replication_type_to_string(type) << std::endl;
+}
+
+// @unsafe - Mutation through Cell::set(), plus std::cerr output
+void set_replication_type(ReplicationType type) {
+    g_replication_type_explicit.set(true);
+    store_replication_type(type);  // @unsafe
+}
+
+// @unsafe - Mutation through Cell::set(), plus std::cerr output
+bool apply_config_replication_type(ReplicationType type) {
+    if (g_replication_type_explicit.get() && g_replication_type.get() != type) {
+        // The explicit choice wins; the caller reports the disagreement.
+        return false;
+    }
+    store_replication_type(type);  // @unsafe
+    return true;
 }
 
 // @safe - String parsing with validation, delegates to set_replication_type
@@ -120,9 +150,12 @@ std::optional<ReplicationType> infer_replication_type_from_configs(
         continue;
       }
       const std::string ab = config["mode"]["ab"].as<std::string>();
+      // The spellings src/deptran/config.cc accepts for mode.ab
+      // (Config::LoadModeYML); config/paxos.yml says multi_paxos.
       if (equals_ignore_case(ab, "raft")) {
         inferred = ReplicationType::RAFT;
-      } else if (equals_ignore_case(ab, "paxos")) {
+      } else if (equals_ignore_case(ab, "paxos") ||
+                 equals_ignore_case(ab, "multi_paxos")) {
         inferred = ReplicationType::PAXOS;
       }
     } catch (const std::exception&) {
@@ -132,15 +165,41 @@ std::optional<ReplicationType> infer_replication_type_from_configs(
   return inferred;
 }
 
-std::optional<ReplicationType> infer_replication_type_from_args(int argc, char* argv[]) {
+// @unsafe - Reads argv and the config files, mutates the global type, and
+// writes std::cerr.
+// Resolves the protocol setup() dispatches on. Precedence:
+//   1. a --replication argument in this argv (an explicit choice);
+//   2. an explicit choice made earlier with set_replication_type*(), for
+//      example by dbtest's --replication flag, which is not in this argv;
+//   3. mode.ab of the -f/--config files;
+//   4. the type as it stands: the default, unless a caller already applied
+//      a config value.
+void resolve_replication_type_from_args(int argc, char* argv[]) {
   if (auto flag_type = parse_replication_flag(argc, argv); flag_type.has_value()) {
-    return flag_type;
+    janus::set_replication_type(*flag_type);  // @unsafe
+    return;
   }
   const auto config_paths = collect_config_paths(argc, argv);
   if (config_paths.empty()) {
-    return std::nullopt;
+    return;
   }
-  return infer_replication_type_from_configs(config_paths);
+  const auto config_type = infer_replication_type_from_configs(config_paths);
+  if (!config_type.has_value()) {
+    return;
+  }
+  if (!janus::apply_config_replication_type(*config_type)) {  // @unsafe
+    // Each worker builds its frame from mode.ab (Frame::GetFrame), so a
+    // helper and a mode file that name different protocols cannot run
+    // together. Say so here; the explicit choice is kept.
+    // @unsafe { std::cerr output is not borrow-checked }
+    std::cerr << "Replication type "
+              << janus::replication_type_to_string(janus::get_replication_type())
+              << " was chosen explicitly but the config files say mode.ab is "
+              << janus::replication_type_to_string(*config_type)
+              << "; keeping the explicit choice. Pass the mode file of the"
+                 " chosen protocol (config/raft.yml or config/paxos.yml)."
+              << std::endl;
+  }
 }
 
 }  // namespace
@@ -178,9 +237,7 @@ std::optional<ReplicationType> infer_replication_type_from_args(int argc, char* 
 // ============================================================================
 
 std::vector<std::string> setup(int argc, char* argv[]) {
-    if (auto inferred = infer_replication_type_from_args(argc, argv); inferred.has_value()) {
-        janus::set_replication_type(*inferred);
-    }
+    resolve_replication_type_from_args(argc, argv);  // @unsafe
     DISPATCH_RAFT_OR_PAXOS(setup, argc, argv);  // @unsafe
 }
 

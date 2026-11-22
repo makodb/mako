@@ -1128,11 +1128,11 @@ int main(int argc, char **argv) {
         printf("  Both local DB and RemoteDB use mako::Options struct.\n");
         printf("  Client mode sets options.client.enabled = true\n");
         printf("\nExamples:\n");
-        printf("  %s 2 0 6 localhost 1              # COLOCATE + Paxos\n", argv[0]);
         printf("  %s 2 0 6 localhost 1 raft         # COLOCATE + Raft\n", argv[0]);
-        printf("  %s --server 2 0 6 localhost 1     # SERVER_ONLY + Paxos\n", argv[0]);
+        printf("  %s --server 2 0 6 localhost 1 raft # SERVER_ONLY + Raft\n", argv[0]);
         printf("  %s --server 1 0 4 localhost 0     # SERVER_ONLY (no replication)\n", argv[0]);
         printf("  %s --client localhost 31000 0x8000000000000001 # unique external client\n", argv[0]);
+        printf("\nreplication_type defaults to raft. paxos selects the deprecated, no longer tested Paxos engine.\n");
         return 1;
     }
 
@@ -1142,8 +1142,9 @@ int main(int argc, char **argv) {
     std::string paxos_proc_name = std::string(argv[4 + arg_offset]);
     int is_replicated = std::stoi(argv[5 + arg_offset]);
 
-    // Set replication type if provided (default is paxos)
-    std::string replication_type = "paxos";
+    // Set replication type if provided. The default is raft; paxos must be
+    // named and is deprecated and untested (src/deptran/paxos/DEPRECATED.md).
+    std::string replication_type = "raft";
     if (effective_argc == 7) {
         replication_type = argv[6 + arg_offset];
         janus::set_replication_type_from_string(replication_type);

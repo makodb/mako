@@ -6,7 +6,7 @@
 #include "service.h"
 #include "commo.h"
 #include "config.h"
-
+// DEPRECATED: Multi-Paxos replication is deprecated and no longer tested; Raft (src/deptran/raft/) is the supported engine. See src/deptran/paxos/DEPRECATED.md.
 namespace janus {
 
 CoordinatorMultiPaxos *MultiPaxosFrame::CreateCoordinator() {
