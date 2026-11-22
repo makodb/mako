@@ -1,0 +1,19 @@
+[package]
+name = "raft-host"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[features]
+default = []
+test-hooks = []
+
+[dependencies]
+raft-core = { path = "../../src/deptran/raft/core" }
+raft-store = { path = "../../src/deptran/raft/store", features = ["rocksdb"] }
+srpc = { path = "../../src/srpc" }
+serde = { version = "1", features = ["derive", "rc"] }
+serde_bytes = "0.11"
+bincode = "1.3"
+sha2 = "0.10"
+parking_lot = "0.12"

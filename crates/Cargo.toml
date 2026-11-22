@@ -1,5 +1,7 @@
 # Workspace for Mako's native Rust components: the Masstree/RocksDB cache
-# (mrx-*, mako-cache, mako-local) and the native Rust STO (sto-*).
+# (mrx-*, mako-cache, mako-local), the native Rust STO (sto-*), and the direct
+# RocksDB/Raft profile (sto-rocksdb, raft-host, rocksdb-raft-service; built
+# and tested by cmake/RocksdbRaft.cmake, not by the workspace-wide sweeps).
 #
 # One workspace so the crates share a lockfile and a target directory, and
 # so `cargo test` at this level covers all of them. It is rooted at
@@ -28,8 +30,11 @@ members = [
     "mrx-rocks",
     "mtree-sys",
     "mtx-sys",
+    "raft-host",
+    "rocksdb-raft-service",
     "sto-core",
     "sto-masstree",
+    "sto-rocksdb",
     "sto-test-datatypes",
     "sto-tpcc-ffi",
 ]
@@ -51,3 +56,17 @@ opt-level = 3
 
 [profile.dev]
 lto = false
+
+# raft-host and rocksdb-raft-service depend on srpc (whose Lion runtime names
+# vstd from Verus's git repository), on raft-core (Verus's crates.io release)
+# and on src/cluster (another git revision). Cargo refuses two Verus releases
+# in one graph, so unify them exactly as src/deptran/raft/Cargo.toml does.
+# Standalone sharding verification retains its own pinned verifier dependency.
+#
+# The entry is a table, not the bare version string src/deptran/raft/Cargo.toml
+# uses: trybuild (sto-core's compile-fail test) reads this manifest with its
+# own parser, which accepts only tables under [patch]. On a string it silently
+# falls back to an empty workspace manifest and then fails every case with
+# "no edition found in workspace's manifest".
+[patch."https://github.com/verus-lang/verus"]
+vstd = { version = "=0.0.0-2026-08-02-0125" }

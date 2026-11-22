@@ -6,6 +6,13 @@
 //! datatype adapters supply observations, conflict coverage, deferred intents,
 //! and commit callbacks. This crate is native Rust and is not translated into
 //! C++.
+//!
+//! The default `distributed` feature preserves the participant and distributed
+//! decision API. Disable default features for a local-only dependency closure.
+//! [`LocalCommit`] retains the ordinary frame and locks across an external
+//! durable decision without importing distributed time. Its storage operation
+//! is fallible and transaction-wide; item install callbacks publish metadata
+//! only after that operation succeeds.
 
 pub mod direct_commit;
 pub mod error;
@@ -26,6 +33,9 @@ pub mod test_install;
 
 mod terminal_read;
 mod trans_item;
+
+#[cfg(doctest)]
+mod capability_contracts;
 
 pub use direct_commit::{
     BorrowedDirectPrepare, BorrowedInjectiveLockCommitCapability, BorrowedLockToken,
@@ -55,10 +65,14 @@ pub use runtime::{
 pub use terminal_read::TerminalReadProxy;
 pub use trans_item::TransProxy;
 pub use transaction::{
-    Active, ItemBatchControl, ItemBatchOutcome, Participant, ParticipantError, ParticipantPhase,
-    ResolvedItemSession, TerminalReadOpen, TerminalReadReady, TerminalReadTransaction, Transaction,
-    UniqueItemKeyIndex, UniqueItemKeys,
+    Active, ItemBatchControl, ItemBatchOutcome, ResolvedItemSession, TerminalReadOpen,
+    TerminalReadReady, TerminalReadTransaction, Transaction, UniqueItemKeyIndex, UniqueItemKeys,
 };
+pub use transaction::{
+    LocalApplyError, LocalCommit, LocalCommitError, LocalCommitPhase, SealedItem,
+};
+#[cfg(feature = "distributed")]
+pub use transaction::{Participant, ParticipantError, ParticipantPhase};
 pub use txn_array::{ArrayBoundsError, TxnArray};
 pub use txn_cell::{TxnCell, VersionLock};
 pub use txn_counter::TxnCounter;

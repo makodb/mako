@@ -4785,6 +4785,7 @@ fn terminal_read_pool_contains_adapter_panic_when_worker_drops() {
     );
 }
 
+#[cfg(feature = "distributed")]
 #[test]
 fn retained_participant_preserves_poisoned_and_unknown_outcomes() {
     use mako_clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
@@ -4838,6 +4839,7 @@ fn retained_participant_preserves_poisoned_and_unknown_outcomes() {
     assert!(finish_events(&install.harness.events()).is_empty());
 }
 
+#[cfg(feature = "distributed")]
 #[test]
 fn installed_participant_cleanup_failure_is_definitely_committed() {
     use mako_clock::distributed::{DistributedTerm, DistributedTimeTerm, DistributedTimestamp};
@@ -4865,4 +4867,140 @@ fn installed_participant_cleanup_failure_is_definitely_committed() {
         })
     ));
     assert_eq!(fixture.runtime.health(), RuntimeHealth::Poisoned);
+}
+
+#[test]
+fn local_certification_failure_is_definite_abort_before_external_submission() {
+    use sto_core::{LocalCommitError, LocalCommitPhase};
+
+    let fixture = fixture(vec![(Callback::Validation, 1, Action::Conflict)]);
+    let mut worker = fixture.runtime.attach().unwrap();
+    let mut txn = worker.begin().unwrap();
+    stage_read_write(&mut txn, &fixture.resource, 1);
+    let mut local = txn.into_local_commit();
+    local.lock_writes().unwrap();
+    assert!(matches!(local.certify(), Err(LocalCommitError::Aborted(_))));
+    assert_eq!(local.phase(), LocalCommitPhase::Finished);
+    drop(local);
+    assert_eq!(
+        release_events(&fixture.harness.events()),
+        vec![(1, LockDisposition::Aborted)]
+    );
+    assert_eq!(fixture.runtime.health(), RuntimeHealth::Healthy);
+}
+
+#[test]
+fn local_unsubmitted_drop_aborts_but_submitted_drop_runs_no_release_or_cleanup() {
+    for submitted in [false, true] {
+        let fixture = fixture(vec![]);
+        let mut worker = fixture.runtime.attach().unwrap();
+        let mut txn = worker.begin().unwrap();
+        stage_write(&mut txn, &fixture.resource, 1);
+        let mut local = txn.into_local_commit();
+        local.lock_writes().unwrap();
+        local.certify().unwrap();
+        if submitted {
+            local.mark_submitted().unwrap();
+        }
+        fixture.harness.clear();
+        drop(local);
+        let events = fixture.harness.events();
+        if submitted {
+            assert!(
+                events.is_empty(),
+                "unresolved drop must retain guards and items: {events:?}"
+            );
+            assert_eq!(fixture.runtime.health(), RuntimeHealth::Indeterminate);
+        } else {
+            assert_eq!(release_events(&events), vec![(1, LockDisposition::Aborted)]);
+            assert_eq!(
+                finish_events(&events),
+                vec![(1, CleanupDisposition::Aborted, true)]
+            );
+            assert_eq!(fixture.runtime.health(), RuntimeHealth::Healthy);
+        }
+    }
+}
+
+#[test]
+fn local_committed_cleanup_failure_is_not_an_abort_and_completion_is_exactly_once() {
+    use sto_core::LocalCommitError;
+
+    let fixture = fixture(vec![(Callback::Finish, 1, Action::Panic)]);
+    let mut worker = fixture.runtime.attach().unwrap();
+    let mut txn = worker.begin().unwrap();
+    stage_write(&mut txn, &fixture.resource, 1);
+    let mut local = txn.into_local_commit();
+    local.lock_writes().unwrap();
+    local.certify().unwrap();
+    local.mark_submitted().unwrap();
+    local.mark_committed().unwrap();
+    let result = local.complete_applied();
+    assert!(matches!(
+        result,
+        Err(LocalCommitError::CommittedPublication(
+            CommitFailure::Poisoned {
+                outcome: DefiniteOutcome::Committed(_),
+                ..
+            }
+        ))
+    ));
+    let events = fixture.harness.events();
+    assert_eq!(local.complete_applied(), result);
+    assert_eq!(fixture.harness.events(), events);
+    assert!(local.reject().is_err());
+    assert_eq!(fixture.runtime.health(), RuntimeHealth::Poisoned);
+}
+
+#[test]
+fn local_committed_publication_failure_preserves_external_decision() {
+    use sto_core::LocalCommitError;
+
+    let fixture = fixture(vec![(Callback::Install, 2, Action::Panic)]);
+    let mut worker = fixture.runtime.attach().unwrap();
+    let mut txn = worker.begin().unwrap();
+    stage_write(&mut txn, &fixture.resource, 1);
+    stage_write(&mut txn, &fixture.resource, 2);
+    let mut local = txn.into_local_commit();
+    local.lock_writes().unwrap();
+    local.certify().unwrap();
+    local.mark_submitted().unwrap();
+    local.mark_committed().unwrap();
+    assert!(matches!(
+        local.complete_applied(),
+        Err(LocalCommitError::CommittedPublication(
+            CommitFailure::Indeterminate(_)
+        ))
+    ));
+    assert!(local.reject().is_err());
+    assert!(release_events(&fixture.harness.events())
+        .iter()
+        .all(|(_, disposition)| !matches!(disposition, LockDisposition::Aborted)));
+    assert!(finish_events(&fixture.harness.events()).is_empty());
+}
+
+#[test]
+fn local_whole_batch_unwind_is_fenced_and_cannot_be_retried() {
+    use sto_core::LocalCommitPhase;
+
+    let fixture = fixture(vec![]);
+    let mut worker = fixture.runtime.attach().unwrap();
+    let mut txn = worker.begin().unwrap();
+    stage_write(&mut txn, &fixture.resource, 1);
+    let mut local = txn.into_local_commit();
+    local.lock_writes().unwrap();
+    local.certify().unwrap();
+    local.mark_submitted().unwrap();
+    local.mark_committed().unwrap();
+    fixture.harness.clear();
+    assert!(catch_unwind(AssertUnwindSafe(|| {
+        let _ = local.apply::<()>(|| panic!("lost control after native application"));
+    }))
+    .is_err());
+    assert_eq!(local.phase(), LocalCommitPhase::ApplyFailed);
+    assert_eq!(fixture.runtime.health(), RuntimeHealth::Indeterminate);
+    assert!(local.apply::<()>(|| panic!("must not retry")).is_err());
+    assert!(local.abort().is_err());
+    drop(local);
+    assert!(fixture.harness.events().is_empty());
 }

@@ -12,7 +12,12 @@ default = []
 # Synchronous wrapper-level write observers for deterministic crash tests.
 # This does not expose a hook inside RocksDB's WAL implementation.
 test-hooks = []
+# Production storage cannot silently become an unlinked test-only package.
+required-native = []
 
 [dependencies]
-mrx-core = { path = "../mrx-core" }
+mrx-core = { path = "../mrx-core", default-features = false }
 # See crates/Cargo.toml: profiles live at the workspace root.
+
+[dev-dependencies]
+mrx-core = { path = "../mrx-core" }

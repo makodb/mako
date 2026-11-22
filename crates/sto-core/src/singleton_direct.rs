@@ -135,6 +135,7 @@ impl<
         let mut cx = DirectInstallContext {
             owner,
             occ_commit_id,
+            #[cfg(feature = "distributed")]
             distributed_time_term: None,
             not_send_sync: PhantomData,
         };

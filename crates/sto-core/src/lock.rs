@@ -436,6 +436,7 @@ impl PreflightFreeValidationContext<'_> {
 pub struct InstallContext<'a> {
     plan: &'a mut LockPlan,
     occ_commit_id: Option<OccCommitId>,
+    #[cfg(feature = "distributed")]
     distributed_time_term: Option<mako_clock::distributed::DistributedTimeTerm>,
     retain_locks: bool,
     not_send_or_sync: PhantomData<Rc<()>>,
@@ -520,6 +521,7 @@ impl InstallContext<'_> {
         self.occ_commit_id
     }
 
+    #[cfg(feature = "distributed")]
     /// The external distributed decision, independent of the local OCC ID.
     pub fn distributed_time_term(&self) -> Option<mako_clock::distributed::DistributedTimeTerm> {
         self.distributed_time_term
@@ -1023,19 +1025,27 @@ impl LockPlan {
         &mut self,
         occ_commit_id: Option<OccCommitId>,
     ) -> Result<InstallContext<'_>, AdapterFault> {
-        self.install_context_with_decision(occ_commit_id, None, false)
+        self.install_context_with_decision(
+            occ_commit_id,
+            #[cfg(feature = "distributed")]
+            None,
+            false,
+        )
     }
 
     pub(crate) fn install_context_with_decision(
         &mut self,
         occ_commit_id: Option<OccCommitId>,
-        distributed_time_term: Option<mako_clock::distributed::DistributedTimeTerm>,
+        #[cfg(feature = "distributed")] distributed_time_term: Option<
+            mako_clock::distributed::DistributedTimeTerm,
+        >,
         retain_locks: bool,
     ) -> Result<InstallContext<'_>, AdapterFault> {
         self.ensure_held(AdapterPhase::Install)?;
         Ok(InstallContext {
             plan: self,
             occ_commit_id,
+            #[cfg(feature = "distributed")]
             distributed_time_term,
             retain_locks,
             not_send_or_sync: PhantomData,

@@ -775,6 +775,8 @@ audit_asan_quarantine_skips() {
             --exclude sto-tpcc-ffi \
             --exclude mako-engine --exclude mako-engine-sto \
             --exclude mako-cache --exclude mako-cache-bench \
+            --exclude sto-rocksdb --exclude raft-host \
+            --exclude rocksdb-raft-service \
             --exclude mako-local \
             --all-targets \
             --all-features \
@@ -2083,7 +2085,8 @@ actual_clippy_packages = {
 }
 if actual_clippy_packages != expected_clippy_packages:
     raise SystemExit(f"Clippy package selection differs: {actual_clippy_packages!r}")
-for package in ("mako-engine", "mako-engine-sto", "mako-cache", "mako-cache-bench", "mako-local"):
+for package in ("mako-engine", "mako-engine-sto", "mako-cache", "mako-cache-bench", "mako-local",
+                "sto-rocksdb", "raft-host", "rocksdb-raft-service"):
     if f"--exclude {package}" not in test_commands[0]:
         raise SystemExit(f"workspace all-features test did not exclude {package}")
 

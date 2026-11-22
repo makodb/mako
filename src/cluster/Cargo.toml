@@ -9,9 +9,13 @@ publish = false
 path = "lib.rs"
 crate-type = ["rlib", "staticlib"]
 
+[features]
+default = ["engine-host"]
+engine-host = ["dep:parking_lot"]
+
 [dependencies]
 vstd = { git = "https://github.com/verus-lang/verus", rev = "b677dd5a766f25f56e9aa1e32621aa4e53304b47" }
-parking_lot = "0.12"
+parking_lot = { version = "0.12", optional = true }
 
 [lints.rust]
 unsafe_code = "deny"
@@ -19,3 +23,7 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(verus_keep_ghost)', 'cfg(v
 
 [profile.release]
 panic = "abort"
+
+[[example]]
+name = "durable_recovery"
+required-features = ["engine-host"]

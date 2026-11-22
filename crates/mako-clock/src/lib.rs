@@ -23,11 +23,12 @@
 //! The clock is process-global in production ([`global`]) because one process
 //! owns one cache-order namespace. Tests construct private [`Clock`]s.
 //!
-//! Distributed transaction bases and decimal terms use the independent
-//! [`distributed`] authority; they are never HLC stamps or cache sequences.
+//! With the default `distributed` feature, distributed transaction bases and
+//! decimal terms use an independent authority, never HLC stamps or cache sequences.
 
 #![forbid(unsafe_code)]
 
+#[cfg(feature = "distributed")]
 pub mod distributed;
 
 use std::num::NonZeroU32;

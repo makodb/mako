@@ -1,5 +1,15 @@
 cmake_minimum_required(VERSION 3.30)
 
+set(MAKO_BUILD_PROFILE "MAKO" CACHE STRING "Build profile: MAKO or ROCKSDB_RAFT")
+set_property(CACHE MAKO_BUILD_PROFILE PROPERTY STRINGS MAKO ROCKSDB_RAFT)
+if(MAKO_BUILD_PROFILE STREQUAL "ROCKSDB_RAFT")
+    project(mako_rocksdb_raft LANGUAGES NONE)
+    include(cmake/RocksdbRaft.cmake)
+    return()
+elseif(NOT MAKO_BUILD_PROFILE STREQUAL "MAKO")
+    message(FATAL_ERROR "Unknown MAKO_BUILD_PROFILE: ${MAKO_BUILD_PROFILE}")
+endif()
+
 # `import std;` is enabled via `src/srpc/std_compat.hpp`. The header
 # textually includes every C++ standard header AND then `import std;`s.
 # Clang's libc++ rejects `import std; ... #include <vector>` but
@@ -3594,6 +3604,11 @@ if(MAKO_CARGO_EXECUTABLE)
             # and cache separately with an explicit engine selection.
             --exclude mako-engine --exclude mako-engine-sto
             --exclude mako-cache --exclude mako-cache-bench
+            # The direct RocksDB/Raft profile tests its own crates
+            # (cmake/RocksdbRaft.cmake): raft-host's scenarios start real
+            # SRPC runtimes and must run one at a time.
+            --exclude sto-rocksdb --exclude raft-host
+            --exclude rocksdb-raft-service
             ${_MAKO_RUST_STO_NATIVE_ABI_EXCLUSIONS}
             --all-targets
             --all-features
