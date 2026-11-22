@@ -3408,8 +3408,10 @@ if(TARGET sto_tpcc_bench)
         RUN_SERIAL TRUE
         TIMEOUT 30)
 
+    # Replicated scenarios run Raft only. The Paxos ones were removed when
+    # Paxos was deprecated (src/deptran/paxos/DEPRECATED.md).
     foreach(_protocol_engine IN ITEMS cpp rust)
-        foreach(_protocol_replication IN ITEMS none paxos raft)
+        foreach(_protocol_replication IN ITEMS none raft)
             set(_protocol_test
                 "test_sto_tpcc_protocol_${_protocol_engine}_${_protocol_replication}")
             add_test(NAME "${_protocol_test}"

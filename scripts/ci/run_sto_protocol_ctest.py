@@ -3,8 +3,10 @@
 
 Generates all configuration under --output, never edits source configuration,
 never searches for or kills unrelated processes, and makes no performance
-comparison. Paxos uses three voting replicas plus a learner; Raft uses three
-voting replicas. Every leader must commit remote NewOrder and Payment work.
+comparison. Replicated scenarios run Raft with three voting replicas (the
+deprecated Paxos mode, with its learner, is no longer a choice here; see
+src/deptran/paxos/DEPRECATED.md). Every leader must commit remote NewOrder and
+Payment work.
 Every nonleader must report a nonempty batch consumed by the real replay
 backend. That receipt proves replay execution, not an exact payload digest
 (the native integration tests cover payload and source-version correctness).
@@ -49,7 +51,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--binary", required=True, type=Path)
     parser.add_argument("--engine", required=True, choices=("rust", "cpp"))
     parser.add_argument("--shards", type=positive_int, default=2)
-    parser.add_argument("--replication", choices=("none", "paxos", "raft"), default="none")
+    parser.add_argument("--replication", choices=("none", "raft"), default="none")
     parser.add_argument("--colocated-leader", action="store_true",
                         help="host all leader shards together; replicas use identical full topology")
     parser.add_argument("--output", required=True, type=Path)
@@ -194,7 +196,8 @@ class Ports:
 def write_configs(directory: Path, args: argparse.Namespace, ports: Ports) -> tuple[Path, list[Path], Path]:
     directory.mkdir()
     # Children listen inside each 8-port block: the leader at offsets 0, 6 and
-    # 7, replicas at 2 and 3, and a Paxos learner at 2, 3, 6 and 7.
+    # 7, replicas at 2 and 3. The shard file still names all four ROLES; no
+    # learner process is started (only the deprecated Paxos mode had one).
     transport = {role: [ports.block(8) for _ in range(args.shards)] for role in ROLES}
     lines = [f"shards: {args.shards}", "replicas: 3", "warehouses: 1"]
     for role in ROLES:
@@ -208,7 +211,8 @@ def write_configs(directory: Path, args: argparse.Namespace, ports: Ports) -> tu
     shard_config = directory / "shards.yml"
     shard_config.write_text("\n".join(lines) + "\n", encoding="utf-8")
     replication_configs = []
-    roles = ROLES if args.replication == "paxos" else ROLES[:3]
+    # Raft has three voting replicas and no learner.
+    roles = ROLES[:3]
     if args.replication != "none":
         for shard in range(args.shards):
             sites = [f"s{100 * (index + 1) + 1}" for index in range(len(roles))]
@@ -221,7 +225,8 @@ def write_configs(directory: Path, args: argparse.Namespace, ports: Ports) -> tu
             path.write_text("\n".join(content) + "\n", encoding="utf-8")
             replication_configs.append(path)
     mode = directory / "mode.yml"
-    protocol = "raft" if args.replication == "raft" else "multi_paxos"
+    # Only a replicated child is handed this file (start_child).
+    protocol = "raft" if args.replication == "raft" else "none"
     mode.write_text(f"mode:\n  ab: {protocol}\n  batch: false\n  retry: 20\n", encoding="utf-8")
     dump_json(directory / "ports.json", sorted(ports.allocated))
     dump_json(directory / "port_selection.json", ports.description())
@@ -428,9 +433,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                            MAKO_FOLLOWER_END_WAIT_SECONDS=str(args.timeout))
         if args.colocated_leader and args.replication != "none":
             environment["MAKO_FULL_REPLICATION_TOPOLOGY"] = "1"
-        roles = ("localhost",) if args.replication == "none" else (
-            ("p1", "p2", "learner", "localhost") if args.replication == "paxos"
-            else ("p1", "p2", "localhost"))
+        roles = ("localhost",) if args.replication == "none" else ("p1", "p2", "localhost")
         deadline = time.monotonic() + args.timeout
         ports.close()
         for role in roles:
