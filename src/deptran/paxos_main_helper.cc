@@ -554,6 +554,8 @@ void stuff_todo_learner_upgrade(){
 // `es`: exit() destroys every static owner of that state while this thread can
 // still be parked in a heartbeat RPC (srpc::Future waits up to 1 s), so a
 // `running` check through `es` reads freed memory (heap-use-after-free).
+// `running` is atomic: the main thread clears it in shutdown_paxos() while
+// this loop reads it.
 void* heartbeatBackground(ElectionState& state) {
   auto poll_arc = PollThread::create();
   auto rpc_cli = srpc::Client::create(poll_arc);
@@ -572,7 +574,7 @@ void* heartbeatBackground(ElectionState& state) {
   // heap-allocated and never deleted, a direct leak whenever this thread
   // returns before the process exits.
   ServerControlProxy client_proxy(const_cast<srpc::Client*>(rpc_cli.get()));
-  while (state.running) {
+  while (state.running.load(std::memory_order_relaxed)) {
     ServerControlProxy::RpcServerHeartBeatRequest req;
     auto connected = client_proxy.server_heart_beat(req);
     if (connected.is_ok()){
@@ -593,12 +595,19 @@ void* heartbeatBackground(ElectionState& state) {
 // @unsafe - Detached like heartbeatBackground, so the loop reads the flag and
 // the heartbeat timestamp through the spawning closure's `state`, never the
 // global `es`. The failover branch below still reaches process globals.
+// Both are atomics, because this loop spins while heartbeatBackground stamps
+// the timestamp and the main thread clears the flag. That removes the data
+// race only: the 5 s sleep is still all that stands in for "the first
+// heartbeat has arrived", and nothing joins this thread before teardown.
 void* heartbeatMonitor2(ElectionState& state) { // happens on the learner
   time_t st = time(NULL);
   std::this_thread::sleep_for(std::chrono::seconds(5)); // ensure heartbeatBackground get started
 
-  while (state.running) {
-    auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - state.heartbeat_seen);
+  while (state.running.load(std::memory_order_relaxed)) {
+    // Clock first, then the sample, which is the order the plain field read
+    // had: a stall of this thread between the two can only shorten the gap.
+    const auto checked_at = std::chrono::high_resolution_clock::now();
+    auto duration2 = std::chrono::duration_cast<std::chrono::nanoseconds>(checked_at - state.get_heartbeat_seen());
     auto xx1 = std::chrono::high_resolution_clock::now() ;
     if (duration2.count()/1000.0/1000.0 > 1000) { // timeout: 1s
      Log_info("the time for the heartbeat: {:f} ms", duration2.count()/1000.0/1000.0);

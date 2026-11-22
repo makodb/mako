@@ -441,7 +441,14 @@ class ElectionState {
 public: 
   std::recursive_mutex election_mutex{};
   pthread_t election_th_;
-  bool running = true;
+  // Stop flag of the learner's two detached heartbeat threads. The main thread
+  // clears it in shutdown_paxos() while heartbeatBackground and
+  // heartbeatMonitor2 read it on every loop, with no lock, so a plain bool was
+  // a data race. A thread that reads false only returns: nothing else is
+  // published through the flag, so the readers load it relaxed. std::atomic
+  // keeps `es->running = false` in both shutdown_paxos() (Paxos and Raft
+  // helpers) as written, and this header already uses it (PaxosWorker::n_tot).
+  std::atomic<bool> running{true};
   int timeout = 1; // in seconds
   int heartbeat_timeout = 300; // in milliseconds
   int send_prep_anyway_timeout = 1;
@@ -457,7 +464,19 @@ public:
   timepoint last_prep_sent = std::chrono::high_resolution_clock::now();
 
   // weihai
-  timepoint heartbeat_seen = std::chrono::high_resolution_clock::now();
+  // When the learner last got a heartbeat reply from the leader. One writer
+  // (heartbeatBackground, about every 10 ms) and one reader
+  // (heartbeatMonitor2, which spins on it), with no lock, so a plain
+  // time_point was a data race. It is one self-contained 8-byte sample: no
+  // invariant ties it to another field, and a sample that is one heartbeat
+  // stale moves a 1 s timeout by about 10 ms. Hence a lock-free atomic rather
+  // than election_mutex, which the monitor would have to take on every spin.
+  // std::atomic and not a rusty atomic: rusty has no concrete time-point
+  // alias and keeps its generic Atomic<T> for transpiled code, and this header
+  // already counts with std::atomic (PaxosWorker::n_tot).
+  std::atomic<timepoint> heartbeat_seen{std::chrono::high_resolution_clock::now()};
+  static_assert(std::atomic<timepoint>::is_always_lock_free,
+                "heartbeat_seen must stay a plain 8-byte load in the monitor loop");
 
   //void operator=(const ElectionState &) = delete;
 
@@ -534,8 +553,17 @@ public:
     leader_id = val;
   }
 
+  // @unsafe - std::chrono and std::atomic are STL, not borrow-checked. Called
+  // only by heartbeatBackground; relaxed because the sample stands alone.
   void set_heartbeat_seen(){
-    heartbeat_seen = std::chrono::high_resolution_clock::now();
+    heartbeat_seen.store(std::chrono::high_resolution_clock::now(),
+                         std::memory_order_relaxed);
+  }
+
+  // @unsafe - std::atomic is STL, not borrow-checked. Called only by
+  // heartbeatMonitor2; pairs with set_heartbeat_seen().
+  timepoint get_heartbeat_seen() const {
+    return heartbeat_seen.load(std::memory_order_relaxed);
   }
 
   void set_lastseen(){
