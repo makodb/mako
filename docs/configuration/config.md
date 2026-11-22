@@ -347,7 +347,7 @@ host:
 
 **Use case**: Performance testing, benchmarking
 
-### Multi-Shard with Paxos Replication
+### Multi-Shard with Paxos Replication (deprecated engine)
 
 High availability with 3 replicas per shard:
 
@@ -417,10 +417,13 @@ host:
 
 ```yaml
 mode:
-  ab: multi_paxos     # multi_paxos (or paxos), raft, or none
+  ab: raft            # raft (the default), none, or the deprecated multi_paxos / paxos
   batch: false
   retry: 20
 ```
+
+A mode file whose `ab` says `multi_paxos` or `paxos` selects the deprecated
+Paxos engine, which no test covers; see `src/deptran/paxos/DEPRECATED.md`.
 
 `mode` selects replication only. It does not select a transaction protocol,
 storage engine, or persistence backend. Production transactions always use
