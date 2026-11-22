@@ -689,6 +689,12 @@ TEST(MassTransEpochIntegrationTest,
             ti->rcu_stop();
             Transaction::rcu_quiesce();
 
+            // The transaction object is allocated for process lifetime and
+            // nothing frees it when a thread exits. Free it here, as the other
+            // tests in this file do, so the leak checker sees only real leaks.
+            // The replay attachment's exit hook tolerates a null transaction.
+            delete TThread::txn;
+            TThread::txn = nullptr;
         } catch (const std::exception& error) {
             failure = error.what();
         } catch (...) {
