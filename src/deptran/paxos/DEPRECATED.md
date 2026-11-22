@@ -79,13 +79,18 @@ Each of these carries the one-line notice:
   payload classes, `pxs_workers_g`
 - `src/deptran/paxos_main_helper.cc`: namespace `paxos_impl`
 
-Headers with neutral names whose only users are the files above (no notice
-was added to them):
+Headers with neutral names whose only users are the files above:
 
-- `src/deptran/coordinator.h` (`janus::Coordinator`)
-- `src/deptran/distribution.h`
+- `src/deptran/coordinator.h` (`janus::Coordinator`): carries the notice. It
+  is still pulled into Raft translation units, because
+  `src/deptran/paxos_worker.h` includes it and
+  `src/deptran/raft_main_helper.cc` includes that header for `ElectionState`.
+- `src/deptran/distribution.h`: carries the notice. Its only includer is
+  `src/deptran/paxos/server.h`.
 - `src/deptran/concurrentqueue.h` (vendored third-party code; leave its text
-  alone)
+  alone, so it has no notice)
+
+`config/paxos.yml` starts with a `# DEPRECATED` comment line.
 
 Still needed to launch the deprecated engine by hand, and kept for that
 reason: `config/paxos.yml`, `config/1leader_2followers/generator.py` with its

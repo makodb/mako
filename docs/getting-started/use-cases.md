@@ -374,7 +374,7 @@ Petabyte-scale data that can't fit in memory.
 | **Data model** | Key-value | Key-value + data structures |
 | **Transactions** | Full ACID, multi-key | Limited (MULTI/EXEC) |
 | **Consistency** | Strong (serializable) | Eventually consistent (cluster) |
-| **Replication** | Paxos (CP) | Async (AP) |
+| **Replication** | Raft (CP); Paxos is deprecated | Async (AP) |
 | **Persistence** | In-memory + async disk | In-memory + RDB/AOF |
 | **Use case** | Transactions | Caching, pub/sub |
 
@@ -400,7 +400,7 @@ Petabyte-scale data that can't fit in memory.
 | Feature | Mako | CockroachDB |
 |---------|------|-------------|
 | **Data model** | Key-value | SQL (PostgreSQL compatible) |
-| **Replication** | Paxos | Raft |
+| **Replication** | Raft (Paxos is deprecated) | Raft |
 | **Latency** | ~2ms (speculative) | ~50ms (wait for consensus) |
 | **Consistency** | Serializable | Serializable |
 | **Geo-replication** | Yes | Yes |

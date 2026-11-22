@@ -278,6 +278,8 @@ Timeline:
 
 ## Replication with Paxos
 
+> Multi-Paxos, which this section describes, is deprecated and no longer tested; Raft is the supported replication engine and the default. See `src/deptran/paxos/DEPRECATED.md`.
+
 ### Multi-Paxos Protocol
 
 Mako uses **Multi-Paxos** for efficient replication:

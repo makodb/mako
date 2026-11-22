@@ -91,6 +91,8 @@ Shard 0
 
 ### Replication with Paxos
 
+> Paxos, which this section describes, is deprecated and no longer tested; Raft is the supported replication engine and the default. See `src/deptran/paxos/DEPRECATED.md`.
+
 Mako uses **Paxos** consensus to keep replicas synchronized:
 
 1. **Propose**: Coordinator proposes a write to all replicas

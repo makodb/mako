@@ -16,8 +16,8 @@ Mako supports three operating modes in `simpleTransactionRep`:
 
 ### Server Mode (Standalone)
 ```bash
-# Start server on shard 0 with 6 threads, Paxos replication
-./build/simpleTransactionRep --server 2 0 6 localhost 1
+# Start server on shard 0 with 6 threads, Raft replication
+./build/simpleTransactionRep --server 2 0 6 localhost 1 raft
 
 # Or without replication
 ./build/simpleTransactionRep --server 1 0 4 localhost 0

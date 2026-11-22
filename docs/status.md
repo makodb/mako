@@ -116,8 +116,8 @@ source stays and still builds, but a replicated run gets Paxos only when it
 selects it explicitly (`--replication paxos`, or a mode file whose `ab` says
 `paxos` or `multi_paxos`); such a run logs one `[PAXOS-DEPRECATED]` warning.
 See `src/deptran/paxos/DEPRECATED.md`.
-The assessment below (60%, not production-ready) predates that decision and is
-kept as the reason for it.
+The assessment below (60%, not production-ready) predates those decisions and
+is kept for the record.
 
 The Paxos implementation has more unfinished code paths than Raft.
 

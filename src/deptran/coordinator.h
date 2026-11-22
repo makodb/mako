@@ -1,5 +1,5 @@
 #pragma once
-
+// DEPRECATED: Multi-Paxos replication is deprecated and no longer tested; Raft (src/deptran/raft/) is the supported engine. This header (janus::Coordinator) has only Paxos users, but it is still pulled into Raft translation units through paxos_worker.h. See src/deptran/paxos/DEPRECATED.md.
 #include "constants.h"
 
 namespace janus {
