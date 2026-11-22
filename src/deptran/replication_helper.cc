@@ -13,7 +13,9 @@ namespace janus {
 // @safe - Using rusty::Cell for thread-safe interior mutability of Copy type.
 // The replication type is set once during initialization and read many times,
 // making Cell an appropriate choice (no runtime borrow checking overhead).
-static rusty::Cell<ReplicationType> g_replication_type{ReplicationType::PAXOS};
+// Raft is the default. The deprecated Paxos engine runs only when a caller or
+// a config file names it (src/deptran/paxos/DEPRECATED.md).
+static rusty::Cell<ReplicationType> g_replication_type{ReplicationType::RAFT};
 
 // Whether a caller named the protocol through set_replication_type*().
 // @safe - Using rusty::Cell for interior mutability of a Copy type; written

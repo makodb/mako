@@ -540,7 +540,7 @@ main(int argc, char **argv)
   vector<string> paxos_config_file{};
   string site_name = "";  // For new config format
   string local_shards_str = "";  // For multi-shard mode: comma-separated list
-  string replication_type = "";  // paxos or raft (default: paxos)
+  string replication_type = "";  // raft or paxos (empty: mode.ab of the -F files, else raft)
 
   auto& benchConfig = BenchmarkConfig::getInstance();
   // Parse command line arguments
@@ -563,7 +563,7 @@ main(int argc, char **argv)
   // which are commonly used by timeout/docker stop/script cleanup flows.
   set_fasttransport_signal_handlers_enabled(false);
 
-  // Set replication type before any initialization (default is paxos)
+  // Set replication type before any initialization (default is raft; an explicit flag wins over the -F files)
   if (!replication_type.empty()) {
     janus::set_replication_type_from_string(replication_type);
     Notice("Using replication type: %s", replication_type.c_str());

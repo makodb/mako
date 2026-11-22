@@ -149,9 +149,11 @@ int main(int argc, char **argv) {
     string config_path = get_current_absolute_path()
             + "../src/mako/config/local-shards" + to_string(nshards)
             + "-warehouses" + to_string(nthreads) + ".yml";
+    // Replication configs (read only when is_replicated is 1): Raft, the
+    // default engine. This program has no way to ask for the deprecated Paxos.
     vector<string> paxos_config_file{
-        get_current_absolute_path() + "../config/1leader_2followers/paxos" + to_string(nthreads) + "_shardidx" + to_string(shardIdx) + ".yml",
-        get_current_absolute_path() + "../config/paxos.yml"
+        get_current_absolute_path() + "../config/1leader_2followers/raft" + to_string(nthreads) + "_shardidx" + to_string(shardIdx) + ".yml",
+        get_current_absolute_path() + "../config/raft.yml"
     };
 
     auto& benchConfig = BenchmarkConfig::getInstance();

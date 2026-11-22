@@ -1329,9 +1329,9 @@ int main(int argc, char** argv) {
   std::fflush(stdout);
 
   // Route the unqualified replication_helper entry points to raft_impl. This
-  // must happen before setup(); without it the default is PAXOS and setup()
-  // goes through paxos_main_helper, which does not disable Jetpack recovery
-  // and yields RPC handler mismatches at runtime.
+  // must happen before setup(). Raft is the default now, but the explicit call
+  // stays: a setup() that goes through paxos_main_helper does not disable
+  // Jetpack recovery and yields RPC handler mismatches at runtime.
   janus::set_replication_type(janus::ReplicationType::RAFT);
 
   // Build the replication argv by hand, mirroring
