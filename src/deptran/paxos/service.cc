@@ -1,4 +1,4 @@
-
+// DEPRECATED: Multi-Paxos replication is deprecated and no longer tested; Raft (src/deptran/raft/) is the supported engine. See src/deptran/paxos/DEPRECATED.md.
 #include "service.h"
 #include "server.h"
 #include "../paxos_worker.h"

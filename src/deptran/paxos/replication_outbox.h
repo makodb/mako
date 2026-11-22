@@ -1,5 +1,5 @@
 #pragma once
-
+// DEPRECATED: Multi-Paxos replication is deprecated and no longer tested; Raft (src/deptran/raft/) is the supported engine. See src/deptran/paxos/DEPRECATED.md.
 // Per-destination ordered outbox for must-deliver replication requests.
 //
 // Header-only and free of Config: MultiPaxosCommo (commo.cc) keeps one outbox

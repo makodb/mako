@@ -1,4 +1,4 @@
-
+// DEPRECATED: Multi-Paxos replication is deprecated and no longer tested; Raft (src/deptran/raft/) is the supported engine. See src/deptran/paxos/DEPRECATED.md.
 #include <rusty/thread.hpp>
 #include "__dep__.h"
 #include "frame.h"
@@ -208,11 +208,17 @@ int get_outstanding_logs(uint32_t par_id) {
     return -1;
 }
 
-
+// @unsafe - Legacy Paxos start-up: raw new, const_cast and process globals.
 std::vector<std::string> setup(int argc, char* argv[]) {
     vector<string> retVector;
     check_current_path();
     Log_info("starting process {}", getpid());
+    // The one runtime deprecation notice (src/deptran/paxos/DEPRECATED.md).
+    // It belongs here and nowhere else: the unified setup() dispatches to this
+    // function only after the process has resolved to Paxos, so a Raft or an
+    // unreplicated process never prints it. No other statement prints the
+    // token, so a log check can grep for it to prove a run did not use Paxos.
+    Log_warn("[PAXOS-DEPRECATED] Paxos replication is deprecated and no longer tested; select Raft with --replication raft or mode ab: raft");
 
     int ret = Config::CreateConfig(argc, argv);
     if (ret != SUCCESS) {
