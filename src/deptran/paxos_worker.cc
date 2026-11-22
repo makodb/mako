@@ -1,4 +1,5 @@
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 
@@ -159,7 +160,15 @@ void PaxosWorker::SetupService() {
 
   // start rpc server
   Log_debug("starting server at {}", bind_addr.c_str());
-  std::cout << "starting server at " << bind_addr.c_str() << std::endl;
+  // server_launch_worker() runs one SetupService() thread per hosted site, and
+  // every operator<< on std::cout rewrites the stream's formatting state
+  // (width, fill) without a lock. One stdio call writes the same bytes and
+  // touches none of that state.
+  // @unsafe { stdio is not borrow-checked }
+  {
+    ::printf("starting server at %s\n", bind_addr.c_str());
+    ::fflush(stdout);
+  }
   int ret = rpc_server_->start(reinterpret_cast<const int8_t*>(bind_addr.c_str()));
   if (ret != 0) {
     Log_fatal("server launch failed.");

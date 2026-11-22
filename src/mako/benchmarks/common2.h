@@ -109,7 +109,7 @@ void modeMonitorRun(abstract_db *db, int thread_nums, bench_runner * R) {
     std::unique_lock<std::mutex> lk((sync_util::sync_logger::m));
     sync_util::sync_logger::cv.wait(lk, [] { return sync_util::sync_logger::toLeader; });
 
-    Warning("start for modeMonitorRun, running:%d",sync_util::sync_logger::worker_running);   
+    Warning("start for modeMonitorRun, running:%d",sync_util::sync_logger::worker_running.load());
     if (!sync_util::sync_logger::worker_running) {
         return;
     }
@@ -133,7 +133,7 @@ void modeMonitorRun(abstract_db *db, int thread_nums, bench_runner * R) {
 }
 
 void modeMonitor(abstract_db *db, int thread_nums, bench_runner *R) {
-    Warning("start for modeMonitor, running:%d",sync_util::sync_logger::worker_running);
+    Warning("start for modeMonitor, running:%d",sync_util::sync_logger::worker_running.load());
     thread mimic_thread(&modeMonitorRun, db, thread_nums, R);
 #if !defined(__APPLE__)
     pthread_setname_np(mimic_thread.native_handle(), "modeMonitor");

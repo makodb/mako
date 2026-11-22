@@ -1,9 +1,11 @@
 #ifndef _SYNC_UTIL_H
 #define _SYNC_UTIL_H
+#include <stdio.h>
 #include <atomic>
 #include <array>
 #include <stdexcept>
 #include <chrono>
+#include <stdio.h>
 #include <thread>
 #include <mutex>
 #include <condition_variable>
@@ -29,6 +31,8 @@ namespace sync_util {
     public:
         // latest timestamp for each local Paxos stream
         // Please, we can keep this as vector
+        // Neither timestamp vector is ever destroyed (see sync_util_init.cc):
+        // the detached advancer thread indexes them until the process exits.
         static vector<std::atomic<uint32_t>> local_timestamp_; // timestamp*10+epoch
 #ifndef DISABLE_DISK
         // latest timestamp for disk persistence per partition
@@ -41,7 +45,11 @@ namespace sync_util {
         static int shardIdx;
         static int nshards;
         static int nthreads; // nthreads == n of Paxos streams
-        static bool worker_running;
+        // The advancer's stop request and the safety_check gate. Atomic, like
+        // exchange_running below: start_advancer() (a replication apply
+        // thread) and shutdown() (the main thread) write it while the
+        // advancer, replay, worker and mode-monitor threads read it unlocked.
+        static std::atomic<bool> worker_running;
         static bool is_leader;
         static string cluster;
         static transport::Configuration *config;
@@ -133,6 +141,12 @@ namespace sync_util {
            single_watermark_.store(0, memory_order_relaxed);
         }
 
+        // @unsafe - Stop requests only; nothing is joined. The advancer, the
+        // watermark-exchange and the mode-monitor threads are detached and may
+        // still be running when main returns. Only the advancer's data is made
+        // to outlive it (the timestamp vectors are never destroyed, see
+        // sync_util_init.cc); cv, m and cluster are still destroyed at exit
+        // under the other detached threads.
         static void shutdown() {
             worker_running = false ;
             toLeader = true; // in order to stop the thread in the follower
@@ -141,14 +155,17 @@ namespace sync_util {
         }
 
         // Single timestamp safety check
+        // @safe - Relaxed read of the gate: one plain byte load, as with the
+        // bool it replaces. Called on the read and replay paths.
         static bool safety_check(uint32_t timestamp, uint32_t watermark) {
-            if (!worker_running) return true;
+            if (!worker_running.load(std::memory_order_relaxed)) return true;
             return timestamp <= watermark;
         }
         
         // Single timestamp check against global watermark
+        // @safe - Same relaxed gate read, then one acquire load of the watermark.
         static bool safety_check(uint32_t timestamp) {
-            if (!worker_running) return true;
+            if (!worker_running.load(std::memory_order_relaxed)) return true;
             // Check against single watermark
             return timestamp <= single_watermark_.load(memory_order_acquire);
         }
@@ -208,7 +225,14 @@ namespace sync_util {
 
         static void start_advancer() {
             // detached thread for advancing vectorized timestamp
-            std::cout<<"start the advancer thread..."<<std::endl;
+            // The caller is a replication apply thread, and std::cout's
+            // formatting state is shared, unlocked, with the benchmark threads:
+            // print each line here with one stdio call instead.
+            // @unsafe { stdio is not borrow-checked }
+            {
+                ::fputs("start the advancer thread...\n", stdout);
+                ::fflush(stdout);
+            }
             // DO NOT reset local_timestamp_ to 0. In single-Raft mode, all partitions
             // share one log stream, so loading tail entries for other partitions may
             // still be pending when par_id=0's ADVANCER_MARKER fires. Resetting to 0
@@ -230,7 +254,12 @@ namespace sync_util {
             }
             if (min_so_far != numeric_limits<uint32_t>::max()) {
                 single_watermark_.store(min_so_far, memory_order_release);
-                std::cout << "start_advancer: initial watermark=" << min_so_far << std::endl;
+                // @unsafe { stdio is not borrow-checked }
+                {
+                    ::printf("start_advancer: initial watermark=%u\n",
+                             static_cast<unsigned>(min_so_far));
+                    ::fflush(stdout);
+                }
             }
             worker_running = true;
             thread advancer_thread(&sync_logger::advancer);
@@ -268,6 +297,10 @@ namespace sync_util {
 
         // detached thread to advance local watermark on the current shard
         // there are two ways to advance watermarks: (1) periodically exchange; (2) piggyback in the RPCs in transaction execution
+        // @unsafe - Never joined: it can run past main's return and through the
+        // exit-time destructors. It may only touch trivially destructible
+        // statics, the never-destroyed timestamp vectors and the standard
+        // streams.
         static void advancer() {
             size_t counter=0;
             while(worker_running) {
@@ -301,10 +334,27 @@ namespace sync_util {
                     for (int i = 0; i < nthreads; i++) {
                         local_w_msg += " p" + std::to_string(i) + "=" + std::to_string(local_timestamp_[i].load(memory_order_relaxed));
                     }
-                    std::cerr << local_w_msg << std::endl;
+                    // One stdio call for the whole line. std::cerr's formatting
+                    // state is shared with the threads that print through
+                    // mako::benchmark_cerr(), and this loop must not wait for
+                    // their lock. The old `std::cerr << ... << std::endl` also
+                    // flushed stdout (cerr is tied to cout), so keep that
+                    // once-a-second drain explicitly.
+                    local_w_msg += '\n';
+                    // @unsafe { stdio is not borrow-checked }
+                    {
+                        ::fputs(local_w_msg.c_str(), stderr);
+                        ::fflush(stdout);
+                    }
                 }
             }
-            std::cout << "END of advancer" << std::endl;
+            // Same reason as above: this detached thread must not format
+            // through std::cout.
+            // @unsafe { stdio is not borrow-checked }
+            {
+                ::fputs("END of advancer\n", stdout);
+                ::fflush(stdout);
+            }
         }
 
         // for the server

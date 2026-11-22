@@ -12,6 +12,7 @@
 #include "rocksdb_persistence_fwd.h"
 
 #include <getopt.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 #if defined(__linux__)
@@ -350,7 +351,13 @@ static void register_paxos_follower_callback(TSharedThreadPoolMbta& replicated_d
     if (len==mako::ADVANCER_MARKER_NUM) { // start a advancer
       status = mako::PaxosStatus::STATUS_REPLAY_DONE;
       if (par_id==0 && benchConfig.getNshards() > 1){
-        std::cout << "we can start a advancer" << std::endl;
+        // An apply thread must not format through std::cout: see the note in
+        // register_paxos_leader_callback().
+        // @unsafe { stdio is not borrow-checked }
+        {
+          ::fputs("we can start a advancer\n", stdout);
+          ::fflush(stdout);
+        }
         sync_util::sync_logger::start_advancer();
       }
       return status;
@@ -530,7 +537,15 @@ static void register_paxos_leader_callback(vector<pair<uint32_t, uint32_t>>& adv
     if (len==mako::ADVANCER_MARKER_NUM) { // start a advancer
       status = mako::PaxosStatus::STATUS_REPLAY_DONE;
       if (par_id==0){
-        std::cout << "we can start a advancer" << std::endl;
+        // This runs on a replication apply thread while benchmark threads
+        // print through std::cout, whose formatting state (width, fill) every
+        // operator<< rewrites without a lock. One stdio call writes the same
+        // bytes and touches none of that state.
+        // @unsafe { stdio is not borrow-checked }
+        {
+          ::fputs("we can start a advancer\n", stdout);
+          ::fflush(stdout);
+        }
         sync_util::sync_logger::start_advancer();
       }
       return status; 

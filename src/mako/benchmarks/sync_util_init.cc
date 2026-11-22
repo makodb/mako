@@ -12,9 +12,16 @@ import std;
 
 // Define all sync_util::sync_logger static variables once
 int sync_util::sync_logger::shardIdx = 0;
-std::vector<std::atomic<uint32_t>> sync_util::sync_logger::local_timestamp_(80);
+// @unsafe - Never destroyed. sync_logger::advancer() runs on a detached thread
+// that nothing joins, so it can still be indexing these vectors while the main
+// thread runs the exit-time destructors; freeing their storage there is a
+// use-after-free. Every other sync_logger static that thread touches is
+// trivially destructible. The attribute is Clang's, the compiler this build
+// selects (CMakeLists.txt); one that does not know it ignores it and keeps
+// the destructors.
+[[clang::no_destroy]] std::vector<std::atomic<uint32_t>> sync_util::sync_logger::local_timestamp_(80);
 #ifndef DISABLE_DISK
-std::vector<std::atomic<uint32_t>> sync_util::sync_logger::disk_timestamp_(80);
+[[clang::no_destroy]] std::vector<std::atomic<uint32_t>> sync_util::sync_logger::disk_timestamp_(80);
 #endif
 std::atomic<uint32_t> sync_util::sync_logger::single_watermark_(0);
 int sync_util::sync_logger::nshards = 0;
@@ -28,7 +35,7 @@ alignas(128) std::atomic<uint32_t>
     sync_util::sync_logger::legacy_distributed_timestamp_state{1};
 std::chrono::time_point<std::chrono::high_resolution_clock> sync_util::sync_logger::last_update = std::chrono::high_resolution_clock::now();
 int sync_util::sync_logger::nthreads = 0;
-bool sync_util::sync_logger::worker_running = false;
+std::atomic<bool> sync_util::sync_logger::worker_running{false};
 bool sync_util::sync_logger::is_leader = true;
 std::string sync_util::sync_logger::cluster = mako::LOCALHOST_CENTER;
 transport::Configuration *sync_util::sync_logger::config = nullptr;
